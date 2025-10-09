@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: nats-operator
+helmCharts:
+  - name: nats-operator
+    repo: https://nats-io.github.io/k8s/helm/charts
+    version: 0.8.3
+    releaseName: nats-operator
+    namespace: nats-operator
+    includeCRDs: true
+    valuesInline:
+      clusterScoped: false
+      cluster:
+        create: false
