@@ -4,7 +4,7 @@ namespace: nats-operator
 helmCharts:
   - name: nats-operator
     repo: https://nats-io.github.io/k8s/helm/charts
-    version: 0.8.3
+    version: 0.8.3 # latest published chart (2023-01-16)
     releaseName: nats-operator
     namespace: nats-operator
     includeCRDs: true
