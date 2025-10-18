@@ -1,4 +1,5 @@
 export * from './runtime.ts'
 export * from './client.ts'
+export * from './worker.ts'
 export * as native from '../internal/core-bridge/native.js'
 export * from '../../vendor/sdk-typescript/packages/core-bridge/ts/errors'

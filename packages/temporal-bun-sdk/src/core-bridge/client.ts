@@ -16,6 +16,7 @@ export interface ClientOptions {
   readonly clientVersion?: string
   readonly apiKey?: string
   readonly tls?: ClientTlsOptions
+  readonly allowInsecure?: boolean
 }
 
 export class Client {
@@ -52,6 +53,10 @@ export class Client {
     const tlsPayload = serializeTlsOptions(this.options.tls)
     if (tlsPayload) {
       payload.tls = tlsPayload
+    }
+
+    if (this.options.allowInsecure !== undefined) {
+      payload.allowInsecure = this.options.allowInsecure
     }
 
     this.#native = await native.createClient(nativeRuntime, payload)
