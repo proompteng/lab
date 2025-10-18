@@ -57,6 +57,9 @@ describe('runCodexImplementation', () => {
   beforeEach(async () => {
     workdir = await mkdtemp(join(tmpdir(), 'codex-impl-test-'))
     eventPath = join(workdir, 'event.json')
+    delete process.env.OUTPUT_PATH
+    delete process.env.JSON_OUTPUT_PATH
+    delete process.env.AGENT_OUTPUT_PATH
     process.env.WORKTREE = workdir
     process.env.LGTM_LOKI_ENDPOINT = 'http://localhost/loki'
     process.env.RELAY_SCRIPT = ''

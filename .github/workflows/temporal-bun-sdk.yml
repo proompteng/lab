@@ -1,12 +1,20 @@
 name: Temporal Bun SDK CI
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/temporal-bun-sdk/**'
+      - 'packages/temporal-bun-sdk-example/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/temporal-bun-sdk.yml'
   pull_request:
     paths:
       - 'packages/temporal-bun-sdk/**'
-      - '.github/workflows/temporal-bun-sdk.yml'
-      - 'pnpm-lock.yaml'
       - 'packages/temporal-bun-sdk-example/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/temporal-bun-sdk.yml'
 
 jobs:
   test:

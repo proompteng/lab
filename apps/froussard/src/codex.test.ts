@@ -130,4 +130,60 @@ describe('buildCodexPrompt', () => {
 
     expect(prompt).toContain('"""\nNo description provided.\n"""')
   })
+
+  it('constructs a review prompt with outstanding feedback context', () => {
+    const prompt = buildCodexPrompt({
+      stage: 'review',
+      issueTitle: 'Tighten review automation',
+      issueBody: 'Codex should keep working the PR until it can merge.',
+      repositoryFullName: 'proompteng/lab',
+      issueNumber: 123,
+      baseBranch: 'main',
+      headBranch: 'codex/issue-123-abcd1234',
+      issueUrl: 'https://github.com/proompteng/lab/issues/123',
+      reviewContext: {
+        summary: 'Two review threads remain unresolved.',
+        reviewThreads: [
+          {
+            summary: 'Add unit coverage for the new webhook branch.',
+            url: 'https://github.com/proompteng/lab/pull/456#discussion-1',
+            author: 'octocat',
+          },
+        ],
+        failingChecks: [
+          {
+            name: 'ci / lint',
+            conclusion: 'failure',
+            url: 'https://ci.example.com/lint',
+            details: 'Biome formatting check is failing',
+          },
+        ],
+        additionalNotes: ['Post an update in the progress comment after fixes land.'],
+      },
+    })
+
+    expect(prompt).toContain('Address outstanding reviewer feedback and failing checks')
+    expect(prompt).toContain('Outstanding items from GitHub:')
+    expect(prompt).toContain('Open review threads:')
+    expect(prompt).toContain('Add unit coverage for the new webhook branch.')
+    expect(prompt).toContain('ci / lint')
+    expect(prompt).toContain('Biome formatting check is failing')
+    expect(prompt).toContain(PROGRESS_COMMENT_MARKER)
+  })
+
+  it('falls back to guidance when no review context is provided', () => {
+    const prompt = buildCodexPrompt({
+      stage: 'review',
+      issueTitle: 'Run review loop',
+      issueBody: 'Ensure Codex exits cleanly when nothing remains.',
+      repositoryFullName: 'proompteng/lab',
+      issueNumber: 321,
+      baseBranch: 'main',
+      headBranch: 'codex/issue-321-abcd1234',
+      issueUrl: 'https://github.com/proompteng/lab/issues/321',
+    })
+
+    expect(prompt).toContain('No unresolved feedback or failing checks were supplied.')
+    expect(prompt).toContain('Double-check the pull request status and exit once it is mergeable.')
+  })
 })

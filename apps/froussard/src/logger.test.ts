@@ -13,6 +13,7 @@ vi.mock('pino', () => ({
 }))
 
 const originalEnv = { ...process.env }
+delete originalEnv.LGTM_LOKI_ENDPOINT
 
 const resetEnv = () => {
   for (const key of Object.keys(process.env)) {

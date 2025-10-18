@@ -10,7 +10,7 @@ export interface DiscordRelayOptions {
 }
 
 export interface RunCodexSessionOptions {
-  stage: 'planning' | 'implementation'
+  stage: 'planning' | 'implementation' | 'review'
   prompt: string
   outputPath: string
   jsonOutputPath: string

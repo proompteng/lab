@@ -24,13 +24,178 @@ export enum CodexTaskStage {
    * @generated from enum value: CODEX_TASK_STAGE_IMPLEMENTATION = 2;
    */
   IMPLEMENTATION = 2,
+
+  /**
+   * @generated from enum value: CODEX_TASK_STAGE_REVIEW = 3;
+   */
+  REVIEW = 3,
 }
 // Retrieve enum metadata with: proto3.getEnumType(CodexTaskStage)
 proto3.util.setEnumType(CodexTaskStage, "github.v1.CodexTaskStage", [
   { no: 0, name: "CODEX_TASK_STAGE_UNSPECIFIED" },
   { no: 1, name: "CODEX_TASK_STAGE_PLANNING" },
   { no: 2, name: "CODEX_TASK_STAGE_IMPLEMENTATION" },
+  { no: 3, name: "CODEX_TASK_STAGE_REVIEW" },
 ]);
+
+/**
+ * @generated from message github.v1.CodexReviewThread
+ */
+export class CodexReviewThread extends Message<CodexReviewThread> {
+  /**
+   * @generated from field: string summary = 1;
+   */
+  summary = "";
+
+  /**
+   * @generated from field: optional string url = 2;
+   */
+  url?: string;
+
+  /**
+   * @generated from field: optional string author = 3;
+   */
+  author?: string;
+
+  constructor(data?: PartialMessage<CodexReviewThread>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "github.v1.CodexReviewThread";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "summary", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "url", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 3, name: "author", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): CodexReviewThread {
+    return new CodexReviewThread().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): CodexReviewThread {
+    return new CodexReviewThread().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): CodexReviewThread {
+    return new CodexReviewThread().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: CodexReviewThread | PlainMessage<CodexReviewThread> | undefined, b: CodexReviewThread | PlainMessage<CodexReviewThread> | undefined): boolean {
+    return proto3.util.equals(CodexReviewThread, a, b);
+  }
+}
+
+/**
+ * @generated from message github.v1.CodexFailingCheck
+ */
+export class CodexFailingCheck extends Message<CodexFailingCheck> {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name = "";
+
+  /**
+   * @generated from field: optional string conclusion = 2;
+   */
+  conclusion?: string;
+
+  /**
+   * @generated from field: optional string url = 3;
+   */
+  url?: string;
+
+  /**
+   * @generated from field: optional string details = 4;
+   */
+  details?: string;
+
+  constructor(data?: PartialMessage<CodexFailingCheck>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "github.v1.CodexFailingCheck";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "conclusion", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 3, name: "url", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 4, name: "details", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): CodexFailingCheck {
+    return new CodexFailingCheck().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): CodexFailingCheck {
+    return new CodexFailingCheck().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): CodexFailingCheck {
+    return new CodexFailingCheck().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: CodexFailingCheck | PlainMessage<CodexFailingCheck> | undefined, b: CodexFailingCheck | PlainMessage<CodexFailingCheck> | undefined): boolean {
+    return proto3.util.equals(CodexFailingCheck, a, b);
+  }
+}
+
+/**
+ * @generated from message github.v1.CodexReviewContext
+ */
+export class CodexReviewContext extends Message<CodexReviewContext> {
+  /**
+   * @generated from field: optional string summary = 1;
+   */
+  summary?: string;
+
+  /**
+   * @generated from field: repeated github.v1.CodexReviewThread review_threads = 2;
+   */
+  reviewThreads: CodexReviewThread[] = [];
+
+  /**
+   * @generated from field: repeated github.v1.CodexFailingCheck failing_checks = 3;
+   */
+  failingChecks: CodexFailingCheck[] = [];
+
+  /**
+   * @generated from field: repeated string additional_notes = 4;
+   */
+  additionalNotes: string[] = [];
+
+  constructor(data?: PartialMessage<CodexReviewContext>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "github.v1.CodexReviewContext";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "summary", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 2, name: "review_threads", kind: "message", T: CodexReviewThread, repeated: true },
+    { no: 3, name: "failing_checks", kind: "message", T: CodexFailingCheck, repeated: true },
+    { no: 4, name: "additional_notes", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): CodexReviewContext {
+    return new CodexReviewContext().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): CodexReviewContext {
+    return new CodexReviewContext().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): CodexReviewContext {
+    return new CodexReviewContext().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: CodexReviewContext | PlainMessage<CodexReviewContext> | undefined, b: CodexReviewContext | PlainMessage<CodexReviewContext> | undefined): boolean {
+    return proto3.util.equals(CodexReviewContext, a, b);
+  }
+}
 
 /**
  * @generated from message github.v1.CodexTask
@@ -111,6 +276,11 @@ export class CodexTask extends Message<CodexTask> {
    */
   deliveryId = "";
 
+  /**
+   * @generated from field: optional github.v1.CodexReviewContext review_context = 16;
+   */
+  reviewContext?: CodexReviewContext;
+
   constructor(data?: PartialMessage<CodexTask>) {
     super();
     proto3.util.initPartial(data, this);
@@ -134,6 +304,7 @@ export class CodexTask extends Message<CodexTask> {
     { no: 13, name: "plan_comment_url", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
     { no: 14, name: "plan_comment_body", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
     { no: 15, name: "delivery_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 16, name: "review_context", kind: "message", T: CodexReviewContext, opt: true },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): CodexTask {

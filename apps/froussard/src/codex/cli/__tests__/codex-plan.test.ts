@@ -61,6 +61,10 @@ describe('runCodexPlan', () => {
 
   beforeEach(async () => {
     workdir = await mkdtemp(join(tmpdir(), 'codex-plan-test-'))
+    delete process.env.OUTPUT_PATH
+    delete process.env.JSON_OUTPUT_PATH
+    delete process.env.AGENT_OUTPUT_PATH
+    delete process.env.PLAN_OUTPUT_PATH
     process.env.WORKTREE = workdir
     process.env.CODEX_PROMPT = '# Plan\n- do things'
     process.env.POST_TO_GITHUB = 'false'

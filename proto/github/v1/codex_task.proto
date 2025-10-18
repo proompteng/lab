@@ -10,6 +10,27 @@ enum CodexTaskStage {
   CODEX_TASK_STAGE_UNSPECIFIED = 0;
   CODEX_TASK_STAGE_PLANNING = 1;
   CODEX_TASK_STAGE_IMPLEMENTATION = 2;
+  CODEX_TASK_STAGE_REVIEW = 3;
+}
+
+message CodexReviewThread {
+  string summary = 1;
+  optional string url = 2;
+  optional string author = 3;
+}
+
+message CodexFailingCheck {
+  string name = 1;
+  optional string conclusion = 2;
+  optional string url = 3;
+  optional string details = 4;
+}
+
+message CodexReviewContext {
+  optional string summary = 1;
+  repeated CodexReviewThread review_threads = 2;
+  repeated CodexFailingCheck failing_checks = 3;
+  repeated string additional_notes = 4;
 }
 
 message CodexTask {
@@ -28,4 +49,5 @@ message CodexTask {
   optional string plan_comment_url = 13;
   optional string plan_comment_body = 14;
   string delivery_id = 15;
+  optional CodexReviewContext review_context = 16;
 }
