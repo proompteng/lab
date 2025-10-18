@@ -26,6 +26,9 @@ const MAX_POOL_SIZE: usize = 16;
 
 static BYTE_ARRAY_POOL: OnceLock<Mutex<Vec<Vec<u8>>>> = OnceLock::new();
 
+#[cfg(test)]
+static TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+
 fn pool() -> &'static Mutex<Vec<Vec<u8>>> {
     BYTE_ARRAY_POOL.get_or_init(|| Mutex::new(Vec::new()))
 }
@@ -83,4 +86,9 @@ pub fn clear_pool() {
 #[cfg(test)]
 pub fn pool_len() -> usize {
     pool().lock().unwrap().len()
+}
+
+#[cfg(test)]
+pub fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    TEST_MUTEX.get_or_init(|| Mutex::new(())).lock().unwrap()
 }

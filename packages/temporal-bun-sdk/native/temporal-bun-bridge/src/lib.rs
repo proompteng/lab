@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::mem::take;
+use std::net::SocketAddr;
 use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 use base64::{engine::general_purpose, Engine as _};
 use prost::Message;
@@ -13,17 +15,25 @@ use temporal_client::{
     tonic::IntoRequest, ClientOptionsBuilder, ClientTlsConfig, ConfiguredClient, Namespace,
     RetryClient, TemporalServiceClient, TlsConfig, WorkflowService,
 };
-use temporal_sdk_core::{CoreRuntime, TokioRuntimeBuilder};
-use temporal_sdk_core_api::telemetry::TelemetryOptions;
+use temporal_sdk_core::{
+    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
+    CoreRuntime, TokioRuntimeBuilder,
+};
+use temporal_sdk_core_api::telemetry::{
+    metrics::CoreMeter, HistogramBucketOverrides, MetricTemporality, OtelCollectorOptionsBuilder,
+    OtlpProtocol, PrometheusExporterOptions, PrometheusExporterOptionsBuilder, TelemetryOptions,
+};
 use temporal_sdk_core_protos::temporal::api::common::v1::{
     Header, Memo, Payload, Payloads, RetryPolicy, SearchAttributes, WorkflowExecution, WorkflowType,
 };
 use temporal_sdk_core_protos::temporal::api::enums::v1::TaskQueueKind;
 use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueue;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
-    SignalWithStartWorkflowExecutionRequest, StartWorkflowExecutionRequest, TerminateWorkflowExecutionRequest,
+    SignalWithStartWorkflowExecutionRequest, StartWorkflowExecutionRequest,
+    TerminateWorkflowExecutionRequest,
 };
 use thiserror::Error;
+use tokio::task::AbortHandle;
 use url::Url;
 use uuid::Uuid;
 
@@ -36,6 +46,8 @@ type PendingClientHandle = pending::PendingResult<ClientHandle>;
 #[repr(C)]
 pub struct RuntimeHandle {
     runtime: Arc<CoreRuntime>,
+    prometheus_abort: Option<AbortHandle>,
+    prometheus_config: Option<PrometheusTelemetryPayload>,
 }
 
 #[repr(C)]
@@ -148,6 +160,87 @@ struct StartWorkflowResponseInfo {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TelemetryUpdatePayload {
+    metrics: MetricsExporterPayload,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum MetricsExporterPayload {
+    Prometheus(PrometheusTelemetryPayload),
+    Otlp(OtlpTelemetryPayload),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrometheusTelemetryPayload {
+    bind_address: String,
+    #[serde(default)]
+    global_tags: HashMap<String, String>,
+    #[serde(default)]
+    counters_total_suffix: bool,
+    #[serde(default)]
+    unit_suffix: bool,
+    #[serde(default)]
+    use_seconds_for_durations: bool,
+    #[serde(default)]
+    histogram_bucket_overrides: HashMap<String, Vec<f64>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OtlpTelemetryPayload {
+    url: String,
+    #[serde(default)]
+    protocol: Option<OtlpProtocolTag>,
+    #[serde(default)]
+    headers: HashMap<String, String>,
+    #[serde(default)]
+    metric_periodicity_ms: Option<u64>,
+    #[serde(default)]
+    metric_temporality: Option<MetricTemporalityTag>,
+    #[serde(default)]
+    global_tags: HashMap<String, String>,
+    #[serde(default)]
+    use_seconds_for_durations: bool,
+    #[serde(default)]
+    histogram_bucket_overrides: HashMap<String, Vec<f64>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum MetricTemporalityTag {
+    Cumulative,
+    Delta,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum OtlpProtocolTag {
+    Http,
+    Grpc,
+}
+
+impl From<MetricTemporalityTag> for MetricTemporality {
+    fn from(value: MetricTemporalityTag) -> Self {
+        match value {
+            MetricTemporalityTag::Cumulative => MetricTemporality::Cumulative,
+            MetricTemporalityTag::Delta => MetricTemporality::Delta,
+        }
+    }
+}
+
+impl From<OtlpProtocolTag> for OtlpProtocol {
+    fn from(value: OtlpProtocolTag) -> Self {
+        match value {
+            OtlpProtocolTag::Http => OtlpProtocol::Http,
+            OtlpProtocolTag::Grpc => OtlpProtocol::Grpc,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct TerminateWorkflowRequestPayload {
     #[serde(default)]
     namespace: Option<String>,
@@ -201,6 +294,12 @@ enum BridgeError {
     InvalidTlsConfig(String),
     #[error("invalid client metadata: {0}")]
     InvalidMetadata(String),
+    #[error("invalid telemetry configuration: {0}")]
+    InvalidTelemetry(String),
+    #[error("failed to configure telemetry exporters: {0}")]
+    TelemetryConfiguration(String),
+    #[error("runtime is currently in use; telemetry configuration cannot be updated")]
+    RuntimeInUse,
 }
 
 #[unsafe(no_mangle)]
@@ -212,6 +311,8 @@ pub extern "C" fn temporal_bun_runtime_new(
         Ok(runtime) => {
             let handle = RuntimeHandle {
                 runtime: Arc::new(runtime),
+                prometheus_abort: None,
+                prometheus_config: None,
             };
             Box::into_raw(Box::new(handle)) as *mut c_void
         }
@@ -229,20 +330,42 @@ pub extern "C" fn temporal_bun_runtime_free(handle: *mut c_void) {
     }
 
     unsafe {
-        let _ = Box::from_raw(handle as *mut RuntimeHandle);
+        let mut handle = Box::from_raw(handle as *mut RuntimeHandle);
+        if let Some(task) = handle.prometheus_abort.take() {
+            task.abort();
+        }
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_runtime_update_telemetry(
-    _runtime_ptr: *mut c_void,
-    _options_ptr: *const u8,
-    _options_len: usize,
+    runtime_ptr: *mut c_void,
+    options_ptr: *const u8,
+    options_len: usize,
 ) -> i32 {
-    // TODO(codex): Configure telemetry exporters (Prometheus, OTLP) via CoreRuntime once the plan in
-    // docs/ffi-surface.md is implemented.
-    error::set_error("temporal_bun_runtime_update_telemetry is not implemented yet".to_string());
-    -1
+    let handle = match runtime_handle_mut_from_ptr(runtime_ptr) {
+        Ok(handle) => handle,
+        Err(err) => {
+            error::set_error(err.to_string());
+            return -1;
+        }
+    };
+
+    let payload = match request_from_raw::<TelemetryUpdatePayload>(options_ptr, options_len) {
+        Ok(payload) => payload,
+        Err(err) => {
+            error::set_error(err.to_string());
+            return -1;
+        }
+    };
+
+    match configure_runtime_telemetry(handle, payload) {
+        Ok(()) => 0,
+        Err(err) => {
+            error::set_error(err.to_string());
+            -1
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -272,6 +395,302 @@ fn runtime_from_ptr(ptr: *mut c_void) -> Result<Arc<CoreRuntime>, BridgeError> {
 
     let runtime = unsafe { &*(ptr as *mut RuntimeHandle) };
     Ok(runtime.runtime.clone())
+}
+
+fn runtime_handle_mut_from_ptr<'a>(ptr: *mut c_void) -> Result<&'a mut RuntimeHandle, BridgeError> {
+    if ptr.is_null() {
+        return Err(BridgeError::InvalidRuntimeHandle);
+    }
+    Ok(unsafe { &mut *(ptr as *mut RuntimeHandle) })
+}
+
+fn configure_runtime_telemetry(
+    handle: &mut RuntimeHandle,
+    payload: TelemetryUpdatePayload,
+) -> Result<(), BridgeError> {
+    match payload.metrics {
+        MetricsExporterPayload::Prometheus(config) => configure_prometheus(handle, config),
+        MetricsExporterPayload::Otlp(config) => configure_otlp(handle, config),
+    }
+}
+
+fn ensure_runtime_exclusive(handle: &mut RuntimeHandle) -> Result<(), BridgeError> {
+    if Arc::get_mut(&mut handle.runtime).is_some() {
+        Ok(())
+    } else {
+        Err(BridgeError::RuntimeInUse)
+    }
+}
+
+fn with_runtime<T>(
+    handle: &mut RuntimeHandle,
+    f: impl FnOnce(&mut CoreRuntime) -> Result<T, BridgeError>,
+) -> Result<T, BridgeError> {
+    let runtime = Arc::get_mut(&mut handle.runtime).ok_or(BridgeError::RuntimeInUse)?;
+    let _subscriber_guard = runtime
+        .telemetry()
+        .trace_subscriber()
+        .map(|sub| tracing::subscriber::set_default(sub));
+    let _tokio_guard = runtime.tokio_handle().enter();
+    f(runtime)
+}
+
+fn configure_prometheus(
+    handle: &mut RuntimeHandle,
+    config: PrometheusTelemetryPayload,
+) -> Result<(), BridgeError> {
+    ensure_runtime_exclusive(handle)?;
+    let options = build_prometheus_options(&config)?;
+
+    let previous_config = handle.prometheus_config.clone();
+    let previous_abort = handle.prometheus_abort.take();
+
+    if let Some(task) = previous_abort {
+        task.abort();
+    }
+
+    let abort_handle = match with_runtime(handle, move |runtime| {
+        let exporter = start_prometheus_metric_exporter(options).map_err(|err| {
+            BridgeError::TelemetryConfiguration(format!(
+                "failed to start Prometheus exporter: {err}"
+            ))
+        })?;
+        runtime
+            .telemetry_mut()
+            .attach_late_init_metrics(exporter.meter.clone());
+        Ok::<AbortHandle, BridgeError>(exporter.abort_handle)
+    }) {
+        Ok(handle) => handle,
+        Err(err) => {
+            if let Some(prev_config) = previous_config {
+                if let Err(rollback_err) = restart_prometheus(handle, &prev_config) {
+                    return Err(BridgeError::TelemetryConfiguration(format!(
+                        "failed to start Prometheus exporter: {err}; rollback failed: {rollback_err}"
+                    )));
+                }
+            }
+            return Err(err);
+        }
+    };
+
+    handle.prometheus_abort = Some(abort_handle);
+    handle.prometheus_config = Some(config);
+    Ok(())
+}
+
+fn build_prometheus_options(
+    config: &PrometheusTelemetryPayload,
+) -> Result<PrometheusExporterOptions, BridgeError> {
+    let socket_addr: SocketAddr = config.bind_address.parse().map_err(|err| {
+        BridgeError::InvalidTelemetry(format!("invalid Prometheus bind address: {err}"))
+    })?;
+
+    let mut builder = PrometheusExporterOptionsBuilder::default();
+    builder
+        .socket_addr(socket_addr)
+        .global_tags(config.global_tags.clone())
+        .counters_total_suffix(config.counters_total_suffix)
+        .unit_suffix(config.unit_suffix)
+        .use_seconds_for_durations(config.use_seconds_for_durations)
+        .histogram_bucket_overrides(HistogramBucketOverrides {
+            overrides: config.histogram_bucket_overrides.clone(),
+        });
+
+    builder.build().map_err(|err| {
+        BridgeError::InvalidTelemetry(format!("failed to build Prometheus options: {err}"))
+    })
+}
+
+fn restart_prometheus(
+    handle: &mut RuntimeHandle,
+    config: &PrometheusTelemetryPayload,
+) -> Result<(), BridgeError> {
+    let options = build_prometheus_options(config)?;
+    let abort_handle = with_runtime(handle, move |runtime| {
+        let exporter = start_prometheus_metric_exporter(options).map_err(|err| {
+            BridgeError::TelemetryConfiguration(format!(
+                "failed to restart Prometheus exporter: {err}"
+            ))
+        })?;
+        runtime
+            .telemetry_mut()
+            .attach_late_init_metrics(exporter.meter.clone());
+        Ok::<AbortHandle, BridgeError>(exporter.abort_handle)
+    })?;
+
+    handle.prometheus_abort = Some(abort_handle);
+    handle.prometheus_config = Some(config.clone());
+
+    Ok(())
+}
+
+fn configure_otlp(
+    handle: &mut RuntimeHandle,
+    config: OtlpTelemetryPayload,
+) -> Result<(), BridgeError> {
+    let mut builder = OtelCollectorOptionsBuilder::default();
+    let url = Url::parse(&config.url).map_err(|err| {
+        BridgeError::InvalidTelemetry(format!("invalid OTLP collector URL: {err}"))
+    })?;
+    builder
+        .url(url)
+        .headers(config.headers.clone())
+        .use_seconds_for_durations(config.use_seconds_for_durations)
+        .global_tags(config.global_tags.clone())
+        .histogram_bucket_overrides(HistogramBucketOverrides {
+            overrides: config.histogram_bucket_overrides.clone(),
+        });
+
+    if let Some(period_ms) = config.metric_periodicity_ms {
+        if period_ms == 0 {
+            return Err(BridgeError::InvalidTelemetry(
+                "otlp.metricPeriodicityMs must be greater than zero".to_string(),
+            ));
+        }
+        builder.metric_periodicity(Duration::from_millis(period_ms));
+    }
+
+    if let Some(temporality) = config.metric_temporality {
+        builder.metric_temporality(temporality.into());
+    }
+
+    if let Some(protocol) = config.protocol {
+        builder.protocol(protocol.into());
+    }
+
+    let options = builder.build().map_err(|err| {
+        BridgeError::InvalidTelemetry(format!("failed to build OTLP options: {err}"))
+    })?;
+
+    with_runtime(handle, move |runtime| {
+        let exporter = build_otlp_metric_exporter(options).map_err(|err| {
+            BridgeError::TelemetryConfiguration(format!("failed to start OTLP exporter: {err}"))
+        })?;
+        let meter: Arc<dyn CoreMeter + 'static> = Arc::new(exporter);
+        runtime.telemetry_mut().attach_late_init_metrics(meter);
+        Ok(())
+    })?;
+
+    if let Some(task) = handle.prometheus_abort.take() {
+        task.abort();
+    }
+    handle.prometheus_config = None;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod telemetry_tests {
+    use super::*;
+
+    fn build_runtime_handle() -> RuntimeHandle {
+        let runtime =
+            CoreRuntime::new(TelemetryOptions::default(), TokioRuntimeBuilder::default()).unwrap();
+        RuntimeHandle {
+            runtime: Arc::new(runtime),
+            prometheus_abort: None,
+            prometheus_config: None,
+        }
+    }
+
+    fn prometheus_payload(bind_address: &str) -> TelemetryUpdatePayload {
+        TelemetryUpdatePayload {
+            metrics: MetricsExporterPayload::Prometheus(PrometheusTelemetryPayload {
+                bind_address: bind_address.to_string(),
+                global_tags: HashMap::new(),
+                counters_total_suffix: false,
+                unit_suffix: false,
+                use_seconds_for_durations: false,
+                histogram_bucket_overrides: HashMap::new(),
+            }),
+        }
+    }
+
+    fn otlp_payload(url: &str) -> TelemetryUpdatePayload {
+        TelemetryUpdatePayload {
+            metrics: MetricsExporterPayload::Otlp(OtlpTelemetryPayload {
+                url: url.to_string(),
+                protocol: None,
+                headers: HashMap::new(),
+                metric_periodicity_ms: None,
+                metric_temporality: None,
+                global_tags: HashMap::new(),
+                use_seconds_for_durations: false,
+                histogram_bucket_overrides: HashMap::new(),
+            }),
+        }
+    }
+
+    #[test]
+    fn telemetry_configuration_rejects_shared_runtime() {
+        let mut handle = build_runtime_handle();
+        let _clone = handle.runtime.clone();
+
+        let err = configure_runtime_telemetry(&mut handle, prometheus_payload("127.0.0.1:0"))
+            .unwrap_err();
+        assert!(matches!(err, BridgeError::RuntimeInUse));
+    }
+
+    #[test]
+    fn telemetry_configuration_rejects_invalid_prometheus_address() {
+        let mut handle = build_runtime_handle();
+
+        let err = configure_runtime_telemetry(&mut handle, prometheus_payload("not-a-socket"))
+            .unwrap_err();
+        assert!(matches!(err, BridgeError::InvalidTelemetry(_)));
+    }
+
+    #[test]
+    fn telemetry_configuration_rejects_invalid_otlp_url() {
+        let mut handle = build_runtime_handle();
+
+        let err =
+            configure_runtime_telemetry(&mut handle, otlp_payload("://collector")).unwrap_err();
+        assert!(matches!(err, BridgeError::InvalidTelemetry(_)));
+    }
+
+    #[test]
+    fn telemetry_configuration_starts_prometheus_exporter() {
+        let mut handle = build_runtime_handle();
+
+        configure_runtime_telemetry(&mut handle, prometheus_payload("127.0.0.1:0")).unwrap();
+        assert!(handle.prometheus_abort.is_some());
+
+        if let Some(task) = handle.prometheus_abort.take() {
+            task.abort();
+        }
+    }
+
+    #[test]
+    fn telemetry_configuration_rolls_back_on_prometheus_error() {
+        let mut handle = build_runtime_handle();
+
+        configure_runtime_telemetry(&mut handle, prometheus_payload("127.0.0.1:0")).unwrap();
+        let previous_config = handle.prometheus_config.clone();
+        assert!(handle.prometheus_abort.is_some());
+
+        let blocker = std::net::TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let blocked_addr = blocker.local_addr().expect("listener addr").to_string();
+
+        let err = configure_runtime_telemetry(&mut handle, prometheus_payload(&blocked_addr))
+            .unwrap_err();
+        assert!(matches!(err, BridgeError::TelemetryConfiguration(_)));
+
+        assert!(handle.prometheus_abort.is_some());
+        assert_eq!(
+            handle
+                .prometheus_config
+                .as_ref()
+                .map(|cfg| cfg.bind_address.as_str()),
+            previous_config
+                .as_ref()
+                .map(|cfg| cfg.bind_address.as_str())
+        );
+
+        if let Some(task) = handle.prometheus_abort.take() {
+            task.abort();
+        }
+    }
 }
 
 fn config_from_raw(ptr: *const u8, len: usize) -> Result<ClientConfig, BridgeError> {
@@ -319,12 +738,13 @@ fn normalize_metadata_headers(
     for (key, value) in raw_headers.into_iter() {
         let trimmed_key = key.trim();
         if trimmed_key.is_empty() {
-            return Err(BridgeError::InvalidMetadata("header keys must be non-empty".into()));
+            return Err(BridgeError::InvalidMetadata(
+                "header keys must be non-empty".into(),
+            ));
         }
 
         let lower_key = trimmed_key.to_ascii_lowercase();
-        if normalized.contains_key(&lower_key)
-            || (lower_key == "authorization" && bearer.is_some())
+        if normalized.contains_key(&lower_key) || (lower_key == "authorization" && bearer.is_some())
         {
             return Err(BridgeError::InvalidMetadata(format!(
                 "duplicate header key '{lower_key}'",
@@ -1150,7 +1570,9 @@ fn tls_config_from_payload(payload: ClientTlsConfigPayload) -> Result<TlsConfig,
 
     if let Some(server_root_ca) = server_root_ca_cert {
         let bytes = decode_base64(&server_root_ca).map_err(|err| {
-            BridgeError::InvalidTlsConfig(format!("invalid serverRootCACertificate/server_root_ca_cert: {err}"))
+            BridgeError::InvalidTlsConfig(format!(
+                "invalid serverRootCACertificate/server_root_ca_cert: {err}"
+            ))
         })?;
         tls.server_root_ca_cert = Some(bytes);
     }
@@ -1173,7 +1595,9 @@ fn tls_config_from_payload(payload: ClientTlsConfigPayload) -> Result<TlsConfig,
                     BridgeError::InvalidTlsConfig(format!("invalid client_cert/clientCert: {err}"))
                 })?;
                 let key = decode_base64(&key_b64).map_err(|err| {
-                    BridgeError::InvalidTlsConfig(format!("invalid client_private_key/clientPrivateKey: {err}"))
+                    BridgeError::InvalidTlsConfig(format!(
+                        "invalid client_private_key/clientPrivateKey: {err}"
+                    ))
                 })?;
                 tls.client_tls_config = Some(ClientTlsConfig {
                     client_cert: cert,
@@ -1222,6 +1646,7 @@ mod tests {
 
     #[test]
     fn byte_array_new_round_trips_large_payload() {
+        let _guard = byte_array::test_lock();
         byte_array::clear_pool();
 
         let len = 8 * 1024 * 1024;
@@ -1246,6 +1671,7 @@ mod tests {
 
     #[test]
     fn byte_array_new_reuses_pooled_buffers() {
+        let _guard = byte_array::test_lock();
         byte_array::clear_pool();
         assert_eq!(byte_array::pool_len(), 0);
 
@@ -1542,17 +1968,16 @@ mod tests {
     #[test]
     fn normalize_metadata_headers_lowercases_and_extracts_bearer() {
         let headers = HashMap::from([
-            (String::from("Authorization"), String::from(" Bearer super-secret ")),
+            (
+                String::from("Authorization"),
+                String::from(" Bearer super-secret "),
+            ),
             (String::from("X-Custom"), String::from(" value ")),
         ]);
 
-        let (normalized, bearer) =
-            normalize_metadata_headers(headers).expect("headers normalized");
+        let (normalized, bearer) = normalize_metadata_headers(headers).expect("headers normalized");
 
-        assert_eq!(
-            normalized.get("x-custom"),
-            Some(&"value".to_string())
-        );
+        assert_eq!(normalized.get("x-custom"), Some(&"value".to_string()));
         assert!(!normalized.contains_key("authorization"));
         assert_eq!(bearer.as_deref(), Some("super-secret"));
     }
@@ -1561,10 +1986,12 @@ mod tests {
     fn normalize_metadata_headers_preserves_non_bearer_authorization() {
         let headers = HashMap::from([(String::from("Authorization"), String::from("Basic abc"))]);
 
-        let (normalized, bearer) =
-            normalize_metadata_headers(headers).expect("headers normalized");
+        let (normalized, bearer) = normalize_metadata_headers(headers).expect("headers normalized");
 
-        assert_eq!(normalized.get("authorization"), Some(&"Basic abc".to_string()));
+        assert_eq!(
+            normalized.get("authorization"),
+            Some(&"Basic abc".to_string())
+        );
         assert_eq!(bearer, None);
     }
 
