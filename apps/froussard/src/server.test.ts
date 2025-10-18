@@ -92,12 +92,20 @@ vi.mock('@/services/github', () => {
     {
       postIssueReaction: (options: unknown) => ReturnType<typeof Effect.succeed>
       findLatestPlanComment: (options: unknown) => ReturnType<typeof Effect.succeed>
+      fetchPullRequest: (options: unknown) => ReturnType<typeof Effect.succeed>
+      markPullRequestReadyForReview: (options: unknown) => ReturnType<typeof Effect.succeed>
+      listPullRequestReviewThreads: (options: unknown) => ReturnType<typeof Effect.succeed>
+      listPullRequestCheckFailures: (options: unknown) => ReturnType<typeof Effect.succeed>
     }
   >() {}
 
   const GithubServiceLayer = Layer.succeed(GithubService, {
     postIssueReaction: () => Effect.succeed({ ok: true }),
     findLatestPlanComment: () => Effect.succeed({ ok: false, reason: 'not-found' }),
+    fetchPullRequest: () => Effect.succeed({ ok: false, reason: 'not-found' }),
+    markPullRequestReadyForReview: () => Effect.succeed({ ok: true }),
+    listPullRequestReviewThreads: () => Effect.succeed({ ok: true, threads: [] }),
+    listPullRequestCheckFailures: () => Effect.succeed({ ok: true, checks: [] }),
   })
 
   return {
@@ -105,6 +113,10 @@ vi.mock('@/services/github', () => {
     GithubServiceLayer,
     postIssueReaction: vi.fn(),
     findLatestPlanComment: vi.fn(),
+    fetchPullRequest: vi.fn(),
+    markPullRequestReadyForReview: vi.fn(),
+    listPullRequestReviewThreads: vi.fn(),
+    listPullRequestCheckFailures: vi.fn(),
   }
 })
 

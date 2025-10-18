@@ -6,9 +6,20 @@ import { Effect } from 'effect'
 import { buildCodexBranchName, buildCodexPrompt, type CodexTaskMessage, normalizeLogin } from '@/codex'
 import { selectReactionRepository } from '@/codex-workflow'
 import type { AppRuntime } from '@/effect/runtime'
-import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent } from '@/github-payload'
+import {
+  deriveRepositoryFullName,
+  isGithubIssueCommentEvent,
+  isGithubIssueEvent,
+  type GithubRepository,
+} from '@/github-payload'
 import { logger } from '@/logger'
-import { CodexTaskStage, CodexTask as GithubCodexTaskMessage } from '@/proto/github/v1/codex_task_pb'
+import {
+  CodexFailingCheck as GithubCodexFailingCheck,
+  CodexReviewContext as GithubCodexReviewContext,
+  CodexReviewThread as GithubCodexReviewThread,
+  CodexTaskStage,
+  CodexTask as GithubCodexTaskMessage,
+} from '@/proto/github/v1/codex_task_pb'
 import { GithubService } from '@/services/github'
 
 import type { WebhookConfig } from './types'
@@ -25,6 +36,98 @@ const PROTO_CODEX_TASK_FULL_NAME = 'github.v1.CodexTask'
 const PROTO_CODEX_TASK_SCHEMA = 'github/v1/codex_task.proto'
 const CODEX_PLAN_MARKER = '<!-- codex:plan -->'
 
+const toNumericId = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number.parseInt(value, 10)
+    if (Number.isFinite(parsed)) {
+      return parsed
+    }
+  }
+  return null
+}
+
+const parseIssueNumberFromBranch = (branch: string, prefix: string): number | null => {
+  if (typeof branch !== 'string' || branch.length === 0) {
+    return null
+  }
+  const normalizedPrefix = prefix.toLowerCase()
+  const normalizedBranch = branch.toLowerCase()
+  if (normalizedBranch.startsWith(normalizedPrefix)) {
+    const remainder = branch.slice(prefix.length)
+    const match = remainder.match(/^(\d+)/)
+    if (match) {
+      const parsed = Number.parseInt(match[1], 10)
+      if (Number.isFinite(parsed)) {
+        return parsed
+      }
+    }
+  }
+
+  const fallbackMatch = branch.match(/(\d+)/)
+  if (fallbackMatch) {
+    const parsed = Number.parseInt(fallbackMatch[1], 10)
+    if (Number.isFinite(parsed)) {
+      return parsed
+    }
+  }
+
+  return null
+}
+
+const shouldHandlePullRequestAction = (action?: string | null): boolean => {
+  if (!action) {
+    return false
+  }
+  return new Set([
+    'opened',
+    'ready_for_review',
+    'synchronize',
+    'reopened',
+    'edited',
+    'converted_to_draft',
+    'review_requested',
+    'review_request_removed',
+  ]).has(action)
+}
+
+const shouldHandlePullRequestReviewAction = (action?: string | null): boolean => {
+  if (!action) {
+    return false
+  }
+  return new Set(['submitted', 'edited', 'dismissed']).has(action)
+}
+
+const buildReviewContextProto = (context: CodexTaskMessage['reviewContext'] | undefined) => {
+  if (!context) {
+    return undefined
+  }
+
+  return new GithubCodexReviewContext({
+    summary: context.summary,
+    reviewThreads: (context.reviewThreads ?? []).map(
+      (thread) =>
+        new GithubCodexReviewThread({
+          summary: thread.summary,
+          url: thread.url,
+          author: thread.author,
+        }),
+    ),
+    failingChecks: (context.failingChecks ?? []).map(
+      (check) =>
+        new GithubCodexFailingCheck({
+          name: check.name,
+          conclusion: check.conclusion,
+          url: check.url,
+          details: check.details,
+        }),
+    ),
+    additionalNotes: context.additionalNotes ?? [],
+  })
+}
+
 const toTimestamp = (value: string): Timestamp => {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) {
@@ -34,8 +137,15 @@ const toTimestamp = (value: string): Timestamp => {
 }
 
 const toCodexTaskProto = (message: CodexTaskMessage, deliveryId: string): GithubCodexTaskMessage => {
+  const protoStage =
+    message.stage === 'planning'
+      ? CodexTaskStage.PLANNING
+      : message.stage === 'review'
+        ? CodexTaskStage.REVIEW
+        : CodexTaskStage.IMPLEMENTATION
+
   return new GithubCodexTaskMessage({
-    stage: message.stage === 'planning' ? CodexTaskStage.PLANNING : CodexTaskStage.IMPLEMENTATION,
+    stage: protoStage,
     prompt: message.prompt,
     repository: message.repository,
     base: message.base,
@@ -50,6 +160,7 @@ const toCodexTaskProto = (message: CodexTaskMessage, deliveryId: string): Github
     planCommentUrl: message.planCommentUrl,
     planCommentBody: message.planCommentBody,
     deliveryId,
+    reviewContext: buildReviewContextProto(message.reviewContext),
   })
 }
 
@@ -103,6 +214,10 @@ export const createGithubWebhookHandler =
     headers['x-hub-signature-256'] = signatureHeader
 
     let codexStageTriggered: string | null = null
+    const senderLogin =
+      typeof (parsedPayload as { sender?: { login?: unknown } }).sender?.login === 'string'
+        ? (parsedPayload as { sender: { login: string } }).sender.login
+        : undefined
 
     try {
       if (eventName === 'issues' && actionValue === 'opened' && isGithubIssueEvent(parsedPayload)) {
@@ -217,6 +332,11 @@ export const createGithubWebhookHandler =
           (isAuthorizedSender && (isManualTrigger || hasPlanMarker)) || (hasPlanMarker && isWorkflowSender)
 
         if (shouldTriggerImplementation) {
+        const commentBody = typeof parsedPayload.comment?.body === 'string' ? parsedPayload.comment.body.trim() : ''
+        if (
+          commentBody === config.codexImplementationTriggerPhrase &&
+          normalizeLogin(senderLogin) === config.codexTriggerLogin
+        ) {
           const issue = parsedPayload.issue
           const issueRepository = selectReactionRepository(issue, parsedPayload.repository)
           const repositoryFullName = deriveRepositoryFullName(issueRepository, issue?.repository_url)
@@ -279,7 +399,7 @@ export const createGithubWebhookHandler =
               issueUrl,
               issueTitle,
               issueBody,
-              sender: typeof senderLoginValue === 'string' ? senderLoginValue : '',
+              sender: typeof senderLogin === 'string' ? senderLogin : '',
               issuedAt: new Date().toISOString(),
               planCommentBody,
               planCommentId,
@@ -314,6 +434,265 @@ export const createGithubWebhookHandler =
 
             codexStageTriggered = 'implementation'
           }
+        }
+      }
+
+      if (
+        (eventName === 'pull_request' && shouldHandlePullRequestAction(actionValue)) ||
+        (eventName === 'pull_request_review' && shouldHandlePullRequestReviewAction(actionValue))
+      ) {
+        const pullRequestPayload = (parsedPayload as { pull_request?: unknown }).pull_request
+        if (pullRequestPayload && typeof pullRequestPayload === 'object') {
+          let repositoryFullName = deriveRepositoryFullName(
+            (parsedPayload as { repository?: GithubRepository | null | undefined }).repository,
+            undefined,
+          )
+
+          if (!repositoryFullName) {
+            const baseValue = (pullRequestPayload as { base?: unknown }).base
+            if (baseValue && typeof baseValue === 'object') {
+              const baseRepo = (baseValue as { repo?: unknown }).repo
+              if (baseRepo && typeof baseRepo === 'object') {
+                const fullNameValue = (baseRepo as { full_name?: unknown }).full_name
+                if (typeof fullNameValue === 'string' && fullNameValue.length > 0) {
+                  repositoryFullName = fullNameValue
+                }
+              }
+            }
+          }
+
+          const pullNumber = toNumericId((pullRequestPayload as { number?: unknown }).number)
+
+          do {
+            if (!repositoryFullName || pullNumber === null) {
+              break
+            }
+
+            const pullResult = await runtime.runPromise(
+              githubService.fetchPullRequest({
+                repositoryFullName,
+                pullNumber,
+                token: config.github.token,
+                apiBaseUrl: config.github.apiBaseUrl,
+                userAgent: config.github.userAgent,
+              }),
+            )
+
+            if (!pullResult.ok) {
+              logger.warn(
+                {
+                  deliveryId,
+                  repository: repositoryFullName,
+                  pullNumber,
+                  reason: pullResult.reason,
+                  status: pullResult.status,
+                },
+                'failed to fetch pull request metadata',
+              )
+              break
+            }
+
+            const pull = pullResult.pullRequest
+            if (pull.state !== 'open' || pull.merged) {
+              break
+            }
+
+            if (normalizeLogin(pull.authorLogin) !== config.codexTriggerLogin) {
+              break
+            }
+
+            if (!pull.headRef || !pull.headSha || !pull.baseRef) {
+              logger.warn(
+                { deliveryId, repository: repositoryFullName, pullNumber },
+                'missing pull request head information',
+              )
+              break
+            }
+
+            const issueNumber = parseIssueNumberFromBranch(pull.headRef, config.codebase.branchPrefix)
+            if (issueNumber === null) {
+              logger.warn(
+                { deliveryId, repository: repositoryFullName, pullNumber, headRef: pull.headRef },
+                'unable to extract issue number from codex branch',
+              )
+              break
+            }
+
+            const threadsResult = await runtime.runPromise(
+              githubService.listPullRequestReviewThreads({
+                repositoryFullName,
+                pullNumber,
+                token: config.github.token,
+                apiBaseUrl: config.github.apiBaseUrl,
+                userAgent: config.github.userAgent,
+              }),
+            )
+
+            if (!threadsResult.ok) {
+              logger.warn(
+                {
+                  deliveryId,
+                  repository: repositoryFullName,
+                  pullNumber,
+                  reason: threadsResult.reason,
+                  status: threadsResult.status,
+                },
+                'failed to load review threads',
+              )
+              break
+            }
+
+            const checksResult = await runtime.runPromise(
+              githubService.listPullRequestCheckFailures({
+                repositoryFullName,
+                headSha: pull.headSha,
+                token: config.github.token,
+                apiBaseUrl: config.github.apiBaseUrl,
+                userAgent: config.github.userAgent,
+              }),
+            )
+
+            if (!checksResult.ok) {
+              logger.warn(
+                {
+                  deliveryId,
+                  repository: repositoryFullName,
+                  pullNumber,
+                  reason: checksResult.reason,
+                  status: checksResult.status,
+                },
+                'failed to load check run failures',
+              )
+              break
+            }
+
+            const unresolvedThreads = threadsResult.threads
+            const failingChecks = checksResult.checks
+            const outstandingWork = unresolvedThreads.length > 0 || failingChecks.length > 0
+
+            if (pull.draft && !outstandingWork) {
+              const undraftResult = await runtime.runPromise(
+                githubService.markPullRequestReadyForReview({
+                  repositoryFullName,
+                  pullNumber,
+                  token: config.github.token,
+                  apiBaseUrl: config.github.apiBaseUrl,
+                  userAgent: config.github.userAgent,
+                }),
+              )
+
+              if (undraftResult.ok) {
+                logger.info(
+                  { deliveryId, repository: repositoryFullName, pullNumber },
+                  'marking codex pull request ready for review',
+                )
+              } else {
+                logger.warn(
+                  {
+                    deliveryId,
+                    repository: repositoryFullName,
+                    pullNumber,
+                    reason: undraftResult.reason,
+                    status: undraftResult.status,
+                  },
+                  'failed to convert codex pull request to ready state',
+                )
+              }
+
+              break
+            }
+
+            if (!outstandingWork) {
+              break
+            }
+
+            const summaryParts: string[] = []
+            if (unresolvedThreads.length > 0) {
+              summaryParts.push(
+                `${unresolvedThreads.length} unresolved review thread${unresolvedThreads.length === 1 ? '' : 's'}`,
+              )
+            }
+            if (failingChecks.length > 0) {
+              summaryParts.push(`${failingChecks.length} failing check${failingChecks.length === 1 ? '' : 's'}`)
+            }
+
+            const additionalNotes: string[] = []
+            const mergeableState = pull.mergeableState ?? undefined
+            if (mergeableState && !['clean', 'unstable', 'unknown'].includes(mergeableState)) {
+              additionalNotes.push(`GitHub reports mergeable_state=${mergeableState}.`)
+            }
+
+            const reviewContext: CodexTaskMessage['reviewContext'] = {
+              summary: summaryParts.length > 0 ? `Outstanding items: ${summaryParts.join(', ')}.` : undefined,
+              reviewThreads: unresolvedThreads.map((thread) => ({
+                summary: thread.summary,
+                url: thread.url,
+                author: thread.author,
+              })),
+              failingChecks: failingChecks.map((check) => ({
+                name: check.name,
+                conclusion: check.conclusion,
+                url: check.url,
+                details: check.details,
+              })),
+              additionalNotes: additionalNotes.length > 0 ? additionalNotes : undefined,
+            }
+
+            const prompt = buildCodexPrompt({
+              stage: 'review',
+              issueTitle: pull.title,
+              issueBody: pull.body,
+              repositoryFullName,
+              issueNumber,
+              baseBranch: pull.baseRef,
+              headBranch: pull.headRef,
+              issueUrl: pull.htmlUrl,
+              reviewContext,
+            })
+
+            const codexMessage: CodexTaskMessage = {
+              stage: 'review',
+              prompt,
+              repository: repositoryFullName,
+              base: pull.baseRef,
+              head: pull.headRef,
+              issueNumber,
+              issueUrl: pull.htmlUrl,
+              issueTitle: pull.title,
+              issueBody: pull.body,
+              sender: typeof senderLogin === 'string' ? senderLogin : '',
+              issuedAt: new Date().toISOString(),
+              reviewContext,
+            }
+
+            await runtime.runPromise(
+              publishKafkaMessage({
+                topic: config.topics.codex,
+                key: `pull-${pull.number}-review`,
+                value: JSON.stringify(codexMessage),
+                headers: { ...headers, 'x-codex-task-stage': 'review' },
+              }),
+            )
+
+            const codexStructuredMessage = toCodexTaskProto(codexMessage, deliveryId)
+
+            await runtime.runPromise(
+              publishKafkaMessage({
+                topic: config.topics.codexStructured,
+                key: `pull-${pull.number}-review`,
+                value: codexStructuredMessage.toBinary(),
+                headers: {
+                  ...headers,
+                  'content-type': PROTO_CONTENT_TYPE,
+                  'x-codex-task-stage': 'review',
+                  'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,
+                  'x-protobuf-schema': PROTO_CODEX_TASK_SCHEMA,
+                },
+              }),
+            )
+
+            codexStageTriggered = 'review'
+          } while (false)
         }
       }
 

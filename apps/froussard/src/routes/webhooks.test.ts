@@ -9,37 +9,40 @@ import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 import { GithubService } from '@/services/github'
 import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
 
-const { mockVerifyDiscordRequest, mockBuildPlanModalResponse, mockToPlanModalEvent } = vi.hoisted(() => ({
-  mockVerifyDiscordRequest: vi.fn(async () => true),
-  mockBuildPlanModalResponse: vi.fn(() => ({
-    type: 9,
-    data: {
-      custom_id: 'plan:cmd-1',
-      title: 'Request Planning Run',
-      components: [],
-    },
-  })),
-  mockToPlanModalEvent: vi.fn(() => ({
-    provider: 'discord' as const,
-    interactionId: 'interaction-123',
-    applicationId: 'app-123',
-    command: 'plan',
-    commandId: 'command-1',
-    version: 1,
-    token: 'token-123',
-    options: { content: 'Ship the release with QA gating' },
-    guildId: 'guild-1',
-    channelId: 'channel-1',
-    user: { id: 'user-1', username: 'tester', globalName: 'Tester', discriminator: '1234' },
-    member: undefined,
-    locale: 'en-US',
-    guildLocale: 'en-US',
-    response: { type: 4, flags: 64 },
-    timestamp: '2025-10-09T00:00:00.000Z',
-    correlationId: '',
-    traceId: '',
-  })),
-}))
+const { mockVerifyDiscordRequest, mockBuildPlanModalResponse, mockToPlanModalEvent, mockBuildCodexPrompt } = vi.hoisted(
+  () => ({
+    mockVerifyDiscordRequest: vi.fn(async () => true),
+    mockBuildPlanModalResponse: vi.fn(() => ({
+      type: 9,
+      data: {
+        custom_id: 'plan:cmd-1',
+        title: 'Request Planning Run',
+        components: [],
+      },
+    })),
+    mockToPlanModalEvent: vi.fn(() => ({
+      provider: 'discord' as const,
+      interactionId: 'interaction-123',
+      applicationId: 'app-123',
+      command: 'plan',
+      commandId: 'command-1',
+      version: 1,
+      token: 'token-123',
+      options: { content: 'Ship the release with QA gating' },
+      guildId: 'guild-1',
+      channelId: 'channel-1',
+      user: { id: 'user-1', username: 'tester', globalName: 'Tester', discriminator: '1234' },
+      member: undefined,
+      locale: 'en-US',
+      guildLocale: 'en-US',
+      response: { type: 4, flags: 64 },
+      timestamp: '2025-10-09T00:00:00.000Z',
+      correlationId: '',
+      traceId: '',
+    })),
+    mockBuildCodexPrompt: vi.fn(() => 'PROMPT'),
+  }),
+)
 
 vi.mock('@/discord-commands', () => ({
   verifyDiscordRequest: mockVerifyDiscordRequest,
@@ -50,7 +53,7 @@ vi.mock('@/discord-commands', () => ({
 
 vi.mock('@/codex', () => ({
   buildCodexBranchName: vi.fn(() => 'codex/issue-1-test'),
-  buildCodexPrompt: vi.fn(() => 'PROMPT'),
+  buildCodexPrompt: mockBuildCodexPrompt,
   normalizeLogin: vi.fn((value: string | undefined | null) => (value ? value.toLowerCase() : null)),
 }))
 
@@ -99,6 +102,10 @@ describe('createWebhookHandler', () => {
   let githubServiceMock: {
     postIssueReaction: ReturnType<typeof vi.fn>
     findLatestPlanComment: ReturnType<typeof vi.fn>
+    fetchPullRequest: ReturnType<typeof vi.fn>
+    markPullRequestReadyForReview: ReturnType<typeof vi.fn>
+    listPullRequestReviewThreads: ReturnType<typeof vi.fn>
+    listPullRequestCheckFailures: ReturnType<typeof vi.fn>
   }
 
   const webhooks = {
@@ -153,6 +160,10 @@ describe('createWebhookHandler', () => {
     const githubLayer = Layer.succeed(GithubService, {
       postIssueReaction: githubServiceMock.postIssueReaction,
       findLatestPlanComment: githubServiceMock.findLatestPlanComment,
+      fetchPullRequest: githubServiceMock.fetchPullRequest,
+      markPullRequestReadyForReview: githubServiceMock.markPullRequestReadyForReview,
+      listPullRequestReviewThreads: githubServiceMock.listPullRequestReviewThreads,
+      listPullRequestCheckFailures: githubServiceMock.listPullRequestCheckFailures,
     })
 
     runtime = makeManagedRuntime(Layer.mergeAll(loggerLayer, kafkaLayer, githubLayer))
@@ -163,6 +174,10 @@ describe('createWebhookHandler', () => {
     githubServiceMock = {
       postIssueReaction: vi.fn(() => Effect.succeed({ ok: true })),
       findLatestPlanComment: vi.fn(() => Effect.succeed({ ok: false, reason: 'not-found' })),
+      fetchPullRequest: vi.fn(() => Effect.succeed({ ok: false as const, reason: 'not-found' as const })),
+      markPullRequestReadyForReview: vi.fn(() => Effect.succeed({ ok: true })),
+      listPullRequestReviewThreads: vi.fn(() => Effect.succeed({ ok: true as const, threads: [] })),
+      listPullRequestCheckFailures: vi.fn(() => Effect.succeed({ ok: true as const, checks: [] })),
     }
     provideRuntime()
   })
@@ -337,6 +352,169 @@ describe('createWebhookHandler', () => {
     expect(implementationProto.deliveryId).toBe('delivery-plan-marker')
 
     expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-plan-marker' })
+  })
+
+  it('publishes review message when a Codex pull request has outstanding feedback', async () => {
+    githubServiceMock.fetchPullRequest.mockReturnValueOnce(
+      Effect.succeed({
+        ok: true as const,
+        pullRequest: {
+          number: 5,
+          title: 'Review automation',
+          body: 'Ensure Codex keeps iterating.',
+          htmlUrl: 'https://github.com/owner/repo/pull/5',
+          draft: false,
+          merged: false,
+          state: 'open',
+          headRef: 'codex/issue-5-branch',
+          headSha: 'abc123',
+          baseRef: 'main',
+          authorLogin: 'user',
+          mergeableState: 'blocked',
+        },
+      }),
+    )
+    githubServiceMock.listPullRequestReviewThreads.mockReturnValueOnce(
+      Effect.succeed({
+        ok: true as const,
+        threads: [
+          {
+            summary: 'Add unit tests for webhook logic',
+            url: 'https://github.com/owner/repo/pull/5#discussion-1',
+            author: 'octocat',
+          },
+        ],
+      }),
+    )
+    githubServiceMock.listPullRequestCheckFailures.mockReturnValueOnce(
+      Effect.succeed({
+        ok: true as const,
+        checks: [
+          {
+            name: 'ci / test',
+            conclusion: 'failure',
+            url: 'https://ci.example.com/run/1',
+            details: 'Integration tests are failing',
+          },
+        ],
+      }),
+    )
+
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const payload = {
+      action: 'submitted',
+      repository: { full_name: 'owner/repo' },
+      sender: { login: 'reviewer' },
+      pull_request: {
+        number: 5,
+        head: { ref: 'codex/issue-5-branch', sha: 'abc123' },
+        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
+        user: { login: 'USER' },
+      },
+    }
+
+    const response = await handler(
+      buildRequest(payload, {
+        'x-github-event': 'pull_request_review',
+        'x-github-delivery': 'delivery-review-1',
+        'x-github-action': 'submitted',
+        'x-hub-signature-256': 'sig',
+        'content-type': 'application/json',
+      }),
+      'github',
+    )
+
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: 'review' })
+
+    expect(githubServiceMock.fetchPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryFullName: 'owner/repo', pullNumber: 5 }),
+    )
+    expect(githubServiceMock.markPullRequestReadyForReview).not.toHaveBeenCalled()
+    expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'review',
+        reviewContext: expect.objectContaining({
+          reviewThreads: expect.arrayContaining([
+            expect.objectContaining({ summary: 'Add unit tests for webhook logic' }),
+          ]),
+        }),
+      }),
+    )
+
+    expect(publishedMessages).toHaveLength(3)
+    const reviewJsonMessage = publishedMessages.find((message) => message.topic === 'codex-topic')
+    expect(reviewJsonMessage).toBeTruthy()
+    const reviewStructuredMessage = publishedMessages.find((message) => message.topic === 'github.issues.codex.tasks')
+    expect(reviewStructuredMessage).toBeTruthy()
+
+    const reviewJsonPayload = JSON.parse(toBuffer(reviewJsonMessage!.value).toString('utf8'))
+    expect(reviewJsonPayload.stage).toBe('review')
+    expect(reviewJsonPayload.reviewContext.reviewThreads[0].summary).toBe('Add unit tests for webhook logic')
+    expect(reviewJsonPayload.reviewContext.failingChecks[0].name).toBe('ci / test')
+    expect(reviewJsonPayload.reviewContext.additionalNotes[0]).toContain('mergeable_state=blocked')
+    expect(reviewJsonPayload.issueNumber).toBe(5)
+
+    const reviewProto = CodexTask.fromBinary(toBuffer(reviewStructuredMessage!.value))
+    expect(reviewProto.stage).toBe(CodexTaskStage.REVIEW)
+    expect(reviewProto.issueNumber).toBe(BigInt(5))
+    expect(reviewProto.reviewContext?.reviewThreads[0]?.summary).toBe('Add unit tests for webhook logic')
+    expect(reviewProto.reviewContext?.failingChecks[0]?.name).toBe('ci / test')
+    expect(reviewProto.reviewContext?.additionalNotes[0]).toContain('mergeable_state=blocked')
+  })
+
+  it('converts draft Codex pull requests to ready-for-review when clean', async () => {
+    githubServiceMock.fetchPullRequest.mockReturnValueOnce(
+      Effect.succeed({
+        ok: true as const,
+        pullRequest: {
+          number: 6,
+          title: 'Ready PR',
+          body: '',
+          htmlUrl: 'https://github.com/owner/repo/pull/6',
+          draft: true,
+          merged: false,
+          state: 'open',
+          headRef: 'codex/issue-6-ready',
+          headSha: 'def456',
+          baseRef: 'main',
+          authorLogin: 'user',
+          mergeableState: 'clean',
+        },
+      }),
+    )
+
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const payload = {
+      action: 'synchronize',
+      repository: { full_name: 'owner/repo' },
+      sender: { login: 'user' },
+      pull_request: {
+        number: 6,
+        head: { ref: 'codex/issue-6-ready', sha: 'def456' },
+        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
+        user: { login: 'USER' },
+      },
+    }
+
+    const response = await handler(
+      buildRequest(payload, {
+        'x-github-event': 'pull_request',
+        'x-github-delivery': 'delivery-undraft-1',
+        'x-github-action': 'synchronize',
+        'x-hub-signature-256': 'sig',
+        'content-type': 'application/json',
+      }),
+      'github',
+    )
+
+    expect(response.status).toBe(202)
+    expect(githubServiceMock.markPullRequestReadyForReview).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryFullName: 'owner/repo', pullNumber: 6 }),
+    )
+    expect(publishedMessages).toHaveLength(1)
+    expect(publishedMessages[0]).toMatchObject({ topic: 'raw-topic', key: 'delivery-undraft-1' })
+    expect(mockBuildCodexPrompt).not.toHaveBeenCalled()
   })
 
   it('returns 401 when Discord signature verification fails', async () => {

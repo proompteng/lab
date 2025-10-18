@@ -84,6 +84,48 @@ func TestListenerRun_LogsStructuredMessage(t *testing.T) {
 	require.Contains(t, output, `"issueNumber":"42"`)
 }
 
+func TestListenerRun_LogsReviewStage(t *testing.T) {
+	task := &githubpb.CodexTask{
+		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_REVIEW,
+		Repository:  "proompteng/lab",
+		IssueNumber: 101,
+		ReviewContext: &githubpb.CodexReviewContext{
+			Summary: proto.String("1 unresolved thread"),
+			ReviewThreads: []*githubpb.CodexReviewThread{
+				{
+					Summary: "Update tests",
+					Url:     proto.String("https://example.com/thread"),
+				},
+			},
+		},
+	}
+	payload, err := proto.Marshal(task)
+	require.NoError(t, err)
+
+	reader := &stubReader{
+		messages: []kafka.Message{
+			{
+				Key:   []byte("issue-101-review"),
+				Value: payload,
+			},
+		},
+		fetchErr: context.Canceled,
+	}
+
+	var buf bytes.Buffer
+	logger := log.New(&buf, "", 0)
+
+	listener := codex.NewListener(reader, logger)
+	err = listener.Run(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, reader.committed, 1)
+	output := buf.String()
+	require.Contains(t, output, `"stage":"CODEX_TASK_STAGE_REVIEW"`)
+	require.Contains(t, output, `"issueNumber":"101"`)
+	require.Contains(t, output, `"summary":"1 unresolved thread"`)
+}
+
 func TestListenerRun_IgnoresInvalidMessage(t *testing.T) {
 	reader := &stubReader{
 		messages: []kafka.Message{

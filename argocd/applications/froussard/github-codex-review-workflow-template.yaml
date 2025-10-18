@@ -1,0 +1,86 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: github-codex-review
+  namespace: argo-workflows
+  labels:
+    codex.stage: review
+spec:
+  serviceAccountName: argo-workflows-workflow
+  entrypoint: review
+  arguments:
+    parameters:
+      - name: rawEvent
+        value: '{}'
+      - name: eventBody
+        value: '{}'
+  templates:
+    - name: review
+      inputs:
+        parameters:
+          - name: rawEvent
+          - name: eventBody
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: DISCORD_BOT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: bot-token
+                optional: true
+          - name: DISCORD_GUILD_ID
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: guild-id
+                optional: true
+          - name: DISCORD_CATEGORY_ID
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: category-id
+                optional: true
+          - name: GH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: LGTM_LOKI_ENDPOINT
+            value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
+        command: ["/usr/local/bin/codex-bootstrap"]
+        args:
+          - "/bin/bash"
+          - "-lc"
+          - |
+            set -euo pipefail
+
+            EVENT_FILE=$(mktemp)
+            cat <<'JSON' > "$EVENT_FILE"
+            {{inputs.parameters.eventBody}}
+            JSON
+
+            STAGE=$(jq -r '.stage // ""' "$EVENT_FILE")
+            if [[ "$STAGE" != "review" ]]; then
+              echo "Skipping unsupported stage: '$STAGE'"
+              exit 0
+            fi
+
+            WORKTREE_DIR="${WORKTREE:-/workspace/lab}"
+            export OUTPUT_PATH="${REVIEW_OUTPUT_PATH:-/workspace/lab/.codex-review.log}"
+
+            echo "Executing review workflow" >&2
+            "${WORKTREE_DIR}/apps/froussard/src/codex/cli/codex-review.ts" "$EVENT_FILE"
+        resources:
+          requests:
+            cpu: "4"
+            memory: 8Gi
+          limits:
+            cpu: "6"
+            memory: 12Gi
