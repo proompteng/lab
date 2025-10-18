@@ -74,21 +74,18 @@ Feed these into `core-bridge` client creation request.
 
 ## 3. Request Serialization
 
-Create helper module `src/client/serialization.ts`:
+`src/client/serialization.ts` owns the JSON envelopes we hand to the Bun ↔︎ Rust bridge. Each helper accepts the caller options plus the default namespace/identity/task queue derived from configuration so we never duplicate mapping logic inside `client.ts`.
 
-- `buildStartWorkflowRequest(options, payloadCodec)` -> `Buffer`
-- `buildSignalRequest(handle, signal, args)`
-- `buildQueryRequest(handle, query, args)`
-- `buildTerminateRequest(handle, reason, details)`
+`buildStartWorkflowRequest({ options, defaults })` now shapes the start payload with the following rules:
 
-Encoding steps:
+- Always include `namespace`, `workflow_id`, `workflow_type`, `identity`, `task_queue`, and `args` (defaulting args to `[]`).
+- Promote caller overrides for `namespace`, `identity`, and `taskQueue`; fall back to the defaults provided by `createTemporalClient` when omitted.
+- Translate camelCase properties to the FFI’s snake_case keys for `cron_schedule`, `memo`, `headers`, `search_attributes`, `request_id`, and the three timeout fields.
+- When a retry policy is provided, emit `retry_policy` with the snake_case keys (`initial_interval_ms`, `maximum_attempts`, etc.) while skipping fields that were left `undefined`.
 
-1. Convert JS args into Temporal payloads (use `payloads-codec`).
-2. Pack envelope structure described in `ffi-surface.md`.
-3. Serialize to JSON, then `Buffer.from(..., 'utf8')`.
-4. Pass pointer/length to FFI.
+The bridge layer is still responsible for serializing the returned record to JSON before handing it to `temporal_bun_client_start_workflow`.
 
-Responses should be decoded accordingly.
+Stubs remain for signal/query/terminate requests until their serialization plans are implemented.
 
 ---
 

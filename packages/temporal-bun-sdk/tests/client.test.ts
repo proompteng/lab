@@ -277,6 +277,70 @@ describe('temporal client (native bridge)', () => {
     await client.shutdown()
   })
 
+  test('startWorkflow maps optional fields into the bridge payload', async () => {
+    let captured: Record<string, unknown> | undefined
+    native.startWorkflow = mock(async (_: unknown, payload: Record<string, unknown>) => {
+      captured = payload
+      return encodeJson({ runId: 'run-opt', workflowId: payload.workflow_id, namespace: payload.namespace })
+    })
+
+    const config: TemporalConfig = {
+      host: 'localhost',
+      port: 7233,
+      address: 'localhost:7233',
+      namespace: 'default',
+      taskQueue: 'prix',
+      apiKey: undefined,
+      tls: undefined,
+      allowInsecureTls: false,
+      workerIdentity: 'worker-default',
+      workerIdentityPrefix: 'temporal-bun-worker',
+    }
+
+    const { client } = await createTemporalClient({ config })
+
+    await client.workflow.start({
+      workflowId: 'wf-opt',
+      workflowType: 'ExampleWorkflow',
+      namespace: 'custom-namespace',
+      taskQueue: 'custom-queue',
+      identity: 'explicit-worker',
+      cronSchedule: '@hourly',
+      memo: { feature: 'beta' },
+      headers: { 'x-trace-id': '123' },
+      searchAttributes: { CustomerId: ['abc-123'] },
+      requestId: 'request-42',
+      workflowExecutionTimeoutMs: 60_000,
+      workflowRunTimeoutMs: 30_000,
+      workflowTaskTimeoutMs: 10_000,
+      retryPolicy: {
+        maximumAttempts: 3,
+      },
+    })
+
+    expect(captured).toMatchObject({
+      namespace: 'custom-namespace',
+      workflow_id: 'wf-opt',
+      workflow_type: 'ExampleWorkflow',
+      task_queue: 'custom-queue',
+      identity: 'explicit-worker',
+      cron_schedule: '@hourly',
+      memo: { feature: 'beta' },
+      headers: { 'x-trace-id': '123' },
+      search_attributes: { CustomerId: ['abc-123'] },
+      request_id: 'request-42',
+      workflow_execution_timeout_ms: 60_000,
+      workflow_run_timeout_ms: 30_000,
+      workflow_task_timeout_ms: 10_000,
+      retry_policy: {
+        maximum_attempts: 3,
+      },
+    })
+    expect(captured?.args).toEqual([])
+
+    await client.shutdown()
+  })
+
   test('createTemporalClient forwards TLS and API key options to native bridge', async () => {
     native.startWorkflow = mock(async (_: unknown, payload: Record<string, unknown>) => {
       return encodeJson({ runId: 'run-123', workflowId: payload.workflow_id, namespace: payload.namespace })
