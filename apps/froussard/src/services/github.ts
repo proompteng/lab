@@ -834,8 +834,8 @@ export const listPullRequestCheckFailures = (
     if (!failureMap.has(key)) {
       failureMap.set(key, failure)
     } else {
-      const existing = failureMap.get(key)!
-      if (!existing.details && failure.details) {
+      const existing = failureMap.get(key)
+      if (existing && !existing.details && failure.details) {
         failureMap.set(key, { ...existing, details: failure.details })
       }
     }

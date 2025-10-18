@@ -8,16 +8,16 @@ import { selectReactionRepository } from '@/codex-workflow'
 import type { AppRuntime } from '@/effect/runtime'
 import {
   deriveRepositoryFullName,
+  type GithubRepository,
   isGithubIssueCommentEvent,
   isGithubIssueEvent,
-  type GithubRepository,
 } from '@/github-payload'
 import { logger } from '@/logger'
 import {
+  CodexTaskStage,
   CodexFailingCheck as GithubCodexFailingCheck,
   CodexReviewContext as GithubCodexReviewContext,
   CodexReviewThread as GithubCodexReviewThread,
-  CodexTaskStage,
   CodexTask as GithubCodexTaskMessage,
 } from '@/proto/github/v1/codex_task_pb'
 import { GithubService } from '@/services/github'
@@ -332,11 +332,6 @@ export const createGithubWebhookHandler =
           (isAuthorizedSender && (isManualTrigger || hasPlanMarker)) || (hasPlanMarker && isWorkflowSender)
 
         if (shouldTriggerImplementation) {
-        const commentBody = typeof parsedPayload.comment?.body === 'string' ? parsedPayload.comment.body.trim() : ''
-        if (
-          commentBody === config.codexImplementationTriggerPhrase &&
-          normalizeLogin(senderLogin) === config.codexTriggerLogin
-        ) {
           const issue = parsedPayload.issue
           const issueRepository = selectReactionRepository(issue, parsedPayload.repository)
           const repositoryFullName = deriveRepositoryFullName(issueRepository, issue?.repository_url)
@@ -399,7 +394,7 @@ export const createGithubWebhookHandler =
               issueUrl,
               issueTitle,
               issueBody,
-              sender: typeof senderLogin === 'string' ? senderLogin : '',
+              sender: typeof senderLoginValue === 'string' ? senderLoginValue : '',
               issuedAt: new Date().toISOString(),
               planCommentBody,
               planCommentId,
@@ -463,9 +458,9 @@ export const createGithubWebhookHandler =
 
           const pullNumber = toNumericId((pullRequestPayload as { number?: unknown }).number)
 
-          do {
+          const processPullRequest = async () => {
             if (!repositoryFullName || pullNumber === null) {
-              break
+              return
             }
 
             const pullResult = await runtime.runPromise(
@@ -489,16 +484,16 @@ export const createGithubWebhookHandler =
                 },
                 'failed to fetch pull request metadata',
               )
-              break
+              return
             }
 
             const pull = pullResult.pullRequest
             if (pull.state !== 'open' || pull.merged) {
-              break
+              return
             }
 
             if (normalizeLogin(pull.authorLogin) !== config.codexTriggerLogin) {
-              break
+              return
             }
 
             if (!pull.headRef || !pull.headSha || !pull.baseRef) {
@@ -506,7 +501,7 @@ export const createGithubWebhookHandler =
                 { deliveryId, repository: repositoryFullName, pullNumber },
                 'missing pull request head information',
               )
-              break
+              return
             }
 
             const issueNumber = parseIssueNumberFromBranch(pull.headRef, config.codebase.branchPrefix)
@@ -515,7 +510,7 @@ export const createGithubWebhookHandler =
                 { deliveryId, repository: repositoryFullName, pullNumber, headRef: pull.headRef },
                 'unable to extract issue number from codex branch',
               )
-              break
+              return
             }
 
             const threadsResult = await runtime.runPromise(
@@ -539,7 +534,7 @@ export const createGithubWebhookHandler =
                 },
                 'failed to load review threads',
               )
-              break
+              return
             }
 
             const checksResult = await runtime.runPromise(
@@ -563,7 +558,7 @@ export const createGithubWebhookHandler =
                 },
                 'failed to load check run failures',
               )
-              break
+              return
             }
 
             const unresolvedThreads = threadsResult.threads
@@ -599,11 +594,11 @@ export const createGithubWebhookHandler =
                 )
               }
 
-              break
+              return
             }
 
             if (!outstandingWork) {
-              break
+              return
             }
 
             const summaryParts: string[] = []
@@ -692,7 +687,9 @@ export const createGithubWebhookHandler =
             )
 
             codexStageTriggered = 'review'
-          } while (false)
+          }
+
+          await processPullRequest()
         }
       }
 

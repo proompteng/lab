@@ -93,8 +93,8 @@ const toNumericIssue = (value: number | string | null | undefined, message: stri
 const buildReviewContext = (payload: ReviewContextPayload | null | undefined): ReviewContext => {
   const summary = sanitizeOptionalString(payload?.summary)
   const reviewThreads = Array.isArray(payload?.reviewThreads)
-    ? payload!
-        .reviewThreads!.map((thread) => ({
+    ? (payload?.reviewThreads ?? [])
+        .map((thread) => ({
           summary: sanitizeString(thread.summary),
           url: sanitizeOptionalString(thread.url),
           author: sanitizeOptionalString(thread.author),
@@ -103,8 +103,8 @@ const buildReviewContext = (payload: ReviewContextPayload | null | undefined): R
     : []
 
   const failingChecks = Array.isArray(payload?.failingChecks)
-    ? payload!
-        .failingChecks!.map((check) => ({
+    ? (payload?.failingChecks ?? [])
+        .map((check) => ({
           name: sanitizeString(check.name),
           conclusion: sanitizeOptionalString(check.conclusion),
           url: sanitizeOptionalString(check.url),
@@ -114,7 +114,7 @@ const buildReviewContext = (payload: ReviewContextPayload | null | undefined): R
     : []
 
   const additionalNotes = Array.isArray(payload?.additionalNotes)
-    ? payload!.additionalNotes!.map((note) => sanitizeString(note).trim()).filter((note) => note.length > 0)
+    ? (payload?.additionalNotes ?? []).map((note) => sanitizeString(note).trim()).filter((note) => note.length > 0)
     : []
 
   return {

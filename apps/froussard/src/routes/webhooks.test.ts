@@ -445,17 +445,23 @@ describe('createWebhookHandler', () => {
     expect(publishedMessages).toHaveLength(3)
     const reviewJsonMessage = publishedMessages.find((message) => message.topic === 'codex-topic')
     expect(reviewJsonMessage).toBeTruthy()
+    if (!reviewJsonMessage) {
+      throw new Error('Expected review JSON message to be published')
+    }
     const reviewStructuredMessage = publishedMessages.find((message) => message.topic === 'github.issues.codex.tasks')
     expect(reviewStructuredMessage).toBeTruthy()
+    if (!reviewStructuredMessage) {
+      throw new Error('Expected review structured message to be published')
+    }
 
-    const reviewJsonPayload = JSON.parse(toBuffer(reviewJsonMessage!.value).toString('utf8'))
+    const reviewJsonPayload = JSON.parse(toBuffer(reviewJsonMessage.value).toString('utf8'))
     expect(reviewJsonPayload.stage).toBe('review')
     expect(reviewJsonPayload.reviewContext.reviewThreads[0].summary).toBe('Add unit tests for webhook logic')
     expect(reviewJsonPayload.reviewContext.failingChecks[0].name).toBe('ci / test')
     expect(reviewJsonPayload.reviewContext.additionalNotes[0]).toContain('mergeable_state=blocked')
     expect(reviewJsonPayload.issueNumber).toBe(5)
 
-    const reviewProto = CodexTask.fromBinary(toBuffer(reviewStructuredMessage!.value))
+    const reviewProto = CodexTask.fromBinary(toBuffer(reviewStructuredMessage.value))
     expect(reviewProto.stage).toBe(CodexTaskStage.REVIEW)
     expect(reviewProto.issueNumber).toBe(BigInt(5))
     expect(reviewProto.reviewContext?.reviewThreads[0]?.summary).toBe('Add unit tests for webhook logic')
