@@ -1,4 +1,4 @@
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Schema } from 'effect'
 
 import { PLAN_COMMENT_MARKER } from '@/codex'
 
@@ -178,6 +178,30 @@ export type ListCheckFailuresResult =
 
 const DEFAULT_API_BASE_URL = 'https://api.github.com'
 const DEFAULT_USER_AGENT = 'froussard-webhook'
+
+const GitHubPullRequestSchema = Schema.Struct({
+  number: Schema.Number,
+  title: Schema.String,
+  body: Schema.optionalWith(Schema.String, { nullable: true, default: () => '' }),
+  html_url: Schema.String,
+  draft: Schema.Boolean,
+  merged: Schema.Boolean,
+  state: Schema.String,
+  head: Schema.Struct({
+    ref: Schema.String,
+    sha: Schema.String,
+  }),
+  base: Schema.Struct({
+    ref: Schema.String,
+  }),
+  user: Schema.optionalWith(
+    Schema.Struct({
+      login: Schema.optionalWith(Schema.String, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  mergeable_state: Schema.optionalWith(Schema.String, { nullable: true }),
+})
 
 const trimTrailingSlash = (value: string): string => (value.endsWith('/') ? value.slice(0, -1) : value)
 
@@ -511,35 +535,8 @@ export const fetchPullRequest = (options: FetchPullRequestOptions): Effect.Effec
             }
           }
 
-          const number = coerceNumericId((parsed as { number?: unknown }).number)
-          const title = (parsed as { title?: unknown }).title
-          const body = (parsed as { body?: unknown }).body
-          const htmlUrl = (parsed as { html_url?: unknown }).html_url
-          const draft = (parsed as { draft?: unknown }).draft
-          const merged = (parsed as { merged?: unknown }).merged
-          const state = (parsed as { state?: unknown }).state
-          const head = (parsed as { head?: unknown }).head
-          const base = (parsed as { base?: unknown }).base
-          const user = (parsed as { user?: unknown }).user
-          const mergeableState = (parsed as { mergeable_state?: unknown }).mergeable_state
-
-          const headRef = typeof (head as { ref?: unknown })?.ref === 'string' ? (head as { ref: string }).ref : null
-          const headSha = typeof (head as { sha?: unknown })?.sha === 'string' ? (head as { sha: string }).sha : null
-          const baseRef = typeof (base as { ref?: unknown })?.ref === 'string' ? (base as { ref: string }).ref : null
-          const authorLogin =
-            typeof (user as { login?: unknown })?.login === 'string' ? (user as { login: string }).login : null
-
-          if (
-            number === null ||
-            typeof title !== 'string' ||
-            typeof htmlUrl !== 'string' ||
-            typeof draft !== 'boolean' ||
-            typeof merged !== 'boolean' ||
-            typeof state !== 'string' ||
-            typeof headRef !== 'string' ||
-            typeof headSha !== 'string' ||
-            typeof baseRef !== 'string'
-          ) {
+          const decoded = Schema.decodeUnknownEither(GitHubPullRequestSchema)(parsed)
+          if (decoded._tag === 'Left') {
             return {
               ok: false as const,
               reason: 'invalid-pull-request',
@@ -547,22 +544,24 @@ export const fetchPullRequest = (options: FetchPullRequestOptions): Effect.Effec
             }
           }
 
+          const pull = decoded.right
+          const authorLogin = typeof pull.user?.login === 'string' ? pull.user.login : null
+
           return {
             ok: true as const,
             pullRequest: {
-              number,
-              title,
-              body: typeof body === 'string' ? body : '',
-              htmlUrl,
-              draft,
-              merged,
-              state,
-              headRef,
-              headSha,
-              baseRef,
+              number: pull.number,
+              title: pull.title,
+              body: pull.body,
+              htmlUrl: pull.html_url,
+              draft: pull.draft,
+              merged: pull.merged,
+              state: pull.state,
+              headRef: pull.head.ref,
+              headSha: pull.head.sha,
+              baseRef: pull.base.ref,
               authorLogin,
-              mergeableState:
-                typeof mergeableState === 'string' || mergeableState === null ? mergeableState : undefined,
+              mergeableState: pull.mergeable_state,
             },
           }
         }),
