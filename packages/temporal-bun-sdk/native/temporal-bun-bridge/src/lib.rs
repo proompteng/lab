@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::ffi::c_void;
 use std::mem::take;
 use std::sync::mpsc::channel;
@@ -18,10 +19,14 @@ use temporal_sdk_core_api::telemetry::TelemetryOptions;
 use temporal_sdk_core_protos::temporal::api::common::v1::{
     Header, Memo, Payload, Payloads, RetryPolicy, SearchAttributes, WorkflowExecution, WorkflowType,
 };
-use temporal_sdk_core_protos::temporal::api::enums::v1::TaskQueueKind;
+use temporal_sdk_core_protos::temporal::api::enums::v1::{
+    QueryRejectCondition, TaskQueueKind, WorkflowExecutionStatus,
+};
+use temporal_sdk_core_protos::temporal::api::query::v1::WorkflowQuery;
 use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueue;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
-    SignalWithStartWorkflowExecutionRequest, StartWorkflowExecutionRequest, TerminateWorkflowExecutionRequest,
+    QueryWorkflowRequest, SignalWithStartWorkflowExecutionRequest, StartWorkflowExecutionRequest,
+    TerminateWorkflowExecutionRequest,
 };
 use thiserror::Error;
 use url::Url;
@@ -137,9 +142,27 @@ struct RetryPolicyPayload {
     non_retryable_error_types: Option<Vec<String>>,
 }
 
+#[derive(Debug, Deserialize)]
+struct QueryWorkflowRequestPayload {
+    #[serde(default)]
+    namespace: Option<String>,
+    workflow_id: String,
+    #[serde(default)]
+    run_id: Option<String>,
+    #[serde(default)]
+    first_execution_run_id: Option<String>,
+    query_name: String,
+    #[serde(default)]
+    args: Option<Vec<serde_json::Value>>,
+}
+
 struct StartWorkflowDefaults<'a> {
     namespace: &'a str,
     identity: &'a str,
+}
+
+struct QueryWorkflowDefaults<'a> {
+    namespace: &'a str,
 }
 
 struct StartWorkflowResponseInfo {
@@ -764,14 +787,68 @@ pub extern "C" fn temporal_bun_client_signal(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_bun_client_query(
-    _client_ptr: *mut c_void,
-    _payload_ptr: *const u8,
-    _payload_len: usize,
+pub extern "C" fn temporal_bun_client_query_workflow(
+    client_ptr: *mut c_void,
+    payload_ptr: *const u8,
+    payload_len: usize,
 ) -> *mut pending::PendingByteArray {
-    // TODO(codex): Implement workflow query bridge using QueryWorkflowRequest per docs/ffi-surface.md.
-    error::set_error("temporal_bun_client_query is not implemented yet".to_string());
-    std::ptr::null_mut()
+    let client_handle = match client_from_ptr(client_ptr) {
+        Ok(client) => client,
+        Err(err) => return into_string_error(err) as *mut pending::PendingByteArray,
+    };
+
+    let payload = match request_from_raw::<QueryWorkflowRequestPayload>(payload_ptr, payload_len) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return into_string_error(BridgeError::InvalidRequest(err.to_string()))
+                as *mut pending::PendingByteArray
+        }
+    };
+
+    let default_namespace = client_handle.namespace.clone();
+    let defaults = QueryWorkflowDefaults {
+        namespace: &default_namespace,
+    };
+
+    let request = match build_query_workflow_request(payload, defaults) {
+        Ok(request) => request,
+        Err(err) => return into_string_error(err) as *mut pending::PendingByteArray,
+    };
+
+    let runtime = client_handle.runtime.clone();
+    let client = client_handle.client.clone();
+
+    let (tx, rx) = channel();
+
+    thread::spawn(move || {
+        let result = runtime.tokio_handle().block_on(async move {
+            let mut inner = client.clone();
+            let response =
+                WorkflowService::query_workflow(&mut inner, request.into_request()).await;
+
+            let response = match response {
+                Ok(resp) => resp.into_inner(),
+                Err(err) => return Err(BridgeError::ClientRequest(err.to_string())),
+            };
+
+            if let Some(rejected) = response.query_rejected {
+                let status = WorkflowExecutionStatus::try_from(rejected.status)
+                    .map(|s| format!("{s:?}"))
+                    .unwrap_or_else(|_| format!("UNKNOWN({})", rejected.status));
+                return Err(BridgeError::ClientRequest(format!(
+                    "workflow query rejected: execution status {status}",
+                )));
+            }
+
+            let value = decode_query_result(response.query_result)?;
+            json_bytes(&value)
+        });
+
+        let outcome = result.map_err(|err| err.to_string());
+        let _ = tx.send(outcome);
+    });
+
+    Box::into_raw(Box::new(pending::PendingByteArray::new(rx)))
 }
 
 #[unsafe(no_mangle)]
@@ -1097,6 +1174,98 @@ fn build_signal_with_start_request(
     });
 
     Ok((request, response_info))
+}
+
+fn build_query_workflow_request(
+    payload: QueryWorkflowRequestPayload,
+    defaults: QueryWorkflowDefaults,
+) -> Result<QueryWorkflowRequest, BridgeError> {
+    let QueryWorkflowRequestPayload {
+        namespace,
+        workflow_id,
+        run_id,
+        first_execution_run_id: _,
+        query_name,
+        args,
+    } = payload;
+
+    if workflow_id.trim().is_empty() {
+        return Err(BridgeError::InvalidRequest(
+            "workflow_id cannot be empty for query".to_string(),
+        ));
+    }
+
+    if query_name.trim().is_empty() {
+        return Err(BridgeError::InvalidRequest(
+            "query_name cannot be empty".to_string(),
+        ));
+    }
+
+    let namespace = namespace.unwrap_or_else(|| defaults.namespace.to_string());
+
+    let mut encoded_args = Vec::new();
+    if let Some(values) = args {
+        for value in values {
+            encoded_args.push(encode_payload(value)?);
+        }
+    }
+
+    let query = WorkflowQuery {
+        query_type: query_name,
+        query_args: Some(Payloads {
+            payloads: encoded_args,
+        }),
+        header: None,
+    };
+
+    let execution = WorkflowExecution {
+        workflow_id,
+        run_id: run_id.unwrap_or_default(),
+    };
+
+    Ok(QueryWorkflowRequest {
+        namespace,
+        execution: Some(execution),
+        query: Some(query),
+        query_reject_condition: QueryRejectCondition::None as i32,
+    })
+}
+
+fn decode_query_result(payloads: Option<Payloads>) -> Result<serde_json::Value, BridgeError> {
+    match payloads {
+        Some(payloads) => {
+            let mut values = Vec::with_capacity(payloads.payloads.len());
+            for payload in payloads.payloads {
+                values.push(decode_payload(payload)?);
+            }
+
+            match values.len() {
+                0 => Ok(serde_json::Value::Null),
+                1 => Ok(values.into_iter().next().unwrap()),
+                _ => Ok(serde_json::Value::Array(values)),
+            }
+        }
+        None => Ok(serde_json::Value::Null),
+    }
+}
+
+fn decode_payload(payload: Payload) -> Result<serde_json::Value, BridgeError> {
+    let encoding = payload
+        .metadata
+        .get("encoding")
+        .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+        .ok_or_else(|| {
+            BridgeError::ResponseEncode("missing payload encoding metadata".to_string())
+        })?;
+
+    if !encoding.to_ascii_lowercase().contains("json") {
+        return Err(BridgeError::ResponseEncode(format!(
+            "unsupported payload encoding: {encoding}",
+        )));
+    }
+
+    serde_json::from_slice(&payload.data)
+        .map_err(|err| BridgeError::ResponseEncode(err.to_string()))
 }
 
 fn encode_payload_map(

@@ -48,6 +48,7 @@ const {
     temporal_bun_client_start_workflow,
     temporal_bun_client_terminate_workflow,
     temporal_bun_client_signal_with_start,
+    temporal_bun_client_query_workflow,
   },
 } = dlopen(libraryFile, {
   temporal_bun_runtime_new: {
@@ -119,6 +120,10 @@ const {
     returns: FFIType.int32_t,
   },
   temporal_bun_client_signal_with_start: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.ptr,
+  },
+  temporal_bun_client_query_workflow: {
     args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
     returns: FFIType.ptr,
   },
@@ -211,12 +216,17 @@ export const native = {
     return Promise.reject(buildNotImplementedError('Workflow signal bridge', 'docs/ffi-surface.md'))
   },
 
-  async queryWorkflow(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
-    void client
-    void _request
-    // TODO(codex): Marshal workflow queries through `temporal_bun_client_query` once the native bridge
-    // is available (docs/ffi-surface.md — Client exports).
-    return Promise.reject(buildNotImplementedError('Workflow query bridge', 'docs/ffi-surface.md'))
+  async queryWorkflow(client: NativeClient, request: Record<string, unknown>): Promise<Uint8Array> {
+    const payload = Buffer.from(JSON.stringify(request), 'utf8')
+    const pendingHandle = Number(temporal_bun_client_query_workflow(client.handle, ptr(payload), payload.byteLength))
+    if (!pendingHandle) {
+      throw new Error(readLastError())
+    }
+    try {
+      return await waitForByteArray(pendingHandle)
+    } finally {
+      temporal_bun_pending_byte_array_free(pendingHandle)
+    }
   },
 
   async terminateWorkflow(client: NativeClient, request: Record<string, unknown>): Promise<void> {

@@ -14,6 +14,13 @@ const notImplemented = (feature: string, docPath: string): never => {
   throw new Error(`${feature} is not implemented yet. See ${docPath} for the step-by-step plan.`)
 }
 
+const ensureWorkflowNamespace = (handle: WorkflowHandle): string => {
+  if (!handle.namespace || handle.namespace.trim().length === 0) {
+    throw new Error('Workflow handle must include a non-empty namespace')
+  }
+  return handle.namespace
+}
+
 export const buildSignalRequest = (
   handle: WorkflowHandle,
   signalName: string,
@@ -32,11 +39,32 @@ export const buildQueryRequest = (
   queryName: string,
   args: unknown[],
 ): Record<string, unknown> => {
-  void handle
-  void queryName
-  void args
-  // TODO(codex): Encode workflow query payloads and headers per ${CLIENT_RUNTIME_DOC} §3 before invoking the native bridge.
-  return notImplemented('Workflow query serialization', CLIENT_RUNTIME_DOC)
+  if (!handle.workflowId || handle.workflowId.trim().length === 0) {
+    throw new Error('Workflow handle must include a non-empty workflowId')
+  }
+
+  if (typeof queryName !== 'string' || queryName.trim().length === 0) {
+    throw new Error('Workflow query name must be a non-empty string')
+  }
+
+  const namespace = ensureWorkflowNamespace(handle)
+
+  const payload: Record<string, unknown> = {
+    namespace,
+    workflow_id: handle.workflowId,
+    query_name: queryName,
+    args: Array.isArray(args) ? [...args] : [],
+  }
+
+  if (handle.runId) {
+    payload.run_id = handle.runId
+  }
+
+  if (handle.firstExecutionRunId) {
+    payload.first_execution_run_id = handle.firstExecutionRunId
+  }
+
+  return payload
 }
 
 export const buildTerminateRequest = (

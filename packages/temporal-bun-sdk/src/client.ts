@@ -109,6 +109,15 @@ const terminateWorkflowOptionsSchema = z.object({
   runId: z.string().min(1).optional(),
   firstExecutionRunId: z.string().min(1).optional(),
 })
+
+const workflowHandleSchema = z.object({
+  workflowId: z.string().min(1),
+  namespace: z.string().min(1).optional(),
+  runId: z.string().min(1).optional(),
+  firstExecutionRunId: z.string().min(1).optional(),
+})
+
+const workflowQueryNameSchema = z.string().min(1)
 export interface TemporalWorkflowClient {
   start(options: StartWorkflowOptions): Promise<StartWorkflowResult>
   signal(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void>
@@ -248,7 +257,16 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async queryWorkflow(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown> {
-    const request = buildQueryRequest(handle, queryName, args)
+    const parsedHandle = workflowHandleSchema.parse(handle)
+    const resolvedHandle: WorkflowHandle = {
+      workflowId: parsedHandle.workflowId,
+      namespace: parsedHandle.namespace ?? this.namespace,
+      runId: parsedHandle.runId,
+      firstExecutionRunId: parsedHandle.firstExecutionRunId,
+    }
+
+    const parsedQueryName = workflowQueryNameSchema.parse(queryName)
+    const request = buildQueryRequest(resolvedHandle, parsedQueryName, args)
     const bytes = await native.queryWorkflow(this.client, request)
     return parseJson(bytes)
   }

@@ -61,6 +61,7 @@ describe('temporal client (native bridge)', () => {
     terminateWorkflow: native.terminateWorkflow,
     describeNamespace: native.describeNamespace,
     updateClientHeaders: native.updateClientHeaders,
+    queryWorkflow: native.queryWorkflow,
   }
 
   const runtimeHandle = { type: 'runtime', handle: 101 } as const
@@ -74,6 +75,7 @@ describe('temporal client (native bridge)', () => {
     native.terminateWorkflow = mock(async () => {})
     native.describeNamespace = mock(async () => new Uint8Array())
     native.updateClientHeaders = mock(() => {})
+    native.queryWorkflow = mock(async () => encodeJson(null))
   })
 
   afterEach(() => {
@@ -405,5 +407,106 @@ describe('temporal client (native bridge)', () => {
     await expect(client.updateHeaders({ authorization: 'Bearer rotate' })).rejects.toThrow(
       'Temporal client has already been shut down',
     )
+  })
+
+  test('queryWorkflow applies defaults and parses JSON response', async () => {
+    let capturedRequest: Record<string, unknown> | undefined
+    native.queryWorkflow = mock(async (_handle, request: Record<string, unknown>) => {
+      capturedRequest = request
+      return encodeJson({ state: 'running', count: 2 })
+    })
+
+    const config: TemporalConfig = {
+      host: '127.0.0.1',
+      port: 7233,
+      address: '127.0.0.1:7233',
+      namespace: 'default',
+      taskQueue: 'prix',
+      apiKey: undefined,
+      tls: undefined,
+      allowInsecureTls: false,
+      workerIdentity: 'bun-worker',
+      workerIdentityPrefix: 'temporal-bun-worker',
+    }
+
+    const { client } = await createTemporalClient({ config })
+
+    const result = await client.workflow.query({ workflowId: 'wf-99' }, 'currentState', { includeDetails: true })
+
+    expect(result).toEqual({ state: 'running', count: 2 })
+    expect(capturedRequest).toEqual({
+      namespace: 'default',
+      workflow_id: 'wf-99',
+      query_name: 'currentState',
+      args: [{ includeDetails: true }],
+    })
+
+    await client.shutdown()
+  })
+
+  test('queryWorkflow respects handle overrides and forwards runId', async () => {
+    let capturedRequest: Record<string, unknown> | undefined
+    native.queryWorkflow = mock(async (_handle, request: Record<string, unknown>) => {
+      capturedRequest = request
+      return encodeJson('ok')
+    })
+
+    const config: TemporalConfig = {
+      host: 'localhost',
+      port: 7233,
+      address: 'localhost:7233',
+      namespace: 'default',
+      taskQueue: 'prix',
+      apiKey: undefined,
+      tls: undefined,
+      allowInsecureTls: false,
+      workerIdentity: 'worker-default',
+      workerIdentityPrefix: 'temporal-bun-worker',
+    }
+
+    const { client } = await createTemporalClient({ config })
+
+    const result = await client.workflow.query(
+      { workflowId: 'wf-run', namespace: 'analytics', runId: 'run-123' },
+      'inspect',
+      'arg-1',
+      42,
+    )
+
+    expect(result).toBe('ok')
+    expect(capturedRequest).toEqual({
+      namespace: 'analytics',
+      workflow_id: 'wf-run',
+      query_name: 'inspect',
+      run_id: 'run-123',
+      args: ['arg-1', 42],
+    })
+
+    await client.shutdown()
+  })
+
+  test('queryWorkflow surfaces native errors', async () => {
+    native.queryWorkflow = mock(async () => {
+      throw new Error('query failure')
+    })
+
+    const config: TemporalConfig = {
+      host: 'temporal',
+      port: 7233,
+      address: 'temporal:7233',
+      namespace: 'default',
+      taskQueue: 'prix',
+      apiKey: undefined,
+      tls: undefined,
+      allowInsecureTls: false,
+      workerIdentity: 'bun-worker',
+      workerIdentityPrefix: 'temporal-bun-worker',
+    }
+
+    const { client } = await createTemporalClient({ config })
+
+    await expect(client.workflow.query({ workflowId: 'wf-err' }, 'snapshot')).rejects.toThrow('query failure')
+
+    await client.shutdown()
   })
 })

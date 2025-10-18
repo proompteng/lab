@@ -1,8 +1,8 @@
 export interface WorkflowHandle {
   workflowId: string
+  namespace?: string
   runId?: string
   firstExecutionRunId?: string
-  namespace: string
 }
 
 export interface WorkflowHandleMetadata {
