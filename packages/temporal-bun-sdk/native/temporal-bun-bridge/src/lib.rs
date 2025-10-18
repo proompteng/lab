@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::fmt::Display;
 use std::mem::take;
 use std::sync::mpsc::channel;
 use std::sync::Arc;
@@ -13,8 +14,8 @@ use temporal_client::{
     tonic::IntoRequest, ClientOptionsBuilder, ClientTlsConfig, ConfiguredClient, Namespace,
     RetryClient, TemporalServiceClient, TlsConfig, WorkflowService,
 };
-use temporal_sdk_core::{CoreRuntime, TokioRuntimeBuilder};
-use temporal_sdk_core_api::telemetry::TelemetryOptions;
+use temporal_sdk_core::{CoreRuntime, TokioRuntimeBuilder, Worker, WorkerConfigBuilder, init_worker};
+use temporal_sdk_core_api::{telemetry::TelemetryOptions, worker::WorkerVersioningStrategy, Worker as _};
 use temporal_sdk_core_protos::temporal::api::common::v1::{
     Header, Memo, Payload, Payloads, RetryPolicy, SearchAttributes, WorkflowExecution, WorkflowType,
 };
@@ -46,6 +47,12 @@ pub struct ClientHandle {
     identity: String,
 }
 
+#[repr(C)]
+pub struct WorkerHandle {
+    runtime: Arc<CoreRuntime>,
+    worker: Arc<Worker>,
+}
+
 #[derive(Debug, Deserialize)]
 struct ClientConfig {
     address: String,
@@ -60,6 +67,8 @@ struct ClientConfig {
     api_key: Option<String>,
     #[serde(default, alias = "allowInsecureTls")]
     allow_insecure_tls: Option<bool>,
+    #[serde(default, rename = "allowInsecure")]
+    allow_insecure: Option<bool>,
     #[serde(default)]
     tls: Option<ClientTlsConfigPayload>,
 }
@@ -175,16 +184,34 @@ struct ClientCertPairPayload {
     key: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct WorkerConfigPayload {
+    namespace: String,
+    task_queue: String,
+    #[serde(default)]
+    identity: Option<String>,
+    #[serde(default)]
+    build_id: Option<String>,
+    #[serde(default)]
+    max_cached_workflows: Option<usize>,
+    #[serde(default)]
+    no_remote_activities: Option<bool>,
+}
+
 #[derive(Debug, Error)]
 enum BridgeError {
     #[error("invalid runtime handle")]
     InvalidRuntimeHandle,
     #[error("invalid client handle")]
     InvalidClientHandle,
+    #[error("invalid worker handle")]
+    InvalidWorkerHandle,
     #[error("missing configuration payload")]
     MissingConfig,
     #[error("failed to parse client configuration: {0}")]
     InvalidConfig(String),
+    #[error("failed to parse worker configuration: {0}")]
+    InvalidWorkerConfig(String),
     #[error("failed to parse request payload: {0}")]
     InvalidRequest(String),
     #[error("failed to parse Temporal address: {0}")]
@@ -193,6 +220,10 @@ enum BridgeError {
     ClientInit(String),
     #[error("Temporal request failed: {0}")]
     ClientRequest(String),
+    #[error("Temporal worker initialization failed: {0}")]
+    WorkerInit(String),
+    #[error("Temporal worker operation failed: {0}")]
+    WorkerOperation(String),
     #[error("failed to encode payload: {0}")]
     PayloadEncode(String),
     #[error("failed to encode response payload: {0}")]
@@ -363,6 +394,13 @@ fn client_from_ptr(ptr: *mut c_void) -> Result<&'static ClientHandle, BridgeErro
     Ok(unsafe { &*(ptr as *mut ClientHandle) })
 }
 
+fn worker_from_ptr(ptr: *mut c_void) -> Result<&'static WorkerHandle, BridgeError> {
+    if ptr.is_null() {
+        return Err(BridgeError::InvalidWorkerHandle);
+    }
+    Ok(unsafe { &*(ptr as *mut WorkerHandle) })
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_client_connect_async(
     runtime_ptr: *mut c_void,
@@ -403,7 +441,11 @@ pub extern "C" fn temporal_bun_client_connect_async(
         .client_name(client_name)
         .client_version(client_version)
         .identity(identity.clone());
-    let _allow_insecure_tls = config.allow_insecure_tls.unwrap_or(false);
+
+    let allow_insecure = config
+        .allow_insecure
+        .or(config.allow_insecure_tls)
+        .unwrap_or(false);
 
     if let Some(api_key) = config.api_key.clone() {
         builder.api_key(Some(api_key));
@@ -411,11 +453,16 @@ pub extern "C" fn temporal_bun_client_connect_async(
 
     if let Some(tls_payload) = config.tls.clone() {
         match tls_config_from_payload(tls_payload) {
-            Ok(tls_cfg) => {
+            Ok(mut tls_cfg) => {
+                set_allow_insecure(&mut tls_cfg, allow_insecure);
                 builder.tls_cfg(tls_cfg);
             }
             Err(err) => return into_string_error(err) as *mut PendingClientHandle,
         }
+    } else if allow_insecure {
+        let mut tls_cfg = TlsConfig::default();
+        set_allow_insecure(&mut tls_cfg, allow_insecure);
+        builder.tls_cfg(tls_cfg);
     }
 
     let options = match builder.build() {
@@ -753,6 +800,58 @@ pub extern "C" fn temporal_bun_pending_byte_array_free(ptr: *mut pending::Pendin
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_pending_unit_poll(ptr: *mut pending::PendingUnit) -> i32 {
+    if ptr.is_null() {
+        error::set_error("invalid pending handle".to_string());
+        return -1;
+    }
+
+    let pending = unsafe { &*ptr };
+
+    match pending.poll() {
+        pending::PendingState::Pending => 0,
+        pending::PendingState::ReadyOk => 1,
+        pending::PendingState::ReadyErr(err) => {
+            error::set_error(err);
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_pending_unit_consume(ptr: *mut pending::PendingUnit) -> i32 {
+    if ptr.is_null() {
+        error::set_error("invalid pending handle".to_string());
+        return -1;
+    }
+
+    let pending = unsafe { &*ptr };
+
+    match pending.take_result() {
+        Some(Ok(())) => 1,
+        Some(Err(err)) => {
+            error::set_error(err);
+            0
+        }
+        None => {
+            error::set_error("pending result not ready".to_string());
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_pending_unit_free(ptr: *mut pending::PendingUnit) {
+    if ptr.is_null() {
+        return;
+    }
+
+    unsafe {
+        let _ = Box::from_raw(ptr);
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_client_signal(
     _client_ptr: *mut c_void,
     _payload_ptr: *const u8,
@@ -900,6 +999,168 @@ pub extern "C" fn temporal_bun_client_signal_with_start(
     };
 
     byte_array::ByteArray::from_vec(bytes)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_worker_new(
+    runtime_ptr: *mut c_void,
+    client_ptr: *mut c_void,
+    config_ptr: *const u8,
+    config_len: usize,
+) -> *mut c_void {
+    let runtime = match runtime_from_ptr(runtime_ptr) {
+        Ok(runtime) => runtime,
+        Err(err) => return into_string_error(err),
+    };
+
+    let client_handle = match client_from_ptr(client_ptr) {
+        Ok(client) => client,
+        Err(err) => return into_string_error(err),
+    };
+
+    let payload = match request_from_raw::<WorkerConfigPayload>(config_ptr, config_len) {
+        Ok(payload) => payload,
+        Err(err) => return into_string_error(BridgeError::InvalidWorkerConfig(err.to_string())),
+    };
+
+    let mut builder = WorkerConfigBuilder::default();
+    builder.namespace(payload.namespace);
+    builder.task_queue(payload.task_queue);
+    if let Some(identity) = payload.identity {
+        builder.client_identity_override(identity);
+    }
+    if let Some(max_cached) = payload.max_cached_workflows {
+        builder.max_cached_workflows(max_cached);
+    }
+    if let Some(no_remote) = payload.no_remote_activities {
+        builder.no_remote_activities(no_remote);
+    }
+    if let Some(build_id) = payload.build_id {
+        builder.versioning_strategy(WorkerVersioningStrategy::None { build_id });
+    }
+
+    let config = match builder.build() {
+        Ok(config) => config,
+        Err(err) => {
+            return into_string_error(BridgeError::InvalidWorkerConfig(err.to_string()));
+        }
+    };
+
+    let worker = match init_worker(runtime.as_ref(), config, client_handle.client.clone()) {
+        Ok(worker) => worker,
+        Err(err) => return into_string_error(BridgeError::WorkerInit(err.to_string())),
+    };
+
+    let handle = WorkerHandle {
+        runtime: runtime.clone(),
+        worker: Arc::new(worker),
+    };
+
+    Box::into_raw(Box::new(handle)) as *mut c_void
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_worker_free(handle: *mut c_void) {
+    if handle.is_null() {
+        return;
+    }
+
+    unsafe {
+        let _ = Box::from_raw(handle as *mut WorkerHandle);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_worker_initiate_shutdown(worker_ptr: *mut c_void) {
+    let worker_handle = match worker_from_ptr(worker_ptr) {
+        Ok(worker) => worker,
+        Err(err) => {
+            into_string_error(err);
+            return;
+        }
+    };
+
+    worker_handle.worker.initiate_shutdown();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_worker_validate_async(
+    worker_ptr: *mut c_void,
+) -> *mut pending::PendingUnit {
+    let worker_handle = match worker_from_ptr(worker_ptr) {
+        Ok(worker) => worker,
+        Err(err) => return into_string_error(err) as *mut pending::PendingUnit,
+    };
+
+    let runtime = worker_handle.runtime.clone();
+    let worker = worker_handle.worker.clone();
+    let (tx, rx) = channel();
+
+    thread::spawn(move || {
+        let result = runtime.tokio_handle().block_on(async {
+            worker
+                .validate()
+                .await
+                .map_err(|err| BridgeError::WorkerOperation(err.to_string()).to_string())
+        });
+
+        let send_result = match result {
+            Ok(()) => Ok(()),
+            Err(err) => Err(err),
+        };
+
+        let _ = tx.send(send_result);
+    });
+
+    Box::into_raw(Box::new(pending::PendingUnit::new(rx)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_worker_shutdown_async(
+    worker_ptr: *mut c_void,
+) -> *mut pending::PendingUnit {
+    let worker_handle = match worker_from_ptr(worker_ptr) {
+        Ok(worker) => worker,
+        Err(err) => return into_string_error(err) as *mut pending::PendingUnit,
+    };
+
+    let runtime = worker_handle.runtime.clone();
+    let worker = worker_handle.worker.clone();
+    let (tx, rx) = channel();
+
+    thread::spawn(move || {
+        let result = runtime.tokio_handle().block_on(async {
+            worker.shutdown().await.into_shutdown_result()
+        });
+
+        let send_result = match result {
+            Ok(()) => Ok(()),
+            Err(err) => Err(BridgeError::WorkerOperation(err).to_string()),
+        };
+
+        let _ = tx.send(send_result);
+    });
+
+    Box::into_raw(Box::new(pending::PendingUnit::new(rx)))
+}
+
+trait ShutdownResultExt {
+    fn into_shutdown_result(self) -> Result<(), String>;
+}
+
+impl ShutdownResultExt for () {
+    fn into_shutdown_result(self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+impl<E> ShutdownResultExt for Result<(), E>
+where
+    E: Display,
+{
+    fn into_shutdown_result(self) -> Result<(), String> {
+        self.map_err(|err| err.to_string())
+    }
 }
 
 fn encode_payload(value: serde_json::Value) -> Result<Payload, BridgeError> {
@@ -1201,6 +1462,19 @@ fn tls_config_from_payload(payload: ClientTlsConfigPayload) -> Result<TlsConfig,
 
 fn decode_base64(value: &str) -> Result<Vec<u8>, base64::DecodeError> {
     general_purpose::STANDARD.decode(value)
+}
+
+fn set_allow_insecure(config: &mut TlsConfig, value: bool) {
+    #[cfg(temporal_client_has_allow_insecure)]
+    {
+        config.allow_insecure = value;
+    }
+
+    #[cfg(not(temporal_client_has_allow_insecure))]
+    {
+        let _ = config;
+        let _ = value;
+    }
 }
 
 fn json_bytes<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, BridgeError> {
