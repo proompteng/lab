@@ -16,6 +16,7 @@ interface ParsedArgs {
   runId?: string
   dryRun: boolean
   timestamp?: string
+  summary?: string
 }
 
 const usage = () => {
@@ -30,6 +31,7 @@ Options:
   --title <text>        Optional display title for the run.
   --run-id <id>         Additional identifier appended to the channel name.
   --timestamp <iso>     ISO timestamp used for deterministic naming.
+  --summary <text>      Optional summary content included in the intro message.
   --dry-run             Print intended actions without talking to Discord.
   -h, --help            Show this help message.
 
@@ -72,6 +74,9 @@ const parseArgs = (argv: string[]): ParsedArgs => {
         break
       case '--timestamp':
         options.timestamp = requireValue('--timestamp')
+        break
+      case '--summary':
+        options.summary = requireValue('--summary')
         break
       case '--dry-run':
         options.dryRun = true
@@ -135,6 +140,7 @@ const main = async () => {
     runId: options.runId,
     title: options.title,
     createdAt,
+    summary: options.summary,
   }
 
   const echo = (line: string) => console.error(line)
