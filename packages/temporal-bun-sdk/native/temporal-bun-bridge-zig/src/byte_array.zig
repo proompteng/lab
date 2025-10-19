@@ -113,8 +113,10 @@ pub fn free(array: ?*ByteArray) void {
             }
         },
         .temporal_core => |adopted| {
-            if (adopted.destroy) |destroy_fn| {
-                destroy_fn(adopted.byte_buf);
+            if (adopted.byte_buf) |buf| {
+                if (adopted.destroy) |destroy_fn| {
+                    destroy_fn(buf);
+                }
             }
         },
     }
@@ -187,4 +189,14 @@ test "adopted core buffers reuse the underlying pointer and invoke destroy once"
     try testing.expect(buf.data_ptr == null);
     try testing.expectEqual(@as(usize, 0), buf.len);
     try testing.expectEqual(@as(usize, 0), buf.cap);
+}
+
+test "free skips destroy when temporal core provided no buffer" {
+    destroy_call_count = 0;
+
+    const array_opt = allocate(.{ .adopt_core = .{ .byte_buf = null, .destroy = trackingDestroy } });
+    try testing.expect(array_opt != null);
+
+    free(array_opt.?);
+    try testing.expectEqual(@as(usize, 0), destroy_call_count);
 }
