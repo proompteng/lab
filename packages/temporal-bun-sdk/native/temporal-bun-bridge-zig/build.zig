@@ -3,6 +3,11 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const install_subpath = b.option(
+        []const u8,
+        "install-subpath",
+        "Relative path (from the lib install dir) that overrides where the compiled bridge dylib/so should be staged.",
+    );
 
     const lib_module = b.createModule(.{
         .root_source_file = b.path("src/lib.zig"),
@@ -17,9 +22,11 @@ pub fn build(b: *std.Build) void {
         .linkage = .dynamic,
     });
 
-    // TODO(codex, zig-pack-01): Link Temporal Rust static libraries emitted by cargo+cbindgen.
-
-    const install = b.addInstallArtifact(lib, .{});
+    var install_options: std.Build.Step.InstallArtifact.Options = .{};
+    if (install_subpath) |subpath| {
+        install_options.dest_sub_path = subpath;
+    }
+    const install = b.addInstallArtifact(lib, install_options);
     b.getInstallStep().dependOn(&install.step);
 
     const test_module = b.createModule(.{
