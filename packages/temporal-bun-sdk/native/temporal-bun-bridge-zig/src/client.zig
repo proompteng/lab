@@ -72,7 +72,7 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
         const formatted = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to allocate client handle: {}",
-            .{ err },
+            .{err},
         ) catch "temporal-bun-bridge-zig: failed to allocate client handle";
         const message: []const u8 = formatted;
         errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = message, .details = null });
@@ -224,14 +224,14 @@ pub fn signalWorkflow(client_ptr: ?*ClientHandle, payload: []const u8) ?*pending
         .payload = copy[0..payload.len],
     };
 
-    const thread = std.Thread.spawn(.{}, runSignalWorkflow, .{ context }) catch |err| {
+    const thread = std.Thread.spawn(.{}, runSignalWorkflow, .{context}) catch |err| {
         allocator.free(copy);
         pending.free(pending_handle_ptr);
         var scratch: [128]u8 = undefined;
         const formatted = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to spawn signal worker thread: {}",
-            .{ err },
+            .{err},
         ) catch "temporal-bun-bridge-zig: failed to spawn signal worker thread";
         return createByteArrayError(grpc.internal, formatted);
     };

@@ -65,6 +65,9 @@ jobs:
           git clone --depth 1 --branch master https://github.com/temporalio/sdk-core.git packages/temporal-bun-sdk/vendor/sdk-core
           git clone --depth 1 --branch main https://github.com/temporalio/sdk-typescript.git packages/temporal-bun-sdk/vendor/sdk-typescript
 
+      - name: Check Zig formatting
+        run: zig fmt --check packages/temporal-bun-sdk/native/temporal-bun-bridge-zig
+
       - name: Build Zig bridge
         run: pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
 

@@ -47,7 +47,7 @@ fn allocateHandle(status: Status) ?*PendingHandle {
         const message = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to allocate pending handle: {}",
-            .{ err },
+            .{err},
         ) catch "temporal-bun-bridge-zig: failed to allocate pending handle";
         errors.setStructuredErrorJson(.{ .code = GrpcStatus.resource_exhausted, .message = message, .details = null });
         return null;
