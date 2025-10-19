@@ -1,0 +1,6 @@
+language = "C"
+cpp_compat = true
+pragma_once = true
+
+[export]
+prefix = "TemporalCore"

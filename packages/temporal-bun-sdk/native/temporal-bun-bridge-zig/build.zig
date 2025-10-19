@@ -15,12 +15,15 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    const include_dir = b.path("include");
+    lib_module.addIncludePath(include_dir);
 
     const lib = b.addLibrary(.{
         .name = "temporal_bun_bridge_zig",
         .root_module = lib_module,
         .linkage = .dynamic,
     });
+    lib.addIncludePath(include_dir);
 
     // TODO(codex, zig-pack-01): Link Temporal Rust static libraries emitted by cargo+cbindgen.
 
@@ -37,6 +40,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    test_module.addIncludePath(include_dir);
 
     const unit_tests = b.addTest(.{
         .root_module = test_module,

@@ -10,7 +10,7 @@ pub const RuntimeHandle = struct {
     id: u64,
     /// Raw JSON payload passed from TypeScript; retained until the Rust runtime wiring is complete.
     config: []u8,
-    core_runtime: ?*core.RuntimeOpaque,
+    core_runtime: ?*core.Runtime,
 };
 
 var next_runtime_id: u64 = 1;

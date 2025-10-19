@@ -1,70 +1,59 @@
 const std = @import("std");
 
-// This module will host the C-ABI imports for the Temporal Rust SDK once the headers are generated.
-// TODO(codex, zig-core-01): Generate headers via cbindgen and replace these extern placeholders.
-// See packages/temporal-bun-sdk/docs/ffi-surface.md and docs/zig-bridge-migration-plan.md.
-
+// This module imports the Temporal Rust SDK C bridge so Zig code can alias the
+// real runtime/client types and re-export the C ABI entry points that other
+// bridge modules call through.
 const builtin = @import("builtin");
 
-pub const RuntimeOpaque = opaque {};
-pub const ClientOpaque = opaque {};
-pub const WorkerOpaque = opaque {};
+const c = @cImport({
+    @cInclude("temporal-sdk-core-c-bridge.h");
+});
 
-pub const ByteBuf = extern struct {
-    data_ptr: ?[*]u8,
-    len: usize,
-    cap: usize,
-};
-pub const ByteBufDestroyFn = *const fn (?*ByteBuf) void;
+pub const Runtime = c.TemporalCoreRuntime;
+pub const RuntimeOptions = c.TemporalCoreRuntimeOptions;
+pub const RuntimeOrFail = c.TemporalCoreRuntimeOrFail;
 
-pub const ByteArray = extern struct {
-    data_ptr: ?[*]const u8,
-    len: usize,
-    cap: usize,
-    disable_free: bool,
-};
+pub const Client = c.TemporalCoreClient;
+pub const ClientOptions = c.TemporalCoreClientOptions;
+pub const ClientConnectCallback = c.TemporalCoreClientConnectCallback;
 
-pub const ByteArrayRef = extern struct {
-    data_ptr: ?[*]const u8,
-    len: usize,
-};
+pub const Worker = c.TemporalCoreWorker;
 
-pub const WorkerCallback = *const fn (?*anyopaque, ?*const ByteArray) callconv(.c) void;
+// Backwards-compatibility aliases used by existing Zig modules.
+pub const RuntimeOpaque = Runtime;
+pub const ClientOpaque = Client;
+pub const WorkerOpaque = Worker;
 
-pub const WorkerCompleteFn = *const fn (?*WorkerOpaque, ByteArrayRef, ?*anyopaque, WorkerCallback) callconv(.c) void;
-pub const RuntimeByteArrayFreeFn = *const fn (?*RuntimeOpaque, ?*const ByteArray) callconv(.c) void;
+pub const ByteArray = c.TemporalCoreByteArray;
+pub const ByteArrayRef = c.TemporalCoreByteArrayRef;
+pub const MetadataRef = c.TemporalCoreMetadataRef;
 
-extern fn temporal_sdk_core_runtime_new(options_json: ?[*]const u8, len: usize) ?*RuntimeOpaque;
-extern fn temporal_sdk_core_runtime_free(handle: ?*RuntimeOpaque) void;
+pub const ByteBuf = ByteArray;
+pub const ByteBufDestroyFn = *const fn (?*RuntimeOpaque, ?*const ByteBuf) callconv(.c) void;
 
-extern fn temporal_sdk_core_connect_async(
-    runtime: ?*RuntimeOpaque,
-    config_json: ?[*]const u8,
-    len: usize,
-) ?*ClientOpaque;
-
-extern fn temporal_sdk_core_client_free(handle: ?*ClientOpaque) void;
-extern fn temporal_sdk_core_byte_buffer_destroy(handle: ?*ByteBuf) void;
-
-pub const runtime_new = temporal_sdk_core_runtime_new;
-pub const runtime_free = temporal_sdk_core_runtime_free;
-pub const connect_async = temporal_sdk_core_connect_async;
-pub const client_free = temporal_sdk_core_client_free;
+pub const WorkerCallback = c.TemporalCoreWorkerCallback;
+pub const WorkerCompleteFn =
+    *const fn (?*WorkerOpaque, ByteArrayRef, ?*anyopaque, WorkerCallback) callconv(.c) void;
+pub const RuntimeByteArrayFreeFn =
+    *const fn (?*RuntimeOpaque, ?*const ByteArray) callconv(.c) void;
 
 pub const api = struct {
-    pub const runtime_new = temporal_sdk_core_runtime_new;
-    pub const runtime_free = temporal_sdk_core_runtime_free;
-    pub const connect_async = temporal_sdk_core_connect_async;
-    pub const client_free = temporal_sdk_core_client_free;
-    pub const byte_buffer_destroy = temporal_sdk_core_byte_buffer_destroy;
+    pub const runtime_new = c.temporal_core_runtime_new;
+    pub const runtime_free = c.temporal_core_runtime_free;
+    pub const byte_array_free = c.temporal_core_byte_array_free;
+
+    pub const client_connect = c.temporal_core_client_connect;
+    pub const client_free = c.temporal_core_client_free;
+    pub const client_update_metadata = c.temporal_core_client_update_metadata;
+    pub const client_update_api_key = c.temporal_core_client_update_api_key;
 };
 
 const fallback_error_slice =
     "temporal-bun-bridge-zig: temporal core worker completion bridge is not linked"[0..];
 
 const fallback_error_array = ByteArray{
-    .data_ptr = fallback_error_slice.ptr,
-    .len = fallback_error_slice.len,
+    .data = fallback_error_slice.ptr,
+    .size = fallback_error_slice.len,
     .cap = fallback_error_slice.len,
     .disable_free = true,
 };
@@ -82,11 +71,9 @@ fn fallbackWorkerCompleteWorkflowActivation(
         return;
     }
 
-    if (@intFromPtr(callback) == 0) {
-        return;
+    if (callback) |cb| {
+        cb(user_data, &fallback_error_array);
     }
-
-    callback(user_data, &fallback_error_array);
 }
 
 fn fallbackRuntimeByteArrayFree(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArray) callconv(.c) void {
@@ -137,5 +124,5 @@ pub fn signalWorkflow(_client: ?*ClientOpaque, request_json: []const u8) SignalW
         return SignalWorkflowError.NotFound;
     }
 
-    // TODO(codex, zig-core-02): Invoke temporal_sdk_core_client_signal_workflow once headers are available.
+    // TODO(codex, zig-core-02): Invoke temporal_core_client_signal_workflow once headers are available.
 }
