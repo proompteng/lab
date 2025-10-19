@@ -227,6 +227,17 @@ const GitHubPullRequestSchema = Schema.Struct({
 
 const trimTrailingSlash = (value: string): string => (value.endsWith('/') ? value.slice(0, -1) : value)
 
+const resolveGitHubGraphqlUrl = (apiBaseUrl: string): string => {
+  const trimmed = trimTrailingSlash(apiBaseUrl)
+  if (trimmed.endsWith('/api/v3')) {
+    return `${trimmed.slice(0, -2)}graphql`
+  }
+  if (trimmed.endsWith('/api')) {
+    return `${trimmed}/graphql`
+  }
+  return `${trimmed}/graphql`
+}
+
 const toError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
 
 const readResponseText = (response: FetchResponse) =>
@@ -756,6 +767,34 @@ export const createPullRequestComment = (
   )
 }
 
+const LIST_REVIEW_THREADS_QUERY = `
+  query ReviewThreads($owner: String!, $repo: String!, $pullNumber: Int!, $cursor: String) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $pullNumber) {
+        reviewThreads(first: 50, after: $cursor) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            isResolved
+            path
+            comments(last: 1) {
+              nodes {
+                bodyText
+                url
+                author {
+                  login
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`
+
 export const listPullRequestReviewThreads = (
   options: ListReviewThreadsOptions,
 ): Effect.Effect<ListReviewThreadsResult> => {
@@ -782,38 +821,40 @@ export const listPullRequestReviewThreads = (
     return Effect.succeed({ ok: false, reason: 'no-fetch' } as const)
   }
 
-  const baseUrl = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/pulls/${pullNumber}/threads`
+  const graphqlUrl = resolveGitHubGraphqlUrl(apiBaseUrl)
 
   return Effect.gen(function* (_) {
     const threads: PullRequestReviewThread[] = []
-    let page = 1
+    let cursor: string | null = null
 
     while (true) {
+      const variables: Record<string, unknown> = {
+        owner,
+        repo,
+        pullNumber,
+      }
+      if (cursor) {
+        variables.cursor = cursor
+      }
+
       const response = yield* Effect.tryPromise({
         try: () =>
-          fetchFn(`${baseUrl}?per_page=100&page=${page}`, {
-            method: 'GET',
+          fetchFn(graphqlUrl, {
+            method: 'POST',
             headers: {
-              Accept: 'application/vnd.github+json',
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
               'X-GitHub-Api-Version': '2022-11-28',
               'User-Agent': userAgent,
               ...(token && token.trim().length > 0 ? { Authorization: `Bearer ${token}` } : {}),
             },
+            body: JSON.stringify({
+              query: LIST_REVIEW_THREADS_QUERY,
+              variables,
+            }),
           }),
         catch: toError,
       })
-
-      if (!response.ok) {
-        const detail = yield* readResponseText(response).pipe(
-          Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
-        )
-        return {
-          ok: false as const,
-          reason: 'http-error',
-          status: response.status,
-          detail,
-        }
-      }
 
       const bodyResult = yield* readResponseText(response).pipe(Effect.either)
       if (bodyResult._tag === 'Left') {
@@ -824,9 +865,18 @@ export const listPullRequestReviewThreads = (
         }
       }
 
+      if (!response.ok) {
+        return {
+          ok: false as const,
+          reason: 'http-error',
+          status: response.status,
+          detail: bodyResult.right.length > 0 ? bodyResult.right : undefined,
+        }
+      }
+
       let parsed: unknown
       try {
-        parsed = bodyResult.right.length === 0 ? [] : JSON.parse(bodyResult.right)
+        parsed = bodyResult.right.length === 0 ? {} : JSON.parse(bodyResult.right)
       } catch (error) {
         return {
           ok: false as const,
@@ -835,71 +885,140 @@ export const listPullRequestReviewThreads = (
         }
       }
 
-      if (!Array.isArray(parsed)) {
+      const errorsValue = (parsed as { errors?: unknown }).errors
+      if (Array.isArray(errorsValue) && errorsValue.length > 0) {
+        const detail = errorsValue
+          .map((entry) =>
+            entry && typeof entry === 'object' && typeof (entry as { message?: unknown }).message === 'string'
+              ? (entry as { message: string }).message
+              : JSON.stringify(entry),
+          )
+          .join('; ')
         return {
           ok: false as const,
-          reason: 'invalid-json',
-          detail: 'Expected array response from GitHub API',
+          reason: 'http-error',
+          status: response.status,
+          detail: detail.length > 0 ? detail : undefined,
         }
       }
 
-      for (const thread of parsed) {
-        if (!thread || typeof thread !== 'object') {
+      const dataValue = (parsed as { data?: unknown }).data
+      if (!dataValue || typeof dataValue !== 'object') {
+        return {
+          ok: false as const,
+          reason: 'invalid-json',
+          detail: 'Missing data in GraphQL response',
+        }
+      }
+
+      const repositoryValue = (dataValue as { repository?: unknown }).repository
+      if (!repositoryValue || typeof repositoryValue !== 'object') {
+        return {
+          ok: false as const,
+          reason: 'http-error',
+          status: response.status,
+          detail: 'Repository not found in GraphQL response',
+        }
+      }
+
+      const pullRequestValue = (repositoryValue as { pullRequest?: unknown }).pullRequest
+      if (!pullRequestValue || typeof pullRequestValue !== 'object') {
+        return {
+          ok: false as const,
+          reason: 'http-error',
+          status: response.status,
+          detail: 'Pull request not found in GraphQL response',
+        }
+      }
+
+      const reviewThreadsValue = (pullRequestValue as { reviewThreads?: unknown }).reviewThreads
+      if (!reviewThreadsValue || typeof reviewThreadsValue !== 'object') {
+        return {
+          ok: false as const,
+          reason: 'invalid-json',
+          detail: 'Missing reviewThreads connection in GraphQL response',
+        }
+      }
+
+      const nodeList = Array.isArray((reviewThreadsValue as { nodes?: unknown }).nodes)
+        ? ((reviewThreadsValue as { nodes: unknown[] }).nodes as unknown[])
+        : []
+
+      for (const node of nodeList) {
+        if (!node || typeof node !== 'object') {
           continue
         }
 
-        const resolvedValue = (thread as { resolved?: unknown }).resolved
-        if (resolvedValue === true) {
+        const isResolved = (node as { isResolved?: unknown }).isResolved === true
+        if (isResolved) {
           continue
         }
 
-        const commentsValue = (thread as { comments?: unknown }).comments
-        const comments = Array.isArray(commentsValue) ? commentsValue : []
+        const commentsValue = (node as { comments?: unknown }).comments
         let summary: string | null = null
         let author: string | undefined
         let commentUrl: string | undefined
 
-        for (let index = comments.length - 1; index >= 0; index -= 1) {
-          const comment = comments[index]
-          if (!comment || typeof comment !== 'object') {
-            continue
-          }
-          const bodySummary = summarizeText((comment as { body?: unknown }).body)
-          if (!bodySummary) {
-            continue
-          }
-          summary = bodySummary
-          const userValue = (comment as { user?: unknown }).user
-          if (userValue && typeof userValue === 'object') {
-            const loginValue = (userValue as { login?: unknown }).login
-            if (typeof loginValue === 'string') {
-              author = loginValue
+        if (commentsValue && typeof commentsValue === 'object') {
+          const commentNodes = (commentsValue as { nodes?: unknown }).nodes
+          const latestComment =
+            Array.isArray(commentNodes) && commentNodes.length > 0 ? commentNodes[commentNodes.length - 1] : null
+
+          if (latestComment && typeof latestComment === 'object') {
+            const bodyValue =
+              (latestComment as { bodyText?: unknown }).bodyText ?? (latestComment as { body?: unknown }).body ?? null
+            const summaryCandidate = summarizeText(bodyValue)
+            if (summaryCandidate) {
+              summary = summaryCandidate
+            }
+
+            const authorValue = (latestComment as { author?: unknown }).author
+            if (authorValue && typeof authorValue === 'object') {
+              const loginValue = (authorValue as { login?: unknown }).login
+              if (typeof loginValue === 'string' && loginValue.trim().length > 0) {
+                author = loginValue
+              }
+            }
+
+            const urlValue = (latestComment as { url?: unknown }).url
+            if (typeof urlValue === 'string' && urlValue.trim().length > 0) {
+              commentUrl = urlValue
             }
           }
-          const htmlUrlValue = (comment as { html_url?: unknown }).html_url
-          if (typeof htmlUrlValue === 'string') {
-            commentUrl = htmlUrlValue
-          }
-          break
         }
 
         if (!summary) {
-          const pathSummary = summarizeText((thread as { path?: unknown }).path, 160)
-          summary = pathSummary ?? 'Review thread requires attention.'
+          summary = summarizeText((node as { path?: unknown }).path, 160)
         }
 
         threads.push({
-          summary,
+          summary: summary ?? 'Review thread requires attention.',
           url: commentUrl,
           author,
         })
       }
 
-      if (parsed.length < 100) {
+      const pageInfoValue = (reviewThreadsValue as { pageInfo?: unknown }).pageInfo
+      let hasNextPage = false
+      let nextCursor: string | null = null
+
+      if (pageInfoValue && typeof pageInfoValue === 'object') {
+        hasNextPage = (pageInfoValue as { hasNextPage?: unknown }).hasNextPage === true
+        const cursorValue = (pageInfoValue as { endCursor?: unknown }).endCursor
+        if (typeof cursorValue === 'string' && cursorValue.trim().length > 0) {
+          nextCursor = cursorValue
+        }
+      }
+
+      if (!hasNextPage || !nextCursor) {
         break
       }
 
-      page += 1
+      if (cursor === nextCursor) {
+        break
+      }
+
+      cursor = nextCursor
     }
 
     return {
