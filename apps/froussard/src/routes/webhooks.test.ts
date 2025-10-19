@@ -473,6 +473,65 @@ describe('createWebhookHandler', () => {
     expect(reviewProto.reviewContext?.additionalNotes[0]).toContain('mergeable_state=blocked')
   })
 
+  it('publishes review message when a Codex pull request opens cleanly', async () => {
+    githubServiceMock.fetchPullRequest.mockReturnValueOnce(
+      Effect.succeed({
+        ok: true as const,
+        pullRequest: {
+          number: 7,
+          title: 'Fresh PR',
+          body: 'Initial change set',
+          htmlUrl: 'https://github.com/owner/repo/pull/7',
+          draft: false,
+          merged: false,
+          state: 'open',
+          headRef: 'codex/issue-7-fresh',
+          headSha: 'ghi789',
+          baseRef: 'main',
+          authorLogin: 'user',
+          mergeableState: 'clean',
+        },
+      }),
+    )
+
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const payload = {
+      action: 'opened',
+      repository: { full_name: 'owner/repo' },
+      sender: { login: 'user' },
+      pull_request: {
+        number: 7,
+        head: { ref: 'codex/issue-7-fresh', sha: 'ghi789' },
+        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
+        user: { login: 'USER' },
+      },
+    }
+
+    const response = await handler(
+      buildRequest(payload, {
+        'x-github-event': 'pull_request',
+        'x-github-delivery': 'delivery-review-opened',
+        'x-github-action': 'opened',
+        'x-hub-signature-256': 'sig',
+        'content-type': 'application/json',
+      }),
+      'github',
+    )
+
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: 'review' })
+
+    expect(githubServiceMock.markPullRequestReadyForReview).not.toHaveBeenCalled()
+    expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
+    expect(mockBuildCodexPrompt).toHaveBeenCalledWith(expect.objectContaining({ stage: 'review' }))
+
+    expect(publishedMessages).toHaveLength(3)
+    const reviewJsonMessage = publishedMessages.find((message) => message.topic === 'codex-topic')
+    expect(reviewJsonMessage).toBeTruthy()
+    const reviewStructuredMessage = publishedMessages.find((message) => message.topic === 'github.issues.codex.tasks')
+    expect(reviewStructuredMessage).toBeTruthy()
+  })
+
   it('converts draft Codex pull requests to ready-for-review when clean', async () => {
     githubServiceMock.fetchPullRequest.mockReturnValueOnce(
       Effect.succeed({
