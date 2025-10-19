@@ -39,3 +39,8 @@ jobs:
 
       - name: Run froussard coverage
         run: pnpm --filter froussard exec vitest run --coverage
+
+      - name: Summarize coverage
+        env:
+          COVERAGE_SUMMARY_PATH: apps/froussard/coverage/coverage-summary.json
+        run: node scripts/report-coverage.mjs
