@@ -1,5 +1,5 @@
 import type { AppRuntime } from '@/effect/runtime'
-import type { GithubServiceDefinition } from '@/services/github'
+import type { GithubServiceDefinition } from '@/services/github/service.types'
 import {
   CODEX_READY_COMMENT_MARKER,
   PROTO_CODEX_TASK_FULL_NAME,

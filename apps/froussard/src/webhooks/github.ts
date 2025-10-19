@@ -5,7 +5,7 @@ import { Effect } from 'effect'
 
 import type { AppRuntime } from '@/effect/runtime'
 import { logger } from '@/logger'
-import { GithubService } from '@/services/github'
+import { GithubService } from '@/services/github/service'
 
 import { handleIssueCommentCreated, handleIssueOpened } from './github/events/issues'
 import { handlePullRequestEvent, handlePullRequestReviewEvent } from './github/events/pull-request'

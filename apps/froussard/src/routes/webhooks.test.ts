@@ -6,7 +6,7 @@ import { AppLogger } from '@/logger'
 import { CommandEvent as FacteurCommandEventMessage } from '@/proto/facteur/v1/contract_pb'
 import { CodexTask, CodexTaskStage } from '@/proto/github/v1/codex_task_pb'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
-import { GithubService } from '@/services/github'
+import { GithubService } from '@/services/github/service'
 import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
 
 const { mockVerifyDiscordRequest, mockBuildPlanModalResponse, mockToPlanModalEvent, mockBuildCodexPrompt } = vi.hoisted(

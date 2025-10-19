@@ -2,7 +2,8 @@ import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PLAN_COMMENT_MARKER } from '@/codex'
-import { findLatestPlanComment, listPullRequestReviewThreads, postIssueReaction } from '@/services/github'
+import { postIssueReaction, findLatestPlanComment } from '@/services/github/issues'
+import { listPullRequestReviewThreads } from '@/services/github/reviews'
 
 describe('postIssueReaction', () => {
   it('reports missing token when GITHUB_TOKEN is not configured', async () => {

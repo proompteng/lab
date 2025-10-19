@@ -83,7 +83,7 @@ vi.mock('@/services/kafka', () => {
   }
 })
 
-vi.mock('@/services/github', () => {
+vi.mock('@/services/github/service', () => {
   const effect = require('effect')
   const { Effect, Layer } = effect
 
@@ -113,13 +113,6 @@ vi.mock('@/services/github', () => {
   return {
     GithubService,
     GithubServiceLayer,
-    postIssueReaction: vi.fn(),
-    findLatestPlanComment: vi.fn(),
-    fetchPullRequest: vi.fn(),
-    markPullRequestReadyForReview: vi.fn(),
-    createPullRequestComment: vi.fn(),
-    listPullRequestReviewThreads: vi.fn(),
-    listPullRequestCheckFailures: vi.fn(),
   }
 })
 

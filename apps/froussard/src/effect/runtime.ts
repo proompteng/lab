@@ -3,7 +3,7 @@ import { type ManagedRuntime, make as makeManagedRuntime } from 'effect/ManagedR
 
 import { AppConfigLayer } from '@/effect/config'
 import { AppLoggerLayer } from '@/logger'
-import { GithubServiceLayer } from '@/services/github'
+import { GithubServiceLayer } from '@/services/github/service'
 import { KafkaProducerLayer } from '@/services/kafka'
 
 const CoreAppLayer = Layer.mergeAll(AppConfigLayer, AppLoggerLayer)
