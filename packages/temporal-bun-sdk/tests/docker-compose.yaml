@@ -1,6 +1,6 @@
 services:
   temporal:
-    image: temporalio/auto-setup:1.23.0
+    image: public.ecr.aws/temporalio/auto-setup:1.23.0
     container_name: temporal-test
     environment:
       - DB=postgres12
