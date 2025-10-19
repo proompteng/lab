@@ -90,9 +90,37 @@ void *temporal_bun_client_start_workflow(void *client, void *payload, uint64_t l
   return NULL;
 }
 
+void *temporal_bun_client_signal_with_start(void *client, void *payload, uint64_t len) {
+  (void)client;
+  (void)payload;
+  (void)len;
+  return NULL;
+}
+
 int32_t temporal_bun_client_terminate_workflow(void *client, void *payload, uint64_t len) {
   (void)client;
   (void)payload;
   (void)len;
   return 0;
+}
+
+void *temporal_bun_client_query_workflow(void *client, void *payload, uint64_t len) {
+  (void)client;
+  (void)payload;
+  (void)len;
+  return NULL;
+}
+
+void *temporal_bun_client_signal(void *client, void *payload, uint64_t len) {
+  (void)client;
+  (void)payload;
+  (void)len;
+  return NULL;
+}
+
+void *temporal_bun_client_cancel_workflow(void *client, void *payload, uint64_t len) {
+  (void)client;
+  (void)payload;
+  (void)len;
+  return NULL;
 }

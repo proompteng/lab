@@ -1,6 +1,9 @@
 const std = @import("std");
 const errors = @import("errors.zig");
 const core = @import("core.zig");
+const pending = @import("pending.zig");
+
+const grpc = pending.GrpcStatus;
 
 /// Placeholder handle that mirrors the pointer-based interface exposed by the Rust bridge.
 pub const RuntimeHandle = struct {
@@ -16,14 +19,26 @@ pub fn create(options_json: []const u8) ?*RuntimeHandle {
     var allocator = std.heap.c_allocator;
 
     const copy = allocator.alloc(u8, options_json.len) catch |err| {
-        errors.setLastErrorFmt("temporal-bun-bridge-zig: failed to allocate runtime config: {}", .{err});
+        var scratch: [128]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to allocate runtime config: {}",
+            .{err},
+        ) catch "temporal-bun-bridge-zig: failed to allocate runtime config";
+        errors.setStructuredError(.{ .code = grpc.resource_exhausted, .message = message });
         return null;
     };
     @memcpy(copy, options_json);
 
     const handle = allocator.create(RuntimeHandle) catch |err| {
         allocator.free(copy);
-        errors.setLastErrorFmt("temporal-bun-bridge-zig: failed to allocate runtime handle: {}", .{err});
+        var scratch: [128]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to allocate runtime handle: {}",
+            .{err},
+        ) catch "temporal-bun-bridge-zig: failed to allocate runtime handle";
+        errors.setStructuredError(.{ .code = grpc.resource_exhausted, .message = message });
         return null;
     };
 
@@ -66,7 +81,10 @@ pub fn updateTelemetry(handle: ?*RuntimeHandle, _options_json: []const u8) i32 {
     // TODO(codex, zig-rt-03): Apply telemetry configuration by bridging to Temporal core telemetry APIs.
     _ = handle;
     _ = _options_json;
-    errors.setLastError("temporal-bun-bridge-zig: runtime telemetry updates are not implemented yet");
+    errors.setStructuredError(.{
+        .code = grpc.unimplemented,
+        .message = "temporal-bun-bridge-zig: runtime telemetry updates are not implemented yet",
+    });
     return -1;
 }
 
@@ -74,6 +92,9 @@ pub fn setLogger(handle: ?*RuntimeHandle, _callback_ptr: ?*anyopaque) i32 {
     // TODO(codex, zig-rt-04): Forward Temporal core log events through the provided Bun callback.
     _ = handle;
     _ = _callback_ptr;
-    errors.setLastError("temporal-bun-bridge-zig: runtime logger installation is not implemented yet");
+    errors.setStructuredError(.{
+        .code = grpc.unimplemented,
+        .message = "temporal-bun-bridge-zig: runtime logger installation is not implemented yet",
+    });
     return -1;
 }

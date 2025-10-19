@@ -5,7 +5,49 @@ const std = @import("std");
 const empty_bytes = [_]u8{};
 const empty_slice = empty_bytes[0..];
 
+pub const StructuredError = struct {
+    code: i32,
+    message: []const u8,
+    details: ?[]const u8 = null,
+};
+
 var last_error: []u8 = empty_slice;
+
+fn replaceLastError(buffer: []u8) void {
+    const allocator = std.heap.c_allocator;
+    if (last_error.len > 0) {
+        allocator.free(last_error);
+    }
+    last_error = buffer;
+}
+
+fn toHexDigit(value: u8) u8 {
+    return if (value < 10) '0' + value else 'a' + (value - 10);
+}
+
+fn writeJsonString(buffer: *std.ArrayList(u8), allocator: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error!void {
+    try buffer.append(allocator, '"');
+    for (text) |byte| {
+        switch (byte) {
+            '"' => try buffer.appendSlice(allocator, "\\\""),
+            '\\' => try buffer.appendSlice(allocator, "\\\\"),
+            '\n' => try buffer.appendSlice(allocator, "\\n"),
+            '\r' => try buffer.appendSlice(allocator, "\\r"),
+            '\t' => try buffer.appendSlice(allocator, "\\t"),
+            else => {
+                if (byte < 0x20) {
+                    var escape: [6]u8 = .{ '\\', 'u', '0', '0', 0, 0 };
+                    escape[4] = toHexDigit((byte >> 4) & 0x0F);
+                    escape[5] = toHexDigit(byte & 0x0F);
+                    try buffer.appendSlice(allocator, escape[0..]);
+                } else {
+                    try buffer.append(allocator, byte);
+                }
+            },
+        }
+    }
+    try buffer.append(allocator, '"');
+}
 
 pub fn setLastError(message: []const u8) void {
     const allocator = std.heap.c_allocator;
@@ -26,6 +68,61 @@ pub fn setLastError(message: []const u8) void {
 
     @memcpy(copy, message);
     last_error = copy;
+}
+
+pub fn setStructuredError(payload: StructuredError) void {
+    const allocator = std.heap.c_allocator;
+    var buffer = std.ArrayList(u8){ .items = &.{}, .capacity = 0 };
+    defer buffer.deinit(allocator);
+
+    buffer.appendSlice(allocator, "{\"code\":") catch {
+        setLastError(payload.message);
+        return;
+    };
+
+    var code_scratch: [32]u8 = undefined;
+    const code_fragment = std.fmt.bufPrint(&code_scratch, "{d}", .{payload.code}) catch {
+        setLastError(payload.message);
+        return;
+    };
+
+    buffer.appendSlice(allocator, code_fragment) catch {
+        setLastError(payload.message);
+        return;
+    };
+
+    buffer.appendSlice(allocator, ",\"message\":") catch {
+        setLastError(payload.message);
+        return;
+    };
+
+    writeJsonString(&buffer, allocator, payload.message) catch {
+        setLastError(payload.message);
+        return;
+    };
+
+    if (payload.details) |details| {
+        buffer.appendSlice(allocator, ",\"details\":") catch {
+            setLastError(payload.message);
+            return;
+        };
+        writeJsonString(&buffer, allocator, details) catch {
+            setLastError(payload.message);
+            return;
+        };
+    }
+
+    buffer.append(allocator, '}') catch {
+        setLastError(payload.message);
+        return;
+    };
+
+    const encoded = buffer.toOwnedSlice(allocator) catch {
+        setLastError(payload.message);
+        return;
+    };
+
+    replaceLastError(encoded);
 }
 
 pub fn setLastErrorFmt(comptime fmt: []const u8, args: anytype) void {
