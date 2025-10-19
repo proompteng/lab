@@ -230,7 +230,7 @@ describe('createWebhookHandler', () => {
     action?: string
     payload: Record<string, unknown>
     setup?: () => void
-    assert: (body: any, response: Response) => Promise<void> | void
+    assert: (body: unknown, response: Response) => Promise<void> | void
   }
 
   const scenarioHeaders = (event: string, action?: string) => ({

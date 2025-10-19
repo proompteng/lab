@@ -1,37 +1,37 @@
-import { buildCodexPrompt, type CodexTaskMessage } from '@/codex'
+import { buildCodexPrompt, type CodexTaskMessage, normalizeLogin } from '@/codex'
+import type {
+  ReadyCommentCommand as ReadyCommentCommandType,
+  ReviewEvaluation,
+  UndraftCommand,
+} from '@/codex/workflow-machine'
 import {
   evaluateCodexWorkflow,
-  type ReadyCommentCommand,
-  type ReviewEvaluation,
   shouldPostReadyCommentGuard,
   shouldRequestReviewGuard,
   shouldUndraftGuard,
-  type UndraftCommand,
 } from '@/codex/workflow-machine'
 import { deriveRepositoryFullName, type GithubRepository } from '@/github-payload'
-import { normalizeLogin } from '@/codex'
-import type { WorkflowExecutionContext, WorkflowStage } from '../workflow'
-import { executeWorkflowCommands } from '../workflow'
-import type { WebhookConfig } from '../types'
 import {
   CODEX_READY_COMMENT_MARKER,
   CODEX_READY_TO_MERGE_COMMENT,
+  CODEX_REVIEW_COMMENT,
   PROTO_CODEX_TASK_FULL_NAME,
   PROTO_CODEX_TASK_SCHEMA,
   PROTO_CONTENT_TYPE,
-  CODEX_REVIEW_COMMENT,
 } from '../constants'
-import { toCodexTaskProto } from '../payloads'
 import {
   FORCE_REVIEW_ACTIONS,
   parseIssueNumberFromBranch,
   shouldHandlePullRequestAction,
   shouldHandlePullRequestReviewAction,
 } from '../helpers'
-import type { ReadyCommentCommand as ReadyCommentCommandType } from '@/codex/workflow-machine'
+import { toCodexTaskProto } from '../payloads'
+import type { WebhookConfig } from '../types'
+import type { WorkflowExecutionContext, WorkflowStage } from '../workflow'
+import { executeWorkflowCommands } from '../workflow'
 
 interface PullRequestBaseParams {
-  parsedPayload: Record<string, any>
+  parsedPayload: unknown
   headers: Record<string, string>
   config: WebhookConfig
   executionContext: WorkflowExecutionContext
@@ -68,33 +68,34 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
     return null
   }
 
-  let repositoryFullName = deriveRepositoryFullName(
+  let repositoryFullNameCandidate = deriveRepositoryFullName(
     (parsedPayload as { repository?: GithubRepository | null | undefined }).repository,
     undefined,
   )
 
-  if (!repositoryFullName) {
+  if (!repositoryFullNameCandidate) {
     const baseValue = (pullRequestPayload as { base?: unknown }).base
     if (baseValue && typeof baseValue === 'object') {
       const baseRepo = (baseValue as { repo?: unknown }).repo
       if (baseRepo && typeof baseRepo === 'object') {
         const fullNameValue = (baseRepo as { full_name?: unknown }).full_name
         if (typeof fullNameValue === 'string' && fullNameValue.length > 0) {
-          repositoryFullName = fullNameValue
+          repositoryFullNameCandidate = fullNameValue
         }
       }
     }
   }
 
+  const repoFullName = repositoryFullNameCandidate
   const pullNumber = (pullRequestPayload as { number?: unknown }).number
-  if (!repositoryFullName || typeof pullNumber !== 'number') {
+  if (!repoFullName || typeof pullNumber !== 'number') {
     return null
   }
 
   const processPullRequest = async () => {
     const pullResult = await executionContext.runtime.runPromise(
       executionContext.githubService.fetchPullRequest({
-        repositoryFullName: repositoryFullName!,
+        repositoryFullName: repoFullName,
         pullNumber,
         token: config.github.token,
         apiBaseUrl: config.github.apiBaseUrl,
@@ -126,7 +127,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
 
     const threadsResult = await executionContext.runtime.runPromise(
       executionContext.githubService.listPullRequestReviewThreads({
-        repositoryFullName: repositoryFullName!,
+        repositoryFullName: repoFullName,
         pullNumber,
         token: config.github.token,
         apiBaseUrl: config.github.apiBaseUrl,
@@ -140,7 +141,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
 
     const checksResult = await executionContext.runtime.runPromise(
       executionContext.githubService.listPullRequestCheckFailures({
-        repositoryFullName: repositoryFullName!,
+        repositoryFullName: repoFullName,
         headSha: pull.headSha,
         token: config.github.token,
         apiBaseUrl: config.github.apiBaseUrl,
@@ -175,7 +176,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
     const undraftCandidate: UndraftCommand | undefined =
       pull.draft && actionValue !== 'converted_to_draft'
         ? {
-            repositoryFullName: repositoryFullName!,
+            repositoryFullName: repoFullName,
             pullNumber,
             commentBody: CODEX_REVIEW_COMMENT,
           }
@@ -194,7 +195,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
     const readyCommentCandidate: ReadyCommentCommandType | undefined =
       !mergeStateRequiresAttention && !shouldForceReviewStage && !outstandingWork
         ? {
-            repositoryFullName: repositoryFullName!,
+            repositoryFullName: repoFullName,
             pullNumber,
             issueNumber: pull.number,
             body:
@@ -257,7 +258,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
         stage: 'review',
         issueTitle: pull.title,
         issueBody: pull.body,
-        repositoryFullName: repositoryFullName!,
+        repositoryFullName: repoFullName,
         issueNumber,
         baseBranch: pull.baseRef,
         headBranch: pull.headRef,
@@ -268,7 +269,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
       const codexMessage: CodexTaskMessage = {
         stage: 'review',
         prompt,
-        repository: repositoryFullName!,
+        repository: repoFullName,
         base: pull.baseRef,
         head: pull.headRef,
         issueNumber,

@@ -1,13 +1,12 @@
 import { Timestamp } from '@bufbuild/protobuf'
-
+import type { CodexTaskMessage } from '@/codex'
 import {
+  CodexTaskStage,
   CodexFailingCheck as GithubCodexFailingCheck,
   CodexReviewContext as GithubCodexReviewContext,
   CodexReviewThread as GithubCodexReviewThread,
   CodexTask as GithubCodexTaskMessage,
-  CodexTaskStage,
 } from '@/proto/github/v1/codex_task_pb'
-import type { CodexTaskMessage } from '@/codex'
 
 const toTimestamp = (value: string): Timestamp => {
   const date = new Date(value)

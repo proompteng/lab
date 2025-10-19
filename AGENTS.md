@@ -18,6 +18,7 @@
   - `bun apps/froussard/src/codex/cli/build-codex-image.ts` to rebuild/push the Codex runner image.
   - `bun packages/scripts/src/froussard/deploy-service.ts` to build and roll the Froussard Knative service (sets `FROUSSARD_VERSION/FROUSSARD_COMMIT` automatically).
   - `bun packages/scripts/src/facteur/deploy-service.ts` to build, push, and redeploy Facteur (applies the kustomize overlay and `kn service apply`).
+- Codex/automation agents MUST run `pnpm exec biome check apps/froussard` and resolve all diagnostics before pushing or opening PRs; note this in the PR description if you performed fixes.
 
 ### Tooling Notes
 

@@ -1,11 +1,9 @@
+import { Schema } from 'effect'
+
 import { buildCodexBranchName, buildCodexPrompt, type CodexTaskMessage, normalizeLogin } from '@/codex'
 import { evaluateCodexWorkflow, type ImplementationCommand, type PlanningCommand } from '@/codex/workflow-machine'
 import { selectReactionRepository } from '@/codex-workflow'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent } from '@/github-payload'
-import { Schema } from 'effect'
-import type { WorkflowStage, WorkflowExecutionContext } from '../workflow'
-import { executeWorkflowCommands } from '../workflow'
-import type { WebhookConfig } from '../types'
 import {
   CODEX_PLAN_MARKER,
   PROTO_CODEX_TASK_FULL_NAME,
@@ -13,6 +11,9 @@ import {
   PROTO_CONTENT_TYPE,
 } from '../constants'
 import { toCodexTaskProto } from '../payloads'
+import type { WebhookConfig } from '../types'
+import type { WorkflowExecutionContext, WorkflowStage } from '../workflow'
+import { executeWorkflowCommands } from '../workflow'
 
 interface BaseIssueParams {
   parsedPayload: unknown

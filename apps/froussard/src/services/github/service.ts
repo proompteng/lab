@@ -1,7 +1,7 @@
 import { Effect, Layer } from 'effect'
 
-import { createPullRequestComment, fetchPullRequest, markPullRequestReadyForReview } from './pull-requests'
 import { findLatestPlanComment, postIssueReaction } from './issues'
+import { createPullRequestComment, fetchPullRequest, markPullRequestReadyForReview } from './pull-requests'
 import { listPullRequestCheckFailures, listPullRequestReviewThreads } from './reviews'
 import type { GithubServiceDefinition } from './service.types'
 

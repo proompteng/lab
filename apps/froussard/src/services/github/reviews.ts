@@ -205,7 +205,6 @@ const mapThreadError = (error: ReviewApiError): ListReviewThreadsResult => {
       return { ok: false, reason: 'network-error', detail: error.detail }
     case 'http-error':
       return { ok: false, reason: 'http-error', status: error.status, detail: error.detail }
-    case 'invalid-json':
     default:
       return { ok: false, reason: 'invalid-json', detail: error.detail }
   }
@@ -221,7 +220,6 @@ const mapCheckError = (error: ReviewApiError): ListCheckFailuresResult => {
       return { ok: false, reason: 'network-error', detail: error.detail }
     case 'http-error':
       return { ok: false, reason: 'http-error', status: error.status, detail: error.detail }
-    case 'invalid-json':
     default:
       return { ok: false, reason: 'invalid-json', detail: error.detail }
   }
@@ -340,7 +338,6 @@ const recordCheckRunFailures = (runs: unknown[], record: (failure: PullRequestCh
     }
 
     const failureConclusions = new Set(['failure', 'timed_out', 'action_required', 'cancelled', 'stale'])
-    const failureStates = new Set(['failure', 'error'])
 
     const isFailure =
       (status === 'completed' && normalizedConclusion && failureConclusions.has(normalizedConclusion)) ||

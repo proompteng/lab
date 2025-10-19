@@ -113,7 +113,7 @@ export const createGithubWebhookHandler =
     try {
       if (eventName === 'issues' && actionValue === 'opened') {
         const stage = await handleIssueOpened({
-          parsedPayload: parsedPayload as Record<string, any>,
+          parsedPayload,
           headers,
           config,
           executionContext,
@@ -127,7 +127,7 @@ export const createGithubWebhookHandler =
 
       if (eventName === 'issue_comment' && actionValue === 'created') {
         const stage = await handleIssueCommentCreated({
-          parsedPayload: parsedPayload as Record<string, any>,
+          parsedPayload,
           headers,
           config,
           executionContext,
@@ -141,7 +141,7 @@ export const createGithubWebhookHandler =
 
       if (eventName === 'pull_request') {
         const stage = await handlePullRequestEvent({
-          parsedPayload: parsedPayload as Record<string, any>,
+          parsedPayload,
           headers,
           config,
           executionContext,
@@ -156,7 +156,7 @@ export const createGithubWebhookHandler =
 
       if (eventName === 'pull_request_review') {
         const stage = await handlePullRequestReviewEvent({
-          parsedPayload: parsedPayload as Record<string, any>,
+          parsedPayload,
           headers,
           config,
           executionContext,
