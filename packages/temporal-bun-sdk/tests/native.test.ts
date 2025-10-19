@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { native } from '../src/internal/core-bridge/native.ts'
-import { isTemporalServerAvailable } from './helpers/temporal-server'
+import { isTemporalServerReachable, resolveTemporalAddress } from './helpers/temporal.ts'
 
-const temporalAddress = process.env.TEMPORAL_TEST_SERVER_ADDRESS ?? 'http://127.0.0.1:7233'
-const wantsLiveTemporalServer = process.env.TEMPORAL_TEST_SERVER === '1'
-const hasLiveTemporalServer = wantsLiveTemporalServer && (await isTemporalServerAvailable(temporalAddress))
-
-if (wantsLiveTemporalServer && !hasLiveTemporalServer) {
-  console.warn(`Temporal server requested but unreachable at ${temporalAddress}; falling back to negative expectations`)
-}
+const hasLiveTemporalServer = process.env.TEMPORAL_TEST_SERVER === '1'
+const rawTemporalAddress = process.env.TEMPORAL_TEST_SERVER_ADDRESS ?? '127.0.0.1:7233'
+const temporalAddress = resolveTemporalAddress(rawTemporalAddress)
+const temporalAddressString = temporalAddress.url
+const liveServerReachablePromise = hasLiveTemporalServer
+  ? isTemporalServerReachable(rawTemporalAddress)
+  : Promise.resolve(false)
 
 describe('native bridge', () => {
   test('create and shutdown runtime', () => {
@@ -19,16 +19,17 @@ describe('native bridge', () => {
   })
 
   test('client connect respects server availability', async () => {
+    const serverReachable = await liveServerReachablePromise
     const runtime = native.createRuntime({})
     try {
       const connect = () =>
         native.createClient(runtime, {
-          address: temporalAddress,
+          address: temporalAddressString,
           namespace: 'default',
         })
 
-      if (hasLiveTemporalServer) {
-        const client = await withRetry(connect, 10, 500)
+      if (hasLiveTemporalServer && serverReachable) {
+        const client = await connect()
         expect(client.type).toBe('client')
         expect(typeof client.handle).toBe('number')
         native.clientShutdown(client)
@@ -54,17 +55,3 @@ describe('native bridge', () => {
     }
   })
 })
-
-async function withRetry<T>(fn: () => T | Promise<T>, attempts: number, waitMs: number): Promise<T> {
-  let lastError: unknown
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      return await fn()
-    } catch (error) {
-      lastError = error
-      if (attempt === attempts) break
-      await Bun.sleep(waitMs)
-    }
-  }
-  throw lastError
-}

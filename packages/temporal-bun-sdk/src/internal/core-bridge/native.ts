@@ -9,6 +9,8 @@ type RuntimePtr = Pointer
 
 type ClientPtr = Pointer
 
+type WorkerPtr = Pointer
+
 export interface Runtime {
   type: 'runtime'
   handle: RuntimePtr
@@ -17,6 +19,11 @@ export interface Runtime {
 export interface NativeClient {
   type: 'client'
   handle: ClientPtr
+}
+
+export interface NativeWorker {
+  type: 'worker'
+  handle: WorkerPtr
 }
 
 const libraryFile = resolveBridgeLibraryPath()
@@ -49,6 +56,14 @@ const {
     temporal_bun_client_terminate_workflow,
     temporal_bun_client_signal_with_start,
     temporal_bun_client_query_workflow,
+    temporal_bun_pending_unit_poll,
+    temporal_bun_pending_unit_consume,
+    temporal_bun_pending_unit_free,
+    temporal_bun_worker_new,
+    temporal_bun_worker_free,
+    temporal_bun_worker_initiate_shutdown,
+    temporal_bun_worker_validate_async,
+    temporal_bun_worker_shutdown_async,
   },
 } = dlopen(libraryFile, {
   temporal_bun_runtime_new: {
@@ -127,6 +142,38 @@ const {
     args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
     returns: FFIType.ptr,
   },
+  temporal_bun_pending_unit_poll: {
+    args: [FFIType.ptr],
+    returns: FFIType.int32_t,
+  },
+  temporal_bun_pending_unit_consume: {
+    args: [FFIType.ptr],
+    returns: FFIType.int32_t,
+  },
+  temporal_bun_pending_unit_free: {
+    args: [FFIType.ptr],
+    returns: FFIType.void,
+  },
+  temporal_bun_worker_new: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.ptr,
+  },
+  temporal_bun_worker_free: {
+    args: [FFIType.ptr],
+    returns: FFIType.void,
+  },
+  temporal_bun_worker_initiate_shutdown: {
+    args: [FFIType.ptr],
+    returns: FFIType.void,
+  },
+  temporal_bun_worker_validate_async: {
+    args: [FFIType.ptr],
+    returns: FFIType.ptr,
+  },
+  temporal_bun_worker_shutdown_async: {
+    args: [FFIType.ptr],
+    returns: FFIType.ptr,
+  },
 })
 
 export const native = {
@@ -183,6 +230,47 @@ export const native = {
       throw new Error(readLastError())
     }
     return readByteArray(arrayPtr)
+  },
+
+  createWorker(runtime: Runtime, client: NativeClient, config: Record<string, unknown>): NativeWorker {
+    const payload = Buffer.from(JSON.stringify(config), 'utf8')
+    const handle = Number(temporal_bun_worker_new(runtime.handle, client.handle, ptr(payload), payload.byteLength))
+    if (!handle) {
+      throw new Error(readLastError())
+    }
+    return { type: 'worker', handle }
+  },
+
+  workerInitiateShutdown(worker: NativeWorker): void {
+    temporal_bun_worker_initiate_shutdown(worker.handle)
+  },
+
+  async workerValidate(worker: NativeWorker): Promise<void> {
+    const pendingHandle = Number(temporal_bun_worker_validate_async(worker.handle))
+    if (!pendingHandle) {
+      throw new Error(readLastError())
+    }
+    try {
+      await waitForUnit(pendingHandle)
+    } finally {
+      temporal_bun_pending_unit_free(pendingHandle)
+    }
+  },
+
+  async workerShutdown(worker: NativeWorker): Promise<void> {
+    const pendingHandle = Number(temporal_bun_worker_shutdown_async(worker.handle))
+    if (!pendingHandle) {
+      throw new Error(readLastError())
+    }
+    try {
+      await waitForUnit(pendingHandle)
+    } finally {
+      temporal_bun_pending_unit_free(pendingHandle)
+    }
+  },
+
+  workerFree(worker: NativeWorker): void {
+    temporal_bun_worker_free(worker.handle)
   },
 
   configureTelemetry(runtime: Runtime, options: Record<string, unknown> = {}): never {
@@ -415,6 +503,32 @@ async function waitForByteArray(handle: number): Promise<Uint8Array> {
       }
 
       // status === -1 or unexpected
+      reject(new Error(readLastError()))
+    }
+
+    setTimeout(poll, 0)
+  })
+}
+
+async function waitForUnit(handle: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const poll = (): void => {
+      const status = Number(temporal_bun_pending_unit_poll(handle))
+      if (status === 0) {
+        setTimeout(poll, 0)
+        return
+      }
+
+      if (status === 1) {
+        const result = Number(temporal_bun_pending_unit_consume(handle))
+        if (result === 1) {
+          resolve()
+          return
+        }
+        reject(new Error(readLastError()))
+        return
+      }
+
       reject(new Error(readLastError()))
     }
 

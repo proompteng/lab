@@ -2,29 +2,33 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { fileURLToPath } from 'node:url'
 import process from 'node:process'
 import { native } from '../src/internal/core-bridge/native.ts'
-import { isTemporalServerAvailable, parseTemporalAddress } from './helpers/temporal-server'
+import { isTemporalServerReachable, resolveTemporalAddress } from './helpers/temporal.ts'
 
-const temporalAddress = process.env.TEMPORAL_TEST_SERVER_ADDRESS ?? 'http://127.0.0.1:7233'
 const shouldRun = process.env.TEMPORAL_TEST_SERVER === '1'
-const serverAvailable = shouldRun ? await isTemporalServerAvailable(temporalAddress) : false
+const rawTemporalAddress = process.env.TEMPORAL_TEST_SERVER_ADDRESS ?? '127.0.0.1:7233'
+const temporalAddress = resolveTemporalAddress(rawTemporalAddress)
+const temporalAddressString = temporalAddress.url
+const workerAddress = `${temporalAddress.host}:${temporalAddress.port}`
 
-if (shouldRun && !serverAvailable) {
-  console.warn(`Skipping native bridge integration tests: Temporal server unavailable at ${temporalAddress}`)
-}
-
-const suite = shouldRun && serverAvailable ? describe : describe.skip
-const workerAddress = (() => {
-  const { host, port } = parseTemporalAddress(temporalAddress)
-  return `${host}:${port}`
-})()
+const suite = shouldRun ? describe : describe.skip
 
 suite('native bridge integration', () => {
   let runtime: ReturnType<typeof native.createRuntime>
   let workerProcess: ReturnType<typeof Bun.spawn> | undefined
   const taskQueue = 'bun-sdk-query-tests'
   const decoder = new TextDecoder()
+  let integrationAvailable = false
 
   beforeAll(async () => {
+    if (!shouldRun) {
+      return
+    }
+
+    const reachable = await isTemporalServerReachable(rawTemporalAddress)
+    if (!reachable) {
+      return
+    }
+
     runtime = native.createRuntime({})
 
     const workerScript = fileURLToPath(new URL('./worker/run-query-worker.mjs', import.meta.url))
@@ -44,10 +48,13 @@ suite('native bridge integration', () => {
     }
 
     await waitForWorkerReady(workerProcess)
+    integrationAvailable = true
   })
 
   afterAll(async () => {
-    native.runtimeShutdown(runtime)
+    if (integrationAvailable && runtime) {
+      native.runtimeShutdown(runtime)
+    }
     if (workerProcess) {
       try {
         workerProcess.kill()
@@ -63,13 +70,17 @@ suite('native bridge integration', () => {
   })
 
   test('describe namespace succeeds against live Temporal server', async () => {
+    if (!integrationAvailable) {
+      return
+    }
+
     const maxAttempts = 10
     const waitMs = 500
 
     const client = await withRetry(
       async () => {
         return native.createClient(runtime, {
-          address: temporalAddress,
+          address: temporalAddressString,
           namespace: 'default',
         })
       },
@@ -86,13 +97,17 @@ suite('native bridge integration', () => {
   })
 
   test('queryWorkflow returns JSON payload for running workflow', async () => {
+    if (!integrationAvailable) {
+      return
+    }
+
     const maxAttempts = 10
     const waitMs = 500
 
     const client = await withRetry(
       async () => {
         return native.createClient(runtime, {
-          address: temporalAddress,
+          address: temporalAddressString,
           namespace: 'default',
           identity: 'bun-integration-client',
         })
@@ -133,8 +148,12 @@ suite('native bridge integration', () => {
   })
 
   test('queryWorkflow surfaces errors for unknown workflow', async () => {
+    if (!integrationAvailable) {
+      return
+    }
+
     const client = await native.createClient(runtime, {
-      address: 'http://127.0.0.1:7233',
+      address: temporalAddressString,
       namespace: 'default',
       identity: 'bun-integration-client',
     })
@@ -168,71 +187,29 @@ async function withRetry<T>(fn: () => T | Promise<T>, attempts: number, waitMs: 
   throw lastError
 }
 
-async function waitForWorkerReady(proc: ReturnType<typeof Bun.spawn>, timeoutMs = 30_000): Promise<void> {
-  const stdoutReader = proc.stdout?.getReader()
-  if (!stdoutReader) {
+async function waitForWorkerReady(proc: ReturnType<typeof Bun.spawn>, timeoutMs = 10_000): Promise<void> {
+  const reader = proc.stdout?.getReader()
+  if (!reader) {
     throw new Error('Worker stdout is not readable')
   }
 
-  const stderrReader = proc.stderr?.getReader()
   const decoder = new TextDecoder()
-  let stdoutBuffer = ''
-  let stderrBuffer = ''
   const start = Date.now()
-
-  let stdoutPromise = stdoutReader.read()
-  let stderrPromise = stderrReader?.read()
+  let buffer = ''
 
   while (Date.now() - start < timeoutMs) {
-    const elapsed = Date.now() - start
-    const remaining = Math.max(0, timeoutMs - elapsed)
-
-    const tasks: Array<Promise<{ kind: 'tick' | 'stdout' | 'stderr'; value?: Uint8Array; done?: boolean }>> = [
-      Bun.sleep(Math.min(remaining, 250)).then(() => ({ kind: 'tick' as const })),
-      stdoutPromise.then((result) => ({ kind: 'stdout' as const, value: result.value, done: result.done })),
-    ]
-
-    if (stderrPromise) {
-      tasks.push(stderrPromise.then((result) => ({ kind: 'stderr' as const, value: result.value, done: result.done })))
-    }
-
-    const result = await Promise.race(tasks)
-
-    if (result.kind === 'stdout') {
-      if (result.done) {
-        break
-      }
-      if (result.value) {
-        stdoutBuffer += decoder.decode(result.value, { stream: true })
-        if (stdoutBuffer.includes('worker-ready')) {
-          stdoutReader.releaseLock()
-          stderrReader?.releaseLock()
-          return
-        }
-      }
-      stdoutPromise = stdoutReader.read()
-      continue
-    }
-
-    if (result.kind === 'stderr') {
-      if (result.done) {
-        stderrPromise = undefined
-      } else if (result.value) {
-        stderrBuffer += decoder.decode(result.value, { stream: true })
-        stderrPromise = stderrReader?.read()
-      }
-      continue
-    }
-
-    if (proc.killed || proc.exitCode !== null) {
+    const { value, done } = await reader.read()
+    if (done) {
       break
+    }
+    buffer += decoder.decode(value, { stream: true })
+    if (buffer.includes('worker-ready')) {
+      reader.releaseLock()
+      return
     }
   }
 
-  stdoutReader.releaseLock()
-  stderrReader?.releaseLock()
+  reader.releaseLock()
 
-  throw new Error(
-    `Worker did not become ready within ${timeoutMs}ms. stdout="${stdoutBuffer.trim()}" stderr="${stderrBuffer.trim()}"`,
-  )
+  throw new Error(`Worker did not become ready within ${timeoutMs}ms. stdout="${buffer}"`)
 }

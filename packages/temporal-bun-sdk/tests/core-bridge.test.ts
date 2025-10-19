@@ -163,6 +163,45 @@ describe('core bridge client wrapper', () => {
 
     native.clientShutdown = originalClientShutdown
   })
+
+  test('emits camel-cased allowInsecure flag', async () => {
+    const originalCreateRuntime = native.createRuntime
+    const originalRuntimeShutdown = native.runtimeShutdown
+    const originalCreateClient = native.createClient
+    const originalClientShutdown = native.clientShutdown
+
+    const runtimeHandle = { type: 'runtime', handle: 404 } as ReturnType<typeof native.createRuntime>
+    const clientHandle = { type: 'client', handle: 505 } as Awaited<ReturnType<typeof native.createClient>>
+
+    native.createRuntime = mock(() => runtimeHandle)
+    native.runtimeShutdown = mock(() => {})
+    native.clientShutdown = mock(() => {})
+    const createClientMock = mock(async (_runtime: typeof runtimeHandle, payload: Record<string, unknown>) => {
+      expect(payload.allowInsecure).toBe(true)
+      expect('allow_insecure' in payload).toBe(false)
+      return clientHandle
+    })
+    native.createClient = createClientMock as typeof native.createClient
+
+    try {
+      const runtime = createRuntime()
+      const client = await createClient(runtime, {
+        address: '127.0.0.1:7233',
+        namespace: 'default',
+        allowInsecure: true,
+      })
+
+      await client.shutdown()
+      await runtime.shutdown()
+
+      expect(createClientMock).toHaveBeenCalledTimes(1)
+    } finally {
+      native.createRuntime = originalCreateRuntime
+      native.runtimeShutdown = originalRuntimeShutdown
+      native.createClient = originalCreateClient
+      native.clientShutdown = originalClientShutdown
+    }
+  })
 })
 
 integrationSuite('core bridge client integration', () => {

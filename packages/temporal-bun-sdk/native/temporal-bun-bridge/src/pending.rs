@@ -3,13 +3,13 @@ use std::sync::Mutex;
 use std::vec::Vec;
 
 #[repr(C)]
-pub(crate) struct PendingResult<T> {
+pub struct PendingResult<T> {
     receiver: Mutex<Option<Receiver<Result<T, String>>>>,
     result: Mutex<Option<Result<T, String>>>,
 }
 
 #[derive(Debug)]
-pub(crate) enum PendingState {
+pub enum PendingState {
     Pending,
     ReadyOk,
     ReadyErr(String),
@@ -70,7 +70,8 @@ impl<T> PendingResult<T> {
     }
 }
 
-pub(crate) type PendingByteArray = PendingResult<Vec<u8>>;
+pub type PendingByteArray = PendingResult<Vec<u8>>;
+pub type PendingUnit = PendingResult<()>;
 
 #[cfg(test)]
 mod tests {
