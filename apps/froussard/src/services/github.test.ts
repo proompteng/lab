@@ -2,7 +2,7 @@ import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PLAN_COMMENT_MARKER } from '@/codex'
-import { findLatestPlanComment, postIssueReaction } from '@/services/github'
+import { findLatestPlanComment, listPullRequestReviewThreads, postIssueReaction } from '@/services/github'
 
 describe('postIssueReaction', () => {
   it('reports missing token when GITHUB_TOKEN is not configured', async () => {
@@ -162,6 +162,189 @@ describe('postIssueReaction', () => {
     }
     const [url] = trailingCall
     expect(url).toBe('https://example.test/api/repos/acme/widgets/issues/5/reactions')
+  })
+})
+
+describe('listPullRequestReviewThreads', () => {
+  it('returns unresolved review threads from the GraphQL response', async () => {
+    const fetchSpy = vi.fn(async (url: string, init?: { body?: unknown }) => {
+      expect(url).toBe('https://api.github.com/graphql')
+      const payload = typeof init?.body === 'string' ? JSON.parse(init.body) : JSON.parse(String(init?.body ?? '{}'))
+      expect(payload.variables).toEqual({
+        owner: 'acme',
+        repo: 'widgets',
+        pullNumber: 42,
+      })
+
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    nodes: [
+                      {
+                        isResolved: false,
+                        path: 'src/app.tsx',
+                        comments: {
+                          nodes: [
+                            {
+                              bodyText: 'Please add unit tests before merging.',
+                              url: 'https://example.test/thread-1',
+                              author: { login: 'octocat' },
+                            },
+                          ],
+                        },
+                      },
+                      {
+                        isResolved: true,
+                        path: 'src/ignore.ts',
+                        comments: { nodes: [] },
+                      },
+                    ],
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+                },
+              },
+            },
+          }),
+      }
+    })
+
+    const result = await Effect.runPromise(
+      listPullRequestReviewThreads({
+        repositoryFullName: 'acme/widgets',
+        pullNumber: 42,
+        token: 'token-123',
+        fetchImplementation: fetchSpy,
+      }),
+    )
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.threads).toEqual([
+        {
+          summary: 'Please add unit tests before merging.',
+          url: 'https://example.test/thread-1',
+          author: 'octocat',
+        },
+      ])
+    }
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('paginates when GitHub returns additional review threads', async () => {
+    const fetchSpy = vi
+      .fn(async (_url: string, init?: { body?: unknown }) => {
+        const payload = typeof init?.body === 'string' ? JSON.parse(init.body) : JSON.parse(String(init?.body ?? '{}'))
+
+        if (!payload.variables.cursor) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () =>
+              JSON.stringify({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      reviewThreads: {
+                        nodes: [],
+                        pageInfo: { hasNextPage: true, endCursor: 'cursor-1' },
+                      },
+                    },
+                  },
+                },
+              }),
+          }
+        }
+
+        expect(payload.variables.cursor).toBe('cursor-1')
+
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    reviewThreads: {
+                      nodes: [
+                        {
+                          isResolved: false,
+                          path: 'src/server.ts',
+                          comments: {
+                            nodes: [
+                              {
+                                bodyText: 'Server handler still fails on edge cases.',
+                                url: 'https://example.test/thread-2',
+                                author: { login: 'codex-bot' },
+                              },
+                            ],
+                          },
+                        },
+                      ],
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                    },
+                  },
+                },
+              },
+            }),
+        }
+      })
+      .mockName('graphqlFetch')
+
+    const result = await Effect.runPromise(
+      listPullRequestReviewThreads({
+        repositoryFullName: 'acme/widgets',
+        pullNumber: 77,
+        token: 'token-xyz',
+        fetchImplementation: fetchSpy,
+      }),
+    )
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.threads).toEqual([
+        {
+          summary: 'Server handler still fails on edge cases.',
+          url: 'https://example.test/thread-2',
+          author: 'codex-bot',
+        },
+      ])
+    }
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('surfaces GraphQL errors from GitHub', async () => {
+    const fetchSpy = vi.fn(async () => {
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            errors: [{ message: 'Something went wrong' }],
+          }),
+      }
+    })
+
+    const result = await Effect.runPromise(
+      listPullRequestReviewThreads({
+        repositoryFullName: 'acme/widgets',
+        pullNumber: 88,
+        token: 'token-xyz',
+        fetchImplementation: fetchSpy,
+      }),
+    )
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('http-error')
+      expect(result.detail).toContain('Something went wrong')
+    }
   })
 })
 
