@@ -23,6 +23,21 @@ const run = (command, commandArgs, options = {}) =>
     ...options,
   })
 
+const captureStdout = (command, commandArgs) => {
+  try {
+    const result = spawnSync(command, commandArgs, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    if (result.status !== 0 || !result.stdout) {
+      return null
+    }
+    return result.stdout.trim()
+  } catch {
+    return null
+  }
+}
+
 const tryCommand = (command, commandArgs) => run(command, commandArgs, { stdio: 'ignore' }).status === 0
 
 const ensureCargo = () => {
@@ -56,37 +71,75 @@ const ensureCargo = () => {
   return true
 }
 
-const hasWellKnownTypes = () => {
-  const wellKnownRelative = ['google', 'protobuf', 'duration.proto']
-  const includeDirs = new Set(['/usr/include', '/usr/local/include'])
-  const homebrewPrefix = env.HOMEBREW_PREFIX || '/opt/homebrew'
+const appendCellarIncludes = (includeDirs, cellarRoot) => {
+  if (!cellarRoot) {
+    return
+  }
 
-  includeDirs.add(path.join(homebrewPrefix, 'include'))
-  includeDirs.add(path.join(homebrewPrefix, 'opt', 'protobuf', 'include'))
+  const protobufCellar = path.join(cellarRoot, 'protobuf')
+  if (!existsSync(protobufCellar)) {
+    return
+  }
 
-  const appendCellarIncludes = (cellarRoot) => {
-    if (!cellarRoot) {
-      return
-    }
-
-    const protobufCellar = path.join(cellarRoot, 'protobuf')
-    if (!existsSync(protobufCellar)) {
-      return
-    }
-
-    try {
-      for (const entry of readdirSync(protobufCellar, { withFileTypes: true })) {
-        if (entry.isDirectory()) {
-          includeDirs.add(path.join(protobufCellar, entry.name, 'include'))
-        }
+  try {
+    for (const entry of readdirSync(protobufCellar, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        includeDirs.add(path.join(protobufCellar, entry.name, 'include'))
       }
-    } catch {
-      // Ignore filesystem issues; fall back to other include locations.
+    }
+  } catch {
+    // Ignore filesystem issues; fall back to other include locations.
+  }
+}
+
+const collectHomebrewIncludeDirs = () => {
+  const includeDirs = new Set()
+  const prefixCandidates = new Set()
+  const addIncludeDir = (dir) => {
+    if (dir) {
+      includeDirs.add(dir)
+    }
+  }
+  const addPrefixCandidate = (prefix) => {
+    if (prefix) {
+      prefixCandidates.add(prefix)
     }
   }
 
-  appendCellarIncludes(env.HOMEBREW_CELLAR)
-  appendCellarIncludes(path.join(homebrewPrefix, 'Cellar'))
+  addPrefixCandidate(env.HOMEBREW_PREFIX)
+  addPrefixCandidate(env.BREW_PREFIX)
+  addPrefixCandidate('/opt/homebrew')
+
+  const brewExecutables = new Set(
+    [env.HOMEBREW_BREW_FILE, '/opt/homebrew/bin/brew', '/usr/local/bin/brew', 'brew'].filter(Boolean),
+  )
+
+  for (const brewExecutable of brewExecutables) {
+    const protobufPrefix = captureStdout(brewExecutable, ['--prefix', 'protobuf'])
+    if (protobufPrefix) {
+      addIncludeDir(path.join(protobufPrefix, 'include'))
+      addPrefixCandidate(path.resolve(protobufPrefix, '..', '..'))
+      appendCellarIncludes(includeDirs, path.resolve(protobufPrefix, '..', '..', 'Cellar'))
+    }
+
+    const defaultPrefix = captureStdout(brewExecutable, ['--prefix'])
+    addPrefixCandidate(defaultPrefix)
+  }
+
+  appendCellarIncludes(includeDirs, env.HOMEBREW_CELLAR)
+
+  for (const prefixCandidate of prefixCandidates) {
+    addIncludeDir(path.join(prefixCandidate, 'include'))
+    addIncludeDir(path.join(prefixCandidate, 'opt', 'protobuf', 'include'))
+    appendCellarIncludes(includeDirs, path.join(prefixCandidate, 'Cellar'))
+  }
+
+  return includeDirs
+}
+
+const hasWellKnownTypes = () => {
+  const wellKnownRelative = ['google', 'protobuf', 'duration.proto']
+  const includeDirs = new Set(['/usr/include', '/usr/local/include', ...collectHomebrewIncludeDirs()])
 
   const candidates = [
     ...Array.from(includeDirs).map((dir) => path.join(dir, ...wellKnownRelative)),
