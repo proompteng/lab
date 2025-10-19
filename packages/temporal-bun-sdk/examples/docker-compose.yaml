@@ -2,7 +2,7 @@ version: '3.9'
 
 services:
   temporal:
-    image: public.ecr.aws/temporalio/auto-setup:1.23.0
+    image: temporalio/auto-setup:1.23.0
     container_name: temporal-dev
     environment:
       - TEMPORAL_DEFAULT_NAMESPACE=default
