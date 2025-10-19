@@ -196,7 +196,12 @@ test "free skips destroy when temporal core provided no buffer" {
 
     const array_opt = allocate(.{ .adopt_core = .{ .byte_buf = null, .destroy = trackingDestroy } });
     try testing.expect(array_opt != null);
+    const array_ptr = array_opt.?;
 
-    free(array_opt.?);
+    try testing.expectEqual(@as(?[*]u8, null), array_ptr.data_ptr);
+    try testing.expectEqual(@as(usize, 0), array_ptr.len);
+    try testing.expectEqual(@as(usize, 0), array_ptr.cap);
+
+    free(array_ptr);
     try testing.expectEqual(@as(usize, 0), destroy_call_count);
 }
