@@ -8,7 +8,7 @@ describe('shared cli utilities', () => {
   })
 
   it('repoRoot points to repository root', () => {
-    expect(repoRoot).toMatch(/review-functional$/)
+    expect(repoRoot).toBe(process.cwd())
   })
 
   it('run executes commands successfully', async () => {
