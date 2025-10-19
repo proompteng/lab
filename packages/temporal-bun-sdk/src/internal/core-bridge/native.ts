@@ -469,12 +469,16 @@ function resolveBridgeLibraryCandidates(preference: ZigPreference): BridgeResolu
   }
 
   const hasZigCandidate = candidates.some((candidate) => candidate.variant === 'zig')
-  if (preference !== 'enable' || !hasZigCandidate) {
+  if (!hasZigCandidate) {
     candidates.push({ path: resolveRustBridgeLibraryPath(), variant: 'rust' })
+    return candidates
   }
 
-  if (candidates.length === 0) {
-    candidates.push({ path: resolveRustBridgeLibraryPath(), variant: 'rust' })
+  if (preference !== 'enable') {
+    const rustFallback = tryResolveRustBridgeLibraryPath()
+    if (rustFallback) {
+      candidates.push({ path: rustFallback, variant: 'rust' })
+    }
   }
 
   return candidates
@@ -584,6 +588,14 @@ function getZigDebugLibraryName(): string {
     return 'libtemporal_bun_bridge_zig_debug.dylib'
   }
   return 'libtemporal_bun_bridge_zig_debug.so'
+}
+
+function tryResolveRustBridgeLibraryPath(): string | null {
+  try {
+    return resolveRustBridgeLibraryPath()
+  } catch (_error) {
+    return null
+  }
 }
 
 function resolveRustBridgeLibraryPath(): string {
