@@ -25,7 +25,7 @@ fn duplicateConfig(config_json: []const u8) ?[]u8 {
 }
 
 fn destroyClientFromPending(ptr: ?*anyopaque) void {
-    const handle: ?*ClientHandle = if (ptr) |nonNull| @as(?*ClientHandle, @alignCast(@ptrCast(nonNull))) else null;
+    const handle: ?*ClientHandle = if (ptr) |nonNull| @as(?*ClientHandle, @ptrCast(@alignCast(nonNull))) else null;
     destroy(handle);
 }
 
@@ -153,4 +153,18 @@ pub fn queryWorkflow(client_ptr: ?*ClientHandle, _payload: []const u8) ?*pending
     // TODO(codex, zig-wf-04): Implement workflow query bridge using pending byte arrays.
     _ = _payload;
     return createByteArrayError("temporal-bun-bridge-zig: queryWorkflow is not implemented yet");
+}
+
+pub fn signalWorkflow(_client: ?*ClientHandle, _payload: []const u8) ?*pending.PendingByteArray {
+    // TODO(codex, zig-wf-05): Invoke Temporal core signal RPC and surface result via pending handle.
+    _ = _client;
+    _ = _payload;
+    return createByteArrayError("temporal-bun-bridge-zig: signalWorkflow is not implemented yet");
+}
+
+pub fn cancelWorkflow(_client: ?*ClientHandle, _payload: []const u8) ?*pending.PendingByteArray {
+    // TODO(codex, zig-wf-06): Route workflow cancellation through Temporal core client.
+    _ = _client;
+    _ = _payload;
+    return createByteArrayError("temporal-bun-bridge-zig: cancelWorkflow is not implemented yet");
 }

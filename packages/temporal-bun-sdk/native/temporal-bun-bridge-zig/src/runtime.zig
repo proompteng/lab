@@ -61,3 +61,19 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
 
     allocator.destroy(runtime);
 }
+
+pub fn updateTelemetry(handle: ?*RuntimeHandle, _options_json: []const u8) i32 {
+    // TODO(codex, zig-rt-03): Apply telemetry configuration by bridging to Temporal core telemetry APIs.
+    _ = handle;
+    _ = _options_json;
+    errors.setLastError("temporal-bun-bridge-zig: runtime telemetry updates are not implemented yet");
+    return -1;
+}
+
+pub fn setLogger(handle: ?*RuntimeHandle, _callback_ptr: ?*anyopaque) i32 {
+    // TODO(codex, zig-rt-04): Forward Temporal core log events through the provided Bun callback.
+    _ = handle;
+    _ = _callback_ptr;
+    errors.setLastError("temporal-bun-bridge-zig: runtime logger installation is not implemented yet");
+    return -1;
+}

@@ -11,6 +11,8 @@ The items below slice the Zig bridge effort into PR-sized TODOs. Every ID maps b
 | zig-core-01 | Generate Temporal core headers via `cbindgen` and plumb them through `src/core.zig`. | `src/core.zig` | Headers vendored + imported; stubs removed. |
 | zig-rt-01 | Replace runtime stub with calls to `temporal_sdk_core_runtime_new`. | `src/runtime.zig` | Runtime handle stores opaque pointer; error propagation verified. |
 | zig-rt-02 | Release runtime through the C-ABI destructor and clear allocations. | `src/runtime.zig` | Drop routine calls C core + passes tests. |
+| zig-rt-03 | Bridge telemetry updates via Temporal core C-ABI. | `src/runtime.zig`, `src/lib.zig` | `runtime.updateTelemetry` surfaces exporter wiring. |
+| zig-rt-04 | Forward core logs into Bun via callback registration. | `src/runtime.zig`, `src/lib.zig` | Bun callback receives log events during tests. |
 
 ### Client Lifecycle
 
@@ -28,6 +30,8 @@ The items below slice the Zig bridge effort into PR-sized TODOs. Every ID maps b
 | zig-wf-02 | Implement signal-with-start using shared marshalling path. | `src/client.zig` | Integration test covers signal and start success. |
 | zig-wf-03 | Add terminate workflow RPC bridging. | `src/client.zig` | Temporal terminate scenario passes via Zig bridge. |
 | zig-wf-04 | Implement workflow query RPC using pending byte arrays. | `src/client.zig` | Query integration test succeeds. |
+| zig-wf-05 | Implement workflow signal FFI returning pending handle. | `src/client.zig`, `src/lib.zig` | Signal integration test passes via Zig bridge. |
+| zig-wf-06 | Wire workflow cancel RPC returning pending handle. | `src/client.zig`, `src/lib.zig` | Cancel scenario passes via Zig bridge. |
 
 ### Byte Array & Pending Handles
 
@@ -37,6 +41,20 @@ The items below slice the Zig bridge effort into PR-sized TODOs. Every ID maps b
 | zig-buf-02 | Add guardrails + telemetry counters for buffer allocations. | `src/byte_array.zig` | Metrics surfaced to TS layer; unit tests cover failure cases. |
 | zig-pend-01 | Implement reusable pending handle state machine for clients + byte arrays. | `src/pending.zig` | Concurrent stress test passes; TS polling logic unchanged. |
 | zig-pend-02 | Surface structured errors from pending handles to TypeScript. | `src/pending.zig` | Errors deliver JSON payload + status code. |
+
+### Worker Lifecycle
+
+| ID | Description | Entry point | Acceptance |
+|----|-------------|-------------|------------|
+| zig-worker-01 | Instantiate Temporal core worker and expose handle creation. | `src/worker.zig`, `src/lib.zig` | Worker creation returns opaque pointer for configured task queue. |
+| zig-worker-02 | Dispose worker handles and release underlying resources. | `src/worker.zig`, `src/lib.zig` | Worker shutdown frees core references without leaks. |
+| zig-worker-03 | Poll workflow tasks and surface activations via pending handles. | `src/worker.zig`, `src/lib.zig` | Workflow task polling drives activation dispatch in TS tests. |
+| zig-worker-04 | Complete workflow tasks with success/error payloads. | `src/worker.zig`, `src/lib.zig` | Workflow completion integration test passes. |
+| zig-worker-05 | Poll activity tasks through Temporal core worker. | `src/worker.zig`, `src/lib.zig` | Activity polling returns payloads consumed by Bun worker. |
+| zig-worker-06 | Complete activity tasks (success & failure). | `src/worker.zig`, `src/lib.zig` | Activity completion test verifies response propagation. |
+| zig-worker-07 | Record activity heartbeats through FFI bridge. | `src/worker.zig`, `src/lib.zig` | Heartbeat updates visible in Temporal server during tests. |
+| zig-worker-08 | Initiate graceful shutdown (stop polling). | `src/worker.zig`, `src/lib.zig` | Worker halts new polls while allowing inflight work to finish. |
+| zig-worker-09 | Finalize shutdown and wait for inflight tasks. | `src/worker.zig`, `src/lib.zig` | Shutdown completes without dangling handles. |
 
 ### Tooling & Distribution
 
