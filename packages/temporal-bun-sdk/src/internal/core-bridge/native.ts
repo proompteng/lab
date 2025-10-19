@@ -232,6 +232,10 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.int32_t,
     },
+    temporal_bun_client_signal: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.ptr,
+    },
     temporal_bun_client_signal_with_start: {
       args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.ptr,
@@ -297,6 +301,7 @@ const {
     temporal_bun_byte_array_free,
     temporal_bun_client_start_workflow,
     temporal_bun_client_terminate_workflow,
+    temporal_bun_client_signal,
     temporal_bun_client_signal_with_start,
     temporal_bun_client_query_workflow,
   },
@@ -383,12 +388,17 @@ export const native = {
     }
   },
 
-  async signalWorkflow(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
-    void client
-    void _request
-    // TODO(codex): Call into `temporal_bun_client_signal` once implemented to deliver workflow signals
-    // per the packages/temporal-bun-sdk/docs/ffi-surface.md function matrix.
-    return Promise.reject(buildNotImplementedError('Workflow signal bridge', 'docs/ffi-surface.md'))
+  async signalWorkflow(client: NativeClient, request: Record<string, unknown>): Promise<void> {
+    const payload = Buffer.from(JSON.stringify(request), 'utf8')
+    const pendingHandle = Number(temporal_bun_client_signal(client.handle, ptr(payload), payload.byteLength))
+    if (!pendingHandle) {
+      throw buildNativeBridgeError()
+    }
+    try {
+      await waitForByteArray(pendingHandle)
+    } finally {
+      temporal_bun_pending_byte_array_free(pendingHandle)
+    }
   },
 
   async queryWorkflow(client: NativeClient, request: Record<string, unknown>): Promise<Uint8Array> {

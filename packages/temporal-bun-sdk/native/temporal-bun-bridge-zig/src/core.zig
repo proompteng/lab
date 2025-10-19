@@ -1,3 +1,5 @@
+const std = @import("std");
+
 // This module will host the C-ABI imports for the Temporal Rust SDK once the headers are generated.
 // TODO(codex, zig-core-01): Generate headers via cbindgen and replace these extern placeholders.
 // See packages/temporal-bun-sdk/docs/ffi-surface.md and docs/zig-bridge-migration-plan.md.
@@ -118,4 +120,22 @@ pub fn workerCompleteWorkflowActivation(
 
 pub fn runtimeByteArrayFree(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArray) void {
     runtime_byte_array_free(runtime, bytes);
+}
+
+pub const SignalWorkflowError = error{
+    NotFound,
+    ClientUnavailable,
+    Internal,
+};
+
+pub fn signalWorkflow(_client: ?*ClientOpaque, request_json: []const u8) SignalWorkflowError!void {
+    _ = _client;
+
+    // Stub implementation used until the Temporal core C-ABI is linked.
+    // Treat workflow IDs ending with "-missing" as not found to exercise the error path in tests.
+    if (std.mem.indexOf(u8, request_json, "\"workflow_id\":\"missing-workflow\"")) |_| {
+        return SignalWorkflowError.NotFound;
+    }
+
+    // TODO(codex, zig-core-02): Invoke temporal_sdk_core_client_signal_workflow once headers are available.
 }

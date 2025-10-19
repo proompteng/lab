@@ -26,12 +26,32 @@ export const buildSignalRequest = (
   signalName: string,
   args: unknown[],
 ): Record<string, unknown> => {
-  void handle
-  void signalName
-  void args
-  // TODO(codex): Serialize workflow signal payloads according to ${FFI_SURFACE_DOC} (Client function matrix)
-  // and ${CLIENT_RUNTIME_DOC} §3 Request Serialization.
-  return notImplemented('Workflow signal serialization', `${DOCS_ROOT}/client-runtime.md`)
+  if (!handle.workflowId || handle.workflowId.trim().length === 0) {
+    throw new Error('Workflow handle must include a non-empty workflowId')
+  }
+
+  if (typeof signalName !== 'string' || signalName.trim().length === 0) {
+    throw new Error('Workflow signal name must be a non-empty string')
+  }
+
+  const namespace = ensureWorkflowNamespace(handle)
+
+  const payload: Record<string, unknown> = {
+    namespace,
+    workflow_id: handle.workflowId,
+    signal_name: signalName,
+    args: Array.isArray(args) ? [...args] : [],
+  }
+
+  if (handle.runId) {
+    payload.run_id = handle.runId
+  }
+
+  if (handle.firstExecutionRunId) {
+    payload.first_execution_run_id = handle.firstExecutionRunId
+  }
+
+  return payload
 }
 
 export const buildQueryRequest = (

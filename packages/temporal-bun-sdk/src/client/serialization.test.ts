@@ -1,5 +1,56 @@
 import { describe, expect, test } from 'bun:test'
-import { buildSignalWithStartRequest, buildStartWorkflowRequest } from './serialization'
+import { buildSignalRequest, buildSignalWithStartRequest, buildStartWorkflowRequest } from './serialization'
+
+describe('buildSignalRequest', () => {
+  test('builds a payload with defaults from the workflow handle', () => {
+    const payload = buildSignalRequest(
+      {
+        workflowId: 'wf-id',
+        namespace: 'default',
+        runId: 'run-id',
+        firstExecutionRunId: 'first-run-id',
+      },
+      'signalName',
+      [{ foo: 'bar' }],
+    )
+
+    expect(payload).toEqual({
+      namespace: 'default',
+      workflow_id: 'wf-id',
+      run_id: 'run-id',
+      first_execution_run_id: 'first-run-id',
+      signal_name: 'signalName',
+      args: [{ foo: 'bar' }],
+    })
+  })
+
+  test('clones args array to avoid accidental mutation', () => {
+    const args = [{ foo: 'bar' }]
+    const payload = buildSignalRequest(
+      {
+        workflowId: 'wf-id',
+        namespace: 'default',
+      },
+      'signalName',
+      args,
+    )
+
+    expect(payload.args).toEqual([{ foo: 'bar' }])
+    expect(payload.args).not.toBe(args)
+    ;(payload.args as unknown[])[0] = { foo: 'baz' }
+    expect(args).toEqual([{ foo: 'bar' }])
+  })
+
+  test('validates required workflow and signal identifiers', () => {
+    expect(() => buildSignalRequest({ workflowId: '', namespace: 'default' }, 'signalName', [])).toThrowError(
+      /workflowId/,
+    )
+
+    expect(() => buildSignalRequest({ workflowId: 'wf-id' }, 'signalName', [])).toThrowError(/namespace/)
+
+    expect(() => buildSignalRequest({ workflowId: 'wf-id', namespace: 'default' }, '', [])).toThrowError(/signal name/)
+  })
+})
 
 describe('buildSignalWithStartRequest', () => {
   test('merges defaults with signal payload', () => {

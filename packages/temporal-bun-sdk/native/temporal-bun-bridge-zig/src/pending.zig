@@ -1,5 +1,6 @@
 const std = @import("std");
 const errors = @import("errors.zig");
+const byte_array = @import("byte_array.zig");
 
 /// Maps directly onto the poll contract expected by Bun. See native.ts for semantics.
 pub const Status = enum(i32) {
@@ -46,7 +47,7 @@ fn allocateHandle(status: Status) ?*PendingHandle {
         const message = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to allocate pending handle: {}",
-            .{err},
+            .{ err },
         ) catch "temporal-bun-bridge-zig: failed to allocate pending handle";
         errors.setStructuredErrorJson(.{ .code = GrpcStatus.resource_exhausted, .message = message, .details = null });
         return null;
@@ -95,6 +96,7 @@ fn releasePayload(handle: *PendingHandle) void {
         }
         handle.payload = null;
     }
+    handle.cleanup = null;
 }
 
 fn destroyHandle(handle: *PendingHandle) void {
@@ -133,6 +135,14 @@ fn assignError(handle: *PendingHandle, code: i32, message: []const u8, duplicate
 
     handle.fault.message = message;
     handle.fault.owns_message = false;
+}
+
+fn clearError(handle: *PendingHandle) void {
+    destroyMessage(handle.fault.message, handle.fault.owns_message);
+    handle.fault.code = GrpcStatus.unknown;
+    handle.fault.message = "";
+    handle.fault.owns_message = false;
+    handle.fault.active = false;
 }
 
 pub fn createPendingError(code: i32, message: []const u8) ?*PendingHandle {
@@ -253,4 +263,132 @@ pub fn free(handle: ?*PendingHandle) void {
 
     const pending = handle.?;
     destroyHandle(pending);
+}
+
+fn freeByteArrayFromPending(ptr: ?*anyopaque) void {
+    const array: ?*byte_array.ByteArray = if (ptr) |non_null| @as(?*byte_array.ByteArray, @ptrCast(@alignCast(non_null))) else null;
+    byte_array.free(array);
+}
+
+pub fn resolveByteArray(handle: ?*PendingByteArray, array: ?*byte_array.ByteArray) bool {
+    if (handle == null) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.invalid_argument,
+            .message = "temporal-bun-bridge-zig: resolveByteArray received null handle",
+            .details = null,
+        });
+        if (array) |non_null| {
+            byte_array.free(non_null);
+        }
+        return false;
+    }
+
+    if (array == null) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.invalid_argument,
+            .message = "temporal-bun-bridge-zig: resolveByteArray received null byte array",
+            .details = null,
+        });
+        return false;
+    }
+
+    const pending_handle = handle.?;
+    if (pending_handle.status != .pending) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.failed_precondition,
+            .message = "temporal-bun-bridge-zig: resolveByteArray expected pending status",
+            .details = null,
+        });
+        byte_array.free(array.?);
+        return false;
+    }
+
+    if (pending_handle.consumed) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.failed_precondition,
+            .message = "temporal-bun-bridge-zig: resolveByteArray received consumed handle",
+            .details = null,
+        });
+        byte_array.free(array.?);
+        return false;
+    }
+
+    releasePayload(pending_handle);
+    clearError(pending_handle);
+
+    const non_null = array.?;
+    pending_handle.payload = @as(?*anyopaque, @ptrCast(@alignCast(non_null)));
+    pending_handle.cleanup = freeByteArrayFromPending;
+    pending_handle.status = .ready;
+    pending_handle.consumed = false;
+    return true;
+}
+
+pub fn rejectByteArray(handle: ?*PendingByteArray, code: i32, message: []const u8) bool {
+    if (handle == null) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.invalid_argument,
+            .message = "temporal-bun-bridge-zig: rejectByteArray received null handle",
+            .details = null,
+        });
+        return false;
+    }
+
+    const pending_handle = handle.?;
+    if (pending_handle.status != .pending) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.failed_precondition,
+            .message = "temporal-bun-bridge-zig: rejectByteArray expected pending status",
+            .details = null,
+        });
+        return false;
+    }
+
+    releasePayload(pending_handle);
+    clearError(pending_handle);
+
+    assignError(pending_handle, code, message, true);
+    pending_handle.status = .failed;
+    pending_handle.consumed = false;
+
+    errors.setStructuredErrorJson(.{ .code = code, .message = if (message.len != 0) message else "", .details = null });
+    return true;
+}
+
+const testing = std.testing;
+
+test "resolveByteArray transitions pending handle to ready" {
+    const handle_opt = createPendingInFlight();
+    try testing.expect(handle_opt != null);
+    const handle_ptr = handle_opt.?;
+    defer free(handle_ptr);
+
+    const pending_byte = @as(*PendingByteArray, @ptrCast(handle_ptr));
+
+    const ack_opt = byte_array.allocate(.{ .slice = "" });
+    try testing.expect(ack_opt != null);
+    const ack = ack_opt.?;
+
+    try testing.expect(resolveByteArray(pending_byte, ack));
+    try testing.expectEqual(@as(i32, @intFromEnum(Status.ready)), poll(handle_ptr));
+
+    const payload_opt = consume(handle_ptr);
+    try testing.expect(payload_opt != null);
+    const payload_ptr = payload_opt.?;
+    const array = @as(*byte_array.ByteArray, @ptrCast(@alignCast(payload_ptr)));
+    defer byte_array.free(array);
+    try testing.expectEqual(@as(usize, 0), array.len);
+}
+
+test "rejectByteArray transitions pending handle to failed state" {
+    const handle_opt = createPendingInFlight();
+    try testing.expect(handle_opt != null);
+    const handle_ptr = handle_opt.?;
+    defer free(handle_ptr);
+
+    const pending_byte = @as(*PendingByteArray, @ptrCast(handle_ptr));
+    try testing.expect(rejectByteArray(pending_byte, GrpcStatus.internal, "boom"));
+    try testing.expectEqual(@as(i32, @intFromEnum(Status.failed)), poll(handle_ptr));
+
+    try testing.expect(consume(handle_ptr) == null);
 }
