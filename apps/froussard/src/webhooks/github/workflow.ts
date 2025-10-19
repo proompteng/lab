@@ -42,6 +42,7 @@ export const executeWorkflowCommands = async (
     switch (command.type) {
       case 'publishPlanning': {
         stage = 'planning'
+        logger.info({ key: command.data.key, deliveryId: context.deliveryId }, 'publishing codex planning message')
         await context.runtime.runPromise(
           publishKafkaMessage({
             topic: command.data.topics.codex,
@@ -97,6 +98,10 @@ export const executeWorkflowCommands = async (
       }
       case 'publishImplementation': {
         stage = 'implementation'
+        logger.info(
+          { key: command.data.key, deliveryId: context.deliveryId },
+          'publishing codex implementation message',
+        )
         await context.runtime.runPromise(
           publishKafkaMessage({
             topic: command.data.topics.codex,
@@ -127,6 +132,7 @@ export const executeWorkflowCommands = async (
       }
       case 'publishReview': {
         stage = 'review'
+        logger.info({ key: command.data.key, deliveryId: context.deliveryId }, 'publishing codex review message')
         await context.runtime.runPromise(
           publishKafkaMessage({
             topic: command.data.topics.codex,
@@ -156,6 +162,14 @@ export const executeWorkflowCommands = async (
         break
       }
       case 'markReadyForReview': {
+        logger.info(
+          {
+            deliveryId: context.deliveryId,
+            repository: command.data.repositoryFullName,
+            pullNumber: command.data.pullNumber,
+          },
+          'converting codex pull request to ready state',
+        )
         const result = await context.runGithub(() =>
           context.githubService.markPullRequestReadyForReview({
             repositoryFullName: command.data.repositoryFullName,
@@ -214,6 +228,14 @@ export const executeWorkflowCommands = async (
         break
       }
       case 'postReadyComment': {
+        logger.info(
+          {
+            deliveryId: context.deliveryId,
+            repository: command.data.repositoryFullName,
+            pullNumber: command.data.pullNumber,
+          },
+          'ensuring codex ready comment exists',
+        )
         const lookup = await context.runGithub(() =>
           context.githubService.findLatestPlanComment({
             repositoryFullName: command.data.repositoryFullName,

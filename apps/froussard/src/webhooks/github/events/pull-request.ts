@@ -11,6 +11,7 @@ import {
   shouldUndraftGuard,
 } from '@/codex/workflow-machine'
 import { deriveRepositoryFullName, type GithubRepository } from '@/github-payload'
+import { logger } from '@/logger'
 import {
   CODEX_READY_COMMENT_MARKER,
   CODEX_READY_TO_MERGE_COMMENT,
@@ -98,6 +99,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
   }
 
   const processPullRequest = async () => {
+    logger.info({ repository: repoFullName, pullNumber, action: actionValue ?? 'unknown' }, 'processing pull request')
     const pullResult = await executionContext.runGithub(() =>
       executionContext.githubService.fetchPullRequest({
         repositoryFullName: repoFullName,
@@ -114,6 +116,10 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
 
     const pull = pullResult.pullRequest
     if (pull.state !== 'open' || pull.merged) {
+      logger.info(
+        { repository: repoFullName, pullNumber, state: pull.state, merged: pull.merged },
+        'ignoring closed pull request',
+      )
       return null
     }
 
@@ -195,6 +201,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
       )
     ) {
       reviewEvaluation.undraftCommand = undraftCandidate
+      logger.info({ repository: repoFullName, pullNumber }, 'prepared codex undraft command')
     }
 
     const readyCommentCandidate: ReadyCommentCommandType | undefined =
@@ -219,6 +226,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
       )
     ) {
       reviewEvaluation.readyCommentCommand = readyCommentCandidate
+      logger.info({ repository: repoFullName, pullNumber }, 'prepared codex ready comment')
     }
 
     const reviewFingerprint = buildReviewFingerprint({
@@ -305,6 +313,9 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
         const reviewHeaders = buildReviewHeaders(headers, {
           fingerprint: reviewFingerprint,
           headSha: pull.headSha,
+          outstandingThreads: unresolvedThreads.length,
+          failingChecks: failingChecks.length,
+          hasMergeConflicts,
         })
 
         reviewEvaluation.reviewCommand = {
@@ -319,7 +330,29 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
           jsonHeaders: reviewHeaders.json,
           structuredHeaders: reviewHeaders.structured,
         }
+        logger.info(
+          {
+            repository: repoFullName,
+            pullNumber,
+            fingerprint: reviewFingerprint,
+            outstandingThreads: unresolvedThreads.length,
+            failingChecks: failingChecks.length,
+            hasMergeConflicts,
+          },
+          'queued codex review workflow',
+        )
       } else {
+        logger.info(
+          {
+            repository: repoFullName,
+            pullNumber,
+            fingerprint: reviewFingerprint,
+            outstandingThreads: unresolvedThreads.length,
+            failingChecks: failingChecks.length,
+            hasMergeConflicts,
+          },
+          'skipping duplicate codex review workflow',
+        )
         reviewEvaluation.reviewCommand = undefined
       }
     }
