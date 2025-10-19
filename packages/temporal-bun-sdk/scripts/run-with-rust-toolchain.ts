@@ -24,11 +24,17 @@ const cargoHome = env.CARGO_HOME ?? `${homeDir}/.cargo`
 const cargoBinDir = `${cargoHome}/bin`
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 
-const run = (command: string, commandArgs: CommandArgs, options: SpawnSyncOptions = {}) =>
-  spawnSync(command, commandArgs, { stdio: 'inherit', ...options })
+const run = (
+  command: string,
+  commandArgs: CommandArgs,
+  options: SpawnSyncOptions = {},
+): SpawnSyncReturns<Buffer> => spawnSync(command, commandArgs, { stdio: 'inherit', ...options })
 
-const runQuiet = (command: string, commandArgs: CommandArgs, options: SpawnSyncOptions = {}) =>
-  spawnSync(command, commandArgs, { stdio: ['ignore', 'ignore', 'ignore'], ...options })
+const runQuiet = (
+  command: string,
+  commandArgs: CommandArgs,
+  options: SpawnSyncOptions = {},
+): SpawnSyncReturns<Buffer> => spawnSync(command, commandArgs, { stdio: ['ignore', 'ignore', 'ignore'], ...options })
 
 const captureStdout = (command: string, commandArgs: CommandArgs): string | null => {
   try {
@@ -225,7 +231,7 @@ const ensureProtobufIncludes = (): boolean => {
   }
 
   stderr.write('Protobuf well-known type headers not found; installing libprotobuf-dev...\n')
-  const install: SpawnSyncReturns<Buffer> = run(aptInvocation.command, aptInvocation.args)
+  const install = run(aptInvocation.command, aptInvocation.args)
 
   if (install.status !== 0 || install.error) {
     stderr.write('Failed to install libprotobuf-dev via apt.\n')
@@ -245,7 +251,7 @@ if (!ensureCargo() || !ensureProtobufIncludes()) {
 }
 
 const [command, ...commandArgs] = args
-const combinedPath = `${cargoBinDir}:${env.PATH ?? ''}`
+const combinedPath = [cargoBinDir, env.PATH ?? ''].filter(Boolean).join(path.delimiter)
 const result = run(command, commandArgs, {
   env: {
     ...env,
