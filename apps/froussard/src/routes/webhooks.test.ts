@@ -508,7 +508,7 @@ describe('createWebhookHandler', () => {
     expect(reviewProto.reviewContext?.additionalNotes[0]).toContain('mergeable_state=blocked')
   })
 
-  it('publishes review message when a Codex pull request opens cleanly', async () => {
+  it('publishes review message and skips ready comment when a Codex pull request opens cleanly', async () => {
     githubServiceMock.fetchPullRequest.mockReturnValueOnce(
       Effect.succeed({
         ok: true as const,
@@ -557,27 +557,91 @@ describe('createWebhookHandler', () => {
     await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: 'review' })
 
     expect(githubServiceMock.markPullRequestReadyForReview).not.toHaveBeenCalled()
-    expect(githubServiceMock.findLatestPlanComment).toHaveBeenCalledWith(
+    expect(githubServiceMock.findLatestPlanComment).not.toHaveBeenCalled()
+    expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
+    expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
+        stage: 'review',
         repositoryFullName: 'owner/repo',
         issueNumber: 7,
-        marker: expect.stringContaining('codex:ready'),
       }),
     )
-    expect(githubServiceMock.createPullRequestComment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        repositoryFullName: 'owner/repo',
-        pullNumber: 7,
-        body: expect.stringContaining('ready to merge'),
-      }),
-    )
-    expect(mockBuildCodexPrompt).toHaveBeenCalledWith(expect.objectContaining({ stage: 'review' }))
 
     expect(publishedMessages).toHaveLength(3)
     const reviewJsonMessage = publishedMessages.find((message) => message.topic === 'codex-topic')
     expect(reviewJsonMessage).toBeTruthy()
     const reviewStructuredMessage = publishedMessages.find((message) => message.topic === 'github.issues.codex.tasks')
     expect(reviewStructuredMessage).toBeTruthy()
+  })
+
+  it('posts a ready comment when a clean Codex pull request updates outside forced review actions', async () => {
+    githubServiceMock.fetchPullRequest.mockReturnValueOnce(
+      Effect.succeed({
+        ok: true as const,
+        pullRequest: {
+          number: 9,
+          title: 'Clean updates',
+          body: '',
+          htmlUrl: 'https://github.com/owner/repo/pull/9',
+          draft: false,
+          merged: false,
+          state: 'open',
+          headRef: 'codex/issue-9-clean',
+          headSha: 'cleansha',
+          baseRef: 'main',
+          authorLogin: 'user',
+          mergeableState: 'clean',
+        },
+      }),
+    )
+
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const payload = {
+      action: 'edited',
+      repository: { full_name: 'owner/repo' },
+      sender: { login: 'user' },
+      pull_request: {
+        number: 9,
+        head: { ref: 'codex/issue-9-clean', sha: 'cleansha' },
+        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
+        user: { login: 'USER' },
+      },
+    }
+
+    const response = await handler(
+      buildRequest(payload, {
+        'x-github-event': 'pull_request',
+        'x-github-delivery': 'delivery-review-clean-update',
+        'x-github-action': 'edited',
+        'x-hub-signature-256': 'sig',
+        'content-type': 'application/json',
+      }),
+      'github',
+    )
+
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
+
+    expect(githubServiceMock.findLatestPlanComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryFullName: 'owner/repo',
+        issueNumber: 9,
+        marker: expect.stringContaining('codex:ready'),
+      }),
+    )
+    expect(githubServiceMock.createPullRequestComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 9,
+        body: expect.stringContaining('ready to merge'),
+      }),
+    )
+    expect(mockBuildCodexPrompt).not.toHaveBeenCalled()
+    expect(publishedMessages).toHaveLength(1)
+    expect(publishedMessages[0]).toMatchObject({
+      topic: 'raw-topic',
+      key: 'delivery-review-clean-update',
+    })
   })
 
   it('publishes review message when merge conflicts are detected', async () => {

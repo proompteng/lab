@@ -50,7 +50,7 @@ const ensurePnpmAvailable = async (): Promise<string> => {
   try {
     await runWithNvm('corepack enable pnpm')
   } catch (error) {
-    console.warn('corepack failed to enable pnpm, falling back to npm global install')
+    console.warn('corepack failed to enable pnpm, falling back to npm global install', error)
     await runWithNvm('npm install -g pnpm')
   }
 

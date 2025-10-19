@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   evaluateCodexWorkflow,
-  shouldPostReadyCommentGuard,
   type ReadyCommentCommand,
   type ReviewEvaluation,
+  shouldPostReadyCommentGuard,
   type WorkflowContext,
 } from '../workflow-machine'
 
