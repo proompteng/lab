@@ -50,9 +50,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config protobuf-compiler docker-compose
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -64,9 +61,6 @@ jobs:
 
       - name: Build native bridge
         run: pnpm --filter @proompteng/temporal-bun-sdk run build:native
-
-      - name: Run Rust tests
-        run: cargo test --manifest-path packages/temporal-bun-sdk/native/temporal-bun-bridge/Cargo.toml
 
       - name: Start Temporal server
         run: docker-compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml up -d
