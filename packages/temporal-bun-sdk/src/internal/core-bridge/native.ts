@@ -27,10 +27,37 @@ const resolvedBridgeVariant: BridgeVariant = libraryFile.includes('temporal-bun-
 export const bridgeVariant = resolvedBridgeVariant
 export const isZigBridge = resolvedBridgeVariant === 'zig'
 
+const UNKNOWN_NATIVE_ERROR_CODE = 2
+
+export interface NativeBridgeErrorInit {
+  code: number
+  message: string
+  details?: unknown
+  raw?: string
+}
+
 export class NativeBridgeError extends Error {
-  constructor(message: string) {
+  readonly code: number
+  readonly details?: unknown
+  readonly raw: string
+
+  constructor(input: string | NativeBridgeErrorInit) {
+    const payload: NativeBridgeErrorInit =
+      typeof input === 'string'
+        ? { code: UNKNOWN_NATIVE_ERROR_CODE, message: input, raw: input }
+        : {
+            code: input.code ?? UNKNOWN_NATIVE_ERROR_CODE,
+            message: input.message ?? 'Unknown native error',
+            details: input.details,
+            raw: input.raw ?? input.message,
+          }
+    const message = payload.message ?? 'Unknown native error'
     super(message)
     this.name = 'NativeBridgeError'
+    this.code = payload.code
+    this.details = payload.details
+    this.raw = payload.raw ?? message
+    Object.setPrototypeOf(this, new.target.prototype)
   }
 }
 
@@ -142,7 +169,7 @@ export const native = {
     const payload = Buffer.from(JSON.stringify(options), 'utf8')
     const handle = Number(temporal_bun_runtime_new(ptr(payload), payload.byteLength))
     if (!handle) {
-      throw new Error(readLastError())
+      throw buildNativeBridgeError()
     }
     return { type: 'runtime', handle }
   },
@@ -155,7 +182,7 @@ export const native = {
     const payload = Buffer.from(JSON.stringify(config), 'utf8')
     const pendingHandle = Number(temporal_bun_client_connect_async(runtime.handle, ptr(payload), payload.byteLength))
     if (!pendingHandle) {
-      throw new Error(readLastError())
+      throw buildNativeBridgeError()
     }
     try {
       const handle = await waitForClientHandle(pendingHandle)
@@ -175,7 +202,7 @@ export const native = {
       temporal_bun_client_describe_namespace_async(client.handle, ptr(payload), payload.byteLength),
     )
     if (!pendingHandle) {
-      throw new Error(readLastError())
+      throw buildNativeBridgeError()
     }
     try {
       return await waitForByteArray(pendingHandle)
@@ -188,7 +215,7 @@ export const native = {
     const payload = Buffer.from(JSON.stringify(request), 'utf8')
     const arrayPtr = Number(temporal_bun_client_start_workflow(client.handle, ptr(payload), payload.byteLength))
     if (!arrayPtr) {
-      throw new Error(readLastError())
+      throw buildNativeBridgeError()
     }
     return readByteArray(arrayPtr)
   },
@@ -212,7 +239,7 @@ export const native = {
     const payload = Buffer.from(JSON.stringify(headers ?? {}), 'utf8')
     const status = Number(temporal_bun_client_update_headers(client.handle, ptr(payload), payload.byteLength))
     if (status !== 0) {
-      throw new NativeBridgeError(readLastError())
+      throw buildNativeBridgeError()
     }
   },
 
@@ -228,7 +255,7 @@ export const native = {
     const payload = Buffer.from(JSON.stringify(request), 'utf8')
     const pendingHandle = Number(temporal_bun_client_query_workflow(client.handle, ptr(payload), payload.byteLength))
     if (!pendingHandle) {
-      throw new Error(readLastError())
+      throw buildNativeBridgeError()
     }
     try {
       return await waitForByteArray(pendingHandle)
@@ -241,7 +268,7 @@ export const native = {
     const payload = Buffer.from(JSON.stringify(request), 'utf8')
     const status = Number(temporal_bun_client_terminate_workflow(client.handle, ptr(payload), payload.byteLength))
     if (status !== 0) {
-      throw new Error(readLastError())
+      throw buildNativeBridgeError()
     }
   },
 
@@ -257,7 +284,7 @@ export const native = {
     const payload = Buffer.from(JSON.stringify(request), 'utf8')
     const arrayPtr = Number(temporal_bun_client_signal_with_start(client.handle, ptr(payload), payload.byteLength))
     if (!arrayPtr) {
-      throw new Error(readLastError())
+      throw buildNativeBridgeError()
     }
     return readByteArray(arrayPtr)
   },
@@ -384,7 +411,7 @@ async function waitForClientHandle(handle: number): Promise<number> {
         try {
           const pointer = Number(temporal_bun_pending_client_consume(handle))
           if (!pointer) {
-            throw new Error(readLastError())
+            throw buildNativeBridgeError()
           }
           resolve(pointer)
         } catch (error) {
@@ -393,7 +420,7 @@ async function waitForClientHandle(handle: number): Promise<number> {
         return
       }
 
-      reject(new Error(readLastError()))
+      reject(buildNativeBridgeError())
     }
 
     setTimeout(poll, 0)
@@ -413,7 +440,7 @@ async function waitForByteArray(handle: number): Promise<Uint8Array> {
         try {
           const arrayPtr = Number(temporal_bun_pending_byte_array_consume(handle))
           if (!arrayPtr) {
-            throw new Error(readLastError())
+            throw buildNativeBridgeError()
           }
           resolve(readByteArray(arrayPtr))
         } catch (error) {
@@ -423,14 +450,14 @@ async function waitForByteArray(handle: number): Promise<Uint8Array> {
       }
 
       // status === -1 or unexpected
-      reject(new Error(readLastError()))
+      reject(buildNativeBridgeError())
     }
 
     setTimeout(poll, 0)
   })
 }
 
-function readLastError(): string {
+function readLastErrorText(): string {
   const lenBuffer = new BigUint64Array(1)
   const errPtr = Number(temporal_bun_error_message(ptr(lenBuffer)))
   const len = Number(lenBuffer[0])
@@ -443,6 +470,41 @@ function readLastError(): string {
   } finally {
     temporal_bun_error_free(errPtr, len)
   }
+}
+
+function readLastErrorPayload(): NativeBridgeErrorInit {
+  const raw = readLastErrorText()
+  if (!raw) {
+    return {
+      code: UNKNOWN_NATIVE_ERROR_CODE,
+      message: 'Unknown native error',
+      raw,
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as { code?: unknown; message?: unknown; details?: unknown }
+    if (typeof parsed.message === 'string') {
+      return {
+        code: typeof parsed.code === 'number' ? parsed.code : UNKNOWN_NATIVE_ERROR_CODE,
+        message: parsed.message,
+        details: parsed.details,
+        raw,
+      }
+    }
+  } catch {
+    // fall through to default handling when the payload is not valid JSON
+  }
+
+  return {
+    code: UNKNOWN_NATIVE_ERROR_CODE,
+    message: raw,
+    raw,
+  }
+}
+
+function buildNativeBridgeError(): NativeBridgeError {
+  return new NativeBridgeError(readLastErrorPayload())
 }
 
 function buildNotImplementedError(feature: string, docPath: string): Error {

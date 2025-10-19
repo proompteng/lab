@@ -10,19 +10,45 @@ pub const Status = enum(i32) {
 
 const CleanupFn = ?*const fn (?*anyopaque) void;
 
+pub const GrpcStatus = struct {
+    pub const ok: i32 = 0;
+    pub const cancelled: i32 = 1;
+    pub const unknown: i32 = 2;
+    pub const invalid_argument: i32 = 3;
+    pub const not_found: i32 = 5;
+    pub const already_exists: i32 = 6;
+    pub const resource_exhausted: i32 = 8;
+    pub const failed_precondition: i32 = 9;
+    pub const unimplemented: i32 = 12;
+    pub const internal: i32 = 13;
+    pub const unavailable: i32 = 14;
+};
+
+const PendingErrorState = struct {
+    code: i32,
+    message: []const u8,
+    owns_message: bool,
+    active: bool,
+};
+
 pub const PendingHandle = struct {
     status: Status,
     consumed: bool,
     payload: ?*anyopaque,
     cleanup: CleanupFn,
-    error_message: []const u8,
-    owns_message: bool,
+    error: PendingErrorState,
 };
 
 fn allocateHandle(status: Status) ?*PendingHandle {
     const allocator = std.heap.c_allocator;
     const handle = allocator.create(PendingHandle) catch |err| {
-        errors.setLastErrorFmt("temporal-bun-bridge-zig: failed to allocate pending handle: {}", .{err});
+        var scratch: [128]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to allocate pending handle: {}",
+            .{err},
+        ) catch "temporal-bun-bridge-zig: failed to allocate pending handle";
+        errors.setStructuredError(.{ .code = GrpcStatus.resource_exhausted, .message = message });
         return null;
     };
     handle.* = .{
@@ -30,20 +56,24 @@ fn allocateHandle(status: Status) ?*PendingHandle {
         .consumed = false,
         .payload = null,
         .cleanup = null,
-        .error_message = "",
-        .owns_message = false,
+        .error = .{
+            .code = GrpcStatus.unknown,
+            .message = "",
+            .owns_message = false,
+            .active = false,
+        },
     };
     return handle;
 }
 
-fn duplicateMessage(message: []const u8) []const u8 {
+fn duplicateMessage(message: []const u8) ?[]const u8 {
     if (message.len == 0) {
         return "";
     }
 
     const allocator = std.heap.c_allocator;
     const copy = allocator.alloc(u8, message.len) catch {
-        return "";
+        return null;
     };
 
     @memcpy(copy, message);
@@ -69,7 +99,7 @@ fn releasePayload(handle: *PendingHandle) void {
 
 fn destroyHandle(handle: *PendingHandle) void {
     releasePayload(handle);
-    destroyMessage(handle.error_message, handle.owns_message);
+    destroyMessage(handle.error.message, handle.error.owns_message);
     const allocator = std.heap.c_allocator;
     allocator.destroy(handle);
 }
@@ -77,11 +107,37 @@ fn destroyHandle(handle: *PendingHandle) void {
 pub const PendingClient = PendingHandle;
 pub const PendingByteArray = PendingHandle;
 
-pub fn createPendingError(message: []const u8) ?*PendingHandle {
+fn assignError(handle: *PendingHandle, code: i32, message: []const u8, duplicate: bool) void {
+    destroyMessage(handle.error.message, handle.error.owns_message);
+    handle.error.code = code;
+    handle.error.message = "";
+    handle.error.owns_message = false;
+    handle.error.active = true;
+
+    if (message.len == 0) {
+        return;
+    }
+
+    if (duplicate) {
+        if (duplicateMessage(message)) |copy| {
+            handle.error.message = copy;
+            handle.error.owns_message = true;
+            return;
+        }
+        // Fall back to an internal error with a static message if duplication fails.
+        handle.error.code = GrpcStatus.internal;
+        handle.error.message = "temporal-bun-bridge-zig: failed to duplicate error message";
+        handle.error.owns_message = false;
+        return;
+    }
+
+    handle.error.message = message;
+    handle.error.owns_message = false;
+}
+
+pub fn createPendingError(code: i32, message: []const u8) ?*PendingHandle {
     const handle = allocateHandle(.failed) orelse return null;
-    const duplicated = duplicateMessage(message);
-    handle.error_message = duplicated;
-    handle.owns_message = duplicated.len != 0;
+    assignError(handle, code, message, true);
     return handle;
 }
 
@@ -98,7 +154,10 @@ pub fn createPendingInFlight() ?*PendingHandle {
 
 pub fn poll(handle: ?*PendingHandle) i32 {
     if (handle == null) {
-        errors.setLastError("temporal-bun-bridge-zig: pending poll received null handle");
+        errors.setStructuredError(.{
+            .code = GrpcStatus.invalid_argument,
+            .message = "temporal-bun-bridge-zig: pending poll received null handle",
+        });
         return @intFromEnum(Status.failed);
     }
 
@@ -107,13 +166,21 @@ pub fn poll(handle: ?*PendingHandle) i32 {
         .pending => @intFromEnum(Status.pending),
         .ready => blk: {
             if (pending.consumed) {
-                errors.setLastError("temporal-bun-bridge-zig: pending handle already consumed");
+                assignError(pending, GrpcStatus.failed_precondition, "temporal-bun-bridge-zig: pending handle already consumed", false);
+                errors.setStructuredError(.{ .code = pending.error.code, .message = pending.error.message });
                 break :blk @intFromEnum(Status.failed);
             }
             break :blk @intFromEnum(Status.ready);
         },
         .failed => blk: {
-            errors.setLastError(pending.error_message);
+            if (pending.error.active) {
+                errors.setStructuredError(.{ .code = pending.error.code, .message = pending.error.message });
+            } else {
+                errors.setStructuredError(.{
+                    .code = GrpcStatus.internal,
+                    .message = "temporal-bun-bridge-zig: pending handle failed without structured error",
+                });
+            }
             break :blk @intFromEnum(Status.failed);
         },
     };
@@ -121,39 +188,55 @@ pub fn poll(handle: ?*PendingHandle) i32 {
 
 pub fn consume(handle: ?*PendingHandle) ?*anyopaque {
     if (handle == null) {
-        errors.setLastError("temporal-bun-bridge-zig: pending consume received null handle");
+        errors.setStructuredError(.{
+            .code = GrpcStatus.invalid_argument,
+            .message = "temporal-bun-bridge-zig: pending consume received null handle",
+        });
         return null;
     }
 
     const pending = handle.?;
     switch (pending.status) {
         .pending => {
-            errors.setLastError("temporal-bun-bridge-zig: pending handle not ready");
+            errors.setStructuredError(.{
+                .code = GrpcStatus.failed_precondition,
+                .message = "temporal-bun-bridge-zig: pending handle not ready",
+            });
             return null;
         },
         .failed => {
-            errors.setLastError(pending.error_message);
+            if (pending.error.active) {
+                errors.setStructuredError(.{ .code = pending.error.code, .message = pending.error.message });
+            } else {
+                errors.setStructuredError(.{
+                    .code = GrpcStatus.internal,
+                    .message = "temporal-bun-bridge-zig: pending handle failed without structured error",
+                });
+            }
             return null;
         },
         .ready => {},
     }
 
     if (pending.consumed) {
-        errors.setLastError("temporal-bun-bridge-zig: pending handle already consumed");
+        errors.setStructuredError(.{
+            .code = GrpcStatus.failed_precondition,
+            .message = "temporal-bun-bridge-zig: pending handle already consumed",
+        });
         return null;
     }
 
     pending.consumed = true;
     const payload = pending.payload orelse {
-        errors.setLastError("temporal-bun-bridge-zig: pending handle missing payload");
+        assignError(pending, GrpcStatus.internal, "temporal-bun-bridge-zig: pending handle missing payload", false);
+        errors.setStructuredError(.{ .code = pending.error.code, .message = pending.error.message });
         return null;
     };
 
     // Transfer ownership to the caller; prevent free() from double-dropping.
     pending.payload = null;
     pending.status = .failed;
-    pending.error_message = "temporal-bun-bridge-zig: pending handle already consumed";
-    pending.owns_message = false;
+    assignError(pending, GrpcStatus.failed_precondition, "temporal-bun-bridge-zig: pending handle already consumed", false);
     return payload;
 }
 
