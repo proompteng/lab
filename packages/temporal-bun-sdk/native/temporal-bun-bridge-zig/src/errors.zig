@@ -125,6 +125,11 @@ pub fn setStructuredError(payload: StructuredError) void {
     replaceLastError(encoded);
 }
 
+pub fn setStructuredErrorJson(payload: StructuredError) void {
+    setStructuredError(payload);
+    setLastErrorFmt("{{\"code\":{d},\"message\":\"{s}\"}}", .{ payload.code, payload.message });
+}
+
 pub fn setLastErrorFmt(comptime fmt: []const u8, args: anytype) void {
     const allocator = std.heap.c_allocator;
     const formatted = std.fmt.allocPrint(allocator, fmt, args) catch {

@@ -48,7 +48,7 @@ fn allocateHandle(status: Status) ?*PendingHandle {
             "temporal-bun-bridge-zig: failed to allocate pending handle: {}",
             .{err},
         ) catch "temporal-bun-bridge-zig: failed to allocate pending handle";
-        errors.setStructuredError(.{ .code = GrpcStatus.resource_exhausted, .message = message });
+        errors.setStructuredErrorJson(.{ .code = GrpcStatus.resource_exhausted, .message = message, .details = null });
         return null;
     };
     handle.* = .{
@@ -154,9 +154,10 @@ pub fn createPendingInFlight() ?*PendingHandle {
 
 pub fn poll(handle: ?*PendingHandle) i32 {
     if (handle == null) {
-        errors.setStructuredError(.{
+        errors.setStructuredErrorJson(.{
             .code = GrpcStatus.invalid_argument,
             .message = "temporal-bun-bridge-zig: pending poll received null handle",
+            .details = null,
         });
         return @intFromEnum(Status.failed);
     }
@@ -167,18 +168,19 @@ pub fn poll(handle: ?*PendingHandle) i32 {
         .ready => blk: {
             if (pending.consumed) {
                 assignError(pending, GrpcStatus.failed_precondition, "temporal-bun-bridge-zig: pending handle already consumed", false);
-                errors.setStructuredError(.{ .code = pending.fault.code, .message = pending.fault.message });
+                errors.setStructuredErrorJson(.{ .code = pending.fault.code, .message = pending.fault.message, .details = null });
                 break :blk @intFromEnum(Status.failed);
             }
             break :blk @intFromEnum(Status.ready);
         },
         .failed => blk: {
             if (pending.fault.active) {
-                errors.setStructuredError(.{ .code = pending.fault.code, .message = pending.fault.message });
+                errors.setStructuredErrorJson(.{ .code = pending.fault.code, .message = pending.fault.message, .details = null });
             } else {
-                errors.setStructuredError(.{
+                errors.setStructuredErrorJson(.{
                     .code = GrpcStatus.internal,
                     .message = "temporal-bun-bridge-zig: pending handle failed without structured error",
+                    .details = null,
                 });
             }
             break :blk @intFromEnum(Status.failed);
@@ -188,9 +190,10 @@ pub fn poll(handle: ?*PendingHandle) i32 {
 
 pub fn consume(handle: ?*PendingHandle) ?*anyopaque {
     if (handle == null) {
-        errors.setStructuredError(.{
+        errors.setStructuredErrorJson(.{
             .code = GrpcStatus.invalid_argument,
             .message = "temporal-bun-bridge-zig: pending consume received null handle",
+            .details = null,
         });
         return null;
     }
@@ -198,19 +201,21 @@ pub fn consume(handle: ?*PendingHandle) ?*anyopaque {
     const pending = handle.?;
     switch (pending.status) {
         .pending => {
-            errors.setStructuredError(.{
+            errors.setStructuredErrorJson(.{
                 .code = GrpcStatus.failed_precondition,
                 .message = "temporal-bun-bridge-zig: pending handle not ready",
+                .details = null,
             });
             return null;
         },
         .failed => {
             if (pending.fault.active) {
-                errors.setStructuredError(.{ .code = pending.fault.code, .message = pending.fault.message });
+                errors.setStructuredErrorJson(.{ .code = pending.fault.code, .message = pending.fault.message, .details = null });
             } else {
-                errors.setStructuredError(.{
+                errors.setStructuredErrorJson(.{
                     .code = GrpcStatus.internal,
                     .message = "temporal-bun-bridge-zig: pending handle failed without structured error",
+                    .details = null,
                 });
             }
             return null;
@@ -219,9 +224,10 @@ pub fn consume(handle: ?*PendingHandle) ?*anyopaque {
     }
 
     if (pending.consumed) {
-        errors.setStructuredError(.{
+        errors.setStructuredErrorJson(.{
             .code = GrpcStatus.failed_precondition,
             .message = "temporal-bun-bridge-zig: pending handle already consumed",
+            .details = null,
         });
         return null;
     }
@@ -229,7 +235,7 @@ pub fn consume(handle: ?*PendingHandle) ?*anyopaque {
     pending.consumed = true;
     const payload = pending.payload orelse {
         assignError(pending, GrpcStatus.internal, "temporal-bun-bridge-zig: pending handle missing payload", false);
-        errors.setStructuredError(.{ .code = pending.fault.code, .message = pending.fault.message });
+        errors.setStructuredErrorJson(.{ .code = pending.fault.code, .message = pending.fault.message, .details = null });
         return null;
     };
 

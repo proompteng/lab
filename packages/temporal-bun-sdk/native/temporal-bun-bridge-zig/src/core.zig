@@ -44,14 +44,10 @@ extern fn temporal_sdk_core_connect_async(
 extern fn temporal_sdk_core_client_free(handle: ?*ClientOpaque) void;
 extern fn temporal_sdk_core_byte_buffer_destroy(handle: ?*ByteBuf) void;
 
-extern fn temporal_sdk_core_worker_complete_workflow_activation(
-    worker: ?*WorkerOpaque,
-    completion: ByteArrayRef,
-    user_data: ?*anyopaque,
-    callback: WorkerCallback,
-) void;
-
-extern fn temporal_sdk_core_byte_array_free(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArray) void;
+pub const runtime_new = temporal_sdk_core_runtime_new;
+pub const runtime_free = temporal_sdk_core_runtime_free;
+pub const connect_async = temporal_sdk_core_connect_async;
+pub const client_free = temporal_sdk_core_client_free;
 
 pub const api = struct {
     pub const runtime_new = temporal_sdk_core_runtime_new;
@@ -61,15 +57,55 @@ pub const api = struct {
     pub const byte_buffer_destroy = temporal_sdk_core_byte_buffer_destroy;
 };
 
-pub var worker_complete_workflow_activation: WorkerCompleteFn = blk: {
-    if (builtin.is_test) break :blk undefined;
-    break :blk temporal_sdk_core_worker_complete_workflow_activation;
+const fallback_error_slice =
+    "temporal-bun-bridge-zig: temporal core worker completion bridge is not linked"[0..];
+
+const fallback_error_array = ByteArray{
+    .data_ptr = fallback_error_slice.ptr,
+    .len = fallback_error_slice.len,
+    .cap = fallback_error_slice.len,
+    .disable_free = true,
 };
 
-pub var runtime_byte_array_free: RuntimeByteArrayFreeFn = blk: {
-    if (builtin.is_test) break :blk undefined;
-    break :blk temporal_sdk_core_byte_array_free;
-};
+fn fallbackWorkerCompleteWorkflowActivation(
+    worker: ?*WorkerOpaque,
+    completion: ByteArrayRef,
+    user_data: ?*anyopaque,
+    callback: WorkerCallback,
+) callconv(.c) void {
+    _ = worker;
+    _ = completion;
+
+    if (user_data == null) {
+        return;
+    }
+
+    if (@intFromPtr(callback) == 0) {
+        return;
+    }
+
+    callback(user_data, &fallback_error_array);
+}
+
+fn fallbackRuntimeByteArrayFree(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArray) callconv(.c) void {
+    _ = runtime;
+    _ = bytes;
+}
+
+pub var worker_complete_workflow_activation: WorkerCompleteFn =
+    if (builtin.is_test) undefined else fallbackWorkerCompleteWorkflowActivation;
+
+pub var runtime_byte_array_free: RuntimeByteArrayFreeFn =
+    if (builtin.is_test) undefined else fallbackRuntimeByteArrayFree;
+
+pub fn registerTemporalCoreCallbacks(
+    worker_complete: ?WorkerCompleteFn,
+    byte_array_free: ?RuntimeByteArrayFreeFn,
+) void {
+    worker_complete_workflow_activation =
+        worker_complete orelse fallbackWorkerCompleteWorkflowActivation;
+    runtime_byte_array_free = byte_array_free orelse fallbackRuntimeByteArrayFree;
+}
 
 pub fn workerCompleteWorkflowActivation(
     worker: ?*WorkerOpaque,

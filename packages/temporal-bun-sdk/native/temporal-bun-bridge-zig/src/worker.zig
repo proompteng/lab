@@ -124,9 +124,10 @@ fn byteArraySlice(bytes_ptr: ?*const core.ByteArray) []const u8 {
 
 pub fn completeWorkflowTask(handle: ?*WorkerHandle, payload: []const u8) i32 {
     if (handle == null) {
-        errors.setStructuredError(.{
+        errors.setStructuredErrorJson(.{
             .code = grpc.invalid_argument,
             .message = "temporal-bun-bridge-zig: completeWorkflowTask received null worker handle",
+            .details = null,
         });
         return -1;
     }
@@ -134,17 +135,19 @@ pub fn completeWorkflowTask(handle: ?*WorkerHandle, payload: []const u8) i32 {
     const worker_handle = handle.?;
 
     if (worker_handle.core_worker == null) {
-        errors.setStructuredError(.{
+        errors.setStructuredErrorJson(.{
             .code = grpc.failed_precondition,
             .message = "temporal-bun-bridge-zig: worker core handle is not initialized",
+            .details = null,
         });
         return -1;
     }
 
     if (worker_handle.runtime == null) {
-        errors.setStructuredError(.{
+        errors.setStructuredErrorJson(.{
             .code = grpc.failed_precondition,
             .message = "temporal-bun-bridge-zig: worker runtime handle is not initialized",
+            .details = null,
         });
         return -1;
     }
@@ -152,17 +155,19 @@ pub fn completeWorkflowTask(handle: ?*WorkerHandle, payload: []const u8) i32 {
     const runtime_handle = worker_handle.runtime.?;
 
     if (runtime_handle.core_runtime == null) {
-        errors.setStructuredError(.{
+        errors.setStructuredErrorJson(.{
             .code = grpc.failed_precondition,
             .message = "temporal-bun-bridge-zig: worker runtime core handle is not initialized",
+            .details = null,
         });
         return -1;
     }
 
     if (payload.len == 0) {
-        errors.setStructuredError(.{
+        errors.setStructuredErrorJson(.{
             .code = grpc.invalid_argument,
             .message = "temporal-bun-bridge-zig: completeWorkflowTask requires a workflow completion payload",
+            .details = null,
         });
         return -1;
     }
@@ -191,9 +196,10 @@ pub fn completeWorkflowTask(handle: ?*WorkerHandle, payload: []const u8) i32 {
             message
         else
             "temporal-bun-bridge-zig: workflow completion failed with an unknown error";
-        errors.setStructuredError(.{
+        errors.setStructuredErrorJson(.{
             .code = grpc.internal,
             .message = description,
+            .details = null,
         });
 
         core.runtimeByteArrayFree(runtime_handle.core_runtime, fail);
@@ -254,7 +260,7 @@ pub fn finalizeShutdown(_handle: ?*WorkerHandle) i32 {
 
 const testing = std.testing;
 
-if (builtin.is_test) {
+const WorkerTests = struct {
     var fake_runtime_storage: usize = 0;
     var fake_worker_storage: usize = 0;
 
@@ -347,66 +353,66 @@ if (builtin.is_test) {
             .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&fake_worker_storage)),
         };
     }
+};
 
-    test "completeWorkflowTask returns 0 on successful completion" {
-        const original_complete = core.worker_complete_workflow_activation;
-        const original_free = core.runtime_byte_array_free;
-        defer {
-            core.worker_complete_workflow_activation = original_complete;
-            core.runtime_byte_array_free = original_free;
-        }
-
-        core.worker_complete_workflow_activation = stubCompleteSuccess;
-        core.runtime_byte_array_free = stubRuntimeByteArrayFree;
-
-        var rt = fakeRuntimeHandle();
-        var worker_handle = fakeWorkerHandle(&rt);
-
-        resetStubs();
-        errors.setLastError(""[0..0]);
-
-        const payload = "respond-workflow-task";
-        const rc = completeWorkflowTask(&worker_handle, payload);
-
-        try testing.expectEqual(@as(i32, 0), rc);
-        try testing.expectEqualStrings(payload, last_completion_payload);
-        try testing.expectEqual(@as(usize, 1), stub_completion_call_count);
-        try testing.expectEqual(@as(usize, 0), stub_byte_array_free_count);
-        try testing.expectEqualStrings("", errors.snapshot());
+test "completeWorkflowTask returns 0 on successful completion" {
+    const original_complete = core.worker_complete_workflow_activation;
+    const original_free = core.runtime_byte_array_free;
+    defer {
+        core.worker_complete_workflow_activation = original_complete;
+        core.runtime_byte_array_free = original_free;
     }
 
-    test "completeWorkflowTask surfaces core error payload" {
-        const original_complete = core.worker_complete_workflow_activation;
-        const original_free = core.runtime_byte_array_free;
-        defer {
-            core.worker_complete_workflow_activation = original_complete;
-            core.runtime_byte_array_free = original_free;
-        }
+    core.worker_complete_workflow_activation = WorkerTests.stubCompleteSuccess;
+    core.runtime_byte_array_free = WorkerTests.stubRuntimeByteArrayFree;
 
-        core.worker_complete_workflow_activation = stubCompleteFailure;
-        core.runtime_byte_array_free = stubRuntimeByteArrayFree;
+    var rt = WorkerTests.fakeRuntimeHandle();
+    var worker_handle = WorkerTests.fakeWorkerHandle(&rt);
 
-        var rt = fakeRuntimeHandle();
-        var worker_handle = fakeWorkerHandle(&rt);
+    WorkerTests.resetStubs();
+    errors.setLastError(""[0..0]);
 
-        resetStubs();
-        errors.setLastError(""[0..0]);
+    const payload = "respond-workflow-task";
+    const rc = completeWorkflowTask(&worker_handle, payload);
 
-        stub_fail_message = "Workflow completion failure: MalformedWorkflowCompletion";
+    try testing.expectEqual(@as(i32, 0), rc);
+    try testing.expectEqualStrings(payload, WorkerTests.last_completion_payload);
+    try testing.expectEqual(@as(usize, 1), WorkerTests.stub_completion_call_count);
+    try testing.expectEqual(@as(usize, 0), WorkerTests.stub_byte_array_free_count);
+    try testing.expectEqualStrings("", errors.snapshot());
+}
 
-        const payload = "fail-workflow-task";
-        const rc = completeWorkflowTask(&worker_handle, payload);
+test "completeWorkflowTask surfaces core error payload" {
+    const original_complete = core.worker_complete_workflow_activation;
+    const original_free = core.runtime_byte_array_free;
+    defer {
+        core.worker_complete_workflow_activation = original_complete;
+        core.runtime_byte_array_free = original_free;
+    }
 
-        try testing.expectEqual(@as(i32, -1), rc);
-        try testing.expectEqualStrings(payload, last_completion_payload);
-        try testing.expectEqual(@as(usize, 1), stub_completion_call_count);
-        try testing.expectEqual(@as(usize, 1), stub_byte_array_free_count);
-        const expected_json = "{\"code\":13,\"message\":\"Workflow completion failure: MalformedWorkflowCompletion\"}";
-        try testing.expectEqualStrings(expected_json, errors.snapshot());
-        try testing.expectEqual(@as(?*core.RuntimeOpaque, @ptrCast(&fake_runtime_storage)), last_runtime_byte_array_free_runtime);
-        try testing.expect(last_runtime_byte_array_free_ptr != null);
-        if (last_runtime_byte_array_free_ptr) |ptr| {
-            try testing.expectEqual(@as(usize, stub_fail_message.len), ptr.len);
-        }
+    core.worker_complete_workflow_activation = WorkerTests.stubCompleteFailure;
+    core.runtime_byte_array_free = WorkerTests.stubRuntimeByteArrayFree;
+
+    var rt = WorkerTests.fakeRuntimeHandle();
+    var worker_handle = WorkerTests.fakeWorkerHandle(&rt);
+
+    WorkerTests.resetStubs();
+    errors.setLastError(""[0..0]);
+
+    WorkerTests.stub_fail_message = "Workflow completion failure: MalformedWorkflowCompletion";
+
+    const payload = "fail-workflow-task";
+    const rc = completeWorkflowTask(&worker_handle, payload);
+
+    try testing.expectEqual(@as(i32, -1), rc);
+    try testing.expectEqualStrings(payload, WorkerTests.last_completion_payload);
+    try testing.expectEqual(@as(usize, 1), WorkerTests.stub_completion_call_count);
+    try testing.expectEqual(@as(usize, 1), WorkerTests.stub_byte_array_free_count);
+    const expected_json = "{\"code\":13,\"message\":\"Workflow completion failure: MalformedWorkflowCompletion\"}";
+    try testing.expectEqualStrings(expected_json, errors.snapshot());
+    try testing.expectEqual(@as(?*core.RuntimeOpaque, @ptrCast(&WorkerTests.fake_runtime_storage)), WorkerTests.last_runtime_byte_array_free_runtime);
+    try testing.expect(WorkerTests.last_runtime_byte_array_free_ptr != null);
+    if (WorkerTests.last_runtime_byte_array_free_ptr) |ptr| {
+        try testing.expectEqual(@as(usize, WorkerTests.stub_fail_message.len), ptr.len);
     }
 }
