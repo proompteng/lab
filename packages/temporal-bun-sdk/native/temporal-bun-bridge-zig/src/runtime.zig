@@ -558,28 +558,35 @@ pub fn updateTelemetry(handle: ?*RuntimeHandle, options_json: []const u8) i32 {
     };
     defer parse_result.deinit();
 
-    var new_snapshot: []u8 = empty_slice;
-    if (options_json.len > 0) {
-        const copy = allocator.alloc(u8, options_json.len) catch {
-            errors.setLastError("temporal-bun-bridge-zig: failed to allocate telemetry snapshot");
-            return -1;
-        };
-        @memcpy(copy, options_json);
-        new_snapshot = copy;
+    if (runtime.core_runtime) |core_runtime| {
+        var new_snapshot: []u8 = empty_slice;
+        if (options_json.len > 0) {
+            const copy = allocator.alloc(u8, options_json.len) catch {
+                errors.setLastError("temporal-bun-bridge-zig: failed to allocate telemetry snapshot");
+                return -1;
+            };
+            @memcpy(copy, options_json);
+            new_snapshot = copy;
+        }
+
+        if (runtime.telemetry_snapshot.len > 0) {
+            allocator.free(runtime.telemetry_snapshot);
+        }
+
+        freeTelemetryState(&runtime.telemetry_state);
+
+        runtime.telemetry_snapshot = new_snapshot;
+        runtime.telemetry_state = parse_result.state;
+        parse_result.state = .none;
+
+        // TODO(codex, zig-rt-03): Invoke Temporal core telemetry bridge once the core runtime wiring lands.
+        _ = core_runtime; // suppress unused pointer until zig-rt-03 is implemented.
+
+        return 0;
     }
-
-    if (runtime.telemetry_snapshot.len > 0) {
-        allocator.free(runtime.telemetry_snapshot);
-    }
-
-    freeTelemetryState(&runtime.telemetry_state);
-
-    runtime.telemetry_snapshot = new_snapshot;
-    runtime.telemetry_state = parse_result.state;
-    parse_result.state = .none;
 
     // The Zig bridge does not yet embed the Temporal core runtime. Surface an explicit error so callers
-    // do not treat telemetry updates as successful until zig-rt-01 wires the C-ABI.
+    // do not treat telemetry updates as successful until zig-rt-03 wires the C-ABI.
     errors.setLastError("temporal-bun-bridge-zig: runtime telemetry requires Temporal core runtime");
     return -1;
 }
