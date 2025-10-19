@@ -21,6 +21,29 @@ export interface NativeClient {
 
 type BridgeVariant = 'zig' | 'rust'
 
+export interface ByteArrayTelemetrySnapshot {
+  readonly totalAllocations: number
+  readonly currentAllocations: number
+  readonly totalBytes: number
+  readonly currentBytes: number
+  readonly allocationFailures: number
+  readonly maxAllocationSize: number
+}
+
+export interface ByteArrayTelemetryMetrics {
+  readonly counters: Record<string, number>
+  readonly gauges: Record<string, number>
+  readonly histograms: Record<string, readonly number[]>
+}
+
+export interface ByteArrayTelemetry {
+  readonly supported: boolean
+  snapshot(): ByteArrayTelemetrySnapshot
+  reset(): ByteArrayTelemetrySnapshot
+  metrics(): ByteArrayTelemetryMetrics
+  subscribe(listener: (snapshot: ByteArrayTelemetrySnapshot) => void): () => void
+}
+
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolvePackageRoot()
 const distNativeDir = join(packageRoot, 'dist', 'native')
@@ -80,8 +103,9 @@ interface BridgeLoadErrorContext {
   override: boolean
 }
 
+type SymbolConfig = Record<string, { readonly args: readonly FFIType[]; readonly returns: FFIType }>
+
 function loadBridgeLibrary(): BridgeLibraryLoadResult {
-  const symbolMap = buildBridgeSymbolMap()
   const override = process.env.TEMPORAL_BUN_SDK_NATIVE_PATH
   if (override) {
     if (!existsSync(override)) {
@@ -90,7 +114,7 @@ function loadBridgeLibrary(): BridgeLibraryLoadResult {
     const variant = detectBridgeVariantFromPath(override)
     try {
       return {
-        module: dlopen(override, symbolMap),
+        module: dlopen(override, buildBridgeSymbolMap(variant)),
         path: override,
         variant,
       }
@@ -127,6 +151,8 @@ function loadBridgeLibrary(): BridgeLibraryLoadResult {
       throw error instanceof Error ? error : new Error(String(error))
     }
 
+    const symbolMap = buildBridgeSymbolMap(candidate.variant)
+
     try {
       return {
         module: dlopen(candidatePath, symbolMap),
@@ -162,8 +188,8 @@ function loadBridgeLibrary(): BridgeLibraryLoadResult {
   throw new NativeBridgeError('No Temporal Bun bridge candidates were resolved.')
 }
 
-function buildBridgeSymbolMap() {
-  return {
+function buildBridgeSymbolMap(variant: BridgeVariant): SymbolConfig {
+  const map: SymbolConfig = {
     temporal_bun_runtime_new: {
       args: [FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.ptr,
@@ -245,6 +271,19 @@ function buildBridgeSymbolMap() {
       returns: FFIType.ptr,
     },
   }
+
+  if (variant === 'zig') {
+    map.temporal_bun_byte_array_metrics_snapshot = {
+      args: [FFIType.ptr],
+      returns: FFIType.void,
+    }
+    map.temporal_bun_byte_array_metrics_reset = {
+      args: [],
+      returns: FFIType.void,
+    }
+  }
+
+  return map
 }
 
 function detectBridgeVariantFromPath(candidate: string): BridgeVariant {
@@ -304,11 +343,99 @@ const {
     temporal_bun_client_signal,
     temporal_bun_client_signal_with_start,
     temporal_bun_client_query_workflow,
+    temporal_bun_byte_array_metrics_snapshot,
+    temporal_bun_byte_array_metrics_reset,
   },
 } = nativeModule
 
+const BYTE_ARRAY_METRICS_WORDS = 6
+const BYTE_ARRAY_METRICS_SIZE = BYTE_ARRAY_METRICS_WORDS * 8
+
+const ZERO_BYTE_ARRAY_TELEMETRY: ByteArrayTelemetrySnapshot = {
+  totalAllocations: 0,
+  currentAllocations: 0,
+  totalBytes: 0,
+  currentBytes: 0,
+  allocationFailures: 0,
+  maxAllocationSize: 0,
+}
+
+const byteArrayMetricsBuffer = Buffer.alloc(BYTE_ARRAY_METRICS_SIZE)
+const byteArrayTelemetryListeners = new Set<(snapshot: ByteArrayTelemetrySnapshot) => void>()
+
+function readByteArrayTelemetrySnapshot(): ByteArrayTelemetrySnapshot {
+  if (!temporal_bun_byte_array_metrics_snapshot) {
+    return ZERO_BYTE_ARRAY_TELEMETRY
+  }
+
+  byteArrayMetricsBuffer.fill(0)
+  temporal_bun_byte_array_metrics_snapshot(ptr(byteArrayMetricsBuffer))
+  const view = new BigUint64Array(
+    byteArrayMetricsBuffer.buffer,
+    byteArrayMetricsBuffer.byteOffset,
+    BYTE_ARRAY_METRICS_WORDS,
+  )
+
+  return {
+    totalAllocations: Number(view[0]),
+    currentAllocations: Number(view[1]),
+    totalBytes: Number(view[2]),
+    currentBytes: Number(view[3]),
+    allocationFailures: Number(view[4]),
+    maxAllocationSize: Number(view[5]),
+  }
+}
+
+function dispatchByteArrayTelemetrySnapshot(): ByteArrayTelemetrySnapshot {
+  const snapshot = readByteArrayTelemetrySnapshot()
+  for (const listener of byteArrayTelemetryListeners) {
+    try {
+      listener(snapshot)
+    } catch (error) {
+      console.error('temporal-bun-bridge byte array telemetry listener failed', error)
+    }
+  }
+  return snapshot
+}
+
+function buildByteArrayTelemetryMetrics(snapshot: ByteArrayTelemetrySnapshot): ByteArrayTelemetryMetrics {
+  return {
+    counters: {
+      'temporal.byte_array.allocations.total': snapshot.totalAllocations,
+      'temporal.byte_array.bytes.total': snapshot.totalBytes,
+      'temporal.byte_array.failures.total': snapshot.allocationFailures,
+    },
+    gauges: {
+      'temporal.byte_array.allocations.current': snapshot.currentAllocations,
+      'temporal.byte_array.bytes.current': snapshot.currentBytes,
+    },
+    histograms: {
+      'temporal.byte_array.max_allocation.bytes': [snapshot.maxAllocationSize],
+    },
+  }
+}
+
+const byteArrayTelemetry: ByteArrayTelemetry = {
+  supported: Boolean(temporal_bun_byte_array_metrics_snapshot),
+  snapshot: dispatchByteArrayTelemetrySnapshot,
+  reset(): ByteArrayTelemetrySnapshot {
+    temporal_bun_byte_array_metrics_reset?.()
+    return dispatchByteArrayTelemetrySnapshot()
+  },
+  metrics(): ByteArrayTelemetryMetrics {
+    return buildByteArrayTelemetryMetrics(readByteArrayTelemetrySnapshot())
+  },
+  subscribe(listener: (snapshot: ByteArrayTelemetrySnapshot) => void): () => void {
+    byteArrayTelemetryListeners.add(listener)
+    return () => {
+      byteArrayTelemetryListeners.delete(listener)
+    }
+  },
+}
+
 export const native = {
   bridgeVariant: resolvedBridgeVariant,
+  byteArrayTelemetry,
 
   createRuntime(options: Record<string, unknown> = {}): Runtime {
     const payload = Buffer.from(JSON.stringify(options), 'utf8')
