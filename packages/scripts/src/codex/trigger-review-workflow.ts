@@ -71,6 +71,7 @@ interface PullRequestPayload {
   headRefOid: string
   baseRefName: string
   isDraft?: boolean
+  mergeStateStatus?: string | null
 }
 
 export interface ReviewThreadSummary {
@@ -90,6 +91,7 @@ export interface ReviewContextSummary {
   summary?: string
   reviewThreads: ReviewThreadSummary[]
   failingChecks: ReviewCheckSummary[]
+  additionalNotes: string[]
 }
 
 const textDecoder = new TextDecoder()
@@ -119,8 +121,10 @@ const summarizeText = (value: string | null | undefined, maxLength = 200) => {
 export const buildReviewContext = (
   threads: GraphqlReviewThreadNode[],
   checks: CheckRunPayload[],
+  mergeStateStatus?: string | null,
 ): ReviewContextSummary => {
   const unresolvedThreads: ReviewThreadSummary[] = []
+  const additionalNotes: string[] = []
 
   for (const thread of threads ?? []) {
     if (thread?.isResolved) {
@@ -172,10 +176,20 @@ export const buildReviewContext = (
     summaryParts.push(`${failingChecks.length} failing check${failingChecks.length === 1 ? '' : 's'}`)
   }
 
+  const normalizedMergeState = mergeStateStatus ? mergeStateStatus.trim().toUpperCase() : undefined
+  if (normalizedMergeState && !['CLEAN', 'UNSTABLE', 'UNKNOWN'].includes(normalizedMergeState)) {
+    additionalNotes.push(`GitHub reports mergeStateStatus=${normalizedMergeState}.`)
+    if (normalizedMergeState === 'DIRTY') {
+      summaryParts.push('merge conflicts detected')
+      additionalNotes.push('Resolve merge conflicts with the base branch before retrying.')
+    }
+  }
+
   return {
     summary: summaryParts.length > 0 ? `Outstanding items: ${summaryParts.join(', ')}.` : undefined,
     reviewThreads: unresolvedThreads,
     failingChecks,
+    additionalNotes,
   }
 }
 
@@ -187,7 +201,7 @@ const fetchPullRequest = (repository: string, prNumber: number): PullRequestPayl
     '--repo',
     repository,
     '--json',
-    'number,title,body,url,headRefName,headRefOid,baseRefName,isDraft',
+    'number,title,body,url,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus',
   ]) as PullRequestPayload
 
   if (!payload?.headRefName || !payload?.headRefOid || !payload?.baseRefName) {
@@ -259,6 +273,7 @@ const buildEventBody = (repository: string, pr: PullRequestPayload, context: Rev
     summary: context.summary,
     reviewThreads: context.reviewThreads,
     failingChecks: context.failingChecks,
+    additionalNotes: context.additionalNotes,
   },
 })
 
@@ -355,9 +370,13 @@ const main = async () => {
   const reviewThreads = fetchReviewThreads(owner, repo, prNumber)
   const checkRuns = fetchCheckRuns(options.repo, pr.headRefOid)
 
-  const context = buildReviewContext(reviewThreads, checkRuns)
+  const context = buildReviewContext(reviewThreads, checkRuns, pr.mergeStateStatus)
 
-  if (context.reviewThreads.length === 0 && context.failingChecks.length === 0) {
+  if (
+    context.reviewThreads.length === 0 &&
+    context.failingChecks.length === 0 &&
+    context.additionalNotes.length === 0
+  ) {
     console.log('No unresolved review threads or failing checks detected. Skipping Argo submission.')
     return
   }

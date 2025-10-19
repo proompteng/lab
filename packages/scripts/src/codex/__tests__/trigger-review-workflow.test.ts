@@ -73,6 +73,7 @@ describe('buildReviewContext', () => {
     })
 
     expect(context.summary).toBe('Outstanding items: 1 unresolved review thread, 1 failing check.')
+    expect(context.additionalNotes).toEqual([])
   })
 
   it('omits summary when no outstanding items', () => {
@@ -95,6 +96,14 @@ describe('buildReviewContext', () => {
     expect(context.reviewThreads).toHaveLength(0)
     expect(context.failingChecks).toHaveLength(0)
     expect(context.summary).toBeUndefined()
+    expect(context.additionalNotes).toEqual([])
+  })
+
+  it('treats merge conflicts as outstanding work', () => {
+    const context = buildReviewContext([] as never, [] as never, 'DIRTY')
+    expect(context.summary).toBe('Outstanding items: merge conflicts detected.')
+    expect(context.additionalNotes).toContain('GitHub reports mergeStateStatus=DIRTY.')
+    expect(context.additionalNotes).toContain('Resolve merge conflicts with the base branch before retrying.')
   })
 })
 
@@ -116,6 +125,7 @@ describe('buildEventBody', () => {
           url: 'https://example.test/job/123',
         },
       ],
+      additionalNotes: [],
     }
 
     const eventBody = buildEventBody(

@@ -12,6 +12,7 @@ interface ParsedArgs {
   stage?: string
   repository?: string
   issue?: string
+  url?: string
   title?: string
   runId?: string
   dryRun: boolean
@@ -28,6 +29,7 @@ Options:
   --stage <name>        Stage identifier (e.g. plan, implementation).
   --repo <owner/name>   GitHub repository slug.
   --issue <number>      GitHub issue number.
+  --url <uri>           Direct link to the issue or pull request.
   --title <text>        Optional display title for the run.
   --run-id <id>         Additional identifier appended to the channel name.
   --timestamp <iso>     ISO timestamp used for deterministic naming.
@@ -65,6 +67,9 @@ const parseArgs = (argv: string[]): ParsedArgs => {
         break
       case '--issue':
         options.issue = requireValue('--issue')
+        break
+      case '--url':
+        options.url = requireValue('--url')
         break
       case '--title':
         options.title = requireValue('--title')
@@ -141,6 +146,7 @@ const main = async () => {
     title: options.title,
     createdAt,
     summary: options.summary,
+    issueUrl: options.url,
   }
 
   const echo = (line: string) => console.error(line)

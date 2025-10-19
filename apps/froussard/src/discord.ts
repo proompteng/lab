@@ -43,6 +43,7 @@ export interface DiscordConfig {
 export interface RelayMetadata {
   repository?: string
   issueNumber?: string | number
+  issueUrl?: string
   stage?: string
   runId?: string
   title?: string
@@ -187,15 +188,60 @@ export const buildChannelName = (metadata: RelayMetadata): string => {
 }
 
 const buildInitialMessage = (metadata: RelayMetadata, relay: RelayBootstrapResult) => {
-  const lines = [
-    `**Codex Relay Started**`,
-    metadata.title ? `**Title:** ${metadata.title}` : null,
-    metadata.repository ? `**Repository:** ${metadata.repository}` : null,
-    metadata.issueNumber !== undefined ? `**Issue:** #${metadata.issueNumber}` : null,
-    metadata.stage ? `**Stage:** ${metadata.stage}` : null,
-    `**Channel:** #${relay.channelName}`,
-    `**Started:** ${new Date(metadata.createdAt ?? Date.now()).toISOString()}`,
-  ].filter(Boolean) as string[]
+  const lines: string[] = [`**Codex Relay Started**`]
+
+  if (metadata.title) {
+    lines.push(`**Title:** ${metadata.title}`)
+  }
+
+  let repositoryInfo: { display: string; url: string } | undefined
+  const repoValue = metadata.repository?.trim()
+  if (repoValue) {
+    const hasProtocol = /^https?:\/\//i.test(repoValue)
+    const normalizedUrl = (hasProtocol ? repoValue : `https://github.com/${repoValue}`).replace(/\/$/, '')
+    const display = normalizedUrl.replace(/^https?:\/\/github\.com\//i, '') || repoValue
+    repositoryInfo = { display, url: normalizedUrl }
+    lines.push(`**Repository:** [${display}](${normalizedUrl})`)
+  }
+
+  const stageLabel = metadata.stage?.trim() ?? ''
+  const isReviewStage = stageLabel.toLowerCase() === 'review'
+  const itemLabel = isReviewStage ? 'Pull Request' : 'Issue'
+
+  const normalizedIssueNumber =
+    metadata.issueNumber !== undefined ? String(metadata.issueNumber).replace(/^#/, '').trim() : undefined
+  let issueUrl = metadata.issueUrl?.trim()
+  if (!issueUrl && normalizedIssueNumber && repositoryInfo) {
+    const path = isReviewStage ? 'pull' : 'issues'
+    issueUrl = `${repositoryInfo.url}/${path}/${normalizedIssueNumber}`
+  }
+  if (normalizedIssueNumber) {
+    const issueLabel = `#${normalizedIssueNumber}`
+    if (issueUrl) {
+      lines.push(`**${itemLabel}:** [${issueLabel}](${issueUrl})`)
+    } else {
+      lines.push(`**${itemLabel}:** ${issueLabel}`)
+    }
+  } else if (issueUrl) {
+    lines.push(`**${itemLabel}:** ${issueUrl}`)
+  }
+
+  if (stageLabel) {
+    lines.push(`**Stage:** ${stageLabel}`)
+  }
+
+  const channelLine = relay.url
+    ? `**Channel:** [#${relay.channelName}](${relay.url})`
+    : `**Channel:** #${relay.channelName}`
+  lines.push(channelLine)
+
+  const startedAtSource =
+    metadata.createdAt instanceof Date
+      ? metadata.createdAt
+      : metadata.createdAt
+        ? new Date(metadata.createdAt)
+        : new Date()
+  lines.push(`**Started:** ${startedAtSource.toISOString()}`)
 
   const summary = metadata.summary?.replace(/\s+/g, ' ').trim()
   if (summary) {

@@ -25,7 +25,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22.19.0
+          node-version: 22.20.0
           cache: pnpm
 
       - name: Install dependencies
@@ -34,5 +34,10 @@ jobs:
       - name: Run Biome check
         run: pnpm exec biome check apps/froussard
 
-      - name: Run froussard tests
-        run: pnpm --filter froussard run test
+      - name: Run froussard tests with coverage
+        run: pnpm --filter froussard exec vitest run --coverage
+
+      - name: Summarize coverage
+        env:
+          COVERAGE_SUMMARY_PATH: apps/froussard/coverage/coverage-summary.json
+        run: node scripts/report-coverage.mjs

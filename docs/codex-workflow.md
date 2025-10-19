@@ -161,3 +161,5 @@ Both lint scripts are what CI uses, so matching their output locally keeps Argo 
 - **No plan comment**: verify the webhook secret/names.
 - **Workflows not triggered**: check the `github-codex` sensor/eventsource pods.
 - **Draft PR missing**: confirm the GitHub token has `repo` scope and the workflow pod can push.
+- **Merge conflicts**: Codex now treats GitHub’s `mergeable_state=dirty` as outstanding work, so review runs fire even when threads/checks are clean. Resolve conflicts (or rebase) before retrying to avoid endless review loops.
+- **Ready-to-merge signal**: Once the Codex branch is clean and mergeable, Froussard automatically posts `@codex review`, flips the PR out of draft, and follows up with a “ready to merge” comment so humans know automation has finished.

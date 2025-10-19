@@ -1,10 +1,10 @@
 import { Readable } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const delayMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
+const delayMock = vi.fn(() => Promise.resolve())
 
 vi.mock('node:timers/promises', () => ({
-  setTimeout: delayMock,
+  setTimeout: (...args: Parameters<typeof delayMock>) => delayMock(...args),
 }))
 
 import * as discord from './discord'
@@ -12,6 +12,10 @@ import * as discord from './discord'
 const { buildChannelName, chunkContent, consumeChunks, DISCORD_MESSAGE_LIMIT } = discord
 
 const originalFetch = global.fetch
+
+beforeEach(() => {
+  delayMock.mockClear()
+})
 
 describe('buildChannelName', () => {
   it('creates a stable channel name using repo slug, issue, stage, timestamp, and run id', () => {
@@ -193,6 +197,7 @@ describe('bootstrapRelay', () => {
     const metadata = {
       repository: 'owner/repo',
       issueNumber: 17,
+      issueUrl: 'https://github.com/owner/repo/issues/17',
       stage: 'planning',
       runId: 'sample',
       createdAt: new Date('2025-10-11T00:00:00Z'),
@@ -207,6 +212,8 @@ describe('bootstrapRelay', () => {
     expect(result.channelId).toBe('dry-run')
     expect(logs[0]).toContain('[dry-run] Would create channel')
     expect(logs[1]).toContain('**Codex Relay Started**')
+    expect(logs[1]).toContain('[owner/repo](https://github.com/owner/repo)')
+    expect(logs[1]).toContain('[#17](https://github.com/owner/repo/issues/17)')
   })
 
   it('creates a channel and posts the initial message', async () => {
@@ -235,6 +242,7 @@ describe('bootstrapRelay', () => {
     const metadata = {
       repository: 'owner/repo',
       issueNumber: 7,
+      issueUrl: 'https://github.com/owner/repo/issues/7',
       stage: 'planning',
       createdAt: new Date('2025-10-01T00:00:00Z'),
     }
@@ -257,6 +265,12 @@ describe('bootstrapRelay', () => {
       'https://discord.com/api/v10/channels/channel-123/messages',
       expect.objectContaining({ method: 'POST' }),
     )
+    const messageRequest = fetchMock.mock.calls[2]?.[1] as RequestInit
+    const messageBodyRaw = (messageRequest?.body as string) ?? '{}'
+    const postMessageBody = JSON.parse(messageBodyRaw) as { content?: string }
+    expect(postMessageBody.content).toContain('[owner/repo](https://github.com/owner/repo)')
+    expect(postMessageBody.content).toContain('[#7](https://github.com/owner/repo/issues/7)')
+    expect(postMessageBody.content).toContain('https://discord.com/channels/guild/channel-123')
   })
 
   it('echoes the newly created category name when a fresh category is required', async () => {
