@@ -3,7 +3,6 @@ const std = @import("std");
 // This module will host the C-ABI imports for the Temporal Rust SDK once the headers are generated.
 // TODO(codex, zig-core-01): Generate headers via cbindgen and replace these extern placeholders.
 // See packages/temporal-bun-sdk/docs/ffi-surface.md and docs/zig-bridge-migration-plan.md.
-
 const builtin = @import("builtin");
 
 pub const RuntimeOpaque = opaque {};
@@ -36,6 +35,11 @@ pub const RuntimeByteArrayFreeFn = *const fn (?*RuntimeOpaque, ?*const ByteArray
 
 extern fn temporal_sdk_core_runtime_new(options_json: ?[*]const u8, len: usize) ?*RuntimeOpaque;
 extern fn temporal_sdk_core_runtime_free(handle: ?*RuntimeOpaque) void;
+extern fn temporal_sdk_core_runtime_update_telemetry(
+    runtime: ?*RuntimeOpaque,
+    options_json: ?[*]const u8,
+    len: usize,
+) i32;
 
 extern fn temporal_sdk_core_connect_async(
     runtime: ?*RuntimeOpaque,
@@ -51,9 +55,24 @@ pub const runtime_free = temporal_sdk_core_runtime_free;
 pub const connect_async = temporal_sdk_core_connect_async;
 pub const client_free = temporal_sdk_core_client_free;
 
+fn runtimeUpdateTelemetryStub(
+    _runtime: ?*RuntimeOpaque,
+    _options_json: ?[*]const u8,
+    _len: usize,
+) callconv(.c) i32 {
+    _ = _runtime;
+    _ = _options_json;
+    _ = _len;
+    return 0;
+}
+
 pub const api = struct {
     pub const runtime_new = temporal_sdk_core_runtime_new;
     pub const runtime_free = temporal_sdk_core_runtime_free;
+    pub const runtime_update_telemetry = if (builtin.is_test)
+        runtimeUpdateTelemetryStub
+    else
+        temporal_sdk_core_runtime_update_telemetry;
     pub const connect_async = temporal_sdk_core_connect_async;
     pub const client_free = temporal_sdk_core_client_free;
     pub const byte_buffer_destroy = temporal_sdk_core_byte_buffer_destroy;

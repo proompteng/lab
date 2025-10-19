@@ -4,12 +4,15 @@ import process from 'node:process'
 import { bridgeVariant, native } from '../src/internal/core-bridge/native.ts'
 import { isTemporalServerAvailable, parseTemporalAddress } from './helpers/temporal-server'
 
-const usingZigBridge = bridgeVariant === 'zig'
+const zigPreferenceFlag = process.env.TEMPORAL_BUN_SDK_USE_ZIG ?? ''
+const prefersZigBridge = /^(1|true|on)$/i.test(zigPreferenceFlag)
+const isZigBridgeActive = bridgeVariant === 'zig'
+const skipLiveTemporalSuite = isZigBridgeActive || prefersZigBridge
 const temporalAddress = process.env.TEMPORAL_TEST_SERVER_ADDRESS ?? 'http://127.0.0.1:7233'
 const shouldRun = process.env.TEMPORAL_TEST_SERVER === '1'
 const serverAvailable = shouldRun ? await isTemporalServerAvailable(temporalAddress) : false
 
-if (usingZigBridge) {
+if (skipLiveTemporalSuite) {
   console.warn(
     'Skipping native bridge integration tests: Zig bridge scaffold does not yet implement live Temporal RPCs',
   )
@@ -17,7 +20,7 @@ if (usingZigBridge) {
   console.warn(`Skipping native bridge integration tests: Temporal server unavailable at ${temporalAddress}`)
 }
 
-const suite = shouldRun && serverAvailable && !usingZigBridge ? describe : describe.skip // TODO(codex, zig-cl-02): enable once Zig bridge wires live Temporal RPCs
+const suite = shouldRun && serverAvailable && !skipLiveTemporalSuite ? describe : describe.skip // TODO(codex, zig-cl-02): enable once Zig bridge wires live Temporal RPCs
 const workerAddress = (() => {
   const { host, port } = parseTemporalAddress(temporalAddress)
   return `${host}:${port}`

@@ -14,6 +14,13 @@ void temporal_bun_runtime_free(void *handle) {
   (void)handle;
 }
 
+int32_t temporal_bun_runtime_update_telemetry(void *runtime, void *payload, uint64_t len) {
+  (void)runtime;
+  (void)payload;
+  (void)len;
+  return 0;
+}
+
 const char *temporal_bun_error_message(uint64_t *len_out) {
   if (len_out) {
     *len_out = (uint64_t)strlen(kNoError);
