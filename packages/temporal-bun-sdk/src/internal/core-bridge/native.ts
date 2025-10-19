@@ -258,10 +258,6 @@ function buildBridgeSymbolMap(variant: BridgeVariant): SymbolConfig {
       args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.int32_t,
     },
-    temporal_bun_client_signal: {
-      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
-      returns: FFIType.ptr,
-    },
     temporal_bun_client_signal_with_start: {
       args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.ptr,
@@ -273,6 +269,14 @@ function buildBridgeSymbolMap(variant: BridgeVariant): SymbolConfig {
   }
 
   if (variant === 'zig') {
+    map.temporal_bun_client_signal = {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.ptr,
+    }
+    map.temporal_bun_client_cancel_workflow = {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.ptr,
+    }
     map.temporal_bun_byte_array_metrics_snapshot = {
       args: [FFIType.ptr],
       returns: FFIType.void,
@@ -343,6 +347,7 @@ const {
     temporal_bun_client_signal,
     temporal_bun_client_signal_with_start,
     temporal_bun_client_query_workflow,
+    temporal_bun_client_cancel_workflow,
     temporal_bun_byte_array_metrics_snapshot,
     temporal_bun_byte_array_metrics_reset,
   },
@@ -516,10 +521,14 @@ export const native = {
   },
 
   async signalWorkflow(client: NativeClient, request: Record<string, unknown>): Promise<void> {
+    if (!temporal_bun_client_signal) {
+      return Promise.reject(buildNotImplementedError('Workflow signal bridge', 'docs/ffi-surface.md'))
+    }
+
     const payload = Buffer.from(JSON.stringify(request), 'utf8')
     const pendingHandle = Number(temporal_bun_client_signal(client.handle, ptr(payload), payload.byteLength))
     if (!pendingHandle) {
-      throw buildNativeBridgeError()
+      throw new Error(readLastError())
     }
     try {
       await waitForByteArray(pendingHandle)
@@ -549,12 +558,21 @@ export const native = {
     }
   },
 
-  async cancelWorkflow(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
-    void client
-    void _request
-    // TODO(codex): Route cancellations through `temporal_bun_client_cancel_workflow` when the FFI export
-    // exists (docs/ffi-surface.md).
-    return Promise.reject(buildNotImplementedError('Workflow cancel bridge', 'docs/ffi-surface.md'))
+  async cancelWorkflow(client: NativeClient, request: Record<string, unknown>): Promise<void> {
+    if (!temporal_bun_client_cancel_workflow) {
+      return Promise.reject(buildNotImplementedError('Workflow cancel bridge', 'docs/ffi-surface.md'))
+    }
+
+    const payload = Buffer.from(JSON.stringify(request), 'utf8')
+    const pendingHandle = Number(temporal_bun_client_cancel_workflow(client.handle, ptr(payload), payload.byteLength))
+    if (!pendingHandle) {
+      throw new Error(readLastError())
+    }
+    try {
+      await waitForByteArray(pendingHandle)
+    } finally {
+      temporal_bun_pending_byte_array_free(pendingHandle)
+    }
   },
 
   async signalWithStart(client: NativeClient, request: Record<string, unknown>): Promise<Uint8Array> {
@@ -811,7 +829,7 @@ async function waitForClientHandle(handle: number): Promise<number> {
         try {
           const pointer = Number(temporal_bun_pending_client_consume(handle))
           if (!pointer) {
-            throw buildNativeBridgeError()
+            throw new Error(readLastError())
           }
           resolve(pointer)
         } catch (error) {
@@ -820,7 +838,7 @@ async function waitForClientHandle(handle: number): Promise<number> {
         return
       }
 
-      reject(buildNativeBridgeError())
+      reject(new Error(readLastError()))
     }
 
     setTimeout(poll, 0)
@@ -840,7 +858,7 @@ async function waitForByteArray(handle: number): Promise<Uint8Array> {
         try {
           const arrayPtr = Number(temporal_bun_pending_byte_array_consume(handle))
           if (!arrayPtr) {
-            throw buildNativeBridgeError()
+            throw new Error(readLastError())
           }
           resolve(readByteArray(arrayPtr))
         } catch (error) {
@@ -850,7 +868,7 @@ async function waitForByteArray(handle: number): Promise<Uint8Array> {
       }
 
       // status === -1 or unexpected
-      reject(buildNativeBridgeError())
+      reject(new Error(readLastError()))
     }
 
     setTimeout(poll, 0)
@@ -870,6 +888,10 @@ function readLastErrorText(): string {
   } finally {
     temporal_bun_error_free(errPtr, len)
   }
+}
+
+function readLastError(): string {
+  return readLastErrorText()
 }
 
 function readLastErrorPayload(): NativeBridgeErrorInit {
