@@ -8,6 +8,11 @@ import { fileURLToPath } from 'node:url'
 
 type CommandArgs = ReadonlyArray<string>
 
+type CommandInvocation = {
+  command: string
+  args: CommandArgs
+}
+
 const args = argv.slice(2)
 if (args.length === 0) {
   stderr.write('Usage: run-with-rust-toolchain <command> [args...]\n')
@@ -48,6 +53,8 @@ const tryCommand = (command: string, commandArgs: CommandArgs): boolean => {
     return false
   }
 }
+
+const isRunningAsRoot = () => (typeof process.getuid === 'function' ? process.getuid() === 0 : false)
 
 const ensureCargo = (): boolean => {
   if (tryCommand('cargo', ['--version']) || tryCommand(`${cargoBinDir}/cargo`, ['--version'])) {
@@ -161,15 +168,39 @@ const hasWellKnownTypes = (): boolean => {
   return candidates.some((candidate) => existsSync(candidate))
 }
 
-const findAvailableCommand = (candidates: Array<string | undefined>): string | null => {
+const findCommand = (candidates: Array<string | undefined>, testArgs: CommandArgs = ['--version']): string | null => {
   for (const candidate of candidates) {
     if (!candidate) {
       continue
     }
-    if (tryCommand(candidate, ['--version'])) {
+    if (tryCommand(candidate, testArgs)) {
       return candidate
     }
   }
+  return null
+}
+
+const resolveAptInstallInvocation = (): CommandInvocation | null => {
+  const aptGet = findCommand([env.APT_GET_PATH, '/usr/bin/apt-get', '/usr/local/bin/apt-get', 'apt-get'])
+  if (!aptGet) {
+    return null
+  }
+
+  if (isRunningAsRoot()) {
+    return {
+      command: aptGet,
+      args: ['install', '-y', 'libprotobuf-dev'],
+    }
+  }
+
+  const sudo = findCommand([env.SUDO_PATH, '/usr/bin/sudo', '/usr/local/bin/sudo', 'sudo'])
+  if (sudo && tryCommand(sudo, ['-n', 'true'])) {
+    return {
+      command: sudo,
+      args: ['-n', aptGet, 'install', '-y', 'libprotobuf-dev'],
+    }
+  }
+
   return null
 }
 
@@ -185,30 +216,19 @@ const ensureProtobufIncludes = (): boolean => {
     return false
   }
 
-  const aptGet = findAvailableCommand([env.APT_GET_PATH, '/usr/bin/apt-get', '/usr/local/bin/apt-get', 'apt-get'])
-  if (!aptGet) {
+  const aptInvocation = resolveAptInstallInvocation()
+  if (!aptInvocation) {
     stderr.write(
-      'Protobuf well-known type headers not found and apt-get is unavailable. Install libprotobuf-dev (or add the headers) before running CI.\n',
-    )
-    return false
-  }
-
-  const sudo = findAvailableCommand([env.SUDO_PATH, '/usr/bin/sudo', '/usr/local/bin/sudo', 'sudo'])
-  const runningAsRoot = typeof process.getuid === 'function' ? process.getuid() === 0 : false
-
-  if (!sudo && !runningAsRoot) {
-    stderr.write(
-      'Protobuf well-known type headers not found and sudo is unavailable. Install libprotobuf-dev ahead of time or ensure the headers exist.\n',
+      'Unable to install libprotobuf-dev automatically because apt-get/sudo are unavailable or require a password. Install it manually and retry.\n',
     )
     return false
   }
 
   stderr.write('Protobuf well-known type headers not found; installing libprotobuf-dev...\n')
-  const aptArgs: CommandArgs = ['install', '-y', 'libprotobuf-dev']
-  const install: SpawnSyncReturns<Buffer> = sudo ? run(sudo, [aptGet, ...aptArgs]) : run(aptGet, aptArgs)
+  const install: SpawnSyncReturns<Buffer> = run(aptInvocation.command, aptInvocation.args)
 
   if (install.status !== 0 || install.error) {
-    stderr.write('Failed to install libprotobuf-dev via apt-get.\n')
+    stderr.write('Failed to install libprotobuf-dev via apt.\n')
     return false
   }
 
