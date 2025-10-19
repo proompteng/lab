@@ -9,6 +9,17 @@ type RuntimePtr = Pointer
 
 type ClientPtr = Pointer
 
+type WorkerPtr = Pointer
+
+export type ActivityCompletionStatus = 'completed' | 'failed'
+
+export interface ActivityCompletionPayload {
+  status: ActivityCompletionStatus
+  taskToken: Uint8Array
+  result?: Uint8Array
+  failure?: Uint8Array
+}
+
 export interface Runtime {
   type: 'runtime'
   handle: RuntimePtr
@@ -34,29 +45,7 @@ export class NativeBridgeError extends Error {
   }
 }
 
-const {
-  symbols: {
-    temporal_bun_runtime_new,
-    temporal_bun_runtime_free,
-    temporal_bun_error_message,
-    temporal_bun_error_free,
-    temporal_bun_client_connect_async,
-    temporal_bun_client_free,
-    temporal_bun_client_describe_namespace_async,
-    temporal_bun_client_update_headers,
-    temporal_bun_pending_client_poll,
-    temporal_bun_pending_client_consume,
-    temporal_bun_pending_client_free,
-    temporal_bun_pending_byte_array_poll,
-    temporal_bun_pending_byte_array_consume,
-    temporal_bun_pending_byte_array_free,
-    temporal_bun_byte_array_free,
-    temporal_bun_client_start_workflow,
-    temporal_bun_client_terminate_workflow,
-    temporal_bun_client_signal_with_start,
-    temporal_bun_client_query_workflow,
-  },
-} = dlopen(libraryFile, {
+const commonSymbolConfig = {
   temporal_bun_runtime_new: {
     args: [FFIType.ptr, FFIType.uint64_t],
     returns: FFIType.ptr,
@@ -70,7 +59,7 @@ const {
     returns: FFIType.ptr,
   },
   temporal_bun_error_free: {
-    args: [FFIType.ptr, FFIType.uint64_t],
+    args: [FFIType.uint64_t, FFIType.uint64_t],
     returns: FFIType.void,
   },
   temporal_bun_client_connect_async: {
@@ -107,7 +96,7 @@ const {
   },
   temporal_bun_pending_byte_array_consume: {
     args: [FFIType.ptr],
-    returns: FFIType.ptr,
+    returns: FFIType.uint64_t,
   },
   temporal_bun_pending_byte_array_free: {
     args: [FFIType.ptr],
@@ -119,7 +108,7 @@ const {
   },
   temporal_bun_client_start_workflow: {
     args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
-    returns: FFIType.ptr,
+    returns: FFIType.uint64_t,
   },
   temporal_bun_client_terminate_workflow: {
     args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
@@ -127,13 +116,151 @@ const {
   },
   temporal_bun_client_signal_with_start: {
     args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
-    returns: FFIType.ptr,
+    returns: FFIType.uint64_t,
   },
   temporal_bun_client_query_workflow: {
     args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
     returns: FFIType.ptr,
   },
-})
+} as const
+
+const zigSymbolConfig = {
+  temporal_bun_worker_free: {
+    args: [FFIType.ptr],
+    returns: FFIType.void,
+  },
+  temporal_bun_worker_complete_activity_task: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.int32_t,
+  },
+  temporal_bun_testing_reset_activity_completions: {
+    args: [],
+    returns: FFIType.void,
+  },
+  temporal_bun_testing_set_activity_completion_status: {
+    args: [FFIType.uint32_t, FFIType.int32_t],
+    returns: FFIType.void,
+  },
+  temporal_bun_testing_take_activity_task_token: {
+    args: [FFIType.uint32_t],
+    returns: FFIType.uint64_t,
+  },
+  temporal_bun_testing_take_activity_payload: {
+    args: [FFIType.uint32_t],
+    returns: FFIType.uint64_t,
+  },
+  temporal_bun_testing_last_activity_worker: {
+    args: [FFIType.uint32_t],
+    returns: FFIType.ptr,
+  },
+  temporal_bun_testing_last_activity_token_len: {
+    args: [FFIType.uint32_t],
+    returns: FFIType.uint64_t,
+  },
+  temporal_bun_testing_last_activity_payload_len: {
+    args: [FFIType.uint32_t],
+    returns: FFIType.uint64_t,
+  },
+  temporal_bun_testing_copy_activity_task_token: {
+    args: [FFIType.uint32_t, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.uint64_t,
+  },
+  temporal_bun_testing_copy_activity_payload: {
+    args: [FFIType.uint32_t, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.uint64_t,
+  },
+  temporal_bun_testing_create_worker_handle: {
+    args: [FFIType.uint64_t],
+    returns: FFIType.ptr,
+  },
+} as const
+
+let symbolTable: Record<string, any>
+if (isZigBridge) {
+  ;({ symbols: symbolTable } = dlopen(libraryFile, { ...commonSymbolConfig, ...zigSymbolConfig }))
+} else {
+  ;({ symbols: symbolTable } = dlopen(libraryFile, commonSymbolConfig))
+}
+
+const {
+  temporal_bun_runtime_new,
+  temporal_bun_runtime_free,
+  temporal_bun_error_message,
+  temporal_bun_error_free,
+  temporal_bun_client_connect_async,
+  temporal_bun_client_free,
+  temporal_bun_client_describe_namespace_async,
+  temporal_bun_client_update_headers,
+  temporal_bun_pending_client_poll,
+  temporal_bun_pending_client_consume,
+  temporal_bun_pending_client_free,
+  temporal_bun_pending_byte_array_poll,
+  temporal_bun_pending_byte_array_consume,
+  temporal_bun_pending_byte_array_free,
+  temporal_bun_byte_array_free,
+  temporal_bun_client_start_workflow,
+  temporal_bun_client_terminate_workflow,
+  temporal_bun_client_signal_with_start,
+  temporal_bun_client_query_workflow,
+  temporal_bun_worker_free,
+  temporal_bun_worker_complete_activity_task,
+  temporal_bun_testing_reset_activity_completions,
+  temporal_bun_testing_set_activity_completion_status,
+  temporal_bun_testing_take_activity_task_token,
+  temporal_bun_testing_take_activity_payload,
+  temporal_bun_testing_last_activity_worker,
+  temporal_bun_testing_last_activity_token_len,
+  temporal_bun_testing_last_activity_payload_len,
+  temporal_bun_testing_copy_activity_task_token,
+  temporal_bun_testing_copy_activity_payload,
+  temporal_bun_testing_create_worker_handle,
+} = symbolTable
+
+const ActivityKindId: Record<ActivityCompletionStatus, number> = {
+  completed: 0,
+  failed: 1,
+}
+
+function activityKindToId(kind: ActivityCompletionStatus): number {
+  return ActivityKindId[kind]
+}
+
+function encodeBase64(bytes?: Uint8Array): string | undefined {
+  if (!bytes || bytes.length === 0) {
+    return undefined
+  }
+  return Buffer.from(bytes).toString('base64')
+}
+
+function serializeActivityCompletionRequest(request: ActivityCompletionPayload): Buffer {
+  if ((request.taskToken?.length ?? 0) === 0) {
+    throw new NativeBridgeError('Activity completion requires a non-empty task token')
+  }
+
+  if (request.status !== 'completed' && request.status !== 'failed') {
+    throw new NativeBridgeError(`Unsupported activity completion status: ${String(request.status)}`)
+  }
+
+  const payload: Record<string, unknown> = {
+    taskToken: encodeBase64(request.taskToken)!,
+    status: request.status,
+  }
+
+  if (request.status === 'completed') {
+    const encodedResult = encodeBase64(request.result)
+    if (encodedResult) {
+      payload.result = encodedResult
+    }
+  } else {
+    const encodedFailure = encodeBase64(request.failure)
+    if (!encodedFailure) {
+      throw new NativeBridgeError('Failed activity completion requires failure payload bytes')
+    }
+    payload.failure = encodedFailure
+  }
+
+  return Buffer.from(JSON.stringify(payload), 'utf8')
+}
 
 export const native = {
   bridgeVariant: resolvedBridgeVariant,
@@ -186,8 +313,8 @@ export const native = {
 
   async startWorkflow(client: NativeClient, request: Record<string, unknown>): Promise<Uint8Array> {
     const payload = Buffer.from(JSON.stringify(request), 'utf8')
-    const arrayPtr = Number(temporal_bun_client_start_workflow(client.handle, ptr(payload), payload.byteLength))
-    if (!arrayPtr) {
+    const arrayPtr = temporal_bun_client_start_workflow(client.handle, ptr(payload), payload.byteLength)
+    if (arrayPtr === 0n) {
       throw new Error(readLastError())
     }
     return readByteArray(arrayPtr)
@@ -255,11 +382,117 @@ export const native = {
 
   async signalWithStart(client: NativeClient, request: Record<string, unknown>): Promise<Uint8Array> {
     const payload = Buffer.from(JSON.stringify(request), 'utf8')
-    const arrayPtr = Number(temporal_bun_client_signal_with_start(client.handle, ptr(payload), payload.byteLength))
-    if (!arrayPtr) {
+    const arrayPtr = temporal_bun_client_signal_with_start(client.handle, ptr(payload), payload.byteLength)
+    if (arrayPtr === 0n) {
       throw new Error(readLastError())
     }
     return readByteArray(arrayPtr)
+  },
+
+  worker: {
+    completeActivityTask(workerHandle: number, completion: ActivityCompletionPayload): void {
+      if (!isZigBridge || typeof temporal_bun_worker_complete_activity_task !== 'function') {
+        throw new NativeBridgeError('Activity completion is only available with the Zig bridge')
+      }
+      const payload = serializeActivityCompletionRequest(completion)
+      const status = Number(temporal_bun_worker_complete_activity_task(workerHandle, ptr(payload), payload.byteLength))
+      if (status !== 0) {
+        throw new NativeBridgeError(readLastError())
+      }
+    },
+
+    free(handle: number): void {
+      if (!temporal_bun_worker_free) {
+        throw new NativeBridgeError('Worker handle management is only available with the Zig bridge')
+      }
+      temporal_bun_worker_free(handle)
+    },
+
+    testing: {
+      resetActivityCompletions(): void {
+        if (!temporal_bun_testing_reset_activity_completions) {
+          throw new NativeBridgeError('Activity completion testing helpers require the Zig bridge')
+        }
+        temporal_bun_testing_reset_activity_completions()
+      },
+
+      setActivityCompletionStatus(kind: ActivityCompletionStatus, status: number): void {
+        if (!temporal_bun_testing_set_activity_completion_status) {
+          throw new NativeBridgeError('Activity completion testing helpers require the Zig bridge')
+        }
+        temporal_bun_testing_set_activity_completion_status(activityKindToId(kind), status)
+      },
+
+      takeActivityTaskToken(kind: ActivityCompletionStatus): Uint8Array | null {
+        if (!temporal_bun_testing_take_activity_task_token) {
+          throw new NativeBridgeError('Activity completion testing helpers require the Zig bridge')
+        }
+        const length = native.worker.testing.getActivityTaskTokenLength(kind)
+        if (length === 0) {
+          return null
+        }
+        if (!temporal_bun_testing_copy_activity_task_token) {
+          throw new NativeBridgeError('Activity completion testing helpers require the Zig bridge')
+        }
+        const buffer = Buffer.alloc(length)
+        const written = Number(
+          temporal_bun_testing_copy_activity_task_token(activityKindToId(kind), ptr(buffer), BigInt(length)),
+        )
+        return new Uint8Array(buffer.subarray(0, written))
+      },
+
+      takeActivityPayload(kind: ActivityCompletionStatus): Uint8Array | null {
+        if (!temporal_bun_testing_take_activity_payload) {
+          throw new NativeBridgeError('Activity completion testing helpers require the Zig bridge')
+        }
+        const length = native.worker.testing.getActivityPayloadLength(kind)
+        if (length === 0) {
+          return null
+        }
+        if (!temporal_bun_testing_copy_activity_payload) {
+          throw new NativeBridgeError('Activity completion testing helpers require the Zig bridge')
+        }
+        const buffer = Buffer.alloc(length)
+        const written = Number(
+          temporal_bun_testing_copy_activity_payload(activityKindToId(kind), ptr(buffer), BigInt(length)),
+        )
+        return new Uint8Array(buffer.subarray(0, written))
+      },
+
+      lastActivityWorker(kind: ActivityCompletionStatus): number | null {
+        if (!temporal_bun_testing_last_activity_worker) {
+          throw new NativeBridgeError('Activity completion testing helpers require the Zig bridge')
+        }
+        const pointer = Number(temporal_bun_testing_last_activity_worker(activityKindToId(kind)))
+        return pointer || null
+      },
+
+      getActivityTaskTokenLength(kind: ActivityCompletionStatus): number {
+        if (!temporal_bun_testing_last_activity_token_len) {
+          throw new NativeBridgeError('Activity completion testing helpers require the Zig bridge')
+        }
+        return Number(temporal_bun_testing_last_activity_token_len(activityKindToId(kind)))
+      },
+
+      getActivityPayloadLength(kind: ActivityCompletionStatus): number {
+        if (!temporal_bun_testing_last_activity_payload_len) {
+          throw new NativeBridgeError('Activity completion testing helpers require the Zig bridge')
+        }
+        return Number(temporal_bun_testing_last_activity_payload_len(activityKindToId(kind)))
+      },
+
+      createWorkerHandle(corePointer: number): number {
+        if (!temporal_bun_testing_create_worker_handle) {
+          throw new NativeBridgeError('Activity completion testing helpers require the Zig bridge')
+        }
+        const pointer = BigInt.asUintN(64, BigInt(Math.trunc(corePointer)))
+        const handle = Number(temporal_bun_testing_create_worker_handle(pointer))
+        if (!handle) {
+          throw new NativeBridgeError(readLastError())
+        }
+        return handle
+      },
+    },
   },
 }
 
@@ -360,14 +593,18 @@ function resolveRustBridgeLibraryPath(): string {
   )
 }
 
-function readByteArray(pointer: number): Uint8Array {
-  const header = new BigUint64Array(toArrayBuffer(pointer, 0, 24))
-  const dataPtr = Number(header[0])
+function readByteArray(pointer: number | bigint): Uint8Array {
+  const ptrValue = typeof pointer === 'bigint' ? pointer : BigInt.asUintN(64, BigInt(pointer))
+  const header = new BigUint64Array(toArrayBuffer(ptrValue, 0, 24))
+  const dataPtr = header[0]
   const len = Number(header[1])
+  if (len === 0) {
+    temporal_bun_byte_array_free(ptrValue)
+    return new Uint8Array()
+  }
   const view = new Uint8Array(toArrayBuffer(dataPtr, 0, len))
-  // Copy into JS-owned memory before the native buffer is released.
   const copy = new Uint8Array(view)
-  temporal_bun_byte_array_free(pointer)
+  temporal_bun_byte_array_free(ptrValue)
   return copy
 }
 
@@ -411,8 +648,8 @@ async function waitForByteArray(handle: number): Promise<Uint8Array> {
 
       if (status === 1) {
         try {
-          const arrayPtr = Number(temporal_bun_pending_byte_array_consume(handle))
-          if (!arrayPtr) {
+          const arrayPtr = temporal_bun_pending_byte_array_consume(handle)
+          if (arrayPtr === 0n) {
             throw new Error(readLastError())
           }
           resolve(readByteArray(arrayPtr))
@@ -432,16 +669,18 @@ async function waitForByteArray(handle: number): Promise<Uint8Array> {
 
 function readLastError(): string {
   const lenBuffer = new BigUint64Array(1)
-  const errPtr = Number(temporal_bun_error_message(ptr(lenBuffer)))
-  const len = Number(lenBuffer[0])
-  if (!errPtr || len === 0) {
+  const errPtr = temporal_bun_error_message(ptr(lenBuffer))
+  const ptrValue = typeof errPtr === 'bigint' ? errPtr : BigInt(errPtr)
+  const lenBig = lenBuffer[0]
+  const len = Number(lenBig)
+  if (ptrValue === 0n || len === 0) {
     return 'Unknown native error'
   }
   try {
-    const buffer = Buffer.from(toArrayBuffer(errPtr, 0, len))
+    const buffer = Buffer.from(toArrayBuffer(ptrValue, 0, len))
     return buffer.toString('utf8')
   } finally {
-    temporal_bun_error_free(errPtr, len)
+    temporal_bun_error_free(ptrValue, lenBig)
   }
 }
 

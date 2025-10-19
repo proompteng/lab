@@ -34,4 +34,12 @@ export class WorkerRuntime {
     void _gracefulTimeoutMs
     notImplemented('WorkerRuntime.shutdown')
   }
+
+  protected static completeActivityTaskNative(workerHandle: number, completion: ActivityCompletionPayload): void {
+    if (!isZigBridge) {
+      notImplemented('Zig worker activity completion bridge', 'docs/ffi-surface.md')
+    }
+    native.worker.completeActivityTask(workerHandle, completion)
+  }
 }
+import { type ActivityCompletionPayload, isZigBridge, native } from '../internal/core-bridge/native.ts'
