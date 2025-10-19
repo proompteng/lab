@@ -6,6 +6,27 @@ resources:
   - minio-secret.yaml
   - minio-buckets-job.yaml
 
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  - name: grafana-dashboard-k8s-views-namespaces
+    files:
+      - grafana-dashboards/k8s-views-namespaces.json
+    options:
+      labels:
+        grafana_dashboard: 'true'
+      annotations:
+        grafana_folder: Kubernetes
+  - name: grafana-dashboard-k8s-views-pods
+    files:
+      - grafana-dashboards/k8s-views-pods.json
+    options:
+      labels:
+        grafana_dashboard: 'true'
+      annotations:
+        grafana_folder: Kubernetes
+
 helmCharts:
   - name: mimir-distributed
     repo: https://grafana.github.io/helm-charts
