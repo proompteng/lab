@@ -50,7 +50,7 @@ const distNativeDir = join(packageRoot, 'dist', 'native')
 const zigStageLibDir = join(packageRoot, 'native', 'temporal-bun-bridge-zig', 'zig-out', 'lib')
 const rustBridgeTargetDir = join(packageRoot, 'native', 'temporal-bun-bridge', 'target')
 
-const { module: nativeModule, path: libraryFile, variant: resolvedBridgeVariant } = loadBridgeLibrary()
+const { module: nativeModule, variant: resolvedBridgeVariant } = loadBridgeLibrary()
 
 export const bridgeVariant = resolvedBridgeVariant
 export const isZigBridge = resolvedBridgeVariant === 'zig'
@@ -528,7 +528,7 @@ export const native = {
     const payload = Buffer.from(JSON.stringify(request), 'utf8')
     const pendingHandle = Number(temporal_bun_client_signal(client.handle, ptr(payload), payload.byteLength))
     if (!pendingHandle) {
-      throw new Error(readLastError())
+      throw buildNativeBridgeError()
     }
     try {
       await waitForByteArray(pendingHandle)
@@ -566,7 +566,7 @@ export const native = {
     const payload = Buffer.from(JSON.stringify(request), 'utf8')
     const pendingHandle = Number(temporal_bun_client_cancel_workflow(client.handle, ptr(payload), payload.byteLength))
     if (!pendingHandle) {
-      throw new Error(readLastError())
+      throw buildNativeBridgeError()
     }
     try {
       await waitForByteArray(pendingHandle)
@@ -829,7 +829,7 @@ async function waitForClientHandle(handle: number): Promise<number> {
         try {
           const pointer = Number(temporal_bun_pending_client_consume(handle))
           if (!pointer) {
-            throw new Error(readLastError())
+            throw buildNativeBridgeError()
           }
           resolve(pointer)
         } catch (error) {
@@ -838,7 +838,7 @@ async function waitForClientHandle(handle: number): Promise<number> {
         return
       }
 
-      reject(new Error(readLastError()))
+      reject(buildNativeBridgeError())
     }
 
     setTimeout(poll, 0)
@@ -858,7 +858,7 @@ async function waitForByteArray(handle: number): Promise<Uint8Array> {
         try {
           const arrayPtr = Number(temporal_bun_pending_byte_array_consume(handle))
           if (!arrayPtr) {
-            throw new Error(readLastError())
+            throw buildNativeBridgeError()
           }
           resolve(readByteArray(arrayPtr))
         } catch (error) {
@@ -868,7 +868,7 @@ async function waitForByteArray(handle: number): Promise<Uint8Array> {
       }
 
       // status === -1 or unexpected
-      reject(new Error(readLastError()))
+      reject(buildNativeBridgeError())
     }
 
     setTimeout(poll, 0)
@@ -888,10 +888,6 @@ function readLastErrorText(): string {
   } finally {
     temporal_bun_error_free(errPtr, len)
   }
-}
-
-function readLastError(): string {
-  return readLastErrorText()
 }
 
 function readLastErrorPayload(): NativeBridgeErrorInit {
