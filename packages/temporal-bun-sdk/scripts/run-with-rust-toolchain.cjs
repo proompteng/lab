@@ -3,7 +3,7 @@
 
 const { spawnSync } = require('node:child_process')
 const { env, argv, stderr } = process
-const { existsSync } = require('node:fs')
+const { existsSync, readdirSync } = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
 
@@ -59,12 +59,34 @@ const ensureCargo = () => {
 const hasWellKnownTypes = () => {
   const wellKnownRelative = ['google', 'protobuf', 'duration.proto']
   const includeDirs = new Set(['/usr/include', '/usr/local/include'])
+  const homebrewPrefix = env.HOMEBREW_PREFIX || '/opt/homebrew'
 
-  if (env.HOMEBREW_PREFIX) {
-    includeDirs.add(path.join(env.HOMEBREW_PREFIX, 'include'))
-  } else {
-    includeDirs.add('/opt/homebrew/include')
+  includeDirs.add(path.join(homebrewPrefix, 'include'))
+  includeDirs.add(path.join(homebrewPrefix, 'opt', 'protobuf', 'include'))
+
+  const appendCellarIncludes = (cellarRoot) => {
+    if (!cellarRoot) {
+      return
+    }
+
+    const protobufCellar = path.join(cellarRoot, 'protobuf')
+    if (!existsSync(protobufCellar)) {
+      return
+    }
+
+    try {
+      for (const entry of readdirSync(protobufCellar, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          includeDirs.add(path.join(protobufCellar, entry.name, 'include'))
+        }
+      }
+    } catch {
+      // Ignore filesystem issues; fall back to other include locations.
+    }
   }
+
+  appendCellarIncludes(env.HOMEBREW_CELLAR)
+  appendCellarIncludes(path.join(homebrewPrefix, 'Cellar'))
 
   const candidates = [
     ...Array.from(includeDirs).map((dir) => path.join(dir, ...wellKnownRelative)),
