@@ -103,39 +103,46 @@ function loadBridgeLibrary(): BridgeLibraryLoadResult {
   }
 
   const preference = getZigPreference()
-  const resolution = resolveBridgeLibraryPath(preference)
+  const candidates = resolveBridgeLibraryCandidates(preference)
 
-  try {
-    return {
-      module: dlopen(resolution.path, buildBridgeSymbolMap()),
-      path: resolution.path,
-      variant: resolution.variant,
-    }
-  } catch (error) {
-    if (resolution.variant === 'zig' && preference === 'auto') {
-      logZigBridgeLoadFailure(resolution.path, error)
-      const fallbackPath = resolveRustBridgeLibraryPath()
-      try {
-        return {
-          module: dlopen(fallbackPath, buildBridgeSymbolMap()),
-          path: fallbackPath,
-          variant: 'rust',
-        }
-      } catch (fallbackError) {
-        throw buildBridgeLoadError(fallbackPath, fallbackError, {
-          variant: 'rust',
-          preference,
-          override: false,
-        })
+  let lastError: unknown = null
+  let lastCandidate: BridgeResolution | null = null
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index]
+    try {
+      return {
+        module: dlopen(candidate.path, buildBridgeSymbolMap()),
+        path: candidate.path,
+        variant: candidate.variant,
       }
-    }
+    } catch (error) {
+      lastError = error
+      lastCandidate = candidate
 
-    throw buildBridgeLoadError(resolution.path, error, {
-      variant: resolution.variant,
+      if (candidate.variant === 'zig') {
+        const nextVariant = candidates[index + 1]?.variant ?? null
+        logZigBridgeLoadFailure(candidate.path, error, nextVariant)
+        continue
+      }
+
+      throw buildBridgeLoadError(candidate.path, error, {
+        variant: candidate.variant,
+        preference,
+        override: false,
+      })
+    }
+  }
+
+  if (lastCandidate) {
+    throw buildBridgeLoadError(lastCandidate.path, lastError, {
+      variant: lastCandidate.variant,
       preference,
       override: false,
     })
   }
+
+  throw new NativeBridgeError('No Temporal Bun bridge candidates were resolved.')
 }
 
 function buildBridgeSymbolMap() {
@@ -223,9 +230,15 @@ function detectBridgeVariantFromPath(candidate: string): BridgeVariant {
   return /temporal[-_]bun[-_]bridge[-_]zig/.test(candidate) ? 'zig' : 'rust'
 }
 
-function logZigBridgeLoadFailure(candidate: string, error: unknown): void {
+function logZigBridgeLoadFailure(candidate: string, error: unknown, nextVariant: BridgeVariant | null): void {
   const reason = error instanceof Error ? error.message : String(error)
-  console.warn(`Failed to load Zig bridge at ${candidate}. Falling back to the Rust bridge.\nReason: ${reason}`, error)
+  let followUp = 'No additional bridge candidates are available.'
+  if (nextVariant === 'zig') {
+    followUp = 'Attempting the next Zig bridge candidate.'
+  } else if (nextVariant === 'rust') {
+    followUp = 'Falling back to the Rust bridge.'
+  }
+  console.warn(`Failed to load Zig bridge at ${candidate}. ${followUp}\nReason: ${reason}`, error)
 }
 
 function buildBridgeLoadError(libraryPath: string, error: unknown, context: BridgeLoadErrorContext): Error {
@@ -422,35 +435,48 @@ interface BridgeResolution {
   variant: BridgeVariant
 }
 
-function resolveBridgeLibraryPath(preference: ZigPreference): BridgeResolution {
+function resolveBridgeLibraryCandidates(preference: ZigPreference): BridgeResolution[] {
+  const candidates: BridgeResolution[] = []
+  const attemptedZigPaths: string[] = []
+
   if (preference !== 'disable') {
     const packaged = resolvePackagedZigBridgeLibraryPath()
+    attemptedZigPaths.push(...packaged.attempted)
     if (packaged.path) {
-      return { path: packaged.path, variant: 'zig' }
+      candidates.push({ path: packaged.path, variant: 'zig' })
     }
 
     const local = resolveLocalZigBridgeLibraryPath()
+    attemptedZigPaths.push(...local.attempted)
     if (local.path) {
-      return { path: local.path, variant: 'zig' }
+      candidates.push({ path: local.path, variant: 'zig' })
     }
 
-    const attempted = [...packaged.attempted, ...local.attempted]
-    if (attempted.length > 0) {
+    if (attemptedZigPaths.length > 0 && !candidates.some((candidate) => candidate.variant === 'zig')) {
       if (preference === 'enable') {
         logMissingZigBridge(
-          attempted,
+          attemptedZigPaths,
           'TEMPORAL_BUN_SDK_USE_ZIG was enabled but no Zig bridge artefacts were found. Falling back to the Rust bridge.',
         )
       } else {
         logMissingZigBridge(
-          attempted,
+          attemptedZigPaths,
           'No Zig bridge binary was located for this platform. Falling back to the Rust bridge.',
         )
       }
     }
   }
 
-  return { path: resolveRustBridgeLibraryPath(), variant: 'rust' }
+  const hasZigCandidate = candidates.some((candidate) => candidate.variant === 'zig')
+  if (preference !== 'enable' || !hasZigCandidate) {
+    candidates.push({ path: resolveRustBridgeLibraryPath(), variant: 'rust' })
+  }
+
+  if (candidates.length === 0) {
+    candidates.push({ path: resolveRustBridgeLibraryPath(), variant: 'rust' })
+  }
+
+  return candidates
 }
 
 function getZigPreference(): ZigPreference {
