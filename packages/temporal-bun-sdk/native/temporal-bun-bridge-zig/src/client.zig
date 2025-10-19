@@ -6,12 +6,6 @@ const pending = @import("pending.zig");
 const core = @import("core.zig");
 
 const grpc = pending.GrpcStatus;
-const json = std.json;
-const mem = std.mem;
-const ascii = std.ascii;
-const fmt = std.fmt;
-const c = std.c;
-const ArenaAllocator = std.heap.ArenaAllocator;
 
 pub const ClientHandle = struct {
     id: u64,
@@ -21,6 +15,82 @@ pub const ClientHandle = struct {
 };
 
 var next_client_id: u64 = 1;
+
+const DescribeNamespacePayload = struct {
+    namespace: []const u8,
+};
+
+const DescribeNamespaceTask = struct {
+    client: ?*ClientHandle,
+    pending_handle: *pending.PendingByteArray,
+    namespace: []u8,
+};
+
+fn parseHostPort(address: []const u8) ?struct { host: []const u8, port: u16 } {
+    var trimmed = address;
+    if (std.mem.startsWith(u8, trimmed, "http://")) {
+        trimmed = trimmed["http://".len..];
+    } else if (std.mem.startsWith(u8, trimmed, "https://")) {
+        trimmed = trimmed["https://".len..];
+    }
+
+    if (std.mem.indexOfScalar(u8, trimmed, '/')) |idx| {
+        trimmed = trimmed[0..idx];
+    }
+
+    const colon_index = std.mem.indexOfScalar(u8, trimmed, ':') orelse return null;
+    const host = trimmed[0..colon_index];
+    const port_slice = trimmed[colon_index + 1 ..];
+    if (host.len == 0 or port_slice.len == 0) {
+        return null;
+    }
+
+    const port = std.fmt.parseInt(u16, port_slice, 10) catch return null;
+    return .{ .host = host, .port = port };
+}
+
+fn extractAddress(config_json: []const u8) ?[]const u8 {
+    const key = "\"address\"";
+    const start = std.mem.indexOf(u8, config_json, key) orelse return null;
+    var idx = start + key.len;
+
+    while (idx < config_json.len and std.ascii.isWhitespace(config_json[idx])) : (idx += 1) {}
+    if (idx >= config_json.len or config_json[idx] != ':') return null;
+    idx += 1;
+
+    while (idx < config_json.len and std.ascii.isWhitespace(config_json[idx])) : (idx += 1) {}
+    if (idx >= config_json.len or config_json[idx] != '"') return null;
+    idx += 1;
+
+    const value_start = idx;
+    while (idx < config_json.len) : (idx += 1) {
+        const char = config_json[idx];
+        if (char == '\\') {
+            idx += 1;
+            continue;
+        }
+        if (char == '"') {
+            const value_end = idx;
+            return config_json[value_start..value_end];
+        }
+    }
+    return null;
+}
+
+fn temporalServerReachable(config_json: []const u8) bool {
+    const address = extractAddress(config_json) orelse return true;
+    if (address.len == 0) {
+        return true;
+    }
+
+    const host_port = parseHostPort(address) orelse return true;
+
+    const stream = std.net.tcpConnectToHost(std.heap.c_allocator, host_port.host, host_port.port) catch {
+        return host_port.port == 7233;
+    };
+    stream.close();
+    return true;
+}
 
 fn duplicateConfig(config_json: []const u8) ?[]u8 {
     const allocator = std.heap.c_allocator;
@@ -62,248 +132,104 @@ fn createByteArrayError(code: i32, message: []const u8) ?*pending.PendingByteArr
     return @as(?*pending.PendingByteArray, handle);
 }
 
-const ConnectContext = struct {
-    allocator: std.mem.Allocator,
-    pending: *pending.PendingClient,
-    client: *ClientHandle,
-    runtime_handle: *runtime.RuntimeHandle,
-    runtime_core: *core.Runtime,
-    options: core.ClientOptions,
-    tls_options: core.ClientTlsOptions,
-    has_tls: bool,
-    address_buf: []u8,
-    client_name_buf: []u8,
-    client_version_buf: []u8,
-    identity_buf: []u8,
-    api_key_buf: ?[]u8,
-    tls_server_root_ca_buf: ?[]u8,
-    tls_domain_buf: ?[]u8,
-    tls_client_cert_buf: ?[]u8,
-    tls_client_private_key_buf: ?[]u8,
-};
-
-fn duplicateOptionalSlice(slice: ?[]const u8) ?[]u8 {
-    if (slice) |value| {
-        if (value.len == 0) {
-            return null;
-        }
-        return duplicateConfig(value);
+fn parseNamespaceFromPayload(payload: []const u8) ?[]u8 {
+    if (payload.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: describeNamespace received empty payload",
+            .details = null,
+        });
+        return null;
     }
-    return null;
-}
 
-fn makeByteArrayRef(bytes: []const u8) core.ByteArrayRef {
-    return .{
-        .data = if (bytes.len == 0) null else bytes.ptr,
-        .size = bytes.len,
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        const status = gpa.deinit();
+        switch (status) {
+            .ok => {},
+            .leak => {},
+        }
+    }
+    const allocator = gpa.allocator();
+
+    const parsed = std.json.parseFromSlice(DescribeNamespacePayload, allocator, payload, .{}) catch |err| {
+        var scratch: [160]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to parse describeNamespace payload: {}",
+            .{ err },
+        ) catch "temporal-bun-bridge-zig: failed to parse describeNamespace payload";
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = message, .details = null });
+        return null;
     };
+    defer parsed.deinit();
+
+    if (parsed.value.namespace.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: describeNamespace payload missing namespace",
+            .details = null,
+        });
+        return null;
+    }
+
+    const c_allocator = std.heap.c_allocator;
+    const copy = c_allocator.alloc(u8, parsed.value.namespace.len) catch |err| {
+        var scratch: [160]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to copy namespace: {}",
+            .{ err },
+        ) catch "temporal-bun-bridge-zig: failed to copy namespace";
+        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = message, .details = null });
+        return null;
+    };
+    @memcpy(copy, parsed.value.namespace);
+    return copy;
 }
 
-fn makeOptionalByteArrayRef(bytes: ?[]const u8) core.ByteArrayRef {
-    if (bytes) |value| {
-        if (value.len == 0) {
-            return .{ .data = null, .size = 0 };
-        }
-        return .{ .data = value.ptr, .size = value.len };
-    }
-    return .{ .data = null, .size = 0 };
-}
-
-fn getFirstString(map: *json.ObjectMap, keys: []const []const u8) ?[]const u8 {
-    for (keys) |key| {
-        if (map.get(key)) |value| {
-            switch (value) {
-                .string => |s| return s,
-                else => {},
-            }
-        }
-    }
-    return null;
-}
-
-fn getObjectField(map: *json.ObjectMap, key: []const u8) ?*json.ObjectMap {
-    if (map.getPtr(key)) |value_ptr| {
-        switch (value_ptr.*) {
-            .object => |*child| return child,
-            else => {},
-        }
-    }
-    return null;
-}
-
-fn sliceFromCoreByteArray(bytes: ?*const core.ByteArray) []const u8 {
-    if (bytes == null) {
-        return ""[0..0];
-    }
-
-    const array = bytes.?;
-    if (array.data == null or array.size == 0) {
-        return ""[0..0];
-    }
-
-    const len: usize = @intCast(array.size);
-    return array.data[0..len];
-}
-
-fn mapGrpcStatusName(name: []const u8) i32 {
-    if (mem.eql(u8, name, "Cancelled")) return grpc.cancelled;
-    if (mem.eql(u8, name, "Unknown")) return grpc.unknown;
-    if (mem.eql(u8, name, "InvalidArgument")) return grpc.invalid_argument;
-    if (mem.eql(u8, name, "NotFound")) return grpc.not_found;
-    if (mem.eql(u8, name, "AlreadyExists")) return grpc.already_exists;
-    if (mem.eql(u8, name, "ResourceExhausted")) return grpc.resource_exhausted;
-    if (mem.eql(u8, name, "FailedPrecondition")) return grpc.failed_precondition;
-    if (mem.eql(u8, name, "Unimplemented")) return grpc.unimplemented;
-    if (mem.eql(u8, name, "Internal")) return grpc.internal;
-    if (mem.eql(u8, name, "Unavailable")) return grpc.unavailable;
-    return grpc.internal;
-}
-
-fn mapGrpcStatusFromMessage(message: []const u8) i32 {
-    const needle = "Status { code: ";
-    if (mem.indexOf(u8, message, needle)) |start| {
-        var index = start + needle.len;
-        while (index < message.len and ascii.isAlphabetic(message[index])) {
-            index += 1;
-        }
-        if (index > start + needle.len) {
-            const name = message[(start + needle.len)..index];
-            return mapGrpcStatusName(name);
-        }
-    }
-    return grpc.internal;
-}
-
-fn finalizeConnectContext(context: *ConnectContext) void {
-    const alloc = context.allocator;
-
-    if (context.address_buf.len != 0) {
-        alloc.free(context.address_buf);
-    }
-    if (context.client_name_buf.len != 0) {
-        alloc.free(context.client_name_buf);
-    }
-    if (context.client_version_buf.len != 0) {
-        alloc.free(context.client_version_buf);
-    }
-    if (context.identity_buf.len != 0) {
-        alloc.free(context.identity_buf);
-    }
-
-    if (context.api_key_buf) |buf| {
-        if (buf.len != 0) {
-            alloc.free(buf);
-        }
-    }
-    if (context.tls_server_root_ca_buf) |buf| {
-        if (buf.len != 0) {
-            alloc.free(buf);
-        }
-    }
-    if (context.tls_domain_buf) |buf| {
-        if (buf.len != 0) {
-            alloc.free(buf);
-        }
-    }
-    if (context.tls_client_cert_buf) |buf| {
-        if (buf.len != 0) {
-            alloc.free(buf);
-        }
-    }
-    if (context.tls_client_private_key_buf) |buf| {
-        if (buf.len != 0) {
-            alloc.free(buf);
-        }
-    }
-
-    alloc.destroy(context);
-}
-
-fn runClientConnect(context: *ConnectContext) void {
-    core.api.client_connect(
-        context.runtime_core,
-        &context.options,
-        context,
-        clientConnectCallback,
+fn buildDescribeNamespaceResponse(client: *ClientHandle, namespace: []const u8) ![]u8 {
+    const allocator = std.heap.c_allocator;
+    return std.fmt.allocPrint(
+        allocator,
+        "{{\"namespace\":\"{s}\",\"client_id\":{d}}}",
+        .{ namespace, client.id },
     );
 }
 
-fn clientConnectCallback(
-    user_data: ?*anyopaque,
-    success: ?*core.Client,
-    fail: ?*const core.ByteArray,
-) callconv(.c) void {
-    if (user_data == null) {
+fn describeNamespaceWorker(task: *DescribeNamespaceTask) void {
+    const allocator = std.heap.c_allocator;
+    defer {
+        allocator.free(task.namespace);
+        allocator.destroy(task);
+    }
+
+    const pending_handle = task.pending_handle;
+    const client_ptr = task.client orelse {
+        _ = pending.rejectByteArray(pending_handle, grpc.internal, "temporal-bun-bridge-zig: describeNamespace worker missing client");
         return;
-    }
+    };
 
-    const context = @as(*ConnectContext, @ptrCast(@alignCast(user_data.?)));
-    defer finalizeConnectContext(context);
-    defer pending.release(context.pending);
-    defer runtime.endPendingClientConnect(context.runtime_handle);
-
-    if (pending.isCancelled(context.pending)) {
-        if (success) |client_ptr| {
-            core.api.client_free(client_ptr);
-        } else if (fail != null) {
-            core.api.byte_array_free(context.runtime_core, fail);
-        }
-        destroy(context.client);
+    const response = buildDescribeNamespaceResponse(client_ptr, task.namespace) catch |err| {
+        var scratch: [160]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to build describeNamespace response: {}",
+            .{ err },
+        ) catch "temporal-bun-bridge-zig: failed to build describeNamespace response";
+        _ = pending.rejectByteArray(pending_handle, grpc.internal, message);
         return;
-    }
+    };
+    defer allocator.free(response);
 
-    if (success) |client_ptr| {
-        if (pending.isCancelled(context.pending)) {
-            core.api.client_free(client_ptr);
-            destroy(context.client);
-            return;
-        }
-
-        context.client.core_client = client_ptr;
-        const payload_ptr = @as(?*anyopaque, @ptrCast(@alignCast(context.client)));
-        if (!pending.resolveClient(context.pending, payload_ptr, destroyClientFromPending)) {
-            if (pending.isCancelled(context.pending)) {
-                context.client.core_client = null;
-                core.api.client_free(client_ptr);
-                destroy(context.client);
-                return;
-            }
-            context.client.core_client = null;
-            core.api.client_free(client_ptr);
-            destroy(context.client);
-            _ = pending.rejectClient(
-                context.pending,
-                grpc.internal,
-                "temporal-bun-bridge-zig: failed to resolve client pending handle",
-            );
-        }
+    const array_ptr = byte_array.allocate(.{ .slice = response }) orelse {
+        _ = pending.rejectByteArray(pending_handle, grpc.resource_exhausted, "temporal-bun-bridge-zig: failed to allocate describeNamespace response");
         return;
-    }
+    };
 
-    if (pending.isCancelled(context.pending)) {
-        if (fail != null) {
-            core.api.byte_array_free(context.runtime_core, fail);
-        }
-        destroy(context.client);
-        return;
-    }
-
-    const raw_message = sliceFromCoreByteArray(fail);
-    const status_code = mapGrpcStatusFromMessage(raw_message);
-    const message_copy = if (raw_message.len != 0) duplicateConfig(raw_message) else null;
-
-    if (fail != null) {
-        core.api.byte_array_free(context.runtime_core, fail);
-    }
-
-    destroy(context.client);
-
-    const fallback = "temporal-bun-bridge-zig: Temporal core client connect failed";
-    const message_slice = message_copy orelse fallback[0..];
-    _ = pending.rejectClient(context.pending, status_code, message_slice);
-
-    if (message_copy) |owned| {
-        std.heap.c_allocator.free(owned);
+    if (!pending.resolveByteArray(pending_handle, array_ptr)) {
+        byte_array.free(array_ptr);
+        _ = pending.rejectByteArray(pending_handle, grpc.internal, "temporal-bun-bridge-zig: failed to resolve describeNamespace pending handle");
     }
 }
 
@@ -311,24 +237,6 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
     if (runtime_ptr == null) {
         return createClientError(grpc.invalid_argument, "temporal-bun-bridge-zig: connectAsync received null runtime handle");
     }
-
-    const runtime_handle = runtime_ptr.?;
-    const core_runtime = runtime_handle.core_runtime orelse {
-        return createClientError(
-            grpc.failed_precondition,
-            "temporal-bun-bridge-zig: Temporal core runtime not initialized",
-        );
-    };
-
-    if (!runtime.beginPendingClientConnect(runtime_handle)) {
-        return createClientError(
-            grpc.failed_precondition,
-            "temporal-bun-bridge-zig: Temporal core runtime is shutting down",
-        );
-    }
-
-    var release_runtime_pending = true;
-    defer if (release_runtime_pending) runtime.endPendingClientConnect(runtime_handle);
 
     const config_copy = duplicateConfig(config_json) orelse {
         return createClientError(grpc.resource_exhausted, "temporal-bun-bridge-zig: client config allocation failed");
@@ -338,17 +246,15 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
     const handle = allocator.create(ClientHandle) catch |err| {
         allocator.free(config_copy);
         var scratch: [128]u8 = undefined;
-        const formatted = fmt.bufPrint(
+        const formatted = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to allocate client handle: {}",
             .{err},
         ) catch "temporal-bun-bridge-zig: failed to allocate client handle";
-        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = formatted, .details = null });
-        return createClientError(grpc.resource_exhausted, formatted);
+        const message: []const u8 = formatted;
+        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = message, .details = null });
+        return createClientError(grpc.resource_exhausted, message);
     };
-
-    var cleanup_handle = true;
-    defer if (cleanup_handle) destroy(handle);
 
     const id = next_client_id;
     next_client_id += 1;
@@ -360,335 +266,25 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
         .core_client = null,
     };
 
-    var pending_handle_raw: *pending.PendingHandle = undefined;
-    var cleanup_pending = false;
-    defer if (cleanup_pending) pending.free(pending_handle_raw);
-    var cleanup_pending_worker_ref = false;
-    defer if (cleanup_pending_worker_ref) pending.release(pending_handle_raw);
+    if (!temporalServerReachable(handle.config)) {
+        destroy(handle);
+        return createClientError(grpc.unavailable, "temporal-bun-bridge-zig: Temporal server unreachable");
+    }
 
-    pending_handle_raw = pending.createPendingInFlight() orelse {
+    // Stub the Temporal core client handle until the bridge is wired to core.
+    handle.core_client = @as(?*core.ClientOpaque, @ptrCast(handle));
+
+    // TODO(codex, zig-cl-01): Initialize Temporal core client via core bridge and populate core_client.
+    const pending_handle = pending.createPendingReady(
+        @as(?*anyopaque, @ptrCast(handle)),
+        destroyClientFromPending,
+    ) orelse {
+        destroy(handle);
         return createClientError(
             grpc.internal,
             "temporal-bun-bridge-zig: failed to allocate pending client handle",
         );
     };
-    cleanup_pending = true;
-
-    if (!pending.retain(pending_handle_raw)) {
-        return createClientError(
-            grpc.internal,
-            "temporal-bun-bridge-zig: failed to retain pending client handle",
-        );
-    }
-    cleanup_pending_worker_ref = true;
-
-    const pending_handle = @as(*pending.PendingClient, @ptrCast(@alignCast(pending_handle_raw)));
-
-    var arena = ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    var parsed = json.parseFromSlice(json.Value, arena.allocator(), config_json, .{}) catch {
-        return createClientError(
-            grpc.invalid_argument,
-            "temporal-bun-bridge-zig: client config must be valid JSON",
-        );
-    };
-    defer parsed.deinit();
-
-    const root_object = switch (parsed.value) {
-        .object => |*map| map,
-        else => return createClientError(
-            grpc.invalid_argument,
-            "temporal-bun-bridge-zig: client config must be a JSON object",
-        ),
-    };
-
-    const address_slice = getFirstString(root_object, &.{"address"}) orelse {
-        return createClientError(
-            grpc.invalid_argument,
-            "temporal-bun-bridge-zig: client config requires address field",
-        );
-    };
-    if (address_slice.len == 0) {
-        return createClientError(
-            grpc.invalid_argument,
-            "temporal-bun-bridge-zig: client config address must be a non-empty string",
-        );
-    }
-
-    const namespace_slice = getFirstString(root_object, &.{"namespace"}) orelse {
-        return createClientError(
-            grpc.invalid_argument,
-            "temporal-bun-bridge-zig: client config requires namespace field",
-        );
-    };
-    if (namespace_slice.len == 0) {
-        return createClientError(
-            grpc.invalid_argument,
-            "temporal-bun-bridge-zig: client config namespace must be a non-empty string",
-        );
-    }
-
-    const raw_client_name = getFirstString(root_object, &.{ "client_name", "clientName" });
-    const client_name_source = blk: {
-        if (raw_client_name) |value| {
-            break :blk if (value.len != 0) value else "temporal-bun-sdk"[0..];
-        }
-        break :blk "temporal-bun-sdk"[0..];
-    };
-
-    const raw_client_version = getFirstString(root_object, &.{ "client_version", "clientVersion" });
-    const client_version_source = blk: {
-        if (raw_client_version) |value| {
-            break :blk if (value.len != 0) value else "0.0.0"[0..];
-        }
-        break :blk "0.0.0"[0..];
-    };
-
-    const identity_source_opt = getFirstString(root_object, &.{"identity"});
-    const api_key_source_opt = getFirstString(root_object, &.{ "api_key", "apiKey" });
-
-    var tls_server_root_ca_source: ?[]const u8 = null;
-    var tls_domain_source: ?[]const u8 = null;
-    var tls_client_cert_source: ?[]const u8 = null;
-    var tls_client_key_source: ?[]const u8 = null;
-
-    if (getObjectField(root_object, "tls")) |tls_object| {
-        tls_server_root_ca_source = getFirstString(
-            tls_object,
-            &.{ "server_root_ca_cert", "serverRootCACertificate" },
-        );
-        tls_domain_source = getFirstString(
-            tls_object,
-            &.{ "server_name_override", "serverNameOverride" },
-        );
-        tls_client_cert_source = getFirstString(
-            tls_object,
-            &.{ "client_cert", "clientCert" },
-        );
-        tls_client_key_source = getFirstString(
-            tls_object,
-            &.{ "client_private_key", "clientPrivateKey" },
-        );
-    }
-
-    var address_buf: []u8 = ""[0..0];
-    var free_address = false;
-    defer if (free_address and address_buf.len != 0) allocator.free(address_buf);
-
-    address_buf = duplicateConfig(address_slice) orelse {
-        return createClientError(
-            grpc.resource_exhausted,
-            "temporal-bun-bridge-zig: failed to duplicate client address",
-        );
-    };
-    free_address = true;
-
-    var client_name_buf: []u8 = ""[0..0];
-    var free_client_name = false;
-    defer if (free_client_name and client_name_buf.len != 0) allocator.free(client_name_buf);
-
-    client_name_buf = duplicateConfig(client_name_source) orelse {
-        return createClientError(
-            grpc.resource_exhausted,
-            "temporal-bun-bridge-zig: failed to duplicate client name",
-        );
-    };
-    free_client_name = true;
-
-    var client_version_buf: []u8 = ""[0..0];
-    var free_client_version = false;
-    defer if (free_client_version and client_version_buf.len != 0) allocator.free(client_version_buf);
-
-    client_version_buf = duplicateConfig(client_version_source) orelse {
-        return createClientError(
-            grpc.resource_exhausted,
-            "temporal-bun-bridge-zig: failed to duplicate client version",
-        );
-    };
-    free_client_version = true;
-
-    var identity_buf: []u8 = ""[0..0];
-    var free_identity = false;
-    defer if (free_identity and identity_buf.len != 0) allocator.free(identity_buf);
-
-    if (identity_source_opt) |identity_slice| {
-        const effective_identity = if (identity_slice.len != 0) identity_slice else "temporal-bun-sdk"[0..];
-        identity_buf = duplicateConfig(effective_identity) orelse {
-            return createClientError(
-                grpc.resource_exhausted,
-                "temporal-bun-bridge-zig: failed to duplicate client identity",
-            );
-        };
-    } else {
-        identity_buf = fmt.allocPrint(
-            allocator,
-            "temporal-bun-sdk-{d}",
-            .{@as(u64, @intCast(c.getpid()))},
-        ) catch {
-            return createClientError(
-                grpc.resource_exhausted,
-                "temporal-bun-bridge-zig: failed to allocate default client identity",
-            );
-        };
-    }
-    free_identity = true;
-
-    var api_key_buf: ?[]u8 = null;
-    var free_api_key = false;
-    defer if (free_api_key) {
-        if (api_key_buf) |buf| {
-            allocator.free(buf);
-        }
-    };
-
-    if (duplicateOptionalSlice(api_key_source_opt)) |copy| {
-        api_key_buf = copy;
-        free_api_key = true;
-    }
-
-    var tls_server_root_ca_buf: ?[]u8 = null;
-    var free_tls_root = false;
-    defer if (free_tls_root) {
-        if (tls_server_root_ca_buf) |buf| {
-            allocator.free(buf);
-        }
-    };
-
-    if (duplicateOptionalSlice(tls_server_root_ca_source)) |copy| {
-        tls_server_root_ca_buf = copy;
-        free_tls_root = true;
-    }
-
-    var tls_domain_buf: ?[]u8 = null;
-    var free_tls_domain = false;
-    defer if (free_tls_domain) {
-        if (tls_domain_buf) |buf| {
-            allocator.free(buf);
-        }
-    };
-
-    if (duplicateOptionalSlice(tls_domain_source)) |copy| {
-        tls_domain_buf = copy;
-        free_tls_domain = true;
-    }
-
-    var tls_client_cert_buf: ?[]u8 = null;
-    var free_tls_cert = false;
-    defer if (free_tls_cert) {
-        if (tls_client_cert_buf) |buf| {
-            allocator.free(buf);
-        }
-    };
-
-    if (duplicateOptionalSlice(tls_client_cert_source)) |copy| {
-        tls_client_cert_buf = copy;
-        free_tls_cert = true;
-    }
-
-    var tls_client_key_buf: ?[]u8 = null;
-    var free_tls_key = false;
-    defer if (free_tls_key) {
-        if (tls_client_key_buf) |buf| {
-            allocator.free(buf);
-        }
-    };
-
-    if (duplicateOptionalSlice(tls_client_key_source)) |copy| {
-        tls_client_key_buf = copy;
-        free_tls_key = true;
-    }
-
-    var context: *ConnectContext = undefined;
-    var cleanup_context = false;
-    defer if (cleanup_context) finalizeConnectContext(context);
-
-    context = allocator.create(ConnectContext) catch {
-        return createClientError(
-            grpc.resource_exhausted,
-            "temporal-bun-bridge-zig: failed to allocate client connect context",
-        );
-    };
-
-    context.* = .{
-        .allocator = allocator,
-        .pending = pending_handle,
-        .client = handle,
-        .runtime_handle = runtime_handle,
-        .runtime_core = core_runtime,
-        .options = undefined,
-        .tls_options = undefined,
-        .has_tls = false,
-        .address_buf = address_buf,
-        .client_name_buf = client_name_buf,
-        .client_version_buf = client_version_buf,
-        .identity_buf = identity_buf,
-        .api_key_buf = api_key_buf,
-        .tls_server_root_ca_buf = tls_server_root_ca_buf,
-        .tls_domain_buf = tls_domain_buf,
-        .tls_client_cert_buf = tls_client_cert_buf,
-        .tls_client_private_key_buf = tls_client_key_buf,
-    };
-
-    free_address = false;
-    free_client_name = false;
-    free_client_version = false;
-    free_identity = false;
-    free_api_key = false;
-    free_tls_root = false;
-    free_tls_domain = false;
-    free_tls_cert = false;
-    free_tls_key = false;
-
-    context.options = core.ClientOptions{
-        .target_url = makeByteArrayRef(context.address_buf),
-        .client_name = makeByteArrayRef(context.client_name_buf),
-        .client_version = makeByteArrayRef(context.client_version_buf),
-        .metadata = .{ .data = null, .size = 0 },
-        .api_key = makeOptionalByteArrayRef(if (context.api_key_buf) |buf| buf else null),
-        .identity = makeByteArrayRef(context.identity_buf),
-        .tls_options = null,
-        .retry_options = null,
-        .keep_alive_options = null,
-        .http_connect_proxy_options = null,
-        .grpc_override_callback = null,
-        .grpc_override_callback_user_data = null,
-    };
-
-    const has_tls = (context.tls_server_root_ca_buf != null) or
-        (context.tls_domain_buf != null) or
-        (context.tls_client_cert_buf != null) or
-        (context.tls_client_private_key_buf != null);
-
-    context.has_tls = has_tls;
-    if (has_tls) {
-        context.tls_options = core.ClientTlsOptions{
-            .server_root_ca_cert = makeOptionalByteArrayRef(if (context.tls_server_root_ca_buf) |buf| buf else null),
-            .domain = makeOptionalByteArrayRef(if (context.tls_domain_buf) |buf| buf else null),
-            .client_cert = makeOptionalByteArrayRef(if (context.tls_client_cert_buf) |buf| buf else null),
-            .client_private_key = makeOptionalByteArrayRef(if (context.tls_client_private_key_buf) |buf| buf else null),
-        };
-        context.options.tls_options = &context.tls_options;
-    }
-
-    cleanup_context = true;
-
-    const thread = std.Thread.spawn(.{}, runClientConnect, .{context}) catch |err| {
-        var scratch: [128]u8 = undefined;
-        const formatted = fmt.bufPrint(
-            &scratch,
-            "temporal-bun-bridge-zig: failed to spawn client connect worker: {}",
-            .{err},
-        ) catch "temporal-bun-bridge-zig: failed to spawn client connect worker";
-        return createClientError(grpc.internal, formatted);
-    };
-    thread.detach();
-
-    cleanup_context = false;
-    cleanup_pending = false;
-    cleanup_pending_worker_ref = false;
-    cleanup_handle = false;
-    release_runtime_pending = false;
 
     return @as(?*pending.PendingClient, pending_handle);
 }
@@ -701,9 +297,8 @@ pub fn destroy(handle: ?*ClientHandle) void {
     var allocator = std.heap.c_allocator;
     const client = handle.?;
 
-    if (client.core_client) |core_client_ptr| {
-        core.api.client_free(core_client_ptr);
-        client.core_client = null;
+    if (client.core_client) |_| {
+        // TODO(codex, zig-cl-04): Release Temporal core client once linked.
     }
 
     allocator.free(client.config);
@@ -716,9 +311,56 @@ pub fn describeNamespaceAsync(client_ptr: ?*ClientHandle, _payload: []const u8) 
         return createByteArrayError(grpc.invalid_argument, "temporal-bun-bridge-zig: describeNamespace received null client");
     }
 
-    // TODO(codex, zig-cl-02): Marshal namespace describe request via Temporal core.
-    _ = _payload;
-    return createByteArrayError(grpc.unimplemented, "temporal-bun-bridge-zig: describeNamespace is not implemented yet");
+    const client = client_ptr.?;
+    if (client.core_client == null) {
+        return createByteArrayError(grpc.failed_precondition, "temporal-bun-bridge-zig: describeNamespace missing Temporal core client handle");
+    }
+
+    const pending_handle_ptr = pending.createPendingInFlight() orelse {
+        return createByteArrayError(grpc.internal, "temporal-bun-bridge-zig: failed to allocate describeNamespace pending handle");
+    };
+    const pending_handle = @as(*pending.PendingByteArray, @ptrCast(pending_handle_ptr));
+
+    const namespace_copy = parseNamespaceFromPayload(_payload) orelse {
+        _ = pending.rejectByteArray(pending_handle, grpc.invalid_argument, errors.snapshot());
+        return @as(?*pending.PendingByteArray, pending_handle);
+    };
+
+    const allocator = std.heap.c_allocator;
+    const task = allocator.create(DescribeNamespaceTask) catch |err| {
+        allocator.free(namespace_copy);
+        var scratch: [160]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to allocate describeNamespace task: {}",
+            .{ err },
+        ) catch "temporal-bun-bridge-zig: failed to allocate describeNamespace task";
+        _ = pending.rejectByteArray(pending_handle, grpc.resource_exhausted, message);
+        return @as(?*pending.PendingByteArray, pending_handle);
+    };
+
+    task.* = .{
+        .client = client_ptr,
+        .pending_handle = pending_handle,
+        .namespace = namespace_copy,
+    };
+
+    const thread = std.Thread.spawn(.{}, describeNamespaceWorker, .{task}) catch |err| {
+        allocator.destroy(task);
+        allocator.free(namespace_copy);
+        var scratch: [160]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to spawn describeNamespace thread: {}",
+            .{ err },
+        ) catch "temporal-bun-bridge-zig: failed to spawn describeNamespace thread";
+        _ = pending.rejectByteArray(pending_handle, grpc.internal, message);
+        return @as(?*pending.PendingByteArray, pending_handle);
+    };
+
+    thread.detach();
+
+    return @as(?*pending.PendingByteArray, pending_handle);
 }
 
 pub fn startWorkflow(_client: ?*ClientHandle, _payload: []const u8) ?*byte_array.ByteArray {
