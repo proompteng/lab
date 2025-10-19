@@ -9,36 +9,40 @@ import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 import { GithubService } from '@/services/github'
 import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
 
-const mockVerifyDiscordRequest = vi.fn(async () => true)
-const mockBuildPlanModalResponse = vi.fn(() => ({
-  type: 9,
-  data: {
-    custom_id: 'plan:cmd-1',
-    title: 'Request Planning Run',
-    components: [],
-  },
-}))
-const mockToPlanModalEvent = vi.fn(() => ({
-  provider: 'discord' as const,
-  interactionId: 'interaction-123',
-  applicationId: 'app-123',
-  command: 'plan',
-  commandId: 'command-1',
-  version: 1,
-  token: 'token-123',
-  options: { content: 'Ship the release with QA gating' },
-  guildId: 'guild-1',
-  channelId: 'channel-1',
-  user: { id: 'user-1', username: 'tester', globalName: 'Tester', discriminator: '1234' },
-  member: undefined,
-  locale: 'en-US',
-  guildLocale: 'en-US',
-  response: { type: 4, flags: 64 },
-  timestamp: '2025-10-09T00:00:00.000Z',
-  correlationId: '',
-  traceId: '',
-}))
-const mockBuildCodexPrompt = vi.fn(() => 'PROMPT')
+const { mockVerifyDiscordRequest, mockBuildPlanModalResponse, mockToPlanModalEvent, mockBuildCodexPrompt } = vi.hoisted(
+  () => ({
+    mockVerifyDiscordRequest: vi.fn(async () => true),
+    mockBuildPlanModalResponse: vi.fn(() => ({
+      type: 9,
+      data: {
+        custom_id: 'plan:cmd-1',
+        title: 'Request Planning Run',
+        components: [],
+      },
+    })),
+    mockToPlanModalEvent: vi.fn(() => ({
+      provider: 'discord' as const,
+      interactionId: 'interaction-123',
+      applicationId: 'app-123',
+      command: 'plan',
+      commandId: 'command-1',
+      version: 1,
+      token: 'token-123',
+      options: { content: 'Ship the release with QA gating' },
+      guildId: 'guild-1',
+      channelId: 'channel-1',
+      user: { id: 'user-1', username: 'tester', globalName: 'Tester', discriminator: '1234' },
+      member: undefined,
+      locale: 'en-US',
+      guildLocale: 'en-US',
+      response: { type: 4, flags: 64 },
+      timestamp: '2025-10-09T00:00:00.000Z',
+      correlationId: '',
+      traceId: '',
+    })),
+    mockBuildCodexPrompt: vi.fn(() => 'PROMPT'),
+  }),
+)
 
 vi.mock('@/discord-commands', () => ({
   verifyDiscordRequest: mockVerifyDiscordRequest,

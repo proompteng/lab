@@ -3,11 +3,25 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const pathExistsMock = vi.fn(async (path: string) => !path.includes('missing'))
-const copyAgentLogIfNeededMock = vi.fn(async () => undefined)
-const randomRunIdMock = vi.fn(() => 'random456')
-const timestampUtcMock = vi.fn(() => '2025-10-18T00:00:00Z')
-const buildDiscordRelayCommandMock = vi.fn(async () => ['bun', 'run', 'relay.ts'])
+const {
+  pathExistsMock,
+  copyAgentLogIfNeededMock,
+  randomRunIdMock,
+  timestampUtcMock,
+  buildDiscordRelayCommandMock,
+  runCodexSessionMock,
+  pushCodexEventsToLokiMock,
+  buildCodexPromptMock,
+} = vi.hoisted(() => ({
+  pathExistsMock: vi.fn(async (path: string) => !path.includes('missing')),
+  copyAgentLogIfNeededMock: vi.fn(async () => undefined),
+  randomRunIdMock: vi.fn(() => 'random456'),
+  timestampUtcMock: vi.fn(() => '2025-10-18T00:00:00Z'),
+  buildDiscordRelayCommandMock: vi.fn(async () => ['bun', 'run', 'relay.ts']),
+  runCodexSessionMock: vi.fn(async () => ({ agentMessages: [] })),
+  pushCodexEventsToLokiMock: vi.fn(async () => {}),
+  buildCodexPromptMock: vi.fn(() => 'REVIEW PROMPT'),
+}))
 
 vi.mock('../lib/codex-utils', () => ({
   pathExists: pathExistsMock,
@@ -17,15 +31,10 @@ vi.mock('../lib/codex-utils', () => ({
   buildDiscordRelayCommand: buildDiscordRelayCommandMock,
 }))
 
-const runCodexSessionMock = vi.fn(async () => ({ agentMessages: [] }))
-const pushCodexEventsToLokiMock = vi.fn(async () => {})
-
 vi.mock('../lib/codex-runner', () => ({
   runCodexSession: runCodexSessionMock,
   pushCodexEventsToLoki: pushCodexEventsToLokiMock,
 }))
-
-const buildCodexPromptMock = vi.fn(() => 'REVIEW PROMPT')
 
 vi.mock('@/codex', () => ({
   buildCodexPrompt: buildCodexPromptMock,
