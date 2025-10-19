@@ -40,6 +40,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    test_module.addIncludePath(include_dir);
 
     const unit_tests = b.addTest(.{
         .root_module = test_module,
