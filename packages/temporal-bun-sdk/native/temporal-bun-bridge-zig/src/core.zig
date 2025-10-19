@@ -5,8 +5,6 @@ const std = @import("std");
 // See packages/temporal-bun-sdk/docs/ffi-surface.md and docs/zig-bridge-migration-plan.md.
 const builtin = @import("builtin");
 
-const builtin = @import("builtin");
-
 pub const RuntimeOpaque = opaque {};
 pub const ClientOpaque = opaque {};
 pub const WorkerOpaque = opaque {};
