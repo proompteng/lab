@@ -860,18 +860,19 @@ export const createGithubWebhookHandler =
               reviewEvaluation.undraftCommand = undraftCandidate
             }
 
-            const readyCommentCandidate = !mergeStateRequiresAttention
-              ? ({
-                  repositoryFullName,
-                  pullNumber,
-                  issueNumber: pull.number,
-                  body:
-                    executionContext.workflowIdentifier && executionContext.workflowIdentifier.length > 0
-                      ? `${CODEX_READY_TO_MERGE_COMMENT}\n_Workflow: ${executionContext.workflowIdentifier}_`
-                      : CODEX_READY_TO_MERGE_COMMENT,
-                  marker: CODEX_READY_COMMENT_MARKER,
-                } satisfies ReadyCommentCommand)
-              : undefined
+            const readyCommentCandidate =
+              !mergeStateRequiresAttention && !shouldForceReviewStage && !outstandingWork
+                ? ({
+                    repositoryFullName,
+                    pullNumber,
+                    issueNumber: pull.number,
+                    body:
+                      executionContext.workflowIdentifier && executionContext.workflowIdentifier.length > 0
+                        ? `${CODEX_READY_TO_MERGE_COMMENT}\n_Workflow: ${executionContext.workflowIdentifier}_`
+                        : CODEX_READY_TO_MERGE_COMMENT,
+                    marker: CODEX_READY_COMMENT_MARKER,
+                  } satisfies ReadyCommentCommand)
+                : undefined
 
             if (
               readyCommentCandidate &&
