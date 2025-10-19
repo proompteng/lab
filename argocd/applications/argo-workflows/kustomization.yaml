@@ -17,6 +17,12 @@ helmCharts:
       controller:
         workflowNamespaces:
           - argo-workflows
+        workflowDefaults:
+          spec:
+            ttlStrategy:
+              secondsAfterSuccess: 43200 # 12h retention for successful runs
+              secondsAfterFailure: 604800 # 7d retention to keep failure diagnostics
+              secondsAfterCompletion: 604800
       server:
         secure: false
         authModes:
