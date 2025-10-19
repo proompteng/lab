@@ -212,6 +212,12 @@ export const runCodexReview = async (eventPath: string) => {
       if (relayRunId) {
         args.push('--run-id', relayRunId)
       }
+      if (issueTitle) {
+        args.push('--title', issueTitle)
+      }
+      if (issueUrl) {
+        args.push('--url', issueUrl)
+      }
       if (reviewContext.summary) {
         args.push('--summary', reviewContext.summary)
       }

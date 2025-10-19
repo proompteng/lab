@@ -3,41 +3,35 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const pathExistsMock = vi.fn(async (path: string) => !path.includes('missing'))
+const copyAgentLogIfNeededMock = vi.fn(async () => undefined)
+const randomRunIdMock = vi.fn(() => 'random456')
+const timestampUtcMock = vi.fn(() => '2025-10-18T00:00:00Z')
+const buildDiscordRelayCommandMock = vi.fn(async () => ['bun', 'run', 'relay.ts'])
+
+vi.mock('../lib/codex-utils', () => ({
+  pathExists: pathExistsMock,
+  copyAgentLogIfNeeded: copyAgentLogIfNeededMock,
+  randomRunId: randomRunIdMock,
+  timestampUtc: timestampUtcMock,
+  buildDiscordRelayCommand: buildDiscordRelayCommandMock,
+}))
+
+const runCodexSessionMock = vi.fn(async () => ({ agentMessages: [] }))
+const pushCodexEventsToLokiMock = vi.fn(async () => {})
+
+vi.mock('../lib/codex-runner', () => ({
+  runCodexSession: runCodexSessionMock,
+  pushCodexEventsToLoki: pushCodexEventsToLokiMock,
+}))
+
+const buildCodexPromptMock = vi.fn(() => 'REVIEW PROMPT')
+
+vi.mock('@/codex', () => ({
+  buildCodexPrompt: buildCodexPromptMock,
+}))
+
 import { runCodexReview } from '../codex-review'
-
-const utilMocks = vi.hoisted(() => ({
-  pathExists: vi.fn(async (path: string) => !path.includes('missing')),
-  copyAgentLogIfNeeded: vi.fn(async () => undefined),
-  randomRunId: vi.fn(() => 'random456'),
-  timestampUtc: vi.fn(() => '2025-10-18T00:00:00Z'),
-  buildDiscordRelayCommand: vi.fn(async () => ['bun', 'run', 'relay.ts']),
-}))
-
-vi.mock('../lib/codex-utils', () => utilMocks)
-
-const runnerMocks = vi.hoisted(() => ({
-  runCodexSession: vi.fn(async () => ({ agentMessages: [] })),
-  pushCodexEventsToLoki: vi.fn(async () => {}),
-}))
-
-vi.mock('../lib/codex-runner', () => runnerMocks)
-
-const codexMocks = vi.hoisted(() => ({
-  buildCodexPrompt: vi.fn(() => 'REVIEW PROMPT'),
-}))
-
-vi.mock('@/codex', async (importOriginal) => {
-  const mod = await importOriginal()
-  return {
-    ...mod,
-    buildCodexPrompt: codexMocks.buildCodexPrompt,
-  }
-})
-
-const runCodexSessionMock = runnerMocks.runCodexSession
-const pushCodexEventsToLokiMock = runnerMocks.pushCodexEventsToLoki
-const buildDiscordRelayCommandMock = utilMocks.buildDiscordRelayCommand
-const buildCodexPromptMock = codexMocks.buildCodexPrompt
 
 const ORIGINAL_ENV = { ...process.env }
 
@@ -71,7 +65,7 @@ describe('runCodexReview', () => {
       issueNumber: 7,
       issueTitle: 'Review behaviour',
       issueBody: 'Address reviewer feedback.',
-      issueUrl: 'https://github.com/owner/repo/issues/7',
+      issueUrl: 'https://github.com/owner/repo/pull/7',
       base: 'main',
       head: 'codex/issue-7-feedback',
       reviewContext: {
@@ -97,11 +91,22 @@ describe('runCodexReview', () => {
 
     await writeFile(eventPath, JSON.stringify(payload))
 
-    runCodexSessionMock.mockClear()
-    pushCodexEventsToLokiMock.mockClear()
-    buildCodexPromptMock.mockClear()
-    buildDiscordRelayCommandMock.mockClear()
-    utilMocks.pathExists.mockImplementation(async (path: string) => !path.includes('missing'))
+    runCodexSessionMock.mockReset()
+    runCodexSessionMock.mockResolvedValue({ agentMessages: [] })
+    pushCodexEventsToLokiMock.mockReset()
+    pushCodexEventsToLokiMock.mockResolvedValue(undefined)
+    buildCodexPromptMock.mockReset()
+    buildCodexPromptMock.mockReturnValue('REVIEW PROMPT')
+    buildDiscordRelayCommandMock.mockReset()
+    buildDiscordRelayCommandMock.mockResolvedValue(['bun', 'run', 'relay.ts'])
+    pathExistsMock.mockReset()
+    pathExistsMock.mockImplementation(async (path: string) => !path.includes('missing'))
+    copyAgentLogIfNeededMock.mockReset()
+    copyAgentLogIfNeededMock.mockResolvedValue(undefined)
+    randomRunIdMock.mockReset()
+    randomRunIdMock.mockReturnValue('random456')
+    timestampUtcMock.mockReset()
+    timestampUtcMock.mockReturnValue('2025-10-18T00:00:00Z')
   })
 
   afterEach(async () => {
@@ -158,13 +163,26 @@ describe('runCodexReview', () => {
     process.env.DISCORD_BOT_TOKEN = 'token'
     process.env.DISCORD_GUILD_ID = 'guild'
     process.env.RELAY_SCRIPT = 'apps/froussard/scripts/discord-relay.ts'
-    utilMocks.pathExists.mockResolvedValue(true)
+    pathExistsMock.mockResolvedValue(true)
 
     await runCodexReview(eventPath)
 
     expect(buildDiscordRelayCommandMock).toHaveBeenCalledWith(
       'apps/froussard/scripts/discord-relay.ts',
-      expect.arrayContaining(['--stage', 'review', '--summary', 'One unresolved thread and failing check remain.']),
+      expect.arrayContaining([
+        '--stage',
+        'review',
+        '--repo',
+        'owner/repo',
+        '--issue',
+        '7',
+        '--title',
+        'Review behaviour',
+        '--url',
+        'https://github.com/owner/repo/pull/7',
+        '--summary',
+        'One unresolved thread and failing check remain.',
+      ]),
     )
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
     expect(invocation?.discordRelay?.command).toEqual(['bun', 'run', 'relay.ts'])
