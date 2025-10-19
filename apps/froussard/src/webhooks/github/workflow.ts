@@ -1,3 +1,4 @@
+import type { Effect as EffectType } from 'effect/Effect'
 import type { WorkflowCommand } from '@/codex/workflow-machine'
 import type { AppRuntime } from '@/effect/runtime'
 import { logger } from '@/logger'
@@ -15,6 +16,7 @@ export type WorkflowStage = 'planning' | 'implementation' | 'review'
 export interface WorkflowExecutionContext {
   runtime: AppRuntime
   githubService: GithubServiceDefinition
+  runGithub: <R, E, A>(factory: () => EffectType<R, E, A>) => Promise<A>
   config: {
     github: {
       token: string | null
@@ -68,7 +70,7 @@ export const executeWorkflowCommands = async (
         )
 
         if (command.data.ack) {
-          const ackResult = await context.runtime.runPromise(
+          const ackResult = await context.runGithub(() =>
             context.githubService.postIssueReaction({
               repositoryFullName: command.data.ack.repositoryFullName,
               issueNumber: command.data.ack.issueNumber,
@@ -154,7 +156,7 @@ export const executeWorkflowCommands = async (
         break
       }
       case 'markReadyForReview': {
-        const result = await context.runtime.runPromise(
+        const result = await context.runGithub(() =>
           context.githubService.markPullRequestReadyForReview({
             repositoryFullName: command.data.repositoryFullName,
             pullNumber: command.data.pullNumber,
@@ -174,7 +176,7 @@ export const executeWorkflowCommands = async (
             'marking codex pull request ready for review',
           )
 
-          const commentResult = await context.runtime.runPromise(
+          const commentResult = await context.runGithub(() =>
             context.githubService.createPullRequestComment({
               repositoryFullName: command.data.repositoryFullName,
               pullNumber: command.data.pullNumber,
@@ -212,7 +214,7 @@ export const executeWorkflowCommands = async (
         break
       }
       case 'postReadyComment': {
-        const lookup = await context.runtime.runPromise(
+        const lookup = await context.runGithub(() =>
           context.githubService.findLatestPlanComment({
             repositoryFullName: command.data.repositoryFullName,
             issueNumber: command.data.issueNumber,
@@ -241,7 +243,7 @@ export const executeWorkflowCommands = async (
           break
         }
 
-        const readyResult = await context.runtime.runPromise(
+        const readyResult = await context.runGithub(() =>
           context.githubService.createPullRequestComment({
             repositoryFullName: command.data.repositoryFullName,
             pullNumber: command.data.pullNumber,

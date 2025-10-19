@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto'
 
 import type { Webhooks } from '@octokit/webhooks'
 import { Effect } from 'effect'
+import type { Effect as EffectType } from 'effect/Effect'
+import * as STM from 'effect/STM'
+import * as TSemaphore from 'effect/TSemaphore'
 
 import type { AppRuntime } from '@/effect/runtime'
 import { logger } from '@/logger'
@@ -85,10 +88,15 @@ export const createGithubWebhookHandler =
         return yield* GithubService
       }),
     )
+    const githubSemaphore = Effect.runSync(STM.commit(TSemaphore.make(4)))
+
+    const runGithub = <R, E, A>(factory: () => EffectType<R, E, A>) =>
+      runtime.runPromise(TSemaphore.withPermits(githubSemaphore, 1)(factory()))
 
     const executionContext: WorkflowExecutionContext = {
       runtime,
       githubService,
+      runGithub,
       config: {
         github: {
           token: config.github.token,

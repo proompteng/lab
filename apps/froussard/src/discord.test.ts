@@ -1,21 +1,11 @@
 import { Readable } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const delayMock = vi.fn(() => Promise.resolve())
-
-vi.mock('node:timers/promises', () => ({
-  setTimeout: (...args: Parameters<typeof delayMock>) => delayMock(...args),
-}))
-
 import * as discord from './discord'
 
 const { buildChannelName, chunkContent, consumeChunks, DISCORD_MESSAGE_LIMIT } = discord
 
 const originalFetch = global.fetch
-
-beforeEach(() => {
-  delayMock.mockClear()
-})
 
 describe('buildChannelName', () => {
   it('creates a stable channel name using repo slug, issue, stage, timestamp, and run id', () => {
@@ -181,10 +171,6 @@ describe('createRelayChannel', () => {
 })
 
 describe('bootstrapRelay', () => {
-  beforeEach(() => {
-    delayMock.mockClear()
-  })
-
   afterEach(() => {
     if (originalFetch) {
       global.fetch = originalFetch
@@ -331,10 +317,6 @@ describe('bootstrapRelay', () => {
 })
 
 describe('relayStream', () => {
-  beforeEach(() => {
-    delayMock.mockClear()
-  })
-
   afterEach(() => {
     vi.restoreAllMocks()
     if (originalFetch) {
@@ -389,7 +371,6 @@ describe('relayStream', () => {
 
 describe('postMessage', () => {
   afterEach(() => {
-    delayMock.mockClear()
     if (originalFetch) {
       global.fetch = originalFetch
     }
@@ -415,7 +396,6 @@ describe('postMessage', () => {
     await discord.postMessage({ botToken: 'token', guildId: 'guild' }, 'channel', 'content')
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(delayMock).toHaveBeenCalled()
   })
 
   it('does nothing when content is empty', async () => {

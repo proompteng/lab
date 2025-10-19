@@ -110,6 +110,27 @@ spec:
           version: v1alpha1
           operation: create
           parameters:
+            - dest: metadata.name
+              src:
+                dependencyName: review-event
+                dataTemplate: |
+                  {{- $headers := .Input.headers -}}
+                  {{- $fingerprint := default "" (index $headers "x-codex-review-fingerprint") -}}
+                  {{- if $fingerprint -}}
+                    {{- printf "github-codex-review-%s" (regexReplaceAll "[^a-z0-9-]" (lower $fingerprint) "-") -}}
+                  {{- else -}}
+                    {{- printf "github-codex-review-%s" (lower (randAlphaNum 10)) -}}
+                  {{- end -}}
+            - dest: metadata.labels.codex\.reviewFingerprint
+              src:
+                dependencyName: review-event
+                dataTemplate: |
+                  {{- default "" (index .Input.headers "x-codex-review-fingerprint") -}}
+            - dest: metadata.labels.codex\.headSha
+              src:
+                dependencyName: review-event
+                dataTemplate: |
+                  {{- default "" (index .Input.headers "x-codex-review-head-sha") -}}
             - dest: spec.arguments.parameters.0.value
               src:
                 dependencyName: review-event
