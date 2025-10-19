@@ -168,6 +168,22 @@ describe('parseArgs', () => {
     })
   })
 
+  it('derives repo from PR URL', () => {
+    const options = parseArgs(['--pr=https://github.com/acme/widgets/pull/99'])
+    expect(options).toEqual({
+      pr: 99,
+      repo: 'acme/widgets',
+      namespace: 'argo-workflows',
+      dryRun: false,
+    })
+  })
+
+  it('validates repo consistency when both URL and flag provided', () => {
+    expect(() => parseArgs(['--pr=https://github.com/acme/widgets/pull/99', '--repo=acme/other'])).toThrow(
+      /Repository mismatch/,
+    )
+  })
+
   it('throws on missing PR flag', () => {
     expect(() => parseArgs([])).toThrow(/Usage:/)
   })

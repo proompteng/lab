@@ -262,6 +262,25 @@ const buildEventBody = (repository: string, pr: PullRequestPayload, context: Rev
   },
 })
 
+const extractPrIdentifier = (value: string) => {
+  if (/^https?:\/\//i.test(value)) {
+    const match = value.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i)
+    if (!match) {
+      throw new Error(`Unable to parse pull request URL: ${value}`)
+    }
+    return {
+      prNumber: Number.parseInt(match[3], 10),
+      repo: `${match[1]}/${match[2]}`,
+    }
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    throw new Error(`Invalid PR number: ${value}`)
+  }
+  return { prNumber: parsed }
+}
+
 const parseArgs = (argv: string[]) => {
   const options: { repo: string; namespace: string; dryRun: boolean } = {
     repo: 'proompteng/lab',
@@ -269,6 +288,8 @@ const parseArgs = (argv: string[]) => {
     dryRun: false,
   }
   let prNumber: number | undefined
+  let repoFromPr: string | undefined
+  let repoExplicit = false
 
   for (const arg of argv) {
     if (arg === '--dry-run') {
@@ -277,6 +298,7 @@ const parseArgs = (argv: string[]) => {
     }
     if (arg.startsWith('--repo=')) {
       options.repo = arg.slice('--repo='.length)
+      repoExplicit = true
       continue
     }
     if (arg.startsWith('--namespace=')) {
@@ -284,11 +306,11 @@ const parseArgs = (argv: string[]) => {
       continue
     }
     if (arg.startsWith('--pr=')) {
-      const value = Number.parseInt(arg.slice('--pr='.length), 10)
-      if (Number.isNaN(value) || value <= 0) {
-        throw new Error(`Invalid PR number: ${arg}`)
+      const result = extractPrIdentifier(arg.slice('--pr='.length))
+      prNumber = result.prNumber
+      if (result.repo) {
+        repoFromPr = result.repo
       }
-      prNumber = value
     }
   }
 
@@ -300,6 +322,15 @@ const parseArgs = (argv: string[]) => {
 
   if (!options.repo.includes('/')) {
     throw new Error(`Repository must be in the form owner/name (received '${options.repo}')`)
+  }
+
+  if (repoFromPr) {
+    if (repoExplicit && options.repo !== repoFromPr) {
+      throw new Error(`Repository mismatch between --repo (${options.repo}) and PR URL (${repoFromPr})`)
+    }
+    if (!repoExplicit) {
+      options.repo = repoFromPr
+    }
   }
 
   return { ...options, pr: prNumber }
