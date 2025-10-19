@@ -1,6 +1,7 @@
 services:
   temporal:
-    image: temporalio/auto-setup:1.23.0
+    # Use the Google Container Registry mirror to avoid Docker Hub rate limiting in CI.
+    image: mirror.gcr.io/temporalio/auto-setup:1.23.1
     container_name: temporal-test
     environment:
       - DB=postgres12
