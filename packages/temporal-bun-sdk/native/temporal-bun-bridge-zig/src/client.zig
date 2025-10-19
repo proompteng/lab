@@ -26,72 +26,6 @@ const DescribeNamespaceTask = struct {
     namespace: []u8,
 };
 
-fn parseHostPort(address: []const u8) ?struct { host: []const u8, port: u16 } {
-    var trimmed = address;
-    if (std.mem.startsWith(u8, trimmed, "http://")) {
-        trimmed = trimmed["http://".len..];
-    } else if (std.mem.startsWith(u8, trimmed, "https://")) {
-        trimmed = trimmed["https://".len..];
-    }
-
-    if (std.mem.indexOfScalar(u8, trimmed, '/')) |idx| {
-        trimmed = trimmed[0..idx];
-    }
-
-    const colon_index = std.mem.indexOfScalar(u8, trimmed, ':') orelse return null;
-    const host = trimmed[0..colon_index];
-    const port_slice = trimmed[colon_index + 1 ..];
-    if (host.len == 0 or port_slice.len == 0) {
-        return null;
-    }
-
-    const port = std.fmt.parseInt(u16, port_slice, 10) catch return null;
-    return .{ .host = host, .port = port };
-}
-
-fn extractAddress(config_json: []const u8) ?[]const u8 {
-    const key = "\"address\"";
-    const start = std.mem.indexOf(u8, config_json, key) orelse return null;
-    var idx = start + key.len;
-
-    while (idx < config_json.len and std.ascii.isWhitespace(config_json[idx])) : (idx += 1) {}
-    if (idx >= config_json.len or config_json[idx] != ':') return null;
-    idx += 1;
-
-    while (idx < config_json.len and std.ascii.isWhitespace(config_json[idx])) : (idx += 1) {}
-    if (idx >= config_json.len or config_json[idx] != '"') return null;
-    idx += 1;
-
-    const value_start = idx;
-    while (idx < config_json.len) : (idx += 1) {
-        const char = config_json[idx];
-        if (char == '\\') {
-            idx += 1;
-            continue;
-        }
-        if (char == '"') {
-            const value_end = idx;
-            return config_json[value_start..value_end];
-        }
-    }
-    return null;
-}
-
-fn temporalServerReachable(config_json: []const u8) bool {
-    const address = extractAddress(config_json) orelse return true;
-    if (address.len == 0) {
-        return true;
-    }
-
-    const host_port = parseHostPort(address) orelse return true;
-
-    const stream = std.net.tcpConnectToHost(std.heap.c_allocator, host_port.host, host_port.port) catch {
-        return host_port.port == 7233;
-    };
-    stream.close();
-    return true;
-}
-
 fn duplicateConfig(config_json: []const u8) ?[]u8 {
     const allocator = std.heap.c_allocator;
     const copy = allocator.alloc(u8, config_json.len) catch {
@@ -265,11 +199,6 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
         .config = config_copy,
         .core_client = null,
     };
-
-    if (!temporalServerReachable(handle.config)) {
-        destroy(handle);
-        return createClientError(grpc.unavailable, "temporal-bun-bridge-zig: Temporal server unreachable");
-    }
 
     // Stub the Temporal core client handle until the bridge is wired to core.
     handle.core_client = @as(?*core.ClientOpaque, @ptrCast(handle));
