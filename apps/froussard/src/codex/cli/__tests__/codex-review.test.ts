@@ -164,7 +164,7 @@ describe('runCodexReview', () => {
 
     expect(buildDiscordRelayCommandMock).toHaveBeenCalledWith(
       'apps/froussard/scripts/discord-relay.ts',
-      expect.arrayContaining(['--stage', 'review']),
+      expect.arrayContaining(['--stage', 'review', '--summary', 'One unresolved thread and failing check remain.']),
     )
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
     expect(invocation?.discordRelay?.command).toEqual(['bun', 'run', 'relay.ts'])
