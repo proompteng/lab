@@ -1,5 +1,66 @@
 const std = @import("std");
 
+const TemporalCrate = struct {
+    package: []const u8,
+    archive: []const u8,
+};
+
+const temporal_crates = [_]TemporalCrate{
+    .{ .package = "temporal-sdk-core", .archive = "temporal_sdk_core" },
+    .{ .package = "temporal-client", .archive = "temporal_client" },
+    .{ .package = "temporal-sdk-core-api", .archive = "temporal_sdk_core_api" },
+    .{ .package = "temporal-sdk-core-protos", .archive = "temporal_sdk_core_protos" },
+};
+
+const temporal_vendor_root = "../../vendor/sdk-core";
+
+const BuildError = error{
+    UnsupportedTarget,
+    ArchiveNotFound,
+};
+
+fn getCargoTargetTriple(target: std.Target) BuildError![]const u8 {
+    return switch (target.os.tag) {
+        .macos => switch (target.cpu.arch) {
+            .aarch64 => "aarch64-apple-darwin",
+            .x86_64 => "x86_64-apple-darwin",
+            else => BuildError.UnsupportedTarget,
+        },
+        .linux => switch (target.cpu.arch) {
+            .aarch64 => "aarch64-unknown-linux-gnu",
+            .x86_64 => "x86_64-unknown-linux-gnu",
+            else => BuildError.UnsupportedTarget,
+        },
+        else => BuildError.UnsupportedTarget,
+    };
+}
+
+fn getProfileDir(optimize: std.builtin.OptimizeMode) []const u8 {
+    return switch (optimize) {
+        .Debug => "debug",
+        else => "release",
+    };
+}
+
+fn formatArchiveFilename(b: *std.Build, archive_name: []const u8) []const u8 {
+    return b.fmt("lib{s}.a", .{archive_name});
+}
+
+fn archivePath(
+    b: *std.Build,
+    cargo_target: []const u8,
+    profile_dir: []const u8,
+    archive_name: []const u8,
+) std.Build.LazyPath {
+    return b.path(b.pathJoin(&.{
+        temporal_vendor_root,
+        "target",
+        cargo_target,
+        profile_dir,
+        formatArchiveFilename(b, archive_name),
+    }));
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -41,6 +102,44 @@ pub fn build(b: *std.Build) void {
     const unit_tests = b.addTest(.{
         .root_module = test_module,
     });
+
+    const vendor_path = b.build_root.join(b.allocator, &.{temporal_vendor_root}) catch @panic("failed to resolve vendor path");
+    defer b.allocator.free(vendor_path);
+    var vendor_dir = std.fs.cwd().openDir(vendor_path, .{}) catch |err| {
+        std.debug.panic(
+            "Temporal SDK core checkout not found at {s} ({s}). Run the vendor setup in packages/temporal-bun-sdk/README.md.",
+            .{ temporal_vendor_root, @errorName(err) },
+        );
+    };
+    defer vendor_dir.close();
+
+    _ = b.findProgram(&.{"cargo"}, &.{}) catch {
+        std.debug.panic("Cargo toolchain is required to build Temporal core artifacts.", .{});
+    };
+
+    const resolved_target = target.result;
+    const cargo_target = getCargoTargetTriple(resolved_target) catch {
+        std.debug.panic(
+            "Unsupported target {s}-{s} for Temporal Rust linkage.",
+            .{ @tagName(resolved_target.cpu.arch), @tagName(resolved_target.os.tag) },
+        );
+    };
+    const profile_dir = getProfileDir(optimize);
+
+    for (temporal_crates) |crate_info| {
+        const cargo_step = b.addSystemCommand(&.{ "cargo", "rustc" });
+        cargo_step.setName(b.fmt("cargo rustc ({s})", .{crate_info.package}));
+        cargo_step.setCwd(b.path(temporal_vendor_root));
+        cargo_step.addArgs(&.{ "-p", crate_info.package, "--crate-type", "staticlib", "--target", cargo_target });
+        if (optimize != .Debug) cargo_step.addArg("--release");
+
+        lib.step.dependOn(&cargo_step.step);
+        unit_tests.step.dependOn(&cargo_step.step);
+
+        const archive = archivePath(b, cargo_target, profile_dir, crate_info.archive);
+        lib.addObjectFile(archive);
+        unit_tests.addObjectFile(archive);
+    }
 
     const test_step = b.step("test", "Run Zig bridge tests (stub)");
     test_step.dependOn(&b.addRunArtifact(unit_tests).step);
