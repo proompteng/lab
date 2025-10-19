@@ -1,7 +1,41 @@
 services:
   temporal:
-    build:
-      context: ./docker/temporal-dev
+    image: temporalio/auto-setup:1.23.0
     container_name: temporal-test
+    environment:
+      - DB=postgres12
+      - POSTGRES_SEEDS=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_DB=temporal
+      - POSTGRES_SCHEMA=temporal
+      - POSTGRES_SSL_MODE=disable
+      - POSTGRES_VISIBILITY_SEEDS=postgresql
+      - POSTGRES_VISIBILITY_DB=temporal_visibility
+      - POSTGRES_VISIBILITY_SCHEMA=temporal_visibility
+      - POSTGRES_VISIBILITY_USER=temporal
+      - POSTGRES_VISIBILITY_PWD=temporal
+      - TEMPORAL_VISIBILITY_DBNAME=temporal_visibility
+      - TEMPORAL_DEFAULT_NAMESPACE=default
     ports:
       - '7233:7233'
+    depends_on:
+      postgresql:
+        condition: service_healthy
+
+  postgresql:
+    # Use the Amazon ECR public mirror to avoid Docker Hub pull rate limiting in CI.
+    image: public.ecr.aws/docker/library/postgres:15
+    container_name: temporal-postgresql
+    environment:
+      - POSTGRES_USER=temporal
+      - POSTGRES_PASSWORD=temporal
+      - POSTGRES_DB=temporal
+    volumes:
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
