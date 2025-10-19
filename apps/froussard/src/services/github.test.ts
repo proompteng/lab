@@ -9,6 +9,7 @@ import {
   markPullRequestReadyForReview,
 } from '@/services/github/pull-requests'
 import { listPullRequestReviewThreads } from '@/services/github/reviews'
+import type { FetchLike, FetchResponse } from '@/services/github/types'
 
 describe('postIssueReaction', () => {
   it('reports missing token when GITHUB_TOKEN is not configured', async () => {
@@ -637,7 +638,14 @@ describe('markPullRequestReadyForReview', () => {
   })
 
   it('returns ok when GitHub accepts the mutation', async () => {
-    const fetchSpy = vi.fn(async () => ({ ok: true, status: 200, text: async () => '' }))
+    const fetchSpy = vi
+      .fn<Parameters<FetchLike>, Promise<FetchResponse>>()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ node_id: 'node-123' }),
+      })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => '' })
 
     const result = await Effect.runPromise(
       markPullRequestReadyForReview({
@@ -649,20 +657,31 @@ describe('markPullRequestReadyForReview', () => {
     )
 
     expect(result).toEqual({ ok: true })
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+    const graphqlCall = fetchSpy.mock.calls[1]
+    expect(graphqlCall?.[1]?.body).toContain('node-123')
   })
 
   it('returns http-error when GitHub rejects the request', async () => {
+    const fetchSpy = vi
+      .fn<Parameters<FetchLike>, Promise<FetchResponse>>()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ node_id: 'node-123' }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: async () => 'failure',
+      })
+
     const result = await Effect.runPromise(
       markPullRequestReadyForReview({
         repositoryFullName: 'owner/repo',
         pullNumber: 7,
         token: 'token',
-        fetchImplementation: async () => ({
-          ok: false,
-          status: 500,
-          text: async () => 'failure',
-        }),
+        fetchImplementation: fetchSpy,
       }),
     )
 
@@ -682,6 +701,23 @@ describe('markPullRequestReadyForReview', () => {
     )
 
     expect(result).toEqual({ ok: false, reason: 'network-error', detail: 'boom' })
+  })
+
+  it('returns http-error when fetching the pull request fails', async () => {
+    const result = await Effect.runPromise(
+      markPullRequestReadyForReview({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 7,
+        token: 'token',
+        fetchImplementation: vi.fn(async () => ({
+          ok: false,
+          status: 404,
+          text: async () => 'missing',
+        })),
+      }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'http-error', status: 404, detail: 'missing' })
   })
 })
 
@@ -780,7 +816,7 @@ describe('createPullRequestComment', () => {
       return
     }
     expect(result.reason).toBe('invalid-json')
-    expect(result.detail).toMatch(/Unexpected|property name/) // message varies per runtime
+    expect(result.detail).toMatch(/Unexpected|property name|Expected/) // message varies per runtime
   })
 
   it('returns network-error when fetch throws', async () => {

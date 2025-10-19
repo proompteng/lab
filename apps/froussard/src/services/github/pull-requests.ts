@@ -41,6 +41,12 @@ const GitHubPullRequestSchema = Schema.Struct({
 
 const decodePullRequest = Schema.decodeUnknown(GitHubPullRequestSchema)
 
+const GitHubPullRequestNodeSchema = Schema.Struct({
+  node_id: Schema.String,
+})
+
+const decodePullRequestNode = Schema.decodeUnknown(GitHubPullRequestNodeSchema)
+
 export const fetchPullRequest = (options: FetchPullRequestOptions): Effect.Effect<FetchPullRequestResult> => {
   const {
     repositoryFullName,
@@ -171,66 +177,130 @@ export const markPullRequestReadyForReview = (options: ReadyForReviewOptions): E
     return Effect.succeed({ ok: false, reason: 'no-fetch' } as const)
   }
 
-  const url = `${trimTrailingSlash(apiBaseUrl)}/graphql`
-  const mutation = `
-    mutation MarkReady($input: MarkPullRequestReadyForReviewInput!) {
-      markPullRequestReadyForReview(input: $input) {
-        pullRequest {
-          id
-        }
-      }
-    }
-  `
+  const pullUrl = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/pulls/${pullNumber}`
 
-  const payload = JSON.stringify({
-    query: mutation,
-    variables: {
-      input: {
-        pullRequestId: `MDExOlB1bGxSZXF1ZXN0${pullNumber}`,
-        clientMutationId: `ready-${pullNumber}`,
-      },
-    },
-  })
+  return Effect.gen(function* (_) {
+    const pullResponseResult = yield* Effect.tryPromise({
+      try: () =>
+        fetchFn(pullUrl, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            Authorization: `Bearer ${token}`,
+            'User-Agent': userAgent,
+          },
+        }),
+      catch: toError,
+    }).pipe(Effect.either)
 
-  return Effect.tryPromise({
-    try: () =>
-      fetchFn(url, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/vnd.github+json',
-          'Content-Type': 'application/json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          Authorization: `Bearer ${token}`,
-          'User-Agent': userAgent,
-        },
-        body: payload,
-      }),
-    catch: toError,
-  }).pipe(
-    Effect.flatMap((response) => {
-      if (response.ok) {
-        return Effect.succeed<ReadyForReviewResult>({ ok: true })
-      }
-
-      return readResponseText(response)
-        .pipe(Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)))
-        .pipe(
-          Effect.map((detail) => ({
-            ok: false as const,
-            reason: response.status === 404 ? 'invalid-repository' : 'http-error',
-            status: response.status,
-            detail,
-          })),
-        )
-    }),
-    Effect.catchAll((error) =>
-      Effect.succeed<ReadyForReviewResult>({
-        ok: false,
+    if (pullResponseResult._tag === 'Left') {
+      const error = pullResponseResult.left
+      return {
+        ok: false as const,
         reason: 'network-error',
         detail: error instanceof Error ? error.message : String(error),
-      }),
-    ),
-  )
+      }
+    }
+
+    const pullResponse = pullResponseResult.right
+    if (!pullResponse.ok) {
+      const detail = yield* readResponseText(pullResponse).pipe(
+        Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
+      )
+
+      return {
+        ok: false as const,
+        reason: 'http-error',
+        status: pullResponse.status,
+        detail,
+      }
+    }
+
+    const pullBodyResult = yield* readResponseText(pullResponse).pipe(Effect.either)
+    if (pullBodyResult._tag === 'Left') {
+      return {
+        ok: false as const,
+        reason: 'network-error',
+        detail: pullBodyResult.left.message,
+      }
+    }
+
+    let nodeId: string
+    try {
+      const raw = pullBodyResult.right.length === 0 ? {} : JSON.parse(pullBodyResult.right)
+      const decoded = yield* decodePullRequestNode(raw)
+      nodeId = decoded.node_id
+    } catch (error) {
+      return {
+        ok: false as const,
+        reason: 'network-error',
+        detail: error instanceof Error ? error.message : String(error),
+      }
+    }
+
+    const url = `${trimTrailingSlash(apiBaseUrl)}/graphql`
+    const mutation = `
+      mutation MarkReady($input: MarkPullRequestReadyForReviewInput!) {
+        markPullRequestReadyForReview(input: $input) {
+          pullRequest {
+            id
+          }
+        }
+      }
+    `
+
+    const payload = JSON.stringify({
+      query: mutation,
+      variables: {
+        input: {
+          pullRequestId: nodeId,
+          clientMutationId: `ready-${pullNumber}`,
+        },
+      },
+    })
+
+    const responseResult = yield* Effect.tryPromise({
+      try: () =>
+        fetchFn(url, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'Content-Type': 'application/json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            Authorization: `Bearer ${token}`,
+            'User-Agent': userAgent,
+          },
+          body: payload,
+        }),
+      catch: toError,
+    }).pipe(Effect.either)
+
+    if (responseResult._tag === 'Left') {
+      const error = responseResult.left
+      return {
+        ok: false as const,
+        reason: 'network-error',
+        detail: error instanceof Error ? error.message : String(error),
+      }
+    }
+
+    const response = responseResult.right
+    if (response.ok) {
+      return { ok: true as const }
+    }
+
+    const detail = yield* readResponseText(response).pipe(
+      Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
+    )
+
+    return {
+      ok: false as const,
+      reason: response.status === 404 ? 'invalid-repository' : 'http-error',
+      status: response.status,
+      detail,
+    }
+  })
 }
 
 export const createPullRequestComment = (
