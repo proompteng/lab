@@ -560,6 +560,12 @@ pub fn updateTelemetry(handle: ?*RuntimeHandle, options_json: []const u8) i32 {
 
     if (runtime.core_runtime) |core_runtime| {
         var new_snapshot: []u8 = empty_slice;
+        errdefer {
+            if (new_snapshot.len > 0) {
+                allocator.free(new_snapshot);
+            }
+        }
+
         if (options_json.len > 0) {
             const copy = allocator.alloc(u8, options_json.len) catch {
                 errors.setLastError("temporal-bun-bridge-zig: failed to allocate telemetry snapshot");
@@ -567,6 +573,15 @@ pub fn updateTelemetry(handle: ?*RuntimeHandle, options_json: []const u8) i32 {
             };
             @memcpy(copy, options_json);
             new_snapshot = copy;
+        }
+
+        const payload_ptr: ?[*]const u8 = if (options_json.len > 0) options_json.ptr else null;
+        const status = core.api.runtime_update_telemetry(core_runtime, payload_ptr, options_json.len);
+        if (status != 0) {
+            if (errors.snapshot().len == 0) {
+                errors.setLastError("temporal-bun-bridge-zig: failed to configure Temporal runtime telemetry");
+            }
+            return -1;
         }
 
         if (runtime.telemetry_snapshot.len > 0) {
@@ -578,9 +593,7 @@ pub fn updateTelemetry(handle: ?*RuntimeHandle, options_json: []const u8) i32 {
         runtime.telemetry_snapshot = new_snapshot;
         runtime.telemetry_state = parse_result.state;
         parse_result.state = .none;
-
-        // TODO(codex, zig-rt-03): Invoke Temporal core telemetry bridge once the core runtime wiring lands.
-        _ = core_runtime; // suppress unused pointer until zig-rt-03 is implemented.
+        new_snapshot = empty_slice;
 
         return 0;
     }
