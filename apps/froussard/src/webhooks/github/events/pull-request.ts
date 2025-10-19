@@ -241,8 +241,6 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
     })
     const fingerprintKey = `${repoFullName}#${pull.number}`
     const fingerprintChanged = rememberReviewFingerprint(fingerprintKey, reviewFingerprint)
-
-    let fingerprintCommitted = false
     if (shouldRequestReviewGuard({ commands: [] }, { type: 'PR_ACTIVITY', data: reviewEvaluation })) {
       if (fingerprintChanged) {
         const summaryParts: string[] = []
@@ -342,7 +340,6 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
           },
           'queued codex review workflow',
         )
-        fingerprintCommitted = true
       } else {
         logger.info(
           {
@@ -367,7 +364,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
       const { stage } = await executeWorkflowCommands(evaluation.commands, executionContext)
       return stage ?? null
     } catch (error) {
-      if (fingerprintChanged && !fingerprintCommitted) {
+      if (fingerprintChanged) {
         forgetReviewFingerprint(fingerprintKey, reviewFingerprint)
       }
       throw error
