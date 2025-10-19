@@ -218,6 +218,10 @@ pub export fn temporal_bun_worker_complete_workflow_task(
     payload_ptr: ?[*]const u8,
     len: u64,
 ) i32 {
+    if (len > 0 and payload_ptr == null) {
+        errors.setLastError("temporal-bun-bridge-zig: worker completion payload pointer was null");
+        return -1;
+    }
     const payload = sliceFrom(payload_ptr, len);
     return worker.completeWorkflowTask(handle, payload);
 }
