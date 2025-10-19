@@ -66,11 +66,15 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
     const allocator = std.heap.c_allocator;
     const handle = allocator.create(ClientHandle) catch |err| {
         allocator.free(config_copy);
-        errors.setStructuredError(.{
-            .code = grpc.resource_exhausted,
-            .message = "temporal-bun-bridge-zig: failed to allocate client handle",
-        });
-        return createClientError(grpc.resource_exhausted, "temporal-bun-bridge-zig: client handle allocation failed");
+        var scratch: [128]u8 = undefined;
+        const formatted = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to allocate client handle: {}",
+            .{err},
+        ) catch "temporal-bun-bridge-zig: failed to allocate client handle";
+        const message: []const u8 = formatted;
+        errors.setStructuredError(.{ .code = grpc.resource_exhausted, .message = message });
+        return createClientError(grpc.resource_exhausted, message);
     };
 
     const id = next_client_id;
