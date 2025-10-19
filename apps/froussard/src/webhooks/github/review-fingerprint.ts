@@ -100,6 +100,13 @@ export const rememberReviewFingerprint = (key: string, fingerprint: string): boo
   return true
 }
 
+export const forgetReviewFingerprint = (key: string, fingerprint: string) => {
+  const cached = fingerprintCache.get(key)
+  if (cached === fingerprint) {
+    fingerprintCache.delete(key)
+  }
+}
+
 export const clearReviewFingerprintCacheForTest = () => {
   fingerprintCache.clear()
 }

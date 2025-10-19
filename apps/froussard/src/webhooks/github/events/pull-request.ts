@@ -27,7 +27,7 @@ import {
   shouldHandlePullRequestReviewAction,
 } from '../helpers'
 import { toCodexTaskProto } from '../payloads'
-import { buildReviewFingerprint, rememberReviewFingerprint } from '../review-fingerprint'
+import { buildReviewFingerprint, forgetReviewFingerprint, rememberReviewFingerprint } from '../review-fingerprint'
 import type { WebhookConfig } from '../types'
 import type { WorkflowExecutionContext, WorkflowStage } from '../workflow'
 import { executeWorkflowCommands } from '../workflow'
@@ -243,6 +243,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
     const fingerprintChanged = rememberReviewFingerprint(fingerprintKey, reviewFingerprint)
 
     if (shouldRequestReviewGuard({ commands: [] }, { type: 'PR_ACTIVITY', data: reviewEvaluation })) {
+      let fingerprintCommitted = false
       if (fingerprintChanged) {
         const summaryParts: string[] = []
         if (unresolvedThreads.length > 0) {
@@ -341,6 +342,7 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
           },
           'queued codex review workflow',
         )
+        fingerprintCommitted = true
       } else {
         logger.info(
           {
@@ -355,15 +357,23 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
         )
         reviewEvaluation.reviewCommand = undefined
       }
+      try {
+        const evaluation = evaluateCodexWorkflow({
+          type: 'PR_ACTIVITY',
+          data: reviewEvaluation,
+        })
+
+        const { stage } = await executeWorkflowCommands(evaluation.commands, executionContext)
+        return stage ?? null
+      } catch (error) {
+        if (fingerprintChanged && !fingerprintCommitted) {
+          forgetReviewFingerprint(fingerprintKey, reviewFingerprint)
+        }
+        throw error
+      }
     }
 
-    const evaluation = evaluateCodexWorkflow({
-      type: 'PR_ACTIVITY',
-      data: reviewEvaluation,
-    })
-
-    const { stage } = await executeWorkflowCommands(evaluation.commands, executionContext)
-    return stage ?? null
+    return null
   }
 
   return processPullRequest()
