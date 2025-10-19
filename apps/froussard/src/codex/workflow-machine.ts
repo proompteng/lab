@@ -127,6 +127,7 @@ export const shouldUndraftGuard = (_context: WorkflowContext, event: WorkflowEve
 export const shouldPostReadyCommentGuard = (_context: WorkflowContext, event: WorkflowEvent) =>
   event.type === 'PR_ACTIVITY' &&
   !event.data.outstandingWork &&
+  !event.data.forceReview &&
   !event.data.isDraft &&
   !event.data.mergeStateRequiresAttention &&
   !!event.data.readyCommentCommand
