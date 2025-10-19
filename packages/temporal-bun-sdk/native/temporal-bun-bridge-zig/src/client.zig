@@ -11,7 +11,7 @@ pub const ClientHandle = struct {
     id: u64,
     runtime: ?*runtime.RuntimeHandle,
     config: []u8,
-    core_client: ?*core.ClientOpaque,
+    core_client: ?*core.Client,
 };
 
 var next_client_id: u64 = 1;
