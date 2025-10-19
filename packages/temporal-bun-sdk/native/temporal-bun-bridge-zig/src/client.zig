@@ -31,11 +31,12 @@ fn destroyClientFromPending(ptr: ?*anyopaque) void {
 }
 
 fn createClientError(code: i32, message: []const u8) ?*pending.PendingClient {
-    errors.setStructuredError(.{ .code = code, .message = message });
+    errors.setStructuredErrorJson(.{ .code = code, .message = message, .details = null });
     const handle = pending.createPendingError(code, message) orelse {
-        errors.setStructuredError(.{
+        errors.setStructuredErrorJson(.{
             .code = grpc.internal,
             .message = "temporal-bun-bridge-zig: failed to allocate pending client error handle",
+            .details = null,
         });
         return null;
     };
@@ -43,11 +44,12 @@ fn createClientError(code: i32, message: []const u8) ?*pending.PendingClient {
 }
 
 fn createByteArrayError(code: i32, message: []const u8) ?*pending.PendingByteArray {
-    errors.setStructuredError(.{ .code = code, .message = message });
+    errors.setStructuredErrorJson(.{ .code = code, .message = message, .details = null });
     const handle = pending.createPendingError(code, message) orelse {
-        errors.setStructuredError(.{
+        errors.setStructuredErrorJson(.{
             .code = grpc.internal,
             .message = "temporal-bun-bridge-zig: failed to allocate pending byte array error handle",
+            .details = null,
         });
         return null;
     };
@@ -73,7 +75,7 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
             .{err},
         ) catch "temporal-bun-bridge-zig: failed to allocate client handle";
         const message: []const u8 = formatted;
-        errors.setStructuredError(.{ .code = grpc.resource_exhausted, .message = message });
+        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = message, .details = null });
         return createClientError(grpc.resource_exhausted, message);
     };
 
@@ -133,9 +135,10 @@ pub fn startWorkflow(_client: ?*ClientHandle, _payload: []const u8) ?*byte_array
     // TODO(codex, zig-wf-01): Marshal workflow start request into Temporal core and return run handles.
     _ = _client;
     _ = _payload;
-    errors.setStructuredError(.{
+    errors.setStructuredErrorJson(.{
         .code = grpc.unimplemented,
         .message = "temporal-bun-bridge-zig: startWorkflow is not wired to Temporal core yet",
+        .details = null,
     });
     return null;
 }
@@ -144,9 +147,10 @@ pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_arr
     // TODO(codex, zig-wf-02): Implement signalWithStart once start + signal bridges exist.
     _ = _client;
     _ = _payload;
-    errors.setStructuredError(.{
+    errors.setStructuredErrorJson(.{
         .code = grpc.unimplemented,
         .message = "temporal-bun-bridge-zig: signalWithStart is not implemented yet",
+        .details = null,
     });
     return null;
 }
@@ -155,9 +159,10 @@ pub fn terminateWorkflow(_client: ?*ClientHandle, _payload: []const u8) i32 {
     // TODO(codex, zig-wf-03): Wire termination RPC to Temporal core client.
     _ = _client;
     _ = _payload;
-    errors.setStructuredError(.{
+    errors.setStructuredErrorJson(.{
         .code = grpc.unimplemented,
         .message = "temporal-bun-bridge-zig: terminateWorkflow is not implemented yet",
+        .details = null,
     });
     return -1;
 }
@@ -166,9 +171,10 @@ pub fn updateHeaders(_client: ?*ClientHandle, _payload: []const u8) i32 {
     // TODO(codex, zig-cl-03): Push metadata updates to Temporal core client.
     _ = _client;
     _ = _payload;
-    errors.setStructuredError(.{
+    errors.setStructuredErrorJson(.{
         .code = grpc.unimplemented,
         .message = "temporal-bun-bridge-zig: updateHeaders is not implemented yet",
+        .details = null,
     });
     return -1;
 }

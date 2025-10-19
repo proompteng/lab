@@ -68,7 +68,7 @@ Current progress snapshot:
 | Worker | `temporal_bun_worker_new(runtime_ptr, client_ptr, config_ptr, len)` | Instantiate worker for task queue | `native.createWorker` | ⬜️ TODO |
 | Worker | `temporal_bun_worker_free(worker_ptr)` | Free worker | `native.workerShutdown` | ⬜️ TODO |
 | Worker | `temporal_bun_worker_poll_workflow_task(worker_ptr)` | Poll workflow tasks (blocking) | `workerBridge.pollWorkflowTask` | ⬜️ TODO |
-| Worker | `temporal_bun_worker_complete_workflow_task(worker_ptr, payload_ptr, len)` | Complete workflow task | `workerBridge.completeWorkflowTask` | ⬜️ TODO |
+| Worker | `temporal_bun_worker_complete_workflow_task(worker_ptr, payload_ptr, len)` | Complete workflow task | `workerBridge.completeWorkflowTask` | ⚙️ Zig bridge implementation (core handle pending) |
 | Worker | `temporal_bun_worker_poll_activity_task(worker_ptr)` | Poll activity task | `workerBridge.pollActivityTask` | ⬜️ TODO |
 | Worker | `temporal_bun_worker_complete_activity_task(worker_ptr, payload_ptr, len)` | Respond to activity task | `workerBridge.completeActivityTask` | ⬜️ TODO |
 | Worker | `temporal_bun_worker_record_activity_heartbeat(worker_ptr, payload_ptr, len)` | Activity heartbeat | `workerBridge.recordHeartbeat` | ⬜️ TODO |
