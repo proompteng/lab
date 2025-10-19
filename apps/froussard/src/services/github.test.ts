@@ -2,12 +2,12 @@ import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PLAN_COMMENT_MARKER } from '@/codex'
+import { findLatestPlanComment, postIssueReaction } from '@/services/github/issues'
 import {
   createPullRequestComment,
   fetchPullRequest,
   markPullRequestReadyForReview,
 } from '@/services/github/pull-requests'
-import { findLatestPlanComment, postIssueReaction } from '@/services/github/issues'
 import { listPullRequestReviewThreads } from '@/services/github/reviews'
 
 describe('postIssueReaction', () => {
