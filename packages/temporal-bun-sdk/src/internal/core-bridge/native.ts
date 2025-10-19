@@ -107,27 +107,43 @@ function loadBridgeLibrary(): BridgeLibraryLoadResult {
   const candidates = resolveBridgeLibraryCandidates(preference)
 
   let lastError: unknown = null
-  let lastCandidate: BridgeResolution | null = null
+  let lastCandidate: ResolvedBridgeCandidate | null = null
 
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index]
+
+    let candidatePath: string
+    try {
+      candidatePath = candidate.resolvePath()
+    } catch (error) {
+      lastError = error
+
+      if (candidate.variant === 'zig') {
+        const nextVariant = candidates[index + 1]?.variant ?? null
+        logZigBridgeLoadFailure('(failed to resolve Zig bridge path)', error, nextVariant)
+        continue
+      }
+
+      throw error instanceof Error ? error : new Error(String(error))
+    }
+
     try {
       return {
-        module: dlopen(candidate.path, symbolMap),
-        path: candidate.path,
+        module: dlopen(candidatePath, symbolMap),
+        path: candidatePath,
         variant: candidate.variant,
       }
     } catch (error) {
       lastError = error
-      lastCandidate = candidate
+      lastCandidate = { path: candidatePath, variant: candidate.variant }
 
       if (candidate.variant === 'zig') {
         const nextVariant = candidates[index + 1]?.variant ?? null
-        logZigBridgeLoadFailure(candidate.path, error, nextVariant)
+        logZigBridgeLoadFailure(candidatePath, error, nextVariant)
         continue
       }
 
-      throw buildBridgeLoadError(candidate.path, error, {
+      throw buildBridgeLoadError(candidatePath, error, {
         variant: candidate.variant,
         preference,
         override: false,
@@ -432,6 +448,11 @@ interface ZigLookupResult {
 }
 
 interface BridgeResolution {
+  resolvePath: () => string
+  variant: BridgeVariant
+}
+
+interface ResolvedBridgeCandidate {
   path: string
   variant: BridgeVariant
 }
@@ -444,13 +465,15 @@ function resolveBridgeLibraryCandidates(preference: ZigPreference): BridgeResolu
     const packaged = resolvePackagedZigBridgeLibraryPath()
     attemptedZigPaths.push(...packaged.attempted)
     if (packaged.path) {
-      candidates.push({ path: packaged.path, variant: 'zig' })
+      const zigPackagedPath = packaged.path
+      candidates.push({ resolvePath: () => zigPackagedPath, variant: 'zig' })
     }
 
     const local = resolveLocalZigBridgeLibraryPath()
     attemptedZigPaths.push(...local.attempted)
     if (local.path) {
-      candidates.push({ path: local.path, variant: 'zig' })
+      const zigLocalPath = local.path
+      candidates.push({ resolvePath: () => zigLocalPath, variant: 'zig' })
     }
 
     if (attemptedZigPaths.length > 0 && !candidates.some((candidate) => candidate.variant === 'zig')) {
@@ -470,15 +493,12 @@ function resolveBridgeLibraryCandidates(preference: ZigPreference): BridgeResolu
 
   const hasZigCandidate = candidates.some((candidate) => candidate.variant === 'zig')
   if (!hasZigCandidate) {
-    candidates.push({ path: resolveRustBridgeLibraryPath(), variant: 'rust' })
+    candidates.push({ resolvePath: () => resolveRustBridgeLibraryPath(), variant: 'rust' })
     return candidates
   }
 
   if (preference !== 'enable') {
-    const rustFallback = tryResolveRustBridgeLibraryPath()
-    if (rustFallback) {
-      candidates.push({ path: rustFallback, variant: 'rust' })
-    }
+    candidates.push({ resolvePath: () => resolveRustBridgeLibraryPath(), variant: 'rust' })
   }
 
   return candidates
@@ -588,14 +608,6 @@ function getZigDebugLibraryName(): string {
     return 'libtemporal_bun_bridge_zig_debug.dylib'
   }
   return 'libtemporal_bun_bridge_zig_debug.so'
-}
-
-function tryResolveRustBridgeLibraryPath(): string | null {
-  try {
-    return resolveRustBridgeLibraryPath()
-  } catch (_error) {
-    return null
-  }
 }
 
 function resolveRustBridgeLibraryPath(): string {
@@ -747,11 +759,32 @@ function readLastErrorPayload(): NativeBridgeErrorInit {
     // fall through to default handling when the payload is not valid JSON
   }
 
+  if (raw.startsWith('temporal-bun-bridge-zig:')) {
+    const message = raw.replace(/^temporal-bun-bridge-zig:\s*/, '')
+    const code = mapZigErrorCode(message)
+    return {
+      code,
+      message,
+      details: { source: 'zig', raw },
+      raw: JSON.stringify({ code, message }),
+    }
+  }
+
   return {
     code: UNKNOWN_NATIVE_ERROR_CODE,
     message: raw,
     raw,
   }
+}
+
+function mapZigErrorCode(message: string): number {
+  if (/received null runtime handle/i.test(message)) {
+    return 3
+  }
+  if (/is not implemented yet/i.test(message)) {
+    return 12
+  }
+  return UNKNOWN_NATIVE_ERROR_CODE
 }
 
 function buildNativeBridgeError(): NativeBridgeError {
