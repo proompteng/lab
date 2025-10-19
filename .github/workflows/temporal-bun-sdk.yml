@@ -45,15 +45,15 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config protobuf-compiler docker-compose docker-compose-plugin xz-utils
+
       - name: Set up Zig 0.15.1
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.15.1
-
-      - name: Install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config protobuf-compiler docker-compose
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -67,10 +67,15 @@ jobs:
       - name: Build Zig bridge
         run: pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
 
+      - name: Run Zig bridge tests
+        run: pnpm --filter @proompteng/temporal-bun-sdk run test:native:zig
+
       - name: Start Temporal server
+        id: start_temporal_server
         run: docker-compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml up -d
 
       - name: Wait for Temporal server
+        if: steps.start_temporal_server.outcome == 'success'
         run: |
           for i in {1..30}; do
             if nc -z localhost 7233; then
@@ -82,8 +87,9 @@ jobs:
           exit 1
 
       - name: Run Bun SDK tests
+        if: steps.start_temporal_server.outcome == 'success'
         run: pnpm --filter @proompteng/temporal-bun-sdk test
 
       - name: Stop Temporal server
-        if: always()
+        if: always() && steps.start_temporal_server.outcome == 'success'
         run: docker-compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml down -v
