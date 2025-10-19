@@ -377,7 +377,7 @@ test "resolveByteArray transitions pending handle to ready" {
     const payload_ptr = payload_opt.?;
     const array = @as(*byte_array.ByteArray, @ptrCast(@alignCast(payload_ptr)));
     defer byte_array.free(array);
-    try testing.expectEqual(@as(usize, 0), array.len);
+    try testing.expectEqual(@as(usize, 0), array.size);
 }
 
 test "rejectByteArray transitions pending handle to failed state" {

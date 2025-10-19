@@ -147,7 +147,7 @@ var destroy_call_count: usize = 0;
 fn trackingDestroy(
     runtime: ?*core.RuntimeOpaque,
     buf: ?*const core.ByteBuf,
-) void {
+) callconv(.c) void {
     _ = runtime;
     destroy_call_count += 1;
     if (buf) |byte_buf| {
@@ -187,7 +187,7 @@ test "allocate duplicates slices into managed byte arrays" {
     const array_ptr = array_opt.?;
 
     try testing.expect(array_ptr.data != null);
-    try testing.expect(array_ptr.data != payload.ptr);
+    try testing.expect(@intFromPtr(array_ptr.data) != @intFromPtr(payload.ptr));
     try testing.expectEqual(payload.len, array_ptr.size);
     try testing.expectEqual(payload.len, array_ptr.cap);
     try testing.expectEqualSlices(u8, payload, array_ptr.data[0..array_ptr.size]);
@@ -249,7 +249,7 @@ test "adopted core buffers reuse the underlying pointer and invoke destroy once"
     const array_ptr = array_opt.?;
 
     try testing.expect(array_ptr.data != null);
-    try testing.expect(array_ptr.data == &storage);
+    try testing.expectEqual(@intFromPtr(array_ptr.data), @intFromPtr(&storage[0]));
     try testing.expectEqual(buf.size, array_ptr.size);
     try testing.expectEqual(buf.cap, array_ptr.cap);
 
