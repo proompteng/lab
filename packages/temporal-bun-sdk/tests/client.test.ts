@@ -61,6 +61,7 @@ describe('temporal client (native bridge)', () => {
     terminateWorkflow: native.terminateWorkflow,
     describeNamespace: native.describeNamespace,
     updateClientHeaders: native.updateClientHeaders,
+    signalWorkflow: native.signalWorkflow,
     queryWorkflow: native.queryWorkflow,
   }
 
@@ -75,6 +76,7 @@ describe('temporal client (native bridge)', () => {
     native.terminateWorkflow = mock(async () => {})
     native.describeNamespace = mock(async () => new Uint8Array())
     native.updateClientHeaders = mock(() => {})
+    native.signalWorkflow = mock(async () => {})
     native.queryWorkflow = mock(async () => encodeJson(null))
   })
 
@@ -196,6 +198,89 @@ describe('temporal client (native bridge)', () => {
       },
     })
 
+    await client.shutdown()
+  })
+
+  test('signalWorkflow forwards payload to native bridge', async () => {
+    const config: TemporalConfig = {
+      host: 'localhost',
+      port: 7233,
+      address: 'localhost:7233',
+      namespace: 'default',
+      taskQueue: 'prix',
+      apiKey: undefined,
+      tls: undefined,
+      allowInsecureTls: false,
+      workerIdentity: 'worker',
+      workerIdentityPrefix: 'temporal-bun-worker',
+    }
+
+    const captured: Record<string, unknown>[] = []
+    native.signalWorkflow = mock(async (_client, payload: Record<string, unknown>) => {
+      captured.push(payload)
+    })
+
+    const { client } = await createTemporalClient({ config })
+
+    await client.workflow.signal(
+      {
+        workflowId: 'wf-signal',
+        namespace: 'analytics',
+        runId: 'run-current',
+        firstExecutionRunId: 'run-initial',
+      },
+      'example-signal',
+      { foo: 'bar' },
+      123,
+    )
+
+    expect(captured).toEqual([
+      {
+        namespace: 'analytics',
+        workflow_id: 'wf-signal',
+        run_id: 'run-current',
+        first_execution_run_id: 'run-initial',
+        signal_name: 'example-signal',
+        args: [{ foo: 'bar' }, 123],
+      },
+    ])
+
+    expect(native.signalWorkflow).toHaveBeenCalledTimes(1)
+    await client.shutdown()
+  })
+
+  test('signalWorkflow surfaces native errors', async () => {
+    const config: TemporalConfig = {
+      host: 'localhost',
+      port: 7233,
+      address: 'localhost:7233',
+      namespace: 'default',
+      taskQueue: 'prix',
+      apiKey: undefined,
+      tls: undefined,
+      allowInsecureTls: false,
+      workerIdentity: 'worker',
+      workerIdentityPrefix: 'temporal-bun-worker',
+    }
+
+    const failure = new Error('native signal failure')
+    native.signalWorkflow = mock(async () => {
+      throw failure
+    })
+
+    const { client } = await createTemporalClient({ config })
+
+    await expect(
+      client.workflow.signal(
+        {
+          workflowId: 'wf-missing',
+          namespace: 'default',
+        },
+        'example-signal',
+      ),
+    ).rejects.toThrow('native signal failure')
+
+    expect(native.signalWorkflow).toHaveBeenCalledTimes(1)
     await client.shutdown()
   })
 
