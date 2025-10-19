@@ -119,7 +119,7 @@ fn byteArraySlice(bytes_ptr: ?*const core.ByteArray) []const u8 {
         return ""[0..0];
     }
 
-    return bytes.data.?[0..bytes.size];
+    return bytes.data[0..bytes.size];
 }
 
 pub fn completeWorkflowTask(handle: ?*WorkerHandle, payload: []const u8) i32 {
@@ -290,7 +290,7 @@ const WorkerTests = struct {
         if (ref.data == null or ref.size == 0) {
             return ""[0..0];
         }
-        return ref.data.?[0..ref.size];
+        return ref.data[0..ref.size];
     }
 
     fn stubCompleteSuccess(
@@ -302,8 +302,8 @@ const WorkerTests = struct {
         _ = worker_ptr;
         stub_completion_call_count += 1;
         last_completion_payload = stubCompletionSlice(completion);
-        if (@intFromPtr(callback) != 0) {
-            callback(user_data, null);
+        if (callback) |cb| {
+            cb(user_data, null);
         }
     }
 
@@ -322,8 +322,8 @@ const WorkerTests = struct {
             .cap = stub_fail_message.len,
             .disable_free = false,
         };
-        if (@intFromPtr(callback) != 0) {
-            callback(user_data, &stub_fail_buffer);
+        if (callback) |cb| {
+            cb(user_data, &stub_fail_buffer);
         }
     }
 

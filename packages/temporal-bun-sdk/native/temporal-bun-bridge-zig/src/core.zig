@@ -29,7 +29,7 @@ pub const ByteArrayRef = c.TemporalCoreByteArrayRef;
 pub const MetadataRef = c.TemporalCoreMetadataRef;
 
 pub const ByteBuf = ByteArray;
-pub const ByteBufDestroyFn = *const fn (?*ByteBuf) void;
+pub const ByteBufDestroyFn = *const fn (?*RuntimeOpaque, ?*const ByteBuf) callconv(.c) void;
 
 pub const WorkerCallback = c.TemporalCoreWorkerCallback;
 pub const WorkerCompleteFn =
@@ -71,11 +71,9 @@ fn fallbackWorkerCompleteWorkflowActivation(
         return;
     }
 
-    if (@intFromPtr(callback) == 0) {
-        return;
+    if (callback) |cb| {
+        cb(user_data, &fallback_error_array);
     }
-
-    callback(user_data, &fallback_error_array);
 }
 
 fn fallbackRuntimeByteArrayFree(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArray) callconv(.c) void {
