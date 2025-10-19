@@ -36,6 +36,11 @@ pub const RuntimeByteArrayFreeFn = *const fn (?*RuntimeOpaque, ?*const ByteArray
 
 extern fn temporal_sdk_core_runtime_new(options_json: ?[*]const u8, len: usize) ?*RuntimeOpaque;
 extern fn temporal_sdk_core_runtime_free(handle: ?*RuntimeOpaque) void;
+extern fn temporal_sdk_core_runtime_update_telemetry(
+    runtime: ?*RuntimeOpaque,
+    options_json: ?[*]const u8,
+    len: usize,
+) i32;
 
 extern fn temporal_sdk_core_connect_async(
     runtime: ?*RuntimeOpaque,
@@ -54,6 +59,7 @@ pub const client_free = temporal_sdk_core_client_free;
 pub const api = struct {
     pub const runtime_new = temporal_sdk_core_runtime_new;
     pub const runtime_free = temporal_sdk_core_runtime_free;
+    pub const runtime_update_telemetry = temporal_sdk_core_runtime_update_telemetry;
     pub const connect_async = temporal_sdk_core_connect_async;
     pub const client_free = temporal_sdk_core_client_free;
     pub const byte_buffer_destroy = temporal_sdk_core_byte_buffer_destroy;

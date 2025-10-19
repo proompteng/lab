@@ -172,6 +172,10 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr],
       returns: FFIType.void,
     },
+    temporal_bun_runtime_update_telemetry: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.int32_t,
+    },
     temporal_bun_error_message: {
       args: [FFIType.ptr],
       returns: FFIType.ptr,
@@ -286,6 +290,7 @@ const {
   symbols: {
     temporal_bun_runtime_new,
     temporal_bun_runtime_free,
+    temporal_bun_runtime_update_telemetry,
     temporal_bun_error_message,
     temporal_bun_error_free,
     temporal_bun_client_connect_async,
@@ -365,12 +370,12 @@ export const native = {
     return readByteArray(arrayPtr)
   },
 
-  configureTelemetry(runtime: Runtime, options: Record<string, unknown> = {}): never {
-    void runtime
-    void options
-    // TODO(codex): Bridge telemetry configuration through `temporal_bun_runtime_update_telemetry`
-    // per packages/temporal-bun-sdk/docs/ffi-surface.md (Function Matrix, Runtime section).
-    return notImplemented('Runtime telemetry configuration', 'docs/ffi-surface.md')
+  configureTelemetry(runtime: Runtime, options: Record<string, unknown> = {}): void {
+    const payload = Buffer.from(JSON.stringify(options ?? {}), 'utf8')
+    const status = Number(temporal_bun_runtime_update_telemetry(runtime.handle, ptr(payload), payload.byteLength))
+    if (status !== 0) {
+      throw new NativeBridgeError(readLastError())
+    }
   },
 
   installLogger(runtime: Runtime, _callback: (...args: unknown[]) => void): never {
