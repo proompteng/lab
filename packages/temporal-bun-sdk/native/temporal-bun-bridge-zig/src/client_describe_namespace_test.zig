@@ -33,10 +33,7 @@ test "describeNamespaceAsync resolves with byte payload for valid namespace" {
     const pending_client = client.connectAsync(runtime_handle, "{}") orelse unreachable;
     defer pending.free(@as(?*pending.PendingHandle, @ptrCast(pending_client)));
 
-    try std.testing.expectEqual(
-        @intFromEnum(pending.Status.ready),
-        pending.poll(@as(?*pending.PendingHandle, @ptrCast(pending_client))),
-    );
+    try pollUntilReady(@as(?*pending.PendingHandle, @ptrCast(pending_client)));
 
     const client_any = pending.consume(@as(?*pending.PendingHandle, @ptrCast(pending_client))) orelse unreachable;
     const client_ptr = @as(*client.ClientHandle, @ptrCast(@alignCast(client_any)));
@@ -62,10 +59,7 @@ test "describeNamespaceAsync returns failed handle for empty payload" {
     const pending_client = client.connectAsync(runtime_handle, "{}") orelse unreachable;
     defer pending.free(@as(?*pending.PendingHandle, @ptrCast(pending_client)));
 
-    try std.testing.expectEqual(
-        @intFromEnum(pending.Status.ready),
-        pending.poll(@as(?*pending.PendingHandle, @ptrCast(pending_client))),
-    );
+    try pollUntilReady(@as(?*pending.PendingHandle, @ptrCast(pending_client)));
 
     const client_any = pending.consume(@as(?*pending.PendingHandle, @ptrCast(pending_client))) orelse unreachable;
     const client_ptr = @as(*client.ClientHandle, @ptrCast(@alignCast(client_any)));
@@ -98,10 +92,7 @@ test "describeNamespaceAsync rejects when core client pointer is missing" {
     const pending_client = client.connectAsync(runtime_handle, "{}") orelse unreachable;
     defer pending.free(@as(?*pending.PendingHandle, @ptrCast(pending_client)));
 
-    try std.testing.expectEqual(
-        @intFromEnum(pending.Status.ready),
-        pending.poll(@as(?*pending.PendingHandle, @ptrCast(pending_client))),
-    );
+    try pollUntilReady(@as(?*pending.PendingHandle, @ptrCast(pending_client)));
 
     const client_any = pending.consume(@as(?*pending.PendingHandle, @ptrCast(pending_client))) orelse unreachable;
     const client_ptr = @as(*client.ClientHandle, @ptrCast(@alignCast(client_any)));

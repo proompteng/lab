@@ -11,10 +11,11 @@ pub const ClientHandle = struct {
     id: u64,
     runtime: ?*runtime.RuntimeHandle,
     config: []u8,
-    core_client: ?*core.Client,
+    core_client: ?*core.ClientOpaque,
 };
 
 var next_client_id: u64 = 1;
+var next_client_id_mutex = std.Thread.Mutex{};
 
 const DescribeNamespacePayload = struct {
     namespace: []const u8,
@@ -25,6 +26,20 @@ const DescribeNamespaceTask = struct {
     pending_handle: *pending.PendingByteArray,
     namespace: []u8,
 };
+
+const ConnectTask = struct {
+    runtime: ?*runtime.RuntimeHandle,
+    pending_handle: *pending.PendingClient,
+    config: []u8,
+};
+
+fn nextClientId() u64 {
+    next_client_id_mutex.lock();
+    defer next_client_id_mutex.unlock();
+    const id = next_client_id;
+    next_client_id += 1;
+    return id;
+}
 
 fn parseHostPort(address: []const u8) ?struct { host: []const u8, port: u16 } {
     var trimmed = address;
@@ -281,6 +296,54 @@ fn describeNamespaceWorker(task: *DescribeNamespaceTask) void {
     }
 }
 
+fn connectAsyncWorker(task: *ConnectTask) void {
+    const allocator = std.heap.c_allocator;
+    defer allocator.destroy(task);
+
+    const pending_handle = task.pending_handle;
+    const runtime_ptr = task.runtime;
+    const config_copy = task.config;
+
+    if (!temporalServerReachable(config_copy)) {
+        allocator.free(config_copy);
+        var scratch: [192]u8 = undefined;
+        const message = unreachableServerMessage(scratch[0..], config_copy);
+        _ = pending.rejectClient(pending_handle, grpc.unavailable, message);
+        return;
+    }
+
+    const client_handle = allocator.create(ClientHandle) catch |err| {
+        allocator.free(config_copy);
+        var scratch: [128]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to allocate client handle: {}",
+            .{ err },
+        ) catch "temporal-bun-bridge-zig: failed to allocate client handle";
+        _ = pending.rejectClient(pending_handle, grpc.resource_exhausted, message);
+        return;
+    };
+
+    const id = nextClientId();
+    client_handle.* = .{
+        .id = id,
+        .runtime = runtime_ptr,
+        .config = config_copy,
+        .core_client = null,
+    };
+
+    // Stub the Temporal core client handle until the bridge is wired to core.
+    client_handle.core_client = @as(?*core.ClientOpaque, @ptrCast(client_handle));
+
+    if (!pending.resolveClient(
+        pending_handle,
+        @as(?*anyopaque, @ptrCast(client_handle)),
+        destroyClientFromPending,
+    )) {
+        destroy(client_handle);
+    }
+}
+
 pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u8) ?*pending.PendingClient {
     if (runtime_ptr == null) {
         return createClientError(grpc.invalid_argument, "temporal-bun-bridge-zig: connectAsync received null runtime handle");
@@ -290,51 +353,48 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
         return createClientError(grpc.resource_exhausted, "temporal-bun-bridge-zig: client config allocation failed");
     };
 
-    const allocator = std.heap.c_allocator;
-    const handle = allocator.create(ClientHandle) catch |err| {
-        allocator.free(config_copy);
-        var scratch: [128]u8 = undefined;
-        const formatted = std.fmt.bufPrint(
-            &scratch,
-            "temporal-bun-bridge-zig: failed to allocate client handle: {}",
-            .{err},
-        ) catch "temporal-bun-bridge-zig: failed to allocate client handle";
-        const message: []const u8 = formatted;
-        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = message, .details = null });
-        return createClientError(grpc.resource_exhausted, message);
-    };
-
-    const id = next_client_id;
-    next_client_id += 1;
-
-    handle.* = .{
-        .id = id,
-        .runtime = runtime_ptr,
-        .config = config_copy,
-        .core_client = null,
-    };
-
-    if (!temporalServerReachable(handle.config)) {
-        var scratch: [192]u8 = undefined;
-        const message = unreachableServerMessage(scratch[0..], handle.config);
-        destroy(handle);
-        return createClientError(grpc.unavailable, message);
-    }
-
-    // Stub the Temporal core client handle until the bridge is wired to core.
-    handle.core_client = @as(?*core.ClientOpaque, @ptrCast(handle));
-
-    // TODO(codex, zig-cl-01): Initialize Temporal core client via core bridge and populate core_client.
-    const pending_handle = pending.createPendingReady(
-        @as(?*anyopaque, @ptrCast(handle)),
-        destroyClientFromPending,
-    ) orelse {
-        destroy(handle);
+    const pending_handle_ptr = pending.createPendingInFlight() orelse {
+        std.heap.c_allocator.free(config_copy);
         return createClientError(
-            grpc.internal,
+            grpc.resource_exhausted,
             "temporal-bun-bridge-zig: failed to allocate pending client handle",
         );
     };
+    const pending_handle = @as(*pending.PendingClient, @ptrCast(pending_handle_ptr));
+
+    const allocator = std.heap.c_allocator;
+    const task = allocator.create(ConnectTask) catch |err| {
+        allocator.free(config_copy);
+        var scratch: [160]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to allocate connect task: {}",
+            .{ err },
+        ) catch "temporal-bun-bridge-zig: failed to allocate connect task";
+        _ = pending.rejectClient(pending_handle, grpc.resource_exhausted, message);
+        return @as(?*pending.PendingClient, pending_handle);
+    };
+
+    task.* = .{
+        .runtime = runtime_ptr,
+        .pending_handle = pending_handle,
+        .config = config_copy,
+    };
+
+    const thread = std.Thread.spawn(.{}, connectAsyncWorker, .{task}) catch |err| {
+        allocator.free(config_copy);
+        allocator.destroy(task);
+        var scratch: [160]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to spawn connect worker: {}",
+            .{ err },
+        ) catch "temporal-bun-bridge-zig: failed to spawn connect worker";
+        _ = pending.rejectClient(pending_handle, grpc.internal, message);
+        return @as(?*pending.PendingClient, pending_handle);
+    };
+
+    thread.detach();
 
     return @as(?*pending.PendingClient, pending_handle);
 }
@@ -506,14 +566,14 @@ pub fn signalWorkflow(client_ptr: ?*ClientHandle, payload: []const u8) ?*pending
         .payload = copy[0..payload.len],
     };
 
-    const thread = std.Thread.spawn(.{}, runSignalWorkflow, .{context}) catch |err| {
+    const thread = std.Thread.spawn(.{}, runSignalWorkflow, .{ context }) catch |err| {
         allocator.free(copy);
         pending.free(pending_handle_ptr);
         var scratch: [128]u8 = undefined;
         const formatted = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to spawn signal worker thread: {}",
-            .{err},
+            .{ err },
         ) catch "temporal-bun-bridge-zig: failed to spawn signal worker thread";
         return createByteArrayError(grpc.internal, formatted);
     };

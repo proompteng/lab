@@ -334,6 +334,56 @@ pub fn resolveByteArray(handle: ?*PendingByteArray, array: ?*byte_array.ByteArra
     return true;
 }
 
+pub fn resolveClient(handle: ?*PendingClient, payload: ?*anyopaque, cleanup: ?*const fn (?*anyopaque) void) bool {
+    if (handle == null) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.invalid_argument,
+            .message = "temporal-bun-bridge-zig: resolveClient received null handle",
+            .details = null,
+        });
+        return false;
+    }
+
+    if (payload == null) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.invalid_argument,
+            .message = "temporal-bun-bridge-zig: resolveClient received null payload",
+            .details = null,
+        });
+        return false;
+    }
+
+    const pending_handle = handle.?;
+    pending_handle.mutex.lock();
+    defer pending_handle.mutex.unlock();
+    if (pending_handle.status != .pending) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.failed_precondition,
+            .message = "temporal-bun-bridge-zig: resolveClient expected pending status",
+            .details = null,
+        });
+        return false;
+    }
+
+    if (pending_handle.consumed) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.failed_precondition,
+            .message = "temporal-bun-bridge-zig: resolveClient received consumed handle",
+            .details = null,
+        });
+        return false;
+    }
+
+    releasePayload(pending_handle);
+    clearError(pending_handle);
+
+    pending_handle.payload = payload;
+    pending_handle.cleanup = cleanup;
+    pending_handle.status = .ready;
+    pending_handle.consumed = false;
+    return true;
+}
+
 pub fn rejectByteArray(handle: ?*PendingByteArray, code: i32, message: []const u8) bool {
     if (handle == null) {
         errors.setStructuredErrorJson(.{
@@ -351,6 +401,39 @@ pub fn rejectByteArray(handle: ?*PendingByteArray, code: i32, message: []const u
         errors.setStructuredErrorJson(.{
             .code = GrpcStatus.failed_precondition,
             .message = "temporal-bun-bridge-zig: rejectByteArray expected pending status",
+            .details = null,
+        });
+        return false;
+    }
+
+    releasePayload(pending_handle);
+    clearError(pending_handle);
+
+    assignError(pending_handle, code, message, true);
+    pending_handle.status = .failed;
+    pending_handle.consumed = false;
+
+    errors.setStructuredErrorJson(.{ .code = code, .message = if (message.len != 0) message else "", .details = null });
+    return true;
+}
+
+pub fn rejectClient(handle: ?*PendingClient, code: i32, message: []const u8) bool {
+    if (handle == null) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.invalid_argument,
+            .message = "temporal-bun-bridge-zig: rejectClient received null handle",
+            .details = null,
+        });
+        return false;
+    }
+
+    const pending_handle = handle.?;
+    pending_handle.mutex.lock();
+    defer pending_handle.mutex.unlock();
+    if (pending_handle.status != .pending) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.failed_precondition,
+            .message = "temporal-bun-bridge-zig: rejectClient expected pending status",
             .details = null,
         });
         return false;
@@ -402,5 +485,33 @@ test "rejectByteArray transitions pending handle to failed state" {
     try testing.expect(rejectByteArray(pending_byte, GrpcStatus.internal, "boom"));
     try testing.expectEqual(@as(i32, @intFromEnum(Status.failed)), poll(handle_ptr));
 
+    try testing.expect(consume(handle_ptr) == null);
+}
+
+test "resolveClient transitions pending handle to ready" {
+    const handle_opt = createPendingInFlight();
+    try testing.expect(handle_opt != null);
+    const handle_ptr = handle_opt.?;
+    defer free(handle_ptr);
+
+    const pending_client = @as(*PendingClient, @ptrCast(handle_ptr));
+
+    var payload_value: usize = 42;
+    const payload = @as(?*anyopaque, @ptrCast(&payload_value));
+
+    try testing.expect(resolveClient(pending_client, payload, null));
+    try testing.expectEqual(@as(i32, @intFromEnum(Status.ready)), poll(handle_ptr));
+}
+
+test "rejectClient transitions pending handle to failed state" {
+    const handle_opt = createPendingInFlight();
+    try testing.expect(handle_opt != null);
+    const handle_ptr = handle_opt.?;
+    defer free(handle_ptr);
+
+    const pending_client = @as(*PendingClient, @ptrCast(handle_ptr));
+
+    try testing.expect(rejectClient(pending_client, GrpcStatus.unavailable, "connect failed"));
+    try testing.expectEqual(@as(i32, @intFromEnum(Status.failed)), poll(handle_ptr));
     try testing.expect(consume(handle_ptr) == null);
 }
