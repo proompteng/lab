@@ -13,7 +13,7 @@ const execGit = (args: string[]): string => {
   return result.stdout.toString().trim()
 }
 
-const main = async () => {
+export const main = async () => {
   ensureCli('kubectl')
   ensureCli('kn')
 
@@ -32,4 +32,10 @@ const main = async () => {
   await $`kn service apply facteur --namespace facteur --filename ${serviceManifest} --image ${image}`
 }
 
-main().catch((error) => fatal('Failed to build and deploy facteur', error))
+if (import.meta.main) {
+  main().catch((error) => fatal('Failed to build and deploy facteur', error))
+}
+
+export const __private = {
+  execGit,
+}

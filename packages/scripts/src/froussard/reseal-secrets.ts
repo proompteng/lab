@@ -99,7 +99,7 @@ const writeDocuments = async (outputPath: string, documents: string[]) => {
   chmodSync(outputPath, 0o600)
 }
 
-const main = async () => {
+export const main = async () => {
   ensureCli('op')
   ensureCli('kubectl')
   ensureCli('kubeseal')
@@ -207,4 +207,13 @@ const main = async () => {
   )
 }
 
-main().catch((error) => fatal('Failed to reseal froussard secrets', error))
+if (import.meta.main) {
+  main().catch((error) => fatal('Failed to reseal froussard secrets', error))
+}
+
+export const __private = {
+  capture,
+  readOpSecret,
+  sealSecret,
+  writeDocuments,
+}
