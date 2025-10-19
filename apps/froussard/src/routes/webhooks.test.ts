@@ -7,8 +7,8 @@ import { CommandEvent as FacteurCommandEventMessage } from '@/proto/facteur/v1/c
 import { CodexTask, CodexTaskStage } from '@/proto/github/v1/codex_task_pb'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 import { GithubService } from '@/services/github/service'
-import { clearReviewFingerprintCacheForTest } from '@/webhooks/github/review-fingerprint'
 import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
+import { clearReviewFingerprintCacheForTest } from '@/webhooks/github/review-fingerprint'
 
 const { mockVerifyDiscordRequest, mockBuildPlanModalResponse, mockToPlanModalEvent, mockBuildCodexPrompt } = vi.hoisted(
   () => ({

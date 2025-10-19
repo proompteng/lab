@@ -25,8 +25,8 @@ import {
   shouldHandlePullRequestAction,
   shouldHandlePullRequestReviewAction,
 } from '../helpers'
-import { buildReviewFingerprint, rememberReviewFingerprint } from '../review-fingerprint'
 import { toCodexTaskProto } from '../payloads'
+import { buildReviewFingerprint, rememberReviewFingerprint } from '../review-fingerprint'
 import type { WebhookConfig } from '../types'
 import type { WorkflowExecutionContext, WorkflowStage } from '../workflow'
 import { executeWorkflowCommands } from '../workflow'
