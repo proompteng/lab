@@ -1,0 +1,330 @@
+import { Effect, Schema } from 'effect'
+
+import { DEFAULT_API_BASE_URL, DEFAULT_USER_AGENT, readResponseText, toError, trimTrailingSlash } from './common'
+import type {
+  CreatePullRequestCommentOptions,
+  CreatePullRequestCommentResult,
+  FetchLike,
+  FetchPullRequestOptions,
+  FetchPullRequestResult,
+  PullRequestSummary,
+  ReadyForReviewOptions,
+  ReadyForReviewResult,
+} from './types'
+
+const globalFetch: FetchLike | null =
+  typeof globalThis.fetch === 'function' ? (globalThis.fetch.bind(globalThis) as FetchLike) : null
+
+const GitHubPullRequestSchema = Schema.Struct({
+  number: Schema.Number,
+  title: Schema.String,
+  body: Schema.optionalWith(Schema.String, { nullable: true, default: () => '' }),
+  html_url: Schema.String,
+  draft: Schema.Boolean,
+  merged: Schema.Boolean,
+  state: Schema.String,
+  head: Schema.Struct({
+    ref: Schema.String,
+    sha: Schema.String,
+  }),
+  base: Schema.Struct({
+    ref: Schema.String,
+  }),
+  user: Schema.optionalWith(
+    Schema.Struct({
+      login: Schema.optionalWith(Schema.String, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  mergeable_state: Schema.optionalWith(Schema.String, { nullable: true }),
+})
+
+const decodePullRequest = Schema.decodeUnknown(GitHubPullRequestSchema)
+
+export const fetchPullRequest = (options: FetchPullRequestOptions): Effect.Effect<FetchPullRequestResult> => {
+  const {
+    repositoryFullName,
+    pullNumber,
+    token,
+    apiBaseUrl = DEFAULT_API_BASE_URL,
+    userAgent = DEFAULT_USER_AGENT,
+    fetchImplementation = globalFetch,
+  } = options
+
+  const [owner, repo] = repositoryFullName.split('/')
+  if (!owner || !repo) {
+    return Effect.succeed({
+      ok: false,
+      reason: 'invalid-repository' as const,
+      detail: repositoryFullName,
+    })
+  }
+
+  const fetchFn = fetchImplementation
+  if (!fetchFn) {
+    return Effect.succeed({ ok: false, reason: 'no-fetch' } as const)
+  }
+
+  const url = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/pulls/${pullNumber}`
+
+  return Effect.matchEffect(
+    Effect.tryPromise({
+      try: () =>
+        fetchFn(url, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            'User-Agent': userAgent,
+            ...(token && token.trim().length > 0 ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        }),
+      catch: toError,
+    }),
+    {
+      onFailure: (error) =>
+        Effect.succeed<FetchPullRequestResult>({
+          ok: false,
+          reason: 'network-error',
+          detail: error instanceof Error ? error.message : String(error),
+        }),
+      onSuccess: (response) =>
+        Effect.gen(function* (_) {
+          if (!response.ok) {
+            const detail = yield* readResponseText(response).pipe(
+              Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
+            )
+            return {
+              ok: false as const,
+              reason: response.status === 404 ? 'not-found' : 'http-error',
+              status: response.status,
+              detail,
+            }
+          }
+
+          const bodyResult = yield* readResponseText(response).pipe(Effect.either)
+          if (bodyResult._tag === 'Left') {
+            return {
+              ok: false as const,
+              reason: 'network-error',
+              detail: bodyResult.left.message,
+            }
+          }
+
+          let parsed: PullRequestSummary
+          try {
+            const raw = bodyResult.right.length === 0 ? {} : JSON.parse(bodyResult.right)
+            const decoded = yield* decodePullRequest(raw)
+            parsed = {
+              number: decoded.number,
+              title: decoded.title,
+              body: decoded.body ?? '',
+              htmlUrl: decoded.html_url,
+              draft: decoded.draft,
+              merged: decoded.merged,
+              state: decoded.state,
+              headRef: decoded.head.ref,
+              headSha: decoded.head.sha,
+              baseRef: decoded.base.ref,
+              authorLogin: decoded.user?.login ?? null,
+              mergeableState: decoded.mergeable_state ?? null,
+            }
+          } catch (error) {
+            return {
+              ok: false as const,
+              reason: 'invalid-pull-request',
+              detail: error instanceof Error ? error.message : String(error),
+            }
+          }
+
+          return { ok: true as const, pullRequest: parsed }
+        }),
+    },
+  )
+}
+
+export const markPullRequestReadyForReview = (options: ReadyForReviewOptions): Effect.Effect<ReadyForReviewResult> => {
+  const {
+    repositoryFullName,
+    pullNumber,
+    token,
+    apiBaseUrl = DEFAULT_API_BASE_URL,
+    userAgent = DEFAULT_USER_AGENT,
+    fetchImplementation = globalFetch,
+  } = options
+
+  if (!token || token.trim().length === 0) {
+    return Effect.succeed({ ok: false, reason: 'missing-token' } as const)
+  }
+
+  const [owner, repo] = repositoryFullName.split('/')
+  if (!owner || !repo) {
+    return Effect.succeed({
+      ok: false,
+      reason: 'invalid-repository' as const,
+      detail: repositoryFullName,
+    })
+  }
+
+  const fetchFn = fetchImplementation
+  if (!fetchFn) {
+    return Effect.succeed({ ok: false, reason: 'no-fetch' } as const)
+  }
+
+  const url = `${trimTrailingSlash(apiBaseUrl)}/graphql`
+  const mutation = `
+    mutation MarkReady($input: MarkPullRequestReadyForReviewInput!) {
+      markPullRequestReadyForReview(input: $input) {
+        pullRequest {
+          id
+        }
+      }
+    }
+  `
+
+  const payload = JSON.stringify({
+    query: mutation,
+    variables: {
+      input: {
+        pullRequestId: `MDExOlB1bGxSZXF1ZXN0${pullNumber}`,
+        clientMutationId: `ready-${pullNumber}`,
+      },
+    },
+  })
+
+  return Effect.tryPromise({
+    try: () =>
+      fetchFn(url, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          Authorization: `Bearer ${token}`,
+          'User-Agent': userAgent,
+        },
+        body: payload,
+      }),
+    catch: toError,
+  }).pipe(
+    Effect.flatMap((response) => {
+      if (response.ok) {
+        return Effect.succeed<ReadyForReviewResult>({ ok: true })
+      }
+
+      return readResponseText(response)
+        .pipe(Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)))
+        .pipe(
+          Effect.map((detail) => ({
+            ok: false as const,
+            reason: response.status === 404 ? 'invalid-repository' : 'http-error',
+            status: response.status,
+            detail,
+          })),
+        )
+    }),
+    Effect.catchAll((error) =>
+      Effect.succeed<ReadyForReviewResult>({
+        ok: false,
+        reason: 'network-error',
+        detail: error instanceof Error ? error.message : String(error),
+      }),
+    ),
+  )
+}
+
+export const createPullRequestComment = (
+  options: CreatePullRequestCommentOptions,
+): Effect.Effect<CreatePullRequestCommentResult> => {
+  const {
+    repositoryFullName,
+    pullNumber,
+    body,
+    token,
+    apiBaseUrl = DEFAULT_API_BASE_URL,
+    userAgent = DEFAULT_USER_AGENT,
+    fetchImplementation = globalFetch,
+  } = options
+
+  if (!token || token.trim().length === 0) {
+    return Effect.succeed({ ok: false, reason: 'missing-token' } as const)
+  }
+
+  const [owner, repo] = repositoryFullName.split('/')
+  if (!owner || !repo) {
+    return Effect.succeed({
+      ok: false,
+      reason: 'invalid-repository' as const,
+      detail: repositoryFullName,
+    })
+  }
+
+  const fetchFn = fetchImplementation
+  if (!fetchFn) {
+    return Effect.succeed({ ok: false, reason: 'no-fetch' } as const)
+  }
+
+  const url = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/issues/${pullNumber}/comments`
+  const payload = JSON.stringify({ body })
+
+  return Effect.tryPromise({
+    try: () =>
+      fetchFn(url, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': userAgent,
+          Authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: payload,
+      }),
+    catch: toError,
+  }).pipe(
+    Effect.flatMap((response) => {
+      if (response.ok) {
+        return readResponseText(response).pipe(
+          Effect.map((text) => {
+            if (!text) {
+              return { ok: true } as const
+            }
+            try {
+              const parsed = JSON.parse(text) as { html_url?: unknown }
+              const commentUrl =
+                parsed && typeof parsed === 'object' && typeof parsed.html_url === 'string'
+                  ? parsed.html_url
+                  : undefined
+              return { ok: true, commentUrl }
+            } catch (error) {
+              return {
+                ok: false as const,
+                reason: 'invalid-json',
+                detail: error instanceof Error ? error.message : String(error),
+              }
+            }
+          }),
+        )
+      }
+
+      return readResponseText(response).pipe(
+        Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
+        Effect.map(
+          (detail): CreatePullRequestCommentResult => ({
+            ok: false,
+            reason: 'http-error',
+            status: response.status,
+            detail,
+          }),
+        ),
+      )
+    }),
+    Effect.catchAll((error) =>
+      Effect.succeed<CreatePullRequestCommentResult>({
+        ok: false,
+        reason: 'network-error',
+        detail: error instanceof Error ? error.message : String(error),
+      }),
+    ),
+  )
+}

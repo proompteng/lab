@@ -224,6 +224,222 @@ describe('createWebhookHandler', () => {
     vi.clearAllMocks()
   })
 
+  interface Scenario {
+    name: string
+    event: string
+    action?: string
+    payload: Record<string, unknown>
+    setup?: () => void
+    assert: (body: any, response: Response) => Promise<void> | void
+  }
+
+  const scenarioHeaders = (event: string, action?: string) => ({
+    'x-github-event': event,
+    'x-github-delivery': `delivery-${event}-${action ?? 'none'}`,
+    ...(action ? { 'x-github-action': action } : {}),
+    'x-hub-signature-256': 'sig',
+    'content-type': 'application/json',
+  })
+
+  const webhookScenarios: Scenario[] = [
+    {
+      name: 'queues planning workflow when a Codex issue opens',
+      event: 'issues',
+      action: 'opened',
+      payload: {
+        action: 'opened',
+        repository: { full_name: 'owner/repo', default_branch: 'main' },
+        issue: {
+          number: 42,
+          title: 'Implement feature',
+          body: 'Detailed description',
+          html_url: 'https://github.com/owner/repo/issues/42',
+          user: { login: 'USER' },
+          repository_url: 'https://api.github.com/repos/owner/repo',
+        },
+        sender: { login: 'user' },
+      },
+      assert: (body) => {
+        expect(body).toMatchObject({ codexStageTriggered: 'planning' })
+        expect(publishedMessages).toHaveLength(3)
+        const planningJsonMessage = publishedMessages.find((message) => message.topic === 'codex-topic')
+        expect(planningJsonMessage).toBeTruthy()
+        const planningStructuredMessage = publishedMessages.find(
+          (message) => message.topic === 'github.issues.codex.tasks',
+        )
+        expect(planningStructuredMessage).toBeTruthy()
+        expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
+          expect.objectContaining({ repositoryFullName: 'owner/repo', issueNumber: 42 }),
+        )
+        expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
+          expect.objectContaining({ stage: 'planning', issueNumber: 42 }),
+        )
+      },
+    },
+    {
+      name: 'promotes implementation when plan comment arrives',
+      event: 'issue_comment',
+      action: 'created',
+      payload: {
+        action: 'created',
+        repository: { full_name: 'owner/repo', default_branch: 'main' },
+        issue: {
+          number: 99,
+          title: 'Ship feature',
+          body: 'Ticket body',
+          html_url: 'https://github.com/owner/repo/issues/99',
+          repository_url: 'https://api.github.com/repos/owner/repo',
+        },
+        comment: {
+          id: 555,
+          html_url: 'https://github.com/owner/repo/issues/99#issuecomment-555',
+          body: '<!-- codex:plan -->\n- step',
+        },
+        sender: { login: 'user' },
+      },
+      setup: () => {
+        githubServiceMock.findLatestPlanComment.mockResolvedValue({ ok: false, reason: 'not-found' })
+      },
+      assert: (body) => {
+        expect(body).toMatchObject({ codexStageTriggered: 'implementation' })
+        expect(publishedMessages.filter((message) => message.topic === 'codex-topic')).toHaveLength(1)
+        expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
+          expect.objectContaining({ stage: 'implementation', issueNumber: 99 }),
+        )
+      },
+    },
+    {
+      name: 'requests Codex review when outstanding feedback exists',
+      event: 'pull_request',
+      action: 'synchronize',
+      payload: {
+        action: 'synchronize',
+        repository: { full_name: 'owner/repo' },
+        sender: { login: 'user' },
+        pull_request: {
+          number: 5,
+          head: { ref: 'codex/issue-5-branch', sha: 'abc123' },
+          base: { ref: 'main', repo: { full_name: 'owner/repo' } },
+          user: { login: 'USER' },
+        },
+      },
+      setup: () => {
+        githubServiceMock.fetchPullRequest.mockReturnValueOnce(
+          Effect.succeed({
+            ok: true as const,
+            pullRequest: {
+              number: 5,
+              title: 'Update webhook handler',
+              body: 'Adds new logic',
+              htmlUrl: 'https://github.com/owner/repo/pull/5',
+              draft: false,
+              merged: false,
+              state: 'open',
+              headRef: 'codex/issue-5-branch',
+              headSha: 'abc123',
+              baseRef: 'main',
+              authorLogin: 'user',
+              mergeableState: 'blocked',
+            },
+          }),
+        )
+        githubServiceMock.listPullRequestReviewThreads.mockReturnValueOnce(
+          Effect.succeed({
+            ok: true as const,
+            threads: [
+              {
+                summary: 'Add unit tests for webhook logic',
+                url: 'https://github.com/owner/repo/pull/5#discussion-1',
+                author: 'octocat',
+              },
+            ],
+          }),
+        )
+        githubServiceMock.listPullRequestCheckFailures.mockReturnValueOnce(
+          Effect.succeed({
+            ok: true as const,
+            checks: [
+              {
+                name: 'ci / test',
+                conclusion: 'failure',
+                url: 'https://ci.example.com/run/1',
+                details: 'Integration tests are failing',
+              },
+            ],
+          }),
+        )
+      },
+      assert: (body) => {
+        expect(body).toMatchObject({ codexStageTriggered: 'review' })
+        expect(mockBuildCodexPrompt).toHaveBeenCalledWith(expect.objectContaining({ stage: 'review', issueNumber: 5 }))
+      },
+    },
+    {
+      name: 'posts ready comment when clean pull request updates',
+      event: 'pull_request',
+      action: 'edited',
+      payload: {
+        action: 'edited',
+        repository: { full_name: 'owner/repo' },
+        sender: { login: 'user' },
+        pull_request: {
+          number: 9,
+          head: { ref: 'codex/issue-9-clean', sha: 'cleansha' },
+          base: { ref: 'main', repo: { full_name: 'owner/repo' } },
+          user: { login: 'USER' },
+        },
+      },
+      setup: () => {
+        githubServiceMock.fetchPullRequest.mockReturnValueOnce(
+          Effect.succeed({
+            ok: true as const,
+            pullRequest: {
+              number: 9,
+              title: 'Clean updates',
+              body: '',
+              htmlUrl: 'https://github.com/owner/repo/pull/9',
+              draft: false,
+              merged: false,
+              state: 'open',
+              headRef: 'codex/issue-9-clean',
+              headSha: 'cleansha',
+              baseRef: 'main',
+              authorLogin: 'user',
+              mergeableState: 'clean',
+            },
+          }),
+        )
+        githubServiceMock.listPullRequestReviewThreads.mockReturnValueOnce(
+          Effect.succeed({ ok: true as const, threads: [] }),
+        )
+        githubServiceMock.listPullRequestCheckFailures.mockReturnValueOnce(
+          Effect.succeed({ ok: true as const, checks: [] }),
+        )
+        githubServiceMock.findLatestPlanComment.mockReturnValueOnce(
+          Effect.succeed({ ok: false as const, reason: 'not-found' as const }),
+        )
+      },
+      assert: (body) => {
+        expect(body).toMatchObject({ codexStageTriggered: null })
+        expect(githubServiceMock.findLatestPlanComment).toHaveBeenCalled()
+        expect(githubServiceMock.createPullRequestComment).toHaveBeenCalledWith(
+          expect.objectContaining({ body: expect.stringContaining('ready to merge') }),
+        )
+      },
+    },
+  ]
+
+  it.each(webhookScenarios)('$name', async ({ event, action, payload, setup, assert }) => {
+    setup?.()
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+
+    const response = await handler(buildRequest(payload, scenarioHeaders(event, action)), 'github')
+
+    expect(response.status).toBe(202)
+    const body = await response.json()
+    await assert(body, response)
+  })
+
   it('rejects unsupported providers', async () => {
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
     const response = await handler(
