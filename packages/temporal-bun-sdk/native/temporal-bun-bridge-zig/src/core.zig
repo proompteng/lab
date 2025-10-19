@@ -27,9 +27,10 @@ pub const ByteArrayRef = extern struct {
     len: usize,
 };
 
-pub const WorkerCallback = *const fn (?*anyopaque, ?*const ByteArray) callconv(.C) void;
-pub const WorkerCompleteFn = *const fn (?*WorkerOpaque, ByteArrayRef, ?*anyopaque, WorkerCallback) callconv(.C) void;
-pub const RuntimeByteArrayFreeFn = *const fn (?*RuntimeOpaque, ?*const ByteArray) callconv(.C) void;
+pub const WorkerCallback = *const fn (?*anyopaque, ?*const ByteArray) callconv(.c) void;
+
+pub const WorkerCompleteFn = *const fn (?*WorkerOpaque, ByteArrayRef, ?*anyopaque, WorkerCallback) callconv(.c) void;
+pub const RuntimeByteArrayFreeFn = *const fn (?*RuntimeOpaque, ?*const ByteArray) callconv(.c) void;
 
 extern fn temporal_sdk_core_runtime_new(options_json: ?[*]const u8, len: usize) ?*RuntimeOpaque;
 extern fn temporal_sdk_core_runtime_free(handle: ?*RuntimeOpaque) void;

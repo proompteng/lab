@@ -296,8 +296,8 @@ if (builtin.is_test) {
         _ = worker_ptr;
         stub_completion_call_count += 1;
         last_completion_payload = stubCompletionSlice(completion);
-        if (callback) |cb| {
-            cb(user_data, null);
+        if (@intFromPtr(callback) != 0) {
+            callback(user_data, null);
         }
     }
 
@@ -316,8 +316,8 @@ if (builtin.is_test) {
             .cap = stub_fail_message.len,
             .disable_free = false,
         };
-        if (callback) |cb| {
-            cb(user_data, &stub_fail_buffer);
+        if (@intFromPtr(callback) != 0) {
+            callback(user_data, &stub_fail_buffer);
         }
     }
 
