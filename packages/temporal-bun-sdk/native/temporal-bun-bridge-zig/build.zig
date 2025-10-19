@@ -22,6 +22,8 @@ pub fn build(b: *std.Build) void {
         .linkage = .dynamic,
     });
 
+    // TODO(codex, zig-pack-01): Link Temporal Rust static libraries emitted by cargo+cbindgen.
+
     var install_options: std.Build.Step.InstallArtifact.Options = .{};
     if (install_subpath) |subpath| {
         install_options.dest_sub_path = subpath;
