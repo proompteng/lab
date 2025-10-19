@@ -5,7 +5,21 @@ const std = @import("std");
 const empty_bytes = [_]u8{};
 const empty_slice = empty_bytes[0..];
 
+pub const StructuredError = struct {
+    code: i32,
+    message: []const u8,
+    details: ?[]const u8 = null,
+};
+
 var last_error: []u8 = empty_slice;
+
+fn replaceLastError(buffer: []u8) void {
+    const allocator = std.heap.c_allocator;
+    if (last_error.len > 0) {
+        allocator.free(last_error);
+    }
+    last_error = buffer;
+}
 
 pub fn setLastError(message: []const u8) void {
     const allocator = std.heap.c_allocator;
@@ -26,6 +40,29 @@ pub fn setLastError(message: []const u8) void {
 
     @memcpy(copy, message);
     last_error = copy;
+}
+
+pub fn setStructuredError(payload: StructuredError) void {
+    const allocator = std.heap.c_allocator;
+    const Encodable = struct {
+        code: i32,
+        message: []const u8,
+        details: ?[]const u8 = null,
+    };
+
+    const encodable = Encodable{
+        .code = payload.code,
+        .message = payload.message,
+        .details = payload.details,
+    };
+
+    const encoded = std.json.stringifyAlloc(allocator, encodable, .{ .whitespace = .minified }) catch {
+        // Fall back to the raw message if JSON encoding fails.
+        setLastError(payload.message);
+        return;
+    };
+
+    replaceLastError(encoded);
 }
 
 pub fn setLastErrorFmt(comptime fmt: []const u8, args: anytype) void {
