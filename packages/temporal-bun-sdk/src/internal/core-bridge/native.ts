@@ -81,6 +81,7 @@ interface BridgeLoadErrorContext {
 }
 
 function loadBridgeLibrary(): BridgeLibraryLoadResult {
+  const symbolMap = buildBridgeSymbolMap()
   const override = process.env.TEMPORAL_BUN_SDK_NATIVE_PATH
   if (override) {
     if (!existsSync(override)) {
@@ -89,7 +90,7 @@ function loadBridgeLibrary(): BridgeLibraryLoadResult {
     const variant = detectBridgeVariantFromPath(override)
     try {
       return {
-        module: dlopen(override, buildBridgeSymbolMap()),
+        module: dlopen(override, symbolMap),
         path: override,
         variant,
       }
@@ -112,7 +113,7 @@ function loadBridgeLibrary(): BridgeLibraryLoadResult {
     const candidate = candidates[index]
     try {
       return {
-        module: dlopen(candidate.path, buildBridgeSymbolMap()),
+        module: dlopen(candidate.path, symbolMap),
         path: candidate.path,
         variant: candidate.variant,
       }
