@@ -43,12 +43,15 @@ ln -s ~/github.com/temporalio/sdk-typescript packages/temporal-bun-sdk/vendor/sd
 # Compile the native Temporal bridge (requires protoc in PATH)
 pnpm --filter @proompteng/temporal-bun-sdk run build:native
 
-# (Experimental) Build the Zig bridge scaffold
+# (Experimental) Build the Zig bridge scaffold (invokes Cargo to stage static Temporal core archives)
+pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
 pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:bundle
 pnpm --filter @proompteng/temporal-bun-sdk run package:native:zig
 # Optional: build a Debug variant of the Zig bridge for local investigation
 # pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:debug
 ```
+
+> The Zig bridge build calls `cargo rustc --crate-type staticlib` for `temporal-sdk-core`, `temporal-client`, `temporal-sdk-core-api`, and `temporal-sdk-core-protos` so the linker can consume the resulting `.a` archives. Keep the Rust toolchain installed (via `rustup`) alongside Zig 0.15.1; missing Cargo or the vendored checkout aborts the build with guidance.
 
 The bundling script cross-compiles ReleaseFast builds for `darwin` and `linux` (arm64 and x64), staging
 them under `native/temporal-bun-bridge-zig/zig-out/lib/<platform>/<arch>/`. The packaging helper then
@@ -66,6 +69,7 @@ copies those artifacts into `dist/native/<platform>/<arch>/` so `pnpm pack --fil
 > ```
 
 Ensure `protoc` ≥ 28 is installed (`brew install protobuf` on macOS, `apt install protobuf-compiler` on Debian/Ubuntu).
+On Debian/Ubuntu, also install `libprotobuf-dev` so the well-known types referenced by Temporal's Rust crates are available to `protoc`.
 
 Build and test the package:
 
