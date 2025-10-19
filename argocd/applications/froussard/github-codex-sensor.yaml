@@ -118,6 +118,10 @@ spec:
               src:
                 dependencyName: review-event
                 dataTemplate: '{{ .Input.body | toJson }}'
+            - dest: spec.arguments.parameters.2.value
+              src:
+                dependencyName: review-event
+                dataTemplate: 'pr-{{ .Input.body.issueNumber }}'
           resource: workflows
           source:
             resource:

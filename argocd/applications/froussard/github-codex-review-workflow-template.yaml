@@ -14,6 +14,15 @@ spec:
         value: '{}'
       - name: eventBody
         value: '{}'
+      - name: issueKey
+        value: ''
+  synchronization:
+    mutex:
+      name: codex-review-{{workflow.parameters.issueKey}}
+  ttlStrategy:
+    secondsAfterCompletion: 7200
+    secondsAfterSuccess: 3600
+    secondsAfterFailure: 7200
   templates:
     - name: review
       inputs:
