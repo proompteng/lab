@@ -2,6 +2,11 @@ import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PLAN_COMMENT_MARKER } from '@/codex'
+import {
+  createPullRequestComment,
+  fetchPullRequest,
+  markPullRequestReadyForReview,
+} from '@/services/github/pull-requests'
 import { findLatestPlanComment, postIssueReaction } from '@/services/github/issues'
 import { listPullRequestReviewThreads } from '@/services/github/reviews'
 
@@ -493,5 +498,304 @@ describe('findLatestPlanComment', () => {
     )
 
     expect(result).toEqual({ ok: false, reason: 'network-error', detail: 'network down' })
+  })
+})
+
+describe('fetchPullRequest', () => {
+  it('parses a pull request payload when GitHub responds successfully', async () => {
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          number: 7,
+          title: 'Add API endpoint',
+          body: 'Implements the endpoint',
+          html_url: 'https://github.com/owner/repo/pull/7',
+          draft: false,
+          merged: false,
+          state: 'open',
+          head: { ref: 'feature/api', sha: 'abc123' },
+          base: { ref: 'main' },
+          user: { login: 'octocat' },
+          mergeable_state: 'clean',
+        }),
+    }))
+
+    const result = await Effect.runPromise(
+      fetchPullRequest({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 7,
+        fetchImplementation: fetchSpy,
+      }),
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+
+    expect(result.pullRequest).toMatchObject({
+      number: 7,
+      title: 'Add API endpoint',
+      headRef: 'feature/api',
+      headSha: 'abc123',
+      baseRef: 'main',
+      authorLogin: 'octocat',
+      mergeableState: 'clean',
+    })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns invalid-repository when the repository name is malformed', async () => {
+    const result = await Effect.runPromise(fetchPullRequest({ repositoryFullName: 'ownerOnly', pullNumber: 1 }))
+
+    expect(result).toEqual({ ok: false, reason: 'invalid-repository', detail: 'ownerOnly' })
+  })
+
+  it('returns no-fetch when a fetch implementation is unavailable', async () => {
+    const result = await Effect.runPromise(
+      fetchPullRequest({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 1,
+        fetchImplementation: null,
+      }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'no-fetch' })
+  })
+
+  it('maps 404 responses to not-found', async () => {
+    const result = await Effect.runPromise(
+      fetchPullRequest({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 99,
+        fetchImplementation: async () => ({
+          ok: false,
+          status: 404,
+          text: async () => 'missing',
+        }),
+      }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'not-found', status: 404, detail: 'missing' })
+  })
+
+  it('returns invalid-pull-request when decoding fails', async () => {
+    const result = await Effect.runPromise(
+      fetchPullRequest({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 5,
+        fetchImplementation: async () => ({
+          ok: true,
+          status: 200,
+          text: async () => '{ bad json',
+        }),
+      }),
+    )
+
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.reason).toBe('invalid-pull-request')
+  })
+})
+
+describe('markPullRequestReadyForReview', () => {
+  it('requires a token', async () => {
+    const result = await Effect.runPromise(
+      markPullRequestReadyForReview({ repositoryFullName: 'owner/repo', pullNumber: 1 }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'missing-token' })
+  })
+
+  it('returns invalid-repository for malformed names', async () => {
+    const result = await Effect.runPromise(
+      markPullRequestReadyForReview({
+        repositoryFullName: 'ownerOnly',
+        pullNumber: 1,
+        token: 'token',
+      }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'invalid-repository', detail: 'ownerOnly' })
+  })
+
+  it('returns no-fetch when fetch implementation is missing', async () => {
+    const result = await Effect.runPromise(
+      markPullRequestReadyForReview({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 1,
+        token: 'token',
+        fetchImplementation: null,
+      }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'no-fetch' })
+  })
+
+  it('returns ok when GitHub accepts the mutation', async () => {
+    const fetchSpy = vi.fn(async () => ({ ok: true, status: 200, text: async () => '' }))
+
+    const result = await Effect.runPromise(
+      markPullRequestReadyForReview({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 7,
+        token: 'token',
+        fetchImplementation: fetchSpy,
+      }),
+    )
+
+    expect(result).toEqual({ ok: true })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns http-error when GitHub rejects the request', async () => {
+    const result = await Effect.runPromise(
+      markPullRequestReadyForReview({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 7,
+        token: 'token',
+        fetchImplementation: async () => ({
+          ok: false,
+          status: 500,
+          text: async () => 'failure',
+        }),
+      }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'http-error', status: 500, detail: 'failure' })
+  })
+
+  it('returns network-error when fetch throws', async () => {
+    const result = await Effect.runPromise(
+      markPullRequestReadyForReview({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 7,
+        token: 'token',
+        fetchImplementation: async () => {
+          throw new Error('boom')
+        },
+      }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'network-error', detail: 'boom' })
+  })
+})
+
+describe('createPullRequestComment', () => {
+  it('requires a token', async () => {
+    const result = await Effect.runPromise(
+      createPullRequestComment({ repositoryFullName: 'owner/repo', pullNumber: 1, body: 'Hi' }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'missing-token' })
+  })
+
+  it('rejects malformed repository names', async () => {
+    const result = await Effect.runPromise(
+      createPullRequestComment({
+        repositoryFullName: 'ownerOnly',
+        pullNumber: 1,
+        body: 'Hello',
+        token: 'token',
+      }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'invalid-repository', detail: 'ownerOnly' })
+  })
+
+  it('returns no-fetch when no implementation is supplied', async () => {
+    const result = await Effect.runPromise(
+      createPullRequestComment({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 1,
+        body: 'Hello',
+        token: 'token',
+        fetchImplementation: null,
+      }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'no-fetch' })
+  })
+
+  it('returns the comment URL on success', async () => {
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      status: 201,
+      text: async () => JSON.stringify({ html_url: 'https://github.com/owner/repo/pull/1#comment-1' }),
+    }))
+
+    const result = await Effect.runPromise(
+      createPullRequestComment({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 1,
+        body: 'Looks good!',
+        token: 'token',
+        fetchImplementation: fetchSpy,
+      }),
+    )
+
+    expect(result).toEqual({ ok: true, commentUrl: 'https://github.com/owner/repo/pull/1#comment-1' })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('propagates http errors from GitHub', async () => {
+    const result = await Effect.runPromise(
+      createPullRequestComment({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 1,
+        body: 'Looks good!',
+        token: 'token',
+        fetchImplementation: async () => ({
+          ok: false,
+          status: 403,
+          text: async () => 'forbidden',
+        }),
+      }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'http-error', status: 403, detail: 'forbidden' })
+  })
+
+  it('returns invalid-json when GitHub responds with malformed JSON', async () => {
+    const result = await Effect.runPromise(
+      createPullRequestComment({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 1,
+        body: 'Looks good!',
+        token: 'token',
+        fetchImplementation: async () => ({
+          ok: true,
+          status: 201,
+          text: async () => '{ bad json',
+        }),
+      }),
+    )
+
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.reason).toBe('invalid-json')
+    expect(result.detail).toMatch(/Unexpected|property name/) // message varies per runtime
+  })
+
+  it('returns network-error when fetch throws', async () => {
+    const result = await Effect.runPromise(
+      createPullRequestComment({
+        repositoryFullName: 'owner/repo',
+        pullNumber: 1,
+        body: 'Looks good!',
+        token: 'token',
+        fetchImplementation: async () => {
+          throw new Error('boom')
+        },
+      }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'network-error', detail: 'boom' })
   })
 })
