@@ -36,7 +36,7 @@ pub const PendingHandle = struct {
     consumed: bool,
     payload: ?*anyopaque,
     cleanup: CleanupFn,
-    error: PendingErrorState,
+    fault: PendingErrorState,
 };
 
 fn allocateHandle(status: Status) ?*PendingHandle {
@@ -56,7 +56,7 @@ fn allocateHandle(status: Status) ?*PendingHandle {
         .consumed = false,
         .payload = null,
         .cleanup = null,
-        .error = .{
+        .fault = .{
             .code = GrpcStatus.unknown,
             .message = "",
             .owns_message = false,
@@ -99,7 +99,7 @@ fn releasePayload(handle: *PendingHandle) void {
 
 fn destroyHandle(handle: *PendingHandle) void {
     releasePayload(handle);
-    destroyMessage(handle.error.message, handle.error.owns_message);
+    destroyMessage(handle.fault.message, handle.fault.owns_message);
     const allocator = std.heap.c_allocator;
     allocator.destroy(handle);
 }
@@ -108,11 +108,11 @@ pub const PendingClient = PendingHandle;
 pub const PendingByteArray = PendingHandle;
 
 fn assignError(handle: *PendingHandle, code: i32, message: []const u8, duplicate: bool) void {
-    destroyMessage(handle.error.message, handle.error.owns_message);
-    handle.error.code = code;
-    handle.error.message = "";
-    handle.error.owns_message = false;
-    handle.error.active = true;
+    destroyMessage(handle.fault.message, handle.fault.owns_message);
+    handle.fault.code = code;
+    handle.fault.message = "";
+    handle.fault.owns_message = false;
+    handle.fault.active = true;
 
     if (message.len == 0) {
         return;
@@ -120,19 +120,19 @@ fn assignError(handle: *PendingHandle, code: i32, message: []const u8, duplicate
 
     if (duplicate) {
         if (duplicateMessage(message)) |copy| {
-            handle.error.message = copy;
-            handle.error.owns_message = true;
+            handle.fault.message = copy;
+            handle.fault.owns_message = true;
             return;
         }
         // Fall back to an internal error with a static message if duplication fails.
-        handle.error.code = GrpcStatus.internal;
-        handle.error.message = "temporal-bun-bridge-zig: failed to duplicate error message";
-        handle.error.owns_message = false;
+        handle.fault.code = GrpcStatus.internal;
+        handle.fault.message = "temporal-bun-bridge-zig: failed to duplicate error message";
+        handle.fault.owns_message = false;
         return;
     }
 
-    handle.error.message = message;
-    handle.error.owns_message = false;
+    handle.fault.message = message;
+    handle.fault.owns_message = false;
 }
 
 pub fn createPendingError(code: i32, message: []const u8) ?*PendingHandle {
@@ -167,14 +167,14 @@ pub fn poll(handle: ?*PendingHandle) i32 {
         .ready => blk: {
             if (pending.consumed) {
                 assignError(pending, GrpcStatus.failed_precondition, "temporal-bun-bridge-zig: pending handle already consumed", false);
-                errors.setStructuredError(.{ .code = pending.error.code, .message = pending.error.message });
+                errors.setStructuredError(.{ .code = pending.fault.code, .message = pending.fault.message });
                 break :blk @intFromEnum(Status.failed);
             }
             break :blk @intFromEnum(Status.ready);
         },
         .failed => blk: {
-            if (pending.error.active) {
-                errors.setStructuredError(.{ .code = pending.error.code, .message = pending.error.message });
+            if (pending.fault.active) {
+                errors.setStructuredError(.{ .code = pending.fault.code, .message = pending.fault.message });
             } else {
                 errors.setStructuredError(.{
                     .code = GrpcStatus.internal,
@@ -205,8 +205,8 @@ pub fn consume(handle: ?*PendingHandle) ?*anyopaque {
             return null;
         },
         .failed => {
-            if (pending.error.active) {
-                errors.setStructuredError(.{ .code = pending.error.code, .message = pending.error.message });
+            if (pending.fault.active) {
+                errors.setStructuredError(.{ .code = pending.fault.code, .message = pending.fault.message });
             } else {
                 errors.setStructuredError(.{
                     .code = GrpcStatus.internal,
@@ -229,7 +229,7 @@ pub fn consume(handle: ?*PendingHandle) ?*anyopaque {
     pending.consumed = true;
     const payload = pending.payload orelse {
         assignError(pending, GrpcStatus.internal, "temporal-bun-bridge-zig: pending handle missing payload", false);
-        errors.setStructuredError(.{ .code = pending.error.code, .message = pending.error.message });
+        errors.setStructuredError(.{ .code = pending.fault.code, .message = pending.fault.message });
         return null;
     };
 
