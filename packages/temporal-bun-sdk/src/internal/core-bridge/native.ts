@@ -374,7 +374,7 @@ export const native = {
     const payload = Buffer.from(JSON.stringify(options ?? {}), 'utf8')
     const status = Number(temporal_bun_runtime_update_telemetry(runtime.handle, ptr(payload), payload.byteLength))
     if (status !== 0) {
-      throw new NativeBridgeError(readLastError())
+      throw buildNativeBridgeError()
     }
   },
 
