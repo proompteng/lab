@@ -1,17 +1,12 @@
 #!/usr/bin/env bun
-import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from 'node:child_process'
-import { env, argv, stderr } from 'node:process'
+import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
-import path from 'node:path'
 import os from 'node:os'
+import path from 'node:path'
+import { argv, env, stderr } from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 type CommandArgs = ReadonlyArray<string>
-
-type CommandInvocation = {
-  command: string
-  args: CommandArgs
-}
 
 const args = argv.slice(2)
 if (args.length === 0) {
@@ -24,75 +19,22 @@ const cargoHome = env.CARGO_HOME ?? `${homeDir}/.cargo`
 const cargoBinDir = `${cargoHome}/bin`
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 
-const run = (
-  command: string,
-  commandArgs: CommandArgs,
-  options: SpawnSyncOptions = {},
-): SpawnSyncReturns<Buffer> => spawnSync(command, commandArgs, { stdio: 'inherit', ...options })
+const run = (command: string, commandArgs: CommandArgs, options: SpawnSyncOptions = {}): SpawnSyncReturns<Buffer> =>
+  spawnSync(command, commandArgs, { stdio: 'inherit', ...options })
 
-const runQuiet = (
-  command: string,
-  commandArgs: CommandArgs,
-  options: SpawnSyncOptions = {},
-): SpawnSyncReturns<Buffer> => spawnSync(command, commandArgs, { stdio: ['ignore', 'ignore', 'ignore'], ...options })
-
-const captureStdout = (command: string, commandArgs: CommandArgs): string | null => {
+const tryCommand = (command: string, commandArgs: CommandArgs, options: SpawnSyncOptions = {}): boolean => {
   try {
     const result = spawnSync(command, commandArgs, {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
+      stdio: ['ignore', 'ignore', 'ignore'],
+      ...options,
     })
-    if (result.status !== 0 || !result.stdout) {
-      return null
-    }
-    return (result.stdout as string).trim()
-  } catch {
-    return null
-  }
-}
-
-const tryCommand = (command: string, commandArgs: CommandArgs): boolean => {
-  try {
-    const result = runQuiet(command, commandArgs)
     return result.status === 0 && !result.error
   } catch {
     return false
   }
 }
 
-const isRunningAsRoot = () => (typeof process.getuid === 'function' ? process.getuid() === 0 : false)
-
-const ensureCargo = (): boolean => {
-  if (tryCommand('cargo', ['--version']) || tryCommand(`${cargoBinDir}/cargo`, ['--version'])) {
-    return true
-  }
-
-  if (!env.CI) {
-    stderr.write(
-      'Cargo toolchain is required to build Temporal core artifacts. Install Rust from https://rustup.rs/ and retry.\n',
-    )
-    return false
-  }
-
-  stderr.write('Cargo not found on PATH; installing stable Rust toolchain via rustup...\n')
-  const install = run('sh', [
-    '-c',
-    'curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable',
-  ])
-
-  if (install.status !== 0 || install.error) {
-    stderr.write('Failed to install Rust using rustup.\n')
-    return false
-  }
-
-  if (!tryCommand(`${cargoBinDir}/cargo`, ['--version'])) {
-    stderr.write('Rust installation completed but cargo is still unavailable at the expected path.\n')
-    return false
-  }
-
-  stderr.write('Rust toolchain installed successfully.\n')
-  return true
-}
+const resolvePathWithCargo = (): string => [cargoBinDir, env.PATH ?? ''].filter(Boolean).join(path.delimiter)
 
 const appendCellarIncludes = (includeDirs: Set<string>, cellarRoot?: string | null) => {
   if (!cellarRoot) {
@@ -140,15 +82,32 @@ const collectHomebrewIncludeDirs = (): Set<string> => {
   )
 
   for (const brewExecutable of brewExecutables) {
-    const protobufPrefix = captureStdout(brewExecutable, ['--prefix', 'protobuf'])
-    if (protobufPrefix) {
-      addIncludeDir(path.join(protobufPrefix, 'include'))
-      addPrefixCandidate(path.resolve(protobufPrefix, '..', '..'))
-      appendCellarIncludes(includeDirs, path.resolve(protobufPrefix, '..', '..', 'Cellar'))
+    try {
+      const result = spawnSync(brewExecutable, ['--prefix', 'protobuf'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+      if (result.status === 0 && result.stdout) {
+        const protobufPrefix = (result.stdout as string).trim()
+        addIncludeDir(path.join(protobufPrefix, 'include'))
+        addPrefixCandidate(path.resolve(protobufPrefix, '..', '..'))
+        appendCellarIncludes(includeDirs, path.resolve(protobufPrefix, '..', '..', 'Cellar'))
+      }
+    } catch {
+      // Ignore brew detection failures and continue gathering include candidates.
     }
 
-    const defaultPrefix = captureStdout(brewExecutable, ['--prefix'])
-    addPrefixCandidate(defaultPrefix)
+    try {
+      const defaultPrefixResult = spawnSync(brewExecutable, ['--prefix'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+      if (defaultPrefixResult.status === 0 && defaultPrefixResult.stdout) {
+        addPrefixCandidate((defaultPrefixResult.stdout as string).trim())
+      }
+    } catch {
+      // Ignore brew detection failures and continue gathering include candidates.
+    }
   }
 
   appendCellarIncludes(includeDirs, env.HOMEBREW_CELLAR ?? null)
@@ -174,40 +133,27 @@ const hasWellKnownTypes = (): boolean => {
   return candidates.some((candidate) => existsSync(candidate))
 }
 
-const findCommand = (candidates: Array<string | undefined>, testArgs: CommandArgs = ['--version']): string | null => {
-  for (const candidate of candidates) {
-    if (!candidate) {
-      continue
-    }
-    if (tryCommand(candidate, testArgs)) {
-      return candidate
-    }
+const ensureCargo = (): boolean => {
+  const pathWithCargo = resolvePathWithCargo()
+  if (tryCommand('cargo', ['--version'], { env: { ...env, PATH: pathWithCargo } })) {
+    return true
   }
-  return null
+
+  stderr.write(
+    'Cargo is required but was not found on PATH. The Codex build image now bundles the Rust toolchain; rebuild the image (apps/froussard/Dockerfile.codex) or install Rust manually before retrying.\n',
+  )
+  return false
 }
 
-const resolveAptInstallInvocation = (): CommandInvocation | null => {
-  const aptGet = findCommand([env.APT_GET_PATH, '/usr/bin/apt-get', '/usr/local/bin/apt-get', 'apt-get'])
-  if (!aptGet) {
-    return null
+const ensureProtoc = (): boolean => {
+  if (tryCommand('protoc', ['--version'])) {
+    return true
   }
 
-  if (isRunningAsRoot()) {
-    return {
-      command: aptGet,
-      args: ['install', '-y', 'libprotobuf-dev'],
-    }
-  }
-
-  const sudo = findCommand([env.SUDO_PATH, '/usr/bin/sudo', '/usr/local/bin/sudo', 'sudo'])
-  if (sudo && tryCommand(sudo, ['-n', 'true'])) {
-    return {
-      command: sudo,
-      args: ['-n', aptGet, 'install', '-y', 'libprotobuf-dev'],
-    }
-  }
-
-  return null
+  stderr.write(
+    '`protoc` is required but missing. Ensure protobuf-compiler is installed or run inside the updated Codex build image (#1546).\n',
+  )
+  return false
 }
 
 const ensureProtobufIncludes = (): boolean => {
@@ -215,43 +161,18 @@ const ensureProtobufIncludes = (): boolean => {
     return true
   }
 
-  if (!env.CI) {
-    stderr.write(
-      'Missing google/protobuf well-known types; install libprotobuf-dev (or ensure protoc includes are on PATH) and retry.\n',
-    )
-    return false
-  }
-
-  const aptInvocation = resolveAptInstallInvocation()
-  if (!aptInvocation) {
-    stderr.write(
-      'Unable to install libprotobuf-dev automatically because apt-get/sudo are unavailable or require a password. Install it manually and retry.\n',
-    )
-    return false
-  }
-
-  stderr.write('Protobuf well-known type headers not found; installing libprotobuf-dev...\n')
-  const install = run(aptInvocation.command, aptInvocation.args)
-
-  if (install.status !== 0 || install.error) {
-    stderr.write('Failed to install libprotobuf-dev via apt.\n')
-    return false
-  }
-
-  if (!hasWellKnownTypes()) {
-    stderr.write('libprotobuf-dev installed but google/protobuf headers still missing.\n')
-    return false
-  }
-
-  return true
+  stderr.write(
+    'Protobuf well-known type headers (google/protobuf/*.proto) are missing. Install libprotobuf-dev or rebuild with the refreshed Codex image so headers are available.\n',
+  )
+  return false
 }
 
-if (!ensureCargo() || !ensureProtobufIncludes()) {
+if (!ensureCargo() || !ensureProtoc() || !ensureProtobufIncludes()) {
   process.exit(1)
 }
 
 const [command, ...commandArgs] = args
-const combinedPath = [cargoBinDir, env.PATH ?? ''].filter(Boolean).join(path.delimiter)
+const combinedPath = resolvePathWithCargo()
 const result = run(command, commandArgs, {
   env: {
     ...env,

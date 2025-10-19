@@ -16,9 +16,20 @@ ENV DEBIAN_FRONTEND=noninteractive \
     GIT_TERMINAL_PROMPT=0 \
     BUN_INSTALL=/usr/local
 
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo
+
+ENV PATH="${CARGO_HOME}/bin:${PATH}"
+
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git gh jq python3 curl xz-utils \
+    && apt-get install -y --no-install-recommends git gh jq python3 curl xz-utils protobuf-compiler libprotobuf-dev \
     && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable; \
+    rustup show active-toolchain; \
+    cargo --version; \
+    chmod -R a+rwX "${CARGO_HOME}" "${RUSTUP_HOME}"
 
 RUN set -eux; \
     ARCH=${TARGETARCH:-arm64}; \
@@ -100,6 +111,9 @@ COPY apps/froussard/src/codex/cli/codex-plan.ts /usr/local/bin/codex-plan
 COPY apps/froussard/src/codex/cli/codex-implement.ts /usr/local/bin/codex-implement
 COPY apps/froussard/src/codex/cli/lib /usr/local/bin/lib
 RUN chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/codex-plan /usr/local/bin/codex-implement
+
+RUN --mount=type=bind,source=.,target=/tmp/src,ro \
+    cargo fetch --locked --manifest-path /tmp/src/packages/temporal-bun-sdk/native/temporal-bun-bridge/Cargo.toml
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/codex-bootstrap"]

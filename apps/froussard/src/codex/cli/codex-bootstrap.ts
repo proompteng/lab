@@ -76,7 +76,20 @@ const bootstrapWorkspace = async () => {
     return
   }
 
+  const missingBinaryError = (binary: string) =>
+    new Error(
+      `${binary} is required but missing from PATH. The Codex build image now preinstalls Rust and protobuf tooling; rebuild the image (apps/froussard/Dockerfile.codex) or install ${binary} locally.`,
+    )
+
   const pnpmExecutable = await ensurePnpmAvailable()
+
+  if (!(await which('cargo'))) {
+    throw missingBinaryError('cargo')
+  }
+
+  if (!(await which('protoc'))) {
+    throw missingBinaryError('protoc')
+  }
 
   console.log('Installing workspace dependencies via pnpm...')
   await runWithNvm(`"${pnpmExecutable}" install --frozen-lockfile`)

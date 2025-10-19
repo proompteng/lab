@@ -1,7 +1,6 @@
 # `@proompteng/temporal-bun-sdk`
 
-A Bun-first starter kit for running Temporal workers that mirrors our existing Go-based setup (namespace `default`, task queue `prix`, gRPC port `7233`) while providing typed helpers for connection, workflow, and activity registration.
-<!-- TODO(codex, zig-pack-03): Expand Zig toolchain prerequisites section and link install script. -->
+A Bun-first starter kit for running Temporal workers that mirrors our existing Go-based setup (namespace `default`, task queue `prix`, gRPC port `7233`) while providing typed helpers for connection, workflow, and activity registration. Codex automation now runs inside an image that bundles the Rust minimal profile toolchain plus `protobuf-compiler`/`libprotobuf-dev`, so bridge builds skip on-the-fly installs. Local development outside that image should install the same prerequisites before compiling native artifacts.
 
 ## Features
 - Zod-backed environment parsing (`loadTemporalConfig`) with sane defaults and TLS loading.
@@ -70,6 +69,7 @@ copies those artifacts into `dist/native/<platform>/<arch>/` so `pnpm pack --fil
 
 Ensure `protoc` ≥ 28 is installed (`brew install protobuf` on macOS, `apt install protobuf-compiler` on Debian/Ubuntu).
 On Debian/Ubuntu, also install `libprotobuf-dev` so the well-known types referenced by Temporal's Rust crates are available to `protoc`.
+> Codex runners already provide both packages along with a pre-provisioned Rust stable toolchain (see `apps/froussard/Dockerfile.codex`). When invoking the helper script locally, missing prerequisites now fail fast with guidance instead of attempting installs.
 
 Build and test the package:
 
