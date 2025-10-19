@@ -19,7 +19,13 @@ export interface NativeClient {
   handle: ClientPtr
 }
 
+type BridgeVariant = 'zig' | 'rust'
+
 const libraryFile = resolveBridgeLibraryPath()
+const resolvedBridgeVariant: BridgeVariant = libraryFile.includes('temporal-bun-bridge-zig') ? 'zig' : 'rust'
+
+export const bridgeVariant = resolvedBridgeVariant
+export const isZigBridge = resolvedBridgeVariant === 'zig'
 
 export class NativeBridgeError extends Error {
   constructor(message: string) {
@@ -130,6 +136,8 @@ const {
 })
 
 export const native = {
+  bridgeVariant: resolvedBridgeVariant,
+
   createRuntime(options: Record<string, unknown> = {}): Runtime {
     const payload = Buffer.from(JSON.stringify(options), 'utf8')
     const handle = Number(temporal_bun_runtime_new(ptr(payload), payload.byteLength))

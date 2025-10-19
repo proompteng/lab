@@ -22,6 +22,7 @@ jobs:
 
     env:
       TEMPORAL_TEST_SERVER: '1'
+      TEMPORAL_BUN_SDK_USE_ZIG: '1'
 
     steps:
       - name: Checkout repository
@@ -45,13 +46,15 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install build tools
+      - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config protobuf-compiler docker-compose
+          sudo apt-get install -y build-essential pkg-config protobuf-compiler docker-compose xz-utils
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Zig 0.15.1
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -62,16 +65,18 @@ jobs:
           git clone --depth 1 --branch master https://github.com/temporalio/sdk-core.git packages/temporal-bun-sdk/vendor/sdk-core
           git clone --depth 1 --branch main https://github.com/temporalio/sdk-typescript.git packages/temporal-bun-sdk/vendor/sdk-typescript
 
-      - name: Build native bridge
-        run: pnpm --filter @proompteng/temporal-bun-sdk run build:native
+      - name: Build Zig bridge
+        run: pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
 
-      - name: Run Rust tests
-        run: cargo test --manifest-path packages/temporal-bun-sdk/native/temporal-bun-bridge/Cargo.toml
+      - name: Run Zig bridge tests
+        run: pnpm --filter @proompteng/temporal-bun-sdk run test:native:zig
 
       - name: Start Temporal server
+        id: start_temporal_server
         run: docker-compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml up -d
 
       - name: Wait for Temporal server
+        if: steps.start_temporal_server.outcome == 'success'
         run: |
           for i in {1..30}; do
             if nc -z localhost 7233; then
@@ -83,8 +88,9 @@ jobs:
           exit 1
 
       - name: Run Bun SDK tests
+        if: steps.start_temporal_server.outcome == 'success'
         run: pnpm --filter @proompteng/temporal-bun-sdk test
 
       - name: Stop Temporal server
-        if: always()
+        if: always() && steps.start_temporal_server.outcome == 'success'
         run: docker-compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml down -v
