@@ -74,6 +74,20 @@ pnpm --filter @proompteng/temporal-bun-sdk build
 pnpm --filter @proompteng/temporal-bun-sdk test
 ```
 
+If you just need the test suite to exercise the TypeScript surface without cloning Temporal’s
+Rust sources, build the lightweight stub bridge before running `pnpm test`. On macOS the one-liner
+is:
+
+```bash
+cc packages/temporal-bun-sdk/tests/fixtures/stub_temporal_bridge.c \
+  -dynamiclib \
+  -o packages/temporal-bun-sdk/native/temporal-bun-bridge/target/debug/libtemporal_bun_bridge.dylib
+```
+
+On Linux replace `-dynamiclib` with `-shared -fPIC` and emit `libtemporal_bun_bridge.so`; on
+Windows use `-shared` and target `temporal_bun_bridge.dll`. The tests will fall back to this stub
+library whenever the full Rust or Zig bridge is unavailable.
+
 Packaged Zig bridge artifacts load automatically when present. Set `TEMPORAL_BUN_SDK_USE_ZIG=1` to require the Zig
 bridge (a warning is emitted if the binaries are missing) or `TEMPORAL_BUN_SDK_USE_ZIG=0` to force the Rust fallback.
 
