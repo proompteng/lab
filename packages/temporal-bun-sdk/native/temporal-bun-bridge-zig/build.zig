@@ -7,6 +7,7 @@ const TemporalCrate = struct {
 
 const temporal_crates = [_]TemporalCrate{
     .{ .package = "temporal-sdk-core", .archive = "temporal_sdk_core" },
+    .{ .package = "temporal-sdk-core-c-bridge", .archive = "temporal_sdk_core_c_bridge" },
     .{ .package = "temporal-client", .archive = "temporal_client" },
     .{ .package = "temporal-sdk-core-api", .archive = "temporal_sdk_core_api" },
     .{ .package = "temporal-sdk-core-protos", .archive = "temporal_sdk_core_protos" },

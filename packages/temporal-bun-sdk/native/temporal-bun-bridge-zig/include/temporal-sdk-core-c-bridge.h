@@ -403,7 +403,6 @@ typedef const void *(*TemporalCoreCustomMetricMeterAttributesNewCallback)(const 
 
 typedef void (*TemporalCoreCustomMetricMeterAttributesFreeCallback)(const void *attributes);
 
-typedef void (*TemporalCoreCustomMetricMeterMeterFreeCallback)(const struct TemporalCoreCustomMetricMeter *meter);
 
 /**
  * No parameters in the callbacks below should be assumed to live beyond the
@@ -421,7 +420,7 @@ typedef struct TemporalCoreCustomMetricMeter {
   TemporalCoreCustomMetricMeterMetricRecordDurationCallback metric_record_duration;
   TemporalCoreCustomMetricMeterAttributesNewCallback attributes_new;
   TemporalCoreCustomMetricMeterAttributesFreeCallback attributes_free;
-  TemporalCoreCustomMetricMeterMeterFreeCallback meter_free;
+  void (*meter_free)(const struct TemporalCoreCustomMetricMeter *meter);
 } TemporalCoreCustomMetricMeter;
 
 /**
