@@ -334,7 +334,7 @@ pub fn resolveByteArray(handle: ?*PendingByteArray, array: ?*byte_array.ByteArra
     return true;
 }
 
-pub fn resolveClient(handle: ?*PendingClient, payload: ?*anyopaque, cleanup: ?*const fn (?*anyopaque) void) bool {
+pub fn resolveClient(handle: ?*PendingClient, payload: ?*anyopaque, cleanup: CleanupFn) bool {
     if (handle == null) {
         errors.setStructuredErrorJson(.{
             .code = GrpcStatus.invalid_argument,
@@ -496,11 +496,20 @@ test "resolveClient transitions pending handle to ready" {
 
     const pending_client = @as(*PendingClient, @ptrCast(handle_ptr));
 
-    var payload_value: usize = 42;
-    const payload = @as(?*anyopaque, @ptrCast(&payload_value));
+    const allocator = std.heap.c_allocator;
+    const payload_ptr = allocator.create(u8) catch unreachable;
+    payload_ptr.* = 42;
 
-    try testing.expect(resolveClient(pending_client, payload, null));
+    const payload_any = @as(?*anyopaque, @ptrCast(@alignCast(payload_ptr)));
+    try testing.expect(resolveClient(pending_client, payload_any, null));
     try testing.expectEqual(@as(i32, @intFromEnum(Status.ready)), poll(handle_ptr));
+
+    const consumed_opt = consume(handle_ptr);
+    try testing.expect(consumed_opt != null);
+    const consumed_ptr = consumed_opt.?;
+    const recovered = @as(*u8, @ptrCast(@alignCast(consumed_ptr)));
+    try testing.expectEqual(@as(u8, 42), recovered.*);
+    allocator.destroy(recovered);
 }
 
 test "rejectClient transitions pending handle to failed state" {
@@ -511,7 +520,7 @@ test "rejectClient transitions pending handle to failed state" {
 
     const pending_client = @as(*PendingClient, @ptrCast(handle_ptr));
 
-    try testing.expect(rejectClient(pending_client, GrpcStatus.unavailable, "connect failed"));
+    try testing.expect(rejectClient(pending_client, GrpcStatus.internal, "connect failed"));
     try testing.expectEqual(@as(i32, @intFromEnum(Status.failed)), poll(handle_ptr));
     try testing.expect(consume(handle_ptr) == null);
 }

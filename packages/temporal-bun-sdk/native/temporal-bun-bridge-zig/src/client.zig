@@ -305,9 +305,9 @@ fn connectAsyncWorker(task: *ConnectTask) void {
     const config_copy = task.config;
 
     if (!temporalServerReachable(config_copy)) {
-        allocator.free(config_copy);
         var scratch: [192]u8 = undefined;
         const message = unreachableServerMessage(scratch[0..], config_copy);
+        allocator.free(config_copy);
         _ = pending.rejectClient(pending_handle, grpc.unavailable, message);
         return;
     }
