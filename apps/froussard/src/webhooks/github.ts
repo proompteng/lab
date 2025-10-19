@@ -78,6 +78,8 @@ const parseIssueNumberFromBranch = (branch: string, prefix: string): number | nu
   return null
 }
 
+const FORCE_REVIEW_ACTIONS = new Set(['opened', 'ready_for_review', 'reopened'])
+
 const shouldHandlePullRequestAction = (action?: string | null): boolean => {
   if (!action) {
     return false
@@ -565,6 +567,8 @@ export const createGithubWebhookHandler =
             const unresolvedThreads = threadsResult.threads
             const failingChecks = checksResult.checks
             const outstandingWork = unresolvedThreads.length > 0 || failingChecks.length > 0
+            const shouldForceReviewStage =
+              eventName === 'pull_request' && actionValue ? FORCE_REVIEW_ACTIONS.has(actionValue) : false
 
             if (pull.draft && !outstandingWork) {
               const undraftResult = await runtime.runPromise(
@@ -622,7 +626,7 @@ export const createGithubWebhookHandler =
               return
             }
 
-            if (!outstandingWork) {
+            if (!outstandingWork && !shouldForceReviewStage) {
               return
             }
 

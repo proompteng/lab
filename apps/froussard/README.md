@@ -67,7 +67,7 @@ The local runtime exposes:
 
 ### Local Deploy Script
 
-- Run `bun apps/froussard/scripts/deploy.ts` to build, push, and deploy. The helper derives `FROUSSARD_VERSION` and `FROUSSARD_COMMIT` from `git describe --tags --always` / `git rev-parse HEAD` and injects them before shelling out to `pnpm --filter froussard run deploy`. If you invoke the pnpm script directly, make sure those two environment variables are set first—otherwise the rollout will fail.
+- Run `bun packages/scripts/src/froussard/deploy-service.ts` to build, push, and deploy. The helper derives `FROUSSARD_VERSION` and `FROUSSARD_COMMIT` from `git describe --tags --always` / `git rev-parse HEAD` and injects them before shelling out to `pnpm --filter froussard run deploy`. If you invoke the pnpm script directly, make sure those two environment variables are set first—otherwise the rollout will fail.
 - The script uses Bun Shell’s `$` tagged template literal to execute commands, which safely escapes interpolated values, and `$.env()` to scope the derived environment variables to the deploy invocation.
 
 ## Verification Checklist
