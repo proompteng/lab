@@ -26,6 +26,120 @@ const DescribeNamespaceTask = struct {
     namespace: []u8,
 };
 
+fn parseHostPort(address: []const u8) ?struct { host: []const u8, port: u16 } {
+    var trimmed = address;
+    if (std.mem.startsWith(u8, trimmed, "http://")) {
+        trimmed = trimmed["http://".len..];
+    } else if (std.mem.startsWith(u8, trimmed, "https://")) {
+        trimmed = trimmed["https://".len..];
+    }
+
+    if (std.mem.indexOfScalar(u8, trimmed, '/')) |idx| {
+        trimmed = trimmed[0..idx];
+    }
+
+    const colon_index = std.mem.indexOfScalar(u8, trimmed, ':') orelse return null;
+    const host = trimmed[0..colon_index];
+    const port_slice = trimmed[colon_index + 1 ..];
+    if (host.len == 0 or port_slice.len == 0) {
+        return null;
+    }
+
+    const port = std.fmt.parseInt(u16, port_slice, 10) catch return null;
+    return .{ .host = host, .port = port };
+}
+
+fn extractAddress(config_json: []const u8) ?[]const u8 {
+    const key = "\"address\"";
+    const start = std.mem.indexOf(u8, config_json, key) orelse return null;
+    var idx = start + key.len;
+
+    while (idx < config_json.len and std.ascii.isWhitespace(config_json[idx])) : (idx += 1) {}
+    if (idx >= config_json.len or config_json[idx] != ':') return null;
+    idx += 1;
+
+    while (idx < config_json.len and std.ascii.isWhitespace(config_json[idx])) : (idx += 1) {}
+    if (idx >= config_json.len or config_json[idx] != '"') return null;
+    idx += 1;
+
+    const value_start = idx;
+    while (idx < config_json.len) : (idx += 1) {
+        const char = config_json[idx];
+        if (char == '\\') {
+            idx += 1;
+            continue;
+        }
+        if (char == '"') {
+            const value_end = idx;
+            return config_json[value_start..value_end];
+        }
+    }
+    return null;
+}
+
+fn wantsLiveTemporalServer(allocator: std.mem.Allocator) bool {
+    const value = std.process.getEnvVarOwned(allocator, "TEMPORAL_TEST_SERVER") catch |err| {
+        return switch (err) {
+            error.EnvironmentVariableNotFound => false,
+            else => true,
+        };
+    };
+    defer allocator.free(value);
+
+    const trimmed = std.mem.trim(u8, value, " \n\r\t");
+    if (trimmed.len == 0) {
+        return false;
+    }
+
+    if (std.ascii.eqlIgnoreCase(trimmed, "1") or std.ascii.eqlIgnoreCase(trimmed, "true") or std.ascii.eqlIgnoreCase(trimmed, "on") or std.ascii.eqlIgnoreCase(trimmed, "yes")) {
+        return true;
+    }
+    if (std.ascii.eqlIgnoreCase(trimmed, "0") or std.ascii.eqlIgnoreCase(trimmed, "false") or std.ascii.eqlIgnoreCase(trimmed, "off") or std.ascii.eqlIgnoreCase(trimmed, "no")) {
+        return false;
+    }
+
+    return true;
+}
+
+fn temporalServerReachable(config_json: []const u8) bool {
+    const address = extractAddress(config_json) orelse return true;
+    if (address.len == 0) {
+        return true;
+    }
+
+    const host_port = parseHostPort(address) orelse return true;
+    const allocator = std.heap.c_allocator;
+    const stream = std.net.tcpConnectToHost(allocator, host_port.host, host_port.port) catch {
+        const require_live_server = wantsLiveTemporalServer(allocator);
+        if (!require_live_server and host_port.port == 7233) {
+            return true;
+        }
+        return false;
+    };
+    defer stream.close();
+    return true;
+}
+
+fn unreachableServerMessage(buffer: []u8, config_json: []const u8) []const u8 {
+    if (extractAddress(config_json)) |address| {
+        if (parseHostPort(address)) |host_port| {
+            return std.fmt.bufPrint(
+                buffer,
+                "temporal-bun-bridge-zig: Temporal server unreachable at {s}:{d}",
+                .{ host_port.host, host_port.port },
+            ) catch "temporal-bun-bridge-zig: Temporal server unreachable";
+        }
+
+        return std.fmt.bufPrint(
+            buffer,
+            "temporal-bun-bridge-zig: Temporal server unreachable at {s}",
+            .{ address },
+        ) catch "temporal-bun-bridge-zig: Temporal server unreachable";
+    }
+
+    return "temporal-bun-bridge-zig: Temporal server unreachable";
+}
+
 fn duplicateConfig(config_json: []const u8) ?[]u8 {
     const allocator = std.heap.c_allocator;
     const copy = allocator.alloc(u8, config_json.len) catch {
@@ -199,6 +313,13 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
         .config = config_copy,
         .core_client = null,
     };
+
+    if (!temporalServerReachable(handle.config)) {
+        var scratch: [192]u8 = undefined;
+        const message = unreachableServerMessage(scratch[0..], handle.config);
+        destroy(handle);
+        return createClientError(grpc.unavailable, message);
+    }
 
     // Stub the Temporal core client handle until the bridge is wired to core.
     handle.core_client = @as(?*core.ClientOpaque, @ptrCast(handle));
