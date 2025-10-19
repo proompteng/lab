@@ -21,17 +21,54 @@ const ensureParentDir = async (path: string) => {
   await mkdir(dirname(path), { recursive: true })
 }
 
-const ensurePnpmAvailable = async () => {
-  if (await which('pnpm')) {
-    return
+const resolveNvmDir = () => {
+  const home = process.env.HOME ?? '/root'
+  return process.env.NVM_DIR ?? join(home, '.nvm')
+}
+
+const runWithNvm = async (command: string, capture = false) => {
+  const nvmDir = resolveNvmDir()
+  const nvmScript = `${nvmDir}/nvm.sh`
+  if (!(await pathExists(nvmScript))) {
+    throw new Error(`Unable to locate nvm shim at ${nvmScript}`)
+  }
+  const commandWithEnv = `export NVM_DIR="${nvmDir}"; [ -s "${nvmScript}" ] && . "${nvmScript}"; nvm use --silent default >/dev/null || nvm use --silent ${process.env.NODE_VERSION ?? '22'} >/dev/null; ${command}`
+  const task = $`bash -lc ${commandWithEnv}`
+  if (capture) {
+    return (await task.text()).trim()
+  }
+  await task
+  return ''
+}
+
+const ensurePnpmAvailable = async (): Promise<string> => {
+  const existing = await which('pnpm')
+  if (existing) {
+    return existing
   }
 
   try {
-    await $`corepack enable pnpm`
+    await runWithNvm('corepack enable pnpm')
   } catch (error) {
     console.warn('corepack failed to enable pnpm, falling back to npm global install')
-    await $`npm install -g pnpm`
+    await runWithNvm('npm install -g pnpm')
   }
+
+  const pnpmPath = await runWithNvm('command -v pnpm', true)
+  if (!pnpmPath) {
+    throw new Error('pnpm installation via nvm failed: command -v pnpm returned empty result')
+  }
+
+  const pnpmBinDir = dirname(pnpmPath)
+  process.env.NVM_DIR = resolveNvmDir()
+  const currentPath = process.env.PATH ?? ''
+  if (!currentPath.split(':').includes(pnpmBinDir)) {
+    process.env.PATH = `${pnpmBinDir}:${currentPath}`
+  }
+
+  await runWithNvm(`ln -sf "${pnpmPath}" /usr/local/bin/pnpm`)
+
+  return pnpmPath
 }
 
 const bootstrapWorkspace = async () => {
@@ -39,13 +76,13 @@ const bootstrapWorkspace = async () => {
     return
   }
 
-  await ensurePnpmAvailable()
+  const pnpmExecutable = await ensurePnpmAvailable()
 
   console.log('Installing workspace dependencies via pnpm...')
-  await $`pnpm install --frozen-lockfile`
+  await runWithNvm(`"${pnpmExecutable}" install --frozen-lockfile`)
 
   console.log('Building Temporal Bun Zig native bridge...')
-  await $`pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig`
+  await runWithNvm(`"${pnpmExecutable}" --filter @proompteng/temporal-bun-sdk run build:native:zig`)
 }
 
 export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) => {
