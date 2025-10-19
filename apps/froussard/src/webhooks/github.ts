@@ -1,9 +1,22 @@
 import { randomUUID } from 'node:crypto'
+
 import { Timestamp } from '@bufbuild/protobuf'
 import type { Webhooks } from '@octokit/webhooks'
 import { Effect } from 'effect'
 
 import { buildCodexBranchName, buildCodexPrompt, type CodexTaskMessage, normalizeLogin } from '@/codex'
+import {
+  evaluateCodexWorkflow,
+  type ImplementationCommand,
+  type PlanningCommand,
+  type ReadyCommentCommand,
+  type ReviewEvaluation,
+  shouldPostReadyCommentGuard,
+  shouldRequestReviewGuard,
+  shouldUndraftGuard,
+  type UndraftCommand,
+  type WorkflowCommand,
+} from '@/codex/workflow-machine'
 import { selectReactionRepository } from '@/codex-workflow'
 import type { AppRuntime } from '@/effect/runtime'
 import {
@@ -21,19 +34,6 @@ import {
   CodexTask as GithubCodexTaskMessage,
 } from '@/proto/github/v1/codex_task_pb'
 import { GithubService, type GithubServiceDefinition } from '@/services/github'
-import {
-  evaluateCodexWorkflow,
-  type ImplementationCommand,
-  type PlanningCommand,
-  type ReadyCommentCommand,
-  type ReviewCommand,
-  type ReviewEvaluation,
-  type UndraftCommand,
-  type WorkflowCommand,
-  shouldPostReadyCommentGuard,
-  shouldRequestReviewGuard,
-  shouldUndraftGuard,
-} from '@/codex/workflow-machine'
 
 import type { WebhookConfig } from './types'
 import { publishKafkaMessage } from './utils'

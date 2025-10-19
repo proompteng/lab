@@ -1,5 +1,5 @@
-import { assign, createMachine } from 'xstate'
 import { Schema } from 'effect'
+import { assign, createMachine } from 'xstate'
 
 export const PlanningCommandSchema = Schema.Struct({
   stage: Schema.Literal('planning'),
