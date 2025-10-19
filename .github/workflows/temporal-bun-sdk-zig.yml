@@ -1,16 +1,11 @@
 name: Temporal Bun SDK Zig CI
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'packages/temporal-bun-sdk/**'
-      - '.github/workflows/temporal-bun-sdk-zig.yml'
-  pull_request:
-    paths:
-      - 'packages/temporal-bun-sdk/**'
-      - '.github/workflows/temporal-bun-sdk-zig.yml'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Describe why you are manually running the Zig-only CI'
+        required: false
 
 jobs:
   zig-bridge:
