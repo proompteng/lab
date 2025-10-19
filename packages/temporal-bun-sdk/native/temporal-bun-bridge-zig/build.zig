@@ -141,6 +141,12 @@ pub fn build(b: *std.Build) void {
         unit_tests.addObjectFile(archive);
     }
 
+    if (resolved_target.os.tag == .linux) {
+        // Rust's panic/unwind support expects these symbols from libunwind when linking static archives.
+        lib.linkSystemLibrary("unwind");
+        unit_tests.linkSystemLibrary("unwind");
+    }
+
     const test_step = b.step("test", "Run Zig bridge tests (stub)");
     test_step.dependOn(&b.addRunArtifact(unit_tests).step);
 }

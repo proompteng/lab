@@ -69,6 +69,7 @@ copies those artifacts into `dist/native/<platform>/<arch>/` so `pnpm pack --fil
 > ```
 
 Ensure `protoc` ≥ 28 is installed (`brew install protobuf` on macOS, `apt install protobuf-compiler` on Debian/Ubuntu).
+On Debian/Ubuntu, also install `libprotobuf-dev` so the well-known types referenced by Temporal's Rust crates are available to `protoc`.
 
 Build and test the package:
 

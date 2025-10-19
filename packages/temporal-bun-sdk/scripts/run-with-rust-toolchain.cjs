@@ -3,6 +3,8 @@
 
 const { spawnSync } = require('node:child_process')
 const { env, argv, stderr } = process
+const { existsSync } = require('node:fs')
+const path = require('node:path')
 const os = require('node:os')
 
 const args = argv.slice(2)
@@ -54,7 +56,43 @@ const ensureCargo = () => {
   return true
 }
 
-if (!ensureCargo()) {
+const hasWellKnownTypes = () => {
+  const candidates = [
+    '/usr/include/google/protobuf/duration.proto',
+    '/usr/local/include/google/protobuf/duration.proto',
+    path.join(__dirname, '..', 'vendor', 'sdk-core', 'sdk-core-protos', 'protos', 'api_upstream', 'google', 'protobuf', 'duration.proto'),
+  ]
+  return candidates.some((candidate) => existsSync(candidate))
+}
+
+const ensureProtobufIncludes = () => {
+  if (hasWellKnownTypes()) {
+    return true
+  }
+
+  if (!env.CI) {
+    stderr.write(
+      'Missing google/protobuf well-known types; install libprotobuf-dev (or ensure protoc includes are on PATH) and retry.\n',
+    )
+    return false
+  }
+
+  stderr.write('Protobuf well-known type headers not found; installing libprotobuf-dev...\n')
+  const install = run('sudo', ['apt-get', 'install', '-y', 'libprotobuf-dev'])
+  if (install.status !== 0) {
+    stderr.write('Failed to install libprotobuf-dev via apt.\n')
+    return false
+  }
+
+  if (!hasWellKnownTypes()) {
+    stderr.write('libprotobuf-dev installed but google/protobuf headers still missing.\n')
+    return false
+  }
+
+  return true
+}
+
+if (!ensureCargo() || !ensureProtobufIncludes()) {
   process.exit(1)
 }
 
