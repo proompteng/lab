@@ -44,9 +44,20 @@ ln -s ~/github.com/temporalio/sdk-typescript packages/temporal-bun-sdk/vendor/sd
 pnpm --filter @proompteng/temporal-bun-sdk run build:native
 
 # (Experimental) Build the Zig bridge scaffold
-pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
-<!-- TODO(codex, zig-pack-02): Document copying zig-out/lib artifacts into npm package. -->
+pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:bundle
+pnpm --filter @proompteng/temporal-bun-sdk run package:native:zig
+# Optional: build a Debug variant of the Zig bridge for local investigation
+# pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:debug
 ```
+
+The bundling script cross-compiles ReleaseFast builds for `darwin` and `linux` (arm64 and x64), staging
+them under `native/temporal-bun-bridge-zig/zig-out/lib/<platform>/<arch>/`. The packaging helper then
+copies those artifacts into `dist/native/<platform>/<arch>/` so `pnpm pack --filter
+@proompteng/temporal-bun-sdk` ships prebuilt Zig libraries alongside the TypeScript output. Running
+`pnpm pack` or the publish workflow automatically executes both steps via the package `prepack` hook.
+
+> **Note:** Windows/MSVC builds remain on the roadmap (`zig-pack-03`). Until then, Windows hosts rely
+> on the Rust bridge.
 
 > **Tip:** For deterministic builds, pin the repositories to the versions we test against:
 > ```bash
@@ -63,7 +74,8 @@ pnpm --filter @proompteng/temporal-bun-sdk build
 pnpm --filter @proompteng/temporal-bun-sdk test
 ```
 
-Enable the Zig bridge scaffold by setting `TEMPORAL_BUN_SDK_USE_ZIG=1` before running scripts that load the native library. The TypeScript layer will automatically fall back to the Rust bridge if the Zig artifact has not been built yet.
+Packaged Zig bridge artifacts load automatically when present. Set `TEMPORAL_BUN_SDK_USE_ZIG=1` to require the Zig
+bridge (a warning is emitted if the binaries are missing) or `TEMPORAL_BUN_SDK_USE_ZIG=0` to force the Rust fallback.
 
 ## Usage
 

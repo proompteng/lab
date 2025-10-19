@@ -1,6 +1,6 @@
 import { dlopen, FFIType, ptr, toArrayBuffer } from 'bun:ffi'
 import { existsSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 type Pointer = number
@@ -21,8 +21,14 @@ export interface NativeClient {
 
 type BridgeVariant = 'zig' | 'rust'
 
+const moduleDir = dirname(fileURLToPath(import.meta.url))
+const packageRoot = resolvePackageRoot()
+const distNativeDir = join(packageRoot, 'dist', 'native')
+const zigStageLibDir = join(packageRoot, 'native', 'temporal-bun-bridge-zig', 'zig-out', 'lib')
+const rustBridgeTargetDir = join(packageRoot, 'native', 'temporal-bun-bridge', 'target')
+
 const libraryFile = resolveBridgeLibraryPath()
-const resolvedBridgeVariant: BridgeVariant = libraryFile.includes('temporal-bun-bridge-zig') ? 'zig' : 'rust'
+const resolvedBridgeVariant: BridgeVariant = /temporal[-_]bun[-_]bridge[-_]zig/.test(libraryFile) ? 'zig' : 'rust'
 
 export const bridgeVariant = resolvedBridgeVariant
 export const isZigBridge = resolvedBridgeVariant === 'zig'
@@ -60,6 +66,8 @@ export class NativeBridgeError extends Error {
     Object.setPrototypeOf(this, new.target.prototype)
   }
 }
+
+type ZigPreference = 'auto' | 'enable' | 'disable'
 
 const {
   symbols: {
@@ -290,6 +298,23 @@ export const native = {
   },
 }
 
+function resolvePackageRoot(): string {
+  let dir = moduleDir
+  for (let depth = 0; depth < 6; depth += 1) {
+    const candidate = join(dir, 'package.json')
+    if (existsSync(candidate)) {
+      return dir
+    }
+    dir = join(dir, '..')
+  }
+  return join(moduleDir, '..', '..', '..', '..', '..')
+}
+
+interface ZigLookupResult {
+  path: string | null
+  attempted: string[]
+}
+
 function resolveBridgeLibraryPath(): string {
   const override = process.env.TEMPORAL_BUN_SDK_NATIVE_PATH
   if (override) {
@@ -299,78 +324,152 @@ function resolveBridgeLibraryPath(): string {
     return override
   }
 
-  if (shouldPreferZigBridge()) {
-    const zigPath = resolveZigBridgeLibraryPath()
-    if (zigPath) {
-      return zigPath
-    }
-    console.warn(
-      'TEMPORAL_BUN_SDK_USE_ZIG was enabled but the Zig bridge was not found. Falling back to the Rust bridge.',
+  const preference = getZigPreference()
+  const packaged = preference !== 'disable' ? resolvePackagedZigBridgeLibraryPath() : { path: null, attempted: [] }
+  if (packaged.path) {
+    return packaged.path
+  }
+
+  const local = preference !== 'disable' ? resolveLocalZigBridgeLibraryPath() : { path: null, attempted: [] }
+  if (local.path) {
+    return local.path
+  }
+
+  if (preference === 'enable') {
+    logMissingZigBridge(
+      [...packaged.attempted, ...local.attempted],
+      'TEMPORAL_BUN_SDK_USE_ZIG was enabled but no Zig bridge artefacts were found. Falling back to the Rust bridge.',
+    )
+  } else if (packaged.attempted.length > 0 || local.attempted.length > 0) {
+    logMissingZigBridge(
+      [...packaged.attempted, ...local.attempted],
+      'No Zig bridge binary was located for this platform. Falling back to the Rust bridge.',
     )
   }
 
   return resolveRustBridgeLibraryPath()
 }
 
-function shouldPreferZigBridge(): boolean {
+function getZigPreference(): ZigPreference {
   const flag = process.env.TEMPORAL_BUN_SDK_USE_ZIG
   if (!flag) {
-    return false
+    return 'auto'
   }
-  return /^(1|true|on)$/i.test(flag)
+  if (/^(0|false|off)$/i.test(flag)) {
+    return 'disable'
+  }
+  if (/^(1|true|on)$/i.test(flag)) {
+    return 'enable'
+  }
+  return 'enable'
 }
 
-function resolveZigBridgeLibraryPath(): string | null {
-  const baseDir = fileURLToPath(new URL('../../../native/temporal-bun-bridge-zig', import.meta.url))
-  const libDir = join(baseDir, 'zig-out', 'lib')
-  const baseName =
-    process.platform === 'win32'
-      ? 'temporal_bun_bridge_zig.dll'
-      : process.platform === 'darwin'
-        ? 'libtemporal_bun_bridge_zig.dylib'
-        : 'libtemporal_bun_bridge_zig.so'
-
-  const releasePath = join(libDir, baseName)
-  if (existsSync(releasePath)) {
-    return releasePath
+function resolvePackagedZigBridgeLibraryPath(): ZigLookupResult {
+  const attempted: string[] = []
+  const platform = getRuntimePlatform()
+  const arch = getRuntimeArch()
+  if (!platform || !arch) {
+    return { path: null, attempted }
   }
 
-  const debugName =
-    process.platform === 'win32'
-      ? 'temporal_bun_bridge_zig_debug.dll'
-      : process.platform === 'darwin'
-        ? 'libtemporal_bun_bridge_zig_debug.dylib'
-        : 'libtemporal_bun_bridge_zig_debug.so'
-
-  const debugPath = join(libDir, debugName)
-  if (existsSync(debugPath)) {
-    return debugPath
+  const releaseName = getZigReleaseLibraryName()
+  const packagedPath = join(distNativeDir, platform, arch, releaseName)
+  attempted.push(packagedPath)
+  if (existsSync(packagedPath)) {
+    return { path: packagedPath, attempted }
   }
 
-  // TODO(codex, temporal-zig-phase-0): surface richer diagnostics (include zig build command output, etc.)
+  return { path: null, attempted }
+}
+
+function resolveLocalZigBridgeLibraryPath(): ZigLookupResult {
+  const attempted: string[] = []
+  const platform = getRuntimePlatform()
+  const arch = getRuntimeArch()
+  const releaseName = getZigReleaseLibraryName()
+  const debugName = getZigDebugLibraryName()
+
+  const candidates: string[] = []
+  if (platform && arch) {
+    candidates.push(join(zigStageLibDir, platform, arch, releaseName))
+    candidates.push(join(zigStageLibDir, platform, arch, debugName))
+  }
+  candidates.push(join(zigStageLibDir, releaseName))
+  candidates.push(join(zigStageLibDir, debugName))
+
+  for (const candidate of candidates) {
+    attempted.push(candidate)
+    if (existsSync(candidate)) {
+      return { path: candidate, attempted }
+    }
+  }
+
+  return { path: null, attempted }
+}
+
+function logMissingZigBridge(paths: string[], message: string): void {
+  if (paths.length === 0) {
+    return
+  }
+  const uniquePaths = [...new Set(paths)]
+  const details = uniquePaths.map((candidate) => `  • ${candidate}`).join('\n')
+  console.warn(`${message}\nSearched the following locations:\n${details}`)
+}
+
+function getRuntimePlatform(): 'darwin' | 'linux' | null {
+  if (process.platform === 'darwin') {
+    return 'darwin'
+  }
+  if (process.platform === 'linux') {
+    return 'linux'
+  }
   return null
 }
 
-function resolveRustBridgeLibraryPath(): string {
-  const targetDir = fileURLToPath(new URL('../../../native/temporal-bun-bridge/target', import.meta.url))
-  const baseName =
-    process.platform === 'win32'
-      ? 'temporal_bun_bridge.dll'
-      : process.platform === 'darwin'
-        ? 'libtemporal_bun_bridge.dylib'
-        : 'libtemporal_bun_bridge.so'
+function getRuntimeArch(): 'arm64' | 'x64' | null {
+  if (process.arch === 'arm64') {
+    return 'arm64'
+  }
+  if (process.arch === 'x64') {
+    return 'x64'
+  }
+  return null
+}
 
-  const releasePath = join(targetDir, 'release', baseName)
+function getZigReleaseLibraryName(): string {
+  if (process.platform === 'win32') {
+    return 'temporal_bun_bridge_zig.dll'
+  }
+  if (process.platform === 'darwin') {
+    return 'libtemporal_bun_bridge_zig.dylib'
+  }
+  return 'libtemporal_bun_bridge_zig.so'
+}
+
+function getZigDebugLibraryName(): string {
+  if (process.platform === 'win32') {
+    return 'temporal_bun_bridge_zig_debug.dll'
+  }
+  if (process.platform === 'darwin') {
+    return 'libtemporal_bun_bridge_zig_debug.dylib'
+  }
+  return 'libtemporal_bun_bridge_zig_debug.so'
+}
+
+function resolveRustBridgeLibraryPath(): string {
+  const baseName = getRustLibraryName()
+
+  const releasePath = join(rustBridgeTargetDir, 'release', baseName)
   if (existsSync(releasePath)) {
     return releasePath
   }
 
-  const debugPath = join(targetDir, 'debug', baseName)
+  const debugPath = join(rustBridgeTargetDir, 'debug', baseName)
   if (existsSync(debugPath)) {
     return debugPath
   }
 
-  const depsDir = join(targetDir, 'debug', 'deps')
+  const depsDir = join(rustBridgeTargetDir, 'debug', 'deps')
   if (existsSync(depsDir)) {
     const prefix = baseName.replace(/\.[^./]+$/, '')
     const candidate = readdirSync(depsDir)
@@ -385,6 +484,16 @@ function resolveRustBridgeLibraryPath(): string {
   throw new Error(
     `Temporal Bun bridge library not found. Expected at ${releasePath} or ${debugPath}. Did you build the native bridge?`,
   )
+}
+
+function getRustLibraryName(): string {
+  if (process.platform === 'win32') {
+    return 'temporal_bun_bridge.dll'
+  }
+  if (process.platform === 'darwin') {
+    return 'libtemporal_bun_bridge.dylib'
+  }
+  return 'libtemporal_bun_bridge.so'
 }
 
 function readByteArray(pointer: number): Uint8Array {
