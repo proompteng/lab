@@ -6,9 +6,12 @@ import { isTemporalServerAvailable } from './helpers/temporal-server'
 const temporalAddress = process.env.TEMPORAL_TEST_SERVER_ADDRESS ?? 'http://127.0.0.1:7233'
 const wantsLiveTemporalServer = process.env.TEMPORAL_TEST_SERVER === '1'
 const hasLiveTemporalServer = wantsLiveTemporalServer && (await isTemporalServerAvailable(temporalAddress))
-const usingZigBridge = bridgeVariant === 'zig'
-const connectivityTest = usingZigBridge ? test.skip : test // TODO(codex, zig-cl-01): re-enable once Zig bridge performs real connectivity
-const zigOnlyTest = usingZigBridge ? test : test.skip
+const zigPreferenceFlag = process.env.TEMPORAL_BUN_SDK_USE_ZIG ?? ''
+const prefersZigBridge = /^(1|true|on)$/i.test(zigPreferenceFlag)
+const isZigBridgeActive = bridgeVariant === 'zig'
+const skipLiveTemporalTests = isZigBridgeActive || prefersZigBridge
+const connectivityTest = skipLiveTemporalTests ? test.skip : test // TODO(codex, zig-cl-01): re-enable once Zig bridge performs real connectivity
+const zigOnlyTest = isZigBridgeActive ? test : test.skip
 
 if (wantsLiveTemporalServer && !hasLiveTemporalServer) {
   console.warn(`Temporal server requested but unreachable at ${temporalAddress}; falling back to negative expectations`)
