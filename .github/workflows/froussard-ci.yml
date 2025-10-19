@@ -34,10 +34,7 @@ jobs:
       - name: Run Biome check
         run: pnpm exec biome check apps/froussard
 
-      - name: Run froussard tests
-        run: pnpm --filter froussard run test
-
-      - name: Run froussard coverage
+      - name: Run froussard tests with coverage
         run: pnpm --filter froussard exec vitest run --coverage
 
       - name: Summarize coverage

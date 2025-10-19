@@ -14,7 +14,7 @@ export default defineConfig({
     include: ['src/**/*.test.ts'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'lcov', 'html'],
+      reporter: ['text', 'lcov', 'html', 'json-summary'],
       exclude: ['scripts/**', 'vitest.config.ts'],
     },
   },

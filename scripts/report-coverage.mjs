@@ -1,4 +1,4 @@
-import { appendFile, readFile } from 'node:fs/promises'
+import { access, appendFile, constants, readFile } from 'node:fs/promises'
 import process from 'node:process'
 
 const summaryPath = process.env.COVERAGE_SUMMARY_PATH ?? 'apps/froussard/coverage/coverage-summary.json'
@@ -24,6 +24,13 @@ const ensureTotals = (coverage) => {
 }
 
 const main = async () => {
+  try {
+    await access(summaryPath, constants.R_OK)
+  } catch {
+    console.warn(`Coverage summary not found at ${summaryPath}; skipping report.`)
+    return
+  }
+
   const raw = await readFile(summaryPath, 'utf8')
   const data = JSON.parse(raw)
   const totals = ensureTotals(data.total ?? data.totals)
