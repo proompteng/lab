@@ -1,9 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import {
-  bridgeVariant,
-  native,
-  type ByteArrayTelemetrySnapshot,
-} from '../src/internal/core-bridge/native.ts'
+import { bridgeVariant, native, type ByteArrayTelemetrySnapshot } from '../src/internal/core-bridge/native.ts'
 
 const zigTest = bridgeVariant === 'zig' ? test : test.skip
 
@@ -40,11 +36,10 @@ describe('zig byte array telemetry', () => {
     expect(Object.values(snapshot).every((value) => value === 0)).toBe(true)
 
     const metrics = native.byteArrayTelemetry.metrics()
-    expect(metrics.counters).toHaveProperty('temporal.byte_array.allocations.total', snapshot.totalAllocations)
-    expect(metrics.counters).toHaveProperty('temporal.byte_array.failures.total', snapshot.allocationFailures)
-    expect(metrics.gauges).toHaveProperty('temporal.byte_array.allocations.current', snapshot.currentAllocations)
-    expect(metrics.gauges).toHaveProperty('temporal.byte_array.bytes.current', snapshot.currentBytes)
-    expect(metrics.histograms).toHaveProperty('temporal.byte_array.max_allocation.bytes')
+    expect(metrics.counters['temporal.byte_array.allocations.total']).toBe(snapshot.totalAllocations)
+    expect(metrics.counters['temporal.byte_array.failures.total']).toBe(snapshot.allocationFailures)
+    expect(metrics.gauges['temporal.byte_array.allocations.current']).toBe(snapshot.currentAllocations)
+    expect(metrics.gauges['temporal.byte_array.bytes.current']).toBe(snapshot.currentBytes)
     expect(metrics.histograms['temporal.byte_array.max_allocation.bytes']).toEqual([snapshot.maxAllocationSize])
   })
 })

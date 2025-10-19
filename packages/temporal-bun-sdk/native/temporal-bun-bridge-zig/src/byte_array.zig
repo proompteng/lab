@@ -5,8 +5,8 @@ const testing = std.testing;
 
 // TODO(codex, zig-buf-01): Support zero-copy interop with Temporal core-owned buffers.
 
-const AtomicOrdering = std.atomic.Ordering;
-const AtomicU64 = std.atomic.Atomic(u64);
+const AtomicOrder = std.builtin.AtomicOrder;
+const AtomicU64 = std.atomic.Value(u64);
 
 const MAX_BUFFER_CAPACITY: usize = 32 * 1024 * 1024;
 
@@ -114,7 +114,7 @@ pub fn metricsSnapshot() ByteArrayMetrics {
 }
 
 pub fn resetMetrics() void {
-    const ordering = AtomicOrdering.release;
+    const ordering = AtomicOrder.release;
     telemetry.total_allocations.store(0, ordering);
     telemetry.current_allocations.store(0, ordering);
     telemetry.total_bytes.store(0, ordering);
