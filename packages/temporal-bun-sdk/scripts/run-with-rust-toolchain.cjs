@@ -57,11 +57,29 @@ const ensureCargo = () => {
 }
 
 const hasWellKnownTypes = () => {
+  const wellKnownRelative = ['google', 'protobuf', 'duration.proto']
+  const includeDirs = new Set(['/usr/include', '/usr/local/include'])
+
+  if (env.HOMEBREW_PREFIX) {
+    includeDirs.add(path.join(env.HOMEBREW_PREFIX, 'include'))
+  } else {
+    includeDirs.add('/opt/homebrew/include')
+  }
+
   const candidates = [
-    '/usr/include/google/protobuf/duration.proto',
-    '/usr/local/include/google/protobuf/duration.proto',
-    path.join(__dirname, '..', 'vendor', 'sdk-core', 'sdk-core-protos', 'protos', 'api_upstream', 'google', 'protobuf', 'duration.proto'),
+    ...Array.from(includeDirs).map((dir) => path.join(dir, ...wellKnownRelative)),
+    path.join(
+      __dirname,
+      '..',
+      'vendor',
+      'sdk-core',
+      'sdk-core-protos',
+      'protos',
+      'api_upstream',
+      ...wellKnownRelative,
+    ),
   ]
+
   return candidates.some((candidate) => existsSync(candidate))
 }
 
