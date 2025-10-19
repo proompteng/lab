@@ -70,6 +70,7 @@ describe('codex-runner', () => {
   it('executes a Codex session and captures agent messages', async () => {
     const promptSink: string[] = []
     const codexMessages = [
+      JSON.stringify({ type: 'session.created', session: { id: 'session-123' } }),
       JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'hello world' } }),
     ]
     spawnMock.mockImplementation(() => createCodexProcess(codexMessages, promptSink))
@@ -86,9 +87,43 @@ describe('codex-runner', () => {
     })
 
     expect(result.agentMessages).toEqual(['hello world'])
+    expect(result.sessionId).toBe('session-123')
     expect(promptSink).toEqual(['Plan please'])
     expect(await readFile(jsonOutputPath, 'utf8')).toContain('hello world')
     expect(await readFile(agentOutputPath, 'utf8')).toContain('hello world')
+  })
+
+  it('passes resume arguments when a session id is provided', async () => {
+    const promptSink: string[] = []
+    const codexMessages = [
+      JSON.stringify({ type: 'session.rehydrated', session: { id: 'resume-42' } }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'resumed message' } }),
+    ]
+
+    spawnMock.mockImplementation(() => createCodexProcess(codexMessages, promptSink))
+
+    const outputPath = join(workspace, 'output.log')
+    const jsonOutputPath = join(workspace, 'events.jsonl')
+    const agentOutputPath = join(workspace, 'agent.log')
+
+    const result = await runCodexSession({
+      stage: 'implementation',
+      prompt: 'Continue',
+      outputPath,
+      jsonOutputPath,
+      agentOutputPath,
+      resumeSessionId: 'resume-41',
+    })
+
+    const spawnArgs = spawnMock.mock.calls[0]?.[0]
+    expect(spawnArgs?.cmd).toEqual(
+      expect.arrayContaining(['codex', 'exec', '--dangerously-bypass-approvals-and-sandbox', '--json']),
+    )
+    expect(spawnArgs?.cmd).toContain('resume')
+    const resumeIndex = spawnArgs?.cmd?.indexOf('resume')
+    expect(resumeIndex).toBeGreaterThan(-1)
+    expect(spawnArgs?.cmd?.[resumeIndex + 1]).toBe('resume-41')
+    expect(result.sessionId).toBe('resume-42')
   })
 
   it('streams output to a Discord relay when configured', async () => {

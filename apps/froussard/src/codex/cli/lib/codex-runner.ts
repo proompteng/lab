@@ -16,11 +16,13 @@ export interface RunCodexSessionOptions {
   jsonOutputPath: string
   agentOutputPath: string
   discordRelay?: DiscordRelayOptions
+  resumeSessionId?: string
   logger?: CodexLogger
 }
 
 export interface RunCodexSessionResult {
   agentMessages: string[]
+  sessionId?: string
 }
 
 export interface PushCodexEventsToLokiOptions {
@@ -123,6 +125,7 @@ export const runCodexSession = async ({
   jsonOutputPath,
   agentOutputPath,
   discordRelay,
+  resumeSessionId,
   logger,
 }: RunCodexSessionOptions): Promise<RunCodexSessionResult> => {
   const log = logger ?? consoleLogger
@@ -166,16 +169,29 @@ export const runCodexSession = async ({
     }
   }
 
+  const codexCommand = [
+    'codex',
+    'exec',
+    '--dangerously-bypass-approvals-and-sandbox',
+    '--json',
+    '--output-last-message',
+    outputPath,
+  ]
+
+  if (resumeSessionId && resumeSessionId.trim().length > 0) {
+    const resumeArg = resumeSessionId.trim()
+    codexCommand.push('resume')
+    if (resumeArg === '--last') {
+      codexCommand.push('--last')
+    } else {
+      codexCommand.push(resumeArg)
+    }
+  }
+
+  codexCommand.push('-')
+
   const codexProcess = Bun.spawn({
-    cmd: [
-      'codex',
-      'exec',
-      '--dangerously-bypass-approvals-and-sandbox',
-      '--json',
-      '--output-last-message',
-      outputPath,
-      '-',
-    ],
+    cmd: codexCommand,
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'inherit',
@@ -196,6 +212,7 @@ export const runCodexSession = async ({
   const agentMessages: string[] = []
   const reader = codexProcess.stdout?.getReader()
   let buffer = ''
+  let sessionId: string | undefined
 
   if (!reader) {
     throw new Error('Codex subprocess is missing stdout')
@@ -211,6 +228,27 @@ export const runCodexSession = async ({
     try {
       const parsed = JSON.parse(line)
       const item = parsed?.item
+      if (!sessionId) {
+        const candidateSession =
+          typeof parsed?.session?.id === 'string'
+            ? parsed.session.id
+            : typeof parsed?.session_id === 'string'
+              ? parsed.session_id
+              : typeof parsed?.sessionId === 'string'
+                ? parsed.sessionId
+                : typeof item?.session?.id === 'string'
+                  ? item.session.id
+                  : typeof item?.session_id === 'string'
+                    ? item.session_id
+                    : typeof item?.sessionId === 'string'
+                      ? item.sessionId
+                      : typeof parsed?.conversation_id === 'string'
+                        ? parsed.conversation_id
+                        : undefined
+        if (candidateSession && candidateSession.trim().length > 0) {
+          sessionId = candidateSession.trim()
+        }
+      }
       if (parsed?.type === 'item.completed' && item?.type === 'agent_message' && typeof item?.text === 'string') {
         const message = item.text
         agentMessages.push(message)
@@ -275,7 +313,7 @@ export const runCodexSession = async ({
     }
   }
 
-  return { agentMessages }
+  return { agentMessages, sessionId }
 }
 
 export const pushCodexEventsToLoki = async ({
