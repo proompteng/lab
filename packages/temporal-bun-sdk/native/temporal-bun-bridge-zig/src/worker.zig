@@ -5,14 +5,186 @@ const client = @import("client.zig");
 const pending = @import("pending.zig");
 const core = @import("core.zig");
 const builtin = @import("builtin");
+const json = std.json;
 
 const grpc = pending.GrpcStatus;
+const whitespace = " \t\r\n";
+const default_identity_prefix = "temporal-bun-worker";
+
+const WorkerConfigAnalysis = struct {
+    identity: []u8,
+};
+
+fn trimString(value: []const u8) []const u8 {
+    return std.mem.trim(u8, value, whitespace);
+}
+
+fn duplicateSlice(slice: []const u8) ?[]u8 {
+    if (slice.len == 0) {
+        return ""[0..0];
+    }
+    const allocator = std.heap.c_allocator;
+    const copy = allocator.alloc(u8, slice.len) catch {
+        return null;
+    };
+    @memcpy(copy, slice);
+    return copy;
+}
+
+fn analyzeWorkerConfig(config_json: []const u8, worker_id: u64) ?WorkerConfigAnalysis {
+    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const parsed = json.parseFromSlice(json.Value, allocator, config_json, .{}) catch {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker config must be valid JSON",
+            .details = null,
+        });
+        return null;
+    };
+
+    if (parsed.value != .object) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker config must be a JSON object",
+            .details = null,
+        });
+        return null;
+    }
+
+    var object = parsed.value.object;
+
+    const namespace_ptr = object.getPtr("namespace") orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker config requires a namespace",
+            .details = null,
+        });
+        return null;
+    };
+
+    if (namespace_ptr.* != .string) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: namespace must be a string",
+            .details = null,
+        });
+        return null;
+    }
+
+    const namespace = trimString(namespace_ptr.string);
+    if (namespace.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: namespace cannot be empty",
+            .details = null,
+        });
+        return null;
+    }
+
+    const task_queue_ptr = object.getPtr("taskQueue") orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker config requires a task queue",
+            .details = null,
+        });
+        return null;
+    };
+
+    if (task_queue_ptr.* != .string) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: task queue must be a string",
+            .details = null,
+        });
+        return null;
+    }
+
+    const task_queue = trimString(task_queue_ptr.string);
+    if (task_queue.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: task queue cannot be empty",
+            .details = null,
+        });
+        return null;
+    }
+
+    var identity_prefix_slice: []const u8 = default_identity_prefix;
+    if (object.getPtr("identityPrefix")) |prefix_ptr| {
+        if (prefix_ptr.* != .string) {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: identityPrefix must be a string",
+                .details = null,
+            });
+            return null;
+        }
+        const trimmed_prefix = trimString(prefix_ptr.string);
+        if (trimmed_prefix.len == 0) {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: identityPrefix cannot be empty",
+                .details = null,
+            });
+            return null;
+        }
+        identity_prefix_slice = trimmed_prefix;
+    }
+
+    var identity_slice: []const u8 = ""[0..0];
+    if (object.getPtr("identity")) |identity_ptr| {
+        if (identity_ptr.* != .string) {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: identity must be a string",
+                .details = null,
+            });
+            return null;
+        }
+        const trimmed_identity = trimString(identity_ptr.string);
+        if (trimmed_identity.len == 0) {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: identity cannot be empty",
+                .details = null,
+            });
+            return null;
+        }
+        identity_slice = trimmed_identity;
+    }
+
+    if (identity_slice.len == 0) {
+        identity_slice = std.fmt.allocPrint(allocator, "{s}-{d}", .{ identity_prefix_slice, worker_id }) catch {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.resource_exhausted,
+                .message = "temporal-bun-bridge-zig: failed to allocate worker identity",
+                .details = null,
+            });
+            return null;
+        };
+    }
+
+    const identity_copy = duplicateSlice(identity_slice) orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to copy worker identity",
+            .details = null,
+        });
+        return null;
+    };
+
+    return WorkerConfigAnalysis{ .identity = identity_copy };
+}
 
 pub const WorkerHandle = struct {
     id: u64,
     runtime: ?*runtime.RuntimeHandle,
     client: ?*client.ClientHandle,
     config: []u8,
+    identity: []u8,
     core_worker: ?*core.WorkerOpaque,
 };
 
@@ -36,6 +208,9 @@ fn releaseHandle(handle: *WorkerHandle) void {
     if (handle.config.len > 0) {
         allocator.free(handle.config);
     }
+    if (handle.identity.len > 0) {
+        allocator.free(handle.identity);
+    }
     allocator.destroy(handle);
 }
 
@@ -56,26 +231,91 @@ pub fn create(
     client_ptr: ?*client.ClientHandle,
     config_json: []const u8,
 ) ?*WorkerHandle {
-    // TODO(codex, zig-worker-01): Instantiate Temporal core worker via C-ABI and persist opaque handle.
-    _ = runtime_ptr;
-    _ = client_ptr;
+    if (runtime_ptr == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker creation received null runtime handle",
+            .details = null,
+        });
+        return null;
+    }
+
+    if (client_ptr == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker creation received null client handle",
+            .details = null,
+        });
+        return null;
+    }
+
+    const runtime_handle = runtime_ptr.?;
+    const client_handle = client_ptr.?;
+    if (client_handle.runtime) |client_runtime| {
+        if (client_runtime != runtime_ptr) {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: worker client runtime handle mismatch",
+                .details = null,
+            });
+            return null;
+        }
+    }
+
+    const worker_id = next_worker_id;
+
+    const analysis = analyzeWorkerConfig(config_json, worker_id) orelse {
+        return null;
+    };
+
     const config_copy = duplicateConfig(config_json) orelse {
+        std.heap.c_allocator.free(analysis.identity);
         errors.setStructuredError(.{
             .code = grpc.resource_exhausted,
             .message = "temporal-bun-bridge-zig: failed to allocate worker config",
         });
         return null;
     };
-    defer {
+
+    const allocator = std.heap.c_allocator;
+    const handle = allocator.create(WorkerHandle) catch |err| {
         if (config_copy.len > 0) {
-            std.heap.c_allocator.free(config_copy);
+            allocator.free(config_copy);
         }
+        if (analysis.identity.len > 0) {
+            allocator.free(analysis.identity);
+        }
+        var scratch: [128]u8 = undefined;
+        const message = std.fmt.bufPrint(&scratch, "temporal-bun-bridge-zig: failed to allocate worker handle: {}", .{err}) catch
+            "temporal-bun-bridge-zig: failed to allocate worker handle";
+        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = message, .details = null });
+        return null;
+    };
+
+    handle.* = .{
+        .id = worker_id,
+        .runtime = runtime_ptr,
+        .client = client_ptr,
+        .config = config_copy,
+        .identity = analysis.identity,
+        .core_worker = null,
+    };
+
+    const core_worker = core.workerNew(runtime_handle.core_runtime, client_handle.core_client, config_copy);
+    if (core_worker == null) {
+        releaseHandle(handle);
+        errors.setStructuredErrorJson(.{
+            .code = grpc.internal,
+            .message = "temporal-bun-bridge-zig: Temporal core worker creation failed",
+            .details = null,
+        });
+        return null;
     }
-    errors.setStructuredError(.{
-        .code = grpc.unimplemented,
-        .message = "temporal-bun-bridge-zig: worker creation is not implemented yet",
-    });
-    return null;
+
+    handle.core_worker = core_worker;
+    next_worker_id = worker_id + 1;
+    errors.setLastError(""[0..0]);
+    return handle;
 }
 
 pub fn destroy(handle: ?*WorkerHandle) void {
@@ -83,8 +323,10 @@ pub fn destroy(handle: ?*WorkerHandle) void {
         return;
     }
 
-    // TODO(codex, zig-worker-02): Shut down core worker and free associated resources.
     const worker_handle = handle.?;
+    if (worker_handle.core_worker) |core_handle| {
+        core.workerFree(core_handle);
+    }
     releaseHandle(worker_handle);
 }
 
@@ -263,6 +505,7 @@ const testing = std.testing;
 const WorkerTests = struct {
     var fake_runtime_storage: usize = 0;
     var fake_worker_storage: usize = 0;
+    var fake_client_storage: usize = 0;
 
     var stub_completion_call_count: usize = 0;
     var stub_byte_array_free_count: usize = 0;
@@ -278,12 +521,23 @@ const WorkerTests = struct {
         .disable_free = false,
     };
 
+    var stub_worker_new_call_count: usize = 0;
+    var stub_worker_free_call_count: usize = 0;
+    var stub_worker_should_fail: bool = false;
+
     fn resetStubs() void {
         stub_completion_call_count = 0;
         stub_byte_array_free_count = 0;
         last_completion_payload = ""[0..0];
         last_runtime_byte_array_free_ptr = null;
         last_runtime_byte_array_free_runtime = null;
+        resetWorkerFactory();
+    }
+
+    fn resetWorkerFactory() void {
+        stub_worker_new_call_count = 0;
+        stub_worker_free_call_count = 0;
+        stub_worker_should_fail = false;
     }
 
     fn stubCompletionSlice(ref: core.ByteArrayRef) []const u8 {
@@ -350,10 +604,130 @@ const WorkerTests = struct {
             .runtime = rt,
             .client = null,
             .config = ""[0..0],
+            .identity = ""[0..0],
             .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&fake_worker_storage)),
         };
     }
+
+    fn fakeClientHandle(rt: *runtime.RuntimeHandle) client.ClientHandle {
+        return .{
+            .id = 11,
+            .runtime = rt,
+            .config = @constCast(""[0..0]),
+            .core_client = @as(?*core.ClientOpaque, @ptrCast(&fake_client_storage)),
+        };
+    }
+
+    fn stubWorkerNew(
+        runtime_ptr: ?*core.RuntimeOpaque,
+        client_ptr: ?*core.ClientOpaque,
+        config_ptr: ?[*]const u8,
+        len: usize,
+    ) callconv(.c) ?*core.WorkerOpaque {
+        _ = runtime_ptr;
+        _ = client_ptr;
+        _ = config_ptr;
+        _ = len;
+        stub_worker_new_call_count += 1;
+        if (stub_worker_should_fail) {
+            return null;
+        }
+        return @as(?*core.WorkerOpaque, @ptrCast(&fake_worker_storage));
+    }
+
+    fn stubWorkerFree(handle: ?*core.WorkerOpaque) callconv(.c) void {
+        _ = handle;
+        stub_worker_free_call_count += 1;
+    }
 };
+
+test "create returns worker handle for valid config" {
+    const original_worker_new = core.worker_new_impl;
+    const original_worker_free = core.worker_free_impl;
+    defer {
+        core.worker_new_impl = original_worker_new;
+        core.worker_free_impl = original_worker_free;
+    }
+
+    WorkerTests.resetWorkerFactory();
+    core.worker_new_impl = WorkerTests.stubWorkerNew;
+    core.worker_free_impl = WorkerTests.stubWorkerFree;
+
+    errors.setLastError(""[0..0]);
+    next_worker_id = 1;
+
+    var runtime_handle = WorkerTests.fakeRuntimeHandle();
+    var client_handle = WorkerTests.fakeClientHandle(&runtime_handle);
+
+    const config = "{\"namespace\":\"default\",\"taskQueue\":\"zig-tests\"}";
+    const worker_ptr = create(&runtime_handle, &client_handle, config) orelse {
+        try testing.expect(false);
+        return;
+    };
+
+    const worker_handle = worker_ptr;
+    try testing.expectEqual(@as(usize, 1), WorkerTests.stub_worker_new_call_count);
+    try testing.expectEqual(@as(u64, 1), worker_handle.id);
+    try testing.expectEqualSlices(u8, config, worker_handle.config);
+    const expected_identity = "temporal-bun-worker-1";
+    try testing.expectEqualSlices(u8, expected_identity, worker_handle.identity);
+    try testing.expectEqualStrings("", errors.snapshot());
+
+    WorkerTests.stub_worker_free_call_count = 0;
+    destroy(worker_ptr);
+    try testing.expectEqual(@as(usize, 1), WorkerTests.stub_worker_free_call_count);
+}
+
+test "create fails when namespace missing" {
+    const original_worker_new = core.worker_new_impl;
+    defer core.worker_new_impl = original_worker_new;
+
+    WorkerTests.resetWorkerFactory();
+    core.worker_new_impl = WorkerTests.stubWorkerNew;
+
+    errors.setLastError(""[0..0]);
+    next_worker_id = 1;
+
+    var runtime_handle = WorkerTests.fakeRuntimeHandle();
+    var client_handle = WorkerTests.fakeClientHandle(&runtime_handle);
+
+    const config = "{\"taskQueue\":\"zig-tests\"}";
+    const worker_ptr = create(&runtime_handle, &client_handle, config);
+    try testing.expect(worker_ptr == null);
+    const expected_error =
+        "{\"code\":3,\"message\":\"temporal-bun-bridge-zig: worker config requires a namespace\"}";
+    try testing.expectEqualStrings(expected_error, errors.snapshot());
+    try testing.expectEqual(@as(usize, 0), WorkerTests.stub_worker_new_call_count);
+}
+
+test "destroy frees core worker handle" {
+    const original_worker_new = core.worker_new_impl;
+    const original_worker_free = core.worker_free_impl;
+    defer {
+        core.worker_new_impl = original_worker_new;
+        core.worker_free_impl = original_worker_free;
+    }
+
+    WorkerTests.resetWorkerFactory();
+    core.worker_new_impl = WorkerTests.stubWorkerNew;
+    core.worker_free_impl = WorkerTests.stubWorkerFree;
+
+    errors.setLastError(""[0..0]);
+    next_worker_id = 1;
+
+    var runtime_handle = WorkerTests.fakeRuntimeHandle();
+    var client_handle = WorkerTests.fakeClientHandle(&runtime_handle);
+
+    const config = "{\"namespace\":\"default\",\"taskQueue\":\"zig-tests\"}";
+    const worker_ptr = create(&runtime_handle, &client_handle, config) orelse {
+        try testing.expect(false);
+        return;
+    };
+
+    WorkerTests.stub_worker_free_call_count = 0;
+    destroy(worker_ptr);
+    try testing.expectEqual(@as(usize, 1), WorkerTests.stub_worker_free_call_count);
+}
 
 test "completeWorkflowTask returns 0 on successful completion" {
     const original_complete = core.worker_complete_workflow_activation;

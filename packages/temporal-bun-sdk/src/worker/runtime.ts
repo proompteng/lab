@@ -1,3 +1,11 @@
+import {
+  isZigBridge,
+  native,
+  type NativeClient,
+  type NativeWorker,
+  type Runtime as NativeRuntime,
+} from '../internal/core-bridge/native'
+
 const WORKER_DOC = 'packages/temporal-bun-sdk/docs/worker-runtime.md'
 
 const notImplemented = (feature: string): never => {
@@ -10,17 +18,36 @@ export interface WorkerRuntimeOptions {
   taskQueue?: string
   namespace?: string
   concurrency?: { workflow?: number; activity?: number }
+  nativeRuntime?: NativeRuntime
+  nativeClient?: NativeClient
 }
 
 export class WorkerRuntime {
-  constructor(private readonly options: WorkerRuntimeOptions) {
-    void options
-    // TODO(codex): Initialize native worker handles and runtime scaffolding per WORKER_DOC §1–§3.
+  #options: WorkerRuntimeOptions
+  #worker: NativeWorker | undefined
+
+  private constructor(options: WorkerRuntimeOptions, worker?: NativeWorker) {
+    this.#options = options
+    this.#worker = worker
   }
 
   static async create(options: WorkerRuntimeOptions): Promise<WorkerRuntime> {
-    // TODO(codex): Build async factory that wires Bun-native worker creation per WORKER_DOC §2.
-    void options
+    if (isZigBridge) {
+      const runtimeHandle = options.nativeRuntime
+      const clientHandle = options.nativeClient
+      if (!runtimeHandle || !clientHandle) {
+        throw new Error('WorkerRuntime.create requires native runtime and client handles when using the Zig bridge')
+      }
+
+      const workerConfig = {
+        namespace: options.namespace,
+        taskQueue: options.taskQueue,
+      }
+
+      const workerHandle = await native.createWorker(runtimeHandle, clientHandle, workerConfig)
+      return new WorkerRuntime(options, workerHandle)
+    }
+
     notImplemented('WorkerRuntime.create')
   }
 
@@ -30,7 +57,14 @@ export class WorkerRuntime {
   }
 
   async shutdown(_gracefulTimeoutMs?: number): Promise<never> {
-    // TODO(codex): Implement graceful shutdown semantics before swapping out the Node worker bridge.
+    if (isZigBridge) {
+      if (this.#worker) {
+        native.workerShutdown(this.#worker)
+        this.#worker = undefined
+      }
+      return Promise.reject(new Error('WorkerRuntime.run is not implemented yet for the Zig bridge'))
+    }
+
     void _gracefulTimeoutMs
     notImplemented('WorkerRuntime.shutdown')
   }

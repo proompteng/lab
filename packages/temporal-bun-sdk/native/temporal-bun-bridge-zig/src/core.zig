@@ -33,6 +33,9 @@ pub const WorkerCallback = *const fn (?*anyopaque, ?*const ByteArray) callconv(.
 
 pub const WorkerCompleteFn = *const fn (?*WorkerOpaque, ByteArrayRef, ?*anyopaque, WorkerCallback) callconv(.c) void;
 pub const RuntimeByteArrayFreeFn = *const fn (?*RuntimeOpaque, ?*const ByteArray) callconv(.c) void;
+pub const WorkerNewFn = *const fn (?*RuntimeOpaque, ?*ClientOpaque, ?[*]const u8, usize) callconv(.c) ?*WorkerOpaque;
+pub const WorkerFreeFn = *const fn (?*WorkerOpaque) callconv(.c) void;
+pub const WorkerShutdownFn = *const fn (?*WorkerOpaque) callconv(.c) void;
 
 extern fn temporal_sdk_core_runtime_new(options_json: ?[*]const u8, len: usize) ?*RuntimeOpaque;
 extern fn temporal_sdk_core_runtime_free(handle: ?*RuntimeOpaque) void;
@@ -45,6 +48,15 @@ extern fn temporal_sdk_core_connect_async(
 
 extern fn temporal_sdk_core_client_free(handle: ?*ClientOpaque) void;
 extern fn temporal_sdk_core_byte_buffer_destroy(handle: ?*ByteBuf) void;
+extern fn temporal_sdk_core_worker_new(
+    runtime: ?*RuntimeOpaque,
+    client: ?*ClientOpaque,
+    config_json: ?[*]const u8,
+    len: usize,
+) ?*WorkerOpaque;
+extern fn temporal_sdk_core_worker_free(handle: ?*WorkerOpaque) void;
+extern fn temporal_sdk_core_worker_initiate_shutdown(handle: ?*WorkerOpaque) void;
+extern fn temporal_sdk_core_worker_finalize_shutdown(handle: ?*WorkerOpaque) void;
 
 pub const runtime_new = temporal_sdk_core_runtime_new;
 pub const runtime_free = temporal_sdk_core_runtime_free;
@@ -57,6 +69,10 @@ pub const api = struct {
     pub const connect_async = temporal_sdk_core_connect_async;
     pub const client_free = temporal_sdk_core_client_free;
     pub const byte_buffer_destroy = temporal_sdk_core_byte_buffer_destroy;
+    pub const worker_new = workerNew;
+    pub const worker_free = workerFree;
+    pub const worker_initiate_shutdown = workerInitiateShutdown;
+    pub const worker_finalize_shutdown = workerFinalizeShutdown;
 };
 
 const fallback_error_slice =
@@ -94,11 +110,38 @@ fn fallbackRuntimeByteArrayFree(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArr
     _ = bytes;
 }
 
+var fallback_worker_storage: usize = 0;
+
+fn fallbackWorkerNew(
+    runtime: ?*RuntimeOpaque,
+    client: ?*ClientOpaque,
+    config_json: ?[*]const u8,
+    len: usize,
+) callconv(.c) ?*WorkerOpaque {
+    _ = runtime;
+    _ = client;
+    _ = config_json;
+    _ = len;
+    return @as(?*WorkerOpaque, @ptrCast(&fallback_worker_storage));
+}
+
+fn fallbackWorkerLifecycle(handle: ?*WorkerOpaque) callconv(.c) void {
+    _ = handle;
+}
+
 pub var worker_complete_workflow_activation: WorkerCompleteFn =
     if (builtin.is_test) undefined else fallbackWorkerCompleteWorkflowActivation;
 
 pub var runtime_byte_array_free: RuntimeByteArrayFreeFn =
     if (builtin.is_test) undefined else fallbackRuntimeByteArrayFree;
+
+pub var worker_new_impl: WorkerNewFn = fallbackWorkerNew;
+
+pub var worker_free_impl: WorkerFreeFn = fallbackWorkerLifecycle;
+
+pub var worker_initiate_shutdown_impl: WorkerShutdownFn = fallbackWorkerLifecycle;
+
+pub var worker_finalize_shutdown_impl: WorkerShutdownFn = fallbackWorkerLifecycle;
 
 pub fn registerTemporalCoreCallbacks(
     worker_complete: ?WorkerCompleteFn,
@@ -107,6 +150,20 @@ pub fn registerTemporalCoreCallbacks(
     worker_complete_workflow_activation =
         worker_complete orelse fallbackWorkerCompleteWorkflowActivation;
     runtime_byte_array_free = byte_array_free orelse fallbackRuntimeByteArrayFree;
+}
+
+pub fn registerTemporalCoreWorkerFactories(
+    worker_new: ?WorkerNewFn,
+    worker_free: ?WorkerFreeFn,
+    worker_initiate_shutdown: ?WorkerShutdownFn,
+    worker_finalize_shutdown: ?WorkerShutdownFn,
+) void {
+    worker_new_impl = worker_new orelse fallbackWorkerNew;
+    worker_free_impl = worker_free orelse fallbackWorkerLifecycle;
+    worker_initiate_shutdown_impl =
+        worker_initiate_shutdown orelse fallbackWorkerLifecycle;
+    worker_finalize_shutdown_impl =
+        worker_finalize_shutdown orelse fallbackWorkerLifecycle;
 }
 
 pub fn workerCompleteWorkflowActivation(
@@ -120,6 +177,27 @@ pub fn workerCompleteWorkflowActivation(
 
 pub fn runtimeByteArrayFree(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArray) void {
     runtime_byte_array_free(runtime, bytes);
+}
+
+pub fn workerNew(
+    runtime: ?*RuntimeOpaque,
+    client: ?*ClientOpaque,
+    config_json: []const u8,
+) ?*WorkerOpaque {
+    const config_ptr: ?[*]const u8 = if (config_json.len == 0) null else config_json.ptr;
+    return worker_new_impl(runtime, client, config_ptr, config_json.len);
+}
+
+pub fn workerFree(handle: ?*WorkerOpaque) void {
+    worker_free_impl(handle);
+}
+
+pub fn workerInitiateShutdown(handle: ?*WorkerOpaque) void {
+    worker_initiate_shutdown_impl(handle);
+}
+
+pub fn workerFinalizeShutdown(handle: ?*WorkerOpaque) void {
+    worker_finalize_shutdown_impl(handle);
 }
 
 pub const SignalWorkflowError = error{
