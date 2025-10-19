@@ -578,9 +578,10 @@ pub fn updateTelemetry(handle: ?*RuntimeHandle, options_json: []const u8) i32 {
     runtime.telemetry_state = parse_result.state;
     parse_result.state = .none;
 
-    // TODO(codex, zig-rt-03): Invoke Temporal core telemetry bridge once the core runtime is wired.
-
-    return 0;
+    // The Zig bridge does not yet embed the Temporal core runtime. Surface an explicit error so callers
+    // do not treat telemetry updates as successful until zig-rt-01 wires the C-ABI.
+    errors.setLastError("temporal-bun-bridge-zig: runtime telemetry requires Temporal core runtime");
+    return -1;
 }
 
 pub fn setLogger(handle: ?*RuntimeHandle, _callback_ptr: ?*anyopaque) i32 {
