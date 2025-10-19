@@ -57,13 +57,14 @@ RUN set -eux; \
         exit 1; \
         ;; \
     esac; \
-    ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"; \
+    ZIG_OS="linux"; \
+    ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_VERSION}.tar.xz"; \
     ZIG_TMPDIR="$(mktemp -d)"; \
     curl -fsSL "${ZIG_URL}" | tar -xJf - -C "${ZIG_TMPDIR}"; \
     install -d /opt/zig; \
-    rm -rf "/opt/zig/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}"; \
-    mv "${ZIG_TMPDIR}/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}" /opt/zig/; \
-    ln -sf "/opt/zig/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}/zig" /usr/local/bin/zig; \
+    rm -rf "/opt/zig/zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_VERSION}"; \
+    mv "${ZIG_TMPDIR}/zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_VERSION}" /opt/zig/; \
+    ln -sf "/opt/zig/zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_VERSION}/zig" /usr/local/bin/zig; \
     rm -rf "${ZIG_TMPDIR}"; \
     ZLS_URL="https://builds.zigtools.org/zls-${ZLS_ARCH}-linux-${ZLS_VERSION}.tar.xz"; \
     ZLS_TMPDIR="$(mktemp -d)"; \
