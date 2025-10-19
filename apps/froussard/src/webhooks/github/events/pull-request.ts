@@ -242,8 +242,8 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
     const fingerprintKey = `${repoFullName}#${pull.number}`
     const fingerprintChanged = rememberReviewFingerprint(fingerprintKey, reviewFingerprint)
 
+    let fingerprintCommitted = false
     if (shouldRequestReviewGuard({ commands: [] }, { type: 'PR_ACTIVITY', data: reviewEvaluation })) {
-      let fingerprintCommitted = false
       if (fingerprintChanged) {
         const summaryParts: string[] = []
         if (unresolvedThreads.length > 0) {
@@ -357,23 +357,21 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
         )
         reviewEvaluation.reviewCommand = undefined
       }
-      try {
-        const evaluation = evaluateCodexWorkflow({
-          type: 'PR_ACTIVITY',
-          data: reviewEvaluation,
-        })
-
-        const { stage } = await executeWorkflowCommands(evaluation.commands, executionContext)
-        return stage ?? null
-      } catch (error) {
-        if (fingerprintChanged && !fingerprintCommitted) {
-          forgetReviewFingerprint(fingerprintKey, reviewFingerprint)
-        }
-        throw error
-      }
     }
+    const evaluation = evaluateCodexWorkflow({
+      type: 'PR_ACTIVITY',
+      data: reviewEvaluation,
+    })
 
-    return null
+    try {
+      const { stage } = await executeWorkflowCommands(evaluation.commands, executionContext)
+      return stage ?? null
+    } catch (error) {
+      if (fingerprintChanged && !fingerprintCommitted) {
+        forgetReviewFingerprint(fingerprintKey, reviewFingerprint)
+      }
+      throw error
+    }
   }
 
   return processPullRequest()
