@@ -47,6 +47,7 @@ export interface RelayMetadata {
   runId?: string
   title?: string
   createdAt?: Date
+  summary?: string
 }
 
 export interface RelayBootstrapResult {
@@ -195,6 +196,15 @@ const buildInitialMessage = (metadata: RelayMetadata, relay: RelayBootstrapResul
     `**Channel:** #${relay.channelName}`,
     `**Started:** ${new Date(metadata.createdAt ?? Date.now()).toISOString()}`,
   ].filter(Boolean) as string[]
+
+  const summary = metadata.summary?.replace(/\s+/g, ' ').trim()
+  if (summary) {
+    const available = Math.max(0, DISCORD_MESSAGE_LIMIT - lines.join('\n').length - '**Summary:** '.length - 1)
+    const trimmedSummary = available > 0 && summary.length > available ? `${summary.slice(0, available - 1)}…` : summary
+    if (trimmedSummary) {
+      lines.push(`**Summary:** ${trimmedSummary}`)
+    }
+  }
 
   return lines.join('\n')
 }
