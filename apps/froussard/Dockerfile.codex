@@ -4,6 +4,8 @@ FROM ghcr.io/openai/codex-universal:latest
 ARG ARGO_VERSION=v3.6.3
 ARG KUBECONFORM_VERSION=v0.6.7
 ARG TARGETARCH=arm64
+ARG ZIG_VERSION=0.15.2
+ARG ZLS_VERSION=0.15.0
 ARG CODEX_AUTH_CHECKSUM=unspecified
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -15,7 +17,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BUN_INSTALL=/usr/local
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git gh jq python3 curl \
+    && apt-get install -y --no-install-recommends git gh jq python3 curl xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
@@ -38,6 +40,37 @@ RUN set -eux; \
     tar -xzf "${KUBECONFORM_ARCHIVE}" -C /tmp kubeconform; \
     install -m 0755 /tmp/kubeconform /usr/local/bin/kubeconform; \
     rm -f "${KUBECONFORM_ARCHIVE}" /tmp/kubeconform
+
+RUN set -eux; \
+    ARCH="${TARGETARCH:-arm64}"; \
+    case "${ARCH}" in \
+      amd64) \
+        ZIG_ARCH="x86_64"; \
+        ZLS_ARCH="x86_64"; \
+        ;; \
+      arm64) \
+        ZIG_ARCH="aarch64"; \
+        ZLS_ARCH="aarch64"; \
+        ;; \
+      *) \
+        echo "Unsupported TARGETARCH: ${ARCH}" >&2; \
+        exit 1; \
+        ;; \
+    esac; \
+    ZIG_OS="linux"; \
+    ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_VERSION}.tar.xz"; \
+    ZIG_TMPDIR="$(mktemp -d)"; \
+    curl -fsSL "${ZIG_URL}" | tar -xJf - -C "${ZIG_TMPDIR}"; \
+    install -d /opt/zig; \
+    rm -rf "/opt/zig/zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_VERSION}"; \
+    mv "${ZIG_TMPDIR}/zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_VERSION}" /opt/zig/; \
+    ln -sf "/opt/zig/zig-${ZIG_ARCH}-${ZIG_OS}-${ZIG_VERSION}/zig" /usr/local/bin/zig; \
+    rm -rf "${ZIG_TMPDIR}"; \
+    ZLS_URL="https://builds.zigtools.org/zls-${ZLS_ARCH}-linux-${ZLS_VERSION}.tar.xz"; \
+    ZLS_TMPDIR="$(mktemp -d)"; \
+    curl -fsSL "${ZLS_URL}" | tar -xJf - -C "${ZLS_TMPDIR}"; \
+    install -m 0755 "${ZLS_TMPDIR}/zls" /usr/local/bin/zls; \
+    rm -rf "${ZLS_TMPDIR}"
 
 RUN curl -fsSL https://bun.sh/install | bash \
     && mkdir -p /opt/homebrew/bin \
