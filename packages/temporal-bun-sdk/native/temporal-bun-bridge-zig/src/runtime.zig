@@ -5,6 +5,7 @@ const core = @import("core.zig");
 const json = std.json;
 const mem = std.mem;
 const fmt = std.fmt;
+const JsonObject = json.ObjectMap;
 
 const empty_bytes = [_]u8{};
 const empty_slice = empty_bytes[0..];
@@ -98,7 +99,6 @@ fn parseTelemetryOptions(allocator: mem.Allocator, options_json: []const u8) Tel
 
     var tree = json.parseFromSlice(json.Value, allocator, options_json, .{
         .duplicate_field_behavior = .use_first,
-        .max_depth = 128,
     }) catch |err| switch (err) {
         error.OutOfMemory => {
             errors.setLastError("temporal-bun-bridge-zig: failed to allocate telemetry payload");
@@ -106,7 +106,7 @@ fn parseTelemetryOptions(allocator: mem.Allocator, options_json: []const u8) Tel
         },
         else => {
             errors.setLastErrorFmt(
-                "temporal-bun-bridge-zig: invalid telemetry payload: {}",
+                "temporal-bun-bridge-zig: invalid telemetry payload: {s}",
                 .{@errorName(err)},
             );
             return error.ValidationFailed;
@@ -114,11 +114,11 @@ fn parseTelemetryOptions(allocator: mem.Allocator, options_json: []const u8) Tel
     };
     defer tree.deinit();
 
-    const metrics_ptr = blk: {
+    const metrics_value = blk: {
         switch (tree.value) {
             .object => |object| {
-                if (object.get("metrics")) |ptr| {
-                    break :blk ptr;
+                if (object.get("metrics")) |value| {
+                    break :blk value;
                 }
                 errors.setLastError("temporal-bun-bridge-zig: telemetry payload must include metrics configuration");
                 return error.ValidationFailed;
@@ -130,7 +130,6 @@ fn parseTelemetryOptions(allocator: mem.Allocator, options_json: []const u8) Tel
         }
     };
 
-    const metrics_value = metrics_ptr.*;
     const metrics_object = switch (metrics_value) {
         .object => |object| object,
         else => {
@@ -139,12 +138,12 @@ fn parseTelemetryOptions(allocator: mem.Allocator, options_json: []const u8) Tel
         },
     };
 
-    const type_ptr = metrics_object.get("type") orelse {
+    const type_value = metrics_object.get("type") orelse {
         errors.setLastError("temporal-bun-bridge-zig: telemetry.metrics.type is required");
         return error.ValidationFailed;
     };
 
-    const type_str = try expectString("telemetry.metrics.type", type_ptr.*);
+    const type_str = try expectString("telemetry.metrics.type", type_value);
 
     var result = TelemetryParseResult.init();
     errdefer result.deinit();
@@ -164,13 +163,13 @@ fn parseTelemetryOptions(allocator: mem.Allocator, options_json: []const u8) Tel
     return result;
 }
 
-fn parsePrometheus(allocator: mem.Allocator, metrics: json.Object) TelemetryError!TelemetryState {
-    const bind_ptr = metrics.get("bindAddress") orelse {
+fn parsePrometheus(allocator: mem.Allocator, metrics: JsonObject) TelemetryError!TelemetryState {
+    const bind_value = metrics.get("bindAddress") orelse {
         errors.setLastError("temporal-bun-bridge-zig: telemetry.metrics.bindAddress is required");
         return error.ValidationFailed;
     };
 
-    const bind_str = try expectString("telemetry.metrics.bindAddress", bind_ptr.*);
+    const bind_str = try expectString("telemetry.metrics.bindAddress", bind_value);
     try validatePrometheusAddress(bind_str);
 
     const bind_copy = allocator.dupe(u8, bind_str) catch |err| switch (err) {
@@ -186,12 +185,12 @@ fn parsePrometheus(allocator: mem.Allocator, metrics: json.Object) TelemetryErro
     const unit_suffix = try parseOptionalBool(metrics, "unitSuffix", false);
     const use_seconds = try parseOptionalBool(metrics, "useSecondsForDurations", false);
 
-    if (metrics.get("globalTags")) |tags_ptr| {
-        try validateStringMap("telemetry.metrics.globalTags", tags_ptr.*);
+    if (metrics.get("globalTags")) |tags_value| {
+        try validateStringMap("telemetry.metrics.globalTags", tags_value);
     }
 
-    if (metrics.get("histogramBucketOverrides")) |overrides_ptr| {
-        try validateHistogramOverrides("telemetry.metrics.histogramBucketOverrides", overrides_ptr.*);
+    if (metrics.get("histogramBucketOverrides")) |overrides_value| {
+        try validateHistogramOverrides("telemetry.metrics.histogramBucketOverrides", overrides_value);
     }
 
     return TelemetryState{
@@ -204,13 +203,13 @@ fn parsePrometheus(allocator: mem.Allocator, metrics: json.Object) TelemetryErro
     };
 }
 
-fn parseOtlp(allocator: mem.Allocator, metrics: json.Object) TelemetryError!TelemetryState {
-    const url_ptr = metrics.get("url") orelse {
+fn parseOtlp(allocator: mem.Allocator, metrics: JsonObject) TelemetryError!TelemetryState {
+    const url_value = metrics.get("url") orelse {
         errors.setLastError("temporal-bun-bridge-zig: telemetry.metrics.url is required");
         return error.ValidationFailed;
     };
 
-    const url_str = try expectString("telemetry.metrics.url", url_ptr.*);
+    const url_str = try expectString("telemetry.metrics.url", url_value);
     try validateOtlpUrl(url_str);
 
     const url_copy = allocator.dupe(u8, url_str) catch |err| switch (err) {
@@ -222,16 +221,16 @@ fn parseOtlp(allocator: mem.Allocator, metrics: json.Object) TelemetryError!Tele
     };
     errdefer allocator.free(url_copy);
 
-    if (metrics.get("headers")) |headers_ptr| {
-        try validateStringMap("telemetry.metrics.headers", headers_ptr.*);
+    if (metrics.get("headers")) |headers_value| {
+        try validateStringMap("telemetry.metrics.headers", headers_value);
     }
 
-    if (metrics.get("globalTags")) |tags_ptr| {
-        try validateStringMap("telemetry.metrics.globalTags", tags_ptr.*);
+    if (metrics.get("globalTags")) |tags_value| {
+        try validateStringMap("telemetry.metrics.globalTags", tags_value);
     }
 
-    if (metrics.get("histogramBucketOverrides")) |overrides_ptr| {
-        try validateHistogramOverrides("telemetry.metrics.histogramBucketOverrides", overrides_ptr.*);
+    if (metrics.get("histogramBucketOverrides")) |overrides_value| {
+        try validateHistogramOverrides("telemetry.metrics.histogramBucketOverrides", overrides_value);
     }
 
     const use_seconds = try parseOptionalBool(metrics, "useSecondsForDurations", false);
@@ -250,9 +249,9 @@ fn parseOtlp(allocator: mem.Allocator, metrics: json.Object) TelemetryError!Tele
     };
 }
 
-fn parseOptionalBool(metrics: json.Object, field: []const u8, default_value: bool) TelemetryError!bool {
-    if (metrics.get(field)) |value_ptr| {
-        return switch (value_ptr.*) {
+fn parseOptionalBool(metrics: JsonObject, field: []const u8, default_value: bool) TelemetryError!bool {
+    if (metrics.get(field)) |value| {
+        return switch (value) {
             .bool => |flag| flag,
             else => {
                 errors.setLastErrorFmt(
@@ -267,15 +266,15 @@ fn parseOptionalBool(metrics: json.Object, field: []const u8, default_value: boo
     return default_value;
 }
 
-fn parseOptionalMetricPeriodicity(metrics: json.Object) TelemetryError!?u64 {
-    if (metrics.get("metricPeriodicityMs")) |value_ptr| {
-        return switch (value_ptr.*) {
+fn parseOptionalMetricPeriodicity(metrics: JsonObject) TelemetryError!?u64 {
+    if (metrics.get("metricPeriodicityMs")) |value| {
+        return switch (value) {
             .integer => |int_val| {
                 if (int_val <= 0) {
                     errors.setLastError("temporal-bun-bridge-zig: otlp.metricPeriodicityMs must be greater than zero");
                     return error.ValidationFailed;
                 }
-                return @intCast(u64, int_val);
+                return @as(u64, @intCast(int_val));
             },
             else => {
                 errors.setLastError("temporal-bun-bridge-zig: otlp.metricPeriodicityMs must be an integer");
@@ -287,19 +286,19 @@ fn parseOptionalMetricPeriodicity(metrics: json.Object) TelemetryError!?u64 {
     return null;
 }
 
-fn parseOptionalProtocol(metrics: json.Object) TelemetryError!?OtlpProtocol {
-    if (metrics.get("protocol")) |value_ptr| {
-        const value = try expectString("telemetry.metrics.protocol", value_ptr.*);
-        if (mem.eql(u8, value, "http")) {
+fn parseOptionalProtocol(metrics: JsonObject) TelemetryError!?OtlpProtocol {
+    if (metrics.get("protocol")) |value| {
+        const value_str = try expectString("telemetry.metrics.protocol", value);
+        if (mem.eql(u8, value_str, "http")) {
             return .http;
         }
-        if (mem.eql(u8, value, "grpc")) {
+        if (mem.eql(u8, value_str, "grpc")) {
             return .grpc;
         }
 
         errors.setLastErrorFmt(
             "temporal-bun-bridge-zig: otlp.protocol must be \"http\" or \"grpc\"; received \"{s}\"",
-            .{value},
+            .{value_str},
         );
         return error.ValidationFailed;
     }
@@ -307,19 +306,19 @@ fn parseOptionalProtocol(metrics: json.Object) TelemetryError!?OtlpProtocol {
     return null;
 }
 
-fn parseOptionalMetricTemporality(metrics: json.Object) TelemetryError!?MetricTemporality {
-    if (metrics.get("metricTemporality")) |value_ptr| {
-        const value = try expectString("telemetry.metrics.metricTemporality", value_ptr.*);
-        if (mem.eql(u8, value, "cumulative")) {
+fn parseOptionalMetricTemporality(metrics: JsonObject) TelemetryError!?MetricTemporality {
+    if (metrics.get("metricTemporality")) |value| {
+        const value_str = try expectString("telemetry.metrics.metricTemporality", value);
+        if (mem.eql(u8, value_str, "cumulative")) {
             return .cumulative;
         }
-        if (mem.eql(u8, value, "delta")) {
+        if (mem.eql(u8, value_str, "delta")) {
             return .delta;
         }
 
         errors.setLastErrorFmt(
             "temporal-bun-bridge-zig: otlp.metricTemporality must be \"cumulative\" or \"delta\"; received \"{s}\"",
-            .{value},
+            .{value_str},
         );
         return error.ValidationFailed;
     }
