@@ -45,6 +45,11 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Set up Zig 0.15.1
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.1
+
       - name: Install build tools
         run: |
           sudo apt-get update
@@ -59,8 +64,8 @@ jobs:
           git clone --depth 1 --branch master https://github.com/temporalio/sdk-core.git packages/temporal-bun-sdk/vendor/sdk-core
           git clone --depth 1 --branch main https://github.com/temporalio/sdk-typescript.git packages/temporal-bun-sdk/vendor/sdk-typescript
 
-      - name: Build native bridge
-        run: pnpm --filter @proompteng/temporal-bun-sdk run build:native
+      - name: Build Zig bridge
+        run: pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
 
       - name: Start Temporal server
         run: docker-compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml up -d
