@@ -2,6 +2,7 @@ import { buildCodexBranchName, buildCodexPrompt, type CodexTaskMessage, normaliz
 import { evaluateCodexWorkflow, type ImplementationCommand, type PlanningCommand } from '@/codex/workflow-machine'
 import { selectReactionRepository } from '@/codex-workflow'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent } from '@/github-payload'
+import { Schema } from 'effect'
 import type { WorkflowStage, WorkflowExecutionContext } from '../workflow'
 import { executeWorkflowCommands } from '../workflow'
 import type { WebhookConfig } from '../types'
@@ -14,13 +15,63 @@ import {
 import { toCodexTaskProto } from '../payloads'
 
 interface BaseIssueParams {
-  parsedPayload: Record<string, any>
+  parsedPayload: unknown
   headers: Record<string, string>
   config: WebhookConfig
   executionContext: WorkflowExecutionContext
   deliveryId: string
   senderLogin?: string
 }
+
+const SenderSchema = Schema.optionalWith(
+  Schema.Struct({
+    login: Schema.optionalWith(Schema.String, { nullable: true }),
+  }),
+  { nullable: true, default: () => undefined },
+)
+
+const IssueSchema = Schema.Struct({
+  number: Schema.Number,
+  title: Schema.optionalWith(Schema.String, { nullable: true }),
+  body: Schema.optionalWith(Schema.String, { nullable: true }),
+  html_url: Schema.optionalWith(Schema.String, { nullable: true }),
+  repository_url: Schema.optionalWith(Schema.String, { nullable: true }),
+  user: Schema.optionalWith(
+    Schema.Struct({
+      login: Schema.optionalWith(Schema.String, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+})
+
+const RepositorySchema = Schema.optionalWith(
+  Schema.Struct({
+    full_name: Schema.optionalWith(Schema.String, { nullable: true }),
+    default_branch: Schema.optionalWith(Schema.String, { nullable: true }),
+  }),
+  { nullable: true, default: () => ({}) },
+)
+
+const IssueOpenedPayloadSchema = Schema.Struct({
+  issue: IssueSchema,
+  repository: RepositorySchema,
+  sender: SenderSchema,
+})
+
+type IssueOpenedPayload = Schema.Type<typeof IssueOpenedPayloadSchema>
+
+const IssueCommentPayloadSchema = Schema.Struct({
+  issue: IssueSchema,
+  repository: RepositorySchema,
+  sender: SenderSchema,
+  comment: Schema.Struct({
+    id: Schema.optionalWith(Schema.Number, { nullable: true }),
+    body: Schema.optionalWith(Schema.String, { nullable: true }),
+    html_url: Schema.optionalWith(Schema.String, { nullable: true }),
+  }),
+})
+
+type IssueCommentPayload = Schema.Type<typeof IssueCommentPayloadSchema>
 
 export const handleIssueOpened = async (params: BaseIssueParams): Promise<WorkflowStage | null> => {
   const { parsedPayload, headers, config, executionContext, deliveryId, senderLogin } = params
@@ -29,9 +80,16 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
     return null
   }
 
-  const issue = parsedPayload.issue
-  const repository = parsedPayload.repository
-  const senderLoginValue = parsedPayload.sender?.login ?? senderLogin
+  let payload: IssueOpenedPayload
+  try {
+    payload = Schema.decodeUnknownSync(IssueOpenedPayloadSchema)(parsedPayload)
+  } catch {
+    return null
+  }
+
+  const issue = payload.issue
+  const repository = payload.repository
+  const senderLoginValue = payload.sender?.login ?? senderLogin
   const issueNumber = issue?.number
 
   if (typeof issueNumber !== 'number') {
@@ -123,9 +181,16 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
     return null
   }
 
-  const rawCommentBody = typeof parsedPayload.comment?.body === 'string' ? parsedPayload.comment.body : ''
+  let payload: IssueCommentPayload
+  try {
+    payload = Schema.decodeUnknownSync(IssueCommentPayloadSchema)(parsedPayload)
+  } catch {
+    return null
+  }
+
+  const rawCommentBody = typeof payload.comment?.body === 'string' ? payload.comment.body : ''
   const trimmedCommentBody = rawCommentBody.trim()
-  const senderLoginValue = parsedPayload.sender?.login
+  const senderLoginValue = payload.sender?.login
   const normalizedSender = normalizeLogin(senderLoginValue)
   const isAuthorizedSender = normalizedSender === config.codexTriggerLogin
   const isWorkflowSender = normalizedSender === config.codexWorkflowLogin
@@ -139,8 +204,8 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
     return null
   }
 
-  const issue = parsedPayload.issue
-  const issueRepository = selectReactionRepository(issue, parsedPayload.repository)
+  const issue = payload.issue
+  const issueRepository = selectReactionRepository(issue, payload.repository)
   const repositoryFullName = deriveRepositoryFullName(issueRepository, issue?.repository_url)
   const issueNumber = typeof issue?.number === 'number' ? issue.number : undefined
 
@@ -160,8 +225,8 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
 
   if (hasPlanMarker) {
     planCommentBody = rawCommentBody
-    planCommentId = typeof parsedPayload.comment?.id === 'number' ? parsedPayload.comment.id : undefined
-    planCommentUrl = typeof parsedPayload.comment?.html_url === 'string' ? parsedPayload.comment.html_url : undefined
+    planCommentId = typeof payload.comment?.id === 'number' ? payload.comment.id : undefined
+    planCommentUrl = typeof payload.comment?.html_url === 'string' ? payload.comment.html_url : undefined
   } else {
     const planLookup = await executionContext.runtime.runPromise(
       executionContext.githubService.findLatestPlanComment({
