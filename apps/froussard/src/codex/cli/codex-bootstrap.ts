@@ -21,6 +21,33 @@ const ensureParentDir = async (path: string) => {
   await mkdir(dirname(path), { recursive: true })
 }
 
+const ensurePnpmAvailable = async () => {
+  if (await which('pnpm')) {
+    return
+  }
+
+  try {
+    await $`corepack enable pnpm`
+  } catch (error) {
+    console.warn('corepack failed to enable pnpm, falling back to npm global install')
+    await $`npm install -g pnpm`
+  }
+}
+
+const bootstrapWorkspace = async () => {
+  if (process.env.CODEX_SKIP_BOOTSTRAP === '1') {
+    return
+  }
+
+  await ensurePnpmAvailable()
+
+  console.log('Installing workspace dependencies via pnpm...')
+  await $`pnpm install --frozen-lockfile`
+
+  console.log('Building Temporal Bun Zig native bridge...')
+  await $`pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig`
+}
+
 export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) => {
   const repoUrl = process.env.REPO_URL ?? 'https://github.com/proompteng/lab'
   const worktreeDefault = process.env.WORKTREE ?? '/workspace/lab'
@@ -47,6 +74,8 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   }
 
   process.chdir(targetDir)
+
+  await bootstrapWorkspace()
 
   const [command, ...commandArgs] = argv
   if (!command) {
