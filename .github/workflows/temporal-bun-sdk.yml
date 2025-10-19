@@ -48,7 +48,7 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config protobuf-compiler docker-compose docker-compose-plugin xz-utils
+          sudo apt-get install -y build-essential pkg-config protobuf-compiler docker-compose xz-utils
 
       - name: Set up Zig 0.15.1
         uses: goto-bus-stop/setup-zig@v2
