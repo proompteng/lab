@@ -3,18 +3,19 @@ const errors = @import("errors.zig");
 const runtime = @import("runtime.zig");
 const client = @import("client.zig");
 const byte_array = @import("byte_array.zig");
+const pending = @import("pending.zig");
 
 fn sliceFrom(ptr: ?[*]const u8, len: u64) []const u8 {
     if (ptr == null or len == 0) {
-        return &[_]u8{};
+        return ""[0..0];
     }
 
     const size: usize = @intCast(len);
     return ptr.?[0..size];
 }
 
-fn markNotImplemented(feature: []const u8) void {
-    errors.setLastErrorFmt("temporal-bun-bridge-zig: {s} is not implemented yet", .{feature});
+fn toPendingHandle(ptr: ?*anyopaque) ?*pending.PendingHandle {
+    return if (ptr) |nonNull| @as(?*pending.PendingHandle, @alignCast(@ptrCast(nonNull))) else null;
 }
 
 pub export fn temporal_bun_runtime_new(payload_ptr: ?[*]const u8, len: u64) ?*runtime.RuntimeHandle {
@@ -40,9 +41,9 @@ pub export fn temporal_bun_client_connect_async(
     len: u64,
 ) ?*anyopaque {
     const payload = sliceFrom(payload_ptr, len);
-    markNotImplemented("client connect");
-    _ = runtime_ptr;
-    _ = payload;
+    if (client.connectAsync(runtime_ptr, payload)) |handle| {
+        return @as(?*anyopaque, @ptrCast(handle));
+    }
     return null;
 }
 
@@ -56,9 +57,9 @@ pub export fn temporal_bun_client_describe_namespace_async(
     len: u64,
 ) ?*anyopaque {
     const payload = sliceFrom(payload_ptr, len);
-    _ = client_ptr;
-    _ = payload;
-    markNotImplemented("describe namespace");
+    if (client.describeNamespaceAsync(client_ptr, payload)) |handle| {
+        return @as(?*anyopaque, @ptrCast(handle));
+    }
     return null;
 }
 
@@ -68,42 +69,43 @@ pub export fn temporal_bun_client_update_headers(
     len: u64,
 ) i32 {
     const payload = sliceFrom(payload_ptr, len);
-    _ = client_ptr;
-    _ = payload;
-    markNotImplemented("update client headers");
-    return -1;
+    return client.updateHeaders(client_ptr, payload);
 }
 
 pub export fn temporal_bun_pending_client_poll(_handle: ?*anyopaque) i32 {
-    markNotImplemented("pending client poll");
-    _ = _handle;
-    return -1;
+    const handle = toPendingHandle(_handle);
+    return pending.poll(handle);
 }
 
 pub export fn temporal_bun_pending_client_consume(_handle: ?*anyopaque) ?*client.ClientHandle {
-    markNotImplemented("pending client consume");
-    _ = _handle;
+    const handle = toPendingHandle(_handle);
+    if (pending.consume(handle)) |payload| {
+        return @as(?*client.ClientHandle, @alignCast(@ptrCast(payload)));
+    }
     return null;
 }
 
 pub export fn temporal_bun_pending_client_free(_handle: ?*anyopaque) void {
-    _ = _handle;
+    const handle = toPendingHandle(_handle);
+    pending.free(handle);
 }
 
 pub export fn temporal_bun_pending_byte_array_poll(_handle: ?*anyopaque) i32 {
-    markNotImplemented("pending byte array poll");
-    _ = _handle;
-    return -1;
+    const handle = toPendingHandle(_handle);
+    return pending.poll(handle);
 }
 
 pub export fn temporal_bun_pending_byte_array_consume(_handle: ?*anyopaque) ?*byte_array.ByteArray {
-    markNotImplemented("pending byte array consume");
-    _ = _handle;
+    const handle = toPendingHandle(_handle);
+    if (pending.consume(handle)) |payload| {
+        return @as(?*byte_array.ByteArray, @alignCast(@ptrCast(payload)));
+    }
     return null;
 }
 
 pub export fn temporal_bun_pending_byte_array_free(_handle: ?*anyopaque) void {
-    _ = _handle;
+    const handle = toPendingHandle(_handle);
+    pending.free(handle);
 }
 
 pub export fn temporal_bun_byte_array_free(handle: ?*byte_array.ByteArray) void {
@@ -116,10 +118,7 @@ pub export fn temporal_bun_client_start_workflow(
     len: u64,
 ) ?*byte_array.ByteArray {
     const payload = sliceFrom(payload_ptr, len);
-    _ = client_ptr;
-    _ = payload;
-    markNotImplemented("start workflow");
-    return null;
+    return client.startWorkflow(client_ptr, payload);
 }
 
 pub export fn temporal_bun_client_terminate_workflow(
@@ -146,5 +145,8 @@ pub export fn temporal_bun_client_query_workflow(
     len: u64,
 ) ?*anyopaque {
     const payload = sliceFrom(payload_ptr, len);
-    return client.queryWorkflow(client_ptr, payload);
+    if (client.queryWorkflow(client_ptr, payload)) |handle| {
+        return @as(?*anyopaque, @ptrCast(handle));
+    }
+    return null;
 }
