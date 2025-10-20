@@ -312,9 +312,6 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
         const reviewHeaders = buildReviewHeaders(headers, {
           fingerprint: reviewFingerprint,
           headSha: pull.headSha,
-          outstandingThreads: unresolvedThreads.length,
-          failingChecks: failingChecks.length,
-          hasMergeConflicts,
         })
 
         reviewEvaluation.reviewCommand = {
