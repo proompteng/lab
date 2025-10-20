@@ -12,6 +12,7 @@ const ascii = std.ascii;
 const fmt = std.fmt;
 const c = std.c;
 const ArenaAllocator = std.heap.ArenaAllocator;
+const testing = std.testing;
 
 pub const ClientHandle = struct {
     id: u64,
@@ -149,14 +150,20 @@ fn mapGrpcStatusName(name: []const u8) i32 {
     if (mem.eql(u8, name, "Cancelled")) return grpc.cancelled;
     if (mem.eql(u8, name, "Unknown")) return grpc.unknown;
     if (mem.eql(u8, name, "InvalidArgument")) return grpc.invalid_argument;
+    if (mem.eql(u8, name, "DeadlineExceeded")) return grpc.deadline_exceeded;
     if (mem.eql(u8, name, "NotFound")) return grpc.not_found;
     if (mem.eql(u8, name, "AlreadyExists")) return grpc.already_exists;
+    if (mem.eql(u8, name, "PermissionDenied")) return grpc.permission_denied;
     if (mem.eql(u8, name, "ResourceExhausted")) return grpc.resource_exhausted;
     if (mem.eql(u8, name, "FailedPrecondition")) return grpc.failed_precondition;
+    if (mem.eql(u8, name, "Aborted")) return grpc.aborted;
+    if (mem.eql(u8, name, "OutOfRange")) return grpc.out_of_range;
     if (mem.eql(u8, name, "Unimplemented")) return grpc.unimplemented;
     if (mem.eql(u8, name, "Internal")) return grpc.internal;
     if (mem.eql(u8, name, "Unavailable")) return grpc.unavailable;
-    return grpc.internal;
+    if (mem.eql(u8, name, "DataLoss")) return grpc.data_loss;
+    if (mem.eql(u8, name, "Unauthenticated")) return grpc.unauthenticated;
+    return grpc.unknown;
 }
 
 fn mapGrpcStatusFromMessage(message: []const u8) i32 {
@@ -171,7 +178,7 @@ fn mapGrpcStatusFromMessage(message: []const u8) i32 {
             return mapGrpcStatusName(name);
         }
     }
-    return grpc.internal;
+    return grpc.unknown;
 }
 
 fn finalizeConnectContext(context: *ConnectContext) void {
@@ -899,4 +906,44 @@ fn runSignalWorkflow(context: SignalWorkerContext) void {
         const message = "temporal-bun-bridge-zig: failed to resolve signal pending handle";
         _ = pending.rejectByteArray(context.handle, grpc.internal, message);
     }
+}
+
+test "mapGrpcStatusName returns canonical Temporal gRPC codes" {
+    const cases = [_]struct {
+        name: []const u8,
+        expected: i32,
+    }{
+        .{ .name = "Cancelled", .expected = grpc.cancelled },
+        .{ .name = "Unknown", .expected = grpc.unknown },
+        .{ .name = "InvalidArgument", .expected = grpc.invalid_argument },
+        .{ .name = "DeadlineExceeded", .expected = grpc.deadline_exceeded },
+        .{ .name = "NotFound", .expected = grpc.not_found },
+        .{ .name = "AlreadyExists", .expected = grpc.already_exists },
+        .{ .name = "PermissionDenied", .expected = grpc.permission_denied },
+        .{ .name = "ResourceExhausted", .expected = grpc.resource_exhausted },
+        .{ .name = "FailedPrecondition", .expected = grpc.failed_precondition },
+        .{ .name = "Aborted", .expected = grpc.aborted },
+        .{ .name = "OutOfRange", .expected = grpc.out_of_range },
+        .{ .name = "Unimplemented", .expected = grpc.unimplemented },
+        .{ .name = "Internal", .expected = grpc.internal },
+        .{ .name = "Unavailable", .expected = grpc.unavailable },
+        .{ .name = "DataLoss", .expected = grpc.data_loss },
+        .{ .name = "Unauthenticated", .expected = grpc.unauthenticated },
+    };
+
+    for (cases) |case| {
+        try testing.expectEqual(case.expected, mapGrpcStatusName(case.name));
+    }
+}
+
+test "mapGrpcStatusName falls back to unknown" {
+    try testing.expectEqual(grpc.unknown, mapGrpcStatusName("SomeFutureStatus"));
+}
+
+test "mapGrpcStatusFromMessage parses status names and defaults to unknown" {
+    const source = "Status { code: PermissionDenied, message: \"denied\" }";
+    try testing.expectEqual(grpc.permission_denied, mapGrpcStatusFromMessage(source));
+
+    const missing = "temporal core returned unexpected payload";
+    try testing.expectEqual(grpc.unknown, mapGrpcStatusFromMessage(missing));
 }
