@@ -112,6 +112,13 @@ const bootstrapWorkspace = async () => {
 
   await ensureTemporalVendors()
 
+  try {
+    console.log('Prefetching Temporal core static archives...')
+    await runWithNvm('bun run packages/temporal-bun-sdk/scripts/fetch-temporal-core.ts')
+  } catch (error) {
+    console.warn('Temporal core prefetch failed during bootstrap; Zig builds will fall back to Cargo. Details:', error)
+  }
+
   console.log('Installing workspace dependencies via pnpm...')
   await runWithNvm(`"${pnpmExecutable}" install --frozen-lockfile`)
 

@@ -20,6 +20,14 @@ const BuildError = error{
     ArchiveNotFound,
 };
 
+fn archiveExists(dir: *std.fs.Dir, relative_path: []const u8) bool {
+    _ = dir.statFile(relative_path) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir => return false,
+        else => std.debug.panic("Failed to inspect cached Temporal core archive {s}: {s}", .{ relative_path, @errorName(err) }),
+    };
+    return true;
+}
+
 fn getCargoTargetTriple(target: std.Target) BuildError![]const u8 {
     return switch (target.os.tag) {
         .macos => switch (target.cpu.arch) {
@@ -137,7 +145,13 @@ pub fn build(b: *std.Build) void {
     }
 
     for (temporal_crates) |crate_info| {
-        if (skip_cargo == null) {
+        const archive_filename = formatArchiveFilename(b, crate_info.archive);
+        const relative_archive = b.fmt("target/{s}/{s}/{s}", .{ cargo_target, profile_dir, archive_filename });
+        defer b.allocator.free(relative_archive);
+
+        const archive_present = if (skip_cargo != null) true else archiveExists(&vendor_dir, relative_archive);
+
+        if (skip_cargo == null and !archive_present) {
             const cargo_step = b.addSystemCommand(&.{ "cargo", "rustc" });
             cargo_step.setName(b.fmt("cargo rustc ({s})", .{crate_info.package}));
             cargo_step.setCwd(b.path(temporal_vendor_root));
@@ -146,6 +160,8 @@ pub fn build(b: *std.Build) void {
 
             lib.step.dependOn(&cargo_step.step);
             unit_tests.step.dependOn(&cargo_step.step);
+        } else if (skip_cargo == null and archive_present) {
+            std.log.info("Reusing cached Temporal core archive: {s}", .{relative_archive});
         }
 
         const archive = archivePath(b, cargo_target, profile_dir, crate_info.archive);

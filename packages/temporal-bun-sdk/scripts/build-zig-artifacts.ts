@@ -11,6 +11,7 @@ const zigProjectDir = join(rootDir, 'native', 'temporal-bun-bridge-zig')
 const buildFile = join(zigProjectDir, 'build.zig')
 const toolchainScript = join(rootDir, 'scripts', 'run-with-rust-toolchain.ts')
 const zigOutLibDir = join(zigProjectDir, 'zig-out', 'lib')
+const fetchScript = join(rootDir, 'scripts', 'fetch-temporal-core.ts')
 
 async function ensureZigInstalled() {
   try {
@@ -20,6 +21,18 @@ async function ensureZigInstalled() {
     console.error('Install Zig or ensure it is available on PATH, then retry.')
     process.exitCode = 1
     throw new Error('missing zig command')
+  }
+}
+
+async function ensureCoreArchives() {
+  const targets = zigTargets.map((target) => target.cargoTarget).join(',')
+  const command = $`bun run ${fetchScript} --targets ${targets}`
+  command.cwd = rootDir
+  const result = await command.nothrow()
+  if (result.exitCode !== 0) {
+    console.warn(
+      'Temporal core prefetch exited with a non-zero status; proceeding with Zig builds (Cargo fallback will handle missing archives).',
+    )
   }
 }
 
@@ -40,6 +53,7 @@ async function buildTarget(target: (typeof zigTargets)[number]) {
 async function main() {
   try {
     await ensureZigInstalled()
+    await ensureCoreArchives()
     for (const target of zigTargets) {
       await buildTarget(target)
     }

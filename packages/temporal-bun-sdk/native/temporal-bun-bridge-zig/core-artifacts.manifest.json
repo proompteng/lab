@@ -1,0 +1,70 @@
+{
+  "version": "1.13.0",
+  "publishedAt": "2025-09-30",
+  "artifacts": {
+    "aarch64-apple-darwin": {
+      "archive": {
+        "url": "https://temporal.download/sdk-core/v1.13.0/aarch64-apple-darwin/temporal-sdk-core.tar.zst",
+        "sha256": null,
+        "format": "tar.zst",
+        "stripComponents": 1
+      },
+      "outputDir": "vendor/sdk-core/target/aarch64-apple-darwin/release",
+      "files": [
+        { "name": "libtemporal_sdk_core.a", "sha256": null },
+        { "name": "libtemporal_sdk_core_c_bridge.a", "sha256": null },
+        { "name": "libtemporal_client.a", "sha256": null },
+        { "name": "libtemporal_sdk_core_api.a", "sha256": null },
+        { "name": "libtemporal_sdk_core_protos.a", "sha256": null }
+      ]
+    },
+    "x86_64-apple-darwin": {
+      "archive": {
+        "url": "https://temporal.download/sdk-core/v1.13.0/x86_64-apple-darwin/temporal-sdk-core.tar.zst",
+        "sha256": null,
+        "format": "tar.zst",
+        "stripComponents": 1
+      },
+      "outputDir": "vendor/sdk-core/target/x86_64-apple-darwin/release",
+      "files": [
+        { "name": "libtemporal_sdk_core.a", "sha256": null },
+        { "name": "libtemporal_sdk_core_c_bridge.a", "sha256": null },
+        { "name": "libtemporal_client.a", "sha256": null },
+        { "name": "libtemporal_sdk_core_api.a", "sha256": null },
+        { "name": "libtemporal_sdk_core_protos.a", "sha256": null }
+      ]
+    },
+    "aarch64-unknown-linux-gnu": {
+      "archive": {
+        "url": "https://temporal.download/sdk-core/v1.13.0/aarch64-unknown-linux-gnu/temporal-sdk-core.tar.zst",
+        "sha256": null,
+        "format": "tar.zst",
+        "stripComponents": 1
+      },
+      "outputDir": "vendor/sdk-core/target/aarch64-unknown-linux-gnu/release",
+      "files": [
+        { "name": "libtemporal_sdk_core.a", "sha256": null },
+        { "name": "libtemporal_sdk_core_c_bridge.a", "sha256": null },
+        { "name": "libtemporal_client.a", "sha256": null },
+        { "name": "libtemporal_sdk_core_api.a", "sha256": null },
+        { "name": "libtemporal_sdk_core_protos.a", "sha256": null }
+      ]
+    },
+    "x86_64-unknown-linux-gnu": {
+      "archive": {
+        "url": "https://temporal.download/sdk-core/v1.13.0/x86_64-unknown-linux-gnu/temporal-sdk-core.tar.zst",
+        "sha256": null,
+        "format": "tar.zst",
+        "stripComponents": 1
+      },
+      "outputDir": "vendor/sdk-core/target/x86_64-unknown-linux-gnu/release",
+      "files": [
+        { "name": "libtemporal_sdk_core.a", "sha256": null },
+        { "name": "libtemporal_sdk_core_c_bridge.a", "sha256": null },
+        { "name": "libtemporal_client.a", "sha256": null },
+        { "name": "libtemporal_sdk_core_api.a", "sha256": null },
+        { "name": "libtemporal_sdk_core_protos.a", "sha256": null }
+      ]
+    }
+  }
+}

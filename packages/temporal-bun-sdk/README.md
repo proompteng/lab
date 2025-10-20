@@ -46,7 +46,7 @@ ln -s ~/github.com/temporalio/sdk-typescript packages/temporal-bun-sdk/vendor/sd
 # Compile the native Temporal bridge (requires protoc in PATH)
 pnpm --filter @proompteng/temporal-bun-sdk run build:native
 
-# (Experimental) Build the Zig bridge scaffold (invokes Cargo to stage static Temporal core archives)
+# (Experimental) Build the Zig bridge scaffold (prefetches static Temporal core archives when available)
 pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
 pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:bundle
 pnpm --filter @proompteng/temporal-bun-sdk run package:native:zig
@@ -79,6 +79,22 @@ pnpm --filter @proompteng/temporal-bun-sdk test
 
 Packaged Zig bridge artifacts load automatically when present. Set `TEMPORAL_BUN_SDK_USE_ZIG=1` to require the Zig
 bridge (a warning is emitted if the binaries are missing) or `TEMPORAL_BUN_SDK_USE_ZIG=0` to force the Rust fallback.
+
+### Temporal core artifact cache
+
+The Zig bridge links against the same static archives that power `@temporalio/core-bridge`, which publishes a per-target `releases/<platform-arch>/` bundle for Darwin and Linux builds.citeturn6search0 The cache manifest (`packages/temporal-bun-sdk/native/temporal-bun-bridge-zig/core-artifacts.manifest.json`) maps each Cargo triple to the expected archive checksums. The helper script `packages/temporal-bun-sdk/scripts/fetch-temporal-core.ts` downloads, verifies, and unpacks those archives into `vendor/sdk-core/target/<triple>/release/`, then `build.zig` skips `cargo rustc` whenever the prebaked `.a` files are present.
+
+All Zig-oriented package scripts (`build:native`, `build:native:zig`, `build:native:zig:debug`, `build:native:zig:bundle`, `test:native:zig`, and `package:native:zig`) run the fetch helper first; failures fall back to on-demand `cargo rustc`, mirroring the upstream TypeScript bridge’s behavior.citeturn5search1
+
+#### Refreshing cached archives
+
+1. Produce new static archives for each supported target (`aarch64/x86_64` on macOS and Linux) following Temporal’s release notes and checksum guidance.citeturn6search0turn7search0
+2. Upload the tarballs to the distribution bucket (or mirror) and record their SHA-256 values.
+3. Update `core-artifacts.manifest.json` with the new `version`, archive URLs, and checksums.
+4. Run `bun run packages/temporal-bun-sdk/scripts/fetch-temporal-core.ts` to hydrate the cache, then `bun run packages/temporal-bun-sdk/scripts/fetch-temporal-core.ts --check` to confirm every file matches the manifest.
+5. Execute `pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:bundle` to ensure the Zig bundle consumes the cached archives end to end.
+
+Set `TEMPORAL_CORE_FETCH_BASE_URL` to test a staging bucket, `TEMPORAL_CORE_FETCH_CACHE_DIR` to reuse a local download directory, and `SKIP_TEMPORAL_CARGO=1` to force Zig to reuse existing archives during iterative testing. When the helper fails to download an archive, the Zig build emits a warning and recompiles via Cargo so CI can still progress while the cache is warming.
 
 ## Usage
 
@@ -147,6 +163,9 @@ temporal-bun docker-build --tag my-worker:latest
 | `TEMPORAL_TLS_SERVER_NAME` | _unset_ | Overrides TLS server name. |
 | `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS` | `false` | Accepts `1/true/on` to disable TLS verification (sets `NODE_TLS_REJECT_UNAUTHORIZED=0`). |
 | `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (appends host + PID). |
+| `TEMPORAL_CORE_FETCH_BASE_URL` | _unset_ | Override host/path for manifest URLs when staging mirrored core archives. |
+| `TEMPORAL_CORE_FETCH_CACHE_DIR` | _unset_ | Persist downloaded archives outside the system temp dir. |
+| `SKIP_TEMPORAL_CARGO` | _unset_ | When set to `1`, tells `build.zig` to reuse existing `vendor/sdk-core/target/*` archives without running Cargo. |
 
 These align with the existing Temporal setup (`services/prix/worker/main.go`, `packages/atelier/src/create-default-namespace.ts`) so Bun workers can drop into current environments without additional configuration.
 
@@ -174,3 +193,4 @@ docker compose -f packages/temporal-bun-sdk/examples/docker-compose.yaml up --bu
 | `pnpm --filter @proompteng/temporal-bun-sdk run test:coverage` | Run tests with Bun coverage output under `.coverage/`. |
 | `pnpm --filter @proompteng/temporal-bun-sdk run start:worker` | Launch the compiled worker. |
 | `pnpm --filter @proompteng/temporal-bun-sdk run build:native` | Build the Bun ↔ Temporal native bridge. |
+| `bun run packages/temporal-bun-sdk/scripts/fetch-temporal-core.ts [--check] [--targets ...]` | Download/verify cached Temporal core archives; `--check` verifies without mutating. |
