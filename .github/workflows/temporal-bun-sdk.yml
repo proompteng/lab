@@ -6,21 +6,19 @@ on:
       - main
     paths:
       - 'packages/temporal-bun-sdk/**'
+      - '!packages/temporal-bun-sdk/**/*.md'
+      - '!packages/temporal-bun-sdk/docs/**'
       - 'packages/temporal-bun-sdk-example/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/temporal-bun-sdk.yml'
-    paths-ignore:
-      - 'packages/temporal-bun-sdk/**/*.md'
-      - 'packages/temporal-bun-sdk/docs/**'
   pull_request:
     paths:
       - 'packages/temporal-bun-sdk/**'
+      - '!packages/temporal-bun-sdk/**/*.md'
+      - '!packages/temporal-bun-sdk/docs/**'
       - 'packages/temporal-bun-sdk-example/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/temporal-bun-sdk.yml'
-    paths-ignore:
-      - 'packages/temporal-bun-sdk/**/*.md'
-      - 'packages/temporal-bun-sdk/docs/**'
 
 jobs:
   test:
@@ -74,11 +72,8 @@ jobs:
       - name: Check Zig formatting
         run: zig fmt --check packages/temporal-bun-sdk/native/temporal-bun-bridge-zig
 
-      - name: Build Zig bridge
-        run: pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
-
-      - name: Run Zig bridge tests
-        run: pnpm --filter @proompteng/temporal-bun-sdk run test:native:zig
+      - name: Build and test Zig bridge
+        run: pnpm --filter @proompteng/temporal-bun-sdk run ci:native:zig
 
       - name: Start Temporal server
         id: start_temporal_server

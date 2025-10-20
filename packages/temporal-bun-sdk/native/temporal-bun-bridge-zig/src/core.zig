@@ -16,6 +16,7 @@ pub const RuntimeOrFail = c.TemporalCoreRuntimeOrFail;
 pub const Client = c.TemporalCoreClient;
 pub const ClientOptions = c.TemporalCoreClientOptions;
 pub const ClientConnectCallback = c.TemporalCoreClientConnectCallback;
+pub const ClientTlsOptions = c.TemporalCoreClientTlsOptions;
 
 pub const Worker = c.TemporalCoreWorker;
 
