@@ -108,6 +108,18 @@ pub fn build(b: *std.Build) void {
         .root_module = test_module,
     });
 
+    const resolved_target = target.result;
+    const cargo_target = getCargoTargetTriple(resolved_target) catch {
+        std.debug.panic(
+            "Unsupported target {s}-{s} for Temporal Rust linkage.",
+            .{ @tagName(resolved_target.cpu.arch), @tagName(resolved_target.os.tag) },
+        );
+    };
+    const profile_dir = getProfileDir(optimize);
+
+    const skip_cargo = std.process.getEnvVarOwned(b.allocator, "SKIP_TEMPORAL_CARGO") catch null;
+    defer if (skip_cargo) |value| b.allocator.free(value);
+
     const vendor_path = b.build_root.join(b.allocator, &.{temporal_vendor_root}) catch @panic("failed to resolve vendor path");
     defer b.allocator.free(vendor_path);
     var vendor_dir = std.fs.cwd().openDir(vendor_path, .{}) catch |err| {
@@ -118,28 +130,23 @@ pub fn build(b: *std.Build) void {
     };
     defer vendor_dir.close();
 
-    _ = b.findProgram(&.{"cargo"}, &.{}) catch {
-        std.debug.panic("Cargo toolchain is required to build Temporal core artifacts.", .{});
-    };
-
-    const resolved_target = target.result;
-    const cargo_target = getCargoTargetTriple(resolved_target) catch {
-        std.debug.panic(
-            "Unsupported target {s}-{s} for Temporal Rust linkage.",
-            .{ @tagName(resolved_target.cpu.arch), @tagName(resolved_target.os.tag) },
-        );
-    };
-    const profile_dir = getProfileDir(optimize);
+    if (skip_cargo == null) {
+        _ = b.findProgram(&.{"cargo"}, &.{}) catch {
+            std.debug.panic("Cargo toolchain is required to build Temporal core artifacts.", .{});
+        };
+    }
 
     for (temporal_crates) |crate_info| {
-        const cargo_step = b.addSystemCommand(&.{ "cargo", "rustc" });
-        cargo_step.setName(b.fmt("cargo rustc ({s})", .{crate_info.package}));
-        cargo_step.setCwd(b.path(temporal_vendor_root));
-        cargo_step.addArgs(&.{ "-p", crate_info.package, "--crate-type", "staticlib", "--target", cargo_target });
-        if (optimize != .Debug) cargo_step.addArg("--release");
+        if (skip_cargo == null) {
+            const cargo_step = b.addSystemCommand(&.{ "cargo", "rustc" });
+            cargo_step.setName(b.fmt("cargo rustc ({s})", .{crate_info.package}));
+            cargo_step.setCwd(b.path(temporal_vendor_root));
+            cargo_step.addArgs(&.{ "-p", crate_info.package, "--crate-type", "staticlib", "--target", cargo_target });
+            if (optimize != .Debug) cargo_step.addArg("--release");
 
-        lib.step.dependOn(&cargo_step.step);
-        unit_tests.step.dependOn(&cargo_step.step);
+            lib.step.dependOn(&cargo_step.step);
+            unit_tests.step.dependOn(&cargo_step.step);
+        }
 
         const archive = archivePath(b, cargo_target, profile_dir, crate_info.archive);
         lib.addObjectFile(archive);
@@ -150,6 +157,17 @@ pub fn build(b: *std.Build) void {
         // Rust's panic/unwind support expects these symbols from libunwind when linking static archives.
         lib.linkSystemLibrary("unwind");
         unit_tests.linkSystemLibrary("unwind");
+    } else if (resolved_target.os.tag == .macos) {
+        const frameworks = [_][]const u8{
+            "Security",
+            "CoreFoundation",
+            "SystemConfiguration",
+            "IOKit",
+        };
+        for (frameworks) |fw| {
+            lib.linkFramework(fw);
+            unit_tests.linkFramework(fw);
+        }
     }
 
     const test_step = b.step("test", "Run Zig bridge tests (stub)");

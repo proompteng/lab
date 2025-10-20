@@ -12,8 +12,9 @@ pub const StructuredError = struct {
 };
 
 var last_error: []u8 = empty_slice;
+var error_mutex: std.Thread.Mutex = .{};
 
-fn replaceLastError(buffer: []u8) void {
+fn replaceLastErrorLocked(buffer: []u8) void {
     const allocator = std.heap.c_allocator;
     if (last_error.len > 0) {
         allocator.free(last_error);
@@ -49,7 +50,7 @@ fn writeJsonString(buffer: *std.ArrayList(u8), allocator: std.mem.Allocator, tex
     try buffer.append(allocator, '"');
 }
 
-pub fn setLastError(message: []const u8) void {
+fn setLastErrorLocked(message: []const u8) void {
     const allocator = std.heap.c_allocator;
 
     if (last_error.len > 0) {
@@ -70,82 +71,111 @@ pub fn setLastError(message: []const u8) void {
     last_error = copy;
 }
 
-pub fn setStructuredError(payload: StructuredError) void {
+fn setStructuredErrorLocked(payload: StructuredError) void {
     const allocator = std.heap.c_allocator;
     var buffer = std.ArrayList(u8){ .items = &.{}, .capacity = 0 };
     defer buffer.deinit(allocator);
 
     buffer.appendSlice(allocator, "{\"code\":") catch {
-        setLastError(payload.message);
+        setLastErrorLocked(payload.message);
         return;
     };
 
     var code_scratch: [32]u8 = undefined;
     const code_fragment = std.fmt.bufPrint(&code_scratch, "{d}", .{payload.code}) catch {
-        setLastError(payload.message);
+        setLastErrorLocked(payload.message);
         return;
     };
 
     buffer.appendSlice(allocator, code_fragment) catch {
-        setLastError(payload.message);
+        setLastErrorLocked(payload.message);
         return;
     };
 
     buffer.appendSlice(allocator, ",\"message\":") catch {
-        setLastError(payload.message);
+        setLastErrorLocked(payload.message);
         return;
     };
 
     writeJsonString(&buffer, allocator, payload.message) catch {
-        setLastError(payload.message);
+        setLastErrorLocked(payload.message);
         return;
     };
 
     if (payload.details) |details| {
         buffer.appendSlice(allocator, ",\"details\":") catch {
-            setLastError(payload.message);
+            setLastErrorLocked(payload.message);
             return;
         };
         writeJsonString(&buffer, allocator, details) catch {
-            setLastError(payload.message);
+            setLastErrorLocked(payload.message);
             return;
         };
     }
 
     buffer.append(allocator, '}') catch {
-        setLastError(payload.message);
+        setLastErrorLocked(payload.message);
         return;
     };
 
     const encoded = buffer.toOwnedSlice(allocator) catch {
-        setLastError(payload.message);
+        setLastErrorLocked(payload.message);
         return;
     };
 
-    replaceLastError(encoded);
+    replaceLastErrorLocked(encoded);
 }
 
-pub fn setStructuredErrorJson(payload: StructuredError) void {
-    setStructuredError(payload);
-    setLastErrorFmt("{{\"code\":{d},\"message\":\"{s}\"}}", .{ payload.code, payload.message });
+fn setStructuredErrorJsonLocked(payload: StructuredError) void {
+    setStructuredErrorLocked(payload);
+    setLastErrorFmtLocked("{{\"code\":{d},\"message\":\"{s}\"}}", .{ payload.code, payload.message });
 }
 
-pub fn setLastErrorFmt(comptime fmt: []const u8, args: anytype) void {
+fn setLastErrorFmtLocked(comptime fmt: []const u8, args: anytype) void {
     const allocator = std.heap.c_allocator;
     const formatted = std.fmt.allocPrint(allocator, fmt, args) catch {
-        setLastError("temporal-bun-bridge-zig: failed to format error message");
+        setLastErrorLocked("temporal-bun-bridge-zig: failed to format error message");
         return;
     };
 
     defer allocator.free(formatted);
-    setLastError(formatted);
+    setLastErrorLocked(formatted);
+}
+
+pub fn setLastError(message: []const u8) void {
+    error_mutex.lock();
+    defer error_mutex.unlock();
+    setLastErrorLocked(message);
+}
+
+pub fn setStructuredError(payload: StructuredError) void {
+    error_mutex.lock();
+    defer error_mutex.unlock();
+    setStructuredErrorLocked(payload);
+}
+
+pub fn setStructuredErrorJson(payload: StructuredError) void {
+    error_mutex.lock();
+    defer error_mutex.unlock();
+    setStructuredErrorJsonLocked(payload);
+}
+
+pub fn setLastErrorFmt(comptime fmt: []const u8, args: anytype) void {
+    error_mutex.lock();
+    defer error_mutex.unlock();
+    setLastErrorFmtLocked(fmt, args);
 }
 
 pub fn snapshot() []const u8 {
+    error_mutex.lock();
+    defer error_mutex.unlock();
     return last_error;
 }
 
 pub fn takeForFfi(len_ptr: ?*u64) ?[*]u8 {
+    error_mutex.lock();
+    defer error_mutex.unlock();
+
     if (len_ptr) |ptr| {
         ptr.* = @intCast(last_error.len);
     }

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const atomic = std.atomic;
 const testing = std.testing;
 
@@ -60,6 +61,18 @@ pub const PendingHandle = struct {
     state_lock: std.Thread.Mutex,
 };
 
+const TestHooks = if (builtin.is_test) struct {
+    pub var before_consume_lock: ?*const fn (*PendingHandle) void = null;
+} else struct {};
+
+inline fn runBeforeConsumeLockHook(handle: *PendingHandle) void {
+    if (comptime builtin.is_test) {
+        if (TestHooks.before_consume_lock) |hook| {
+            hook(handle);
+        }
+    }
+}
+
 /// Entry points coordinating PendingHandle state:
 /// - pending.createPendingInFlight: creates `.pending` handles without payload or message.
 /// - pending.createPendingReady: allocates a pending handle then delegates to transitionToReady for initialization.
@@ -101,7 +114,7 @@ fn allocateHandle(status: Status) ?*PendingHandle {
             .owns_message = false,
             .active = false,
         },
-        .state_lock = std.Thread.Mutex.init(),
+        .state_lock = .{},
     };
     return handle;
 }
@@ -196,7 +209,7 @@ pub fn transitionToReady(handle: *PendingHandle, payload: ?*anyopaque, cleanup: 
     handle.state_lock.lock();
     defer handle.state_lock.unlock();
 
-    const current_status = handle.status.load(.Acquire);
+    const current_status = handle.status.load(.acquire);
     if (current_status != .pending) {
         return false;
     }
@@ -206,8 +219,8 @@ pub fn transitionToReady(handle: *PendingHandle, payload: ?*anyopaque, cleanup: 
 
     handle.payload = payload;
     handle.cleanup = cleanup;
-    handle.consumed.store(false, .Release);
-    handle.status.store(.ready, .Release);
+    handle.consumed.store(false, .release);
+    handle.status.store(.ready, .release);
     return true;
 }
 
@@ -215,7 +228,7 @@ pub fn transitionToError(handle: *PendingHandle, code: i32, message: []const u8)
     handle.state_lock.lock();
     defer handle.state_lock.unlock();
 
-    const current_status = handle.status.load(.Acquire);
+    const current_status = handle.status.load(.acquire);
     if (current_status == .failed) {
         return false;
     }
@@ -224,8 +237,8 @@ pub fn transitionToError(handle: *PendingHandle, code: i32, message: []const u8)
     }
 
     assignErrorLocked(handle, code, message, true);
-    handle.consumed.store(false, .Release);
-    handle.status.store(.failed, .Release);
+    handle.consumed.store(false, .release);
+    handle.status.store(.failed, .release);
     return true;
 }
 
@@ -263,11 +276,11 @@ pub fn poll(handle: ?*PendingHandle) i32 {
     }
 
     const pending = handle.?;
-    const status = pending.status.load(.Acquire);
+    const status = pending.status.load(.acquire);
     return switch (status) {
         .pending => @intFromEnum(Status.pending),
         .ready => blk: {
-            if (pending.consumed.load(.Acquire)) {
+            if (pending.consumed.load(.acquire)) {
                 setStructuredError(GrpcStatus.failed_precondition, ERR_ALREADY_CONSUMED);
                 break :blk @intFromEnum(Status.failed);
             }
@@ -287,7 +300,7 @@ pub fn consume(handle: ?*PendingHandle) ?*anyopaque {
     }
 
     const pending = handle.?;
-    const status = pending.status.load(.Acquire);
+    const status = pending.status.load(.acquire);
     switch (status) {
         .pending => {
             setStructuredError(GrpcStatus.failed_precondition, ERR_NOT_READY);
@@ -300,18 +313,31 @@ pub fn consume(handle: ?*PendingHandle) ?*anyopaque {
         .ready => {},
     }
 
-    const already_consumed = pending.consumed.swap(true, .AcqRel);
+    const already_consumed = pending.consumed.swap(true, .acq_rel);
     if (already_consumed) {
         setStructuredError(GrpcStatus.failed_precondition, ERR_ALREADY_CONSUMED);
         return null;
     }
 
+    runBeforeConsumeLockHook(pending);
+
     pending.state_lock.lock();
     defer pending.state_lock.unlock();
 
+    const locked_status = pending.status.load(.acquire);
+    if (locked_status != .ready) {
+        pending.consumed.store(false, .release);
+        switch (locked_status) {
+            .pending => setStructuredError(GrpcStatus.failed_precondition, ERR_NOT_READY),
+            .ready => unreachable,
+            .failed => publishFault(pending),
+        }
+        return null;
+    }
+
     const payload = pending.payload orelse {
         assignErrorLocked(pending, GrpcStatus.internal, ERR_MISSING_PAYLOAD, false);
-        pending.status.store(.failed, .Release);
+        pending.status.store(.failed, .release);
         setStructuredError(GrpcStatus.internal, ERR_MISSING_PAYLOAD);
         return null;
     };
@@ -319,7 +345,7 @@ pub fn consume(handle: ?*PendingHandle) ?*anyopaque {
     pending.payload = null;
     pending.cleanup = null;
     assignErrorLocked(pending, GrpcStatus.failed_precondition, ERR_ALREADY_CONSUMED, false);
-    pending.status.store(.failed, .Release);
+    pending.status.store(.failed, .release);
     return payload;
 }
 
@@ -358,14 +384,14 @@ pub fn resolveByteArray(handle: ?*PendingByteArray, array: ?*byte_array.ByteArra
     pending_handle.state_lock.lock();
     defer pending_handle.state_lock.unlock();
 
-    const status = pending_handle.status.load(.Acquire);
+    const status = pending_handle.status.load(.acquire);
     if (status != .pending) {
         setStructuredError(GrpcStatus.failed_precondition, ERR_RESOLVE_STATUS);
         byte_array.free(array.?);
         return false;
     }
 
-    if (pending_handle.consumed.load(.Acquire)) {
+    if (pending_handle.consumed.load(.acquire)) {
         setStructuredError(GrpcStatus.failed_precondition, ERR_RESOLVE_CONSUMED);
         byte_array.free(array.?);
         return false;
@@ -377,8 +403,8 @@ pub fn resolveByteArray(handle: ?*PendingByteArray, array: ?*byte_array.ByteArra
     const non_null = array.?;
     pending_handle.payload = @as(?*anyopaque, @ptrCast(@alignCast(non_null)));
     pending_handle.cleanup = freeByteArrayFromPending;
-    pending_handle.consumed.store(false, .Release);
-    pending_handle.status.store(.ready, .Release);
+    pending_handle.consumed.store(false, .release);
+    pending_handle.status.store(.ready, .release);
     return true;
 }
 
@@ -392,7 +418,7 @@ pub fn rejectByteArray(handle: ?*PendingByteArray, code: i32, message: []const u
     pending_handle.state_lock.lock();
     defer pending_handle.state_lock.unlock();
 
-    const status = pending_handle.status.load(.Acquire);
+    const status = pending_handle.status.load(.acquire);
     if (status != .pending) {
         setStructuredError(GrpcStatus.failed_precondition, ERR_REJECT_STATUS);
         return false;
@@ -402,8 +428,8 @@ pub fn rejectByteArray(handle: ?*PendingByteArray, code: i32, message: []const u
     clearErrorLocked(pending_handle);
 
     assignErrorLocked(pending_handle, code, message, true);
-    pending_handle.consumed.store(false, .Release);
-    pending_handle.status.store(.failed, .Release);
+    pending_handle.consumed.store(false, .release);
+    pending_handle.status.store(.failed, .release);
 
     setStructuredError(code, if (message.len != 0) message else "");
     return true;
@@ -537,8 +563,10 @@ test "pending handle concurrent poll and consume" {
                 const status_code = poll(handle_ptr);
                 if (status_code == @intFromEnum(Status.ready)) {
                     ready_seen = true;
+                } else if (status_code == @intFromEnum(Status.failed)) {
+                    return;
                 } else {
-                    std.time.sleep(1_000);
+                    std.Thread.sleep(1_000);
                 }
             }
         }
@@ -557,8 +585,8 @@ test "pending handle concurrent poll and consume" {
             success_ptr: *atomic.Value(usize),
             payload_slot: *atomic.Value(?*anyopaque),
         ) void {
-            while (!start_flag_ptr.load(.Acquire)) {
-                std.time.sleep(1_000);
+            while (!start_flag_ptr.load(.acquire)) {
+                std.Thread.sleep(1_000);
             }
 
             while (true) {
@@ -569,12 +597,13 @@ test "pending handle concurrent poll and consume" {
                 if (status_code == @intFromEnum(Status.failed)) {
                     return;
                 }
-                std.time.sleep(1_000);
+                std.Thread.sleep(1_000);
             }
 
             if (consume(handle_ptr)) |ptr| {
-                success_ptr.fetchAdd(1, .AcqRel);
-                payload_slot.store(ptr, .Release);
+                _ = success_ptr.fetchAdd(1, .acq_rel);
+                payload_slot.store(ptr, .release);
+                return;
             }
         }
     };
@@ -592,8 +621,9 @@ test "pending handle concurrent poll and consume" {
     );
     try testing.expect(transitioned);
 
-    start_flag.store(true, .Release);
+    start_flag.store(true, .release);
 
+    var spins: usize = 0;
     // Wait for readiness before attempting to consume on the main thread.
     while (true) {
         const status_code = poll(handle);
@@ -603,13 +633,34 @@ test "pending handle concurrent poll and consume" {
         if (status_code == @intFromEnum(Status.failed)) {
             break;
         }
-        std.time.sleep(1_000);
+        std.Thread.sleep(1_000);
+        spins += 1;
+        if (spins > 5000) {
+            worker_thread.join();
+            var join_idx: usize = 0;
+            while (join_idx < poll_threads.len) : (join_idx += 1) {
+                poll_threads[join_idx].join();
+            }
+            try testing.expect(false);
+            return;
+        }
     }
 
     var main_payload: ?*anyopaque = null;
+    // If the worker thread beat us to consumption, bail early instead of spinning forever.
+    if (success_count.load(.acquire) != 0) {
+        worker_thread.join();
+        idx = 0;
+        while (idx < poll_threads.len) : (idx += 1) {
+            poll_threads[idx].join();
+        }
+        try testing.expectEqual(@as(usize, 1), success_count.load(.acquire));
+        return;
+    }
+
     const main_result = consume(handle);
     if (main_result) |ptr| {
-        success_count.fetchAdd(1, .AcqRel);
+        _ = success_count.fetchAdd(1, .acq_rel);
         main_payload = ptr;
     }
 
@@ -620,7 +671,7 @@ test "pending handle concurrent poll and consume" {
         poll_threads[idx].join();
     }
 
-    const successes = success_count.load(.Acquire);
+    const successes = success_count.load(.acquire);
     try testing.expectEqual(@as(usize, 1), successes);
 
     var freed = false;
@@ -628,7 +679,7 @@ test "pending handle concurrent poll and consume" {
         payloadCleanup(ptr);
         freed = true;
     }
-    const worker_ptr = worker_payload.swap(null, .AcqRel);
+    const worker_ptr = worker_payload.swap(null, .acq_rel);
     if (worker_ptr) |ptr| {
         try testing.expect(!freed);
         payloadCleanup(ptr);
@@ -641,4 +692,46 @@ test "pending handle concurrent poll and consume" {
         .{ GrpcStatus.failed_precondition, ERR_ALREADY_CONSUMED },
     );
     try testing.expectEqualStrings(expected_json, errors.snapshot());
+}
+
+test "consume preserves producer error published before lock" {
+    errors.setLastError("");
+
+    const allocator = std.heap.c_allocator;
+    const payload_ptr = allocator.create(u8) catch unreachable;
+    payload_ptr.* = 9;
+
+    const Cleanup = struct {
+        pub fn run(ptr: ?*anyopaque) void {
+            if (ptr) |non_null| {
+                const typed = @as(*u8, @ptrCast(non_null));
+                std.heap.c_allocator.destroy(typed);
+            }
+        }
+    };
+
+    const handle = createPendingReady(@as(?*anyopaque, @ptrCast(payload_ptr)), Cleanup.run) orelse unreachable;
+    defer free(handle);
+
+    const failure_message = "producer failure message";
+    const Hook = struct {
+        pub fn run(target: *PendingHandle) void {
+            if (!transitionToError(target, GrpcStatus.internal, failure_message)) {
+                @panic("failed to transition handle to error in test hook");
+            }
+        }
+    };
+
+    TestHooks.before_consume_lock = Hook.run;
+    defer TestHooks.before_consume_lock = null;
+
+    const result = consume(handle);
+    try testing.expect(result == null);
+
+    const expected_json = std.fmt.comptimePrint(
+        "{{\"code\":{d},\"message\":\"{s}\"}}",
+        .{ GrpcStatus.internal, failure_message },
+    );
+    try testing.expectEqualStrings(expected_json, errors.snapshot());
+    try testing.expectEqual(false, handle.consumed.load(.acquire));
 }
