@@ -5,6 +5,7 @@ item is designed to be auditable during release reviews.
 
 ## 1. Technical Completeness
 - ✅ Feature parity issues closed for IDs `zig-rt-*`, `zig-cl-*`, `zig-wf-*`, `zig-buf-*`, `zig-pend-*`.
+- ✅ `zig-core-02`: Zig bridge signals invoke Temporal core (`signalWorkflowExecution`) with real status mapping (PR #1554).
 - ✅ All TODO markers removed or converted to tracked issues with owners.
 - ✅ Integration matrix (`docs/testing-plan.md`) updated with Zig scenarios alongside Rust.
 

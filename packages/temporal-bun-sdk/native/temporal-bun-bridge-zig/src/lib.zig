@@ -5,6 +5,7 @@ const client = @import("client.zig");
 const byte_array = @import("byte_array.zig");
 const pending = @import("pending.zig");
 const worker = @import("worker.zig");
+pub const core = @import("core.zig");
 
 fn sliceFrom(ptr: ?[*]const u8, len: u64) []const u8 {
     if (ptr == null or len == 0) {
@@ -240,6 +241,12 @@ pub export fn temporal_bun_worker_complete_activity_task(
 ) i32 {
     const payload = sliceFrom(payload_ptr, len);
     return worker.completeActivityTask(handle, payload);
+}
+
+comptime {
+    if (@import("builtin").is_test) {
+        _ = @import("bridge_tests");
+    }
 }
 
 pub export fn temporal_bun_worker_record_activity_heartbeat(

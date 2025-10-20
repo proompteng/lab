@@ -103,6 +103,9 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     test_module.addIncludePath(include_dir);
+    test_module.addAnonymousImport("bridge_tests", .{
+        .root_source_file = b.path("tests/core_signal_workflow.zig"),
+    });
 
     const unit_tests = b.addTest(.{
         .root_module = test_module,

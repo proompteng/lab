@@ -27,6 +27,9 @@ pub const WorkerOpaque = Worker;
 pub const ByteArray = c.TemporalCoreByteArray;
 pub const ByteArrayRef = c.TemporalCoreByteArrayRef;
 pub const MetadataRef = c.TemporalCoreMetadataRef;
+pub const RpcCallOptions = c.TemporalCoreRpcCallOptions;
+pub const ClientRpcCallCallback = c.TemporalCoreClientRpcCallCallback;
+pub const RpcService = c.TemporalCoreRpcService;
 
 pub const ByteBuf = ByteArray;
 pub const ByteBufDestroyFn = *const fn (?*RuntimeOpaque, ?*const ByteBuf) callconv(.c) void;
@@ -115,14 +118,133 @@ pub const SignalWorkflowError = error{
     Internal,
 };
 
-pub fn signalWorkflow(_client: ?*ClientOpaque, request_json: []const u8) SignalWorkflowError!void {
-    _ = _client;
+const rpc_service_workflow: RpcService = @as(RpcService, 1);
+const signal_workflow_rpc = "SignalWorkflowExecution";
 
-    // Stub implementation used until the Temporal core C-ABI is linked.
-    // Treat workflow IDs ending with "-missing" as not found to exercise the error path in tests.
-    if (std.mem.indexOf(u8, request_json, "\"workflow_id\":\"missing-workflow\"")) |_| {
-        return SignalWorkflowError.NotFound;
+const grpc_status_not_found: u32 = 5;
+const grpc_status_internal: u32 = 13;
+const grpc_status_unavailable: u32 = 14;
+
+pub const ClientRpcCallFn = *const fn (
+    *ClientOpaque,
+    *const c.TemporalCoreRpcCallOptions,
+    ?*anyopaque,
+    c.TemporalCoreClientRpcCallCallback,
+) callconv(.c) void;
+
+var client_rpc_call_stub: ?ClientRpcCallFn = null;
+
+fn clientRpcCall(
+    client: *ClientOpaque,
+    options: *const c.TemporalCoreRpcCallOptions,
+    user_data: ?*anyopaque,
+    callback: c.TemporalCoreClientRpcCallCallback,
+) void {
+    if (client_rpc_call_stub) |stub| {
+        stub(client, options, user_data, callback);
+        return;
+    }
+    c.temporal_core_client_rpc_call(client, options, user_data, callback);
+}
+
+const SignalWorkflowContext = struct {
+    mutex: std.Thread.Mutex = .{},
+    cond: std.Thread.Condition = .{},
+    done: bool = false,
+    status_code: u32 = 0,
+    failure_present: bool = false,
+};
+
+fn signalWorkflowCallback(
+    user_data: ?*anyopaque,
+    success: ?*const ByteArray,
+    status_code: u32,
+    failure_message: ?*const ByteArray,
+    failure_details: ?*const ByteArray,
+) callconv(.c) void {
+    const raw_ctx = user_data orelse return;
+    const ctx: *SignalWorkflowContext = @ptrCast(@alignCast(raw_ctx));
+
+    if (success) |bytes| {
+        runtimeByteArrayFree(null, bytes);
+    }
+    if (failure_message) |bytes| {
+        runtimeByteArrayFree(null, bytes);
+    }
+    if (failure_details) |bytes| {
+        runtimeByteArrayFree(null, bytes);
     }
 
-    // TODO(codex, zig-core-02): Invoke temporal_core_client_signal_workflow once headers are available.
+    ctx.mutex.lock();
+    defer {
+        ctx.done = true;
+        ctx.cond.signal();
+        ctx.mutex.unlock();
+    }
+
+    ctx.status_code = status_code;
+    ctx.failure_present = (failure_message != null) or (failure_details != null);
+}
+
+pub fn setClientRpcCallStubForTesting(stub: ClientRpcCallFn) void {
+    if (!builtin.is_test) {
+        @panic("setClientRpcCallStubForTesting may only be used in tests");
+    }
+    client_rpc_call_stub = stub;
+}
+
+pub fn resetClientRpcCallStubForTesting() void {
+    if (!builtin.is_test) {
+        @panic("resetClientRpcCallStubForTesting may only be used in tests");
+    }
+    client_rpc_call_stub = null;
+}
+
+pub fn signalWorkflow(client: ?*ClientOpaque, request_json: []const u8) SignalWorkflowError!void {
+    if (client == null) {
+        return SignalWorkflowError.ClientUnavailable;
+    }
+
+    const rpc_name = signal_workflow_rpc;
+    const rpc_ref = c.TemporalCoreByteArrayRef{
+        .data = rpc_name.ptr,
+        .size = rpc_name.len,
+    };
+    const req_ref = c.TemporalCoreByteArrayRef{ .data = request_json.ptr, .size = request_json.len };
+    var options = c.TemporalCoreRpcCallOptions{
+        .service = rpc_service_workflow,
+        .rpc = rpc_ref,
+        .req = req_ref,
+        .retry = true,
+        .metadata = .{ .data = null, .size = 0 },
+        .timeout_millis = 0,
+        .cancellation_token = null,
+    };
+
+    var ctx = SignalWorkflowContext{};
+    clientRpcCall(client.?, &options, @as(?*anyopaque, @ptrCast(&ctx)), signalWorkflowCallback);
+
+    ctx.mutex.lock();
+    defer ctx.mutex.unlock();
+    while (!ctx.done) {
+        ctx.cond.wait(&ctx.mutex);
+    }
+
+    if (ctx.status_code == 0 and !ctx.failure_present) {
+        return;
+    }
+
+    switch (ctx.status_code) {
+        grpc_status_not_found => return SignalWorkflowError.NotFound,
+        grpc_status_unavailable => return SignalWorkflowError.ClientUnavailable,
+        grpc_status_internal => {},
+        else => {
+            std.log.warn(
+                "temporal_core_client_rpc_call returned unexpected status code {d} for SignalWorkflowExecution",
+                .{ctx.status_code},
+            );
+        },
+    }
+
+    return SignalWorkflowError.Internal;
 }
