@@ -3,6 +3,7 @@
 **Status:** Scaffolded — Zig shared library placeholder merged (18 Oct 2025)  
 **Owner:** Platform Runtime (Temporal Bun)  
 **Related Issue:** #1458 — Native Bun support with Zig
+**See Also:** `zig-bridge-architectural-plan.md` for the end-state architecture and roadmap.
 
 ---
 
@@ -45,6 +46,20 @@ Supporting modules:
 - `native/temporal-bun-bridge-zig/src/pending.zig` needs the hardening from #1526 to be thread-safe.
 - `native/temporal-bun-bridge-zig/src/byte_array.zig` still awaits telemetry/guardrails (`zig-buf-02`).
 - TypeScript loader (`src/internal/core-bridge/native.ts`) leaves telemetry/logging/cancelation paths as TODOs pending Zig parity.
+
+---
+
+## 4. Phased Roadmap (2025–2026)
+
+| Phase | Goals | Dependencies | Exit Criteria |
+|-------|-------|--------------|---------------|
+| 0. Foundations | Land pending-handle fixes (#1526), correct docs, validate TLS against Temporal Cloud sandbox. | Zig 0.15.x toolchain, Temporal Cloud sandbox access. | Zig unit tests + TLS smoke succeed on macOS/Linux. |
+| 1. Client Parity | Implement `zig-cl-*` / `zig-wf-*`, wrap Bun client API, publish quickstart docs. | `zig-pack-01` linkage, Bun FFI loaders. | Integration suite passes for connect/start/signal/query/terminate; docs author “Temporal on Bun”. |
+| 2. Worker Parity | Complete `zig-worker-*`, run workflow/activity loops in Bun worker. | Client parity shipped; workflow runtime scaffolding. | Sample workflow executes end-to-end with timers, activities, signals. |
+| 3. Observability | Wire telemetry/logging FFI, provide dashboards/runbooks. | Runtime parity, metrics exporters. | Prometheus + OTLP exporters validated; logging callback invoked from Bun. |
+| 4. Release & Adoption | Package native binaries, publish npm canary/GA, gather feedback. | Packaging pipeline, CI matrix ready. | npm release published with SBOM + signatures; Temporal Cloud smoke in CI. |
+
+The detailed architectural context for each phase lives in `zig-bridge-architectural-plan.md`.
 
 ---
 
