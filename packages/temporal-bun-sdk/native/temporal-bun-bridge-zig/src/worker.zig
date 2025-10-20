@@ -341,6 +341,10 @@ const WorkerTests = struct {
             .id = 7,
             .config = ""[0..0],
             .core_runtime = @as(?*core.RuntimeOpaque, @ptrCast(&fake_runtime_storage)),
+            .pending_lock = .{},
+            .pending_condition = .{},
+            .pending_connects = 0,
+            .destroying = false,
         };
     }
 

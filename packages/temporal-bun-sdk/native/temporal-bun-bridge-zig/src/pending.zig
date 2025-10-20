@@ -71,6 +71,8 @@ pub const PendingHandle = struct {
     cleanup: CleanupFn,
     fault: PendingErrorState,
     state_lock: std.Thread.Mutex,
+    ref_count: atomic.Value(usize),
+    cancelled: atomic.Value(bool),
 };
 
 const TestHooks = if (builtin.is_test) struct {
@@ -128,6 +130,8 @@ fn allocateHandle(status: Status) ?*PendingHandle {
             .active = false,
         },
         .state_lock = .{},
+        .ref_count = atomic.Value(usize).init(1),
+        .cancelled = atomic.Value(bool).init(false),
     };
     return handle;
 }
@@ -242,6 +246,53 @@ fn destroyHandle(handle: *PendingHandle) void {
 
     const allocator = std.heap.c_allocator;
     allocator.destroy(handle);
+}
+
+fn retainHandle(handle: *PendingHandle) bool {
+    var current = handle.ref_count.load(.acquire);
+    while (true) {
+        if (current == 0) {
+            return false;
+        }
+        const next = current + 1;
+        const exchanged = handle.ref_count.cmpxchgStrong(current, next, .acq_rel, .acquire);
+        if (exchanged == null) {
+            return true;
+        }
+        current = exchanged.?;
+    }
+}
+
+fn releaseHandle(handle: *PendingHandle) void {
+    const previous = handle.ref_count.fetchSub(1, .acq_rel);
+    std.debug.assert(previous > 0);
+    if (previous == 1) {
+        destroyHandle(handle);
+    }
+}
+
+pub fn retain(handle: ?*PendingHandle) bool {
+    if (handle == null) {
+        return false;
+    }
+
+    return retainHandle(handle.?);
+}
+
+pub fn release(handle: ?*PendingHandle) void {
+    if (handle == null) {
+        return;
+    }
+
+    releaseHandle(handle.?);
+}
+
+pub fn isCancelled(handle: ?*PendingHandle) bool {
+    if (handle == null) {
+        return true;
+    }
+
+    return handle.?.cancelled.load(.acquire);
 }
 
 fn publishFault(handle: *PendingHandle) void {
@@ -435,7 +486,12 @@ pub fn free(handle: ?*PendingHandle) void {
     }
 
     const pending = handle.?;
-    destroyHandle(pending);
+    const status = pending.status.load(.acquire);
+    if (status == .pending and !pending.consumed.load(.acquire)) {
+        pending.cancelled.store(true, .release);
+    }
+
+    releaseHandle(pending);
 }
 
 fn freeByteArrayFromPending(ptr: ?*anyopaque) void {
@@ -444,6 +500,92 @@ fn freeByteArrayFromPending(ptr: ?*anyopaque) void {
     else
         null;
     byte_array.free(array);
+}
+
+pub fn resolveClient(handle: ?*PendingClient, payload: ?*anyopaque, cleanup: CleanupFn) bool {
+    if (handle == null) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.invalid_argument,
+            .message = "temporal-bun-bridge-zig: resolveClient received null handle",
+            .details = null,
+        });
+        return false;
+    }
+
+    if (payload == null) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.invalid_argument,
+            .message = "temporal-bun-bridge-zig: resolveClient received null payload",
+            .details = null,
+        });
+        return false;
+    }
+
+    const pending_handle = handle.?;
+    const status = pending_handle.status.load(.acquire);
+    if (status != .pending) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.failed_precondition,
+            .message = "temporal-bun-bridge-zig: resolveClient expected pending status",
+            .details = null,
+        });
+        return false;
+    }
+
+    if (pending_handle.consumed.load(.acquire)) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.failed_precondition,
+            .message = "temporal-bun-bridge-zig: resolveClient received consumed handle",
+            .details = null,
+        });
+        return false;
+    }
+
+    if (!transitionToReady(pending_handle, payload, cleanup)) {
+        // Another producer modified the handle concurrently.
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.failed_precondition,
+            .message = "temporal-bun-bridge-zig: resolveClient failed to publish ready payload",
+            .details = null,
+        });
+        return false;
+    }
+
+    return true;
+}
+
+pub fn rejectClient(handle: ?*PendingClient, code: i32, message: []const u8) bool {
+    if (handle == null) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.invalid_argument,
+            .message = "temporal-bun-bridge-zig: rejectClient received null handle",
+            .details = null,
+        });
+        return false;
+    }
+
+    const pending_handle = handle.?;
+    const status = pending_handle.status.load(.acquire);
+    if (status != .pending) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.failed_precondition,
+            .message = "temporal-bun-bridge-zig: rejectClient expected pending status",
+            .details = null,
+        });
+        return false;
+    }
+
+    if (!transitionToError(pending_handle, code, message)) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.failed_precondition,
+            .message = "temporal-bun-bridge-zig: rejectClient failed to publish error state",
+            .details = null,
+        });
+        return false;
+    }
+
+    errors.setStructuredErrorJson(.{ .code = code, .message = if (message.len != 0) message else "", .details = null });
+    return true;
 }
 
 pub fn resolveByteArray(handle: ?*PendingByteArray, array: ?*byte_array.ByteArray) bool {
@@ -905,4 +1047,50 @@ test "consume preserves producer error published before lock" {
     );
     try testing.expectEqualStrings(expected_json, errors.snapshot());
     try testing.expectEqual(false, handle.consumed.load(.acquire));
+}
+
+test "resolveClient transitions pending handle to ready" {
+    const handle_opt = createPendingInFlight();
+    try testing.expect(handle_opt != null);
+    const handle_ptr = handle_opt.?;
+    defer free(handle_ptr);
+
+    const pending_client = @as(*PendingClient, @ptrCast(@alignCast(handle_ptr)));
+    var payload_value: usize = 42;
+    const payload_ptr = @as(?*anyopaque, @ptrCast(&payload_value));
+
+    try testing.expect(resolveClient(pending_client, payload_ptr, null));
+    try testing.expectEqual(@as(i32, @intFromEnum(Status.ready)), poll(handle_ptr));
+
+    const consumed = consume(handle_ptr);
+    try testing.expect(consumed != null);
+    try testing.expectEqual(@intFromPtr(payload_ptr.?), @intFromPtr(consumed.?));
+}
+
+test "free marks pending handle cancelled while retained" {
+    errors.setLastError("");
+
+    const handle_opt = createPendingInFlight();
+    try testing.expect(handle_opt != null);
+    const handle_ptr = handle_opt.?;
+
+    try testing.expect(retain(handle_ptr));
+    try testing.expect(!isCancelled(handle_ptr));
+
+    free(handle_ptr);
+    try testing.expect(isCancelled(handle_ptr));
+
+    release(handle_ptr);
+}
+
+test "rejectClient transitions pending handle to failed state" {
+    const handle_opt = createPendingInFlight();
+    try testing.expect(handle_opt != null);
+    const handle_ptr = handle_opt.?;
+    defer free(handle_ptr);
+
+    const pending_client = @as(*PendingClient, @ptrCast(@alignCast(handle_ptr)));
+    try testing.expect(rejectClient(pending_client, GrpcStatus.internal, "boom"));
+    try testing.expectEqual(@as(i32, @intFromEnum(Status.failed)), poll(handle_ptr));
+    try testing.expect(consume(handle_ptr) == null);
 }

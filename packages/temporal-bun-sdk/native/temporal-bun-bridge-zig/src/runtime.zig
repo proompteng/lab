@@ -4,6 +4,7 @@ const core = @import("core.zig");
 const pending = @import("pending.zig");
 
 const grpc = pending.GrpcStatus;
+const allocator = std.heap.c_allocator;
 
 const RuntimeNewFn = *const fn ([*c]const core.RuntimeOptions) callconv(.c) core.RuntimeOrFail;
 const RuntimeFreeFn = *const fn (?*core.Runtime) callconv(.c) void;
@@ -58,13 +59,15 @@ pub const RuntimeHandle = struct {
     /// Raw JSON payload passed from TypeScript; retained until the Rust runtime wiring is complete.
     config: []u8,
     core_runtime: ?*core.Runtime,
+    pending_lock: std.Thread.Mutex,
+    pending_condition: std.Thread.Condition,
+    pending_connects: usize,
+    destroying: bool,
 };
 
 var next_runtime_id: u64 = 1;
 
 pub fn create(options_json: []const u8) ?*RuntimeHandle {
-    var allocator = std.heap.c_allocator;
-
     const copy = allocator.alloc(u8, options_json.len) catch |err| {
         var scratch: [128]u8 = undefined;
         const message = std.fmt.bufPrint(
@@ -96,6 +99,10 @@ pub fn create(options_json: []const u8) ?*RuntimeHandle {
         .id = id,
         .config = copy,
         .core_runtime = null,
+        .pending_lock = .{},
+        .pending_condition = .{},
+        .pending_connects = 0,
+        .destroying = false,
     };
 
     // Temporal core expects a valid options struct even when telemetry is absent; initialize with defaults.
@@ -117,9 +124,22 @@ pub fn create(options_json: []const u8) ?*RuntimeHandle {
             .details = if (fail_message.len > 0) fail_message else null,
         });
 
-        // Temporal core allocates the failure payload; release it with the runtime before freeing the runtime itself.
         runtimeByteArrayFree(runtime_ptr, fail_ptr);
         runtimeFree(runtime_ptr);
+
+        allocator.free(copy);
+        allocator.destroy(handle);
+        return null;
+    }
+
+    if (runtime_ptr == null) {
+        const fallback =
+            "temporal-bun-bridge-zig: temporal core runtime initialization failed";
+        errors.setStructuredError(.{
+            .code = grpc.internal,
+            .message = fallback,
+            .details = null,
+        });
 
         allocator.free(copy);
         allocator.destroy(handle);
@@ -139,12 +159,17 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
         return;
     }
 
-    var allocator = std.heap.c_allocator;
     const runtime = handle.?;
 
-    // TODO(codex, zig-rt-02): Call into the Temporal core to drop the runtime (`runtime.free`).
-    if (runtime.core_runtime) |_| {
-        // The Zig bridge does not yet link against Temporal core; release will be wired in zig-rt-02.
+    runtime.pending_lock.lock();
+    runtime.destroying = true;
+    while (runtime.pending_connects != 0) {
+        runtime.pending_condition.wait(&runtime.pending_lock);
+    }
+    runtime.pending_lock.unlock();
+
+    if (runtime.core_runtime) |core_runtime_ptr| {
+        runtimeFree(core_runtime_ptr);
     }
 
     if (runtime.config.len > 0) {
@@ -152,6 +177,30 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
     }
 
     allocator.destroy(runtime);
+}
+
+pub fn beginPendingClientConnect(handle: *RuntimeHandle) bool {
+    handle.pending_lock.lock();
+    defer handle.pending_lock.unlock();
+
+    if (handle.destroying) {
+        return false;
+    }
+
+    handle.pending_connects += 1;
+    return true;
+}
+
+pub fn endPendingClientConnect(handle: *RuntimeHandle) void {
+    handle.pending_lock.lock();
+    defer handle.pending_lock.unlock();
+
+    std.debug.assert(handle.pending_connects > 0);
+    handle.pending_connects -= 1;
+
+    if (handle.destroying and handle.pending_connects == 0) {
+        handle.pending_condition.broadcast();
+    }
 }
 
 pub fn updateTelemetry(handle: ?*RuntimeHandle, _options_json: []const u8) i32 {
@@ -306,4 +355,111 @@ test "create surfaces Temporal core runtime failure and frees resources" {
     const expected_error =
         "{\"code\":13,\"message\":\"core runtime exploded\",\"details\":\"core runtime exploded\"}";
     try testing.expectEqualStrings(expected_error, errors.snapshot());
+}
+
+test "beginPendingClientConnect guards against runtime destruction" {
+    const testing = std.testing;
+    resetCoreApiOverrides();
+    defer resetCoreApiOverrides();
+    errors.setLastError(""[0..0]);
+
+    const Stubs = struct {
+        var runtime_new_calls: usize = 0;
+        var runtime_free_calls: usize = 0;
+        var runtime_storage: DummyRuntime = .{};
+
+        fn runtimePointer() *core.Runtime {
+            return @as(*core.Runtime, @ptrCast(&runtime_storage));
+        }
+
+        fn runtimeNew(options: [*c]const core.RuntimeOptions) callconv(.c) core.RuntimeOrFail {
+            _ = options;
+            runtime_new_calls += 1;
+            return .{ .runtime = runtimePointer(), .fail = null };
+        }
+
+        fn runtimeFree(runtime: ?*core.Runtime) callconv(.c) void {
+            _ = runtime;
+            runtime_free_calls += 1;
+        }
+    };
+
+    runtime_new_impl = Stubs.runtimeNew;
+    runtime_free_impl = Stubs.runtimeFree;
+
+    const handle_opt = create("{}"[0..]);
+    try testing.expect(handle_opt != null);
+    const handle = handle_opt.?;
+    defer destroy(handle);
+
+    try testing.expect(beginPendingClientConnect(handle));
+    try testing.expectEqual(@as(usize, 1), handle.pending_connects);
+
+    endPendingClientConnect(handle);
+    try testing.expectEqual(@as(usize, 0), handle.pending_connects);
+
+    handle.pending_lock.lock();
+    handle.destroying = true;
+    handle.pending_lock.unlock();
+
+    try testing.expect(!beginPendingClientConnect(handle));
+    try testing.expectEqual(@as(usize, 0), handle.pending_connects);
+
+    try testing.expectEqual(@as(usize, 1), Stubs.runtime_new_calls);
+    try testing.expectEqual(@as(usize, 0), Stubs.runtime_free_calls);
+}
+
+test "destroy waits for pending client connects" {
+    const testing = std.testing;
+    resetCoreApiOverrides();
+    defer resetCoreApiOverrides();
+    errors.setLastError(""[0..0]);
+
+    const Stubs = struct {
+        var runtime_new_calls: usize = 0;
+        var runtime_free_calls: usize = 0;
+        var runtime_storage: DummyRuntime = .{};
+
+        fn runtimePointer() *core.Runtime {
+            return @as(*core.Runtime, @ptrCast(&runtime_storage));
+        }
+
+        fn runtimeNew(options: [*c]const core.RuntimeOptions) callconv(.c) core.RuntimeOrFail {
+            _ = options;
+            runtime_new_calls += 1;
+            return .{ .runtime = runtimePointer(), .fail = null };
+        }
+
+        fn runtimeFree(runtime: ?*core.Runtime) callconv(.c) void {
+            _ = runtime;
+            runtime_free_calls += 1;
+        }
+    };
+
+    runtime_new_impl = Stubs.runtimeNew;
+    runtime_free_impl = Stubs.runtimeFree;
+
+    const handle_opt = create("{}"[0..]);
+    try testing.expect(handle_opt != null);
+    const handle = handle_opt.?;
+
+    try testing.expect(beginPendingClientConnect(handle));
+
+    const Destroyer = struct {
+        fn run(handle_ptr: *RuntimeHandle) void {
+            destroy(handle_ptr);
+        }
+    };
+
+    var thread = try std.Thread.spawn(.{}, Destroyer.run, .{handle});
+
+    std.Thread.sleep(std.time.ns_per_ms * 10);
+    try testing.expectEqual(@as(usize, 0), Stubs.runtime_free_calls);
+
+    endPendingClientConnect(handle);
+
+    thread.join();
+
+    try testing.expectEqual(@as(usize, 1), Stubs.runtime_new_calls);
+    try testing.expectEqual(@as(usize, 1), Stubs.runtime_free_calls);
 }

@@ -360,6 +360,8 @@ typedef struct TemporalCorePrometheusOptions {
   TemporalCoreMetadataRef histogram_bucket_overrides;
 } TemporalCorePrometheusOptions;
 
+struct TemporalCoreCustomMetricMeter;
+
 typedef const void *(*TemporalCoreCustomMetricMeterMetricNewCallback)(struct TemporalCoreByteArrayRef name,
                                                                       struct TemporalCoreByteArrayRef description,
                                                                       struct TemporalCoreByteArrayRef unit,
