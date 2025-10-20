@@ -1,41 +1,49 @@
 # Temporal Bun Zig Bridge — Production Readiness
 
-The Zig bridge must satisfy the following formalities before we flip the default from Rust to Zig. Each
-item is designed to be auditable during release reviews.
+**Status (20 Oct 2025): Scaffold only.** The Zig bridge exports the FFI surface but still relies on stubbed runtime,
+client, and worker implementations. The checklist below captures what remains before the Zig bridge can replace
+the Rust bridge as the default.
 
 ## 1. Technical Completeness
-- ✅ Feature parity issues closed for IDs `zig-rt-*`, `zig-cl-*`, `zig-wf-*`, `zig-buf-*`, `zig-pend-*`.
-- ✅ All TODO markers removed or converted to tracked issues with owners.
-- ✅ Integration matrix (`docs/testing-plan.md`) updated with Zig scenarios alongside Rust.
+- [ ] Feature parity issues for `zig-rt-*`, `zig-cl-*`, `zig-wf-*`, `zig-buf-*`, `zig-pend-*` are closed. (Open examples:
+  `zig-rt-02`, `zig-rt-03`, `zig-rt-04`, `zig-cl-01`…`zig-cl-04`, `zig-wf-01`…`zig-wf-06`, `zig-worker-01`…`zig-worker-09`.)
+- [ ] All inline `TODO(codex, …)` markers are removed or mapped to open issues. Current gaps include
+  `zig-core-02`, `zig-cl-04`, and `zig-pack-01`.
+- [ ] `docs/testing-plan.md` documents Zig scenarios next to Rust, and the test matrix reflects the planned
+  end-to-end coverage.
 
 ## 2. Automated Verification
-- ✅ GitHub Actions: `.github/workflows/temporal-bun-sdk.yml` (Rust) and `.github/workflows/temporal-bun-sdk-zig.yml` (Zig) both green.
-- ✅ Nightly job executes Docker-based end-to-end smoke (`tests/docker-compose.yaml`) against Zig bridge.
-- ✅ Test failures gate releases; flaky tests quarantined with documented follow-up.
+- [ ] Dedicated Zig CI workflow (e.g. `.github/workflows/temporal-bun-sdk-zig.yml`) runs `zig build test` plus Bun
+  smoke tests on every PR.
+- [ ] Nightly Docker-based smoke (`tests/docker-compose.yaml`) exercises the Zig bridge path and reports separately
+  from the Rust bridge.
+- [ ] Flaky Zig tests, if any, are triaged with documented owners and follow-ups.
 
 ## 3. Packaging & Distribution
-- ✅ `zig-pack-01`/`zig-pack-02` complete — Zig artifacts bundled for macOS (x64/arm64) and Linux (x64/arm64); Windows/MSVC remains scoped to `zig-pack-03`.
-- ✅ Hash-signed release assets published to GitHub Releases with provenance metadata.
-- ✅ Package README highlights Zig vs Rust bridge selection and environment variables.
+- [ ] `zig-pack-01` links the bridge against vendored Temporal static libraries; `zig-pack-02` copies platform
+  artifacts into `dist/native/<platform>/<arch>/`.
+- [ ] Release automation publishes Zig binaries (macOS arm64/x64, Linux arm64/x64, Windows/MSVC once available) with
+  signatures/provenance.
+- [ ] README and publish notes explain how SDK consumers opt into/out of the Zig bridge and which platforms are supported.
 
 ## 4. Security & Compliance
-- ✅ Supply chain review complete (Zig toolchain, cbindgen output, vendored Temporal headers).
-- ✅ Vulnerability scan on Zig artifacts (e.g., `trivy fs`) integrated into release workflow.
-- ✅ Security advisory filed for potential downgrade path (Rust fallback), including rollback steps.
+- [ ] Supply-chain review covers the Zig toolchain, vendored headers, and build scripts.
+- [ ] Vulnerability scanning (e.g. `trivy fs`) includes the Zig artifacts in release gating.
+- [ ] Downgrade/rollback guidance for the Zig bridge versus Rust fallback is documented and reviewed.
 
 ## 5. Observability & Ops
-- ✅ Telemetry parity delivered (logs, metrics, tracing) with hooks plumbed into Bun runtime.
-- ✅ Runbooks updated: failure signatures, debugging steps, and rollback instructions.
-- ✅ SLO dashboards include Zig bridge metrics with alerts routed to Platform Runtime.
+- [ ] Telemetry, logging, and tracing parity is delivered (`zig-rt-03`, `zig-rt-04`, byte-array metrics surfaced to Bun).
+- [ ] Runbooks describe Zig-specific failure signatures and debugging workflows.
+- [ ] Platform dashboards/SLOs include Zig bridge metrics and alert hooks.
 
 ## 6. Rollout & Communication
-- ✅ Dry-run rollout in staging namespace with shadow traffic compared against Rust bridge.
-- ✅ Change announcement posted in #platform-runtime and added to the weekly release notes.
-- ✅ Support playbook updated with FAQ entry covering bridge selection and troubleshooting.
+- [ ] Staging rollout with shadow traffic validates the Zig bridge against real Temporal workloads.
+- [ ] Announcements (Slack, release notes) communicate the rollout plan and support channels.
+- [ ] Support FAQ covers bridge selection, troubleshooting, and feature gaps while both bridges coexist.
 
 ## 7. Post-Launch Governance
-- ✅ Ownership recorded in `CODEOWNERS`; escalate-to contact documented.
-- ✅ Quarterly review cadence established to audit Temporal dependency updates.
-- ✅ Deprecation plan for Rust bridge communicated (timeline + migration steps).
+- [ ] CODEOWNERS/escalation contacts for the Zig bridge are recorded and kept current.
+- [ ] Dependency review cadence (Temporal core headers/libraries, Zig versions) is scheduled and tracked.
+- [ ] Rust bridge deprecation plan (timeline, migration steps) is approved and published.
 
-Track each checklist item in the project board before merging the “Zig default” PR.
+Update this checklist as milestones close so reviewers can see at a glance when the Zig bridge is truly production ready.
