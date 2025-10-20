@@ -10,10 +10,10 @@
 
 Ship `@proompteng/temporal-bun-sdk` to npm so Bun developers can:
 
-- install a single package that bundles Zig-built native libraries for macOS (arm64/x64) and Linux (arm64/x64); the library loads through `bun:ffi` without requiring Rust on consumer machines;citehttps://bun.com/docs/api/ffi
-- author workflows, activities, and workers purely in Bun/TypeScript with an API surface comparable to the Node Temporal SDK while preserving determinism guarantees;citehttps://docs.temporal.io/concepts/what-is-temporal
-- connect securely to Temporal Cloud (TLS, worker versioning, long-running workflow support) out of the box;citehttps://docs.temporal.io/worker-versioninghttps://temporal.io/blog/very-long-running-workflows
-- run production-grade telemetry (Prometheus, OTLP) and logging hooks via the Zig runtime bridge so platform teams can operate Bun workers at scale.citehttps://docs.temporal.io/determine-deploy-production
+- install a single package that bundles Zig-built native libraries for macOS (arm64/x64) and Linux (arm64/x64); the library loads through `bun:ffi` without requiring Rust on consumer machines (see [Bun FFI docs](https://bun.com/docs/api/ffi)).
+- author workflows, activities, and workers purely in Bun/TypeScript with an API surface comparable to the Node Temporal SDK while preserving determinism guarantees (see [Temporal concepts](https://docs.temporal.io/concepts/what-is-temporal)).
+- connect securely to Temporal Cloud (TLS, worker versioning, long-running workflow support) out of the box (see [Worker versioning](https://docs.temporal.io/worker-versioning) and [Long-running workflows](https://temporal.io/blog/very-long-running-workflows)).
+- run production-grade telemetry (Prometheus, OTLP) and logging hooks via the Zig runtime bridge so platform teams can operate Bun workers at scale (see [Temporal production checklist](https://docs.temporal.io/determine-deploy-production)).
 
 ---
 
@@ -29,26 +29,26 @@ Ship `@proompteng/temporal-bun-sdk` to npm so Bun developers can:
 ### 2.2 Bun Interop Layer
 
 - Provide TypeScript wrappers (`src/core-bridge/**`) that mirror the Node SDK surface but translate to Bun primitives (e.g., `Bun.file`, `AbortController`, top-level `await`).  
-- Detect Bun at runtime and load the Zig library with `dlopen`. When running on unsupported runtimes, fail fast with actionable guidance.citehttps://bun.com/docs/api/ffi  
-- Validate TLS handshakes against Temporal Cloud and document known Docker pitfalls observed by early adopters.citehttps://community.temporal.io/t/temporal-client-fails-to-connect-inside-docker-container-node-js-bun/17982
+- Detect Bun at runtime and load the Zig library with `dlopen`. When running on unsupported runtimes, fail fast with actionable guidance (see [Bun FFI docs](https://bun.com/docs/api/ffi)).
+- Validate TLS handshakes against Temporal Cloud and document known Docker pitfalls observed by early adopters (see [Temporal community report](https://community.temporal.io/t/temporal-client-fails-to-connect-inside-docker-container-node-js-bun/17982)).
 
 ### 2.3 Developer Experience & Tooling
 
 - Ship a `bun create temporal` (or `pnpm create`) template showcasing local development, Temporal CLI integration, and recommended Bun project structure.  
-- Bundle docs and code samples demonstrating worker versioning rollouts, workflow testing, and replay flows.citehttps://docs.temporal.io/worker-versioninghttps://temporal.io/blog/very-long-running-workflows  
-- Support `bun test` and `bun --watch` for quick feedback, with guidance on using the Temporal web UI/debugger alongside Bun workflows.citehttps://www.reddit.com/r/bun/comments/1m69ui2
+- Bundle docs and code samples demonstrating worker versioning rollouts, workflow testing, and replay flows (see [Worker versioning](https://docs.temporal.io/worker-versioning) and [Long-running workflows](https://temporal.io/blog/very-long-running-workflows)).
+- Support `bun test` and `bun --watch` for quick feedback, with guidance on using the Temporal web UI/debugger alongside Bun workflows (see [Bun debugger discussion](https://www.reddit.com/r/bun/comments/1m69ui2)).
 
 ### 2.4 Observability & Operations
 
 - Wire `temporal_bun_runtime_update_telemetry` and `temporal_bun_runtime_set_logger` once the bridge exposes them, surfacing Prometheus and OTLP exporters to Bun.  
-- Provide default dashboards/alerts and document SLO expectations for Bun workers.citehttps://docs.temporal.io/determine-deploy-production  
-- Capture long-running workflow considerations (timeouts, continue-as-new) to avoid surprises when moving from Node to Bun.citehttps://temporal.io/blog/very-long-running-workflows
+- Provide default dashboards/alerts and document SLO expectations for Bun workers (see [Temporal production checklist](https://docs.temporal.io/determine-deploy-production)).
+- Capture long-running workflow considerations (timeouts, continue-as-new) to avoid surprises when moving from Node to Bun (see [Long-running workflows](https://temporal.io/blog/very-long-running-workflows)).
 
 ### 2.5 Quality Bar
 
-- Matrix CI on macOS and Linux (arm64/x64) using the latest Bun LTS (track via endoflife.date).citehttps://endoflife.date/bun  
+- Matrix CI on macOS and Linux (arm64/x64) using the latest Bun LTS (track via [endoflife.date](https://endoflife.date/bun)).
 - Integrate Temporal’s docker-compose integration tests plus a nightly Temporal Cloud TLS smoke.  
-- Publish SBOMs, checksums, and signature metadata for native artifacts; document the support policy for experimental Bun FFI releases.citehttps://bun.com/docs/api/ffi
+- Publish SBOMs, checksums, and signature metadata for native artifacts; document the support policy for experimental Bun FFI releases (see [Bun FFI docs](https://bun.com/docs/api/ffi)).
 
 ---
 
@@ -69,9 +69,9 @@ Dates assume we prioritize the Zig bridge alongside existing Rust bridge mainten
 ## 4. Documentation Backlog
 
 - **Quickstart:** “Temporal on Bun” (local dev + Temporal Cloud).  
-- **FFI Safety Notes:** explain Bun’s experimental status, supported platforms, and fallback behaviour.citehttps://bun.com/docs/api/ffi  
-- **Worker Versioning & Deployment Guide:** tailored to Bun packaging/deploy flows.citehttps://docs.temporal.io/worker-versioning  
-- **Troubleshooting TLS/Docker:** collect known issues and fixes from community threads.citehttps://community.temporal.io/t/temporal-client-fails-to-connect-inside-docker-container-node-js-bun/17982  
+- **FFI Safety Notes:** explain Bun’s experimental status, supported platforms, and fallback behaviour (see [Bun FFI docs](https://bun.com/docs/api/ffi)).
+- **Worker Versioning & Deployment Guide:** tailored to Bun packaging/deploy flows (see [Worker versioning](https://docs.temporal.io/worker-versioning)).
+- **Troubleshooting TLS/Docker:** collect known issues and fixes from community threads (see [Temporal community report](https://community.temporal.io/t/temporal-client-fails-to-connect-inside-docker-container-node-js-bun/17982)).
 - **Release Notes Template:** highlight Bun minimum version, platform coverage, experimental warnings.
 
 Keep this list synchronized with `zig-production-readiness.md`.
@@ -80,14 +80,14 @@ Keep this list synchronized with `zig-production-readiness.md`.
 
 ## 5. References
 
-1. Bun FFI documentation (“Experimental — not recommended for production use yet”).citehttps://bun.com/docs/api/ffi  
-2. Temporal Cloud Docker TLS issue report (Node/Bun) — illustrates current friction.citehttps://community.temporal.io/t/temporal-client-fails-to-connect-inside-docker-container-node-js-bun/17982  
-3. Temporal worker versioning rollout guide.citehttps://docs.temporal.io/worker-versioning  
-4. Temporal long-running workflow best practices.citehttps://temporal.io/blog/very-long-running-workflows  
-5. Bun community feedback on debugging workflow failures.citehttps://www.reddit.com/r/bun/comments/1m69ui2  
-6. Bun release lifecycle (track supported versions).citehttps://endoflife.date/bun  
-7. Temporal production deployment checklist.citehttps://docs.temporal.io/determine-deploy-production  
-8. Temporal primer on platform architecture.citehttps://docs.temporal.io/concepts/what-is-temporal
+1. [Bun FFI documentation](https://bun.com/docs/api/ffi) (“Experimental — not recommended for production use yet”).
+2. [Temporal Cloud Docker TLS issue report](https://community.temporal.io/t/temporal-client-fails-to-connect-inside-docker-container-node-js-bun/17982) illustrating current friction.
+3. [Temporal worker versioning rollout guide](https://docs.temporal.io/worker-versioning).
+4. [Temporal long-running workflow best practices](https://temporal.io/blog/very-long-running-workflows).
+5. [Bun community feedback on debugging workflow failures](https://www.reddit.com/r/bun/comments/1m69ui2).
+6. [Bun release lifecycle](https://endoflife.date/bun) for tracking supported versions.
+7. [Temporal production deployment checklist](https://docs.temporal.io/determine-deploy-production).
+8. [Temporal platform overview](https://docs.temporal.io/concepts/what-is-temporal).
 
 ---
 
