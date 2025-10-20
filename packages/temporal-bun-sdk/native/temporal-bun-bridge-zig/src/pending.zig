@@ -86,7 +86,6 @@ inline fn runBeforeConsumeLockHook(handle: *PendingHandle) void {
 /// - pending.free: releases handle resources via `temporal_bun_pending_{client,byte_array}_free` and other call sites.
 /// - client.connectAsync and future async client APIs wrap payload pointers in `.ready` handles; worker.zig uses
 ///   createPendingError for unimplemented paths today. All callers depend on errors.zig to expose thread-local messages.
-
 fn setStructuredError(code: i32, message: []const u8) void {
     errors.setStructuredErrorJson(.{ .code = code, .message = message, .details = null });
 }
