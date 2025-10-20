@@ -115,11 +115,11 @@ fn byteArraySlice(bytes_ptr: ?*const core.ByteArray) []const u8 {
     }
 
     const bytes = bytes_ptr.?;
-    if (bytes.data == null or bytes.size == 0) {
+    if (bytes.data_ptr == null or bytes.len == 0) {
         return ""[0..0];
     }
 
-    return bytes.data[0..bytes.size];
+    return bytes.data_ptr.?[0..bytes.len];
 }
 
 pub fn completeWorkflowTask(handle: ?*WorkerHandle, payload: []const u8) i32 {
@@ -177,8 +177,8 @@ pub fn completeWorkflowTask(handle: ?*WorkerHandle, payload: []const u8) i32 {
     state.wait_group.start();
 
     const completion = core.ByteArrayRef{
-        .data = payload.ptr,
-        .size = payload.len,
+        .data_ptr = payload.ptr,
+        .len = payload.len,
     };
 
     core.workerCompleteWorkflowActivation(
@@ -272,8 +272,8 @@ const WorkerTests = struct {
 
     var stub_fail_message: []const u8 = ""[0..0];
     var stub_fail_buffer: core.ByteArray = .{
-        .data = null,
-        .size = 0,
+        .data_ptr = null,
+        .len = 0,
         .cap = 0,
         .disable_free = false,
     };
@@ -287,10 +287,10 @@ const WorkerTests = struct {
     }
 
     fn stubCompletionSlice(ref: core.ByteArrayRef) []const u8 {
-        if (ref.data == null or ref.size == 0) {
+        if (ref.data_ptr == null or ref.len == 0) {
             return ""[0..0];
         }
-        return ref.data[0..ref.size];
+        return ref.data_ptr.?[0..ref.len];
     }
 
     fn stubCompleteSuccess(
@@ -302,8 +302,8 @@ const WorkerTests = struct {
         _ = worker_ptr;
         stub_completion_call_count += 1;
         last_completion_payload = stubCompletionSlice(completion);
-        if (callback) |cb| {
-            cb(user_data, null);
+        if (@intFromPtr(callback) != 0) {
+            callback(user_data, null);
         }
     }
 
@@ -317,13 +317,13 @@ const WorkerTests = struct {
         stub_completion_call_count += 1;
         last_completion_payload = stubCompletionSlice(completion);
         stub_fail_buffer = .{
-            .data = stub_fail_message.ptr,
-            .size = stub_fail_message.len,
+            .data_ptr = stub_fail_message.ptr,
+            .len = stub_fail_message.len,
             .cap = stub_fail_message.len,
             .disable_free = false,
         };
-        if (callback) |cb| {
-            cb(user_data, &stub_fail_buffer);
+        if (@intFromPtr(callback) != 0) {
+            callback(user_data, &stub_fail_buffer);
         }
     }
 
@@ -417,6 +417,6 @@ test "completeWorkflowTask surfaces core error payload" {
     try testing.expectEqual(@as(?*core.RuntimeOpaque, @ptrCast(&WorkerTests.fake_runtime_storage)), WorkerTests.last_runtime_byte_array_free_runtime);
     try testing.expect(WorkerTests.last_runtime_byte_array_free_ptr != null);
     if (WorkerTests.last_runtime_byte_array_free_ptr) |ptr| {
-        try testing.expectEqual(@as(usize, WorkerTests.stub_fail_message.len), ptr.size);
+        try testing.expectEqual(@as(usize, WorkerTests.stub_fail_message.len), ptr.len);
     }
 }

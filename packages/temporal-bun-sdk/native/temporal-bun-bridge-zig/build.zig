@@ -82,9 +82,9 @@ pub fn build(b: *std.Build) void {
     const include_dir = b.path("include");
     lib_module.addIncludePath(include_dir);
 
-    if (std.process.getEnvVarOwned(allocator, "TEMPORAL_CORE_INCLUDE_DIR")) |include_dir| {
-        defer allocator.free(include_dir);
-        lib_module.addIncludePath(.{ .cwd_relative = include_dir });
+    if (std.process.getEnvVarOwned(allocator, "TEMPORAL_CORE_INCLUDE_DIR")) |include_dir_override| {
+        defer allocator.free(include_dir_override);
+        lib_module.addIncludePath(.{ .cwd_relative = include_dir_override });
     } else |_| {}
 
     const lib = b.addLibrary(.{

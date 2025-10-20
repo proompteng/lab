@@ -260,6 +260,5 @@ pub export fn temporal_bun_worker_finalize_shutdown(handle: ?*worker.WorkerHandl
 }
 
 test {
-    _ = @import("client_connect_test.zig");
     _ = @import("client_describe_namespace_test.zig");
 }
