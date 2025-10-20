@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto'
 import type { Webhooks } from '@octokit/webhooks'
 import { Effect } from 'effect'
 import type { Effect as EffectType } from 'effect/Effect'
-import * as STM from 'effect/STM'
 import * as TSemaphore from 'effect/TSemaphore'
 
 import type { AppRuntime } from '@/effect/runtime'
@@ -45,9 +44,18 @@ const buildHeaders = (
   return headers
 }
 
-export const createGithubWebhookHandler =
-  ({ runtime, webhooks, config }: GithubWebhookDependencies) =>
-  async (rawBody: string, request: Request): Promise<Response> => {
+export const createGithubWebhookHandler = ({ runtime, webhooks, config }: GithubWebhookDependencies) => {
+  const githubService = runtime.runSync(
+    Effect.gen(function* (_) {
+      return yield* GithubService
+    }),
+  )
+  const githubSemaphore = TSemaphore.unsafeMake(4)
+
+  const runGithub = <R, E, A>(factory: () => EffectType<R, E, A>) =>
+    runtime.runPromise(TSemaphore.withPermits(githubSemaphore, 1)(factory()))
+
+  return async (rawBody: string, request: Request): Promise<Response> => {
     const signatureHeader = request.headers.get('x-hub-signature-256')
     if (!signatureHeader) {
       logger.error({ headers: Array.from(request.headers.keys()) }, 'missing x-hub-signature-256 header')
@@ -82,16 +90,6 @@ export const createGithubWebhookHandler =
 
     const workflowIdentifier =
       process.env.ARGO_WORKFLOW_NAME ?? process.env.ARGO_WORKFLOW_UID ?? process.env.ARGO_WORKFLOW_NAMESPACE ?? null
-
-    const githubService = runtime.runSync(
-      Effect.gen(function* (_) {
-        return yield* GithubService
-      }),
-    )
-    const githubSemaphore = Effect.runSync(STM.commit(TSemaphore.make(4)))
-
-    const runGithub = <R, E, A>(factory: () => EffectType<R, E, A>) =>
-      runtime.runPromise(TSemaphore.withPermits(githubSemaphore, 1)(factory()))
 
     const executionContext: WorkflowExecutionContext = {
       runtime,
@@ -204,3 +202,4 @@ export const createGithubWebhookHandler =
       return new Response('Failed to enqueue webhook event', { status: 500 })
     }
   }
+}
