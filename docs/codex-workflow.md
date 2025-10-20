@@ -4,14 +4,14 @@ This guide explains how the three-stage Codex automation pipeline works and how 
 
 ## Architecture
 
-1. **Froussard** consumes GitHub webhooks and normalises them into Kafka topics (`github.codex.tasks`, `github.issues.codex.tasks`).citehttps://docs.github.com/en/webhooks-and-events/webhooks/about-webhooks When the planning workflow leaves a `<!-- codex:plan -->` marker the service promotes the issue to implementation, mirroring GitHub’s recommended pattern for approval comments.
-2. **Argo Events** (`github-codex` EventSource/Sensor) consumes those Kafka messages and fans out to dedicated workflow templates for each stage.citehttps://argo-events.readthedocs.io/en/stable/
+1. **Froussard** consumes GitHub webhooks and normalises them into Kafka topics (`github.codex.tasks`, `github.issues.codex.tasks`). When the planning workflow leaves a `<!-- codex:plan -->` marker the service promotes the issue to implementation, mirroring GitHub’s recommended pattern for approval comments (see the [GitHub webhooks guide](https://docs.github.com/en/webhooks-and-events/webhooks/about-webhooks)).
+2. **Argo Events** (`github-codex` EventSource/Sensor) consumes those Kafka messages and fans out to dedicated workflow templates for each stage as documented in the [Argo Events manual](https://argo-events.readthedocs.io/en/stable/).
    - `github-codex-planning` for planning requests.
    - `github-codex-implementation` for approved plans.
    - `github-codex-review` for review/maintenance loops until the PR becomes mergeable.
    Argo Events remains pointed at the JSON stream (`github.codex.tasks`) because the Kafka EventSource only offers raw/JSON
    decoding today; the structured mirror exists for services that want to deserialize the protobuf payload directly.
-3. Each **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`), orchestrated by Argo Workflows.citehttps://argo-workflows.readthedocs.io/en/stable/
+3. Each **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`), orchestrated by [Argo Workflows](https://argo-workflows.readthedocs.io/en/stable/).
    - `stage=planning`: `codex-plan.ts` (via the `github-codex-planning` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`.
    - `stage=implementation`: `codex-implement.ts` executes the approved plan, pushes the feature branch, opens a **draft** PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.ts`, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
    - `stage=review`: `codex-review.ts` consumes the review payload, synthesises the reviewer feedback plus failing checks into a new prompt, reuses the existing Codex branch, and streams the run into `.codex-review.log` for artifacts and Discord updates.
@@ -42,7 +42,7 @@ flowchart LR
 Run `facteur codex-listen --config <path>` to stream the structured payloads while you build consumers; the command uses the
 `github.issues.codex.tasks` topic and simply echoes the decoded `github.v1.CodexTask` message.
 
-Prod deployments mirror that behaviour via Knative Eventing — `kubernetes/facteur/base/codex-kafkasource.yaml` configures the KafkaSource → KService flow defined in the Knative eventing docs.citehttps://knative.dev/docs/eventing/sources/kafka-source/
+Prod deployments mirror that behaviour via Knative Eventing — `kubernetes/facteur/base/codex-kafkasource.yaml` configures the KafkaSource → KService flow described in the [Knative KafkaSource documentation](https://knative.dev/docs/eventing/sources/kafka-source/).
 `github.issues.codex.tasks` into the Factor service (`POST /codex/tasks`), where the handler logs the stage, repository,
 issue number, and delivery identifier for observability.
 ## Prerequisites
@@ -145,6 +145,18 @@ argo submit --from workflowtemplate/github-codex-review -n argo-workflows \
 ```
 
 The implementation and review workflows write verbose output to `/workspace/lab/.codex-implementation.log` and `/workspace/lab/.codex-review.log`; inspect the artifacts in Argo if you need the full Codex transcripts.
+
+### Cleanup After Manual Tests
+
+When you finish a dry run, clean up the temporary artefacts so production dashboards stay quiet:
+
+- Delete the ad-hoc test issue/PR opened during the run (or close the GitHub ticket if you re-used an existing one).
+- Remove the Codex Discord channel created for the rehearsal.
+- Prune completed workflows to avoid clutter in Argo:
+  ```bash
+  argo delete --older 24h -n argo-workflows github-codex-planning-999 github-codex-implementation-999 github-codex-review-999
+  ```
+- Clear any Kafka offsets for local consumers (`facteur codex-listen`) if you plan to re-run the scenario.
 
 ## Manifest & CI Safety Checks
 

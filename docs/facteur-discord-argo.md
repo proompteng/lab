@@ -1,6 +1,6 @@
 # facteur Discord ↔ Argo bridge scaffolding
 
-Facteur receives Discord interactions, validates signatures, and submits Argo Workflows against a pre-provisioned WorkflowTemplate. The goal is to document the configuration contract and deployment surface so future automation can plug in without reworking the service.citeturn3search0turn2search0
+Facteur receives Discord interactions, validates signatures, and submits Argo Workflows against a pre-provisioned WorkflowTemplate. The goal is to document the configuration contract and deployment surface so future automation can plug in without reworking the service. For background, see the [Discord interactions reference](https://discord.com/developers/docs/interactions/receiving-and-responding) and the [Argo Workflows architecture overview](https://argo-workflows.readthedocs.io/en/stable/).
 
 ## Configuration model
 
@@ -13,8 +13,8 @@ Configuration can be supplied via YAML or environment variables prefixed with `F
 | `discord.bot_token` | `FACTEUR_DISCORD_BOT_TOKEN` | Discord bot token used for interactions API calls. |
 | `discord.application_id` | `FACTEUR_DISCORD_APPLICATION_ID` | Discord application identifier for validating interaction payloads. |
 | `redis.url` | `FACTEUR_REDIS_URL` | Redis connection string (e.g. `redis://host:6379/0`) for session storage. |
-| `argo.namespace` | `FACTEUR_ARGO_NAMESPACE` | Kubernetes namespace containing the Argo Workflows controller.citeturn2search0 |
-| `argo.workflow_template` | `FACTEUR_ARGO_WORKFLOW_TEMPLATE` | WorkflowTemplate name to clone when dispatching workflows.citeturn2search0 |
+| `argo.namespace` | `FACTEUR_ARGO_NAMESPACE` | Kubernetes namespace containing the Argo Workflows controller (see the [Argo Workflows install docs](https://argo-workflows.readthedocs.io/en/stable/getting-started/)). |
+| `argo.workflow_template` | `FACTEUR_ARGO_WORKFLOW_TEMPLATE` | WorkflowTemplate name to clone when dispatching workflows. |
 
 ### Optional fields
 
@@ -39,11 +39,11 @@ The role map controls which Discord roles can invoke specific commands. Schema d
 
 ## Service surfaces
 
-- **CLI (`cmd/facteur`)** – Cobra-based commands; `facteur serve --config ./config/production.yaml` bootstraps the HTTP handlers and Discord signature verification.citeturn3search0
+- **CLI (`cmd/facteur`)** – Cobra-based commands; `facteur serve --config ./config/production.yaml` bootstraps the HTTP handlers and Discord signature verification.
 - **Configuration (`internal/config`)** – Central loader for YAML + env with validation.
 - **Discord handlers (`internal/discord`)** – Command routing, role enforcement, and session coordination.
 - **Bridge (`internal/bridge`)** – Facade around Argo clients and business logic for workflow execution.
-- **Session store (`internal/session`)** – Redis-backed storage for in-flight command interactions.citeturn1search3
+- **Session store (`internal/session`)** – Redis-backed storage for in-flight command interactions (deployed via the OT-Container-Kit Redis Operator).
 - **Argo integration (`internal/argo`)** – Workflow submission and status inspection plumbing.
 
 ## Deployment artifacts

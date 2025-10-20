@@ -14,7 +14,7 @@ Going forward, treat this note as the source of truth for Knative manifests.
 
 ## Required fields to keep manifests stable
 
-Always record the following defaults in the manifest (Knative Serving injects them when omitted, leading to perpetual drift in Argo CD).citeturn2search3turn2search8
+Always record the following defaults in the manifest (Knative Serving injects them when omitted, leading to perpetual drift in Argo CD—see the [Knative traffic management docs](https://knative.dev/docs/serving/rollouts/traffic-management/) for context).
 
 - `spec.template.spec.containers[].ports[].protocol`
   - Knative defaults to `TCP`, but Argo will keep reporting drift unless it is

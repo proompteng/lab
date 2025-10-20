@@ -1,13 +1,13 @@
 # dernier service
 
-The `dernier` API is a production Rails 8.0.x deployment (currently 8.0.3, released September 22, 2025) running on Knative Serving with Argo CD managing desired state.citeturn5search1 CloudNativePG 1.27 provides the PostgreSQL control plane, while the OT-Container-Kit Redis Operator (v0.21.x+) furnishes Redis Sentinel/cluster capabilities for caching, session storage, and Solid Queue workers.citeturn0search0turn0search2turn1search3 Autoscaling is handled by Knative’s Kubernetes-backed HPA integration; manifests capture the default probe thresholds that Knative otherwise injects (failure threshold 3, timeout 1 second) to keep Argo CD in sync with live revisions.citeturn2search3turn2search8
+The `dernier` API is a production Rails 8.0.x deployment (currently 8.0.3, released September 22, 2025) running on Knative Serving with Argo CD managing desired state. Recent release notes are archived on [api.rubyonrails.org](https://weblog.rubyonrails.org/). CloudNativePG 1.27 provides the PostgreSQL control plane, while the OT-Container-Kit Redis Operator (v0.21.x+) furnishes Redis Sentinel/cluster capabilities for caching, session storage, and Solid Queue workers (see the [CloudNativePG documentation](https://cloudnative-pg.io/documentation/1.27/) and the [Redis Operator project](https://github.com/OT-CONTAINER-KIT/redis-operator)). Autoscaling is handled by Knative’s Kubernetes-backed HPA integration; manifests capture the default probe thresholds that Knative otherwise injects (failure threshold 3, timeout 1 second) to keep Argo CD in sync with live revisions per the [Knative Serving spec](https://knative.dev/docs/serving/rollouts/traffic-management/).
 
 ## Architecture
 
 - **Image:** `registry.ide-newton.ts.net/lab/dernier`
 - **Namespace:** `dernier`
-- **Database:** CloudNativePG 1.27 cluster `dernier-db` (primary service `dernier-db-rw`). The release supports PostgreSQL 17 by default and remains in active maintenance until ~February 2026.citeturn0search0turn0search2
-- **Redis:** Redis Operator-managed instance `dernier-redis` (leader service `dernier-redis-leader`), compatible with Redis 7.0.12+.citeturn1search3
+- **Database:** CloudNativePG 1.27 cluster `dernier-db` (primary service `dernier-db-rw`). The release supports PostgreSQL 17 by default and remains in maintenance until early 2026 (see [CloudNativePG release notes](https://cloudnative-pg.io/documentation/1.27/)).
+- **Redis:** Redis Operator-managed instance `dernier-redis` (leader service `dernier-redis-leader`), compatible with Redis 7.0.12+ (see the [Redis Operator compatibility matrix](https://github.com/OT-CONTAINER-KIT/redis-operator#compatibility)).
 - **Ingress:** Knative Serving (Istio ingress gateway) exposes the route `https://dernier.proompteng.ai`.
 
 ## System Diagram
@@ -47,9 +47,9 @@ Additional runtime configuration:
 
 ### Frontend Tooling
 
-- Tailwind CSS (currently 3.4, upgrade to v4 alpha after GA) powers the UI layer. Source tokens live in `app/assets/tailwind/application.css` and compile to `app/assets/builds/tailwind.css`.citehttps://tailwindcss.com/blog/tailwindcss-v3-4
+- Tailwind CSS (currently 3.4; monitor the [Tailwind CSS release blog](https://tailwindcss.com/blog/tailwindcss-v3-4)) powers the UI layer. Source tokens live in `app/assets/tailwind/application.css` and compile to `app/assets/builds/tailwind.css`.
 - Run `bin/dev` (Procfile-backed) to boot Rails alongside the Tailwind watcher. Production builds run `rails tailwindcss:build`.
-- Propshaft ships by default in Rails 8 and remains the asset pipeline of record even though controllers are API-first.citeturn5search4
+- Propshaft ships by default in Rails 8 and remains the asset pipeline of record even though controllers are API-first (see the [Rails 8 release notes](https://weblog.rubyonrails.org/2024/9/24/Rails-8-0-final/)).
 
 ### Local development
 
@@ -74,8 +74,8 @@ The entrypoint prepares the database and exposes `/health` for readiness checks.
 ### Scaling & Availability
 
 - HPA scales between 2–5 replicas (see `argocd/applications/dernier/overlays/cluster/hpa.yaml`).
-- CloudNativePG provides HA failover once replicas join the cluster and enforces liveness-restart semantics introduced in 1.27.citeturn0search0
-- Redis Operator bundles a redis-exporter sidecar listening on `:9121` for Prometheus scraping.citeturn1search0
+- CloudNativePG provides HA failover once replicas join the cluster and enforces liveness-restarts introduced in 1.27 (see the [CloudNativePG documentation](https://cloudnative-pg.io/documentation/1.27/high-availability/)).
+- Redis Operator bundles a redis-exporter sidecar listening on `:9121` for Prometheus scraping (documented in the [redis-operator metrics section](https://github.com/OT-CONTAINER-KIT/redis-operator#metrics)).
 
 ### Secret Management
 
