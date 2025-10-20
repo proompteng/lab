@@ -1,8 +1,8 @@
 /* eslint-disable no-console */
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 import { $ } from 'bun'
 import { artifactFilename, relativeArtifactSubpath, zigTargets } from './zig-targets'
 
@@ -35,6 +35,14 @@ async function buildTarget(target: (typeof zigTargets)[number]) {
   const command = $`bun run ${toolchainScript} -- zig build -Doptimize=ReleaseFast -Dtarget=${target.triple} -Dinstall-subpath=${destSubpath} --build-file ${buildFile}`
   command.cwd = zigProjectDir
   await command
+
+  try {
+    await stat(artifactPath)
+  } catch {
+    throw new Error(
+      `Expected shared library not found at ${artifactPath}; confirm install-subpath handling in build.zig.`,
+    )
+  }
 }
 
 async function main() {

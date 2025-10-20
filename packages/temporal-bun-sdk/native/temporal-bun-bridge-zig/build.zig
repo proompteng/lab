@@ -20,17 +20,49 @@ const BuildError = error{
     ArchiveNotFound,
 };
 
-fn getCargoTargetTriple(target: std.Target) BuildError![]const u8 {
+const TargetLayout = struct {
+    cargo_triple: []const u8,
+    platform_dir: []const u8,
+    arch_dir: []const u8,
+};
+
+fn resolveTargetLayout(target: std.Target) BuildError!TargetLayout {
+    const arch_dir = switch (target.cpu.arch) {
+        .aarch64 => "arm64",
+        .x86_64 => "x64",
+        else => return BuildError.UnsupportedTarget,
+    };
+
     return switch (target.os.tag) {
         .macos => switch (target.cpu.arch) {
-            .aarch64 => "aarch64-apple-darwin",
-            .x86_64 => "x86_64-apple-darwin",
-            else => BuildError.UnsupportedTarget,
+            .aarch64 => TargetLayout{
+                .cargo_triple = "aarch64-apple-darwin",
+                .platform_dir = "darwin",
+                .arch_dir = arch_dir,
+            },
+            .x86_64 => TargetLayout{
+                .cargo_triple = "x86_64-apple-darwin",
+                .platform_dir = "darwin",
+                .arch_dir = arch_dir,
+            },
+            else => unreachable,
         },
-        .linux => switch (target.cpu.arch) {
-            .aarch64 => "aarch64-unknown-linux-gnu",
-            .x86_64 => "x86_64-unknown-linux-gnu",
-            else => BuildError.UnsupportedTarget,
+        .linux => blk: {
+            if (target.abi != .gnu) return BuildError.UnsupportedTarget;
+            const layout = switch (target.cpu.arch) {
+                .aarch64 => TargetLayout{
+                    .cargo_triple = "aarch64-unknown-linux-gnu",
+                    .platform_dir = "linux",
+                    .arch_dir = arch_dir,
+                },
+                .x86_64 => TargetLayout{
+                    .cargo_triple = "x86_64-unknown-linux-gnu",
+                    .platform_dir = "linux",
+                    .arch_dir = arch_dir,
+                },
+                else => unreachable,
+            };
+            break :blk layout;
         },
         else => BuildError.UnsupportedTarget,
     };
@@ -65,6 +97,7 @@ fn archivePath(
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const resolved_target = target.result;
     const install_subpath = b.option(
         []const u8,
         "install-subpath",
@@ -87,11 +120,23 @@ pub fn build(b: *std.Build) void {
     });
     lib.addIncludePath(include_dir);
 
-    // TODO(codex, zig-pack-01): Link Temporal Rust static libraries emitted by cargo+cbindgen.
+    const target_layout = resolveTargetLayout(resolved_target) catch {
+        std.debug.panic(
+            "Unsupported target {s}-{s} for Temporal Rust linkage.",
+            .{ @tagName(resolved_target.cpu.arch), @tagName(resolved_target.os.tag) },
+        );
+    };
+    const default_install_subpath = b.fmt("{s}/{s}/{s}", .{
+        target_layout.platform_dir,
+        target_layout.arch_dir,
+        lib.out_filename,
+    });
 
     var install_options: std.Build.Step.InstallArtifact.Options = .{};
     if (install_subpath) |subpath| {
         install_options.dest_sub_path = subpath;
+    } else {
+        install_options.dest_sub_path = default_install_subpath;
     }
     const install = b.addInstallArtifact(lib, install_options);
     b.getInstallStep().dependOn(&install.step);
@@ -121,27 +166,19 @@ pub fn build(b: *std.Build) void {
     _ = b.findProgram(&.{"cargo"}, &.{}) catch {
         std.debug.panic("Cargo toolchain is required to build Temporal core artifacts.", .{});
     };
-
-    const resolved_target = target.result;
-    const cargo_target = getCargoTargetTriple(resolved_target) catch {
-        std.debug.panic(
-            "Unsupported target {s}-{s} for Temporal Rust linkage.",
-            .{ @tagName(resolved_target.cpu.arch), @tagName(resolved_target.os.tag) },
-        );
-    };
     const profile_dir = getProfileDir(optimize);
 
     for (temporal_crates) |crate_info| {
         const cargo_step = b.addSystemCommand(&.{ "cargo", "rustc" });
         cargo_step.setName(b.fmt("cargo rustc ({s})", .{crate_info.package}));
         cargo_step.setCwd(b.path(temporal_vendor_root));
-        cargo_step.addArgs(&.{ "-p", crate_info.package, "--crate-type", "staticlib", "--target", cargo_target });
+        cargo_step.addArgs(&.{ "-p", crate_info.package, "--crate-type", "staticlib", "--target", target_layout.cargo_triple });
         if (optimize != .Debug) cargo_step.addArg("--release");
 
         lib.step.dependOn(&cargo_step.step);
         unit_tests.step.dependOn(&cargo_step.step);
 
-        const archive = archivePath(b, cargo_target, profile_dir, crate_info.archive);
+        const archive = archivePath(b, target_layout.cargo_triple, profile_dir, crate_info.archive);
         lib.addObjectFile(archive);
         unit_tests.addObjectFile(archive);
     }

@@ -14,7 +14,8 @@ item is designed to be auditable during release reviews.
 - ✅ Test failures gate releases; flaky tests quarantined with documented follow-up.
 
 ## 3. Packaging & Distribution
-- ✅ `zig-pack-01`/`zig-pack-02` complete — Zig artifacts bundled for macOS (x64/arm64) and Linux (x64/arm64); Windows/MSVC remains scoped to `zig-pack-03`.
+- ✅ `zig-pack-01` complete (2025-10-20 via #1555) — Zig build links vendored Temporal static archives and stages per-platform shared libraries under `zig-out/lib/<platform>/<arch>/`.
+- ✅ `zig-pack-02` complete — Zig artifacts bundled for macOS (x64/arm64) and Linux (x64/arm64); Windows/MSVC remains scoped to `zig-pack-03`.
 - ✅ Hash-signed release assets published to GitHub Releases with provenance metadata.
 - ✅ Package README highlights Zig vs Rust bridge selection and environment variables.
 

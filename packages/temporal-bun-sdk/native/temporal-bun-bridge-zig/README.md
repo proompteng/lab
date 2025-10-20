@@ -1,30 +1,43 @@
-## temporal-bun-bridge-zig (scaffold)
+## temporal-bun-bridge-zig
 
-This directory hosts the Zig rewrite of the Temporal Bun native bridge. The initial commit only wires up
-the build graph and exports stub functions so that TypeScript can experiment with the loading path behind
-`TEMPORAL_BUN_SDK_USE_ZIG=1`.
+This project houses the Zig implementation of the Temporal Bun native bridge. The build now links the vendored
+Temporal Rust static archives (`temporal-sdk-core`, client, API, and protos), so the resulting shared library can run
+the Temporal runtime without depending on the Rust bridge at load time.
 
-### Layout
+### Prerequisites
+- Zig 0.15.x or newer on your `PATH` (`zig version` should succeed).
+- Rust toolchain (`cargo`, `rustup`) plus the targets we ship: `aarch64-apple-darwin`, `x86_64-apple-darwin`,
+  `aarch64-unknown-linux-gnu`, and `x86_64-unknown-linux-gnu`. Install them with:
+  ```bash
+  rustup target add aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu
+  ```
+- Protobuf headers available on the host (Homebrew `protobuf` or `apt install libprotobuf-dev`) so `cbindgen` can build
+  the Temporal C headers during vendoring.
 
-- `build.zig` — shared library target (`libtemporal_bun_bridge_zig`) plus a placeholder `zig build test`.
-- `src/lib.zig` — exported symbol table matching the existing Rust bridge surface.
-- `src/runtime.zig` — runtime handle lifecycle scaffold (TODO: hook into `temporal_sdk_core` runtime).
-- `src/client.zig` — client lifecycle and RPC entry points (TODO: forward to low-level Temporal C-ABI).
-- `src/byte_array.zig` — helpers for managing Bun-owned buffers.
-- `src/errors.zig` — temporary last-error plumbing used by the stub implementation.
-- `src/core.zig` — placeholder for `@cImport` once the Rust headers are generated.
+The helper script `packages/temporal-bun-sdk/scripts/run-with-rust-toolchain.ts` verifies most of these requirements
+and can bootstrap the Rust toolchain automatically in CI.
 
-### Follow-up Checklist
+### Building the Zig bridge
+- Single target builds (debug or release) re-use Zig’s build graph:
+  ```bash
+  bun run packages/temporal-bun-sdk/scripts/run-with-rust-toolchain.ts -- \
+    zig build -Doptimize=Debug --build-file packages/temporal-bun-sdk/native/temporal-bun-bridge-zig/build.zig
+  bun run packages/temporal-bun-sdk/scripts/run-with-rust-toolchain.ts -- \
+    zig build -Doptimize=ReleaseFast --build-file packages/temporal-bun-sdk/native/temporal-bun-bridge-zig/build.zig
+  ```
+  The install step stages artifacts in `zig-out/lib/<platform>/<arch>/libtemporal_bun_bridge_zig.<dylib|so>` (the path
+  derives from the resolved Zig target). Override the relative install destination with `-Dinstall-subpath=<dir/file>`
+  when you need a custom layout.
+- Multi-target bundling drives the cross-compiles used by the published package:
+  ```bash
+  TEMPORAL_BUN_SDK_USE_ZIG=1 pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:bundle
+  pnpm --filter @proompteng/temporal-bun-sdk run package:native:zig
+  ```
+  The bundle script iterates through the supported Zig triples, ensures the right Rust archives are built via `cargo
+  rustc`, and leaves the staged `.dylib`/`.so` files inside `dist/native/<platform>/<arch>/`.
 
-The TODO markers in the source files reference these bite-sized tasks:
-
-1. Generate C headers from `temporal-sdk-core` crates via `cbindgen` and expose them in `src/core.zig`.
-2. Replace the stubbed runtime bootstrap with real `temporal_sdk_core_runtime_new` wiring.
-3. Implement async client connect + poll/consume state machine backed by Zig worker threads.
-4. Marshal byte arrays returned from Temporal core into Bun-readable buffers.
-5. Port workflow RPCs (start, signal-with-start, terminate, query, cancel, signal) to Zig.
-6. Expose telemetry/logger hooks once the Temporal runtime exports land.
-7. Add Zig unit tests covering error propagation and the pending handle state machine.
-8. Update CI scripts to build and package the Zig shared library alongside the Rust fallback.
-
-Each item is intended to fit within a single PR for incremental delivery.
+### Troubleshooting
+- `cargo rustc` fails with “target not found”: run the `rustup target add` command above.
+- Missing protobuf headers on macOS: `brew install protobuf` (the toolchain script scans Homebrew prefixes).
+- Linux release builds failing to link `libunwind`: install `libunwind-dev` (Ubuntu/Debian) or ensure `libunwind` is
+  present in the container image.

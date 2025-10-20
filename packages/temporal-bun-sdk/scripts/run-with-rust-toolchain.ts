@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
-import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from 'node:child_process'
-import { env, argv, stderr } from 'node:process'
+import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
-import path from 'node:path'
 import os from 'node:os'
+import path from 'node:path'
+import { argv, env, stderr } from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 type CommandArgs = ReadonlyArray<string>
@@ -24,11 +24,8 @@ const cargoHome = env.CARGO_HOME ?? `${homeDir}/.cargo`
 const cargoBinDir = `${cargoHome}/bin`
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 
-const run = (
-  command: string,
-  commandArgs: CommandArgs,
-  options: SpawnSyncOptions = {},
-): SpawnSyncReturns<Buffer> => spawnSync(command, commandArgs, { stdio: 'inherit', ...options })
+const run = (command: string, commandArgs: CommandArgs, options: SpawnSyncOptions = {}): SpawnSyncReturns<Buffer> =>
+  spawnSync(command, commandArgs, { stdio: 'inherit', ...options })
 
 const runQuiet = (
   command: string,
