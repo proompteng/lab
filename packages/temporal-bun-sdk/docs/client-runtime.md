@@ -1,6 +1,7 @@
 # Client Runtime Rewrite Guide
 
-**Objective:** Implement a Bun-native Temporal client that communicates via the new FFI bridge and exposes parity with the Node SDK’s `WorkflowClient`.
+**Objective:** Implement a Bun-native Temporal client that communicates via the new FFI bridge and exposes parity with the Node SDK’s `WorkflowClient`. The target behaviour should match the capabilities documented in the Temporal TypeScript client guide and API reference.<br>
+[Temporal client concepts](https://docs.temporal.io/develop/typescript/temporal-client) · [WorkflowClient API](https://typescript.temporal.io/api/classes/client.WorkflowClient)
 
 ---
 
@@ -68,7 +69,8 @@ sequenceDiagram
 - identity, client name/version
 - retry settings
 
-Feed these into `core-bridge` client creation request.
+Feed these into `core-bridge` client creation request so mTLS and metadata settings propagate correctly when connecting to Temporal Cloud.<br>
+[Temporal Cloud authentication](https://docs.temporal.io/best-practices/security-controls) · [Client certificate requirements](https://docs.temporal.io/cloud/certificates)
 
 ---
 
@@ -94,9 +96,10 @@ Responses should be decoded accordingly.
 
 ## 4. Retry & Error Semantics
 
-- Map FFI error strings to rich errors with `.cause`, `.code`, `.status` (gRPC status if present).
-- Implement retryable metadata so callers can decide to retry manual commands.
-- Provide optional exponential backoff helper for `start` and `signal` operations (mirroring upstream).
+- Map FFI error strings to rich errors with `.cause`, `.code`, `.status` (gRPC status if present) so retry logic can distinguish gRPC codes.
+- Implement retryable metadata so callers can decide to retry manual commands (align with upstream `WorkflowClient` semantics).
+- Provide optional exponential backoff helper for `start` and `signal` operations (mirroring upstream client helpers documented in the TypeScript SDK tutorials).<br>
+[Getting started tutorial](https://learn.temporal.io/getting_started/typescript/first_program_in_typescript/)
 
 ---
 
@@ -105,8 +108,10 @@ Responses should be decoded accordingly.
 Refer to `testing-plan.md`:
 
 - Unit: stub FFI to return deterministic buffers, assert payload encodings.
-- Integration: run local Temporal, execute `helloTemporal` workflow via client, query/signal/terminate.
-- TLS scenario: use self-signed certs to ensure config passes through.
+- Integration: run local Temporal, execute `helloTemporal` workflow via client, query/signal/terminate. Use the Temporal CLI tutorial as a baseline.<br>
+  [Temporal CLI workflow start](https://learn.temporal.io/tutorials/typescript/background-check/project-setup/)
+- TLS scenario: use self-signed certs to ensure config passes through for Temporal Cloud connections.<br>
+[Temporal Cloud TLS setup](https://docs.temporal.io/cloud/certificates)
 
 ---
 
