@@ -238,13 +238,36 @@ fn clientConnectCallback(
     }
 
     const context = @as(*ConnectContext, @ptrCast(@alignCast(user_data.?)));
-    defer runtime.endPendingClientConnect(context.runtime_handle);
     defer finalizeConnectContext(context);
+    defer pending.release(context.pending);
+    defer runtime.endPendingClientConnect(context.runtime_handle);
+
+    if (pending.isCancelled(context.pending)) {
+        if (success) |client_ptr| {
+            core.api.client_free(client_ptr);
+        } else if (fail != null) {
+            core.api.byte_array_free(context.runtime_core, fail);
+        }
+        destroy(context.client);
+        return;
+    }
 
     if (success) |client_ptr| {
+        if (pending.isCancelled(context.pending)) {
+            core.api.client_free(client_ptr);
+            destroy(context.client);
+            return;
+        }
+
         context.client.core_client = client_ptr;
         const payload_ptr = @as(?*anyopaque, @ptrCast(@alignCast(context.client)));
         if (!pending.resolveClient(context.pending, payload_ptr, destroyClientFromPending)) {
+            if (pending.isCancelled(context.pending)) {
+                context.client.core_client = null;
+                core.api.client_free(client_ptr);
+                destroy(context.client);
+                return;
+            }
             context.client.core_client = null;
             core.api.client_free(client_ptr);
             destroy(context.client);
@@ -254,6 +277,14 @@ fn clientConnectCallback(
                 "temporal-bun-bridge-zig: failed to resolve client pending handle",
             );
         }
+        return;
+    }
+
+    if (pending.isCancelled(context.pending)) {
+        if (fail != null) {
+            core.api.byte_array_free(context.runtime_core, fail);
+        }
+        destroy(context.client);
         return;
     }
 
@@ -332,6 +363,8 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
     var pending_handle_raw: *pending.PendingHandle = undefined;
     var cleanup_pending = false;
     defer if (cleanup_pending) pending.free(pending_handle_raw);
+    var cleanup_pending_worker_ref = false;
+    defer if (cleanup_pending_worker_ref) pending.release(pending_handle_raw);
 
     pending_handle_raw = pending.createPendingInFlight() orelse {
         return createClientError(
@@ -340,6 +373,14 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
         );
     };
     cleanup_pending = true;
+
+    if (!pending.retain(pending_handle_raw)) {
+        return createClientError(
+            grpc.internal,
+            "temporal-bun-bridge-zig: failed to retain pending client handle",
+        );
+    }
+    cleanup_pending_worker_ref = true;
 
     const pending_handle = @as(*pending.PendingClient, @ptrCast(@alignCast(pending_handle_raw)));
 
@@ -645,6 +686,7 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
 
     cleanup_context = false;
     cleanup_pending = false;
+    cleanup_pending_worker_ref = false;
     cleanup_handle = false;
     release_runtime_pending = false;
 
