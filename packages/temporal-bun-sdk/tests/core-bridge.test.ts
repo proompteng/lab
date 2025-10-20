@@ -1,11 +1,17 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
-import { Client, createClient, normalizeTemporalAddress, __TEST__ as clientTest } from '../src/core-bridge/client.ts'
+import { Client, __TEST__ as clientTest, createClient, normalizeTemporalAddress } from '../src/core-bridge/client.ts'
 import { createRuntime, __TEST__ as runtimeTest } from '../src/core-bridge/runtime.ts'
-import { bridgeVariant, native } from '../src/internal/core-bridge/native.ts'
+import {
+  bridgeVariant,
+  type NativeClient,
+  type Runtime as NativeRuntime,
+  native,
+} from '../src/internal/core-bridge/native.ts'
 
 const hasLiveServer = process.env.TEMPORAL_TEST_SERVER === '1'
 const usingZigBridge = bridgeVariant === 'zig'
 const reachabilityTest = usingZigBridge ? test.skip : test // TODO(codex, zig-cl-01): enable once Zig bridge surfaces connect failures deterministically
+const zigOnlyTest = usingZigBridge ? test : test.skip
 
 describe('core bridge runtime wrapper', () => {
   test('shutdown is idempotent and prevents reuse', async () => {
@@ -13,6 +19,22 @@ describe('core bridge runtime wrapper', () => {
     await runtime.shutdown()
     await runtime.shutdown()
     expect(() => runtime.nativeHandle).toThrowError('Runtime has already been shut down')
+  })
+
+  zigOnlyTest('shutdown only invokes native runtimeShutdown once when Zig bridge is active', async () => {
+    const originalRuntimeShutdown = native.runtimeShutdown
+    const runtimeShutdownMock = mock(() => {})
+    native.runtimeShutdown = runtimeShutdownMock
+
+    const runtime = createRuntime()
+    try {
+      await runtime.shutdown()
+      await runtime.shutdown()
+    } finally {
+      native.runtimeShutdown = originalRuntimeShutdown
+    }
+
+    expect(runtimeShutdownMock).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -146,13 +168,35 @@ describe('core bridge client wrapper', () => {
 
   test('runtime finalizer swallows native shutdown errors', () => {
     const originalRuntimeShutdown = native.runtimeShutdown
-    native.runtimeShutdown = mock(() => {
+    const runtimeShutdownMock = mock(() => {
       throw new Error('finalizer-failure')
     })
+    native.runtimeShutdown = runtimeShutdownMock
 
-    expect(() => runtimeTest.finalizeRuntime({ type: 'runtime', handle: 99 } as any)).not.toThrow()
+    const runtimeHandle: NativeRuntime = { type: 'runtime', handle: 99 }
 
-    native.runtimeShutdown = originalRuntimeShutdown
+    try {
+      expect(() => runtimeTest.finalizeRuntime(runtimeHandle)).not.toThrow()
+      expect(runtimeShutdownMock).toHaveBeenCalledTimes(1)
+    } finally {
+      native.runtimeShutdown = originalRuntimeShutdown
+    }
+  })
+
+  zigOnlyTest('runtime finalizer delegates to native runtimeShutdown once', () => {
+    const originalRuntimeShutdown = native.runtimeShutdown
+    const runtimeShutdownMock = mock(() => {})
+    native.runtimeShutdown = runtimeShutdownMock
+
+    const runtimeHandle: NativeRuntime = { type: 'runtime', handle: 456 }
+
+    try {
+      runtimeTest.finalizeRuntime(runtimeHandle)
+    } finally {
+      native.runtimeShutdown = originalRuntimeShutdown
+    }
+
+    expect(runtimeShutdownMock).toHaveBeenCalledTimes(1)
   })
 
   test('client finalizer swallows native shutdown errors', () => {
@@ -161,7 +205,9 @@ describe('core bridge client wrapper', () => {
       throw new Error('finalizer-failure')
     })
 
-    expect(() => clientTest.finalizeClient({ type: 'client', handle: 77 } as any)).not.toThrow()
+    const clientHandle: NativeClient = { type: 'client', handle: 77 }
+
+    expect(() => clientTest.finalizeClient(clientHandle)).not.toThrow()
 
     native.clientShutdown = originalClientShutdown
   })
