@@ -9,10 +9,10 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
 ## Quick Start
 
 1. **Prerequisites**
-   - Node.js 22.20.x and pnpm 10+
-   - Go 1.24+
-   - Bun (optional, see `bun.lock`)
-   - Docker / Kubernetes tooling if you plan to run services or apply manifests locally
+   - Node.js 22.20.x and pnpm 10+ (see the [Node.js release schedule](https://nodejs.org/en/about/previous-releases) and [Corepack docs](https://nodejs.org/api/corepack.html))
+   - Go 1.24+ ([download from go.dev](https://go.dev/dl/))
+   - Bun (optional, see `bun.lock`; install via the [Bun docs](https://bun.sh/docs/installation))
+   - Docker / Kubernetes tooling (use the [Docker Desktop install](https://docs.docker.com/desktop/) and [kubectl setup guide](https://kubernetes.io/docs/tasks/tools/)) if you plan to run services or apply manifests locally
 2. **Install workspace dependencies**
    ```bash
    pnpm install
@@ -30,7 +30,7 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
    go run ./services/prt
    ```
 
-> Prefer a hosted development experience? Click the **Open in Coder** button above to provision a workspace with Node 22, pnpm, and the repository pre-installed.
+> Prefer a hosted development experience? Click the **Open in Coder** button above to provision a workspace with Node 22, pnpm, and the repository pre-installed. The template uses Coder’s [Kubernetes deployment model](https://coder.com/docs) and the bootstrap script outlined in `docs/coder-workspace-bootstrap.md`.
 
 ---
 
@@ -70,7 +70,7 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
 
 ### Tooling & Quality
 - Husky + Biome formatted on commit (`lint-staged` configuration in `package.json`).
-- TailwindCSS v4 & Radix UI used extensively in frontend components.
+- Tailwind CSS (v3.4 per the [Tailwind release blog](https://tailwindcss.com/blog/tailwindcss-v3-4)) & Radix UI used extensively in frontend components.
 
 ---
 
@@ -102,7 +102,7 @@ Some experiments expect a Postgres instance (see original Home Cloud notes). To 
    grant create on database altra to altra;
    ```
 
-These instructions remain intentionally permissive for an isolated lab network—tighten auth and networking before production use.
+These instructions remain intentionally permissive for an isolated lab network—tighten auth and networking before production use. Consult the [PostgreSQL documentation](https://www.postgresql.org/docs/current/) for hardening guidance.
 
 ---
 
@@ -110,13 +110,13 @@ These instructions remain intentionally permissive for an isolated lab network�
 
 | Task | Command / Notes |
 | ---- | ---------------- |
-| Plan infrastructure | `pnpm run tf:plan` (OpenTofu under `tofu/harvester`)
-| Apply infrastructure | `pnpm run tf:apply` (only after reviewing the plan)
-| Destroy Harvester VM | `pnpm run tf:destroy`
-| Apply Kubernetes base | `pnpm run harvester:apply` or `./kubernetes/install.sh`
-| Bootstrap Argo CD | `pnpm run k:bootstrap` (applies manifests in `argocd/`)
-| Run Ansible playbooks | `pnpm run ansible`
-| Manage Coder template | `kubernetes/coder` contains Terraform + template YAML used by the button above.
+| Plan infrastructure | `pnpm run tf:plan` (OpenTofu under `tofu/harvester`; see the [OpenTofu docs](https://opentofu.org/docs/intro/install/)) |
+| Apply infrastructure | `pnpm run tf:apply` (only after reviewing the plan) |
+| Destroy Harvester VM | `pnpm run tf:destroy` |
+| Apply Kubernetes base | `pnpm run harvester:apply` or `./kubernetes/install.sh` |
+| Bootstrap Argo CD | `pnpm run k:bootstrap` (applies manifests in `argocd/`; reference the [Argo CD getting started guide](https://argo-cd.readthedocs.io/en/stable/getting_started/)) |
+| Run Ansible playbooks | `pnpm run ansible` (install Ansible via the [official instructions](https://docs.ansible.com/ansible/latest/installation_guide/installation_distros.html)) |
+| Manage Coder template | `kubernetes/coder` contains Terraform + template YAML used by the button above. |
 
 Supporting configuration:
 - `skaffold.yaml` for iterative container builds.
