@@ -33,6 +33,8 @@ const PendingErrorState = struct {
     code: i32,
     message: []const u8,
     owns_message: bool,
+    details: ?[]const u8,
+    owns_details: bool,
     active: bool,
 };
 
@@ -42,6 +44,7 @@ const ERR_NOT_READY = "temporal-bun-bridge-zig: pending handle not ready";
 const ERR_ALREADY_CONSUMED = "temporal-bun-bridge-zig: pending handle already consumed";
 const ERR_MISSING_PAYLOAD = "temporal-bun-bridge-zig: pending handle missing payload";
 const ERR_DUPLICATE_MESSAGE = "temporal-bun-bridge-zig: failed to duplicate error message";
+const ERR_DUPLICATE_DETAILS = "temporal-bun-bridge-zig: failed to duplicate error details";
 const ERR_HANDLE_FAILED_WITHOUT_STRUCTURED = "temporal-bun-bridge-zig: pending handle failed without structured error";
 const ERR_RESOLVE_HANDLE_NULL = "temporal-bun-bridge-zig: resolveByteArray received null handle";
 const ERR_RESOLVE_ARRAY_NULL = "temporal-bun-bridge-zig: resolveByteArray received null byte array";
@@ -51,6 +54,15 @@ const ERR_REJECT_HANDLE_NULL = "temporal-bun-bridge-zig: rejectByteArray receive
 const ERR_REJECT_STATUS = "temporal-bun-bridge-zig: rejectByteArray expected pending status";
 const ERR_TRANSITION_READY_FAILED = "temporal-bun-bridge-zig: failed to transition pending handle to ready";
 const ERR_TRANSITION_ERROR_FAILED = "temporal-bun-bridge-zig: failed to transition pending handle to error";
+
+/// Configuration for transitioning a pending handle into the failed state.
+/// Callers can opt out of duplicating message/details slices when they remain valid
+/// for the lifetime of the handle, or attach optional details to surface richer context.
+pub const TransitionToErrorOptions = struct {
+    duplicate_message: bool = true,
+    details: ?[]const u8 = null,
+    duplicate_details: bool = true,
+};
 
 pub const PendingHandle = struct {
     status: atomic.Value(Status),
@@ -111,6 +123,8 @@ fn allocateHandle(status: Status) ?*PendingHandle {
             .code = GrpcStatus.unknown,
             .message = "",
             .owns_message = false,
+            .details = null,
+            .owns_details = false,
             .active = false,
         },
         .state_lock = .{},
@@ -118,61 +132,95 @@ fn allocateHandle(status: Status) ?*PendingHandle {
     return handle;
 }
 
-fn duplicateMessage(message: []const u8) ?[]const u8 {
-    if (message.len == 0) {
+fn duplicateSlice(buffer: []const u8) ?[]const u8 {
+    if (buffer.len == 0) {
         return "";
     }
 
     const allocator = std.heap.c_allocator;
-    const copy = allocator.alloc(u8, message.len) catch {
+    const copy = allocator.alloc(u8, buffer.len) catch {
         return null;
     };
 
-    @memcpy(copy, message);
+    @memcpy(copy, buffer);
     return copy;
 }
 
-fn destroyMessage(message: []const u8, owns_message: bool) void {
-    if (!owns_message or message.len == 0) {
+fn destroySlice(buffer: []const u8, owns_buffer: bool) void {
+    if (!owns_buffer or buffer.len == 0) {
         return;
     }
     const allocator = std.heap.c_allocator;
-    allocator.free(@constCast(message));
+    allocator.free(@constCast(buffer));
 }
 
 fn clearErrorLocked(handle: *PendingHandle) void {
-    destroyMessage(handle.fault.message, handle.fault.owns_message);
+    destroySlice(handle.fault.message, handle.fault.owns_message);
+    if (handle.fault.details) |details| {
+        destroySlice(details, handle.fault.owns_details);
+    }
     handle.fault.code = GrpcStatus.unknown;
     handle.fault.message = "";
     handle.fault.owns_message = false;
+    handle.fault.details = null;
+    handle.fault.owns_details = false;
     handle.fault.active = false;
 }
 
-fn assignErrorLocked(handle: *PendingHandle, code: i32, message: []const u8, duplicate: bool) void {
-    destroyMessage(handle.fault.message, handle.fault.owns_message);
+fn assignErrorLocked(handle: *PendingHandle, code: i32, message: []const u8, options: TransitionToErrorOptions) void {
+    destroySlice(handle.fault.message, handle.fault.owns_message);
+    if (handle.fault.details) |details| {
+        destroySlice(details, handle.fault.owns_details);
+    }
     handle.fault.code = code;
     handle.fault.message = "";
     handle.fault.owns_message = false;
+    handle.fault.details = null;
+    handle.fault.owns_details = false;
     handle.fault.active = true;
 
-    if (message.len == 0) {
-        return;
+    if (message.len != 0) {
+        if (options.duplicate_message) {
+            if (duplicateSlice(message)) |copy| {
+                handle.fault.message = copy;
+                handle.fault.owns_message = true;
+            } else {
+                handle.fault.code = GrpcStatus.internal;
+                handle.fault.message = ERR_DUPLICATE_MESSAGE;
+                handle.fault.owns_message = false;
+                return;
+            }
+        } else {
+            handle.fault.message = message;
+            handle.fault.owns_message = false;
+        }
     }
 
-    if (duplicate) {
-        if (duplicateMessage(message)) |copy| {
-            handle.fault.message = copy;
-            handle.fault.owns_message = true;
+    if (options.details) |details| {
+        if (details.len == 0) {
+            handle.fault.details = details;
+            handle.fault.owns_details = false;
             return;
         }
-        handle.fault.code = GrpcStatus.internal;
-        handle.fault.message = ERR_DUPLICATE_MESSAGE;
-        handle.fault.owns_message = false;
-        return;
-    }
 
-    handle.fault.message = message;
-    handle.fault.owns_message = false;
+        if (options.duplicate_details) {
+            if (duplicateSlice(details)) |copy| {
+                handle.fault.details = copy;
+                handle.fault.owns_details = true;
+                return;
+            }
+            destroySlice(handle.fault.message, handle.fault.owns_message);
+            handle.fault.code = GrpcStatus.internal;
+            handle.fault.message = ERR_DUPLICATE_DETAILS;
+            handle.fault.owns_message = false;
+            handle.fault.details = null;
+            handle.fault.owns_details = false;
+            return;
+        }
+
+        handle.fault.details = details;
+        handle.fault.owns_details = false;
+    }
 }
 
 /// Caller must ensure exclusive access to the handle before releasing payload state.
@@ -198,9 +246,17 @@ fn destroyHandle(handle: *PendingHandle) void {
 
 fn publishFault(handle: *PendingHandle) void {
     if (handle.fault.active) {
-        setStructuredError(handle.fault.code, handle.fault.message);
+        errors.setStructuredErrorJson(.{
+            .code = handle.fault.code,
+            .message = handle.fault.message,
+            .details = handle.fault.details,
+        });
     } else {
-        setStructuredError(GrpcStatus.internal, ERR_HANDLE_FAILED_WITHOUT_STRUCTURED);
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.internal,
+            .message = ERR_HANDLE_FAILED_WITHOUT_STRUCTURED,
+            .details = null,
+        });
     }
 }
 
@@ -223,7 +279,15 @@ pub fn transitionToReady(handle: *PendingHandle, payload: ?*anyopaque, cleanup: 
     return true;
 }
 
-pub fn transitionToError(handle: *PendingHandle, code: i32, message: []const u8) bool {
+/// Transitions a handle to the failed state while honoring advanced error options.
+/// Safe for concurrent producers: releases payload when moving from `.ready` and
+/// ensures error slices are duplicated or borrowed per the provided options.
+pub fn transitionToErrorWithOptions(
+    handle: *PendingHandle,
+    code: i32,
+    message: []const u8,
+    options: TransitionToErrorOptions,
+) bool {
     handle.state_lock.lock();
     defer handle.state_lock.unlock();
 
@@ -235,18 +299,31 @@ pub fn transitionToError(handle: *PendingHandle, code: i32, message: []const u8)
         releasePayload(handle);
     }
 
-    assignErrorLocked(handle, code, message, true);
+    assignErrorLocked(handle, code, message, options);
     handle.consumed.store(false, .release);
     handle.status.store(.failed, .release);
     return true;
+}
+
+pub fn transitionToError(handle: *PendingHandle, code: i32, message: []const u8) bool {
+    return transitionToErrorWithOptions(handle, code, message, .{});
 }
 
 pub const PendingClient = PendingHandle;
 pub const PendingByteArray = PendingHandle;
 
 pub fn createPendingError(code: i32, message: []const u8) ?*PendingHandle {
+    return createPendingErrorWithOptions(code, message, .{});
+}
+
+/// Allocates a pending handle in the failed state using the provided error options.
+pub fn createPendingErrorWithOptions(
+    code: i32,
+    message: []const u8,
+    options: TransitionToErrorOptions,
+) ?*PendingHandle {
     const handle = allocateHandle(.pending) orelse return null;
-    if (!transitionToError(handle, code, message)) {
+    if (!transitionToErrorWithOptions(handle, code, message, options)) {
         destroyHandle(handle);
         setStructuredError(GrpcStatus.internal, ERR_TRANSITION_ERROR_FAILED);
         return null;
@@ -335,7 +412,9 @@ pub fn consume(handle: ?*PendingHandle) ?*anyopaque {
     }
 
     const payload = pending.payload orelse {
-        assignErrorLocked(pending, GrpcStatus.internal, ERR_MISSING_PAYLOAD, false);
+        assignErrorLocked(pending, GrpcStatus.internal, ERR_MISSING_PAYLOAD, .{
+            .duplicate_message = false,
+        });
         pending.status.store(.failed, .release);
         setStructuredError(GrpcStatus.internal, ERR_MISSING_PAYLOAD);
         return null;
@@ -343,7 +422,9 @@ pub fn consume(handle: ?*PendingHandle) ?*anyopaque {
 
     pending.payload = null;
     pending.cleanup = null;
-    assignErrorLocked(pending, GrpcStatus.failed_precondition, ERR_ALREADY_CONSUMED, false);
+    assignErrorLocked(pending, GrpcStatus.failed_precondition, ERR_ALREADY_CONSUMED, .{
+        .duplicate_message = false,
+    });
     pending.status.store(.failed, .release);
     return payload;
 }
@@ -426,7 +507,7 @@ pub fn rejectByteArray(handle: ?*PendingByteArray, code: i32, message: []const u
     releasePayload(pending_handle);
     clearErrorLocked(pending_handle);
 
-    assignErrorLocked(pending_handle, code, message, true);
+    assignErrorLocked(pending_handle, code, message, .{});
     pending_handle.consumed.store(false, .release);
     pending_handle.status.store(.failed, .release);
 
@@ -540,6 +621,97 @@ test "pending handle transition to error surfaces message" {
     const payload = consume(handle);
     try testing.expect(payload == null);
     try testing.expectEqualStrings(expected_json, errors.snapshot());
+}
+
+test "transitionToErrorWithOptions duplicates details when requested" {
+    errors.setLastError("");
+    const handle = createPendingInFlight() orelse unreachable;
+    defer free(handle);
+
+    const allocator = std.heap.c_allocator;
+    const detail_source = allocator.dupe(u8, "detail context") catch unreachable;
+    defer allocator.free(detail_source);
+    const detail_slice = detail_source[0..];
+
+    try testing.expect(transitionToErrorWithOptions(
+        handle,
+        GrpcStatus.internal,
+        "error with detail",
+        .{ .details = detail_slice },
+    ));
+
+    const stored_details_opt = handle.fault.details;
+    try testing.expect(stored_details_opt != null);
+    const stored_details = stored_details_opt.?;
+
+    detail_source[0] = 'X';
+    try testing.expectEqual(@as(u8, 'd'), stored_details[0]);
+    try testing.expect(handle.fault.owns_details);
+
+    const status_code = poll(handle);
+    try testing.expectEqual(@intFromEnum(Status.failed), status_code);
+}
+
+test "transitionToErrorWithOptions retains borrowed details" {
+    errors.setLastError("");
+    const handle = createPendingInFlight() orelse unreachable;
+    defer free(handle);
+
+    const message = "borrowed message";
+    const details = "borrowed details";
+
+    try testing.expect(transitionToErrorWithOptions(
+        handle,
+        GrpcStatus.internal,
+        message,
+        .{
+            .duplicate_message = false,
+            .details = details,
+            .duplicate_details = false,
+        },
+    ));
+
+    try testing.expect(!handle.fault.owns_message);
+    try testing.expect(!handle.fault.owns_details);
+
+    const stored_details_opt = handle.fault.details;
+    try testing.expect(stored_details_opt != null);
+    const stored_details = stored_details_opt.?;
+    try testing.expectEqual(@as(usize, details.len), stored_details.len);
+    try testing.expectEqual(@intFromPtr(details.ptr), @intFromPtr(stored_details.ptr));
+
+    const status_code = poll(handle);
+    try testing.expectEqual(@intFromEnum(Status.failed), status_code);
+}
+
+test "transitionToReady clears previous fault details" {
+    errors.setLastError("");
+    const handle = createPendingInFlight() orelse unreachable;
+    defer free(handle);
+
+    handle.state_lock.lock();
+    assignErrorLocked(handle, GrpcStatus.internal, "prefail", .{
+        .duplicate_message = false,
+        .details = "contextual info",
+        .duplicate_details = false,
+    });
+    handle.state_lock.unlock();
+    try testing.expect(handle.fault.details != null);
+    try testing.expect(handle.fault.active);
+
+    const allocator = std.heap.c_allocator;
+    const payload_ptr = allocator.create(u8) catch unreachable;
+    payload_ptr.* = 13;
+
+    const became_ready = transitionToReady(
+        handle,
+        @as(?*anyopaque, @ptrCast(payload_ptr)),
+        payloadCleanup,
+    );
+    try testing.expect(became_ready);
+
+    try testing.expect(handle.fault.details == null);
+    try testing.expect(handle.fault.active == false);
 }
 
 test "pending handle concurrent poll and consume" {
