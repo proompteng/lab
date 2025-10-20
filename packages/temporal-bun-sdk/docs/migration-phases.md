@@ -26,7 +26,7 @@ flowchart LR
   P4 --> P5["Phase 5<br/>Release readiness"]
 ```
 
-- Implement FFI for client operations (start, signal, query, terminate, headers, TLS).
+- Implement FFI for client operations (start, signal, query, terminate, headers, TLS) aligning with the [Temporal TypeScript client API](https://docs.temporal.io/develop/typescript/temporal-client).
 - Rewrite `src/client.ts` to use new Core bridge client.
 - ✅ `start_workflow` wired through Rust bridge + Bun client (`createTemporalClient.workflow.start`).
 - Remove `@temporalio/client` dependency.
@@ -43,7 +43,7 @@ flowchart LR
 
 - FFI for worker poll/complete/heartbeat/shutdown.
 - Implement new worker runtime loops.
-- Build minimal workflow runtime to process activations.
+- Build minimal workflow runtime to process activations following the [worker and workflow docs](https://docs.temporal.io/develop/typescript/workers).
 - Replace `@temporalio/worker` dependency.
 - CLI worker runs successfully against local Temporal server.
 
@@ -56,7 +56,7 @@ flowchart LR
 
 ## Phase 3 — Workflow Runtime Parity
 
-- Support deterministic features (patch markers, continue-as-new, child workflows).
+- Support deterministic features (patch markers, continue-as-new, child workflows) as documented in the [workflow versioning guide](https://docs.temporal.io/develop/typescript/workflows#versioning).
 - Implement interceptor pipeline.
 - Provide payload codec extensibility (JSON + optional binary).
 - Add determinism replay harness.
@@ -69,7 +69,7 @@ flowchart LR
 
 ## Phase 4 — Ecosystem Integration
 
-- Telemetry exports (Prometheus, OTLP).
+- Telemetry exports (Prometheus, OTLP) matching the best practices in [Temporal’s observability guide](https://docs.temporal.io/production-readiness/observability).
 - Metrics/logging callbacks wired into runtime.
 - CLI and Docker templates updated to use native stack only.
 - Documentation and tutorials refreshed.
@@ -81,7 +81,7 @@ flowchart LR
 ## Phase 5 — Release Readiness
 
 - CI lanes stable on macOS/Linux (unit + integration).
-- Publish RC build to npm (`0.1.0-rc.1`).
+- Publish RC build to npm (`0.1.0-rc.1`) once the native bridge compiles successfully across macOS/Linux (see [Zig getting started](https://ziglang.org/learn/getting-started/) for supported toolchains).
 - Manual QA across local Temporal + Temporal Cloud.
 - Collect feedback, address bugs, finalize stable release.
 
@@ -92,3 +92,11 @@ flowchart LR
 - Maintain a checklist in GitHub Projects (one column per phase).
 - Each phase should have an owner, deadlines, and link to PRs.
 - Update `design-e2e.md` summary as phases complete.
+
+## References
+
+- [Temporal TypeScript developer docs](https://docs.temporal.io/develop/typescript)
+- [Temporal workflow versioning guidance](https://docs.temporal.io/develop/typescript/workflows#versioning)
+- [Temporal observability best practices](https://docs.temporal.io/production-readiness/observability)
+- [Temporal TypeScript sample workflows](https://github.com/temporalio/samples-typescript)
+- [Zig getting started guide](https://ziglang.org/learn/getting-started/)

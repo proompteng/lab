@@ -2,7 +2,7 @@
 
 **Audience:** Future Codex instances shipping the Bun-native Temporal SDK  
 **Status:** Authoritative blueprint (17 Oct 2025)  
-**Goal:** Deliver a complete Bun ↔ Temporal Core bridge so no upstream `@temporalio/*` packages are required.
+**Goal:** Deliver a complete Bun ↔ Temporal Core bridge so no upstream `@temporalio/*` packages are required, building on the C API exposed by the upstream [`temporal-sdk-core-c-bridge`](https://github.com/temporalio/sdk-core/tree/main/crates/sdk-core-c-bridge).
 
 ---
 

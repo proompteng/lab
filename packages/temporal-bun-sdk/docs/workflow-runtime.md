@@ -1,6 +1,7 @@
 # Workflow Runtime Plan
 
-**Goal:** Provide a deterministic workflow execution environment compatible with Temporal’s expectations, implemented purely with Bun primitives.
+**Goal:** Provide a deterministic workflow execution environment compatible with Temporal’s expectations, implemented purely with Bun primitives while matching the behaviour described in the Temporal TypeScript workflow documentation.<br>
+[Workflows overview](https://docs.temporal.io/develop/typescript/workflows)
 
 ---
 
@@ -9,10 +10,10 @@
 | Area | Requirements |
 |------|--------------|
 | Activation handling | Consume workflow activations from worker loop, apply commands (timer, activity, signal, child workflow). |
-| Determinism | Same code + history => same commands. Ensure timers, random, and external world access are deterministic. |
-| Workflow sandboxing | Prevent workflows from accessing ambient state; maintain per-run context. |
-| Interceptors | Support inbound/outbound workflow interceptors for logging/tracing. |
-| Patch markers | Respect versioning via `patched`, `deprecatePatch`. |
+| Determinism | Same code + history => same commands. Ensure timers, random, and external world access behave deterministically, following the Temporal replay contract. |
+| Workflow sandboxing | Prevent workflows from accessing ambient state; maintain per-run context (sandbox semantics documented in the TypeScript SDK). |
+| Interceptors | Support inbound/outbound workflow interceptors for logging/tracing.<br>[Interceptors guide](https://docs.temporal.io/develop/typescript/interceptors) |
+| Patch markers | Respect versioning via `patched` / `deprecatePatch` helpers.<br>[Workflow versioning](https://docs.temporal.io/develop/typescript/workflows#versioning) |
 
 ---
 
@@ -31,9 +32,10 @@
    - Collect commands and serialize as workflow task completion.
 
 3. Isolation strategy:
-   - Use Bun’s `import()` to load workflow module fresh per run.
-   - Wrap built-ins (`Date`, `Math.random`, `UUID`) with deterministic shims.
-   - Provide workflow `Context` (activities via `proxyActivities`, continue-as-new helper, etc.) identical to upstream API.
+   - Use Bun’s `import()` to load workflow modules fresh per run (works with ESM and Bun-transpiled TS).
+   - Wrap built-ins (`Date`, `Math.random`, UUID generators) with deterministic shims to preserve replay guarantees.
+   - Provide workflow `Context` (activities via `proxyActivities`, condition utilities, `continueAsNew`, child workflow helpers) identical to the upstream API.<br>
+     [Workflow APIs](https://docs.temporal.io/develop/typescript/workflows#write-workflows)
 
 ```mermaid
 flowchart TD
@@ -64,7 +66,7 @@ flowchart TD
 
 ## 4. Payload Handling
 
-Leverage `payloads-codec` module (see separate doc) for serialization:
+Leverage the `payloads-codec` module (see separate doc) for serialization:
 
 - Store payload codec instance per workflow run (handles custom data-converters).
 - Ensure queries and signals share same codec configuration as the workflow.

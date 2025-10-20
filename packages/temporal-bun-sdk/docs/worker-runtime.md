@@ -1,6 +1,7 @@
 # Worker Runtime Implementation Guide
 
-**Purpose:** Stand up a Bun-native worker capable of polling, executing, and responding to Temporal tasks without relying on `@temporalio/worker`.
+**Purpose:** Stand up a Bun-native worker capable of polling, executing, and responding to Temporal tasks without relying on `@temporalio/worker`, while matching the semantics described in the Temporal TypeScript worker and activity guides.<br>
+[Temporal worker overview](https://docs.temporal.io/develop/typescript/workers) · [Activities guide](https://docs.temporal.io/develop/typescript/activities)
 
 ---
 
@@ -40,10 +41,10 @@ stateDiagram-v2
 | Component | Description |
 |-----------|-------------|
 | `WorkerRuntime` | Owns native worker handle, spawns poll loops, orchestrates shutdown, exposes `run()` and `shutdown()` methods. |
-| `WorkflowTaskLoop` | Async loop calling `native.worker.pollWorkflowTask`, passing activations to workflow runtime, sending completions. |
-| `ActivityTaskLoop` | Async loop polling activities, running registered activity functions, returning results or failures. |
+| `WorkflowTaskLoop` | Async loop calling `native.worker.pollWorkflowTask`, passing activations to the workflow runtime, sending completions (mirrors the workflow activation lifecycle). |
+| `ActivityTaskLoop` | Async loop polling activities, running registered activity functions, returning results or failures (use the same failure semantics as the TypeScript SDK). |
 | `WorkflowIsolateManager` | Loads workflow bundles, maintains deterministic execution per run, handles patch markers, timers, signals. |
-| `InterceptorManager` | Optional; plug-in architecture for inbound/outbound interceptors (logging, tracing). |
+| `InterceptorManager` | Optional; plug-in architecture for inbound/outbound interceptors (logging, tracing) that remains compatible with Temporal’s interceptor APIs.<br>[Interceptors](https://docs.temporal.io/develop/typescript/interceptors) |
 
 ---
 
@@ -51,7 +52,8 @@ stateDiagram-v2
 
 1. **Initialization**
    - Resolve `workflowsPath` to compiled JS or raw TS (Bun can transpile).
-   - Register activity implementations (object or map).
+   - Register activity implementations (object or map) using the patterns from the official activity registration docs.<br>
+     [Registering activities](https://docs.temporal.io/develop/typescript/activities#create-an-activity)
    - Create native worker via FFI using runtime/client handles.
 
 2. **Running**
@@ -68,9 +70,10 @@ stateDiagram-v2
      - Encode completion commands and send through FFI.
    - **Activity tasks:**
      - Lookup implementation by name.
-     - Execute with timeout enforcement (setTimeout + Promise.race).
-     - Heartbeats triggered via `worker.recordActivityHeartbeat`.
-     - Respond success/failure via FFI.
+     - Execute with timeout enforcement (`setTimeout` + `Promise.race` or Bun timers).
+     - Heartbeats triggered via `worker.recordActivityHeartbeat` (match the behaviour documented in the Temporal heartbeat tutorial).
+     - Respond success/failure via FFI.<br>
+       [Activity heartbeats](https://docs.temporal.io/develop/typescript/activities#heartbeat-an-activity)
 
 4. **Shutdown**
    - `shutdown(gracefulTimeoutMs)`:
@@ -93,8 +96,9 @@ stateDiagram-v2
    - Accept object or array. Normalize to `Map<string, ActivityFn>`.
    - Validate on startup (throw if missing).
 5. **Metrics/logging**  
-   - Provide hooks for task counts, latencies (expose minimal API).
-   - Later integrate with telemetry runtime.
+   - Provide hooks for task counts and latencies (expose minimal API).
+   - Later integrate with telemetry runtime following Temporal’s observability recommendations.<br>
+     [Observability best practices](https://docs.temporal.io/production-readiness/observability)
 6. **Error handling**  
    - Convert thrown errors to Temporal failure payloads (message + stack).
    - Preserve application-specific failure types with optional metadata.
@@ -103,13 +107,14 @@ stateDiagram-v2
 
 ## 5. Testing Requirements
 
-Refer to `testing-plan.md` for full matrix. Highlights:
+Refer to `testing-plan.md` for the full matrix. Highlights:
 
 - Unit tests for polling loop restart/retry logic.
 - Activity timeout + heartbeat cases.
 - Workflow continue-as-new and timer scheduling.
 - Shutdown behavior (graceful vs immediate).
-- Integration test executing sample workflow end-to-end.
+- Integration test executing sample workflow end-to-end (use the “hello” samples as inspiration).<br>
+  [Sample workflows](https://github.com/temporalio/samples-typescript)
 
 ---
 

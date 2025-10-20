@@ -54,7 +54,8 @@ flowchart BT
   - Bun client test container (runs integration suite).
   - Optionally metrics exporter for telemetry tests.
 
-> CI uses `packages/temporal-bun-sdk/tests/docker-compose.yaml` to build a lightweight container that runs `temporal server start-dev` via the Temporal CLI and sets `TEMPORAL_TEST_SERVER=1` so Bun integration tests run automatically.
+> CI uses `packages/temporal-bun-sdk/tests/docker-compose.yaml` to build a lightweight container that runs `temporal server start-dev` via the Temporal CLI and sets `TEMPORAL_TEST_SERVER=1` so Bun integration tests run automatically.<br>
+> [Temporal CLI reference](https://docs.temporal.io/cli/server/start-dev)
 
 ### Test Cases
 1. **Happy path workflow**

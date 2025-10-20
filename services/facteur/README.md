@@ -1,6 +1,6 @@
 # facteur
 
-`facteur` is a Go service that will mediate Discord bot commands into Argo workflow executions. This directory currently contains the CLI scaffolding, configuration layer, and deployment manifests that future work will extend with real integrations. See `docs/facteur-discord-argo.md` for the end-to-end architecture and configuration contract.
+`facteur` is a Go service that mediates Discord bot commands into Argo Workflow executions. It follows the [Discord interaction lifecycle](https://discord.com/developers/docs/interactions/receiving-and-responding) and the [Argo Workflows submission model](https://argo-workflows.readthedocs.io/en/stable/) to translate slash commands into WorkflowTemplate runs. See `docs/facteur-discord-argo.md` for the end-to-end architecture and configuration contract.
 
 ## Layout
 

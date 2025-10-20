@@ -2,7 +2,8 @@
 
 **Audience:** Codex engineers extending the Bun-native Temporal SDK  
 **Prereqs:** `ffi-surface.md` should already be in flight; native exports must exist before these steps.  
-**Objective:** Replace the re-export of `@temporalio/core-bridge` with a Bun-specific implementation that speaks to the new FFI surface.
+**Objective:** Replace the re-export of `@temporalio/core-bridge` with a Bun-specific implementation that speaks to the new FFI surface and preserves the guarantees documented in the Temporal TypeScript SDK references.<br>
+[Temporal TypeScript SDK docs](https://docs.temporal.io/develop/typescript) · [Core bridge source](https://github.com/temporalio/sdk-typescript/tree/main/packages/core)
 
 ---
 
@@ -93,7 +94,7 @@ export const createWorker = (runtime: Runtime, client: Client, config: WorkerCon
 | `RuntimeImpl` | Own the native runtime pointer, call telemetry/logging FFI, manage shutdown semantics, surface diagnostics. |
 | `ClientImpl` | Serialize requests into the JSON/byte payloads expected by FFI, decode responses, expose ergonomic helpers to higher layers. |
 | `WorkerImpl` | Provide async iteration over poll calls, internally run the workflow/activity loops, handle shutdown states, translate heartbeats. |
-| `errors.ts` | Define `TemporalBridgeError` with `.code`, `.details`, `.retryable` derived from FFI error strings. |
+| `errors.ts` | Define `TemporalBridgeError` with `.code`, `.details`, `.retryable` derived from FFI error strings (align with gRPC status handling described in Temporal’s troubleshooting docs).<br>[Error handling](https://docs.temporal.io/develop/typescript/common-errors) |
 
 ---
 
@@ -101,8 +102,8 @@ export const createWorker = (runtime: Runtime, client: Client, config: WorkerCon
 
 1. **Create runtime wrapper.**
    - Store native handle (number).
-   - Provide `configureTelemetry` and `setLogger` passthroughs.
-   - Use `FinalizationRegistry` to guard against leaks.
+   - Provide `configureTelemetry` and `setLogger` passthroughs mirroring the upstream runtime API.<br>[Telemetry configuration](https://docs.temporal.io/develop/typescript/environment-setup#configure-telemetry)
+   - Use `FinalizationRegistry` to guard against leaks (MDN reference: [FinalizationRegistry](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/FinalizationRegistry)).
 
 2. **Client commands.**
    - Build `requestToPayload` utilities that encode headers, search attributes, retry options.
@@ -119,7 +120,7 @@ export const createWorker = (runtime: Runtime, client: Client, config: WorkerCon
 
 4. **Error handling.**
    - Wrap every call with `convertError(nativeCall, contextLabel)`.
-   - Provide `TemporalBridgeError.isRetryable()` hint to consumer.
+   - Provide `TemporalBridgeError.isRetryable()` hint to consumer using gRPC retry semantics (refer to Temporal’s client error recommendations).
 
 5. **Dependencies.**
    - Use only standard library plus small utilities (Zod optional).

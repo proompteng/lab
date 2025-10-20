@@ -23,4 +23,4 @@ The ACL rendered at `templates/policy.hujson.tmpl` matches the settings captured
 
 DNS settings (MagicDNS on, global resolver `192.168.1.130`) are managed through `tailscale_dns_preferences.tailnet` and `tailscale_dns_nameservers.tailnet`. Adjust the `dns_nameservers` variable if the resolver changes.
 
-> ℹ️ HTTPS certificates remain a manual tailnet toggle today. Enable MagicDNS and HTTPS in the Tailscale admin console under **DNS → HTTPS certificates** before relying on `tailscale serve` or automated cert provisioning.citeturn1search0
+> ℹ️ HTTPS certificates remain a manual tailnet toggle today. Enable MagicDNS and HTTPS in the Tailscale admin console under **DNS → HTTPS certificates** before relying on `tailscale serve` or automated cert provisioning.

@@ -1,84 +1,95 @@
-# Tooling Setup
+# Tooling Setup (October 20 2025)
 
-This guide consolidates the CLI and runtime tooling used across the Experimentation Lab. Commands assume macOS (Homebrew) unless otherwise noted. Linux alternatives are included where relevant.
+This guide consolidates the CLI and runtime tooling we keep standardised across the lab workspaces. Examples below assume macOS with Homebrew; when a Linux alternative is materially different we call it out. Use these instructions alongside the Coder bootstrap script so local environments and cloud workspaces stay aligned.
 
 ## Node.js, pnpm, and Bun
 
-- Node.js 22.20.0 (managed by `nvm` inside the Coder template)
-- pnpm 10.18.1 (installed automatically by `corepack` in the template)
-- Optional Bun runtime:
+- **Node.js** – Target the Active LTS line (22.x) which receives security fixes through April 30 2027 (see the [Node.js release schedule](https://nodejs.org/en/about/previous-releases)).  
+  Workspaces ship with `nvm` preinstalled. To match production:
+  ```bash
+  nvm install 22
+  nvm alias default 22
+  ```
+- **pnpm** – Corepack enables pnpm 10.x automatically inside new workspaces; if you need to pin or reinstall:  
+  ```bash
+  corepack enable pnpm
+  corepack prepare pnpm@10 --activate
+  ```
+  (Corepack ships with Node.js since v16.9.0 according to the [Corepack documentation](https://nodejs.org/api/corepack.html).)
+- **Bun** – Optional runtime we keep available for FFI experimentation. Install from the official script documented on bun.sh:  
   ```bash
   curl -fsSL https://bun.sh/install | bash
+  ```  
+  (See [Bun installation docs](https://bun.sh/docs/installation) for platform notes.)
+
+## OpenTofu / Terraform
+
+- The IaC directories under `tofu/` rely on OpenTofu; follow the [official installation guide](https://opentofu.org/docs/intro/install/). Install via Homebrew:
+  ```bash
+  brew install opentofu
   ```
-
-## Terraform / OpenTofu
-
-- Install Terraform via Homebrew:
+- We still keep `terraform` available for legacy modules:
   ```bash
   brew install terraform
   ```
-- The repo primarily uses [OpenTofu](https://opentofu.org/) (see `tofu/`), invoked through package scripts such as `pnpm run tf:plan`.
+- CLI wrappers such as `pnpm run tf:plan` invoke OpenTofu; when contributing Terraform modules, test with both CLIs if you expect upstream consumers.
 
 ## Kubernetes Tooling
 
-- kubectl:
+- Install `kubectl` following the upstream guidance from [kubernetes.io](https://kubernetes.io/docs/tasks/tools/):  
   ```bash
   brew install kubectl
-  ```
-- Optional: `./kubernetes/install.sh` seeds baseline manifests.
-- Configure kubeconfig access to Harvester or lab clusters:
-  ```bash
-  # copy contents of downloaded config to ~/.kube/altra.yaml
-  touch ~/.kube/altra.yaml
-  ```
+  ```  
+  (Reference: [Kubernetes install guide](https://kubernetes.io/docs/tasks/tools/).)
+- Optional helpers:
+  - `./kubernetes/install.sh` seeds the base manifests for local clusters.
+  - Place shared kubeconfigs under `~/.kube` (for example `~/.kube/altra.yaml`) and export `KUBECONFIG` when switching contexts.
 
 ## Ansible
 
-Used for host bootstrap and configuration (`ansible/`).
+Used for host bootstrap and configuration stored under `ansible/`. Install from Homebrew (or follow the [Ansible installation guide](https://docs.ansible.com/ansible/latest/installation_guide/installation_distros.html) for other OSes):
 ```bash
 brew install ansible
 ```
 
-## PostgreSQL
+## PostgreSQL Client Utilities
 
-- CLI tools on macOS:
+- macOS:  
   ```bash
   brew install postgresql
   ```
-- Server packages on Ubuntu:
+- Ubuntu:  
   ```bash
-  sudo apt update && sudo apt install postgresql
+  sudo apt update && sudo apt install postgresql-client
   ```
-- Configure authentication as documented in the main README under **Database Setup**.
+Check the main repository README for connection parameters and authentication requirements when targeting CloudNativePG clusters.
 
 ## Python Tooling
 
-Some automation leverages Python-based utilities.
+We standardise on Python 3.12 for automation scripts.
 
-- Install pyenv:
+- pyenv installs via Homebrew per the [upstream instructions](https://github.com/pyenv/pyenv#installation):  
   ```bash
   brew install pyenv
+  pyenv install 3.12.5
   ```
-- Install Python 3.12:
-  ```bash
-  pyenv install 3.12
-  ```
-- Install pipx for isolated CLI tools:
+- Install pipx to manage isolated CLI tools ([pipx docs](https://pipx.pypa.io/stable/installation/)):  
   ```bash
   brew install pipx
+  pipx ensurepath
   ```
-- Manage project packages with Poetry via pipx:
+- Install Poetry (used by several helper scripts) via pipx ([Poetry install guide](https://python-poetry.org/docs/#installing-with-pipx)):  
   ```bash
   pipx install poetry
   ```
 
 ## GitHub CLI
 
-Required for certain automation scripts.
+Automation scripts under `scripts/` depend on `gh` for release management and PR operations. Install from Homebrew or the [official GitHub CLI installer](https://cli.github.com/manual/installation):
 ```bash
 brew install gh
 ```
 
 ---
 
-Refer back to the main README for day-to-day workflows, infrastructure commands, and service-level documentation.
+Refer back to the repository README for service-specific workflows, deployment commands, and infra runbooks once these core tools are available.

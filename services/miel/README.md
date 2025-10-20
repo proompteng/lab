@@ -1,6 +1,6 @@
 # Miel Service
 
-A Go service that integrates with the Alpaca Trading API to backtest simple trading strategies and place real or paper-market orders. The service exposes an HTTP API for:
+A Go service that integrates with the [Alpaca Trading API](https://docs.alpaca.markets/) to backtest simple trading strategies and place real or paper-market orders. The service exposes an HTTP API for:
 
 - Triggering historical simulations (`POST /api/v1/backtests`) using Alpaca market data
 - Submitting market orders to Alpaca (`POST /api/v1/orders/market`)
@@ -43,7 +43,7 @@ Set the following environment variables before running the service. Paper-tradin
 
 ### TigerBeetle ledger (optional)
 
-Enable ledger recording to TigerBeetle by setting `TIGERBEETLE_ENABLED=true` and supplying the additional parameters below. Orders and backtest net P&L are written as transfers.
+Enable ledger recording to [TigerBeetle](https://docs.tigerbeetle.com/) by setting `TIGERBEETLE_ENABLED=true` and supplying the additional parameters below. Orders and backtest net P&L are written as transfers.
 
 | Variable                                 | Description                                                                      | Default                 |
 | ---------------------------------------- | -------------------------------------------------------------------------------- | ----------------------- |
