@@ -32,8 +32,11 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 pnpm install
 
 # Clone upstream Temporal sources (one-time setup)
-git clone --depth 1 --branch master https://github.com/temporalio/sdk-core.git ~/github.com/temporalio/sdk-core
-git clone --depth 1 --branch main https://github.com/temporalio/sdk-typescript.git ~/github.com/temporalio/sdk-typescript
+#   sdk-typescript  v1.13.1  (latest 1.13 patch release as of Oct 20, 2025)
+#   sdk-core        de67417  (commit referenced by that sdk-typescript tag)
+git clone --depth 1 --branch v1.13.1 https://github.com/temporalio/sdk-typescript.git ~/github.com/temporalio/sdk-typescript
+git clone https://github.com/temporalio/sdk-core.git ~/github.com/temporalio/sdk-core
+git -C ~/github.com/temporalio/sdk-core checkout de674173c664d42f85d0dee1ff3b2ac47e36d545
 
 # Symlink the checkouts into this workspace (kept out of git)
 mkdir -p packages/temporal-bun-sdk/vendor
@@ -62,11 +65,7 @@ copies those artifacts into `dist/native/<platform>/<arch>/` so `pnpm pack --fil
 > **Note:** Windows/MSVC builds remain on the roadmap (`zig-pack-03`). Until then, Windows hosts rely
 > on the Rust bridge.
 
-> **Tip:** For deterministic builds, pin the repositories to the versions we test against:
-> ```bash
-> git -C ~/github.com/temporalio/sdk-core checkout 9a54f72f  # example commit
-> git -C ~/github.com/temporalio/sdk-typescript checkout v1.13.1
-> ```
+> **Tip:** For deterministic builds, stay on `sdk-typescript@v1.13.1` and the referenced `sdk-core` commit `de674173c664d42f85d0dee1ff3b2ac47e36d545`. Both are wired into this workspace’s vendor clones and match the Temporal 1.13 line as of October 20 2025.
 
 Ensure `protoc` ≥ 28 is installed (`brew install protobuf` on macOS, `apt install protobuf-compiler` on Debian/Ubuntu).
 On Debian/Ubuntu, also install `libprotobuf-dev` so the well-known types referenced by Temporal's Rust crates are available to `protoc`.
