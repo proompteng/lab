@@ -1,6 +1,6 @@
 # Tigresse
 
-Tigresse is a Kubernetes operator that provisions TigerBeetle clusters using the [Kubebuilder](https://kubebuilder.io/) controller-runtime stack. The operator reconciles a `TigerBeetleCluster` custom resource into the ConfigMap, Services, and StatefulSet required to run the database following upstream recommendations.
+Tigresse is a Kubernetes operator that provisions [TigerBeetle](https://docs.tigerbeetle.com/) clusters using the [Kubebuilder](https://kubebuilder.io/) controller-runtime stack. The operator reconciles a `TigerBeetleCluster` custom resource into the ConfigMap, Services, and StatefulSet required to run the database following TigerBeetle’s deployment recommendations.
 
 ## Development
 

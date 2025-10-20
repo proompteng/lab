@@ -1,6 +1,6 @@
 # Temporal Bun SDK — End-to-End Design
 
-**Author:** Your Name  
+**Author:** Platform Runtime Team  
 **Date:** 17 Oct 2025  
 **Status:** Draft
 

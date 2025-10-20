@@ -10,12 +10,12 @@ rebuilds container images, and reapplies manifests so Knative rolls out new revi
 
 ## Prerequisites
 - Docker with BuildKit/buildx enabled (`docker buildx inspect default` should list `linux/arm64`).
-- Skaffold v2.11+ (config version `v4beta11`).
+- Skaffold v2.11+ (config version `v4beta11`). See the [Skaffold CLI documentation](https://skaffold.dev/docs/) for installation and usage details.
 - Access to the target Kubernetes cluster and container registry (`registry.ide-newton.ts.net`).
 - Git repository available so Skaffold can derive commit-based tags.
 
 ## Knative routing & subdomain
-- A `DomainMapping` is applied for `prt.proompteng.ai`, pointing straight at the Knative Service.
+- A `DomainMapping` is applied for `prt.proompteng.ai`, pointing straight at the Knative Service (see the [Knative Serving domain mapping guide](https://knative.dev/docs/serving/setting-up-custom-domains/)).
 - Knative Serving is already configured to mint certificates through cert-manager and to use the `{{.Name}}.{{.Domain}}` template, so the public URL resolves to `https://prt.proompteng.ai` once DNS points at the cluster ingress.
 - Argo CD’s ApplicationSet sets `CreateNamespace=true`, so the `prt` namespace is created automatically—no standalone Namespace manifest is needed.
 

@@ -1,6 +1,6 @@
 # dernier
 
-Rails 8.0.3 API application backed by PostgreSQL (CloudNativePG) and Redis. The service exposes a `/health` endpoint for uptime checks and is designed to run in Kubernetes via Argo CD.
+Rails 8.0.3 API application backed by PostgreSQL (managed via [CloudNativePG](https://cloudnative-pg.io/documentation/1.27/)) and Redis (OT-Container-Kit operator). The service exposes a `/health` endpoint for uptime checks and is designed to run in Kubernetes via Argo CD, following the deployment guidance in the [Rails 8 release notes](https://weblog.rubyonrails.org/2024/9/24/Rails-8-0-final/).
 
 ## Requirements
 
@@ -27,7 +27,7 @@ bundle exec rails server
 
 ### Tailwind CSS workflow
 
-Tailwind v4 is wired in via [`tailwindcss-rails`](https://github.com/rails/tailwindcss-rails). For a live-reloading loop, use the Foreman-backed dev script:
+Tailwind is wired in via [`tailwindcss-rails`](https://github.com/rails/tailwindcss-rails) and matches the tooling described in the [Tailwind CSS v3.4 announcement](https://tailwindcss.com/blog/tailwindcss-v3-4). For a live-reloading loop, use the Foreman-backed dev script:
 
 ```bash
 bin/dev
