@@ -25,7 +25,7 @@ To provide first-class Bun developer ergonomics we will reimplement the native b
 |-------|-----------|
 | Provide a Zig-built shared library exposing the `temporal_bun_*` symbols consumed by `src/internal/core-bridge/native.ts`. | Rewriting Temporal Core itself in Zig. We will continue to embed the upstream runtime via its C-ABI surface. |
 | Match the existing successful client paths: runtime bootstrap, async client connect, namespace describe, workflow start. | Full worker runtime parity on day one. Worker APIs will move in a later phase. |
-| Remove the direct dependency on `cargo` for consumers; only Zig (>=0.15.x) is required to build from source. | Dropping the Rust toolchain from **our** CI machines immediately. Until Zig parity is complete we keep Rust builds available for fallback. |
+| Remove the direct dependency on `cargo` for consumers; only Zig (>=0.15.x) is required to build from source (see the [Zig install guide](https://ziglang.org/learn/getting-started/)). | Dropping the Rust toolchain from **our** CI machines immediately. Until Zig parity is complete we keep Rust builds available for fallback. |
 | Ship phased plan, validation strategy, owners, and rollout guardrails. | Changing Temporal server deployment. |
 
 ---
