@@ -52,6 +52,12 @@ const DummyRuntime = extern struct {
     pad: u8 = 0,
 };
 
+/// Determines whether `destroyRuntime` frees the owning Zig handle or preserves it for inspection.
+const DestroyMode = enum {
+    release_handle,
+    retain_handle,
+};
+
 /// Placeholder handle that mirrors the pointer-based interface exposed by the Rust bridge.
 pub const RuntimeHandle = struct {
     id: u64,
@@ -134,7 +140,7 @@ pub fn create(options_json: []const u8) ?*RuntimeHandle {
     return handle;
 }
 
-pub fn destroy(handle: ?*RuntimeHandle) void {
+fn destroyRuntime(handle: ?*RuntimeHandle, comptime mode: DestroyMode) void {
     if (handle == null) {
         return;
     }
@@ -142,17 +148,48 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
     var allocator = std.heap.c_allocator;
     const runtime = handle.?;
 
-    // TODO(codex, zig-rt-02): Call into the Temporal core to drop the runtime (`runtime.free`).
-    if (runtime.core_runtime) |_| {
-        // The Zig bridge does not yet link against Temporal core; release will be wired in zig-rt-02.
+    const core_handle = runtime.core_runtime;
+    if (core_handle) |ptr| {
+        // Clear the stored pointer before delegating to Temporal core so repeated destroy calls become no-ops.
+        runtime.core_runtime = null;
+        runtimeFree(ptr);
     }
 
     if (runtime.config.len > 0) {
         allocator.free(runtime.config);
+        runtime.config = ""[0..0];
     }
 
-    allocator.destroy(runtime);
+    if (mode == .release_handle) {
+        allocator.destroy(runtime);
+    }
 }
+
+pub fn destroy(handle: ?*RuntimeHandle) void {
+    destroyRuntime(handle, .release_handle);
+}
+
+pub const __TEST__ = struct {
+    pub fn destroyRetainingHandle(handle: ?*RuntimeHandle) void {
+        destroyRuntime(handle, .retain_handle);
+    }
+
+    pub fn resetCoreApiOverridesForTest() void {
+        resetCoreApiOverrides();
+    }
+
+    pub fn setRuntimeNewOverride(fn_ptr: RuntimeNewFn) void {
+        runtime_new_impl = fn_ptr;
+    }
+
+    pub fn setRuntimeFreeOverride(fn_ptr: RuntimeFreeFn) void {
+        runtime_free_impl = fn_ptr;
+    }
+
+    pub fn setRuntimeByteArrayFreeOverride(fn_ptr: RuntimeByteArrayFreeFn) void {
+        runtime_byte_array_free_impl = fn_ptr;
+    }
+};
 
 pub fn updateTelemetry(handle: ?*RuntimeHandle, _options_json: []const u8) i32 {
     // TODO(codex, zig-rt-03): Apply telemetry configuration by bridging to Temporal core telemetry APIs.
@@ -306,4 +343,133 @@ test "create surfaces Temporal core runtime failure and frees resources" {
     const expected_error =
         "{\"code\":13,\"message\":\"core runtime exploded\",\"details\":\"core runtime exploded\"}";
     try testing.expectEqualStrings(expected_error, errors.snapshot());
+}
+
+test "destroy releases Temporal core runtime once and clears runtime handle state" {
+    const testing = std.testing;
+    __TEST__.resetCoreApiOverridesForTest();
+    defer __TEST__.resetCoreApiOverridesForTest();
+    errors.setLastError(""[0..0]);
+
+    const Stubs = struct {
+        var runtime_new_calls: usize = 0;
+        var runtime_free_calls: usize = 0;
+        var byte_array_free_calls: usize = 0;
+        var last_free_ptr: ?*core.Runtime = null;
+        var handle_was_null_before_free: bool = false;
+        var runtime_storage: DummyRuntime = .{};
+        var observed_handle: ?*RuntimeHandle = null;
+
+        fn runtimePointer() *core.Runtime {
+            return @as(*core.Runtime, @ptrCast(&runtime_storage));
+        }
+
+        fn runtimeNew(_options: [*c]const core.RuntimeOptions) callconv(.c) core.RuntimeOrFail {
+            _ = _options;
+            runtime_new_calls += 1;
+            return .{
+                .runtime = runtimePointer(),
+                .fail = null,
+            };
+        }
+
+        fn runtimeFree(runtime: ?*core.Runtime) callconv(.c) void {
+            runtime_free_calls += 1;
+            last_free_ptr = runtime;
+            if (observed_handle) |handle| {
+                handle_was_null_before_free = handle.core_runtime == null;
+            }
+        }
+
+        fn runtimeByteArrayFree(runtime: ?*core.Runtime, bytes: ?*const core.ByteArray) callconv(.c) void {
+            _ = runtime;
+            _ = bytes;
+            byte_array_free_calls += 1;
+        }
+    };
+
+    __TEST__.setRuntimeNewOverride(Stubs.runtimeNew);
+    __TEST__.setRuntimeFreeOverride(Stubs.runtimeFree);
+    __TEST__.setRuntimeByteArrayFreeOverride(Stubs.runtimeByteArrayFree);
+
+    const payload = "{\"namespace\":\"default\"}"[0..];
+    const handle_opt = create(payload);
+    try testing.expect(handle_opt != null);
+    const handle = handle_opt.?;
+
+    Stubs.observed_handle = handle;
+
+    __TEST__.destroyRetainingHandle(handle);
+
+    try testing.expectEqual(@as(usize, 1), Stubs.runtime_new_calls);
+    try testing.expectEqual(@as(usize, 1), Stubs.runtime_free_calls);
+    try testing.expectEqual(@as(usize, 0), Stubs.byte_array_free_calls);
+    try testing.expect(Stubs.handle_was_null_before_free);
+    try testing.expect(handle.core_runtime == null);
+    try testing.expectEqual(@as(usize, 0), handle.config.len);
+    try testing.expect(Stubs.last_free_ptr != null);
+    try testing.expectEqual(@intFromPtr(Stubs.runtimePointer()), @intFromPtr(Stubs.last_free_ptr.?));
+
+    destroy(handle);
+    try testing.expectEqual(@as(usize, 1), Stubs.runtime_free_calls);
+}
+
+test "destroy is idempotent after Temporal core runtime has been released" {
+    const testing = std.testing;
+    __TEST__.resetCoreApiOverridesForTest();
+    defer __TEST__.resetCoreApiOverridesForTest();
+    errors.setLastError(""[0..0]);
+
+    const Stubs = struct {
+        var runtime_free_calls: usize = 0;
+        var observed_handle: ?*RuntimeHandle = null;
+        var handle_cleared_on_subsequent_calls: bool = true;
+
+        fn runtimeFree(runtime: ?*core.Runtime) callconv(.c) void {
+            _ = runtime;
+            runtime_free_calls += 1;
+            if (observed_handle) |handle| {
+                if (runtime_free_calls > 1 and handle.core_runtime != null) {
+                    handle_cleared_on_subsequent_calls = false;
+                }
+            }
+        }
+    };
+
+    __TEST__.setRuntimeFreeOverride(Stubs.runtimeFree);
+
+    const allocator = std.heap.c_allocator;
+    const handle = allocator.create(RuntimeHandle) catch unreachable;
+    var destroyed = false;
+    defer if (!destroyed) destroy(handle);
+
+    const payload = "{\"namespace\":\"default\"}"[0..];
+    const config = allocator.alloc(u8, payload.len) catch unreachable;
+    var config_freed = false;
+    defer if (!config_freed) allocator.free(config);
+    @memcpy(config, payload);
+
+    var runtime_storage = DummyRuntime{};
+    handle.* = .{
+        .id = 99,
+        .config = config,
+        .core_runtime = @as(?*core.Runtime, @ptrCast(&runtime_storage)),
+    };
+
+    Stubs.observed_handle = handle;
+
+    __TEST__.destroyRetainingHandle(handle);
+    try testing.expectEqual(@as(usize, 1), Stubs.runtime_free_calls);
+    try testing.expect(handle.core_runtime == null);
+    try testing.expectEqual(@as(usize, 0), handle.config.len);
+    config_freed = true;
+
+    __TEST__.destroyRetainingHandle(handle);
+    try testing.expectEqual(@as(usize, 1), Stubs.runtime_free_calls);
+    try testing.expect(handle.core_runtime == null);
+    try testing.expectEqual(@as(usize, 0), handle.config.len);
+    try testing.expect(Stubs.handle_cleared_on_subsequent_calls);
+
+    destroy(handle);
+    destroyed = true;
 }
