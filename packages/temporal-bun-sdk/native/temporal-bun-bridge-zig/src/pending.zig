@@ -20,13 +20,19 @@ pub const GrpcStatus = struct {
     pub const cancelled: i32 = 1;
     pub const unknown: i32 = 2;
     pub const invalid_argument: i32 = 3;
+    pub const deadline_exceeded: i32 = 4;
     pub const not_found: i32 = 5;
     pub const already_exists: i32 = 6;
+    pub const permission_denied: i32 = 7;
     pub const resource_exhausted: i32 = 8;
     pub const failed_precondition: i32 = 9;
+    pub const aborted: i32 = 10;
+    pub const out_of_range: i32 = 11;
     pub const unimplemented: i32 = 12;
     pub const internal: i32 = 13;
     pub const unavailable: i32 = 14;
+    pub const data_loss: i32 = 15;
+    pub const unauthenticated: i32 = 16;
 };
 
 const PendingErrorState = struct {
