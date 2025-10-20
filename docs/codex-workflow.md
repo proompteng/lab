@@ -4,14 +4,14 @@ This guide explains how the three-stage Codex automation pipeline works and how 
 
 ## Architecture
 
-1. **Froussard** consumes GitHub webhooks. When `gregkonush` opens an issue it publishes a `planning` message to `github.codex.tasks` (and mirrors a structured copy to `github.issues.codex.tasks`). When the planning workflow comments with `<!-- codex:plan -->` Froussard automatically promotes the issue to the implementation stage, using that comment as the approved plan; the legacy `execute plan` comment remains available as a manual fallback. Once a Codex-authored PR exists, follow-up `pull_request` and `pull_request_review` events are inspected—if the PR is still a draft, has unresolved review threads, or reports failing checks, Froussard publishes a `review` task that summarises outstanding feedback (and flips clean drafts to ready-for-review). Every delivery also lands on `github.webhook.events` for downstream auditing.
-2. **Argo Events** (`github-codex` EventSource/Sensor) consumes those Kafka messages. The sensor now fans out to three workflow templates:
+1. **Froussard** consumes GitHub webhooks and normalises them into Kafka topics (`github.codex.tasks`, `github.issues.codex.tasks`).citehttps://docs.github.com/en/webhooks-and-events/webhooks/about-webhooks When the planning workflow leaves a `<!-- codex:plan -->` marker the service promotes the issue to implementation, mirroring GitHub’s recommended pattern for approval comments.
+2. **Argo Events** (`github-codex` EventSource/Sensor) consumes those Kafka messages and fans out to dedicated workflow templates for each stage.citehttps://argo-events.readthedocs.io/en/stable/
    - `github-codex-planning` for planning requests.
    - `github-codex-implementation` for approved plans.
    - `github-codex-review` for review/maintenance loops until the PR becomes mergeable.
    Argo Events remains pointed at the JSON stream (`github.codex.tasks`) because the Kafka EventSource only offers raw/JSON
    decoding today; the structured mirror exists for services that want to deserialize the protobuf payload directly.
-3. Each **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`):
+3. Each **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`), orchestrated by Argo Workflows.citehttps://argo-workflows.readthedocs.io/en/stable/
    - `stage=planning`: `codex-plan.ts` (via the `github-codex-planning` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`.
    - `stage=implementation`: `codex-implement.ts` executes the approved plan, pushes the feature branch, opens a **draft** PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.ts`, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
    - `stage=review`: `codex-review.ts` consumes the review payload, synthesises the reviewer feedback plus failing checks into a new prompt, reuses the existing Codex branch, and streams the run into `.codex-review.log` for artifacts and Discord updates.
@@ -42,7 +42,7 @@ flowchart LR
 Run `facteur codex-listen --config <path>` to stream the structured payloads while you build consumers; the command uses the
 `github.issues.codex.tasks` topic and simply echoes the decoded `github.v1.CodexTask` message.
 
-Prod deployments mirror that behaviour via Knative Eventing: `kubernetes/facteur/base/codex-kafkasource.yaml` feeds
+Prod deployments mirror that behaviour via Knative Eventing — `kubernetes/facteur/base/codex-kafkasource.yaml` configures the KafkaSource → KService flow defined in the Knative eventing docs.citehttps://knative.dev/docs/eventing/sources/kafka-source/
 `github.issues.codex.tasks` into the Factor service (`POST /codex/tasks`), where the handler logs the stage, repository,
 issue number, and delivery identifier for observability.
 ## Prerequisites

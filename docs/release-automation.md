@@ -1,6 +1,6 @@
 # Release Branch Auto-PR Workflow
 
-This workflow opens pull requests when Argo CD Image Updater commits to a `release/<app>` branch or when the workflow is manually dispatched.
+This workflow opens pull requests whenever Argo CD Image Updater commits to a `release/<app>` branch or when a maintainer triggers the `workflow_dispatch` input. The automation relies on standard GitHub Actions branching semantics and the release workflow documented in GitHub’s manual dispatch guide.citehttps://docs.github.com/actions/using-workflows/events-that-trigger-workflows#workflow_dispatch
 
 ## Enrolling a New Application
 

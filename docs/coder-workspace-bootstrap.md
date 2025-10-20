@@ -1,18 +1,18 @@
 # Coder Workspace Bootstrap Runbook
 
-This document explains how to maintain the single `k8s-arm64` template, push new versions, and verify the tool bootstrap succeeds so that follow-up Codex runs can iterate reliably.
+This document explains how to maintain the single `k8s-arm64` template in Coder, publish new versions, and verify the bootstrap script so Codex tasks and local development stay reproducible. See the upstream Coder documentation for template management fundamentals.citeturn4search0
 
 ## Prerequisites
 
 - Logged in to the Coder deployment (`coder login ...`).
-- `coder` CLI v2.27.0 or newer on your local machine.
+- `coder` CLI v2.27.0 or newer on your local machine (download instructions in the Coder CLI manual).citeturn4search0
 - Repository cloned locally (this repo, default path `~/github.com/lab`).
 
 ## Template Update Loop
 
 1. Edit `kubernetes/coder/main.tf` and `kubernetes/coder/template.yaml` as needed.
 2. Bump `version` in `kubernetes/coder/template.yaml` (e.g., `1.0.8`).
-3. Push a new template version:
+3. Push a new template version (Coder increments template revisions automatically when `--message` is provided).citeturn4search0
    ```bash
    coder templates push k8s-arm64 --directory kubernetes/coder --message 'feat: describe change' --yes
    ```

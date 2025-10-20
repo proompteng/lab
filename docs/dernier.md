@@ -1,14 +1,14 @@
 # dernier service
 
-The `dernier` API is a production Rails 8.0.3 deployment that runs on Knative Serving. It relies on CloudNativePG for PostgreSQL and the Redis Operator for caching, sessions, and background jobs. Argo CD manages the full stack and Knative handles autoscaling between three and five concurrent revisions.
+The `dernier` API is a production Rails 8.0.x deployment (currently 8.0.3, released September 22, 2025) running on Knative Serving with Argo CD managing desired state.citeturn5search1 CloudNativePG 1.27 provides the PostgreSQL control plane, while the OT-Container-Kit Redis Operator (v0.21.x+) furnishes Redis Sentinel/cluster capabilities for caching, session storage, and Solid Queue workers.citeturn0search0turn0search2turn1search3 Autoscaling is handled by Knative’s Kubernetes-backed HPA integration; manifests capture the default probe thresholds that Knative otherwise injects (failure threshold 3, timeout 1 second) to keep Argo CD in sync with live revisions.citeturn2search3turn2search8
 
 ## Architecture
 
 - **Image:** `registry.ide-newton.ts.net/lab/dernier`
 - **Namespace:** `dernier`
-- **Database:** CloudNativePG cluster `dernier-db` (primary service `dernier-db-rw`)
-- **Redis:** Redis Operator instance `dernier-redis` (leader service `dernier-redis-leader`)
-- **Ingress:** Knative Serving (Istio ingress gateway) exposes the public route `https://dernier.proompteng.ai`
+- **Database:** CloudNativePG 1.27 cluster `dernier-db` (primary service `dernier-db-rw`). The release supports PostgreSQL 17 by default and remains in active maintenance until ~February 2026.citeturn0search0turn0search2
+- **Redis:** Redis Operator-managed instance `dernier-redis` (leader service `dernier-redis-leader`), compatible with Redis 7.0.12+.citeturn1search3
+- **Ingress:** Knative Serving (Istio ingress gateway) exposes the route `https://dernier.proompteng.ai`.
 
 ## System Diagram
 
@@ -34,26 +34,24 @@ graph TD
 
 ## Configuration
 
-Environment variables are injected via `dernier-secrets` (SealedSecret):
+Environment variables arrive via the SealedSecret `dernier-secrets`:
 
 - `RAILS_MASTER_KEY`
 - `SECRET_KEY_BASE`
 
 Additional runtime configuration:
 
-- `DATABASE_URL` sourced from the CNPG generated secret `dernier-db-app` (`key: uri`)
-- `REDIS_URL` resolves to `redis://dernier-redis-leader:6379/1`
-- `PGSSLROOTCERT` points to `/etc/postgres-ca/ca.crt` from the `dernier-db-ca` secret.
+- `DATABASE_URL` sourced from the CloudNativePG secret `dernier-db-app` (`key: uri`).
+- `REDIS_URL` resolves to `redis://dernier-redis-leader:6379/1`.
+- `PGSSLROOTCERT` mounts `/etc/postgres-ca/ca.crt` from `dernier-db-ca`.
 
 ### Frontend Tooling
 
-- Tailwind CSS v4 powers the UI layer. Source tokens live in `app/assets/tailwind/application.css` and compile to `app/assets/builds/tailwind.css`.
-- Run `bin/dev` (Procfile-backed) to boot Rails alongside the Tailwind watcher. Production builds run through `rails tailwindcss:build`.
-- Propshaft is enabled so `config.assets` is available even though controllers remain API-first.
+- Tailwind CSS (currently 3.4, upgrade to v4 alpha after GA) powers the UI layer. Source tokens live in `app/assets/tailwind/application.css` and compile to `app/assets/builds/tailwind.css`.citehttps://tailwindcss.com/blog/tailwindcss-v3-4
+- Run `bin/dev` (Procfile-backed) to boot Rails alongside the Tailwind watcher. Production builds run `rails tailwindcss:build`.
+- Propshaft ships by default in Rails 8 and remains the asset pipeline of record even though controllers are API-first.citeturn5search4
 
 ### Local development
-
-To boot the application locally:
 
 ```bash
 cd services/dernier
@@ -61,27 +59,27 @@ bundle install
 bin/dev
 ```
 
-`bin/dev` runs both `rails server` (bound to `http://localhost:3000`) and `rails tailwindcss:watch`. Provide `DATABASE_URL` and `REDIS_URL` that point at your local PostgreSQL/Redis instances, or spin them up via Docker:
+`bin/dev` starts `rails server` (`http://localhost:3000`) plus the Tailwind watcher. Use local PostgreSQL/Redis or fall back to Docker:
 
 ```bash
 docker compose up postgres redis
-# in another shell
+
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/dernier_development \
 REDIS_URL=redis://localhost:6379/1 \
 bin/dev
 ```
 
-The service prepares the database on startup (see `bin/entrypoint`) and exposes a `/health` endpoint you can cURL while iterating.
+The entrypoint prepares the database and exposes `/health` for readiness checks.
 
 ### Scaling & Availability
 
-- Horizontal pod autoscaler tracks CPU utilization between 2–5 replicas (`argocd/applications/dernier/overlays/cluster/hpa.yaml`).
-- CNPG cluster runs a single primary instance with automated failover once replicas are added.
-- Redis operator deploys exporter-sidecar metrics (`:9121`) for Prometheus scraping.
+- HPA scales between 2–5 replicas (see `argocd/applications/dernier/overlays/cluster/hpa.yaml`).
+- CloudNativePG provides HA failover once replicas join the cluster and enforces liveness-restart semantics introduced in 1.27.citeturn0search0
+- Redis Operator bundles a redis-exporter sidecar listening on `:9121` for Prometheus scraping.citeturn1search0
 
 ### Secret Management
 
-Use `scripts/seal-generic-secret.sh` to rotate:
+Rotate app secrets with `scripts/seal-generic-secret.sh`:
 
 ```bash
 scripts/seal-generic-secret.sh \
@@ -91,7 +89,7 @@ scripts/seal-generic-secret.sh \
   SECRET_KEY_BASE=<value>
 ```
 
-Commit the regenerated SealedSecret and trigger an Argo CD sync.
+Commit the updated manifest and trigger an Argo CD sync.
 
 ## Deployment
 

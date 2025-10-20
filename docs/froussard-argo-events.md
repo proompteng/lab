@@ -1,5 +1,7 @@
 # Froussard ⇄ Argo Events Integration Notes
 
+Argo Events sensors mutate WorkflowTemplate parameters via `template.k8s.parameters`. Capturing that structure ensures the Kafka payload lands in `spec.arguments` exactly as documented upstream.citehttps://argo-events.readthedocs.io/en/stable/sensors/kubernetes/trigger-reference.html
+
 ## Summary
 
 - **Updated** `argocd/applications/froussard/github-codex-sensor.yaml:43` so that the

@@ -1,10 +1,12 @@
 # Kafka Topic Conventions
 
+We namespace Kafka topics using dot notation (`<source>.<domain>.<entity>`) so producers, ACLs, and observability dashboards stay consistent. Resource manifests are managed through Strimzi’s `KafkaTopic` CRD; keep the Kubernetes resource name DNS-1123 compliant and rely on `spec.topicName` for the dotted topic.citeturn1search4
+
 We namespace Kafka topics with dot notation (e.g. `github.webhook.events`) to make it obvious which producer owns the stream and what data shape to expect. The segments map to `<source>.<domain>.<entity>` and can be extended with additional qualifiers when needed (for example, `github.codex.tasks` for Codex-triggered automation).
 
 ## Working With Strimzi Manifests
 
-Strimzi requires the Kubernetes `metadata.name` to follow DNS-1123 conventions (`[a-z0-9-]+`). When a topic contains dots, set the desired Kafka topic with `spec.topicName` and keep the resource name kebab-cased:
+Strimzi requires the Kubernetes `metadata.name` to follow DNS-1123 conventions (`[a-z0-9-]+`). When a topic contains dots, set the desired Kafka topic with `spec.topicName` while keeping the resource name kebab-cased:citeturn1search4
 
 ```yaml
 apiVersion: kafka.strimzi.io/v1beta2
