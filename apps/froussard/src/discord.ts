@@ -1,4 +1,5 @@
-import { setTimeout as delay } from 'node:timers/promises'
+import { Effect } from 'effect'
+import * as Duration from 'effect/Duration'
 
 const DISCORD_API_BASE = 'https://discord.com/api/v10'
 export const DISCORD_MESSAGE_LIMIT = 1900
@@ -88,6 +89,19 @@ export class DiscordRelayError extends Error {
   ) {
     super(message)
     this.name = 'DiscordRelayError'
+  }
+}
+
+class DiscordRetryableError extends DiscordRelayError {
+  constructor(
+    message: string,
+    response: Response | undefined,
+    payload: DiscordErrorPayload | undefined,
+    readonly retryAfterMs: number | undefined,
+    readonly rateLimited: boolean,
+  ) {
+    super(message, response, payload)
+    this.name = 'DiscordRetryableError'
   }
 }
 
@@ -270,28 +284,60 @@ const parseError = async (response: Response): Promise<DiscordErrorPayload | und
 
 const nextBackoff = (attempt: number) => Math.min(MAX_BACKOFF_MS, DEFAULT_BACKOFF_MS * 2 ** Math.max(0, attempt - 1))
 
-const discordFetch = async (config: DiscordConfig, path: string, init: RequestInit, attempt = 1): Promise<Response> => {
+const discordFetch = async (config: DiscordConfig, path: string, init: RequestInit): Promise<Response> => {
   const url = `${DISCORD_API_BASE}${path}`
-  const response = await fetch(url, { ...init, headers: { ...buildHeaders(config), ...(init.headers ?? {}) } })
 
-  if (response.status === 429) {
-    const payload = await parseError(response)
-    const retryAfterMs = payload?.retry_after ? payload.retry_after * 1000 : nextBackoff(attempt)
-    await delay(retryAfterMs)
-    return discordFetch(config, path, init, attempt + 1)
-  }
+  const request = (attempt: number): Effect.Effect<Response, DiscordRelayError> =>
+    Effect.gen(function* () {
+      const response = yield* Effect.tryPromise(() =>
+        fetch(url, { ...init, headers: { ...buildHeaders(config), ...(init.headers ?? {}) } }),
+      )
 
-  if (response.status >= 500 && response.status < 600 && attempt < 5) {
-    await delay(nextBackoff(attempt))
-    return discordFetch(config, path, init, attempt + 1)
-  }
+      if (response.status === 429) {
+        const payload = yield* Effect.tryPromise(() => parseError(response))
+        const retryAfterMs = payload?.retry_after ? payload.retry_after * 1000 : undefined
+        yield* Effect.fail(
+          new DiscordRetryableError('Discord rate limit encountered', response, payload, retryAfterMs, true),
+        )
+      }
 
-  if (!response.ok) {
-    const payload = await parseError(response)
-    throw new DiscordRelayError(`Discord request failed with status ${response.status}`, response, payload)
-  }
+      if (response.status >= 500 && response.status < 600) {
+        const payload = yield* Effect.tryPromise(() => parseError(response))
+        yield* Effect.fail(
+          new DiscordRetryableError(
+            `Discord request failed with status ${response.status}`,
+            response,
+            payload,
+            undefined,
+            false,
+          ),
+        )
+      }
 
-  return response
+      if (!response.ok) {
+        const payload = yield* Effect.tryPromise(() => parseError(response))
+        yield* Effect.fail(
+          new DiscordRelayError(`Discord request failed with status ${response.status}`, response, payload),
+        )
+      }
+
+      return response
+    }).pipe(
+      Effect.catchAll((error) => {
+        if (error instanceof DiscordRetryableError) {
+          const hasRetryBudget = error.rateLimited || attempt < 5
+          if (!hasRetryBudget) {
+            return Effect.fail(new DiscordRelayError(error.message, error.response, error.payload))
+          }
+          const delayMs = error.retryAfterMs ?? nextBackoff(attempt)
+          return Effect.sleep(Duration.millis(delayMs)).pipe(Effect.flatMap(() => request(attempt + 1)))
+        }
+
+        return Effect.fail(error)
+      }),
+    )
+
+  return Effect.runPromise(request(1))
 }
 
 const requestJson = async <T>(response: Response): Promise<T> => {

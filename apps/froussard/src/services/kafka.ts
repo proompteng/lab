@@ -1,4 +1,6 @@
 import { Effect, Layer, Ref } from 'effect'
+import * as Deferred from 'effect/Deferred'
+import * as Queue from 'effect/Queue'
 import { Kafka } from 'kafkajs'
 
 import { AppConfigService } from '@/effect/config'
@@ -20,6 +22,11 @@ export interface KafkaProducerService {
 }
 
 export class KafkaProducer extends Effect.Tag('@froussard/KafkaProducer')<KafkaProducer, KafkaProducerService>() {}
+
+interface QueuedMessage {
+  readonly message: KafkaMessage
+  readonly deferred: Deferred.Deferred<void>
+}
 
 export const KafkaProducerLayer = Layer.scoped(
   KafkaProducer,
@@ -63,7 +70,7 @@ export const KafkaProducerLayer = Layer.scoped(
       producer = createProducer()
     })
 
-    const publish = (message: KafkaMessage) =>
+    const sendMessage = (message: KafkaMessage) =>
       ensureConnected.pipe(
         Effect.flatMap(() =>
           Effect.tryPromise({
@@ -105,6 +112,34 @@ export const KafkaProducerLayer = Layer.scoped(
         ),
       )
 
+    const queueCapacity = 128
+    const queue = yield* Queue.bounded<QueuedMessage>(queueCapacity)
+
+    const processQueuedMessage = (item: QueuedMessage) =>
+      sendMessage(item.message).pipe(
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Deferred.fail(item.deferred, error).pipe(
+              Effect.zipRight(
+                logger.error('dropping kafka message after failure', {
+                  topic: item.message.topic,
+                  key: item.message.key,
+                }),
+              ),
+            ),
+          onSuccess: () => Deferred.succeed(item.deferred, undefined),
+        }),
+      )
+
+    yield* queue.take.pipe(Effect.flatMap(processQueuedMessage), Effect.forever, Effect.forkScoped)
+
+    const publish = (message: KafkaMessage) =>
+      Effect.gen(function* (_) {
+        const deferred = yield* Deferred.make<void>()
+        yield* queue.offer({ message, deferred })
+        return yield* Deferred.await(deferred)
+      })
+
     const isReady = Ref.get(readyRef)
 
     return yield* Effect.acquireRelease(
@@ -113,7 +148,7 @@ export const KafkaProducerLayer = Layer.scoped(
         ensureConnected,
         isReady,
       }),
-      () => disconnect.pipe(Effect.zipRight(resetProducer)),
+      () => Queue.shutdown(queue).pipe(Effect.zipRight(disconnect), Effect.zipRight(resetProducer)),
     )
   }),
 )

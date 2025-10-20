@@ -229,7 +229,7 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
     planCommentId = typeof payload.comment?.id === 'number' ? payload.comment.id : undefined
     planCommentUrl = typeof payload.comment?.html_url === 'string' ? payload.comment.html_url : undefined
   } else {
-    const planLookup = await executionContext.runtime.runPromise(
+    const planLookup = await executionContext.runGithub(() =>
       executionContext.githubService.findLatestPlanComment({
         repositoryFullName,
         issueNumber,
