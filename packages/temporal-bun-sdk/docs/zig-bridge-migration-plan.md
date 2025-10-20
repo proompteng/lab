@@ -3,6 +3,7 @@
 **Status:** Scaffolded — Zig shared library placeholder merged (18 Oct 2025)  
 **Owner:** Platform Runtime (Temporal Bun)  
 **Related Issue:** #1458 — Native Bun support with Zig
+**See Also:** `zig-bridge-architectural-plan.md` for the end-state architecture and roadmap.
 
 ---
 
@@ -31,19 +32,34 @@ To provide first-class Bun developer ergonomics we will reimplement the native b
 
 ## 3. Current Surface Inventory (Oct 2025 Snapshot)
 
-| Area | Symbol | Notes |
-|------|--------|-------|
-| Runtime | `temporal_bun_runtime_new`, `temporal_bun_runtime_free` | Used by `native.createRuntime` in TypeScript. Options payload currently ignored. |
-| Client Async | `temporal_bun_client_connect_async`, pending poll/consume/free trio | Produces a `PendingClientHandle` polled from JS event loop. |
-| Client RPCs | `temporal_bun_client_describe_namespace_async`, `temporal_bun_client_start_workflow` | Describe returns pending byte array, Start returns immediate byte array. |
-| Error Surface | `temporal_bun_error_message`, `temporal_bun_error_free` | Shared error buffer read from JS. |
-| Future Work | Telemetry hooks, metadata updates, signal/query/terminate/cancel APIs | Documented as TODOs in TypeScript and the Rust bridge; parity required in Zig plan phases. |
+| Area | Symbol(s) | Current Status |
+|------|-----------|----------------|
+| Runtime | `temporal_bun_runtime_new`, `temporal_bun_runtime_free`, `temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger` | `runtime_new` allocates a handle, but `runtime_free`, telemetry, and logger hooks are TODOs (see `zig-rt-02` … `zig-rt-04`). |
+| Client Async | `temporal_bun_client_connect_async`, pending poll/consume/free trio | Stubbed pending handles return success without invoking Temporal core; safe concurrency requires #1526. |
+| Client RPCs | `temporal_bun_client_describe_namespace_async`, `temporal_bun_client_start_workflow`, `temporal_bun_client_signal*`, `temporal_bun_client_query_workflow`, `temporal_bun_client_terminate_workflow`, `temporal_bun_client_update_headers` | All RPC entry points return `unimplemented` errors today (`zig-cl-*` and `zig-wf-*` backlog). Describe/Start PRs (#1529, etc.) are in flight but not merged. |
+| Error Surface | `temporal_bun_error_message`, `temporal_bun_error_free` | Functional; mirrors the Rust bridge behaviour. |
+| Worker | `temporal_bun_worker_*` suite | Creation, polling, completion, and shutdown remain TODOs (`zig-worker-01` … `zig-worker-09`). |
+| Packaging | `build.zig` + scripts | `zig-pack-01` linking to Temporal static libs is not implemented; bridge builds without real core symbols. |
 
 Supporting modules:
 
-- `native/pending.rs` spawns Tokio futures in background threads and exposes poll/consume semantics.
-- `native/byte_array.rs` allocates byte buffers with ownership transfer semantics expected by Bun.
-- Build target emits `libtemporal_bun_bridge.{so|dylib|dll}` under `target/{debug,release}`.
+- `native/temporal-bun-bridge-zig/src/pending.zig` needs the hardening from #1526 to be thread-safe.
+- `native/temporal-bun-bridge-zig/src/byte_array.zig` still awaits telemetry/guardrails (`zig-buf-02`).
+- TypeScript loader (`src/internal/core-bridge/native.ts`) leaves telemetry/logging/cancelation paths as TODOs pending Zig parity.
+
+---
+
+## 4. Phased Roadmap (2025–2026)
+
+| Phase | Goals | Dependencies | Exit Criteria |
+|-------|-------|--------------|---------------|
+| 0. Foundations | Land pending-handle fixes (#1526), correct docs, validate TLS against Temporal Cloud sandbox. | Zig 0.15.x toolchain, Temporal Cloud sandbox access. | Zig unit tests + TLS smoke succeed on macOS/Linux. |
+| 1. Client Parity | Implement `zig-cl-*` / `zig-wf-*`, wrap Bun client API, publish quickstart docs. | `zig-pack-01` linkage, Bun FFI loaders. | Integration suite passes for connect/start/signal/query/terminate; docs author “Temporal on Bun”. |
+| 2. Worker Parity | Complete `zig-worker-*`, run workflow/activity loops in Bun worker. | Client parity shipped; workflow runtime scaffolding. | Sample workflow executes end-to-end with timers, activities, signals. |
+| 3. Observability | Wire telemetry/logging FFI, provide dashboards/runbooks. | Runtime parity, metrics exporters. | Prometheus + OTLP exporters validated; logging callback invoked from Bun. |
+| 4. Release & Adoption | Package native binaries, publish npm canary/GA, gather feedback. | Packaging pipeline, CI matrix ready. | npm release published with SBOM + signatures; Temporal Cloud smoke in CI. |
+
+The detailed architectural context for each phase lives in `zig-bridge-architectural-plan.md`.
 
 ---
 

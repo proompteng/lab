@@ -9,12 +9,18 @@ on:
       - 'packages/temporal-bun-sdk-example/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/temporal-bun-sdk.yml'
+    paths-ignore:
+      - 'packages/temporal-bun-sdk/**/*.md'
+      - 'packages/temporal-bun-sdk/docs/**'
   pull_request:
     paths:
       - 'packages/temporal-bun-sdk/**'
       - 'packages/temporal-bun-sdk-example/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/temporal-bun-sdk.yml'
+    paths-ignore:
+      - 'packages/temporal-bun-sdk/**/*.md'
+      - 'packages/temporal-bun-sdk/docs/**'
 
 jobs:
   test:
