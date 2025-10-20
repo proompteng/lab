@@ -7,6 +7,276 @@ const core = @import("core.zig");
 
 const grpc = pending.GrpcStatus;
 
+const StringArena = struct {
+    allocator: std.mem.Allocator,
+    store: std.ArrayListUnmanaged([]u8) = .{},
+
+    pub fn init(allocator: std.mem.Allocator) StringArena {
+        return .{ .allocator = allocator, .store = .{} };
+    }
+
+    pub fn dup(self: *StringArena, bytes: []const u8) ![]const u8 {
+        const copy = try self.allocator.alloc(u8, bytes.len);
+        @memcpy(copy, bytes);
+        try self.store.append(self.allocator, copy);
+        return copy;
+    }
+
+    pub fn deinit(self: *StringArena) void {
+        for (self.store.items) |buf| {
+            self.allocator.free(buf);
+        }
+        self.store.deinit(self.allocator);
+    }
+};
+
+fn makeByteArrayRef(slice: []const u8) core.ByteArrayRef {
+    return .{ .data = slice.ptr, .size = slice.len };
+}
+
+fn emptyByteArrayRef() core.ByteArrayRef {
+    return .{ .data = null, .size = 0 };
+}
+
+fn byteArraySlice(bytes_ptr: ?*const core.ByteArray) []const u8 {
+    if (bytes_ptr == null) return ""[0..0];
+    const bytes = bytes_ptr.?;
+    if (bytes.data == null or bytes.size == 0) return ""[0..0];
+    return bytes.data[0..bytes.size];
+}
+
+fn makeDefaultIdentity(arena: *StringArena) ![]const u8 {
+    const pid = std.c.getpid();
+    const pid_u64 = @as(u64, @intCast(pid));
+    var buffer: [64]u8 = undefined;
+    const written = try std.fmt.bufPrint(&buffer, "temporal-bun-sdk-{d}", .{pid_u64});
+    return arena.dup(written);
+}
+
+fn extractStringField(config_json: []const u8, key: []const u8) ?[]const u8 {
+    var pattern_buf: [96]u8 = undefined;
+    if (key.len + 2 > pattern_buf.len) return null;
+    const pattern = std.fmt.bufPrint(&pattern_buf, "\"{s}\"", .{key}) catch return null;
+    const start = std.mem.indexOf(u8, config_json, pattern) orelse return null;
+    var idx = start + pattern.len;
+
+    while (idx < config_json.len and std.ascii.isWhitespace(config_json[idx])) : (idx += 1) {}
+    if (idx >= config_json.len or config_json[idx] != ':') return null;
+    idx += 1;
+
+    while (idx < config_json.len and std.ascii.isWhitespace(config_json[idx])) : (idx += 1) {}
+    if (idx >= config_json.len or config_json[idx] != '"') return null;
+    idx += 1;
+
+    const value_start = idx;
+    while (idx < config_json.len) : (idx += 1) {
+        const char = config_json[idx];
+        if (char == '\\') {
+            idx += 1;
+            continue;
+        }
+        if (char == '"') {
+            const value_end = idx;
+            return config_json[value_start..value_end];
+        }
+    }
+    return null;
+}
+
+fn extractOptionalStringField(config_json: []const u8, aliases: []const []const u8) ?[]const u8 {
+    for (aliases) |alias| {
+        if (extractStringField(config_json, alias)) |value| {
+            return value;
+        }
+    }
+    return null;
+}
+
+fn extractBoolField(config_json: []const u8, key: []const u8) ?bool {
+    var pattern_buf: [96]u8 = undefined;
+    if (key.len + 2 > pattern_buf.len) return null;
+    const pattern = std.fmt.bufPrint(&pattern_buf, "\"{s}\"", .{key}) catch return null;
+    const start = std.mem.indexOf(u8, config_json, pattern) orelse return null;
+    var idx = start + pattern.len;
+    while (idx < config_json.len and std.ascii.isWhitespace(config_json[idx])) : (idx += 1) {}
+    if (idx >= config_json.len or config_json[idx] != ':') return null;
+    idx += 1;
+    while (idx < config_json.len and std.ascii.isWhitespace(config_json[idx])) : (idx += 1) {}
+    if (idx + 4 <= config_json.len and std.ascii.eqlIgnoreCase(config_json[idx .. idx + 4], "true")) {
+        return true;
+    }
+    if (idx + 5 <= config_json.len and std.ascii.eqlIgnoreCase(config_json[idx .. idx + 5], "false")) {
+        return false;
+    }
+    return null;
+}
+
+fn encodeDescribeNamespaceRequest(allocator: std.mem.Allocator, namespace: []const u8) ![]u8 {
+    var length_buffer: [10]u8 = undefined;
+    var length_index: usize = 0;
+    var remaining = namespace.len;
+    while (true) {
+        const byte: u8 = @as(u8, @intCast(remaining & 0x7F));
+        remaining >>= 7;
+        if (remaining == 0) {
+            length_buffer[length_index] = byte;
+            length_index += 1;
+            break;
+        }
+        length_buffer[length_index] = byte | 0x80;
+        length_index += 1;
+    }
+
+    const total_len = 1 + length_index + namespace.len;
+    const out = try allocator.alloc(u8, total_len);
+    out[0] = 0x0A;
+    @memcpy(out[1 .. 1 + length_index], length_buffer[0..length_index]);
+    @memcpy(out[1 + length_index ..], namespace);
+    return out;
+}
+
+const ConnectError = error{ConnectFailed};
+
+const ConnectCallbackContext = struct {
+    allocator: std.mem.Allocator,
+    wait_group: std.Thread.WaitGroup = .{},
+    result_client: ?*core.Client = null,
+    error_message: []u8 = ""[0..0],
+    runtime_handle: *runtime.RuntimeHandle,
+};
+
+fn clientConnectCallback(
+    user_data: ?*anyopaque,
+    success: ?*core.Client,
+    fail: ?*const core.ByteArray,
+) callconv(.c) void {
+    if (user_data == null) return;
+    const context = @as(*ConnectCallbackContext, @ptrCast(@alignCast(user_data.?)));
+    defer context.wait_group.finish();
+
+    if (success) |client_ptr| {
+        context.result_client = client_ptr;
+        if (fail) |fail_ptr| {
+            core.api.byte_array_free(context.runtime_handle.core_runtime, fail_ptr);
+        }
+        return;
+    }
+
+    if (fail) |fail_ptr| {
+        const slice = byteArraySlice(fail_ptr);
+        if (slice.len > 0) {
+            context.error_message = context.allocator.alloc(u8, slice.len) catch {
+                core.api.byte_array_free(context.runtime_handle.core_runtime, fail_ptr);
+                return;
+            };
+            @memcpy(context.error_message, slice);
+        }
+        core.api.byte_array_free(context.runtime_handle.core_runtime, fail_ptr);
+    }
+}
+
+fn connectCoreClient(
+    allocator: std.mem.Allocator,
+    runtime_handle: *runtime.RuntimeHandle,
+    config_json: []const u8,
+    arena: *StringArena,
+) ConnectError!*core.Client {
+    const address = extractStringField(config_json, "address") orelse {
+        errors.setStructuredError(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: client config missing address" });
+        return ConnectError.ConnectFailed;
+    };
+
+    const identity = extractOptionalStringField(config_json, &.{"identity"}) orelse makeDefaultIdentity(arena) catch {
+        errors.setStructuredError(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to allocate client identity" });
+        return ConnectError.ConnectFailed;
+    };
+
+    const client_name = extractOptionalStringField(config_json, &.{ "clientName", "client_name" }) orelse "temporal-bun-sdk";
+    const client_version = extractOptionalStringField(config_json, &.{ "clientVersion", "client_version" }) orelse "zig-bridge-dev";
+    const api_key = extractOptionalStringField(config_json, &.{ "apiKey", "api_key" });
+
+    var options = std.mem.zeroes(core.ClientOptions);
+    options.target_url = makeByteArrayRef(address);
+    options.client_name = makeByteArrayRef(client_name);
+    options.client_version = makeByteArrayRef(client_version);
+    options.metadata = emptyByteArrayRef();
+    options.identity = makeByteArrayRef(identity);
+    options.api_key = if (api_key) |key| makeByteArrayRef(key) else emptyByteArrayRef();
+    options.tls_options = null;
+    options.retry_options = null;
+    options.keep_alive_options = null;
+    options.http_connect_proxy_options = null;
+    options.grpc_override_callback = null;
+    options.grpc_override_callback_user_data = null;
+
+    var context = ConnectCallbackContext{ .allocator = allocator, .runtime_handle = runtime_handle };
+    context.wait_group.start();
+    core.api.client_connect(runtime_handle.core_runtime, &options, &context, clientConnectCallback);
+    context.wait_group.wait();
+
+    defer if (context.error_message.len > 0) allocator.free(context.error_message);
+
+    if (context.result_client) |client_ptr| {
+        return client_ptr;
+    }
+
+    const message = if (context.error_message.len > 0)
+        context.error_message
+    else
+        "temporal-bun-bridge-zig: Temporal core client connect failed";
+
+    errors.setStructuredError(.{ .code = grpc.unavailable, .message = message });
+    return ConnectError.ConnectFailed;
+}
+
+const RpcCallContext = struct {
+    allocator: std.mem.Allocator,
+    pending_handle: *pending.PendingByteArray,
+    wait_group: std.Thread.WaitGroup = .{},
+    runtime_handle: *runtime.RuntimeHandle,
+};
+
+fn clientDescribeCallback(
+    user_data: ?*anyopaque,
+    success: ?*const core.ByteArray,
+    status_code: u32,
+    failure_message: ?*const core.ByteArray,
+    failure_details: ?*const core.ByteArray,
+) callconv(.c) void {
+    if (user_data == null) return;
+    const context = @as(*RpcCallContext, @ptrCast(@alignCast(user_data.?)));
+    defer context.wait_group.finish();
+
+    if (success != null and status_code == 0) {
+        const slice = byteArraySlice(success.?);
+        if (slice.len == 0) {
+            errors.setStructuredError(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: describeNamespace returned empty payload" });
+            _ = pending.rejectByteArray(context.pending_handle, grpc.internal, "temporal-bun-bridge-zig: describeNamespace returned empty payload");
+        } else if (byte_array.allocateFromSlice(slice)) |array_ptr| {
+            if (!pending.resolveByteArray(context.pending_handle, array_ptr)) {
+                byte_array.free(array_ptr);
+            } else {
+                errors.setLastError(""[0..0]);
+            }
+        } else {
+            errors.setStructuredError(.{ .code = grpc.resource_exhausted, .message = "temporal-bun-bridge-zig: failed to allocate describeNamespace response" });
+            _ = pending.rejectByteArray(context.pending_handle, grpc.resource_exhausted, "temporal-bun-bridge-zig: failed to allocate describeNamespace response");
+        }
+        core.api.byte_array_free(context.runtime_handle.core_runtime, success.?);
+        if (failure_message) |msg| core.api.byte_array_free(context.runtime_handle.core_runtime, msg);
+        if (failure_details) |details| core.api.byte_array_free(context.runtime_handle.core_runtime, details);
+        return;
+    }
+
+    const code: i32 = if (status_code == 0) grpc.internal else @intCast(status_code);
+    const message_slice = if (failure_message) |msg| byteArraySlice(msg) else "temporal-bun-bridge-zig: describeNamespace failed"[0..];
+    _ = pending.rejectByteArray(context.pending_handle, code, message_slice);
+    errors.setStructuredError(.{ .code = code, .message = message_slice });
+    if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+    if (failure_message) |msg| core.api.byte_array_free(context.runtime_handle.core_runtime, msg);
+    if (failure_details) |details| core.api.byte_array_free(context.runtime_handle.core_runtime, details);
+}
+
 pub const ClientHandle = struct {
     id: u64,
     runtime: ?*runtime.RuntimeHandle,
@@ -148,7 +418,7 @@ fn unreachableServerMessage(buffer: []u8, config_json: []const u8) []const u8 {
         return std.fmt.bufPrint(
             buffer,
             "temporal-bun-bridge-zig: Temporal server unreachable at {s}",
-            .{ address },
+            .{address},
         ) catch "temporal-bun-bridge-zig: Temporal server unreachable";
     }
 
@@ -220,7 +490,7 @@ fn parseNamespaceFromPayload(payload: []const u8) ?[]u8 {
         const message = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to parse describeNamespace payload: {}",
-            .{ err },
+            .{err},
         ) catch "temporal-bun-bridge-zig: failed to parse describeNamespace payload";
         errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = message, .details = null });
         return null;
@@ -242,7 +512,7 @@ fn parseNamespaceFromPayload(payload: []const u8) ?[]u8 {
         const message = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to copy namespace: {}",
-            .{ err },
+            .{err},
         ) catch "temporal-bun-bridge-zig: failed to copy namespace";
         errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = message, .details = null });
         return null;
@@ -251,14 +521,7 @@ fn parseNamespaceFromPayload(payload: []const u8) ?[]u8 {
     return copy;
 }
 
-fn buildDescribeNamespaceResponse(client: *ClientHandle, namespace: []const u8) ![]u8 {
-    const allocator = std.heap.c_allocator;
-    return std.fmt.allocPrint(
-        allocator,
-        "{{\"namespace\":\"{s}\",\"client_id\":{d}}}",
-        .{ namespace, client.id },
-    );
-}
+const describe_namespace_rpc = "DescribeNamespace";
 
 fn describeNamespaceWorker(task: *DescribeNamespaceTask) void {
     const allocator = std.heap.c_allocator;
@@ -272,28 +535,56 @@ fn describeNamespaceWorker(task: *DescribeNamespaceTask) void {
         _ = pending.rejectByteArray(pending_handle, grpc.internal, "temporal-bun-bridge-zig: describeNamespace worker missing client");
         return;
     };
+    const runtime_handle = client_ptr.runtime orelse {
+        _ = pending.rejectByteArray(pending_handle, grpc.failed_precondition, "temporal-bun-bridge-zig: describeNamespace missing runtime handle");
+        return;
+    };
+    if (runtime_handle.core_runtime == null) {
+        _ = pending.rejectByteArray(pending_handle, grpc.failed_precondition, "temporal-bun-bridge-zig: runtime core handle is not initialized");
+        return;
+    }
 
-    const response = buildDescribeNamespaceResponse(client_ptr, task.namespace) catch |err| {
+    if (!runtime.beginPendingClientConnect(runtime_handle)) {
+        errors.setStructuredError(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: runtime is shutting down",
+        });
+        _ = pending.rejectByteArray(pending_handle, grpc.failed_precondition, "temporal-bun-bridge-zig: runtime is shutting down");
+        return;
+    }
+    defer runtime.endPendingClientConnect(runtime_handle);
+
+    const core_client = client_ptr.core_client orelse {
+        errors.setStructuredError(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: client core handle is not initialized",
+        });
+        _ = pending.rejectByteArray(pending_handle, grpc.failed_precondition, "temporal-bun-bridge-zig: client core handle is not initialized");
+        return;
+    };
+
+    const request_bytes = encodeDescribeNamespaceRequest(allocator, task.namespace) catch |err| {
         var scratch: [160]u8 = undefined;
-        const message = std.fmt.bufPrint(
-            &scratch,
-            "temporal-bun-bridge-zig: failed to build describeNamespace response: {}",
-            .{ err },
-        ) catch "temporal-bun-bridge-zig: failed to build describeNamespace response";
+        const message = std.fmt.bufPrint(&scratch, "temporal-bun-bridge-zig: failed to encode describeNamespace payload: {}", .{err}) catch "temporal-bun-bridge-zig: failed to encode describeNamespace payload";
         _ = pending.rejectByteArray(pending_handle, grpc.internal, message);
         return;
     };
-    defer allocator.free(response);
+    defer allocator.free(request_bytes);
 
-    const array_ptr = byte_array.allocate(.{ .slice = response }) orelse {
-        _ = pending.rejectByteArray(pending_handle, grpc.resource_exhausted, "temporal-bun-bridge-zig: failed to allocate describeNamespace response");
-        return;
-    };
+    var rpc_context = RpcCallContext{ .allocator = allocator, .pending_handle = pending_handle, .runtime_handle = runtime_handle };
+    rpc_context.wait_group.start();
 
-    if (!pending.resolveByteArray(pending_handle, array_ptr)) {
-        byte_array.free(array_ptr);
-        _ = pending.rejectByteArray(pending_handle, grpc.internal, "temporal-bun-bridge-zig: failed to resolve describeNamespace pending handle");
-    }
+    var call_options = std.mem.zeroes(core.RpcCallOptions);
+    call_options.service = @as(core.RpcService, 1); // Workflow service
+    call_options.rpc = makeByteArrayRef(describe_namespace_rpc);
+    call_options.req = makeByteArrayRef(request_bytes);
+    call_options.retry = true;
+    call_options.metadata = emptyByteArrayRef();
+    call_options.timeout_millis = 0;
+    call_options.cancellation_token = null;
+
+    core.api.client_rpc_call(core_client, &call_options, &rpc_context, clientDescribeCallback);
+    rpc_context.wait_group.wait();
 }
 
 fn connectAsyncWorker(task: *ConnectTask) void {
@@ -301,25 +592,79 @@ fn connectAsyncWorker(task: *ConnectTask) void {
     defer allocator.destroy(task);
 
     const pending_handle = task.pending_handle;
-    const runtime_ptr = task.runtime;
     const config_copy = task.config;
+    const runtime_ptr = task.runtime orelse {
+        allocator.free(config_copy);
+        errors.setStructuredError(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: connectAsync received null runtime handle",
+        });
+        _ = pending.rejectClient(
+            pending_handle,
+            grpc.invalid_argument,
+            "temporal-bun-bridge-zig: connectAsync received null runtime handle",
+        );
+        return;
+    };
 
     if (!temporalServerReachable(config_copy)) {
         var scratch: [192]u8 = undefined;
         const message = unreachableServerMessage(scratch[0..], config_copy);
         allocator.free(config_copy);
+        errors.setStructuredError(.{ .code = grpc.unavailable, .message = message });
         _ = pending.rejectClient(pending_handle, grpc.unavailable, message);
         return;
     }
 
+    if (runtime_ptr.core_runtime == null) {
+        allocator.free(config_copy);
+        errors.setStructuredError(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: runtime core handle is not initialized",
+        });
+        _ = pending.rejectClient(
+            pending_handle,
+            grpc.failed_precondition,
+            "temporal-bun-bridge-zig: runtime core handle is not initialized",
+        );
+        return;
+    }
+
+    if (!runtime.beginPendingClientConnect(runtime_ptr)) {
+        allocator.free(config_copy);
+        errors.setStructuredError(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: runtime is shutting down",
+        });
+        _ = pending.rejectClient(
+            pending_handle,
+            grpc.failed_precondition,
+            "temporal-bun-bridge-zig: runtime is shutting down",
+        );
+        return;
+    }
+    defer runtime.endPendingClientConnect(runtime_ptr);
+
+    var arena = StringArena.init(allocator);
+    defer arena.deinit();
+
+    const core_client = connectCoreClient(allocator, runtime_ptr, config_copy, &arena) catch {
+        const message = errors.snapshot();
+        allocator.free(config_copy);
+        _ = pending.rejectClient(pending_handle, grpc.unavailable, message);
+        return;
+    };
+
     const client_handle = allocator.create(ClientHandle) catch |err| {
         allocator.free(config_copy);
+        core.api.client_free(core_client);
         var scratch: [128]u8 = undefined;
         const message = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to allocate client handle: {}",
-            .{ err },
+            .{err},
         ) catch "temporal-bun-bridge-zig: failed to allocate client handle";
+        errors.setStructuredError(.{ .code = grpc.resource_exhausted, .message = message });
         _ = pending.rejectClient(pending_handle, grpc.resource_exhausted, message);
         return;
     };
@@ -329,19 +674,23 @@ fn connectAsyncWorker(task: *ConnectTask) void {
         .id = id,
         .runtime = runtime_ptr,
         .config = config_copy,
-        .core_client = null,
+        .core_client = core_client,
     };
-
-    // Stub the Temporal core client handle until the bridge is wired to core.
-    client_handle.core_client = @as(?*core.ClientOpaque, @ptrCast(client_handle));
 
     if (!pending.resolveClient(
         pending_handle,
         @as(?*anyopaque, @ptrCast(client_handle)),
         destroyClientFromPending,
     )) {
+        errors.setStructuredError(.{
+            .code = grpc.internal,
+            .message = "temporal-bun-bridge-zig: failed to resolve client handle",
+        });
         destroy(client_handle);
+        return;
     }
+
+    errors.setLastError(""[0..0]);
 }
 
 pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u8) ?*pending.PendingClient {
@@ -369,7 +718,7 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
         const message = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to allocate connect task: {}",
-            .{ err },
+            .{err},
         ) catch "temporal-bun-bridge-zig: failed to allocate connect task";
         _ = pending.rejectClient(pending_handle, grpc.resource_exhausted, message);
         return @as(?*pending.PendingClient, pending_handle);
@@ -388,7 +737,7 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
         const message = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to spawn connect worker: {}",
-            .{ err },
+            .{err},
         ) catch "temporal-bun-bridge-zig: failed to spawn connect worker";
         _ = pending.rejectClient(pending_handle, grpc.internal, message);
         return @as(?*pending.PendingClient, pending_handle);
@@ -407,8 +756,9 @@ pub fn destroy(handle: ?*ClientHandle) void {
     var allocator = std.heap.c_allocator;
     const client = handle.?;
 
-    if (client.core_client) |_| {
-        // TODO(codex, zig-cl-04): Release Temporal core client once linked.
+    if (client.core_client) |core_client_ptr| {
+        core.api.client_free(core_client_ptr);
+        client.core_client = null;
     }
 
     allocator.free(client.config);
@@ -422,8 +772,8 @@ pub fn describeNamespaceAsync(client_ptr: ?*ClientHandle, _payload: []const u8) 
     }
 
     const client = client_ptr.?;
-    if (client.core_client == null) {
-        return createByteArrayError(grpc.failed_precondition, "temporal-bun-bridge-zig: describeNamespace missing Temporal core client handle");
+    if (client.runtime == null) {
+        return createByteArrayError(grpc.failed_precondition, "temporal-bun-bridge-zig: describeNamespace missing runtime handle");
     }
 
     const pending_handle_ptr = pending.createPendingInFlight() orelse {
@@ -443,7 +793,7 @@ pub fn describeNamespaceAsync(client_ptr: ?*ClientHandle, _payload: []const u8) 
         const message = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to allocate describeNamespace task: {}",
-            .{ err },
+            .{err},
         ) catch "temporal-bun-bridge-zig: failed to allocate describeNamespace task";
         _ = pending.rejectByteArray(pending_handle, grpc.resource_exhausted, message);
         return @as(?*pending.PendingByteArray, pending_handle);
@@ -462,7 +812,7 @@ pub fn describeNamespaceAsync(client_ptr: ?*ClientHandle, _payload: []const u8) 
         const message = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to spawn describeNamespace thread: {}",
-            .{ err },
+            .{err},
         ) catch "temporal-bun-bridge-zig: failed to spawn describeNamespace thread";
         _ = pending.rejectByteArray(pending_handle, grpc.internal, message);
         return @as(?*pending.PendingByteArray, pending_handle);
@@ -566,14 +916,14 @@ pub fn signalWorkflow(client_ptr: ?*ClientHandle, payload: []const u8) ?*pending
         .payload = copy[0..payload.len],
     };
 
-    const thread = std.Thread.spawn(.{}, runSignalWorkflow, .{ context }) catch |err| {
+    const thread = std.Thread.spawn(.{}, runSignalWorkflow, .{context}) catch |err| {
         allocator.free(copy);
         pending.free(pending_handle_ptr);
         var scratch: [128]u8 = undefined;
         const formatted = std.fmt.bufPrint(
             &scratch,
             "temporal-bun-bridge-zig: failed to spawn signal worker thread: {}",
-            .{ err },
+            .{err},
         ) catch "temporal-bun-bridge-zig: failed to spawn signal worker thread";
         return createByteArrayError(grpc.internal, formatted);
     };

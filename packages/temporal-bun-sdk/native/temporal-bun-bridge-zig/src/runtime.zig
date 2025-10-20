@@ -7,6 +7,26 @@ const grpc = pending.GrpcStatus;
 
 const allocator = std.heap.c_allocator;
 
+const runtime_error_message = "temporal-bun-bridge-zig: runtime initialization failed";
+
+const fallback_error_array = core.ByteArray{
+    .data = runtime_error_message.ptr,
+    .size = runtime_error_message.len,
+    .cap = runtime_error_message.len,
+    .disable_free = true,
+};
+
+fn byteArraySlice(bytes_ptr: ?*const core.ByteArray) []const u8 {
+    if (bytes_ptr == null) {
+        return ""[0..0];
+    }
+    const bytes = bytes_ptr.?;
+    if (bytes.data == null or bytes.size == 0) {
+        return ""[0..0];
+    }
+    return bytes.data[0..bytes.size];
+}
+
 /// Placeholder handle that mirrors the pointer-based interface exposed by the Rust bridge.
 pub const RuntimeHandle = struct {
     id: u64,
@@ -49,19 +69,41 @@ pub fn create(options_json: []const u8) ?*RuntimeHandle {
     const id = next_runtime_id;
     next_runtime_id += 1;
 
+    core.ensureExternalApiInstalled();
+
+    var runtime_options = std.mem.zeroes(core.RuntimeOptions);
+    const created = core.api.runtime_new(&runtime_options);
+    if (created.runtime == null) {
+        const message_slice = byteArraySlice(created.fail orelse &fallback_error_array);
+        const message = if (message_slice.len > 0)
+            message_slice
+        else
+            "temporal-bun-bridge-zig: failed to create Temporal runtime";
+
+        errors.setStructuredError(.{ .code = grpc.internal, .message = message });
+        if (created.fail) |fail_ptr| {
+            core.api.byte_array_free(null, fail_ptr);
+        }
+        allocator.free(copy);
+        allocator.destroy(handle);
+        return null;
+    }
+
     handle.* = .{
         .id = id,
         .config = copy,
-        .core_runtime = null,
+        .core_runtime = created.runtime,
         .pending_lock = .{},
         .pending_condition = .{},
         .pending_connects = 0,
         .destroying = false,
     };
 
-    // TODO(codex, zig-rt-01): Initialize the Temporal core runtime through the Rust C-ABI
-    // (`temporal_sdk_core_runtime_new`) and store the opaque pointer on the handle.
+    if (created.fail) |fail_ptr| {
+        core.api.byte_array_free(handle.core_runtime, fail_ptr);
+    }
 
+    errors.setLastError(""[0..0]);
     return handle;
 }
 
@@ -74,12 +116,13 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
 
     runtime.pending_lock.lock();
     runtime.destroying = true;
-    runtime.pending_condition.broadcast();
+    while (runtime.pending_connects != 0) {
+        runtime.pending_condition.wait(&runtime.pending_lock);
+    }
     runtime.pending_lock.unlock();
 
-    // TODO(codex, zig-rt-02): Call into the Temporal core to drop the runtime (`runtime.free`).
-    if (runtime.core_runtime) |_| {
-        // The Zig bridge does not yet link against Temporal core; release will be wired in zig-rt-02.
+    if (runtime.core_runtime) |core_runtime_ptr| {
+        core.api.runtime_free(core_runtime_ptr);
     }
 
     if (runtime.config.len > 0) {
@@ -90,7 +133,6 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
 }
 
 pub fn updateTelemetry(handle: ?*RuntimeHandle, _options_json: []const u8) i32 {
-    // TODO(codex, zig-rt-03): Apply telemetry configuration by bridging to Temporal core telemetry APIs.
     _ = handle;
     _ = _options_json;
     errors.setStructuredError(.{
@@ -126,7 +168,6 @@ pub fn endPendingClientConnect(handle: *RuntimeHandle) void {
 }
 
 pub fn setLogger(handle: ?*RuntimeHandle, _callback_ptr: ?*anyopaque) i32 {
-    // TODO(codex, zig-rt-04): Forward Temporal core log events through the provided Bun callback.
     _ = handle;
     _ = _callback_ptr;
     errors.setStructuredError(.{
