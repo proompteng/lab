@@ -71,6 +71,7 @@ pub fn build(b: *std.Build) void {
         "install-subpath",
         "Relative path (from the lib install dir) that overrides where the compiled bridge dylib/so should be staged.",
     );
+    const allocator = b.allocator;
 
     const lib_module = b.createModule(.{
         .root_source_file = b.path("src/lib.zig"),
@@ -81,6 +82,11 @@ pub fn build(b: *std.Build) void {
     const include_dir = b.path("include");
     lib_module.addIncludePath(include_dir);
 
+    if (std.process.getEnvVarOwned(allocator, "TEMPORAL_CORE_INCLUDE_DIR")) |include_dir_override| {
+        defer allocator.free(include_dir_override);
+        lib_module.addIncludePath(.{ .cwd_relative = include_dir_override });
+    } else |_| {}
+
     const lib = b.addLibrary(.{
         .name = "temporal_bun_bridge_zig",
         .root_module = lib_module,
@@ -88,7 +94,13 @@ pub fn build(b: *std.Build) void {
     });
     lib.addIncludePath(include_dir);
 
-    // TODO(codex, zig-pack-01): Link Temporal Rust static libraries emitted by cargo+cbindgen.
+    if (std.process.getEnvVarOwned(allocator, "TEMPORAL_CORE_LIB_DIR")) |lib_dir| {
+        defer allocator.free(lib_dir);
+        lib.addLibraryPath(.{ .cwd_relative = lib_dir });
+        // These libraries map to the Temporal core Rust build artifacts once generated via cbindgen.
+        lib.linkSystemLibrary("temporal_sdk_core_c_bridge");
+        lib.linkSystemLibrary("temporal_sdk_core");
+    } else |_| {}
 
     var install_options: std.Build.Step.InstallArtifact.Options = .{};
     if (install_subpath) |subpath| {

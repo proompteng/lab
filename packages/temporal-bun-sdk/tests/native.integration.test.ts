@@ -4,20 +4,16 @@ import process from 'node:process'
 import { bridgeVariant, native } from '../src/internal/core-bridge/native.ts'
 import { isTemporalServerAvailable, parseTemporalAddress } from './helpers/temporal-server'
 
-const usingZigBridge = bridgeVariant === 'zig'
 const temporalAddress = process.env.TEMPORAL_TEST_SERVER_ADDRESS ?? 'http://127.0.0.1:7233'
 const shouldRun = process.env.TEMPORAL_TEST_SERVER === '1'
 const serverAvailable = shouldRun ? await isTemporalServerAvailable(temporalAddress) : false
+const usingZigBridge = bridgeVariant === 'zig'
 
-if (usingZigBridge) {
-  console.warn(
-    'Skipping native bridge integration tests: Zig bridge scaffold does not yet implement live Temporal RPCs',
-  )
-} else if (shouldRun && !serverAvailable) {
+if (shouldRun && !serverAvailable) {
   console.warn(`Skipping native bridge integration tests: Temporal server unavailable at ${temporalAddress}`)
 }
 
-const suite = shouldRun && serverAvailable && !usingZigBridge ? describe : describe.skip // TODO(codex, zig-cl-02): enable once Zig bridge wires live Temporal RPCs
+const suite = shouldRun && serverAvailable ? describe : describe.skip
 const workerAddress = (() => {
   const { host, port } = parseTemporalAddress(temporalAddress)
   return `${host}:${port}`
@@ -90,7 +86,9 @@ suite('native bridge integration', () => {
     }
   })
 
-  test('queryWorkflow returns JSON payload for running workflow', async () => {
+  const queryWorkflowSuccessTest = usingZigBridge ? test.skip : test // TODO(codex, zig-wf-01): Re-enable once Zig bridge wires start & query RPCs.
+
+  queryWorkflowSuccessTest('queryWorkflow returns JSON payload for running workflow', async () => {
     const maxAttempts = 10
     const waitMs = 500
 

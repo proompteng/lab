@@ -258,3 +258,7 @@ pub export fn temporal_bun_worker_initiate_shutdown(handle: ?*worker.WorkerHandl
 pub export fn temporal_bun_worker_finalize_shutdown(handle: ?*worker.WorkerHandle) i32 {
     return worker.finalizeShutdown(handle);
 }
+
+test {
+    _ = @import("client_describe_namespace_test.zig");
+}
