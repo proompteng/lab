@@ -270,7 +270,7 @@ pub fn build(b: *std.Build) void {
                 std.debug.print("   Solutions:\n", .{});
                 std.debug.print("   1. Run 'bun run libs:download' to download pre-built libraries\n", .{});
                 std.debug.print("   2. Set up vendor directory with 'git submodule update --init --recursive'\n", .{});
-                std.debug.panic("Neither pre-built libraries nor vendor directory available for build");
+                std.debug.panic("Neither pre-built libraries nor vendor directory available for build", .{});
             }
         }
     } else if (should_use_prebuilt and platform == null) {
@@ -282,7 +282,7 @@ pub fn build(b: *std.Build) void {
             fallback_to_cargo = true;
             std.debug.print("✓ Found vendor directory, falling back to Cargo build\n", .{});
         } else {
-            std.debug.panic("Platform not supported for pre-built libraries and no vendor directory available");
+            std.debug.panic("Platform not supported for pre-built libraries and no vendor directory available", .{});
         }
     } else if (!should_use_prebuilt) {
         // Explicitly using cargo build
@@ -290,7 +290,7 @@ pub fn build(b: *std.Build) void {
             fallback_to_cargo = true;
             std.debug.print("✓ Using Cargo build (USE_PREBUILT_LIBS=false)\n");
         } else {
-            std.debug.panic("Cargo build requested but vendor directory not available. Run 'git submodule update --init --recursive'");
+            std.debug.panic("Cargo build requested but vendor directory not available. Run 'git submodule update --init --recursive'", .{});
         }
     }
 
@@ -312,7 +312,7 @@ pub fn build(b: *std.Build) void {
             lib.step.dependOn(&cargo_build.step);
             unit_tests.step.dependOn(&cargo_build.step);
         } else {
-            std.debug.panic("No valid build strategy determined");
+            std.debug.panic("No valid build strategy determined", .{});
         }
 
         lib.addObjectFile(archive);
