@@ -54,30 +54,79 @@ fn makeDefaultIdentity(arena: *StringArena) ![]const u8 {
 }
 
 fn extractStringField(config_json: []const u8, key: []const u8) ?[]const u8 {
-    var pattern_buf: [96]u8 = undefined;
-    if (key.len + 2 > pattern_buf.len) return null;
-    const pattern = std.fmt.bufPrint(&pattern_buf, "\"{s}\"", .{key}) catch return null;
-    const start = std.mem.indexOf(u8, config_json, pattern) orelse return null;
-    var idx = start + pattern.len;
+    var depth: i32 = 0;
+    var idx: usize = 0;
+    var in_string = false;
+    var escape_next = false;
+    var key_start: ?usize = null;
 
-    while (idx < config_json.len and std.ascii.isWhitespace(config_json[idx])) : (idx += 1) {}
-    if (idx >= config_json.len or config_json[idx] != ':') return null;
-    idx += 1;
-
-    while (idx < config_json.len and std.ascii.isWhitespace(config_json[idx])) : (idx += 1) {}
-    if (idx >= config_json.len or config_json[idx] != '"') return null;
-    idx += 1;
-
-    const value_start = idx;
     while (idx < config_json.len) : (idx += 1) {
         const char = config_json[idx];
-        if (char == '\\') {
-            idx += 1;
+
+        if (escape_next) {
+            escape_next = false;
             continue;
         }
+
+        if (char == '\\') {
+            escape_next = true;
+            continue;
+        }
+
         if (char == '"') {
-            const value_end = idx;
-            return config_json[value_start..value_end];
+            if (!in_string) {
+                key_start = idx;
+            } else if (key_start) |start| {
+                if (depth == 1 and idx > start + 1) {
+                    const key_name = config_json[start + 1 .. idx];
+                    if (std.mem.eql(u8, key_name, key)) {
+                        var match_idx = idx + 1;
+                        while (match_idx < config_json.len and std.ascii.isWhitespace(config_json[match_idx])) : (match_idx += 1) {}
+                        if (match_idx >= config_json.len or config_json[match_idx] != ':') {
+                            key_start = null;
+                            in_string = false;
+                            continue;
+                        }
+                        match_idx += 1;
+
+                        while (match_idx < config_json.len and std.ascii.isWhitespace(config_json[match_idx])) : (match_idx += 1) {}
+                        if (match_idx >= config_json.len or config_json[match_idx] != '"') {
+                            key_start = null;
+                            in_string = false;
+                            continue;
+                        }
+                        match_idx += 1;
+
+                        const value_start = match_idx;
+                        var value_escape = false;
+                        while (match_idx < config_json.len) : (match_idx += 1) {
+                            const value_char = config_json[match_idx];
+                            if (value_escape) {
+                                value_escape = false;
+                                continue;
+                            }
+                            if (value_char == '\\') {
+                                value_escape = true;
+                                continue;
+                            }
+                            if (value_char == '"') {
+                                return config_json[value_start..match_idx];
+                            }
+                        }
+                    }
+                }
+                key_start = null;
+            }
+            in_string = !in_string;
+            continue;
+        }
+
+        if (in_string) continue;
+
+        if (char == '{') {
+            depth += 1;
+        } else if (char == '}') {
+            depth -= 1;
         }
     }
     return null;
