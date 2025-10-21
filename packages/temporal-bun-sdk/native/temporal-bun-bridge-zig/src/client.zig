@@ -531,6 +531,7 @@ fn describeNamespaceWorker(task: *DescribeNamespaceTask) void {
     }
 
     const pending_handle = task.pending_handle;
+    defer pending.release(pending_handle);
     const client_ptr = task.client orelse {
         _ = pending.rejectByteArray(pending_handle, grpc.internal, "temporal-bun-bridge-zig: describeNamespace worker missing client");
         return;
@@ -592,6 +593,7 @@ fn connectAsyncWorker(task: *ConnectTask) void {
     defer allocator.destroy(task);
 
     const pending_handle = task.pending_handle;
+    defer pending.release(pending_handle);
     const config_copy = task.config;
     const runtime_ptr = task.runtime orelse {
         allocator.free(config_copy);
@@ -730,9 +732,25 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
         .config = config_copy,
     };
 
+    if (!pending.retain(pending_handle_ptr)) {
+        allocator.free(config_copy);
+        allocator.destroy(task);
+        errors.setStructuredError(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to retain pending client handle",
+        });
+        _ = pending.rejectClient(
+            pending_handle,
+            grpc.resource_exhausted,
+            "temporal-bun-bridge-zig: failed to retain pending client handle",
+        );
+        return @as(?*pending.PendingClient, pending_handle);
+    }
+
     const thread = std.Thread.spawn(.{}, connectAsyncWorker, .{task}) catch |err| {
         allocator.free(config_copy);
         allocator.destroy(task);
+        pending.release(pending_handle_ptr);
         var scratch: [160]u8 = undefined;
         const message = std.fmt.bufPrint(
             &scratch,
@@ -805,9 +823,25 @@ pub fn describeNamespaceAsync(client_ptr: ?*ClientHandle, _payload: []const u8) 
         .namespace = namespace_copy,
     };
 
+    if (!pending.retain(pending_handle_ptr)) {
+        allocator.destroy(task);
+        allocator.free(namespace_copy);
+        errors.setStructuredError(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to retain describeNamespace pending handle",
+        });
+        _ = pending.rejectByteArray(
+            pending_handle,
+            grpc.resource_exhausted,
+            "temporal-bun-bridge-zig: failed to retain describeNamespace pending handle",
+        );
+        return @as(?*pending.PendingByteArray, pending_handle);
+    }
+
     const thread = std.Thread.spawn(.{}, describeNamespaceWorker, .{task}) catch |err| {
         allocator.destroy(task);
         allocator.free(namespace_copy);
+        pending.release(pending_handle_ptr);
         var scratch: [160]u8 = undefined;
         const message = std.fmt.bufPrint(
             &scratch,
@@ -916,8 +950,18 @@ pub fn signalWorkflow(client_ptr: ?*ClientHandle, payload: []const u8) ?*pending
         .payload = copy[0..payload.len],
     };
 
+    if (!pending.retain(pending_handle_ptr)) {
+        allocator.free(copy);
+        pending.free(pending_handle_ptr);
+        return createByteArrayError(
+            grpc.resource_exhausted,
+            "temporal-bun-bridge-zig: failed to retain pending signal handle",
+        );
+    }
+
     const thread = std.Thread.spawn(.{}, runSignalWorkflow, .{context}) catch |err| {
         allocator.free(copy);
+        pending.release(pending_handle_ptr);
         pending.free(pending_handle_ptr);
         var scratch: [128]u8 = undefined;
         const formatted = std.fmt.bufPrint(
@@ -978,6 +1022,7 @@ const SignalWorkerContext = struct {
 
 fn runSignalWorkflow(context: SignalWorkerContext) void {
     defer std.heap.c_allocator.free(context.payload);
+    defer pending.release(context.handle);
 
     core.signalWorkflow(context.client.core_client, context.payload) catch |err| {
         const Rejection = struct { code: i32, message: []const u8 };

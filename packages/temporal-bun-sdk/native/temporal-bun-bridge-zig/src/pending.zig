@@ -1,6 +1,7 @@
 const std = @import("std");
 const errors = @import("errors.zig");
 const byte_array = @import("byte_array.zig");
+const math = std.math;
 
 /// Maps directly onto the poll contract expected by Bun. See native.ts for semantics.
 pub const Status = enum(i32) {
@@ -39,6 +40,7 @@ pub const PendingHandle = struct {
     payload: ?*anyopaque,
     cleanup: CleanupFn,
     fault: PendingErrorState,
+    ref_count: usize,
 };
 
 fn allocateHandle(status: Status) ?*PendingHandle {
@@ -65,6 +67,7 @@ fn allocateHandle(status: Status) ?*PendingHandle {
             .owns_message = false,
             .active = false,
         },
+        .ref_count = 1,
     };
     return handle;
 }
@@ -270,7 +273,31 @@ pub fn free(handle: ?*PendingHandle) void {
     }
 
     const pending = handle.?;
-    destroyHandle(pending);
+    var should_cancel = false;
+    pending.mutex.lock();
+    if (pending.status == .pending) {
+        should_cancel = true;
+        releasePayload(pending);
+        assignError(
+            pending,
+            GrpcStatus.cancelled,
+            "temporal-bun-bridge-zig: pending handle cancelled",
+            false,
+        );
+        pending.status = .failed;
+        pending.consumed = false;
+    }
+    pending.mutex.unlock();
+
+    if (should_cancel) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.cancelled,
+            .message = "temporal-bun-bridge-zig: pending handle cancelled",
+            .details = null,
+        });
+    }
+
+    release(handle);
 }
 
 fn freeByteArrayFromPending(ptr: ?*anyopaque) void {
@@ -450,6 +477,54 @@ pub fn rejectClient(handle: ?*PendingClient, code: i32, message: []const u8) boo
     return true;
 }
 
+pub fn retain(handle: ?*PendingHandle) bool {
+    if (handle == null) {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.invalid_argument,
+            .message = "temporal-bun-bridge-zig: retain received null handle",
+            .details = null,
+        });
+        return false;
+    }
+
+    const pending_handle = handle.?;
+    pending_handle.mutex.lock();
+    defer pending_handle.mutex.unlock();
+
+    const next = math.add(usize, pending_handle.ref_count, 1) catch {
+        errors.setStructuredErrorJson(.{
+            .code = GrpcStatus.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: pending handle retain overflow",
+            .details = null,
+        });
+        return false;
+    };
+
+    pending_handle.ref_count = next;
+    return true;
+}
+
+pub fn release(handle: ?*PendingHandle) void {
+    if (handle == null) {
+        return;
+    }
+
+    const pending_handle = handle.?;
+    pending_handle.mutex.lock();
+    if (pending_handle.ref_count == 0) {
+        pending_handle.mutex.unlock();
+        return;
+    }
+
+    pending_handle.ref_count -= 1;
+    const should_destroy = pending_handle.ref_count == 0;
+    pending_handle.mutex.unlock();
+
+    if (should_destroy) {
+        destroyHandle(pending_handle);
+    }
+}
+
 const testing = std.testing;
 
 test "resolveByteArray transitions pending handle to ready" {
@@ -523,4 +598,15 @@ test "rejectClient transitions pending handle to failed state" {
     try testing.expect(rejectClient(pending_client, GrpcStatus.internal, "connect failed"));
     try testing.expectEqual(@as(i32, @intFromEnum(Status.failed)), poll(handle_ptr));
     try testing.expect(consume(handle_ptr) == null);
+}
+
+test "retain increments reference count" {
+    const handle_opt = createPendingInFlight();
+    try testing.expect(handle_opt != null);
+    const handle_ptr = handle_opt.?;
+
+    try testing.expect(retain(handle_ptr));
+
+    release(handle_ptr);
+    release(handle_ptr);
 }
