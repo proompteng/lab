@@ -9,7 +9,6 @@ export interface ZigTarget {
 
 export const zigTargets: ZigTarget[] = [
   { triple: 'aarch64-macos', platform: 'darwin', arch: 'arm64', extension: 'dylib' },
-  { triple: 'x86_64-macos', platform: 'darwin', arch: 'x64', extension: 'dylib' },
   { triple: 'aarch64-linux-gnu', platform: 'linux', arch: 'arm64', extension: 'so' },
   { triple: 'x86_64-linux-gnu', platform: 'linux', arch: 'x64', extension: 'so' },
 ]
