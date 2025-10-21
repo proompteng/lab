@@ -397,7 +397,9 @@ export class GitHubApiClient {
               `Available releases: ${releases
                 .slice(0, 5)
                 .map((r) => r.tag_name)
-                .join(', ')}${releases.length > 5 ? '...' : ''}`,
+                .join(', ')}${releases.length > 5 ? '...' : ''}\n\n` +
+              `To create a temporal-libs release:\n` +
+              `  gh release create temporal-libs-v1.0.0 --title "Temporal Static Libraries v1.0.0" --notes "Pre-built libraries"`,
           )
         }
 
