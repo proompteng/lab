@@ -1,0 +1,56 @@
+name: Build Temporal Libraries (linux-arm64)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'packages/temporal-bun-sdk/vendor/**'
+      - '.github/workflows/build-temporal-libs-linux-arm64.yml'
+
+jobs:
+  build:
+    runs-on: arc-arm64
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Clone temporal-sdk-core
+        run: |
+          cd packages/temporal-bun-sdk
+          if [ ! -d vendor/temporal-sdk-core ]; then
+            mkdir -p vendor
+            git clone --depth 1 https://github.com/temporalio/sdk-core.git vendor/temporal-sdk-core
+          fi
+      
+      - name: Build temporal-sdk-core
+        run: |
+          cd packages/temporal-bun-sdk/vendor/temporal-sdk-core
+          cargo build --release
+      
+      - name: Package libraries
+        run: |
+          cd packages/temporal-bun-sdk
+          VERSION="v1.0.0"
+          RELEASE_DIR="releases/$VERSION/linux-arm64"
+          mkdir -p "$RELEASE_DIR"
+          
+          find vendor/temporal-sdk-core/target/release -name "*.a" -exec cp {} "$RELEASE_DIR/" \;
+          
+          TARBALL="releases/temporal-static-libs-linux-arm64-$VERSION.tar.gz"
+          tar -czf "$TARBALL" -C "$RELEASE_DIR" .
+          
+          sha256sum "$TARBALL" | awk '{print $1 "  " $2}' | sed 's|releases/||' > "$TARBALL.sha256"
+          
+          echo "tarball=$TARBALL" >> $GITHUB_OUTPUT
+          echo "checksum=$TARBALL.sha256" >> $GITHUB_OUTPUT
+        id: package
+      
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd packages/temporal-bun-sdk
+          gh release upload temporal-libs-v1.0.0 \
+            ${{ steps.package.outputs.tarball }} \
+            ${{ steps.package.outputs.checksum }} \
+            --clobber
