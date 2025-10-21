@@ -39,7 +39,7 @@ To provide first-class Bun developer ergonomics we will reimplement the native b
 | Client RPCs | `temporal_bun_client_describe_namespace_async`, `temporal_bun_client_start_workflow`, `temporal_bun_client_signal*`, `temporal_bun_client_query_workflow`, `temporal_bun_client_terminate_workflow`, `temporal_bun_client_update_headers` | All RPC entry points return `unimplemented` errors today (`zig-cl-*` and `zig-wf-*` backlog). Describe/Start PRs (#1529, etc.) are in flight but not merged. |
 | Error Surface | `temporal_bun_error_message`, `temporal_bun_error_free` | Functional; mirrors the Rust bridge behaviour. |
 | Worker | `temporal_bun_worker_*` suite | Creation, polling, completion, and shutdown remain TODOs (`zig-worker-01` … `zig-worker-09`). |
-| Packaging | `build.zig` + scripts | `zig-pack-01` linking to Temporal static libs is not implemented; bridge builds without real core symbols. |
+| Packaging | `build.zig` + scripts | Cache manifest + fetch helper reuse Temporal static libs when present; Cargo fallback remains for cache misses (`zig-pack-01`). |
 
 Supporting modules:
 
