@@ -483,8 +483,8 @@ export class GitHubApiClient {
 export class FileDownloader {
   private readonly config: TemporalLibsConfig
 
-  constructor(config: TemporalLibsConfig) {
-    this.config = config
+  constructor(config?: TemporalLibsConfig) {
+    this.config = config || DEFAULT_CONFIG
   }
 
   /**
@@ -1528,6 +1528,23 @@ export class CacheManager {
       console.error(`Error removing corrupted cache directory ${cacheDir}:`, error)
     }
   }
+
+  /**
+   * Ensure cache directory exists (for test compatibility)
+   */
+  ensureCacheDirectory(): void {
+    if (!existsSync(this.cacheDir)) {
+      mkdirSync(this.cacheDir, { recursive: true })
+    }
+  }
+
+  /**
+   * Check if cached library is valid (for test compatibility)
+   */
+  isCachedLibraryValid(platform: string, arch: string, version: string): boolean {
+    const platformStr = `${platform}-${arch}`
+    return this.isCached(version, platformStr)
+  }
 }
 
 /**
@@ -1565,6 +1582,8 @@ export class DownloadClient {
     const targetVersion = version || this.config.version || 'latest'
     console.log(`Downloading temporal libraries version: ${targetVersion}`)
 
+    let actualVersion = targetVersion // Initialize with target version for fallback
+
     try {
       // Find the release first to get the actual tag name
       const release = await this.githubClient.findRelease(targetVersion)
@@ -1572,7 +1591,7 @@ export class DownloadClient {
         throw new ArtifactNotFoundError(`No release found for version: ${targetVersion}`, targetVersion)
       }
 
-      const actualVersion = release.tag_name
+      actualVersion = release.tag_name
       console.log(`Found release: ${release.name} (${actualVersion})`)
 
       // Check cache using the actual release tag name
