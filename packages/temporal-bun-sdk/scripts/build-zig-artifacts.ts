@@ -33,9 +33,10 @@ async function buildTarget(target: (typeof zigTargets)[number]) {
 
   console.log(`\nBuilding Zig bridge for ${target.triple} → dist/native/${target.platform}/${target.arch}`)
 
-  // Download pre-built libraries first
-  console.log('Downloading pre-built temporal libraries...')
-  const downloadCommand = $`bun run ${downloadScript} download`
+  // Download pre-built libraries for the specific target platform
+  console.log(`Downloading pre-built temporal libraries for ${target.platform}-${target.arch}...`)
+  const targetPlatform = `${target.platform === 'darwin' ? 'macos' : target.platform}-${target.arch}`
+  const downloadCommand = $`bun run ${downloadScript} download latest ${targetPlatform}`
   downloadCommand.cwd = rootDir
   await downloadCommand
 

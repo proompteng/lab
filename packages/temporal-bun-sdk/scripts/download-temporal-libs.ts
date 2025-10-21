@@ -167,8 +167,20 @@ const DEFAULT_CONFIG: TemporalLibsConfig = {
  */
 export const PlatformDetector = {
   detectPlatform(): PlatformInfo {
-    const platform = process.platform
-    const arch = process.arch
+    // Check for forced platform/arch from environment (used for cross-compilation)
+    const forcePlatform = process.env.FORCE_PLATFORM
+    const forceArch = process.env.FORCE_ARCH
+
+    let platform = process.platform
+    let arch = process.arch
+
+    // Override with forced values if provided
+    if (forcePlatform) {
+      platform = forcePlatform
+    }
+    if (forceArch) {
+      arch = forceArch
+    }
 
     let os: PlatformInfo['os']
     let normalizedArch: PlatformInfo['arch']
@@ -201,11 +213,20 @@ export const PlatformDetector = {
         throw new Error(`Unsupported architecture: ${arch}`)
     }
 
-    return {
+    const platformInfo = {
       os,
       arch: normalizedArch,
       platform: `${os}-${normalizedArch}`,
     }
+
+    // Log if we're using forced platform detection
+    if (forcePlatform || forceArch) {
+      console.log(
+        `Using forced platform detection: ${platformInfo.platform} (original: ${process.platform}-${process.arch})`,
+      )
+    }
+
+    return platformInfo
   },
 
   isSupported(platformInfo: PlatformInfo): boolean {
@@ -2385,6 +2406,22 @@ if (import.meta.main) {
   const command = args[0] || 'download'
 
   try {
+    // Handle target platform override before creating client
+    const targetPlatform = command === 'download' ? args[2] : undefined
+    if (targetPlatform) {
+      const [os, arch] = targetPlatform.split('-')
+      if (os && arch) {
+        process.env.FORCE_PLATFORM = os === 'macos' ? 'darwin' : os
+        process.env.FORCE_ARCH = arch
+        console.log(`Downloading for target platform: ${targetPlatform}`)
+      } else {
+        console.error(
+          `Invalid target platform format: ${targetPlatform}. Expected format: os-arch (e.g., linux-x64, darwin-arm64)`,
+        )
+        process.exit(1)
+      }
+    }
+
     const client = new DownloadClient()
 
     switch (command) {
@@ -2467,15 +2504,17 @@ if (import.meta.main) {
         console.log('  bun run download-temporal-libs.ts [command] [options]')
         console.log('')
         console.log('Commands:')
-        console.log('  download [version]     Download libraries (default: latest)')
-        console.log('  cache-stats           Show cache statistics')
-        console.log('  cache-clear [version] Clear cache (all or specific version)')
-        console.log('  cache-cleanup [keep]  Clean up old versions (default: keep 3)')
-        console.log('  cache-validate        Validate and repair cache integrity')
-        console.log('  help                  Show this help message')
+        console.log('  download [version] [platform]  Download libraries (default: latest, host platform)')
+        console.log('  cache-stats                    Show cache statistics')
+        console.log('  cache-clear [version]          Clear cache (all or specific version)')
+        console.log('  cache-cleanup [keep]           Clean up old versions (default: keep 3)')
+        console.log('  cache-validate                 Validate and repair cache integrity')
+        console.log('  help                           Show this help message')
         console.log('')
         console.log('Examples:')
         console.log('  bun run download-temporal-libs.ts download latest')
+        console.log('  bun run download-temporal-libs.ts download latest macos-arm64')
+        console.log('  bun run download-temporal-libs.ts download latest linux-x64')
         console.log('  bun run download-temporal-libs.ts cache-stats')
         console.log('  bun run download-temporal-libs.ts cache-clear v1.0.0')
         console.log('  bun run download-temporal-libs.ts cache-cleanup 5')
