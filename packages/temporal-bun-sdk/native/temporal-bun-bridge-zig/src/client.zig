@@ -224,6 +224,102 @@ fn clientConnectCallback(
     }
 }
 
+fn extractTlsObject(config_json: []const u8) ?[]const u8 {
+    var depth: i32 = 0;
+    var idx: usize = 0;
+    var in_string = false;
+    var escape_next = false;
+    var key_start: ?usize = null;
+
+    while (idx < config_json.len) : (idx += 1) {
+        const char = config_json[idx];
+
+        if (escape_next) {
+            escape_next = false;
+            continue;
+        }
+
+        if (char == '\\') {
+            escape_next = true;
+            continue;
+        }
+
+        if (char == '"') {
+            if (!in_string) {
+                key_start = idx;
+            } else if (key_start) |start| {
+                if (depth == 1 and idx > start + 1) {
+                    const key_name = config_json[start + 1 .. idx];
+                    if (std.mem.eql(u8, key_name, "tls")) {
+                        var match_idx = idx + 1;
+                        while (match_idx < config_json.len and std.ascii.isWhitespace(config_json[match_idx])) : (match_idx += 1) {}
+                        if (match_idx >= config_json.len or config_json[match_idx] != ':') {
+                            key_start = null;
+                            in_string = false;
+                            continue;
+                        }
+                        match_idx += 1;
+
+                        while (match_idx < config_json.len and std.ascii.isWhitespace(config_json[match_idx])) : (match_idx += 1) {}
+                        if (match_idx >= config_json.len or config_json[match_idx] != '{') {
+                            key_start = null;
+                            in_string = false;
+                            continue;
+                        }
+
+                        const obj_start = match_idx;
+                        var obj_depth: i32 = 0;
+                        var obj_in_string = false;
+                        var obj_escape = false;
+
+                        while (match_idx < config_json.len) : (match_idx += 1) {
+                            const obj_char = config_json[match_idx];
+
+                            if (obj_escape) {
+                                obj_escape = false;
+                                continue;
+                            }
+
+                            if (obj_char == '\\') {
+                                obj_escape = true;
+                                continue;
+                            }
+
+                            if (obj_char == '"') {
+                                obj_in_string = !obj_in_string;
+                                continue;
+                            }
+
+                            if (obj_in_string) continue;
+
+                            if (obj_char == '{') {
+                                obj_depth += 1;
+                            } else if (obj_char == '}') {
+                                obj_depth -= 1;
+                                if (obj_depth == 0) {
+                                    return config_json[obj_start .. match_idx + 1];
+                                }
+                            }
+                        }
+                    }
+                }
+                key_start = null;
+            }
+            in_string = !in_string;
+            continue;
+        }
+
+        if (in_string) continue;
+
+        if (char == '{') {
+            depth += 1;
+        } else if (char == '}') {
+            depth -= 1;
+        }
+    }
+    return null;
+}
+
 fn connectCoreClient(
     allocator: std.mem.Allocator,
     runtime_handle: *runtime.RuntimeHandle,
@@ -244,6 +340,23 @@ fn connectCoreClient(
     const client_version = extractOptionalStringField(config_json, &.{ "clientVersion", "client_version" }) orelse "zig-bridge-dev";
     const api_key = extractOptionalStringField(config_json, &.{ "apiKey", "api_key" });
 
+    var tls_opts: ?core.ClientTlsOptions = null;
+    if (extractTlsObject(config_json)) |tls_json| {
+        const server_root_ca = extractOptionalStringField(tls_json, &.{ "serverRootCACertificate", "server_root_ca_cert" });
+        const domain = extractOptionalStringField(tls_json, &.{ "serverNameOverride", "server_name_override", "domain" });
+        const client_cert = extractOptionalStringField(tls_json, &.{"client_cert"});
+        const client_key = extractOptionalStringField(tls_json, &.{"client_private_key"});
+
+        if (server_root_ca != null or domain != null or (client_cert != null and client_key != null)) {
+            var opts = std.mem.zeroes(core.ClientTlsOptions);
+            opts.server_root_ca_cert = if (server_root_ca) |ca| makeByteArrayRef(ca) else emptyByteArrayRef();
+            opts.domain = if (domain) |d| makeByteArrayRef(d) else emptyByteArrayRef();
+            opts.client_cert = if (client_cert) |cert| makeByteArrayRef(cert) else emptyByteArrayRef();
+            opts.client_private_key = if (client_key) |key| makeByteArrayRef(key) else emptyByteArrayRef();
+            tls_opts = opts;
+        }
+    }
+
     var options = std.mem.zeroes(core.ClientOptions);
     options.target_url = makeByteArrayRef(address);
     options.client_name = makeByteArrayRef(client_name);
@@ -251,7 +364,7 @@ fn connectCoreClient(
     options.metadata = emptyByteArrayRef();
     options.identity = makeByteArrayRef(identity);
     options.api_key = if (api_key) |key| makeByteArrayRef(key) else emptyByteArrayRef();
-    options.tls_options = null;
+    options.tls_options = if (tls_opts) |*opts| opts else null;
     options.retry_options = null;
     options.keep_alive_options = null;
     options.http_connect_proxy_options = null;
