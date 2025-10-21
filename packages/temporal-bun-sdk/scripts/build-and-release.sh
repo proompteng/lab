@@ -43,7 +43,7 @@ mkdir -p "$RELEASE_DIR"
 echo "📋 Copying libraries..."
 find "$LIB_DIR" -name '*.a' -exec cp {} "$RELEASE_DIR/" \;
 
-LIB_COUNT=$(ls -1 "$RELEASE_DIR"/*.a 2>/dev/null | wc -l)
+LIB_COUNT=$(find "$RELEASE_DIR" -name '*.a' -type f | wc -l)
 echo "✓ Copied ${LIB_COUNT} libraries"
 
 # Create tarball
