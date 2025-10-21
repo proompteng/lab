@@ -1,7 +1,14 @@
 import { fileURLToPath } from 'node:url'
-import { NativeConnection, type NativeConnectionOptions, Worker, type WorkerOptions } from '@temporalio/worker'
+import {
+  NativeConnection,
+  type NativeConnectionOptions,
+  Worker,
+  type WorkerOptions,
+  bundleWorkflowCode,
+} from '@temporalio/worker'
 import { loadTemporalConfig, type TemporalConfig } from './config'
 import * as defaultActivities from './activities'
+import type { BridgeWorker, BridgeWorkerOptions } from './types'
 
 const DEFAULT_WORKFLOWS_PATH = fileURLToPath(new URL('./workflows/index.js', import.meta.url))
 
@@ -52,4 +59,39 @@ export const runWorker = async (options?: CreateWorkerOptions) => {
   const { worker } = await createWorker(options)
   await worker.run()
   return worker
+}
+
+export const createBridgeWorker = async (options: BridgeWorkerOptions): Promise<BridgeWorker> => {
+  const connection = await NativeConnection.connect({ address: options.address })
+  try {
+    const workflowBundle = await bundleWorkflowCode({ workflowsPath: options.workflowsPath })
+    const worker = await Worker.create({
+      connection,
+      namespace: options.namespace,
+      taskQueue: options.taskQueue,
+      workflowBundle,
+      activities: options.activities,
+      identity: options.identity ?? `bun-worker-${process.pid}`,
+    })
+
+    let closed = false
+
+    const run = async () => {
+      await worker.run()
+    }
+
+    const shutdown = async () => {
+      if (closed) {
+        return
+      }
+      closed = true
+      await worker.shutdown()
+      await connection.close()
+    }
+
+    return { run, shutdown }
+  } catch (error) {
+    await connection.close()
+    throw error
+  }
 }
