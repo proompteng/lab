@@ -5,13 +5,17 @@ const testing = std.testing;
 
 // TODO(codex, zig-buf-02): Emit allocation telemetry and guardrails for Bun-facing buffers.
 
-pub const ByteArray = core.ByteArray;
+pub const ByteArray = extern struct {
+    data: ?[*]const u8,
+    size: usize,
+    cap: usize,
+    disable_free: bool,
+};
 
 pub const AllocationSource = union(enum) {
     slice: []const u8,
     adopt_core: struct {
-        runtime: ?*core.RuntimeOpaque,
-        byte_buf: ?*const core.ByteBuf,
+        byte_buf: ?*core.ByteBuf,
         destroy: ?core.ByteBufDestroyFn = null,
     },
 };
@@ -19,8 +23,7 @@ pub const AllocationSource = union(enum) {
 const Ownership = union(enum) {
     duplicated,
     temporal_core: struct {
-        runtime: ?*core.RuntimeOpaque,
-        byte_buf: ?*const core.ByteBuf,
+        byte_buf: ?*core.ByteBuf,
         destroy: ?core.ByteBufDestroyFn,
     },
 };
@@ -89,7 +92,6 @@ pub fn allocate(source: AllocationSource) ?*ByteArray {
                     .disable_free = false,
                 },
                 .ownership = .{ .temporal_core = .{
-                    .runtime = adoption.runtime,
                     .byte_buf = buf,
                     .destroy = adoption.destroy,
                 } },
@@ -112,15 +114,13 @@ pub fn free(array: ?*ByteArray) void {
     switch (managed.ownership) {
         .duplicated => {
             if (handle.data) |ptr| {
-                allocator.free(@constCast(ptr[0..handle.size]));
+                allocator.free(@constCast(ptr)[0..handle.size]);
             }
         },
         .temporal_core => |adopted| {
             if (adopted.byte_buf) |buf| {
                 if (adopted.destroy) |destroy_fn| {
-                    destroy_fn(adopted.runtime, buf);
-                } else if (adopted.runtime) |runtime_ptr| {
-                    core.runtimeByteArrayFree(runtime_ptr, buf);
+                    destroy_fn(null, buf);
                 }
             }
         },
@@ -133,22 +133,16 @@ pub fn allocateFromSlice(bytes: []const u8) ?*ByteArray {
     return allocate(.{ .slice = bytes });
 }
 
-pub fn adoptCoreByteBuf(
-    runtime: ?*core.RuntimeOpaque,
-    byte_buf: ?*const core.ByteBuf,
-    destroy: ?core.ByteBufDestroyFn,
-) ?*ByteArray {
-    // Temporal core exposes runtime-scoped free hooks; callers can pass them here once wired.
-    return allocate(.{ .adopt_core = .{ .runtime = runtime, .byte_buf = byte_buf, .destroy = destroy } });
+pub fn adoptCoreByteBuf(byte_buf: ?*core.ByteBuf, destroy: ?core.ByteBufDestroyFn) ?*ByteArray {
+    // Callers should pass core.api.byte_buffer_destroy once Temporal core headers are linked.
+    const resolved = destroy orelse core.api.byte_array_free;
+    return allocate(.{ .adopt_core = .{ .byte_buf = byte_buf, .destroy = resolved } });
 }
 
 var destroy_call_count: usize = 0;
 
-fn trackingDestroy(
-    runtime: ?*core.RuntimeOpaque,
-    buf: ?*const core.ByteBuf,
-) callconv(.c) void {
-    _ = runtime;
+fn trackingDestroy(_runtime: ?*core.RuntimeOpaque, buf: ?*const core.ByteBuf) callconv(.c) void {
+    _ = _runtime;
     destroy_call_count += 1;
     if (buf) |byte_buf| {
         const mutable = @constCast(byte_buf);
@@ -158,27 +152,6 @@ fn trackingDestroy(
     }
 }
 
-const RuntimeFreeStub = struct {
-    var call_count: usize = 0;
-    var last_runtime: ?*core.RuntimeOpaque = null;
-    var last_bytes: ?*const core.ByteArray = null;
-
-    fn reset() void {
-        call_count = 0;
-        last_runtime = null;
-        last_bytes = null;
-    }
-
-    fn invoke(
-        runtime: ?*core.RuntimeOpaque,
-        bytes: ?*const core.ByteArray,
-    ) callconv(.c) void {
-        call_count += 1;
-        last_runtime = runtime;
-        last_bytes = bytes;
-    }
-};
-
 test "allocate duplicates slices into managed byte arrays" {
     destroy_call_count = 0;
     const payload = "temporal";
@@ -187,51 +160,14 @@ test "allocate duplicates slices into managed byte arrays" {
     const array_ptr = array_opt.?;
 
     try testing.expect(array_ptr.data != null);
-    try testing.expect(@intFromPtr(array_ptr.data) != @intFromPtr(payload.ptr));
+    try testing.expect(array_ptr.data.? != payload.ptr);
     try testing.expectEqual(payload.len, array_ptr.size);
     try testing.expectEqual(payload.len, array_ptr.cap);
-    try testing.expectEqualSlices(u8, payload, array_ptr.data[0..array_ptr.size]);
+    try testing.expectEqualSlices(u8, payload, array_ptr.data.?[0..array_ptr.size]);
 
     // Freeing duplicated buffers should not trigger the core destructor hook.
     free(array_ptr);
     try testing.expectEqual(@as(usize, 0), destroy_call_count);
-}
-
-test "free delegates to runtimeByteArrayFree when destroy is null" {
-    destroy_call_count = 0;
-    RuntimeFreeStub.reset();
-
-    const original_free = core.runtime_byte_array_free;
-    core.runtime_byte_array_free = RuntimeFreeStub.invoke;
-    defer core.runtime_byte_array_free = original_free;
-
-    var fake_runtime_storage: usize = 0;
-    const runtime_ptr = @as(?*core.RuntimeOpaque, @ptrCast(&fake_runtime_storage));
-
-    var storage = [_]u8{ 0xAA, 0xBB, 0xCC };
-    var buf = core.ByteBuf{
-        .data = &storage,
-        .size = storage.len,
-        .cap = storage.len,
-        .disable_free = false,
-    };
-
-    const array_opt = allocate(.{ .adopt_core = .{
-        .runtime = runtime_ptr,
-        .byte_buf = &buf,
-        .destroy = null,
-    } });
-    try testing.expect(array_opt != null);
-
-    free(array_opt.?);
-
-    try testing.expectEqual(@as(usize, 1), RuntimeFreeStub.call_count);
-    try testing.expectEqual(runtime_ptr, RuntimeFreeStub.last_runtime);
-    try testing.expect(RuntimeFreeStub.last_bytes != null);
-    if (RuntimeFreeStub.last_bytes) |bytes| {
-        const expected = @as(*const core.ByteArray, @ptrCast(&buf));
-        try testing.expect(bytes == expected);
-    }
 }
 
 test "adopted core buffers reuse the underlying pointer and invoke destroy once" {
@@ -244,17 +180,16 @@ test "adopted core buffers reuse the underlying pointer and invoke destroy once"
         .disable_free = false,
     };
 
-    const array_opt = allocate(.{ .adopt_core = .{ .runtime = null, .byte_buf = &buf, .destroy = trackingDestroy } });
+    const array_opt = allocate(.{ .adopt_core = .{ .byte_buf = &buf, .destroy = trackingDestroy } });
     try testing.expect(array_opt != null);
     const array_ptr = array_opt.?;
 
     try testing.expect(array_ptr.data != null);
-    try testing.expectEqual(@intFromPtr(array_ptr.data), @intFromPtr(&storage[0]));
+    try testing.expect(array_ptr.data.? == &storage);
     try testing.expectEqual(buf.size, array_ptr.size);
     try testing.expectEqual(buf.cap, array_ptr.cap);
 
-    const mutable_slice = @constCast(array_ptr.data[0..array_ptr.size]);
-    mutable_slice[0] = 0xAA;
+    @constCast(array_ptr.data.?)[0] = 0xAA;
     try testing.expectEqual(@as(u8, 0xAA), storage[0]);
 
     free(array_ptr);
@@ -267,11 +202,11 @@ test "adopted core buffers reuse the underlying pointer and invoke destroy once"
 test "free skips destroy when temporal core provided no buffer" {
     destroy_call_count = 0;
 
-    const array_opt = allocate(.{ .adopt_core = .{ .runtime = null, .byte_buf = null, .destroy = trackingDestroy } });
+    const array_opt = allocate(.{ .adopt_core = .{ .byte_buf = null, .destroy = trackingDestroy } });
     try testing.expect(array_opt != null);
     const array_ptr = array_opt.?;
 
-    try testing.expect(array_ptr.data == null);
+    try testing.expectEqual(@as(?[*]const u8, null), array_ptr.data);
     try testing.expectEqual(@as(usize, 0), array_ptr.size);
     try testing.expectEqual(@as(usize, 0), array_ptr.cap);
 

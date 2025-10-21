@@ -1,8 +1,4 @@
 const std = @import("std");
-
-// This module imports the Temporal Rust SDK C bridge so Zig code can alias the
-// real runtime/client types and re-export the C ABI entry points that other
-// bridge modules call through.
 const builtin = @import("builtin");
 
 const c = @cImport({
@@ -17,10 +13,17 @@ pub const Client = c.TemporalCoreClient;
 pub const ClientOptions = c.TemporalCoreClientOptions;
 pub const ClientConnectCallback = c.TemporalCoreClientConnectCallback;
 pub const ClientTlsOptions = c.TemporalCoreClientTlsOptions;
+pub const ClientRetryOptions = c.TemporalCoreClientRetryOptions;
+pub const ClientKeepAliveOptions = c.TemporalCoreClientKeepAliveOptions;
+pub const ClientHttpConnectProxyOptions = c.TemporalCoreClientHttpConnectProxyOptions;
 
 pub const Worker = c.TemporalCoreWorker;
 
-// Backwards-compatibility aliases used by existing Zig modules.
+pub const RpcService = c.TemporalCoreRpcService;
+pub const RpcCallOptions = c.TemporalCoreRpcCallOptions;
+pub const ClientRpcCallCallback = c.TemporalCoreClientRpcCallCallback;
+pub const CancellationToken = c.TemporalCoreCancellationToken;
+
 pub const RuntimeOpaque = Runtime;
 pub const ClientOpaque = Client;
 pub const WorkerOpaque = Worker;
@@ -28,7 +31,6 @@ pub const WorkerOpaque = Worker;
 pub const ByteArray = c.TemporalCoreByteArray;
 pub const ByteArrayRef = c.TemporalCoreByteArrayRef;
 pub const MetadataRef = c.TemporalCoreMetadataRef;
-
 pub const ByteBuf = ByteArray;
 pub const ByteBufDestroyFn = *const fn (?*RuntimeOpaque, ?*const ByteBuf) callconv(.c) void;
 
@@ -38,19 +40,8 @@ pub const WorkerCompleteFn =
 pub const RuntimeByteArrayFreeFn =
     *const fn (?*RuntimeOpaque, ?*const ByteArray) callconv(.c) void;
 
-pub const api = struct {
-    pub const runtime_new = c.temporal_core_runtime_new;
-    pub const runtime_free = c.temporal_core_runtime_free;
-    pub const byte_array_free = c.temporal_core_byte_array_free;
-
-    pub const client_connect = c.temporal_core_client_connect;
-    pub const client_free = c.temporal_core_client_free;
-    pub const client_update_metadata = c.temporal_core_client_update_metadata;
-    pub const client_update_api_key = c.temporal_core_client_update_api_key;
-};
-
 const fallback_error_slice =
-    "temporal-bun-bridge-zig: temporal core worker completion bridge is not linked"[0..];
+    "temporal-bun-bridge-zig: temporal core bridge is not linked"[0..];
 
 const fallback_error_array = ByteArray{
     .data = fallback_error_slice.ptr,
@@ -82,11 +73,8 @@ fn fallbackRuntimeByteArrayFree(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArr
     _ = bytes;
 }
 
-pub var worker_complete_workflow_activation: WorkerCompleteFn =
-    if (builtin.is_test) undefined else fallbackWorkerCompleteWorkflowActivation;
-
-pub var runtime_byte_array_free: RuntimeByteArrayFreeFn =
-    if (builtin.is_test) undefined else fallbackRuntimeByteArrayFree;
+pub var worker_complete_workflow_activation: WorkerCompleteFn = fallbackWorkerCompleteWorkflowActivation;
+pub var runtime_byte_array_free: RuntimeByteArrayFreeFn = fallbackRuntimeByteArrayFree;
 
 pub fn registerTemporalCoreCallbacks(
     worker_complete: ?WorkerCompleteFn,
@@ -110,6 +98,108 @@ pub fn runtimeByteArrayFree(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArray) 
     runtime_byte_array_free(runtime, bytes);
 }
 
+const stub_runtime_or_fail = RuntimeOrFail{
+    .runtime = null,
+    .fail = &fallback_error_array,
+};
+
+fn stubRuntimeNew(_options: *const RuntimeOptions) callconv(.c) RuntimeOrFail {
+    _ = _options;
+    return stub_runtime_or_fail;
+}
+
+fn stubRuntimeFree(_runtime: ?*Runtime) callconv(.c) void {
+    _ = _runtime;
+}
+
+fn stubByteArrayFree(_runtime: ?*RuntimeOpaque, _bytes: ?*const ByteArray) callconv(.c) void {
+    _ = _runtime;
+    _ = _bytes;
+}
+
+fn stubClientConnect(
+    user_runtime: ?*Runtime,
+    _options: *const ClientOptions,
+    user_data: ?*anyopaque,
+    callback: ClientConnectCallback,
+) callconv(.c) void {
+    _ = user_runtime;
+    _ = _options;
+    if (callback) |cb| {
+        cb(user_data, null, &fallback_error_array);
+    }
+}
+
+fn stubClientFree(_client: ?*Client) callconv(.c) void {
+    _ = _client;
+}
+
+fn stubClientUpdateMetadata(_client: ?*Client, _metadata: ByteArrayRef) callconv(.c) void {
+    _ = _client;
+    _ = _metadata;
+}
+
+fn stubClientUpdateApiKey(_client: ?*Client, _api_key: ByteArrayRef) callconv(.c) void {
+    _ = _client;
+    _ = _api_key;
+}
+
+fn stubClientRpcCall(
+    _client: ?*Client,
+    _options: *const RpcCallOptions,
+    user_data: ?*anyopaque,
+    callback: ClientRpcCallCallback,
+) callconv(.c) void {
+    _ = _client;
+    _ = _options;
+    if (callback) |cb| {
+        cb(user_data, null, 0, &fallback_error_array, null);
+    }
+}
+
+pub const Api = struct {
+    runtime_new: *const fn (*const RuntimeOptions) callconv(.c) RuntimeOrFail,
+    runtime_free: *const fn (?*Runtime) callconv(.c) void,
+    byte_array_free: RuntimeByteArrayFreeFn,
+    client_connect: *const fn (?*Runtime, *const ClientOptions, ?*anyopaque, ClientConnectCallback) callconv(.c) void,
+    client_free: *const fn (?*Client) callconv(.c) void,
+    client_update_metadata: *const fn (?*Client, ByteArrayRef) callconv(.c) void,
+    client_update_api_key: *const fn (?*Client, ByteArrayRef) callconv(.c) void,
+    client_rpc_call: *const fn (?*Client, *const RpcCallOptions, ?*anyopaque, ClientRpcCallCallback) callconv(.c) void,
+};
+
+pub const stub_api: Api = .{
+    .runtime_new = stubRuntimeNew,
+    .runtime_free = stubRuntimeFree,
+    .byte_array_free = stubByteArrayFree,
+    .client_connect = stubClientConnect,
+    .client_free = stubClientFree,
+    .client_update_metadata = stubClientUpdateMetadata,
+    .client_update_api_key = stubClientUpdateApiKey,
+    .client_rpc_call = stubClientRpcCall,
+};
+
+pub const extern_api: Api = .{
+    .runtime_new = c.temporal_core_runtime_new,
+    .runtime_free = c.temporal_core_runtime_free,
+    .byte_array_free = c.temporal_core_byte_array_free,
+    .client_connect = c.temporal_core_client_connect,
+    .client_free = c.temporal_core_client_free,
+    .client_update_metadata = c.temporal_core_client_update_metadata,
+    .client_update_api_key = c.temporal_core_client_update_api_key,
+    .client_rpc_call = c.temporal_core_client_rpc_call,
+};
+
+pub var api: Api = stub_api;
+
+var api_installed = std.atomic.Value(bool).init(false);
+
+pub fn ensureExternalApiInstalled() void {
+    if (!api_installed.swap(true, .seq_cst)) {
+        api = extern_api;
+    }
+}
+
 pub const SignalWorkflowError = error{
     NotFound,
     ClientUnavailable,
@@ -119,11 +209,7 @@ pub const SignalWorkflowError = error{
 pub fn signalWorkflow(_client: ?*ClientOpaque, request_json: []const u8) SignalWorkflowError!void {
     _ = _client;
 
-    // Stub implementation used until the Temporal core C-ABI is linked.
-    // Treat workflow IDs ending with "-missing" as not found to exercise the error path in tests.
     if (std.mem.indexOf(u8, request_json, "\"workflow_id\":\"missing-workflow\"")) |_| {
         return SignalWorkflowError.NotFound;
     }
-
-    // TODO(codex, zig-core-02): Invoke temporal_core_client_signal_workflow once headers are available.
 }

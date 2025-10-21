@@ -13,9 +13,6 @@ on:
         default: true
         type: boolean
 
-permissions:
-  contents: write
-
 jobs:
   build:
     name: Build Static Libraries

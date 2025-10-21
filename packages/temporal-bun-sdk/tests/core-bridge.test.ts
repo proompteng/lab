@@ -5,7 +5,7 @@ import { bridgeVariant, native } from '../src/internal/core-bridge/native.ts'
 
 const hasLiveServer = process.env.TEMPORAL_TEST_SERVER === '1'
 const usingZigBridge = bridgeVariant === 'zig'
-const reachabilityTest = usingZigBridge ? test.skip : test // TODO(codex, zig-cl-01): enable once Zig bridge surfaces connect failures deterministically
+const reachabilityTest = test
 
 describe('core bridge runtime wrapper', () => {
   test('shutdown is idempotent and prevents reuse', async () => {
@@ -16,7 +16,7 @@ describe('core bridge runtime wrapper', () => {
   })
 })
 
-const integrationSuite = hasLiveServer && !usingZigBridge ? describe : describe.skip
+const integrationSuite = hasLiveServer ? describe : describe.skip
 
 describe('core bridge client wrapper', () => {
   test('normalizes addresses with protocol inference', () => {
