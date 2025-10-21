@@ -31,22 +31,10 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 ```bash
 pnpm install
 
-# Clone upstream Temporal sources (one-time setup)
-#   sdk-typescript  v1.13.1  (latest 1.13 patch release as of Oct 20, 2025)
-#   sdk-core        de67417  (commit referenced by that sdk-typescript tag)
-git clone --depth 1 --branch v1.13.1 https://github.com/temporalio/sdk-typescript.git ~/github.com/temporalio/sdk-typescript
-git clone https://github.com/temporalio/sdk-core.git ~/github.com/temporalio/sdk-core
-git -C ~/github.com/temporalio/sdk-core checkout de674173c664d42f85d0dee1ff3b2ac47e36d545
+# Download pre-built static libraries (automatic during build)
+# No manual setup required - libraries are downloaded from GitHub releases
 
-# Symlink the checkouts into this workspace (kept out of git)
-mkdir -p packages/temporal-bun-sdk/vendor
-ln -s ~/github.com/temporalio/sdk-core packages/temporal-bun-sdk/vendor/sdk-core
-ln -s ~/github.com/temporalio/sdk-typescript packages/temporal-bun-sdk/vendor/sdk-typescript
-
-# Compile the native Temporal bridge (requires protoc in PATH)
-pnpm --filter @proompteng/temporal-bun-sdk run build:native
-
-# (Experimental) Build the Zig bridge scaffold (invokes Cargo to stage static Temporal core archives)
+# Build the Zig bridge (downloads pre-built libraries automatically)
 pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
 pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:bundle
 pnpm --filter @proompteng/temporal-bun-sdk run package:native:zig
@@ -54,7 +42,9 @@ pnpm --filter @proompteng/temporal-bun-sdk run package:native:zig
 # pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:debug
 ```
 
-> The Zig bridge build calls `cargo rustc --crate-type staticlib` for `temporal-sdk-core`, `temporal-client`, `temporal-sdk-core-api`, and `temporal-sdk-core-protos` so the linker can consume the resulting `.a` archives. Keep the Rust toolchain installed (via `rustup`) alongside Zig 0.15.1; missing Cargo or the vendored checkout aborts the build with guidance.
+**No Rust toolchain installation is required.** The build process automatically downloads pre-built static libraries from GitHub releases, eliminating the need for local Rust compilation.
+
+
 
 The bundling script cross-compiles ReleaseFast builds for `darwin` and `linux` (arm64 and x64), staging
 them under `native/temporal-bun-bridge-zig/zig-out/lib/<platform>/<arch>/`. The packaging helper then

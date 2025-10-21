@@ -274,7 +274,7 @@ function buildBridgeLoadError(libraryPath: string, error: unknown, context: Brid
   } else if (context.variant === 'zig' && context.preference === 'enable') {
     messages.push('TEMPORAL_BUN_SDK_USE_ZIG=1 requires a compatible Zig bridge; disable the flag to fall back to Rust.')
   } else if (context.variant === 'rust') {
-    messages.push('Did you run `cargo build -p temporal-bun-bridge`?')
+    messages.push('The Rust bridge is deprecated. Use the Zig bridge with pre-built libraries instead.')
   }
 
   const failure = new NativeBridgeError(messages.join('. '))
