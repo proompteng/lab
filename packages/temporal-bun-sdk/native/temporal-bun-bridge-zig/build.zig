@@ -288,7 +288,7 @@ pub fn build(b: *std.Build) void {
         // Explicitly using cargo build
         if (checkVendorDirectoryExists(b)) {
             fallback_to_cargo = true;
-            std.debug.print("✓ Using Cargo build (USE_PREBUILT_LIBS=false)\n");
+            std.debug.print("✓ Using Cargo build (USE_PREBUILT_LIBS=false)\n", .{});
         } else {
             std.debug.panic("Cargo build requested but vendor directory not available. Run 'git submodule update --init --recursive'", .{});
         }
