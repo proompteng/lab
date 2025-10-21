@@ -266,7 +266,7 @@ describe('Build System Integration Tests', () => {
 
     test('should validate platform support', () => {
       const platformInfo = downloadClient.getPlatformInfo()
-      const supportedPlatforms = ['linux-arm64', 'linux-x64', 'macos-arm64']
+      const supportedPlatforms = ['linux-arm64', 'linux-x64', 'macos-arm64', 'macos-x64']
 
       if (supportedPlatforms.includes(platformInfo.platform)) {
         expect(true).toBe(true) // Platform is supported

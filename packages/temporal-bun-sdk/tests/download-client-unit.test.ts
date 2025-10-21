@@ -93,7 +93,7 @@ describe('Download Client Core Unit Tests', () => {
       // Test unsupported platforms
       expect(PlatformDetector.isSupported({ os: 'windows', arch: 'x64', platform: 'windows-x64' })).toBe(false)
       expect(PlatformDetector.isSupported({ os: 'linux', arch: 'x86', platform: 'linux-x86' })).toBe(false)
-      expect(PlatformDetector.isSupported({ os: 'macos', arch: 'x64', platform: 'macos-x64' })).toBe(false)
+      expect(PlatformDetector.isSupported({ os: 'macos', arch: 'x64', platform: 'macos-x64' })).toBe(true)
     })
 
     test('should handle platform detection with mocked process values', async () => {

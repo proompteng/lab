@@ -231,7 +231,7 @@ export const PlatformDetector = {
   },
 
   isSupported(platformInfo: PlatformInfo): boolean {
-    const supportedPlatforms = ['linux-arm64', 'linux-x64', 'macos-arm64']
+    const supportedPlatforms = ['linux-arm64', 'linux-x64', 'macos-arm64', 'macos-x64']
     return supportedPlatforms.includes(platformInfo.platform)
   },
 }
