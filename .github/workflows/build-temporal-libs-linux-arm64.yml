@@ -44,11 +44,9 @@ jobs:
           sha256sum "$TARBALL" | awk '{print $1 "  temporal-static-libs-linux-arm64-v1.0.0.tar.gz"}' > "$TARBALL.sha256"
       
       - name: Upload to release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          cd packages/temporal-bun-sdk
-          gh release upload temporal-libs-v1.0.0 \
-            releases/temporal-static-libs-linux-arm64-v1.0.0.tar.gz \
-            releases/temporal-static-libs-linux-arm64-v1.0.0.tar.gz.sha256 \
-            --clobber
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: temporal-libs-v1.0.0
+          files: |
+            packages/temporal-bun-sdk/releases/temporal-static-libs-linux-arm64-v1.0.0.tar.gz
+            packages/temporal-bun-sdk/releases/temporal-static-libs-linux-arm64-v1.0.0.tar.gz.sha256
