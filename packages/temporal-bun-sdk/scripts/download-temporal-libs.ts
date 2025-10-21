@@ -17,6 +17,7 @@ import {
 } from 'fs'
 import { join, dirname } from 'path'
 import { createHash } from 'crypto'
+import { execSync } from 'child_process'
 
 // Error types for better error handling
 export class TemporalLibsError extends Error {
@@ -1565,14 +1566,23 @@ export class DownloadClient {
     console.log(`Downloading temporal libraries version: ${targetVersion}`)
 
     try {
-      // Check cache first
-      const cachedLibraries = await this.getCachedLibraries(targetVersion)
+      // Find the release first to get the actual tag name
+      const release = await this.githubClient.findRelease(targetVersion)
+      if (!release) {
+        throw new ArtifactNotFoundError(`No release found for version: ${targetVersion}`, targetVersion)
+      }
+
+      const actualVersion = release.tag_name
+      console.log(`Found release: ${release.name} (${actualVersion})`)
+
+      // Check cache using the actual release tag name
+      const cachedLibraries = await this.getCachedLibraries(actualVersion)
       if (cachedLibraries) {
-        console.log(`Found cached libraries for ${targetVersion}, validating compatibility...`)
+        console.log(`Found cached libraries for ${actualVersion}, validating compatibility...`)
 
         const validation = await this.validateLibraryCompatibility(cachedLibraries)
         if (validation.compatible) {
-          console.log(`✓ Using cached libraries for ${targetVersion}`)
+          console.log(`✓ Using cached libraries for ${actualVersion}`)
           return cachedLibraries
         } else {
           console.warn(`⚠️  Cached libraries are incompatible: ${validation.issues.join('; ')}`)
@@ -1580,20 +1590,12 @@ export class DownloadClient {
 
           // Clear the incompatible cache
           try {
-            this.cacheManager.clearCache(targetVersion)
+            this.cacheManager.clearCache(actualVersion)
           } catch (error) {
             console.warn(`Failed to clear incompatible cache: ${error instanceof Error ? error.message : error}`)
           }
         }
       }
-
-      // Find the appropriate release
-      const release = await this.githubClient.findRelease(targetVersion)
-      if (!release) {
-        throw new ArtifactNotFoundError(`No release found for version: ${targetVersion}`, targetVersion)
-      }
-
-      console.log(`Found release: ${release.name} (${release.tag_name})`)
 
       // Find platform-specific artifacts
       const { libraryAsset, checksumAsset, availablePlatforms } = this.githubClient.findPlatformArtifacts(
@@ -1608,8 +1610,8 @@ export class DownloadClient {
             : 'No platform-specific artifacts found in this release'
 
         throw new ArtifactNotFoundError(
-          `No library artifact found for platform ${this.platformInfo.platform} in release ${release.tag_name}. ${platformsText}`,
-          targetVersion,
+          `No library artifact found for platform ${this.platformInfo.platform} in release ${actualVersion}. ${platformsText}`,
+          actualVersion,
           this.platformInfo.platform,
         )
       }
@@ -1676,7 +1678,7 @@ export class DownloadClient {
       }
 
       // Extract the archive
-      const extractDir = this.cacheManager.getCacheDir(release.tag_name, this.platformInfo.platform)
+      const extractDir = this.cacheManager.getCacheDir(actualVersion, this.platformInfo.platform)
       console.log(`Extracting libraries to ${extractDir}...`)
 
       try {
@@ -1702,7 +1704,7 @@ export class DownloadClient {
       const librarySet: LibrarySet = {
         platform: this.platformInfo.os,
         architecture: this.platformInfo.arch,
-        version: release.tag_name,
+        version: actualVersion,
         libraries,
       }
 
@@ -1720,6 +1722,26 @@ export class DownloadClient {
       // Save to cache
       try {
         await this.cacheManager.saveToCache(librarySet)
+
+        // Create 'latest' symlink for build.zig compatibility
+        const latestLink = join(this.cacheManager['cacheDir'], 'latest')
+        const targetDir = join(this.cacheManager['cacheDir'], actualVersion)
+
+        try {
+          // Remove existing symlink if it exists
+          if (existsSync(latestLink)) {
+            rmSync(latestLink, { recursive: true, force: true })
+          }
+          // Create symlink (works on Unix-like systems)
+          if (process.platform !== 'win32') {
+            execSync(`ln -s "${actualVersion}" "${latestLink}"`)
+            console.log(`✓ Created 'latest' symlink -> ${actualVersion}`)
+          }
+        } catch (symlinkError) {
+          console.warn(
+            `Could not create 'latest' symlink: ${symlinkError instanceof Error ? symlinkError.message : symlinkError}`,
+          )
+        }
       } catch (error) {
         console.warn(`Failed to save libraries to cache: ${error instanceof Error ? error.message : error}`)
         // Don't fail the entire operation if caching fails
@@ -1749,7 +1771,7 @@ export class DownloadClient {
       if (this.config.fallbackToCompilation) {
         console.log('🔄 Attempting fallback to Rust compilation...')
         return await this.fallbackToRustCompilation(
-          targetVersion,
+          actualVersion,
           error instanceof Error ? error : new Error(String(error)),
         )
       }
