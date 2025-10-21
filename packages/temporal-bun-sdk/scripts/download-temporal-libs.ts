@@ -2243,24 +2243,17 @@ export class DownloadClient {
         )
       }
 
-      // Check if all expected libraries are present (warning only, not fatal)
-      const expectedLibraries = [
-        'libtemporal_sdk_core.a',
-        'libtemporal_sdk_core_c_bridge.a',
-        'libtemporal_client.a',
-        'libtemporal_sdk_core_api.a',
-        'libtemporal_sdk_core_protos.a',
-      ]
-
-      const presentLibraries = librarySet.libraries.map((lib) => lib.name)
-      const missingLibraries = expectedLibraries.filter(
-        (expected) => !presentLibraries.some((present) => present === expected),
-      )
-
-      if (missingLibraries.length > 0) {
-        warnings.push(
-          `Some expected libraries not found: ${missingLibraries.join(', ')} (may be using alternative build)`,
-        )
+      // Check if any static libraries are present (flexible validation)
+      if (librarySet.libraries.length === 0) {
+        issues.push('No static libraries found in the downloaded archive')
+      } else {
+        // Log what libraries were found for debugging
+        console.log(`Found ${librarySet.libraries.length} static libraries:`)
+        for (const lib of librarySet.libraries) {
+          const stats = existsSync(lib.path) ? statSync(lib.path) : null
+          const sizeMB = stats ? (stats.size / 1024 / 1024).toFixed(1) : 'unknown'
+          console.log(`  ${lib.name}: ${sizeMB}MB`)
+        }
       }
 
       // Check if library files actually exist and are readable
