@@ -77,6 +77,7 @@ jobs:
           # Build each crate as a static library
           TARGET="${{ matrix.target }}"
           cargo rustc -p temporal-sdk-core --crate-type staticlib --target "$TARGET" --release
+          cargo rustc -p temporal-sdk-core-c-bridge --crate-type staticlib --target "$TARGET" --release
           cargo rustc -p temporal-client --crate-type staticlib --target "$TARGET" --release
           cargo rustc -p temporal-sdk-core-api --crate-type staticlib --target "$TARGET" --release
           cargo rustc -p temporal-sdk-core-protos --crate-type staticlib --target "$TARGET" --release
@@ -91,6 +92,7 @@ jobs:
 
           # Copy static libraries
           cp "$TARGET_DIR/libtemporal_sdk_core.a" artifacts/
+          cp "$TARGET_DIR/libtemporal_sdk_core_c_bridge.a" artifacts/
           cp "$TARGET_DIR/libtemporal_client.a" artifacts/
           cp "$TARGET_DIR/libtemporal_sdk_core_api.a" artifacts/
           cp "$TARGET_DIR/libtemporal_sdk_core_protos.a" artifacts/
