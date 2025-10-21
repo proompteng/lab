@@ -1,0 +1,54 @@
+name: Temporal Bun SDK FFI
+
+on:
+  push:
+    paths:
+      - 'packages/temporal-bun-sdk/**'
+      - '.github/workflows/temporal-bun-ffi.yml'
+  pull_request:
+    paths:
+      - 'packages/temporal-bun-sdk/**'
+      - '.github/workflows/temporal-bun-ffi.yml'
+  workflow_dispatch:
+
+env:
+  BUN_VERSION: '1.1.20'
+  ZIG_VERSION: '0.12.0'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Set up Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache: true
+
+      - name: Zig tests (Debug)
+        working-directory: packages/temporal-bun-sdk/native/temporal-bun-bridge-zig
+        run: zig build -Doptimize=Debug test
+
+      - name: Zig build (ReleaseFast)
+        working-directory: packages/temporal-bun-sdk/native/temporal-bun-bridge-zig
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: Bun FFI tests
+        working-directory: packages/temporal-bun-sdk
+        run: bun test tests/ffi.*.test.ts
