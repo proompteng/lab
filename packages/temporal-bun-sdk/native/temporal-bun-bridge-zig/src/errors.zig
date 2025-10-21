@@ -12,7 +12,7 @@ pub const StructuredError = struct {
 };
 
 var last_error: []u8 = empty_slice;
-var error_mutex: std.Thread.Mutex = .{};
+var error_mutex: std.Thread.Mutex = std.Thread.Mutex.init();
 
 fn replaceLastErrorLocked(buffer: []u8) void {
     const allocator = std.heap.c_allocator;
