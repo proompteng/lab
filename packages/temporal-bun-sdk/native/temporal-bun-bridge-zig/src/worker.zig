@@ -8,6 +8,160 @@ const builtin = @import("builtin");
 
 const grpc = pending.GrpcStatus;
 
+pub fn createStubWorker(
+    client_handle: u64,
+    task_queue: []const u8,
+    out_worker: ?*u64,
+) i32 {
+    _ = client_handle;
+    _ = task_queue;
+
+    if (out_worker == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker output pointer is null",
+            .details = null,
+        });
+        return -1;
+    }
+
+    out_worker.?.* = 0;
+    errors.setStructuredErrorJson(.{
+        .code = grpc.unimplemented,
+        .message = "temporal-bun-bridge-zig: worker runtime is not implemented",
+        .details = null,
+    });
+    return -1;
+}
+
+pub fn setStubConcurrency(worker_handle: u64, concurrency: i32) i32 {
+    _ = worker_handle;
+    _ = concurrency;
+    errors.setStructuredErrorJson(.{
+        .code = grpc.unimplemented,
+        .message = "temporal-bun-bridge-zig: worker concurrency is not implemented",
+        .details = null,
+    });
+    return -1;
+}
+
+pub fn pollStubActivity(
+    worker_handle: u64,
+    out_ptr: ?*[*]const u8,
+    out_len: ?*i32,
+) i32 {
+    _ = worker_handle;
+    if (out_ptr) |ptr| {
+        ptr.* = null;
+    }
+    if (out_len) |len| {
+        len.* = 0;
+    }
+    errors.setStructuredErrorJson(.{
+        .code = grpc.unimplemented,
+        .message = "temporal-bun-bridge-zig: activity polling is not implemented",
+        .details = null,
+    });
+    return -1;
+}
+
+pub fn recordStubHeartbeat(
+    worker_handle: u64,
+    token_ptr: ?[*]const u8,
+    token_len: i32,
+    details_ptr: ?[*]const u8,
+    details_len: i32,
+) i32 {
+    _ = worker_handle;
+    _ = token_ptr;
+    _ = token_len;
+    _ = details_ptr;
+    _ = details_len;
+    errors.setStructuredErrorJson(.{
+        .code = grpc.unimplemented,
+        .message = "temporal-bun-bridge-zig: activity heartbeat is not implemented",
+        .details = null,
+    });
+    return -1;
+}
+
+pub fn stubIsCancelled(
+    worker_handle: u64,
+    token_ptr: ?[*]const u8,
+    token_len: i32,
+    out_bool: ?*i32,
+) i32 {
+    _ = worker_handle;
+    _ = token_ptr;
+    _ = token_len;
+    if (out_bool == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: cancellation output pointer is null",
+            .details = null,
+        });
+        return -1;
+    }
+    out_bool.?.* = 0;
+    errors.setStructuredErrorJson(.{
+        .code = grpc.unimplemented,
+        .message = "temporal-bun-bridge-zig: activity cancellation detection is not implemented",
+        .details = null,
+    });
+    return -1;
+}
+
+pub fn stubCompleteActivity(
+    worker_handle: u64,
+    token_ptr: ?[*]const u8,
+    token_len: i32,
+    result_ptr: ?[*]const u8,
+    result_len: i32,
+) i32 {
+    _ = worker_handle;
+    _ = token_ptr;
+    _ = token_len;
+    _ = result_ptr;
+    _ = result_len;
+    errors.setStructuredErrorJson(.{
+        .code = grpc.unimplemented,
+        .message = "temporal-bun-bridge-zig: activity completion is not implemented",
+        .details = null,
+    });
+    return -1;
+}
+
+pub fn stubFailActivity(
+    worker_handle: u64,
+    token_ptr: ?[*]const u8,
+    token_len: i32,
+    err_ptr: ?[*]const u8,
+    err_len: i32,
+) i32 {
+    _ = worker_handle;
+    _ = token_ptr;
+    _ = token_len;
+    _ = err_ptr;
+    _ = err_len;
+    errors.setStructuredErrorJson(.{
+        .code = grpc.unimplemented,
+        .message = "temporal-bun-bridge-zig: activity failure is not implemented",
+        .details = null,
+    });
+    return -1;
+}
+
+pub fn stubShutdownWorker(worker_handle: u64, drain_seconds: i32) i32 {
+    _ = worker_handle;
+    _ = drain_seconds;
+    errors.setStructuredErrorJson(.{
+        .code = grpc.unimplemented,
+        .message = "temporal-bun-bridge-zig: worker shutdown is not implemented",
+        .details = null,
+    });
+    return -1;
+}
+
 pub const WorkerHandle = struct {
     id: u64,
     runtime: ?*runtime.RuntimeHandle,

@@ -40,6 +40,7 @@
     "dev": "bun --watch src/bin/start-worker.ts",
     "build": "bunx tsc --project tsconfig.json --pretty false",
     "test": "bun test",
+    "test:worker-mvp": "bun test tests/worker-mvp.e2e.test.ts",
     "test:coverage": "bun test --coverage",
     "start:worker": "bun run dist/bin/start-worker.js",
     "build:native": "bun run scripts/run-with-rust-toolchain.ts -- zig build -Doptimize=ReleaseFast --build-file native/temporal-bun-bridge-zig/build.zig",

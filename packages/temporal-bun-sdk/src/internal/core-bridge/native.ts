@@ -438,6 +438,33 @@ export const native = {
     }
     return readByteArray(arrayPtr)
   },
+
+  workerBridge: {
+    async createWorker(_clientHandle: number | bigint, _taskQueue: Uint8Array): Promise<number> {
+      throw buildNotImplementedError('Activity worker bridge', 'docs/worker-mvp.md')
+    },
+    async setConcurrency(_workerHandle: number, _concurrency: number): Promise<void> {
+      throw buildNotImplementedError('Activity worker bridge', 'docs/worker-mvp.md')
+    },
+    async pollActivity(_workerHandle: number): Promise<never> {
+      throw buildNotImplementedError('Activity worker bridge', 'docs/worker-mvp.md')
+    },
+    async recordHeartbeat(_workerHandle: number, _token: Uint8Array, _details: Uint8Array): Promise<never> {
+      throw buildNotImplementedError('Activity worker bridge', 'docs/worker-mvp.md')
+    },
+    async isCancelled(_workerHandle: number, _token: Uint8Array): Promise<never> {
+      throw buildNotImplementedError('Activity worker bridge', 'docs/worker-mvp.md')
+    },
+    async completeActivity(_workerHandle: number, _token: Uint8Array, _payload: Uint8Array): Promise<never> {
+      throw buildNotImplementedError('Activity worker bridge', 'docs/worker-mvp.md')
+    },
+    async failActivity(_workerHandle: number, _token: Uint8Array, _payload: Uint8Array): Promise<never> {
+      throw buildNotImplementedError('Activity worker bridge', 'docs/worker-mvp.md')
+    },
+    async shutdownWorker(_workerHandle: number, _drainSeconds: number): Promise<never> {
+      throw buildNotImplementedError('Activity worker bridge', 'docs/worker-mvp.md')
+    },
+  },
 }
 
 function resolvePackageRoot(): string {
