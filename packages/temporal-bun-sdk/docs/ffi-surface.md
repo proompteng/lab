@@ -176,9 +176,10 @@ Current progress snapshot:
 
 ## 7. Reference Materials
 
-- Temporal Core Rust docs: `<repo>/vendor/sdk-core/core/src/lib.rs`
-- Temporal C bridge (for parity): `<repo>/vendor/sdk-core/sdk-core/src/lib.rs` + `temporal-sdk-core-c-bridge`
-- Current minimal bridge: `packages/temporal-bun-sdk/native/temporal-bun-bridge/src/lib.rs`
+- Temporal Core Rust docs: Available in the upstream `temporal-sdk-core` repository
+- Temporal C bridge (for parity): `temporal-sdk-core-c-bridge` crate documentation
+- Current Zig bridge implementation: `packages/temporal-bun-sdk/native/temporal-bun-bridge-zig/`
+- Pre-built static libraries: Downloaded automatically from GitHub releases during build
 - Bun FFI reference: https://bun.sh/docs/api/ffi
 
 ---
