@@ -2,10 +2,6 @@ name: Build Temporal Libraries (linux-arm64)
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - 'packages/temporal-bun-sdk/vendor/**'
-      - '.github/workflows/build-temporal-libs-linux-arm64.yml'
 
 jobs:
   build:
@@ -14,18 +10,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Clone temporal-sdk-core
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      
+      - name: Clone and build temporal-sdk-core
         run: |
           cd packages/temporal-bun-sdk
-          if [ ! -d vendor/temporal-sdk-core ]; then
-            mkdir -p vendor
-            git clone --depth 1 https://github.com/temporalio/sdk-core.git vendor/temporal-sdk-core
-          fi
-      
-      - name: Build temporal-sdk-core
-        run: |
-          cd packages/temporal-bun-sdk/vendor/temporal-sdk-core
-          cargo build --release
+          mkdir -p vendor
+          git clone --depth 1 https://github.com/temporalio/sdk-core.git vendor/temporal-sdk-core
+          cd vendor/temporal-sdk-core
+          $HOME/.cargo/bin/cargo build --release
       
       - name: Package libraries
         run: |
@@ -39,11 +35,7 @@ jobs:
           TARBALL="releases/temporal-static-libs-linux-arm64-$VERSION.tar.gz"
           tar -czf "$TARBALL" -C "$RELEASE_DIR" .
           
-          sha256sum "$TARBALL" | awk '{print $1 "  " $2}' | sed 's|releases/||' > "$TARBALL.sha256"
-          
-          echo "tarball=$TARBALL" >> $GITHUB_OUTPUT
-          echo "checksum=$TARBALL.sha256" >> $GITHUB_OUTPUT
-        id: package
+          sha256sum "$TARBALL" | awk '{print $1 "  temporal-static-libs-linux-arm64-v1.0.0.tar.gz"}' > "$TARBALL.sha256"
       
       - name: Upload to release
         env:
@@ -51,6 +43,6 @@ jobs:
         run: |
           cd packages/temporal-bun-sdk
           gh release upload temporal-libs-v1.0.0 \
-            ${{ steps.package.outputs.tarball }} \
-            ${{ steps.package.outputs.checksum }} \
+            releases/temporal-static-libs-linux-arm64-v1.0.0.tar.gz \
+            releases/temporal-static-libs-linux-arm64-v1.0.0.tar.gz.sha256 \
             --clobber
