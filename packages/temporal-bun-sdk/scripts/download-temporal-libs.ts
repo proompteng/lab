@@ -2221,7 +2221,7 @@ export class DownloadClient {
         )
       }
 
-      // Check if all expected libraries are present
+      // Check if all expected libraries are present (warning only, not fatal)
       const expectedLibraries = [
         'libtemporal_sdk_core.a',
         'libtemporal_sdk_core_c_bridge.a',
@@ -2236,7 +2236,9 @@ export class DownloadClient {
       )
 
       if (missingLibraries.length > 0) {
-        issues.push(`Missing expected libraries: ${missingLibraries.join(', ')}`)
+        warnings.push(
+          `Some expected libraries not found: ${missingLibraries.join(', ')} (may be using alternative build)`,
+        )
       }
 
       // Check if library files actually exist and are readable

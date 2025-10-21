@@ -244,3 +244,8 @@ tmp/
 services/dernier/config/master.key
 /packages/temporal-bun-sdk/native/temporal-bun-bridge/target/
 /packages/temporal-bun-sdk/vendor/
+
+# Temporal libraries cache and releases
+packages/temporal-bun-sdk/.temporal-libs-cache/
+packages/temporal-bun-sdk/releases/
+packages/temporal-bun-sdk/vendor/
