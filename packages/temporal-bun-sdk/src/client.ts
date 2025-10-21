@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
+import type { BridgeClient, BridgeClientConfig, BridgeStartWorkflowOptions, BridgeStartWorkflowResult } from './types'
 import {
   buildCancelRequest,
   buildQueryRequest,
@@ -366,6 +367,70 @@ const serializeTlsConfig = (tls?: TLSConfig): Record<string, unknown> | undefine
   }
 
   return payload
+}
+
+const DEFAULT_BRIDGE_CLIENT_NAME = 'temporal-bun-bridge-client'
+const DEFAULT_BRIDGE_CLIENT_VERSION = '0.1.0'
+
+export const createBridgeClient = async (config: BridgeClientConfig): Promise<BridgeClient> => {
+  const runtime = native.createRuntime()
+  try {
+    const identity = config.identity ?? `bun-client-${process.pid}`
+    const clientPayload = {
+      address: config.address,
+      namespace: config.namespace,
+      identity,
+      client_name: config.clientName ?? DEFAULT_BRIDGE_CLIENT_NAME,
+      client_version: config.clientVersion ?? DEFAULT_BRIDGE_CLIENT_VERSION,
+      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+    }
+
+    const client = await native.createClient(runtime, clientPayload)
+    let closed = false
+
+    const ensureOpen = () => {
+      if (closed) {
+        throw new Error('Temporal bridge client already closed')
+      }
+    }
+
+    const close = async () => {
+      if (closed) {
+        return
+      }
+      closed = true
+      native.clientShutdown(client)
+      native.runtimeShutdown(runtime)
+    }
+
+    const startWorkflow = async (options: BridgeStartWorkflowOptions): Promise<BridgeStartWorkflowResult> => {
+      ensureOpen()
+      const taskQueue = options.taskQueue ?? config.taskQueue
+      if (!taskQueue) {
+        throw new Error('Workflow start requires a task queue')
+      }
+      const request = {
+        namespace: options.namespace ?? config.namespace,
+        workflow_id: options.workflowId,
+        workflow_type: options.workflowType,
+        task_queue: taskQueue,
+        identity: options.identity ?? identity,
+        args: options.args ?? [],
+      }
+
+      const response = await native.startWorkflow(client, request)
+      const parsed = JSON.parse(textDecoder.decode(response)) as BridgeStartWorkflowResult
+      return parsed
+    }
+
+    return {
+      startWorkflow,
+      close,
+    }
+  } catch (error) {
+    native.runtimeShutdown(runtime)
+    throw error
+  }
 }
 export { createWorkflowHandle } from './client/types'
 export type {

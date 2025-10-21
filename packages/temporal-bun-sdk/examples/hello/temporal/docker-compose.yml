@@ -1,0 +1,14 @@
+version: '3.9'
+
+services:
+  temporal:
+    image: temporalio/auto-setup:1.23
+    ports:
+      - '7233:7233'
+    environment:
+      - TEMPORAL_ADDRESS=0.0.0.0:7233
+    healthcheck:
+      test: ['CMD', 'temporal', 'workflow', 'list']
+      interval: 5s
+      timeout: 5s
+      retries: 10

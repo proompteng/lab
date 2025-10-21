@@ -49,13 +49,16 @@
     "ci:native:zig": "bun run scripts/run-with-rust-toolchain.ts -- sh -c \"zig build -Doptimize=ReleaseFast --build-file native/temporal-bun-bridge-zig/build.zig && zig build -Doptimize=Debug --build-file native/temporal-bun-bridge-zig/build.zig test\"",
     "package:native:zig": "bun run scripts/package-zig-artifacts.ts",
     "test:native:zig": "bun run scripts/run-with-rust-toolchain.ts -- zig build -Doptimize=Debug --build-file native/temporal-bun-bridge-zig/build.zig test",
-    "prepack": "pnpm run build && pnpm run build:native:zig:bundle && pnpm run package:native:zig"
+    "prepack": "pnpm run build && pnpm run build:native:zig:bundle && pnpm run package:native:zig",
+    "hello:up": "docker compose -f examples/hello/temporal/docker-compose.yml up -d",
+    "hello:down": "docker compose -f examples/hello/temporal/docker-compose.yml down"
   },
   "engines": {
     "bun": ">=1.1.20"
   },
   "dependencies": {
     "@temporalio/activity": "^1.13.0",
+    "@temporalio/client": "^1.13.0",
     "@temporalio/common": "^1.13.0",
     "@temporalio/worker": "^1.13.0",
     "@temporalio/workflow": "^1.13.0",
