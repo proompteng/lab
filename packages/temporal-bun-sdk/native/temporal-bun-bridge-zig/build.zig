@@ -280,7 +280,7 @@ pub fn build(b: *std.Build) void {
 
         if (checkVendorDirectoryExists(b)) {
             fallback_to_cargo = true;
-            std.debug.print("✓ Found vendor directory, falling back to Cargo build\n");
+            std.debug.print("✓ Found vendor directory, falling back to Cargo build\n", .{});
         } else {
             std.debug.panic("Platform not supported for pre-built libraries and no vendor directory available");
         }
