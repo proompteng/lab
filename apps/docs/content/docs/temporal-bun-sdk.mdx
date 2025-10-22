@@ -1,0 +1,239 @@
+---
+title: Temporal Bun SDK
+description: Learn how to build and operate Temporal workers with the Bun runtime using the @proompteng Temporal Bun SDK.
+---
+
+`@proompteng/temporal-bun-sdk` is our Bun-first Temporal toolkit. It mirrors the
+`prix` Go worker defaults (namespace `default`, task queue `prix`, gRPC port
+`7233`) while layering on:
+
+- Zod-backed environment parsing with TLS, API key, and insecure-mode support.
+- Factories for Temporal clients, workflow handles, and worker registration.
+- A `temporal-bun` CLI that scaffolds projects, checks connectivity, and builds
+  Docker images.
+- A `temporal-bun-worker` binary that boots a worker with sensible defaults.
+- Optional Zig-native bridge binaries that ship alongside the TypeScript output
+  for instant startup on macOS and Linux.
+
+## Prerequisites
+
+- Bun **1.1.20 or newer** (matches the package engine requirement).
+- Access to a Temporal Cloud namespace or self-hosted cluster.
+- (Optional) The [`temporal`](https://docs.temporal.io/cli) CLI for namespace
+  administration.
+- `docker` if you plan to build container images with the provided helpers.
+
+## Install and scaffold
+
+Add the SDK to an existing Bun workspace:
+
+```bash
+bun add @proompteng/temporal-bun-sdk
+```
+
+To generate a new worker project, run the bundled CLI:
+
+```bash
+bunx temporal-bun init my-worker
+cd my-worker
+bun install
+bun run dev # runs the worker locally
+```
+
+The template includes example workflows, activities, and Docker packaging
+scripts that map one-to-one with the library’s defaults.
+
+## Configure your Temporal connection
+
+Configuration flows through `loadTemporalConfig()`, which reads environment
+variables, normalizes paths, and enforces required values. Drop a `.env` file in
+your worker project and tailor the defaults as needed:
+
+```bash
+TEMPORAL_HOST=temporal.proompteng.local
+TEMPORAL_GRPC_PORT=7233
+TEMPORAL_NAMESPACE=default
+TEMPORAL_TASK_QUEUE=prix
+TEMPORAL_API_KEY=your-cloud-api-key
+# Uncomment to enable mutual TLS
+# TEMPORAL_TLS_CERT_PATH=./certs/client.crt
+# TEMPORAL_TLS_KEY_PATH=./certs/client.key
+# TEMPORAL_TLS_CA_PATH=./certs/ca.pem
+```
+
+Environment variables supported by the config loader:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `TEMPORAL_ADDRESS` | `${TEMPORAL_HOST}:${TEMPORAL_GRPC_PORT}` | Direct address override (e.g. `temporal.example.com:7233`). |
+| `TEMPORAL_HOST` | `127.0.0.1` | Hostname used when `TEMPORAL_ADDRESS` is unset. |
+| `TEMPORAL_GRPC_PORT` | `7233` | Temporal gRPC port. |
+| `TEMPORAL_NAMESPACE` | `default` | Namespace passed to the worker and client. |
+| `TEMPORAL_TASK_QUEUE` | `prix` | Worker task queue. |
+| `TEMPORAL_API_KEY` | _unset_ | Injected into connection metadata for Cloud/API auth. |
+| `TEMPORAL_TLS_CA_PATH` | _unset_ | Path to trusted CA bundle. |
+| `TEMPORAL_TLS_CERT_PATH` / `TEMPORAL_TLS_KEY_PATH` | _unset_ | mTLS client certificate & key (require both). |
+| `TEMPORAL_TLS_SERVER_NAME` | _unset_ | Overrides TLS server name verification. |
+| `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS` | `false` | Accepts `1/true/on` to skip certificate verification. |
+| `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (host and PID are appended automatically). |
+| `TEMPORAL_BUN_SDK_USE_ZIG` | _auto-detect_ | `1` forces the Zig bridge, `0` keeps the Rust fallback. |
+
+`loadTemporalConfig()` returns typed values that the client and worker factories
+consume directly, so you never have to stitch addresses or TLS buffers together
+by hand.
+
+## Author activities
+
+Activities are plain Bun functions. Keep them deterministic from Temporal’s
+perspective and delegate external side effects to this layer.
+
+```ts title="workers/activities.ts"
+export type Activities = {
+  echo(input: { message: string }): Promise<string>
+  sleep(milliseconds: number): Promise<void>
+}
+
+export const echo: Activities['echo'] = async ({ message }) => {
+  return message
+}
+
+export const sleep: Activities['sleep'] = async (milliseconds) => {
+  await Bun.sleep(milliseconds)
+}
+```
+
+## Author workflows
+
+Import workflow primitives from the SDK so Bun can bundle Temporal’s deterministic
+runtime correctly.
+
+```ts title="workers/workflows.ts"
+import { proxyActivities } from '@proompteng/temporal-bun-sdk'
+import type { Activities } from '../activities.ts'
+
+const activities = proxyActivities<Activities>({
+  startToCloseTimeout: '1 minute',
+})
+
+export async function helloWorkflow(name: string): Promise<string> {
+  await activities.sleep(10)
+  return await activities.echo({ message: `Hello, ${name}!` })
+}
+```
+
+Export your workflows from an index file so the worker can register them all at
+once:
+
+```ts title="workers/workflows/index.ts"
+export * from './workflows.ts'
+```
+
+## Run a worker
+
+`createWorker()` wires up the Temporal connection, registers your workflows and
+activities, and hands back both the worker instance and the resolved config.
+
+```ts title="worker.ts"
+import { fileURLToPath } from 'node:url'
+import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
+import * as activities from './workers/activities.ts'
+
+const { worker } = await createWorker({
+  activities,
+  workflowsPath: fileURLToPath(new URL('./workers/workflows/index.ts', import.meta.url)),
+})
+
+const shutdown = async (signal: string) => {
+  console.log(`Received ${signal}. Shutting down worker…`)
+  await worker.shutdown()
+  process.exit(0)
+}
+
+process.on('SIGINT', () => void shutdown('SIGINT'))
+process.on('SIGTERM', () => void shutdown('SIGTERM'))
+
+await worker.run()
+```
+
+For quick tests, run the bundled binary instead of compiling your own entry
+point:
+
+```bash
+bunx temporal-bun-worker
+```
+
+It uses the same configuration loader and ships with example workflows if you
+need a smoke test.
+
+## Start and manage workflows from Bun
+
+`createTemporalClient()` produces a Bun-native Temporal client that already
+understands the config loader, workflow handles, and retry policies.
+
+```ts title="scripts/start-workflow.ts"
+import { createTemporalClient } from '@proompteng/temporal-bun-sdk'
+
+const { client } = await createTemporalClient()
+
+const start = await client.startWorkflow({
+  workflowId: `hello-${Date.now()}`,
+  workflowType: 'helloWorkflow',
+  taskQueue: 'prix',
+  args: ['Proompteng'],
+})
+
+console.log('Workflow started:', start.runId)
+
+await client.signalWorkflow(start.handle, 'complete', { ok: true })
+await client.terminateWorkflow(start.handle, { reason: 'demo complete' })
+await client.shutdown()
+```
+
+All workflow operations (`startWorkflow`, `signalWorkflow`, `queryWorkflow`,
+`terminateWorkflow`, `cancelWorkflow`, and `signalWithStart`) share the same
+handle structure, so you can persist it between processes without extra
+serialization code.
+
+## CLI quick reference
+
+The `temporal-bun` CLI is available through `bunx temporal-bun <command>` once
+the package is installed.
+
+- `init [directory] [--force]` – scaffold a Bun worker project with example
+  workflows, activities, Dockerfile, and scripts.
+- `check [namespace] [--namespace <value>]` – verify TLS/API connectivity to your
+  Temporal cluster using the native Bun bridge.
+- `docker-build [--tag <name>]` – package the current directory into a worker
+  image using the provided Docker helper.
+- `help` – print the command reference.
+
+## Native bridge and Zig builds
+
+Prebuilt Zig binaries ship with the npm package and cover macOS (arm64/x64) and
+Linux (arm64/x64). Set `TEMPORAL_BUN_SDK_USE_ZIG=1` to require them at runtime or
+`TEMPORAL_BUN_SDK_USE_ZIG=0` to keep the Rust bridge. When bundling from source,
+run:
+
+```bash
+pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
+pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:bundle
+pnpm --filter @proompteng/temporal-bun-sdk run package:native:zig
+```
+
+The scripts download vendor libraries automatically and stage the artifacts
+under `dist/native/<platform>/<arch>/` so they publish with the package.
+
+## Local development and production tips
+
+- Use Bun’s `--watch` flag (`bun run --watch worker.ts`) to restart the worker on
+  changes.
+- Keep activities free of Temporal SDK imports so they remain tree-shakeable and
+  easy to unit-test.
+- Expose Prometheus metrics via the worker runtime and forward them to your
+  observability stack.
+- Prefer Temporal schedules to cron jobs for recurring workloads.
+- Store long-lived credentials in a secrets manager and inject them via the
+  worker environment.
+
+With `@proompteng/temporal-bun-sdk`, you can reuse existing Temporal workflows
+while adopting Bun’s fast startup times and fully typed client/worker helpers.
