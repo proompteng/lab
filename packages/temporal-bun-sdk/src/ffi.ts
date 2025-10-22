@@ -1,206 +1,253 @@
-import { dlopen, FFIType, ptr } from 'bun:ffi'
+import { dlopen, FFIType, ptr, toArrayBuffer } from 'bun:ffi'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { decodeNativeError, type NativeErrorPayload, TemporalBridgeError } from './errors.ts'
 
-import { buildTemporalBridgeError, TemporalBridgeError, TemporalBridgeErrorCode } from './errors'
-
-const LIBRARY_FILENAMES = {
-  darwin: 'libtemporal_bun_bridge_zig.dylib',
-  linux: 'libtemporal_bun_bridge_zig.so',
+const StatusCodes = {
+  ok: 0,
+  invalidArgument: 1,
+  notFound: 2,
+  alreadyClosed: 3,
+  busy: 4,
+  internal: 5,
+  oom: 6,
 } as const
 
-type SupportedPlatform = keyof typeof LIBRARY_FILENAMES
+export type StatusCode = (typeof StatusCodes)[keyof typeof StatusCodes]
 
 const symbolMap = {
-  te_client_connect: { args: [FFIType.ptr], returns: FFIType.int32_t },
-  te_client_close: { args: [FFIType.uint64_t], returns: FFIType.int32_t },
-  te_worker_start: { args: [FFIType.uint64_t, FFIType.ptr], returns: FFIType.int32_t },
-  te_worker_shutdown: { args: [FFIType.uint64_t], returns: FFIType.int32_t },
-  te_get_last_error: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.int32_t },
-  te_free_buf: { args: [FFIType.uint64_t, FFIType.int64_t], returns: FFIType.int32_t },
+  te_client_connect: {
+    args: [FFIType.ptr, FFIType.int64_t, FFIType.ptr],
+    returns: FFIType.int32_t,
+  },
+  te_client_close: {
+    args: [FFIType.uint64_t],
+    returns: FFIType.int32_t,
+  },
+  te_worker_start: {
+    args: [FFIType.uint64_t, FFIType.ptr, FFIType.int64_t, FFIType.ptr],
+    returns: FFIType.int32_t,
+  },
+  te_worker_shutdown: {
+    args: [FFIType.uint64_t],
+    returns: FFIType.int32_t,
+  },
+  te_get_last_error: {
+    args: [FFIType.ptr, FFIType.ptr],
+    returns: FFIType.int32_t,
+  },
+  te_free_buf: {
+    args: [FFIType.uint64_t, FFIType.int64_t],
+    returns: FFIType.int32_t,
+  },
 } as const
 
-const moduleDir = dirname(fileURLToPath(import.meta.url))
-const packageRoot = join(moduleDir, '..')
-const defaultLibDir = join(packageRoot, 'native', 'temporal-bun-bridge-zig', 'zig-out', 'lib')
+type NativeModule = ReturnType<typeof dlopen>
+
+type NativeSymbols = NativeModule['symbols']
+
+const TEMPORAL_BRIDGE_ENV = 'TEMPORAL_BUN_BRIDGE_PATH'
 
 const libraryPath = resolveLibraryPath()
-
 const nativeModule = dlopen(libraryPath, symbolMap)
-const symbols = nativeModule.symbols
-
-const LIBC_FILENAMES = {
-  darwin: 'libSystem.B.dylib',
-  linux: 'libc.so.6',
-} as const
-
-const libcPath = LIBC_FILENAMES[process.platform as keyof typeof LIBC_FILENAMES]
-if (!libcPath) {
-  throw new Error(`Unsupported platform ${process.platform} for libc bindings`)
-}
-
-const libcModule = dlopen(libcPath, {
-  memcpy: { args: [FFIType.ptr, FFIType.uint64_t, FFIType.uint64_t], returns: FFIType.uint64_t },
-} as const)
-const libcSymbols = libcModule.symbols
-
-export const nativeBridgePath = libraryPath
-
-export type NativeHandle = bigint
-
-export function clientConnect(): NativeHandle {
-  const out = new BigUint64Array(1)
-  ensureOk(symbols.te_client_connect(ptr(out)), 'te_client_connect')
-  return out[0]
-}
-
-export function clientClose(handle: NativeHandle | number): void {
-  ensureOk(symbols.te_client_close(normalizeHandle(handle)), 'te_client_close')
-}
-
-export function workerStart(client: NativeHandle | number): NativeHandle {
-  const out = new BigUint64Array(1)
-  ensureOk(symbols.te_worker_start(normalizeHandle(client), ptr(out)), 'te_worker_start')
-  return out[0]
-}
-
-export function workerShutdown(handle: NativeHandle | number): void {
-  ensureOk(symbols.te_worker_shutdown(normalizeHandle(handle)), 'te_worker_shutdown')
-}
-
-function getLastErrorRaw(): { status: number; ptr: bigint; len: bigint } {
-  const ptrBuffer = new BigUint64Array(1)
-  const lenBuffer = new BigUint64Array(1)
-  const status = symbols.te_get_last_error(ptr(ptrBuffer), ptr(lenBuffer))
-  return { status, ptr: ptrBuffer[0], len: lenBuffer[0] }
-}
-
-export const __testing = {
-  getLastErrorRaw,
-  freeBuffer(pointer: bigint, length: number | bigint): number {
-    return symbols.te_free_buf(pointer, Number(length))
-  },
-  callClientClose(handle: NativeHandle | number): number {
-    return symbols.te_client_close(normalizeHandle(handle))
-  },
-  drainErrorSlot() {
-    const result = getLastErrorRaw()
-    if (result.status !== 0) {
-      throw new Error(`te_get_last_error failed with status ${result.status}`)
-    }
-    if (result.ptr !== 0n && result.len > 0n) {
-      const freeStatus = symbols.te_free_buf(result.ptr, Number(result.len))
-      if (freeStatus !== 0 && freeStatus !== TemporalBridgeErrorCode.NotFound) {
-        throw new Error(`te_free_buf failed with status ${freeStatus}`)
-      }
-    }
-    return result
-  },
-}
-
-function ensureOk(status: number, where: string): void {
-  if (status === 0) {
-    return
-  }
-  throwNativeError(where, status)
-}
-
-function throwNativeError(where: string, status: number): never {
-  const buffer = readErrorBuffer(where, status)
-  throw buildTemporalBridgeError({
-    status,
-    where,
-    buffer,
-    fallbackMessage: `Native error ${status} at ${where}`,
-  })
-}
-
-function readErrorBuffer(where: string, status: number): Uint8Array | null {
-  const { status: getStatus, ptr: pointer, len: length } = getLastErrorRaw()
-  if (getStatus !== 0) {
-    throw new TemporalBridgeError({
-      code: getStatus,
-      message: `te_get_last_error failed after ${where}(${status})`,
-      where: 'te_get_last_error',
-      raw: '',
-    })
-  }
-
-  if (pointer === 0n || length === 0n) {
-    return null
-  }
-
-  const lengthNumber = Number(length)
-
-  let payload: Uint8Array | null = null
-  let pendingError: TemporalBridgeError | null = null
-  try {
-    payload = copyFromPointer(pointer, lengthNumber)
-  } catch (error) {
-    pendingError = new TemporalBridgeError({
-      code: TemporalBridgeErrorCode.Internal,
-      message: `Failed to read native error buffer for ${where}`,
-      where,
-      raw: '',
-      cause: error,
-    })
-  } finally {
-    const freeStatus = symbols.te_free_buf(pointer, lengthNumber)
-    if (freeStatus !== 0) {
-      if (!pendingError) {
-        pendingError = new TemporalBridgeError({
-          code: freeStatus,
-          message: 'te_free_buf failed while releasing native error buffer',
-          where: 'te_free_buf',
-          raw: '',
-        })
-      }
-    }
-  }
-
-  if (pendingError) {
-    throw pendingError
-  }
-
-  return payload ?? null
-}
-
-function normalizeHandle(handle: NativeHandle | number): number {
-  return typeof handle === 'bigint' ? Number(handle) : handle
-}
-
-function copyFromPointer(pointer: bigint, length: number): Uint8Array {
-  if (length === 0) {
-    return new Uint8Array(0)
-  }
-
-  const result = new Uint8Array(length)
-  libcSymbols.memcpy(ptr(result), pointer, BigInt(length))
-  return result
-}
+const native: NativeSymbols = nativeModule.symbols
 
 function resolveLibraryPath(): string {
-  const override = process.env.TEMPORAL_BUN_BRIDGE_PATH
+  const override = process.env[TEMPORAL_BRIDGE_ENV]
   if (override) {
     if (!existsSync(override)) {
-      throw new Error(`Temporal Bun bridge override not found at ${override}`)
+      throw new TemporalBridgeError({
+        code: StatusCodes.notFound,
+        msg: `Temporal bridge override not found at ${override}`,
+        where: 'resolveLibraryPath',
+        raw: override,
+      })
     }
     return override
   }
 
-  const platform = process.platform as SupportedPlatform
-  const filename = LIBRARY_FILENAMES[platform]
-  if (!filename) {
-    throw new Error(`Unsupported platform ${process.platform} for Temporal Bun bridge`)
-  }
-
-  const candidate = join(defaultLibDir, filename)
+  const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)))
+  const nativeRoot = join(packageRoot, 'native', 'temporal-bun-bridge-zig', 'zig-out', 'lib')
+  const filename = selectLibraryFilename()
+  const candidate = join(nativeRoot, filename)
   if (!existsSync(candidate)) {
-    throw new Error(
-      `Temporal Bun Zig bridge not found at ${candidate}. Run \`zig build -Doptimize=ReleaseFast --build-file native/temporal-bun-bridge-zig/build.zig\` first.`,
-    )
+    throw new TemporalBridgeError({
+      code: StatusCodes.notFound,
+      msg: `Temporal bridge library not found at ${candidate}`,
+      where: 'resolveLibraryPath',
+      raw: candidate,
+    })
   }
-
   return candidate
 }
+
+function selectLibraryFilename(): string {
+  switch (process.platform) {
+    case 'darwin':
+      return 'libtemporal_bun_bridge_zig.dylib'
+    case 'win32':
+      return 'temporal_bun_bridge_zig.dll'
+    default:
+      return 'libtemporal_bun_bridge_zig.so'
+  }
+}
+
+export function connectClient(config?: ArrayBufferView | ArrayBuffer | null): bigint {
+  const configBuffer = encodeConfig(config)
+  const outHandle = new BigUint64Array(1)
+  const status = native.te_client_connect(configBuffer.pointer, configBuffer.length, ptr(outHandle))
+  void configBuffer.view
+  ensureStatus(status, 'te_client_connect')
+  return outHandle[0]
+}
+
+export function closeClient(handle: bigint): void {
+  ensureStatus(native.te_client_close(handle), 'te_client_close')
+}
+
+export function startWorker(clientHandle: bigint, options?: ArrayBufferView | ArrayBuffer | null): bigint {
+  const optionsBuffer = encodeConfig(options)
+  const outHandle = new BigUint64Array(1)
+  const status = native.te_worker_start(clientHandle, optionsBuffer.pointer, optionsBuffer.length, ptr(outHandle))
+  void optionsBuffer.view
+  ensureStatus(status, 'te_worker_start')
+  return outHandle[0]
+}
+
+export function shutdownWorker(handle: bigint): void {
+  ensureStatus(native.te_worker_shutdown(handle), 'te_worker_shutdown')
+}
+
+export function drainErrorForTest(): NativeErrorPayload | null {
+  return drainNativeError()
+}
+
+function ensureStatus(status: number, where: string): void {
+  if (status === StatusCodes.ok) {
+    return
+  }
+  const payload = drainNativeError()
+  if (payload) {
+    throw new TemporalBridgeError(payload)
+  }
+  throw new TemporalBridgeError({
+    code: status,
+    msg: `${where} failed with status ${status}`,
+    where,
+    raw: `${where}:${status}`,
+  })
+}
+
+function drainNativeError(): NativeErrorPayload | null {
+  const ptrBox = new BigUint64Array(1)
+  const lenBox = new BigUint64Array(1)
+  const status = native.te_get_last_error(ptr(ptrBox), ptr(lenBox))
+  if (status === StatusCodes.notFound) {
+    return null
+  }
+  if (status !== StatusCodes.ok) {
+    throw new TemporalBridgeError({
+      code: status,
+      msg: `te_get_last_error failed with status ${status}`,
+      where: 'te_get_last_error',
+      raw: String(status),
+    })
+  }
+
+  const ptrValue = ptrBox[0]
+  const lenValue = lenBox[0]
+  if (ptrValue === 0n || lenValue === 0n) {
+    return null
+  }
+
+  const length = ensureSafeLength(lenValue, 'te_get_last_error')
+  const pointer = ensureSafePointer(ptrValue, 'te_get_last_error')
+  const copy = copyNativeBuffer(pointer, length)
+
+  let decoded: NativeErrorPayload | undefined
+  let caught: unknown | undefined
+  try {
+    decoded = decodeNativeError(copy)
+  } catch (error) {
+    caught = error
+  }
+
+  const freeStatus = native.te_free_buf(ptrValue, length)
+  if (freeStatus !== StatusCodes.ok) {
+    throw new TemporalBridgeError({
+      code: freeStatus,
+      msg: `te_free_buf failed with status ${freeStatus}`,
+      where: 'te_get_last_error',
+      raw: String(freeStatus),
+    })
+  }
+
+  if (caught) {
+    throw caught
+  }
+
+  if (!decoded) {
+    throw new TemporalBridgeError({
+      code: StatusCodes.internal,
+      msg: 'decodeNativeError returned empty payload',
+      where: 'te_get_last_error',
+      raw: 'decodeNativeError',
+    })
+  }
+
+  return decoded
+}
+
+function encodeConfig(data?: ArrayBufferView | ArrayBuffer | null): {
+  pointer: number
+  length: number
+  view?: Uint8Array
+} {
+  if (!data) {
+    return { pointer: 0, length: 0 }
+  }
+
+  const view =
+    data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  if (view.byteLength === 0) {
+    return { pointer: 0, length: 0, view }
+  }
+  return { pointer: ptr(view), length: view.byteLength, view }
+}
+
+function ensureSafePointer(value: bigint, where: string): number {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new TemporalBridgeError({
+      code: StatusCodes.internal,
+      msg: `${where} returned pointer exceeding JS precision`,
+      where,
+      raw: value.toString(),
+    })
+  }
+  return Number(value)
+}
+
+function ensureSafeLength(value: bigint, where: string): number {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new TemporalBridgeError({
+      code: StatusCodes.internal,
+      msg: `${where} returned length exceeding JS precision`,
+      where,
+      raw: value.toString(),
+    })
+  }
+  return Number(value)
+}
+
+function copyNativeBuffer(pointer: number, length: number): Uint8Array {
+  if (length === 0) {
+    return new Uint8Array(0)
+  }
+  const buffer = toArrayBuffer(pointer, length)
+  const copy = new Uint8Array(length)
+  copy.set(new Uint8Array(buffer))
+  return copy
+}
+
+export { StatusCodes }

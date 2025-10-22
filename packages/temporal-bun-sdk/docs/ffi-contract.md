@@ -1,90 +1,74 @@
-# Temporal Bun SDK FFI Contract
+# Temporal Bun FFI Contract
 
-## ABI surface
+This document captures the minimal contract between the Bun bindings and the Zig bridge. The intent is to provide a tiny, well
+-defined surface so additional functionality can be layered without breaking existing integrations.
 
-The Zig bridge exposes a compact C ABI with the following exports:
+## Exported Symbols
 
-| Symbol | Signature | Description |
+All exported functions use a C ABI and return an `int32` status code. A status of `0` indicates success. Non-zero values map to a
+compact enum shared between Zig and Bun.
+
+| Symbol | Signature (Zig) | Description |
 | --- | --- | --- |
-| `te_client_connect` | `int32_t te_client_connect(uint64_t *out_client_id)` | Creates a client handle and returns an opaque identifier via `out_client_id`. |
-| `te_client_close` | `int32_t te_client_close(uint64_t client_id)` | Marks the client handle as closed. Idempotent. |
-| `te_worker_start` | `int32_t te_worker_start(uint64_t client_id, uint64_t *out_worker_id)` | Allocates a worker handle associated with an existing client. |
-| `te_worker_shutdown` | `int32_t te_worker_shutdown(uint64_t worker_id)` | Shuts down a worker handle. Idempotent. |
-| `te_get_last_error` | `int32_t te_get_last_error(uint8_t **out_ptr, size_t *out_len)` | Copies the thread-local error buffer pointer/length and clears the slot. |
-| `te_free_buf` | `int32_t te_free_buf(uint8_t *ptr, int64_t len)` | Releases buffers allocated by the bridge (`te_get_last_error`, etc.). |
+| `te_client_connect` | `(config_ptr: ?[*]const u8, len: i64, out_handle: ?*u64) i32` | Creates a new client handle and writes its opaque `u64` identifier to `out_handle`. |
+| `te_client_close` | `(handle: u64) i32` | Closes the client handle. Double-close returns `already_closed`. |
+| `te_worker_start` | `(client_handle: u64, options_ptr: ?[*]const u8, len: i64, out_handle: ?*u64) i32` | Registers a worker associated with a client. |
+| `te_worker_shutdown` | `(handle: u64) i32` | Shuts down a worker handle; idempotent with typed errors. |
+| `te_get_last_error` | `(out_ptr: ?*u64, out_len: ?*u64) i32` | Returns an owned buffer containing the last error payload for the current thread. |
+| `te_free_buf` | `(ptr_value: u64, len: i64) i32` | Releases buffers produced by `te_get_last_error`. |
 
-All functions return `int32_t` status codes (see below). On success, outputs are written and the slot for the last error is cleared.
+### Status Codes
 
-## Status codes
+The following status values are shared between Zig and Bun:
 
-The bridge uses a compact enum shared with TypeScript bindings:
+| Code | Name | Meaning |
+| --- | --- | --- |
+| `0` | `ok` | Operation succeeded. |
+| `1` | `invalid_argument` | Inputs were invalid (null pointers, negative lengths, closed handles). |
+| `2` | `not_found` | Handle or buffer could not be located. |
+| `3` | `already_closed` | Lifecycle operation invoked on an already-closed handle. |
+| `4` | `busy` | Reserved for future use. |
+| `5` | `internal` | Internal invariant failed. |
+| `6` | `oom` | Allocation failed. |
 
-| Code | Name |
-| --- | --- |
-| `0` | `Ok` |
-| `1` | `InvalidArgument` |
-| `2` | `NotFound` |
-| `3` | `AlreadyClosed` |
-| `4` | `NoMemory` |
-| `5` | `Internal` |
+## Error Model
 
-Non-zero statuses set the thread-local error payload. The status returned by `te_get_last_error` reports problems retrieving the buffer (e.g. bad pointers, missing state).
+* Errors are tracked per-thread. Each failing call stores a JSON payload and returns a non-zero status.
+* The JSON schema is: `{"code":<int>,"msg":"...","where":"<symbol>"}`.
+* `te_get_last_error` copies the payload out of the thread-local slot, registers the buffer for ownership tracking, and clears the slot.
+* Callers **must** release the returned buffer with `te_free_buf(ptr,len)`. Double-free, length mismatches, and invalid pointers all
+surface typed errors without crashing.
 
-## Error model
+## Memory Contract
 
-* Errors are stored thread-locally as UTF-8 JSON: `{"code":<int>,"message":"...","where":"<fn>"}`.
-* On failure, call `te_get_last_error(&ptr,&len)` to transfer ownership of the error buffer. The slot is cleared on success.
-* Call `te_free_buf(ptr,len)` exactly once for every non-null pointer returned by `te_get_last_error`.
-* If an error occurs while allocating or registering the JSON payload the bridge falls back to the status code without a buffer.
+* All outgoing buffers (currently only error payloads) are allocated in Zig with the active global allocator.
+* Inputs must not pass null pointers with non-zero lengths. Negative lengths yield `invalid_argument`.
+* Buffer handles returned by `te_get_last_error` remain valid until `te_free_buf` is invoked. The bridge guards against double
+frees and frees with mismatched lengths.
 
-## Memory contract
+## Handle Lifecycle
 
-* Every buffer returned from the bridge is heap-allocated inside Zig and tracked in a registry.
-* `te_free_buf` validates pointers and lengths:
-  * `ptr == NULL && len == 0` → success (no-op).
-  * `ptr == NULL && len != 0` → `InvalidArgument`.
-  * `len < 0` → `InvalidArgument`.
-  * Unknown pointer → `NotFound`.
-  * Length mismatch → buffer freed and `InvalidArgument` returned.
-* Double frees are safe and reported as `NotFound`.
+* Client and worker handles are opaque `u64` identifiers. They are monotonically assigned and thread-safe.
+* Closing an already-closed handle returns `already_closed` but does not crash or corrupt state.
+* Worker start validates the owning client. Attempts to attach a worker to a closed or unknown client return a typed error.
 
-## Handle lifecycle
+## Bun Bindings
 
-* Client and worker handles are opaque `uint64_t` identifiers.
-* Creation is thread-safe; IDs are monotonically increasing and never reused.
-* Closing/shutdown is idempotent and surfaces `AlreadyClosed` without panics.
-* Handle registries are guarded by mutexes to support concurrent access from multiple threads.
+* The Bun side loads the shared library with `Bun.dlopen` and maps the status codes to a `TemporalBridgeError` class.
+* Error payloads are decoded from JSON, copied into managed memory, and freed via `te_free_buf` before constructing the error.
+* RAII helpers (`ClientHandle`, `WorkerHandle`) ensure handles are closed exactly once and raise typed errors on double-close.
+* `TEMPORAL_BUN_BRIDGE_PATH` can override the resolved shared library path for testing or distribution overrides.
 
-## TypeScript bindings
+## Validation
 
-The Bun bindings load the shared library at runtime and wrap the raw symbols:
+The Zig test suite covers:
 
-* Symbols are resolved via `bun:ffi` with explicit type metadata.
-* `clientConnect`, `clientClose`, `workerStart`, and `workerShutdown` convert statuses into `TemporalBridgeError` instances.
-* Errors are decoded by copying the native buffer with `toArrayBuffer`, freeing it via `te_free_buf`, and parsing the JSON payload.
-* `TemporalBridgeError` exposes `.code`, `.where`, `.raw`, and `.cause` fields for diagnostics.
-* `ClientHandle`/`WorkerHandle` provide RAII close semantics and throw `TemporalBridgeError` on double-close.
-* `withClient(fn)` opens a client, executes `fn`, and guarantees `close()` exactly once (unless the caller closed it).
+* Allocator counting to ensure no leaks remain after lifecycle operations.
+* Error buffer registry correctness (double-free, invalid arguments, length mismatches).
+* Eight-thread stress test that exercises connect/close sequences for 100 iterations per thread.
 
-## Testing
+The Bun test suite covers:
 
-### Zig
-
-Run unit tests (with leak detection) from the bridge directory:
-
-```bash
-zig build -Doptimize=Debug test --build-file packages/temporal-bun-sdk/native/temporal-bun-bridge-zig/build.zig
-```
-
-### Bun
-
-Execute the Bun-side contract tests from the package root:
-
-```bash
-cd packages/temporal-bun-sdk
-bun test tests/ffi.*.test.ts
-```
-
-## CI coverage
-
-`.github/workflows/temporal-bun-ffi.yml` provisions Bun (`1.1.20`) and Zig (`0.12.0`) on Ubuntu and macOS runners, builds the shared library (Debug + ReleaseFast), runs the Zig tests with leak checks, and executes the Bun FFI test suite. The workflow caches toolchains and fails fast if the bridge cannot be built or the tests do not pass.
+* Error mapping and metadata exposure.
+* Guaranteeing error buffers are freed after failures and that success paths leave the error slot empty.
+* RAII protections (double-close) and concurrency stress across multiple asynchronous tasks.

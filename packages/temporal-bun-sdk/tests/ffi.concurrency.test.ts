@@ -1,18 +1,17 @@
-import { expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
+import { drainErrorForTest } from '../src/ffi.ts'
+import { ClientHandle } from '../src/handles.ts'
 
-import { clientClose, clientConnect } from '../src/ffi'
-
-const THREADS = 8
-const ITERATIONS = 100
-
-test('multi-actor open/close stress', async () => {
-  const tasks = Array.from({ length: THREADS }, async () => {
-    for (let index = 0; index < ITERATIONS; index += 1) {
-      const handle = clientConnect()
-      expect(handle).toBeGreaterThan(0n)
-      clientClose(handle)
-    }
+describe('ffi concurrency', () => {
+  test('connect and close handles across concurrent tasks', async () => {
+    const iterations = 100
+    const workers = Array.from({ length: 8 }, async () => {
+      for (let index = 0; index < iterations; index += 1) {
+        const client = ClientHandle.create()
+        client.close()
+      }
+    })
+    await Promise.all(workers)
+    expect(drainErrorForTest()).toBeNull()
   })
-
-  await Promise.all(tasks)
 })

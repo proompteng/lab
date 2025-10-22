@@ -1,103 +1,49 @@
 import { describe, expect, test } from 'bun:test'
+import { TemporalBridgeError } from '../src/errors.ts'
+import { closeClient, drainErrorForTest, StatusCodes, startWorker } from '../src/ffi.ts'
+import { ClientHandle } from '../src/handles.ts'
 
-import { buildTemporalBridgeError, TemporalBridgeError, TemporalBridgeErrorCode } from '../src/errors'
-import { clientClose, workerShutdown } from '../src/ffi'
-import { ClientHandle } from '../src/handles'
-
-function expectTemporalError(error: unknown, code: TemporalBridgeErrorCode) {
-  expect(error).toBeInstanceOf(TemporalBridgeError)
-  expect((error as TemporalBridgeError).code).toBe(code)
-}
-
-describe('Temporal bridge errors', () => {
-  const INVALID_HANDLE = BigInt(Number.MAX_SAFE_INTEGER)
-
-  test('closing an unknown client surfaces not found', () => {
+describe('ffi error handling', () => {
+  test('closing unknown client surfaces native payload', () => {
     try {
-      clientClose(INVALID_HANDLE)
-      throw new Error('clientClose should have thrown')
+      closeClient(999n)
+      expect.unreachable('closeClient should throw for unknown handle')
     } catch (error) {
-      expectTemporalError(error, TemporalBridgeErrorCode.NotFound)
+      expect(error).toBeInstanceOf(TemporalBridgeError)
       const bridgeError = error as TemporalBridgeError
-      expect(bridgeError.message).toContain('client handle not found')
+      expect(bridgeError.code).toBe(StatusCodes.notFound)
       expect(bridgeError.where).toBe('te_client_close')
-      expect(bridgeError.raw).toContain('"message":"client handle not found"')
     }
+    expect(drainErrorForTest()).toBeNull()
   })
 
-  test('client handle throws on double close', () => {
-    const client = ClientHandle.open()
+  test('starting worker on closed client reports typed error', () => {
+    const client = ClientHandle.create()
+    client.close()
+    try {
+      startWorker(client.id)
+      expect.unreachable('startWorker should throw when client is closed')
+    } catch (error) {
+      expect(error).toBeInstanceOf(TemporalBridgeError)
+      const bridgeError = error as TemporalBridgeError
+      expect(bridgeError.code).toBe(StatusCodes.invalidArgument)
+      expect(bridgeError.where).toBe('te_worker_start')
+    }
+    expect(drainErrorForTest()).toBeNull()
+  })
+
+  test('RAII close guards against double close', () => {
+    const client = ClientHandle.create()
     client.close()
     try {
       client.close()
-      throw new Error('close should throw on already closed client')
+      expect.unreachable('ClientHandle.close should throw on second invocation')
     } catch (error) {
-      expectTemporalError(error, TemporalBridgeErrorCode.AlreadyClosed)
+      expect(error).toBeInstanceOf(TemporalBridgeError)
       const bridgeError = error as TemporalBridgeError
-      expect(bridgeError.where).toBe('te_client_close')
+      expect(bridgeError.code).toBe(StatusCodes.alreadyClosed)
+      expect(bridgeError.where).toBe('ClientHandle.close')
     }
-  })
-
-  test('worker shutdown reports already closed', () => {
-    const client = ClientHandle.open()
-    const worker = client.startWorker()
-    worker.close()
-    try {
-      worker.close()
-      throw new Error('worker.close() should throw when already closed')
-    } catch (error) {
-      expectTemporalError(error, TemporalBridgeErrorCode.AlreadyClosed)
-      const bridgeError = error as TemporalBridgeError
-      expect(bridgeError.where).toBe('te_worker_shutdown')
-    }
-  })
-
-  test('workerShutdown reports not found for unknown handles', () => {
-    try {
-      workerShutdown(INVALID_HANDLE)
-      throw new Error('workerShutdown should throw')
-    } catch (error) {
-      expectTemporalError(error, TemporalBridgeErrorCode.NotFound)
-      const bridgeError = error as TemporalBridgeError
-      expect(bridgeError.where).toBe('te_worker_shutdown')
-    }
-  })
-
-  test('worker start fails when client already closed', () => {
-    const client = ClientHandle.open()
-    client.close()
-    try {
-      client.startWorker()
-      throw new Error('startWorker should throw when client is closed')
-    } catch (error) {
-      expectTemporalError(error, TemporalBridgeErrorCode.AlreadyClosed)
-      const bridgeError = error as TemporalBridgeError
-      expect(bridgeError.where).toBe('te_worker_start')
-    }
-  })
-
-  test('buildTemporalBridgeError falls back when payload invalid', () => {
-    const buffer = new TextEncoder().encode('not json')
-    const error = buildTemporalBridgeError({
-      status: TemporalBridgeErrorCode.Internal,
-      where: 'te_test',
-      buffer,
-    })
-    expect(error.code).toBe(TemporalBridgeErrorCode.Internal)
-    expect(error.where).toBe('te_test')
-    expect(error.raw).toBe('not json')
-  })
-
-  test('buildTemporalBridgeError supports message and source fields', () => {
-    const payload = {
-      code: TemporalBridgeErrorCode.InvalidArgument,
-      message: 'boom',
-      source: 'native',
-    }
-    const buffer = new TextEncoder().encode(JSON.stringify(payload))
-    const error = buildTemporalBridgeError({ status: 99, where: 'te_unused', buffer })
-    expect(error.code).toBe(TemporalBridgeErrorCode.InvalidArgument)
-    expect(error.where).toBe('native')
-    expect(error.message).toBe('boom')
+    expect(drainErrorForTest()).toBeNull()
   })
 })

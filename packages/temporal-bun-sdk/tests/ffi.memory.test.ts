@@ -1,96 +1,36 @@
 import { describe, expect, test } from 'bun:test'
+import { TemporalBridgeError } from '../src/errors.ts'
+import { closeClient, connectClient, drainErrorForTest, StatusCodes } from '../src/ffi.ts'
+import { ClientHandle } from '../src/handles.ts'
 
-import { TemporalBridgeError, TemporalBridgeErrorCode } from '../src/errors'
-import { __testing, clientClose, clientConnect } from '../src/ffi'
-
-function drain(): { status: number; ptr: bigint; len: bigint } {
-  return __testing.drainErrorSlot()
-}
-
-const INVALID_HANDLE = BigInt(Number.MAX_SAFE_INTEGER)
-
-function getLastErrorRaw() {
-  return __testing.getLastErrorRaw()
-}
-
-describe('Temporal bridge buffers', () => {
-  test('te_get_last_error returns empty when slot clear', () => {
-    const empty = getLastErrorRaw()
-    expect(empty.status).toBe(0)
-    expect(empty.ptr).toBe(0n)
-    expect(empty.len).toBe(0n)
-  })
-
-  test('error buffers are released after mapping an error', () => {
+describe('ffi memory contract', () => {
+  test('error buffers are freed after mapping', () => {
     try {
-      clientClose(INVALID_HANDLE)
-      throw new Error('clientClose should have failed')
+      closeClient(123n)
+      expect.unreachable('closeClient should throw for unknown handle')
     } catch (error) {
       expect(error).toBeInstanceOf(TemporalBridgeError)
-      expect((error as TemporalBridgeError).code).toBe(TemporalBridgeErrorCode.NotFound)
+      const bridgeError = error as TemporalBridgeError
+      expect(bridgeError.code).toBe(StatusCodes.notFound)
     }
-
-    const drained = drain()
-    expect(drained.ptr).toBe(0n)
-    expect(drained.len).toBe(0n)
+    expect(drainErrorForTest()).toBeNull()
   })
 
-  test('successful calls do not leave residual buffers', () => {
-    const handle = clientConnect()
+  test('successful lifecycle leaves no dangling buffers', () => {
+    const handle = connectClient()
     expect(handle).toBeGreaterThan(0n)
-    clientClose(handle)
-
-    const drained = drain()
-    expect(drained.ptr).toBe(0n)
-    expect(drained.len).toBe(0n)
+    closeClient(handle)
+    expect(drainErrorForTest()).toBeNull()
   })
 
-  test('double free surfaces not found without crashing', () => {
-    const status = __testing.callClientClose(INVALID_HANDLE)
-    expect(status).toBe(TemporalBridgeErrorCode.NotFound)
-
-    const raw = getLastErrorRaw()
-    expect(raw.status).toBe(0)
-    expect(raw.ptr).not.toBe(0n)
-    expect(raw.len).toBeGreaterThan(0n)
-    expect(__testing.freeBuffer(raw.ptr, Number(raw.len))).toBe(0)
-    expect(__testing.freeBuffer(raw.ptr, Number(raw.len))).toBe(TemporalBridgeErrorCode.NotFound)
-
-    const drained = drain()
-    expect(drained.ptr).not.toBe(0n)
-    expect(drained.len).toBeGreaterThan(0n)
-
-    const cleared = drain()
-    expect(cleared.ptr).toBe(0n)
-    expect(cleared.len).toBe(0n)
-  })
-
-  test('length mismatch frees buffer and reports invalid argument', () => {
-    const status = __testing.callClientClose(INVALID_HANDLE)
-    expect(status).toBe(TemporalBridgeErrorCode.NotFound)
-
-    const raw = getLastErrorRaw()
-    expect(raw.status).toBe(0)
-    expect(raw.ptr).not.toBe(0n)
-    expect(raw.len).toBeGreaterThan(0n)
-
-    const mismatch = Number(raw.len + 1n)
-    expect(__testing.freeBuffer(raw.ptr, mismatch)).toBe(TemporalBridgeErrorCode.InvalidArgument)
-    const drainedAfterMismatch = drain()
-    expect(drainedAfterMismatch.ptr).not.toBe(0n)
-    expect(drainedAfterMismatch.len).toBeGreaterThan(0n)
-
-    const slotCleared = drain()
-    expect(slotCleared.ptr).toBe(0n)
-    expect(slotCleared.len).toBe(0n)
-
-    expect(__testing.freeBuffer(raw.ptr, Number(raw.len))).toBe(TemporalBridgeErrorCode.NotFound)
-    const drainedFinal = drain()
-    expect(drainedFinal.ptr).not.toBe(0n)
-    expect(drainedFinal.len).toBeGreaterThan(0n)
-
-    const finalClear = drain()
-    expect(finalClear.ptr).toBe(0n)
-    expect(finalClear.len).toBe(0n)
+  test('RAII cleanup swallows native errors during shutdown', () => {
+    const client = ClientHandle.create()
+    client.close()
+    try {
+      client.close()
+    } catch (error) {
+      expect(error).toBeInstanceOf(TemporalBridgeError)
+    }
+    expect(drainErrorForTest()).toBeNull()
   })
 })

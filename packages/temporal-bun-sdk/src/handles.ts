@@ -1,119 +1,96 @@
-import { clientClose, clientConnect, NativeHandle, workerShutdown, workerStart } from './ffi'
-import { TemporalBridgeError, TemporalBridgeErrorCode } from './errors'
+import { TemporalBridgeError } from './errors.ts'
+import { closeClient, connectClient, drainErrorForTest, StatusCodes, shutdownWorker, startWorker } from './ffi.ts'
 
-interface HandleDescriptor {
-  readonly type: string
-  readonly closeWhere: string
-}
+export type ClientHandleId = bigint
+export type WorkerHandleId = bigint
 
-abstract class ManagedHandle {
+export class ClientHandle {
+  #handle: ClientHandleId
   #closed = false
-  protected readonly descriptor: HandleDescriptor
-  protected readonly handle: NativeHandle
 
-  protected constructor(descriptor: HandleDescriptor, handle: NativeHandle) {
-    this.descriptor = descriptor
-    this.handle = handle
+  private constructor(handle: ClientHandleId) {
+    this.#handle = handle
   }
 
-  get id(): NativeHandle {
-    return this.handle
+  static create(config?: ArrayBufferView | ArrayBuffer | null): ClientHandle {
+    return new ClientHandle(connectClient(config))
   }
 
-  get isClosed(): boolean {
+  get id(): ClientHandleId {
+    return this.#handle
+  }
+
+  get closed(): boolean {
     return this.#closed
   }
 
   close(): void {
     if (this.#closed) {
-      throw alreadyClosedError(this.descriptor, this.handle)
+      throw new TemporalBridgeError({
+        code: StatusCodes.alreadyClosed,
+        msg: 'Client handle already closed',
+        where: 'ClientHandle.close',
+      })
     }
-
+    closeClient(this.#handle)
     this.#closed = true
-    try {
-      this.closeNative(this.handle)
-    } catch (error) {
-      if (error instanceof TemporalBridgeError && error.code === TemporalBridgeErrorCode.AlreadyClosed) {
-        return
-      }
-      this.#closed = false
-      throw error
+  }
+
+  startWorker(options?: ArrayBufferView | ArrayBuffer | null): WorkerHandle {
+    if (this.#closed) {
+      throw new TemporalBridgeError({
+        code: StatusCodes.invalidArgument,
+        msg: 'Cannot start worker on closed client',
+        where: 'ClientHandle.startWorker',
+      })
     }
+    return new WorkerHandle(startWorker(this.#handle, options))
   }
-
-  protected abstract closeNative(handle: NativeHandle): void
 }
 
-export class ClientHandle extends ManagedHandle {
-  private constructor(handle: NativeHandle) {
-    super({ type: 'client', closeWhere: 'te_client_close' }, handle)
+export class WorkerHandle {
+  #handle: WorkerHandleId
+  #closed = false
+
+  constructor(handle: WorkerHandleId) {
+    this.#handle = handle
   }
 
-  static open(): ClientHandle {
-    const handle = clientConnect()
-    return new ClientHandle(handle)
+  get id(): WorkerHandleId {
+    return this.#handle
   }
 
-  startWorker(): WorkerHandle {
-    if (this.isClosed) {
-      throw alreadyClosedError({ type: 'client', closeWhere: 'te_worker_start' }, this.handle)
+  get closed(): boolean {
+    return this.#closed
+  }
+
+  shutdown(): void {
+    if (this.#closed) {
+      throw new TemporalBridgeError({
+        code: StatusCodes.alreadyClosed,
+        msg: 'Worker handle already shutdown',
+        where: 'WorkerHandle.shutdown',
+      })
     }
-    const workerId = workerStart(this.handle)
-    return new WorkerHandle(workerId, this.handle)
-  }
-
-  protected closeNative(handle: NativeHandle): void {
-    clientClose(handle)
+    shutdownWorker(this.#handle)
+    this.#closed = true
   }
 }
 
-export class WorkerHandle extends ManagedHandle {
-  readonly clientId: NativeHandle
-
-  private constructor(handle: NativeHandle, clientId: NativeHandle) {
-    super({ type: 'worker', closeWhere: 'te_worker_shutdown' }, handle)
-    this.clientId = clientId
-  }
-
-  static start(client: ClientHandle): WorkerHandle {
-    return client.startWorker()
-  }
-
-  protected closeNative(handle: NativeHandle): void {
-    workerShutdown(handle)
-  }
-}
-
-export async function withClient<T>(callback: (client: ClientHandle) => Promise<T> | T): Promise<T> {
-  const client = ClientHandle.open()
+export function withClient<T>(
+  config: ArrayBufferView | ArrayBuffer | null = null,
+  run: (handle: ClientHandle) => T,
+): T {
+  const client = ClientHandle.create(config)
   try {
-    const result = await callback(client)
-    finalizeClient(client)
-    return result
-  } catch (error) {
-    try {
-      finalizeClient(client)
-    } catch (closeError) {
-      if (!(closeError instanceof TemporalBridgeError) || closeError.code !== TemporalBridgeErrorCode.AlreadyClosed) {
-        throw closeError
+    return run(client)
+  } finally {
+    if (!client.closed) {
+      try {
+        client.close()
+      } catch {
+        drainErrorForTest()
       }
     }
-    throw error
   }
-}
-
-function finalizeClient(client: ClientHandle): void {
-  if (client.isClosed) {
-    return
-  }
-  client.close()
-}
-
-function alreadyClosedError(descriptor: HandleDescriptor, handle: NativeHandle): TemporalBridgeError {
-  return new TemporalBridgeError({
-    code: TemporalBridgeErrorCode.AlreadyClosed,
-    message: `${descriptor.type} handle ${handle.toString()} is already closed`,
-    where: descriptor.closeWhere,
-    raw: '',
-  })
 }

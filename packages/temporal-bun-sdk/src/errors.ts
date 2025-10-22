@@ -1,121 +1,68 @@
-const decoder = new TextDecoder()
+import { TextDecoder } from 'node:util'
 
-export enum TemporalBridgeErrorCode {
-  Ok = 0,
-  InvalidArgument = 1,
-  NotFound = 2,
-  AlreadyClosed = 3,
-  NoMemory = 4,
-  Internal = 5,
+export interface NativeErrorPayload {
+  code: number
+  msg: string
+  where: string
+  raw?: string
 }
 
-export interface TemporalBridgeErrorInit {
-  readonly code: number
-  readonly message: string
-  readonly where: string
-  readonly raw: string
-  readonly cause?: unknown
+export interface TemporalBridgeErrorInit extends NativeErrorPayload {
+  raw?: string
 }
+
+const textDecoder = new TextDecoder()
+const FALLBACK_CODE = 1
 
 export class TemporalBridgeError extends Error {
-  readonly code: TemporalBridgeErrorCode
-  readonly where: string
+  readonly code: number
+  readonly where?: string
   readonly raw: string
-  readonly cause?: unknown
 
-  constructor(init: TemporalBridgeErrorInit) {
-    super(init.message)
+  constructor(input: TemporalBridgeErrorInit | string) {
+    const payload = typeof input === 'string' ? parseFallback(input) : normalizePayload(input)
+    super(payload.msg ?? 'Temporal bridge error')
     this.name = 'TemporalBridgeError'
-    this.code = toBridgeErrorCode(init.code)
-    this.where = init.where
-    this.raw = init.raw
-    if (init.cause !== undefined) {
-      ;(this as { cause?: unknown }).cause = init.cause
-    }
-    this.cause = init.cause
+    this.code = payload.code
+    this.where = payload.where
+    this.raw = payload.raw ?? payload.msg ?? 'Temporal bridge error'
     Object.setPrototypeOf(this, new.target.prototype)
   }
 }
 
-interface TemporalBridgeErrorPayload {
-  code?: unknown
-  message?: unknown
-  msg?: unknown
-  where?: unknown
-  source?: unknown
+function parseFallback(message: string): NativeErrorPayload {
+  return { code: FALLBACK_CODE, msg: message, where: 'unknown', raw: message }
 }
 
-export interface BuildBridgeErrorOptions {
-  readonly status: number
-  readonly where: string
-  readonly buffer: Uint8Array | null
-  readonly cause?: unknown
-  readonly fallbackMessage?: string
+function normalizePayload(payload: NativeErrorPayload): NativeErrorPayload {
+  return {
+    code: typeof payload.code === 'number' ? payload.code : FALLBACK_CODE,
+    msg: payload.msg ?? 'Temporal bridge error',
+    where: payload.where ?? 'unknown',
+    raw: payload.raw ?? payload.msg,
+  }
 }
 
-export function buildTemporalBridgeError(options: BuildBridgeErrorOptions): TemporalBridgeError {
-  const { status, where, buffer, cause, fallbackMessage } = options
-  if (buffer && buffer.length > 0) {
-    const raw = decoder.decode(buffer)
-    try {
-      const parsed = JSON.parse(raw) as TemporalBridgeErrorPayload
-      const decoded = decodePayload(parsed)
-      if (decoded) {
-        return new TemporalBridgeError({
-          code: decoded.code,
-          message: decoded.message,
-          where: decoded.where,
-          raw,
-          cause,
-        })
-      }
+export function decodeNativeError(buffer: Uint8Array): NativeErrorPayload {
+  let raw = ''
+  try {
+    raw = textDecoder.decode(buffer)
+  } catch (error) {
+    const fallback = String(error)
+    return { code: FALLBACK_CODE, msg: fallback, where: 'decodeNativeError', raw: fallback }
+  }
 
-      return new TemporalBridgeError({
-        code: status,
-        message: fallbackMessage ?? `Native error ${status} at ${where}`,
-        where,
-        raw,
-        cause,
-      })
-    } catch (error) {
-      return new TemporalBridgeError({
-        code: status,
-        message: fallbackMessage ?? `Native error ${status} at ${where}`,
-        where,
-        raw,
-        cause: cause ?? error,
-      })
+  try {
+    const parsed = JSON.parse(raw) as Partial<NativeErrorPayload>
+    if (typeof parsed.code !== 'number' || typeof parsed.msg !== 'string' || typeof parsed.where !== 'string') {
+      return { code: FALLBACK_CODE, msg: raw || 'Native error payload missing fields', where: 'decodeNativeError', raw }
     }
+    return { code: parsed.code, msg: parsed.msg, where: parsed.where, raw }
+  } catch {
+    return { code: FALLBACK_CODE, msg: raw || 'Native error payload not valid JSON', where: 'decodeNativeError', raw }
   }
-
-  return new TemporalBridgeError({
-    code: status,
-    message: fallbackMessage ?? `Native error ${status} at ${where}`,
-    where,
-    raw: buffer ? decoder.decode(buffer) : '',
-    cause,
-  })
 }
 
-function decodePayload(
-  payload: TemporalBridgeErrorPayload,
-): { code: number; message: string; where: string } | undefined {
-  const code = typeof payload.code === 'number' ? payload.code : Number(payload.code)
-  const messageField =
-    typeof payload.message === 'string' ? payload.message : typeof payload.msg === 'string' ? payload.msg : undefined
-  const whereField =
-    typeof payload.where === 'string' ? payload.where : typeof payload.source === 'string' ? payload.source : undefined
-
-  if (Number.isFinite(code) && messageField && whereField) {
-    return { code, message: messageField, where: whereField }
-  }
-
-  return undefined
-}
-
-function toBridgeErrorCode(code: number): TemporalBridgeErrorCode {
-  if (code in TemporalBridgeErrorCode) {
-    return code as TemporalBridgeErrorCode
-  }
-  return TemporalBridgeErrorCode.Internal
+export function toTemporalBridgeError(payload: NativeErrorPayload | string): TemporalBridgeError {
+  return new TemporalBridgeError(payload)
 }

@@ -1,54 +1,53 @@
-name: Temporal Bun SDK FFI
+name: temporal-bun-ffi
 
 on:
-  push:
-    paths:
-      - 'packages/temporal-bun-sdk/**'
-      - '.github/workflows/temporal-bun-ffi.yml'
   pull_request:
     paths:
       - 'packages/temporal-bun-sdk/**'
       - '.github/workflows/temporal-bun-ffi.yml'
-  workflow_dispatch:
-
-env:
-  BUN_VERSION: '1.1.20'
-  ZIG_VERSION: '0.12.0'
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/temporal-bun-sdk/**'
+      - '.github/workflows/temporal-bun-ffi.yml'
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
+  test:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-
+    runs-on: ${{ matrix.os }}
+    env:
+      ZIG_VERSION: '0.13.0'
+      BUN_VERSION: '1.1.20'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Bun
+      - name: Setup Zig
+        uses: goto-bus/zig-setup@v1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Install workspace dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Set up Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
-          cache: true
-
-      - name: Zig tests (Debug)
-        working-directory: packages/temporal-bun-sdk/native/temporal-bun-bridge-zig
-        run: zig build -Doptimize=Debug test
-
-      - name: Zig build (ReleaseFast)
+      - name: Build Zig library (Release)
         working-directory: packages/temporal-bun-sdk/native/temporal-bun-bridge-zig
         run: zig build -Doptimize=ReleaseFast
 
-      - name: Bun FFI tests
+      - name: Run Zig tests
+        working-directory: packages/temporal-bun-sdk/native/temporal-bun-bridge-zig
+        run: zig build test
+
+      - name: Install Bun dependencies
+        working-directory: packages/temporal-bun-sdk
+        run: bun install --frozen-lockfile
+
+      - name: Run Bun FFI tests
         working-directory: packages/temporal-bun-sdk
         run: bun test tests/ffi.*.test.ts

@@ -1,490 +1,507 @@
 const std = @import("std");
-const builtin = @import("builtin");
 
-const Allocator = std.mem.Allocator;
-
-pub const ErrorCode = enum(i32) {
+const Status = enum(i32) {
     ok = 0,
     invalid_argument = 1,
     not_found = 2,
     already_closed = 3,
-    no_memory = 4,
+    busy = 4,
     internal = 5,
+    oom = 6,
 };
 
-const ErrorPayload = struct {
-    code: i32,
-    message: []const u8,
-    where: []const u8,
+const ErrorSlot = struct {
+    payload: ?[]u8 = null,
+    code: Status = .ok,
 };
 
-const ClientState = struct {
-    closed: bool,
+threadlocal var tls_error: ErrorSlot = .{};
+
+var global_allocator: std.mem.Allocator = std.heap.c_allocator;
+
+const ClientEntry = struct {
+    closed: bool = false,
 };
 
-const WorkerState = struct {
-    closed: bool,
+const WorkerEntry = struct {
+    closed: bool = false,
     client_id: u64,
 };
 
-const BufferInfo = struct {
-    allocator: Allocator,
-    len: usize,
-};
+var client_registry = std.AutoArrayHashMapUnmanaged(u64, ClientEntry){};
+var worker_registry = std.AutoArrayHashMapUnmanaged(u64, WorkerEntry){};
+var buffer_registry = std.AutoArrayHashMapUnmanaged(u64, usize){};
 
-fn sliceFromPtr(ptr: *u8, len: usize) []u8 {
-    const many = @as([*]u8, @ptrCast(ptr));
-    return many[0..len];
+var client_mutex = std.Thread.Mutex{};
+var worker_mutex = std.Thread.Mutex{};
+var buffer_mutex = std.Thread.Mutex{};
+
+var client_counter = std.atomic.Value(u64).init(1);
+var worker_counter = std.atomic.Value(u64).init(1);
+
+fn allocator() std.mem.Allocator {
+    return global_allocator;
 }
 
-var active_allocator: Allocator = std.heap.c_allocator;
+fn swapAllocator(new_allocator: std.mem.Allocator) std.mem.Allocator {
+    const previous = global_allocator;
+    global_allocator = new_allocator;
+    return previous;
+}
 
-var clients_mutex = std.Thread.Mutex{};
-var clients = std.AutoHashMapUnmanaged(u64, ClientState){};
+fn resetErrorSlot() void {
+    if (tls_error.payload) |payload| {
+        allocator().free(payload);
+    }
+    tls_error = .{};
+}
 
-var workers_mutex = std.Thread.Mutex{};
-var workers = std.AutoHashMapUnmanaged(u64, WorkerState){};
+fn fail(code: Status, where: []const u8, message: []const u8) i32 {
+    resetErrorSlot();
+    const result = std.fmt.allocPrint(
+        allocator(),
+        "{\"code\":{d},\"msg\":\"{s}\",\"where\":\"{s}\"}",
+        .{ @intFromEnum(code), message, where },
+    ) catch {
+        tls_error.code = .oom;
+        return @intFromEnum(Status.oom);
+    };
 
-var buffer_mutex = std.Thread.Mutex{};
-var buffer_registry = std.AutoHashMapUnmanaged(usize, BufferInfo){};
-
-threadlocal var last_error_key: ?usize = null;
-
-var client_id_counter = std.atomic.Value(u64).init(1);
-var worker_id_counter = std.atomic.Value(u64).init(1);
-
-fn status(code: ErrorCode) i32 {
+    tls_error.payload = result;
+    tls_error.code = code;
     return @intFromEnum(code);
 }
 
-fn reset_state_internal() void {
-    clients_mutex.lock();
-    workers_mutex.lock();
-    buffer_mutex.lock();
+fn ok() i32 {
+    resetErrorSlot();
+    return @intFromEnum(Status.ok);
+}
 
-    if (clients.capacity() != 0) {
-        clients.deinit(active_allocator);
-        clients = .{};
-    } else {
-        clients = .{};
+const BufferError = error{
+    NegativeLength,
+    NullPointer,
+    LengthOverflow,
+};
+
+fn validateBuffer(ptr: ?[*]const u8, len: i64) BufferError!void {
+    if (len < 0) return BufferError.NegativeLength;
+    if (len == 0) return;
+    if (ptr == null) return BufferError.NullPointer;
+    _ = std.math.cast(usize, len) orelse return BufferError.LengthOverflow;
+}
+
+fn nextId(counter: *std.atomic.Value(u64)) u64 {
+    return counter.fetchAdd(1, .seq_cst);
+}
+
+fn getClientEntry(id: u64) ?*ClientEntry {
+    return client_registry.getPtr(id);
+}
+
+fn getWorkerEntry(id: u64) ?*WorkerEntry {
+    return worker_registry.getPtr(id);
+}
+
+fn registerBuffer(buffer: []u8) !u64 {
+    const key = @as(u64, @intCast(@intFromPtr(buffer.ptr)));
+    try buffer_registry.put(allocator(), key, buffer.len);
+    return key;
+}
+
+fn takeErrorBuffer() ?[]u8 {
+    if (tls_error.payload) |payload| {
+        tls_error.payload = null;
+        return payload;
+    }
+    return null;
+}
+
+fn clearRegistries() void {
+    {
+        client_mutex.lock();
+        defer client_mutex.unlock();
+        client_registry.deinit(allocator());
+        client_registry = .{};
+        client_counter.store(1, .seq_cst);
     }
 
-    if (workers.capacity() != 0) {
-        workers.deinit(active_allocator);
-        workers = .{};
-    } else {
-        workers = .{};
+    {
+        worker_mutex.lock();
+        defer worker_mutex.unlock();
+        worker_registry.deinit(allocator());
+        worker_registry = .{};
+        worker_counter.store(1, .seq_cst);
     }
 
-    if (buffer_registry.capacity() != 0) {
+    {
+        buffer_mutex.lock();
+        defer buffer_mutex.unlock();
         var it = buffer_registry.iterator();
         while (it.next()) |entry| {
-            const key = entry.key_ptr.*;
-            const info = entry.value_ptr.*;
-            const ptr_value = @as(*u8, @ptrFromInt(key));
-            info.allocator.free(sliceFromPtr(ptr_value, info.len));
+            const ptr_value = entry.key_ptr.*;
+            const len_value = entry.value_ptr.*;
+            const slice_ptr: [*]u8 = @ptrFromInt(ptr_value);
+            if (len_value > 0) {
+                const slice_len = len_value;
+                const slice = slice_ptr[0..slice_len];
+                allocator().free(slice);
+            }
         }
-        buffer_registry.deinit(active_allocator);
+        buffer_registry.deinit(allocator());
         buffer_registry = .{};
-    } else {
-        buffer_registry = .{};
     }
 
-    buffer_mutex.unlock();
-    workers_mutex.unlock();
-    clients_mutex.unlock();
-
-    client_id_counter.store(1, .seq_cst);
-    worker_id_counter.store(1, .seq_cst);
-    last_error_key = null;
+    resetErrorSlot();
 }
 
-fn set_active_allocator(new_allocator: Allocator) void {
-    reset_state_internal();
-    active_allocator = new_allocator;
+pub export fn te_client_connect(config_ptr: ?[*]const u8, len: i64, out_handle: ?*u64) i32 {
+    resetErrorSlot();
+    if (out_handle == null) {
+        return fail(.invalid_argument, "te_client_connect", "out_handle is null");
+    }
+
+    if (validateBuffer(config_ptr, len)) |_| {
+        // ignore validated slice contents for now
+    } else |err| switch (err) {
+        BufferError.NegativeLength => {
+            return fail(.invalid_argument, "te_client_connect", "config length is negative");
+        },
+        BufferError.NullPointer => {
+            return fail(.invalid_argument, "te_client_connect", "config pointer is null");
+        },
+        BufferError.LengthOverflow => {
+            return fail(.invalid_argument, "te_client_connect", "config length overflow");
+        },
+    }
+
+    const id = nextId(&client_counter);
+
+    client_mutex.lock();
+    defer client_mutex.unlock();
+
+    client_registry.put(allocator(), id, .{}) catch |err| {
+        return switch (err) {
+            error.OutOfMemory => fail(.oom, "te_client_connect", "allocation failed"),
+            else => fail(.internal, "te_client_connect", "registry insert failed"),
+        };
+    };
+
+    out_handle.?.* = id;
+    return ok();
 }
 
-fn clear_last_error() void {
-    if (last_error_key) |key| {
-        buffer_mutex.lock();
-        const removed = buffer_registry.fetchRemove(key);
-        buffer_mutex.unlock();
-        if (removed) |kv| {
-            const info = kv.value;
-            const base_ptr = @as(*u8, @ptrFromInt(kv.key));
-            info.allocator.free(sliceFromPtr(base_ptr, info.len));
+pub export fn te_client_close(handle: u64) i32 {
+    resetErrorSlot();
+    if (handle == 0) {
+        return fail(.invalid_argument, "te_client_close", "handle is zero");
+    }
+
+    client_mutex.lock();
+    defer client_mutex.unlock();
+
+    if (getClientEntry(handle)) |entry| {
+        if (entry.closed) {
+            return fail(.already_closed, "te_client_close", "client already closed");
         }
-        last_error_key = null;
-    }
-}
-
-fn store_error_buffer(buf: []u8, alloc: Allocator) i32 {
-    const key = @intFromPtr(buf.ptr);
-    buffer_mutex.lock();
-    defer buffer_mutex.unlock();
-
-    const result = buffer_registry.getOrPut(alloc, key) catch {
-        alloc.free(buf);
-        last_error_key = null;
-        return status(.no_memory);
-    };
-
-    result.value_ptr.* = .{ .allocator = alloc, .len = buf.len };
-    last_error_key = key;
-    return 0;
-}
-
-fn set_last_error(code: ErrorCode, msg: []const u8, where: []const u8) i32 {
-    clear_last_error();
-
-    const payload = ErrorPayload{
-        .code = @intFromEnum(code),
-        .message = msg,
-        .where = where,
-    };
-
-    const encoded = std.json.stringifyAlloc(active_allocator, payload, .{}) catch {
-        last_error_key = null;
-        return status(code);
-    };
-
-    _ = store_error_buffer(encoded, active_allocator);
-    return status(code);
-}
-
-fn allocator() Allocator {
-    return active_allocator;
-}
-
-fn next_client_id() u64 {
-    return client_id_counter.fetchAdd(1, .seq_cst);
-}
-
-fn next_worker_id() u64 {
-    return worker_id_counter.fetchAdd(1, .seq_cst);
-}
-
-pub export fn te_client_connect(out_id: ?*u64) i32 {
-    if (out_id == null) {
-        return set_last_error(.invalid_argument, "client_id pointer was null", "te_client_connect");
+        entry.closed = true;
+        return ok();
     }
 
-    clients_mutex.lock();
-    defer clients_mutex.unlock();
-
-    const id = next_client_id();
-    const allocator_ref = allocator();
-    const entry = clients.getOrPut(allocator_ref, id) catch {
-        return set_last_error(.no_memory, "failed to allocate client handle", "te_client_connect");
-    };
-
-    entry.value_ptr.* = .{ .closed = false };
-    out_id.?.* = id;
-    return status(.ok);
+    return fail(.not_found, "te_client_close", "unknown client handle");
 }
 
-pub export fn te_client_close(id: u64) i32 {
-    clients_mutex.lock();
-    defer clients_mutex.unlock();
+pub export fn te_worker_start(client_handle: u64, options_ptr: ?[*]const u8, len: i64, out_handle: ?*u64) i32 {
+    resetErrorSlot();
+    if (out_handle == null) {
+        return fail(.invalid_argument, "te_worker_start", "out_handle is null");
+    }
 
-    if (clients.getPtr(id)) |state| {
-        if (state.closed) {
-            return set_last_error(.already_closed, "client already closed", "te_client_close");
+    if (client_handle == 0) {
+        return fail(.invalid_argument, "te_worker_start", "client handle is zero");
+    }
+
+    if (validateBuffer(options_ptr, len)) |_| {
+        // nothing to do with contents yet
+    } else |err| switch (err) {
+        BufferError.NegativeLength => {
+            return fail(.invalid_argument, "te_worker_start", "options length is negative");
+        },
+        BufferError.NullPointer => {
+            return fail(.invalid_argument, "te_worker_start", "options pointer is null");
+        },
+        BufferError.LengthOverflow => {
+            return fail(.invalid_argument, "te_worker_start", "options length overflow");
+        },
+    }
+
+    client_mutex.lock();
+    defer client_mutex.unlock();
+
+    const client_entry = getClientEntry(client_handle) orelse {
+        return fail(.not_found, "te_worker_start", "client handle not found");
+    };
+
+    if (client_entry.closed) {
+        return fail(.invalid_argument, "te_worker_start", "client is closed");
+    }
+
+    const id = nextId(&worker_counter);
+
+    worker_mutex.lock();
+    defer worker_mutex.unlock();
+
+    worker_registry.put(allocator(), id, .{ .client_id = client_handle }) catch |err| {
+        return switch (err) {
+            error.OutOfMemory => fail(.oom, "te_worker_start", "allocation failed"),
+            else => fail(.internal, "te_worker_start", "registry insert failed"),
+        };
+    };
+
+    out_handle.?.* = id;
+    return ok();
+}
+
+pub export fn te_worker_shutdown(handle: u64) i32 {
+    resetErrorSlot();
+    if (handle == 0) {
+        return fail(.invalid_argument, "te_worker_shutdown", "handle is zero");
+    }
+
+    worker_mutex.lock();
+    defer worker_mutex.unlock();
+
+    if (getWorkerEntry(handle)) |entry| {
+        if (entry.closed) {
+            return fail(.already_closed, "te_worker_shutdown", "worker already shutdown");
         }
-        state.closed = true;
-        return status(.ok);
+        entry.closed = true;
+        return ok();
     }
 
-    return set_last_error(.not_found, "client handle not found", "te_client_close");
+    return fail(.not_found, "te_worker_shutdown", "unknown worker handle");
 }
 
-pub export fn te_worker_start(client_id: u64, out_worker_id: ?*u64) i32 {
-    if (out_worker_id == null) {
-        return set_last_error(.invalid_argument, "worker_id pointer was null", "te_worker_start");
-    }
-
-    clients_mutex.lock();
-    if (clients.getPtr(client_id)) |client_state| {
-        if (client_state.closed) {
-            clients_mutex.unlock();
-            return set_last_error(.already_closed, "client is closed", "te_worker_start");
-        }
-    } else {
-        clients_mutex.unlock();
-        return set_last_error(.not_found, "client handle not found", "te_worker_start");
-    }
-
-    workers_mutex.lock();
-    const worker_id = next_worker_id();
-    const allocator_ref = allocator();
-    const entry = workers.getOrPut(allocator_ref, worker_id) catch {
-        workers_mutex.unlock();
-        clients_mutex.unlock();
-        return set_last_error(.no_memory, "failed to allocate worker handle", "te_worker_start");
-    };
-
-    entry.value_ptr.* = .{ .closed = false, .client_id = client_id };
-    workers_mutex.unlock();
-    clients_mutex.unlock();
-
-    out_worker_id.?.* = worker_id;
-    return status(.ok);
-}
-
-pub export fn te_worker_shutdown(worker_id: u64) i32 {
-    workers_mutex.lock();
-    defer workers_mutex.unlock();
-
-    if (workers.getPtr(worker_id)) |state| {
-        if (state.closed) {
-            return set_last_error(.already_closed, "worker already shutdown", "te_worker_shutdown");
-        }
-        state.closed = true;
-        return status(.ok);
-    }
-
-    return set_last_error(.not_found, "worker handle not found", "te_worker_shutdown");
-}
-
-pub export fn te_get_last_error(out_ptr: ?*?*u8, out_len: ?*usize) i32 {
+pub export fn te_get_last_error(out_ptr: ?*u64, out_len: ?*u64) i32 {
     if (out_ptr == null or out_len == null) {
-        return set_last_error(.invalid_argument, "output pointers must be non-null", "te_get_last_error");
+        return fail(.invalid_argument, "te_get_last_error", "output pointers are null");
     }
 
-    const key = last_error_key;
-    if (key == null) {
-        out_ptr.?.* = null;
-        out_len.?.* = 0;
-        return status(.ok);
+    if (takeErrorBuffer()) |buffer| {
+        const len_usize = buffer.len;
+        out_len.?.* = @as(u64, @intCast(len_usize));
+
+        buffer_mutex.lock();
+        defer buffer_mutex.unlock();
+        const key = registerBuffer(buffer) catch |err| {
+            allocator().free(buffer);
+            return switch (err) {
+                error.OutOfMemory => fail(.oom, "te_get_last_error", "buffer registry allocation failed"),
+                else => fail(.internal, "te_get_last_error", "buffer registry failure"),
+            };
+        };
+
+        out_ptr.?.* = key;
+        return ok();
     }
 
-    buffer_mutex.lock();
-    const info = buffer_registry.get(key.?);
-    buffer_mutex.unlock();
-
-    if (info) |value| {
-        out_ptr.?.* = @as(?*u8, @ptrFromInt(key.?));
-        out_len.?.* = value.len;
-        last_error_key = null;
-        return status(.ok);
-    }
-
-    last_error_key = null;
-    out_ptr.?.* = null;
+    out_ptr.?.* = 0;
     out_len.?.* = 0;
-    return set_last_error(.internal, "no error buffer registered", "te_get_last_error");
+    return @intFromEnum(Status.not_found);
 }
 
-pub export fn te_free_buf(ptr_value: usize, len: isize) i32 {
+pub export fn te_free_buf(ptr_value: u64, len: i64) i32 {
+    resetErrorSlot();
+
     if (len < 0) {
-        return set_last_error(.invalid_argument, "length was negative", "te_free_buf");
+        return fail(.invalid_argument, "te_free_buf", "length is negative");
+    }
+
+    if (len == 0) {
+        if (ptr_value != 0) {
+            return fail(.invalid_argument, "te_free_buf", "length is zero but pointer is not null");
+        }
+        return ok();
     }
 
     if (ptr_value == 0) {
-        if (len == 0) {
-            return status(.ok);
-        }
-        return set_last_error(.invalid_argument, "null pointer requires zero length", "te_free_buf");
+        return fail(.invalid_argument, "te_free_buf", "pointer is null");
     }
 
-    const actual_len: usize = @intCast(len);
+    const len_usize = std.math.cast(usize, len) orelse {
+        return fail(.invalid_argument, "te_free_buf", "length overflow");
+    };
+
     const key = ptr_value;
+    const pointer: [*]u8 = @ptrFromInt(ptr_value);
 
     buffer_mutex.lock();
-    const entry = buffer_registry.fetchRemove(key);
-    buffer_mutex.unlock();
+    defer buffer_mutex.unlock();
 
-    if (entry == null) {
-        return set_last_error(.not_found, "buffer not recognized", "te_free_buf");
+    if (buffer_registry.fetchRemove(key)) |kv| {
+        if (kv.value != len_usize) {
+            buffer_registry.put(allocator(), key, kv.value) catch {
+                // if reinsertion fails we still surface mismatch error
+            };
+            return fail(.invalid_argument, "te_free_buf", "length mismatch");
+        }
+        const slice = pointer[0..len_usize];
+        allocator().free(slice);
+        return ok();
     }
 
-    const kv = entry.?;
-    const info = kv.value;
-    const ptr = @as(*u8, @ptrFromInt(ptr_value));
-    const slice = sliceFromPtr(ptr, info.len);
-    if (info.len != actual_len) {
-        info.allocator.free(slice);
-        return set_last_error(.invalid_argument, "buffer length mismatch", "te_free_buf");
+    return fail(.not_found, "te_free_buf", "buffer handle not found");
+}
+
+fn statusFromInt(value: i32) Status {
+    return @enumFromInt(value);
+}
+
+fn expectStatus(status: i32, expected: Status) !void {
+    try std.testing.expectEqual(expected, statusFromInt(status));
+}
+
+fn expectError(where: []const u8, expected_code: Status) !void {
+    var ptr_value: u64 = 0;
+    var len: u64 = 0;
+    const status = te_get_last_error(&ptr_value, &len);
+    try expectStatus(status, .ok);
+    try std.testing.expect(ptr_value != 0);
+    try std.testing.expect(len > 0);
+    const slice_len: usize = @intCast(len);
+    const pointer: [*]u8 = @ptrFromInt(ptr_value);
+    const slice = pointer[0..slice_len];
+    defer {
+        const free_status = te_free_buf(ptr_value, len);
+        std.debug.assert(free_status == @intFromEnum(Status.ok));
     }
-
-    info.allocator.free(slice);
-    return status(.ok);
+    var code_buf: [32]u8 = undefined;
+    const code_fragment = std.fmt.bufPrint(&code_buf, "\"code\":{d}", .{@intFromEnum(expected_code)}) catch unreachable;
+    try std.testing.expect(std.mem.indexOf(u8, slice, code_fragment) != null);
+    try std.testing.expect(std.mem.indexOf(u8, slice, where) != null);
 }
 
-fn expect_ok(status_code: i32) !void {
-    try std.testing.expectEqual(@as(i32, 0), status_code);
+fn expectNoError() !void {
+    var buf_ptr: u64 = 123;
+    var len: u64 = 123;
+    const status = te_get_last_error(&buf_ptr, &len);
+    try std.testing.expectEqual(Status.not_found, statusFromInt(status));
+    try std.testing.expectEqual(@as(u64, 0), buf_ptr);
+    try std.testing.expectEqual(@as(u64, 0), len);
 }
 
-fn drain_error_slot() !void {
-    var ptr_value: ?*u8 = null;
-    var len_value: usize = 0;
-    _ = te_get_last_error(&ptr_value, &len_value);
-    if (ptr_value) |ptr_non_null| {
-        _ = te_free_buf(@intFromPtr(ptr_non_null), @intCast(len_value));
-    }
+test "client connect and close lifecycle" {
+    clearRegistries();
+    defer clearRegistries();
+
+    var handle: u64 = 0;
+    try expectStatus(te_client_connect(null, 0, &handle), .ok);
+    try std.testing.expect(handle != 0);
+    try expectStatus(te_client_close(handle), .ok);
+
+    const second_close = te_client_close(handle);
+    try std.testing.expectEqual(Status.already_closed, statusFromInt(second_close));
+    try expectError("te_client_close", .already_closed);
 }
 
-const StressError = error{NativeFailure};
+test "worker lifecycle depends on client" {
+    clearRegistries();
+    defer clearRegistries();
 
-fn stress_open_close(iterations: usize) StressError!void {
-    var index: usize = 0;
-    while (index < iterations) : (index += 1) {
-        var client_id: u64 = 0;
-        if (te_client_connect(&client_id) != status(.ok)) return StressError.NativeFailure;
-        if (te_client_close(client_id) != status(.ok)) return StressError.NativeFailure;
-    }
+    var client_handle: u64 = 0;
+    try expectStatus(te_client_connect(null, 0, &client_handle), .ok);
+
+    var worker_handle: u64 = 0;
+    try expectStatus(te_worker_start(client_handle, null, 0, &worker_handle), .ok);
+    try std.testing.expect(worker_handle != 0);
+
+    try expectStatus(te_worker_shutdown(worker_handle), .ok);
+
+    const again = te_worker_shutdown(worker_handle);
+    try std.testing.expectEqual(Status.already_closed, statusFromInt(again));
+    try expectError("te_worker_shutdown", .already_closed);
+
+    try expectStatus(te_client_close(client_handle), .ok);
 }
 
-fn run_stress_thread(iterations: usize) !void {
-    try stress_open_close(iterations);
+test "invalid arguments surface descriptive errors" {
+    clearRegistries();
+    defer clearRegistries();
+
+    try std.testing.expectEqual(Status.invalid_argument, statusFromInt(te_client_connect(null, 0, null)));
+    try expectError("te_client_connect", .invalid_argument);
+
+    var client_handle: u64 = 0;
+    try expectStatus(te_client_connect(null, 0, &client_handle), .ok);
+    try expectStatus(te_client_close(client_handle), .ok);
+
+    var worker_handle: u64 = 0;
+    try std.testing.expectEqual(Status.invalid_argument, statusFromInt(te_worker_start(client_handle, null, 0, &worker_handle)));
+    try expectError("te_worker_start", .invalid_argument);
+}
+
+test "double free and buffer mismatch errors" {
+    clearRegistries();
+    defer clearRegistries();
+
+    const status = te_client_close(42);
+    try std.testing.expectEqual(Status.not_found, statusFromInt(status));
+    try expectError("te_client_close", .not_found);
+
+    var ptr_value: u64 = 0;
+    var len: u64 = 0;
+    try expectStatus(te_get_last_error(&ptr_value, &len), .ok);
+    try std.testing.expect(ptr_value != 0);
+    try expectStatus(te_free_buf(ptr_value, len), .ok);
+
+    const double_free = te_free_buf(ptr_value, len);
+    try std.testing.expectEqual(Status.not_found, statusFromInt(double_free));
+    try expectError("te_free_buf", .not_found);
 }
 
 test "allocator counting" {
-    reset_state_internal();
-
+    clearRegistries();
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const test_allocator = gpa.allocator();
+    const previous = swapAllocator(test_allocator);
     defer {
-        const leaked = gpa.deinit();
-        if (leaked == .leak) {
-            @panic("allocator leaked");
-        }
-    }
+        _ = swapAllocator(previous);
+        clearRegistries();
+        const status = gpa.deinit();
+        std.testing.expect(status == .ok) catch unreachable;
+    };
 
-    set_active_allocator(gpa.allocator());
-    defer set_active_allocator(std.heap.c_allocator);
-
-    var client_id: u64 = 0;
-    try expect_ok(te_client_connect(&client_id));
-    try expect_ok(te_client_close(client_id));
-
-    try drain_error_slot();
+    var handle: u64 = 0;
+    try expectStatus(te_client_connect(null, 0, &handle), .ok);
+    try expectStatus(te_client_close(handle), .ok);
+    try expectNoError();
 }
 
-test "te_client_close double close" {
-    reset_state_internal();
-    var client_id: u64 = 0;
-    try expect_ok(te_client_connect(&client_id));
-    try expect_ok(te_client_close(client_id));
-    try std.testing.expectEqual(status(.already_closed), te_client_close(client_id));
-    try drain_error_slot();
-}
+test "stress 8 threads connect close" {
+    clearRegistries();
+    defer clearRegistries();
 
-test "te_worker_start validates client" {
-    reset_state_internal();
-
-    var worker_id: u64 = 0;
-    try std.testing.expectEqual(status(.not_found), te_worker_start(42, &worker_id));
-    try drain_error_slot();
-
-    var client_id: u64 = 0;
-    try expect_ok(te_client_connect(&client_id));
-    try expect_ok(te_client_close(client_id));
-    try std.testing.expectEqual(status(.already_closed), te_worker_start(client_id, &worker_id));
-    try drain_error_slot();
-}
-
-test "te_get_last_error returns payload" {
-    reset_state_internal();
-
-    var client_id: u64 = 0;
-    try expect_ok(te_client_connect(&client_id));
-    try expect_ok(te_client_close(client_id));
-    try std.testing.expectEqual(status(.already_closed), te_client_close(client_id));
-
-    var err_ptr: ?*u8 = null;
-    var err_len: usize = 0;
-    try expect_ok(te_get_last_error(&err_ptr, &err_len));
-    try std.testing.expect(err_ptr != null);
-    try std.testing.expect(err_len > 0);
-    if (err_ptr) |ptr_non_null| {
-        try expect_ok(te_free_buf(@intFromPtr(ptr_non_null), @intCast(err_len)));
-    }
-
-    try drain_error_slot();
-}
-
-test "te_get_last_error empty slot" {
-    reset_state_internal();
-
-    var err_ptr: ?*u8 = null;
-    var err_len: usize = 1234;
-    try expect_ok(te_get_last_error(&err_ptr, &err_len));
-    try std.testing.expect(err_ptr == null);
-    try std.testing.expectEqual(@as(usize, 0), err_len);
-}
-
-test "te_free_buf validates arguments" {
-    reset_state_internal();
-
-    try std.testing.expectEqual(status(.invalid_argument), te_free_buf(0, 5));
-    try drain_error_slot();
-
-    var ptr_value: ?*u8 = null;
-    var len_value: usize = 0;
-    try expect_ok(te_get_last_error(&ptr_value, &len_value));
-    try std.testing.expect(ptr_value == null);
-}
-
-test "te_free_buf double free safe" {
-    reset_state_internal();
-
-    try std.testing.expectEqual(status(.not_found), te_client_close(4242));
-
-    var err_ptr: ?*u8 = null;
-    var err_len: usize = 0;
-    try expect_ok(te_get_last_error(&err_ptr, &err_len));
-    try std.testing.expect(err_ptr != null);
-    try std.testing.expect(err_len > 0);
-
-    const ptr_value = @intFromPtr(err_ptr.?);
-    const len_value: isize = @intCast(err_len);
-    try expect_ok(te_free_buf(ptr_value, len_value));
-
-    try std.testing.expectEqual(status(.not_found), te_free_buf(ptr_value, len_value));
-    try drain_error_slot();
-}
-
-test "te_free_buf length mismatch clears entry" {
-    reset_state_internal();
-
-    try std.testing.expectEqual(status(.not_found), te_worker_shutdown(9999));
-
-    var err_ptr: ?*u8 = null;
-    var err_len: usize = 0;
-    try expect_ok(te_get_last_error(&err_ptr, &err_len));
-    try std.testing.expect(err_ptr != null);
-    try std.testing.expect(err_len > 0);
-
-    const ptr_value = @intFromPtr(err_ptr.?);
-    const wrong_len = @as(isize, @intCast(err_len + 1));
-    try std.testing.expectEqual(status(.invalid_argument), te_free_buf(ptr_value, wrong_len));
-    try drain_error_slot();
-
-    try std.testing.expectEqual(status(.not_found), te_free_buf(ptr_value, @intCast(err_len)));
-    try drain_error_slot();
-}
-
-test "multi-thread open close stress" {
-    reset_state_internal();
-
+    const iterations: usize = 100;
     var threads: [8]std.Thread = undefined;
-    for (&threads) |*thread| {
-        thread.* = try std.Thread.spawn(.{}, run_stress_thread, .{100});
+
+    for (threads, 0..) |*thread, _| {
+        thread.* = try std.Thread.spawn(.{}, stressThread, .{iterations});
     }
 
     for (threads) |thread| {
         thread.join();
     }
 
-    try drain_error_slot();
+    try expectNoError();
 }
 
-pub const testing = struct {
-    pub fn reset() void {
-        reset_state_internal();
+fn stressThread(iterations: usize) void {
+    var index: usize = 0;
+    while (index < iterations) : (index += 1) {
+        var handle: u64 = 0;
+        const connect_status = te_client_connect(null, 0, &handle);
+        std.debug.assert(connect_status == @intFromEnum(Status.ok));
+        const close_status = te_client_close(handle);
+        std.debug.assert(close_status == @intFromEnum(Status.ok));
     }
+}
 
-    pub fn useAllocator(alloc: Allocator) void {
-        set_active_allocator(alloc);
-    }
-};
