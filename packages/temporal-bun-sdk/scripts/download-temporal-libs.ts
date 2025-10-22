@@ -33,13 +33,24 @@ interface Release {
   assets: ReleaseAsset[]
 }
 
+interface DownloadClient {
+  downloadLibraries(version?: string): Promise<LibrarySet>
+  detectPlatform(): PlatformInfo
+}
+
 class TemporalLibsDownloadClient implements DownloadClient {
   private cacheDir: string
   private baseUrl: string
+  private ownerRepo: string
 
-  constructor(cacheDir: string = '.temporal-libs-cache', baseUrl: string = 'https://api.github.com') {
+  constructor(
+    cacheDir: string = '.temporal-libs-cache',
+    baseUrl: string = 'https://api.github.com',
+    ownerRepo: string = process.env.TEMPORAL_LIBS_REPO ?? 'proompteng/lab',
+  ) {
     this.cacheDir = cacheDir
     this.baseUrl = baseUrl
+    this.ownerRepo = ownerRepo
   }
 
   detectPlatform(): PlatformInfo {
@@ -125,10 +136,9 @@ class TemporalLibsDownloadClient implements DownloadClient {
   }
 
   private async getReleaseInfo(version: string): Promise<unknown> {
+    const repoBase = `${this.baseUrl}/repos/${this.ownerRepo}`
     const url =
-      version === 'latest'
-        ? `${this.baseUrl}/repos/temporalio/sdk-core/releases/latest`
-        : `${this.baseUrl}/repos/temporalio/sdk-core/releases/tags/temporal-libs-${version}`
+      version === 'latest' ? `${repoBase}/releases/latest` : `${repoBase}/releases/tags/${this.resolveTag(version)}`
 
     const response = await fetch(url)
     if (!response.ok) {
@@ -136,6 +146,16 @@ class TemporalLibsDownloadClient implements DownloadClient {
     }
 
     return await response.json()
+  }
+
+  private resolveTag(version: string): string {
+    if (version.startsWith('temporal-libs-')) {
+      return version
+    }
+    if (version.startsWith('v')) {
+      return `temporal-libs-${version}`
+    }
+    return `temporal-libs-v${version}`
   }
 
   private findAssetForPlatform(release: Release, platform: string): ReleaseAsset | undefined {

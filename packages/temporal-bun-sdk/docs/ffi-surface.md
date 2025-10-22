@@ -28,11 +28,27 @@ flowchart LR
 
 ## 2. Function Matrix
 
-Current progress snapshot:
+Current progress snapshot (24 Oct 2025):
 
-- ✅ Client connect + describe namespace working (Bun integration tests exercise live Temporal).
-- ⚙️ Next up: add workflow operations (start/signal/query/terminate) in both Rust and TS layers.
-- ⬜️ Worker and runtime APIs remain untouched.
+- ✅ Client connect, describe namespace, start workflow, update headers wired through Zig bridge.
+- ⚠️ Cancellation, termination, signal, signal-with-start, and query still stubbed in Zig (`client.zig` returns unimplemented errors). TypeScript wrappers call into these stubs and throw.
+- ⚠️ Worker surface exported from Zig but native task polling/completion requires full command encoding—`worker.zig` leverages Temporal core but TS side still missing orchestration.
+- ⬜️ Runtime telemetry/logger APIs remain TODO; TypeScript currently throws “not implemented” errors.
+
+### Gap Summary
+
+| Layer | Area | Zig Status | TypeScript Status | Notes |
+|-------|------|------------|-------------------|-------|
+| Client | Signal | `client.signalWorkflow` spawns worker thread but still returns `temporal-bun-bridge-zig: signalWorkflow is not implemented yet` on validation failure; needs actual call into core | TS wrapper exists but returns JSON not yet encoded into proto payloads | Align payload marshalling with Temporal proto types and remove stub errors |
+| Client | Query | Stub returning unimplemented error | `native.queryWorkflow` consumes pending handle but expects real response | Implement `client.queryWorkflow` and JSON decoding |
+| Client | Terminate | Stub | `native.terminateWorkflow` throws not implemented | Wire termination payload |
+| Client | Cancel | Currently pending TODO (`cancelWorkflow` returns error) | TS wrapper expects pending handle | Implement cancellation via core API |
+| Client | SignalWithStart | Stub | TS wrapper expects byte array handle | Reuse start payload logic |
+| Runtime | Telemetry | `runtime.updateTelemetry` returns unimplemented | `native.configureTelemetry` throws | Map telemetry options to core |
+| Runtime | Logger | Unimplemented stub | `native.installLogger` throws | Forward Bun callback |
+| Worker | Poll/Complete | Zig functions call Temporal core but TypeScript orchestration absent | `worker.runtime.ts` still `notImplemented` | Build Bun task loops, serialization |
+
+Until these are implemented, the Bun SDK cannot reach alpha parity; track progress in the table above.
 
 | Area | Rust Export | Purpose | TS Wrapper | Status |
 |------|-------------|---------|------------|--------|
@@ -45,11 +61,11 @@ Current progress snapshot:
 | Client | `temporal_bun_client_describe_namespace_async(client_ptr, payload_ptr, len)` | Describe namespace via async pending handle | `native.describeNamespace` | ✅ (new) |
 | Client | `temporal_bun_client_update_headers(client_ptr, headers_ptr, len)` | Update gRPC metadata (API key, custom headers) | `coreBridge.client.updateHeaders` | ✅ Implemented |
 | Client | `temporal_bun_client_start_workflow(client_ptr, payload_ptr, len)` | Start workflow execution | `client.workflow.start` | ✅ Implemented |
-| Client | `temporal_bun_client_signal(client_ptr, payload_ptr, len)` | Send signal to existing workflow | `client.signal` | ⬜️ TODO |
-| Client | `temporal_bun_client_query(client_ptr, payload_ptr, len)` | Run workflow query | `client.query` | ⬜️ TODO |
-| Client | `temporal_bun_client_terminate_workflow(...)` | Terminate workflow | `client.terminate` | ⬜️ TODO |
-| Client | `temporal_bun_client_cancel_workflow(...)` | Cancel workflow | `client.cancel` | ⬜️ TODO |
-| Client | `temporal_bun_client_signal_with_start(...)` | Signal-with-start helper | `client.signalWithStart` | ⬜️ TODO |
+| Client | `temporal_bun_client_signal(client_ptr, payload_ptr, len)` | Send signal to existing workflow | `client.signal` | ⚠️ Zig stub emits unimplemented error |
+| Client | `temporal_bun_client_query(client_ptr, payload_ptr, len)` | Run workflow query | `client.query` | ⚠️ Zig stub emits unimplemented error |
+| Client | `temporal_bun_client_terminate_workflow(...)` | Terminate workflow | `client.terminate` | ⚠️ Zig stub emits unimplemented error |
+| Client | `temporal_bun_client_cancel_workflow(...)` | Cancel workflow | `client.cancel` | ⚠️ Zig stub emits unimplemented error |
+| Client | `temporal_bun_client_signal_with_start(...)` | Signal-with-start helper | `client.signalWithStart` | ⚠️ Zig stub emits unimplemented error |
 | Byte transport | `temporal_bun_byte_array_new(ptr, len)` | Allocate vector for responses | `byteArray.fromBuffer` | ⬜️ TODO |
 | Byte transport | `temporal_bun_byte_array_free(array_ptr)` | Free allocated data | `native.freeByteArray` | ✅ |
 | Pending | `temporal_bun_pending_client_poll(pending_ptr)` | Readiness check for client connect (0=pending,1=ready,-1=error) | `pendingClient.poll` | ✅ (new) |
@@ -65,15 +81,15 @@ Current progress snapshot:
 - Every async FFI export must return a pending handle (or reuse the shared helpers) so we can apply the same lifecycle guarantees: single-consume, deterministic error propagation via `temporal_bun_error_message`, and explicit `free`.
 - The Bun side polls on an interval (`setTimeout` cadence) and calls `consume` only once `poll` reports ready. Errors surface immediately via the shared error buffer, and the handle is freed regardless of success or failure.
 
-| Worker | `temporal_bun_worker_new(runtime_ptr, client_ptr, config_ptr, len)` | Instantiate worker for task queue | `native.createWorker` | ⬜️ TODO |
-| Worker | `temporal_bun_worker_free(worker_ptr)` | Free worker | `native.workerShutdown` | ⬜️ TODO |
-| Worker | `temporal_bun_worker_poll_workflow_task(worker_ptr)` | Poll workflow tasks (blocking) | `workerBridge.pollWorkflowTask` | ⬜️ TODO |
-| Worker | `temporal_bun_worker_complete_workflow_task(worker_ptr, payload_ptr, len)` | Complete workflow task | `workerBridge.completeWorkflowTask` | ⚙️ Zig bridge implementation (core handle pending) |
-| Worker | `temporal_bun_worker_poll_activity_task(worker_ptr)` | Poll activity task | `workerBridge.pollActivityTask` | ⬜️ TODO |
-| Worker | `temporal_bun_worker_complete_activity_task(worker_ptr, payload_ptr, len)` | Respond to activity task | `workerBridge.completeActivityTask` | ⬜️ TODO |
-| Worker | `temporal_bun_worker_record_activity_heartbeat(worker_ptr, payload_ptr, len)` | Activity heartbeat | `workerBridge.recordHeartbeat` | ⬜️ TODO |
-| Worker | `temporal_bun_worker_initiate_shutdown(worker_ptr)` | Soft shutdown (no new polls) | `worker.shutdown` | ⬜️ TODO |
-| Worker | `temporal_bun_worker_finalize_shutdown(worker_ptr)` | Wait for inflight tasks | `worker.runUntilShutdown` | ⬜️ TODO |
+| Worker | `temporal_bun_worker_new(runtime_ptr, client_ptr, config_ptr, len)` | Instantiate worker for task queue | `native.createWorker` | ⚠️ Zig creates worker handles; TS runtime still stubbed |
+| Worker | `temporal_bun_worker_free(worker_ptr)` | Free worker | `native.workerShutdown` | ✅ Zig frees handle; TS to invoke during shutdown |
+| Worker | `temporal_bun_worker_poll_workflow_task(worker_ptr)` | Poll workflow tasks (blocking) | `workerBridge.pollWorkflowTask` | ⚠️ Zig returns pending handle; TS handler missing |
+| Worker | `temporal_bun_worker_complete_workflow_task(worker_ptr, payload_ptr, len)` | Complete workflow task | `workerBridge.completeWorkflowTask` | ⚠️ Zig calls core; TS completion payload generation TODO |
+| Worker | `temporal_bun_worker_poll_activity_task(worker_ptr)` | Poll activity task | `workerBridge.pollActivityTask` | ⚠️ Zig returns pending handle; TS handler missing |
+| Worker | `temporal_bun_worker_complete_activity_task(worker_ptr, payload_ptr, len)` | Respond to activity task | `workerBridge.completeActivityTask` | ⚠️ Zig calls core; TS wiring pending |
+| Worker | `temporal_bun_worker_record_activity_heartbeat(worker_ptr, payload_ptr, len)` | Activity heartbeat | `workerBridge.recordHeartbeat` | ⚠️ Zig returns status; TS to send heartbeat payload |
+| Worker | `temporal_bun_worker_initiate_shutdown(worker_ptr)` | Soft shutdown (no new polls) | `worker.shutdown` | ⚠️ Zig stub returns success; TS not implemented |
+| Worker | `temporal_bun_worker_finalize_shutdown(worker_ptr)` | Wait for inflight tasks | `worker.runUntilShutdown` | ⚠️ Zig stub returns success; TS not implemented |
 | Ephemeral | `temporal_bun_test_server_start(config_ptr, len)` | Optional local test server | `testServer.start` | ⬜️ OPTIONAL |
 | Ephemeral | `temporal_bun_test_server_stop(server_ptr)` | Stop test server | `testServer.stop` | ⬜️ OPTIONAL |
 
@@ -151,14 +167,15 @@ Current progress snapshot:
 
 ## 6. Migration Plan (Stepwise)
 
-1. **Phase 1 — Client Parity**
-   - Implement TLS/API key support, start/signal/query/terminate FFI.
-   - Rewrite `createTemporalClient` to rely solely on FFI. Remove `@temporalio/client` dependency.
+1. **Phase 1 — Client Parity (In Progress)**
+   - ✅ TLS/API key scaffolding exists but TS still loads PEM paths; convert to base64 payloads during client creation.
+   - ⚠️ Implement signal/query/terminate/cancel/signal-with-start FFI and mirror in TS helpers.
+   - ⚠️ `createTemporalClient` currently mixes FFI with `@temporalio/client` identity defaults; remove Node dependency once FFI parity achieved.
 
-2. **Phase 2 — Worker Core**
-   - Implement worker create/poll/complete/heartbeat in Rust & TS.
-   - Port minimal workflow runtime (activation dispatch, activity scheduling). Remove `@temporalio/worker`.
-   - Provide `bun run dev` sample that completes activities against real Temporal.
+2. **Phase 2 — Worker Core (Not Started)**
+   - ⚠️ Finalize Zig worker polling/completion semantics (confirm payload schema, add activity heartbeat bridging).
+   - ⚠️ Build Bun-side `WorkerRuntime` to drive workflow/activity loops, integrate `WorkflowIsolateManager`.
+   - ⚠️ Remove `@temporalio/worker` fallback once Bun runtime runs hello-world workflow against Temporal server.
 
 3. **Phase 3 — Workflow Runtime Enhancements**
    - Add memo, search attributes, patch APIs, local activities, continue-as-new.
