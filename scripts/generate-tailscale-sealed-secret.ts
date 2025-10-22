@@ -19,7 +19,7 @@ const repoRoot = resolve(import.meta.dir, '..')
 
 const [, , maybeOutput] = process.argv
 
-if (maybeOutput && maybeOutput.startsWith('-')) {
+if (maybeOutput?.startsWith('-')) {
   fatal(`Unknown flag '${maybeOutput}'. Pass an optional output path or nothing.`)
 }
 

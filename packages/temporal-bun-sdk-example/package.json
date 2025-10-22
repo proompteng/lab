@@ -1,17 +1,31 @@
 {
-  "name": "temporal-bun-sdk-example",
+  "name": "@proompteng/temporal-bun-sdk-example",
   "version": "0.1.0",
-  "private": true,
+  "license": "MIT",
   "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
-    "dev": "bun run src/worker.ts",
-    "worker:start": "bun run src/worker.ts",
-    "docker:build": "bun run scripts/build-docker.ts --tag temporal-bun-sdk-example:latest"
+    "clean": "rm -rf dist",
+    "build": "bunx tsc --project tsconfig.json --pretty false",
+    "dev": "bun --watch src/index.ts",
+    "start": "bun run dist/index.js",
+    "test": "bun test"
+  },
+  "engines": {
+    "bun": ">=1.1.20"
   },
   "dependencies": {
-    "@proompteng/temporal-bun-sdk": "workspace:*"
+    "@proompteng/temporal-bun-sdk": "workspace:*",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/node": "^22.7.5",
     "bun-types": "^1.1.20"
   }
 }

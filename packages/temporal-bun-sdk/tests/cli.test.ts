@@ -2,14 +2,14 @@ import { describe, expect, it, mock } from 'bun:test'
 import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { TemporalConfig } from '../src/config'
 import {
-  parseArgs,
-  inferPackageName,
-  projectTemplates,
-  handleCheck,
   formatTemporalAddress,
+  handleCheck,
+  inferPackageName,
+  parseArgs,
+  projectTemplates,
 } from '../src/bin/temporal-bun.ts'
+import type { TemporalConfig } from '../src/config'
 
 type NativeBridge = typeof import('../src/internal/core-bridge/native').native
 

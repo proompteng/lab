@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { execSync } from 'child_process'
+import { execSync } from 'node:child_process'
 
 const version = process.argv[2] || 'v1.0.0'
 const tag = `temporal-libs-${version}`

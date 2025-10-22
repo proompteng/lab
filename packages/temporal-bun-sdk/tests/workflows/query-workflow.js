@@ -1,9 +1,9 @@
-import { defineQuery, setHandler, sleep } from '@temporalio/workflow'
+// Replaced @temporalio/workflow with native implementation
 
 const currentStateQuery = defineQuery('currentState')
 
 export async function queryWorkflowSample(initialValue = 'unset') {
-  let state = initialValue
+  const state = initialValue
   setHandler(currentStateQuery, () => state)
   await sleep(2000)
   return state

@@ -1125,13 +1125,29 @@ pub extern "C" fn temporal_bun_client_terminate_workflow(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_client_cancel_workflow(
-    _client_ptr: *mut c_void,
-    _payload_ptr: *const u8,
-    _payload_len: usize,
+    client_ptr: *mut c_void,
+    payload_ptr: *const u8,
+    payload_len: usize,
 ) -> *mut pending::PendingByteArray {
-    // TODO(codex): Implement cancellation via WorkflowService::request_cancel_workflow_execution (docs/ffi-surface.md).
-    error::set_error("temporal_bun_client_cancel_workflow is not implemented yet".to_string());
-    std::ptr::null_mut()
+    let client_handle = match ClientHandle::from_ptr(client_ptr) {
+        Some(handle) => handle,
+        None => {
+            error::set_error("temporal_bun_client_cancel_workflow received null client".to_string());
+            return std::ptr::null_mut();
+        }
+    };
+
+    let payload = unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
+
+    let request = match cancel::CancelWorkflowRequest::from_json(payload) {
+        Ok(req) => req,
+        Err(err) => {
+            error::set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+
+    cancel::dispatch_cancel(client_handle, request)
 }
 
 #[unsafe(no_mangle)]

@@ -1,5 +1,5 @@
-import React from 'react'
 import { cva } from 'class-variance-authority'
+import React from 'react'
 
 const statusVariants = {
   Running: 'bg-green-700 text-green-100',

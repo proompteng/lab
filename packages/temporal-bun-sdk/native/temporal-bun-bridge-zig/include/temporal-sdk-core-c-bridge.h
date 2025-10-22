@@ -58,6 +58,8 @@ typedef struct TemporalCoreCancellationToken TemporalCoreCancellationToken;
 
 typedef struct TemporalCoreClient TemporalCoreClient;
 
+typedef struct TemporalCoreCustomSlotSupplierCallbacks TemporalCoreCustomSlotSupplierCallbacks;
+
 /**
  * Representation of gRPC request for the callback.
  *

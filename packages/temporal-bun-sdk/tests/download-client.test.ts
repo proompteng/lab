@@ -1,27 +1,24 @@
-import { describe, expect, test, beforeEach, afterEach, mock, spyOn } from 'bun:test'
-import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs'
-import { join } from 'path'
-import { createHash } from 'crypto'
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 // Mock the download client module
 const mockFetch = mock()
-const mockExistsSync = spyOn(require('fs'), 'existsSync')
-const mockMkdirSync = spyOn(require('fs'), 'mkdirSync')
-const mockWriteFileSync = spyOn(require('fs'), 'writeFileSync')
-const mockReadFileSync = spyOn(require('fs'), 'readFileSync')
-const mockRmSync = spyOn(require('fs'), 'rmSync')
+const mockExistsSync = spyOn(require('node:fs'), 'existsSync')
+const mockMkdirSync = spyOn(require('node:fs'), 'mkdirSync')
+const mockWriteFileSync = spyOn(require('node:fs'), 'writeFileSync')
+const mockReadFileSync = spyOn(require('node:fs'), 'readFileSync')
+const mockRmSync = spyOn(require('node:fs'), 'rmSync')
 
 // Mock global fetch
 global.fetch = mockFetch
 
-// Import types and classes from the actual implementation
-import type { PlatformInfo, TemporalLibsConfig } from '../scripts/download-temporal-libs.ts'
-
 describe('Download Client Unit Tests', () => {
   const testCacheDir = join(process.cwd(), 'test-cache')
-  const testVersion = 'v1.0.0'
-  const testPlatform = 'linux'
-  const testArch = 'arm64'
+  const _testVersion = 'v1.0.0'
+  const _testPlatform = 'linux'
+  const _testArch = 'arm64'
 
   beforeEach(() => {
     // Reset all mocks
@@ -201,7 +198,7 @@ describe('Download Client Unit Tests', () => {
               return headers[key] || null
             },
           },
-        } as any)
+        } as Response)
         // Second call also returns rate limit error to trigger the final error
         .mockResolvedValueOnce({
           ok: false,
@@ -216,7 +213,7 @@ describe('Download Client Unit Tests', () => {
               return headers[key] || null
             },
           },
-        } as any)
+        } as Response)
 
       const { GitHubApiClient, RateLimitError } = await import('../scripts/download-temporal-libs.ts')
       const client = new GitHubApiClient('test', 'repo', {
@@ -339,7 +336,7 @@ describe('Download Client Unit Tests', () => {
           },
         },
         body: mockStream,
-      } as any)
+      } as Response)
 
       const { FileDownloader } = await import('../scripts/download-temporal-libs.ts')
       const downloader = new FileDownloader()
@@ -453,8 +450,8 @@ describe('Download Client Unit Tests', () => {
   describe('Download Client Integration', () => {
     // Mock platform to be supported for these tests
     beforeEach(() => {
-      const originalPlatform = process.platform
-      const originalArch = process.arch
+      const _originalPlatform = process.platform
+      const _originalArch = process.arch
 
       Object.defineProperty(process, 'platform', { value: 'linux' })
       Object.defineProperty(process, 'arch', { value: 'arm64' })

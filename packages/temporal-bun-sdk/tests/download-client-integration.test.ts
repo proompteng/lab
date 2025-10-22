@@ -1,7 +1,7 @@
-import { describe, expect, test, beforeEach, afterEach, mock } from 'bun:test'
-import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs'
-import { join } from 'path'
-import { createHash } from 'crypto'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 // Create a temporary test directory
 const testDir = join(process.cwd(), 'test-temp-download-client')
@@ -215,7 +215,7 @@ describe('Download Client Integration Tests', () => {
 
   describe('Error Handling in Real Scenarios', () => {
     test('should handle file system errors gracefully', async () => {
-      const { CacheManager, CacheError } = await import('../scripts/download-temporal-libs.ts')
+      const { CacheManager } = await import('../scripts/download-temporal-libs.ts')
 
       // Test that the method exists and can handle edge cases
       const config = { cacheDir: '/tmp/test-cache-error-handling' }

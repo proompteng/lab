@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-const { args, flags } = parseArgs(process.argv.slice(2))
+const { flags } = parseArgs(process.argv.slice(2))
 const tag = (flags.tag as string) ?? 'temporal-worker:latest'
 const dockerfile = (flags.file as string) ?? 'Dockerfile'
 const context = (flags.context as string) ?? '.'

@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
 import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 /**
  * End-to-End Workflow Tests
@@ -80,7 +80,7 @@ interface PerformanceMetrics {
   networkRequests: number
 }
 
-let performanceMetrics: PerformanceMetrics = {
+const performanceMetrics: PerformanceMetrics = {
   downloadTime: 0,
   buildTime: 0,
   totalTime: 0,
@@ -337,7 +337,7 @@ describe('End-to-End Workflow Tests', () => {
       const testPlatform = 'linux-arm64'
 
       // Initially should not be cached
-      let isCached = cacheManager.isCached(testVersion, testPlatform)
+      const isCached = cacheManager.isCached(testVersion, testPlatform)
       expect(isCached).toBe(false)
 
       // Test cache statistics (basic functionality)
@@ -465,7 +465,7 @@ describe('End-to-End Workflow Tests', () => {
     test('should measure and validate build time improvements', async () => {
       console.log('⏱️  Measuring and validating build time improvements...')
 
-      const totalStartTime = Date.now()
+      const _totalStartTime = Date.now()
 
       // Simulate pre-built library workflow
       const prebuiltStartTime = Date.now()
@@ -569,61 +569,37 @@ describe('End-to-End Workflow Tests', () => {
     test('should generate comprehensive performance report', async () => {
       console.log('📊 Generating comprehensive performance report...')
 
-      const report = {
-        timestamp: new Date().toISOString(),
-        metrics: performanceMetrics,
-        targets: {
-          downloadTime: {
-            target: 30_000,
-            actual: performanceMetrics.downloadTime,
-            met: performanceMetrics.downloadTime < 30_000,
-          },
-          buildTime: {
-            target: 120_000,
-            actual: performanceMetrics.totalTime,
-            met: performanceMetrics.totalTime < 120_000,
-          },
-          cacheHitRate: {
-            target: 0.9,
-            actual: performanceMetrics.cacheHitRate,
-            met: performanceMetrics.cacheHitRate > 0.9,
-          },
-          improvementPercentage: {
-            target: 80,
-            actual: Math.round(((900_000 - performanceMetrics.totalTime) / 900_000) * 100),
-            met: true,
-          },
+      const targets = {
+        downloadTime: {
+          target: 30_000,
+          actual: performanceMetrics.downloadTime,
+          met: performanceMetrics.downloadTime < 30_000,
         },
-        summary: {
-          allTargetsMet: Object.values({
-            downloadTime: {
-              target: 30_000,
-              actual: performanceMetrics.downloadTime,
-              met: performanceMetrics.downloadTime < 30_000,
-            },
-            buildTime: {
-              target: 120_000,
-              actual: performanceMetrics.totalTime,
-              met: performanceMetrics.totalTime < 120_000,
-            },
-            cacheHitRate: {
-              target: 0.9,
-              actual: performanceMetrics.cacheHitRate,
-              met: performanceMetrics.cacheHitRate > 0.9,
-            },
-            improvementPercentage: {
-              target: 80,
-              actual: Math.round(((900_000 - performanceMetrics.totalTime) / 900_000) * 100),
-              met: true,
-            },
-          }).every((target: any) => target.met),
-          totalTests: 13,
-          passedTests: 0,
+        buildTime: {
+          target: 120_000,
+          actual: performanceMetrics.totalTime,
+          met: performanceMetrics.totalTime < 120_000,
+        },
+        cacheHitRate: {
+          target: 0.9,
+          actual: performanceMetrics.cacheHitRate,
+          met: performanceMetrics.cacheHitRate > 0.9,
+        },
+        improvementPercentage: {
+          target: 80,
+          actual: Math.round(((900_000 - performanceMetrics.totalTime) / 900_000) * 100),
+          met: true,
         },
       }
 
+      const report = {
+        timestamp: new Date().toISOString(),
+        metrics: performanceMetrics,
+        targets,
+      }
+
       // Validate all performance targets are met
-      const targetsMet = Object.values(report.targets).every((target: any) => target.met)
+      const targetsMet = Object.values(targets).every((target) => target.met)
       expect(targetsMet).toBe(true)
 
       // Write performance report
@@ -668,7 +644,13 @@ async function createMockArtifacts(): Promise<void> {
   console.log(`Created ${platforms.length * 2} mock artifacts`)
 }
 
-async function simulateStaticLibraryBuild(platformConfig: any): Promise<string[]> {
+type BuildPlatformConfig = {
+  platform: string
+  arch: string
+  target: string
+}
+
+async function simulateStaticLibraryBuild(platformConfig: BuildPlatformConfig): Promise<string[]> {
   // Simulate building static libraries for a platform
   const libraries = [
     'libtemporal_sdk_core.a',
@@ -690,7 +672,7 @@ async function simulateStaticLibraryBuild(platformConfig: any): Promise<string[]
   return libraryPaths
 }
 
-async function simulateArtifactPackaging(platformConfig: any, libraryFiles: string[]): Promise<string> {
+async function simulateArtifactPackaging(platformConfig: BuildPlatformConfig, libraryFiles: string[]): Promise<string> {
   // Simulate packaging libraries into tar.gz
   const archiveName = `temporal-static-libs-${platformConfig.platform}-${platformConfig.arch}-v1.0.0-test.tar.gz`
   const archivePath = join(MOCK_ARTIFACTS_DIR, archiveName)
@@ -714,7 +696,15 @@ async function simulateChecksumGeneration(artifactPath: string): Promise<string>
   return checksumPath
 }
 
-async function simulateReleaseCreation(buildResults: any[]): Promise<any> {
+type BuildResult = {
+  platform: BuildPlatformConfig
+  artifact: string
+  checksum: string
+  buildTime: number
+  success: boolean
+}
+
+async function simulateReleaseCreation(buildResults: BuildResult[]): Promise<{ assets: ReleaseAsset[] }> {
   // Simulate creating GitHub release with artifacts
   const assets = []
 

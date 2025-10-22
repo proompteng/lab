@@ -1,15 +1,15 @@
 #!/usr/bin/env bun
 
-import { Connection, isGrpcServiceError } from '@temporalio/client'
-import type { TLSConfig } from '@temporalio/client'
-import { status as GrpcStatus } from '@grpc/grpc-js'
-import { CoreV1Api, KubeConfig, PortForward } from '@kubernetes/client-node'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { readFile } from 'node:fs/promises'
 import net from 'node:net'
 import process from 'node:process'
 import { PassThrough } from 'node:stream'
-import { spawn } from 'node:child_process'
-import { once } from 'node:events'
+import { status as GrpcStatus } from '@grpc/grpc-js'
+import { CoreV1Api, KubeConfig, PortForward } from '@kubernetes/client-node'
+import type { TLSConfig } from '@temporalio/client'
+import { Connection, isGrpcServiceError } from '@temporalio/client'
 
 type CliOptions = {
   namespace?: string

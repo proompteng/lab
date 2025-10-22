@@ -1,6 +1,5 @@
-import { Chart } from 'cdk8s'
+import { ApiObject, Chart } from 'cdk8s'
 import type { Construct } from 'constructs'
-import { ApiObject } from 'cdk8s'
 import { z } from 'zod'
 
 const kustomizationSchema = z.object({

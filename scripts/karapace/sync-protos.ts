@@ -8,10 +8,10 @@
  * to preview registrations without touching the registry.
  */
 
-import { parseArgs } from 'node:util'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { resolve, join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { parseArgs } from 'node:util'
 
 type Reference = {
   name: string
@@ -143,8 +143,9 @@ async function resolveReferences(refs: Reference[] | undefined): Promise<Referen
       continue
     }
 
-    if (referenceCache.has(ref.subject)) {
-      resolved.push({ ...ref, version: referenceCache.get(ref.subject)! })
+    const cachedVersion = referenceCache.get(ref.subject)
+    if (cachedVersion !== undefined) {
+      resolved.push({ ...ref, version: cachedVersion })
       continue
     }
 

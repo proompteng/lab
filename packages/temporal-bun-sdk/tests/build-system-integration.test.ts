@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, rmSync, writeFileSync, statSync } from 'fs'
-import { join } from 'path'
+import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { DownloadClient } from '../scripts/download-temporal-libs.ts'
 
 const TEMP_TEST_DIR = join(process.cwd(), 'packages/temporal-bun-sdk/.test-build-integration')
@@ -20,7 +20,7 @@ const TEST_CONFIG = {
 
 describe('Build System Integration Tests', () => {
   let downloadClient: DownloadClient
-  let buildTimes: Record<string, number> = {}
+  const buildTimes: Record<string, number> = {}
 
   beforeAll(async () => {
     // Create test directory structure

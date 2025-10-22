@@ -1,3 +1,7 @@
-// TODO(codex): Replace this re-export with the Bun-native worker runtime once implemented per
-// packages/temporal-bun-sdk/docs/worker-runtime.md.
-export * from '../../vendor/sdk-typescript/packages/worker/src/index.ts'
+// Worker implementation for @proompteng/temporal-bun-sdk
+
+export * from './runtime'
+export { WorkerRuntime } from './runtime'
+export * from './task-loops'
+// Re-export for convenience
+export { WorkflowIsolateManager } from './task-loops'

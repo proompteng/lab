@@ -1,11 +1,10 @@
-import React from 'react'
-import { HeadContent, Outlet, Scripts, createRootRouteWithContext } from '@tanstack/react-router'
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
-import { CommandPalette } from '~/components/command-palette'
-
-import type { TRPCOptionsProxy } from '@trpc/tanstack-react-query'
-import type { AppRouter } from '~/server/routers/_app'
 import type { QueryClient } from '@tanstack/react-query'
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
+import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
+import type { TRPCOptionsProxy } from '@trpc/tanstack-react-query'
+import React from 'react'
+import { CommandPalette } from '~/components/command-palette'
+import type { AppRouter } from '~/server/routers/_app'
 
 import '../main.css'
 

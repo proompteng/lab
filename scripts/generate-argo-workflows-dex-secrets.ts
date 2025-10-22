@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync, chmodSync, mkdtempSync, rmSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { $ } from 'bun'
 
 type CliOptions = {
@@ -247,7 +247,7 @@ writeSealedSecret(workflowsOutput, sealedWorkflowsSecret)
 try {
   const config = readFileSync(configPath, 'utf8')
   const updated = config.replace(
-    /(hash:\s*")([^\"]*)(")/,
+    /(hash:\s*")([^"]*)(")/,
     (_match, prefix, _oldHash, suffix) => `${prefix}${passwordHash}${suffix}`,
   )
   if (updated === config) {

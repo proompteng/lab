@@ -270,7 +270,11 @@ async function runParallel<T>(items: T[], concurrency: number, task: (item: T, i
         return
       }
       nextIndex += 1
-      await task(items[currentIndex]!, currentIndex)
+      const item = items[currentIndex]
+      if (item === undefined) {
+        return
+      }
+      await task(item, currentIndex)
     }
   }
 
