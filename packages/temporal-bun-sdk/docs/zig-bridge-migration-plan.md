@@ -108,19 +108,18 @@ Bun (bun:ffi) ──▶ Zig Bridge (libtemporal_bun_bridge.zig)
 | 1 — Client Parity | Reimplement runtime + client connect + describe + start workflow. Maintain async pending handles. | Toggle default to Zig bridge on CI when env flag enabled. Update TS to fall back to Rust when Zig load fails. | `bun test` suite passes with Zig shared lib; docs updated. |
 | 2 — Client Enhancements | Implement signal/query/terminate/cancel/signalWithStart + metadata updates. Add telemetry + logger support. | All TODOs in `src/internal/core-bridge/native.ts` removed or delegated to Zig. | Temporal integration tests (docker compose) green under Zig path. |
 | 3 — Worker Runtime | Port worker creation, poll/complete, activity heartbeat. Mirror existing FFI blueprint. | `temporal-bun-worker` binary runs end-to-end solely on Zig bridge. | Example app runs against Temporal server without Rust artifacts. |
-| 4 — Cleanup & Release | Remove Rust bridge, deprecate Cargo build scripts, publish prebuilt binaries (GitHub releases). | No Rust toolchain needed for consumers; README + scripts updated. |
+| 4 — Cleanup & Release | ✅ **COMPLETED** - Removed Rust bridge, deprecated Cargo build scripts, published prebuilt binaries (GitHub releases). | ✅ No Rust toolchain needed for consumers; README + scripts updated. |
 
 ---
 
 ## 6. Build & Tooling Updates
 
 1. **Zig Toolchain Version** — Standardize on Zig 0.15.1 (matches `services/galette`). Document installation in README.  
-2. **Package Scripts** — Replace `cargo build` script with:
+2. **Package Scripts** — ✅ **COMPLETED** - Replaced `cargo build` scripts with pre-built library downloads:
    ```json
-   "build:native": "zig build -Doptimize=ReleaseFast --build-file native/temporal-bun-bridge-zig/build.zig"
+   "build:native": "USE_PREBUILT_LIBS=true bun run libs:download && USE_PREBUILT_LIBS=true zig build -Doptimize=ReleaseFast --build-file native/temporal-bun-bridge-zig/build.zig"
    ```
-   Provide `build:native:debug` equivalent for development.
-3. **CI Images** — Extend Docker images with Zig; drop Rust once Phase 4 completes.  
+3. **CI Images** — ✅ **COMPLETED** - Removed Rust from Docker images, using only Zig with pre-built libraries.  
 4. **Prebuilt Artifacts** — Use `zig build install` to stage artifacts under `native/artifacts/<platform>/`.  
 5. **NPM Packaging** — Update publish step to copy Zig binaries into `dist/native/<platform>/`.
 

@@ -1,7 +1,19 @@
 {
-  "eslint.workingDirectories": [
-    {
-      "mode": "auto"
-    }
-  ]
+  "files.autoSave": "afterDelay",
+  "editor.renderWhitespace": "all",
+  "editor.fontFamily": "JetBrainsMono Nerd Font Mono",
+  "editor.fontSize": 14,
+  "terminal.integrated.fontFamily": "JetBrainsMono Nerd Font Mono",
+  "terminal.integrated.fontSize": 14,
+  "terminal.integrated.fontLigatures.enabled": true,
+  "editor.fontLigatures": true,
+  "vscode-neovim.neovimClean": true,
+  "workbench.sideBar.location": "right",
+  "editor.lineNumbers": "relative",
+  "extensions.experimental.affinity": {
+    "asvetliakov.vscode-neovim": 1
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  }
 }

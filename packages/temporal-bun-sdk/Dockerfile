@@ -2,20 +2,68 @@
 
 FROM oven/bun:1.1.20 AS install
 WORKDIR /app
+
+# Install system dependencies
+# Optimized for pre-built libraries but includes fallback dependencies for Rust compilation
+RUN apt-get update && apt-get install -y \
+    xz-utils \
+    curl \
+    ca-certificates \
+    tar \
+    git \
+    build-essential \
+    pkg-config \
+    protobuf-compiler \
+    libprotobuf-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Zig 0.15.1
+RUN curl -L https://ziglang.org/download/0.15.1/zig-x86_64-linux-0.15.1.tar.xz | tar -xJ -C /usr/local --strip-components=1
+
+# Rust toolchain no longer needed - using pre-built static libraries
+
 COPY packages/temporal-bun-sdk/package.json package.json
 COPY packages/temporal-bun-sdk/bunfig.toml bunfig.toml
 COPY packages/temporal-bun-sdk/tsconfig.json tsconfig.json
 COPY packages/temporal-bun-sdk/src src
 COPY packages/temporal-bun-sdk/tests tests
+COPY packages/temporal-bun-sdk/scripts scripts
+COPY packages/temporal-bun-sdk/native native
+
 RUN bun install
+
+# Vendor directory no longer needed - using pre-built static libraries
+
+# Download pre-built libraries (required - no fallback compilation)
+# This replaces the previous 15-minute Rust compilation process
+ENV USE_PREBUILT_LIBS=true
+RUN bun run libs:download
+
+# Build TypeScript and native Zig components
+# The Zig build system will automatically use pre-built libraries if available, otherwise fall back to cargo
 RUN bun run build
+RUN bun run build:native:zig:bundle
 
 FROM oven/bun:1.1.20 AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+ENV USE_PREBUILT_LIBS=true
+
+# Install minimal runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY packages/temporal-bun-sdk/package.json package.json
 COPY packages/temporal-bun-sdk/bunfig.toml bunfig.toml
 RUN bun install --production
+
 COPY --from=install /app/dist dist
+COPY --from=install /app/dist/native dist/native
+
+# Add health check for the worker
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD bun --version || exit 1
+
 CMD ["bun", "run", "start:worker"]
 

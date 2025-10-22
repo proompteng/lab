@@ -27,6 +27,7 @@ jobs:
     env:
       TEMPORAL_TEST_SERVER: '1'
       TEMPORAL_BUN_SDK_USE_ZIG: '1'
+      USE_PREBUILT_LIBS: 'true'
 
     steps:
       - name: Checkout repository
@@ -53,7 +54,7 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config protobuf-compiler docker-compose xz-utils
+          sudo apt-get install -y docker-compose xz-utils
 
       - name: Set up Zig 0.15.1
         uses: goto-bus-stop/setup-zig@v2
@@ -63,11 +64,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Prepare Temporal vendor sources
+      - name: Download pre-built Temporal libraries
         run: |
-          mkdir -p packages/temporal-bun-sdk/vendor
-          git clone --depth 1 --branch master https://github.com/temporalio/sdk-core.git packages/temporal-bun-sdk/vendor/sdk-core
-          git clone --depth 1 --branch main https://github.com/temporalio/sdk-typescript.git packages/temporal-bun-sdk/vendor/sdk-typescript
+          cd packages/temporal-bun-sdk
+          bun run libs:download
 
       - name: Check Zig formatting
         run: zig fmt --check packages/temporal-bun-sdk/native/temporal-bun-bridge-zig
@@ -77,7 +77,8 @@ jobs:
 
       - name: Start Temporal server
         id: start_temporal_server
-        run: docker-compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml up -d
+        run: |
+          docker-compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml up -d
 
       - name: Wait for Temporal server
         if: steps.start_temporal_server.outcome == 'success'
@@ -97,4 +98,5 @@ jobs:
 
       - name: Stop Temporal server
         if: always() && steps.start_temporal_server.outcome == 'success'
-        run: docker-compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml down -v
+        run: |
+          docker-compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml down -v

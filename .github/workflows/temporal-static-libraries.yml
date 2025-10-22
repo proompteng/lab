@@ -1,0 +1,200 @@
+name: Build Temporal Static Libraries
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag for the release (e.g., v1.0.0)"
+        required: true
+        type: string
+      create_release:
+        description: "Create a new GitHub release"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Static Libraries
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-gnu
+            platform: linux
+            arch: arm64
+            runner: arc-arm64
+          - target: x86_64-unknown-linux-gnu
+            platform: linux
+            arch: x64
+            runner: arc-arm64
+          - target: aarch64-apple-darwin
+            platform: macos
+            arch: arm64
+            runner: macos-14
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation dependencies (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config protobuf-compiler
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            sudo apt-get install -y gcc-x86-64-linux-gnu g++-x86-64-linux-gnu
+          fi
+
+      - name: Install protobuf (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          brew install protobuf
+
+      - name: Prepare Temporal vendor sources
+        run: |
+          mkdir -p packages/temporal-bun-sdk/vendor
+          git clone --depth 1 --branch master https://github.com/temporalio/sdk-core.git packages/temporal-bun-sdk/vendor/sdk-core
+
+      - name: Configure cross-compilation environment
+        run: |
+          TARGET="${{ matrix.target }}"
+          if [ "$TARGET" = "x86_64-unknown-linux-gnu" ] && [ "$(uname -m)" = "aarch64" ]; then
+            echo "CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++" >> $GITHUB_ENV
+            echo "AR_x86_64_unknown_linux_gnu=x86_64-linux-gnu-ar" >> $GITHUB_ENV
+            echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc" >> $GITHUB_ENV
+          fi
+
+      - name: Build static libraries
+        working-directory: packages/temporal-bun-sdk/vendor/sdk-core
+        run: |
+          # Build each crate as a static library
+          TARGET="${{ matrix.target }}"
+          cargo rustc -p temporal-sdk-core --crate-type staticlib --target "$TARGET" --release
+          cargo rustc -p temporal-sdk-core-c-bridge --crate-type staticlib --target "$TARGET" --release
+          cargo rustc -p temporal-client --crate-type staticlib --target "$TARGET" --release
+          cargo rustc -p temporal-sdk-core-api --crate-type staticlib --target "$TARGET" --release
+          cargo rustc -p temporal-sdk-core-protos --crate-type staticlib --target "$TARGET" --release
+
+      - name: Collect and package artifacts
+        run: |
+          # Create artifact directory
+          mkdir -p artifacts
+
+          # Define target directory based on platform
+          TARGET_DIR="packages/temporal-bun-sdk/vendor/sdk-core/target/${{ matrix.target }}/release"
+
+          # Copy static libraries
+          cp "$TARGET_DIR/libtemporal_sdk_core.a" artifacts/
+          cp "$TARGET_DIR/libtemporal_sdk_core_c_bridge.a" artifacts/
+          cp "$TARGET_DIR/libtemporal_client.a" artifacts/
+          cp "$TARGET_DIR/libtemporal_sdk_core_api.a" artifacts/
+          cp "$TARGET_DIR/libtemporal_sdk_core_protos.a" artifacts/
+
+          # Create archive
+          PLATFORM="${{ matrix.platform }}"
+          ARCH="${{ matrix.arch }}"
+          VERSION="${{ inputs.version }}"
+          ARCHIVE_NAME="temporal-static-libs-${PLATFORM}-${ARCH}-${VERSION}.tar.gz"
+          tar -czf "$ARCHIVE_NAME" -C artifacts .
+
+          # Generate checksum (compatible with both Linux and macOS)
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ARCHIVE_NAME" > "$ARCHIVE_NAME.sha256"
+          else
+            shasum -a 256 "$ARCHIVE_NAME" > "$ARCHIVE_NAME.sha256"
+          fi
+
+          # Verify files were created
+          ls -la "$ARCHIVE_NAME" "$ARCHIVE_NAME.sha256"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: temporal-libs-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            temporal-static-libs-*.tar.gz
+            temporal-static-libs-*.sha256
+          retention-days: 30
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: arc-arm64
+    if: ${{ inputs.create_release }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Prepare release assets
+        run: |
+          # Flatten artifact structure
+          find release-artifacts -name "*.tar.gz" -o -name "*.sha256" | \
+            xargs -I {} cp {} .
+
+          # List all files for verification
+          ls -la *.tar.gz *.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: temporal-libs-${{ inputs.version }}
+          name: Temporal Static Libraries ${{ inputs.version }}
+          body: |
+            ## Temporal Static Libraries ${{ inputs.version }}
+
+            Pre-built static libraries for the Temporal Core SDK, compiled for multiple platforms.
+
+            ### Supported Platforms
+            - Linux ARM64 (`aarch64-unknown-linux-gnu`)
+            - Linux x64 (`x86_64-unknown-linux-gnu`)
+            - macOS ARM64 (`aarch64-apple-darwin`)
+
+            ### Usage
+            Download the appropriate archive for your platform and extract the static libraries.
+            Each archive contains:
+            - `libtemporal_sdk_core.a`
+            - `libtemporal_client.a`
+            - `libtemporal_sdk_core_api.a`
+            - `libtemporal_sdk_core_protos.a`
+
+            ### Verification
+            Verify the integrity of downloaded archives using the provided SHA256 checksums:
+            ```bash
+            sha256sum -c temporal-static-libs-<platform>-<arch>-${{ inputs.version }}.tar.gz.sha256
+            ```
+
+            ### Build Information
+            - Built from: `${{ github.sha }}`
+            - Rust toolchain: stable
+            - Build date: ${{ github.run_id }}
+          files: |
+            temporal-static-libs-*.tar.gz
+            temporal-static-libs-*.sha256
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update latest release tag
+        run: |
+          # Create or update a 'latest' tag pointing to this release
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f temporal-libs-latest
+          git push origin temporal-libs-latest --force
