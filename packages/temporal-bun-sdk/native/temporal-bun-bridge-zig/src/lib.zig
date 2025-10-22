@@ -5,6 +5,7 @@ const client = @import("client.zig");
 const byte_array = @import("byte_array.zig");
 const pending = @import("pending.zig");
 const worker = @import("worker.zig");
+_ = @import("ffi.zig");
 
 fn sliceFrom(ptr: ?[*]const u8, len: u64) []const u8 {
     if (ptr == null or len == 0) {
