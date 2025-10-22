@@ -1,8 +1,8 @@
 /* eslint-disable no-console */
 import { copyFile, mkdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 import { artifactFilename, zigTargets } from './zig-targets'
 
 const rootDir = fileURLToPath(new URL('..', import.meta.url))

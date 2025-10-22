@@ -1,7 +1,7 @@
 import { createServerFileRoute } from '@tanstack/react-start/server'
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch'
-import { appRouter } from '~/server/routers/_app'
 import { createContext } from '~/server/context'
+import { appRouter } from '~/server/routers/_app'
 
 const handleRequest = (request: Request) =>
   fetchRequestHandler({

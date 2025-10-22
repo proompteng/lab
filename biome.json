@@ -18,16 +18,16 @@
       "!**/build",
       "!**/.mastra",
       "!**/.venv",
-      "!tmp/**",
+      "!tmp",
       "!**/coverage",
       "!**/pnpm-lock.yaml",
       "!**/bun.lock",
       "!**/src/app/routeTree.gen.ts",
       "!apps/proompteng/src/components/ui",
       "!schemas",
-      "!services/facteur/internal/facteurpb/**",
-      "!services/dernier/vendor/**",
-      "!apps/froussard/src/proto/**"
+      "!services/facteur/internal/facteurpb",
+      "!services/dernier/vendor",
+      "!apps/froussard/src/proto"
     ],
     "maxSize": 1048576
   },

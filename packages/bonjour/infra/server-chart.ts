@@ -1,5 +1,4 @@
-import { Chart, ChartProps, Duration } from 'cdk8s'
-import { Construct } from 'constructs'
+import { Chart, type ChartProps, Duration } from 'cdk8s'
 import {
   Deployment,
   EnvValue,
@@ -8,9 +7,10 @@ import {
   MetricTarget,
   Probe,
   Service,
-  ServicePort,
+  type ServicePort,
   ServiceType,
 } from 'cdk8s-plus-33'
+import type { Construct } from 'constructs'
 
 export interface ServerChartProps extends ChartProps {
   readonly image: string

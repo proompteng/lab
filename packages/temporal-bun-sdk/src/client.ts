@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
+
 import {
   buildCancelRequest,
   buildQueryRequest,
@@ -10,7 +10,6 @@ import {
 } from './client/serialization'
 import {
   createWorkflowHandle,
-  type RetryPolicyOptions,
   type SignalWithStartOptions,
   type StartWorkflowOptions,
   type StartWorkflowResult,
@@ -18,7 +17,8 @@ import {
   type WorkflowHandle,
   type WorkflowHandleMetadata,
 } from './client/types'
-import { native, type NativeClient, type Runtime } from './internal/core-bridge/native'
+import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
+import { type NativeClient, native, type Runtime } from './internal/core-bridge/native'
 
 const startWorkflowMetadataSchema = z.object({
   runId: z.string().min(1),
@@ -367,13 +367,14 @@ const serializeTlsConfig = (tls?: TLSConfig): Record<string, unknown> | undefine
 
   return payload
 }
-export { createWorkflowHandle } from './client/types'
+
 export type {
-  WorkflowHandle,
-  WorkflowHandleMetadata,
+  RetryPolicyOptions,
+  SignalWithStartOptions,
+  StartWorkflowOptions,
   StartWorkflowResult,
   TerminateWorkflowOptions,
-  SignalWithStartOptions,
-  RetryPolicyOptions,
-  StartWorkflowOptions,
+  WorkflowHandle,
+  WorkflowHandleMetadata,
 } from './client/types'
+export { createWorkflowHandle } from './client/types'

@@ -1,4 +1,4 @@
-import { describe, expect, it, afterEach, mock } from 'bun:test'
+import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { load } from 'js-yaml'
 import { generatePlainSecret, sealSecret } from './generate'
 

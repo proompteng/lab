@@ -1,8 +1,8 @@
+import { execSync } from 'node:child_process'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { dump } from 'js-yaml'
 import { z } from 'zod'
-import { execSync } from 'node:child_process'
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
 
 const secretSchema = z.object({
   name: z.string(),

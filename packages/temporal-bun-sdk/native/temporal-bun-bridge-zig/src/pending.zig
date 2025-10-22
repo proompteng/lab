@@ -1,6 +1,7 @@
 const std = @import("std");
 const errors = @import("errors.zig");
 const byte_array = @import("byte_array.zig");
+const core = @import("core.zig");
 const math = std.math;
 
 /// Maps directly onto the poll contract expected by Bun. See native.ts for semantics.
@@ -41,6 +42,8 @@ pub const PendingHandle = struct {
     cleanup: CleanupFn,
     fault: PendingErrorState,
     ref_count: usize,
+    user_data: ?*anyopaque = null,
+    completion_callback: ?*const fn (?*anyopaque, ?*const core.ByteArray) callconv(.c) void = null,
 };
 
 fn allocateHandle(status: Status) ?*PendingHandle {
@@ -68,6 +71,8 @@ fn allocateHandle(status: Status) ?*PendingHandle {
             .active = false,
         },
         .ref_count = 1,
+        .user_data = null,
+        .completion_callback = null,
     };
     return handle;
 }
@@ -167,6 +172,10 @@ pub fn createPendingReady(payload: ?*anyopaque, cleanup: CleanupFn) ?*PendingHan
 
 pub fn createPendingInFlight() ?*PendingHandle {
     return allocateHandle(.pending);
+}
+
+pub fn createPendingByteArray() ?*PendingByteArray {
+    return @as(?*PendingByteArray, @ptrCast(allocateHandle(.pending)));
 }
 
 pub fn poll(handle: ?*PendingHandle) i32 {

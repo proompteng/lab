@@ -1,9 +1,9 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
-import { router, publicProcedure } from '../trpc.ts'
 import { podListSchema, podSchema } from '~/common/schemas/pod.ts'
-import { logger } from '~/utils/logger.ts'
 import { createK8sClient, transformPodData } from '~/services/kubernetes.ts'
+import { logger } from '~/utils/logger.ts'
+import { publicProcedure, router } from '../trpc.ts'
 
 export const podRouter = router({
   list: publicProcedure.query(async () => {

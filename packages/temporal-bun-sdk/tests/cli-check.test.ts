@@ -1,7 +1,7 @@
-import { Buffer } from 'node:buffer'
 import { describe, expect, mock, test } from 'bun:test'
-import type { TemporalConfig } from '../src/config.ts'
+import { Buffer } from 'node:buffer'
 import { handleCheck } from '../src/bin/temporal-bun.ts'
+import type { TemporalConfig } from '../src/config.ts'
 
 type NativeBridge = typeof import('../src/internal/core-bridge/native').native
 

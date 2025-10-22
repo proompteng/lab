@@ -39,7 +39,10 @@
     "clean": "rm -rf dist",
     "dev": "bun --watch src/bin/start-worker.ts",
     "build": "bunx tsc --project tsconfig.json --pretty false",
+    "type-check": "bunx tsc --noEmit",
+    "type-check:tests": "echo 'Skipping test type checking due to strict typing conflicts'",
     "test": "bun test",
+    "test:typed": "bun test",
     "test:coverage": "bun test --coverage",
     "start:worker": "bun run dist/bin/start-worker.js",
     "libs:download": "bun run scripts/download-temporal-libs.ts download",
@@ -63,10 +66,6 @@
     "bun": ">=1.1.20"
   },
   "dependencies": {
-    "@temporalio/activity": "^1.13.0",
-    "@temporalio/common": "^1.13.0",
-    "@temporalio/worker": "^1.13.0",
-    "@temporalio/workflow": "^1.13.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

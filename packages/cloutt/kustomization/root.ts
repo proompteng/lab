@@ -1,6 +1,6 @@
+import { Chart } from 'cdk8s'
 import type { Construct } from 'constructs'
 import { Kustomization } from './common/kustomization'
-import { Chart } from 'cdk8s'
 
 export class RootKustomization extends Chart {
   constructor(scope: Construct, id: string, props: { overlays: string[]; name: string }) {

@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
-import { $ } from 'bun'
 import { randomBytes } from 'node:crypto'
-import { dirname, resolve } from 'node:path'
 import { mkdirSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { $ } from 'bun'
 
 type CliOptions = {
   outputPath: string

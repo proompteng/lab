@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
-import { Client, createClient, normalizeTemporalAddress, __TEST__ as clientTest } from '../src/core-bridge/client.ts'
+import { Client, __TEST__ as clientTest, createClient, normalizeTemporalAddress } from '../src/core-bridge/client.ts'
 import { createRuntime, __TEST__ as runtimeTest } from '../src/core-bridge/runtime.ts'
 import { bridgeVariant, native } from '../src/internal/core-bridge/native.ts'
 
 const hasLiveServer = process.env.TEMPORAL_TEST_SERVER === '1'
-const usingZigBridge = bridgeVariant === 'zig'
+const _usingZigBridge = bridgeVariant === 'zig'
 const reachabilityTest = test
 
 describe('core bridge runtime wrapper', () => {
@@ -150,7 +150,7 @@ describe('core bridge client wrapper', () => {
       throw new Error('finalizer-failure')
     })
 
-    expect(() => runtimeTest.finalizeRuntime({ type: 'runtime', handle: 99 } as any)).not.toThrow()
+    expect(() => runtimeTest.finalizeRuntime({ type: 'runtime', handle: 99 } as unknown)).not.toThrow()
 
     native.runtimeShutdown = originalRuntimeShutdown
   })
@@ -161,7 +161,7 @@ describe('core bridge client wrapper', () => {
       throw new Error('finalizer-failure')
     })
 
-    expect(() => clientTest.finalizeClient({ type: 'client', handle: 77 } as any)).not.toThrow()
+    expect(() => clientTest.finalizeClient({ type: 'client', handle: 77 } as unknown)).not.toThrow()
 
     native.clientShutdown = originalClientShutdown
   })

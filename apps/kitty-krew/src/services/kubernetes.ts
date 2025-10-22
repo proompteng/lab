@@ -1,7 +1,7 @@
-import * as k8s from '@kubernetes/client-node'
 import { promises as fsPromises } from 'node:fs'
-import { logger } from '~/utils/logger.ts'
+import * as k8s from '@kubernetes/client-node'
 import type { Pod } from '~/common/schemas/pod.ts'
+import { logger } from '~/utils/logger.ts'
 
 /**
  * Loads and configures the self-signed certificate for the Kubernetes client

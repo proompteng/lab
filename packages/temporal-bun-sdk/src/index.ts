@@ -1,5 +1,7 @@
-export * from './client/index.ts'
-export * from './worker/index.ts'
-export * from './workflow/index.ts'
-export * from './common/index.ts'
-export * as coreBridge from './core-bridge/index.ts'
+// Main exports for @proompteng/temporal-bun-sdk
+export * from './client'
+export * from './common'
+export * from './config'
+export * from './core-bridge'
+export * from './worker'
+export * from './workflow'

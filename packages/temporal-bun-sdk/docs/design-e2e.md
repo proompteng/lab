@@ -121,7 +121,7 @@ Deliver a fully Bun-native workflow loop without `@temporalio/*` dependencies by
 
 2. **Native Build**
    - `pnpm run build:native` – compiles the bridge using system `protoc` (ensure prerequisites match Temporal’s documented build requirements).
-   - Output stored under `native/temporal-bun-bridge/target/release` (ignored by git).
+   - Output stored under `native/temporal-bun-bridge-zig/zig-out/lib` (ignored by git).
 
 3. **Testing**
    - Unit tests: runtime/client creation, error propagation, pending-handle lifecycle, ByteArray transfer.

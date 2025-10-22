@@ -1,5 +1,5 @@
 import { dlopen, FFIType, ptr, toArrayBuffer } from 'bun:ffi'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -8,6 +8,8 @@ type Pointer = number
 type RuntimePtr = Pointer
 
 type ClientPtr = Pointer
+
+type WorkerPtr = Pointer
 
 export interface Runtime {
   type: 'runtime'
@@ -19,18 +21,22 @@ export interface NativeClient {
   handle: ClientPtr
 }
 
-type BridgeVariant = 'zig' | 'rust'
+export interface NativeWorker {
+  type: 'worker'
+  handle: WorkerPtr
+}
+
+type BridgeVariant = 'zig'
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolvePackageRoot()
 const distNativeDir = join(packageRoot, 'dist', 'native')
 const zigStageLibDir = join(packageRoot, 'native', 'temporal-bun-bridge-zig', 'zig-out', 'lib')
-const rustBridgeTargetDir = join(packageRoot, 'native', 'temporal-bun-bridge', 'target')
 
-const { module: nativeModule, path: libraryFile, variant: resolvedBridgeVariant } = loadBridgeLibrary()
+const { module: nativeModule } = loadBridgeLibrary()
 
-export const bridgeVariant = resolvedBridgeVariant
-export const isZigBridge = resolvedBridgeVariant === 'zig'
+export const bridgeVariant = 'zig'
+export const isZigBridge = true
 
 const UNKNOWN_NATIVE_ERROR_CODE = 2
 
@@ -66,8 +72,6 @@ export class NativeBridgeError extends Error {
   }
 }
 
-type ZigPreference = 'auto' | 'enable' | 'disable'
-
 interface BridgeLibraryLoadResult {
   module: ReturnType<typeof dlopen>
   path: string
@@ -76,7 +80,6 @@ interface BridgeLibraryLoadResult {
 
 interface BridgeLoadErrorContext {
   variant: BridgeVariant
-  preference: ZigPreference
   override: boolean
 }
 
@@ -87,79 +90,28 @@ function loadBridgeLibrary(): BridgeLibraryLoadResult {
     if (!existsSync(override)) {
       throw new Error(`Temporal Bun bridge override not found at ${override}`)
     }
-    const variant = detectBridgeVariantFromPath(override)
     try {
       return {
         module: dlopen(override, symbolMap),
         path: override,
-        variant,
+        variant: 'zig',
       }
     } catch (error) {
-      throw buildBridgeLoadError(override, error, {
-        variant,
-        preference: 'enable',
-        override: true,
-      })
+      throw buildBridgeLoadError(override, error, { variant: 'zig', override: true })
     }
   }
 
-  const preference = getZigPreference()
-  const candidates = resolveBridgeLibraryCandidates(preference)
+  const candidatePath = resolveZigBridgeLibraryPath()
 
-  let lastError: unknown = null
-  let lastCandidate: ResolvedBridgeCandidate | null = null
-
-  for (let index = 0; index < candidates.length; index += 1) {
-    const candidate = candidates[index]
-
-    let candidatePath: string
-    try {
-      candidatePath = candidate.resolvePath()
-    } catch (error) {
-      lastError = error
-
-      if (candidate.variant === 'zig') {
-        const nextVariant = candidates[index + 1]?.variant ?? null
-        logZigBridgeLoadFailure('(failed to resolve Zig bridge path)', error, nextVariant)
-        continue
-      }
-
-      throw error instanceof Error ? error : new Error(String(error))
+  try {
+    return {
+      module: dlopen(candidatePath, symbolMap),
+      path: candidatePath,
+      variant: 'zig',
     }
-
-    try {
-      return {
-        module: dlopen(candidatePath, symbolMap),
-        path: candidatePath,
-        variant: candidate.variant,
-      }
-    } catch (error) {
-      lastError = error
-      lastCandidate = { path: candidatePath, variant: candidate.variant }
-
-      if (candidate.variant === 'zig') {
-        const nextVariant = candidates[index + 1]?.variant ?? null
-        logZigBridgeLoadFailure(candidatePath, error, nextVariant)
-        continue
-      }
-
-      throw buildBridgeLoadError(candidatePath, error, {
-        variant: candidate.variant,
-        preference,
-        override: false,
-      })
-    }
+  } catch (error) {
+    throw buildBridgeLoadError(candidatePath, error, { variant: 'zig', override: false })
   }
-
-  if (lastCandidate) {
-    throw buildBridgeLoadError(lastCandidate.path, lastError, {
-      variant: lastCandidate.variant,
-      preference,
-      override: false,
-    })
-  }
-
-  throw new NativeBridgeError('No Temporal Bun bridge candidates were resolved.')
 }
 
 function buildBridgeSymbolMap() {
@@ -244,22 +196,27 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.ptr,
     },
+    temporal_bun_client_cancel_workflow: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.ptr,
+    },
+    temporal_bun_worker_new: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.ptr,
+    },
+    temporal_bun_worker_free: {
+      args: [FFIType.ptr],
+      returns: FFIType.void,
+    },
+    temporal_bun_worker_poll_workflow_task: {
+      args: [FFIType.ptr],
+      returns: FFIType.ptr,
+    },
+    temporal_bun_worker_complete_workflow_task: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.int32_t,
+    },
   }
-}
-
-function detectBridgeVariantFromPath(candidate: string): BridgeVariant {
-  return /temporal[-_]bun[-_]bridge[-_]zig/.test(candidate) ? 'zig' : 'rust'
-}
-
-function logZigBridgeLoadFailure(candidate: string, error: unknown, nextVariant: BridgeVariant | null): void {
-  const reason = error instanceof Error ? error.message : String(error)
-  let followUp = 'No additional bridge candidates are available.'
-  if (nextVariant === 'zig') {
-    followUp = 'Attempting the next Zig bridge candidate.'
-  } else if (nextVariant === 'rust') {
-    followUp = 'Falling back to the Rust bridge.'
-  }
-  console.warn(`Failed to load Zig bridge at ${candidate}. ${followUp}\nReason: ${reason}`, error)
 }
 
 function buildBridgeLoadError(libraryPath: string, error: unknown, context: BridgeLoadErrorContext): Error {
@@ -271,10 +228,6 @@ function buildBridgeLoadError(libraryPath: string, error: unknown, context: Brid
 
   if (context.override) {
     messages.push('Verify TEMPORAL_BUN_SDK_NATIVE_PATH or rebuild the specified library for this platform.')
-  } else if (context.variant === 'zig' && context.preference === 'enable') {
-    messages.push('TEMPORAL_BUN_SDK_USE_ZIG=1 requires a compatible Zig bridge; disable the flag to fall back to Rust.')
-  } else if (context.variant === 'rust') {
-    messages.push('The Rust bridge is deprecated. Use the Zig bridge with pre-built libraries instead.')
   }
 
   const failure = new NativeBridgeError(messages.join('. '))
@@ -304,6 +257,16 @@ const {
     temporal_bun_client_signal,
     temporal_bun_client_signal_with_start,
     temporal_bun_client_query_workflow,
+    temporal_bun_client_cancel_workflow,
+    temporal_bun_worker_new,
+    temporal_bun_worker_free,
+    temporal_bun_worker_poll_workflow_task,
+    temporal_bun_worker_complete_workflow_task,
+    temporal_bun_worker_poll_activity_task,
+    temporal_bun_worker_complete_activity_task,
+    temporal_bun_worker_record_activity_heartbeat,
+    temporal_bun_worker_initiate_shutdown,
+    temporal_bun_worker_finalize_shutdown,
   },
 } = nativeModule
 
@@ -422,12 +385,17 @@ export const native = {
     }
   },
 
-  async cancelWorkflow(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
-    void client
-    void _request
-    // TODO(codex): Route cancellations through `temporal_bun_client_cancel_workflow` when the FFI export
-    // exists (docs/ffi-surface.md).
-    return Promise.reject(buildNotImplementedError('Workflow cancel bridge', 'docs/ffi-surface.md'))
+  async cancelWorkflow(client: NativeClient, request: Record<string, unknown>): Promise<void> {
+    const payload = Buffer.from(JSON.stringify(request), 'utf8')
+    const pendingHandle = Number(temporal_bun_client_cancel_workflow(client.handle, ptr(payload), payload.byteLength))
+    if (!pendingHandle) {
+      throw buildNativeBridgeError()
+    }
+    try {
+      await waitForByteArray(pendingHandle)
+    } finally {
+      temporal_bun_pending_byte_array_free(pendingHandle)
+    }
   },
 
   async signalWithStart(client: NativeClient, request: Record<string, unknown>): Promise<Uint8Array> {
@@ -437,6 +405,84 @@ export const native = {
       throw buildNativeBridgeError()
     }
     return readByteArray(arrayPtr)
+  },
+
+  createWorker(runtime: Runtime, client: NativeClient, config: Record<string, unknown>): NativeWorker {
+    const payload = Buffer.from(JSON.stringify(config), 'utf8')
+    const handle = Number(temporal_bun_worker_new(runtime.handle, client.handle, ptr(payload), payload.byteLength))
+    if (!handle) {
+      throw buildNativeBridgeError()
+    }
+    return { type: 'worker', handle }
+  },
+
+  workerShutdown(worker: NativeWorker): void {
+    temporal_bun_worker_free(worker.handle)
+  },
+
+  async workerPollWorkflowTask(worker: NativeWorker): Promise<Uint8Array | null> {
+    const pendingHandle = Number(temporal_bun_worker_poll_workflow_task(worker.handle))
+    if (!pendingHandle) {
+      return null
+    }
+    try {
+      return await waitForByteArray(pendingHandle)
+    } finally {
+      temporal_bun_pending_byte_array_free(pendingHandle)
+    }
+  },
+
+  completeWorkflowTask(worker: NativeWorker, completion: Uint8Array): void {
+    const status = Number(
+      temporal_bun_worker_complete_workflow_task(worker.handle, ptr(completion), completion.byteLength),
+    )
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
+  async workerPollActivityTask(worker: NativeWorker): Promise<Uint8Array | null> {
+    const pendingHandle = Number(temporal_bun_worker_poll_activity_task(worker.handle))
+    if (!pendingHandle) {
+      return null
+    }
+    try {
+      return await waitForByteArray(pendingHandle)
+    } finally {
+      temporal_bun_pending_byte_array_free(pendingHandle)
+    }
+  },
+
+  completeActivityTask(worker: NativeWorker, completion: Uint8Array): void {
+    const status = Number(
+      temporal_bun_worker_complete_activity_task(worker.handle, ptr(completion), completion.byteLength),
+    )
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
+  recordActivityHeartbeat(worker: NativeWorker, details: Uint8Array): void {
+    const status = Number(
+      temporal_bun_worker_record_activity_heartbeat(worker.handle, ptr(details), details.byteLength),
+    )
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
+  workerInitiateShutdown(worker: NativeWorker): void {
+    const status = Number(temporal_bun_worker_initiate_shutdown(worker.handle))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
+  workerFinalizeShutdown(worker: NativeWorker): void {
+    const status = Number(temporal_bun_worker_finalize_shutdown(worker.handle))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
   },
 }
 
@@ -467,51 +513,31 @@ interface ResolvedBridgeCandidate {
   variant: BridgeVariant
 }
 
-function resolveBridgeLibraryCandidates(preference: ZigPreference): BridgeResolution[] {
-  const candidates: BridgeResolution[] = []
-  const attemptedZigPaths: string[] = []
+function resolveZigBridgeLibraryPath(): string {
+  const preference = getZigPreference()
+  const attemptedPaths: string[] = []
 
   if (preference !== 'disable') {
     const packaged = resolvePackagedZigBridgeLibraryPath()
-    attemptedZigPaths.push(...packaged.attempted)
+    attemptedPaths.push(...packaged.attempted)
     if (packaged.path) {
-      const zigPackagedPath = packaged.path
-      candidates.push({ resolvePath: () => zigPackagedPath, variant: 'zig' })
+      return packaged.path
     }
 
     const local = resolveLocalZigBridgeLibraryPath()
-    attemptedZigPaths.push(...local.attempted)
+    attemptedPaths.push(...local.attempted)
     if (local.path) {
-      const zigLocalPath = local.path
-      candidates.push({ resolvePath: () => zigLocalPath, variant: 'zig' })
-    }
-
-    if (attemptedZigPaths.length > 0 && !candidates.some((candidate) => candidate.variant === 'zig')) {
-      if (preference === 'enable') {
-        logMissingZigBridge(
-          attemptedZigPaths,
-          'TEMPORAL_BUN_SDK_USE_ZIG was enabled but no Zig bridge artefacts were found. Falling back to the Rust bridge.',
-        )
-      } else {
-        logMissingZigBridge(
-          attemptedZigPaths,
-          'No Zig bridge binary was located for this platform. Falling back to the Rust bridge.',
-        )
-      }
+      return local.path
     }
   }
 
-  const hasZigCandidate = candidates.some((candidate) => candidate.variant === 'zig')
-  if (!hasZigCandidate) {
-    candidates.push({ resolvePath: () => resolveRustBridgeLibraryPath(), variant: 'rust' })
-    return candidates
-  }
-
-  if (preference !== 'enable') {
-    candidates.push({ resolvePath: () => resolveRustBridgeLibraryPath(), variant: 'rust' })
-  }
-
-  return candidates
+  throw new NativeBridgeError(
+    [
+      `No Zig bridge binary was located for this platform.`,
+      `Searched the following locations:`,
+      ...(attemptedPaths.length ? [...new Set(attemptedPaths)].map((candidate) => `  • ${candidate}`) : ['  • <none>']),
+    ].join('\n'),
+  )
 }
 
 function getZigPreference(): ZigPreference {
@@ -571,15 +597,6 @@ function resolveLocalZigBridgeLibraryPath(): ZigLookupResult {
   return { path: null, attempted }
 }
 
-function logMissingZigBridge(paths: string[], message: string): void {
-  if (paths.length === 0) {
-    return
-  }
-  const uniquePaths = [...new Set(paths)]
-  const details = uniquePaths.map((candidate) => `  • ${candidate}`).join('\n')
-  console.warn(`${message}\nSearched the following locations:\n${details}`)
-}
-
 function getRuntimePlatform(): 'darwin' | 'linux' | null {
   if (process.platform === 'darwin') {
     return 'darwin'
@@ -618,46 +635,6 @@ function getZigDebugLibraryName(): string {
     return 'libtemporal_bun_bridge_zig_debug.dylib'
   }
   return 'libtemporal_bun_bridge_zig_debug.so'
-}
-
-function resolveRustBridgeLibraryPath(): string {
-  const baseName = getRustLibraryName()
-
-  const releasePath = join(rustBridgeTargetDir, 'release', baseName)
-  if (existsSync(releasePath)) {
-    return releasePath
-  }
-
-  const debugPath = join(rustBridgeTargetDir, 'debug', baseName)
-  if (existsSync(debugPath)) {
-    return debugPath
-  }
-
-  const depsDir = join(rustBridgeTargetDir, 'debug', 'deps')
-  if (existsSync(depsDir)) {
-    const prefix = baseName.replace(/\.[^./]+$/, '')
-    const candidate = readdirSync(depsDir)
-      .filter((file) => file.startsWith(prefix))
-      .map((file) => join(depsDir, file))
-      .find((file) => existsSync(file))
-    if (candidate) {
-      return candidate
-    }
-  }
-
-  throw new Error(
-    `Temporal Bun bridge library not found. Expected at ${releasePath} or ${debugPath}. Did you build the native bridge?`,
-  )
-}
-
-function getRustLibraryName(): string {
-  if (process.platform === 'win32') {
-    return 'temporal_bun_bridge.dll'
-  }
-  if (process.platform === 'darwin') {
-    return 'libtemporal_bun_bridge.dylib'
-  }
-  return 'libtemporal_bun_bridge.so'
 }
 
 function readByteArray(pointer: number): Uint8Array {

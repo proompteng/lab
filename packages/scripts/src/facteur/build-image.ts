@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { $ } from 'bun'
 import { resolve } from 'node:path'
+import { $ } from 'bun'
 import { ensureCli, repoRoot } from '../shared/cli'
 
 const execGit = (args: string[]): string => {

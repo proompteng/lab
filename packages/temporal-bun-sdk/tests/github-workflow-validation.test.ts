@@ -93,7 +93,7 @@ describe('GitHub Workflow Validation Tests', () => {
       const workflowContent = readFileSync(temporalStaticLibsWorkflow, 'utf-8')
 
       // Validate artifact naming pattern (using shell variable syntax)
-      expect(workflowContent).toContain('temporal-static-libs-${PLATFORM}-${ARCH}-${VERSION}.tar.gz')
+      expect(workflowContent).toContain(`temporal-static-libs-${'PLATFORM'}-${'ARCH'}-${'VERSION'}.tar.gz`)
 
       // Validate checksum file naming
       expect(workflowContent).toMatch(/\.tar\.gz\.sha256/)
@@ -263,7 +263,8 @@ describe('GitHub Workflow Validation Tests', () => {
 
         // Should use GITHUB_TOKEN for releases
         if (content.includes('softprops/action-gh-release')) {
-          expect(content).toContain('GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}')
+          const expectedTokenUsage = 'GITHUB_TOKEN: $' + '{{ secrets.GITHUB_TOKEN }}'
+          expect(content).toContain(expectedTokenUsage)
         }
       }
 

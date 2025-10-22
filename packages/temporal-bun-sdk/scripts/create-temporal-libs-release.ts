@@ -1,12 +1,9 @@
 #!/usr/bin/env bun
 
-import { execSync } from 'child_process'
-import { existsSync, mkdirSync, readdirSync, statSync, createWriteStream } from 'fs'
-import { join } from 'path'
-import { createHash } from 'crypto'
-import { createGzip } from 'zlib'
-import { createReadStream } from 'fs'
-import { pipeline } from 'stream/promises'
+import { execSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { createReadStream, existsSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 const PLATFORMS = [
   { os: 'linux', arch: 'arm64', target: 'aarch64-linux-gnu' },
@@ -123,7 +120,7 @@ async function main() {
       const checksumPath = await createChecksumFile(tarballPath)
 
       allFiles.push(tarballPath, checksumPath)
-    } catch (error) {
+    } catch (_error) {
       console.error(`Failed to build ${os}-${arch}, skipping...`)
     }
   }

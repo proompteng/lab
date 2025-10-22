@@ -8,6 +8,24 @@
     "moduleDetection": "force",
     "baseUrl": "./",
     "rootDirs": ["src", "vendor"],
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitReturns": true,
+    "noImplicitThis": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "exactOptionalPropertyTypes": false,
+    "noImplicitOverride": false,
+    "noPropertyAccessFromIndexSignature": false,
+    "noUncheckedIndexedAccess": false,
+    "noFallthroughCasesInSwitch": false,
+    "noUncheckedSideEffectImports": false,
+    "allowUnusedLabels": false,
+    "allowUnreachableCode": false,
     "paths": {
       "@proompteng/temporal-bun-sdk": ["src/index.ts"],
       "@proompteng/temporal-bun-sdk/common": ["src/common/index.ts"],
@@ -17,5 +35,6 @@
       "@proompteng/temporal-bun-sdk/client": ["src/client/index.ts"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "tests", "scripts"],
+  "exclude": ["node_modules", "dist", "native"]
 }

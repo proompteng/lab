@@ -49,11 +49,7 @@ const main = async () => {
   console.log(table)
 
   if (process.env.GITHUB_STEP_SUMMARY) {
-    await appendFile(
-      process.env.GITHUB_STEP_SUMMARY,
-      `## Froussard Coverage\n\n${table}\n\n`,
-      'utf8',
-    )
+    await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Froussard Coverage\n\n${table}\n\n`, 'utf8')
   }
 }
 

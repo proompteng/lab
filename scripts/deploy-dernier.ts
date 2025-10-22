@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { $ } from 'bun'
 import { Buffer } from 'node:buffer'
+import { $ } from 'bun'
 
 $.throws(true)
 

@@ -2,7 +2,6 @@
 
 @layer base {
   html {
-    /* biome-ignore lint/suspicious/noUnknownAtRules: Tailwind directives provided by build pipeline */
     @apply bg-zinc-900;
   }
 }

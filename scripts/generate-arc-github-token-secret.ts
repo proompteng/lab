@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
-import { $ } from 'bun'
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { $ } from 'bun'
 
 const fatal = (message: string, error?: unknown): never => {
   if (error instanceof Error) {
@@ -40,7 +40,7 @@ if (maybeOutput === '--help' || maybeOutput === '-h') {
   printUsage()
 }
 
-if (maybeOutput && maybeOutput.startsWith('-')) {
+if (maybeOutput?.startsWith('-')) {
   fatal(`Unknown flag '${maybeOutput}'. Pass an optional output path or nothing.`)
 }
 

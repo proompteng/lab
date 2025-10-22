@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { fileURLToPath } from 'node:url'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 import { bridgeVariant, native } from '../src/internal/core-bridge/native.ts'
 import { isTemporalServerAvailable, parseTemporalAddress } from './helpers/temporal-server'
 
@@ -47,7 +47,7 @@ suite('native bridge integration', () => {
       }
 
       await waitForWorkerReady(workerProcess)
-    } catch (error) {
+    } catch (_error) {
       console.warn('Skipping native integration tests: worker dependencies not available')
       // Set a flag to skip the actual tests
       workerProcess = null

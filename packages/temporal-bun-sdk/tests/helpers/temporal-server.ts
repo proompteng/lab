@@ -18,7 +18,7 @@ export const parseTemporalAddress = (raw: string): TemporalAddress => {
         port: url.port ? Number(url.port) : raw.startsWith('https://') ? 443 : 80,
       }
     }
-  } catch (error) {
+  } catch (_error) {
     // fall through to host:port parsing below if URL parsing fails
   }
 

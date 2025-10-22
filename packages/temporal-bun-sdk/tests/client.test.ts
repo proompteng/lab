@@ -1,61 +1,57 @@
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import type { TemporalConfig } from '../src/config'
 
-const ensureNativeBridgeStub = () => {
+const ensureNativeBridge = () => {
   const rootDir = fileURLToPath(new URL('..', import.meta.url))
-  const targetDir = join(rootDir, 'native/temporal-bun-bridge/target')
-  let binaryName: string
-  if (process.platform === 'win32') {
-    binaryName = 'temporal_bun_bridge.dll'
-  } else if (process.platform === 'darwin') {
-    binaryName = 'libtemporal_bun_bridge.dylib'
-  } else {
-    binaryName = 'libtemporal_bun_bridge.so'
-  }
-  const binaryPath = join(targetDir, 'debug', binaryName)
+  const libCandidates: string[] = []
 
-  if (existsSync(binaryPath)) {
-    return binaryPath
+  const platform = getRuntimePlatform()
+  const arch = getRuntimeArch()
+  const releaseName = getZigReleaseLibraryName()
+
+  if (platform && arch) {
+    libCandidates.push(join(rootDir, 'dist/native', platform, arch, releaseName))
+    libCandidates.push(join(rootDir, 'native/temporal-bun-bridge-zig/zig-out/lib', platform, arch, releaseName))
   }
 
-  const fixturesDir = join(rootDir, 'tests/fixtures')
-  const stubSource = join(fixturesDir, 'stub_temporal_bridge.c')
-  mkdirSync(join(targetDir, 'debug'), { recursive: true })
+  libCandidates.push(join(rootDir, 'native/temporal-bun-bridge-zig/zig-out/lib', releaseName))
 
-  const compilerArgs: string[] = []
-  if (process.platform === 'darwin') {
-    compilerArgs.push('-dynamiclib')
-  } else if (process.platform === 'win32') {
-    compilerArgs.push('-shared')
-  } else {
-    compilerArgs.push('-shared', '-fPIC')
-  }
-  compilerArgs.push(stubSource, '-o', binaryPath)
-
-  // Check if C compiler is available
-  const ccCheck = spawnSync('which', ['cc'], { stdio: 'pipe' })
-  if (ccCheck.status !== 0) {
-    console.warn('C compiler not available, skipping native bridge stub compilation')
-    return null
+  for (const candidate of libCandidates) {
+    if (existsSync(candidate)) {
+      return candidate
+    }
   }
 
-  const result = spawnSync('cc', compilerArgs, { stdio: 'inherit' })
-  if (result.status !== 0) {
-    throw new Error('Failed to compile Temporal bridge stub for tests')
-  }
-
-  return binaryPath
+  return null
 }
 
-const stubPath = ensureNativeBridgeStub()
+const getRuntimePlatform = () => {
+  if (process.platform === 'darwin') return 'darwin'
+  if (process.platform === 'linux') return 'linux'
+  return null
+}
 
-let createTemporalClient: any
-let NativeBridgeError: any
-let native: any
+const getRuntimeArch = () => {
+  if (process.arch === 'arm64') return 'arm64'
+  if (process.arch === 'x64') return 'x64'
+  return null
+}
+
+const getZigReleaseLibraryName = () => {
+  if (process.platform === 'win32') return 'temporal_bun_bridge_zig.dll'
+  if (process.platform === 'darwin') return 'libtemporal_bun_bridge_zig.dylib'
+  return 'libtemporal_bun_bridge_zig.so'
+}
+
+const stubPath = ensureNativeBridge()
+
+let createTemporalClient: typeof import('../src/client.js').createTemporalClient | undefined
+let NativeBridgeError: typeof import('../src/internal/core-bridge/native.js').NativeBridgeError | undefined
+let native: typeof import('../src/internal/core-bridge/native.js').native | undefined
 
 if (stubPath) {
   const clientModule = await import('../src/client')

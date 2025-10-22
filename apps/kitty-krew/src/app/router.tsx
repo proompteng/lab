@@ -1,14 +1,12 @@
-import { createRouter as createTanStackRouter } from '@tanstack/react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createRouter as createTanStackRouter } from '@tanstack/react-router'
 import { createTRPCClient, unstable_httpBatchStreamLink } from '@trpc/client'
 import { createTRPCOptionsProxy } from '@trpc/tanstack-react-query'
-
-// Import the generated route tree
-import { routeTree } from './routeTree.gen'
-
-import { Spinner } from '../components/spinner.tsx'
 import type { AppRouter } from '~/server/routers/_app.ts'
 import { transformer } from '~/utils/transformer.ts'
+import { Spinner } from '../components/spinner.tsx'
+// Import the generated route tree
+import { routeTree } from './routeTree.gen'
 
 export const queryClient = new QueryClient()
 

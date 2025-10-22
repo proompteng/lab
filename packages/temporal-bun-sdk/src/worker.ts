@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import { NativeConnection, type NativeConnectionOptions, Worker, type WorkerOptions } from '@temporalio/worker'
-import { loadTemporalConfig, type TemporalConfig } from './config'
 import * as defaultActivities from './activities'
+import { loadTemporalConfig, type TemporalConfig } from './config'
 
 const DEFAULT_WORKFLOWS_PATH = fileURLToPath(new URL('./workflows/index.js', import.meta.url))
 

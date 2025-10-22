@@ -18,6 +18,19 @@ pub const ClientKeepAliveOptions = c.TemporalCoreClientKeepAliveOptions;
 pub const ClientHttpConnectProxyOptions = c.TemporalCoreClientHttpConnectProxyOptions;
 
 pub const Worker = c.TemporalCoreWorker;
+pub const WorkerOptions = c.TemporalCoreWorkerOptions;
+pub const WorkerOrFail = c.TemporalCoreWorkerOrFail;
+pub const WorkerVersioningStrategy = c.TemporalCoreWorkerVersioningStrategy;
+pub const WorkerVersioningStrategyTag = c.TemporalCoreWorkerVersioningStrategy_Tag;
+pub const WorkerVersioningNone = c.TemporalCoreWorkerVersioningNone;
+pub const WorkerVersioningStrategyUnion = c.union_unnamed_4;
+pub const WorkerVersioningStrategyNone = c.struct_unnamed_5;
+pub const TunerHolder = c.TemporalCoreTunerHolder;
+pub const DefaultTuner = c.TemporalCoreDefaultTuner;
+pub const PollerBehavior = c.TemporalCorePollerBehavior;
+pub const PollerBehaviorSimpleMaximum = c.TemporalCorePollerBehaviorSimpleMaximum;
+pub const PollerBehaviorAutoscaling = c.TemporalCorePollerBehaviorAutoscaling;
+pub const ByteArrayRefArray = c.TemporalCoreByteArrayRefArray;
 
 pub const RpcService = c.TemporalCoreRpcService;
 pub const RpcCallOptions = c.TemporalCoreRpcCallOptions;
@@ -35,6 +48,7 @@ pub const ByteBuf = ByteArray;
 pub const ByteBufDestroyFn = *const fn (?*RuntimeOpaque, ?*const ByteBuf) callconv(.c) void;
 
 pub const WorkerCallback = c.TemporalCoreWorkerCallback;
+pub const WorkerPollCallback = c.TemporalCoreWorkerPollCallback;
 pub const WorkerCompleteFn =
     *const fn (?*WorkerOpaque, ByteArrayRef, ?*anyopaque, WorkerCallback) callconv(.c) void;
 pub const RuntimeByteArrayFreeFn =
@@ -166,7 +180,67 @@ pub const Api = struct {
     client_update_metadata: *const fn (?*Client, ByteArrayRef) callconv(.c) void,
     client_update_api_key: *const fn (?*Client, ByteArrayRef) callconv(.c) void,
     client_rpc_call: *const fn (?*Client, *const RpcCallOptions, ?*anyopaque, ClientRpcCallCallback) callconv(.c) void,
+    worker_new: *const fn (?*Client, *const WorkerOptions) callconv(.c) WorkerOrFail,
+    worker_free: *const fn (?*Worker) callconv(.c) void,
+    worker_poll_workflow_activation: *const fn (?*Worker, ?*anyopaque, WorkerPollCallback) callconv(.c) void,
+    worker_poll_activity_task: *const fn (?*Worker, ?*anyopaque, WorkerPollCallback) callconv(.c) void,
+    worker_complete_activity_task: *const fn (?*Worker, ByteArrayRef, ?*anyopaque, WorkerCallback) callconv(.c) void,
+    worker_record_activity_heartbeat: *const fn (?*Worker, ByteArrayRef) callconv(.c) ?*const ByteArray,
+    worker_initiate_shutdown: *const fn (?*Worker) callconv(.c) void,
+    worker_finalize_shutdown: *const fn (?*Worker, ?*anyopaque, WorkerCallback) callconv(.c) void,
 };
+
+fn stubWorkerNew(_client: ?*Client, _options: *const WorkerOptions) callconv(.c) WorkerOrFail {
+    _ = _client;
+    _ = _options;
+    return WorkerOrFail{
+        .worker = null,
+        .fail = &fallback_error_array,
+    };
+}
+
+fn stubWorkerFree(_worker: ?*Worker) callconv(.c) void {
+    _ = _worker;
+}
+
+fn stubWorkerPollWorkflowActivation(_worker: ?*Worker, user_data: ?*anyopaque, callback: WorkerPollCallback) callconv(.c) void {
+    _ = _worker;
+    if (callback) |cb| {
+        cb(user_data, null, &fallback_error_array);
+    }
+}
+
+fn stubWorkerPollActivityTask(_worker: ?*Worker, user_data: ?*anyopaque, callback: WorkerPollCallback) callconv(.c) void {
+    _ = _worker;
+    if (callback) |cb| {
+        cb(user_data, null, &fallback_error_array);
+    }
+}
+
+fn stubWorkerCompleteActivityTask(_worker: ?*Worker, _completion: ByteArrayRef, user_data: ?*anyopaque, _callback: WorkerCallback) callconv(.c) void {
+    _ = _worker;
+    _ = _completion;
+    if (_callback) |cb| {
+        cb(user_data, &fallback_error_array);
+    }
+}
+
+fn stubWorkerRecordActivityHeartbeat(_worker: ?*Worker, _details: ByteArrayRef) callconv(.c) ?*const ByteArray {
+    _ = _worker;
+    _ = _details;
+    return &fallback_error_array;
+}
+
+fn stubWorkerInitiateShutdown(_worker: ?*Worker) callconv(.c) void {
+    _ = _worker;
+}
+
+fn stubWorkerFinalizeShutdown(_worker: ?*Worker, user_data: ?*anyopaque, _callback: WorkerCallback) callconv(.c) void {
+    _ = _worker;
+    if (_callback) |cb| {
+        cb(user_data, &fallback_error_array);
+    }
+}
 
 pub const stub_api: Api = .{
     .runtime_new = stubRuntimeNew,
@@ -177,6 +251,14 @@ pub const stub_api: Api = .{
     .client_update_metadata = stubClientUpdateMetadata,
     .client_update_api_key = stubClientUpdateApiKey,
     .client_rpc_call = stubClientRpcCall,
+    .worker_new = stubWorkerNew,
+    .worker_free = stubWorkerFree,
+    .worker_poll_workflow_activation = stubWorkerPollWorkflowActivation,
+    .worker_poll_activity_task = stubWorkerPollActivityTask,
+    .worker_complete_activity_task = stubWorkerCompleteActivityTask,
+    .worker_record_activity_heartbeat = stubWorkerRecordActivityHeartbeat,
+    .worker_initiate_shutdown = stubWorkerInitiateShutdown,
+    .worker_finalize_shutdown = stubWorkerFinalizeShutdown,
 };
 
 pub const extern_api: Api = .{
@@ -188,6 +270,14 @@ pub const extern_api: Api = .{
     .client_update_metadata = c.temporal_core_client_update_metadata,
     .client_update_api_key = c.temporal_core_client_update_api_key,
     .client_rpc_call = c.temporal_core_client_rpc_call,
+    .worker_new = c.temporal_core_worker_new,
+    .worker_free = c.temporal_core_worker_free,
+    .worker_poll_workflow_activation = c.temporal_core_worker_poll_workflow_activation,
+    .worker_poll_activity_task = c.temporal_core_worker_poll_activity_task,
+    .worker_complete_activity_task = c.temporal_core_worker_complete_activity_task,
+    .worker_record_activity_heartbeat = c.temporal_core_worker_record_activity_heartbeat,
+    .worker_initiate_shutdown = c.temporal_core_worker_initiate_shutdown,
+    .worker_finalize_shutdown = c.temporal_core_worker_finalize_shutdown,
 };
 
 pub var api: Api = stub_api;

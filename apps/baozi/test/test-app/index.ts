@@ -1,7 +1,7 @@
 import { serve } from 'bun'
 
 serve({
-  fetch(req: Request) {
+  fetch(_req: Request) {
     return new Response('Hello from Bun S2I!')
   },
   port: 3000, // Default port exposed in Dockerfile

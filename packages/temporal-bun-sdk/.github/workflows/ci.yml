@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  type-check:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Type check
+        run: pnpm --filter @proompteng/temporal-bun-sdk run type-check
+
+      - name: Type check tests
+        run: pnpm --filter @proompteng/temporal-bun-sdk run type-check:tests
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run Biome
+        run: pnpm --filter @proompteng/temporal-bun-sdk exec biome check .
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build package
+        run: pnpm --filter @proompteng/temporal-bun-sdk build
+
+      - name: Run tests
+        run: pnpm --filter @proompteng/temporal-bun-sdk test
+
+  build-native:
+    name: Build Native Libraries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: ziglang/setup-zig@v1
+        with:
+          zig-version: "0.12.0"
+
+      - name: Build Zig libraries
+        run: |
+          cd packages/temporal-bun-sdk/native/temporal-bun-bridge-zig
+          zig build -Doptimize=ReleaseFast
+
+  integration-test:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    services:
+      temporal:
+        image: temporalio/auto-setup:latest
+        ports:
+          - 7233:7233
+        env:
+          DB: postgresql
+          DB_PORT: 5432
+          POSTGRES_USER: temporal
+          POSTGRES_PWD: temporal
+          POSTGRES_SEEDS: postgresql
+          DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build package
+        run: pnpm --filter @proompteng/temporal-bun-sdk build
+
+      - name: Wait for Temporal
+        run: |
+          timeout 60 bash -c 'until curl -f http://localhost:7233/api/v1/namespaces; do sleep 2; done'
+
+      - name: Run integration tests
+        run: pnpm --filter @proompteng/temporal-bun-sdk test tests/end-to-end-integration.test.ts
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run security audit
+        run: pnpm audit --audit-level moderate
+
+  publish-check:
+    name: Publish Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build package
+        run: pnpm --filter @proompteng/temporal-bun-sdk build
+
+      - name: Check package
+        run: pnpm --filter @proompteng/temporal-bun-sdk pack --dry-run

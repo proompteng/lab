@@ -1,7 +1,7 @@
-import { generateOgImageParams, getPageImage, source } from '@/lib/source'
 import { generate as DefaultImage } from 'fumadocs-ui/og'
-import { ImageResponse } from 'next/og'
 import { notFound } from 'next/navigation'
+import { ImageResponse } from 'next/og'
+import { generateOgImageParams, source } from '@/lib/source'
 
 export const revalidate = false
 

@@ -1,10 +1,10 @@
-import React from 'react'
-import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
+import { createFileRoute, Link } from '@tanstack/react-router'
+import React from 'react'
 import { trpc } from '~/app/router.tsx'
 import type { Pod } from '~/common/schemas/pod.ts'
-import { StatusBadge } from '~/components/status-badge'
 import { MultiSelect } from '~/components/multi-select'
+import { StatusBadge } from '~/components/status-badge'
 
 interface PodTableProps {
   pods?: Pod[]

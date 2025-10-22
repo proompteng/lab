@@ -8,7 +8,7 @@ import type {
 
 const DOCS_ROOT = 'packages/temporal-bun-sdk/docs'
 const FFI_SURFACE_DOC = `${DOCS_ROOT}/ffi-surface.md`
-const CLIENT_RUNTIME_DOC = `${DOCS_ROOT}/client-runtime.md`
+const _CLIENT_RUNTIME_DOC = `${DOCS_ROOT}/client-runtime.md`
 
 const notImplemented = (feature: string, docPath: string): never => {
   throw new Error(`${feature} is not implemented yet. See ${docPath} for the step-by-step plan.`)

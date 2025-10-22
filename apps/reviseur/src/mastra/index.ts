@@ -1,5 +1,5 @@
-import { Mastra } from '@mastra/core/mastra'
 import { createLogger } from '@mastra/core/logger'
+import { Mastra } from '@mastra/core/mastra'
 import { githubAgent } from './agents/github.ts'
 
 export const mastra = new Mastra({
