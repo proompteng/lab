@@ -108,7 +108,7 @@ Import workflow primitives from the SDK so Bun can bundle Temporal’s determini
 runtime correctly.
 
 ```ts title="workers/workflows.ts"
-import { proxyActivities } from '@proompteng/temporal-bun-sdk/workflow'
+import { proxyActivities } from '@proompteng/temporal-bun-sdk'
 import type { Activities } from '../activities.ts'
 
 const activities = proxyActivities<Activities>({
