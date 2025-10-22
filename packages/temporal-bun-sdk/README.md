@@ -13,6 +13,16 @@ A Bun-first Temporal SDK for building workflows and activities with Bun runtime.
 - **Serialization**: Handles BigInt, Date, ArrayBuffer, and complex objects
 - **Memory Management**: Efficient memory usage and garbage collection
 
+## Current Limitations (Alpha)
+
+- Workflow client helpers still rely on in-progress Zig FFI implementations for _signal_, _query_, _cancel_, _terminate_, and _signal-with-start_. These APIs currently throw "not implemented" errors at runtime.
+- The Bun `WorkerRuntime` is scaffolded but does not yet drive Temporal activations/activities. A Node worker shim remains in place until the Bun runtime is finished.
+- Telemetry and logger hooks (`configureTelemetry`, `installLogger`) surface TODO errors.
+- TLS configuration accepts file paths; conversion to base64 PEM payloads happens on the native side and lacks exhaustive error reporting.
+- Tests still include legacy references to the Rust bridge directory; the native loader exclusively targets Zig artefacts located under `native/temporal-bun-bridge-zig/`.
+
+> Track remaining work in `docs/ffi-surface.md` (Function Matrix) and `docs/zig-bridge-migration-plan.md`.
+
 ## Features
 - Zod-backed environment parsing (`loadTemporalConfig`) with sane defaults and TLS loading.
 - Factories for Temporal connections, workflow clients, and workers.

@@ -104,11 +104,11 @@ Bun (bun:ffi) ──▶ Zig Bridge (libtemporal_bun_bridge.zig)
 
 | Phase | Scope | Deliverables | Exit Criteria |
 |-------|-------|--------------|---------------|
-| 0 — Scaffolding | Add `native/temporal-bun-bridge-zig` with `build.zig`, hook into `pnpm build:native`. Generate C headers from Rust core (temporary). | Passing `zig build install` producing `.so/.dylib/.dll`, TypeScript loads via `bun:ffi` override behind feature flag. | `bun run packages/temporal-bun-sdk/scripts/smoke-client.ts` connects & describes namespace using Zig library gated by `TEMPORAL_BUN_SDK_USE_ZIG=1`. |
-| 1 — Client Parity | Reimplement runtime + client connect + describe + start workflow. Maintain async pending handles. | Toggle default to Zig bridge on CI when env flag enabled. Update TS to fall back to Rust when Zig load fails. | `bun test` suite passes with Zig shared lib; docs updated. |
+| 0 — Scaffolding | ✅ Added `native/temporal-bun-bridge-zig` with `build.zig`, loader now defaults to Zig. Rust fallback removed from TypeScript. | Passing `zig build` produces `.so/.dylib` and is consumed via `bun:ffi`. | `bun run build:native` succeeds with Zig artefacts only. |
+| 1 — Client Parity | Reimplement runtime + client connect + describe + start workflow. Maintain async pending handles. | Toggle default to Zig bridge on CI when env flag enabled. | `bun test` suite passes with Zig shared lib for connect/describe/start (partial). |
 | 2 — Client Enhancements | Implement signal/query/terminate/cancel/signalWithStart + metadata updates. Add telemetry + logger support. | All TODOs in `src/internal/core-bridge/native.ts` removed or delegated to Zig. | Temporal integration tests (docker compose) green under Zig path. |
 | 3 — Worker Runtime | Port worker creation, poll/complete, activity heartbeat. Mirror existing FFI blueprint. | `temporal-bun-worker` binary runs end-to-end solely on Zig bridge. | Example app runs against Temporal server without Rust artifacts. |
-| 4 — Cleanup & Release | ✅ **COMPLETED** - Removed Rust bridge, deprecated Cargo build scripts, published prebuilt binaries (GitHub releases). | ✅ No Rust toolchain needed for consumers; README + scripts updated. |
+| 4 — Cleanup & Release | Remove legacy Rust crate, publish prebuilt Zig binaries (GitHub releases). | CI artifacts uploaded for macOS/Linux; README + scripts updated. | npm release ready with Zig-only bridge. |
 
 ---
 
@@ -119,9 +119,9 @@ Bun (bun:ffi) ──▶ Zig Bridge (libtemporal_bun_bridge.zig)
    ```json
    "build:native": "USE_PREBUILT_LIBS=true bun run libs:download && USE_PREBUILT_LIBS=true zig build -Doptimize=ReleaseFast --build-file native/temporal-bun-bridge-zig/build.zig"
    ```
-3. **CI Images** — ✅ **COMPLETED** - Removed Rust from Docker images, using only Zig with pre-built libraries.  
-4. **Prebuilt Artifacts** — Use `zig build install` to stage artifacts under `native/artifacts/<platform>/`.  
-5. **NPM Packaging** — Update publish step to copy Zig binaries into `dist/native/<platform>/`.
+3. **CI Images** — ⚙️ In progress; Rust toolchain still present for legacy tests but no longer used by loader.  
+4. **Prebuilt Artifacts** — Use `zig build install` to stage artifacts under `native/temporal-bun-bridge-zig/zig-out/lib/<platform>/<arch>/`.  
+5. **NPM Packaging** — Update publish step to copy Zig binaries into `dist/native/<platform>/<arch>/`.
 
 ---
 

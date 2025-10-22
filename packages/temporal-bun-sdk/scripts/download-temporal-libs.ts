@@ -31,6 +31,12 @@ interface ReleaseAsset {
 
 interface Release {
   assets: ReleaseAsset[]
+  tag_name?: string
+}
+
+interface ReleaseSummary {
+  tag_name?: string
+  url: string
 }
 
 interface DownloadClient {
@@ -64,18 +70,20 @@ class TemporalLibsDownloadClient implements DownloadClient {
   async downloadLibraries(version: string = 'latest'): Promise<LibrarySet> {
     const platform = this.detectPlatform()
 
-    // Check cache first
-    const cached = this.getCachedLibraries(version)
-    if (cached) {
-      console.log(`Using cached libraries for ${platform.platform} ${version}`)
-      return cached
-    }
-
-    console.log(`Downloading libraries for ${platform.platform} ${version}`)
-
     try {
       // Get release info
       const release = await this.getReleaseInfo(version)
+      const resolvedVersion = this.resolveVersion(version, release)
+
+      // Check cache after resolving actual version
+      const cached = this.getCachedLibraries(resolvedVersion)
+      if (cached) {
+        console.log(`Using cached libraries for ${platform.platform} ${resolvedVersion}`)
+        return cached
+      }
+
+      console.log(`Downloading libraries for ${platform.platform} ${resolvedVersion}`)
+
       const asset = this.findAssetForPlatform(release, platform.platform)
 
       if (!asset) {
@@ -83,17 +91,17 @@ class TemporalLibsDownloadClient implements DownloadClient {
       }
 
       // Download the asset
-      const downloadPath = await this.downloadAsset(asset, version)
+      const downloadPath = await this.downloadAsset(asset, resolvedVersion)
 
       // Verify checksum
       const checksumAsset = this.findChecksumAsset(release, platform.platform)
       if (checksumAsset) {
-        const checksumPath = await this.downloadAsset(checksumAsset, version)
+        const checksumPath = await this.downloadAsset(checksumAsset, resolvedVersion)
         await this.verifyChecksumFile(downloadPath, checksumPath)
       }
 
       // Extract and cache
-      const librarySet = await this.extractAndCache(downloadPath, platform.platform, version)
+      const librarySet = await this.extractAndCache(downloadPath, platform.platform, resolvedVersion)
 
       return librarySet
     } catch (error) {
@@ -135,17 +143,18 @@ class TemporalLibsDownloadClient implements DownloadClient {
     }
   }
 
-  private async getReleaseInfo(version: string): Promise<unknown> {
+  private async getReleaseInfo(version: string): Promise<Release> {
     const repoBase = `${this.baseUrl}/repos/${this.ownerRepo}`
-    const url =
-      version === 'latest' ? `${repoBase}/releases/latest` : `${repoBase}/releases/tags/${this.resolveTag(version)}`
 
-    const response = await fetch(url)
-    if (!response.ok) {
-      throw new Error(`Failed to fetch release info: ${response.statusText}`)
+    if (version === 'latest') {
+      const releaseUrl = await this.findLatestTemporalLibsReleaseUrl(repoBase)
+      if (!releaseUrl) {
+        throw new Error('Failed to locate latest Temporal static libraries release')
+      }
+      return await this.fetchRelease(releaseUrl)
     }
 
-    return await response.json()
+    return await this.fetchRelease(`${repoBase}/releases/tags/${this.resolveTag(version)}`)
   }
 
   private resolveTag(version: string): string {
@@ -156,6 +165,43 @@ class TemporalLibsDownloadClient implements DownloadClient {
       return `temporal-libs-${version}`
     }
     return `temporal-libs-v${version}`
+  }
+
+  private resolveVersion(requestedVersion: string, release: Release): string {
+    if (requestedVersion === 'latest') {
+      return release.tag_name ?? 'latest'
+    }
+    if (release.tag_name) {
+      return release.tag_name
+    }
+    return this.resolveTag(requestedVersion)
+  }
+
+  private async findLatestTemporalLibsReleaseUrl(repoBase: string): Promise<string | undefined> {
+    const perPage = 50
+    for (let page = 1; page <= 5; page++) {
+      const response = await this.githubFetch(`${repoBase}/releases?per_page=${perPage}&page=${page}`)
+      if (!response.ok) {
+        throw new Error(`Failed to list releases: ${response.statusText}`)
+      }
+      const releases = (await response.json()) as ReleaseSummary[]
+      const match = releases.find((rel) => rel.tag_name?.startsWith('temporal-libs-'))
+      if (match) {
+        return match.url
+      }
+      if (releases.length < perPage) {
+        break
+      }
+    }
+    return undefined
+  }
+
+  private async fetchRelease(url: string): Promise<Release> {
+    const response = await this.githubFetch(url)
+    if (!response.ok) {
+      throw new Error(`Failed to fetch release info: ${response.statusText}`)
+    }
+    return (await response.json()) as Release
   }
 
   private findAssetForPlatform(release: Release, platform: string): ReleaseAsset | undefined {
@@ -170,16 +216,17 @@ class TemporalLibsDownloadClient implements DownloadClient {
     )
   }
 
-  private async downloadAsset(asset: ReleaseAsset, _version: string): Promise<string> {
+  private async downloadAsset(asset: ReleaseAsset, version: string): Promise<string> {
     const response = await fetch(asset.browser_download_url)
     if (!response.ok) {
       throw new Error(`Failed to download asset: ${response.statusText}`)
     }
 
     const buffer = await response.arrayBuffer()
-    const downloadPath = join(this.cacheDir, 'downloads', `${asset.name}`)
+    const downloadDir = join(this.cacheDir, 'downloads', version)
+    const downloadPath = join(downloadDir, asset.name)
 
-    mkdirSync(join(this.cacheDir, 'downloads'), { recursive: true })
+    mkdirSync(downloadDir, { recursive: true })
     writeFileSync(downloadPath, Buffer.from(buffer))
 
     return downloadPath
@@ -222,6 +269,26 @@ class TemporalLibsDownloadClient implements DownloadClient {
     writeFileSync(manifestPath, JSON.stringify(librarySet, null, 2))
 
     return librarySet
+  }
+
+  private async githubFetch(url: string, init: RequestInit = {}): Promise<Response> {
+    const headers: HeadersInit = {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'temporal-bun-sdk-download',
+    }
+
+    const token = process.env.TEMPORAL_LIBS_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN
+    if (token) {
+      headers.Authorization = `Bearer ${token}`
+    }
+
+    return await fetch(url, {
+      ...init,
+      headers: {
+        ...headers,
+        ...(init.headers ?? {}),
+      },
+    })
   }
 }
 
