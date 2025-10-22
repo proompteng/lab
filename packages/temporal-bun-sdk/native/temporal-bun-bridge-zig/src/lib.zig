@@ -129,6 +129,16 @@ pub export fn temporal_bun_byte_array_free(handle: ?*byte_array.ByteArray) void 
     byte_array.free(handle);
 }
 
+pub export fn temporal_bun_byte_array_metrics_snapshot(out_ptr: ?*byte_array.ByteArrayMetrics) void {
+    if (out_ptr) |ptr| {
+        ptr.* = byte_array.metricsSnapshot();
+    }
+}
+
+pub export fn temporal_bun_byte_array_metrics_reset() void {
+    byte_array.resetMetrics();
+}
+
 pub export fn temporal_bun_client_start_workflow(
     client_ptr: ?*client.ClientHandle,
     payload_ptr: ?[*]const u8,
