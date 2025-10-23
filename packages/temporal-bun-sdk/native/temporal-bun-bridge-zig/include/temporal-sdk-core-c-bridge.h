@@ -645,9 +645,11 @@ typedef void (*TemporalCoreCustomSlotSupplierReleaseCallback)(const struct Tempo
 typedef bool (*TemporalCoreCustomSlotSupplierAvailableSlotsCallback)(uintptr_t *available_slots,
                                                                      void *user_data);
 
+struct TemporalCoreCustomSlotSupplierCallbacks;
+
 typedef void (*TemporalCoreCustomSlotSupplierFreeCallback)(const struct TemporalCoreCustomSlotSupplierCallbacks *userimpl);
 
-typedef struct TemporalCoreCustomSlotSupplierCallbacks {
+struct TemporalCoreCustomSlotSupplierCallbacks {
   /**
    * Called to initiate asynchronous slot reservation. `ctx` contains information about
    * reservation request. The pointer is only valid for the duration of the function call; the
@@ -704,7 +706,9 @@ typedef struct TemporalCoreCustomSlotSupplierCallbacks {
    * Passed as an extra argument to the callbacks.
    */
   void *user_data;
-} TemporalCoreCustomSlotSupplierCallbacks;
+};
+
+typedef struct TemporalCoreCustomSlotSupplierCallbacks TemporalCoreCustomSlotSupplierCallbacks;
 
 typedef struct TemporalCoreCustomSlotSupplierCallbacksImpl {
   const struct TemporalCoreCustomSlotSupplierCallbacks *_0;

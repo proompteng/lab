@@ -85,7 +85,7 @@ fn validateWorkerHandle(handle: ?*WorkerHandle) ?*WorkerHandle {
     return worker_handle;
 }
 
-const WorkerHandle = struct {
+pub const WorkerHandle = struct {
     id: u64,
     runtime: ?*runtime.RuntimeHandle,
     client: ?*client.ClientHandle,
