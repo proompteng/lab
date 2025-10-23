@@ -52,6 +52,7 @@ fn initPollContext(
     return context;
 }
 
+// Transfers ownership of a core-managed byte array into the bridge-managed representation.
 fn adoptCoreByteArray(runtime_handle: *runtime.RuntimeHandle, bytes_ptr: *const core.ByteArray) ?*byte_array.ByteArray {
     if (runtime_handle == null or runtime_handle.?.core_runtime == null) {
         errors.setStructuredErrorJson(.{ .code = grpc.failed_precondition, .message = "temporal-bun-bridge-zig: runtime handle is not initialized", .details = null });
