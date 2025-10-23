@@ -23,6 +23,13 @@ spec:
               argocd.argoproj.io/sync-wave: "-1"
             automation: auto
             enabled: "true"
+          - name: nats-operator
+            path: argocd/applications/nats-operator
+            namespace: nats-operator
+            annotations:
+              argocd.argoproj.io/sync-wave: "-1"
+            automation: auto
+            enabled: "true"
           - name: external-dns
             path: argocd/applications/external-dns
             namespace: external-dns
