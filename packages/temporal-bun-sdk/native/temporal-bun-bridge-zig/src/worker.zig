@@ -4,11 +4,99 @@ const runtime = @import("runtime.zig");
 const client = @import("client.zig");
 const pending = @import("pending.zig");
 const core = @import("core.zig");
-const builtin = @import("builtin");
+const byte_array = @import("byte_array.zig");
 
 const grpc = pending.GrpcStatus;
 
-pub const WorkerHandle = struct {
+const TaskKind = enum { workflow, activity };
+
+const WorkerPollContext = struct {
+    pending_handle: *pending.PendingByteArray,
+    runtime_handle: *runtime.RuntimeHandle,
+    worker_handle: *WorkerHandle,
+    kind: TaskKind,
+};
+
+fn adoptCoreByteArray(runtime_handle: *runtime.RuntimeHandle, bytes_ptr: *const core.ByteArray) ?*byte_array.ByteArray {
+    if (runtime_handle == null or runtime_handle.?.core_runtime == null) {
+        errors.setStructuredErrorJson(.{ .code = grpc.failed_precondition, .message = "temporal-bun-bridge-zig: runtime handle is not initialized", .details = null });
+        return null;
+    }
+
+    return byte_array.adoptCoreByteBuf(@constCast(bytes_ptr), core.api.byte_array_free) orelse {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to adopt core byte array", .details = null });
+        return null;
+    };
+}
+
+fn makeByteArrayRef(slice: []const u8) core.ByteArrayRef {
+    return if (slice.len == 0)
+        .{ .data = null, .size = 0 }
+    else
+        .{ .data = slice.ptr, .size = slice.len };
+}
+
+fn initPollContext(
+    worker_handle: *WorkerHandle,
+    runtime_handle: *runtime.RuntimeHandle,
+    pending_handle: *pending.PendingByteArray,
+    kind: TaskKind,
+) ?*WorkerPollContext {
+    const allocator = std.heap.c_allocator;
+    const context = allocator.create(WorkerPollContext) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = "temporal-bun-bridge-zig: failed to allocate worker poll context", .details = null });
+        return null;
+    };
+
+    context.* = .{
+        .pending_handle = pending_handle,
+        .runtime_handle = runtime_handle,
+        .worker_handle = worker_handle,
+        .kind = kind,
+    };
+
+    if (!pending.retain(pending_handle)) {
+        allocator.destroy(context);
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to retain pending handle", .details = null });
+        return null;
+    }
+
+    return context;
+}
+
+fn adoptCoreByteArray(runtime_handle: *runtime.RuntimeHandle, bytes_ptr: *const core.ByteArray) ?*byte_array.ByteArray {
+    if (runtime_handle == null or runtime_handle.?.core_runtime == null) {
+        errors.setStructuredErrorJson(.{ .code = grpc.failed_precondition, .message = "temporal-bun-bridge-zig: runtime handle is not initialized", .details = null });
+        return null;
+    }
+
+    return byte_array.adoptCoreByteBuf(@constCast(bytes_ptr), core.api.byte_array_free) orelse {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to adopt core byte array", .details = null });
+        return null;
+    };
+}
+
+fn validateWorkerHandle(handle: ?*WorkerHandle) ?*WorkerHandle {
+    if (handle == null) {
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: worker handle was null", .details = null });
+        return null;
+    }
+
+    const worker_handle = handle.?;
+    if (worker_handle.core_worker == null) {
+        errors.setStructuredErrorJson(.{ .code = grpc.failed_precondition, .message = "temporal-bun-bridge-zig: worker core handle is not initialized", .details = null });
+        return null;
+    }
+
+    if (worker_handle.runtime == null or worker_handle.runtime.?.core_runtime == null) {
+        errors.setStructuredErrorJson(.{ .code = grpc.failed_precondition, .message = "temporal-bun-bridge-zig: worker runtime is not initialized", .details = null });
+        return null;
+    }
+
+    return worker_handle;
+}
+
+const WorkerHandle = struct {
     id: u64,
     runtime: ?*runtime.RuntimeHandle,
     client: ?*client.ClientHandle,
@@ -51,14 +139,129 @@ fn pendingByteArrayError(code: i32, message: []const u8) ?*pending.PendingByteAr
     return @as(?*pending.PendingByteArray, handle);
 }
 
+fn byteArraySlice(bytes_ptr: ?*const core.ByteArray) []const u8 {
+    if (bytes_ptr == null) {
+        return ""[0..0];
+    }
+
+    const bytes = bytes_ptr.?;
+    if (bytes.data == null or bytes.size == 0) {
+        return ""[0..0];
+    }
+
+    return bytes.data[0..bytes.size];
+}
+
+fn parseWorkerOptions(config_json: []const u8, options: *core.WorkerOptions) bool {
+    options.* = std.mem.zeroes(core.WorkerOptions);
+
+    const namespace = extractStringField(config_json, "namespace") orelse "";
+    const task_queue = extractStringField(config_json, "taskQueue") orelse extractStringField(config_json, "task_queue") orelse "";
+    const identity = extractStringField(config_json, "identity") orelse extractStringField(config_json, "workerIdentity") orelse "";
+
+    if (task_queue.len == 0) {
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: worker config missing taskQueue", .details = null });
+        return false;
+    }
+
+    options.namespace_ = makeByteArrayRef(namespace);
+    options.task_queue = makeByteArrayRef(task_queue);
+    options.identity_override = makeByteArrayRef(identity);
+
+    return true;
+}
+
+fn pollTask(worker_handle: *WorkerHandle, kind: TaskKind) ?*pending.PendingByteArray {
+    const runtime_handle = worker_handle.runtime.?;
+
+    const pending_handle_ptr = pending.createPendingInFlight() orelse {
+        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = "temporal-bun-bridge-zig: failed to allocate pending worker poll handle", .details = null });
+        return null;
+    };
+    const pending_handle = @as(*pending.PendingByteArray, @ptrCast(pending_handle_ptr));
+
+    const context = initPollContext(worker_handle, runtime_handle, pending_handle, kind) orelse {
+        pending.free(pending_handle_ptr);
+        return null;
+    };
+
+    switch (kind) {
+        .workflow => core.api.worker_poll_workflow_activation(
+            worker_handle.core_worker,
+            context,
+            workerPollCallback,
+        ),
+        .activity => core.api.worker_poll_activity_task(
+            worker_handle.core_worker,
+            context,
+            workerPollCallback,
+        ),
+    }
+
+    return @as(?*pending.PendingByteArray, pending_handle_ptr);
+}
+
+fn completeCoreTask(handle: ?*WorkerHandle, payload: []const u8, kind: TaskKind) i32 {
+    const worker_handle = validateWorkerHandle(handle) orelse return -1;
+    const runtime_handle = worker_handle.runtime.?;
+
+    if (payload.len == 0) {
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: completion payload is required", .details = null });
+        return -1;
+    }
+
+    var state = CompletionState{};
+    defer state.wait_group.reset();
+    state.wait_group.start();
+
+    const completion = core.ByteArrayRef{ .data = payload.ptr, .size = payload.len };
+
+    switch (kind) {
+        .workflow => core.workerCompleteWorkflowActivation(
+            worker_handle.core_worker,
+            completion,
+            @as(?*anyopaque, @ptrCast(&state)),
+            workflowCompletionCallback,
+        ),
+        .activity => core.workerCompleteActivityTask(
+            worker_handle.core_worker,
+            completion,
+            @as(?*anyopaque, @ptrCast(&state)),
+            workflowCompletionCallback,
+        ),
+    }
+
+    state.wait_group.wait();
+
+    if (state.fail_ptr) |fail| {
+        const description = byteArraySlice(fail);
+        const message = if (description.len > 0)
+            description
+        else
+            "temporal-bun-bridge-zig: worker completion failed";
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = message, .details = null });
+        core.runtimeByteArrayFree(runtime_handle.core_runtime, fail);
+        return -1;
+    }
+
+    errors.setLastError(""[0..0]);
+    return 0;
+}
+
 pub fn create(
     runtime_ptr: ?*runtime.RuntimeHandle,
     client_ptr: ?*client.ClientHandle,
     config_json: []const u8,
 ) ?*WorkerHandle {
-    // TODO(codex, zig-worker-01): Instantiate Temporal core worker via C-ABI and persist opaque handle.
-    _ = runtime_ptr;
-    _ = client_ptr;
+    if (runtime_ptr == null or client_ptr == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker.create requires runtime and client handles",
+            .details = null,
+        });
+        return null;
+    }
+
     const config_copy = duplicateConfig(config_json) orelse {
         errors.setStructuredError(.{
             .code = grpc.resource_exhausted,
@@ -66,16 +269,62 @@ pub fn create(
         });
         return null;
     };
-    defer {
-        if (config_copy.len > 0) {
-            std.heap.c_allocator.free(config_copy);
-        }
+
+    var worker_options = std.mem.zeroes(core.WorkerOptions);
+    if (!parseWorkerOptions(config_copy, &worker_options)) {
+        std.heap.c_allocator.free(config_copy);
+        return null;
     }
-    errors.setStructuredError(.{
-        .code = grpc.unimplemented,
-        .message = "temporal-bun-bridge-zig: worker creation is not implemented yet",
-    });
-    return null;
+
+    const created = core.api.worker_new(
+        runtime_ptr.?.core_runtime,
+        client_ptr.?.core_client,
+        &worker_options,
+    );
+
+    if (created.worker == null) {
+        std.heap.c_allocator.free(config_copy);
+        const fail_ptr = created.fail;
+        const message = byteArraySlice(fail_ptr);
+        const description = if (message.len > 0)
+            message
+        else
+            "temporal-bun-bridge-zig: Temporal core failed to create worker";
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = description, .details = null });
+        if (fail_ptr) |fail| {
+            core.api.byte_array_free(runtime_ptr.?.core_runtime, fail);
+        }
+        return null;
+    }
+
+    if (created.fail) |fail| {
+        core.api.byte_array_free(runtime_ptr.?.core_runtime, fail);
+    }
+
+    const allocator = std.heap.c_allocator;
+    const handle = allocator.create(WorkerHandle) catch |err| {
+        core.api.worker_free(created.worker);
+        std.heap.c_allocator.free(config_copy);
+        var scratch: [160]u8 = undefined;
+        const message = std.fmt.bufPrint(&scratch, "temporal-bun-bridge-zig: failed to allocate worker handle: {}", .{err}) catch
+            "temporal-bun-bridge-zig: failed to allocate worker handle";
+        errors.setStructuredError(.{ .code = grpc.resource_exhausted, .message = message });
+        return null;
+    };
+
+    const id = next_worker_id;
+    next_worker_id += 1;
+
+    handle.* = .{
+        .id = id,
+        .runtime = runtime_ptr,
+        .client = client_ptr,
+        .config = config_copy,
+        .core_worker = created.worker,
+    };
+
+    errors.setLastError(""[0..0]);
+    return handle;
 }
 
 pub fn destroy(handle: ?*WorkerHandle) void {
@@ -83,15 +332,86 @@ pub fn destroy(handle: ?*WorkerHandle) void {
         return;
     }
 
-    // TODO(codex, zig-worker-02): Shut down core worker and free associated resources.
     const worker_handle = handle.?;
+
+    if (worker_handle.core_worker) |core_worker_ptr| {
+        core.api.worker_free(core_worker_ptr);
+    }
+
     releaseHandle(worker_handle);
 }
 
-pub fn pollWorkflowTask(_handle: ?*WorkerHandle) ?*pending.PendingByteArray {
-    // TODO(codex, zig-worker-03): Poll workflow tasks and forward activations through pending handles.
-    _ = _handle;
-    return pendingByteArrayError(grpc.unimplemented, "temporal-bun-bridge-zig: pollWorkflowTask is not implemented yet");
+pub fn pollWorkflowTask(handle: ?*WorkerHandle) ?*pending.PendingByteArray {
+    const worker_handle = validateWorkerHandle(handle) orelse return null;
+    return pollTask(worker_handle, .workflow);
+}
+
+pub fn completeWorkflowTask(handle: ?*WorkerHandle, payload: []const u8) i32 {
+    return completeCoreTask(handle, payload, .workflow);
+}
+
+pub fn pollActivityTask(handle: ?*WorkerHandle) ?*pending.PendingByteArray {
+    const worker_handle = validateWorkerHandle(handle) orelse return null;
+    return pollTask(worker_handle, .activity);
+}
+
+pub fn completeActivityTask(handle: ?*WorkerHandle, payload: []const u8) i32 {
+    return completeCoreTask(handle, payload, .activity);
+}
+
+pub fn recordActivityHeartbeat(handle: ?*WorkerHandle, payload: []const u8) i32 {
+    const worker_handle = validateWorkerHandle(handle) orelse return -1;
+    const heartbeat_ref = core.ByteArrayRef{ .data = if (payload.len > 0) payload.ptr else null, .size = payload.len };
+
+    const error_ptr = core.api.worker_record_activity_heartbeat(worker_handle.core_worker, heartbeat_ref);
+    if (error_ptr == null) {
+        errors.setLastError(""[0..0]);
+        return 0;
+    }
+
+    const message = byteArraySlice(error_ptr);
+    const description = if (message.len > 0)
+        message
+    else
+        "temporal-bun-bridge-zig: activity heartbeat rejected by Temporal core";
+    errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = description, .details = null });
+    core.api.byte_array_free(worker_handle.runtime.?.core_runtime, error_ptr);
+    return -1;
+}
+
+pub fn initiateShutdown(handle: ?*WorkerHandle) i32 {
+    const worker_handle = validateWorkerHandle(handle) orelse return -1;
+    core.api.worker_initiate_shutdown(worker_handle.core_worker);
+    errors.setLastError(""[0..0]);
+    return 0;
+}
+
+pub fn finalizeShutdown(handle: ?*WorkerHandle) i32 {
+    const worker_handle = validateWorkerHandle(handle) orelse return -1;
+    var completion_state = CompletionState{};
+    completion_state.wait_group.start();
+
+    core.api.worker_finalize_shutdown(
+        worker_handle.core_worker,
+        @as(?*anyopaque, @ptrCast(&completion_state)),
+        workflowCompletionCallback,
+    );
+
+    completion_state.wait_group.wait();
+
+    if (completion_state.fail_ptr) |fail| {
+        const message = byteArraySlice(fail);
+        const description = if (message.len > 0)
+            message
+        else
+            "temporal-bun-bridge-zig: worker finalize shutdown failed";
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = description, .details = null });
+        core.runtimeByteArrayFree(worker_handle.runtime.?.core_runtime, fail);
+        return -1;
+    }
+
+    errors.setLastError(""[0..0]);
+    return 0;
 }
 
 const CompletionState = struct {
@@ -109,153 +429,90 @@ fn workflowCompletionCallback(user_data: ?*anyopaque, fail_ptr: ?*const core.Byt
     state_ptr.wait_group.finish();
 }
 
-fn byteArraySlice(bytes_ptr: ?*const core.ByteArray) []const u8 {
-    if (bytes_ptr == null) {
-        return ""[0..0];
+fn workerPollCallback(
+    user_data: ?*anyopaque,
+    success: ?*const core.ByteArray,
+    fail: ?*const core.ByteArray,
+) callconv(.c) void {
+    if (user_data == null) {
+        return;
     }
 
-    const bytes = bytes_ptr.?;
-    if (bytes.data == null or bytes.size == 0) {
-        return ""[0..0];
+    const context = @as(*WorkerPollContext, @ptrCast(@alignCast(user_data.?)));
+    const runtime_handle = context.runtime_handle;
+    const pending_handle = context.pending_handle;
+    const allocator = std.heap.c_allocator;
+    defer allocator.destroy(context);
+    defer pending.release(pending_handle);
+
+    if (success) |activation| {
+        const managed = adoptCoreByteArray(runtime_handle, activation) orelse {
+            const snapshot = errors.snapshot();
+            const message = if (snapshot.len > 0)
+                snapshot
+            else
+                "temporal-bun-bridge-zig: failed to transfer activation";
+            _ = pending.rejectByteArray(pending_handle, grpc.internal, message);
+            return;
+        };
+
+        if (!pending.resolveByteArray(pending_handle, managed)) {
+            byte_array.free(managed);
+        }
+        return;
     }
 
-    return bytes.data[0..bytes.size];
-}
-
-pub fn completeWorkflowTask(handle: ?*WorkerHandle, payload: []const u8) i32 {
-    if (handle == null) {
-        errors.setStructuredErrorJson(.{
-            .code = grpc.invalid_argument,
-            .message = "temporal-bun-bridge-zig: completeWorkflowTask received null worker handle",
-            .details = null,
-        });
-        return -1;
-    }
-
-    const worker_handle = handle.?;
-
-    if (worker_handle.core_worker == null) {
-        errors.setStructuredErrorJson(.{
-            .code = grpc.failed_precondition,
-            .message = "temporal-bun-bridge-zig: worker core handle is not initialized",
-            .details = null,
-        });
-        return -1;
-    }
-
-    if (worker_handle.runtime == null) {
-        errors.setStructuredErrorJson(.{
-            .code = grpc.failed_precondition,
-            .message = "temporal-bun-bridge-zig: worker runtime handle is not initialized",
-            .details = null,
-        });
-        return -1;
-    }
-
-    const runtime_handle = worker_handle.runtime.?;
-
-    if (runtime_handle.core_runtime == null) {
-        errors.setStructuredErrorJson(.{
-            .code = grpc.failed_precondition,
-            .message = "temporal-bun-bridge-zig: worker runtime core handle is not initialized",
-            .details = null,
-        });
-        return -1;
-    }
-
-    if (payload.len == 0) {
-        errors.setStructuredErrorJson(.{
-            .code = grpc.invalid_argument,
-            .message = "temporal-bun-bridge-zig: completeWorkflowTask requires a workflow completion payload",
-            .details = null,
-        });
-        return -1;
-    }
-
-    var state = CompletionState{};
-    defer state.wait_group.reset();
-    state.wait_group.start();
-
-    const completion = core.ByteArrayRef{
-        .data = payload.ptr,
-        .size = payload.len,
-    };
-
-    core.workerCompleteWorkflowActivation(
-        worker_handle.core_worker,
-        completion,
-        @as(?*anyopaque, @ptrCast(&state)),
-        workflowCompletionCallback,
-    );
-
-    state.wait_group.wait();
-
-    if (state.fail_ptr) |fail| {
-        const message = byteArraySlice(fail);
-        const description = if (message.len > 0)
-            message
+    if (fail) |error_ptr| {
+        const description = byteArraySlice(error_ptr);
+        const message = if (description.len > 0)
+            description
         else
-            "temporal-bun-bridge-zig: workflow completion failed with an unknown error";
-        errors.setStructuredErrorJson(.{
-            .code = grpc.internal,
-            .message = description,
-            .details = null,
-        });
-
-        core.runtimeByteArrayFree(runtime_handle.core_runtime, fail);
-        return -1;
+            "temporal-bun-bridge-zig: worker poll returned error";
+        _ = pending.rejectByteArray(pending_handle, grpc.internal, message);
+        core.api.byte_array_free(runtime_handle.core_runtime, error_ptr);
+        return;
     }
 
-    errors.setLastError(""[0..0]);
-    return 0;
+    _ = pending.rejectByteArray(
+        pending_handle,
+        grpc.cancelled,
+        "temporal-bun-bridge-zig: worker poll cancelled",
+    );
 }
 
-pub fn pollActivityTask(_handle: ?*WorkerHandle) ?*pending.PendingByteArray {
-    // TODO(codex, zig-worker-05): Poll activity tasks via Temporal core worker APIs.
-    _ = _handle;
-    return pendingByteArrayError(grpc.unimplemented, "temporal-bun-bridge-zig: pollActivityTask is not implemented yet");
-}
+fn extractStringField(json: []const u8, key: []const u8) ?[]const u8 {
+    var pattern_buffer: [96]u8 = undefined;
+    if (key.len + 2 > pattern_buffer.len) return null;
+    const pattern = std.fmt.bufPrint(&pattern_buffer, "\"{s}\"", .{key}) catch return null;
+    const key_index = std.mem.indexOf(u8, json, pattern) orelse return null;
 
-pub fn completeActivityTask(_handle: ?*WorkerHandle, _payload: []const u8) i32 {
-    // TODO(codex, zig-worker-06): Complete activity tasks and propagate results to Temporal core.
-    _ = _handle;
-    _ = _payload;
-    errors.setStructuredError(.{
-        .code = grpc.unimplemented,
-        .message = "temporal-bun-bridge-zig: completeActivityTask is not implemented yet",
-    });
-    return -1;
-}
+    var index = key_index + pattern.len;
+    while (index < json.len and std.ascii.isWhitespace(json[index])) : (index += 1) {}
+    if (index >= json.len or json[index] != ':') return null;
+    index += 1;
 
-pub fn recordActivityHeartbeat(_handle: ?*WorkerHandle, _payload: []const u8) i32 {
-    // TODO(codex, zig-worker-07): Stream activity heartbeats to Temporal core.
-    _ = _handle;
-    _ = _payload;
-    errors.setStructuredError(.{
-        .code = grpc.unimplemented,
-        .message = "temporal-bun-bridge-zig: recordActivityHeartbeat is not implemented yet",
-    });
-    return -1;
-}
+    while (index < json.len and std.ascii.isWhitespace(json[index])) : (index += 1) {}
+    if (index >= json.len or json[index] != '"') return null;
+    index += 1;
 
-pub fn initiateShutdown(_handle: ?*WorkerHandle) i32 {
-    // TODO(codex, zig-worker-08): Initiate graceful worker shutdown (no new polls).
-    _ = _handle;
-    errors.setStructuredError(.{
-        .code = grpc.unimplemented,
-        .message = "temporal-bun-bridge-zig: initiateShutdown is not implemented yet",
-    });
-    return -1;
-}
+    const start = index;
+    var escape = false;
+    while (index < json.len) : (index += 1) {
+        const char = json[index];
+        if (escape) {
+            escape = false;
+            continue;
+        }
+        if (char == '\\') {
+            escape = true;
+            continue;
+        }
+        if (char == '"') {
+            return json[start..index];
+        }
+    }
 
-pub fn finalizeShutdown(_handle: ?*WorkerHandle) i32 {
-    // TODO(codex, zig-worker-09): Await inflight tasks and finalize worker shutdown.
-    _ = _handle;
-    errors.setStructuredError(.{
-        .code = grpc.unimplemented,
-        .message = "temporal-bun-bridge-zig: finalizeShutdown is not implemented yet",
-    });
-    return -1;
+    return null;
 }
 
 const testing = std.testing;
@@ -359,6 +616,19 @@ const WorkerTests = struct {
     }
 };
 
+fn parseWorkerOptionsForTests(config_json: []const u8, options: *core.WorkerOptions) bool {
+    return parseWorkerOptions(config_json, options);
+}
+
+fn initPollContextForTests(
+    worker_handle: *WorkerHandle,
+    runtime_handle: *runtime.RuntimeHandle,
+    pending_handle: *pending.PendingByteArray,
+    kind: TaskKind,
+) ?*WorkerPollContext {
+    return initPollContext(worker_handle, runtime_handle, pending_handle, kind);
+}
+
 test "completeWorkflowTask returns 0 on successful completion" {
     const original_complete = core.worker_complete_workflow_activation;
     const original_free = core.runtime_byte_array_free;
@@ -414,7 +684,10 @@ test "completeWorkflowTask surfaces core error payload" {
     try testing.expectEqual(@as(usize, 1), WorkerTests.stub_byte_array_free_count);
     const expected_json = "{\"code\":13,\"message\":\"Workflow completion failure: MalformedWorkflowCompletion\"}";
     try testing.expectEqualStrings(expected_json, errors.snapshot());
-    try testing.expectEqual(@as(?*core.RuntimeOpaque, @ptrCast(&WorkerTests.fake_runtime_storage)), WorkerTests.last_runtime_byte_array_free_runtime);
+    try testing.expectEqual(
+        @as(?*core.RuntimeOpaque, @ptrCast(&WorkerTests.fake_runtime_storage)),
+        WorkerTests.last_runtime_byte_array_free_runtime,
+    );
     try testing.expect(WorkerTests.last_runtime_byte_array_free_ptr != null);
     if (WorkerTests.last_runtime_byte_array_free_ptr) |ptr| {
         try testing.expectEqual(@as(usize, WorkerTests.stub_fail_message.len), ptr.size);

@@ -977,7 +977,8 @@ void temporal_core_ephemeral_server_shutdown(struct TemporalCoreEphemeralServer 
                                              void *user_data,
                                              TemporalCoreEphemeralServerShutdownCallback callback);
 
-struct TemporalCoreWorkerOrFail temporal_core_worker_new(struct TemporalCoreClient *client,
+struct TemporalCoreWorkerOrFail temporal_core_worker_new(struct TemporalCoreRuntime *runtime,
+                                                         struct TemporalCoreClient *client,
                                                          const struct TemporalCoreWorkerOptions *options);
 
 void temporal_core_worker_free(struct TemporalCoreWorker *worker);

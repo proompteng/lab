@@ -304,6 +304,7 @@ const {
     temporal_bun_client_signal,
     temporal_bun_client_signal_with_start,
     temporal_bun_client_query_workflow,
+    temporal_bun_worker_new,
   },
 } = nativeModule
 
@@ -437,6 +438,68 @@ export const native = {
       throw buildNativeBridgeError()
     }
     return readByteArray(arrayPtr)
+  },
+  worker: {
+    create(runtime: Runtime, client: NativeClient, config: Record<string, unknown>): number {
+      const payload = Buffer.from(JSON.stringify(config), 'utf8')
+      const handle = Number(temporal_bun_worker_new(runtime.handle, client.handle, ptr(payload), payload.byteLength))
+      if (!handle) {
+        throw buildNativeBridgeError()
+      }
+      return handle
+    },
+  },
+
+  pollWorkflowTask(workerHandle: number): number {
+    const pendingHandle = Number(temporal_bun_worker_poll_workflow_task(workerHandle))
+    if (!pendingHandle) {
+      throw buildNativeBridgeError()
+    }
+    return pendingHandle
+  },
+
+  pollActivityTask(workerHandle: number): number {
+    const pendingHandle = Number(temporal_bun_worker_poll_activity_task(workerHandle))
+    if (!pendingHandle) {
+      throw buildNativeBridgeError()
+    }
+    return pendingHandle
+  },
+
+  completeWorkflowTask(workerHandle: number, payload: Uint8Array | Buffer): void {
+    const status = Number(temporal_bun_worker_complete_workflow_task(workerHandle, ptr(payload), payload.byteLength))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
+  completeActivityTask(workerHandle: number, payload: Uint8Array | Buffer): void {
+    const status = Number(temporal_bun_worker_complete_activity_task(workerHandle, ptr(payload), payload.byteLength))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
+  recordActivityHeartbeat(workerHandle: number, heartbeat: Record<string, unknown>): void {
+    const payload = Buffer.from(JSON.stringify(heartbeat ?? {}), 'utf8')
+    const status = Number(temporal_bun_worker_record_activity_heartbeat(workerHandle, ptr(payload), payload.byteLength))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
+  initiateWorkerShutdown(workerHandle: number): void {
+    const status = Number(temporal_bun_worker_initiate_shutdown(workerHandle))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
+  finalizeWorkerShutdown(workerHandle: number): void {
+    const status = Number(temporal_bun_worker_finalize_shutdown(workerHandle))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
   },
 }
 
