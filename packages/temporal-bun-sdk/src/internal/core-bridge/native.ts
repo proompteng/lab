@@ -305,6 +305,13 @@ const {
     temporal_bun_client_signal_with_start,
     temporal_bun_client_query_workflow,
     temporal_bun_worker_new,
+    temporal_bun_worker_poll_workflow_task,
+    temporal_bun_worker_poll_activity_task,
+    temporal_bun_worker_complete_workflow_task,
+    temporal_bun_worker_complete_activity_task,
+    temporal_bun_worker_record_activity_heartbeat,
+    temporal_bun_worker_initiate_shutdown,
+    temporal_bun_worker_finalize_shutdown,
   },
 } = nativeModule
 

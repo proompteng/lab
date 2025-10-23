@@ -17,18 +17,6 @@ const WorkerPollContext = struct {
     kind: TaskKind,
 };
 
-fn adoptCoreByteArray(runtime_handle: *runtime.RuntimeHandle, bytes_ptr: *const core.ByteArray) ?*byte_array.ByteArray {
-    if (runtime_handle == null or runtime_handle.?.core_runtime == null) {
-        errors.setStructuredErrorJson(.{ .code = grpc.failed_precondition, .message = "temporal-bun-bridge-zig: runtime handle is not initialized", .details = null });
-        return null;
-    }
-
-    return byte_array.adoptCoreByteBuf(@constCast(bytes_ptr), core.api.byte_array_free) orelse {
-        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to adopt core byte array", .details = null });
-        return null;
-    };
-}
-
 fn makeByteArrayRef(slice: []const u8) core.ByteArrayRef {
     return if (slice.len == 0)
         .{ .data = null, .size = 0 }
