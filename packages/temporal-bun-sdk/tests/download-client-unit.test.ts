@@ -69,16 +69,6 @@ describe('Download Client Core Unit Tests', () => {
       expect(error.name).toBe('CacheError')
       expect(error.code).toBe('CACHE_ERROR')
     })
-
-    test('should create FallbackError with original error', async () => {
-      const { FallbackError } = await import('../scripts/download-temporal-libs.ts')
-
-      const originalError = new Error('Original error')
-      const error = new FallbackError('Fallback failed', originalError)
-      expect(error.name).toBe('FallbackError')
-      expect(error.code).toBe('FALLBACK_ERROR')
-      expect(error.originalError).toBe(originalError)
-    })
   })
 
   describe('Platform Detection Logic', () => {
@@ -179,7 +169,6 @@ describe('Download Client Core Unit Tests', () => {
       const customConfig = {
         version: 'v2.0.0',
         cacheDir: '/custom/cache',
-        fallbackToCompilation: false,
         checksumVerification: true,
         retryAttempts: 5,
         retryDelayMs: 2000,

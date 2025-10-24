@@ -10,7 +10,7 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 - Project scaffolding CLI (`temporal-bun init`) with Docker packaging helpers.
 - Dockerfile and `docker-compose` example for containerized development.
 - Detailed FFI implementation blueprint in [`docs/ffi-surface.md`](./docs/ffi-surface.md) to guide future native bridge work.
-- Zig migration roadmap in [`docs/zig-bridge-migration-plan.md`](./docs/zig-bridge-migration-plan.md) covering the phased replacement of the Rust bridge.
+- Zig migration roadmap in [`docs/zig-bridge-migration-plan.md`](./docs/zig-bridge-migration-plan.md) documenting the phased replacement of the former Rust bridge.
 
 ## Documentation
 
@@ -52,8 +52,7 @@ copies those artifacts into `dist/native/<platform>/<arch>/` so `pnpm pack --fil
 @proompteng/temporal-bun-sdk` ships prebuilt Zig libraries alongside the TypeScript output. Running
 `pnpm pack` or the publish workflow automatically executes both steps via the package `prepack` hook.
 
-> **Note:** Windows/MSVC builds remain on the roadmap (`zig-pack-03`). Until then, Windows hosts rely
-> on the Rust bridge.
+> **Note:** Windows/MSVC builds remain on the roadmap (`zig-pack-03`). Until platform-compatible Zig artefacts are ready, Windows hosts are not yet supported.
 
 > **Tip:** For deterministic builds, stay on `sdk-typescript@v1.13.1` and the referenced `sdk-core` commit `de674173c664d42f85d0dee1ff3b2ac47e36d545`. Both are wired into this workspace’s vendor clones and match the Temporal 1.13 line as of October 20 2025.
 
@@ -67,8 +66,7 @@ pnpm --filter @proompteng/temporal-bun-sdk build
 pnpm --filter @proompteng/temporal-bun-sdk test
 ```
 
-Packaged Zig bridge artifacts load automatically when present. Set `TEMPORAL_BUN_SDK_USE_ZIG=1` to require the Zig
-bridge (a warning is emitted if the binaries are missing) or `TEMPORAL_BUN_SDK_USE_ZIG=0` to force the Rust fallback.
+Packaged Zig bridge artifacts load automatically when present. Set `TEMPORAL_BUN_SDK_USE_ZIG=1` to assert Zig usage. Disabling the flag (`TEMPORAL_BUN_SDK_USE_ZIG=0`) is no longer supported because the Rust bridge has been removed.
 
 ## Usage
 

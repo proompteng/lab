@@ -3,8 +3,7 @@
 FROM oven/bun:1.1.20 AS install
 WORKDIR /app
 
-# Install system dependencies
-# Optimized for pre-built libraries but includes fallback dependencies for Rust compilation
+# Install system dependencies required for Zig and Temporal core libraries
 RUN apt-get update && apt-get install -y \
     xz-utils \
     curl \
@@ -20,7 +19,7 @@ RUN apt-get update && apt-get install -y \
 # Install Zig 0.15.1
 RUN curl -L https://ziglang.org/download/0.15.1/zig-x86_64-linux-0.15.1.tar.xz | tar -xJ -C /usr/local --strip-components=1
 
-# Rust toolchain no longer needed - using pre-built static libraries
+# No Rust toolchain required — the build consumes pre-built static libraries
 
 COPY packages/temporal-bun-sdk/package.json package.json
 COPY packages/temporal-bun-sdk/bunfig.toml bunfig.toml
@@ -32,15 +31,12 @@ COPY packages/temporal-bun-sdk/native native
 
 RUN bun install
 
-# Vendor directory no longer needed - using pre-built static libraries
-
-# Download pre-built libraries (required - no fallback compilation)
-# This replaces the previous 15-minute Rust compilation process
+# Download pre-built libraries (required)
+# This replaces the previous lengthy Rust compilation process
 ENV USE_PREBUILT_LIBS=true
 RUN bun run libs:download
 
-# Build TypeScript and native Zig components
-# The Zig build system will automatically use pre-built libraries if available, otherwise fall back to cargo
+# Build TypeScript and native Zig components using pre-built libraries
 RUN bun run build
 RUN bun run build:native:zig:bundle
 
@@ -66,4 +62,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD bun --version || exit 1
 
 CMD ["bun", "run", "start:worker"]
-

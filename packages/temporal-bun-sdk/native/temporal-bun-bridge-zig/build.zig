@@ -13,7 +13,6 @@ const temporal_crates = [_]TemporalCrate{
     .{ .package = "temporal-sdk-core-protos", .archive = "temporal_sdk_core_protos" },
 };
 
-const temporal_vendor_root = "../../vendor/sdk-core";
 const temporal_cache_root = "../../.temporal-libs-cache";
 
 const BuildError = error{
@@ -65,59 +64,6 @@ fn checkPrebuiltLibrariesExist(
     return true;
 }
 
-fn checkVendorDirectoryExists(b: *std.Build) bool {
-    const vendor_path = b.build_root.join(b.allocator, &.{temporal_vendor_root}) catch {
-        return false;
-    };
-    defer b.allocator.free(vendor_path);
-
-    // Check if vendor directory exists and contains expected structure
-    std.fs.cwd().access(vendor_path, .{}) catch {
-        return false;
-    };
-
-    // Check if Cargo.toml exists in vendor directory
-    const cargo_toml_path = b.build_root.join(b.allocator, &.{ temporal_vendor_root, "Cargo.toml" }) catch {
-        return false;
-    };
-    defer b.allocator.free(cargo_toml_path);
-
-    std.fs.cwd().access(cargo_toml_path, .{}) catch {
-        return false;
-    };
-
-    return true;
-}
-
-fn cargoArchivePath(
-    b: *std.Build,
-    target: std.Target,
-    archive_name: []const u8,
-) std.Build.LazyPath {
-    const profile = "release";
-    const target_dir = switch (target.os.tag) {
-        .macos => switch (target.cpu.arch) {
-            .aarch64 => "aarch64-apple-darwin",
-            .x86_64 => "x86_64-apple-darwin",
-            else => "unknown",
-        },
-        .linux => switch (target.cpu.arch) {
-            .aarch64 => "aarch64-unknown-linux-gnu",
-            .x86_64 => "x86_64-unknown-linux-gnu",
-            else => "unknown",
-        },
-        else => "unknown",
-    };
-
-    return b.path(b.pathJoin(&.{
-        temporal_vendor_root,
-        "target",
-        target_dir,
-        profile,
-        formatArchiveFilename(b, archive_name),
-    }));
-}
-
 fn getPlatformString(target: std.Target) ?[]const u8 {
     return switch (target.os.tag) {
         .macos => switch (target.cpu.arch) {
@@ -132,43 +78,6 @@ fn getPlatformString(target: std.Target) ?[]const u8 {
         },
         else => null,
     };
-}
-
-fn addCargoBuildStep(b: *std.Build, target: std.Target) *std.Build.Step.Run {
-    const target_triple = switch (target.os.tag) {
-        .macos => switch (target.cpu.arch) {
-            .aarch64 => "aarch64-apple-darwin",
-            .x86_64 => "x86_64-apple-darwin",
-            else => "unknown-apple-darwin",
-        },
-        .linux => switch (target.cpu.arch) {
-            .aarch64 => "aarch64-unknown-linux-gnu",
-            .x86_64 => "x86_64-unknown-linux-gnu",
-            else => "unknown-linux-gnu",
-        },
-        else => "unknown",
-    };
-
-    const cargo_build = b.addSystemCommand(&.{
-        "cargo",
-        "build",
-        "--release",
-        "--target",
-        target_triple,
-    });
-
-    // Set working directory to vendor directory
-    cargo_build.setCwd(b.path(temporal_vendor_root));
-
-    // Add environment variables for cross-compilation if needed
-    if (target.os.tag == .linux and target.cpu.arch == .aarch64) {
-        cargo_build.setEnvironmentVariable("CC", "aarch64-linux-gnu-gcc");
-        cargo_build.setEnvironmentVariable("CXX", "aarch64-linux-gnu-g++");
-        cargo_build.setEnvironmentVariable("AR", "aarch64-linux-gnu-ar");
-        cargo_build.setEnvironmentVariable("STRIP", "aarch64-linux-gnu-strip");
-    }
-
-    return cargo_build;
 }
 
 pub fn build(b: *std.Build) void {
@@ -248,73 +157,31 @@ pub fn build(b: *std.Build) void {
     // Get platform string for pre-built libraries
     const platform = getPlatformString(resolved_target);
 
-    // Determine build strategy with fallback support
-    var use_prebuilt_libraries = false;
-    var fallback_to_cargo = false;
-
-    if (should_use_prebuilt and platform != null) {
-        // Check if pre-built libraries actually exist
-        if (checkPrebuiltLibrariesExist(b, version, platform.?)) {
-            use_prebuilt_libraries = true;
-            std.debug.print("✓ Using pre-built libraries for platform: {s} (version: {s})\n", .{ platform.?, version });
-        } else {
-            std.debug.print("⚠️  Pre-built libraries not found for {s} (version: {s})\n", .{ platform.?, version });
-            std.debug.print("   Checking for vendor directory fallback...\n", .{});
-
-            // Check if vendor directory exists for fallback
-            if (checkVendorDirectoryExists(b)) {
-                fallback_to_cargo = true;
-                std.debug.print("✓ Found vendor directory, falling back to Cargo build\n", .{});
-            } else {
-                std.debug.print("✗ No vendor directory found for fallback\n", .{});
-                std.debug.print("   Solutions:\n", .{});
-                std.debug.print("   1. Run 'bun run libs:download' to download pre-built libraries\n", .{});
-                std.debug.print("   2. Set up vendor directory with 'git submodule update --init --recursive'\n", .{});
-                std.debug.panic("Neither pre-built libraries nor vendor directory available for build", .{});
-            }
-        }
-    } else if (should_use_prebuilt and platform == null) {
-        std.debug.print("⚠️  Platform {s}-{s} not supported for pre-built libraries\n", .{ @tagName(resolved_target.cpu.arch), @tagName(resolved_target.os.tag) });
-        std.debug.print("   Supported platforms: linux-arm64, linux-x64, macos-arm64\n", .{});
-        std.debug.print("   Checking for vendor directory fallback...\n", .{});
-
-        if (checkVendorDirectoryExists(b)) {
-            fallback_to_cargo = true;
-            std.debug.print("✓ Found vendor directory, falling back to Cargo build\n", .{});
-        } else {
-            std.debug.panic("Platform not supported for pre-built libraries and no vendor directory available", .{});
-        }
-    } else if (!should_use_prebuilt) {
-        // Explicitly using cargo build
-        if (checkVendorDirectoryExists(b)) {
-            fallback_to_cargo = true;
-            std.debug.print("✓ Using Cargo build (USE_PREBUILT_LIBS=false)\n", .{});
-        } else {
-            std.debug.panic("Cargo build requested but vendor directory not available. Run 'git submodule update --init --recursive'", .{});
-        }
+    if (!should_use_prebuilt) {
+        std.debug.print("✗ USE_PREBUILT_LIBS=false is no longer supported.\n", .{});
+        std.debug.print("   The Rust bridge has been removed; pre-built Temporal static libraries are required.\n", .{});
+        std.debug.print("   Run 'bun run scripts/download-temporal-libs.ts download' to fetch the libraries, then rerun the build.\n", .{});
+        std.debug.panic("Pre-built libraries are mandatory for the Zig bridge", .{});
     }
 
-    // Link appropriate libraries based on build strategy
+    if (platform == null) {
+        std.debug.print("✗ Platform {s}-{s} is not supported for pre-built libraries\n", .{ @tagName(resolved_target.cpu.arch), @tagName(resolved_target.os.tag) });
+        std.debug.print("   Supported platforms: linux-arm64, linux-x64, macos-arm64\n", .{});
+        std.debug.panic("Unsupported target for Zig bridge build", .{});
+    }
+
+    if (!checkPrebuiltLibrariesExist(b, version, platform.?)) {
+        std.debug.print("✗ Pre-built libraries not found for {s} (version: {s})\n", .{ platform.?, version });
+        std.debug.print("   Run 'bun run scripts/download-temporal-libs.ts download' to fetch the Temporal static libraries.\n", .{});
+        std.debug.panic("Missing Temporal static libraries required by the Zig bridge", .{});
+    }
+
+    std.debug.print("✓ Using pre-built libraries for platform: {s} (version: {s})\n", .{ platform.?, version });
+
+    // Link pre-built libraries
     for (temporal_crates) |crate_info| {
-        var archive: std.Build.LazyPath = undefined;
-
-        if (use_prebuilt_libraries) {
-            // Use pre-built static libraries
-            archive = prebuiltArchivePath(b, version, platform.?, crate_info.archive);
-            std.debug.print("  → Linking pre-built library: lib{s}.a\n", .{crate_info.archive});
-        } else if (fallback_to_cargo) {
-            // Use cargo-built libraries from vendor directory
-            archive = cargoArchivePath(b, resolved_target, crate_info.archive);
-            std.debug.print("  → Linking cargo-built library: lib{s}.a\n", .{crate_info.archive});
-
-            // Add cargo build step as dependency
-            const cargo_build = addCargoBuildStep(b, resolved_target);
-            lib.step.dependOn(&cargo_build.step);
-            unit_tests.step.dependOn(&cargo_build.step);
-        } else {
-            std.debug.panic("No valid build strategy determined", .{});
-        }
-
+        const archive = prebuiltArchivePath(b, version, platform.?, crate_info.archive);
+        std.debug.print("  → Linking pre-built library: lib{s}.a\n", .{crate_info.archive});
         lib.addObjectFile(archive);
         unit_tests.addObjectFile(archive);
     }

@@ -1,17 +1,17 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, rmSync, writeFileSync, statSync } from 'fs'
 import { join } from 'path'
+import { fileURLToPath } from 'url'
 import { DownloadClient } from '../scripts/download-temporal-libs.ts'
 
-const TEMP_TEST_DIR = join(process.cwd(), 'packages/temporal-bun-sdk/.test-build-integration')
+const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url))
+const TEMP_TEST_DIR = join(PACKAGE_ROOT, '.test-build-integration')
 const CACHE_DIR = join(TEMP_TEST_DIR, '.temporal-libs-cache')
-const VENDOR_DIR = join(process.cwd(), 'packages/temporal-bun-sdk/vendor/sdk-core')
-const BUILD_ZIG_PATH = join('native/temporal-bun-bridge-zig/build.zig')
+const BUILD_ZIG_PATH = join(PACKAGE_ROOT, 'native/temporal-bun-bridge-zig/build.zig')
 
 // Test configuration
 const TEST_CONFIG = {
   cacheDir: CACHE_DIR,
-  fallbackToCompilation: true,
   checksumVerification: true,
   retryAttempts: 2,
   retryDelayMs: 500,
@@ -66,7 +66,6 @@ describe('Build System Integration Tests', () => {
           // Attempt to download libraries (disable fallback for this test)
           const testClient = new DownloadClient('proompteng', 'lab', {
             ...TEST_CONFIG,
-            fallbackToCompilation: false,
           })
           const librarySet = await testClient.downloadLibraries('latest')
 
@@ -141,6 +140,10 @@ describe('Build System Integration Tests', () => {
     })
 
     test('should test Zig build system integration', async () => {
+      if (!existsSync(BUILD_ZIG_PATH)) {
+        console.warn('Skipping Zig build system integration: build.zig not found')
+        return
+      }
       // Test the Zig build system's ability to handle pre-built libraries
       process.env.USE_PREBUILT_LIBS = 'true'
       process.env.TEMPORAL_LIBS_VERSION = 'latest'
@@ -150,7 +153,7 @@ describe('Build System Integration Tests', () => {
 
         // Run Zig build - this will test the build.zig logic for handling pre-built libraries
         const zigBuild = Bun.spawn(['zig', 'build', '-Doptimize=ReleaseFast', '--build-file', BUILD_ZIG_PATH], {
-          cwd: join(process.cwd(), 'packages/temporal-bun-sdk'),
+          cwd: PACKAGE_ROOT,
           stdio: ['ignore', 'pipe', 'pipe'],
           env: {
             ...process.env,
@@ -192,70 +195,21 @@ describe('Build System Integration Tests', () => {
         // The build may fail if dependencies are missing, but should handle it gracefully
         if (exitCode === 0) {
           // Build succeeded - verify the build system detected the environment correctly
-          expect(buildOutput).toMatch(/Using pre-built libraries|Found vendor directory|cargo build/i)
+          expect(buildOutput).toMatch(/Using pre-built libraries/i)
           console.log('✓ Zig build system integration test passed')
         } else {
           // Build failed - verify it's due to expected missing dependencies
           const hasExpectedError =
-            stderr.includes('FileNotFound') ||
-            stderr.includes('vendor directory') ||
-            stderr.includes('pre-built libraries') ||
-            buildOutput.includes('pre-built libraries not found')
+            stderr.includes('Missing Temporal static libraries') ||
+            buildOutput.includes('Pre-built libraries not found') ||
+            buildOutput.includes('USE_PREBUILT_LIBS=false is no longer supported')
 
           expect(hasExpectedError).toBe(true)
-          console.log('✓ Zig build system correctly identified missing dependencies')
+          console.log('✓ Zig build system correctly identified missing pre-built libraries')
         }
       } finally {
         delete process.env.USE_PREBUILT_LIBS
         delete process.env.TEMPORAL_LIBS_VERSION
-      }
-    })
-  })
-
-  describe('Fallback Mechanisms', () => {
-    test('should handle network failures gracefully', async () => {
-      console.log('Testing network failure handling...')
-
-      // Create a client with invalid repository to simulate network failure
-      const failingClient = new DownloadClient('nonexistent-org', 'nonexistent-repo', {
-        ...TEST_CONFIG,
-        retryAttempts: 1, // Reduce retries for faster test
-        fallbackToCompilation: false, // Disable fallback to test error handling
-      })
-
-      try {
-        await failingClient.downloadLibraries('latest')
-        // Should not reach here
-        expect(false).toBe(true)
-      } catch (error) {
-        expect(error instanceof Error).toBe(true)
-        expect(error.message).toMatch(/not found|not accessible|failed/i)
-        console.log('✓ Network failures handled appropriately')
-      }
-    })
-
-    test('should test fallback configuration', async () => {
-      console.log('Testing fallback configuration...')
-
-      // Test with fallback enabled
-      const fallbackClient = new DownloadClient('nonexistent-org', 'nonexistent-repo', {
-        ...TEST_CONFIG,
-        retryAttempts: 1,
-        fallbackToCompilation: true,
-      })
-
-      try {
-        await fallbackClient.downloadLibraries('latest')
-        // If vendor directory exists, fallback might succeed
-        console.log('⚠️  Fallback succeeded (vendor directory available)')
-      } catch (error) {
-        // Expected if no vendor directory
-        expect(error instanceof Error).toBe(true)
-        if (error.message.includes('Vendor directory not found')) {
-          console.log('✓ Fallback correctly identified missing vendor directory')
-        } else {
-          console.log('✓ Fallback handled error appropriately:', error.message)
-        }
       }
     })
   })
@@ -305,7 +259,7 @@ describe('Build System Integration Tests', () => {
     })
 
     test('should verify build artifacts exist', async () => {
-      const buildOutputDir = join(process.cwd(), 'packages/temporal-bun-sdk/zig-out/lib')
+      const buildOutputDir = join(PACKAGE_ROOT, 'zig-out/lib')
 
       if (existsSync(buildOutputDir)) {
         const files = Bun.spawn(
@@ -350,7 +304,6 @@ describe('Build System Integration Tests', () => {
         const cleanCacheDir = join(TEMP_TEST_DIR, 'clean-cache')
         const cleanDownloadClient = new DownloadClient('proompteng', 'lab', {
           cacheDir: cleanCacheDir,
-          fallbackToCompilation: false,
         })
 
         // Verify cache is empty for new client
@@ -383,8 +336,24 @@ describe('Build System Integration Tests', () => {
     })
   })
 
+  describe('Error Handling', () => {
+    test('should surface download failures clearly', async () => {
+      const failingClient = new DownloadClient('nonexistent-org', 'nonexistent-repo', {
+        ...TEST_CONFIG,
+        retryAttempts: 1,
+      })
+
+      await expect(failingClient.downloadLibraries('latest')).rejects.toThrow()
+      console.log('✓ Download failures bubble up as expected')
+    })
+  })
+
   describe('Environment Variable Integration', () => {
     test('should respect environment variables in build system', async () => {
+      if (!existsSync(BUILD_ZIG_PATH)) {
+        console.warn('Skipping environment variable integration tests: build.zig not found')
+        return
+      }
       console.log('Testing environment variable integration...')
 
       // Test USE_PREBUILT_LIBS=false
@@ -395,7 +364,7 @@ describe('Build System Integration Tests', () => {
 
         // Run Zig build with USE_PREBUILT_LIBS=false
         const zigBuild = Bun.spawn(['zig', 'build', '-Doptimize=ReleaseFast', '--build-file', BUILD_ZIG_PATH], {
-          cwd: join(process.cwd(), 'packages/temporal-bun-sdk'),
+          cwd: PACKAGE_ROOT,
           stdio: ['ignore', 'pipe', 'pipe'],
           env: {
             ...process.env,
@@ -422,17 +391,18 @@ describe('Build System Integration Tests', () => {
         }
 
         const exitCode = await zigBuild.exited
+        let stderr = ''
 
-        if (existsSync(VENDOR_DIR)) {
-          // If vendor directory exists, build should succeed
-          expect(exitCode).toBe(0)
-          expect(buildOutput).toMatch(/Using Cargo build|cargo build/i)
-          console.log('✓ USE_PREBUILT_LIBS=false respected (using cargo build)')
-        } else {
-          // If no vendor directory, should fail with appropriate message
-          expect(exitCode).not.toBe(0)
-          console.log('✓ USE_PREBUILT_LIBS=false handled correctly (no vendor directory)')
+        if (zigBuild.stderr) {
+          stderr = await new Response(zigBuild.stderr).text()
         }
+
+        const combinedOutput = `${buildOutput}\n${stderr}`
+
+        // Fallback to Cargo is no longer supported; expect a clear error
+        expect(exitCode).not.toBe(0)
+        expect(combinedOutput).toMatch(/USE_PREBUILT_LIBS=false is no longer supported/)
+        console.log('✓ USE_PREBUILT_LIBS=false surfaces the expected error message')
       } finally {
         delete process.env.USE_PREBUILT_LIBS
       }

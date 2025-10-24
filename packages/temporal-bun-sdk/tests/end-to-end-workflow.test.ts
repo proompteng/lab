@@ -21,7 +21,6 @@ const MOCK_ARTIFACTS_DIR = join(TEMP_TEST_DIR, 'mock-artifacts')
 // Test configuration for end-to-end scenarios
 const E2E_CONFIG = {
   cacheDir: CACHE_DIR,
-  fallbackToCompilation: true,
   checksumVerification: true,
   retryAttempts: 3,
   retryDelayMs: 1000,

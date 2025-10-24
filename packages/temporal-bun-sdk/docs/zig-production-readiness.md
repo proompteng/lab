@@ -29,7 +29,7 @@ the Rust bridge as the default.
 ## 4. Security & Compliance
 - [ ] Supply-chain review covers the Zig toolchain, vendored headers, and build scripts.
 - [ ] Vulnerability scanning (e.g. `trivy fs`) includes the Zig artifacts in release gating.
-- [ ] Downgrade/rollback guidance for the Zig bridge versus Rust fallback is documented and reviewed.
+- [x] Downgrade/rollback guidance for the Zig bridge versus Rust fallback is documented (legacy only) — Rust fallback removed on October 24, 2025.
 
 ## 5. Observability & Ops
 - [ ] Telemetry, logging, and tracing parity is delivered (`zig-rt-03`, `zig-rt-04`, byte-array metrics surfaced to Bun).

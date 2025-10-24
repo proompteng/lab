@@ -6,8 +6,6 @@ ARG KUBECONFORM_VERSION=v0.6.7
 ARG TARGETARCH=arm64
 ARG ZIG_VERSION=0.15.2
 ARG ZLS_VERSION=0.15.0
-ARG TEMPORAL_SDK_CORE_REF=master
-ARG TEMPORAL_SDK_TYPESCRIPT_REF=main
 ARG CODEX_AUTH_CHECKSUM=unspecified
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -16,8 +14,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PLAN_OUTPUT_PATH=/workspace/lab/.codex-plan-output.md \
     IMPLEMENTATION_OUTPUT_PATH=/workspace/lab/.codex-implementation.log \
     GIT_TERMINAL_PROMPT=0 \
-    BUN_INSTALL=/usr/local \
-    TEMPORAL_VENDOR_ROOT=/opt/vendor
+    BUN_INSTALL=/usr/local
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git gh jq python3 curl xz-utils protobuf-compiler libprotobuf-dev \
@@ -80,11 +77,6 @@ RUN curl -fsSL https://bun.sh/install | bash \
     && ln -s /usr/local/bin/bun /opt/homebrew/bin/bun
 
 RUN bash -lc 'source /root/.nvm/nvm.sh && npm install -g @openai/codex@latest && ln -sf "$(command -v codex)" /usr/local/bin/codex'
-
-RUN set -eux; \
-    install -d /opt/vendor; \
-    git clone --depth 1 --branch "${TEMPORAL_SDK_CORE_REF}" https://github.com/temporalio/sdk-core.git /opt/vendor/sdk-core; \
-    git clone --depth 1 --branch "${TEMPORAL_SDK_TYPESCRIPT_REF}" https://github.com/temporalio/sdk-typescript.git /opt/vendor/sdk-typescript
 
 RUN mkdir -p "$WORKSPACE" /root/.codex
 

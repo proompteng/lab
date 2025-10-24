@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { mkdir, readlink, rm, stat, symlink } from 'node:fs/promises'
+import { mkdir, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { $, spawn, which } from 'bun'
@@ -71,46 +71,12 @@ const ensurePnpmAvailable = async (): Promise<string> => {
   return pnpmPath
 }
 
-const ensureTemporalVendors = async () => {
-  const vendorRoot = process.env.TEMPORAL_VENDOR_ROOT ?? '/opt/vendor'
-  const repoRoot = process.cwd()
-  const vendorDir = join(repoRoot, 'packages/temporal-bun-sdk/vendor')
-  await mkdir(vendorDir, { recursive: true })
-
-  const mappings: Array<{ name: string; source: string }> = [
-    { name: 'sdk-core', source: join(vendorRoot, 'sdk-core') },
-    { name: 'sdk-typescript', source: join(vendorRoot, 'sdk-typescript') },
-  ]
-
-  for (const mapping of mappings) {
-    if (!(await pathExists(mapping.source))) {
-      console.warn(`Temporal vendor source missing: ${mapping.source}`)
-      continue
-    }
-    const target = join(vendorDir, mapping.name)
-    if (await pathExists(target)) {
-      try {
-        const existing = await readlink(target)
-        if (existing === mapping.source) {
-          continue
-        }
-      } catch {
-        // not a symlink or unreadable; fall through to removal
-      }
-      await rm(target, { recursive: true, force: true })
-    }
-    await symlink(mapping.source, target)
-  }
-}
-
 const bootstrapWorkspace = async () => {
   if (process.env.CODEX_SKIP_BOOTSTRAP === '1') {
     return
   }
 
   const pnpmExecutable = await ensurePnpmAvailable()
-
-  await ensureTemporalVendors()
 
   console.log('Installing workspace dependencies via pnpm...')
   await runWithNvm(`"${pnpmExecutable}" install --frozen-lockfile`)

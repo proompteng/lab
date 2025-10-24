@@ -182,7 +182,6 @@ describe('Download Client Integration Tests', () => {
       const fullConfig = {
         version: 'v2.0.0',
         cacheDir: testDir,
-        fallbackToCompilation: false,
         checksumVerification: true,
         retryAttempts: 5,
         retryDelayMs: 2000,
