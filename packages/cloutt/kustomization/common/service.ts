@@ -1,6 +1,6 @@
 import { Chart } from 'cdk8s'
+import { Protocol, Service, ServiceType } from 'cdk8s-plus-31'
 import type { Construct } from 'constructs'
-import { Service, ServiceType, Protocol } from 'cdk8s-plus-31'
 import { z } from 'zod'
 
 const serviceSchema = z.object({

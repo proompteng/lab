@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { fileURLToPath } from 'node:url'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 import { importNativeBridge } from './helpers/native-bridge'
 import { isTemporalServerAvailable, parseTemporalAddress } from './helpers/temporal-server'
 
@@ -55,7 +55,7 @@ if (!nativeBridge) {
         }
 
         await waitForWorkerReady(workerProcess)
-      } catch (error) {
+      } catch (_error) {
         console.warn('Skipping native integration tests: worker dependencies not available')
         workerProcess = null
       }

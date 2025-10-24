@@ -1,10 +1,9 @@
 #!/usr/bin/env bun
 
-import { execSync } from 'child_process'
-import { existsSync, mkdirSync, readdirSync, statSync } from 'fs'
-import { join } from 'path'
-import { createHash } from 'crypto'
-import { createReadStream } from 'fs'
+import { execSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { createReadStream, existsSync, mkdirSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 async function findLibraries(searchDir: string): Promise<string[]> {
   const libs: string[] = []
@@ -68,7 +67,9 @@ async function main() {
   }
 
   console.log(`Found ${libs.length} libraries:`)
-  libs.forEach((lib) => console.log(`  - ${lib.split('/').pop()}`))
+  for (const lib of libs) {
+    console.log(`  - ${lib.split('/').pop()}`)
+  }
 
   // Create release directory
   const releaseDir = join(process.cwd(), 'releases', version, platform)
@@ -77,7 +78,7 @@ async function main() {
   // Copy libraries to release directory
   console.log('\n📋 Copying libraries...')
   for (const lib of libs) {
-    const dest = join(releaseDir, lib.split('/').pop()!)
+    const dest = join(releaseDir, lib.split('/').pop() as string)
     execSync(`cp "${lib}" "${dest}"`)
   }
 

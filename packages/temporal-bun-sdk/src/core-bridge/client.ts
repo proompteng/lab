@@ -1,5 +1,5 @@
+import { type NativeClient, native } from '../internal/core-bridge/native.ts'
 import type { Runtime } from './runtime.ts'
-import { native, type NativeClient } from '../internal/core-bridge/native.ts'
 
 export interface ClientTlsOptions {
   readonly serverRootCACertificate?: string

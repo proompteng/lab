@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
 import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 /**
  * End-to-End Workflow Tests
@@ -79,7 +79,7 @@ interface PerformanceMetrics {
   networkRequests: number
 }
 
-let performanceMetrics: PerformanceMetrics = {
+const performanceMetrics: PerformanceMetrics = {
   downloadTime: 0,
   buildTime: 0,
   totalTime: 0,
@@ -341,7 +341,7 @@ describe('End-to-End Workflow Tests', () => {
       const testPlatform = 'linux-arm64'
 
       // Initially should not be cached
-      let isCached = cacheManager.isCached(testVersion, testPlatform)
+      const isCached = cacheManager.isCached(testVersion, testPlatform)
       expect(isCached).toBe(false)
 
       // Test cache statistics (basic functionality)
@@ -469,7 +469,7 @@ describe('End-to-End Workflow Tests', () => {
     test('should measure and validate build time improvements', async () => {
       console.log('⏱️  Measuring and validating build time improvements...')
 
-      const totalStartTime = Date.now()
+      const _totalStartTime = Date.now()
 
       // Simulate pre-built library workflow
       const prebuiltStartTime = Date.now()

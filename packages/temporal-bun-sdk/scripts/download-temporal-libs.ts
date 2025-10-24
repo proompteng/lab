@@ -5,19 +5,19 @@
  * Fetches pre-built static libraries from GitHub releases
  */
 
+import { execSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
+  createWriteStream,
   existsSync,
   mkdirSync,
-  writeFileSync,
-  readFileSync,
-  createWriteStream,
-  rmSync,
   readdirSync,
+  readFileSync,
+  rmSync,
   statSync,
-} from 'fs'
-import { join, dirname } from 'path'
-import { createHash } from 'crypto'
-import { execSync } from 'child_process'
+  writeFileSync,
+} from 'node:fs'
+import { dirname, join } from 'node:path'
 
 // Error types for better error handling
 export class TemporalLibsError extends Error {
@@ -267,14 +267,14 @@ export class GitHubApiClient {
             if (rateLimitRetries > this.config.maxRateLimitRetries) {
               throw new RateLimitError(
                 `GitHub API rate limit exceeded after ${this.config.maxRateLimitRetries} rate limit retries`,
-                rateLimitReset ? new Date(parseInt(rateLimitReset) * 1000) : undefined,
+                rateLimitReset ? new Date(parseInt(rateLimitReset, 10) * 1000) : undefined,
               )
             }
 
             let waitTime = this.config.rateLimitRetryDelayMs
 
             if (rateLimitReset) {
-              const resetTime = new Date(parseInt(rateLimitReset) * 1000)
+              const resetTime = new Date(parseInt(rateLimitReset, 10) * 1000)
               const now = new Date()
               const timeUntilReset = resetTime.getTime() - now.getTime()
 
@@ -352,7 +352,7 @@ export class GitHubApiClient {
         }
 
         // Exponential backoff with jitter and cap
-        const baseDelay = this.config.retryDelayMs * Math.pow(2, attempt - 1)
+        const baseDelay = this.config.retryDelayMs * 2 ** (attempt - 1)
         const jitter = Math.random() * 0.1 * baseDelay // Add up to 10% jitter
         const delay = Math.min(baseDelay + jitter, this.config.maxRetryDelayMs)
 
@@ -506,7 +506,7 @@ export class FileDownloader {
 
     // Add range header for resume
     if (startByte > 0) {
-      headers['Range'] = `bytes=${startByte}-`
+      headers.Range = `bytes=${startByte}-`
     }
 
     for (let attempt = 1; attempt <= this.config.retryAttempts; attempt++) {
@@ -535,7 +535,7 @@ export class FileDownloader {
           if (response.status === 429) {
             // Rate limited
             const retryAfter = response.headers.get('Retry-After')
-            const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : this.config.rateLimitRetryDelayMs
+            const waitTime = retryAfter ? parseInt(retryAfter, 10) * 1000 : this.config.rateLimitRetryDelayMs
             throw new RateLimitError(`Download rate limited. Retry after ${Math.round(waitTime / 1000)}s`)
           }
 
@@ -549,7 +549,7 @@ export class FileDownloader {
         }
 
         const contentLength = response.headers.get('content-length')
-        const partialSize = contentLength ? parseInt(contentLength) : 0
+        const partialSize = contentLength ? parseInt(contentLength, 10) : 0
         const totalSize = partialSize + startByte
 
         // Validate expected size if provided
@@ -659,7 +659,7 @@ export class FileDownloader {
         // Only retry for network errors and server errors
         if (error instanceof NetworkError && error.message.includes('Server error')) {
           // Exponential backoff with jitter and cap
-          const baseDelay = this.config.retryDelayMs * Math.pow(2, attempt - 1)
+          const baseDelay = this.config.retryDelayMs * 2 ** (attempt - 1)
           const jitter = Math.random() * 0.1 * baseDelay // Add up to 10% jitter
           const delay = Math.min(Math.round(baseDelay + jitter), this.config.maxRetryDelayMs)
 
@@ -914,7 +914,6 @@ export class FileDownloader {
  * Cache management for downloaded libraries
  */
 export class CacheManager {
-  private readonly config: TemporalLibsConfig
   private readonly cacheDir: string
 
   constructor(config: TemporalLibsConfig) {
@@ -1052,7 +1051,7 @@ export class CacheManager {
     // Also create checksums.sha256 file as specified in design
     const checksumLines = librarySet.libraries.map((lib) => `${lib.checksum}  ${lib.name}`)
     const checksumsPath = join(cacheDir, 'checksums.sha256')
-    writeFileSync(checksumsPath, checksumLines.join('\n') + '\n')
+    writeFileSync(checksumsPath, `${checksumLines.join('\n')}\n`)
 
     console.log(`✓ Saved cache metadata to ${metadataPath}`)
     console.log(`✓ Saved checksums to ${checksumsPath}`)
@@ -1730,8 +1729,8 @@ export class DownloadClient {
         await this.cacheManager.saveToCache(librarySet)
 
         // Create 'latest' symlink for build.zig compatibility
-        const latestLink = join(this.cacheManager['cacheDir'], 'latest')
-        const targetDir = join(this.cacheManager['cacheDir'], actualVersion)
+        const latestLink = join(this.cacheManager.cacheDir, 'latest')
+        const _targetDir = join(this.cacheManager.cacheDir, actualVersion)
 
         try {
           // Remove existing symlink if it exists
@@ -1863,7 +1862,6 @@ export class DownloadClient {
           })
         } catch (error) {
           console.warn(`\n⚠️  Error processing library ${libName}: ${error}`)
-          continue
         }
       }
 
@@ -2194,7 +2192,7 @@ if (import.meta.main) {
       }
 
       case 'cache-cleanup': {
-        const keepCount = args[1] ? parseInt(args[1]) : 3
+        const keepCount = args[1] ? parseInt(args[1], 10) : 3
         console.log(`Cleaning up old versions, keeping ${keepCount} most recent...`)
         client.cleanupOldVersions(keepCount)
         break
@@ -2223,8 +2221,6 @@ if (import.meta.main) {
         }
         break
       }
-
-      case 'help':
       default: {
         console.log('Temporal Libraries Download Client')
         console.log('')

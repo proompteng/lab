@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 
-import { mkdirSync, existsSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
-import { loadTemporalConfig } from '../config'
 import type { TemporalConfig } from '../config'
+import { loadTemporalConfig } from '../config'
 import type { NativeClient } from '../internal/core-bridge/native'
 
 type CommandHandler = (args: string[], flags: Record<string, string | boolean>) => Promise<void>
@@ -201,7 +201,7 @@ async function handleInit(args: string[], flags: Record<string, string | boolean
   console.log('  bun run docker:build --tag my-worker:latest')
 }
 
-async function handleDockerBuild(args: string[], flags: Record<string, string | boolean>) {
+async function handleDockerBuild(_args: string[], flags: Record<string, string | boolean>) {
   const tag = (flags.tag as string) ?? 'temporal-worker:latest'
   const context = resolve(cwd(), (flags.context as string) ?? '.')
   const dockerfile = resolve(cwd(), (flags.file as string) ?? 'Dockerfile')

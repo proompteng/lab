@@ -1,7 +1,7 @@
-import { describe, expect, test, beforeEach, afterEach, mock } from 'bun:test'
-import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs'
-import { join } from 'path'
-import { createHash } from 'crypto'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 // Create a temporary test directory
 const testDir = join(process.cwd(), 'test-temp-download-client')

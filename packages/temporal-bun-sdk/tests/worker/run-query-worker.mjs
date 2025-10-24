@@ -1,7 +1,7 @@
-import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
-import { Worker, NativeConnection } from '@temporalio/worker'
+import { fileURLToPath } from 'node:url'
+import { NativeConnection, Worker } from '@temporalio/worker'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const workflowsPath = join(__dirname, '../workflows/query-workflow.js')

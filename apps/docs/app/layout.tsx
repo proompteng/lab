@@ -1,6 +1,6 @@
 import '@/app/global.css'
-import type { Metadata } from 'next'
 import { RootProvider } from 'fumadocs-ui/provider'
+import type { Metadata } from 'next'
 
 const siteUrl = 'https://docs.proompteng.ai'
 const siteTitle = 'proompteng documentation'

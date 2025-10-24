@@ -1,8 +1,8 @@
 import { anthropic } from '@ai-sdk/anthropic'
-import { createTool } from '@mastra/core/tools'
 import { Agent } from '@mastra/core/agent'
-import { z } from 'zod'
+import { createTool } from '@mastra/core/tools'
 import { Octokit } from 'octokit'
+import { z } from 'zod'
 
 const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN,
@@ -314,7 +314,7 @@ export const githubTools = {
         if (error instanceof Error) {
           console.error(`[GitHub] Error details: ${error.message}`)
           if ('response' in error) {
-            // @ts-ignore
+            // @ts-expect-error
             console.error(`[GitHub] API response: ${JSON.stringify(error.response?.data)}`)
           }
         }
@@ -491,7 +491,7 @@ export const githubTools = {
         if (error instanceof Error) {
           console.error(`[GitHub] Error details: ${error.message}`)
           if ('response' in error) {
-            // @ts-ignore
+            // @ts-expect-error
             console.error(`[GitHub] API response: ${JSON.stringify(error.response?.data)}`)
           }
         }
