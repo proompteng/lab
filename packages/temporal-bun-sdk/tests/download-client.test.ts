@@ -464,7 +464,6 @@ describe('Download Client Unit Tests', () => {
       const { DownloadClient } = await import('../scripts/download-temporal-libs.ts')
       const client = new DownloadClient('test', 'repo', {
         cacheDir: testCacheDir,
-        fallbackToCompilation: false,
       })
 
       // Test that the client can handle download attempts and errors appropriately
@@ -475,7 +474,6 @@ describe('Download Client Unit Tests', () => {
       const { DownloadClient } = await import('../scripts/download-temporal-libs.ts')
       const client = new DownloadClient('test', 'repo', {
         cacheDir: testCacheDir,
-        fallbackToCompilation: false,
       })
 
       // Test that the client attempts to use cache and handles errors appropriately
@@ -491,7 +489,6 @@ describe('Download Client Unit Tests', () => {
       const { DownloadClient, ArtifactNotFoundError } = await import('../scripts/download-temporal-libs.ts')
       const client = new DownloadClient('test', 'repo', {
         cacheDir: testCacheDir,
-        fallbackToCompilation: false,
       })
 
       await expect(client.downloadLibraries('v999.0.0', 'linux', 'arm64')).rejects.toThrow(ArtifactNotFoundError)
@@ -547,7 +544,6 @@ describe('Download Client Unit Tests', () => {
       const { DownloadClient } = await import('../scripts/download-temporal-libs.ts')
       const client = new DownloadClient('test', 'repo', {
         cacheDir: testCacheDir,
-        fallbackToCompilation: false,
       })
 
       // The test should expect an extraction error since we're providing mock data that isn't a valid tar.gz
@@ -565,7 +561,6 @@ describe('Download Client Unit Tests', () => {
         PlatformError,
         ArtifactNotFoundError,
         CacheError,
-        FallbackError,
       } = await import('../scripts/download-temporal-libs.ts')
 
       const baseError = new TemporalLibsError('Base error', 'BASE_ERROR')
@@ -595,10 +590,6 @@ describe('Download Client Unit Tests', () => {
       const cacheError = new CacheError('Cache error')
       expect(cacheError.name).toBe('CacheError')
       expect(cacheError.code).toBe('CACHE_ERROR')
-
-      const fallbackError = new FallbackError('Fallback failed', new Error('Original error'))
-      expect(fallbackError.name).toBe('FallbackError')
-      expect(fallbackError.code).toBe('FALLBACK_ERROR')
     })
 
     test('should handle error propagation correctly', async () => {

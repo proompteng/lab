@@ -69,7 +69,7 @@ Dates assume we prioritize the Zig bridge alongside existing Rust bridge mainten
 ## 4. Documentation Backlog
 
 - **Quickstart:** “Temporal on Bun” (local dev + Temporal Cloud).  
-- **FFI Safety Notes:** explain Bun’s experimental status, supported platforms, and fallback behaviour (see [Bun FFI docs](https://bun.com/docs/api/ffi)).
+- **FFI Safety Notes:** explain Bun’s experimental status, supported platforms, and (historical) fallback behaviour — the Rust bridge was fully removed in October 2025 (see [Bun FFI docs](https://bun.com/docs/api/ffi)).
 - **Worker Versioning & Deployment Guide:** tailored to Bun packaging/deploy flows (see [Worker versioning](https://docs.temporal.io/worker-versioning)).
 - **Troubleshooting TLS/Docker:** collect known issues and fixes from community threads (see [Temporal community report](https://community.temporal.io/t/temporal-client-fails-to-connect-inside-docker-container-node-js-bun/17982)).
 - **Release Notes Template:** highlight Bun minimum version, platform coverage, experimental warnings.

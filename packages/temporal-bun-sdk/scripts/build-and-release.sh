@@ -29,9 +29,7 @@ if [ -d "$CACHE_DIR" ] && [ "$(find "$CACHE_DIR" -name '*.a' | wc -l)" -gt 0 ]; 
   LIB_DIR="$CACHE_DIR"
 else
   echo "✗ No cached libraries found"
-  echo "You need to either:"
-  echo "  1. Build from Rust source (requires temporal-sdk-core)"
-  echo "  2. Download from another source"
+  echo "Run 'bun run scripts/download-temporal-libs.ts download --version ${VERSION}' to populate ${CACHE_DIR}."
   exit 1
 fi
 

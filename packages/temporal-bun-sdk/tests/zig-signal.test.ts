@@ -2,9 +2,11 @@ process.env.TEMPORAL_BUN_SDK_USE_ZIG = '1'
 
 const { afterAll, beforeAll, describe, expect, test } = await import('bun:test')
 const { createTemporalClient } = await import('../src/client')
-const { bridgeVariant } = await import('../src/internal/core-bridge/native')
+const { importNativeBridge } = await import('./helpers/native-bridge')
 
-const usingZigBridge = bridgeVariant === 'zig'
+const { module: nativeBridge, isStub } = await importNativeBridge()
+
+const usingZigBridge = Boolean(nativeBridge) && nativeBridge.bridgeVariant === 'zig' && !isStub
 const zigSuite = usingZigBridge ? describe : describe.skip
 
 zigSuite('zig bridge workflow signals', () => {

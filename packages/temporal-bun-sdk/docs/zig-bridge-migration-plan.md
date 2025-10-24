@@ -1,6 +1,6 @@
 # Temporal Bun SDK — Zig Bridge Migration Plan
 
-**Status:** Scaffolded — Zig shared library placeholder merged (18 Oct 2025)  
+**Status:** Completed — Zig bridge is now the sole native path (Rust fallback removed 24 Oct 2025)  
 **Owner:** Platform Runtime (Temporal Bun)  
 **Related Issue:** #1458 — Native Bun support with Zig
 **See Also:** `zig-bridge-architectural-plan.md` for the end-state architecture and roadmap.
@@ -25,7 +25,7 @@ To provide first-class Bun developer ergonomics we will reimplement the native b
 |-------|-----------|
 | Provide a Zig-built shared library exposing the `temporal_bun_*` symbols consumed by `src/internal/core-bridge/native.ts`. | Rewriting Temporal Core itself in Zig. We will continue to embed the upstream runtime via its C-ABI surface. |
 | Match the existing successful client paths: runtime bootstrap, async client connect, namespace describe, workflow start. | Full worker runtime parity on day one. Worker APIs will move in a later phase. |
-| Remove the direct dependency on `cargo` for consumers; only Zig (>=0.15.x) is required to build from source (see the [Zig install guide](https://ziglang.org/learn/getting-started/)). | Dropping the Rust toolchain from **our** CI machines immediately. Until Zig parity is complete we keep Rust builds available for fallback. |
+| Remove the direct dependency on `cargo` for consumers; only Zig (>=0.15.x) is required to build from source (see the [Zig install guide](https://ziglang.org/learn/getting-started/)). | Dropping the Rust toolchain from **our** CI machines immediately. (Historical note: Rust builds remained available for fallback until October 2025; they are now removed.) |
 | Ship phased plan, validation strategy, owners, and rollout guardrails. | Changing Temporal server deployment. |
 
 ---
@@ -150,6 +150,7 @@ Bun (bun:ffi) ──▶ Zig Bridge (libtemporal_bun_bridge.zig)
 ## 9. Open Questions
 
 1. Do we maintain dual-bridge mode long term (Rust fallback) or enforce Zig-only after Phase 4?  
+   - **Resolution:** Zig-only enforcement shipped on October 24, 2025.
 2. Should we upstream Zig bindings to Temporal to reduce maintenance burden?  
 3. What is the expected minimum Zig version for Bun consumers (align with Bun 1.1.x release cadence)?  
 4. How will we distribute Apple arm64 binaries safely (notarization requirements)?

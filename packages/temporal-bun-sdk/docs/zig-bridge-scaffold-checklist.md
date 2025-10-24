@@ -60,7 +60,7 @@ The items below slice the Zig bridge effort into PR-sized TODOs. Every ID maps b
 | ID | Description | Entry point | Acceptance |
 |----|-------------|-------------|------------|
 | zig-pack-01 | Link Zig build against Temporal static libraries emitted by Cargo. | `build.zig` | `build:native:zig` links successfully on macOS/Linux. |
-| zig-pack-02 | Ship Zig artifacts in npm package (`zig-out/lib` per target). | `package.json`, publish pipeline | Pack command includes Zig binaries with fallback. |
+| zig-pack-02 | Ship Zig artifacts in npm package (`zig-out/lib` per target). | `package.json`, publish pipeline | Pack command includes Zig binaries (Rust fallback removed). |
 | zig-pack-03 | Document Zig toolchain requirements + installation flow referencing the official Zig install guide. | `README.md`, docs | README section updated, CI job references version. |
 | zig-pack-04 | CI executes `zig build test` in addition to existing Rust bridge smoke tests. | CI configs | Pipeline green with dual bridge verification (see `.github/workflows/temporal-bun-sdk-zig.yml`). |
 

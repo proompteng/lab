@@ -91,17 +91,6 @@ export class CacheError extends TemporalLibsError {
   }
 }
 
-export class FallbackError extends TemporalLibsError {
-  constructor(
-    message: string,
-    public readonly originalError: Error,
-    cause?: Error,
-  ) {
-    super(message, 'FALLBACK_ERROR', cause)
-    this.name = 'FallbackError'
-  }
-}
-
 // Types and interfaces
 export interface PlatformInfo {
   os: 'linux' | 'macos' | 'windows'
@@ -137,7 +126,6 @@ export interface GitHubAsset {
 export interface TemporalLibsConfig {
   version?: string
   cacheDir: string
-  fallbackToCompilation: boolean
   checksumVerification: boolean
   retryAttempts: number
   retryDelayMs: number
@@ -152,7 +140,6 @@ export interface TemporalLibsConfig {
 const DEFAULT_CONFIG: TemporalLibsConfig = {
   version: 'latest',
   cacheDir: '.temporal-libs-cache',
-  fallbackToCompilation: true,
   checksumVerification: true,
   retryAttempts: 3,
   retryDelayMs: 1000,
@@ -1582,7 +1569,7 @@ export class DownloadClient {
     const targetVersion = version || this.config.version || 'latest'
     console.log(`Downloading temporal libraries version: ${targetVersion}`)
 
-    let actualVersion = targetVersion // Initialize with target version for fallback
+    let actualVersion = targetVersion // Track the resolved release version for logging/caching
 
     try {
       // Find the release first to get the actual tag name
@@ -1786,15 +1773,6 @@ export class DownloadClient {
         }
       }
 
-      // Attempt fallback to Rust compilation if enabled
-      if (this.config.fallbackToCompilation) {
-        console.log('🔄 Attempting fallback to Rust compilation...')
-        return await this.fallbackToRustCompilation(
-          actualVersion,
-          error instanceof Error ? error : new Error(String(error)),
-        )
-      }
-
       // Re-throw the original error with context
       if (error instanceof TemporalLibsError) {
         throw error
@@ -1806,286 +1784,6 @@ export class DownloadClient {
         )
       }
     }
-  }
-
-  /**
-   * Fallback to Rust compilation when download fails
-   */
-  private async fallbackToRustCompilation(_version: string, originalError: Error): Promise<LibrarySet> {
-    try {
-      console.log('⚠️  Falling back to Rust compilation due to download failure')
-      console.log(`Original error: ${originalError.message}`)
-
-      // Check if Rust toolchain is available
-      const rustcCheck = Bun.spawn(['rustc', '--version'], { stdio: ['ignore', 'pipe', 'pipe'] })
-      const rustcExitCode = await rustcCheck.exited
-
-      if (rustcExitCode !== 0) {
-        throw new FallbackError(
-          'Rust toolchain not available for fallback compilation. Please install Rust or fix the download issue.',
-          originalError,
-        )
-      }
-
-      const rustcOutput = await new Response(rustcCheck.stdout).text()
-      console.log(`Found Rust toolchain: ${rustcOutput.trim()}`)
-
-      // Check if cargo is available
-      const cargoCheck = Bun.spawn(['cargo', '--version'], { stdio: ['ignore', 'pipe', 'pipe'] })
-      const cargoExitCode = await cargoCheck.exited
-
-      if (cargoExitCode !== 0) {
-        throw new FallbackError(
-          'Cargo not available for fallback compilation. Please install Cargo or fix the download issue.',
-          originalError,
-        )
-      }
-
-      const cargoOutput = await new Response(cargoCheck.stdout).text()
-      console.log(`Found Cargo: ${cargoOutput.trim()}`)
-
-      // Check if vendor directory exists
-      const vendorPath = join(process.cwd(), 'packages/temporal-bun-sdk/vendor/sdk-core')
-      if (!existsSync(vendorPath)) {
-        throw new FallbackError(
-          'Vendor directory not found for Rust compilation fallback. Run "git submodule update --init --recursive" to set up the vendor directory.',
-          originalError,
-        )
-      }
-
-      const cargoTomlPath = join(vendorPath, 'Cargo.toml')
-      if (!existsSync(cargoTomlPath)) {
-        throw new FallbackError(
-          'Cargo.toml not found in vendor directory. The vendor directory may be incomplete.',
-          originalError,
-        )
-      }
-
-      console.log('✓ Found vendor directory with Cargo.toml')
-
-      // Determine target triple for cross-compilation
-      const targetTriple = this.getCargoTargetTriple()
-      console.log(`Building for target: ${targetTriple}`)
-
-      // Build with cargo
-      console.log('🔨 Starting Rust compilation (this may take several minutes)...')
-      const buildStartTime = Date.now()
-
-      const cargoArgs = ['build', '--release', '--target', targetTriple]
-      const cargoBuild = Bun.spawn(cargoArgs, {
-        cwd: vendorPath,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          // Add cross-compilation environment variables if needed
-          ...this.getCrossCompilationEnv(),
-        },
-      })
-
-      // Monitor build progress
-      let buildOutput = ''
-      let buildErrors = ''
-
-      if (cargoBuild.stdout) {
-        const reader = cargoBuild.stdout.getReader()
-        const decoder = new TextDecoder()
-
-        const readOutput = async () => {
-          try {
-            while (true) {
-              const { done, value } = await reader.read()
-              if (done) break
-
-              const text = decoder.decode(value)
-              buildOutput += text
-              process.stdout.write(text) // Show build progress
-            }
-          } finally {
-            reader.releaseLock()
-          }
-        }
-
-        readOutput().catch(console.warn)
-      }
-
-      if (cargoBuild.stderr) {
-        const stderrText = await new Response(cargoBuild.stderr).text()
-        buildErrors = stderrText
-        if (stderrText.trim()) {
-          console.error('Build warnings/errors:', stderrText)
-        }
-      }
-
-      const buildExitCode = await cargoBuild.exited
-      const buildDuration = Math.round((Date.now() - buildStartTime) / 1000)
-
-      if (buildExitCode !== 0) {
-        throw new FallbackError(
-          `Cargo build failed with exit code ${buildExitCode}. Build output: ${buildErrors || buildOutput}`,
-          originalError,
-        )
-      }
-
-      console.log(`✓ Rust compilation completed in ${buildDuration}s`)
-
-      // Scan for built libraries
-      const targetDir = join(vendorPath, 'target', targetTriple, 'release')
-      const libraries = await this.scanCargoBuiltLibraries(targetDir)
-
-      if (libraries.length === 0) {
-        throw new FallbackError(
-          `No static libraries found in cargo build output directory: ${targetDir}`,
-          originalError,
-        )
-      }
-
-      console.log(`✓ Found ${libraries.length} compiled libraries`)
-
-      // Create LibrarySet from cargo-built libraries
-      const librarySet: LibrarySet = {
-        platform: this.platformInfo.os,
-        architecture: this.platformInfo.arch,
-        version: `cargo-built-${Date.now()}`, // Use timestamp for cargo builds
-        libraries,
-      }
-
-      // Optionally cache the cargo-built libraries
-      try {
-        await this.cacheManager.saveToCache(librarySet)
-        console.log('✓ Cached cargo-built libraries for future use')
-      } catch (cacheError) {
-        console.warn(
-          `Failed to cache cargo-built libraries: ${cacheError instanceof Error ? cacheError.message : cacheError}`,
-        )
-      }
-
-      return librarySet
-    } catch (error) {
-      if (error instanceof FallbackError) {
-        throw error
-      }
-
-      throw new FallbackError(
-        `Fallback to Rust compilation failed: ${error instanceof Error ? error.message : error}`,
-        originalError,
-        error instanceof Error ? error : undefined,
-      )
-    }
-  }
-
-  /**
-   * Get cargo target triple for current platform
-   */
-  private getCargoTargetTriple(): string {
-    switch (this.platformInfo.os) {
-      case 'macos':
-        return this.platformInfo.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin'
-      case 'linux':
-        return this.platformInfo.arch === 'arm64' ? 'aarch64-unknown-linux-gnu' : 'x86_64-unknown-linux-gnu'
-      case 'windows':
-        return this.platformInfo.arch === 'arm64' ? 'aarch64-pc-windows-msvc' : 'x86_64-pc-windows-msvc'
-      default:
-        throw new Error(`Unsupported platform for cargo build: ${this.platformInfo.platform}`)
-    }
-  }
-
-  /**
-   * Get cross-compilation environment variables
-   */
-  private getCrossCompilationEnv(): Record<string, string> {
-    const env: Record<string, string> = {}
-
-    // Add cross-compilation environment variables for ARM64 Linux
-    if (this.platformInfo.os === 'linux' && this.platformInfo.arch === 'arm64') {
-      env.CC = 'aarch64-linux-gnu-gcc'
-      env.CXX = 'aarch64-linux-gnu-g++'
-      env.AR = 'aarch64-linux-gnu-ar'
-      env.STRIP = 'aarch64-linux-gnu-strip'
-      env.PKG_CONFIG_PATH = '/usr/lib/aarch64-linux-gnu/pkgconfig'
-    }
-
-    return env
-  }
-
-  /**
-   * Scan cargo build output directory for static libraries
-   */
-  private async scanCargoBuiltLibraries(targetDir: string): Promise<StaticLibrary[]> {
-    const libraries: StaticLibrary[] = []
-
-    if (!existsSync(targetDir)) {
-      throw new Error(`Cargo build target directory not found: ${targetDir}`)
-    }
-
-    console.log(`Scanning for static libraries in ${targetDir}...`)
-
-    try {
-      // Use find command to locate all .a files
-      const proc = Bun.spawn(['find', targetDir, '-name', '*.a', '-type', 'f'], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-
-      const exitCode = await proc.exited
-
-      if (exitCode !== 0) {
-        const stderr = await new Response(proc.stderr).text()
-        throw new Error(`Failed to scan cargo build directory: ${stderr}`)
-      }
-
-      const stdout = await new Response(proc.stdout).text()
-      const libraryPaths = stdout
-        .trim()
-        .split('\n')
-        .filter((path) => path.length > 0)
-
-      if (libraryPaths.length === 0) {
-        console.warn(`⚠️  No static libraries (.a files) found in ${targetDir}`)
-        return libraries
-      }
-
-      console.log(`Found ${libraryPaths.length} static libraries, calculating checksums...`)
-
-      // Process each library file
-      for (let i = 0; i < libraryPaths.length; i++) {
-        const libPath = libraryPaths[i]
-        const libName = libPath.split('/').pop() || ''
-
-        try {
-          // Verify file exists and is readable
-          const stats = statSync(libPath)
-          if (stats.size === 0) {
-            console.warn(`⚠️  Skipping empty library file: ${libName}`)
-            continue
-          }
-
-          process.stdout.write(`\rProcessing library ${i + 1}/${libraryPaths.length}: ${libName}`)
-
-          const checksum = await this.fileDownloader.calculateChecksum(libPath)
-
-          libraries.push({
-            name: libName,
-            path: libPath,
-            checksum,
-          })
-        } catch (error) {
-          console.warn(`\n⚠️  Error processing library ${libName}: ${error}`)
-          continue
-        }
-      }
-
-      console.log(`\n✓ Successfully processed ${libraries.length} static libraries`)
-
-      // Log library details
-      for (const lib of libraries) {
-        const stats = statSync(lib.path)
-        const sizeMB = (stats.size / 1024 / 1024).toFixed(1)
-        console.log(`  ${lib.name}: ${sizeMB}MB (${lib.checksum.substring(0, 8)}...)`)
-      }
-    } catch (error) {
-      throw new Error(`Failed to scan cargo-built libraries: ${error instanceof Error ? error.message : error}`)
-    }
-
-    return libraries
   }
 
   /**
@@ -2404,16 +2102,8 @@ export class DownloadClient {
       console.log('   Problem: Platform compatibility issues')
       console.log('   Solutions:')
       console.log('   1. Check supported platforms: linux-arm64, linux-x64, macos-arm64')
-      console.log('   2. Use cross-compilation if building for a different target')
-      console.log('   3. Set up vendor directory for Rust compilation fallback')
-    } else if (error instanceof FallbackError) {
-      console.log('   Problem: Fallback to Rust compilation failed')
-      console.log('   Solutions:')
-      console.log('   1. Install Rust toolchain: https://rustup.rs/')
-      console.log('   2. Set up vendor directory:')
-      console.log('      git submodule update --init --recursive')
-      console.log('   3. Install cross-compilation tools if needed')
-      console.log('   4. Fix the original download issue instead')
+      console.log('   2. Build the Zig bridge locally for this platform if prebuilt artefacts are unavailable')
+      console.log('   3. Confirm the zig-out/lib directory contains the expected library for your architecture')
     } else if (error instanceof CacheError) {
       console.log('   Problem: Cache management issues')
       console.log('   Solutions:')

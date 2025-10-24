@@ -12,10 +12,10 @@ const notes = `Temporal static libraries release ${version}.
 - linux-x64  
 - macos-arm64
 
-To build libraries locally, ensure you have:
-1. Rust toolchain installed
-2. Temporal SDK Core vendored (git submodule)
-3. Run: \`cargo build --release\` in the vendor directory`
+To stage libraries locally:
+1. Run \`bun run scripts/download-temporal-libs.ts download --version ${version}\`
+2. Optionally validate with \`pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig\`
+`
 
 console.log(`Creating placeholder release: ${tag}`)
 
