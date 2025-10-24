@@ -88,11 +88,4 @@ create_tree() {
 
   echo "create_tree: worktree created at $target_path"
   cd "$target_path" || return 1
-
-  if command -v codex >/dev/null 2>&1; then
-    echo "create_tree: launching codex in $target_path"
-    codex
-  else
-    echo "create_tree: codex command not found; skipping launch" >&2
-  fi
 }
