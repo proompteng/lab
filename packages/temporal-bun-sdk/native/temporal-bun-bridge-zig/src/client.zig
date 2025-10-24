@@ -889,7 +889,7 @@ fn clientStartWorkflowCallback(
 
     if (success != null and status_code == 0) {
         const slice = byteArraySlice(success.?);
-        
+
         if (slice.len == 0) {
             if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
             context.error_code = grpc.internal;

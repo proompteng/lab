@@ -31,7 +31,7 @@ test "StringArena duplicates and manages strings" {
 
     const original = "test-string";
     const copy = try arena.dup(original);
-    
+
     try testing.expectEqualStrings(original, copy);
     try testing.expect(copy.ptr != original.ptr); // Different memory
 }
@@ -50,7 +50,7 @@ test "StringArena manages multiple strings" {
 
     const copy1 = try arena.dup("first");
     const copy2 = try arena.dup("second");
-    
+
     try testing.expectEqualStrings("first", copy1);
     try testing.expectEqualStrings("second", copy2);
 }
@@ -58,23 +58,23 @@ test "StringArena manages multiple strings" {
 // Test the memory safety pattern used in clientStartWorkflowCallback fix
 test "memory copy before free pattern" {
     const allocator = testing.allocator;
-    
+
     // Simulate the original data (like core-managed memory)
     const original_data = try allocator.alloc(u8, 10);
     defer allocator.free(original_data);
     @memcpy(original_data, "test-data\x00");
-    
+
     // Get a slice view (like byteArraySlice would return)
     const slice = original_data[0..9]; // Exclude null terminator
-    
+
     // Copy BEFORE freeing (the fix we implemented)
     const copy = try allocator.alloc(u8, slice.len);
     defer allocator.free(copy);
     @memcpy(copy, slice);
-    
+
     // Now it's safe to "free" the original (simulated)
     // In real code: core.api.byte_array_free(original_ptr);
-    
+
     // Verify the copy is intact
     try testing.expectEqualStrings("test-data", copy);
 }
