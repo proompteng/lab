@@ -201,17 +201,26 @@ async function waitForWorkerReady(workerProcess: ReturnType<typeof Bun.spawn>) {
   const reader = workerProcess.stdout.getReader()
   const decoder = new TextDecoder()
 
+  const timeout = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error('Worker readiness timeout after 3s')), 3000)
+  })
+
   try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done || !value) {
-        throw new Error('Worker exited before signaling readiness')
-      }
-      const text = decoder.decode(value)
-      if (text.includes('Worker ready')) {
-        break
-      }
-    }
+    await Promise.race([
+      (async () => {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done || !value) {
+            throw new Error('Worker exited before signaling readiness')
+          }
+          const text = decoder.decode(value)
+          if (text.includes('Worker ready')) {
+            break
+          }
+        }
+      })(),
+      timeout,
+    ])
   } finally {
     reader.releaseLock()
   }

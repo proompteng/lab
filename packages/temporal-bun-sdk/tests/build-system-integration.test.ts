@@ -168,6 +168,10 @@ describe('Build System Integration Tests', () => {
           const decoder = new TextDecoder()
 
           try {
+            const timeout = setTimeout(() => {
+              zigBuild.kill()
+            }, 3000)
+
             while (true) {
               const { done, value } = await reader.read()
               if (done) break
@@ -175,6 +179,7 @@ describe('Build System Integration Tests', () => {
               buildOutput += text
               process.stdout.write(text)
             }
+            clearTimeout(timeout)
           } finally {
             reader.releaseLock()
           }
@@ -211,7 +216,7 @@ describe('Build System Integration Tests', () => {
         delete process.env.USE_PREBUILT_LIBS
         delete process.env.TEMPORAL_LIBS_VERSION
       }
-    })
+    }, 10000)
   })
 
   describe('Cross-platform Compatibility', () => {
