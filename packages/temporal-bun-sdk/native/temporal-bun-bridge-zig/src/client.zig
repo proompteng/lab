@@ -6,6 +6,7 @@ const pending = @import("pending.zig");
 const core = @import("core.zig");
 
 const grpc = pending.GrpcStatus;
+const ArrayListManaged = std.array_list.Managed;
 
 const StringArena = struct {
     allocator: std.mem.Allocator,
@@ -182,6 +183,420 @@ fn encodeDescribeNamespaceRequest(allocator: std.mem.Allocator, namespace: []con
     @memcpy(out[1 .. 1 + length_index], length_buffer[0..length_index]);
     @memcpy(out[1 + length_index ..], namespace);
     return out;
+}
+
+const ProtoDecodeError = error{
+    UnexpectedEof,
+    UnsupportedWireType,
+    Overflow,
+};
+
+fn writeVarint(buffer: *ArrayListManaged(u8), value: u64) !void {
+    var remaining = value;
+    while (true) {
+        var byte: u8 = @intCast(remaining & 0x7F);
+        remaining >>= 7;
+        if (remaining != 0) {
+            byte |= 0x80;
+        }
+        try buffer.append(byte);
+        if (remaining == 0) break;
+    }
+}
+
+fn writeTag(buffer: *ArrayListManaged(u8), field_number: u32, wire_type: u3) !void {
+    const key = (@as(u64, field_number) << 3) | wire_type;
+    try writeVarint(buffer, key);
+}
+
+fn appendLengthDelimited(buffer: *ArrayListManaged(u8), field_number: u32, bytes: []const u8) !void {
+    try writeTag(buffer, field_number, 2);
+    try writeVarint(buffer, bytes.len);
+    try buffer.appendSlice(bytes);
+}
+
+fn appendString(buffer: *ArrayListManaged(u8), field_number: u32, value: []const u8) !void {
+    try appendLengthDelimited(buffer, field_number, value);
+}
+
+fn appendBytes(buffer: *ArrayListManaged(u8), field_number: u32, value: []const u8) !void {
+    try appendLengthDelimited(buffer, field_number, value);
+}
+
+fn appendVarint(buffer: *ArrayListManaged(u8), field_number: u32, value: u64) !void {
+    try writeTag(buffer, field_number, 0);
+    try writeVarint(buffer, value);
+}
+
+fn appendBool(buffer: *ArrayListManaged(u8), field_number: u32, value: bool) !void {
+    try appendVarint(buffer, field_number, if (value) 1 else 0);
+}
+
+fn appendDouble(buffer: *ArrayListManaged(u8), field_number: u32, value: f64) !void {
+    try writeTag(buffer, field_number, 1);
+    var storage: [8]u8 = undefined;
+    const bits: u64 = @bitCast(value);
+    std.mem.writeInt(u64, storage[0..], bits, .little);
+    try buffer.appendSlice(&storage);
+}
+
+fn duplicateSlice(allocator: std.mem.Allocator, slice: []const u8) ![]u8 {
+    if (slice.len == 0) return ""[0..0];
+    const copy = try allocator.alloc(u8, slice.len);
+    @memcpy(copy, slice);
+    return copy;
+}
+
+fn encodeDurationMillis(allocator: std.mem.Allocator, millis: u64) ![]u8 {
+    var buf = ArrayListManaged(u8).init(allocator);
+    defer buf.deinit();
+
+    const seconds: u64 = millis / 1_000;
+    const nanos: u32 = @intCast((millis % 1_000) * 1_000_000);
+
+    if (seconds != 0) {
+        try appendVarint(&buf, 1, seconds);
+    }
+    if (nanos != 0) {
+        try appendVarint(&buf, 2, nanos);
+    }
+
+    return buf.toOwnedSlice();
+}
+
+fn encodeMetadataEntry(allocator: std.mem.Allocator, key: []const u8, value: []const u8) ![]u8 {
+    var entry = ArrayListManaged(u8).init(allocator);
+    defer entry.deinit();
+
+    try appendString(&entry, 1, key);
+    try appendBytes(&entry, 2, value);
+
+    return entry.toOwnedSlice();
+}
+
+fn encodeJsonPayload(allocator: std.mem.Allocator, value: std.json.Value) ![]u8 {
+    const json_bytes = try std.json.Stringify.valueAlloc(allocator, value, .{});
+    defer allocator.free(json_bytes);
+
+    var payload = ArrayListManaged(u8).init(allocator);
+    defer payload.deinit();
+
+    const metadata_entry = try encodeMetadataEntry(allocator, "encoding", "json/plain");
+    defer allocator.free(metadata_entry);
+    try appendLengthDelimited(&payload, 1, metadata_entry);
+    try appendBytes(&payload, 2, json_bytes);
+
+    return payload.toOwnedSlice();
+}
+
+fn encodePayloadsFromArray(allocator: std.mem.Allocator, array: *std.json.Array) !?[]u8 {
+    if (array.items.len == 0) return null;
+
+    var payloads = ArrayListManaged(u8).init(allocator);
+    defer payloads.deinit();
+
+    for (array.items) |item| {
+        const payload_bytes = try encodeJsonPayload(allocator, item);
+        defer allocator.free(payload_bytes);
+        try appendLengthDelimited(&payloads, 1, payload_bytes);
+    }
+
+    const owned = try payloads.toOwnedSlice();
+    const result: ?[]u8 = owned;
+    return result;
+}
+
+fn encodePayloadMap(allocator: std.mem.Allocator, map: *std.json.ObjectMap) !?[]u8 {
+    if (map.count() == 0) return null;
+
+    var encoded = ArrayListManaged(u8).init(allocator);
+    defer encoded.deinit();
+
+    var cursor = map.iterator();
+    while (cursor.next()) |entry| {
+        const payload_bytes = try encodeJsonPayload(allocator, entry.value_ptr.*);
+        defer allocator.free(payload_bytes);
+
+        var field_entry = ArrayListManaged(u8).init(allocator);
+        defer field_entry.deinit();
+        try appendString(&field_entry, 1, entry.key_ptr.*);
+        try appendLengthDelimited(&field_entry, 2, payload_bytes);
+        const field_bytes = try field_entry.toOwnedSlice();
+        defer allocator.free(field_bytes);
+        try appendLengthDelimited(&encoded, 1, field_bytes);
+    }
+
+    const owned = try encoded.toOwnedSlice();
+    const result: ?[]u8 = owned;
+    return result;
+}
+
+fn jsonValueToU64(value: std.json.Value) !u64 {
+    return switch (value) {
+        .integer => |int| blk: {
+            if (int < 0) return error.InvalidNumber;
+            const converted: u64 = @intCast(int);
+            break :blk converted;
+        },
+        .float => error.InvalidNumber,
+        .number_string => |digits| blk: {
+            const parsed = std.fmt.parseInt(u64, digits, 10) catch return error.InvalidNumber;
+            break :blk parsed;
+        },
+        else => error.InvalidNumber,
+    };
+}
+
+fn jsonValueToF64(value: std.json.Value) !f64 {
+    return switch (value) {
+        .float => |flt| blk: {
+            if (!std.math.isFinite(flt)) return error.InvalidNumber;
+            break :blk flt;
+        },
+        .integer => |int| blk: {
+            const converted: f64 = @floatFromInt(int);
+            break :blk converted;
+        },
+        .number_string => |digits| blk: {
+            const parsed = std.fmt.parseFloat(f64, digits) catch return error.InvalidNumber;
+            if (!std.math.isFinite(parsed)) return error.InvalidNumber;
+            break :blk parsed;
+        },
+        else => error.InvalidNumber,
+    };
+}
+
+fn encodeRetryPolicyFromObject(allocator: std.mem.Allocator, map: *std.json.ObjectMap) !?[]u8 {
+    var payload = ArrayListManaged(u8).init(allocator);
+    defer payload.deinit();
+
+    if (map.getPtr("initial_interval_ms")) |value_ptr| {
+        const millis = try jsonValueToU64(value_ptr.*);
+        const duration = try encodeDurationMillis(allocator, millis);
+        defer allocator.free(duration);
+        try appendLengthDelimited(&payload, 1, duration);
+    }
+
+    if (map.getPtr("backoff_coefficient")) |value_ptr| {
+        const coeff = try jsonValueToF64(value_ptr.*);
+        try appendDouble(&payload, 2, coeff);
+    }
+
+    if (map.getPtr("maximum_interval_ms")) |value_ptr| {
+        const millis = try jsonValueToU64(value_ptr.*);
+        const duration = try encodeDurationMillis(allocator, millis);
+        defer allocator.free(duration);
+        try appendLengthDelimited(&payload, 3, duration);
+    }
+
+    if (map.getPtr("maximum_attempts")) |value_ptr| {
+        const attempts = try jsonValueToU64(value_ptr.*);
+        try appendVarint(&payload, 4, attempts);
+    }
+
+    if (map.getPtr("non_retryable_error_types")) |value_ptr| {
+        if (value_ptr.* != .array) return error.InvalidRetryPolicy;
+        for (value_ptr.*.array.items) |entry| {
+            const str = switch (entry) {
+                .string => |s| s,
+                else => return error.InvalidRetryPolicy,
+            };
+            try appendString(&payload, 5, str);
+        }
+    }
+
+    if (payload.items.len == 0) return null;
+    const owned = try payload.toOwnedSlice();
+    const result: ?[]u8 = owned;
+    return result;
+}
+
+fn generateRequestId(allocator: std.mem.Allocator) ![]u8 {
+    var random_bytes: [16]u8 = undefined;
+    std.crypto.random.bytes(&random_bytes);
+    random_bytes[6] = (random_bytes[6] & 0x0F) | 0x40;
+    random_bytes[8] = (random_bytes[8] & 0x3F) | 0x80;
+
+    var scratch: [36]u8 = undefined;
+    const hex = std.fmt.bytesToHex(random_bytes, .lower);
+    const formatted = try std.fmt.bufPrint(&scratch, "{s}-{s}-{s}-{s}-{s}", .{
+        hex[0..8],
+        hex[8..12],
+        hex[12..16],
+        hex[16..20],
+        hex[20..32],
+    });
+
+    const copy = try allocator.alloc(u8, formatted.len);
+    @memcpy(copy, formatted);
+    return copy;
+}
+
+const StartWorkflowRequestParts = struct {
+    namespace: []const u8,
+    workflow_id: []const u8,
+    workflow_type: []const u8,
+    task_queue: []const u8,
+    identity: []const u8,
+    request_id: []const u8,
+    cron_schedule: ?[]const u8 = null,
+    workflow_execution_timeout_ms: ?u64 = null,
+    workflow_run_timeout_ms: ?u64 = null,
+    workflow_task_timeout_ms: ?u64 = null,
+    args: ?*std.json.Array = null,
+    memo: ?*std.json.ObjectMap = null,
+    search_attributes: ?*std.json.ObjectMap = null,
+    headers: ?*std.json.ObjectMap = null,
+    retry_policy: ?*std.json.ObjectMap = null,
+};
+
+fn encodeStartWorkflowRequest(allocator: std.mem.Allocator, params: StartWorkflowRequestParts) ![]u8 {
+    var request = ArrayListManaged(u8).init(allocator);
+    defer request.deinit();
+
+    try appendString(&request, 1, params.namespace);
+    try appendString(&request, 2, params.workflow_id);
+
+    var workflow_type_buf = ArrayListManaged(u8).init(allocator);
+    defer workflow_type_buf.deinit();
+    try appendString(&workflow_type_buf, 1, params.workflow_type);
+    const workflow_type_bytes = try workflow_type_buf.toOwnedSlice();
+    defer allocator.free(workflow_type_bytes);
+    try appendLengthDelimited(&request, 3, workflow_type_bytes);
+
+    var task_queue_buf = ArrayListManaged(u8).init(allocator);
+    defer task_queue_buf.deinit();
+    try appendString(&task_queue_buf, 1, params.task_queue);
+    try appendVarint(&task_queue_buf, 3, 1); // TaskQueueKind::Normal
+    const task_queue_bytes = try task_queue_buf.toOwnedSlice();
+    defer allocator.free(task_queue_bytes);
+    try appendLengthDelimited(&request, 4, task_queue_bytes);
+
+    if (params.args) |array_ptr| {
+        if (try encodePayloadsFromArray(allocator, array_ptr)) |payload_bytes| {
+            defer allocator.free(payload_bytes);
+            try appendLengthDelimited(&request, 5, payload_bytes);
+        }
+    }
+
+    if (params.workflow_execution_timeout_ms) |millis| {
+        const duration = try encodeDurationMillis(allocator, millis);
+        defer allocator.free(duration);
+        try appendLengthDelimited(&request, 6, duration);
+    }
+
+    if (params.workflow_run_timeout_ms) |millis| {
+        const duration = try encodeDurationMillis(allocator, millis);
+        defer allocator.free(duration);
+        try appendLengthDelimited(&request, 7, duration);
+    }
+
+    if (params.workflow_task_timeout_ms) |millis| {
+        const duration = try encodeDurationMillis(allocator, millis);
+        defer allocator.free(duration);
+        try appendLengthDelimited(&request, 8, duration);
+    }
+
+    try appendString(&request, 9, params.identity);
+    try appendString(&request, 10, params.request_id);
+
+    if (params.retry_policy) |policy_map| {
+        if (try encodeRetryPolicyFromObject(allocator, policy_map)) |encoded_retry| {
+            defer allocator.free(encoded_retry);
+            try appendLengthDelimited(&request, 12, encoded_retry);
+        }
+    }
+
+    if (params.cron_schedule) |schedule| {
+        if (schedule.len != 0) {
+            try appendString(&request, 13, schedule);
+        }
+    }
+
+    if (params.memo) |memo_map| {
+        if (try encodePayloadMap(allocator, memo_map)) |memo_bytes| {
+            defer allocator.free(memo_bytes);
+            try appendLengthDelimited(&request, 14, memo_bytes);
+        }
+    }
+
+    if (params.search_attributes) |search_map| {
+        if (try encodePayloadMap(allocator, search_map)) |search_bytes| {
+            defer allocator.free(search_bytes);
+            try appendLengthDelimited(&request, 15, search_bytes);
+        }
+    }
+
+    if (params.headers) |header_map| {
+        if (try encodePayloadMap(allocator, header_map)) |header_bytes| {
+            defer allocator.free(header_bytes);
+            try appendLengthDelimited(&request, 16, header_bytes);
+        }
+    }
+
+    return request.toOwnedSlice();
+}
+
+fn readVarint(buffer: []const u8, index: *usize) ProtoDecodeError!u64 {
+    var result: u64 = 0;
+    var shift: u6 = 0;
+    while (true) {
+        if (index.* >= buffer.len) return error.UnexpectedEof;
+        const byte = buffer[index.*];
+        index.* += 1;
+        const bits = @as(u64, byte & 0x7F) << shift;
+        result |= bits;
+        if ((byte & 0x80) == 0) break;
+        shift += 7;
+        if (shift >= 64) return error.Overflow;
+    }
+    return result;
+}
+
+fn skipField(buffer: []const u8, index: *usize, wire_type: u3) ProtoDecodeError!void {
+    switch (wire_type) {
+        0 => {
+            _ = try readVarint(buffer, index);
+        },
+        1 => {
+            if (buffer.len - index.* < 8) return error.UnexpectedEof;
+            index.* += 8;
+        },
+        2 => {
+            const length = try readVarint(buffer, index);
+            if (buffer.len - index.* < length) return error.UnexpectedEof;
+            const len_usize: usize = @intCast(length);
+            index.* += len_usize;
+        },
+        5 => {
+            if (buffer.len - index.* < 4) return error.UnexpectedEof;
+            index.* += 4;
+        },
+        else => return error.UnsupportedWireType,
+    }
+}
+
+fn parseStartWorkflowRunId(buffer: []const u8) ProtoDecodeError![]const u8 {
+    var index: usize = 0;
+    while (index < buffer.len) {
+        const key = try readVarint(buffer, &index);
+        const field_number: u32 = @intCast(key >> 3);
+        const wire_type: u3 = @intCast(key & 0x07);
+
+        if (field_number == 1 and wire_type == 2) {
+            const length = try readVarint(buffer, &index);
+            if (buffer.len - index < length) return error.UnexpectedEof;
+            const start = index;
+            const len_usize: usize = @intCast(length);
+            const end = index + len_usize;
+            index = end;
+            return buffer[start..end];
+        }
+
+        try skipField(buffer, &index, wire_type);
+    }
+
+    return ""[0..0];
 }
 
 const ConnectError = error{ConnectFailed};
@@ -430,13 +845,112 @@ fn clientDescribeCallback(
         return;
     }
 
-    const code: i32 = if (status_code == 0) grpc.internal else @intCast(status_code);
+    const code: i32 = if (status_code == 0) grpc.internal else @as(i32, @intCast(status_code));
     const message_slice = if (failure_message) |msg| byteArraySlice(msg) else "temporal-bun-bridge-zig: describeNamespace failed"[0..];
     _ = pending.rejectByteArray(context.pending_handle, code, message_slice);
     errors.setStructuredError(.{ .code = code, .message = message_slice });
     if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
     if (failure_message) |msg| core.api.byte_array_free(context.runtime_handle.core_runtime, msg);
     if (failure_details) |details| core.api.byte_array_free(context.runtime_handle.core_runtime, details);
+}
+
+const StartWorkflowRpcContext = struct {
+    allocator: std.mem.Allocator,
+    wait_group: std.Thread.WaitGroup = .{},
+    runtime_handle: *runtime.RuntimeHandle,
+    response: []u8 = ""[0..0],
+    error_message_owned: bool = false,
+    error_message: []const u8 = ""[0..0],
+    success: bool = false,
+    error_code: i32 = grpc.internal,
+};
+
+fn freeContextSlice(ctx: *StartWorkflowRpcContext, slice: []const u8) void {
+    if (slice.len > 0) {
+        ctx.allocator.free(@constCast(slice));
+    }
+}
+
+fn clientStartWorkflowCallback(
+    user_data: ?*anyopaque,
+    success: ?*const core.ByteArray,
+    status_code: u32,
+    failure_message: ?*const core.ByteArray,
+    failure_details: ?*const core.ByteArray,
+) callconv(.c) void {
+    if (user_data == null) return;
+    const context = @as(*StartWorkflowRpcContext, @ptrCast(@alignCast(user_data.?)));
+    defer context.wait_group.finish();
+
+    defer {
+        if (failure_message) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+        if (failure_details) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+    }
+
+    if (success != null and status_code == 0) {
+        const slice = byteArraySlice(success.?);
+        if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+
+        if (slice.len == 0) {
+            context.error_code = grpc.internal;
+            if (context.error_message_owned) {
+                freeContextSlice(context, context.error_message);
+                context.error_message_owned = false;
+            }
+            context.error_message = "temporal-bun-bridge-zig: startWorkflow returned empty response";
+            context.success = false;
+            return;
+        }
+
+        const copy = context.allocator.alloc(u8, slice.len) catch {
+            context.error_code = grpc.resource_exhausted;
+            if (context.error_message_owned) {
+                freeContextSlice(context, context.error_message);
+                context.error_message_owned = false;
+            }
+            context.error_message = "temporal-bun-bridge-zig: failed to allocate startWorkflow response";
+            context.success = false;
+            return;
+        };
+
+        @memcpy(copy, slice);
+        freeContextSlice(context, context.response);
+        context.response = copy;
+        context.success = true;
+        context.error_code = grpc.ok;
+        if (context.error_message_owned) {
+            freeContextSlice(context, context.error_message);
+            context.error_message_owned = false;
+        }
+        context.error_message = ""[0..0];
+        return;
+    }
+
+    if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+    const code: i32 = if (status_code == 0) grpc.internal else @as(i32, @intCast(status_code));
+    context.error_code = code;
+
+    if (context.error_message_owned) {
+        freeContextSlice(context, context.error_message);
+        context.error_message_owned = false;
+    }
+
+    const message_slice = if (failure_message) |ptr| byteArraySlice(ptr) else "temporal-bun-bridge-zig: startWorkflow failed"[0..];
+    if (message_slice.len == 0) {
+        context.error_message = ""[0..0];
+    } else {
+        const copy = context.allocator.alloc(u8, message_slice.len) catch {
+            context.error_message = "temporal-bun-bridge-zig: failed to duplicate startWorkflow error";
+            context.error_message_owned = false;
+            context.success = false;
+            context.error_code = code;
+            return;
+        };
+        @memcpy(copy, message_slice);
+        context.error_message = copy;
+        context.error_message_owned = true;
+    }
+    context.success = false;
 }
 
 pub const ClientHandle = struct {
@@ -684,6 +1198,7 @@ fn parseNamespaceFromPayload(payload: []const u8) ?[]u8 {
 }
 
 const describe_namespace_rpc = "DescribeNamespace";
+const start_workflow_rpc = "StartWorkflowExecution";
 
 fn describeNamespaceWorker(task: *DescribeNamespaceTask) void {
     const allocator = std.heap.c_allocator;
@@ -1020,15 +1535,518 @@ pub fn describeNamespaceAsync(client_ptr: ?*ClientHandle, _payload: []const u8) 
 }
 
 pub fn startWorkflow(_client: ?*ClientHandle, _payload: []const u8) ?*byte_array.ByteArray {
-    // TODO(codex, zig-wf-01): Marshal workflow start request into Temporal core and return run handles.
-    _ = _client;
-    _ = _payload;
-    errors.setStructuredErrorJson(.{
-        .code = grpc.unimplemented,
-        .message = "temporal-bun-bridge-zig: startWorkflow is not wired to Temporal core yet",
-        .details = null,
-    });
-    return null;
+    if (_client == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: startWorkflow received null client",
+            .details = null,
+        });
+        return null;
+    }
+
+    if (_payload.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: startWorkflow payload must be non-empty",
+            .details = null,
+        });
+        return null;
+    }
+
+    const client_ptr = _client.?;
+    const runtime_handle = client_ptr.runtime orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: startWorkflow missing runtime handle",
+            .details = null,
+        });
+        return null;
+    };
+
+    if (runtime_handle.core_runtime == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: runtime core handle is not initialized",
+            .details = null,
+        });
+        return null;
+    }
+
+    const core_client = client_ptr.core_client orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: client core handle is not initialized",
+            .details = null,
+        });
+        return null;
+    };
+
+    const allocator = std.heap.c_allocator;
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, _payload, .{}) catch |err| {
+        var scratch: [192]u8 = undefined;
+        const msg = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: startWorkflow payload must be valid JSON: {}",
+            .{err},
+        ) catch "temporal-bun-bridge-zig: startWorkflow payload must be valid JSON";
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = msg, .details = null });
+        return null;
+    };
+    defer parsed.deinit();
+
+    const root = parsed.value;
+    if (root != .object) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: startWorkflow payload must be a JSON object",
+            .details = null,
+        });
+        return null;
+    }
+
+    var object = root.object;
+
+    const namespace_value_ptr = object.getPtr("namespace") orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: startWorkflow namespace is required",
+            .details = null,
+        });
+        return null;
+    };
+    const namespace_slice = switch (namespace_value_ptr.*) {
+        .string => |s| s,
+        else => {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: startWorkflow namespace must be a string",
+                .details = null,
+            });
+            return null;
+        },
+    };
+    if (namespace_slice.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: startWorkflow namespace must be non-empty",
+            .details = null,
+        });
+        return null;
+    }
+
+    const workflow_id_ptr = object.getPtr("workflow_id") orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: startWorkflow workflow_id is required",
+            .details = null,
+        });
+        return null;
+    };
+    const workflow_id_slice = switch (workflow_id_ptr.*) {
+        .string => |s| s,
+        else => {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: startWorkflow workflow_id must be a string",
+                .details = null,
+            });
+            return null;
+        },
+    };
+    if (workflow_id_slice.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: startWorkflow workflow_id must be non-empty",
+            .details = null,
+        });
+        return null;
+    }
+
+    const workflow_type_ptr = object.getPtr("workflow_type") orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: startWorkflow workflow_type is required",
+            .details = null,
+        });
+        return null;
+    };
+    const workflow_type_slice = switch (workflow_type_ptr.*) {
+        .string => |s| s,
+        else => {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: startWorkflow workflow_type must be a string",
+                .details = null,
+            });
+            return null;
+        },
+    };
+    if (workflow_type_slice.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: startWorkflow workflow_type must be non-empty",
+            .details = null,
+        });
+        return null;
+    }
+
+    const task_queue_ptr = object.getPtr("task_queue") orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: startWorkflow task_queue is required",
+            .details = null,
+        });
+        return null;
+    };
+    const task_queue_slice = switch (task_queue_ptr.*) {
+        .string => |s| s,
+        else => {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: startWorkflow task_queue must be a string",
+                .details = null,
+            });
+            return null;
+        },
+    };
+    if (task_queue_slice.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: startWorkflow task_queue must be non-empty",
+            .details = null,
+        });
+        return null;
+    }
+
+    const identity_ptr = object.getPtr("identity") orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: startWorkflow identity is required",
+            .details = null,
+        });
+        return null;
+    };
+    const identity_slice = switch (identity_ptr.*) {
+        .string => |s| s,
+        else => {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: startWorkflow identity must be a string",
+                .details = null,
+            });
+            return null;
+        },
+    };
+    if (identity_slice.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: startWorkflow identity must be non-empty",
+            .details = null,
+        });
+        return null;
+    }
+
+    var args_array: ?*std.json.Array = null;
+    if (object.getPtr("args")) |args_ptr| {
+        switch (args_ptr.*) {
+            .array => |*arr| args_array = arr,
+            else => {
+                errors.setStructuredErrorJson(.{
+                    .code = grpc.invalid_argument,
+                    .message = "temporal-bun-bridge-zig: startWorkflow args must be an array",
+                    .details = null,
+                });
+                return null;
+            },
+        }
+    }
+
+    var memo_map: ?*std.json.ObjectMap = null;
+    if (object.getPtr("memo")) |memo_ptr| {
+        switch (memo_ptr.*) {
+            .object => |*map| memo_map = map,
+            else => {
+                errors.setStructuredErrorJson(.{
+                    .code = grpc.invalid_argument,
+                    .message = "temporal-bun-bridge-zig: startWorkflow memo must be an object",
+                    .details = null,
+                });
+                return null;
+            },
+        }
+    }
+
+    var search_map: ?*std.json.ObjectMap = null;
+    if (object.getPtr("search_attributes")) |search_ptr| {
+        switch (search_ptr.*) {
+            .object => |*map| search_map = map,
+            else => {
+                errors.setStructuredErrorJson(.{
+                    .code = grpc.invalid_argument,
+                    .message = "temporal-bun-bridge-zig: startWorkflow search_attributes must be an object",
+                    .details = null,
+                });
+                return null;
+            },
+        }
+    }
+
+    var header_map: ?*std.json.ObjectMap = null;
+    if (object.getPtr("headers")) |headers_ptr| {
+        switch (headers_ptr.*) {
+            .object => |*map| header_map = map,
+            else => {
+                errors.setStructuredErrorJson(.{
+                    .code = grpc.invalid_argument,
+                    .message = "temporal-bun-bridge-zig: startWorkflow headers must be an object",
+                    .details = null,
+                });
+                return null;
+            },
+        }
+    }
+
+    var retry_policy_map: ?*std.json.ObjectMap = null;
+    if (object.getPtr("retry_policy")) |retry_ptr| {
+        switch (retry_ptr.*) {
+            .object => |*map| retry_policy_map = map,
+            else => {
+                errors.setStructuredErrorJson(.{
+                    .code = grpc.invalid_argument,
+                    .message = "temporal-bun-bridge-zig: startWorkflow retry_policy must be an object",
+                    .details = null,
+                });
+                return null;
+            },
+        }
+    }
+
+    var cron_schedule: ?[]const u8 = null;
+    if (object.getPtr("cron_schedule")) |cron_ptr| {
+        const cron_slice = switch (cron_ptr.*) {
+            .string => |s| s,
+            else => {
+                errors.setStructuredErrorJson(.{
+                    .code = grpc.invalid_argument,
+                    .message = "temporal-bun-bridge-zig: startWorkflow cron_schedule must be a string",
+                    .details = null,
+                });
+                return null;
+            },
+        };
+        cron_schedule = cron_slice;
+    }
+
+    var exec_timeout_ms: ?u64 = null;
+    if (object.getPtr("workflow_execution_timeout_ms")) |value_ptr| {
+        exec_timeout_ms = jsonValueToU64(value_ptr.*) catch {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: startWorkflow workflow_execution_timeout_ms must be a non-negative integer",
+                .details = null,
+            });
+            return null;
+        };
+    }
+
+    var run_timeout_ms: ?u64 = null;
+    if (object.getPtr("workflow_run_timeout_ms")) |value_ptr| {
+        run_timeout_ms = jsonValueToU64(value_ptr.*) catch {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: startWorkflow workflow_run_timeout_ms must be a non-negative integer",
+                .details = null,
+            });
+            return null;
+        };
+    }
+
+    var task_timeout_ms: ?u64 = null;
+    if (object.getPtr("workflow_task_timeout_ms")) |value_ptr| {
+        task_timeout_ms = jsonValueToU64(value_ptr.*) catch {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: startWorkflow workflow_task_timeout_ms must be a non-negative integer",
+                .details = null,
+            });
+            return null;
+        };
+    }
+
+    var request_id_owned: ?[]u8 = null;
+    defer if (request_id_owned) |owned| allocator.free(owned);
+
+    var request_id_slice: []const u8 = ""[0..0];
+    if (object.getPtr("request_id")) |request_ptr| {
+        const req_slice = switch (request_ptr.*) {
+            .string => |s| s,
+            else => {
+                errors.setStructuredErrorJson(.{
+                    .code = grpc.invalid_argument,
+                    .message = "temporal-bun-bridge-zig: startWorkflow request_id must be a string",
+                    .details = null,
+                });
+                return null;
+            },
+        };
+        if (req_slice.len == 0) {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.invalid_argument,
+                .message = "temporal-bun-bridge-zig: startWorkflow request_id must be non-empty",
+                .details = null,
+            });
+            return null;
+        }
+        request_id_slice = req_slice;
+    } else {
+        request_id_owned = generateRequestId(allocator) catch {
+            errors.setStructuredErrorJson(.{
+                .code = grpc.resource_exhausted,
+                .message = "temporal-bun-bridge-zig: failed to allocate workflow request_id",
+                .details = null,
+            });
+            return null;
+        };
+        request_id_slice = request_id_owned.?;
+    }
+
+    const namespace_copy = duplicateSlice(allocator, namespace_slice) catch {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to allocate namespace copy",
+            .details = null,
+        });
+        return null;
+    };
+    defer if (namespace_copy.len > 0) allocator.free(namespace_copy);
+
+    const workflow_id_copy = duplicateSlice(allocator, workflow_id_slice) catch {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to allocate workflow_id copy",
+            .details = null,
+        });
+        return null;
+    };
+    defer if (workflow_id_copy.len > 0) allocator.free(workflow_id_copy);
+
+    const params = StartWorkflowRequestParts{
+        .namespace = namespace_slice,
+        .workflow_id = workflow_id_slice,
+        .workflow_type = workflow_type_slice,
+        .task_queue = task_queue_slice,
+        .identity = identity_slice,
+        .request_id = request_id_slice,
+        .cron_schedule = cron_schedule,
+        .workflow_execution_timeout_ms = exec_timeout_ms,
+        .workflow_run_timeout_ms = run_timeout_ms,
+        .workflow_task_timeout_ms = task_timeout_ms,
+        .args = args_array,
+        .memo = memo_map,
+        .search_attributes = search_map,
+        .headers = header_map,
+        .retry_policy = retry_policy_map,
+    };
+
+    const request_bytes = encodeStartWorkflowRequest(allocator, params) catch |err| {
+        const message = switch (err) {
+            error.InvalidNumber => "temporal-bun-bridge-zig: startWorkflow payload contains invalid numeric values",
+            error.InvalidRetryPolicy => "temporal-bun-bridge-zig: startWorkflow retry_policy contains invalid values",
+            else => "temporal-bun-bridge-zig: failed to encode startWorkflow request",
+        };
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = message, .details = null });
+        return null;
+    };
+    defer allocator.free(request_bytes);
+
+    var context = StartWorkflowRpcContext{
+        .allocator = allocator,
+        .runtime_handle = runtime_handle,
+    };
+    context.wait_group.start();
+
+    var call_options = std.mem.zeroes(core.RpcCallOptions);
+    call_options.service = 1; // Workflow service
+    call_options.rpc = makeByteArrayRef(start_workflow_rpc);
+    call_options.req = makeByteArrayRef(request_bytes);
+    call_options.retry = true;
+    call_options.metadata = emptyByteArrayRef();
+    call_options.timeout_millis = 0;
+    call_options.cancellation_token = null;
+
+    core.api.client_rpc_call(core_client, &call_options, &context, clientStartWorkflowCallback);
+    context.wait_group.wait();
+
+    const response_bytes = context.response;
+    defer if (response_bytes.len > 0) allocator.free(response_bytes);
+
+    const error_message_bytes = context.error_message;
+    defer if (context.error_message_owned and error_message_bytes.len > 0) allocator.free(error_message_bytes);
+
+    if (!context.success or response_bytes.len == 0) {
+        const message = if (error_message_bytes.len > 0)
+            error_message_bytes
+        else
+            "temporal-bun-bridge-zig: startWorkflow failed"[0..];
+        errors.setStructuredErrorJson(.{
+            .code = context.error_code,
+            .message = message,
+            .details = null,
+        });
+        return null;
+    }
+
+    const run_id_slice = parseStartWorkflowRunId(response_bytes) catch {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.internal,
+            .message = "temporal-bun-bridge-zig: failed to decode startWorkflow response",
+            .details = null,
+        });
+        return null;
+    };
+
+    const run_id_copy = duplicateSlice(allocator, run_id_slice) catch {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to allocate workflow run_id",
+            .details = null,
+        });
+        return null;
+    };
+    defer if (run_id_copy.len > 0) allocator.free(run_id_copy);
+
+    const ResponsePayload = struct {
+        runId: []const u8,
+        workflowId: []const u8,
+        namespace: []const u8,
+    };
+
+    const response_json = std.json.Stringify.valueAlloc(allocator, ResponsePayload{
+        .runId = run_id_copy,
+        .workflowId = workflow_id_copy,
+        .namespace = namespace_copy,
+    }, .{}) catch {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to encode startWorkflow metadata",
+            .details = null,
+        });
+        return null;
+    };
+    defer allocator.free(response_json);
+
+    const result_array = byte_array.allocate(.{ .slice = response_json }) orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to allocate startWorkflow response",
+            .details = null,
+        });
+        return null;
+    };
+
+    errors.setLastError(""[0..0]);
+    return result_array;
 }
 
 pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_array.ByteArray {
