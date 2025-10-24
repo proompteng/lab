@@ -1,5 +1,5 @@
-import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const fatal = (message: string, error?: unknown): never => {
   if (error instanceof Error) {

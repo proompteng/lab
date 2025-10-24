@@ -13,7 +13,7 @@ export interface WorkerRuntimeOptions {
 }
 
 export class WorkerRuntime {
-  constructor(private readonly options: WorkerRuntimeOptions) {
+  constructor(readonly options: WorkerRuntimeOptions) {
     void options
     // TODO(codex): Initialize native worker handles and runtime scaffolding per WORKER_DOC §1–§3.
   }

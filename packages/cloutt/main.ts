@@ -1,8 +1,8 @@
-import { App, YamlOutputType } from 'cdk8s'
-import { RootKustomization } from './kustomization/root'
-import { KustomizationBase } from './kustomization/base'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { App, YamlOutputType } from 'cdk8s'
+import { KustomizationBase } from './kustomization/base'
+import { RootKustomization } from './kustomization/root'
 
 /**
  * Removes the dist directory if it exists

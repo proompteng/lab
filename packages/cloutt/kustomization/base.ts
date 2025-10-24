@@ -1,10 +1,10 @@
+import { Chart } from 'cdk8s'
 import { Protocol, ServiceType } from 'cdk8s-plus-31'
 import type { Construct } from 'constructs'
-import { Chart } from 'cdk8s'
 import { z } from 'zod'
-import { KustomizationService } from './common/service'
 import { KustomizationDeployment } from './common/deployment'
 import { Kustomization } from './common/kustomization'
+import { KustomizationService } from './common/service'
 
 const chartSchema = z.object({
   name: z.string(),

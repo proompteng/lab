@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { $ } from 'bun'
 import { resolve } from 'node:path'
+import { $ } from 'bun'
 import { ensureCli, fatal, repoRoot } from '../shared/cli'
 import { buildImage } from './build-image'
 

@@ -1,8 +1,8 @@
 /* eslint-disable no-console */
 import { mkdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 import { $ } from 'bun'
 import { artifactFilename, relativeArtifactSubpath, zigTargets } from './zig-targets'
 

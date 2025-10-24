@@ -1,6 +1,6 @@
-import { docs as generatedDocs } from '@/.source'
 import { createMetadataImage } from 'fumadocs-core/server'
 import { loader, type Source } from 'fumadocs-core/source'
+import { docs as generatedDocs } from '@/.source'
 
 const baseUrl = '/docs'
 

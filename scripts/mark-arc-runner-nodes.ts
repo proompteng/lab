@@ -89,14 +89,14 @@ if (nodes.length === 0) {
   throw new Error('No Kubernetes nodes detected')
 }
 
-const sortedNodes = [...nodes].sort((a, b) => a.metadata.name!.localeCompare(b.metadata.name!))
+const sortedNodes = [...nodes].sort((a, b) => (a.metadata.name as string).localeCompare(b.metadata.name as string))
 
 function resolveExplicitNodes(): Required<NodeResource>[] {
   if (explicitNodeNames.length === 0) {
     return []
   }
 
-  const map = new Map(sortedNodes.map((node) => [node.metadata.name!, node]))
+  const map = new Map(sortedNodes.map((node) => [node.metadata.name as string, node]))
   const missing: string[] = []
   const resolved: Required<NodeResource>[] = []
 
@@ -122,7 +122,7 @@ function resolveExplicitNodes(): Required<NodeResource>[] {
 
 const explicitTargets = resolveExplicitNodes()
 const selected = explicitTargets.length > 0 ? explicitTargets : sortedNodes.slice(-nodeCount)
-const selectedNames = new Set(selected.map((node) => node.metadata.name!))
+const selectedNames = new Set(selected.map((node) => node.metadata.name as string))
 
 if (explicitTargets.length === 0 && selected.length < nodeCount) {
   console.warn(`Requested ${nodeCount} nodes but only found ${selected.length}. Proceeding with available nodes.`)
@@ -140,7 +140,7 @@ const targetDescriptor =
 console.log(`Targeting nodes: ${targetDescriptor}`)
 
 for (const node of selected) {
-  const name = node.metadata.name!
+  const name = node.metadata.name as string
 
   if (!hasDesiredLabel(node)) {
     await exec(['kubectl', 'label', 'node', name, `${labelKey}=${labelValue}`, '--overwrite'])
@@ -152,7 +152,7 @@ for (const node of selected) {
 }
 
 for (const node of sortedNodes) {
-  const name = node.metadata.name!
+  const name = node.metadata.name as string
   if (selectedNames.has(name)) {
     continue
   }

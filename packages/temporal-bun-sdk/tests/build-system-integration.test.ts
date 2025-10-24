@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, rmSync, writeFileSync, statSync } from 'fs'
-import { join } from 'path'
-import { fileURLToPath } from 'url'
+import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { DownloadClient } from '../scripts/download-temporal-libs.ts'
 
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -20,7 +20,7 @@ const TEST_CONFIG = {
 
 describe('Build System Integration Tests', () => {
   let downloadClient: DownloadClient
-  let buildTimes: Record<string, number> = {}
+  const buildTimes: Record<string, number> = {}
 
   beforeAll(async () => {
     // Create test directory structure

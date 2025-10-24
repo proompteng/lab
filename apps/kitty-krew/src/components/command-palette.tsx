@@ -1,11 +1,11 @@
-import type * as React from 'react'
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
+import type * as React from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { trpc } from '~/app/router.tsx'
+import type { Pod } from '~/common/schemas/pod.ts'
 import { cn } from '~/utils/cn.ts'
 import { StatusBadge } from './status-badge.tsx'
-import { useQuery } from '@tanstack/react-query'
-import type { Pod } from '~/common/schemas/pod.ts'
 
 export function CommandPalette() {
   const navigate = useNavigate()

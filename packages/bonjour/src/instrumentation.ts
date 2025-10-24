@@ -1,10 +1,10 @@
-import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api'
-import { NodeSDK } from '@opentelemetry/sdk-node'
+import { DiagConsoleLogger, DiagLogLevel, diag } from '@opentelemetry/api'
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node'
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http'
-import { MetricReader, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import { Resource } from '@opentelemetry/resources'
+import { type MetricReader, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
+import { NodeSDK } from '@opentelemetry/sdk-node'
 import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions'
 
 diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR)

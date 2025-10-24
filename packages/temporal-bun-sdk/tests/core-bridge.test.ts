@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
-import { Client, createClient, normalizeTemporalAddress, __TEST__ as clientTest } from '../src/core-bridge/client.ts'
+import { Client, __TEST__ as clientTest, createClient, normalizeTemporalAddress } from '../src/core-bridge/client.ts'
 import { createRuntime, __TEST__ as runtimeTest } from '../src/core-bridge/runtime.ts'
 import { importNativeBridge } from './helpers/native-bridge'
 
@@ -21,7 +21,7 @@ if (!nativeBridge) {
   const { bridgeVariant, native } = nativeBridge
 
   const hasLiveServer = process.env.TEMPORAL_TEST_SERVER === '1'
-  const usingZigBridge = bridgeVariant === 'zig'
+  const _usingZigBridge = bridgeVariant === 'zig'
   const reachabilityTest = test
 
   describe('core bridge runtime wrapper', () => {

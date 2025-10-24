@@ -65,15 +65,15 @@ if (nodes.length === 0) {
   throw new Error('No Kubernetes nodes detected')
 }
 
-const sortedNodes = [...nodes].sort((a, b) => a.metadata.name!.localeCompare(b.metadata.name!))
+const sortedNodes = [...nodes].sort((a, b) => (a.metadata.name as string).localeCompare(b.metadata.name as string))
 const labelledNodes = sortedNodes.filter((node) => node.metadata.labels?.[labelKey] === labelValue)
-const nodeMap = new Map(sortedNodes.map((node) => [node.metadata.name!, node]))
+const nodeMap = new Map(sortedNodes.map((node) => [node.metadata.name as string, node]))
 
 const explicitTargets = explicitNodeNames.map((name) => {
   const match = nodeMap.get(name)
   if (!match) {
     throw new Error(
-      `Node "${name}" not found. Available nodes: ${sortedNodes.map((node) => node.metadata.name!).join(', ')}`,
+      `Node "${name}" not found. Available nodes: ${sortedNodes.map((node) => node.metadata.name as string).join(', ')}`,
     )
   }
   return match
@@ -117,7 +117,7 @@ async function run(command: ExecCommand, options: { allowFailure?: boolean } = {
 }
 
 for (const node of selected) {
-  const name = node.metadata.name!
+  const name = node.metadata.name as string
   await run(['kubectl', 'uncordon', name])
 
   if (hasDrainTaint(node)) {

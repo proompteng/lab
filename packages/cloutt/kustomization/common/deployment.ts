@@ -1,7 +1,7 @@
-import { Construct } from 'constructs'
-import { Cpu, Deployment } from 'cdk8s-plus-31'
-import { z } from 'zod'
 import { Size } from 'cdk8s'
+import { Cpu, Deployment } from 'cdk8s-plus-31'
+import { Construct } from 'constructs'
+import { z } from 'zod'
 
 const deploymentSchema = z.object({
   name: z.string(),

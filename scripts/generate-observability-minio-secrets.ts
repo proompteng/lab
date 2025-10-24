@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 
-import { $ } from 'bun'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { $ } from 'bun'
 
 type CliOptions = {
   minioOutput?: string
@@ -122,7 +122,7 @@ const randomString = (length: number, alphabet: string) => {
 }
 
 const alphaUpper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-const alphaNumUpper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+const _alphaNumUpper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const accessKeyAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 const secretKeyAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
 
@@ -159,7 +159,7 @@ const mimirSecretKey = randomString(40, secretKeyAlphabet)
 
 const configEnvLines = [`export MINIO_ROOT_USER=${rootUser}`, `export MINIO_ROOT_PASSWORD=${rootPassword}`]
 
-const configEnv = configEnvLines.join('\n') + '\n'
+const configEnv = `${configEnvLines.join('\n')}\n`
 
 const minioSecretManifest = `apiVersion: v1
 kind: Secret

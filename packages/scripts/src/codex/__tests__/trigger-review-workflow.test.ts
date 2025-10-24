@@ -4,8 +4,8 @@ import {
   buildEventBody,
   buildReviewContext,
   parseArgs,
-  summarizeText,
   type ReviewContextSummary,
+  summarizeText,
 } from '../trigger-review-workflow'
 
 describe('summarizeText', () => {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
-import { importNativeBridge } from './helpers/native-bridge'
 import type { TemporalConfig } from '../src/config'
+import { importNativeBridge } from './helpers/native-bridge'
 
 const { module: nativeModule, stubPath } = await importNativeBridge()
 

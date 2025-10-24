@@ -63,11 +63,9 @@
     font-weight: inherit;
   }
   a {
-    color: inherit;
-    -webkit-text-decoration: inherit;
-    -webkit-text-decoration: inherit;
-    -webkit-text-decoration: inherit;
-    text-decoration: inherit;
+  color: inherit;
+  -webkit-text-decoration: inherit;
+  text-decoration: inherit;
   }
   b,
   strong {
