@@ -192,7 +192,7 @@ test "startWorkflow marshals request and returns metadata" {
         "\"task_queue\":\"queue\"," ++
         "\"identity\":\"zig-client\"," ++
         "\"args\":[\"payload\"]" ++
-    "}";
+        "}";
 
     const result = client.startWorkflow(handle, payload) orelse unreachable;
     defer byte_array.free(result);
