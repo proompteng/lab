@@ -889,9 +889,9 @@ fn clientStartWorkflowCallback(
 
     if (success != null and status_code == 0) {
         const slice = byteArraySlice(success.?);
-        if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
-
+        
         if (slice.len == 0) {
+            if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
             context.error_code = grpc.internal;
             if (context.error_message_owned) {
                 freeContextSlice(context, context.error_message);
@@ -903,6 +903,7 @@ fn clientStartWorkflowCallback(
         }
 
         const copy = context.allocator.alloc(u8, slice.len) catch {
+            if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
             context.error_code = grpc.resource_exhausted;
             if (context.error_message_owned) {
                 freeContextSlice(context, context.error_message);
@@ -914,6 +915,7 @@ fn clientStartWorkflowCallback(
         };
 
         @memcpy(copy, slice);
+        if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
         freeContextSlice(context, context.response);
         context.response = copy;
         context.success = true;
