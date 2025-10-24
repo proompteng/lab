@@ -1,0 +1,60 @@
+name: temporal-bun-worker-mvp
+
+on:
+  push:
+    paths:
+      - 'packages/temporal-bun-sdk/**'
+      - '.github/workflows/temporal-bun-worker-mvp.yml'
+  pull_request:
+    paths:
+      - 'packages/temporal-bun-sdk/**'
+      - '.github/workflows/temporal-bun-worker-mvp.yml'
+
+jobs:
+  test:
+    name: Bun worker tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install pnpm dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: 1.1.20
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Build Zig bridge (debug)
+        run: pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:debug
+
+      - name: Install package dependencies
+        working-directory: packages/temporal-bun-sdk
+        run: bun install
+
+      - name: Run worker MVP tests
+        working-directory: packages/temporal-bun-sdk
+        run: |
+          bun test tests/worker-mvp.e2e.test.ts | tee ../../worker-mvp-${{ matrix.os }}.log
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-mvp-logs-${{ matrix.os }}
+          path: worker-mvp-${{ matrix.os }}.log
+          if-no-files-found: ignore
