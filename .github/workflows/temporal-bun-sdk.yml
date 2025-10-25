@@ -51,11 +51,6 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install system packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y docker-compose xz-utils
-
       - name: Set up Zig 0.15.1
         uses: goto-bus-stop/setup-zig@v2
         with:
@@ -63,6 +58,11 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install Temporal CLI
+        run: |
+          curl -sSfL https://temporal.download/cli.sh | bash -s -- -b /usr/local/bin
+          temporal version
 
       - name: Download pre-built Temporal libraries
         run: |
@@ -75,28 +75,16 @@ jobs:
       - name: Build and test Zig bridge
         run: pnpm --filter @proompteng/temporal-bun-sdk run ci:native:zig
 
-      - name: Start Temporal server
-        id: start_temporal_server
+      - name: Start Temporal CLI dev server
         run: |
-          docker-compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml up -d
-
-      - name: Wait for Temporal server
-        if: steps.start_temporal_server.outcome == 'success'
-        run: |
-          for i in {1..30}; do
-            if nc -z localhost 7233; then
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Temporal server did not start in time" >&2
-          exit 1
+          cd packages/temporal-bun-sdk
+          bun scripts/start-temporal-cli.ts
 
       - name: Run Bun SDK tests
-        if: steps.start_temporal_server.outcome == 'success'
         run: pnpm --filter @proompteng/temporal-bun-sdk test
 
-      - name: Stop Temporal server
-        if: always() && steps.start_temporal_server.outcome == 'success'
+      - name: Stop Temporal CLI dev server
+        if: always()
         run: |
-          docker-compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml down -v
+          cd packages/temporal-bun-sdk
+          bun scripts/stop-temporal-cli.ts || true

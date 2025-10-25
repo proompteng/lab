@@ -138,35 +138,28 @@ temporal-bun docker-build --tag my-worker:latest
 
 These align with the existing Temporal setup (`services/prix/worker/main.go`, `packages/atelier/src/create-default-namespace.ts`) so Bun workers can drop into current environments without additional configuration.
 
-## Docker
+## Local Temporal Dev Server
 
-Build the worker image from the repo root:
-
-```bash
-docker build -f packages/temporal-bun-sdk/Dockerfile -t temporal-bun-sdk:dev .
-```
-
-Or spin up the Temporal dev stack (Temporalite + optional worker) via Compose:
+Install the [Temporal CLI](https://github.com/temporalio/cli) (v1.0 or newer), then start the embedded dev server via the bundled helper script (set `TEMPORAL_CLI_PATH=/full/path/to/temporal` if it isn’t on `PATH`):
 
 ```bash
-# start Temporalite (SQLite-backed Temporal server)
-docker compose -f packages/temporal-bun-sdk/examples/docker-compose.yaml up -d temporal
-
-# optional: build and run the example worker container
-docker compose -f packages/temporal-bun-sdk/examples/docker-compose.yaml up --build worker
+# from repo root
+pnpm --filter @proompteng/temporal-bun-sdk run temporal:start
 ```
 
-With the Temporal container running, you can execute the native integration tests:
+This starts `temporal server start-dev` in the background, writes the PID to `.temporal-cli.pid`, and tails logs to `.temporal-cli.log`.
+
+With the server running on `127.0.0.1:7233`, execute the native integration suite:
 
 ```bash
 cd packages/temporal-bun-sdk
 TEMPORAL_TEST_SERVER=1 bun test tests/native.integration.test.ts
 ```
 
-Shut everything down with:
+Shut the server down with:
 
 ```bash
-docker compose -f packages/temporal-bun-sdk/examples/docker-compose.yaml down
+pnpm --filter @proompteng/temporal-bun-sdk run temporal:stop
 ```
 
 ## Scripts

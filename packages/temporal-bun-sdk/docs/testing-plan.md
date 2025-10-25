@@ -9,7 +9,7 @@
 | Layer | Purpose | Tools |
 |-------|---------|-------|
 | Unit (Bun test) | Validate FFI bindings, serialization, workflow runtime helpers | `bun test`, dependency injection |
-| Integration (Docker) | Exercise real Temporal server with Bun worker/client | `docker compose`, `bun test` integration suites |
+| Integration (Temporal CLI) | Exercise real Temporal server with Bun worker/client | `temporal server start-dev`, `bun test` integration suites |
 | Replay/Determinism | Ensure workflow histories replay identically | Custom replay harness |
 | Smoke (CLI) | Validate scaffolding CLI and example project | `bun run`, `temporal-bun init` scenarios |
 
@@ -49,19 +49,19 @@ flowchart BT
 ## 3. Integration Tests
 
 ### Setup
-- A ready-to-use Temporalite stack lives at `packages/temporal-bun-sdk/examples/docker-compose.yaml`.
-- Start the Temporal server locally:
+- Install the [Temporal CLI](https://github.com/temporalio/cli).
+- Start the embedded dev server via the helper script:
   ```bash
-  docker compose -f packages/temporal-bun-sdk/examples/docker-compose.yaml up -d temporal
+  pnpm --filter @proompteng/temporal-bun-sdk run temporal:start
   ```
-- With the container running (and listening on `localhost:7233`), execute the Bun integration tests:
+- In another terminal, execute the Bun integration tests:
   ```bash
   cd packages/temporal-bun-sdk
   TEMPORAL_TEST_SERVER=1 bun test tests/native.integration.test.ts
   ```
-- When finished, tear the stack down via `docker compose -f ... down`.
+- Stop the CLI server with `pnpm --filter @proompteng/temporal-bun-sdk run temporal:stop` when finished.
 
-> CI uses an equivalent compose recipe to launch Temporalite and runs `TEMPORAL_TEST_SERVER=1 bun test ...` so the same workflow executes in automation.
+> CI uses the same helper scripts to run `TEMPORAL_TEST_SERVER=1 bun test ...` against a CLI-backed server.
 
 ### Test Cases
 1. **Happy path workflow**
