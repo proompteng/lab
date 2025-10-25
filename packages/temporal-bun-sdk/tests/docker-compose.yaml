@@ -1,7 +1,0 @@
-services:
-  temporal:
-    build:
-      context: ./docker/temporal-dev
-    container_name: temporal-test
-    ports:
-      - '7233:7233'

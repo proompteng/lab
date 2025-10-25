@@ -138,18 +138,28 @@ temporal-bun docker-build --tag my-worker:latest
 
 These align with the existing Temporal setup (`services/prix/worker/main.go`, `packages/atelier/src/create-default-namespace.ts`) so Bun workers can drop into current environments without additional configuration.
 
-## Docker
+## Local Temporal Dev Server
 
-Build the worker image from the repo root:
+Install the [Temporal CLI](https://github.com/temporalio/cli) (v1.0 or newer), then start the embedded dev server via the bundled helper script (set `TEMPORAL_CLI_PATH=/full/path/to/temporal` if it isn’t on `PATH`):
 
 ```bash
-docker build -f packages/temporal-bun-sdk/Dockerfile -t temporal-bun-sdk:dev .
+# from repo root
+pnpm --filter @proompteng/temporal-bun-sdk run temporal:start
 ```
 
-Or spin up a full stack (Temporal + worker) via Compose:
+This starts `temporal server start-dev` in the background, writes the PID to `.temporal-cli.pid`, and tails logs to `.temporal-cli.log`.
+
+With the server running on `127.0.0.1:7233`, execute the native integration suite:
 
 ```bash
-docker compose -f packages/temporal-bun-sdk/examples/docker-compose.yaml up --build
+cd packages/temporal-bun-sdk
+TEMPORAL_TEST_SERVER=1 bun test tests/native.integration.test.ts
+```
+
+Shut the server down with:
+
+```bash
+pnpm --filter @proompteng/temporal-bun-sdk run temporal:stop
 ```
 
 ## Scripts

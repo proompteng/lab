@@ -9,7 +9,7 @@
 | Layer | Purpose | Tools |
 |-------|---------|-------|
 | Unit (Bun test) | Validate FFI bindings, serialization, workflow runtime helpers | `bun test`, dependency injection |
-| Integration (Docker) | Exercise real Temporal server with Bun worker/client | `docker compose`, `bun test` integration suites |
+| Integration (Temporal CLI) | Exercise real Temporal server with Bun worker/client | `temporal server start-dev`, `bun test` integration suites |
 | Replay/Determinism | Ensure workflow histories replay identically | Custom replay harness |
 | Smoke (CLI) | Validate scaffolding CLI and example project | `bun run`, `temporal-bun init` scenarios |
 
@@ -49,13 +49,19 @@ flowchart BT
 ## 3. Integration Tests
 
 ### Setup
-- Compose file already exists at `examples/docker-compose.yaml`.
-- Extend to include:
-  - Bun client test container (runs integration suite).
-  - Optionally metrics exporter for telemetry tests.
+- Install the [Temporal CLI](https://github.com/temporalio/cli).
+- Start the embedded dev server via the helper script:
+  ```bash
+  pnpm --filter @proompteng/temporal-bun-sdk run temporal:start
+  ```
+- In another terminal, execute the Bun integration tests:
+  ```bash
+  cd packages/temporal-bun-sdk
+  TEMPORAL_TEST_SERVER=1 bun test tests/native.integration.test.ts
+  ```
+- Stop the CLI server with `pnpm --filter @proompteng/temporal-bun-sdk run temporal:stop` when finished.
 
-> CI uses `packages/temporal-bun-sdk/tests/docker-compose.yaml` to build a lightweight container that runs `temporal server start-dev` via the Temporal CLI and sets `TEMPORAL_TEST_SERVER=1` so Bun integration tests run automatically.<br>
-> [Temporal CLI reference](https://docs.temporal.io/cli/server/start-dev)
+> CI uses the same helper scripts to run `TEMPORAL_TEST_SERVER=1 bun test ...` against a CLI-backed server.
 
 ### Test Cases
 1. **Happy path workflow**
