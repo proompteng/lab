@@ -44,6 +44,9 @@ pub const ByteBufDestroyFn = *const fn (?*RuntimeOpaque, ?*const ByteBuf) callco
 pub const WorkerCallback = c.TemporalCoreWorkerCallback;
 pub const WorkerCompleteFn =
     *const fn (?*WorkerOpaque, ByteArrayRef, ?*anyopaque, WorkerCallback) callconv(.c) void;
+pub const WorkerPollCallback = c.TemporalCoreWorkerPollCallback;
+pub const WorkerPollFn =
+    *const fn (?*WorkerOpaque, ?*anyopaque, WorkerPollCallback) callconv(.c) void;
 pub const RuntimeByteArrayFreeFn =
     *const fn (?*RuntimeOpaque, ?*const ByteArray) callconv(.c) void;
 
@@ -78,6 +81,18 @@ fn fallbackWorkerCompleteWorkflowActivation(
 fn fallbackRuntimeByteArrayFree(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArray) callconv(.c) void {
     _ = runtime;
     _ = bytes;
+}
+
+fn fallbackWorkerPollActivityTask(
+    worker: ?*WorkerOpaque,
+    user_data: ?*anyopaque,
+    callback: WorkerPollCallback,
+) callconv(.c) void {
+    _ = worker;
+
+    if (callback) |cb| {
+        cb(user_data, null, &fallback_error_array);
+    }
 }
 
 pub var worker_complete_workflow_activation: WorkerCompleteFn = fallbackWorkerCompleteWorkflowActivation;
@@ -179,6 +194,14 @@ fn stubWorkerFree(_worker: ?*Worker) callconv(.c) void {
     _ = _worker;
 }
 
+fn stubWorkerPollActivityTask(
+    worker: ?*Worker,
+    user_data: ?*anyopaque,
+    callback: WorkerPollCallback,
+) callconv(.c) void {
+    fallbackWorkerPollActivityTask(worker, user_data, callback);
+}
+
 pub const Api = struct {
     runtime_new: *const fn (*const RuntimeOptions) callconv(.c) RuntimeOrFail,
     runtime_free: *const fn (?*Runtime) callconv(.c) void,
@@ -190,6 +213,7 @@ pub const Api = struct {
     client_rpc_call: *const fn (?*Client, *const RpcCallOptions, ?*anyopaque, ClientRpcCallCallback) callconv(.c) void,
     worker_new: *const fn (?*Client, *const WorkerOptions) callconv(.c) WorkerOrFail,
     worker_free: *const fn (?*Worker) callconv(.c) void,
+    worker_poll_activity_task: WorkerPollFn,
 };
 
 pub const stub_api: Api = .{
@@ -203,6 +227,7 @@ pub const stub_api: Api = .{
     .client_rpc_call = stubClientRpcCall,
     .worker_new = stubWorkerNew,
     .worker_free = stubWorkerFree,
+    .worker_poll_activity_task = stubWorkerPollActivityTask,
 };
 
 pub const extern_api: Api = .{
@@ -216,6 +241,7 @@ pub const extern_api: Api = .{
     .client_rpc_call = c.temporal_core_client_rpc_call,
     .worker_new = c.temporal_core_worker_new,
     .worker_free = c.temporal_core_worker_free,
+    .worker_poll_activity_task = c.temporal_core_worker_poll_activity_task,
 };
 
 pub var api: Api = stub_api;

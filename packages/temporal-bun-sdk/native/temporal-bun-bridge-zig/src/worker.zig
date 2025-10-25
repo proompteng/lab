@@ -3,6 +3,7 @@ const errors = @import("errors.zig");
 const runtime = @import("runtime.zig");
 const client = @import("client.zig");
 const pending = @import("pending.zig");
+const byte_array = @import("byte_array.zig");
 const core = @import("core.zig");
 const builtin = @import("builtin");
 const json = std.json;
@@ -632,10 +633,248 @@ pub fn completeWorkflowTask(handle: ?*WorkerHandle, payload: []const u8) i32 {
     return 0;
 }
 
+const ActivityPollContext = struct {
+    pending_handle: *pending.PendingByteArray,
+    runtime_handle: *runtime.RuntimeHandle,
+    core_runtime: *core.RuntimeOpaque,
+    wait_group: std.Thread.WaitGroup = .{},
+};
+
+const ActivityPollTask = struct {
+    worker_handle: ?*WorkerHandle,
+    pending_handle: *pending.PendingByteArray,
+};
+
+fn workerPollActivityCallback(
+    user_data: ?*anyopaque,
+    success: ?*const core.ByteArray,
+    fail: ?*const core.ByteArray,
+) callconv(.c) void {
+    if (user_data == null) {
+        return;
+    }
+
+    const context = @as(*ActivityPollContext, @ptrCast(@alignCast(user_data.?)));
+    defer context.wait_group.finish();
+
+    const pending_handle = context.pending_handle;
+    const runtime_ptr = context.core_runtime;
+
+    if (success == null and fail == null) {
+        const array_opt = byte_array.allocateFromSlice(""[0..0]);
+        if (array_opt == null) {
+            _ = pending.rejectByteArray(
+                pending_handle,
+                grpc.resource_exhausted,
+                "temporal-bun-bridge-zig: failed to allocate shutdown poll payload",
+            );
+            return;
+        }
+
+        const array = array_opt.?;
+        if (!pending.resolveByteArray(pending_handle, array)) {
+            byte_array.free(array);
+            return;
+        }
+
+        errors.setLastError(""[0..0]);
+        return;
+    }
+
+    if (success) |success_ptr| {
+        defer core.runtimeByteArrayFree(runtime_ptr, success_ptr);
+
+        const payload = byteArraySlice(success_ptr);
+        const array_opt = byte_array.allocateFromSlice(payload);
+        if (array_opt == null) {
+            _ = pending.rejectByteArray(
+                pending_handle,
+                grpc.resource_exhausted,
+                "temporal-bun-bridge-zig: failed to allocate activity task payload",
+            );
+            return;
+        }
+
+        const array = array_opt.?;
+        if (!pending.resolveByteArray(pending_handle, array)) {
+            byte_array.free(array);
+            return;
+        }
+
+        errors.setLastError(""[0..0]);
+        return;
+    }
+
+    if (fail) |fail_ptr| {
+        defer core.runtimeByteArrayFree(runtime_ptr, fail_ptr);
+
+        const failure_slice = byteArraySlice(fail_ptr);
+        const parsed = parseWorkerFailPayload(failure_slice);
+
+        const allocator = std.heap.c_allocator;
+        defer {
+            if (parsed.details_allocated and parsed.details != null) {
+                allocator.free(@constCast(parsed.details.?));
+            }
+            if (parsed.message_allocated) {
+                allocator.free(@constCast(parsed.message));
+            }
+        }
+
+        const message = if (parsed.message.len > 0)
+            parsed.message
+        else
+            "temporal-bun-bridge-zig: activity poll failed";
+
+        _ = pending.rejectByteArray(pending_handle, parsed.code, message);
+        return;
+    }
+
+    _ = pending.rejectByteArray(
+        pending_handle,
+        grpc.internal,
+        "temporal-bun-bridge-zig: activity poll returned unexpected payload state",
+    );
+}
+
+fn pollActivityTaskWorker(task: *ActivityPollTask) void {
+    const allocator = std.heap.c_allocator;
+    defer allocator.destroy(task);
+
+    const pending_handle = task.pending_handle;
+    const pending_base = @as(*pending.PendingHandle, @ptrCast(pending_handle));
+    defer pending.release(pending_base);
+
+    const worker_handle = task.worker_handle orelse {
+        _ = pending.rejectByteArray(
+            pending_handle,
+            grpc.internal,
+            "temporal-bun-bridge-zig: activity poll worker missing handle",
+        );
+        return;
+    };
+
+    const runtime_handle = worker_handle.runtime orelse {
+        _ = pending.rejectByteArray(
+            pending_handle,
+            grpc.failed_precondition,
+            "temporal-bun-bridge-zig: worker runtime handle is not initialized",
+        );
+        return;
+    };
+
+    const runtime_core = runtime_handle.core_runtime orelse {
+        _ = pending.rejectByteArray(
+            pending_handle,
+            grpc.failed_precondition,
+            "temporal-bun-bridge-zig: worker runtime core handle is not initialized",
+        );
+        return;
+    };
+
+    const core_worker = worker_handle.core_worker orelse {
+        _ = pending.rejectByteArray(
+            pending_handle,
+            grpc.failed_precondition,
+            "temporal-bun-bridge-zig: worker core handle is not initialized",
+        );
+        return;
+    };
+
+    var context = ActivityPollContext{
+        .pending_handle = pending_handle,
+        .runtime_handle = runtime_handle,
+        .core_runtime = runtime_core,
+    };
+    context.wait_group.start();
+
+    core.api.worker_poll_activity_task(core_worker, &context, workerPollActivityCallback);
+    context.wait_group.wait();
+}
+
 pub fn pollActivityTask(_handle: ?*WorkerHandle) ?*pending.PendingByteArray {
-    // TODO(codex, zig-worker-05): Poll activity tasks via Temporal core worker APIs.
-    _ = _handle;
-    return pendingByteArrayError(grpc.unimplemented, "temporal-bun-bridge-zig: pollActivityTask is not implemented yet");
+    if (_handle == null) {
+        return pendingByteArrayError(
+            grpc.invalid_argument,
+            "temporal-bun-bridge-zig: pollActivityTask received null worker handle",
+        );
+    }
+
+    const worker_handle = _handle.?;
+
+    if (worker_handle.core_worker == null) {
+        return pendingByteArrayError(
+            grpc.failed_precondition,
+            "temporal-bun-bridge-zig: worker core handle is not initialized",
+        );
+    }
+
+    const runtime_handle = worker_handle.runtime orelse {
+        return pendingByteArrayError(
+            grpc.failed_precondition,
+            "temporal-bun-bridge-zig: worker runtime handle is not initialized",
+        );
+    };
+
+    if (runtime_handle.core_runtime == null) {
+        return pendingByteArrayError(
+            grpc.failed_precondition,
+            "temporal-bun-bridge-zig: worker runtime core handle is not initialized",
+        );
+    }
+
+    core.ensureExternalApiInstalled();
+
+    const pending_base = pending.createPendingInFlight() orelse {
+        return pendingByteArrayError(
+            grpc.internal,
+            "temporal-bun-bridge-zig: failed to allocate activity poll pending handle",
+        );
+    };
+    const pending_handle = @as(*pending.PendingByteArray, @ptrCast(pending_base));
+
+    const allocator = std.heap.c_allocator;
+    const task = allocator.create(ActivityPollTask) catch |err| {
+        var scratch: [160]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to allocate activity poll task: {}",
+            .{err},
+        ) catch "temporal-bun-bridge-zig: failed to allocate activity poll task";
+        _ = pending.rejectByteArray(pending_handle, grpc.resource_exhausted, message);
+        return @as(?*pending.PendingByteArray, pending_handle);
+    };
+
+    task.* = .{
+        .worker_handle = worker_handle,
+        .pending_handle = pending_handle,
+    };
+
+    if (!pending.retain(pending_base)) {
+        allocator.destroy(task);
+        _ = pending.rejectByteArray(
+            pending_handle,
+            grpc.resource_exhausted,
+            "temporal-bun-bridge-zig: failed to retain activity poll pending handle",
+        );
+        return @as(?*pending.PendingByteArray, pending_handle);
+    }
+
+    const thread = std.Thread.spawn(.{}, pollActivityTaskWorker, .{task}) catch |err| {
+        allocator.destroy(task);
+        pending.release(pending_base);
+        var scratch: [160]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to spawn activity poll thread: {}",
+            .{err},
+        ) catch "temporal-bun-bridge-zig: failed to spawn activity poll thread";
+        _ = pending.rejectByteArray(pending_handle, grpc.internal, message);
+        return @as(?*pending.PendingByteArray, pending_handle);
+    };
+    thread.detach();
+
+    return @as(?*pending.PendingByteArray, pending_handle);
 }
 
 pub fn completeActivityTask(_handle: ?*WorkerHandle, _payload: []const u8) i32 {
@@ -710,6 +949,21 @@ const WorkerTests = struct {
         .cap = 0,
         .disable_free = false,
     };
+    var stub_poll_activity_call_count: usize = 0;
+    var stub_activity_success_payload: []const u8 = ""[0..0];
+    var stub_activity_success_buffer: core.ByteArray = .{
+        .data = null,
+        .size = 0,
+        .cap = 0,
+        .disable_free = false,
+    };
+    var stub_activity_fail_payload: []const u8 = ""[0..0];
+    var stub_activity_fail_buffer: core.ByteArray = .{
+        .data = null,
+        .size = 0,
+        .cap = 0,
+        .disable_free = false,
+    };
 
     fn resetStubs() void {
         stub_completion_call_count = 0;
@@ -721,6 +975,21 @@ const WorkerTests = struct {
         stub_worker_free_calls = 0;
         stub_worker_fail_message = ""[0..0];
         stub_worker_fail_buffer = .{
+            .data = null,
+            .size = 0,
+            .cap = 0,
+            .disable_free = false,
+        };
+        stub_poll_activity_call_count = 0;
+        stub_activity_success_payload = ""[0..0];
+        stub_activity_success_buffer = .{
+            .data = null,
+            .size = 0,
+            .cap = 0,
+            .disable_free = false,
+        };
+        stub_activity_fail_payload = ""[0..0];
+        stub_activity_fail_buffer = .{
             .data = null,
             .size = 0,
             .cap = 0,
@@ -776,6 +1045,54 @@ const WorkerTests = struct {
         stub_byte_array_free_count += 1;
         last_runtime_byte_array_free_runtime = runtime_ptr;
         last_runtime_byte_array_free_ptr = bytes;
+    }
+
+    fn stubPollActivitySuccess(
+        worker_ptr: ?*core.WorkerOpaque,
+        user_data: ?*anyopaque,
+        callback: core.WorkerPollCallback,
+    ) callconv(.c) void {
+        _ = worker_ptr;
+        stub_poll_activity_call_count += 1;
+        stub_activity_success_buffer = .{
+            .data = stub_activity_success_payload.ptr,
+            .size = stub_activity_success_payload.len,
+            .cap = stub_activity_success_payload.len,
+            .disable_free = false,
+        };
+        if (callback) |cb| {
+            cb(user_data, &stub_activity_success_buffer, null);
+        }
+    }
+
+    fn stubPollActivityFailure(
+        worker_ptr: ?*core.WorkerOpaque,
+        user_data: ?*anyopaque,
+        callback: core.WorkerPollCallback,
+    ) callconv(.c) void {
+        _ = worker_ptr;
+        stub_poll_activity_call_count += 1;
+        stub_activity_fail_buffer = .{
+            .data = stub_activity_fail_payload.ptr,
+            .size = stub_activity_fail_payload.len,
+            .cap = stub_activity_fail_payload.len,
+            .disable_free = false,
+        };
+        if (callback) |cb| {
+            cb(user_data, null, &stub_activity_fail_buffer);
+        }
+    }
+
+    fn stubPollActivityShutdown(
+        worker_ptr: ?*core.WorkerOpaque,
+        user_data: ?*anyopaque,
+        callback: core.WorkerPollCallback,
+    ) callconv(.c) void {
+        _ = worker_ptr;
+        stub_poll_activity_call_count += 1;
+        if (callback) |cb| {
+            cb(user_data, null, null);
+        }
     }
 
     fn fakeRuntimeHandle() runtime.RuntimeHandle {
@@ -1025,4 +1342,123 @@ test "completeWorkflowTask surfaces core error payload" {
     if (WorkerTests.last_runtime_byte_array_free_ptr) |ptr| {
         try testing.expectEqual(@as(usize, WorkerTests.stub_fail_message.len), ptr.size);
     }
+}
+
+test "pollActivityTask resolves pending handle with activity payload" {
+    core.ensureExternalApiInstalled();
+    const original_poll = core.api.worker_poll_activity_task;
+    const original_free = core.runtime_byte_array_free;
+    defer {
+        core.api.worker_poll_activity_task = original_poll;
+        core.runtime_byte_array_free = original_free;
+    }
+
+    core.api.worker_poll_activity_task = WorkerTests.stubPollActivitySuccess;
+    core.runtime_byte_array_free = WorkerTests.stubRuntimeByteArrayFree;
+
+    var rt = WorkerTests.fakeRuntimeHandle();
+    var worker_handle = WorkerTests.fakeWorkerHandle(&rt);
+
+    WorkerTests.resetStubs();
+    errors.setLastError(""[0..0]);
+    WorkerTests.stub_activity_success_payload = "poll-activity-success";
+
+    const pending_handle_opt = pollActivityTask(&worker_handle);
+    try testing.expect(pending_handle_opt != null);
+    const pending_handle = pending_handle_opt.?;
+
+    const base_handle = @as(*pending.PendingHandle, @ptrCast(pending_handle));
+    const status = pending.poll(base_handle);
+    try testing.expectEqual(@intFromEnum(pending.Status.ready), status);
+
+    const payload_any = pending.consume(base_handle);
+    try testing.expect(payload_any != null);
+    const payload_ptr = @as(*byte_array.ByteArray, @ptrCast(@alignCast(payload_any.?)));
+    defer byte_array.free(payload_ptr);
+
+    try testing.expect(payload_ptr.data != null);
+    const actual = payload_ptr.data.?[0..payload_ptr.size];
+    try testing.expect(std.mem.eql(u8, WorkerTests.stub_activity_success_payload, actual));
+    try testing.expectEqual(@as(usize, 1), WorkerTests.stub_poll_activity_call_count);
+    try testing.expectEqual(@as(usize, 1), WorkerTests.stub_byte_array_free_count);
+    try testing.expectEqualStrings("", errors.snapshot());
+
+    pending.free(base_handle);
+}
+
+test "pollActivityTask propagates core error payload" {
+    core.ensureExternalApiInstalled();
+    const original_poll = core.api.worker_poll_activity_task;
+    const original_free = core.runtime_byte_array_free;
+    defer {
+        core.api.worker_poll_activity_task = original_poll;
+        core.runtime_byte_array_free = original_free;
+    }
+
+    core.api.worker_poll_activity_task = WorkerTests.stubPollActivityFailure;
+    core.runtime_byte_array_free = WorkerTests.stubRuntimeByteArrayFree;
+
+    var rt = WorkerTests.fakeRuntimeHandle();
+    var worker_handle = WorkerTests.fakeWorkerHandle(&rt);
+
+    WorkerTests.resetStubs();
+    errors.setLastError(""[0..0]);
+    WorkerTests.stub_activity_fail_payload = "{\"code\":14,\"message\":\"activity poll failed\"}";
+
+    const pending_handle_opt = pollActivityTask(&worker_handle);
+    try testing.expect(pending_handle_opt != null);
+    const pending_handle = pending_handle_opt.?;
+
+    const base_handle = @as(*pending.PendingHandle, @ptrCast(pending_handle));
+    const status = pending.poll(base_handle);
+    try testing.expectEqual(@intFromEnum(pending.Status.failed), status);
+
+    const snapshot = errors.snapshot();
+    try testing.expect(std.mem.containsAtLeast(u8, snapshot, 1, "activity poll failed"));
+    try testing.expect(std.mem.containsAtLeast(u8, snapshot, 1, "\"code\":14"));
+
+    try testing.expectEqual(@as(usize, 1), WorkerTests.stub_poll_activity_call_count);
+    try testing.expectEqual(@as(usize, 1), WorkerTests.stub_byte_array_free_count);
+
+    try testing.expect(pending.consume(base_handle) == null);
+
+    pending.free(base_handle);
+}
+
+test "pollActivityTask resolves empty payload when core signals shutdown" {
+    core.ensureExternalApiInstalled();
+    const original_poll = core.api.worker_poll_activity_task;
+    const original_free = core.runtime_byte_array_free;
+    defer {
+        core.api.worker_poll_activity_task = original_poll;
+        core.runtime_byte_array_free = original_free;
+    }
+
+    core.api.worker_poll_activity_task = WorkerTests.stubPollActivityShutdown;
+    core.runtime_byte_array_free = WorkerTests.stubRuntimeByteArrayFree;
+
+    var rt = WorkerTests.fakeRuntimeHandle();
+    var worker_handle = WorkerTests.fakeWorkerHandle(&rt);
+
+    WorkerTests.resetStubs();
+    errors.setLastError(""[0..0]);
+
+    const pending_handle_opt = pollActivityTask(&worker_handle);
+    try testing.expect(pending_handle_opt != null);
+    const pending_handle = pending_handle_opt.?;
+
+    const base_handle = @as(*pending.PendingHandle, @ptrCast(pending_handle));
+    const status = pending.poll(base_handle);
+    try testing.expectEqual(@intFromEnum(pending.Status.ready), status);
+
+    const payload_any = pending.consume(base_handle);
+    try testing.expect(payload_any != null);
+    const payload_ptr = @as(*byte_array.ByteArray, @ptrCast(@alignCast(payload_any.?)));
+    defer byte_array.free(payload_ptr);
+
+    try testing.expectEqual(@as(usize, 0), payload_ptr.size);
+    try testing.expectEqual(@as(usize, 0), WorkerTests.stub_byte_array_free_count);
+    try testing.expectEqualStrings("", errors.snapshot());
+
+    pending.free(base_handle);
 }
