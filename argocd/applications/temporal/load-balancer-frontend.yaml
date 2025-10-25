@@ -4,7 +4,6 @@ metadata:
   name: temporal-frontend-lb
   namespace: temporal
   annotations:
-    tailscale.com/hostname: temporal-grpc
 spec:
   type: LoadBalancer
   loadBalancerClass: tailscale
