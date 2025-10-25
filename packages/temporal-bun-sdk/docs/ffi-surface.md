@@ -111,7 +111,7 @@ Legend: ✅ shipped · ⚠️ partial/stub · ❌ not implemented yet.
 |-----|------|---------|
 | `zig-worker-01` | Worker creation | Translate Bun worker config into `TemporalCoreWorkerOptions`, create worker via Temporal core API. |
 | `zig-worker-02` | Worker shutdown | Ensure inflight polls drain; free worker handle safely. |
-| `zig-worker-03` | Poll workflow tasks | Pending-handle wrapper around `temporal_core_worker_poll_workflow_activation`. |
+| ✅ `zig-worker-03` | Poll workflow tasks | Pending-handle wrapper around `temporal_core_worker_poll_workflow_activation` wired to pending handles. |
 | `zig-worker-04` | Complete workflow tasks | Already partially implemented; finish integration with real Temporal core callbacks. |
 | `zig-worker-05` | Poll activity tasks | Mirror workflow polling for activities. |
 | `zig-worker-06` | Complete activity tasks | Forward completion payload to Temporal core; surface failure payloads. |
