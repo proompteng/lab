@@ -280,29 +280,36 @@ function buildBridgeLoadError(libraryPath: string, error: unknown, context: Brid
 }
 
 const {
-  symbols: {
-    temporal_bun_runtime_new,
-    temporal_bun_runtime_free,
-    temporal_bun_error_message,
-    temporal_bun_error_free,
-    temporal_bun_client_connect_async,
-    temporal_bun_client_free,
-    temporal_bun_client_describe_namespace_async,
-    temporal_bun_client_update_headers,
-    temporal_bun_pending_client_poll,
-    temporal_bun_pending_client_consume,
-    temporal_bun_pending_client_free,
-    temporal_bun_pending_byte_array_poll,
-    temporal_bun_pending_byte_array_consume,
-    temporal_bun_pending_byte_array_free,
-    temporal_bun_byte_array_free,
-    temporal_bun_client_start_workflow,
-    temporal_bun_client_terminate_workflow,
-    temporal_bun_client_signal,
-    temporal_bun_client_signal_with_start,
-    temporal_bun_client_query_workflow,
-  },
-} = nativeModule
+  temporal_bun_runtime_new,
+  temporal_bun_runtime_free,
+  temporal_bun_error_message,
+  temporal_bun_error_free,
+  temporal_bun_client_connect_async,
+  temporal_bun_client_free,
+  temporal_bun_client_describe_namespace_async,
+  temporal_bun_client_update_headers,
+  temporal_bun_pending_client_poll,
+  temporal_bun_pending_client_consume,
+  temporal_bun_pending_client_free,
+  temporal_bun_pending_byte_array_poll,
+  temporal_bun_pending_byte_array_consume,
+  temporal_bun_pending_byte_array_free,
+  temporal_bun_byte_array_free,
+  temporal_bun_client_start_workflow,
+  temporal_bun_client_terminate_workflow,
+  temporal_bun_client_signal,
+  temporal_bun_client_signal_with_start,
+  temporal_bun_client_query_workflow,
+  // Worker bridge exports
+  temporal_bun_worker_new,
+  temporal_bun_worker_poll_workflow_task,
+  temporal_bun_worker_poll_activity_task,
+  temporal_bun_worker_complete_workflow_task,
+  temporal_bun_worker_complete_activity_task,
+  temporal_bun_worker_record_activity_heartbeat,
+  temporal_bun_worker_initiate_shutdown,
+  temporal_bun_worker_finalize_shutdown,
+} = nativeModule.symbols
 
 export const native = {
   bridgeVariant: resolvedBridgeVariant,
@@ -438,6 +445,68 @@ export const native = {
       throw buildNativeBridgeError()
     }
     return readByteArray(arrayPtr)
+  },
+  worker: {
+    create(runtime: Runtime, client: NativeClient, config: Record<string, unknown>): number {
+      const payload = Buffer.from(JSON.stringify(config), 'utf8')
+      const handle = Number(temporal_bun_worker_new(runtime.handle, client.handle, ptr(payload), payload.byteLength))
+      if (!handle) {
+        throw buildNativeBridgeError()
+      }
+      return handle
+    },
+  },
+
+  pollWorkflowTask(workerHandle: number): number {
+    const pendingHandle = Number(temporal_bun_worker_poll_workflow_task(workerHandle))
+    if (!pendingHandle) {
+      throw buildNativeBridgeError()
+    }
+    return pendingHandle
+  },
+
+  pollActivityTask(workerHandle: number): number {
+    const pendingHandle = Number(temporal_bun_worker_poll_activity_task(workerHandle))
+    if (!pendingHandle) {
+      throw buildNativeBridgeError()
+    }
+    return pendingHandle
+  },
+
+  completeWorkflowTask(workerHandle: number, payload: Uint8Array | Buffer): void {
+    const status = Number(temporal_bun_worker_complete_workflow_task(workerHandle, ptr(payload), payload.byteLength))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
+  completeActivityTask(workerHandle: number, payload: Uint8Array | Buffer): void {
+    const status = Number(temporal_bun_worker_complete_activity_task(workerHandle, ptr(payload), payload.byteLength))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
+  recordActivityHeartbeat(workerHandle: number, heartbeat: Record<string, unknown>): void {
+    const payload = Buffer.from(JSON.stringify(heartbeat ?? {}), 'utf8')
+    const status = Number(temporal_bun_worker_record_activity_heartbeat(workerHandle, ptr(payload), payload.byteLength))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
+  initiateWorkerShutdown(workerHandle: number): void {
+    const status = Number(temporal_bun_worker_initiate_shutdown(workerHandle))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
+  finalizeWorkerShutdown(workerHandle: number): void {
+    const status = Number(temporal_bun_worker_finalize_shutdown(workerHandle))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
   },
 }
 
