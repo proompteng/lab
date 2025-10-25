@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, createWriteStream } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, openSync, closeSync } from 'node:fs'
 import { join } from 'node:path'
 import net from 'node:net'
 import { spawn } from 'node:child_process'
@@ -88,29 +88,35 @@ function writePid(pid: number) {
 
 function startTemporalCli(executable: string) {
   mkdirSync(stateDir, { recursive: true })
-  const logStream = createWriteStream(logFile, { flags: 'a' })
-  const child = spawn(
-    executable,
-    [
-      'server',
-      'start-dev',
-      '--namespace',
-      temporalNamespace,
-      '--db-filename',
-      dbPath,
-      '--http-port',
-      String(temporalUiPort),
-    ],
-    {
-      cwd: stateDir,
-      stdio: ['ignore', logStream, logStream],
-      detached: true,
-    },
-  )
+  const logFd = openSync(logFile, 'a')
+  try {
+    const child = spawn(
+      executable,
+      [
+        'server',
+        'start-dev',
+        '--namespace',
+        temporalNamespace,
+        '--db-filename',
+        dbPath,
+        '--port',
+        String(temporalPort),
+        '--ui-port',
+        String(temporalUiPort),
+      ],
+      {
+        cwd: stateDir,
+        stdio: ['ignore', logFd, logFd],
+        detached: true,
+      },
+    )
 
-  child.unref()
-  writePid(child.pid)
-  return child.pid
+    child.unref()
+    writePid(child.pid)
+    return child.pid
+  } finally {
+    closeSync(logFd)
+  }
 }
 
 async function main() {
