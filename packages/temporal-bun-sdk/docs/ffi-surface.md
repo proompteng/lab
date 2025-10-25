@@ -43,7 +43,7 @@ flowchart LR
 
 ### Worker (`worker.zig`)
 - ⚠️ Workflow completion uses stub callbacks for unit tests.
-- ❌ Worker creation, task polling, activity completion, heartbeats, and shutdown exports are placeholders (tagged `zig-worker-0x`).
+- ⚠️ Worker creation/teardown remain stubs, but activity polling now bridges Temporal core byte arrays via pending handles (tests cover success, failure, and shutdown sentinels). Activity completion, heartbeats, and shutdown APIs are still pending (`zig-worker-06`–`zig-worker-09`).
 
 ### Support crates
 - ✅ `pending.zig` implements reference-counted pending handles for clients and byte arrays.
@@ -112,8 +112,8 @@ Legend: ✅ shipped · ⚠️ partial/stub · ❌ not implemented yet.
 | `zig-worker-01` | Worker creation | Translate Bun worker config into `TemporalCoreWorkerOptions`, create worker via Temporal core API. |
 | `zig-worker-02` | Worker shutdown | Ensure inflight polls drain; free worker handle safely. |
 | `zig-worker-03` | Poll workflow tasks | Pending-handle wrapper around `temporal_core_worker_poll_workflow_activation`. |
-| `zig-worker-04` | Complete workflow tasks | ✅ Bridged to Temporal core worker completions with structured error propagation. |
-| `zig-worker-05` | Poll activity tasks | Mirror workflow polling for activities. |
+| `zig-worker-04` | Complete workflow tasks | Already partially implemented; finish integration with real Temporal core callbacks. |
+| `zig-worker-05` | Poll activity tasks | ✅ Pending handle resolves activity payloads, propagates gRPC failures, and returns empty payload on shutdown. |
 | `zig-worker-06` | Complete activity tasks | Forward completion payload to Temporal core; surface failure payloads. |
 | `zig-worker-07` | Heartbeats | Forward payloads and handle cancellation. |
 | `zig-worker-08` | Initiate shutdown | Signal no new polls; allow graceful drain. |

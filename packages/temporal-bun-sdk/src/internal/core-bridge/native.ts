@@ -248,10 +248,6 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.ptr,
     },
-    temporal_bun_worker_complete_workflow_task: {
-      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
-      returns: FFIType.int32_t,
-    },
     temporal_bun_worker_new: {
       args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.ptr,
@@ -260,7 +256,7 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr],
       returns: FFIType.void,
     },
-    temporal_bun_worker_poll_workflow_task: {
+    temporal_bun_worker_poll_activity_task: {
       args: [FFIType.ptr],
       returns: FFIType.ptr,
     },
@@ -324,12 +320,25 @@ const {
     temporal_bun_client_signal,
     temporal_bun_client_signal_with_start,
     temporal_bun_client_query_workflow,
-    temporal_bun_worker_complete_workflow_task,
     temporal_bun_worker_new,
     temporal_bun_worker_free,
     temporal_bun_worker_poll_workflow_task,
+    temporal_bun_worker_complete_workflow_task,
+    temporal_bun_worker_poll_activity_task,
   },
 } = nativeModule
+
+const pendingByteArrayFfi = {
+  poll: temporal_bun_pending_byte_array_poll,
+  consume: temporal_bun_pending_byte_array_consume,
+  free: temporal_bun_pending_byte_array_free,
+}
+
+const workerFfi = {
+  pollActivityTask: temporal_bun_worker_poll_activity_task,
+  pollWorkflowTask: temporal_bun_worker_poll_workflow_task,
+  completeWorkflowTask: temporal_bun_worker_complete_workflow_task,
+}
 
 export const native = {
   bridgeVariant: resolvedBridgeVariant,
@@ -374,9 +383,9 @@ export const native = {
       throw buildNativeBridgeError()
     }
     try {
-      return await waitForByteArray(pendingHandle)
+      return await waitForByteArray(pendingHandle, pendingByteArrayFfi)
     } finally {
-      temporal_bun_pending_byte_array_free(pendingHandle)
+      pendingByteArrayFfi.free(pendingHandle)
     }
   },
 
@@ -419,9 +428,9 @@ export const native = {
       throw buildNativeBridgeError()
     }
     try {
-      await waitForByteArray(pendingHandle)
+      await waitForByteArray(pendingHandle, pendingByteArrayFfi)
     } finally {
-      temporal_bun_pending_byte_array_free(pendingHandle)
+      pendingByteArrayFfi.free(pendingHandle)
     }
   },
 
@@ -432,13 +441,13 @@ export const native = {
       throw buildNativeBridgeError()
     }
     try {
-      const rawBytes = await waitForByteArray(pendingHandle)
+      const rawBytes = await waitForByteArray(pendingHandle, pendingByteArrayFfi)
       if (isZigBridge) {
         return await decodeZigQueryWorkflowResponse(rawBytes)
       }
       return rawBytes
     } finally {
-      temporal_bun_pending_byte_array_free(pendingHandle)
+      pendingByteArrayFfi.free(pendingHandle)
     }
   },
 
@@ -467,15 +476,6 @@ export const native = {
     return readByteArray(arrayPtr)
   },
 
-  workerCompleteWorkflowTask(worker: NativeWorker, payload: Uint8Array | Buffer): void {
-    const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
-
-    const status = Number(temporal_bun_worker_complete_workflow_task(worker.handle, ptr(buffer), buffer.byteLength))
-    if (status !== 0) {
-      throw buildNativeBridgeError()
-    }
-  },
-
   createWorker(runtime: Runtime, client: NativeClient, config: Record<string, unknown>): NativeWorker {
     const payload = Buffer.from(JSON.stringify(config), 'utf8')
     const handleNum = Number(temporal_bun_worker_new(runtime.handle, client.handle, ptr(payload), payload.byteLength))
@@ -489,6 +489,15 @@ export const native = {
     temporal_bun_worker_free(worker.handle)
   },
 
+  workerCompleteWorkflowTask(worker: NativeWorker, payload: Uint8Array | Buffer): void {
+    const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
+
+    const status = Number(workerFfi.completeWorkflowTask(worker.handle, ptr(buffer), buffer.byteLength))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
   worker: {
     async pollWorkflowTask(worker: NativeWorker): Promise<Uint8Array> {
       if (!isZigBridge) {
@@ -497,18 +506,46 @@ export const native = {
         )
       }
 
-      const pendingHandle = Number(temporal_bun_worker_poll_workflow_task(worker.handle))
+      const pendingHandle = Number(workerFfi.pollWorkflowTask(worker.handle))
       if (!pendingHandle) {
         throw buildNativeBridgeError()
       }
 
       try {
-        return await waitForByteArray(pendingHandle)
+        return await waitForByteArray(pendingHandle, pendingByteArrayFfi)
       } finally {
-        temporal_bun_pending_byte_array_free(pendingHandle)
+        pendingByteArrayFfi.free(pendingHandle)
+      }
+    },
+
+    async pollActivityTask(worker: NativeWorker): Promise<Uint8Array | null> {
+      if (process.env.TEMPORAL_BUN_SDK_USE_ZIG !== '1' || !isZigBridge) {
+        throw new NativeBridgeError({
+          code: UNKNOWN_NATIVE_ERROR_CODE,
+          message:
+            'Activity polling via Zig requires TEMPORAL_BUN_SDK_USE_ZIG=1 and the Zig bridge. Rebuild the native bridge or enable the environment flag.',
+          details: { bridgeVariant: resolvedBridgeVariant },
+        })
+      }
+
+      const pendingHandle = Number(workerFfi.pollActivityTask(worker.handle))
+      if (!pendingHandle) {
+        throw buildNativeBridgeError()
+      }
+
+      try {
+        const payload = await waitForByteArray(pendingHandle, pendingByteArrayFfi)
+        return payload.byteLength === 0 ? null : payload
+      } finally {
+        pendingByteArrayFfi.free(pendingHandle)
       }
     },
   },
+}
+
+export const __testing = {
+  pendingByteArrayFfi,
+  workerFfi,
 }
 
 function resolvePackageRoot(): string {
@@ -757,10 +794,13 @@ async function waitForClientHandle(handle: number): Promise<number> {
   })
 }
 
-async function waitForByteArray(handle: number): Promise<Uint8Array> {
+async function waitForByteArray(
+  handle: number,
+  ffi: typeof pendingByteArrayFfi = pendingByteArrayFfi,
+): Promise<Uint8Array> {
   return await new Promise<Uint8Array>((resolve, reject) => {
     const poll = (): void => {
-      const status = Number(temporal_bun_pending_byte_array_poll(handle))
+      const status = Number(ffi.poll(handle))
       if (status === 0) {
         setTimeout(poll, 0)
         return
@@ -768,11 +808,26 @@ async function waitForByteArray(handle: number): Promise<Uint8Array> {
 
       if (status === 1) {
         try {
-          const arrayPtr = Number(temporal_bun_pending_byte_array_consume(handle))
-          if (!arrayPtr) {
+          const consumed = ffi.consume(handle)
+          if (!consumed) {
             throw buildNativeBridgeError()
           }
-          resolve(readByteArray(arrayPtr))
+
+          if (typeof consumed === 'number') {
+            const arrayPtr = Number(consumed)
+            if (!arrayPtr) {
+              throw buildNativeBridgeError()
+            }
+            resolve(readByteArray(arrayPtr))
+            return
+          }
+
+          if (consumed instanceof Uint8Array) {
+            resolve(new Uint8Array(consumed))
+            return
+          }
+
+          throw buildNativeBridgeError()
         } catch (error) {
           reject(error)
         }

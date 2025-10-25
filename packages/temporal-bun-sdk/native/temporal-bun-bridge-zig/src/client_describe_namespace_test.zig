@@ -204,6 +204,7 @@ test "describeNamespaceAsync resolves with byte payload for valid namespace" {
         .worker_new = original_api.worker_new,
         .worker_free = original_api.worker_free,
         .worker_poll_workflow_activation = original_api.worker_poll_workflow_activation,
+        .worker_poll_activity_task = original_api.worker_poll_activity_task,
     };
 
     const runtime_handle = runtime.create("{}") orelse unreachable;
@@ -260,6 +261,7 @@ test "describeNamespaceAsync returns failed handle for empty payload" {
         .worker_new = original_api.worker_new,
         .worker_free = original_api.worker_free,
         .worker_poll_workflow_activation = original_api.worker_poll_workflow_activation,
+        .worker_poll_activity_task = original_api.worker_poll_activity_task,
     };
 
     const runtime_handle = runtime.create("{}") orelse unreachable;
@@ -320,6 +322,7 @@ test "describeNamespaceAsync rejects when runtime handle is missing" {
         .worker_new = original_api.worker_new,
         .worker_free = original_api.worker_free,
         .worker_poll_workflow_activation = original_api.worker_poll_workflow_activation,
+        .worker_poll_activity_task = original_api.worker_poll_activity_task,
     };
 
     const runtime_handle = runtime.create("{}") orelse unreachable;
@@ -379,6 +382,7 @@ test "describeNamespaceAsync surfaces core RPC failure" {
         .worker_new = original_api.worker_new,
         .worker_free = original_api.worker_free,
         .worker_poll_workflow_activation = original_api.worker_poll_workflow_activation,
+        .worker_poll_activity_task = original_api.worker_poll_activity_task,
     };
 
     const runtime_handle = runtime.create("{}") orelse unreachable;
@@ -435,6 +439,7 @@ test "terminateWorkflow issues workflow RPC and succeeds" {
         .worker_new = original_api.worker_new,
         .worker_free = original_api.worker_free,
         .worker_poll_workflow_activation = original_api.worker_poll_workflow_activation,
+        .worker_poll_activity_task = original_api.worker_poll_activity_task,
     };
 
     const runtime_handle = runtime.create("{}") orelse unreachable;
@@ -494,6 +499,7 @@ test "terminateWorkflow surfaces core errors" {
         .worker_new = original_api.worker_new,
         .worker_free = original_api.worker_free,
         .worker_poll_workflow_activation = original_api.worker_poll_workflow_activation,
+        .worker_poll_activity_task = original_api.worker_poll_activity_task,
     };
 
     const runtime_handle = runtime.create("{}") orelse unreachable;
