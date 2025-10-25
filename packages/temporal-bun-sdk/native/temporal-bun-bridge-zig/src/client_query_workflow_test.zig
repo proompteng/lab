@@ -4,18 +4,25 @@ const runtime = @import("runtime.zig");
 const pending = @import("pending.zig");
 const byte_array = @import("byte_array.zig");
 const core = @import("core.zig");
+<<<<<<< HEAD
 const errors = @import("errors.zig");
+=======
+>>>>>>> ee8fd72c (feat(temporal-bun-sdk): add query workflow bridge (Zig stub) + tests; docs & helper)
 const c = @cImport({
     @cInclude("stdlib.h");
 });
 
+<<<<<<< HEAD
 const ArrayList = std.ArrayList;
 
+=======
+>>>>>>> ee8fd72c (feat(temporal-bun-sdk): add query workflow bridge (Zig stub) + tests; docs & helper)
 const PendingPollError = error{
     PendingFailed,
     PendingTimedOut,
 };
 
+<<<<<<< HEAD
 var stub_response: []const u8 = ""[0..0];
 var stub_failure_message: []const u8 = ""[0..0];
 var stub_rpc_should_fail = false;
@@ -30,6 +37,11 @@ fn disableTemporalTestServerEnv() void {
     _ = c.setenv(name, value, 1);
 }
 
+=======
+var fake_runtime_storage: usize = 0;
+var fake_client_storage: usize = 0;
+
+>>>>>>> ee8fd72c (feat(temporal-bun-sdk): add query workflow bridge (Zig stub) + tests; docs & helper)
 fn stubRuntimeNew(_options: *const core.RuntimeOptions) callconv(.c) core.RuntimeOrFail {
     _ = _options;
     return .{ .runtime = @ptrCast(&fake_runtime_storage), .fail = null };
@@ -59,6 +71,7 @@ fn stubClientConnect(
 
 fn stubClientFree(_client: ?*core.Client) callconv(.c) void {
     _ = _client;
+<<<<<<< HEAD
     stub_client_free_calls += 1;
 }
 
@@ -172,12 +185,28 @@ fn stubClientRpcCall(
     if (callback) |cb| {
         cb(user_data, &stub_success_array, 0, null, null);
     }
+=======
+}
+fn stubClientUpdateMetadata(_client: ?*core.Client, _m: core.ByteArrayRef) callconv(.c) void {
+    _ = _client;
+    _ = _m;
+}
+fn stubClientUpdateApiKey(_client: ?*core.Client, _m: core.ByteArrayRef) callconv(.c) void {
+    _ = _client;
+    _ = _m;
+}
+fn stubClientRpcCall(_c: ?*core.Client, _o: *const core.RpcCallOptions, _u: ?*anyopaque, _cb: core.ClientRpcCallCallback) callconv(.c) void {
+    _ = _c;
+    _ = _o;
+    if (_cb) |cb| cb(_u, null, 0, null, null);
+>>>>>>> ee8fd72c (feat(temporal-bun-sdk): add query workflow bridge (Zig stub) + tests; docs & helper)
 }
 
 fn pollUntilReady(handle: ?*pending.PendingHandle) PendingPollError!void {
     var attempts: usize = 0;
     while (attempts < 100) {
         const status = pending.poll(handle);
+<<<<<<< HEAD
         if (status == @intFromEnum(pending.Status.ready)) {
             return;
         }
@@ -185,11 +214,17 @@ fn pollUntilReady(handle: ?*pending.PendingHandle) PendingPollError!void {
             return error.PendingFailed;
         }
         std.Thread.sleep(1_000_000); // 1ms
+=======
+        if (status == @intFromEnum(pending.Status.ready)) return;
+        if (status == @intFromEnum(pending.Status.failed)) return error.PendingFailed;
+        std.Thread.sleep(1_000_000);
+>>>>>>> ee8fd72c (feat(temporal-bun-sdk): add query workflow bridge (Zig stub) + tests; docs & helper)
         attempts += 1;
     }
     return error.PendingTimedOut;
 }
 
+<<<<<<< HEAD
 test "queryWorkflow resolves JSON payload for successful response" {
     disableTemporalTestServerEnv();
     errors.setLastError(""[0..0]);
@@ -210,12 +245,26 @@ test "queryWorkflow resolves JSON payload for successful response" {
     stub_rpc_status_code = 0;
     stub_client_free_calls = 0;
 
+=======
+fn disableTemporalTestServerEnv() void {
+    const name: [*:0]const u8 = "TEMPORAL_TEST_SERVER";
+    const zero: [*:0]const u8 = "0";
+    _ = c.setenv(name, zero, 1);
+}
+
+test "queryWorkflow resolves with byte payload for valid request" {
+    disableTemporalTestServerEnv();
+    core.ensureExternalApiInstalled();
+    const original_api = core.api;
+    defer core.api = original_api;
+>>>>>>> ee8fd72c (feat(temporal-bun-sdk): add query workflow bridge (Zig stub) + tests; docs & helper)
     core.api = .{
         .runtime_new = stubRuntimeNew,
         .runtime_free = stubRuntimeFree,
         .byte_array_free = stubByteArrayFree,
         .client_connect = stubClientConnect,
         .client_free = stubClientFree,
+<<<<<<< HEAD
         .client_update_metadata = original_api.client_update_metadata,
         .client_update_api_key = original_api.client_update_api_key,
         .client_rpc_call = stubClientRpcCall,
@@ -251,4 +300,43 @@ test "queryWorkflow resolves JSON payload for successful response" {
     try std.testing.expectEqual(stub_response.len, array_ptr.size);
     const ptr = array_ptr.data.?;
     try std.testing.expectEqualSlices(u8, stub_response, ptr[0..array_ptr.size]);
+=======
+        .client_update_metadata = stubClientUpdateMetadata,
+        .client_update_api_key = stubClientUpdateApiKey,
+        .client_rpc_call = stubClientRpcCall,
+    };
+
+    const rt = runtime.create("{}") orelse unreachable;
+    defer runtime.destroy(rt);
+
+    const pc = client.connectAsync(rt, "{\"address\":\"http://127.0.0.1:7233\"}") orelse unreachable;
+    defer pending.free(@as(?*pending.PendingHandle, @ptrCast(pc)));
+    try pollUntilReady(@as(?*pending.PendingHandle, @ptrCast(pc)));
+    const any_client = pending.consume(@as(?*pending.PendingHandle, @ptrCast(pc))) orelse unreachable;
+    const cl = @as(*client.ClientHandle, @ptrCast(@alignCast(any_client)));
+    defer client.destroy(cl);
+
+    const payload = "{\"namespace\":\"default\",\"workflow_id\":\"wf-123\",\"query_name\":\"state\",\"args\":[]}";
+    const pending_q = client.queryWorkflow(cl, payload) orelse unreachable;
+    defer pending.free(@as(?*pending.PendingHandle, @ptrCast(pending_q)));
+    try pollUntilReady(@as(?*pending.PendingHandle, @ptrCast(pending_q)));
+    const any_array = pending.consume(@as(?*pending.PendingHandle, @ptrCast(pending_q))) orelse unreachable;
+    const arr = @as(*byte_array.ByteArray, @ptrCast(@alignCast(any_array)));
+    defer byte_array.free(arr);
+    try std.testing.expect(arr.size > 0);
+}
+
+test "queryWorkflow returns failed pending for invalid payload" {
+    disableTemporalTestServerEnv();
+    const rt = runtime.create("{}") orelse unreachable;
+    defer runtime.destroy(rt);
+
+    // Build a fake client handle directly to avoid stubbing connect again.
+    var fake_client = client.ClientHandle{ .id = 1, .runtime = rt, .config = ""[0..], .core_client = null };
+    const bad = client.queryWorkflow(&fake_client, "{\"namespace\":\"default\"}") orelse unreachable;
+    defer pending.free(@as(?*pending.PendingHandle, @ptrCast(bad)));
+    // Should resolve to failed state quickly
+    const status = pending.poll(@as(?*pending.PendingHandle, @ptrCast(bad)));
+    try std.testing.expectEqual(@intFromEnum(pending.Status.failed), status);
+>>>>>>> ee8fd72c (feat(temporal-bun-sdk): add query workflow bridge (Zig stub) + tests; docs & helper)
 }

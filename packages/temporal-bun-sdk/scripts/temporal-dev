@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-}"
+IMAGE="temporal-dev:local"
+NAME="temporal-test"
+# package root (scripts/..)
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
+DEV_DIR="$ROOT_DIR/tests/docker/temporal-dev"
+case "$cmd" in
+  up|start)
+    docker build -t "$IMAGE" "$DEV_DIR"
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
+    docker run -d --rm --name "$NAME" -p 7233:7233 "$IMAGE" >/dev/null
+    echo "Temporal dev server started at http://127.0.0.1:7233"
+    ;;
+  down|stop)
+    docker stop "$NAME" >/dev/null 2>&1 || true
+    echo "Temporal dev server stopped"
+    ;;
+  *)
+    echo "Usage: $0 {up|start|down|stop}" >&2
+    exit 2
+    ;;
+esac
