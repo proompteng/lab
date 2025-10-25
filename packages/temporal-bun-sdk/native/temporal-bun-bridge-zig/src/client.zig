@@ -3482,6 +3482,8 @@ pub fn queryWorkflow(client_ptr: ?*ClientHandle, payload: []const u8) ?*pending.
 }
 
 pub fn signalWorkflow(client_ptr: ?*ClientHandle, payload: []const u8) ?*pending.PendingByteArray {
+    // TODO(codex, zig-wf-05): Replace temporary stub with direct Temporal core RPC so signals run
+    // through the Zig bridge without falling back to Node helpers.
     if (client_ptr == null) {
         return createByteArrayError(grpc.invalid_argument, "temporal-bun-bridge-zig: signalWorkflow received null client");
     }

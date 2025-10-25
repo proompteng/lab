@@ -207,6 +207,8 @@ pub const SignalWorkflowError = error{
 };
 
 pub fn signalWorkflow(_client: ?*ClientOpaque, request_json: []const u8) SignalWorkflowError!void {
+    // TODO(codex, zig-wf-05): Replace this stub with a Temporal core RPC invocation so signals
+    // leverage the same retry/backoff semantics as other client calls.
     _ = _client;
 
     if (std.mem.indexOf(u8, request_json, "\"workflow_id\":\"missing-workflow\"")) |_| {
