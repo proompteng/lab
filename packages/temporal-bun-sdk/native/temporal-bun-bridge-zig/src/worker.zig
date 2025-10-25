@@ -594,6 +594,8 @@ pub fn completeWorkflowTask(handle: ?*WorkerHandle, payload: []const u8) i32 {
         return -1;
     }
 
+    core.ensureExternalApiInstalled();
+
     var state = CompletionState{};
     defer state.wait_group.reset();
     state.wait_group.start();
@@ -1025,4 +1027,69 @@ test "completeWorkflowTask surfaces core error payload" {
     if (WorkerTests.last_runtime_byte_array_free_ptr) |ptr| {
         try testing.expectEqual(@as(usize, WorkerTests.stub_fail_message.len), ptr.size);
     }
+}
+
+test "completeWorkflowTask returns error for null worker handle" {
+    const original_complete = core.worker_complete_workflow_activation;
+    defer {
+        core.worker_complete_workflow_activation = original_complete;
+    }
+
+    core.worker_complete_workflow_activation = WorkerTests.stubCompleteSuccess;
+    WorkerTests.resetStubs();
+    errors.setLastError(""[0..0]);
+
+    const rc = completeWorkflowTask(null, "noop");
+
+    try testing.expectEqual(@as(i32, -1), rc);
+    try testing.expectEqual(@as(usize, 0), WorkerTests.stub_completion_call_count);
+    const expected_json = "{\"code\":3,\"message\":\"temporal-bun-bridge-zig: completeWorkflowTask received null worker handle\"}";
+    try testing.expectEqualStrings(expected_json, errors.snapshot());
+}
+
+test "completeWorkflowTask rejects missing worker core handle" {
+    const original_complete = core.worker_complete_workflow_activation;
+    defer {
+        core.worker_complete_workflow_activation = original_complete;
+    }
+
+    core.worker_complete_workflow_activation = WorkerTests.stubCompleteSuccess;
+    WorkerTests.resetStubs();
+    errors.setLastError(""[0..0]);
+
+    var rt = WorkerTests.fakeRuntimeHandle();
+    var worker_handle = WorkerTests.fakeWorkerHandle(&rt);
+    worker_handle.core_worker = null;
+
+    const payload = "payload";
+    const rc = completeWorkflowTask(&worker_handle, payload);
+
+    try testing.expectEqual(@as(i32, -1), rc);
+    try testing.expectEqual(@as(usize, 0), WorkerTests.stub_completion_call_count);
+    const expected_json =
+        "{\"code\":9,\"message\":\"temporal-bun-bridge-zig: worker core handle is not initialized\"}";
+    try testing.expectEqualStrings(expected_json, errors.snapshot());
+}
+
+test "completeWorkflowTask rejects empty payload" {
+    const original_complete = core.worker_complete_workflow_activation;
+    defer {
+        core.worker_complete_workflow_activation = original_complete;
+    }
+
+    core.worker_complete_workflow_activation = WorkerTests.stubCompleteSuccess;
+    WorkerTests.resetStubs();
+    errors.setLastError(""[0..0]);
+
+    var rt = WorkerTests.fakeRuntimeHandle();
+    var worker_handle = WorkerTests.fakeWorkerHandle(&rt);
+
+    const empty_payload = ""[0..0];
+    const rc = completeWorkflowTask(&worker_handle, empty_payload);
+
+    try testing.expectEqual(@as(i32, -1), rc);
+    try testing.expectEqual(@as(usize, 0), WorkerTests.stub_completion_call_count);
+    const expected_json =
+        "{\"code\":3,\"message\":\"temporal-bun-bridge-zig: completeWorkflowTask requires a workflow completion payload\"}";
+    try testing.expectEqualStrings(expected_json, errors.snapshot());
 }
