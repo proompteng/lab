@@ -707,7 +707,7 @@ typedef struct TemporalCoreCustomSlotSupplierCallbacks {
 } TemporalCoreCustomSlotSupplierCallbacks;
 
 typedef struct TemporalCoreCustomSlotSupplierCallbacksImpl {
-  const struct TemporalCoreCustomSlotSupplierCallbacks *_0;
+  const void *_0;
 } TemporalCoreCustomSlotSupplierCallbacksImpl;
 
 typedef enum TemporalCoreSlotSupplier_Tag {
