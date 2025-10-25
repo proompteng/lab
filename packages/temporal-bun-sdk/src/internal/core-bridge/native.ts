@@ -1,4 +1,4 @@
-import { dlopen, FFIType, ptr, toArrayBuffer, type Pointer } from 'bun:ffi'
+import { dlopen, FFIType, type Pointer, ptr, toArrayBuffer } from 'bun:ffi'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
