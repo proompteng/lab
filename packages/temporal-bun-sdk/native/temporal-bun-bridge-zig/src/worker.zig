@@ -95,6 +95,14 @@ const StringFieldLookup = struct {
     invalid_type: bool = false,
 };
 
+const WorkerFailPayload = struct {
+    code: i32,
+    message: []const u8,
+    message_allocated: bool,
+    details: ?[]const u8,
+    details_allocated: bool,
+};
+
 fn lookupStringField(map: *json.ObjectMap, aliases: []const []const u8) StringFieldLookup {
     var result = StringFieldLookup{};
     for (aliases) |alias| {
@@ -119,9 +127,18 @@ fn lookupStringField(map: *json.ObjectMap, aliases: []const []const u8) StringFi
     return result;
 }
 
-fn parseWorkerFailPayload(bytes: []const u8) struct { code: i32, message: []const u8, details: ?[]const u8 } {
+fn parseWorkerFailPayload(bytes: []const u8) WorkerFailPayload {
+    const default_message = "temporal-bun-bridge-zig: worker creation failed";
+    var result: WorkerFailPayload = .{
+        .code = grpc.internal,
+        .message = default_message,
+        .message_allocated = false,
+        .details = null,
+        .details_allocated = false,
+    };
+
     if (bytes.len == 0) {
-        return .{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: worker creation failed", .details = null };
+        return result;
     }
 
     const allocator = std.heap.c_allocator;
@@ -131,12 +148,12 @@ fn parseWorkerFailPayload(bytes: []const u8) struct { code: i32, message: []cons
     };
 
     var parsed = json.parseFromSlice(json.Value, allocator, bytes, parse_opts) catch {
-        return .{ .code = grpc.internal, .message = bytes, .details = null };
+        return result;
     };
     defer parsed.deinit();
 
     if (parsed.value != .object) {
-        return .{ .code = grpc.internal, .message = bytes, .details = null };
+        return result;
     }
 
     var obj = parsed.value.object;
@@ -157,22 +174,29 @@ fn parseWorkerFailPayload(bytes: []const u8) struct { code: i32, message: []cons
             else => {},
         }
     }
+    result.code = code;
 
-    var message = bytes;
     if (obj.getPtr("message")) |message_value| {
         if (message_value.* == .string and message_value.string.len > 0) {
-            message = message_value.string;
+            if (duplicateBytes(message_value.string)) |copy| {
+                result.message = copy;
+                result.message_allocated = true;
+            } else {
+                result.message = default_message;
+            }
         }
     }
 
-    var details: ?[]const u8 = null;
     if (obj.getPtr("details")) |details_value| {
         if (details_value.* == .string and details_value.string.len > 0) {
-            details = details_value.string;
+            if (duplicateBytes(details_value.string)) |copy| {
+                result.details = copy;
+                result.details_allocated = true;
+            }
         }
     }
 
-    return .{ .code = code, .message = message, .details = details };
+    return result;
 }
 
 pub fn create(
@@ -407,11 +431,23 @@ pub fn create(
         }
         const failure_slice = byteArraySlice(result.fail);
         const parsed_fail = parseWorkerFailPayload(failure_slice);
+
+        const fallback_message = "temporal-bun-bridge-zig: Temporal core worker creation failed";
+        const error_message = if (parsed_fail.message.len > 0) parsed_fail.message else fallback_message;
+        const error_details = parsed_fail.details;
+
         errors.setStructuredErrorJson(.{
             .code = parsed_fail.code,
-            .message = if (parsed_fail.message.len > 0) parsed_fail.message else "temporal-bun-bridge-zig: Temporal core worker creation failed",
-            .details = parsed_fail.details,
+            .message = error_message,
+            .details = error_details,
         });
+
+        if (parsed_fail.details_allocated and parsed_fail.details != null) {
+            allocator.free(@constCast(parsed_fail.details.?));
+        }
+        if (parsed_fail.message_allocated) {
+            allocator.free(@constCast(parsed_fail.message));
+        }
         if (result.fail) |fail_ptr| {
             core.api.byte_array_free(runtime_handle.core_runtime, fail_ptr);
         }
@@ -760,6 +796,9 @@ const WorkerTests = struct {
             .runtime = rt,
             .client = null,
             .config = ""[0..0],
+            .namespace = ""[0..0],
+            .task_queue = ""[0..0],
+            .identity = ""[0..0],
             .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&fake_worker_storage)),
         };
     }
@@ -915,6 +954,9 @@ test "destroy handles null and missing worker pointers" {
         .runtime = null,
         .client = null,
         .config = config,
+        .namespace = ""[0..0],
+        .task_queue = ""[0..0],
+        .identity = ""[0..0],
         .core_worker = null,
     };
 
