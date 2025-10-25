@@ -25,8 +25,7 @@ if (!nativeBridge) {
     return `${host}:${port}`
   })()
 
-  const { bridgeVariant, native } = nativeBridge
-  const usingZigBridge = bridgeVariant === 'zig'
+  const { native } = nativeBridge
 
   suite('native bridge integration', () => {
     let runtime: ReturnType<typeof native.createRuntime>
@@ -104,9 +103,7 @@ if (!nativeBridge) {
       }
     })
 
-    const queryWorkflowSuccessTest = usingZigBridge ? test.skip : test
-
-    queryWorkflowSuccessTest('queryWorkflow returns JSON payload for running workflow', async () => {
+    test('queryWorkflow returns JSON payload for running workflow', async () => {
       const maxAttempts = 10
       const waitMs = 500
 

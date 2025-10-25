@@ -146,10 +146,27 @@ Build the worker image from the repo root:
 docker build -f packages/temporal-bun-sdk/Dockerfile -t temporal-bun-sdk:dev .
 ```
 
-Or spin up a full stack (Temporal + worker) via Compose:
+Or spin up the Temporal dev stack (Temporalite + optional worker) via Compose:
 
 ```bash
-docker compose -f packages/temporal-bun-sdk/examples/docker-compose.yaml up --build
+# start Temporalite (SQLite-backed Temporal server)
+docker compose -f packages/temporal-bun-sdk/examples/docker-compose.yaml up -d temporal
+
+# optional: build and run the example worker container
+docker compose -f packages/temporal-bun-sdk/examples/docker-compose.yaml up --build worker
+```
+
+With the Temporal container running, you can execute the native integration tests:
+
+```bash
+cd packages/temporal-bun-sdk
+TEMPORAL_TEST_SERVER=1 bun test tests/native.integration.test.ts
+```
+
+Shut everything down with:
+
+```bash
+docker compose -f packages/temporal-bun-sdk/examples/docker-compose.yaml down
 ```
 
 ## Scripts

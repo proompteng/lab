@@ -1,16 +1,10 @@
-version: '3.9'
-
 services:
   temporal:
-    image: temporalio/auto-setup:1.23.0
+    image: staffbase/temporalite:latest
     container_name: temporal-dev
-    environment:
-      - TEMPORAL_DEFAULT_NAMESPACE=default
+    platform: linux/amd64
     ports:
       - '7233:7233'
-      - '7234:7234'
-      - '7235:7235'
-      - '7236:7236'
 
   worker:
     build:

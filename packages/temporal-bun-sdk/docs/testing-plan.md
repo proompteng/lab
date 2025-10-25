@@ -49,13 +49,19 @@ flowchart BT
 ## 3. Integration Tests
 
 ### Setup
-- Compose file already exists at `examples/docker-compose.yaml`.
-- Extend to include:
-  - Bun client test container (runs integration suite).
-  - Optionally metrics exporter for telemetry tests.
+- A ready-to-use Temporalite stack lives at `packages/temporal-bun-sdk/examples/docker-compose.yaml`.
+- Start the Temporal server locally:
+  ```bash
+  docker compose -f packages/temporal-bun-sdk/examples/docker-compose.yaml up -d temporal
+  ```
+- With the container running (and listening on `localhost:7233`), execute the Bun integration tests:
+  ```bash
+  cd packages/temporal-bun-sdk
+  TEMPORAL_TEST_SERVER=1 bun test tests/native.integration.test.ts
+  ```
+- When finished, tear the stack down via `docker compose -f ... down`.
 
-> CI uses `packages/temporal-bun-sdk/tests/docker-compose.yaml` to build a lightweight container that runs `temporal server start-dev` via the Temporal CLI and sets `TEMPORAL_TEST_SERVER=1` so Bun integration tests run automatically.<br>
-> [Temporal CLI reference](https://docs.temporal.io/cli/server/start-dev)
+> CI uses an equivalent compose recipe to launch Temporalite and runs `TEMPORAL_TEST_SERVER=1 bun test ...` so the same workflow executes in automation.
 
 ### Test Cases
 1. **Happy path workflow**

@@ -21,7 +21,7 @@ async function main() {
     workflowsPath,
   })
 
-  console.log('worker-ready')
+  console.log('Worker ready')
 
   process.once('SIGINT', shutdown)
   process.once('SIGTERM', shutdown)
