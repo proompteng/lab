@@ -40,5 +40,18 @@ datasources:
             datasourceUid: prom
           serviceMap:
             datasourceUid: prom
+sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: 'true'
+    folderAnnotation: grafana_folder
+    provider:
+      name: sidecarProvider
+      orgid: 1
+      type: file
+      disableDelete: false
+      allowUiUpdates: false
+      foldersFromFilesStructure: true
 testFramework:
   enabled: false
