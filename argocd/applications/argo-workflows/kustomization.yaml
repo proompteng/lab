@@ -6,6 +6,7 @@ resources:
   - argo-workflows-sso-sealedsecret.yaml
   - minio-secret.yaml
   - minio-bucket-job.yaml
+  - minio-root-secret.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
