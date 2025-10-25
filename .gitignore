@@ -249,3 +249,8 @@ services/dernier/config/master.key
 packages/temporal-bun-sdk/.temporal-libs-cache/
 packages/temporal-bun-sdk/releases/
 packages/temporal-bun-sdk/vendor/
+
+# Ignore Temporal cache/artifacts committed by mistake
+packages/**/.temporal-libs-cache/
+packages/**/.test-e2e-workflow/
+packages/temporal-bun-sdk/Users/
