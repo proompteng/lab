@@ -124,3 +124,10 @@ void *temporal_bun_client_cancel_workflow(void *client, void *payload, uint64_t 
   (void)len;
   return NULL;
 }
+
+int32_t temporal_bun_worker_complete_workflow_task(void *worker, void *payload, uint64_t len) {
+  (void)worker;
+  (void)payload;
+  (void)len;
+  return -1;
+}
