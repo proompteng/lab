@@ -249,3 +249,4 @@ services/dernier/config/master.key
 packages/temporal-bun-sdk/.temporal-libs-cache/
 packages/temporal-bun-sdk/releases/
 packages/temporal-bun-sdk/vendor/
+packages/temporal-bun-sdk/Users/
