@@ -561,6 +561,92 @@ if (nativeModule && stubPath) {
 
       await client.shutdown()
     })
+
+    test('signalWithStart merges defaults and forwards payload to native', async () => {
+      let captured: Record<string, unknown> | undefined
+      native.signalWithStart = mock(async (_: unknown, payload: Record<string, unknown>) => {
+        captured = payload
+        return encodeJson({ runId: 'run-sws', workflowId: payload.workflow_id, namespace: payload.namespace })
+      })
+
+      const config: TemporalConfig = {
+        host: '127.0.0.1',
+        port: 7233,
+        address: '127.0.0.1:7233',
+        namespace: 'default',
+        taskQueue: 'prix',
+        apiKey: undefined,
+        tls: undefined,
+        allowInsecureTls: false,
+        workerIdentity: 'bun-worker',
+        workerIdentityPrefix: 'temporal-bun-worker',
+      }
+
+      const { client } = await createTemporalClient({ config, namespace: 'analytics' })
+
+      const result = await client.signalWithStart({
+        workflowId: 'wf-sws',
+        workflowType: 'ExampleWorkflow',
+        args: ['init'],
+        signalName: 'kickoff',
+        signalArgs: [{ ok: true }, 7],
+      })
+
+      expect(captured).toMatchObject({
+        namespace: 'analytics',
+        workflow_id: 'wf-sws',
+        workflow_type: 'ExampleWorkflow',
+        task_queue: 'prix',
+        identity: 'bun-worker',
+        args: ['init'],
+        signal_name: 'kickoff',
+        signal_args: [{ ok: true }, 7],
+      })
+
+      expect(result).toEqual({
+        runId: 'run-sws',
+        workflowId: 'wf-sws',
+        namespace: 'analytics',
+        handle: {
+          runId: 'run-sws',
+          workflowId: 'wf-sws',
+          namespace: 'analytics',
+        },
+      })
+
+      await client.shutdown()
+    })
+
+    test('signalWithStart surfaces native errors', async () => {
+      native.signalWithStart = mock(async () => {
+        throw new Error('sws failure')
+      })
+
+      const config: TemporalConfig = {
+        host: 'localhost',
+        port: 7233,
+        address: 'localhost:7233',
+        namespace: 'default',
+        taskQueue: 'prix',
+        apiKey: undefined,
+        tls: undefined,
+        allowInsecureTls: false,
+        workerIdentity: 'worker',
+        workerIdentityPrefix: 'temporal-bun-worker',
+      }
+
+      const { client } = await createTemporalClient({ config })
+
+      await expect(
+        client.signalWithStart({
+          workflowId: 'wf-err',
+          workflowType: 'WF',
+          signalName: 'go',
+        }),
+      ).rejects.toThrow('sws failure')
+
+      await client.shutdown()
+    })
   })
 } else {
   describe('temporal client (native bridge)', () => {

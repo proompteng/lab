@@ -31,6 +31,7 @@ if (!nativeBridge) {
     let runtime: ReturnType<typeof native.createRuntime>
     let workerProcess: ReturnType<typeof Bun.spawn> | undefined
     const taskQueue = 'bun-sdk-query-tests'
+    const swsTaskQueue = 'bun-sdk-sws-tests'
     const decoder = new TextDecoder()
 
     beforeAll(async () => {
@@ -98,6 +99,54 @@ if (!nativeBridge) {
       try {
         const responseBytes = await withRetry(() => native.describeNamespace(client, 'default'), maxAttempts, waitMs)
         expect(responseBytes.byteLength).toBeGreaterThan(0)
+      } finally {
+        native.clientShutdown(client)
+      }
+    })
+
+    test('signalWithStart starts and signals workflow', async () => {
+      const maxAttempts = 10
+      const waitMs = 500
+
+      const client = await withRetry(
+        async () => {
+          return native.createClient(runtime, {
+            address: temporalAddress,
+            namespace: 'default',
+            identity: 'bun-integration-client',
+          })
+        },
+        maxAttempts,
+        waitMs,
+      )
+
+      try {
+        const workflowId = `sws-workflow-${Date.now()}`
+        const request = {
+          namespace: 'default',
+          workflow_id: workflowId,
+          workflow_type: 'queryWorkflowSample',
+          task_queue: swsTaskQueue,
+          identity: 'bun-integration-client',
+          args: ['initial'],
+          signal_name: 'setState',
+          signal_args: ['updated'],
+        }
+
+        const resultBytes = await withRetry(() => native.signalWithStart(client, request), maxAttempts, waitMs)
+        const info = JSON.parse(decoder.decode(resultBytes)) as { runId: string }
+        expect(info.runId).toBeTruthy()
+
+        const queryRequest = {
+          namespace: 'default',
+          workflow_id: workflowId,
+          run_id: info.runId,
+          query_name: 'currentState',
+          args: [],
+        }
+        const stateBytes = await withRetry(async () => native.queryWorkflow(client, queryRequest), maxAttempts, waitMs)
+        const state = JSON.parse(decoder.decode(stateBytes)) as string
+        expect(state).toBe('updated')
       } finally {
         native.clientShutdown(client)
       }

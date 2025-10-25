@@ -236,7 +236,7 @@ class TemporalClientImpl implements TemporalClient {
   async startWorkflow(options: StartWorkflowOptions): Promise<StartWorkflowResult> {
     const parsed = startWorkflowOptionsSchema.parse(options)
     const payload = buildStartWorkflowRequest({
-      options: parsed,
+      options: parsed as unknown as StartWorkflowOptions,
       defaults: {
         namespace: this.namespace,
         identity: this.defaultIdentity,
@@ -246,7 +246,7 @@ class TemporalClientImpl implements TemporalClient {
 
     const bytes = await native.startWorkflow(this.client, payload)
     const response = parseJson(bytes)
-    const metadata = startWorkflowMetadataSchema.parse(response)
+    const metadata = startWorkflowMetadataSchema.parse(response) as unknown as WorkflowHandleMetadata
     return toStartWorkflowResult(metadata)
   }
 
@@ -292,7 +292,7 @@ class TemporalClientImpl implements TemporalClient {
     })
     const bytes = await native.signalWithStart(this.client, request)
     const response = parseJson(bytes)
-    const metadata = startWorkflowMetadataSchema.parse(response)
+    const metadata = startWorkflowMetadataSchema.parse(response) as unknown as WorkflowHandleMetadata
     return toStartWorkflowResult(metadata)
   }
 

@@ -1,4 +1,4 @@
-import { type Runtime as NativeRuntime, native } from '../internal/core-bridge/native.ts'
+import { type Runtime as NativeRuntime, native } from '../internal/core-bridge/native'
 
 export interface RuntimeOptions {
   readonly options?: Record<string, unknown>

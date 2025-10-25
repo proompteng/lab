@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, openSync, closeSync } from 'node:fs'
-import { join } from 'node:path'
-import net from 'node:net'
 import { spawn } from 'node:child_process'
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import net from 'node:net'
+import { join } from 'node:path'
 
 const projectRoot = join(import.meta.dir, '..')
 const stateDir = join(projectRoot, '.temporal-cli')
@@ -32,10 +32,7 @@ function resolveTemporalExecutable(): string {
     ? [temporalCliOverride]
     : [
         'temporal',
-        ...(home ? [
-          `${home}/.temporalio/bin/temporal`,
-          `${home}/.local/bin/temporal`,
-        ] : []),
+        ...(home ? [`${home}/.temporalio/bin/temporal`, `${home}/.local/bin/temporal`] : []),
         '/usr/local/bin/temporal',
         '/usr/bin/temporal',
         '/opt/homebrew/bin/temporal',
