@@ -248,6 +248,10 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.ptr,
     },
+    temporal_bun_worker_complete_workflow_task: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.int32_t,
+    },
     temporal_bun_worker_new: {
       args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.ptr,
@@ -316,6 +320,7 @@ const {
     temporal_bun_client_signal,
     temporal_bun_client_signal_with_start,
     temporal_bun_client_query_workflow,
+    temporal_bun_worker_complete_workflow_task,
     temporal_bun_worker_new,
     temporal_bun_worker_free,
   },
@@ -455,6 +460,15 @@ export const native = {
       throw buildNativeBridgeError()
     }
     return readByteArray(arrayPtr)
+  },
+
+  workerCompleteWorkflowTask(worker: NativeWorker, payload: Uint8Array | Buffer): void {
+    const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
+
+    const status = Number(temporal_bun_worker_complete_workflow_task(worker.handle, ptr(buffer), buffer.byteLength))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
   },
 
   createWorker(runtime: Runtime, client: NativeClient, config: Record<string, unknown>): NativeWorker {

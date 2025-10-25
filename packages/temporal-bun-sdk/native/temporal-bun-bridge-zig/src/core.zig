@@ -92,6 +92,16 @@ pub fn registerTemporalCoreCallbacks(
     runtime_byte_array_free = byte_array_free orelse fallbackRuntimeByteArrayFree;
 }
 
+fn ensureWorkerCompletionExternsLoaded() void {
+    if (worker_complete_workflow_activation == fallbackWorkerCompleteWorkflowActivation) {
+        worker_complete_workflow_activation = c.temporal_core_worker_complete_workflow_activation;
+    }
+
+    if (runtime_byte_array_free == fallbackRuntimeByteArrayFree) {
+        runtime_byte_array_free = c.temporal_core_byte_array_free;
+    }
+}
+
 pub fn workerCompleteWorkflowActivation(
     worker: ?*WorkerOpaque,
     completion: ByteArrayRef,
@@ -226,6 +236,33 @@ pub fn ensureExternalApiInstalled() void {
     if (!api_installed.swap(true, .seq_cst)) {
         api = extern_api;
     }
+
+    ensureWorkerCompletionExternsLoaded();
+}
+
+const testing = std.testing;
+
+test "ensureExternalApiInstalled loads worker completion externs" {
+    const original_worker_complete = worker_complete_workflow_activation;
+    const original_byte_array_free = runtime_byte_array_free;
+    defer {
+        worker_complete_workflow_activation = original_worker_complete;
+        runtime_byte_array_free = original_byte_array_free;
+    }
+
+    worker_complete_workflow_activation = fallbackWorkerCompleteWorkflowActivation;
+    runtime_byte_array_free = fallbackRuntimeByteArrayFree;
+
+    ensureExternalApiInstalled();
+
+    const worker_ptr: usize = @intFromPtr(worker_complete_workflow_activation);
+    const expected_worker_ptr: usize =
+        @intFromPtr(&c.temporal_core_worker_complete_workflow_activation);
+    try testing.expectEqual(expected_worker_ptr, worker_ptr);
+
+    const free_ptr: usize = @intFromPtr(runtime_byte_array_free);
+    const expected_free_ptr: usize = @intFromPtr(&c.temporal_core_byte_array_free);
+    try testing.expectEqual(expected_free_ptr, free_ptr);
 }
 
 pub const SignalWorkflowError = error{
