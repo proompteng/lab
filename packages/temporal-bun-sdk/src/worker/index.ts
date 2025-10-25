@@ -1,3 +1,2 @@
-// TODO(codex): Replace this re-export with the Bun-native worker runtime once implemented per
-// packages/temporal-bun-sdk/docs/worker-runtime.md.
-export * from './runtime'
+// Re-export the vendor Temporal worker to preserve existing behavior until Bun-native runtime is complete.
+export * from '@temporalio/worker'
