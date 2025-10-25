@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - load-balancer.yaml
+  - load-balancer-frontend.yaml
 
 helmCharts:
   - name: temporal
