@@ -124,3 +124,28 @@ void *temporal_bun_client_cancel_workflow(void *client, void *payload, uint64_t 
   (void)len;
   return NULL;
 }
+
+void *temporal_bun_worker_poll_workflow_task(void *worker) {
+  (void)worker;
+  return NULL;
+}
+
+int32_t temporal_bun_worker_complete_workflow_task(void *worker, void *payload, uint64_t len) {
+  (void)worker;
+  (void)payload;
+  (void)len;
+  return -1;
+}
+
+void temporal_bun_test_worker_install_poll_stub(void) {}
+
+int32_t temporal_bun_test_worker_set_mode(uint8_t mode) {
+  (void)mode;
+  return 0;
+}
+
+void *temporal_bun_test_worker_handle(void) {
+  return NULL;
+}
+
+void temporal_bun_test_worker_reset(void) {}

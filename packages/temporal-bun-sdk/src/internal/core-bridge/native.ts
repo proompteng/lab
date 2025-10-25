@@ -19,6 +19,11 @@ export interface NativeClient {
   handle: ClientPtr
 }
 
+export interface NativeWorker {
+  type: 'worker'
+  handle: Pointer
+}
+
 type BridgeVariant = 'zig'
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
@@ -241,6 +246,10 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.ptr,
     },
+    temporal_bun_worker_poll_workflow_task: {
+      args: [FFIType.ptr],
+      returns: FFIType.ptr,
+    },
   }
 }
 
@@ -301,6 +310,7 @@ const {
     temporal_bun_client_signal,
     temporal_bun_client_signal_with_start,
     temporal_bun_client_query_workflow,
+    temporal_bun_worker_poll_workflow_task,
   },
 } = nativeModule
 
@@ -438,6 +448,27 @@ export const native = {
       throw buildNativeBridgeError()
     }
     return readByteArray(arrayPtr)
+  },
+
+  worker: {
+    async pollWorkflowTask(worker: NativeWorker): Promise<Uint8Array> {
+      if (!isZigBridge) {
+        throw new NativeBridgeError(
+          'Workflow polling via native.worker.pollWorkflowTask requires the Zig bridge. Rebuild the native module with `TEMPORAL_BUN_SDK_USE_ZIG=1`.',
+        )
+      }
+
+      const pendingHandle = Number(temporal_bun_worker_poll_workflow_task(worker.handle))
+      if (!pendingHandle) {
+        throw buildNativeBridgeError()
+      }
+
+      try {
+        return await waitForByteArray(pendingHandle)
+      } finally {
+        temporal_bun_pending_byte_array_free(pendingHandle)
+      }
+    },
   },
 }
 
