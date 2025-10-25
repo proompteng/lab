@@ -47,7 +47,7 @@ Current progress snapshot:
 | Client | `temporal_bun_client_start_workflow(client_ptr, payload_ptr, len)` | Start workflow execution | `client.workflow.start` | ✅ Implemented |
 | Client | `temporal_bun_client_signal(client_ptr, payload_ptr, len)` | Send signal to existing workflow | `client.signal` | ⬜️ TODO |
 | Client | `temporal_bun_client_query_workflow(client_ptr, payload_ptr, len)` | Run workflow query | `client.query` | ✅ Zig returns raw gRPC response bytes; TypeScript decodes `QueryWorkflowResponse` and payloads into JSON. |
-| Client | `temporal_bun_client_terminate_workflow(...)` | Terminate workflow | `client.terminate` | ⬜️ TODO |
+| Client | `temporal_bun_client_terminate_workflow(...)` | Terminate workflow | `client.terminate` | ✅ Implemented |
 | Client | `temporal_bun_client_cancel_workflow(...)` | Cancel workflow | `client.cancel` | ⬜️ TODO |
 | Client | `temporal_bun_client_signal_with_start(...)` | Signal-with-start helper | `client.signalWithStart` | ⬜️ TODO |
 | Byte transport | `temporal_bun_byte_array_new(ptr, len)` | Allocate vector for responses | `byteArray.fromBuffer` | ⬜️ TODO |

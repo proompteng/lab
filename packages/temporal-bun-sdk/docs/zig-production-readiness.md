@@ -6,7 +6,7 @@ the Rust bridge as the default.
 
 ## 1. Technical Completeness
 - [ ] Feature parity issues for `zig-rt-*`, `zig-cl-*`, `zig-wf-*`, `zig-buf-*`, `zig-pend-*` are closed. (Open examples:
-  `zig-rt-02`, `zig-rt-03`, `zig-rt-04`, `zig-cl-01`…`zig-cl-04`, `zig-wf-01`…`zig-wf-06`, `zig-worker-01`…`zig-worker-09`.)
+  `zig-rt-02`, `zig-rt-03`, `zig-rt-04`, `zig-cl-01`…`zig-cl-04`, `zig-wf-01`, `zig-wf-02`, `zig-wf-04`…`zig-wf-06`, `zig-worker-01`…`zig-worker-09`.)
 - [ ] All inline `TODO(codex, …)` markers are removed or mapped to open issues. Current gaps include
   `zig-core-02`, `zig-cl-04`, and `zig-pack-01`.
 - [ ] `docs/testing-plan.md` documents Zig scenarios next to Rust, and the test matrix reflects the planned
