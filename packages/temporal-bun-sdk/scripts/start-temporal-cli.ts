@@ -27,9 +27,19 @@ function isProcessAlive(pid: number): boolean {
 
 function resolveTemporalExecutable(): string {
   const attempts: Array<{ candidate: string; error: string }> = []
+  const home = process.env.HOME?.trim()
   const candidates = temporalCliOverride
     ? [temporalCliOverride]
-    : ['temporal', '/opt/homebrew/bin/temporal', '/usr/local/bin/temporal']
+    : [
+        'temporal',
+        ...(home ? [
+          `${home}/.temporalio/bin/temporal`,
+          `${home}/.local/bin/temporal`,
+        ] : []),
+        '/usr/local/bin/temporal',
+        '/usr/bin/temporal',
+        '/opt/homebrew/bin/temporal',
+      ]
 
   for (const candidate of candidates) {
     try {

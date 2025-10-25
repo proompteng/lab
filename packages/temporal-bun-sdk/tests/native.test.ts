@@ -119,9 +119,8 @@ if (!nativeBridge) {
           expect(nativeError.code).toBe(2)
           return
         }
-        expect(nativeError?.code).toBe(12)
-        expect(nativeError?.message).toContain('queryWorkflow is not implemented yet')
-        expect(JSON.parse(nativeError?.raw ?? '{}')).toMatchObject({ code: 12 })
+        expect(nativeError?.code).toBe(5)
+        expect(JSON.parse(nativeError?.raw ?? '{}')).toMatchObject({ code: 5 })
       } finally {
         if (client) {
           native.clientShutdown(client)

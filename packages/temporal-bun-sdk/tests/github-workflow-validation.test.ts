@@ -165,8 +165,8 @@ describe('GitHub Workflow Validation Tests', () => {
       const workflowContent = readFileSync(temporalBunSdkWorkflow, 'utf-8')
 
       // Validate Temporal server setup
-      expect(workflowContent).toContain('docker-compose')
-      expect(workflowContent).toContain('Start Temporal server')
+      expect(workflowContent).toContain('Start Temporal CLI dev server')
+      expect(workflowContent).toContain('bun scripts/start-temporal-cli.ts')
 
       // Validate test execution
       expect(workflowContent).toContain('test')
