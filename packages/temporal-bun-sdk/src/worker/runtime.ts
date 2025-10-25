@@ -101,8 +101,8 @@ export class WorkerRuntime {
   }
 
   async run(): Promise<never> {
-    // TODO(codex, zig-worker-03): Kick off workflow and activity polling loops using the Zig worker
-    // pending-handle APIs (WORKER_DOC §3).
+    // TODO(codex, zig-worker-04): Integrate workflow polling and completion loops once the
+    // remaining Zig worker bridges are stable (WORKER_DOC §3).
     return Promise.reject(new Error('WorkerRuntime.run is not implemented yet')) as never
   }
 

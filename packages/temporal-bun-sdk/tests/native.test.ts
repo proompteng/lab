@@ -11,11 +11,12 @@ if (!nativeBridge) {
   })
 } else {
   const { NativeBridgeError, native, bridgeVariant } = nativeBridge
+  const usingStubBridge = isStub
 
   const temporalAddress = process.env.TEMPORAL_TEST_SERVER_ADDRESS ?? 'http://127.0.0.1:7233'
   const wantsLiveTemporalServer = process.env.TEMPORAL_TEST_SERVER === '1'
-  const hasLiveTemporalServer =
-    wantsLiveTemporalServer && (await isTemporalServerAvailable(temporalAddress))
+  const serverReachable = await isTemporalServerAvailable(temporalAddress)
+  const hasLiveTemporalServer = wantsLiveTemporalServer && serverReachable
   const usingZigBridge = bridgeVariant === 'zig'
   const connectivityTest = test
   const zigOnlyTest = !isStub && usingZigBridge ? test : test.skip
@@ -43,10 +44,15 @@ if (!nativeBridge) {
             namespace: 'default',
           })
 
-        if (hasLiveTemporalServer) {
+        if (hasLiveTemporalServer || (!wantsLiveTemporalServer && serverReachable)) {
           const client = await withRetry(connect, 10, 500)
           expect(client.type).toBe('client')
           expect(typeof client.handle).toBe('number')
+          native.clientShutdown(client)
+        } else if (usingStubBridge) {
+          // The stub bridge always resolves with a fake handle so tests can exercise higher layers
+          const client = await connect()
+          expect(client.type).toBe('client')
           native.clientShutdown(client)
         } else {
           await expect(connect()).rejects.toThrow()

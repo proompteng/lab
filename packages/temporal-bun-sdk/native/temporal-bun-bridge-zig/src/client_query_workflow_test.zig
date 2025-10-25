@@ -219,6 +219,7 @@ test "queryWorkflow resolves JSON payload for successful response" {
         .client_update_metadata = original_api.client_update_metadata,
         .client_update_api_key = original_api.client_update_api_key,
         .client_rpc_call = stubClientRpcCall,
+        .worker_poll_workflow_activation = original_api.worker_poll_workflow_activation,
     };
 
     const runtime_handle = runtime.create("{}") orelse unreachable;
