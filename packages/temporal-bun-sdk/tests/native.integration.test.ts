@@ -31,7 +31,7 @@ if (!nativeBridge) {
     let runtime: ReturnType<typeof native.createRuntime>
     let workerProcess: ReturnType<typeof Bun.spawn> | undefined
     const taskQueue = 'bun-sdk-query-tests'
-    const swsTaskQueue = 'bun-sdk-sws-tests'
+    const swsTaskQueue = taskQueue
     const decoder = new TextDecoder()
 
     beforeAll(async () => {

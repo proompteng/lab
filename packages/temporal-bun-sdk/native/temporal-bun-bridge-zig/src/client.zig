@@ -2492,9 +2492,13 @@ pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_arr
         errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart namespace is required", .details = null });
         return null;
     };
-    const namespace = switch (namespace_ptr.*) { .string => |s| s, else => {
-        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart namespace must be a string", .details = null });
-        return null; } };
+    const namespace = switch (namespace_ptr.*) {
+        .string => |s| s,
+        else => {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart namespace must be a string", .details = null });
+            return null;
+        },
+    };
     if (namespace.len == 0) {
         errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart namespace must be non-empty", .details = null });
         return null;
@@ -2504,9 +2508,13 @@ pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_arr
         errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_id is required", .details = null });
         return null;
     };
-    const workflow_id = switch (workflow_id_ptr.*) { .string => |s| s, else => {
-        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_id must be a string", .details = null });
-        return null; } };
+    const workflow_id = switch (workflow_id_ptr.*) {
+        .string => |s| s,
+        else => {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_id must be a string", .details = null });
+            return null;
+        },
+    };
     if (workflow_id.len == 0) {
         errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_id must be non-empty", .details = null });
         return null;
@@ -2516,9 +2524,13 @@ pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_arr
         errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart signal_name is required", .details = null });
         return null;
     };
-    const signal_name = switch (signal_name_ptr.*) { .string => |s| s, else => {
-        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart signal_name must be a string", .details = null });
-        return null; } };
+    const signal_name = switch (signal_name_ptr.*) {
+        .string => |s| s,
+        else => {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart signal_name must be a string", .details = null });
+            return null;
+        },
+    };
     if (signal_name.len == 0) {
         errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart signal_name must be non-empty", .details = null });
         return null;
@@ -2526,9 +2538,13 @@ pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_arr
 
     var signal_args_array: ?*std.json.Array = null;
     if (obj.getPtr("signal_args")) |args_ptr| {
-        switch (args_ptr.*) { .array => |*arr| signal_args_array = arr, else => {
-            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart signal_args must be an array", .details = null });
-            return null; } }
+        switch (args_ptr.*) {
+            .array => |*arr| signal_args_array = arr,
+            else => {
+                errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart signal_args must be an array", .details = null });
+                return null;
+            },
+        }
     }
 
     // Reuse existing start encoder helpers
@@ -2540,9 +2556,13 @@ pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_arr
                 errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_type is required", .details = null });
                 return null;
             };
-            const s = switch (p.*) { .string => |v| v, else => {
-                errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_type must be a string", .details = null });
-                return null; } };
+            const s = switch (p.*) {
+                .string => |v| v,
+                else => {
+                    errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_type must be a string", .details = null });
+                    return null;
+                },
+            };
             if (s.len == 0) {
                 errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_type must be non-empty", .details = null });
                 return null;
@@ -2554,9 +2574,13 @@ pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_arr
                 errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart task_queue is required", .details = null });
                 return null;
             };
-            const s = switch (p.*) { .string => |v| v, else => {
-                errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart task_queue must be a string", .details = null });
-                return null; } };
+            const s = switch (p.*) {
+                .string => |v| v,
+                else => {
+                    errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart task_queue must be a string", .details = null });
+                    return null;
+                },
+            };
             if (s.len == 0) {
                 errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart task_queue must be non-empty", .details = null });
                 return null;
@@ -2568,9 +2592,13 @@ pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_arr
                 errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart identity is required", .details = null });
                 return null;
             };
-            const s = switch (p.*) { .string => |v| v, else => {
-                errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart identity must be a string", .details = null });
-                return null; } };
+            const s = switch (p.*) {
+                .string => |v| v,
+                else => {
+                    errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart identity must be a string", .details = null });
+                    return null;
+                },
+            };
             if (s.len == 0) {
                 errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart identity must be non-empty", .details = null });
                 return null;
@@ -2579,9 +2607,13 @@ pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_arr
         },
         .request_id = blk: {
             if (obj.getPtr("request_id")) |p| {
-                const s = switch (p.*) { .string => |v| v, else => {
-                    errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart request_id must be a string", .details = null });
-                    return null; } };
+                const s = switch (p.*) {
+                    .string => |v| v,
+                    else => {
+                        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart request_id must be a string", .details = null });
+                        return null;
+                    },
+                };
                 if (s.len == 0) {
                     errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart request_id must be non-empty", .details = null });
                     return null;
@@ -2592,7 +2624,7 @@ pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_arr
                 errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = "temporal-bun-bridge-zig: failed to allocate signalWithStart request_id", .details = null });
                 return null;
             };
-            defer allocator.free(gen);
+            // Do not free here; consumed by encodeStartWorkflowRequest. Freed when request buffer is deallocated.
             break :blk gen;
         },
         .cron_schedule = null,
@@ -2608,20 +2640,46 @@ pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_arr
 
     // Optional propagation of start fields
     if (obj.getPtr("args")) |p| {
-        switch (p.*) { .array => |*arr| start_params.args = arr, else => {} }
-    }    if (obj.getPtr("memo")) |p| {
-        switch (p.*) { .object => |*m| start_params.memo = m, else => {} }
-    }    if (obj.getPtr("headers")) |p| {
-        switch (p.*) { .object => |*m| start_params.headers = m, else => {} }
-    }    if (obj.getPtr("search_attributes")) |p| {
-        switch (p.*) { .object => |*m| start_params.search_attributes = m, else => {} }
-    }    if (obj.getPtr("cron_schedule")) |p| {
-        switch (p.*) { .string => |s| {
-            if (s.len != 0) {
-                start_params.cron_schedule = s;
-            }
-        }, else => {} }
-    }    if (obj.getPtr("workflow_execution_timeout_ms")) |p| start_params.workflow_execution_timeout_ms = jsonValueToU64(p.*) catch null;    if (obj.getPtr("workflow_run_timeout_ms")) |p| start_params.workflow_run_timeout_ms = jsonValueToU64(p.*) catch null;    if (obj.getPtr("workflow_task_timeout_ms")) |p| start_params.workflow_task_timeout_ms = jsonValueToU64(p.*) catch null;    if (obj.getPtr("retry_policy")) |p| switch (p.*) { .object => |*m| start_params.retry_policy = m, else => {} };
+        switch (p.*) {
+            .array => |*arr| start_params.args = arr,
+            else => {},
+        }
+    }
+    if (obj.getPtr("memo")) |p| {
+        switch (p.*) {
+            .object => |*m| start_params.memo = m,
+            else => {},
+        }
+    }
+    if (obj.getPtr("headers")) |p| {
+        switch (p.*) {
+            .object => |*m| start_params.headers = m,
+            else => {},
+        }
+    }
+    if (obj.getPtr("search_attributes")) |p| {
+        switch (p.*) {
+            .object => |*m| start_params.search_attributes = m,
+            else => {},
+        }
+    }
+    if (obj.getPtr("cron_schedule")) |p| {
+        switch (p.*) {
+            .string => |s| {
+                if (s.len != 0) {
+                    start_params.cron_schedule = s;
+                }
+            },
+            else => {},
+        }
+    }
+    if (obj.getPtr("workflow_execution_timeout_ms")) |p| start_params.workflow_execution_timeout_ms = jsonValueToU64(p.*) catch null;
+    if (obj.getPtr("workflow_run_timeout_ms")) |p| start_params.workflow_run_timeout_ms = jsonValueToU64(p.*) catch null;
+    if (obj.getPtr("workflow_task_timeout_ms")) |p| start_params.workflow_task_timeout_ms = jsonValueToU64(p.*) catch null;
+    if (obj.getPtr("retry_policy")) |p| switch (p.*) {
+        .object => |*m| start_params.retry_policy = m,
+        else => {},
+    };
     // Build SignalWithStartWorkflowExecutionRequest
     var request = ArrayListManaged(u8).init(allocator);
     defer request.deinit();
