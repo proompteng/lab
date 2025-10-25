@@ -47,7 +47,7 @@ The items below slice the Zig bridge effort into PR-sized TODOs. Every ID maps b
 |----|-------------|-------------|------------|
 | zig-worker-01 | Instantiate Temporal core worker and expose handle creation. | `src/worker.zig`, `src/lib.zig`, `src/internal/core-bridge/native.ts`, `src/worker/runtime.ts` | ✅ Worker creation returns opaque pointer for the configured task queue; Bun helper calls the Zig bridge when `TEMPORAL_BUN_SDK_USE_ZIG=1`. |
 | zig-worker-02 | Dispose worker handles and release underlying resources. | `src/worker.zig`, `src/lib.zig` | Worker shutdown frees core references without leaks. |
-| zig-worker-03 | Poll workflow tasks and surface activations via pending handles. | `src/worker.zig`, `src/lib.zig` | Workflow task polling drives activation dispatch in TS tests. |
+| zig-worker-03 | Poll workflow tasks and surface activations via pending handles. | `src/worker.zig`, `src/lib.zig` | ✅ Workflow task polling drives activation dispatch in TS tests. |
 | zig-worker-04 | Complete workflow tasks with success/error payloads. | `src/worker.zig`, `src/lib.zig` | ✅ Workflow completion path bridges to Temporal core and passes Zig + Bun tests. |
 | zig-worker-05 | Poll activity tasks through Temporal core worker. | `src/worker.zig`, `src/lib.zig` | Activity polling returns payloads consumed by Bun worker. |
 | zig-worker-06 | Complete activity tasks (success & failure). | `src/worker.zig`, `src/lib.zig` | Activity completion test verifies response propagation. |

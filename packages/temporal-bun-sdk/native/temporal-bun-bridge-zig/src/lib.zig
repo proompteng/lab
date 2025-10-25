@@ -5,6 +5,7 @@ const client = @import("client.zig");
 const byte_array = @import("byte_array.zig");
 const pending = @import("pending.zig");
 const worker = @import("worker.zig");
+const test_helpers = @import("test_helpers.zig");
 
 fn sliceFrom(ptr: ?[*]const u8, len: u64) []const u8 {
     if (ptr == null or len == 0) {
@@ -257,6 +258,26 @@ pub export fn temporal_bun_worker_initiate_shutdown(handle: ?*worker.WorkerHandl
 
 pub export fn temporal_bun_worker_finalize_shutdown(handle: ?*worker.WorkerHandle) i32 {
     return worker.finalizeShutdown(handle);
+}
+
+pub export fn temporal_bun_test_worker_install_poll_stub() void {
+    test_helpers.installWorkerPollStub();
+}
+
+pub export fn temporal_bun_test_worker_set_mode(mode: u8) i32 {
+    const converted = std.meta.intToEnum(test_helpers.PollMode, mode) catch {
+        return -1;
+    };
+    test_helpers.setWorkerPollMode(converted);
+    return 0;
+}
+
+pub export fn temporal_bun_test_worker_handle() ?*worker.WorkerHandle {
+    return test_helpers.workerHandle();
+}
+
+pub export fn temporal_bun_test_worker_reset() void {
+    test_helpers.resetWorkerState();
 }
 
 test {

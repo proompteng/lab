@@ -42,8 +42,11 @@ pub const ByteBuf = ByteArray;
 pub const ByteBufDestroyFn = *const fn (?*RuntimeOpaque, ?*const ByteBuf) callconv(.c) void;
 
 pub const WorkerCallback = c.TemporalCoreWorkerCallback;
+pub const WorkerPollCallback = c.TemporalCoreWorkerPollCallback;
 pub const WorkerCompleteFn =
     *const fn (?*WorkerOpaque, ByteArrayRef, ?*anyopaque, WorkerCallback) callconv(.c) void;
+pub const WorkerPollFn =
+    *const fn (?*WorkerOpaque, ?*anyopaque, WorkerPollCallback) callconv(.c) void;
 pub const RuntimeByteArrayFreeFn =
     *const fn (?*RuntimeOpaque, ?*const ByteArray) callconv(.c) void;
 
@@ -80,16 +83,35 @@ fn fallbackRuntimeByteArrayFree(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArr
     _ = bytes;
 }
 
+fn fallbackWorkerPollWorkflowActivation(
+    worker: ?*WorkerOpaque,
+    user_data: ?*anyopaque,
+    callback: WorkerPollCallback,
+) callconv(.c) void {
+    _ = worker;
+    if (user_data == null) {
+        return;
+    }
+
+    if (callback) |cb| {
+        cb(user_data, null, &fallback_error_array);
+    }
+}
+
 pub var worker_complete_workflow_activation: WorkerCompleteFn = fallbackWorkerCompleteWorkflowActivation;
+pub var worker_poll_workflow_activation: WorkerPollFn = fallbackWorkerPollWorkflowActivation;
 pub var runtime_byte_array_free: RuntimeByteArrayFreeFn = fallbackRuntimeByteArrayFree;
 
 pub fn registerTemporalCoreCallbacks(
     worker_complete: ?WorkerCompleteFn,
     byte_array_free: ?RuntimeByteArrayFreeFn,
+    worker_poll: ?WorkerPollFn,
 ) void {
     worker_complete_workflow_activation =
         worker_complete orelse fallbackWorkerCompleteWorkflowActivation;
     runtime_byte_array_free = byte_array_free orelse fallbackRuntimeByteArrayFree;
+    worker_poll_workflow_activation =
+        worker_poll orelse fallbackWorkerPollWorkflowActivation;
 }
 
 fn ensureWorkerCompletionExternsLoaded() void {
@@ -113,6 +135,14 @@ pub fn workerCompleteWorkflowActivation(
 
 pub fn runtimeByteArrayFree(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArray) void {
     runtime_byte_array_free(runtime, bytes);
+}
+
+pub fn workerPollWorkflowActivation(
+    worker: ?*WorkerOpaque,
+    user_data: ?*anyopaque,
+    callback: WorkerPollCallback,
+) void {
+    worker_poll_workflow_activation(worker, user_data, callback);
 }
 
 const stub_runtime_or_fail = RuntimeOrFail{
@@ -200,6 +230,7 @@ pub const Api = struct {
     client_rpc_call: *const fn (?*Client, *const RpcCallOptions, ?*anyopaque, ClientRpcCallCallback) callconv(.c) void,
     worker_new: *const fn (?*Client, *const WorkerOptions) callconv(.c) WorkerOrFail,
     worker_free: *const fn (?*Worker) callconv(.c) void,
+    worker_poll_workflow_activation: WorkerPollFn,
 };
 
 pub const stub_api: Api = .{
@@ -213,6 +244,7 @@ pub const stub_api: Api = .{
     .client_rpc_call = stubClientRpcCall,
     .worker_new = stubWorkerNew,
     .worker_free = stubWorkerFree,
+    .worker_poll_workflow_activation = fallbackWorkerPollWorkflowActivation,
 };
 
 pub const extern_api: Api = .{
@@ -226,6 +258,7 @@ pub const extern_api: Api = .{
     .client_rpc_call = c.temporal_core_client_rpc_call,
     .worker_new = c.temporal_core_worker_new,
     .worker_free = c.temporal_core_worker_free,
+    .worker_poll_workflow_activation = c.temporal_core_worker_poll_workflow_activation,
 };
 
 pub var api: Api = stub_api;
