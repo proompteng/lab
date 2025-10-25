@@ -144,8 +144,12 @@ if (!nativeBridge) {
           query_name: 'currentState',
           args: [],
         }
-        const stateBytes = await withRetry(async () => native.queryWorkflow(client, queryRequest), maxAttempts, waitMs)
-        const state = JSON.parse(decoder.decode(stateBytes)) as string
+        const state = await withRetry(async () => {
+          const stateBytes = await native.queryWorkflow(client, queryRequest)
+          const curr = JSON.parse(decoder.decode(stateBytes)) as string
+          if (curr !== 'updated') throw new Error('state not updated yet')
+          return curr
+        }, maxAttempts, waitMs)
         expect(state).toBe('updated')
       } finally {
         native.clientShutdown(client)
