@@ -34,7 +34,8 @@ var test_worker_handle = worker.WorkerHandle{
     .poll_lock = .{},
     .poll_condition = .{},
     .pending_polls = 0,
-    .destroying = false,
+    .destroy_state = .idle,
+    .buffers_released = false,
 };
 
 const success_payload = "stub-activation";
@@ -95,7 +96,8 @@ pub fn setWorkerPollMode(mode: PollMode) void {
 pub fn resetWorkerState() void {
     test_runtime_handle.destroying = false;
     test_runtime_handle.pending_connects = 0;
-    test_worker_handle.destroying = false;
+    test_worker_handle.destroy_state = .idle;
+    test_worker_handle.buffers_released = false;
     test_worker_handle.pending_polls = 0;
     poll_mode = .success;
 }

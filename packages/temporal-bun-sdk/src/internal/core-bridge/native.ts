@@ -254,7 +254,7 @@ function buildBridgeSymbolMap() {
     },
     temporal_bun_worker_free: {
       args: [FFIType.ptr],
-      returns: FFIType.void,
+      returns: FFIType.int32_t,
     },
     temporal_bun_worker_poll_workflow_task: {
       args: [FFIType.ptr],
@@ -267,6 +267,14 @@ function buildBridgeSymbolMap() {
     temporal_bun_worker_poll_activity_task: {
       args: [FFIType.ptr],
       returns: FFIType.ptr,
+    },
+    temporal_bun_worker_test_handle_new: {
+      args: [],
+      returns: FFIType.ptr,
+    },
+    temporal_bun_worker_test_handle_release: {
+      args: [FFIType.ptr],
+      returns: FFIType.void,
     },
   }
 }
@@ -333,6 +341,8 @@ const {
     temporal_bun_worker_poll_workflow_task,
     temporal_bun_worker_complete_workflow_task,
     temporal_bun_worker_poll_activity_task,
+    temporal_bun_worker_test_handle_new,
+    temporal_bun_worker_test_handle_release,
   },
 } = nativeModule
 
@@ -494,7 +504,29 @@ export const native = {
   },
 
   destroyWorker(worker: NativeWorker): void {
-    temporal_bun_worker_free(worker.handle)
+    const status = Number(temporal_bun_worker_free(worker.handle))
+    if (status === 0) {
+      worker.handle = 0 as unknown as Pointer
+      return
+    }
+
+    if (status === -1) {
+      throw buildNativeBridgeError()
+    }
+
+    throw buildNativeBridgeError()
+  },
+
+  createWorkerHandleForTest(): NativeWorker {
+    const handleNum = Number(temporal_bun_worker_test_handle_new())
+    if (!handleNum) {
+      throw buildNativeBridgeError()
+    }
+    return { type: 'worker', handle: handleNum as unknown as Pointer }
+  },
+
+  releaseWorkerHandleForTest(handle: Pointer): void {
+    temporal_bun_worker_test_handle_release(handle)
   },
 
   workerCompleteWorkflowTask(worker: NativeWorker, payload: Uint8Array | Buffer): void {

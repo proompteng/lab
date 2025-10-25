@@ -10,6 +10,12 @@ const json = std.json;
 
 const grpc = pending.GrpcStatus;
 
+const DestroyState = enum(u8) {
+    idle,
+    destroying,
+    destroyed,
+};
+
 pub const WorkerHandle = struct {
     id: u64,
     runtime: ?*runtime.RuntimeHandle,
@@ -22,7 +28,10 @@ pub const WorkerHandle = struct {
     poll_lock: std.Thread.Mutex = .{},
     poll_condition: std.Thread.Condition = .{},
     pending_polls: usize = 0,
-    destroying: bool = false,
+    destroy_state: DestroyState = .idle,
+    buffers_released: bool = false,
+    owns_allocation: bool = false,
+    destroy_reclaims_allocation: bool = false,
 };
 
 var next_worker_id: u64 = 1;
@@ -66,27 +75,40 @@ fn duplicateBytes(slice: []const u8) ?[]u8 {
 }
 
 fn releaseHandle(handle: *WorkerHandle) void {
+    if (handle.buffers_released) {
+        return;
+    }
+
     var allocator = std.heap.c_allocator;
     if (handle.config.len > 0) {
         allocator.free(handle.config);
+        handle.config = ""[0..0];
     }
     if (handle.namespace.len > 0) {
         allocator.free(handle.namespace);
+        handle.namespace = ""[0..0];
     }
     if (handle.task_queue.len > 0) {
         allocator.free(handle.task_queue);
+        handle.task_queue = ""[0..0];
     }
     if (handle.identity.len > 0) {
         allocator.free(handle.identity);
+        handle.identity = ""[0..0];
     }
-    allocator.destroy(handle);
+
+    handle.runtime = null;
+    handle.client = null;
+    handle.buffers_released = true;
+    handle.owns_allocation = false;
+    handle.destroy_reclaims_allocation = false;
 }
 
 fn acquirePollPermit(handle: *WorkerHandle) bool {
     handle.poll_lock.lock();
     defer handle.poll_lock.unlock();
 
-    if (handle.destroying) {
+    if (handle.destroy_state != .idle) {
         return false;
     }
 
@@ -598,6 +620,8 @@ pub fn create(
         .task_queue = task_queue_copy,
         .identity = identity_copy,
         .core_worker = result.worker,
+        .owns_allocation = true,
+        .destroy_reclaims_allocation = true,
     };
 
     if (result.fail) |fail_ptr| {
@@ -608,25 +632,149 @@ pub fn create(
     return handle;
 }
 
-pub fn destroy(handle: ?*WorkerHandle) void {
+pub fn destroy(handle: ?*WorkerHandle) i32 {
     if (handle == null) {
-        return;
+        return 0;
     }
 
     const worker_handle = handle.?;
     worker_handle.poll_lock.lock();
-    worker_handle.destroying = true;
+
+    switch (worker_handle.destroy_state) {
+        .destroying, .destroyed => {
+            worker_handle.poll_lock.unlock();
+            return 0;
+        },
+        .idle => {},
+    }
+
+    worker_handle.destroy_state = .destroying;
     while (worker_handle.pending_polls != 0) {
         worker_handle.poll_condition.wait(&worker_handle.poll_lock);
     }
     worker_handle.poll_lock.unlock();
 
-    if (worker_handle.core_worker) |core_worker_ptr| {
-        core.ensureExternalApiInstalled();
-        core.api.worker_free(core_worker_ptr);
-        worker_handle.core_worker = null;
+    var completed = false;
+    const owns_allocation = worker_handle.owns_allocation;
+    const destroy_reclaims_allocation = worker_handle.destroy_reclaims_allocation;
+    defer {
+        worker_handle.poll_lock.lock();
+        worker_handle.destroy_state = if (completed) .destroyed else .idle;
+        worker_handle.poll_condition.broadcast();
+        worker_handle.poll_lock.unlock();
+        if (completed and owns_allocation and destroy_reclaims_allocation) {
+            worker_handle.owns_allocation = false;
+            worker_handle.destroy_reclaims_allocation = false;
+            std.heap.c_allocator.destroy(worker_handle);
+        }
     }
+
+    if (worker_handle.core_worker == null) {
+        releaseHandle(worker_handle);
+        worker_handle.core_worker = null;
+        completed = true;
+        errors.setLastError(""[0..0]);
+        return 0;
+    }
+
+    const core_worker_ptr = worker_handle.core_worker.?;
+    core.ensureExternalApiInstalled();
+
+    core.api.worker_initiate_shutdown(core_worker_ptr);
+
+    var state = ShutdownState{};
+    defer state.wait_group.reset();
+    state.wait_group.start();
+
+    core.api.worker_finalize_shutdown(
+        core_worker_ptr,
+        @as(?*anyopaque, @ptrCast(&state)),
+        workerFinalizeCallback,
+    );
+
+    state.wait_group.wait();
+
+    if (state.fail_ptr) |fail| {
+        const runtime_handle = worker_handle.runtime;
+        const message = byteArraySlice(fail);
+        const description = if (message.len > 0)
+            message
+        else
+            "temporal-bun-bridge-zig: worker shutdown failed";
+
+        errors.setStructuredErrorJson(.{
+            .code = grpc.internal,
+            .message = description,
+            .details = null,
+        });
+
+        if (runtime_handle) |runtime_ptr| {
+            if (runtime_ptr.core_runtime) |core_runtime_ptr| {
+                core.runtimeByteArrayFree(core_runtime_ptr, fail);
+            } else {
+                core.runtimeByteArrayFree(null, fail);
+            }
+        } else {
+            core.runtimeByteArrayFree(null, fail);
+        }
+
+        return -1;
+    }
+
+    core.api.worker_free(core_worker_ptr);
+    worker_handle.core_worker = null;
     releaseHandle(worker_handle);
+    completed = true;
+    errors.setLastError(""[0..0]);
+    return 0;
+}
+
+pub fn createTestHandle() ?*WorkerHandle {
+    const allocator = std.heap.c_allocator;
+    const handle = allocator.create(WorkerHandle) catch {
+        errors.setStructuredError(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to allocate worker test handle",
+        });
+        return null;
+    };
+
+    const id = next_worker_id;
+    next_worker_id += 1;
+
+    handle.* = .{
+        .id = id,
+        .runtime = null,
+        .client = null,
+        .config = ""[0..0],
+        .namespace = ""[0..0],
+        .task_queue = ""[0..0],
+        .identity = ""[0..0],
+        .core_worker = null,
+        .poll_lock = .{},
+        .poll_condition = .{},
+        .pending_polls = 0,
+        .destroy_state = .idle,
+        .buffers_released = false,
+        .owns_allocation = true,
+        .destroy_reclaims_allocation = false,
+    };
+
+    errors.setLastError(""[0..0]);
+    return handle;
+}
+
+pub fn releaseTestHandle(handle: ?*WorkerHandle) void {
+    if (handle == null) {
+        return;
+    }
+
+    const allocator = std.heap.c_allocator;
+    const worker_handle = handle.?;
+    releaseHandle(worker_handle);
+    worker_handle.owns_allocation = false;
+    worker_handle.destroy_reclaims_allocation = false;
+    allocator.destroy(worker_handle);
 }
 
 pub fn pollWorkflowTask(_handle: ?*WorkerHandle) ?*pending.PendingByteArray {
@@ -751,6 +899,77 @@ fn workflowCompletionCallback(user_data: ?*anyopaque, fail_ptr: ?*const core.Byt
     const state_ptr = @as(*CompletionState, @ptrCast(@alignCast(user_data.?)));
     state_ptr.fail_ptr = fail_ptr;
     state_ptr.wait_group.finish();
+}
+
+const ShutdownState = struct {
+    wait_group: std.Thread.WaitGroup = .{},
+    fail_ptr: ?*const core.ByteArray = null,
+};
+
+fn workerFinalizeCallback(user_data: ?*anyopaque, fail_ptr: ?*const core.ByteArray) callconv(.c) void {
+    if (user_data == null) {
+        return;
+    }
+
+    const state_ptr = @as(*ShutdownState, @ptrCast(@alignCast(user_data.?)));
+    state_ptr.fail_ptr = fail_ptr;
+    state_ptr.wait_group.finish();
+}
+
+const FinalizeMode = enum {
+    success,
+    fail,
+};
+
+const TestHookState = struct {
+    initiate_calls: usize = 0,
+    finalize_calls: usize = 0,
+    free_calls: usize = 0,
+    finalize_mode: FinalizeMode = .success,
+    finalize_fail_ptr: ?*const core.ByteArray = null,
+};
+
+var test_hooks = TestHookState{};
+var runtime_free_calls: usize = 0;
+var runtime_free_last_runtime: ?*core.RuntimeOpaque = null;
+var runtime_free_last_fail: ?*const core.ByteArray = null;
+
+fn resetTestHooks() void {
+    test_hooks = .{};
+    runtime_free_calls = 0;
+    runtime_free_last_runtime = null;
+    runtime_free_last_fail = null;
+}
+
+fn testWorkerInitiateShutdownStub(_worker: ?*core.WorkerOpaque) callconv(.c) void {
+    _ = _worker;
+    test_hooks.initiate_calls += 1;
+}
+
+fn testWorkerFinalizeShutdownStub(
+    _worker: ?*core.WorkerOpaque,
+    user_data: ?*anyopaque,
+    callback: core.WorkerCallback,
+) callconv(.c) void {
+    _ = _worker;
+    test_hooks.finalize_calls += 1;
+    if (callback) |cb| {
+        switch (test_hooks.finalize_mode) {
+            .success => cb(user_data, null),
+            .fail => cb(user_data, test_hooks.finalize_fail_ptr),
+        }
+    }
+}
+
+fn testWorkerFreeStub(_worker: ?*core.WorkerOpaque) callconv(.c) void {
+    _ = _worker;
+    test_hooks.free_calls += 1;
+}
+
+fn testRuntimeByteArrayFreeStub(runtime_ptr: ?*core.RuntimeOpaque, fail_ptr: ?*const core.ByteArray) callconv(.c) void {
+    runtime_free_calls += 1;
+    runtime_free_last_runtime = runtime_ptr;
+    runtime_free_last_fail = fail_ptr;
 }
 
 fn byteArraySlice(bytes_ptr: ?*const core.ByteArray) []const u8 {
@@ -1446,7 +1665,10 @@ const WorkerTests = struct {
             .poll_lock = .{},
             .poll_condition = .{},
             .pending_polls = 0,
-            .destroying = false,
+            .destroy_state = .idle,
+            .buffers_released = false,
+            .owns_allocation = false,
+            .destroy_reclaims_allocation = false,
         };
     }
 
@@ -1536,7 +1758,7 @@ test "create returns worker handle and frees resources on destroy" {
     try testing.expectEqual(@as(usize, 1), WorkerTests.stub_worker_new_calls);
     try testing.expectEqualStrings("", errors.snapshot());
 
-    destroy(worker_handle);
+    try testing.expectEqual(@as(i32, 0), destroy(worker_handle));
 
     try testing.expectEqual(@as(usize, 1), WorkerTests.stub_worker_free_calls);
 }
@@ -1585,7 +1807,7 @@ test "destroy handles null and missing worker pointers" {
     core.api.worker_free = WorkerTests.stubWorkerFree;
     WorkerTests.resetStubs();
 
-    destroy(null);
+    try testing.expectEqual(@as(i32, 0), destroy(null));
     try testing.expectEqual(@as(usize, 0), WorkerTests.stub_worker_free_calls);
 
     const allocator = std.heap.c_allocator;
@@ -1605,11 +1827,201 @@ test "destroy handles null and missing worker pointers" {
         .task_queue = ""[0..0],
         .identity = ""[0..0],
         .core_worker = null,
+        .poll_lock = .{},
+        .poll_condition = .{},
+        .pending_polls = 0,
+        .destroy_state = .idle,
+        .buffers_released = false,
+        .owns_allocation = false,
+        .destroy_reclaims_allocation = false,
     };
 
-    destroy(handle);
+    try testing.expectEqual(@as(i32, 0), destroy(handle));
 
     try testing.expectEqual(@as(usize, 0), WorkerTests.stub_worker_free_calls);
+    try testing.expect(handle.destroy_state == .destroyed);
+    try testing.expect(handle.buffers_released);
+    try testing.expectEqual(@as(usize, 0), handle.config.len);
+    allocator.destroy(handle);
+}
+
+test "worker destroy performs single shutdown finalize and free" {
+    resetTestHooks();
+    test_hooks.finalize_mode = .success;
+    test_hooks.finalize_fail_ptr = null;
+
+    const original_api = core.api;
+    const original_runtime_byte_array_free = core.runtime_byte_array_free;
+    defer {
+        core.api = original_api;
+        core.runtime_byte_array_free = original_runtime_byte_array_free;
+    }
+
+    core.ensureExternalApiInstalled();
+    var api = core.stub_api;
+    api.worker_initiate_shutdown = testWorkerInitiateShutdownStub;
+    api.worker_finalize_shutdown = testWorkerFinalizeShutdownStub;
+    api.worker_free = testWorkerFreeStub;
+    core.api = api;
+    core.runtime_byte_array_free = testRuntimeByteArrayFreeStub;
+
+    var worker_storage: [1]u8 align(@alignOf(core.WorkerOpaque)) = undefined;
+
+    var handle = WorkerHandle{
+        .id = 1,
+        .runtime = null,
+        .client = null,
+        .config = ""[0..0],
+        .namespace = ""[0..0],
+        .task_queue = ""[0..0],
+        .identity = ""[0..0],
+        .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&worker_storage)),
+        .poll_lock = .{},
+        .poll_condition = .{},
+        .pending_polls = 0,
+        .destroy_state = .idle,
+        .buffers_released = false,
+        .owns_allocation = false,
+        .destroy_reclaims_allocation = false,
+    };
+
+    try testing.expectEqual(@as(i32, 0), destroy(&handle));
+
+    try testing.expectEqual(@as(usize, 1), test_hooks.initiate_calls);
+    try testing.expectEqual(@as(usize, 1), test_hooks.finalize_calls);
+    try testing.expectEqual(@as(usize, 1), test_hooks.free_calls);
+    try testing.expectEqual(@as(usize, 0), runtime_free_calls);
+    try testing.expect(handle.core_worker == null);
+    try testing.expect(handle.buffers_released);
+    try testing.expectEqual(@as(usize, 0), handle.config.len);
+    try testing.expectEqual(@as(usize, 0), handle.namespace.len);
+    try testing.expectEqual(@as(usize, 0), handle.task_queue.len);
+    try testing.expectEqual(@as(usize, 0), handle.identity.len);
+    try testing.expect(handle.destroy_state == .destroyed);
+}
+
+test "worker destroy is idempotent for double invocation and null handle" {
+    resetTestHooks();
+    test_hooks.finalize_mode = .success;
+    test_hooks.finalize_fail_ptr = null;
+
+    const original_api = core.api;
+    const original_runtime_byte_array_free = core.runtime_byte_array_free;
+    defer {
+        core.api = original_api;
+        core.runtime_byte_array_free = original_runtime_byte_array_free;
+    }
+
+    core.ensureExternalApiInstalled();
+    var api = core.stub_api;
+    api.worker_initiate_shutdown = testWorkerInitiateShutdownStub;
+    api.worker_finalize_shutdown = testWorkerFinalizeShutdownStub;
+    api.worker_free = testWorkerFreeStub;
+    core.api = api;
+    core.runtime_byte_array_free = testRuntimeByteArrayFreeStub;
+
+    var worker_storage: [1]u8 align(@alignOf(core.WorkerOpaque)) = undefined;
+
+    var handle = WorkerHandle{
+        .id = 2,
+        .runtime = null,
+        .client = null,
+        .config = ""[0..0],
+        .namespace = ""[0..0],
+        .task_queue = ""[0..0],
+        .identity = ""[0..0],
+        .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&worker_storage)),
+        .poll_lock = .{},
+        .poll_condition = .{},
+        .pending_polls = 0,
+        .destroy_state = .idle,
+        .buffers_released = false,
+        .owns_allocation = false,
+        .destroy_reclaims_allocation = false,
+    };
+
+    try testing.expectEqual(@as(i32, 0), destroy(&handle));
+    try testing.expectEqual(@as(i32, 0), destroy(&handle));
+    try testing.expectEqual(@as(i32, 0), destroy(null));
+
+    try testing.expectEqual(@as(usize, 1), test_hooks.initiate_calls);
+    try testing.expectEqual(@as(usize, 1), test_hooks.finalize_calls);
+    try testing.expectEqual(@as(usize, 1), test_hooks.free_calls);
+    try testing.expectEqual(@as(usize, 0), runtime_free_calls);
+    try testing.expect(handle.destroy_state == .destroyed);
+    try testing.expect(handle.core_worker == null);
+    try testing.expect(handle.buffers_released);
+}
+
+test "worker destroy frees finalize error buffers" {
+    resetTestHooks();
+    test_hooks.finalize_mode = .fail;
+
+    const original_api = core.api;
+    const original_runtime_byte_array_free = core.runtime_byte_array_free;
+    defer {
+        core.api = original_api;
+        core.runtime_byte_array_free = original_runtime_byte_array_free;
+    }
+
+    core.ensureExternalApiInstalled();
+    var api = core.stub_api;
+    api.worker_initiate_shutdown = testWorkerInitiateShutdownStub;
+    api.worker_finalize_shutdown = testWorkerFinalizeShutdownStub;
+    api.worker_free = testWorkerFreeStub;
+    core.api = api;
+    core.runtime_byte_array_free = testRuntimeByteArrayFreeStub;
+
+    var worker_storage: [1]u8 align(@alignOf(core.WorkerOpaque)) = undefined;
+    const error_message = "synthetic finalize failure";
+    var error_array = core.ByteArray{
+        .data = error_message.ptr,
+        .size = error_message.len,
+        .cap = error_message.len,
+        .disable_free = true,
+    };
+    test_hooks.finalize_fail_ptr = &error_array;
+
+    var runtime_core_storage: [1]u8 align(@alignOf(core.RuntimeOpaque)) = undefined;
+    var runtime_handle_instance = runtime.RuntimeHandle{
+        .id = 3,
+        .config = ""[0..0],
+        .core_runtime = @as(?*core.RuntimeOpaque, @ptrCast(&runtime_core_storage)),
+        .pending_lock = .{},
+        .pending_condition = .{},
+        .pending_connects = 0,
+        .destroying = false,
+    };
+
+    var handle = WorkerHandle{
+        .id = 3,
+        .runtime = &runtime_handle_instance,
+        .client = null,
+        .config = ""[0..0],
+        .namespace = ""[0..0],
+        .task_queue = ""[0..0],
+        .identity = ""[0..0],
+        .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&worker_storage)),
+        .poll_lock = .{},
+        .poll_condition = .{},
+        .pending_polls = 0,
+        .destroy_state = .idle,
+        .buffers_released = false,
+        .owns_allocation = false,
+        .destroy_reclaims_allocation = false,
+    };
+
+    try testing.expectEqual(@as(i32, -1), destroy(&handle));
+
+    try testing.expectEqual(@as(usize, 1), test_hooks.initiate_calls);
+    try testing.expectEqual(@as(usize, 1), test_hooks.finalize_calls);
+    try testing.expectEqual(@as(usize, 0), test_hooks.free_calls);
+    try testing.expectEqual(@as(usize, 1), runtime_free_calls);
+    try testing.expectEqual(runtime_handle_instance.core_runtime, runtime_free_last_runtime);
+    try testing.expect(runtime_free_last_fail != null);
+    try testing.expect(handle.destroy_state == .idle);
+    try testing.expect(handle.core_worker != null);
+    try testing.expect(!handle.buffers_released);
 }
 
 test "completeWorkflowTask returns 0 on successful completion" {
