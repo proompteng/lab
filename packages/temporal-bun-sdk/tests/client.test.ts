@@ -28,6 +28,7 @@ if (nativeModule && stubPath) {
       terminateWorkflow: native.terminateWorkflow,
       describeNamespace: native.describeNamespace,
       updateClientHeaders: native.updateClientHeaders,
+      signalWithStart: native.signalWithStart,
       signalWorkflow: native.signalWorkflow,
       queryWorkflow: native.queryWorkflow,
     }

@@ -105,10 +105,6 @@ if (!nativeBridge) {
     })
 
     test('signalWithStart starts and signals workflow', async () => {
-      if (!workerProcess) {
-        console.log('Skipping test: worker not available')
-        return
-      }
       const maxAttempts = 10
       const waitMs = 500
 
@@ -161,10 +157,6 @@ if (!nativeBridge) {
     })
 
     test('queryWorkflow returns JSON payload for running workflow', async () => {
-      if (!workerProcess) {
-        console.log('Skipping test: worker not available')
-        return
-      }
       const maxAttempts = 10
       const waitMs = 500
 
