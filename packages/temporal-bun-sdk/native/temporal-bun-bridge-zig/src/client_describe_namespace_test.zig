@@ -201,6 +201,8 @@ test "describeNamespaceAsync resolves with byte payload for valid namespace" {
         .client_update_metadata = original_api.client_update_metadata,
         .client_update_api_key = original_api.client_update_api_key,
         .client_rpc_call = stubClientRpcCall,
+        .worker_new = original_api.worker_new,
+        .worker_free = original_api.worker_free,
     };
 
     const runtime_handle = runtime.create("{}") orelse unreachable;
@@ -254,6 +256,8 @@ test "describeNamespaceAsync returns failed handle for empty payload" {
         .client_update_metadata = original_api.client_update_metadata,
         .client_update_api_key = original_api.client_update_api_key,
         .client_rpc_call = stubClientRpcCall,
+        .worker_new = original_api.worker_new,
+        .worker_free = original_api.worker_free,
     };
 
     const runtime_handle = runtime.create("{}") orelse unreachable;
@@ -311,6 +315,8 @@ test "describeNamespaceAsync rejects when runtime handle is missing" {
         .client_update_metadata = original_api.client_update_metadata,
         .client_update_api_key = original_api.client_update_api_key,
         .client_rpc_call = stubClientRpcCall,
+        .worker_new = original_api.worker_new,
+        .worker_free = original_api.worker_free,
     };
 
     const runtime_handle = runtime.create("{}") orelse unreachable;
@@ -367,6 +373,8 @@ test "describeNamespaceAsync surfaces core RPC failure" {
         .client_update_metadata = original_api.client_update_metadata,
         .client_update_api_key = original_api.client_update_api_key,
         .client_rpc_call = stubClientRpcCall,
+        .worker_new = original_api.worker_new,
+        .worker_free = original_api.worker_free,
     };
 
     const runtime_handle = runtime.create("{}") orelse unreachable;
@@ -420,6 +428,8 @@ test "terminateWorkflow issues workflow RPC and succeeds" {
         .client_update_metadata = original_api.client_update_metadata,
         .client_update_api_key = original_api.client_update_api_key,
         .client_rpc_call = stubClientRpcCall,
+        .worker_new = original_api.worker_new,
+        .worker_free = original_api.worker_free,
     };
 
     const runtime_handle = runtime.create("{}") orelse unreachable;
@@ -476,6 +486,8 @@ test "terminateWorkflow surfaces core errors" {
         .client_update_metadata = original_api.client_update_metadata,
         .client_update_api_key = original_api.client_update_api_key,
         .client_rpc_call = stubClientRpcCall,
+        .worker_new = original_api.worker_new,
+        .worker_free = original_api.worker_free,
     };
 
     const runtime_handle = runtime.create("{}") orelse unreachable;
