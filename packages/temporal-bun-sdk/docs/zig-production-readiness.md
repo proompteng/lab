@@ -1,12 +1,10 @@
 # Temporal Bun Zig Bridge — Production Readiness
 
-**Status (20 Oct 2025): Scaffold only.** The Zig bridge exports the FFI surface but still relies on stubbed runtime,
-client, and worker implementations. The checklist below captures what remains before the Zig bridge can replace
-the Rust bridge as the default.
+**Status (25 Oct 2025): Worker creation wired, remainder scaffold.** The Zig bridge exposes runtime and client stubs plus a Zig-only worker creation path gated by `TEMPORAL_BUN_SDK_USE_ZIG=1`. Polling/completion/shutdown remain TODOs before the bridge can displace the legacy workflows.
 
 ## 1. Technical Completeness
 - [ ] Feature parity issues for `zig-rt-*`, `zig-cl-*`, `zig-wf-*`, `zig-buf-*`, `zig-pend-*` are closed. (Open examples:
-  `zig-rt-02`, `zig-rt-03`, `zig-rt-04`, `zig-cl-01`…`zig-cl-04`, `zig-wf-01`, `zig-wf-02`, `zig-wf-04`…`zig-wf-06`, `zig-worker-01`…`zig-worker-09`.)
+  `zig-rt-02`, `zig-rt-03`, `zig-rt-04`, `zig-cl-01`…`zig-cl-04`, `zig-wf-01`, `zig-wf-02`, `zig-wf-04`…`zig-wf-06`, `zig-worker-02`…`zig-worker-09`.)
 - [ ] All inline `TODO(codex, …)` markers are removed or mapped to open issues. Current gaps include
   `zig-core-02`, `zig-cl-04`, and `zig-pack-01`.
 - [ ] `docs/testing-plan.md` documents Zig scenarios next to Rust, and the test matrix reflects the planned

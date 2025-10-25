@@ -27,6 +27,9 @@ var test_worker_handle = worker.WorkerHandle{
     .runtime = &test_runtime_handle,
     .client = null,
     .config = ""[0..0],
+    .namespace = ""[0..0],
+    .task_queue = ""[0..0],
+    .identity = ""[0..0],
     .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&fake_worker_storage)),
     .pending_lock = .{},
     .pending_condition = .{},
@@ -72,6 +75,7 @@ fn testPollCallback(
 
 pub fn installWorkerPollStub() void {
     core.api.worker_poll_workflow_activation = testPollCallback;
+    core.worker_poll_workflow_activation = testPollCallback;
 }
 
 pub fn setWorkerPollMode(mode: PollMode) void {

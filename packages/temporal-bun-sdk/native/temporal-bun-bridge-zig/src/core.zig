@@ -18,6 +18,13 @@ pub const ClientKeepAliveOptions = c.TemporalCoreClientKeepAliveOptions;
 pub const ClientHttpConnectProxyOptions = c.TemporalCoreClientHttpConnectProxyOptions;
 
 pub const Worker = c.TemporalCoreWorker;
+pub const WorkerOptions = c.TemporalCoreWorkerOptions;
+pub const WorkerOrFail = c.TemporalCoreWorkerOrFail;
+pub const WorkerVersioningStrategy = c.TemporalCoreWorkerVersioningStrategy;
+pub const WorkerVersioningStrategyTag = c.TemporalCoreWorkerVersioningStrategy_Tag;
+pub const WorkerTunerHolder = c.TemporalCoreTunerHolder;
+pub const WorkerPollerBehavior = c.TemporalCorePollerBehavior;
+pub const WorkerByteArrayRefArray = c.TemporalCoreByteArrayRefArray;
 
 pub const RpcService = c.TemporalCoreRpcService;
 pub const RpcCallOptions = c.TemporalCoreRpcCallOptions;
@@ -133,6 +140,11 @@ const stub_runtime_or_fail = RuntimeOrFail{
     .fail = &fallback_error_array,
 };
 
+const stub_worker_or_fail = WorkerOrFail{
+    .worker = null,
+    .fail = &fallback_error_array,
+};
+
 fn stubRuntimeNew(_options: *const RuntimeOptions) callconv(.c) RuntimeOrFail {
     _ = _options;
     return stub_runtime_or_fail;
@@ -187,6 +199,16 @@ fn stubClientRpcCall(
     }
 }
 
+fn stubWorkerNew(_client: ?*Client, _options: *const WorkerOptions) callconv(.c) WorkerOrFail {
+    _ = _client;
+    _ = _options;
+    return stub_worker_or_fail;
+}
+
+fn stubWorkerFree(_worker: ?*Worker) callconv(.c) void {
+    _ = _worker;
+}
+
 pub const Api = struct {
     runtime_new: *const fn (*const RuntimeOptions) callconv(.c) RuntimeOrFail,
     runtime_free: *const fn (?*Runtime) callconv(.c) void,
@@ -196,6 +218,8 @@ pub const Api = struct {
     client_update_metadata: *const fn (?*Client, ByteArrayRef) callconv(.c) void,
     client_update_api_key: *const fn (?*Client, ByteArrayRef) callconv(.c) void,
     client_rpc_call: *const fn (?*Client, *const RpcCallOptions, ?*anyopaque, ClientRpcCallCallback) callconv(.c) void,
+    worker_new: *const fn (?*Client, *const WorkerOptions) callconv(.c) WorkerOrFail,
+    worker_free: *const fn (?*Worker) callconv(.c) void,
     worker_poll_workflow_activation: WorkerPollFn,
 };
 
@@ -208,6 +232,8 @@ pub const stub_api: Api = .{
     .client_update_metadata = stubClientUpdateMetadata,
     .client_update_api_key = stubClientUpdateApiKey,
     .client_rpc_call = stubClientRpcCall,
+    .worker_new = stubWorkerNew,
+    .worker_free = stubWorkerFree,
     .worker_poll_workflow_activation = fallbackWorkerPollWorkflowActivation,
 };
 
@@ -220,6 +246,8 @@ pub const extern_api: Api = .{
     .client_update_metadata = c.temporal_core_client_update_metadata,
     .client_update_api_key = c.temporal_core_client_update_api_key,
     .client_rpc_call = c.temporal_core_client_rpc_call,
+    .worker_new = c.temporal_core_worker_new,
+    .worker_free = c.temporal_core_worker_free,
     .worker_poll_workflow_activation = c.temporal_core_worker_poll_workflow_activation,
 };
 
