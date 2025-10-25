@@ -9,6 +9,7 @@ import { $ } from 'bun'
 type CliOptions = {
   minioOutput?: string
   observabilityOutput?: string
+  consoleOutput?: string
   controllerName?: string
   controllerNamespace?: string
   keepTemp?: boolean
@@ -29,6 +30,7 @@ const fatal = (message: string, error?: unknown): never => {
 const repoRoot = resolve(import.meta.dir, '..')
 const defaultMinioOutput = resolve(repoRoot, 'argocd/applications/minio/observability-minio-secret.yaml')
 const defaultObservabilityOutput = resolve(repoRoot, 'argocd/applications/observability/minio-secret.yaml')
+const defaultConsoleOutput = resolve(repoRoot, 'argocd/applications/minio/observability-minio-console-secret.yaml')
 
 const printUsage = (): never => {
   console.log(`Usage: bun run scripts/generate-observability-minio-secrets.ts [options]
@@ -36,6 +38,7 @@ const printUsage = (): never => {
 Options:
   --minio-output <path>          Override output path for observability-minio-secret.yaml.
   --observability-output <path>  Override output path for observability/minio-secret.yaml.
+  --console-output <path>        Override output path for observability-minio-console-secret.yaml.
   --controller-name <name>       Sealed Secrets controller name (default: sealed-secrets).
   --controller-namespace <ns>    Sealed Secrets controller namespace (default: sealed-secrets).
   --keep-temp                    Do not delete temporary files (for debugging).
@@ -76,6 +79,9 @@ const parseArgs = (): CliOptions => {
         break
       case '--observability-output':
         options.observabilityOutput = nextValue()
+        break
+      case '--console-output':
+        options.consoleOutput = nextValue()
         break
       case '--controller-name':
         options.controllerName = nextValue()
@@ -125,6 +131,7 @@ const alphaUpper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 const _alphaNumUpper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const accessKeyAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 const secretKeyAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+const consoleRandomAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ012345'
 
 const indentBlock = (value: string, spaces: number) => {
   const padding = ' '.repeat(spaces)
@@ -144,6 +151,7 @@ const controllerNamespace =
 
 const minioOutputPath = resolve(options.minioOutput ?? defaultMinioOutput)
 const observabilityOutputPath = resolve(options.observabilityOutput ?? defaultObservabilityOutput)
+const consoleOutputPath = resolve(options.consoleOutput ?? defaultConsoleOutput)
 
 const rootUser = randomString(16, alphaUpper)
 const rootPassword = randomString(32, secretKeyAlphabet)
@@ -156,6 +164,12 @@ const tempoSecretKey = randomString(40, secretKeyAlphabet)
 
 const mimirAccessKey = randomString(20, accessKeyAlphabet)
 const mimirSecretKey = randomString(40, secretKeyAlphabet)
+
+const consoleAccessKey = randomString(20, accessKeyAlphabet)
+const consoleSecretKey = randomString(40, secretKeyAlphabet)
+const consolePBKDFPassphrase = randomString(64, consoleRandomAlphabet)
+const consolePBKDFSalt = randomString(64, consoleRandomAlphabet)
+const consoleMinioServer = 'http://observability-minio.minio.svc.cluster.local:9000'
 
 const configEnvLines = [`export MINIO_ROOT_USER=${rootUser}`, `export MINIO_ROOT_PASSWORD=${rootPassword}`]
 
@@ -188,6 +202,20 @@ stringData:
   tempoSecretKey: ${tempoSecretKey}
   mimirAccessKey: ${mimirAccessKey}
   mimirSecretKey: ${mimirSecretKey}
+type: Opaque
+`
+
+const consoleSecretManifest = `apiVersion: v1
+kind: Secret
+metadata:
+  name: observability-minio-console-env
+  namespace: minio
+stringData:
+  CONSOLE_MINIO_SERVER: ${consoleMinioServer}
+  CONSOLE_ACCESS_KEY: ${consoleAccessKey}
+  CONSOLE_SECRET_KEY: ${consoleSecretKey}
+  CONSOLE_PBKDF_PASSPHRASE: ${consolePBKDFPassphrase}
+  CONSOLE_PBKDF_SALT: ${consolePBKDFSalt}
 type: Opaque
 `
 
@@ -241,6 +269,7 @@ const sealedObservabilitySecret = await sealSecret(
   'observability-minio-credentials',
   'observability',
 )
+const sealedConsoleSecret = await sealSecret(consoleSecretManifest, 'observability-minio-console-env', 'minio')
 
 const writeSealedSecret = (path: string, content: string) => {
   mkdirSync(dirname(path), { recursive: true })
@@ -251,6 +280,7 @@ const writeSealedSecret = (path: string, content: string) => {
 
 writeSealedSecret(minioOutputPath, sealedMinioSecret)
 writeSealedSecret(observabilityOutputPath, sealedObservabilitySecret)
+writeSealedSecret(consoleOutputPath, sealedConsoleSecret)
 
 if (options.printValues) {
   console.log('\nGenerated credentials (treat as sensitive):')
@@ -262,6 +292,11 @@ if (options.printValues) {
   console.log(`  TEMPO_SECRET_KEY=${tempoSecretKey}`)
   console.log(`  MIMIR_ACCESS_KEY=${mimirAccessKey}`)
   console.log(`  MIMIR_SECRET_KEY=${mimirSecretKey}`)
+  console.log(`  CONSOLE_MINIO_SERVER=${consoleMinioServer}`)
+  console.log(`  CONSOLE_ACCESS_KEY=${consoleAccessKey}`)
+  console.log(`  CONSOLE_SECRET_KEY=${consoleSecretKey}`)
+  console.log(`  CONSOLE_PBKDF_PASSPHRASE=${consolePBKDFPassphrase}`)
+  console.log(`  CONSOLE_PBKDF_SALT=${consolePBKDFSalt}`)
 } else {
   console.log('Generation complete. Re-run with --print-values to display the generated credentials if needed.')
 }

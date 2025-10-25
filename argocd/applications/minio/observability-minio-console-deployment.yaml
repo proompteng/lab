@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: observability-minio-console
+  namespace: minio
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: minio-console
+    app.kubernetes.io/instance: observability
+    app.kubernetes.io/component: console
+    app.kubernetes.io/part-of: observability-minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio-console
+      app.kubernetes.io/instance: observability
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio-console
+        app.kubernetes.io/instance: observability
+        app.kubernetes.io/component: console
+        app.kubernetes.io/part-of: observability-minio
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: console
+          image: registry.ide-newton.ts.net/lab/minio-console:v2.0.4
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: observability-minio-console-env
+          ports:
+            - name: http
+              containerPort: 9090
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            initialDelaySeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+            initialDelaySeconds: 30
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+      terminationGracePeriodSeconds: 30

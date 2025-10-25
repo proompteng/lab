@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: observability-minio-console-tailscale
+  namespace: minio
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    tailscale.com/hostname: observability-minio-browser
+  labels:
+    app.kubernetes.io/name: minio-console
+    app.kubernetes.io/instance: observability
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app.kubernetes.io/name: minio-console
+    app.kubernetes.io/instance: observability
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: http

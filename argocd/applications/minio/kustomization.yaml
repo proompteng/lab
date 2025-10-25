@@ -5,5 +5,9 @@ namespace: minio
 resources:
   - github.com/minio/operator?ref=v5.0.18
   - observability-minio-secret.yaml
+  - observability-minio-console-secret.yaml
   - observability-tenant.yaml
   - observability-minio-service.yaml
+  - observability-minio-console-deployment.yaml
+  - observability-minio-console-service.yaml
+  - observability-minio-console-tailscale.yaml
