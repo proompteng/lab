@@ -550,7 +550,6 @@ fn encodeWorkflowExecution(
     allocator: std.mem.Allocator,
     workflow_id: []const u8,
     run_id: ?[]const u8,
-    first_execution_run_id: ?[]const u8,
 ) ![]u8 {
     var execution = ArrayListManaged(u8).init(allocator);
     defer execution.deinit();
@@ -559,11 +558,6 @@ fn encodeWorkflowExecution(
     if (run_id) |value| {
         if (value.len != 0) {
             try appendString(&execution, 2, value);
-        }
-    }
-    if (first_execution_run_id) |value| {
-        if (value.len != 0) {
-            try appendString(&execution, 3, value);
         }
     }
 
@@ -599,10 +593,16 @@ fn encodeQueryWorkflowRequest(allocator: std.mem.Allocator, params: QueryWorkflo
         allocator,
         params.workflow_id,
         params.run_id,
-        params.first_execution_run_id,
     );
     defer allocator.free(execution_bytes);
     try appendLengthDelimited(&request, 2, execution_bytes);
+
+    // first_execution_run_id is a top-level field on QueryWorkflowRequest (field 5)
+    if (params.first_execution_run_id) |value| {
+        if (value.len != 0) {
+            try appendString(&request, 5, value);
+        }
+    }
 
     const query_bytes = try encodeWorkflowQuery(allocator, params);
     defer allocator.free(query_bytes);
