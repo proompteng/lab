@@ -14,7 +14,7 @@ if (!nativeBridge) {
 
   const temporalAddress = process.env.TEMPORAL_TEST_SERVER_ADDRESS ?? 'http://127.0.0.1:7233'
   const wantsLiveTemporalServer = process.env.TEMPORAL_TEST_SERVER === '1'
-  const hasLiveTemporalServer = wantsLiveTemporalServer && (await isTemporalServerAvailable(temporalAddress))
+  const hasLiveTemporalServer = await isTemporalServerAvailable(temporalAddress)
   const usingZigBridge = bridgeVariant === 'zig'
   const connectivityTest = test
   const zigOnlyTest = !isStub && usingZigBridge ? test : test.skip
