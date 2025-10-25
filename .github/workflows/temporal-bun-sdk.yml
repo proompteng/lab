@@ -73,7 +73,7 @@ jobs:
           echo "/usr/local/bin" >> $GITHUB_PATH
 
       - name: Check Temporal CLI version
-        run: temporal version
+        run: temporal --version
 
       - name: Download pre-built Temporal libraries
         run: |
