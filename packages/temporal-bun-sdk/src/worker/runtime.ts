@@ -77,7 +77,7 @@ export const maybeCreateNativeWorker = (options: NativeWorkerOptions): NativeWor
     if (error instanceof NativeBridgeError) {
       throw error
     }
-    throw new NativeBridgeError(error instanceof Error ? error.message : String(error))
+    throw new NativeBridgeError({ message: error instanceof Error ? error.message : String(error) })
   }
 }
 

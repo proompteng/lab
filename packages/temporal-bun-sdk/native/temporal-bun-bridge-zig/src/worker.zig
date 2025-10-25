@@ -364,7 +364,7 @@ pub fn create(
     }
 
     var identity_copy: []u8 = ""[0..0];
-    var identity_slice: []const u8 = default_identity[0..];
+    var identity_slice: []const u8 = default_identity;
     if (identity_lookup.value) |identity_value| {
         identity_copy = duplicateBytes(identity_value) orelse {
             allocator.free(task_queue_copy);

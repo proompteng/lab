@@ -458,7 +458,7 @@ export const native = {
   },
 
   createWorker(runtime: Runtime, client: NativeClient, config: Record<string, unknown>): NativeWorker {
-    const payload = Buffer.from(JSON.stringify(config ?? {}), 'utf8')
+    const payload = Buffer.from(JSON.stringify(config), 'utf8')
     const handleNum = Number(temporal_bun_worker_new(runtime.handle, client.handle, ptr(payload), payload.byteLength))
     if (!handleNum) {
       throw buildNativeBridgeError()
