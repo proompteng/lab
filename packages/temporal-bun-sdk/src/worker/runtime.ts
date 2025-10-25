@@ -91,13 +91,11 @@ export const destroyNativeWorker = (worker: NativeWorker | null | undefined): vo
 export class WorkerRuntime {
   constructor(readonly options: WorkerRuntimeOptions) {
     void options
-    // TODO(codex, zig-worker-01): Initialize native worker handles once the Zig worker bridge wires
-    // up Temporal core creation semantics (see WORKER_DOC §1–§3).
+    // TODO(codex, zig-worker-03): Wire native worker polling loops and manage handle lifetimes.
   }
 
   static async create(options: WorkerRuntimeOptions): Promise<never> {
-    // TODO(codex, zig-worker-01): Build async factory that wires Bun-native worker creation per
-    // WORKER_DOC §2 once Zig exports are available.
+    // TODO(codex, zig-worker-03): Build async factory once polling/completion are implemented.
     void options
     return Promise.reject(new Error('WorkerRuntime.create is not implemented yet')) as never
   }
