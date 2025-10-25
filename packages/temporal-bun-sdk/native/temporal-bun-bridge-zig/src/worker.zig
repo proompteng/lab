@@ -14,6 +14,9 @@ pub const WorkerHandle = struct {
     runtime: ?*runtime.RuntimeHandle,
     client: ?*client.ClientHandle,
     config: []u8,
+    namespace: []u8,
+    task_queue: []u8,
+    identity: []u8,
     core_worker: ?*core.WorkerOpaque,
 };
 
@@ -44,10 +47,32 @@ fn duplicateConfig(config_json: []const u8) ?[]u8 {
     return copy;
 }
 
+fn duplicateBytes(slice: []const u8) ?[]u8 {
+    if (slice.len == 0) {
+        return ""[0..0];
+    }
+
+    const allocator = std.heap.c_allocator;
+    const copy = allocator.alloc(u8, slice.len) catch {
+        return null;
+    };
+    @memcpy(copy, slice);
+    return copy;
+}
+
 fn releaseHandle(handle: *WorkerHandle) void {
     var allocator = std.heap.c_allocator;
     if (handle.config.len > 0) {
         allocator.free(handle.config);
+    }
+    if (handle.namespace.len > 0) {
+        allocator.free(handle.namespace);
+    }
+    if (handle.task_queue.len > 0) {
+        allocator.free(handle.task_queue);
+    }
+    if (handle.identity.len > 0) {
+        allocator.free(handle.identity);
     }
     allocator.destroy(handle);
 }
@@ -265,8 +290,20 @@ pub fn create(
         return null;
     }
 
+    const namespace_copy = duplicateBytes(namespace_slice) orelse {
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to allocate worker namespace",
+        });
+        return null;
+    };
+
     const task_queue_lookup = lookupStringField(&obj, &.{ "taskQueue", "task_queue" });
     if (!task_queue_lookup.found) {
+        allocator.free(namespace_copy);
         if (config_copy.len > 0) {
             allocator.free(config_copy);
         }
@@ -277,6 +314,7 @@ pub fn create(
         return null;
     }
     if (task_queue_lookup.invalid_type or task_queue_lookup.value == null) {
+        allocator.free(namespace_copy);
         if (config_copy.len > 0) {
             allocator.free(config_copy);
         }
@@ -288,6 +326,7 @@ pub fn create(
     }
     const task_queue_slice = task_queue_lookup.value.?;
     if (task_queue_slice.len == 0) {
+        allocator.free(namespace_copy);
         if (config_copy.len > 0) {
             allocator.free(config_copy);
         }
@@ -298,8 +337,22 @@ pub fn create(
         return null;
     }
 
+    const task_queue_copy = duplicateBytes(task_queue_slice) orelse {
+        allocator.free(namespace_copy);
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to allocate worker taskQueue",
+        });
+        return null;
+    };
+
     const identity_lookup = lookupStringField(&obj, &.{ "identity", "identityOverride", "identity_override" });
     if (identity_lookup.invalid_type) {
+        allocator.free(task_queue_copy);
+        allocator.free(namespace_copy);
         if (config_copy.len > 0) {
             allocator.free(config_copy);
         }
@@ -310,14 +363,30 @@ pub fn create(
         return null;
     }
 
-    const identity_slice = identity_lookup.value orelse default_identity[0..];
+    var identity_copy: []u8 = ""[0..0];
+    var identity_slice: []const u8 = default_identity[0..];
+    if (identity_lookup.value) |identity_value| {
+        identity_copy = duplicateBytes(identity_value) orelse {
+            allocator.free(task_queue_copy);
+            allocator.free(namespace_copy);
+            if (config_copy.len > 0) {
+                allocator.free(config_copy);
+            }
+            errors.setStructuredError(.{
+                .code = grpc.resource_exhausted,
+                .message = "temporal-bun-bridge-zig: failed to allocate worker identity",
+            });
+            return null;
+        };
+        identity_slice = identity_copy;
+    }
 
     core.ensureExternalApiInstalled();
 
     var options: core.WorkerOptions = undefined;
     @memset(std.mem.asBytes(&options), 0);
-    options.namespace_ = makeByteArrayRef(namespace_slice);
-    options.task_queue = makeByteArrayRef(task_queue_slice);
+    options.namespace_ = makeByteArrayRef(namespace_copy);
+    options.task_queue = makeByteArrayRef(task_queue_copy);
     options.identity_override = makeByteArrayRef(identity_slice);
     options.versioning_strategy.tag = 0;
     options.nondeterminism_as_workflow_fail_for_types = .{
@@ -328,6 +397,11 @@ pub fn create(
     const result = core.api.worker_new(client_handle.core_client, &options);
 
     if (result.worker == null) {
+        if (identity_copy.len > 0) {
+            allocator.free(identity_copy);
+        }
+        allocator.free(task_queue_copy);
+        allocator.free(namespace_copy);
         if (config_copy.len > 0) {
             allocator.free(config_copy);
         }
@@ -346,6 +420,11 @@ pub fn create(
 
     const handle = allocator.create(WorkerHandle) catch |err| {
         core.api.worker_free(result.worker);
+        if (identity_copy.len > 0) {
+            allocator.free(identity_copy);
+        }
+        allocator.free(task_queue_copy);
+        allocator.free(namespace_copy);
         if (config_copy.len > 0) {
             allocator.free(config_copy);
         }
@@ -367,6 +446,9 @@ pub fn create(
         .runtime = runtime_ptr,
         .client = client_ptr,
         .config = config_copy,
+        .namespace = namespace_copy,
+        .task_queue = task_queue_copy,
+        .identity = identity_copy,
         .core_worker = result.worker,
     };
 
