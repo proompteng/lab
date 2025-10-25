@@ -2460,15 +2460,511 @@ pub fn startWorkflow(_client: ?*ClientHandle, _payload: []const u8) ?*byte_array
 }
 
 pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_array.ByteArray {
-    // TODO(codex, zig-wf-02): Implement signalWithStart once start + signal bridges exist.
-    _ = _client;
-    _ = _payload;
-    errors.setStructuredErrorJson(.{
-        .code = grpc.unimplemented,
-        .message = "temporal-bun-bridge-zig: signalWithStart is not implemented yet",
-        .details = null,
-    });
-    return null;
+    if (_client == null) {
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart received null client", .details = null });
+        return null;
+    }
+    if (_payload.len == 0) {
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart payload must be non-empty", .details = null });
+        return null;
+    }
+
+    const allocator = std.heap.c_allocator;
+
+    // Reuse startWorkflow encoders, then append signal fields.
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, _payload, .{ .ignore_unknown_fields = true }) catch |err| {
+        var scratch: [200]u8 = undefined;
+        const msg = std.fmt.bufPrint(&scratch, "temporal-bun-bridge-zig: signalWithStart payload must be valid JSON: {}", .{err}) catch "temporal-bun-bridge-zig: signalWithStart payload must be valid JSON";
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = msg, .details = null });
+        return null;
+    };
+    defer parsed.deinit();
+
+    if (parsed.value != .object) {
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart payload must be a JSON object", .details = null });
+        return null;
+    }
+
+    var obj = parsed.value.object;
+
+    // Extract minimal required fields to build StartWorkflowExecutionRequest
+    const namespace_ptr = obj.getPtr("namespace") orelse {
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart namespace is required", .details = null });
+        return null;
+    };
+    const namespace = switch (namespace_ptr.*) {
+        .string => |s| s,
+        else => {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart namespace must be a string", .details = null });
+            return null;
+        },
+    };
+    if (namespace.len == 0) {
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart namespace must be non-empty", .details = null });
+        return null;
+    }
+
+    const workflow_id_ptr = obj.getPtr("workflow_id") orelse {
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_id is required", .details = null });
+        return null;
+    };
+    const workflow_id = switch (workflow_id_ptr.*) {
+        .string => |s| s,
+        else => {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_id must be a string", .details = null });
+            return null;
+        },
+    };
+    if (workflow_id.len == 0) {
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_id must be non-empty", .details = null });
+        return null;
+    }
+
+    const signal_name_ptr = obj.getPtr("signal_name") orelse {
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart signal_name is required", .details = null });
+        return null;
+    };
+    const signal_name = switch (signal_name_ptr.*) {
+        .string => |s| s,
+        else => {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart signal_name must be a string", .details = null });
+            return null;
+        },
+    };
+    if (signal_name.len == 0) {
+        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart signal_name must be non-empty", .details = null });
+        return null;
+    }
+
+    var signal_args_array: ?*std.json.Array = null;
+    if (obj.getPtr("signal_args")) |args_ptr| {
+        switch (args_ptr.*) {
+            .array => |*arr| signal_args_array = arr,
+            else => {
+                errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart signal_args must be an array", .details = null });
+                return null;
+            },
+        }
+    }
+
+    // Reuse existing start encoder helpers
+    var start_params: StartWorkflowRequestParts = .{
+        .namespace = namespace,
+        .workflow_id = workflow_id,
+        .workflow_type = blk: {
+            const p = obj.getPtr("workflow_type") orelse {
+                errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_type is required", .details = null });
+                return null;
+            };
+            const s = switch (p.*) {
+                .string => |v| v,
+                else => {
+                    errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_type must be a string", .details = null });
+                    return null;
+                },
+            };
+            if (s.len == 0) {
+                errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart workflow_type must be non-empty", .details = null });
+                return null;
+            }
+            break :blk s;
+        },
+        .task_queue = blk: {
+            const p = obj.getPtr("task_queue") orelse {
+                errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart task_queue is required", .details = null });
+                return null;
+            };
+            const s = switch (p.*) {
+                .string => |v| v,
+                else => {
+                    errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart task_queue must be a string", .details = null });
+                    return null;
+                },
+            };
+            if (s.len == 0) {
+                errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart task_queue must be non-empty", .details = null });
+                return null;
+            }
+            break :blk s;
+        },
+        .identity = blk: {
+            const p = obj.getPtr("identity") orelse {
+                errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart identity is required", .details = null });
+                return null;
+            };
+            const s = switch (p.*) {
+                .string => |v| v,
+                else => {
+                    errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart identity must be a string", .details = null });
+                    return null;
+                },
+            };
+            if (s.len == 0) {
+                errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart identity must be non-empty", .details = null });
+                return null;
+            }
+            break :blk s;
+        },
+        .request_id = blk: {
+            if (obj.getPtr("request_id")) |p| {
+                const s = switch (p.*) {
+                    .string => |v| v,
+                    else => {
+                        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart request_id must be a string", .details = null });
+                        return null;
+                    },
+                };
+                if (s.len == 0) {
+                    errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: signalWithStart request_id must be non-empty", .details = null });
+                    return null;
+                }
+                break :blk s;
+            }
+            const gen = generateRequestId(allocator) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = "temporal-bun-bridge-zig: failed to allocate signalWithStart request_id", .details = null });
+                return null;
+            };
+            // Do not free here; consumed by encodeStartWorkflowRequest. Freed when request buffer is deallocated.
+            break :blk gen;
+        },
+        .cron_schedule = null,
+        .workflow_execution_timeout_ms = null,
+        .workflow_run_timeout_ms = null,
+        .workflow_task_timeout_ms = null,
+        .args = null,
+        .memo = null,
+        .search_attributes = null,
+        .headers = null,
+        .retry_policy = null,
+    };
+
+    // Optional propagation of start fields
+    if (obj.getPtr("args")) |p| {
+        switch (p.*) {
+            .array => |*arr| start_params.args = arr,
+            else => {},
+        }
+    }
+    if (obj.getPtr("memo")) |p| {
+        switch (p.*) {
+            .object => |*m| start_params.memo = m,
+            else => {},
+        }
+    }
+    if (obj.getPtr("headers")) |p| {
+        switch (p.*) {
+            .object => |*m| start_params.headers = m,
+            else => {},
+        }
+    }
+    if (obj.getPtr("search_attributes")) |p| {
+        switch (p.*) {
+            .object => |*m| start_params.search_attributes = m,
+            else => {},
+        }
+    }
+    if (obj.getPtr("cron_schedule")) |p| {
+        switch (p.*) {
+            .string => |s| {
+                if (s.len != 0) {
+                    start_params.cron_schedule = s;
+                }
+            },
+            else => {},
+        }
+    }
+    if (obj.getPtr("workflow_execution_timeout_ms")) |p| start_params.workflow_execution_timeout_ms = jsonValueToU64(p.*) catch null;
+    if (obj.getPtr("workflow_run_timeout_ms")) |p| start_params.workflow_run_timeout_ms = jsonValueToU64(p.*) catch null;
+    if (obj.getPtr("workflow_task_timeout_ms")) |p| start_params.workflow_task_timeout_ms = jsonValueToU64(p.*) catch null;
+    if (obj.getPtr("retry_policy")) |p| switch (p.*) {
+        .object => |*m| start_params.retry_policy = m,
+        else => {},
+    };
+    // Build SignalWithStartWorkflowExecutionRequest
+    var request = ArrayListManaged(u8).init(allocator);
+    defer request.deinit();
+
+    // 1: namespace
+    appendString(&request, 1, start_params.namespace) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS namespace", .details = null });
+        return null;
+    };
+
+    // 2: workflow_id
+    appendString(&request, 2, start_params.workflow_id) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS workflow_id", .details = null });
+        return null;
+    };
+
+    // 3: workflow_type (WorkflowType message)
+    var workflow_type_buf = ArrayListManaged(u8).init(allocator);
+    defer workflow_type_buf.deinit();
+    appendString(&workflow_type_buf, 1, start_params.workflow_type) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS workflow_type name", .details = null });
+        return null;
+    };
+    const workflow_type_bytes = workflow_type_buf.toOwnedSlice() catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = "temporal-bun-bridge-zig: failed to allocate SWS workflow_type buffer", .details = null });
+        return null;
+    };
+    defer allocator.free(workflow_type_bytes);
+    appendLengthDelimited(&request, 3, workflow_type_bytes) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS workflow_type", .details = null });
+        return null;
+    };
+
+    // 4: task_queue (TaskQueue message)
+    var task_queue_buf = ArrayListManaged(u8).init(allocator);
+    defer task_queue_buf.deinit();
+    appendString(&task_queue_buf, 1, start_params.task_queue) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS task_queue name", .details = null });
+        return null;
+    };
+    appendVarint(&task_queue_buf, 2, 1) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS task_queue kind", .details = null });
+        return null;
+    };
+    const task_queue_bytes = task_queue_buf.toOwnedSlice() catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = "temporal-bun-bridge-zig: failed to allocate SWS task_queue buffer", .details = null });
+        return null;
+    };
+    defer allocator.free(task_queue_bytes);
+    appendLengthDelimited(&request, 4, task_queue_bytes) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS task_queue", .details = null });
+        return null;
+    };
+
+    // 5: input (Payloads)
+    if (start_params.args) |array_ptr| {
+        const payloads_opt = encodePayloadsFromArray(allocator, array_ptr) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: failed to encode SWS args", .details = null });
+            return null;
+        };
+        if (payloads_opt) |payloads| {
+            defer allocator.free(payloads);
+            appendLengthDelimited(&request, 5, payloads) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS input payloads", .details = null });
+                return null;
+            };
+        }
+    }
+
+    // 6-8: workflow timeouts (Durations)
+    if (start_params.workflow_execution_timeout_ms) |millis| {
+        const duration = encodeDurationMillis(allocator, millis) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS workflow_execution_timeout", .details = null });
+            return null;
+        };
+        defer allocator.free(duration);
+        appendLengthDelimited(&request, 6, duration) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS workflow_execution_timeout", .details = null });
+            return null;
+        };
+    }
+
+    if (start_params.workflow_run_timeout_ms) |millis| {
+        const duration = encodeDurationMillis(allocator, millis) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS workflow_run_timeout", .details = null });
+            return null;
+        };
+        defer allocator.free(duration);
+        appendLengthDelimited(&request, 7, duration) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS workflow_run_timeout", .details = null });
+            return null;
+        };
+    }
+
+    if (start_params.workflow_task_timeout_ms) |millis| {
+        const duration = encodeDurationMillis(allocator, millis) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS workflow_task_timeout", .details = null });
+            return null;
+        };
+        defer allocator.free(duration);
+        appendLengthDelimited(&request, 8, duration) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS workflow_task_timeout", .details = null });
+            return null;
+        };
+    }
+
+    // 9: identity
+    appendString(&request, 9, start_params.identity) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS identity", .details = null });
+        return null;
+    };
+
+    // 10: request_id
+    appendString(&request, 10, start_params.request_id) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS request_id", .details = null });
+        return null;
+    };
+
+    // 12: signal_name
+    appendString(&request, 12, signal_name) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS signal_name", .details = null });
+        return null;
+    };
+
+    // 13: signalInput (Payloads)
+    if (signal_args_array) |arr| {
+        const payloads_opt = encodePayloadsFromArray(allocator, arr) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: failed to encode SWS signal_args", .details = null });
+            return null;
+        };
+        if (payloads_opt) |payloads| {
+            defer allocator.free(payloads);
+            appendLengthDelimited(&request, 13, payloads) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS signal payloads", .details = null });
+                return null;
+            };
+        }
+    }
+
+    // 15: retry_policy
+    if (start_params.retry_policy) |policy_map| {
+        const encoded_retry = encodeRetryPolicyFromObject(allocator, policy_map) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: failed to encode SWS retry_policy", .details = null });
+            return null;
+        };
+        if (encoded_retry) |retry_bytes| {
+            defer allocator.free(retry_bytes);
+            appendLengthDelimited(&request, 15, retry_bytes) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS retry_policy", .details = null });
+                return null;
+            };
+        }
+    }
+
+    // 16: cron_schedule
+    if (start_params.cron_schedule) |schedule| {
+        if (schedule.len != 0) {
+            appendString(&request, 16, schedule) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS cron_schedule", .details = null });
+                return null;
+            };
+        }
+    }
+
+    // 17: memo
+    if (start_params.memo) |memo_map| {
+        const memo_bytes = encodePayloadMap(allocator, memo_map) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: failed to encode SWS memo", .details = null });
+            return null;
+        };
+        if (memo_bytes) |bytes| {
+            defer allocator.free(bytes);
+            appendLengthDelimited(&request, 17, bytes) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS memo", .details = null });
+                return null;
+            };
+        }
+    }
+
+    // 18: search_attributes
+    if (start_params.search_attributes) |search_map| {
+        const search_bytes = encodePayloadMap(allocator, search_map) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: failed to encode SWS search_attributes", .details = null });
+            return null;
+        };
+        if (search_bytes) |bytes| {
+            defer allocator.free(bytes);
+            appendLengthDelimited(&request, 18, bytes) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS search_attributes", .details = null });
+                return null;
+            };
+        }
+    }
+
+    // 19: header (PayloadMap)
+    if (start_params.headers) |header_map| {
+        const header_bytes = encodePayloadMap(allocator, header_map) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: failed to encode SWS header", .details = null });
+            return null;
+        };
+        if (header_bytes) |bytes| {
+            defer allocator.free(bytes);
+            appendLengthDelimited(&request, 19, bytes) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS header", .details = null });
+                return null;
+            };
+        }
+    }
+
+    // Invoke core RPC
+    const client_ptr = _client.?;
+    const runtime_handle = client_ptr.runtime orelse {
+        errors.setStructuredErrorJson(.{ .code = grpc.failed_precondition, .message = "temporal-bun-bridge-zig: signalWithStart missing runtime handle", .details = null });
+        return null;
+    };
+    if (runtime_handle.core_runtime == null) {
+        errors.setStructuredErrorJson(.{ .code = grpc.failed_precondition, .message = "temporal-bun-bridge-zig: runtime core handle is not initialized", .details = null });
+        return null;
+    }
+    const core_client = client_ptr.core_client orelse {
+        errors.setStructuredErrorJson(.{ .code = grpc.failed_precondition, .message = "temporal-bun-bridge-zig: client core handle is not initialized", .details = null });
+        return null;
+    };
+
+    var context = StartWorkflowRpcContext{ .allocator = allocator, .runtime_handle = runtime_handle };
+    context.wait_group.start();
+
+    var call_options = std.mem.zeroes(core.RpcCallOptions);
+    call_options.service = 1; // Workflow service
+    call_options.rpc = makeByteArrayRef("SignalWithStartWorkflowExecution");
+    call_options.req = makeByteArrayRef(request.items);
+    call_options.retry = true;
+    call_options.metadata = emptyByteArrayRef();
+    call_options.timeout_millis = 0;
+    call_options.cancellation_token = null;
+
+    core.api.client_rpc_call(core_client, &call_options, &context, clientStartWorkflowCallback);
+    context.wait_group.wait();
+
+    const response_bytes = context.response;
+    defer if (response_bytes.len > 0) allocator.free(response_bytes);
+
+    const error_message_bytes = context.error_message;
+    defer if (context.error_message_owned and error_message_bytes.len > 0) allocator.free(error_message_bytes);
+
+    if (!context.success or response_bytes.len == 0) {
+        const message = if (error_message_bytes.len > 0) error_message_bytes else "temporal-bun-bridge-zig: signalWithStart failed"[0..];
+        errors.setStructuredErrorJson(.{ .code = context.error_code, .message = message, .details = null });
+        return null;
+    }
+
+    const run_id_slice = parseStartWorkflowRunId(response_bytes) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to decode signalWithStart response", .details = null });
+        return null;
+    };
+
+    const run_id_copy = duplicateSlice(allocator, run_id_slice) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = "temporal-bun-bridge-zig: failed to allocate workflow run_id", .details = null });
+        return null;
+    };
+    defer if (run_id_copy.len > 0) allocator.free(run_id_copy);
+
+    const ResponsePayload = struct {
+        runId: []const u8,
+        workflowId: []const u8,
+        namespace: []const u8,
+    };
+
+    const response_json = std.json.Stringify.valueAlloc(allocator, ResponsePayload{
+        .runId = run_id_copy,
+        .workflowId = workflow_id,
+        .namespace = namespace,
+    }, .{}) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = "temporal-bun-bridge-zig: failed to encode signalWithStart metadata", .details = null });
+        return null;
+    };
+    defer allocator.free(response_json);
+
+    const result_array = byte_array.allocate(.{ .slice = response_json }) orelse {
+        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = "temporal-bun-bridge-zig: failed to allocate signalWithStart response", .details = null });
+        return null;
+    };
+
+    errors.setLastError(""[0..0]);
+    return result_array;
 }
 
 pub fn terminateWorkflow(_client: ?*ClientHandle, _payload: []const u8) i32 {
@@ -2630,6 +3126,42 @@ pub fn cancelWorkflow(_client: ?*ClientHandle, _payload: []const u8) ?*pending.P
     _ = _client;
     _ = _payload;
     return createByteArrayError(grpc.unimplemented, "temporal-bun-bridge-zig: cancelWorkflow is not implemented yet");
+}
+
+test "encode signalWithStart minimal protobuf" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const params = StartWorkflowRequestParts{
+        .namespace = "default",
+        .workflow_id = "wf-sws",
+        .workflow_type = "ExampleWorkflow",
+        .task_queue = "primary",
+        .identity = "zig-test",
+        .request_id = "req-1",
+        .cron_schedule = null,
+        .workflow_execution_timeout_ms = null,
+        .workflow_run_timeout_ms = null,
+        .workflow_task_timeout_ms = null,
+        .args = null,
+        .memo = null,
+        .search_attributes = null,
+        .headers = null,
+        .retry_policy = null,
+    };
+
+    const start_bytes = try encodeStartWorkflowRequest(allocator, params);
+    defer allocator.free(start_bytes);
+
+    var request = ArrayListManaged(u8).init(allocator);
+    defer request.deinit();
+
+    try appendString(&request, 1, params.namespace);
+    try appendLengthDelimited(&request, 2, start_bytes);
+    try appendString(&request, 3, "kickoff");
+
+    try std.testing.expect(request.items.len > 0);
 }
 
 const SignalPayloadError = error{

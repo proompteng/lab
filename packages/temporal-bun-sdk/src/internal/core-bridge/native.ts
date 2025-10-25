@@ -1,11 +1,9 @@
-import { dlopen, FFIType, ptr, toArrayBuffer } from 'bun:ffi'
+import { dlopen, FFIType, type Pointer, ptr, toArrayBuffer } from 'bun:ffi'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DefaultPayloadConverter } from '@temporalio/common'
 import { temporal } from '@temporalio/proto'
-
-type Pointer = number
 
 type RuntimePtr = Pointer
 
@@ -311,11 +309,11 @@ export const native = {
 
   createRuntime(options: Record<string, unknown> = {}): Runtime {
     const payload = Buffer.from(JSON.stringify(options), 'utf8')
-    const handle = Number(temporal_bun_runtime_new(ptr(payload), payload.byteLength))
-    if (!handle) {
+    const handleNum = Number(temporal_bun_runtime_new(ptr(payload), payload.byteLength))
+    if (!handleNum) {
       throw buildNativeBridgeError()
     }
-    return { type: 'runtime', handle }
+    return { type: 'runtime', handle: handleNum as unknown as Pointer }
   },
 
   runtimeShutdown(runtime: Runtime): void {
@@ -329,8 +327,8 @@ export const native = {
       throw buildNativeBridgeError()
     }
     try {
-      const handle = await waitForClientHandle(pendingHandle)
-      return { type: 'client', handle }
+      const handleNum = await waitForClientHandle(pendingHandle)
+      return { type: 'client', handle: handleNum as unknown as Pointer }
     } finally {
       temporal_bun_pending_client_free(pendingHandle)
     }
@@ -508,7 +506,7 @@ async function decodeZigQueryWorkflowResponse(bytes: Uint8Array): Promise<Uint8A
   if (response.queryRejected) {
     throw new NativeBridgeError({
       code: 9,
-      message: response.queryRejected.message ?? 'Temporal query was rejected',
+      message: 'Temporal query was rejected',
       details: response.queryRejected,
       raw: JSON.stringify(response.queryRejected),
     })
@@ -648,11 +646,13 @@ function getZigDebugLibraryName(): string {
 }
 
 function readByteArray(pointer: number): Uint8Array {
-  const header = new BigUint64Array(toArrayBuffer(pointer, 0, 24))
-  const dataPtr = Number(header[0])
+  // Wrap numeric addresses in a Pointer-compatible shape for bun:ffi
+  const headerPtr = pointer as unknown as Pointer
+  const header = new BigUint64Array(toArrayBuffer(headerPtr, 0, 24))
+  const dataPtrNum = Number(header[0])
   const len = Number(header[1])
+  const dataPtr = dataPtrNum as unknown as Pointer
   const view = new Uint8Array(toArrayBuffer(dataPtr, 0, len))
-  // Copy into JS-owned memory before the native buffer is released.
   const copy = new Uint8Array(view)
   temporal_bun_byte_array_free(pointer)
   return copy
@@ -725,7 +725,8 @@ function readLastErrorText(): string {
     return 'Unknown native error'
   }
   try {
-    const buffer = Buffer.from(toArrayBuffer(errPtr, 0, len))
+    const errPtrWrapped = errPtr as unknown as Pointer
+    const buffer = Buffer.from(toArrayBuffer(errPtrWrapped, 0, len))
     return buffer.toString('utf8')
   } finally {
     temporal_bun_error_free(errPtr, len)
