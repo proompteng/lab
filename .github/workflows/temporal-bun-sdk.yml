@@ -68,7 +68,9 @@ jobs:
         run: curl -sSfL https://temporal.download/cli.sh | bash -s -- -b /usr/local/bin
 
       - name: Add Temporal CLI to path
-        run: echo "/usr/local/bin" >> $GITHUB_PATH
+        run: |
+          echo "$HOME/.temporalio/bin" >> $GITHUB_PATH
+          echo "/usr/local/bin" >> $GITHUB_PATH
 
       - name: Check Temporal CLI version
         run: temporal version
