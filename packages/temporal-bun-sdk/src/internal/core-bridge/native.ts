@@ -9,6 +9,8 @@ type RuntimePtr = Pointer
 
 type ClientPtr = Pointer
 
+type WorkerPtr = Pointer
+
 export interface Runtime {
   type: 'runtime'
   handle: RuntimePtr
@@ -17,6 +19,11 @@ export interface Runtime {
 export interface NativeClient {
   type: 'client'
   handle: ClientPtr
+}
+
+export interface NativeWorker {
+  type: 'worker'
+  handle: WorkerPtr
 }
 
 type BridgeVariant = 'zig'
@@ -241,6 +248,10 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.ptr,
     },
+    temporal_bun_worker_complete_workflow_task: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.int32_t,
+    },
   }
 }
 
@@ -301,6 +312,7 @@ const {
     temporal_bun_client_signal,
     temporal_bun_client_signal_with_start,
     temporal_bun_client_query_workflow,
+    temporal_bun_worker_complete_workflow_task,
   },
 } = nativeModule
 
@@ -438,6 +450,15 @@ export const native = {
       throw buildNativeBridgeError()
     }
     return readByteArray(arrayPtr)
+  },
+
+  workerCompleteWorkflowTask(worker: NativeWorker, payload: Uint8Array | Buffer): void {
+    const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
+
+    const status = Number(temporal_bun_worker_complete_workflow_task(worker.handle, ptr(buffer), buffer.byteLength))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
   },
 }
 
