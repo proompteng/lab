@@ -124,3 +124,23 @@ void *temporal_bun_client_cancel_workflow(void *client, void *payload, uint64_t 
   (void)len;
   return NULL;
 }
+
+void *temporal_bun_worker_new(void *runtime, void *client, void *payload, uint64_t len) {
+  (void)runtime;
+  (void)client;
+  (void)payload;
+  (void)len;
+  return (void *)0x4;
+}
+
+void temporal_bun_worker_free(void *handle) {
+  (void)handle;
+}
+
+void *temporal_bun_worker_test_handle_new(void) {
+  return (void *)0x5;
+}
+
+void temporal_bun_worker_test_handle_release(void *handle) {
+  (void)handle;
+}

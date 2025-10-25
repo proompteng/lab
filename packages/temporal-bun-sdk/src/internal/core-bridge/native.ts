@@ -256,6 +256,14 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr],
       returns: FFIType.void,
     },
+    temporal_bun_worker_test_handle_new: {
+      args: [],
+      returns: FFIType.ptr,
+    },
+    temporal_bun_worker_test_handle_release: {
+      args: [FFIType.ptr],
+      returns: FFIType.void,
+    },
   }
 }
 
@@ -318,6 +326,8 @@ const {
     temporal_bun_client_query_workflow,
     temporal_bun_worker_new,
     temporal_bun_worker_free,
+    temporal_bun_worker_test_handle_new,
+    temporal_bun_worker_test_handle_release,
   },
 } = nativeModule
 
@@ -468,6 +478,19 @@ export const native = {
 
   destroyWorker(worker: NativeWorker): void {
     temporal_bun_worker_free(worker.handle)
+    worker.handle = 0 as unknown as Pointer
+  },
+
+  createWorkerHandleForTest(): NativeWorker {
+    const handleNum = Number(temporal_bun_worker_test_handle_new())
+    if (!handleNum) {
+      throw buildNativeBridgeError()
+    }
+    return { type: 'worker', handle: handleNum as unknown as Pointer }
+  },
+
+  releaseWorkerHandleForTest(handle: Pointer): void {
+    temporal_bun_worker_test_handle_release(handle)
   },
 }
 

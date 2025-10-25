@@ -46,6 +46,9 @@ pub const WorkerCompleteFn =
     *const fn (?*WorkerOpaque, ByteArrayRef, ?*anyopaque, WorkerCallback) callconv(.c) void;
 pub const RuntimeByteArrayFreeFn =
     *const fn (?*RuntimeOpaque, ?*const ByteArray) callconv(.c) void;
+pub const WorkerInitiateShutdownFn = *const fn (?*WorkerOpaque) callconv(.c) void;
+pub const WorkerFinalizeShutdownFn =
+    *const fn (?*WorkerOpaque, ?*anyopaque, WorkerCallback) callconv(.c) void;
 
 const fallback_error_slice =
     "temporal-bun-bridge-zig: temporal core bridge is not linked"[0..];
@@ -179,6 +182,21 @@ fn stubWorkerFree(_worker: ?*Worker) callconv(.c) void {
     _ = _worker;
 }
 
+fn stubWorkerInitiateShutdown(_worker: ?*Worker) callconv(.c) void {
+    _ = _worker;
+}
+
+fn stubWorkerFinalizeShutdown(
+    _worker: ?*Worker,
+    user_data: ?*anyopaque,
+    callback: WorkerCallback,
+) callconv(.c) void {
+    _ = _worker;
+    if (callback) |cb| {
+        cb(user_data, &fallback_error_array);
+    }
+}
+
 pub const Api = struct {
     runtime_new: *const fn (*const RuntimeOptions) callconv(.c) RuntimeOrFail,
     runtime_free: *const fn (?*Runtime) callconv(.c) void,
@@ -190,6 +208,10 @@ pub const Api = struct {
     client_rpc_call: *const fn (?*Client, *const RpcCallOptions, ?*anyopaque, ClientRpcCallCallback) callconv(.c) void,
     worker_new: *const fn (?*Client, *const WorkerOptions) callconv(.c) WorkerOrFail,
     worker_free: *const fn (?*Worker) callconv(.c) void,
+    /// Mirrors `temporal_core_worker_initiate_shutdown(worker)`; no user data or callback.
+    worker_initiate_shutdown: WorkerInitiateShutdownFn,
+    /// Mirrors `temporal_core_worker_finalize_shutdown(worker, user_data, callback)` and reuses `TemporalCoreWorkerCallback`.
+    worker_finalize_shutdown: WorkerFinalizeShutdownFn,
 };
 
 pub const stub_api: Api = .{
@@ -203,6 +225,8 @@ pub const stub_api: Api = .{
     .client_rpc_call = stubClientRpcCall,
     .worker_new = stubWorkerNew,
     .worker_free = stubWorkerFree,
+    .worker_initiate_shutdown = stubWorkerInitiateShutdown,
+    .worker_finalize_shutdown = stubWorkerFinalizeShutdown,
 };
 
 pub const extern_api: Api = .{
@@ -216,6 +240,8 @@ pub const extern_api: Api = .{
     .client_rpc_call = c.temporal_core_client_rpc_call,
     .worker_new = c.temporal_core_worker_new,
     .worker_free = c.temporal_core_worker_free,
+    .worker_initiate_shutdown = c.temporal_core_worker_initiate_shutdown,
+    .worker_finalize_shutdown = c.temporal_core_worker_finalize_shutdown,
 };
 
 pub var api: Api = stub_api;

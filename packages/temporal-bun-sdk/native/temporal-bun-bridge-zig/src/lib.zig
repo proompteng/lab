@@ -259,6 +259,14 @@ pub export fn temporal_bun_worker_finalize_shutdown(handle: ?*worker.WorkerHandl
     return worker.finalizeShutdown(handle);
 }
 
+pub export fn temporal_bun_worker_test_handle_new() ?*worker.WorkerHandle {
+    return worker.createTestHandle();
+}
+
+pub export fn temporal_bun_worker_test_handle_release(handle: ?*worker.WorkerHandle) void {
+    worker.releaseTestHandle(handle);
+}
+
 test {
     _ = @import("client_describe_namespace_test.zig");
 }
