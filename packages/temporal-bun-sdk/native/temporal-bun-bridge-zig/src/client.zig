@@ -2690,24 +2690,121 @@ pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_arr
         return null;
     };
 
-    // 2: start_workflow_request (StartWorkflowExecutionRequest)
-    const start_bytes = encodeStartWorkflowRequest(allocator, start_params) catch {
-        errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: failed to encode start portion of signalWithStart", .details = null });
-        return null;
-    };
-    defer allocator.free(start_bytes);
-    appendLengthDelimited(&request, 2, start_bytes) catch {
-        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS start_workflow_request", .details = null });
+    // 2: workflow_id
+    appendString(&request, 2, start_params.workflow_id) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS workflow_id", .details = null });
         return null;
     };
 
-    // 3: signal_name
-    appendString(&request, 3, signal_name) catch {
+    // 3: workflow_type (WorkflowType message)
+    var workflow_type_buf = ArrayListManaged(u8).init(allocator);
+    defer workflow_type_buf.deinit();
+    appendString(&workflow_type_buf, 1, start_params.workflow_type) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS workflow_type name", .details = null });
+        return null;
+    };
+    const workflow_type_bytes = workflow_type_buf.toOwnedSlice() catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = "temporal-bun-bridge-zig: failed to allocate SWS workflow_type buffer", .details = null });
+        return null;
+    };
+    defer allocator.free(workflow_type_bytes);
+    appendLengthDelimited(&request, 3, workflow_type_bytes) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS workflow_type", .details = null });
+        return null;
+    };
+
+    // 4: task_queue (TaskQueue message)
+    var task_queue_buf = ArrayListManaged(u8).init(allocator);
+    defer task_queue_buf.deinit();
+    appendString(&task_queue_buf, 1, start_params.task_queue) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS task_queue name", .details = null });
+        return null;
+    };
+    appendVarint(&task_queue_buf, 2, 1) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS task_queue kind", .details = null });
+        return null;
+    };
+    const task_queue_bytes = task_queue_buf.toOwnedSlice() catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.resource_exhausted, .message = "temporal-bun-bridge-zig: failed to allocate SWS task_queue buffer", .details = null });
+        return null;
+    };
+    defer allocator.free(task_queue_bytes);
+    appendLengthDelimited(&request, 4, task_queue_bytes) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS task_queue", .details = null });
+        return null;
+    };
+
+    // 5: input (Payloads)
+    if (start_params.args) |array_ptr| {
+        const payloads_opt = encodePayloadsFromArray(allocator, array_ptr) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: failed to encode SWS args", .details = null });
+            return null;
+        };
+        if (payloads_opt) |payloads| {
+            defer allocator.free(payloads);
+            appendLengthDelimited(&request, 5, payloads) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS input payloads", .details = null });
+                return null;
+            };
+        }
+    }
+
+    // 6-8: workflow timeouts (Durations)
+    if (start_params.workflow_execution_timeout_ms) |millis| {
+        const duration = encodeDurationMillis(allocator, millis) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS workflow_execution_timeout", .details = null });
+            return null;
+        };
+        defer allocator.free(duration);
+        appendLengthDelimited(&request, 6, duration) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS workflow_execution_timeout", .details = null });
+            return null;
+        };
+    }
+
+    if (start_params.workflow_run_timeout_ms) |millis| {
+        const duration = encodeDurationMillis(allocator, millis) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS workflow_run_timeout", .details = null });
+            return null;
+        };
+        defer allocator.free(duration);
+        appendLengthDelimited(&request, 7, duration) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS workflow_run_timeout", .details = null });
+            return null;
+        };
+    }
+
+    if (start_params.workflow_task_timeout_ms) |millis| {
+        const duration = encodeDurationMillis(allocator, millis) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS workflow_task_timeout", .details = null });
+            return null;
+        };
+        defer allocator.free(duration);
+        appendLengthDelimited(&request, 8, duration) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS workflow_task_timeout", .details = null });
+            return null;
+        };
+    }
+
+    // 9: identity
+    appendString(&request, 9, start_params.identity) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS identity", .details = null });
+        return null;
+    };
+
+    // 10: request_id
+    appendString(&request, 10, start_params.request_id) catch {
+        errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS request_id", .details = null });
+        return null;
+    };
+
+    // 12: signal_name
+    appendString(&request, 12, signal_name) catch {
         errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS signal_name", .details = null });
         return null;
     };
 
-    // 4: signal_args (Payloads)
+    // 13: signalInput (Payloads)
     if (signal_args_array) |arr| {
         const payloads_opt = encodePayloadsFromArray(allocator, arr) catch {
             errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: failed to encode SWS signal_args", .details = null });
@@ -2715,8 +2812,78 @@ pub fn signalWithStart(_client: ?*ClientHandle, _payload: []const u8) ?*byte_arr
         };
         if (payloads_opt) |payloads| {
             defer allocator.free(payloads);
-            appendLengthDelimited(&request, 4, payloads) catch {
-                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS signal_args payloads", .details = null });
+            appendLengthDelimited(&request, 13, payloads) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS signal payloads", .details = null });
+                return null;
+            };
+        }
+    }
+
+    // 15: retry_policy
+    if (start_params.retry_policy) |policy_map| {
+        const encoded_retry = encodeRetryPolicyFromObject(allocator, policy_map) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: failed to encode SWS retry_policy", .details = null });
+            return null;
+        };
+        if (encoded_retry) |retry_bytes| {
+            defer allocator.free(retry_bytes);
+            appendLengthDelimited(&request, 15, retry_bytes) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS retry_policy", .details = null });
+                return null;
+            };
+        }
+    }
+
+    // 16: cron_schedule
+    if (start_params.cron_schedule) |schedule| {
+        if (schedule.len != 0) {
+            appendString(&request, 16, schedule) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to encode SWS cron_schedule", .details = null });
+                return null;
+            };
+        }
+    }
+
+    // 17: memo
+    if (start_params.memo) |memo_map| {
+        const memo_bytes = encodePayloadMap(allocator, memo_map) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: failed to encode SWS memo", .details = null });
+            return null;
+        };
+        if (memo_bytes) |bytes| {
+            defer allocator.free(bytes);
+            appendLengthDelimited(&request, 17, bytes) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS memo", .details = null });
+                return null;
+            };
+        }
+    }
+
+    // 18: search_attributes
+    if (start_params.search_attributes) |search_map| {
+        const search_bytes = encodePayloadMap(allocator, search_map) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: failed to encode SWS search_attributes", .details = null });
+            return null;
+        };
+        if (search_bytes) |bytes| {
+            defer allocator.free(bytes);
+            appendLengthDelimited(&request, 18, bytes) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS search_attributes", .details = null });
+                return null;
+            };
+        }
+    }
+
+    // 19: header (PayloadMap)
+    if (start_params.headers) |header_map| {
+        const header_bytes = encodePayloadMap(allocator, header_map) catch {
+            errors.setStructuredErrorJson(.{ .code = grpc.invalid_argument, .message = "temporal-bun-bridge-zig: failed to encode SWS header", .details = null });
+            return null;
+        };
+        if (header_bytes) |bytes| {
+            defer allocator.free(bytes);
+            appendLengthDelimited(&request, 19, bytes) catch {
+                errors.setStructuredErrorJson(.{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to append SWS header", .details = null });
                 return null;
             };
         }
