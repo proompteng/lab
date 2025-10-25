@@ -135,6 +135,8 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
 pub fn updateTelemetry(handle: ?*RuntimeHandle, _options_json: []const u8) i32 {
     _ = handle;
     _ = _options_json;
+    // TODO(codex, zig-runtime-02): Bridge telemetry configuration into Temporal core once the
+    // upstream runtime exposes stable Prometheus/OTLP hooks.
     errors.setStructuredError(.{
         .code = grpc.unimplemented,
         .message = "temporal-bun-bridge-zig: runtime telemetry updates are not implemented yet",
@@ -170,6 +172,8 @@ pub fn endPendingClientConnect(handle: *RuntimeHandle) void {
 pub fn setLogger(handle: ?*RuntimeHandle, _callback_ptr: ?*anyopaque) i32 {
     _ = handle;
     _ = _callback_ptr;
+    // TODO(codex, zig-runtime-03): Forward Temporal core logs into Bun so we can surface them via
+    // structured logging without relying on Node SDK shims.
     errors.setStructuredError(.{
         .code = grpc.unimplemented,
         .message = "temporal-bun-bridge-zig: runtime logger installation is not implemented yet",

@@ -116,6 +116,8 @@ fn destroyHandle(handle: *PendingHandle) void {
 pub const PendingClient = PendingHandle;
 pub const PendingByteArray = PendingHandle;
 
+// TODO(codex, zig-runtime-04): Explore pooling or reusing worker threads so pending handles avoid
+// the overhead of `std.Thread.spawn` per RPC once benchmarks justify the complexity.
 fn assignError(handle: *PendingHandle, code: i32, message: []const u8, duplicate: bool) void {
     destroyMessage(handle.fault.message, handle.fault.owns_message);
     handle.fault.code = code;

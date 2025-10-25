@@ -1,205 +1,178 @@
 # Temporal Bun SDK — End-to-End Design
 
 **Author:** Platform Runtime Team  
-**Date:** 17 Oct 2025  
-**Status:** Draft
+**Original Publish Date:** 17 Oct 2025  
+**Last Updated:** 25 Oct 2025  
+**Status:** In progress
 
 ---
 
-## 1. Target Experience
+## 1. Product Goals & Target Experience
 
-Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that developers can install from npm, configure quickly, and rely on for production-quality workflow execution. The experience should mirror the official Temporal TypeScript developer journey while leveraging Bun’s runtime capabilities.<br>
-[Temporal TypeScript getting started](https://docs.temporal.io/develop/typescript) · [Bun installation guide](https://bun.sh/docs/installation)
+Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can install from npm, configure in minutes, and trust for production-grade workflow execution. The experience should mirror Temporal's official TypeScript SDK while leaning on Bun for fast startup and a compact distribution footprint.
 
 ### Supported Platforms & Scenarios
 
-- **Platforms:** macOS, Linux (x86_64 / arm64). Windows support is out of scope for the initial release.
-- **Temporal Deployment Targets:**
-  - Self-managed Temporal servers (local Docker Compose, Kubernetes clusters).
-  - Temporal Cloud (requires mTLS and API key metadata as documented in the [Temporal Cloud certificate guide](https://docs.temporal.io/cloud/certificates) and [API key best practices](https://docs.temporal.io/cloud/api-keys)).
-- **Developer Experience Goals:**
-  - `pnpm install @proompteng/temporal-bun-sdk` should “just work” after basic environment setup.
-  - Minimal manual steps; provide scripts and docs for building native bridge.
-  - Example project demonstrating workflow authoring, activity registration, and client calls.
-  - Clear instructions for provisioning certificates/API keys for Temporal Cloud (link to the Temporal Cloud docs above).
+- **Runtime Targets:** Bun ≥ 1.1.20 running on macOS and Linux (x86_64/arm64). Windows remains out of scope for v0.1.x while Zig bridge artifacts are macOS/Linux only.
+- **Temporal Deployments:** Local Docker Compose clusters, Kubernetes-hosted Temporal, and Temporal Cloud. Temporal Cloud requires mTLS & API key metadata consistent with [Temporal Cloud certificates](https://docs.temporal.io/cloud/certificates) and [API key best practices](https://docs.temporal.io/cloud/api-keys).
+- **Developer Workflow:**
+  - `pnpm install @proompteng/temporal-bun-sdk` succeeds without additional toolchains; native bits ship prebuilt.
+  - `createTemporalClient()` yields a Bun-native client backed by the Zig bridge.
+  - `temporal-bun init` scaffolds a worker project; `temporal-bun check` validates connectivity.
+  - Documentation covers local dev, Temporal Cloud setup, and troubleshooting.
 
+## 2. Implementation Snapshot (25 Oct 2025)
 
-## 2. Architecture Overview
+### TypeScript layer
+- ✅ `createTemporalClient` loads the Zig bridge through `bun:ffi`, applies TLS/API key metadata, and exposes workflow helpers (see `src/client.ts`).
+- ✅ CLI commands (`temporal-bun init|check|docker-build`) ship in `src/bin/temporal-bun.ts`.
+- ✅ Worker bootstrap (`createWorker`, `runWorker`) keeps parity with the existing Node SDK via `@temporalio/worker`, ensuring teams can run workflows today.
+- ⚠️ `client.workflow.cancel` and `client.updateHeaders` surface `NativeBridgeError` because the Zig bridge exports are still stubs; `client.workflow.signal` also depends on the placeholder signal RPC.
+- ⚠️ `WorkerRuntime` (native Bun worker loop) is scaffolded in `src/worker/runtime.ts` but not yet wired to the native bridge.
+
+### Zig native bridge (`native/temporal-bun-bridge-zig`)
+- ✅ Uses `@cImport("temporal-sdk-core-c-bridge.h")` to call Temporal core runtime/client APIs.
+- ✅ Implements async pending handles for client connect, DescribeNamespace, workflow queries, and workflow signals via dedicated worker threads.
+- ✅ Encodes workflow start and signal-with-start requests directly in Zig, returning JSON metadata to Bun.
+- ⚠️ `temporal_bun_client_signal` relies on a temporary stub in `core.zig`; it does not yet invoke Temporal core RPCs.
+- ⚠️ `temporal_bun_client_cancel_workflow` and `temporal_bun_client_update_headers` return `UNIMPLEMENTED`, and `temporal_bun_client_signal` still routes through a stub helper.
+- ⚠️ Worker exports (`temporal_bun_worker_*`) are placeholders; only workflow completion goes through stubbed callbacks to support unit tests.
+- ⚠️ Telemetry and logger configuration hooks (`temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger`) report `UNIMPLEMENTED`.
+
+### Tooling & Distribution
+- ✅ `scripts/download-temporal-libs.ts` downloads pinned Temporal core static libs, enabling reproducible Zig builds.
+- ✅ `pnpm run build:native:zig` compiles `libtemporal_bun_bridge_zig` for macOS/Linux and `package:native:zig` stages artifacts under `dist/native/<platform>/<arch>/`.
+- ✅ `prepack` hook builds TypeScript, fetches native libs, compiles Zig, and packages artifacts automatically.
+- ✅ `tests/native.integration.test.ts`, `tests/end-to-end-workflow.test.ts`, and `tests/zig-signal.test.ts` exercise the bridge against the Temporal CLI dev server.
+- ⚠️ `zig build test` executes stubbed unit tests only; coverage for worker APIs remains TODO.
+
+## 3. Architecture Overview
 
 ```
-┌────────────────────────────┐
-│  @proompteng/temporal-bun  │  npm package
-│  ├─ TypeScript re-exports  │  (Bun-friendly ESM)
-│  ├─ Bun FFI loader         │  → libtemporal_sdk_core_c_bridge
-└────────────┬───────────────┘
-             │
-             ▼
-┌────────────────────────────┐
-│  temporal-sdk-core-c-bridge│ (vendored upstream build)
-│  ├─ Runtime API            │
-│  ├─ Client API             │
-│  ├─ Worker API             │
-│  └─ Metrics/Logging        │
-└────────────┬───────────────┘
-             │
-             ▼
-┌────────────────────────────┐
-│  temporal-sdk-core (Rust)  │
-│  ├─ gRPC client            │
-│  └─ Workflow engine        │
-└────────────┬───────────────┘
-             │
-             ▼
-   Temporal Server / Temporal Cloud
+┌──────────────────────────────────────────┐
+│ @proompteng/temporal-bun-sdk (TypeScript)│
+│  ├─ Config & client helpers              │
+│  ├─ Worker (Node fallback)               │
+│  └─ CLI / scaffolding                    │
+└──────────────────────┬───────────────────┘
+                      │ bun:ffi
+┌─────────────────────▼────────────────────┐
+│ libtemporal_bun_bridge_zig.dylib/.so     │
+│  ├─ Pending-handle runtime               │
+│  ├─ Temporal RPC encoding                │
+│  └─ Worker stubs (future work)           │
+└─────────────────────┬────────────────────┘
+                      │ C ABI
+┌─────────────────────▼────────────────────┐
+│ temporal-sdk-core-c-bridge (Rust)        │
+│  └─ Temporal core runtime & gRPC client  │
+└─────────────────────┬────────────────────┘
+                      │ gRPC
+              Temporal Server / Cloud
 ```
 
-Key design points:
+Key properties:
+- All Temporal interactions flow through Zig → Temporal core; Node SDK usage is confined to the worker fallback.
+- Pending handles allow Bun to poll async results without blocking its event loop.
+- Zig bridge enforces strict JSON validation before making core RPCs, surfacing structured Temporal gRPC status codes to Bun.
 
-- **Native Bridge:** Build the upstream [`temporal-sdk-core-c-bridge`](https://github.com/temporalio/sdk-core/tree/main/crates/sdk-core-c-bridge) and load it via Bun FFI. No custom Rust reimplementation; we leverage Temporal’s battle-tested core. All bridge calls expose non-blocking async handles so Bun’s event loop stays responsive.
-- **TypeScript Surface:** Re-export upstream TypeScript modules (`common`, `worker`, `workflow`, `client`) under the `@proompteng` namespace, allowing developers to write workflows exactly as they would with the upstream SDK.
-- **Configuration:** Provide typed configuration loaders for both local Temporal server and Temporal Cloud (mTLS + API key).<br>
-  [Temporal Cloud connection guide](https://docs.temporal.io/cloud/certificates)
-- **Metrics & Logging:** Support Prometheus and OpenTelemetry exporters, plus log forwarding callbacks consistent with Temporal’s production readiness guidance.<br>
-  [Observability best practices](https://docs.temporal.io/production-readiness/observability)
+## 4. Native Bridge Function Matrix
 
+| Area | Export | Status | Notes |
+|------|--------|--------|-------|
+| Runtime | `temporal_bun_runtime_new` / `free` | ✅ | Creates Temporal core runtime and tracks pending connects with thread-safe counters. |
+| Runtime | `temporal_bun_runtime_update_telemetry` | ⚠️ TODO | Returns `UNIMPLEMENTED`; telemetry wiring planned in `zig-runtime-02`. |
+| Runtime | `temporal_bun_runtime_set_logger` | ⚠️ TODO | Placeholder until Temporal core exposes logger callbacks. |
+| Client | `temporal_bun_client_connect_async` | ✅ | Async connect with pending handle + thread pool. |
+| Client | `temporal_bun_client_describe_namespace_async` | ✅ | Encodes protobuf request and resolves via pending handle. |
+| Client | `temporal_bun_client_start_workflow` | ✅ | Encodes workflow start protobufs, returns JSON metadata. |
+| Client | `temporal_bun_client_signal_with_start` | ✅ | Shares start encoder, invokes `SignalWithStartWorkflowExecution`. |
+| Client | `temporal_bun_client_query_workflow` | ✅ | Spawns worker thread, decodes `QueryWorkflowResponse`, maps errors. |
+| Client | `temporal_bun_client_signal` | ⚠️ Stub | Validates payloads but ultimately routes through stubbed `core.signalWorkflow`; Temporal RPC integration pending (`zig-wf-05`). |
+| Client | `temporal_bun_client_terminate_workflow` | ✅ | Executes Temporal core termination RPC and propagates gRPC status codes. |
+| Client | `temporal_bun_client_cancel_workflow` | ❌ Not implemented | Stub returning `UNIMPLEMENTED`. |
+| Client | `temporal_bun_client_update_headers` | ❌ Not implemented | Metadata updates not yet forwarded to Temporal core. |
+| Worker | `temporal_bun_worker_*` | ❌ Not implemented | Creation, poll, heartbeat, and shutdown functions are placeholders. |
+| Byte transport | Pending + byte array helpers | ✅ | Shared across client RPCs; ensures buffers freed via Temporal core callbacks. |
 
-## 3. Implementation Plan
+## 5. TypeScript & CLI Surface
 
-### 3.0 Vertical Slice — Async Bun Execution (MVP-0)
+- `src/client.ts` exposes:
+  - Bun-native client creation with TLS/API key handling via `loadTemporalConfig`.
+  - Workflow helpers (`start`, `signalWithStart`, `query`, `terminate`, `cancel`, `signal`). Methods backed by Zig exports propagate structured `NativeBridgeError`s when unimplemented paths are invoked.
+  - JSON schema validation through `zod` before crossing the FFI boundary.
+- `src/config.ts` parses environment variables, automatically base64-encoding TLS certificates for Temporal Cloud.
+- `src/worker.ts` keeps the Node worker runtime in place so teams can run workflows while the Bun worker bridge is unfinished; swapping to `WorkerRuntime` will be tracked once Zig worker exports land.
+- CLI (`src/bin/temporal-bun.ts`):
+  - `temporal-bun init <dir>` scaffolds a Bun Temporal worker project.
+  - `temporal-bun check [--namespace <ns>]` uses the Zig bridge to run `DescribeNamespace`.
+  - `temporal-bun docker-build` generates a Docker image skeleton.
 
-Deliver a fully Bun-native workflow loop without `@temporalio/*` dependencies by landing the following slice:
+## 6. Build & Distribution
 
-- **Async bridge primitives:** Introduce pending-operation handles (`temporal_bun_pending_*`) that encapsulate Tokio futures and surface poll/consume semantics to Bun without blocking the main thread.
-- **Client describe workflow smoke:** Rework `client_connect` and `describe_namespace` paths to use async handles, proving out the pattern against a live Temporal service.
-- **Worker bootstrap contracts:** Sketch the async worker call graph (create → poll workflow task → complete) and document the data model needed for Bun to drive core activations.
-- **Example script:** Update the sample Bun worker/client scripts to rely exclusively on the new bridge so we can execute a “hello workflow” end to end (similar to the [Temporal hello world sample](https://github.com/temporalio/samples-typescript/tree/main/hello-world)).
-- **Exit criteria:** A developer can run `pnpm --filter temporal-bun-sdk run demo:e2e` (tracked follow-up) and watch a Bun worker execute a workflow without any Node.js SDK packages installed.
+- `pnpm --filter @proompteng/temporal-bun-sdk run build` builds TypeScript to `dist/`.
+- `pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig` compiles the Zig bridge in `ReleaseFast` mode; artifacts land under `native/temporal-bun-bridge-zig/zig-out/lib/<platform>/<arch>/`.
+- `pnpm --filter @proompteng/temporal-bun-sdk run package:native:zig` copies shared libraries into `dist/native/...` so `pnpm pack` includes them.
+- `scripts/download-temporal-libs.ts` fetches pinned Temporal core archives (commit `de674173c664d42f85d0dee1ff3b2ac47e36d545`, sdk-typescript `v1.13.1`).
+- `bun test` executes Bun unit/integration tests; `zig build test` (debug) validates pending-handle logic.
+- CI expectations: lint (Biome), type-check (tsc), Zig release build, Bun tests, optional Zig tests.
 
-### 3.1 Native FFI Coverage
+## 7. Temporal Cloud Support
 
-1. **Runtime API**
-   - Map TS `RuntimeOptions` to Rust `TemporalCoreRuntimeOptions`, including telemetry, metrics, logging callbacks.
-   - Support log forwarding (`forward_to` callback) and custom metrics (meter creation).
+- `loadTemporalConfig` reads:
+  - `TEMPORAL_TLS_CA_PATH`, `TEMPORAL_TLS_CERT_PATH`, `TEMPORAL_TLS_KEY_PATH`, `TEMPORAL_TLS_SERVER_NAME` and loads file contents as Buffers.
+  - `TEMPORAL_API_KEY` and injects API key metadata.
+  - `TEMPORAL_ALLOW_INSECURE` toggles TLS verification (mirrors existing Go worker behavior).
+- `serializeTlsConfig` (CLI + client) base64-encodes cert/key pairs before handing them to the Zig bridge, matching Temporal core expectations.
+- Docs include `.env.example` guidance and link to Temporal Cloud setup references.
+- Follow-up: propagate header updates without tearing down the client once `temporal_bun_client_update_headers` is implemented.
 
-2. **Client API**
-   - Expose `clientUpdateHeaders`, `clientUpdateApiKey`, and `clientSend*ServiceRequest` wrappers, converting Buffers ↔ ByteArray.
-   - Propagate gRPC errors/status codes to TypeScript.
+## 8. Testing & Validation
 
-3. **Worker API**
-   - Implement `newWorker`, `workerValidate`, poll/complete/heartbeat functions, Nexus, replay, shutdown.
-   - Support either `workflowBundle` or `workflowsPath`; align with TS worker expectations.
+- Bun tests:
+  - `tests/native.integration.test.ts` spins up Temporal CLI dev server and exercises workflow start/query via Zig bridge.
+  - `tests/end-to-end-workflow.test.ts` validates sample workflow execution.
+  - `tests/zig-signal.test.ts` stresses the signal pending-handle path (currently against Zig stub).
+  - `tests/client.test.ts` mocks the native module to verify payload encoding and validation logic.
+- Zig tests:
+  - `zig build test` covers JSON validation helpers and pending-handle state machines.
+  - Worker completion tests assert callback plumbing in `worker.zig`, even though polling is unimplemented.
+- Manual QA: `pnpm --filter @proompteng/temporal-bun-sdk run temporal:start` launches a local server; `bun test tests/native.integration.test.ts` performs smoke validation.
 
-4. **Ephemeral Server API** (optional but helpful for deterministic tests).
+## 9. Remaining Work & Milestones
 
-5. **Error Handling**
-   - Reuse thread-local error storage; ensure all FFI functions return 0/null on error and set detailed messages.
+1. **Client parity**
+   - Implement `temporal_bun_client_update_headers` and `cancel_workflow`, plus add end-to-end Bun tests for the `terminate_workflow` and future signal paths.
+   - Replace stubbed `core.signalWorkflow` with a real Temporal RPC call.
+2. **Runtime telemetry & logging**
+   - Wire `temporal_bun_runtime_update_telemetry` and `*_set_logger` through Temporal core once upstream exposes the hooks.
+   - Surface metrics/logging configuration helpers in TypeScript (`configureTelemetry`, `installLogger`).
+3. **Worker bridge**
+   - Implement worker creation, poll/complete loops, activity heartbeats, and graceful shutdown in Zig (`zig-worker-01`…`zig-worker-09`).
+   - Deliver Bun `WorkerRuntime` to replace the Node fallback and update docs/CLI to default to Bun-native workers.
+4. **Developer experience**
+   - Expand CLI (`temporal-bun init`) templates with Zig bridge usage instructions.
+   - Provide `demo:e2e` script referenced in the doc (currently a follow-up).
+5. **Packaging & CI**
+   - Publish macOS/Linux prebuilt libraries via GitHub Releases and add checksums.
+   - Add release automation for npm publishing, capturing Zig artifact uploads.
 
+## 10. Risks & Mitigations
 
-### 3.2 TypeScript Layer
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Zig bridge diverges from Temporal core updates | Runtime incompatibilities | Pin upstream commits; add sync checklist in release process. |
+| Incomplete cancel/update/signal paths surprise users | Workflow management gaps | Mark methods as beta in README, add runtime warnings, prioritize bridge implementation. |
+| Worker rewrite stalls | Teams rely on Node worker indefinitely | Deliver Bun worker incrementally (client parity first), keep Node fallback documented. |
+| Native builds fail on CI | Blocks releases | Cache prebuilt libs, document Zig toolchain requirements, add `zig env` diagnostics. |
 
-1. **Namespace Rewrites**
-   - Add `paths` in `tsconfig.json` so `@proompteng/temporal-bun-sdk/*` resolves to the vendored upstream modules.
-   - Update bundler config to emit ESM with `.ts` extension imports (Bun-compatible).
+## 11. Open Questions
 
-2. **Core Bridge Typings**
-   - Wrap `core-bridge` to expose our FFI loader while reusing upstream error types.
-
-3. **Cloud Support**
-   - Provide utilities for loading mTLS certs/keys (paths), constructing API key metadata, and injecting into worker/client options as described in Temporal Cloud security docs.<br>
-     [Temporal Cloud security controls](https://docs.temporal.io/best-practices/security-controls)
-
-4. **Packaging**
-   - Update `package.json` `files` & `exports` to ship compiled JS, type declarations, and README.
-
-
-### 3.3 Build & Tooling
-
-1. **Vendor Setup**
-   - Document manual clone (macOS/Linux) of upstream repos (`sdk-core`, `sdk-typescript`).
-   - Provide optional script to build `temporal-sdk-core-c-bridge` via Cargo following Temporal’s build instructions.<br>
-     [Building Temporal SDK Core](https://github.com/temporalio/sdk-core#building)
-
-2. **Native Build**
-   - `pnpm run build:native` – compiles the bridge using system `protoc` (ensure prerequisites match Temporal’s documented build requirements).
-   - Output stored under `native/temporal-bun-bridge/target/release` (ignored by git).
-
-3. **Testing**
-   - Unit tests: runtime/client creation, error propagation, pending-handle lifecycle, ByteArray transfer.
-   - Integration tests: mix of local Temporal server (docker-compose) and mocked gRPC to keep CI light; assert async handles resolve without blocking the Bun event loop.
-
-4. **CI Pipeline**
-   - Linting, type-checking, native build, unit tests, optional integration tests (flag to skip in CI).
-
-
-### 3.4 Developer Experience Enhancements
-
-- Example app with workflow/activity scaffolding, environment templates (`.env.example`), and `pnpm run demo` to start Temporal server + worker + sample client.
-- CLI helper to bootstrap workflows/activities with TypeScript templates **(initial `temporal-bun init` implemented; follow-up work needed to integrate native worker path once bridge is complete).**
-- Native FFI blueprint maintained separately in [`ffi-surface.md`](./ffi-surface.md) to keep implementation steps unambiguous.
-- Rich README covering local dev & Temporal Cloud setup (cert paths, API key assignment).
-
-
-## 4. Temporal Cloud Support
-
-1. **mTLS**
-   - Load CA, client cert/key via `TEMPORAL_TLS_CA_PATH`, `TEMPORAL_TLS_CERT_PATH`, `TEMPORAL_TLS_KEY_PATH` env vars.
-   - Validate file existence; propagate errors with actionable messages following [Temporal Cloud TLS requirements](https://docs.temporal.io/cloud/certificates).
-
-2. **API Key Metadata**
-   - Support API key injection via `TEMPORAL_API_KEY` or header overrides.
-
-3. **Server Name Override**
-   - Expose `TEMPORAL_TLS_SERVER_NAME` to match Temporal Cloud endpoints.
-
-4. **Documentation**
-   - Provide example `.env.cloud` and step-by-step instructions for obtaining credentials.
-
-
-## 5. Deliverables & Publication
-
-- **NPM Package** containing:
-  - ES modules targeting Bun (compiled TS + type declarations).
-  - `postinstall` guidance (if needed) to check bridge presence.
-  - README with quick start, Temporal Cloud setup, integration example.
-
-- **Repository** includes:
-  - Docs (`docs/design-e2e.md`, in-progress architecture notes).
-  - Example project and automated tests.
-  - CI (GitHub Actions) verifying lint/build/test.
-
-- **Release Process:**
-  1. Tag version (e.g., `v0.1.0`).
-  2. Build native bridge and package tarball.
-  3. Publish to npm via `pnpm publish --access public`.
-  4. Document required environment setup in release notes.
-
-
-## 6. Timeline (High-Level)
-
-| Week | Milestone |
-|------|-----------|
-| 1 | Finish FFI implementation (runtime, client, worker, metrics) with unit tests |
-| 2 | Adapt TS modules, verify `bun test` and manual workflow execution |
-| 3 | Build integration example + docker-compose, Temporal Cloud configuration helpers |
-| 4 | Polish docs, finalize npm packaging, release candidate |
-
-
-## 7. Risks & Mitigations
-
-| Risk | Mitigation |
-|------|------------|
-| Upstream API changes | Pin to specific commits/tags; add update checklist |
-| FFI errors causing runtime crashes | Add comprehensive unit tests; guard all pointers |
-| Complex TLS/mTLS setup | Provide CLI checks & detailed docs |
-| Bridge build friction for end-users | Offer optional prebuilt binaries or script to compile with Cargo |
-
-
-## 8. Open Questions
-
-1. Should we provide prebuilt bridge binaries for macOS/Linux to eliminate the Cargo step? (Would improve DX.)
-2. Do we ship both TypeScript source and compiled JS, or compiled only? (Bun handles TS, but compiled JS reduces friction.)
-3. Should the integration tests spin up a real dockerized Temporal server in CI? (Impacts runtime.)
+1. Do we want to ship official prebuilt Zig libraries for Windows, or keep Windows unsupported until Zig produces stable MSVC artifacts?
+2. Should `temporal-bun` CLI embed a smoke test (`temporal-bun check --workflow <id>`) to validate signal/query once those RPCs ship?
+3. How do we expose telemetry configuration ergonomically from Bun (custom config file vs. programmatic API)?
+4. What is the rollout plan for swapping the Node worker fallback with the Bun-native worker in existing services (feature flag vs. semver major)?
 
 ---
 
-This design doc captures the path to a production-ready, Bun-native Temporal SDK with first-class developer experience and Temporal Cloud support. It will live in `packages/temporal-bun-sdk/docs/design-e2e.md` so we can track progress and iterate as needed.
+This document replaces the initial draft to reflect the current Zig-based implementation and clarifies the remaining work required to deliver full client and worker parity with Temporal's TypeScript SDK.
