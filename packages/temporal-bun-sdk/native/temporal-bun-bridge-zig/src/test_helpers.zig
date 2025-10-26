@@ -73,8 +73,19 @@ fn testPollCallback(
     }
 }
 
+fn testByteArrayFree(
+    runtime_ptr: ?*core.RuntimeOpaque,
+    bytes: ?*const core.ByteArray,
+) callconv(.c) void {
+    _ = runtime_ptr;
+    _ = bytes;
+}
+
 pub fn installWorkerPollStub() void {
+    core.ensureExternalApiInstalled();
+    core.api.worker_poll_workflow_activation = testPollCallback;
     core.api.worker_poll_activity_task = testPollCallback;
+    core.api.byte_array_free = testByteArrayFree;
 }
 
 pub fn setWorkerPollMode(mode: PollMode) void {

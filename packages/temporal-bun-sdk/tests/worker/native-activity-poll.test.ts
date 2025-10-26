@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { importNativeBridge } from '../helpers/native-bridge'
 
 const originalEnvUseZig = process.env.TEMPORAL_BUN_SDK_USE_ZIG
@@ -19,6 +19,13 @@ if (!nativeBridge || isStub) {
 
   beforeEach(() => {
     process.env.TEMPORAL_BUN_SDK_USE_ZIG = '1'
+    __testing.workerFfi.pollActivityTask = originalWorkerPoll
+    __testing.pendingByteArrayFfi.poll = originalPendingPoll
+    __testing.pendingByteArrayFfi.consume = originalPendingConsume
+    __testing.pendingByteArrayFfi.free = originalPendingFree
+  })
+
+  afterEach(() => {
     __testing.workerFfi.pollActivityTask = originalWorkerPoll
     __testing.pendingByteArrayFfi.poll = originalPendingPoll
     __testing.pendingByteArrayFfi.consume = originalPendingConsume

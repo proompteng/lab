@@ -256,6 +256,14 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr],
       returns: FFIType.void,
     },
+    temporal_bun_worker_poll_workflow_task: {
+      args: [FFIType.ptr],
+      returns: FFIType.ptr,
+    },
+    temporal_bun_worker_complete_workflow_task: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.int32_t,
+    },
     temporal_bun_worker_poll_activity_task: {
       args: [FFIType.ptr],
       returns: FFIType.ptr,
