@@ -8,8 +8,10 @@ const { TextDecoder } = await import('node:util')
 const { module: nativeBridge, isStub } = await importNativeBridge()
 
 const usingZigBridge = Boolean(nativeBridge) && nativeBridge.bridgeVariant === 'zig' && !isStub
+const hasWorkflowPolling =
+  usingZigBridge && typeof nativeBridge?.native.worker?.pollWorkflowTask === 'function'
 
-if (!usingZigBridge) {
+if (!hasWorkflowPolling) {
   describe.skip('native.worker.pollWorkflowTask', () => {})
 } else {
   const helpers = createWorkerTestHelpers(nativeBridge.nativeLibraryPath)

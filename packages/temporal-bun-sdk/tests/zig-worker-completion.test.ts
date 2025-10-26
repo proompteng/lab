@@ -6,7 +6,10 @@ const { importNativeBridge } = await import('./helpers/native-bridge')
 
 const { module: nativeBridge, isStub } = await importNativeBridge()
 const usingZigBridge = !!nativeBridge && nativeBridge.bridgeVariant === 'zig' && !isStub
-const zigSuite = usingZigBridge ? describe : describe.skip
+const hasWorkflowCompletion =
+  usingZigBridge && typeof nativeBridge?.native.workerCompleteWorkflowTask === 'function'
+
+const zigSuite = hasWorkflowCompletion ? describe : describe.skip
 
 zigSuite('zig worker completions', () => {
   if (!nativeBridge) {

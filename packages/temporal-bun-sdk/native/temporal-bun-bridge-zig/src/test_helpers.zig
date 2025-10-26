@@ -31,8 +31,8 @@ var test_worker_handle = worker.WorkerHandle{
     .task_queue = ""[0..0],
     .identity = ""[0..0],
     .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&fake_worker_storage)),
-    .pending_lock = .{},
-    .pending_condition = .{},
+    .poll_lock = .{},
+    .poll_condition = .{},
     .pending_polls = 0,
     .destroying = false,
 };
@@ -73,8 +73,19 @@ fn testPollCallback(
     }
 }
 
+fn testByteArrayFree(
+    runtime_ptr: ?*core.RuntimeOpaque,
+    bytes: ?*const core.ByteArray,
+) callconv(.c) void {
+    _ = runtime_ptr;
+    _ = bytes;
+}
+
 pub fn installWorkerPollStub() void {
+    core.ensureExternalApiInstalled();
     core.api.worker_poll_workflow_activation = testPollCallback;
+    core.api.worker_poll_activity_task = testPollCallback;
+    core.api.byte_array_free = testByteArrayFree;
 }
 
 pub fn setWorkerPollMode(mode: PollMode) void {
