@@ -6,6 +6,7 @@ import {
   buildSignalWithStartRequest,
   buildStartWorkflowRequest,
   buildTerminateRequest,
+  computeSignalRequestId,
 } from './client/serialization'
 import {
   createWorkflowHandle,
@@ -251,7 +252,32 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async signalWorkflow(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void> {
-    const request = buildSignalRequest(handle, signalName, args)
+    const parsedHandle = workflowHandleSchema.parse(handle)
+    const resolvedHandle: WorkflowHandle = {
+      workflowId: parsedHandle.workflowId,
+      namespace: parsedHandle.namespace ?? this.namespace,
+      runId: parsedHandle.runId,
+      firstExecutionRunId: parsedHandle.firstExecutionRunId,
+    }
+
+    const identity = this.defaultIdentity
+    const requestId = computeSignalRequestId({
+      namespace: resolvedHandle.namespace,
+      workflowId: resolvedHandle.workflowId,
+      runId: resolvedHandle.runId,
+      firstExecutionRunId: resolvedHandle.firstExecutionRunId,
+      signalName,
+      identity,
+      args,
+    })
+
+    const request = buildSignalRequest({
+      handle: resolvedHandle,
+      signalName,
+      args,
+      identity,
+      requestId,
+    })
     await native.signalWorkflow(this.client, request)
   }
 

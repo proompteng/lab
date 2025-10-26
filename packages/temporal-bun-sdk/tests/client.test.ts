@@ -7,12 +7,15 @@ const { module: nativeModule, stubPath } = await importNativeBridge()
 let createTemporalClient: any
 let NativeBridgeError: any
 let native: any
+let computeSignalRequestId: any
 
 if (nativeModule && stubPath) {
   const clientModule = await import('../src/client')
   createTemporalClient = clientModule.createTemporalClient
   NativeBridgeError = nativeModule.NativeBridgeError
   native = nativeModule.native
+  const serializationModule = await import('../src/client/serialization')
+  computeSignalRequestId = serializationModule.computeSignalRequestId
 }
 
 const encodeJson = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value))
@@ -202,6 +205,16 @@ if (nativeModule && stubPath) {
         123,
       )
 
+      const expectedRequestId = computeSignalRequestId({
+        namespace: 'analytics',
+        workflowId: 'wf-signal',
+        runId: 'run-current',
+        firstExecutionRunId: 'run-initial',
+        signalName: 'example-signal',
+        identity: 'worker',
+        args: [{ foo: 'bar' }, 123],
+      })
+
       expect(captured).toEqual([
         {
           namespace: 'analytics',
@@ -210,6 +223,8 @@ if (nativeModule && stubPath) {
           first_execution_run_id: 'run-initial',
           signal_name: 'example-signal',
           args: [{ foo: 'bar' }, 123],
+          identity: 'worker',
+          request_id: expectedRequestId,
         },
       ])
 

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type {
   RetryPolicyOptions,
   SignalWithStartOptions,
@@ -21,11 +22,100 @@ const ensureWorkflowNamespace = (handle: WorkflowHandle): string => {
   return handle.namespace
 }
 
-export const buildSignalRequest = (
-  handle: WorkflowHandle,
-  signalName: string,
-  args: unknown[],
-): Record<string, unknown> => {
+const HASH_SEPARATOR = '\u001F'
+
+const stableStringify = (value: unknown): string => {
+  const seen = new WeakSet<object>()
+
+  const normalize = (input: unknown): unknown => {
+    if (input === null) {
+      return null
+    }
+
+    if (Array.isArray(input)) {
+      if (seen.has(input)) {
+        throw new TypeError('Cannot stringify circular structures in signal arguments')
+      }
+      seen.add(input)
+      const result = input.map((item) => normalize(item))
+      seen.delete(input)
+      return result
+    }
+
+    if (typeof input === 'object') {
+      const objectInput = input as Record<string, unknown>
+      if (seen.has(objectInput)) {
+        throw new TypeError('Cannot stringify circular structures in signal arguments')
+      }
+
+      seen.add(objectInput)
+      const entries = Object.entries(objectInput)
+        .filter(([, value]) => typeof value !== 'undefined' && typeof value !== 'function' && typeof value !== 'symbol')
+        .sort(([left], [right]) => {
+          if (left < right) return -1
+          if (left > right) return 1
+          return 0
+        })
+
+      const normalized: Record<string, unknown> = {}
+      for (const [key, rawValue] of entries) {
+        const formatted = normalize(rawValue)
+        if (typeof formatted !== 'undefined') {
+          normalized[key] = formatted
+        }
+      }
+
+      seen.delete(objectInput)
+      return normalized
+    }
+
+    return input
+  }
+
+  return JSON.stringify(normalize(value))
+}
+
+export const computeSignalRequestId = (input: {
+  namespace: string
+  workflowId: string
+  runId?: string
+  firstExecutionRunId?: string
+  signalName: string
+  identity?: string
+  args: unknown[]
+}): string => {
+  const hash = createHash('sha256')
+  const segments = [
+    input.namespace.trim(),
+    input.workflowId.trim(),
+    (input.runId ?? '').trim(),
+    (input.firstExecutionRunId ?? '').trim(),
+    input.signalName.trim(),
+    (input.identity ?? '').trim(),
+    stableStringify(Array.isArray(input.args) ? input.args : []),
+  ]
+
+  for (const segment of segments) {
+    hash.update(segment)
+    hash.update(HASH_SEPARATOR)
+  }
+
+  return hash.digest('hex')
+}
+
+export const buildSignalRequest = ({
+  handle,
+  signalName,
+  args,
+  identity,
+  requestId,
+}: {
+  handle: WorkflowHandle
+  signalName: string
+  args: unknown[]
+  identity?: string
+  requestId?: string
+}): Record<string, unknown> => {
   if (!handle.workflowId || handle.workflowId.trim().length === 0) {
     throw new Error('Workflow handle must include a non-empty workflowId')
   }
@@ -49,6 +139,14 @@ export const buildSignalRequest = (
 
   if (handle.firstExecutionRunId) {
     payload.first_execution_run_id = handle.firstExecutionRunId
+  }
+
+  if (identity && identity.trim().length > 0) {
+    payload.identity = identity
+  }
+
+  if (requestId && requestId.trim().length > 0) {
+    payload.request_id = requestId
   }
 
   return payload
