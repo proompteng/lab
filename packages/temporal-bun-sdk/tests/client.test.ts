@@ -8,13 +8,14 @@ let createTemporalClient: any
 let NativeBridgeError: any
 let native: any
 let computeSignalRequestId: any
+let serializationModule: any
 
 if (nativeModule && stubPath) {
   const clientModule = await import('../src/client')
   createTemporalClient = clientModule.createTemporalClient
   NativeBridgeError = nativeModule.NativeBridgeError
   native = nativeModule.native
-  const serializationModule = await import('../src/client/serialization')
+  serializationModule = await import('../src/client/serialization')
   computeSignalRequestId = serializationModule.computeSignalRequestId
 }
 
@@ -53,6 +54,7 @@ if (nativeModule && stubPath) {
 
     afterEach(() => {
       Object.assign(native, original)
+      serializationModule.__setSignalRequestEntropyGeneratorForTests()
     })
 
     test('startWorkflow forwards defaults and returns workflow handle metadata', async () => {
@@ -193,43 +195,53 @@ if (nativeModule && stubPath) {
 
       const { client } = await createTemporalClient({ config })
 
-      await client.workflow.signal(
-        {
-          workflowId: 'wf-signal',
-          namespace: 'analytics',
-          runId: 'run-current',
-          firstExecutionRunId: 'run-initial',
-        },
-        'example-signal',
-        { foo: 'bar' },
-        123,
-      )
+      const entropy = 'test-signal-entropy'
+      serializationModule.__setSignalRequestEntropyGeneratorForTests(() => entropy)
 
-      const expectedRequestId = computeSignalRequestId({
-        namespace: 'analytics',
-        workflowId: 'wf-signal',
-        runId: 'run-current',
-        firstExecutionRunId: 'run-initial',
-        signalName: 'example-signal',
-        identity: 'worker',
-        args: [{ foo: 'bar' }, 123],
-      })
+      try {
+        await client.workflow.signal(
+          {
+            workflowId: 'wf-signal',
+            namespace: 'analytics',
+            runId: 'run-current',
+            firstExecutionRunId: 'run-initial',
+          },
+          'example-signal',
+          { foo: 'bar' },
+          123,
+        )
 
-      expect(captured).toEqual([
-        {
-          namespace: 'analytics',
-          workflow_id: 'wf-signal',
-          run_id: 'run-current',
-          first_execution_run_id: 'run-initial',
-          signal_name: 'example-signal',
-          args: [{ foo: 'bar' }, 123],
-          identity: 'worker',
-          request_id: expectedRequestId,
-        },
-      ])
+        const expectedRequestId = computeSignalRequestId(
+          {
+            namespace: 'analytics',
+            workflowId: 'wf-signal',
+            runId: 'run-current',
+            firstExecutionRunId: 'run-initial',
+            signalName: 'example-signal',
+            identity: 'worker',
+            args: [{ foo: 'bar' }, 123],
+          },
+          { entropy },
+        )
 
-      expect(native.signalWorkflow).toHaveBeenCalledTimes(1)
-      await client.shutdown()
+        expect(captured).toEqual([
+          {
+            namespace: 'analytics',
+            workflow_id: 'wf-signal',
+            run_id: 'run-current',
+            first_execution_run_id: 'run-initial',
+            signal_name: 'example-signal',
+            args: [{ foo: 'bar' }, 123],
+            identity: 'worker',
+            request_id: expectedRequestId,
+          },
+        ])
+
+        expect(native.signalWorkflow).toHaveBeenCalledTimes(1)
+      } finally {
+        serializationModule.__setSignalRequestEntropyGeneratorForTests()
+        await client.shutdown()
+      }
     })
 
     test('signalWorkflow surfaces native errors', async () => {

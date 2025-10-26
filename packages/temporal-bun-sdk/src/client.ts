@@ -6,6 +6,7 @@ import {
   buildSignalWithStartRequest,
   buildStartWorkflowRequest,
   buildTerminateRequest,
+  createSignalRequestEntropy,
   computeSignalRequestId,
 } from './client/serialization'
 import {
@@ -261,15 +262,19 @@ class TemporalClientImpl implements TemporalClient {
     }
 
     const identity = this.defaultIdentity
-    const requestId = computeSignalRequestId({
-      namespace: resolvedHandle.namespace,
-      workflowId: resolvedHandle.workflowId,
-      runId: resolvedHandle.runId,
-      firstExecutionRunId: resolvedHandle.firstExecutionRunId,
-      signalName,
-      identity,
-      args,
-    })
+    const entropy = createSignalRequestEntropy()
+    const requestId = computeSignalRequestId(
+      {
+        namespace: resolvedHandle.namespace,
+        workflowId: resolvedHandle.workflowId,
+        runId: resolvedHandle.runId,
+        firstExecutionRunId: resolvedHandle.firstExecutionRunId,
+        signalName,
+        identity,
+        args,
+      },
+      { entropy },
+    )
 
     const request = buildSignalRequest({
       handle: resolvedHandle,

@@ -78,7 +78,7 @@ describe('buildSignalRequest', () => {
 })
 
 describe('computeSignalRequestId', () => {
-  test('is deterministic across runs and insensitive to object key order', () => {
+  test('is deterministic for identical payloads when entropy is reused and insensitive to object key order', () => {
     const base = {
       namespace: 'default',
       workflowId: 'wf-id',
@@ -88,13 +88,14 @@ describe('computeSignalRequestId', () => {
       identity: 'sig-client',
     }
 
-    const first = computeSignalRequestId({ ...base, args: [{ foo: 'bar', baz: 1 }] })
-    const second = computeSignalRequestId({ ...base, args: [{ baz: 1, foo: 'bar' }] })
+    const entropy = 'stable-entropy'
+    const first = computeSignalRequestId({ ...base, args: [{ foo: 'bar', baz: 1 }] }, { entropy })
+    const second = computeSignalRequestId({ ...base, args: [{ baz: 1, foo: 'bar' }] }, { entropy })
 
     expect(first).toBe(second)
   })
 
-  test('changes when inputs differ', () => {
+  test('generates unique IDs for identical payloads when entropy differs', () => {
     const base = {
       namespace: 'default',
       workflowId: 'wf-id',
@@ -102,8 +103,8 @@ describe('computeSignalRequestId', () => {
       args: [{ foo: 'bar' }],
     }
 
-    const first = computeSignalRequestId(base)
-    const second = computeSignalRequestId({ ...base, args: [{ foo: 'baz' }] })
+    const first = computeSignalRequestId(base, { entropy: 'entropy-a' })
+    const second = computeSignalRequestId(base, { entropy: 'entropy-b' })
 
     expect(first).not.toBe(second)
   })
@@ -116,8 +117,9 @@ describe('computeSignalRequestId', () => {
       args: [],
     }
 
-    const first = computeSignalRequestId({ ...base, args: [new Date('2024-01-01T00:00:00.000Z')] })
-    const second = computeSignalRequestId({ ...base, args: [new Date('2025-01-01T00:00:00.000Z')] })
+    const entropy = 'json-aware-entropy'
+    const first = computeSignalRequestId({ ...base, args: [new Date('2024-01-01T00:00:00.000Z')] }, { entropy })
+    const second = computeSignalRequestId({ ...base, args: [new Date('2025-01-01T00:00:00.000Z')] }, { entropy })
 
     expect(first).not.toBe(second)
   })

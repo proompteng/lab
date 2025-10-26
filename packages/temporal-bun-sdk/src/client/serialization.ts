@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import type {
   RetryPolicyOptions,
   SignalWithStartOptions,
@@ -23,6 +23,29 @@ const ensureWorkflowNamespace = (handle: WorkflowHandle): string => {
 }
 
 const HASH_SEPARATOR = '\u001F'
+
+const fallbackRandomHex = (): string => randomBytes(16).toString('hex')
+
+const nextRequestEntropy = (): string => {
+  const globalCrypto =
+    typeof globalThis === 'object' && 'crypto' in globalThis
+      ? (globalThis as { crypto?: { randomUUID?: () => string } }).crypto
+      : undefined
+
+  if (globalCrypto && typeof globalCrypto.randomUUID === 'function') {
+    return globalCrypto.randomUUID()
+  }
+
+  return fallbackRandomHex()
+}
+
+let entropyGenerator: () => string = nextRequestEntropy
+
+export const createSignalRequestEntropy = (): string => entropyGenerator()
+
+export const __setSignalRequestEntropyGeneratorForTests = (generator?: () => string): void => {
+  entropyGenerator = generator ?? nextRequestEntropy
+}
 
 const stableStringify = (value: unknown): string => {
   const seen = new WeakSet<object>()
@@ -80,16 +103,20 @@ const stableStringify = (value: unknown): string => {
   return JSON.stringify(normalize(value))
 }
 
-export const computeSignalRequestId = (input: {
-  namespace: string
-  workflowId: string
-  runId?: string
-  firstExecutionRunId?: string
-  signalName: string
-  identity?: string
-  args: unknown[]
-}): string => {
+export const computeSignalRequestId = (
+  input: {
+    namespace: string
+    workflowId: string
+    runId?: string
+    firstExecutionRunId?: string
+    signalName: string
+    identity?: string
+    args: unknown[]
+  },
+  options: { entropy?: string } = {},
+): string => {
   const hash = createHash('sha256')
+  const entropy = (options.entropy ?? createSignalRequestEntropy()).trim()
   const segments = [
     input.namespace.trim(),
     input.workflowId.trim(),
@@ -98,6 +125,7 @@ export const computeSignalRequestId = (input: {
     input.signalName.trim(),
     (input.identity ?? '').trim(),
     stableStringify(Array.isArray(input.args) ? input.args : []),
+    entropy,
   ]
 
   for (const segment of segments) {
