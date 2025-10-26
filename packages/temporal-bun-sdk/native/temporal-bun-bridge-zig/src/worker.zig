@@ -1410,6 +1410,8 @@ const WorkerTests = struct {
         .cap = 0,
         .disable_free = false,
     };
+    var stub_worker_initiate_calls: usize = 0;
+    var stub_worker_finalize_calls: usize = 0;
     var stub_poll_workflow_call_count: usize = 0;
     var stub_poll_workflow_success_payload: []const u8 = ""[0..0];
     var stub_poll_workflow_success_buffer: core.ByteArray = .{
@@ -1456,6 +1458,8 @@ const WorkerTests = struct {
             .cap = 0,
             .disable_free = false,
         };
+        stub_worker_initiate_calls = 0;
+        stub_worker_finalize_calls = 0;
         stub_poll_workflow_call_count = 0;
         stub_poll_workflow_success_payload = ""[0..0];
         stub_poll_workflow_success_buffer = .{
@@ -1726,19 +1730,42 @@ const WorkerTests = struct {
         _ = worker_ptr;
         stub_worker_free_calls += 1;
     }
+
+    fn stubWorkerInitiateShutdown(worker_ptr: ?*core.WorkerOpaque) callconv(.c) void {
+        _ = worker_ptr;
+        stub_worker_initiate_calls += 1;
+    }
+
+    fn stubWorkerFinalizeShutdown(
+        worker_ptr: ?*core.WorkerOpaque,
+        user_data: ?*anyopaque,
+        callback: core.WorkerCallback,
+    ) callconv(.c) void {
+        _ = worker_ptr;
+        stub_worker_finalize_calls += 1;
+        if (callback) |cb| {
+            cb(user_data, null);
+        }
+    }
 };
 
 test "create returns worker handle and frees resources on destroy" {
     core.ensureExternalApiInstalled();
     const original_worker_new = core.api.worker_new;
     const original_worker_free = core.api.worker_free;
+    const original_worker_initiate = core.api.worker_initiate_shutdown;
+    const original_worker_finalize = core.api.worker_finalize_shutdown;
     defer {
         core.api.worker_new = original_worker_new;
         core.api.worker_free = original_worker_free;
+        core.api.worker_initiate_shutdown = original_worker_initiate;
+        core.api.worker_finalize_shutdown = original_worker_finalize;
     }
 
     core.api.worker_new = WorkerTests.stubWorkerNewSuccess;
     core.api.worker_free = WorkerTests.stubWorkerFree;
+    core.api.worker_initiate_shutdown = WorkerTests.stubWorkerInitiateShutdown;
+    core.api.worker_finalize_shutdown = WorkerTests.stubWorkerFinalizeShutdown;
 
     WorkerTests.resetStubs();
     errors.setLastError(""[0..0]);
