@@ -156,11 +156,20 @@ void *temporal_bun_worker_new(void *runtime, void *client, void *payload, uint64
   return (void *)0x4;
 }
 
-void temporal_bun_worker_free(void *handle) {
+int32_t temporal_bun_worker_free(void *handle) {
   (void)handle;
+  return 0;
 }
 
 void *temporal_bun_worker_poll_activity_task(void *worker) {
   (void)worker;
   return NULL;
+}
+
+void *temporal_bun_worker_test_handle_new(void) {
+  return (void *)0x5;
+}
+
+void temporal_bun_worker_test_handle_release(void *handle) {
+  (void)handle;
 }

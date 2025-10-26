@@ -168,6 +168,21 @@ if (!nativeBridge) {
         native.runtimeShutdown(runtime)
       }
     })
+
+    zigOnlyTest('destroyWorker is idempotent for Zig handles', () => {
+      const worker = native.createWorkerHandleForTest()
+      expect(worker.type).toBe('worker')
+      const handle = worker.handle
+      expect(typeof handle).toBe('number')
+      expect(handle).not.toBe(0)
+
+      try {
+        expect(() => native.destroyWorker(worker)).not.toThrow()
+        expect(() => native.destroyWorker(worker)).not.toThrow()
+      } finally {
+        native.releaseWorkerHandleForTest(handle)
+      }
+    })
   })
 }
 

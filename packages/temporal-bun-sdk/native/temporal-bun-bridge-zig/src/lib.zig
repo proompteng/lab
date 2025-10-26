@@ -203,8 +203,8 @@ pub export fn temporal_bun_worker_new(
     return worker.create(runtime_ptr, client_ptr, payload);
 }
 
-pub export fn temporal_bun_worker_free(handle: ?*worker.WorkerHandle) void {
-    worker.destroy(handle);
+pub export fn temporal_bun_worker_free(handle: ?*worker.WorkerHandle) i32 {
+    return worker.destroy(handle);
 }
 
 pub export fn temporal_bun_worker_poll_workflow_task(handle: ?*worker.WorkerHandle) ?*anyopaque {
@@ -278,6 +278,14 @@ pub export fn temporal_bun_test_worker_handle() ?*worker.WorkerHandle {
 
 pub export fn temporal_bun_test_worker_reset() void {
     test_helpers.resetWorkerState();
+}
+
+pub export fn temporal_bun_worker_test_handle_new() ?*worker.WorkerHandle {
+    return worker.createTestHandle();
+}
+
+pub export fn temporal_bun_worker_test_handle_release(handle: ?*worker.WorkerHandle) void {
+    worker.releaseTestHandle(handle);
 }
 
 test {

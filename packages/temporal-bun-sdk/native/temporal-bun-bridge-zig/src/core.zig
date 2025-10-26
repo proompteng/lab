@@ -49,6 +49,9 @@ pub const WorkerPollFn =
     *const fn (?*WorkerOpaque, ?*anyopaque, WorkerPollCallback) callconv(.c) void;
 pub const RuntimeByteArrayFreeFn =
     *const fn (?*RuntimeOpaque, ?*const ByteArray) callconv(.c) void;
+pub const WorkerInitiateShutdownFn = *const fn (?*WorkerOpaque) callconv(.c) void;
+pub const WorkerFinalizeShutdownFn =
+    *const fn (?*WorkerOpaque, ?*anyopaque, WorkerCallback) callconv(.c) void;
 
 const fallback_error_slice =
     "temporal-bun-bridge-zig: temporal core bridge is not linked"[0..];
@@ -222,6 +225,21 @@ fn stubWorkerPollActivityTask(
     fallbackWorkerPollActivityTask(worker, user_data, callback);
 }
 
+fn stubWorkerInitiateShutdown(_worker: ?*Worker) callconv(.c) void {
+    _ = _worker;
+}
+
+fn stubWorkerFinalizeShutdown(
+    _worker: ?*Worker,
+    user_data: ?*anyopaque,
+    callback: WorkerCallback,
+) callconv(.c) void {
+    _ = _worker;
+    if (callback) |cb| {
+        cb(user_data, &fallback_error_array);
+    }
+}
+
 pub const Api = struct {
     runtime_new: *const fn (*const RuntimeOptions) callconv(.c) RuntimeOrFail,
     runtime_free: *const fn (?*Runtime) callconv(.c) void,
@@ -235,6 +253,10 @@ pub const Api = struct {
     worker_free: *const fn (?*Worker) callconv(.c) void,
     worker_poll_workflow_activation: WorkerPollFn,
     worker_poll_activity_task: WorkerPollFn,
+    /// Mirrors `temporal_core_worker_initiate_shutdown(worker)`; no user data or callback.
+    worker_initiate_shutdown: WorkerInitiateShutdownFn,
+    /// Mirrors `temporal_core_worker_finalize_shutdown(worker, user_data, callback)` and reuses `TemporalCoreWorkerCallback`.
+    worker_finalize_shutdown: WorkerFinalizeShutdownFn,
 };
 
 pub const stub_api: Api = .{
@@ -250,6 +272,8 @@ pub const stub_api: Api = .{
     .worker_free = stubWorkerFree,
     .worker_poll_workflow_activation = fallbackWorkerPollWorkflowActivation,
     .worker_poll_activity_task = stubWorkerPollActivityTask,
+    .worker_initiate_shutdown = stubWorkerInitiateShutdown,
+    .worker_finalize_shutdown = stubWorkerFinalizeShutdown,
 };
 
 pub const extern_api: Api = .{
@@ -265,6 +289,8 @@ pub const extern_api: Api = .{
     .worker_free = c.temporal_core_worker_free,
     .worker_poll_workflow_activation = c.temporal_core_worker_poll_workflow_activation,
     .worker_poll_activity_task = c.temporal_core_worker_poll_activity_task,
+    .worker_initiate_shutdown = c.temporal_core_worker_initiate_shutdown,
+    .worker_finalize_shutdown = c.temporal_core_worker_finalize_shutdown,
 };
 
 pub var api: Api = stub_api;
