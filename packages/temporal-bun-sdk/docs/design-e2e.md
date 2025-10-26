@@ -27,15 +27,15 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 - ✅ `createTemporalClient` loads the Zig bridge through `bun:ffi`, applies TLS/API key metadata, and exposes workflow helpers (see `src/client.ts`).
 - ✅ CLI commands (`temporal-bun init|check|docker-build`) ship in `src/bin/temporal-bun.ts`.
 - ✅ Worker bootstrap (`createWorker`, `runWorker`) keeps parity with the existing Node SDK via `@temporalio/worker`, ensuring teams can run workflows today.
-- ⚠️ `client.workflow.cancel` and `client.updateHeaders` surface `NativeBridgeError` because the Zig bridge exports are still stubs; `client.workflow.signal` also depends on the placeholder signal RPC.
+- ⚠️ `client.workflow.cancel` and `client.updateHeaders` surface `NativeBridgeError` because the Zig bridge exports are still stubs; `client.workflow.signal` now routes through Temporal core with deterministic request IDs plus client identity.
 - ⚠️ `WorkerRuntime` (native Bun worker loop) is scaffolded in `src/worker/runtime.ts` but not yet wired to the native bridge.
 
 ### Zig native bridge (`native/temporal-bun-bridge-zig`)
 - ✅ Uses `@cImport("temporal-sdk-core-c-bridge.h")` to call Temporal core runtime/client APIs.
 - ✅ Implements async pending handles for client connect, DescribeNamespace, workflow queries, and workflow signals via dedicated worker threads.
 - ✅ Encodes workflow start and signal-with-start requests directly in Zig, returning JSON metadata to Bun.
-- ⚠️ `temporal_bun_client_signal` relies on a temporary stub in `core.zig`; it does not yet invoke Temporal core RPCs.
-- ⚠️ `temporal_bun_client_cancel_workflow` and `temporal_bun_client_update_headers` return `UNIMPLEMENTED`, and `temporal_bun_client_signal` still routes through a stub helper.
+- ✅ `core.signalWorkflow` now builds `SignalWorkflowExecutionRequest`, forwards gRPC statuses, and acknowledges pending handles with Temporal core responses.
+- ⚠️ `temporal_bun_client_cancel_workflow` and `temporal_bun_client_update_headers` return `UNIMPLEMENTED`.
 - ⚠️ Worker exports (`temporal_bun_worker_*`) are placeholders; only workflow completion goes through stubbed callbacks to support unit tests.
 - ⚠️ Telemetry and logger configuration hooks (`temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger`) report `UNIMPLEMENTED`.
 
@@ -88,7 +88,7 @@ Key properties:
 | Client | `temporal_bun_client_start_workflow` | ✅ | Encodes workflow start protobufs, returns JSON metadata. |
 | Client | `temporal_bun_client_signal_with_start` | ✅ | Shares start encoder, invokes `SignalWithStartWorkflowExecution`. |
 | Client | `temporal_bun_client_query_workflow` | ✅ | Spawns worker thread, decodes `QueryWorkflowResponse`, maps errors. |
-| Client | `temporal_bun_client_signal` | ⚠️ Stub | Validates payloads but ultimately routes through stubbed `core.signalWorkflow`; Temporal RPC integration pending (`zig-wf-05`). |
+| Client | `temporal_bun_client_signal` | ✅ Complete | Encodes `SignalWorkflowExecutionRequest` with identity/request IDs and surfaces Temporal core statuses via Zig bridge (`zig-wf-05`). |
 | Client | `temporal_bun_client_terminate_workflow` | ✅ | Executes Temporal core termination RPC and propagates gRPC status codes. |
 | Client | `temporal_bun_client_cancel_workflow` | ❌ Not implemented | Stub returning `UNIMPLEMENTED`. |
 | Client | `temporal_bun_client_update_headers` | ❌ Not implemented | Metadata updates not yet forwarded to Temporal core. |
@@ -132,7 +132,7 @@ Key properties:
 - Bun tests:
   - `tests/native.integration.test.ts` spins up Temporal CLI dev server and exercises workflow start/query via Zig bridge.
   - `tests/end-to-end-workflow.test.ts` validates sample workflow execution.
-  - `tests/zig-signal.test.ts` stresses the signal pending-handle path (currently against Zig stub).
+  - `tests/zig-signal.test.ts` exercises signal delivery end-to-end against the Temporal CLI dev server when available.
   - `tests/client.test.ts` mocks the native module to verify payload encoding and validation logic.
 - Zig tests:
   - `zig build test` covers JSON validation helpers and pending-handle state machines.
@@ -143,7 +143,6 @@ Key properties:
 
 1. **Client parity**
    - Implement `temporal_bun_client_update_headers` and `cancel_workflow`, plus add end-to-end Bun tests for the `terminate_workflow` and future signal paths.
-   - Replace stubbed `core.signalWorkflow` with a real Temporal RPC call.
 2. **Runtime telemetry & logging**
    - Wire `temporal_bun_runtime_update_telemetry` and `*_set_logger` through Temporal core once upstream exposes the hooks.
    - Surface metrics/logging configuration helpers in TypeScript (`configureTelemetry`, `installLogger`).
@@ -162,7 +161,7 @@ Key properties:
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | Zig bridge diverges from Temporal core updates | Runtime incompatibilities | Pin upstream commits; add sync checklist in release process. |
-| Incomplete cancel/update/signal paths surprise users | Workflow management gaps | Mark methods as beta in README, add runtime warnings, prioritize bridge implementation. |
+| Incomplete cancel/update paths surprise users | Workflow management gaps | Mark methods as beta in README, add runtime warnings, prioritize bridge implementation. |
 | Worker rewrite stalls | Teams rely on Node worker indefinitely | Deliver Bun worker incrementally (client parity first), keep Node fallback documented. |
 | Native builds fail on CI | Blocks releases | Cache prebuilt libs, document Zig toolchain requirements, add `zig env` diagnostics. |
 

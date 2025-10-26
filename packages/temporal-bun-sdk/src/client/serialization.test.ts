@@ -1,18 +1,25 @@
 import { describe, expect, test } from 'bun:test'
-import { buildSignalRequest, buildSignalWithStartRequest, buildStartWorkflowRequest } from './serialization'
+import {
+  buildSignalRequest,
+  buildSignalWithStartRequest,
+  buildStartWorkflowRequest,
+  computeSignalRequestId,
+} from './serialization'
 
 describe('buildSignalRequest', () => {
   test('builds a payload with defaults from the workflow handle', () => {
-    const payload = buildSignalRequest(
-      {
+    const payload = buildSignalRequest({
+      handle: {
         workflowId: 'wf-id',
         namespace: 'default',
         runId: 'run-id',
         firstExecutionRunId: 'first-run-id',
       },
-      'signalName',
-      [{ foo: 'bar' }],
-    )
+      signalName: 'signalName',
+      args: [{ foo: 'bar' }],
+      identity: 'sig-client',
+      requestId: 'req-123',
+    })
 
     expect(payload).toEqual({
       namespace: 'default',
@@ -21,19 +28,21 @@ describe('buildSignalRequest', () => {
       first_execution_run_id: 'first-run-id',
       signal_name: 'signalName',
       args: [{ foo: 'bar' }],
+      identity: 'sig-client',
+      request_id: 'req-123',
     })
   })
 
   test('clones args array to avoid accidental mutation', () => {
     const args = [{ foo: 'bar' }]
-    const payload = buildSignalRequest(
-      {
+    const payload = buildSignalRequest({
+      handle: {
         workflowId: 'wf-id',
         namespace: 'default',
       },
-      'signalName',
+      signalName: 'signalName',
       args,
-    )
+    })
 
     expect(payload.args).toEqual([{ foo: 'bar' }])
     expect(payload.args).not.toBe(args)
@@ -42,13 +51,77 @@ describe('buildSignalRequest', () => {
   })
 
   test('validates required workflow and signal identifiers', () => {
-    expect(() => buildSignalRequest({ workflowId: '', namespace: 'default' }, 'signalName', [])).toThrowError(
-      /workflowId/,
-    )
+    expect(() =>
+      buildSignalRequest({
+        handle: { workflowId: '', namespace: 'default' },
+        signalName: 'signalName',
+        args: [],
+      }),
+    ).toThrowError(/workflowId/)
 
-    expect(() => buildSignalRequest({ workflowId: 'wf-id' }, 'signalName', [])).toThrowError(/namespace/)
+    expect(() =>
+      buildSignalRequest({
+        handle: { workflowId: 'wf-id' },
+        signalName: 'signalName',
+        args: [],
+      }),
+    ).toThrowError(/namespace/)
 
-    expect(() => buildSignalRequest({ workflowId: 'wf-id', namespace: 'default' }, '', [])).toThrowError(/signal name/)
+    expect(() =>
+      buildSignalRequest({
+        handle: { workflowId: 'wf-id', namespace: 'default' },
+        signalName: '',
+        args: [],
+      }),
+    ).toThrowError(/signal name/)
+  })
+})
+
+describe('computeSignalRequestId', () => {
+  test('is deterministic for identical payloads when entropy is reused and insensitive to object key order', () => {
+    const base = {
+      namespace: 'default',
+      workflowId: 'wf-id',
+      runId: 'run-001',
+      firstExecutionRunId: 'root-123',
+      signalName: 'signalName',
+      identity: 'sig-client',
+    }
+
+    const entropy = 'stable-entropy'
+    const first = computeSignalRequestId({ ...base, args: [{ foo: 'bar', baz: 1 }] }, { entropy })
+    const second = computeSignalRequestId({ ...base, args: [{ baz: 1, foo: 'bar' }] }, { entropy })
+
+    expect(first).toBe(second)
+  })
+
+  test('generates unique IDs for identical payloads when entropy differs', () => {
+    const base = {
+      namespace: 'default',
+      workflowId: 'wf-id',
+      signalName: 'signalName',
+      args: [{ foo: 'bar' }],
+    }
+
+    const first = computeSignalRequestId(base, { entropy: 'entropy-a' })
+    const second = computeSignalRequestId(base, { entropy: 'entropy-b' })
+
+    expect(first).not.toBe(second)
+  })
+
+  test('respects toJSON implementations when hashing arguments', () => {
+    const base = {
+      namespace: 'default',
+      workflowId: 'wf-id',
+      signalName: 'signalName',
+      args: [],
+    }
+
+    const entropy = 'json-aware-entropy'
+    const first = computeSignalRequestId({ ...base, args: [new Date('2024-01-01T00:00:00.000Z')] }, { entropy })
+    const second = computeSignalRequestId({ ...base, args: [new Date('2025-01-01T00:00:00.000Z')] }, { entropy })
+
+    expect(first).not.toBe(second)
   })
 })
 

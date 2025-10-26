@@ -3,6 +3,7 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { importNativeBridge } from './helpers/native-bridge'
 import { isTemporalServerAvailable, parseTemporalAddress } from './helpers/temporal-server'
+import { withRetry, waitForWorkerReady } from './helpers/retry'
 
 const { module: nativeBridge } = await importNativeBridge()
 
@@ -49,10 +50,6 @@ if (!nativeBridge) {
             TEMPORAL_TASK_QUEUE: taskQueue,
           },
         })
-
-        if (!workerProcess.stdout) {
-          throw new Error('Failed to capture worker stdout')
-        }
 
         await waitForWorkerReady(workerProcess)
       } catch (_error) {
@@ -156,6 +153,80 @@ if (!nativeBridge) {
       }
     })
 
+    test('signalWorkflow routes signals through Temporal core', async () => {
+      if (!workerProcess) {
+        console.log('Skipping test: worker not available')
+        return
+      }
+
+      const maxAttempts = 10
+      const waitMs = 500
+
+      const client = await withRetry(
+        async () => {
+          return native.createClient(runtime, {
+            address: temporalAddress,
+            namespace: 'default',
+            identity: 'bun-integration-client',
+          })
+        },
+        maxAttempts,
+        waitMs,
+      )
+
+      try {
+        const workflowId = `signal-workflow-${Date.now()}`
+        const startRequest = {
+          namespace: 'default',
+          workflow_id: workflowId,
+          workflow_type: 'queryWorkflowSample',
+          task_queue: taskQueue,
+          identity: 'bun-integration-client',
+          args: ['initial-state'],
+        }
+
+        const startBytes = await withRetry(
+          async () => native.startWorkflow(client, startRequest),
+          maxAttempts,
+          waitMs,
+        )
+        const startInfo = JSON.parse(decoder.decode(startBytes)) as { runId: string }
+
+        const signalRequest = {
+          namespace: 'default',
+          workflow_id: workflowId,
+          run_id: startInfo.runId,
+          signal_name: 'setState',
+          args: ['updated-state'],
+          identity: 'bun-integration-client',
+          request_id: `req-${workflowId}`,
+        }
+
+        await withRetry(async () => native.signalWorkflow(client, signalRequest), maxAttempts, waitMs)
+
+        const queryRequest = {
+          namespace: 'default',
+          workflow_id: workflowId,
+          run_id: startInfo.runId,
+          query_name: 'currentState',
+          args: [],
+        }
+
+        const state = await withRetry(async () => {
+          const bytes = await native.queryWorkflow(client, queryRequest)
+          const value = JSON.parse(decoder.decode(bytes)) as string
+          if (value !== 'updated-state') {
+            throw new Error(`state not updated yet: ${value}`)
+          }
+          return value
+        }, maxAttempts, waitMs)
+
+        expect(state).toBe('updated-state')
+      } finally {
+        native.clientShutdown(client)
+      }
+    })
+
     test('queryWorkflow returns JSON payload for running workflow', async () => {
       const maxAttempts = 10
       const waitMs = 500
@@ -225,53 +296,4 @@ if (!nativeBridge) {
       }
     })
   })
-}
-
-async function withRetry<T>(fn: () => Promise<T>, attempts: number, waitMs: number): Promise<T> {
-  let lastError: unknown
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      return await fn()
-    } catch (error) {
-      lastError = error
-      if (attempt === attempts) {
-        break
-      }
-      await Bun.sleep(waitMs)
-    }
-  }
-  throw lastError
-}
-
-async function waitForWorkerReady(workerProcess: ReturnType<typeof Bun.spawn>) {
-  if (!workerProcess.stdout) {
-    throw new Error('Worker stdout not available')
-  }
-
-  const reader = workerProcess.stdout.getReader()
-  const decoder = new TextDecoder()
-
-  const timeout = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error('Worker readiness timeout after 3s')), 3000)
-  })
-
-  try {
-    await Promise.race([
-      (async () => {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done || !value) {
-            throw new Error('Worker exited before signaling readiness')
-          }
-          const text = decoder.decode(value)
-          if (text.includes('Worker ready')) {
-            break
-          }
-        }
-      })(),
-      timeout,
-    ])
-  } finally {
-    reader.releaseLock()
-  }
 }

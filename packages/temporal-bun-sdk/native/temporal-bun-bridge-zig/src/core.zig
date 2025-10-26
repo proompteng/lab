@@ -41,6 +41,8 @@ pub const MetadataRef = c.TemporalCoreMetadataRef;
 pub const ByteBuf = ByteArray;
 pub const ByteBufDestroyFn = *const fn (?*RuntimeOpaque, ?*const ByteBuf) callconv(.c) void;
 
+const ArrayListManaged = std.array_list.Managed;
+
 pub const WorkerCallback = c.TemporalCoreWorkerCallback;
 pub const WorkerCompleteFn =
     *const fn (?*WorkerOpaque, ByteArrayRef, ?*anyopaque, WorkerCallback) callconv(.c) void;
@@ -314,12 +316,315 @@ pub const SignalWorkflowError = error{
     Internal,
 };
 
-pub fn signalWorkflow(_client: ?*ClientOpaque, request_json: []const u8) SignalWorkflowError!void {
-    // TODO(codex, zig-wf-05): Replace this stub with a Temporal core RPC invocation so signals
-    // leverage the same retry/backoff semantics as other client calls.
-    _ = _client;
+const signal_workflow_rpc = "SignalWorkflowExecution";
 
-    if (std.mem.indexOf(u8, request_json, "\"workflow_id\":\"missing-workflow\"")) |_| {
-        return SignalWorkflowError.NotFound;
+fn makeByteArrayRef(slice: []const u8) ByteArrayRef {
+    return .{ .data = if (slice.len == 0) null else slice.ptr, .size = slice.len };
+}
+
+fn emptyByteArrayRef() ByteArrayRef {
+    return .{ .data = null, .size = 0 };
+}
+
+fn writeVarint(buffer: *ArrayListManaged(u8), value: u64) !void {
+    var remaining = value;
+    while (true) {
+        var byte: u8 = @intCast(remaining & 0x7F);
+        remaining >>= 7;
+        if (remaining != 0) {
+            byte |= 0x80;
+        }
+        try buffer.append(byte);
+        if (remaining == 0) break;
+    }
+}
+
+fn writeTag(buffer: *ArrayListManaged(u8), field_number: u32, wire_type: u3) !void {
+    const key = (@as(u64, field_number) << 3) | wire_type;
+    try writeVarint(buffer, key);
+}
+
+fn appendLengthDelimited(buffer: *ArrayListManaged(u8), field_number: u32, bytes: []const u8) !void {
+    try writeTag(buffer, field_number, 2);
+    try writeVarint(buffer, bytes.len);
+    try buffer.appendSlice(bytes);
+}
+
+fn appendString(buffer: *ArrayListManaged(u8), field_number: u32, value: []const u8) !void {
+    try appendLengthDelimited(buffer, field_number, value);
+}
+
+fn appendBytes(buffer: *ArrayListManaged(u8), field_number: u32, value: []const u8) !void {
+    try appendLengthDelimited(buffer, field_number, value);
+}
+
+fn encodeMetadataEntry(allocator: std.mem.Allocator, key: []const u8, value: []const u8) ![]u8 {
+    var entry = ArrayListManaged(u8).init(allocator);
+    defer entry.deinit();
+
+    try appendString(&entry, 1, key);
+    try appendBytes(&entry, 2, value);
+
+    return entry.toOwnedSlice();
+}
+
+fn encodeJsonPayload(allocator: std.mem.Allocator, value: std.json.Value) ![]u8 {
+    const json_bytes = try std.json.Stringify.valueAlloc(allocator, value, .{});
+    defer allocator.free(json_bytes);
+
+    var payload = ArrayListManaged(u8).init(allocator);
+    defer payload.deinit();
+
+    const metadata_entry = try encodeMetadataEntry(allocator, "encoding", "json/plain");
+    defer allocator.free(metadata_entry);
+
+    try appendLengthDelimited(&payload, 1, metadata_entry);
+    try appendBytes(&payload, 2, json_bytes);
+
+    return payload.toOwnedSlice();
+}
+
+fn encodePayloadsFromArray(allocator: std.mem.Allocator, array: *std.json.Array) !?[]u8 {
+    if (array.items.len == 0) return null;
+
+    var payloads = ArrayListManaged(u8).init(allocator);
+    defer payloads.deinit();
+
+    for (array.items) |item| {
+        const payload_bytes = try encodeJsonPayload(allocator, item);
+        defer allocator.free(payload_bytes);
+        try appendLengthDelimited(&payloads, 1, payload_bytes);
+    }
+
+    const owned = try payloads.toOwnedSlice();
+    const result: ?[]u8 = owned;
+    return result;
+}
+
+fn encodeWorkflowExecution(
+    allocator: std.mem.Allocator,
+    workflow_id: []const u8,
+    run_id: ?[]const u8,
+) ![]u8 {
+    var execution = ArrayListManaged(u8).init(allocator);
+    defer execution.deinit();
+
+    try appendString(&execution, 1, workflow_id);
+    if (run_id) |value| {
+        if (value.len != 0) {
+            try appendString(&execution, 2, value);
+        }
+    }
+
+    return execution.toOwnedSlice();
+}
+
+const SignalWorkflowRequestParts = struct {
+    namespace: []const u8,
+    workflow_id: []const u8,
+    run_id: ?[]const u8 = null,
+    signal_name: []const u8,
+    identity: ?[]const u8 = null,
+    request_id: ?[]const u8 = null,
+    args: ?*std.json.Array = null,
+};
+
+fn encodeSignalWorkflowRequest(
+    allocator: std.mem.Allocator,
+    params: SignalWorkflowRequestParts,
+) ![]u8 {
+    var request = ArrayListManaged(u8).init(allocator);
+    defer request.deinit();
+
+    try appendString(&request, 1, params.namespace);
+
+    const execution_bytes = try encodeWorkflowExecution(allocator, params.workflow_id, params.run_id);
+    defer allocator.free(execution_bytes);
+    try appendLengthDelimited(&request, 2, execution_bytes);
+
+    try appendString(&request, 3, params.signal_name);
+
+    if (params.args) |array_ptr| {
+        if (try encodePayloadsFromArray(allocator, array_ptr)) |payload_bytes| {
+            defer allocator.free(payload_bytes);
+            try appendLengthDelimited(&request, 4, payload_bytes);
+        }
+    }
+
+    if (params.identity) |identity_slice| {
+        if (identity_slice.len != 0) {
+            try appendString(&request, 5, identity_slice);
+        }
+    }
+
+    if (params.request_id) |request_id_slice| {
+        if (request_id_slice.len != 0) {
+            try appendString(&request, 6, request_id_slice);
+        }
+    }
+
+    return request.toOwnedSlice();
+}
+
+const SignalWorkflowRpcContext = struct {
+    wait_group: std.Thread.WaitGroup = .{},
+    success: bool = false,
+    status_code: u32 = 0,
+};
+
+fn signalWorkflowRpcCallback(
+    user_data: ?*anyopaque,
+    success: ?*const ByteArray,
+    status_code: u32,
+    failure_message: ?*const ByteArray,
+    failure_details: ?*const ByteArray,
+) callconv(.c) void {
+    if (user_data == null) return;
+    const context = @as(*SignalWorkflowRpcContext, @ptrCast(@alignCast(user_data.?)));
+    defer context.wait_group.finish();
+
+    if (success) |ptr| {
+        api.byte_array_free(null, ptr);
+    }
+
+    if (failure_message) |ptr| {
+        api.byte_array_free(null, ptr);
+    }
+
+    if (failure_details) |ptr| {
+        api.byte_array_free(null, ptr);
+    }
+
+    if (status_code == 0) {
+        context.success = true;
+        context.status_code = 0;
+    } else {
+        context.success = false;
+        context.status_code = status_code;
+    }
+}
+
+fn requireStringField(object: *std.json.ObjectMap, key: []const u8) SignalWorkflowError![]const u8 {
+    const value_ptr = object.getPtr(key) orelse return SignalWorkflowError.Internal;
+    return switch (value_ptr.*) {
+        .string => |s| {
+            if (s.len == 0) return SignalWorkflowError.Internal;
+            return s;
+        },
+        else => SignalWorkflowError.Internal,
+    };
+}
+
+fn optionalStringField(object: *std.json.ObjectMap, key: []const u8) SignalWorkflowError!?[]const u8 {
+    if (object.getPtr(key)) |value_ptr| {
+        return switch (value_ptr.*) {
+            .string => |s| {
+                if (s.len == 0) return null;
+                return s;
+            },
+            .null => null,
+            else => SignalWorkflowError.Internal,
+        };
+    }
+    return null;
+}
+
+fn optionalArrayField(object: *std.json.ObjectMap, key: []const u8) SignalWorkflowError!?*std.json.Array {
+    if (object.getPtr(key)) |value_ptr| {
+        return switch (value_ptr.*) {
+            .array => |*arr| arr,
+            .null => null,
+            else => SignalWorkflowError.Internal,
+        };
+    }
+    return null;
+}
+
+pub fn signalWorkflow(_client: ?*ClientOpaque, request_json: []const u8) SignalWorkflowError!void {
+    if (_client == null) {
+        return SignalWorkflowError.ClientUnavailable;
+    }
+
+    if (api.client_rpc_call == stub_api.client_rpc_call) {
+        return SignalWorkflowError.ClientUnavailable;
+    }
+
+    const allocator = std.heap.c_allocator;
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, request_json, .{
+        .ignore_unknown_fields = true,
+    }) catch {
+        return SignalWorkflowError.Internal;
+    };
+    defer parsed.deinit();
+
+    const root = parsed.value;
+    if (root != .object) {
+        return SignalWorkflowError.Internal;
+    }
+
+    var object = root.object;
+
+    const namespace_slice = requireStringField(&object, "namespace") catch {
+        return SignalWorkflowError.Internal;
+    };
+    const workflow_id_slice = requireStringField(&object, "workflow_id") catch {
+        return SignalWorkflowError.Internal;
+    };
+    const signal_name_slice = requireStringField(&object, "signal_name") catch {
+        return SignalWorkflowError.Internal;
+    };
+    const run_id_slice = optionalStringField(&object, "run_id") catch {
+        return SignalWorkflowError.Internal;
+    };
+    const identity_slice = optionalStringField(&object, "identity") catch {
+        return SignalWorkflowError.Internal;
+    };
+    const request_id_slice = optionalStringField(&object, "request_id") catch {
+        return SignalWorkflowError.Internal;
+    };
+    const args_array = optionalArrayField(&object, "args") catch {
+        return SignalWorkflowError.Internal;
+    };
+
+    const params = SignalWorkflowRequestParts{
+        .namespace = namespace_slice,
+        .workflow_id = workflow_id_slice,
+        .run_id = run_id_slice,
+        .signal_name = signal_name_slice,
+        .identity = identity_slice,
+        .request_id = request_id_slice,
+        .args = args_array,
+    };
+
+    const request_bytes = encodeSignalWorkflowRequest(allocator, params) catch {
+        return SignalWorkflowError.Internal;
+    };
+    defer allocator.free(request_bytes);
+
+    const request_slice: []const u8 = request_bytes;
+    const client = _client.?;
+
+    var context = SignalWorkflowRpcContext{};
+    context.wait_group.start();
+
+    var call_options = std.mem.zeroes(RpcCallOptions);
+    call_options.service = 1; // Workflow service
+    call_options.rpc = makeByteArrayRef(signal_workflow_rpc);
+    call_options.req = makeByteArrayRef(request_slice);
+    call_options.retry = true;
+    call_options.metadata = emptyByteArrayRef();
+    call_options.timeout_millis = 0;
+    call_options.cancellation_token = null;
+
+    api.client_rpc_call(client, &call_options, &context, signalWorkflowRpcCallback);
+    context.wait_group.wait();
+
+    if (!context.success) {
+        return switch (context.status_code) {
+            5 => SignalWorkflowError.NotFound,
+            14 => SignalWorkflowError.ClientUnavailable,
+            else => SignalWorkflowError.Internal,
+        };
     }
 }
