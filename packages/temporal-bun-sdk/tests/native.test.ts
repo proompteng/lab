@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Runtime } from '../src/internal/core-bridge/native.ts'
 import { importNativeBridge } from './helpers/native-bridge'
 import { isTemporalServerAvailable } from './helpers/temporal-server'
+import { withRetry } from './helpers/retry'
 
 const { module: nativeBridge, isStub } = await importNativeBridge()
 
@@ -184,18 +185,4 @@ if (!nativeBridge) {
       }
     })
   })
-}
-
-async function withRetry<T>(fn: () => T | Promise<T>, attempts: number, waitMs: number): Promise<T> {
-  let lastError: unknown
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      return await fn()
-    } catch (error) {
-      lastError = error
-      if (attempt === attempts) break
-      await Bun.sleep(waitMs)
-    }
-  }
-  throw lastError
 }

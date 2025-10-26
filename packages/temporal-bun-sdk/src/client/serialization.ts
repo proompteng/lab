@@ -28,48 +28,53 @@ const stableStringify = (value: unknown): string => {
   const seen = new WeakSet<object>()
 
   const normalize = (input: unknown): unknown => {
-    if (input === null) {
-      return null
+    if (input === null || typeof input !== 'object') {
+      return input
     }
 
-    if (Array.isArray(input)) {
-      if (seen.has(input)) {
-        throw new TypeError('Cannot stringify circular structures in signal arguments')
+    const objectInput = input as Record<string, unknown>
+
+    const maybeToJSON = (objectInput as { toJSON?: () => unknown }).toJSON
+    if (typeof maybeToJSON === 'function') {
+      const jsonValue = maybeToJSON.call(objectInput)
+      if (jsonValue !== objectInput) {
+        return normalize(jsonValue)
       }
-      seen.add(input)
-      const result = input.map((item) => normalize(item))
-      seen.delete(input)
-      return result
     }
 
-    if (typeof input === 'object') {
-      const objectInput = input as Record<string, unknown>
+    if (Array.isArray(objectInput)) {
       if (seen.has(objectInput)) {
         throw new TypeError('Cannot stringify circular structures in signal arguments')
       }
-
       seen.add(objectInput)
-      const entries = Object.entries(objectInput)
-        .filter(([, value]) => typeof value !== 'undefined' && typeof value !== 'function' && typeof value !== 'symbol')
-        .sort(([left], [right]) => {
-          if (left < right) return -1
-          if (left > right) return 1
-          return 0
-        })
-
-      const normalized: Record<string, unknown> = {}
-      for (const [key, rawValue] of entries) {
-        const formatted = normalize(rawValue)
-        if (typeof formatted !== 'undefined') {
-          normalized[key] = formatted
-        }
-      }
-
+      const result = objectInput.map((item) => normalize(item))
       seen.delete(objectInput)
-      return normalized
+      return result
     }
 
-    return input
+    if (seen.has(objectInput)) {
+      throw new TypeError('Cannot stringify circular structures in signal arguments')
+    }
+
+    seen.add(objectInput)
+    const entries = Object.entries(objectInput)
+      .filter(([, value]) => typeof value !== 'undefined' && typeof value !== 'function' && typeof value !== 'symbol')
+      .sort(([left], [right]) => {
+        if (left < right) return -1
+        if (left > right) return 1
+        return 0
+      })
+
+    const normalized: Record<string, unknown> = {}
+    for (const [key, rawValue] of entries) {
+      const formatted = normalize(rawValue)
+      if (typeof formatted !== 'undefined') {
+        normalized[key] = formatted
+      }
+    }
+
+    seen.delete(objectInput)
+    return normalized
   }
 
   return JSON.stringify(normalize(value))

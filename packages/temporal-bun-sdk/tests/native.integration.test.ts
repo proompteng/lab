@@ -3,6 +3,7 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { importNativeBridge } from './helpers/native-bridge'
 import { isTemporalServerAvailable, parseTemporalAddress } from './helpers/temporal-server'
+import { withRetry, waitForWorkerReady } from './helpers/retry'
 
 const { module: nativeBridge } = await importNativeBridge()
 
@@ -49,10 +50,6 @@ if (!nativeBridge) {
             TEMPORAL_TASK_QUEUE: taskQueue,
           },
         })
-
-        if (!workerProcess.stdout) {
-          throw new Error('Failed to capture worker stdout')
-        }
 
         await waitForWorkerReady(workerProcess)
       } catch (_error) {
@@ -299,53 +296,4 @@ if (!nativeBridge) {
       }
     })
   })
-}
-
-async function withRetry<T>(fn: () => Promise<T>, attempts: number, waitMs: number): Promise<T> {
-  let lastError: unknown
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      return await fn()
-    } catch (error) {
-      lastError = error
-      if (attempt === attempts) {
-        break
-      }
-      await Bun.sleep(waitMs)
-    }
-  }
-  throw lastError
-}
-
-async function waitForWorkerReady(workerProcess: ReturnType<typeof Bun.spawn>) {
-  if (!workerProcess.stdout) {
-    throw new Error('Worker stdout not available')
-  }
-
-  const reader = workerProcess.stdout.getReader()
-  const decoder = new TextDecoder()
-
-  const timeout = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error('Worker readiness timeout after 3s')), 3000)
-  })
-
-  try {
-    await Promise.race([
-      (async () => {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done || !value) {
-            throw new Error('Worker exited before signaling readiness')
-          }
-          const text = decoder.decode(value)
-          if (text.includes('Worker ready')) {
-            break
-          }
-        }
-      })(),
-      timeout,
-    ])
-  } finally {
-    reader.releaseLock()
-  }
 }

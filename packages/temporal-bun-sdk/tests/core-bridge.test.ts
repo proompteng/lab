@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { Client, __TEST__ as clientTest, createClient, normalizeTemporalAddress } from '../src/core-bridge/client.ts'
 import { createRuntime, __TEST__ as runtimeTest } from '../src/core-bridge/runtime.ts'
 import { importNativeBridge } from './helpers/native-bridge'
+import { withRetry } from './helpers/retry'
 
 const { module: nativeBridge } = await importNativeBridge()
 
@@ -220,20 +221,4 @@ if (!nativeBridge) {
       await expect(client.describeNamespace('default')).rejects.toThrowError('Client has already been shut down')
     })
   })
-}
-
-async function withRetry<T>(fn: () => Promise<T>, attempts: number, waitMs: number): Promise<T> {
-  let lastError: unknown
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      return await fn()
-    } catch (error) {
-      lastError = error
-      if (attempt === attempts) {
-        break
-      }
-      await Bun.sleep(waitMs)
-    }
-  }
-  throw lastError
 }

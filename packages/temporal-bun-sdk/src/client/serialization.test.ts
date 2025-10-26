@@ -107,6 +107,20 @@ describe('computeSignalRequestId', () => {
 
     expect(first).not.toBe(second)
   })
+
+  test('respects toJSON implementations when hashing arguments', () => {
+    const base = {
+      namespace: 'default',
+      workflowId: 'wf-id',
+      signalName: 'signalName',
+      args: [],
+    }
+
+    const first = computeSignalRequestId({ ...base, args: [new Date('2024-01-01T00:00:00.000Z')] })
+    const second = computeSignalRequestId({ ...base, args: [new Date('2025-01-01T00:00:00.000Z')] })
+
+    expect(first).not.toBe(second)
+  })
 })
 
 describe('buildSignalWithStartRequest', () => {
