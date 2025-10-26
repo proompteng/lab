@@ -6,8 +6,8 @@ import {
   buildSignalWithStartRequest,
   buildStartWorkflowRequest,
   buildTerminateRequest,
-  createSignalRequestEntropy,
   computeSignalRequestId,
+  createSignalRequestEntropy,
 } from './client/serialization'
 import {
   createWorkflowHandle,
