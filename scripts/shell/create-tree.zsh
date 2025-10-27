@@ -15,10 +15,19 @@ create_tree() {
     return 1
   fi
 
-  local current_dir parent_dir target_path
-  current_dir=$(pwd)
-  parent_dir=$(dirname "$current_dir")
-  target_path="$parent_dir/$branch"
+  local repo_root worktrees_dir target_path
+  repo_root=$(git rev-parse --show-toplevel) || {
+    echo "create_tree: failed to resolve repository root" >&2
+    return 1
+  }
+  worktrees_dir="$repo_root/.worktrees"
+
+  if ! mkdir -p "$worktrees_dir"; then
+    echo "create_tree: failed to ensure $worktrees_dir exists" >&2
+    return 1
+  fi
+
+  target_path="$worktrees_dir/$branch"
 
   if [ -e "$target_path" ]; then
     echo "create_tree: target path already exists at $target_path" >&2
