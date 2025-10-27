@@ -9,8 +9,8 @@ The items below slice the Zig bridge effort into PR-sized TODOs. Every ID maps b
 | ID | Description | Entry point | Acceptance |
 |----|-------------|-------------|------------|
 | zig-core-01 | Generate Temporal core headers via `cbindgen` and plumb them through `src/core.zig`. | `src/core.zig` | Headers vendored + imported; stubs removed. |
-| zig-rt-01 | Replace runtime stub with calls to `temporal_sdk_core_runtime_new`. | `src/runtime.zig` | Runtime handle stores opaque pointer; error propagation verified. |
-| zig-rt-02 | Release runtime through the C-ABI destructor and clear allocations. | `src/runtime.zig` | Drop routine calls C core + passes tests. |
+| zig-rt-01 | Replace runtime stub with calls to `temporal_sdk_core_runtime_new`. | `src/runtime.zig` | ✅ Runtime handle stores opaque pointer; error propagation verified. |
+| zig-rt-02 | Release runtime through the C-ABI destructor and clear allocations. | `src/runtime.zig` | ✅ Drop routine calls C core + passes tests. |
 | zig-rt-03 | Bridge telemetry updates via Temporal core C-ABI. | `src/runtime.zig`, `src/lib.zig` | `runtime.updateTelemetry` surfaces exporter wiring. |
 | zig-rt-04 | Forward core logs into Bun via callback registration. | `src/runtime.zig`, `src/lib.zig` | Bun callback receives log events during tests. |
 
@@ -18,19 +18,19 @@ The items below slice the Zig bridge effort into PR-sized TODOs. Every ID maps b
 
 | ID | Description | Entry point | Acceptance |
 |----|-------------|-------------|------------|
-| zig-cl-01 | Implement async client connect backed by Temporal core + pending handles. | `src/client.zig`, `src/pending.zig` | `connectAsync` returns pending handle consumed by TS tests. |
-| zig-cl-02 | Wire namespace describe RPC to Temporal core and return byte arrays. | `src/client.zig` | Fixture test decodes namespace info. |
+| zig-cl-01 | Implement async client connect backed by Temporal core + pending handles. | `src/client.zig`, `src/pending.zig` | ✅ `connectAsync` returns pending handle consumed by TS tests. |
+| zig-cl-02 | Wire namespace describe RPC to Temporal core and return byte arrays. | `src/client.zig` | ✅ Fixture test decodes namespace info. |
 | zig-cl-03 | Pass header update requests through to Temporal core metadata APIs. | `src/client.zig` | Unit test confirms headers applied. |
 
 ### Workflow RPCs
 
 | ID | Description | Entry point | Acceptance |
 |----|-------------|-------------|------------|
-| zig-wf-01 | Marshal workflow start payloads and return run handles. | `src/client.zig` | Start smoke test passes via Zig bridge. |
-| zig-wf-02 | Implement signal-with-start using shared marshalling path. | `src/client.zig` | Integration test covers signal and start success. |
+| zig-wf-01 | Marshal workflow start payloads and return run handles. | `src/client.zig` | ✅ Start smoke test passes via Zig bridge. |
+| zig-wf-02 | Implement signal-with-start using shared marshalling path. | `src/client.zig` | ✅ Integration test covers signal and start success. |
 | zig-wf-03 | Add terminate workflow RPC bridging. | `src/client.zig` | ✅ Bun/Zig tests cover terminate success and error paths. |
-| zig-wf-04 | Implement workflow query RPC using pending byte arrays. | `src/client.zig` | Query integration test succeeds (native returns raw proto; TS decodes JSON payloads). |
-| zig-wf-05 | Implement workflow signal FFI returning pending handle. | `src/client.zig`, `src/lib.zig` | Signal integration test passes via Zig bridge. |
+| zig-wf-04 | Implement workflow query RPC using pending byte arrays. | `src/client.zig` | ✅ Query integration test succeeds (native returns raw proto; TS decodes JSON payloads). |
+| zig-wf-05 | Implement workflow signal FFI returning pending handle. | `src/client.zig`, `src/lib.zig` | ✅ Signal integration test passes via Zig bridge. |
 | zig-wf-06 | Wire workflow cancel RPC returning pending handle. | `src/client.zig`, `src/lib.zig` | Cancel scenario passes via Zig bridge. |
 
 ### Byte Array & Pending Handles

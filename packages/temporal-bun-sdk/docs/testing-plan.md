@@ -1,133 +1,105 @@
 # Testing & Validation Plan
 
-**Goal:** Guarantee the Bun-native Temporal SDK behaves like the upstream Node SDK across unit, integration, and regression tests.
+**Status Snapshot (27 Oct 2025)**  
+- ✅ Bun unit tests cover client serialization (`tests/client.test.ts`), CLI commands, config parsing, and native bridge error propagation (`tests/core-bridge.test.ts`, `tests/native.test.ts`).  
+- ✅ Integration tests (`tests/native.integration.test.ts`, `tests/zig-signal.test.ts`, `tests/end-to-end-workflow.test.ts`) exercise the Zig bridge against the Temporal CLI dev server when `TEMPORAL_TEST_SERVER=1`.  
+- ⚠️ Worker-focused suites (`tests/worker/**`, `tests/zig-worker-completion.test.ts`) rely on stubs; no end-to-end worker coverage exists yet.  
+- ❌ Replay/determinism harness, payload codec tests, and telemetry validation are not implemented.  
+- ❌ CI orchestration for Zig tests (macOS/Linux matrix) is still manual; contributors run commands locally.
+
+This plan documents the current pyramid and the steps required to reach production readiness.
 
 ---
 
-## 1. Test Pyramid
+## 1. Test Pyramid Overview
 
-| Layer | Purpose | Tools |
-|-------|---------|-------|
-| Unit (Bun test) | Validate FFI bindings, serialization, workflow runtime helpers | `bun test`, dependency injection |
-| Integration (Temporal CLI) | Exercise real Temporal server with Bun worker/client | `temporal server start-dev`, `bun test` integration suites |
-| Replay/Determinism | Ensure workflow histories replay identically | Custom replay harness |
-| Smoke (CLI) | Validate scaffolding CLI and example project | `bun run`, `temporal-bun init` scenarios |
-
-```mermaid
-flowchart BT
-  Unit["Unit Tests<br/>FFI, worker, workflow, codecs"]
-  Integration["Integration Tests<br/>Docker Temporal stack suite"]
-  Smoke["Smoke Tests<br/>CLI scaffolding"]
-
-  Smoke --> Integration --> Unit
-```
+| Layer | Purpose | Current Coverage | Gaps |
+|-------|---------|------------------|------|
+| Unit (Bun) | Validate serialization, config, CLI flows, native bridge shims | `client.test.ts`, `config.test.ts`, `cli.test.ts`, `core-bridge.test.ts`, `native.test.ts` | No worker/runtime unit tests, no payload codec coverage |
+| Integration (Temporal CLI) | Exercise real Temporal server with Bun client | `native.integration.test.ts`, `end-to-end-workflow.test.ts`, `zig-signal.test.ts` | Worker/task loop integration pending, cancellation/update headers blocked by Zig stubs |
+| Zig tests (`zig build test`) | Validate pending-handle state machines, worker scaffolding | Enabled in `package.json` (`test:native:zig`) | Need broader coverage once worker/client features land |
+| Smoke / CLI | Ensure scaffolding commands succeed | `cli.test.ts`, `cli-check.test.ts` | Future: `temporal-bun init` end-to-end run after worker rewrite |
+| Replay | Guarantee deterministic workflow execution | N/A | Requires Bun workflow runtime implementation |
 
 ---
 
-## 2. Unit Test Suites
+## 2. Commands & Environment
 
-1. **FFI Bindings**
-   - Mock native library (using Bun FFI ability to inject).
-   - Ensure null pointer handling, error propagation.
-   - Tests: `native-runtime.test.ts`, `native-client.test.ts`, `native-worker.test.ts`.
+| Scenario | Command |
+|----------|--------|
+| Unit suites | `bun test` |
+| Filtered client tests | `bun test tests/client.test.ts` |
+| Zig integration (requires Temporal CLI dev server) | `TEMPORAL_TEST_SERVER=1 bun test tests/native.integration.test.ts` |
+| Signal integration | `TEMPORAL_TEST_SERVER=1 bun test tests/zig-signal.test.ts` |
+| Zig native tests | `pnpm --filter @proompteng/temporal-bun-sdk run test:native:zig` |
+| Temporal CLI lifecycle | `pnpm --filter @proompteng/temporal-bun-sdk run temporal:start` / `temporal:stop` |
 
-2. **Payload Codec**
-   - Round-trip serialization, failure conversion.
-   - Edge cases: big payloads, undefined/null, binary data.
-
-3. **Workflow Runtime**
-   - Activation application, timer scheduling, patch markers, signals.
-   - Deterministic random/time shims.
-
-4. **Worker Task Loops**
-   - Poll restart after transient error.
-   - Shutdown handshake.
-   - Activity timeout enforcement.
+> **Dev server setup:** install the Temporal CLI (`brew install temporal` or direct download), then run the `temporal:start` script before executing integration suites.
 
 ---
 
-## 3. Integration Tests
+## 3. Existing Suites
 
-### Setup
-- Install the [Temporal CLI](https://github.com/temporalio/cli).
-- Start the embedded dev server via the helper script:
-  ```bash
-  pnpm --filter @proompteng/temporal-bun-sdk run temporal:start
-  ```
-- In another terminal, execute the Bun integration tests:
-  ```bash
-  cd packages/temporal-bun-sdk
-  TEMPORAL_TEST_SERVER=1 bun test tests/native.integration.test.ts
-  ```
-- Stop the CLI server with `pnpm --filter @proompteng/temporal-bun-sdk run temporal:stop` when finished.
+### Bun Unit Tests
+- `tests/client.test.ts` — serialization helpers (`buildStartWorkflowRequest`, `computeSignalRequestId`, `signalWithStart` defaults).  
+- `tests/client/serialization.test.ts` ( colocated in `src/client`) — deterministic hashing & payload building.  
+- `tests/config.test.ts` — environment parsing and TLS file loading.  
+- `tests/core-bridge.test.ts` — native bridge error handling, library discovery fallbacks.  
+- `tests/native.test.ts` — sanity checks around `NativeBridgeError` and stubbed exports.  
+- `tests/cli.test.ts` / `tests/cli-check.test.ts` — CLI argument parsing and connectivity checks.  
+- `tests/github-workflow-validation.test.ts` — ensures GitHub workflows reference existing scripts.
 
-> CI uses the same helper scripts to run `TEMPORAL_TEST_SERVER=1 bun test ...` against a CLI-backed server.
+### Integration
+- `tests/native.integration.test.ts` — start/query workflow using Zig bridge.  
+- `tests/end-to-end-workflow.test.ts` — runs sample workflow using Node worker fallback.  
+- `tests/zig-signal.test.ts` — validates signal path when Zig bridge is active.  
+- `tests/download-client.integration.test.ts` — ensures bundled Temporal libs download correctly.
 
-### Lane Ownership
-
-The [`parallel-implementation-plan`](./parallel-implementation-plan.md) document maps each Zig module to a lane. When running
-lane-specific work, use the following targeted commands in addition to the global suites:
-
-| Lane | Command |
-|------|---------|
-| 1 | `bun test tests/client.test.ts` and `bun test tests/native.integration.test.ts` |
-| 2 | `bun test tests/native.integration.test.ts --filter describeNamespace` |
-| 3 | `bun test tests/zig-signal.test.ts` |
-| 6 & 7 | `bun test tests/worker` |
-| 9 | `pnpm --filter @proompteng/temporal-bun-sdk run ci:native:zig` |
-
-Document any additional lane-specific commands inside the plan as new modules are carved out.
-
-### Test Cases
-1. **Happy path workflow**
-   - Start `helloTemporal`, ensure activity runs, verify result.
-2. **Signal & Query**
-   - Signal workflow mid-flight, query result.
-3. **Failures**
-   - Activity failure -> workflow retry -> success.
-   - Workflow throwing error -> verify failure payload.
-4. **Heartbeats**
-   - Long-running activity heartbeats then completes.
-5. **Continue-as-new**
-   - Workflow loops via continue-as-new; ensure history trimmed.
-6. **Shutdown**
-   - Send SIGTERM to worker container, ensure graceful exit recorded.
-
-Integration suite should run in CI pipeline (GitHub Actions) on macOS + Linux.
+### Zig (`zig build test`)
+- Covers JSON parsing helpers, pending handle transitions, and worker stubs in `bruke/src`. Expand as new Zig modules ship.
 
 ---
 
-## 4. Replay Harness
+## 4. Planned Additions
 
-- Capture history from running workflow (via Temporal client).
-- Feed into workflow runtime offline, ensure command sequence matches.
-- Useful for regression tests and to guard determinism before publishing.
+| Area | Description | Owner / Lane |
+|------|-------------|--------------|
+| Cancellation integration | Add Bun + Zig tests once `temporal_bun_client_cancel_workflow` is implemented. | Lane 5 |
+| Header updates | Test metadata mutation end-to-end post-implementation. | Lane 5 |
+| Worker polling loops | Create suites under `tests/worker/**` once Bun-native worker is functional (`TEMPORAL_BUN_SDK_USE_ZIG=1`). | Lane 7 |
+| Workflow runtime | Determinism/replay harness after workflow sandbox lands. | Lane 3 |
+| Telemetry/logging | Integration tests for runtime telemetry hooks. | Lane 6 |
+| Payload codecs | Unit + integration coverage for new data converter module. | Lane 10 (docs & DX) |
+| CI automation | GitHub Actions workflow running Bun + Zig tests on macOS and Linux; cache Temporal CLI binaries. | Lane 8 |
 
----
-
-## 5. CLI / Scaffolding Tests
-
-- Existing `cli.test.ts` ensures template generation does not overlap.
-- Add E2E test: run `temporal-bun init` in temp dir, run `bun install --production` (with local workspace), ensure scripts exist.
-- Optionally run `bun run dev` for short duration (spawn worker, ensure no crashes).
-
----
-
-## 6. CI Recommendations
-
-- **Job 1:** Lint + typecheck (Biome, `bunx tsc` without emit).
-- **Job 2:** Build native bridge (macOS + Linux).
-- **Job 3:** Run unit tests (`bun test`).
-- **Job 4:** Run integration tests (docker-compose) — mark as optional / nightly if heavy.
-- Publish coverage to help track progress (use `c8` with Bun once available).
+Document outcomes in `docs/parallel-implementation-plan.md` as each lane completes its tasks.
 
 ---
 
-## 7. Manual QA Checklist (pre-release)
+## 5. CI Recommendations
 
-1. Scaffold new project via CLI, run worker locally.
-2. Build Docker image (`bun run docker:build`), run worker inside container.
-3. Connect to Temporal Cloud with TLS/API key, run smoke workflow.
-4. Validate telemetry emitted to Prometheus endpoint if feature implemented.
+1. **Lint & Typecheck** — `pnpm --filter @proompteng/temporal-bun-sdk run build` (tsc) and Biome linting.  
+2. **Unit Tests** — `bun test` on macOS + Linux.  
+3. **Zig Tests** — `pnpm --filter @proompteng/temporal-bun-sdk run test:native:zig`.  
+4. **Integration (optional / nightly)** — spin up Temporal CLI server and run `TEMPORAL_TEST_SERVER=1 bun test tests/native.integration.test.ts tests/zig-signal.test.ts`.  
+5. **Publish artifacts** — when releasing, run `pnpm --filter @proompteng/temporal-bun-sdk run prepack` to ensure TypeScript build + Zig artefacts bundle correctly.
 
-Keep this plan evolving as the SDK matures; update the table whenever new subsystems (e.g., Nexus, search attributes) arrive.
+---
+
+## 6. Manual QA Checklist
+
+1. Run `temporal-bun init` in a clean directory, install dependencies with Bun, start worker via `bun run dev`.  
+2. Use `temporal-bun check` against Temporal CLI dev server and (optionally) Temporal Cloud with TLS/API key.  
+3. Execute `bun test` followed by integration suites with `TEMPORAL_TEST_SERVER=1`.  
+4. Validate the Zig bridge by setting `TEMPORAL_BUN_SDK_USE_ZIG=1` and re-running client workflow tests (expect worker-related failures until native worker lands).  
+5. Inspect `nativeLibraryPath` output from `src/internal/core-bridge/native.ts` when debugging loading issues.
+
+---
+
+## 7. References
+
+- Source tree: `tests/**`, `bruke/src/**`, `package.json` scripts.  
+- Design docs: `docs/ffi-surface.md`, `docs/parallel-implementation-plan.md`, `docs/worker-runtime.md`.  
+- Temporal CLI: [GitHub repo](https://github.com/temporalio/cli).
+
+Keep this plan updated as new suites land so contributors know which commands to run and which scenarios still lack coverage.

@@ -1,126 +1,136 @@
-# Client Runtime Rewrite Guide
+# Client Runtime Implementation Guide
 
-**Objective:** Implement a Bun-native Temporal client that communicates via the new FFI bridge and exposes parity with the Node SDK’s `WorkflowClient`. The target behaviour should match the capabilities documented in the Temporal TypeScript client guide and API reference.<br>
-[Temporal client concepts](https://docs.temporal.io/develop/typescript/temporal-client) · [WorkflowClient API](https://typescript.temporal.io/api/classes/client.WorkflowClient)
+**Status Snapshot (27 Oct 2025)**  
+- ✅ `createTemporalClient` loads the Zig bridge (`native.createRuntime` / `native.createClient`) and exposes workflow helpers `start`, `signal`, `query`, `signalWithStart`, `terminate`, plus `describeNamespace` and `shutdown`.  
+- ✅ Request payloads are assembled in `src/client/serialization.ts` and validated with Zod schemas before crossing the FFI boundary.  
+- ⚠️ `cancelWorkflow` and `updateHeaders` surface `NativeBridgeError` because the Zig bridge still reports `grpc.unimplemented`; callers receive runtime exceptions at invocation time.  
+- ⚠️ Runtime telemetry/logger passthroughs exist in TypeScript but throw until the Zig bridge exports are completed.  
+- ✅ CLI consumers can pass TLS/API key metadata through `loadTemporalConfig`; base64 encoding happens automatically before FFI calls.  
+
+Keep this document aligned with the current source so new work can focus on the remaining gaps rather than rediscovering the existing surface.
 
 ---
 
-## 1. Public API Target
+## 1. Public Surface
 
-`createTemporalClient` should return:
+`src/client.ts` exports the Bun-native client. The interface mirrors the upstream Temporal TypeScript SDK where features are implemented today:
 
 ```ts
-interface TemporalClient {
-  workflow: {
-    start(request: StartOptions): Promise<StartWorkflowResult>
-    signal(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void>
-    query(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown>
-    terminate(handle: WorkflowHandle, options?: TerminateOptions): Promise<void>
-  }
-  connection: { close(): Promise<void> }
-  namespace: string
+export interface TemporalWorkflowClient {
+  start(options: StartWorkflowOptions): Promise<StartWorkflowResult>
+  signal(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void>
+  query(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown>
+  terminate(handle: WorkflowHandle, options?: TerminateWorkflowOptions): Promise<void>
+  cancel(handle: WorkflowHandle): Promise<void>              // throws until Zig cancel RPC lands
+  signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult>
+}
+
+export interface TemporalClient {
+  readonly namespace: string
+  readonly config: TemporalConfig
+  readonly workflow: TemporalWorkflowClient
+  startWorkflow(options: StartWorkflowOptions): Promise<StartWorkflowResult>
+  signalWorkflow(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void>
+  queryWorkflow(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown>
+  terminateWorkflow(handle: WorkflowHandle, options?: TerminateWorkflowOptions): Promise<void>
+  cancelWorkflow(handle: WorkflowHandle): Promise<void>      // throws (bridge TODO)
+  signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult>
+  describeNamespace(namespace?: string): Promise<Uint8Array>
+  updateHeaders(headers: Record<string, string>): Promise<void> // throws (bridge TODO)
+  shutdown(): Promise<void>
 }
 ```
 
-Workflows handles must track:
+The `workflow` helper simply delegates to the instance methods so higher layers can keep using familiar ergonomics (`client.workflow.start`, etc.).
+
+---
+
+## 2. Runtime & Native Handles
+
+- `createTemporalClient` constructs a Zig runtime (`native.createRuntime(options.runtimeOptions ?? {})`) and retains the handle until `shutdown()` is called.  
+- Every FFI call funnels through `src/internal/core-bridge/native.ts`, which loads `libtemporal_bun_bridge_zig` from either `dist/native/**` or `bruke/zig-out/lib/**`.  
+- `FinalizationRegistry` guards both runtime and client handles to avoid leaking native resources if callers forget to call `shutdown()`. Tests cover that GC shutdown is a best effort only (errors are ignored during finalization).
+- When `config.allowInsecureTls` is true, the code sets `NODE_TLS_REJECT_UNAUTHORIZED = '0'` before connecting so Bun’s HTTPS layer accepts self-signed Temporal endpoints.
+
+---
+
+## 3. Configuration Flow
+
+`loadTemporalConfig` (in `src/config.ts`) already:
+
+- Derives address/host/port/namespace/task queue from environment variables with sane defaults (host `127.0.0.1`, namespace `default`, task queue `prix`).  
+- Reads TLS certificates/keys from disk and returns base64-ready buffers.  
+- Generates a worker identity of the form `${prefix}-${hostname}-${pid}`.
+
+`createTemporalClient` augments this with caller overrides (`options.namespace`, `identity`, `taskQueue`) and prepares the native payload:
 
 ```ts
-interface StartWorkflowResult {
-  workflowId: string
-  runId: string
-  namespace: string
-  firstExecutionRunId?: string
-  handle: WorkflowHandle
-}
-
-interface WorkflowHandle {
-  workflowId: string
-  runId?: string
-  firstExecutionRunId?: string
-  namespace: string
+const nativeConfig = {
+  address: formatTemporalAddress(config.address, Boolean(config.tls)),
+  namespace,
+  identity,
+  apiKey: config.apiKey,
+  tls: serializeTlsConfig(config.tls),    // returns base64 strings
+  allowInsecure: config.allowInsecureTls,
 }
 ```
 
----
-
-## 2. Configuration Handling
-
-```mermaid
-sequenceDiagram
-  participant App as Application
-  participant Config as loadTemporalConfig
-  participant Client as createTemporalClient
-  participant FFI as CoreBridge Client
-  participant Core as Temporal Core
-
-  App->>Config: read env/TLS/api key
-  Config-->>App: TemporalConfig
-  App->>Client: createTemporalClient(config)
-  Client->>FFI: createClient(runtime_ptr, config_json)
-  FFI->>Core: connect (TLS, API key)
-  Core-->>FFI: client_handle
-  FFI-->>Client: client_handle
-  Client-->>App: { workflow: { start, signal, query... } }
-```
-
-`loadTemporalConfig` already provides host, port, TLS, API key, namespace. Extend to surface:
-
-- gRPC metadata overrides
-- identity, client name/version
-- retry settings
-
-Feed these into `core-bridge` client creation request so mTLS and metadata settings propagate correctly when connecting to Temporal Cloud.<br>
-[Temporal Cloud authentication](https://docs.temporal.io/best-practices/security-controls) · [Client certificate requirements](https://docs.temporal.io/cloud/certificates)
+The same helper is used by the CLI `temporal-bun check` command so docs stay consistent.
 
 ---
 
-## 3. Request Serialization
+## 4. Request Serialization
 
-Create helper module `src/client/serialization.ts`:
+`src/client/serialization.ts` centralises JSON payload building. Important helpers:
 
-- `buildStartWorkflowRequest(options, payloadCodec)` -> `Buffer`
-- `buildSignalRequest(handle, signal, args)`
-- `buildQueryRequest(handle, query, args)`
-- `buildTerminateRequest(handle, reason, details)`
+- `buildStartWorkflowRequest` applies defaults for namespace/identity/task queue, coercing optional fields into snake_case keys expected by the Zig bridge.  
+- `buildSignalRequest` and `buildQueryRequest` ensure workflow handles include a namespace, clone argument arrays, and attach request IDs (`computeSignalRequestId`) for idempotency.  
+- `buildTerminateRequest` merges handle defaults with explicit overrides.  
+- `buildSignalWithStartRequest` composes start + signal payloads.  
+- `buildCancelRequest` is currently a stub that throws; the TypeScript layer catches this before the Zig bridge is invoked.
 
-Encoding steps:
-
-1. Convert JS args into Temporal payloads (use `payloads-codec`).
-2. Pack envelope structure described in `ffi-surface.md`.
-3. Serialize to JSON, then `Buffer.from(..., 'utf8')`.
-4. Pass pointer/length to FFI.
-
-Responses should be decoded accordingly.
+All helpers rely on Zod schemas in `src/client.ts` to validate inputs. Any failure results in a synchronous `ZodError`, mirroring the upstream SDK’s behaviour.
 
 ---
 
-## 4. Retry & Error Semantics
+## 5. Error Propagation
 
-- Map FFI error strings to rich errors with `.cause`, `.code`, `.status` (gRPC status if present) so retry logic can distinguish gRPC codes.
-- Implement retryable metadata so callers can decide to retry manual commands (align with upstream `WorkflowClient` semantics).
-- Provide optional exponential backoff helper for `start` and `signal` operations (mirroring upstream client helpers documented in the TypeScript SDK tutorials).<br>
-[Getting started tutorial](https://learn.temporal.io/getting_started/typescript/first_program_in_typescript/)
-
----
-
-## 5. Testing
-
-Refer to `testing-plan.md`:
-
-- Unit: stub FFI to return deterministic buffers, assert payload encodings.
-- Integration: run local Temporal, execute `helloTemporal` workflow via client, query/signal/terminate. Use the Temporal CLI tutorial as a baseline.<br>
-  [Temporal CLI workflow start](https://learn.temporal.io/tutorials/typescript/background-check/project-setup/)
-- TLS scenario: use self-signed certs to ensure config passes through for Temporal Cloud connections.<br>
-[Temporal Cloud TLS setup](https://docs.temporal.io/cloud/certificates)
+- `NativeBridgeError` (defined in `src/internal/core-bridge/native.ts`) wraps gRPC status codes emitted by the Zig bridge.  
+- `native.*` helpers convert JSON payloads or status codes into `NativeBridgeError` when the Zig layer reports failures (`temporal_bun_error_message`).  
+- `signalWorkflow` and `queryWorkflow` await pending handles; `cancelWorkflow`/`updateHeaders` still reject because their Zig exports return `UNIMPLEMENTED`.  
+- Callers must invoke `client.shutdown()` to release native resources. The method is idempotent and safe to call multiple times.
 
 ---
 
-## 6. Completion Checklist
+## 6. Testing Coverage
 
-- [ ] `src/client.ts` removes `@temporalio/client` import.
-- [ ] `src/client/index.ts` no longer re-exports vendor package.
-- [ ] CLI example uses new client for manual testing.
-- [ ] README updated with limitations (if any).
-- [ ] Added regression tests for starvation, start-idempotency, and signal-with-start.
+| Suite | Purpose |
+|-------|---------|
+| `tests/client.test.ts` | Validates serialization helpers (`buildStartWorkflowRequest`, `computeSignalRequestId`, signal-with-start defaults). |
+| `tests/zig-signal.test.ts` | End-to-end signal flow (guarded by `TEMPORAL_TEST_SERVER=1` and Zig bridge availability). |
+| `tests/native.integration.test.ts` | Starts workflows via the Zig bridge against the Temporal CLI dev server. |
+| `tests/native.test.ts` | Exercises selected native wrapper utilities with stubbed bridges. |
 
-Once complete, remove any residual dependencies on the upstream client package from `package.json`.
+When adding features that touch new RPCs, extend these suites or create targeted tests to ensure regressions are caught.
+
+---
+
+## 7. Outstanding Work
+
+1. **Cancellation path** — finish `buildCancelRequest`, wire `native.cancelWorkflow` into the Zig bridge once `temporal_bun_client_cancel_workflow` is implemented, and add integration coverage.  
+2. **Metadata updates** — implement `temporal_bun_client_update_headers` so long-lived clients can mutate headers without reconnecting.  
+3. **Telemetry & logging** — hook `Runtime.configureTelemetry` and `Runtime.installLogger` once the Zig exports land (`temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger`).  
+4. **Data converters** — today we forward raw JSON arguments. When custom payload codecs ship (see `payloads-codec.md`), update serialization to encode Temporal payloads instead of plain JSON arrays.
+
+Track these items in `docs/parallel-implementation-plan.md` (lanes 1, 4, and 5) so they remain visible during planning.
+
+---
+
+## 8. References
+
+- `src/client.ts`, `src/client/serialization.ts`, `src/client/types.ts`  
+- `src/internal/core-bridge/native.ts`  
+- `docs/ffi-surface.md` for the current Zig export matrix  
+- `tests/native.integration.test.ts`, `tests/zig-signal.test.ts`
+
+Update this guide whenever the client surface or dependencies change to keep future contributors aligned with reality.

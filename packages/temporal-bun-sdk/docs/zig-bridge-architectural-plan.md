@@ -2,7 +2,7 @@
 
 **Published:** 20 Oct 2025  
 **Authors:** Platform Runtime (Temporal Bun)  
-**Status:** Draft — guides implementation toward the npm GA release of the Bun-native Temporal SDK.
+**Status:** Draft — guides implementation toward the npm GA release of the Bun-native Temporal SDK. Current progress (27 Oct 2025): client RPCs (start/query/signal/terminate) are live via the Zig bridge; cancellation, metadata updates, telemetry, and worker parity remain open.
 
 ---
 

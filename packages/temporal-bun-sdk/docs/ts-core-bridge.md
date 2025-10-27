@@ -1,139 +1,128 @@
-# TS Core Bridge Implementation Guide
+# TypeScript Core Bridge Guide
 
-**Audience:** Codex engineers extending the Bun-native Temporal SDK  
-**Prereqs:** `ffi-surface.md` should already be in flight; native exports must exist before these steps.  
-**Objective:** Replace the re-export of `@temporalio/core-bridge` with a Bun-specific implementation that speaks to the new FFI surface and preserves the guarantees documented in the Temporal TypeScript SDK references.<br>
-[Temporal TypeScript SDK docs](https://docs.temporal.io/develop/typescript) · [Core bridge source](https://github.com/temporalio/sdk-typescript/tree/main/packages/core)
+**Status Snapshot (27 Oct 2025)**  
+- ✅ `src/internal/core-bridge/native.ts` dynamically loads `libtemporal_bun_bridge_zig` via `bun:ffi` and exposes strongly typed helpers for runtime/client/worker handles.  
+- ✅ `src/core-bridge/runtime.ts` and `src/core-bridge/client.ts` wrap the native handles with ergonomic classes, including `FinalizationRegistry` cleanup and TLS serialization.  
+- ⚠️ `src/core-bridge/index.ts` exports the native helpers plus the runtime/client wrappers, but the worker export still re-exports `@temporalio/worker` until the Bun-native worker ships.  
+- ⚠️ Telemetry configuration and logger installation throw `NativeBridgeError` because the Zig bridge reports `UNIMPLEMENTED`.  
+- ⚠️ Header updates and workflow cancellation surface runtime errors (`NativeBridgeError` code `grpc.unimplemented`) since the Zig bridge does not yet support these RPCs.  
+
+Use this guide to understand the current layering and what remains before we can drop the remaining upstream dependencies.
 
 ---
 
-## 1. File Layout
+## 1. Current File Layout
 
 ```
 src/
   core-bridge/
-    index.ts              // Public surface
-    runtime.ts            // Runtime helpers
-    client.ts             // Client commands
-    worker.ts             // Worker driver
-    errors.ts             // Bridge error types (mirrors upstream)
+    index.ts              // Barrel exports
+    runtime.ts            // Runtime wrapper (Bun-native)
+    client.ts             // Client wrapper (Bun-native)
+    runtime.test.ts       // Tests (to be added)
   internal/core-bridge/
-    native.ts             // FFI wiring (already present)
+    native.ts             // bun:ffi bindings + helper utilities
 ```
 
-### Architecture Diagram
-
-```mermaid
-flowchart LR
-  subgraph TS["TypeScript Layer"]
-    RuntimeImpl -->|wraps| NativeRuntime
-    ClientImpl -->|uses| NativeClient
-    WorkerImpl -->|uses| NativeWorker
-    WorkerImpl --> WorkflowRuntime
-  end
-
-  subgraph FFI["FFI Bridge"]
-    NativeRuntime["runtime_ptr"]
-    NativeClient["client_ptr"]
-    NativeWorker["worker_ptr"]
-  end
-
-  subgraph Core["Temporal Core (Rust)"]
-    CoreRuntime
-    CoreClient
-    CoreWorker
-  end
-
-  NativeRuntime --> CoreRuntime
-  NativeClient --> CoreClient
-  NativeWorker --> CoreWorker
-```
+- `index.ts` re-exports `native` (raw FFI), `runtime`, and `client`. `worker` is intentionally absent until implemented.  
+- Higher-level code imports `coreBridge.native` when it needs raw FFI access (e.g. `src/client.ts`). For most consumers, the wrapped classes are preferred.
 
 ---
 
-## 2. Public API Shape
+## 2. Native Layer (`internal/core-bridge/native.ts`)
 
-Match the upstream Core SDK interface so existing higher-level code remains compatible:
+Key responsibilities:
+
+1. **Library discovery** — resolves candidate library paths (override via `TEMPORAL_BUN_SDK_NATIVE_PATH`, packaged artefacts under `dist/native/<platform>/<arch>`, or local `bruke/zig-out/lib`). Logs failures and returns descriptive `NativeBridgeError` messages when nothing loads.  
+2. **FFI symbol map** — defines the complete set of exported functions (`temporal_bun_*`) used today, including pending-handle helpers. Any new Zig export must be added here so Bun can call it.  
+3. **Pointer utilities** — wraps Bun pointer types, copies `Uint8Array` results, and frees buffers on the Zig side (`temporal_bun_byte_array_free`).  
+4. **Pending handle polling** — `waitForClientHandle` / `waitForByteArray` poll Zig pending handles on a microtask loop, converting errors into `NativeBridgeError`.  
+5. **Error translation** — `readLastErrorPayload()` parses structured JSON from Zig (`errors.zig`); unknown strings fall back to message codes. `NativeBridgeError` captures `code`, `message`, `details`, and the raw payload for diagnostics.
+
+When adding new exports, extend both the symbol map and the high-level wrappers. Avoid leaking raw pointers outside this module.
+
+---
+
+## 3. Runtime Wrapper (`core-bridge/runtime.ts`)
+
+- Holds a `Runtime` class that allocates a Zig runtime in the constructor and registers a `FinalizationRegistry` cleanup hook.  
+- Exposes:
+  - `get nativeHandle()` with defensive checks (`throw` if already shut down).  
+  - `configureTelemetry(options)` and `installLogger(callback)` which currently call into `native.configureTelemetry` / `native.installLogger` and throw (`NativeBridgeError`), since the Zig bridge reports unimplemented status. These methods exist so higher layers can wire telemetry once the native work lands.  
+  - `shutdown()` that is safe to call multiple times and clears the finalizer registration.
+
+Update the doc once telemetry/logging implementations exist.
+
+---
+
+## 4. Client Wrapper (`core-bridge/client.ts`)
+
+Responsibilities:
+
+- Provide an easy way to connect and manage client handles:
 
 ```ts
-export interface Runtime {
-  shutdown(): Promise<void>
-  configureTelemetry(options: TelemetryOptions): Promise<void>
-  setLogger(callback: LogCallback): void
-}
-
-export interface Client {
-  startWorkflow(request: StartWorkflowRequest): Promise<StartWorkflowResponse>
-  signalWorkflow(request: SignalWorkflowRequest): Promise<void>
-  queryWorkflow(request: QueryWorkflowRequest): Promise<QueryWorkflowResponse>
-  terminateWorkflow(request: TerminateWorkflowRequest): Promise<void>
-  updateHeaders(headers: Record<string, string>): Promise<void>
-}
-
-export interface Worker {
-  run(): Promise<void>
-  shutdown(gracefulTimeoutMs?: number): Promise<void>
-  recordActivityHeartbeat(heartbeat: ActivityHeartbeatRequest): Promise<void>
-}
+const runtime = new Runtime()
+const client = await Client.connect(runtime, {
+  address,
+  namespace,
+  identity,
+  apiKey,
+  tls: { serverRootCACertificate, clientCert, clientPrivateKey, serverNameOverride },
+})
 ```
 
-The `index.ts` file should export constructors:
+- Serialize TLS settings into the shape expected by Zig (`serializeTlsOptions`).  
+- Maintain namespace metadata for convenience (`client.namespace`).  
+- Expose methods:
+  - `describeNamespace(namespace?)` → `Uint8Array` protobuf payload.  
+  - `updateHeaders(headers)` passthrough (throws today because Zig stub).  
+  - `shutdown()` to release the native client handle; idempotent.
 
-```ts
-export const createRuntime = (options?: RuntimeOptions) => new RuntimeImpl(...)
-export const createClient = (runtime: Runtime, config: ClientConfig) => new ClientImpl(...)
-export const createWorker = (runtime: Runtime, client: Client, config: WorkerConfig) => new WorkerImpl(...)
-```
-
----
-
-## 3. Responsibilities
-
-| Component | Duties |
-|-----------|--------|
-| `RuntimeImpl` | Own the native runtime pointer, call telemetry/logging FFI, manage shutdown semantics, surface diagnostics. |
-| `ClientImpl` | Serialize requests into the JSON/byte payloads expected by FFI, decode responses, expose ergonomic helpers to higher layers. |
-| `WorkerImpl` | Provide async iteration over poll calls, internally run the workflow/activity loops, handle shutdown states, translate heartbeats. |
-| `errors.ts` | Define `TemporalBridgeError` with `.code`, `.details`, `.retryable` derived from FFI error strings (align with gRPC status handling described in Temporal’s troubleshooting docs).<br>[Error handling](https://docs.temporal.io/develop/typescript/common-errors) |
+A `FinalizationRegistry` ensures unattended clients still release resources, but production code should always call `shutdown()`.
 
 ---
 
-## 4. Implementation Steps
+## 5. Worker Wrapper (Future Work)
 
-1. **Create runtime wrapper.**
-   - Store native handle (number).
-   - Provide `configureTelemetry` and `setLogger` passthroughs mirroring the upstream runtime API.<br>[Telemetry configuration](https://docs.temporal.io/develop/typescript/environment-setup#configure-telemetry)
-   - Use `FinalizationRegistry` to guard against leaks (MDN reference: [FinalizationRegistry](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/FinalizationRegistry)).
+`core-bridge` deliberately does **not** expose a worker class yet. When the Zig worker RPCs are ready:
 
-2. **Client commands.**
-   - Build `requestToPayload` utilities that encode headers, search attributes, retry options.
-   - Use `byteArrayFromPointer` helper for responses.
-   - Validate response shapes with Zod.
+1. Add `worker.ts` under `src/core-bridge/` implementing `createWorker`, `run`, and `shutdown` by delegating to the Zig exports (`native.createWorker`, `native.worker.pollWorkflowTask`, etc.).  
+2. Update `index.ts` to export the new worker helpers.  
+3. Remove the re-export of `@temporalio/worker` from `src/worker/index.ts` and `src/worker.ts`.
 
-3. **Worker driver.**
-   - Accept configuration (task queue, max concurrent pollers, interceptors).
-   - Internally share event emitters for workflow/activity poll loops.
-   - Provide `run()` that:
-     1. Spins up poll loops via `Promise.allSettled`.
-     2. Dispatches tasks to workflow/activity runtime modules (implemented separately).
-     3. Observes shutdown signals.
-
-4. **Error handling.**
-   - Wrap every call with `convertError(nativeCall, contextLabel)`.
-   - Provide `TemporalBridgeError.isRetryable()` hint to consumer using gRPC retry semantics (refer to Temporal’s client error recommendations).
-
-5. **Dependencies.**
-   - Use only standard library plus small utilities (Zod optional).
-   - Avoid re-importing upstream Temporal packages.
+Coordinate with `docs/worker-runtime.md` and the Zig FFI plan to avoid divergence.
 
 ---
 
-## 5. Acceptance Criteria
+## 6. Testing Expectations
 
-- `src/core-bridge/index.ts` no longer references `vendor/sdk-typescript`.
-- All FFI interactions routed through `internal/core-bridge/native.ts`.
-- Unit tests cover runtime, client, and worker constructors (see `testing-plan.md`).
-- `pnpm --filter @proompteng/temporal-bun-sdk build` succeeds without `@temporalio/core-bridge`.
-- Documentation updated in README once shipped.
+| Area | Current Coverage | TODO |
+|------|------------------|------|
+| Library discovery | `tests/core-bridge.test.ts` covers happy-path + failure diagnostics. | Expand to assert env override + packaged artefact fallback. |
+| Runtime wrapper | N/A | Add unit tests for `shutdown`, telemetry/logger error forwarding, finalizer behaviour. |
+| Client wrapper | `tests/native.test.ts` exercises describeNamespace flow via stub bridge. | Add TLS serialization tests and header update rejection snapshot. |
+| Error handling | `tests/core-bridge.test.ts` | Keep in sync when new error codes arrive from Zig. |
 
-Keep this doc synchronized with any future FFI adjustments.
+When adding new FFI calls, extend the test suite with mocks to ensure argument serialization is correct before hitting the Zig layer.
+
+---
+
+## 7. Outstanding Items
+
+1. Implement header updates and cancellation in the Zig bridge, then expose them through the client wrapper with regression tests.  
+2. Surface telemetry/logger configuration once the native bridge supports it; update docs and add unit tests.  
+3. Introduce a worker wrapper and migrate the rest of the SDK away from `@temporalio/worker`.  
+4. Evaluate moving common error-handling utilities into a shared helper (`src/internal/core-bridge/error.ts`) if the surface grows further.
+
+Track progress in `docs/parallel-implementation-plan.md` (lanes 1, 4, 5, and 7).
+
+---
+
+## 8. References
+
+- Source: `src/internal/core-bridge/native.ts`, `src/core-bridge/runtime.ts`, `src/core-bridge/client.ts`.  
+- Zig exports: `bruke/src/lib.zig`, `bruke/src/runtime.zig`, `bruke/src/client/**`.  
+- Higher-level usage: `src/client.ts`, `src/bin/temporal-bun.ts`, `tests/core-bridge.test.ts`.
+
+Keep this guide up to date whenever the bridge surface changes so contributors can rely on accurate documentation.

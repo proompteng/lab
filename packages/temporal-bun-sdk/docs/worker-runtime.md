@@ -1,128 +1,91 @@
 # Worker Runtime Implementation Guide
 
-**Purpose:** Stand up a Bun-native worker capable of polling, executing, and responding to Temporal tasks without relying on `@temporalio/worker`, while matching the semantics described in the Temporal TypeScript worker and activity guides.<br>
-[Temporal worker overview](https://docs.temporal.io/develop/typescript/workers) · [Activities guide](https://docs.temporal.io/develop/typescript/activities)
+**Status Snapshot (27 Oct 2025)**  
+- ✅ Shipping worker experience still relies on the upstream `@temporalio/worker`. `src/worker.ts` wraps `Worker.create`, and `src/bin/start-worker.ts` simply starts the vendor worker with our default config.  
+- ✅ The Zig bridge exposes worker handles (`temporal_bun_worker_new/free/...`), but only creation and test scaffolding are wired; poll/completion/heartbeat/shutdown exports return `UNIMPLEMENTED`.  
+- ⚠️ `src/worker/runtime.ts` contains a placeholder `WorkerRuntime` class and guard helpers (`maybeCreateNativeWorker`, `destroyNativeWorker`) used for future Zig integration. Methods such as `run()` and `shutdown()` currently throw.  
+- ⚠️ `TEMPORAL_BUN_SDK_USE_ZIG=1` enables native worker handle creation, but practical polling loops do not exist yet, so this flag should not be flipped outside tests.  
+- ❌ No Bun-native workflow runtime exists; workflows still execute inside the Node SDK sandbox. See `docs/workflow-runtime.md` for the roadmap.
+
+This document captures the current wiring and the steps required to replace the Node worker once the Zig bridge supports full task handling.
 
 ---
 
-## 1. Architecture Overview
+## 1. Current Architecture
 
 ```
 createWorker(options)
-  ├─ WorkerRuntime (manages lifecycle)
-  │   ├─ WorkflowTaskLoop (poll/dispatch)
-  │   ├─ ActivityTaskLoop (poll/dispatch)
-  │   ├─ ShutdownController
-  │   └─ MetricsEmitter / Logger hooks
-  └─ Workflow Isolate Manager (per-workflow execution context)
+  ├─ NativeConnection.connect (Temporal Node SDK)
+  ├─ Worker.create (from @temporalio/worker)
+  └─ runWorker() -> worker.run()
 ```
 
+- Configuration comes from `loadTemporalConfig`, identical to the client flow.  
+- Activities default to `src/activities/index.ts`.  
+- Sample workflows in `src/workflows/index.ts` use upstream helpers (`proxyActivities`) and execute in the Node SDK runtime.  
+- The CLI entry point (`src/bin/start-worker.ts`) installs SIGINT/SIGTERM handlers and relies on `worker.shutdown()` from the Node SDK.
+
 ---
 
-```mermaid
-stateDiagram-v2
-  [*] --> Initializing
-  Initializing --> PollingWorkflow : spawn workflow loops
-  Initializing --> PollingActivity : spawn activity loops
-  PollingWorkflow --> ExecutingWorkflow : activation received
-  ExecutingWorkflow --> PollingWorkflow : completion sent
-  PollingActivity --> ExecutingActivity : activity task received
-  ExecutingActivity --> PollingActivity : response sent
-  PollingWorkflow --> ShuttingDown : shutdown signal
-  PollingActivity --> ShuttingDown : shutdown signal
-  ShuttingDown --> Finalizing : finalize native worker
-  Finalizing --> [*]
+## 2. Zig Bridge Hooks (Experimental)
+
+`src/worker/runtime.ts` and `src/internal/core-bridge/native.ts` expose helpers that will eventually back the Bun-native worker:
+
+- `isZigWorkerBridgeEnabled()` — checks both `TEMPORAL_BUN_SDK_USE_ZIG` and the loaded bridge variant.  
+- `maybeCreateNativeWorker({ runtime, client, namespace, taskQueue, identity })` — validates inputs and calls `native.createWorker`. Throws `NativeBridgeError` when prerequisites are missing.  
+- `destroyNativeWorker(worker)` — frees the worker handle if it exists.
+
+All higher-level orchestration (`WorkerRuntime.create`, `run`, `shutdown`) is left as TODOs with doc references (`docs/worker-runtime.md`, `docs/ffi-surface.md`).
+
+On the Zig side (`bruke/src/worker.zig`):
+
+- Creation validates config, saves copies of namespace/task queue/identity, and stores the Temporal core worker pointer.  
+- Polling (`pollWorkflowTask`, `pollActivityTask`) spawns threads and returns pending handles, but the completion/heartbeat/shutdown paths still return `grpc.unimplemented`.  
+- Unit tests cover permit bookkeeping and pending-handle lifecycle, yet no end-to-end workflow execution occurs today.
+
+---
+
+## 3. Target Bun-Native Runtime
+
+When implementing the new worker, aim for the following shape:
+
+```ts
+export class WorkerRuntime {
+  static async create(options: WorkerRuntimeOptions): Promise<WorkerRuntime>
+  constructor(readonly options: WorkerRuntimeOptions)
+  async run(): Promise<void>
+  async shutdown(gracefulTimeoutMs?: number): Promise<void>
+}
 ```
 
----
+Responsibilities:
 
-## 2. Responsibilities
-
-| Component | Description |
-|-----------|-------------|
-| `WorkerRuntime` | Owns native worker handle, spawns poll loops, orchestrates shutdown, exposes `run()` and `shutdown()` methods. |
-| `WorkflowTaskLoop` | Async loop calling `native.worker.pollWorkflowTask`, passing activations to the workflow runtime, sending completions (mirrors the workflow activation lifecycle). |
-| `ActivityTaskLoop` | Async loop polling activities, running registered activity functions, returning results or failures (use the same failure semantics as the TypeScript SDK). |
-| `WorkflowIsolateManager` | Loads workflow bundles, maintains deterministic execution per run, handles patch markers, timers, signals. |
-| `InterceptorManager` | Optional; plug-in architecture for inbound/outbound interceptors (logging, tracing) that remains compatible with Temporal’s interceptor APIs.<br>[Interceptors](https://docs.temporal.io/develop/typescript/interceptors) |
-
----
-
-## 3. Execution Flow
-
-1. **Initialization**
-   - Resolve `workflowsPath` to compiled JS or raw TS (Bun can transpile).
-   - Register activity implementations (object or map) using the patterns from the official activity registration docs.<br>
-     [Registering activities](https://docs.temporal.io/develop/typescript/activities#create-an-activity)
-   - Create native worker via FFI using runtime/client handles.
-
-2. **Running**
-   - `run()` kicks off:
-     - `workflowLoop()` with configurable concurrency.
-     - `activityLoop()` likewise.
-   - Use `AbortController` to propagate shutdown signals.
-
-3. **Task Handling**
-   - **Workflow tasks:** 
-     - Decode activation.
-     - Load workflow isolate if new run (module cache keyed by workflow id + run id).
-     - Execute activation via workflow runtime API.
-     - Encode completion commands and send through FFI.
-   - **Activity tasks:**
-     - Lookup implementation by name.
-     - Execute with timeout enforcement (`setTimeout` + `Promise.race` or Bun timers).
-     - Heartbeats triggered via `worker.recordActivityHeartbeat` (match the behaviour documented in the Temporal heartbeat tutorial).
-     - Respond success/failure via FFI.<br>
-       [Activity heartbeats](https://docs.temporal.io/develop/typescript/activities#heartbeat-an-activity)
-
-4. **Shutdown**
-   - `shutdown(gracefulTimeoutMs)`:
-     - Stop new polls (call `worker_initiate_shutdown`).
-     - Wait for loops to settle.
-     - After timeout, force cancel outstanding loops.
-     - Call `worker_finalize_shutdown`.
+| Component | Duties |
+|-----------|--------|
+| Native worker lifecycle | Own Zig handles; ensure `destroyNativeWorker` runs during shutdown or GC finalization. |
+| Poll loops | Call `native.worker.pollWorkflowTask` / `pollActivityTask`, translate pending handles into promises, and dispatch to workflow/activity executors. |
+| Workflow runtime integration | Load workflow bundles via Bun (see `docs/workflow-runtime.md` once implemented). |
+| Activity execution | Invoke registered activities with cancellation/timeouts, send results via `native.worker.completeActivityTask`. |
+| Heartbeats & metrics | Stream heartbeats (`recordActivityHeartbeat`) and surface counters for task throughput/latency. |
+| Shutdown semantics | Implement two-phase shutdown (initiate → finalize) mirroring the Node SDK to keep determinism guarantees.
 
 ---
 
-## 4. Implementation Tasks
+## 4. Implementation Roadmap
 
-1. **Native bindings** (needs FFI support as per `ffi-surface.md`).
-2. **Task loop utilities**  
-   Create `createPollingLoop({ poll, handler, onError })` to share logic between workflow/activity loops.
-3. **Workflow loader**  
-   - Use dynamic import with query string to avoid cache collisions (`import(`${workflowsPath}?workflow=${workflowType}`)`).
-   - Ensure `Bun.Transpiler` used if workflows shipped as TS.
-4. **Activity registry**  
-   - Accept object or array. Normalize to `Map<string, ActivityFn>`.
-   - Validate on startup (throw if missing).
-5. **Metrics/logging**  
-   - Provide hooks for task counts and latencies (expose minimal API).
-   - Later integrate with telemetry runtime following Temporal’s observability recommendations.<br>
-     [Observability best practices](https://docs.temporal.io/production-readiness/observability)
-6. **Error handling**  
-   - Convert thrown errors to Temporal failure payloads (message + stack).
-   - Preserve application-specific failure types with optional metadata.
+1. **Finish Zig worker exports** (lanes 7 & 5 in `parallel-implementation-plan.md`): complete/heartbeat/shutdown RPCs, ensure errors bubble up via `NativeBridgeError`.  
+2. **Add Bun worker runtime loops**: implement `WorkerRuntime.create/run/shutdown`, integrate with `maybeCreateNativeWorker`, and gate behind an opt-in environment flag until stable.  
+3. **Workflow runtime**: replace Node sandbox with Bun-native implementation (see companion doc).  
+4. **Remove Node fallback**: once Bun worker reaches parity, drop the dependency on `@temporalio/worker` and update the CLI scaffolding + README.  
+5. **Testing**: extend `tests/worker/**` with end-to-end cases (workflow activation, activity success/failure, shutdown) and run them under `TEMPORAL_BUN_SDK_USE_ZIG=1` in CI.
 
 ---
 
-## 5. Testing Requirements
+## 5. References
 
-Refer to `testing-plan.md` for the full matrix. Highlights:
+- TypeScript sources: `src/worker.ts`, `src/worker/runtime.ts`, `src/internal/core-bridge/native.ts`.  
+- Zig worker implementation: `bruke/src/worker.zig`, `bruke/src/test_helpers.zig`.  
+- Documentation links: `docs/ffi-surface.md` (§7 Worker exports), `docs/workflow-runtime.md` for execution sandbox plans.  
+- Tests: `tests/worker/**` (currently placeholders) and `tests/zig-worker-completion.test.ts` for the existing stubs.
 
-- Unit tests for polling loop restart/retry logic.
-- Activity timeout + heartbeat cases.
-- Workflow continue-as-new and timer scheduling.
-- Shutdown behavior (graceful vs immediate).
-- Integration test executing sample workflow end-to-end (use the “hello” samples as inspiration).<br>
-  [Sample workflows](https://github.com/temporalio/samples-typescript)
-
----
-
-## 6. Deliverables
-
-- `src/worker.ts` rewritten to use new runtime classes.
-- `src/worker/index.ts` exports updated API (remove vendor re-export).
-- CLI sample (`temporal-bun-worker`) builds/runs with new worker.
-- Example project (`temporal-bun-sdk-example`) functions without upstream dependency.
-
-Keep this guide updated as worker features evolve (local activities, patch markers, etc.).
+Keep this guide synchronized as features land so engineers always know which codepaths are live versus aspirational.
