@@ -141,7 +141,7 @@ const buildImplementationPrompt = ({
     '- Run formatters, lint, and focused tests; record command outputs in the progress comment.',
     `- Use internet search (web.run) when fresh context is needed, and cite with Markdown links back to docs or code (for example, \`[packages/foo.ts](https://github.com/${repositoryFullName}/blob/${headBranch}/packages/foo.ts#L123)\`).`,
     `- Open a draft PR targeting \`${baseBranch}\` with validation results and link it in the issue.`,
-    '- After pushing the PR, sleep 5 minutes and re-check CI; if checks are red, fix them, push, and repeat until green.',
+    '- After pushing the PR, wait 30 seconds, re-check CI; if checks are still running, wait another 30 seconds and poll until they pass; if any check fails, address it, push fixes, and continue the loop until everything is green.',
     '- Surface blockers quickly with mitigation ideas and capture manual QA needs.',
     '',
     'Issue body for quick reference:',
