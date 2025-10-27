@@ -7,11 +7,11 @@
 - ⚠️ `TEMPORAL_BUN_SDK_USE_ZIG=1` enables native worker handle creation, but practical polling loops do not exist yet, so this flag should not be flipped outside tests.  
 - ❌ No Bun-native workflow runtime exists; workflows still execute inside the Node SDK sandbox. See `docs/workflow-runtime.md` for the roadmap.
 
-This document captures the current wiring and the steps required to replace the Node worker once the Zig bridge supports full task handling.
+This document captures the current wiring and, in the sections tagged **Target Architecture**, the envisioned Bun-native worker once the Zig bridge supports full task handling.
 
 ---
 
-## 1. Current Architecture
+## 1. Current Architecture (Today)
 
 ```
 createWorker(options)
@@ -45,20 +45,36 @@ On the Zig side (`bruke/src/worker.zig`):
 
 ---
 
-## 3. Target Bun-Native Runtime
+## 3. Target Bun-Native Runtime (Future Work)
 
-When implementing the new worker, aim for the following shape:
+> **Target Architecture:** The diagrams and responsibilities in this section describe the desired end state once Bun-native worker loops replace the current Node SDK dependency. They are not implemented yet.
 
-```ts
-export class WorkerRuntime {
-  static async create(options: WorkerRuntimeOptions): Promise<WorkerRuntime>
-  constructor(readonly options: WorkerRuntimeOptions)
-  async run(): Promise<void>
-  async shutdown(gracefulTimeoutMs?: number): Promise<void>
-}
+```
+createWorker(options)
+  ├─ WorkerRuntime (manages lifecycle)
+  │   ├─ WorkflowTaskLoop (poll/dispatch)
+  │   ├─ ActivityTaskLoop (poll/dispatch)
+  │   ├─ ShutdownController
+  │   └─ MetricsEmitter / Logger hooks
+  └─ Workflow Isolate Manager (per-workflow execution context)
 ```
 
-Responsibilities:
+```mermaid
+stateDiagram-v2
+  [*] --> Initializing
+  Initializing --> PollingWorkflow : spawn workflow loops
+  Initializing --> PollingActivity : spawn activity loops
+  PollingWorkflow --> ExecutingWorkflow : activation received
+  ExecutingWorkflow --> PollingWorkflow : completion sent
+  PollingActivity --> ExecutingActivity : activity task received
+  ExecutingActivity --> PollingActivity : response sent
+  PollingWorkflow --> ShuttingDown : shutdown signal
+  PollingActivity --> ShuttingDown : shutdown signal
+  ShuttingDown --> Finalizing : finalize native worker
+  Finalizing --> [*]
+```
+
+`WorkerRuntime` responsibilities once implemented:
 
 | Component | Duties |
 |-----------|--------|
