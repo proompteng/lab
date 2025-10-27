@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 
 type Deferred<T> = {
   promise: Promise<T>
@@ -47,67 +47,56 @@ describe('WorkerRuntime.shutdown', () => {
     let clientShutdownCalls = 0
     let pollCalls = 0
 
-    mock.module('../../src/internal/core-bridge/native.ts', () => {
-      class NativeBridgeError extends Error {
-        code: number
-        details?: unknown
+    const nativeModule = await import('../../src/internal/core-bridge/native.ts')
+    const originalNative = {
+      createRuntime: nativeModule.native.createRuntime,
+      runtimeShutdown: nativeModule.native.runtimeShutdown,
+      createClient: nativeModule.native.createClient,
+      clientShutdown: nativeModule.native.clientShutdown,
+      createWorker: nativeModule.native.createWorker,
+      destroyWorker: nativeModule.native.destroyWorker,
+      workerCompleteWorkflowTask: nativeModule.native.workerCompleteWorkflowTask,
+      workerPollWorkflowTask: nativeModule.native.worker.pollWorkflowTask,
+    } as const
 
-        constructor(input: string | { code?: number; message?: string; details?: unknown }) {
-          const message = typeof input === 'string' ? input : input.message ?? 'Native error'
-          super(message)
-          this.code = typeof input === 'string' ? 0 : input.code ?? 0
-          this.details = typeof input === 'string' ? undefined : input.details
-          Object.setPrototypeOf(this, new.target.prototype)
-        }
+    const runtimeHandle = { type: 'runtime' as const, handle: 1 }
+    const clientHandle = { type: 'client' as const, handle: 2 }
+    const workerHandle = { type: 'worker' as const, handle: 3 }
+
+    nativeModule.native.createRuntime = () => runtimeHandle
+    nativeModule.native.runtimeShutdown = () => {
+      runtimeShutdownCalls += 1
+    }
+    nativeModule.native.createClient = async () => clientHandle
+    nativeModule.native.clientShutdown = () => {
+      clientShutdownCalls += 1
+    }
+    nativeModule.native.createWorker = () => workerHandle
+    nativeModule.native.destroyWorker = (worker: typeof workerHandle) => {
+      destroyCalls += 1
+      worker.handle = 0
+      if (!currentDeferred.settled) {
+        currentDeferred.reject(new Error('cancelled'))
       }
+    }
+    nativeModule.native.workerCompleteWorkflowTask = () => {}
+    nativeModule.native.worker.pollWorkflowTask = async () => {
+      pollCalls += 1
+      pollReady.resolve()
+      currentDeferred = createDeferred<Uint8Array>()
+      return await currentDeferred.promise
+    }
 
-      const runtimeHandle = { type: 'runtime' as const, handle: 1 }
-      const clientHandle = { type: 'client' as const, handle: 2 }
-      const workerHandle = { type: 'worker' as const, handle: 3 }
-
-      return {
-        NativeBridgeError,
-        native: {
-          bridgeVariant: 'zig' as const,
-          createRuntime: () => runtimeHandle,
-          runtimeShutdown: () => {
-            runtimeShutdownCalls += 1
-          },
-          createClient: async () => clientHandle,
-          clientShutdown: () => {
-            clientShutdownCalls += 1
-          },
-          createWorker: () => workerHandle,
-          destroyWorker: (worker: typeof workerHandle) => {
-            destroyCalls += 1
-            worker.handle = 0
-            if (!currentDeferred.settled) {
-              currentDeferred.reject(new Error('cancelled'))
-            }
-          },
-          workerCompleteWorkflowTask: () => {},
-          worker: {
-            pollWorkflowTask: async () => {
-              pollCalls += 1
-              pollReady.resolve()
-              currentDeferred = createDeferred<Uint8Array>()
-              return await currentDeferred.promise
-            },
-          },
-        },
-      }
-    })
-
-    mock.module('../../src/config.ts', () => ({
-      loadTemporalConfig: async () => ({
-        address: '127.0.0.1:7233',
-        namespace: 'default',
-        taskQueue: 'unit-test-queue',
-        workerIdentity: 'unit-test-identity',
-        allowInsecureTls: false,
-        tls: undefined,
-      }),
-    }))
+    const previousEnv = {
+      TEMPORAL_ADDRESS: process.env.TEMPORAL_ADDRESS,
+      TEMPORAL_NAMESPACE: process.env.TEMPORAL_NAMESPACE,
+      TEMPORAL_TASK_QUEUE: process.env.TEMPORAL_TASK_QUEUE,
+      TEMPORAL_ALLOW_INSECURE: process.env.TEMPORAL_ALLOW_INSECURE,
+    }
+    process.env.TEMPORAL_ADDRESS = '127.0.0.1:7233'
+    process.env.TEMPORAL_NAMESPACE = 'default'
+    process.env.TEMPORAL_TASK_QUEUE = 'unit-test-queue'
+    process.env.TEMPORAL_ALLOW_INSECURE = '0'
 
     try {
       const { WorkerRuntime } = await import('../../src/worker/runtime.ts?shutdown-test')
@@ -127,7 +116,23 @@ describe('WorkerRuntime.shutdown', () => {
       expect(runtimeShutdownCalls).toBe(1)
       expect(clientShutdownCalls).toBe(1)
     } finally {
-      mock.restore()
+      nativeModule.native.createRuntime = originalNative.createRuntime
+      nativeModule.native.runtimeShutdown = originalNative.runtimeShutdown
+      nativeModule.native.createClient = originalNative.createClient
+      nativeModule.native.clientShutdown = originalNative.clientShutdown
+      nativeModule.native.createWorker = originalNative.createWorker
+      nativeModule.native.destroyWorker = originalNative.destroyWorker
+      nativeModule.native.workerCompleteWorkflowTask = originalNative.workerCompleteWorkflowTask
+      nativeModule.native.worker.pollWorkflowTask = originalNative.workerPollWorkflowTask
+      process.env.TEMPORAL_ADDRESS = previousEnv.TEMPORAL_ADDRESS
+      process.env.TEMPORAL_NAMESPACE = previousEnv.TEMPORAL_NAMESPACE
+      process.env.TEMPORAL_TASK_QUEUE = previousEnv.TEMPORAL_TASK_QUEUE
+      if (previousEnv.TEMPORAL_ALLOW_INSECURE === undefined) {
+        delete process.env.TEMPORAL_ALLOW_INSECURE
+      } else {
+        process.env.TEMPORAL_ALLOW_INSECURE = previousEnv.TEMPORAL_ALLOW_INSECURE
+      }
+
       if (previousFlag === undefined) {
         delete process.env.TEMPORAL_BUN_SDK_USE_ZIG
       } else {
