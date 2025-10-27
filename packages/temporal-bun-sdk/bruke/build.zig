@@ -13,7 +13,7 @@ const temporal_crates = [_]TemporalCrate{
     .{ .package = "temporal-sdk-core-protos", .archive = "temporal_sdk_core_protos" },
 };
 
-const temporal_cache_root = "../../.temporal-libs-cache";
+const temporal_cache_root = "../.temporal-libs-cache";
 
 const BuildError = error{
     UnsupportedTarget,

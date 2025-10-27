@@ -7,7 +7,7 @@ import { $ } from 'bun'
 import { artifactFilename, relativeArtifactSubpath, zigTargets } from './zig-targets'
 
 const rootDir = fileURLToPath(new URL('..', import.meta.url))
-const zigProjectDir = join(rootDir, 'native', 'temporal-bun-bridge-zig')
+const zigProjectDir = join(rootDir, 'bruke')
 const buildFile = join(zigProjectDir, 'build.zig')
 const downloadScript = join(rootDir, 'scripts', 'download-temporal-libs.ts')
 const zigOutLibDir = join(zigProjectDir, 'zig-out', 'lib')

@@ -25,6 +25,7 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 - [`docs/migration-phases.md`](./docs/migration-phases.md) – phased rollout checklist.
 - [`docs/zig-bridge-scaffold-checklist.md`](./docs/zig-bridge-scaffold-checklist.md) – bite-sized TODOs for the Zig bridge rollout.
 - [`docs/zig-production-readiness.md`](./docs/zig-production-readiness.md) – formalities required before making Zig the default bridge.
+- [`docs/zig-module-map.md`](./docs/zig-module-map.md) – current Zig module ownership map for parallel development.
 
 ## Installation
 
@@ -47,7 +48,7 @@ pnpm --filter @proompteng/temporal-bun-sdk run package:native:zig
 
 
 The bundling script cross-compiles ReleaseFast builds for `darwin` and `linux` (arm64 and x64), staging
-them under `native/temporal-bun-bridge-zig/zig-out/lib/<platform>/<arch>/`. The packaging helper then
+them under `bruke/zig-out/lib/<platform>/<arch>/`. The packaging helper then
 copies those artifacts into `dist/native/<platform>/<arch>/` so `pnpm pack --filter
 @proompteng/temporal-bun-sdk` ships prebuilt Zig libraries alongside the TypeScript output. Running
 `pnpm pack` or the publish workflow automatically executes both steps via the package `prepack` hook.

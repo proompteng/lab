@@ -7,7 +7,7 @@ import { DownloadClient } from '../scripts/download-temporal-libs.ts'
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url))
 const TEMP_TEST_DIR = join(PACKAGE_ROOT, '.test-build-integration')
 const CACHE_DIR = join(TEMP_TEST_DIR, '.temporal-libs-cache')
-const BUILD_ZIG_PATH = join(PACKAGE_ROOT, 'native/temporal-bun-bridge-zig/build.zig')
+const BUILD_ZIG_PATH = join(PACKAGE_ROOT, 'bruke/build.zig')
 
 // Test configuration
 const TEST_CONFIG = {

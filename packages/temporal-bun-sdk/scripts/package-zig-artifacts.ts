@@ -8,7 +8,7 @@ import { artifactFilename, zigTargets } from './zig-targets'
 const rootDir = fileURLToPath(new URL('..', import.meta.url))
 const packageDistDir = join(rootDir, 'dist')
 const distNativeDir = join(packageDistDir, 'native')
-const zigProjectDir = join(rootDir, 'native', 'temporal-bun-bridge-zig')
+const zigProjectDir = join(rootDir, 'bruke')
 const zigLibDir = join(zigProjectDir, 'zig-out', 'lib')
 
 async function assertBuilt(target: (typeof zigTargets)[number]): Promise<string> {

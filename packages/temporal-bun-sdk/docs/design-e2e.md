@@ -30,7 +30,7 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 - ⚠️ `client.workflow.cancel` and `client.updateHeaders` surface `NativeBridgeError` because the Zig bridge exports are still stubs; `client.workflow.signal` now routes through Temporal core with deterministic request IDs plus client identity.
 - ⚠️ `WorkerRuntime` (native Bun worker loop) is scaffolded in `src/worker/runtime.ts` but not yet wired to the native bridge.
 
-### Zig native bridge (`native/temporal-bun-bridge-zig`)
+### Zig native bridge (`packages/temporal-bun-sdk/bruke`)
 - ✅ Uses `@cImport("temporal-sdk-core-c-bridge.h")` to call Temporal core runtime/client APIs.
 - ✅ Implements async pending handles for client connect, DescribeNamespace, workflow queries, and workflow signals via dedicated worker threads.
 - ✅ Encodes workflow start and signal-with-start requests directly in Zig, returning JSON metadata to Bun.
@@ -41,7 +41,7 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 
 ### Tooling & Distribution
 - ✅ `scripts/download-temporal-libs.ts` downloads pinned Temporal core static libs, enabling reproducible Zig builds.
-- ✅ `pnpm run build:native:zig` compiles `libtemporal_bun_bridge_zig` for macOS/Linux and `package:native:zig` stages artifacts under `dist/native/<platform>/<arch>/`.
+- ✅ `pnpm run build:native:zig` compiles `libtemporal_bun_bridge_zig` for macOS/Linux and `package:native:zig` stages artifacts under `dist/native/<platform>/<arch>/` (source in `bruke/`).
 - ✅ `prepack` hook builds TypeScript, fetches native libs, compiles Zig, and packages artifacts automatically.
 - ✅ `tests/native.integration.test.ts`, `tests/end-to-end-workflow.test.ts`, and `tests/zig-signal.test.ts` exercise the bridge against the Temporal CLI dev server.
 - ⚠️ `zig build test` executes stubbed unit tests only; coverage for worker APIs remains TODO.
@@ -75,6 +75,7 @@ Key properties:
 - All Temporal interactions flow through Zig → Temporal core; Node SDK usage is confined to the worker fallback.
 - Pending handles allow Bun to poll async results without blocking its event loop.
 - Zig bridge enforces strict JSON validation before making core RPCs, surfacing structured Temporal gRPC status codes to Bun.
+- Client-facing Zig code is split into modules under `bruke/src/client/` (`common.zig`, `connect.zig`, `workflows/*`, etc.) with a lightweight aggregator `client/mod.zig`, letting teams evolve features in parallel without editing a monolith.
 
 ## 4. Native Bridge Function Matrix
 
@@ -111,7 +112,7 @@ Key properties:
 ## 6. Build & Distribution
 
 - `pnpm --filter @proompteng/temporal-bun-sdk run build` builds TypeScript to `dist/`.
-- `pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig` compiles the Zig bridge in `ReleaseFast` mode; artifacts land under `native/temporal-bun-bridge-zig/zig-out/lib/<platform>/<arch>/`.
+- `pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig` compiles the Zig bridge in `ReleaseFast` mode; artifacts land under `bruke/zig-out/lib/<platform>/<arch>/`.
 - `pnpm --filter @proompteng/temporal-bun-sdk run package:native:zig` copies shared libraries into `dist/native/...` so `pnpm pack` includes them.
 - `scripts/download-temporal-libs.ts` fetches pinned Temporal core archives (commit `de674173c664d42f85d0dee1ff3b2ac47e36d545`, sdk-typescript `v1.13.1`).
 - `bun test` executes Bun unit/integration tests; `zig build test` (debug) validates pending-handle logic.
@@ -140,6 +141,9 @@ Key properties:
 - Manual QA: `pnpm --filter @proompteng/temporal-bun-sdk run temporal:start` launches a local server; `bun test tests/native.integration.test.ts` performs smoke validation.
 
 ## 9. Remaining Work & Milestones
+
+The detailed lane breakdown lives in [`docs/parallel-implementation-plan.md`](./parallel-implementation-plan.md). Each item below
+maps to one or more lanes so parallel Codex instances can implement features without clobbering each other.
 
 1. **Client parity**
    - Implement `temporal_bun_client_update_headers` and `cancel_workflow`, plus add end-to-end Bun tests for the `terminate_workflow` and future signal paths.
