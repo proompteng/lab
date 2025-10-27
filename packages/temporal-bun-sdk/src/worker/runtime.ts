@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer'
-import { temporal } from '@temporalio/proto'
+import { coresdk } from '@temporalio/proto'
+import { defaultFailureConverter } from '@temporalio/common'
 import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from '../config'
 import {
   NativeBridgeError,
@@ -8,6 +9,7 @@ import {
   type NativeWorker,
   native,
 } from '../internal/core-bridge/native'
+import { WorkflowEngine, type WorkflowActivationResult } from '../workflow/runtime'
 
 const DEFAULT_NAMESPACE = 'default'
 const DEFAULT_IDENTITY_PREFIX = 'temporal-bun-worker'
@@ -141,6 +143,7 @@ interface WorkerRuntimeContext {
 export class WorkerRuntime {
   #handles: WorkerHandles
   #context: WorkerRuntimeContext
+  #workflowEngine: WorkflowEngine
   #state: WorkerRuntimeState = 'idle'
   #abortController: AbortController | null = null
   #runPromise: Promise<void> | null = null
@@ -154,9 +157,11 @@ export class WorkerRuntime {
     readonly options: WorkerRuntimeOptions,
     handles: WorkerHandles,
     context: WorkerRuntimeContext,
+    workflowEngine: WorkflowEngine,
   ) {
     this.#handles = handles
     this.#context = context
+    this.#workflowEngine = workflowEngine
   }
 
   static async create(options: WorkerRuntimeOptions): Promise<WorkerRuntime> {
@@ -235,10 +240,17 @@ export class WorkerRuntime {
         })
       }
 
+      const workflowEngine = new WorkflowEngine({
+        workflowsPath: options.workflowsPath,
+        activities: options.activities,
+        showStackTraceSources: config.showStackTraceSources ?? false,
+      })
+
       return new WorkerRuntime(
         options,
         { runtime, client, worker: workerHandle },
         { namespace, identity, taskQueue, config },
+        workflowEngine,
       )
     } catch (error) {
       if (client) {
@@ -355,31 +367,42 @@ export class WorkerRuntime {
         continue
       }
 
-      this.#acknowledgeActivation(payload)
+      await this.#processWorkflowActivation(payload)
     }
   }
 
-  #acknowledgeActivation(bytes: Uint8Array): void {
-    let activation: temporal.api.workflowservice.v1.PollWorkflowTaskQueueResponse
+  async #processWorkflowActivation(bytes: Uint8Array): Promise<void> {
+    let activation: coresdk.workflow_activation.WorkflowActivation
     try {
-      activation = temporal.api.workflowservice.v1.PollWorkflowTaskQueueResponse.decode(bytes)
+      activation = coresdk.workflow_activation.WorkflowActivation.decode(bytes)
     } catch (error) {
+      await this.#respondWorkflowFailure(undefined, error)
       throw new Error(`Failed to decode workflow activation: ${(error as Error).message}`)
     }
 
-    const token = activation.taskToken
-    if (!token || token.length === 0) {
-      throw new Error('Received workflow activation without a task token')
+    let result: WorkflowActivationResult
+    try {
+      result = await this.#workflowEngine.processWorkflowActivation(activation, {
+        namespace: this.#context.namespace,
+        taskQueue: this.#context.taskQueue,
+      })
+    } catch (error) {
+      await this.#respondWorkflowFailure(activation.runId, error)
+      throw error
     }
 
-    const completionRequest = temporal.api.workflowservice.v1.RespondWorkflowTaskCompletedRequest.encode({
-      taskToken: token,
-      identity: this.#context.identity,
-      namespace: this.#context.namespace,
-      commands: [],
-    }).finish()
+    const payload = coresdk.workflow_completion.WorkflowActivationCompletion.encode(result.completion).finish()
+    native.worker.completeWorkflowTask(this.#handles.worker, payload)
+  }
 
-    native.workerCompleteWorkflowTask(this.#handles.worker, Buffer.from(completionRequest))
+  async #respondWorkflowFailure(runId: string | undefined, error: unknown): Promise<void> {
+    const failure = defaultFailureConverter.errorToFailure(error instanceof Error ? error : new Error(String(error)))
+    const completion = coresdk.workflow_completion.WorkflowActivationCompletion.create({
+      runId: runId ?? '',
+      failed: coresdk.workflow_completion.Failure.create({ failure }),
+    })
+    const payload = coresdk.workflow_completion.WorkflowActivationCompletion.encode(completion).finish()
+    native.worker.completeWorkflowTask(this.#handles.worker, payload)
   }
 
   #disposeHandles(): void {
@@ -389,6 +412,7 @@ export class WorkerRuntime {
     this.#disposed = true
     this.#nativeShutdownRequested = true
 
+    this.#workflowEngine.shutdown()
     if (this.#handles.worker.handle) {
       destroyNativeWorker(this.#handles.worker)
     }

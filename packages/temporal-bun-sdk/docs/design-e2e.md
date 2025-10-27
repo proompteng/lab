@@ -26,10 +26,10 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 ### TypeScript layer
 - ✅ `createTemporalClient` loads the Zig bridge through `bun:ffi`, applies TLS/API key metadata, and exposes workflow helpers (see `src/client.ts`).
 - ✅ CLI commands (`temporal-bun init|check|docker-build`) ship in `src/bin/temporal-bun.ts`.
-- ✅ Worker bootstrap (`createWorker`, `runWorker`) keeps parity with the existing Node SDK via `@temporalio/worker`, ensuring teams can run workflows today.
+- ✅ Worker bootstrap (`createWorker`, `runWorker`) now defaults to the Bun-native runtime backed by the Zig bridge, with an opt-in `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` escape hatch to reuse `@temporalio/worker` when needed.
 - ⚠️ `client.workflow.cancel` still surfaces `NativeBridgeError` because the Zig bridge export is stubbed; `client.workflow.signal` now routes through Temporal core with deterministic request IDs plus client identity.
 - ✅ `client.updateHeaders` hot-swaps metadata via the Zig bridge and returns Temporal core status codes without forcing a reconnect.
-- ⚠️ `WorkerRuntime` (native Bun worker loop) is scaffolded in `src/worker/runtime.ts` but not yet wired to the native bridge.
+- ✅ `WorkerRuntime` and the `WorkflowEngine` execute workflow activations inside Bun, emitting `WorkflowActivationCompletion` payloads through the Zig bridge. Activity polling/completion remains on the roadmap.
 
 ### Zig native bridge (`packages/temporal-bun-sdk/bruke`)
 - ✅ Uses `@cImport("temporal-sdk-core-c-bridge.h")` to call Temporal core runtime/client APIs.
@@ -53,7 +53,7 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 ┌──────────────────────────────────────────┐
 │ @proompteng/temporal-bun-sdk (TypeScript)│
 │  ├─ Config & client helpers              │
-│  ├─ Worker (Node fallback)               │
+│  ├─ Worker (Bun runtime + WorkflowEngine)│
 │  └─ CLI / scaffolding                    │
 └──────────────────────┬───────────────────┘
                       │ bun:ffi
@@ -152,8 +152,8 @@ maps to one or more lanes so parallel Codex instances can implement features wit
    - Wire `temporal_bun_runtime_update_telemetry` and `*_set_logger` through Temporal core once upstream exposes the hooks.
    - Surface metrics/logging configuration helpers in TypeScript (`configureTelemetry`, `installLogger`).
 3. **Worker bridge**
-   - Implement worker creation, poll/complete loops, activity heartbeats, and graceful shutdown in Zig (`zig-worker-01`…`zig-worker-09`).
-   - Deliver Bun `WorkerRuntime` to replace the Node fallback and update docs/CLI to default to Bun-native workers.
+   - Finish activity polling/completion, heartbeats, and graceful shutdown in Zig (`zig-worker-06+`).
+   - Harden Bun `WorkerRuntime` parity (activity interception, metrics, diagnostics) and document the vendor fallback toggle.
 4. **Developer experience**
    - Expand CLI (`temporal-bun init`) templates with Zig bridge usage instructions.
    - Provide `demo:e2e` script referenced in the doc (currently a follow-up).

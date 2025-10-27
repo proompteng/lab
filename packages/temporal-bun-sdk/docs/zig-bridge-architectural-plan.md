@@ -2,7 +2,7 @@
 
 **Published:** 20 Oct 2025  
 **Authors:** Platform Runtime (Temporal Bun)  
-**Status:** Draft — guides implementation toward the npm GA release of the Bun-native Temporal SDK. Current progress (27 Oct 2025): client RPCs (start/query/signal/terminate) are live via the Zig bridge; cancellation, metadata updates, telemetry, and worker parity remain open.
+**Status:** Draft — guides implementation toward the npm GA release of the Bun-native Temporal SDK. Current progress (27 Oct 2025): client RPCs (start/query/signal/terminate) and workflow task execution are live via the Zig bridge; cancellation, activity completion/heartbeats, metadata updates, telemetry, and remaining worker parity items are still open.
 
 ---
 
@@ -58,7 +58,7 @@ Ship `@proompteng/temporal-bun-sdk` to npm so Bun developers can:
 |-------|---------------|-------|---------------|
 | 0. Foundations | Q4 2025 | Harden pending handles (#1526), correct documentation, prove TLS against Temporal Cloud sandbox. | Zig tests green, TLS smoke succeeds on macOS & Linux. |
 | 1. Client Parity | Q4 2025 – Q1 2026 | Implement `zig-cl-*` / `zig-wf-*`, wrap in Bun client API, ship quickstart docs. | Integration suite passes for connect/start/signal/query/terminate; docs publish “Temporal on Bun” tutorial. |
-| 2. Worker Parity | Q1 2026 | Complete `zig-worker-*`, run workflow/activity loops in Bun worker. | Bun worker handles timers, retries, signals; example app demonstrates end-to-end flow. |
+| 2. Worker Parity | Q1 2026 | Complete `zig-worker-*`, run workflow/activity loops in Bun worker. | Workflow task execution is live; next milestones cover activity completion/heartbeats so the example app demonstrates end-to-end flow. |
 | 3. Observability | Q1 – Q2 2026 | Telemetry/logging wiring, dashboards, alerting runbooks. | Prometheus + OTLP exporters validated; logging callbacks verified from Bun. |
 | 4. Release & Adoption | Q2 2026 | Package native binaries, publish npm canaries/GA, monitor early adopters. | npm package released with release notes, SBOM, and support policy; Temporal Cloud smoke part of CI. |
 
