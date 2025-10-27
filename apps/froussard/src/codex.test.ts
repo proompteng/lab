@@ -55,13 +55,9 @@ describe('buildCodexPrompt', () => {
     })
 
     expect(prompt).toContain('Draft the plan the next Codex run will execute.')
-    expect(prompt).toContain('Planning checklist:')
-    expect(prompt).toContain(
-      'React to the issue with :eyes: while drafting; switch to :rocket: once the final comment is posted.',
-    )
-    expect(prompt).toContain(
-      'Use internet search (web.run) to ground reasoning with fresh, cited sources before finalizing steps.',
-    )
+    expect(prompt).toContain('Guidance:')
+    expect(prompt).toContain('Use internet search (web.run) when the plan needs up-to-date facts.')
+    expect(prompt).toContain('Never emit raw')
     expect(prompt).toContain('Plan template (copy verbatim):')
     expect(prompt).toContain(PLAN_COMMENT_MARKER)
     expect(prompt).toContain('### Steps')
@@ -89,15 +85,11 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain('Approved plan:')
     expect(prompt).toContain('1. Step one')
     expect(prompt).toContain('Implementation branch: codex/issue-77-abc123')
-    expect(prompt).toContain('Execution requirements:')
+    expect(prompt).toContain('Guidance:')
+    expect(prompt).toContain('Use internet search (web.run) when fresh context is needed')
     expect(prompt).toContain(
-      'Ground decisions with internet search (web.run) to capture up-to-date facts and cite key findings.',
+      `Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} up to date using apps/froussard/src/codex/cli/codex-progress-comment.ts.`,
     )
-    expect(prompt).toContain('Closes #77')
-    expect(prompt).toContain(
-      `Maintain a single progress comment anchored by ${PROGRESS_COMMENT_MARKER} using apps/froussard/src/codex/cli/codex-progress-comment.ts`,
-    )
-    expect(prompt).toContain('apps/froussard/src/codex/cli/codex-progress-comment.ts')
   })
 
   it('falls back to a default plan body when the approved plan is empty', () => {
