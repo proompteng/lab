@@ -76,7 +76,7 @@ const client = await Client.connect(runtime, {
 - Maintain namespace metadata for convenience (`client.namespace`).  
 - Expose methods:
   - `describeNamespace(namespace?)` → `Uint8Array` protobuf payload.  
-  - `updateHeaders(headers)` passthrough (throws today because Zig stub).  
+  - `updateHeaders(headers)` normalizes ASCII headers, base64-encodes `-bin` values, and forwards them to the Zig bridge.  
   - `shutdown()` to release the native client handle; idempotent.
 
 A `FinalizationRegistry` ensures unattended clients still release resources, but production code should always call `shutdown()`.
@@ -101,7 +101,7 @@ Coordinate with `docs/worker-runtime.md` and the Zig FFI plan to avoid divergenc
 |------|------------------|------|
 | Library discovery | `tests/core-bridge.test.ts` covers happy-path + failure diagnostics. | Expand to assert env override + packaged artefact fallback. |
 | Runtime wrapper | N/A | Add unit tests for `shutdown`, telemetry/logger error forwarding, finalizer behaviour. |
-| Client wrapper | `tests/native.test.ts` exercises describeNamespace flow via stub bridge. | Add TLS serialization tests and header update rejection snapshot. |
+| Client wrapper | `tests/native.test.ts` covers describeNamespace and header updates; `tests/client.test.ts` asserts ASCII/binary serialization. | Add TLS serialization coverage and negative scenarios for native failures. |
 | Error handling | `tests/core-bridge.test.ts` | Keep in sync when new error codes arrive from Zig. |
 
 When adding new FFI calls, extend the test suite with mocks to ensure argument serialization is correct before hitting the Zig layer.
@@ -110,7 +110,7 @@ When adding new FFI calls, extend the test suite with mocks to ensure argument s
 
 ## 7. Outstanding Items
 
-1. Implement header updates and cancellation in the Zig bridge, then expose them through the client wrapper with regression tests.  
+1. Implement client cancellation in the Zig bridge, then expose it through the wrapper with regression tests.  
 2. Surface telemetry/logger configuration once the native bridge supports it; update docs and add unit tests.  
 3. Introduce a worker wrapper and migrate the rest of the SDK away from `@temporalio/worker`.  
 4. Evaluate moving common error-handling utilities into a shared helper (`src/internal/core-bridge/error.ts`) if the surface grows further.

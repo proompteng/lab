@@ -47,7 +47,7 @@ Ship `@proompteng/temporal-bun-sdk` to npm so Bun developers can:
 ### 2.5 Quality Bar
 
 - Matrix CI on macOS and Linux (arm64/x64) using the latest Bun LTS (track via [endoflife.date](https://endoflife.date/bun)).
-- Integrate Temporal’s docker-compose integration tests plus a nightly Temporal Cloud TLS smoke.  
+- Integrate Temporal CLI–driven integration tests plus a nightly Temporal Cloud TLS smoke.  
 - Publish SBOMs, checksums, and signature metadata for native artifacts; document the support policy for experimental Bun FFI releases (see [Bun FFI docs](https://bun.com/docs/api/ffi)).
 
 ---

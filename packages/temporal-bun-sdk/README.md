@@ -8,7 +8,7 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 - Factories for Temporal connections, workflow clients, and workers.
 - Example workflows/activities plus an executable `temporal-bun-worker` binary.
 - Project scaffolding CLI (`temporal-bun init`) with Docker packaging helpers.
-- Dockerfile and `docker-compose` example for containerized development.
+- Generated projects rely on the Temporal CLI dev server helper instead of Docker Compose.
 - Detailed FFI implementation blueprint in [`docs/ffi-surface.md`](./docs/ffi-surface.md) to guide future native bridge work.
 - Zig migration roadmap in [`docs/zig-bridge-migration-plan.md`](./docs/zig-bridge-migration-plan.md) documenting the phased replacement of the former Rust bridge.
 

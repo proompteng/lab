@@ -27,7 +27,8 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 - ✅ `createTemporalClient` loads the Zig bridge through `bun:ffi`, applies TLS/API key metadata, and exposes workflow helpers (see `src/client.ts`).
 - ✅ CLI commands (`temporal-bun init|check|docker-build`) ship in `src/bin/temporal-bun.ts`.
 - ✅ Worker bootstrap (`createWorker`, `runWorker`) keeps parity with the existing Node SDK via `@temporalio/worker`, ensuring teams can run workflows today.
-- ⚠️ `client.workflow.cancel` and `client.updateHeaders` surface `NativeBridgeError` because the Zig bridge exports are still stubs; `client.workflow.signal` now routes through Temporal core with deterministic request IDs plus client identity.
+- ⚠️ `client.workflow.cancel` still surfaces `NativeBridgeError` because the Zig bridge export is stubbed; `client.workflow.signal` now routes through Temporal core with deterministic request IDs plus client identity.
+- ✅ `client.updateHeaders` hot-swaps metadata via the Zig bridge and returns Temporal core status codes without forcing a reconnect.
 - ⚠️ `WorkerRuntime` (native Bun worker loop) is scaffolded in `src/worker/runtime.ts` but not yet wired to the native bridge.
 
 ### Zig native bridge (`packages/temporal-bun-sdk/bruke`)
@@ -35,7 +36,7 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 - ✅ Implements async pending handles for client connect, DescribeNamespace, workflow queries, and workflow signals via dedicated worker threads.
 - ✅ Encodes workflow start and signal-with-start requests directly in Zig, returning JSON metadata to Bun.
 - ✅ `core.signalWorkflow` now builds `SignalWorkflowExecutionRequest`, forwards gRPC statuses, and acknowledges pending handles with Temporal core responses.
-- ⚠️ `temporal_bun_client_cancel_workflow` and `temporal_bun_client_update_headers` return `UNIMPLEMENTED`.
+- ⚠️ `temporal_bun_client_cancel_workflow` still returns `UNIMPLEMENTED`; header updates now flow through `temporal_bun_client_update_headers`.
 - ⚠️ Worker exports (`temporal_bun_worker_*`) are placeholders; only workflow completion goes through stubbed callbacks to support unit tests.
 - ⚠️ Telemetry and logger configuration hooks (`temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger`) report `UNIMPLEMENTED`.
 
@@ -92,7 +93,7 @@ Key properties:
 | Client | `temporal_bun_client_signal` | ✅ Complete | Encodes `SignalWorkflowExecutionRequest` with identity/request IDs and surfaces Temporal core statuses via Zig bridge (`zig-wf-05`). |
 | Client | `temporal_bun_client_terminate_workflow` | ✅ | Executes Temporal core termination RPC and propagates gRPC status codes. |
 | Client | `temporal_bun_client_cancel_workflow` | ❌ Not implemented | Stub returning `UNIMPLEMENTED`. |
-| Client | `temporal_bun_client_update_headers` | ❌ Not implemented | Metadata updates not yet forwarded to Temporal core. |
+| Client | `temporal_bun_client_update_headers` | ✅ | Accepts JSON metadata, normalizes headers, and forwards updates to Temporal core. |
 | Worker | `temporal_bun_worker_*` | ❌ Not implemented | Creation, poll, heartbeat, and shutdown functions are placeholders. |
 | Byte transport | Pending + byte array helpers | ✅ | Shared across client RPCs; ensures buffers freed via Temporal core callbacks. |
 
@@ -126,7 +127,7 @@ Key properties:
   - `TEMPORAL_ALLOW_INSECURE` toggles TLS verification (mirrors existing Go worker behavior).
 - `serializeTlsConfig` (CLI + client) base64-encodes cert/key pairs before handing them to the Zig bridge, matching Temporal core expectations.
 - Docs include `.env.example` guidance and link to Temporal Cloud setup references.
-- Follow-up: propagate header updates without tearing down the client once `temporal_bun_client_update_headers` is implemented.
+- Follow-up: validate metadata update behaviour against a live Temporal server and extend CLI docs once cancellation lands.
 
 ## 8. Testing & Validation
 
@@ -146,7 +147,7 @@ The detailed lane breakdown lives in [`docs/parallel-implementation-plan.md`](./
 maps to one or more lanes so parallel Codex instances can implement features without clobbering each other.
 
 1. **Client parity**
-   - Implement `temporal_bun_client_update_headers` and `cancel_workflow`, plus add end-to-end Bun tests for the `terminate_workflow` and future signal paths.
+   - Implement `temporal_bun_client_cancel_workflow`, plus add end-to-end Bun tests for the `terminate_workflow` and future signal paths.
 2. **Runtime telemetry & logging**
    - Wire `temporal_bun_runtime_update_telemetry` and `*_set_logger` through Temporal core once upstream exposes the hooks.
    - Surface metrics/logging configuration helpers in TypeScript (`configureTelemetry`, `installLogger`).

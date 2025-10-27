@@ -161,6 +161,18 @@ int32_t temporal_bun_worker_free(void *handle) {
   return 0;
 }
 
+void *temporal_bun_worker_poll_workflow_task(void *worker) {
+  (void)worker;
+  return NULL;
+}
+
+int32_t temporal_bun_worker_complete_workflow_task(void *worker, void *payload, uint64_t len) {
+  (void)worker;
+  (void)payload;
+  (void)len;
+  return 0;
+}
+
 void *temporal_bun_worker_poll_activity_task(void *worker) {
   (void)worker;
   return NULL;
