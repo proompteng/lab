@@ -27,7 +27,8 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 - ✅ `createTemporalClient` loads the Zig bridge through `bun:ffi`, applies TLS/API key metadata, and exposes workflow helpers (see `src/client.ts`).
 - ✅ CLI commands (`temporal-bun init|check|docker-build`) ship in `src/bin/temporal-bun.ts`.
 - ✅ Worker bootstrap (`createWorker`, `runWorker`) keeps parity with the existing Node SDK via `@temporalio/worker`, ensuring teams can run workflows today.
-- ⚠️ `client.workflow.cancel` and `client.updateHeaders` surface `NativeBridgeError` because the Zig bridge exports are still stubs; `client.workflow.signal` now routes through Temporal core with deterministic request IDs plus client identity.
+- ⚠️ `client.workflow.cancel` still surfaces `NativeBridgeError` because the Zig bridge export is stubbed; `client.workflow.signal` now routes through Temporal core with deterministic request IDs plus client identity.
+- ✅ `client.updateHeaders` hot-swaps metadata via the Zig bridge and returns Temporal core status codes without forcing a reconnect.
 - ⚠️ `WorkerRuntime` (native Bun worker loop) is scaffolded in `src/worker/runtime.ts` but not yet wired to the native bridge.
 
 ### Zig native bridge (`packages/temporal-bun-sdk/bruke`)

@@ -3,7 +3,8 @@
 **Status Snapshot (27 Oct 2025)**  
 - ✅ `createTemporalClient` loads the Zig bridge (`native.createRuntime` / `native.createClient`) and exposes workflow helpers `start`, `signal`, `query`, `signalWithStart`, `terminate`, plus `describeNamespace` and `shutdown`.  
 - ✅ Request payloads are assembled in `src/client/serialization.ts` and validated with Zod schemas before crossing the FFI boundary.  
-- ⚠️ `cancelWorkflow` and `updateHeaders` surface `NativeBridgeError` because the Zig bridge still reports `grpc.unimplemented`; callers receive runtime exceptions at invocation time.  
+- ⚠️ `cancelWorkflow` surfaces `NativeBridgeError` because the Zig bridge still reports `grpc.unimplemented`; callers receive runtime exceptions at invocation time.  
+- ✅ `updateHeaders` forwards normalized ASCII/`-bin` metadata through the Zig bridge without reconnecting the client.  
 - ⚠️ Runtime telemetry/logger passthroughs exist in TypeScript but throw until the Zig bridge exports are completed.  
 - ✅ CLI consumers can pass TLS/API key metadata through `loadTemporalConfig`; base64 encoding happens automatically before FFI calls.  
 
