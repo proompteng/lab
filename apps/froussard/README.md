@@ -72,7 +72,7 @@ The local runtime exposes:
 
 ## Verification Checklist
 
-1. Create a GitHub issue in `proompteng/lab` as the Codex trigger user.
+1. Create a GitHub issue in `proompteng/lab` as the Codex trigger user using the **Codex Task** issue template so summary, scope, and validation fields are present.
 2. Ensure Argo Events produces a Workflow named `github-codex-planning-*` in
    `argo-workflows` namespace.
 3. Inspect pod logs to confirm the payload mirrors the Kafka message.
