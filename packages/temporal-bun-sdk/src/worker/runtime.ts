@@ -197,8 +197,10 @@ export class WorkerRuntime {
     let client: NativeClient | null = null
 
     try {
+      const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
+
       const nativeConfig: Record<string, unknown> = {
-        address: formatTemporalAddress(config.address, Boolean(config.tls)),
+        address: formatTemporalAddress(config.address, shouldUseTls),
         namespace,
         identity,
       }

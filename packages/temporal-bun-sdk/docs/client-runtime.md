@@ -66,7 +66,7 @@ The `workflow` helper simply delegates to the instance methods so higher layers 
 
 ```ts
 const nativeConfig = {
-  address: formatTemporalAddress(config.address, Boolean(config.tls)),
+  address: formatTemporalAddress(config.address, Boolean(config.tls || config.allowInsecureTls)),
   namespace,
   identity,
   apiKey: config.apiKey,
