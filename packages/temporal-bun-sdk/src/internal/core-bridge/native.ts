@@ -558,6 +558,14 @@ export const native = {
       }
     },
 
+    completeWorkflowTask(worker: NativeWorker, payload: Uint8Array | Buffer): void {
+      const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
+      const status = Number(workerFfi.completeWorkflowTask(worker.handle, ptr(buffer), buffer.byteLength))
+      if (status !== 0) {
+        throw buildNativeBridgeError()
+      }
+    },
+
     async pollActivityTask(worker: NativeWorker): Promise<Uint8Array | null> {
       if (process.env.TEMPORAL_BUN_SDK_USE_ZIG !== '1' || !isZigBridge) {
         throw new NativeBridgeError({
