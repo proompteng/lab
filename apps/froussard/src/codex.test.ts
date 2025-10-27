@@ -87,6 +87,8 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain('Implementation branch: codex/issue-77-abc123')
     expect(prompt).toContain('Guidance:')
     expect(prompt).toContain('Use internet search (web.run) when fresh context is needed')
+    expect(prompt).toContain('Populate the PR description using .github/PULL_REQUEST_TEMPLATE.md')
+    expect(prompt).toContain('wait 30 seconds, re-check CI; if checks are still running, wait another 30 seconds')
     expect(prompt).toContain(
       `Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} up to date using apps/froussard/src/codex/cli/codex-progress-comment.ts.`,
     )
