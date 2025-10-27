@@ -12,7 +12,7 @@ let stubPromise: Promise<NativeBridgeArtefact> | null = null
 
 async function compileStub(): Promise<NativeBridgeArtefact> {
   const rootDir = fileURLToPath(new URL('../..', import.meta.url))
-  const targetDir = join(rootDir, 'native/temporal-bun-bridge-zig/zig-out/lib')
+  const targetDir = join(rootDir, 'bruke/zig-out/lib')
 
   let releaseName: string
   if (process.platform === 'win32') {

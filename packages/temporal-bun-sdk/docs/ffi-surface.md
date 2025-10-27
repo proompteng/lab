@@ -89,7 +89,7 @@ Legend: ✅ shipped · ⚠️ partial/stub · ❌ not implemented yet.
 
 - `errors.zig` exposes `setStructuredError({ code, message, details })`; TypeScript transforms failures into `NativeBridgeError` with the same payload.
 - Native errors fallback to JSON when possible; otherwise raw strings are wrapped with `code = UNKNOWN`.
-- Zig stubs prefix messages with `temporal-bun-bridge-zig:` so Bun callers can detect unimplemented paths quickly.
+- Zig stubs prefix messages with `bruke:` so Bun callers can detect unimplemented paths quickly.
 - Ensure every new export sets a success message (`errors.setLastError(""))` on success and uses `grpc_status` codes defined in `pending.zig`.
 
 ---
@@ -160,7 +160,7 @@ Delivering these tasks unblocks swapping out `@temporalio/worker` with the Bun-n
 
 ## 10. Reference Materials
 
-- Zig bridge source: `packages/temporal-bun-sdk/native/temporal-bun-bridge-zig/`
+- Zig bridge source: `packages/temporal-bun-sdk/bruke/`
 - Bun FFI wrapper: `packages/temporal-bun-sdk/src/internal/core-bridge/native.ts`
 - Temporal core C headers: downloaded via `scripts/download-temporal-libs.ts`
 - Upstream repos: `temporalio/sdk-core` (Rust), `temporalio/sdk-typescript`

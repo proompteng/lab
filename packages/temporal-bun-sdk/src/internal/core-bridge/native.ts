@@ -31,7 +31,7 @@ type BridgeVariant = 'zig'
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolvePackageRoot()
 const distNativeDir = join(packageRoot, 'dist', 'native')
-const zigStageLibDir = join(packageRoot, 'native', 'temporal-bun-bridge-zig', 'zig-out', 'lib')
+const zigStageLibDir = join(packageRoot, 'bruke', 'zig-out', 'lib')
 
 const UNKNOWN_NATIVE_ERROR_CODE = 2
 const payloadConverter = new DefaultPayloadConverter()
@@ -305,7 +305,7 @@ function buildBridgeLoadError(libraryPath: string, error: unknown, context: Brid
     )
   } else {
     messages.push(
-      'Rebuild the Zig bridge or install packaged artefacts so a library exists under dist/native/<platform>/<arch>/ or native/temporal-bun-bridge-zig/zig-out/lib/.',
+      'Rebuild the Zig bridge or install packaged artefacts so a library exists under dist/native/<platform>/<arch>/ or bruke/zig-out/lib/.',
     )
   }
 

@@ -63,6 +63,21 @@ flowchart BT
 
 > CI uses the same helper scripts to run `TEMPORAL_TEST_SERVER=1 bun test ...` against a CLI-backed server.
 
+### Lane Ownership
+
+The [`parallel-implementation-plan`](./parallel-implementation-plan.md) document maps each Zig module to a lane. When running
+lane-specific work, use the following targeted commands in addition to the global suites:
+
+| Lane | Command |
+|------|---------|
+| 1 | `bun test tests/client.test.ts` and `bun test tests/native.integration.test.ts` |
+| 2 | `bun test tests/native.integration.test.ts --filter describeNamespace` |
+| 3 | `bun test tests/zig-signal.test.ts` |
+| 6 & 7 | `bun test tests/worker` |
+| 9 | `pnpm --filter @proompteng/temporal-bun-sdk run ci:native:zig` |
+
+Document any additional lane-specific commands inside the plan as new modules are carved out.
+
 ### Test Cases
 1. **Happy path workflow**
    - Start `helloTemporal`, ensure activity runs, verify result.

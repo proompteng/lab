@@ -43,9 +43,10 @@ To provide first-class Bun developer ergonomics we will reimplement the native b
 
 Supporting modules:
 
-- `native/temporal-bun-bridge-zig/src/pending.zig` needs the hardening from #1526 to be thread-safe.
-- `native/temporal-bun-bridge-zig/src/byte_array.zig` still awaits telemetry/guardrails (`zig-buf-02`).
+- `bruke/src/pending.zig` needs the hardening from #1526 to be thread-safe.
+- `bruke/src/byte_array.zig` still awaits telemetry/guardrails (`zig-buf-02`).
 - TypeScript loader (`src/internal/core-bridge/native.ts`) leaves telemetry/logging/cancelation paths as TODOs pending Zig parity.
+- Client bridge code now lives in `bruke/src/client/` with dedicated modules for connect, describe, workflow RPCs, and a lightweight aggregator `client/mod.zig` so teams can work in parallel without editing a monolith.
 
 ---
 
@@ -104,7 +105,7 @@ Bun (bun:ffi) ──▶ Zig Bridge (libtemporal_bun_bridge.zig)
 
 | Phase | Scope | Deliverables | Exit Criteria |
 |-------|-------|--------------|---------------|
-| 0 — Scaffolding | Add `native/temporal-bun-bridge-zig` with `build.zig`, hook into `pnpm build:native`. Generate C headers from Rust core (temporary). | Passing `zig build install` producing `.so/.dylib/.dll`, TypeScript loads via `bun:ffi` override behind feature flag. | `bun run packages/temporal-bun-sdk/scripts/smoke-client.ts` connects & describes namespace using Zig library gated by `TEMPORAL_BUN_SDK_USE_ZIG=1`. |
+| 0 — Scaffolding | Add `bruke` with `build.zig`, hook into `pnpm build:native`. Generate C headers from Rust core (temporary). | Passing `zig build install` producing `.so/.dylib/.dll`, TypeScript loads via `bun:ffi` override behind feature flag. | `bun run packages/temporal-bun-sdk/scripts/smoke-client.ts` connects & describes namespace using Zig library gated by `TEMPORAL_BUN_SDK_USE_ZIG=1`. |
 | 1 — Client Parity | Reimplement runtime + client connect + describe + start workflow. Maintain async pending handles. | Toggle default to Zig bridge on CI when env flag enabled. Update TS to fall back to Rust when Zig load fails. | `bun test` suite passes with Zig shared lib; docs updated. |
 | 2 — Client Enhancements | Implement signal/query/terminate/cancel/signalWithStart + metadata updates. Add telemetry + logger support. | All TODOs in `src/internal/core-bridge/native.ts` removed or delegated to Zig. | Temporal integration tests (Temporal CLI dev server) green under Zig path. |
 | 3 — Worker Runtime | Port worker creation, poll/complete, activity heartbeat. Mirror existing FFI blueprint. | `temporal-bun-worker` binary runs end-to-end solely on Zig bridge. | Example app runs against Temporal server without Rust artifacts. |
@@ -117,7 +118,7 @@ Bun (bun:ffi) ──▶ Zig Bridge (libtemporal_bun_bridge.zig)
 1. **Zig Toolchain Version** — Standardize on Zig 0.15.1 (matches `services/galette`). Document installation in README.  
 2. **Package Scripts** — ✅ **COMPLETED** - Replaced `cargo build` scripts with pre-built library downloads:
    ```json
-   "build:native": "USE_PREBUILT_LIBS=true bun run libs:download && USE_PREBUILT_LIBS=true zig build -Doptimize=ReleaseFast --build-file native/temporal-bun-bridge-zig/build.zig"
+   "build:native": "USE_PREBUILT_LIBS=true bun run libs:download && USE_PREBUILT_LIBS=true zig build -Doptimize=ReleaseFast --build-file bruke/build.zig"
    ```
 3. **CI Images** — ✅ **COMPLETED** - Removed Rust from Docker images, using only Zig with pre-built libraries.  
 4. **Prebuilt Artifacts** — Use `zig build install` to stage artifacts under `native/artifacts/<platform>/`.  
