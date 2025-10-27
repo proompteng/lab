@@ -147,6 +147,7 @@ export class WorkerRuntime {
   #shutdownPromise: Promise<void> | null = null
   #resolveShutdown?: () => void
   #rejectShutdown?: (error: unknown) => void
+  #nativeShutdownRequested = false
   #disposed = false
 
   private constructor(
@@ -256,6 +257,7 @@ export class WorkerRuntime {
     }
 
     this.#state = 'running'
+    this.#nativeShutdownRequested = false
     this.#abortController = new AbortController()
     this.#shutdownPromise = new Promise<void>((resolve, reject) => {
       this.#resolveShutdown = resolve
@@ -302,11 +304,27 @@ export class WorkerRuntime {
     if (this.#state === 'running' || this.#state === 'stopping') {
       this.#state = 'stopping'
       this.#abortController?.abort()
+      this.#requestNativeShutdown()
       if (this.#runPromise) {
         await this.#runPromise.catch((error) => {
           throw error
         })
       }
+    }
+  }
+
+  #requestNativeShutdown(): void {
+    if (this.#disposed || this.#nativeShutdownRequested) {
+      return
+    }
+
+    this.#nativeShutdownRequested = true
+
+    try {
+      destroyNativeWorker(this.#handles.worker)
+    } catch (error) {
+      this.#nativeShutdownRequested = false
+      throw error
     }
   }
 
@@ -362,6 +380,7 @@ export class WorkerRuntime {
       return
     }
     this.#disposed = true
+    this.#nativeShutdownRequested = true
     destroyNativeWorker(this.#handles.worker)
     native.clientShutdown(this.#handles.client)
     native.runtimeShutdown(this.#handles.runtime)
