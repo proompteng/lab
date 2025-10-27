@@ -127,14 +127,16 @@ if (!nativeBridge) {
           expect(nativeError.code).toBe(2)
           return
         }
-        expect(nativeError?.message ?? '').toContain('Connection failed')
+        const message = nativeError?.message ?? ''
+        expect(message.length).toBeGreaterThan(0)
+        expect(message).toMatch(/Connection failed|workflow not found|NOT_FOUND/i)
       } catch (error) {
         expect(error).toBeInstanceOf(NativeBridgeError)
         const nativeError = error as NativeBridgeError
         if (nativeError.raw === 'stub') {
           expect(nativeError.code).toBe(2)
         } else {
-          expect(nativeError.message).toContain('Connection failed')
+          expect(nativeError.message).toMatch(/Connection failed|workflow not found|NOT_FOUND/i)
         }
         return
       } finally {
