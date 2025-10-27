@@ -16,7 +16,7 @@ This plan documents the current pyramid and the steps required to reach producti
 | Layer | Purpose | Current Coverage | Gaps |
 |-------|---------|------------------|------|
 | Unit (Bun) | Validate serialization, config, CLI flows, native bridge shims | `client.test.ts`, `config.test.ts`, `cli.test.ts`, `core-bridge.test.ts`, `native.test.ts` | No worker/runtime unit tests, no payload codec coverage |
-| Integration (Temporal CLI) | Exercise real Temporal server with Bun client | `native.integration.test.ts`, `end-to-end-workflow.test.ts`, `zig-signal.test.ts` | Worker/task loop integration pending, cancellation/update headers blocked by Zig stubs |
+| Integration (Temporal CLI) | Exercise real Temporal server with Bun client | `native.integration.test.ts`, `end-to-end-workflow.test.ts`, `zig-signal.test.ts` | Worker/task loop integration pending; cancellation blocked by Zig stubs |
 | Zig tests (`zig build test`) | Validate pending-handle state machines, worker scaffolding | Enabled in `package.json` (`test:native:zig`) | Need broader coverage once worker/client features land |
 | Smoke / CLI | Ensure scaffolding commands succeed | `cli.test.ts`, `cli-check.test.ts` | Future: `temporal-bun init` end-to-end run after worker rewrite |
 | Replay | Guarantee deterministic workflow execution | N/A | Requires Bun workflow runtime implementation |
@@ -65,7 +65,7 @@ This plan documents the current pyramid and the steps required to reach producti
 | Area | Description | Owner / Lane |
 |------|-------------|--------------|
 | Cancellation integration | Add Bun + Zig tests once `temporal_bun_client_cancel_workflow` is implemented. | Lane 5 |
-| Header updates | Test metadata mutation end-to-end post-implementation. | Lane 5 |
+| Header updates | ✅ Bun + Zig coverage for metadata mutation (Oct 2025). | Lane 5 |
 | Worker polling loops | Create suites under `tests/worker/**` once Bun-native worker is functional (`TEMPORAL_BUN_SDK_USE_ZIG=1`). | Lane 7 |
 | Workflow runtime | Determinism/replay harness after workflow sandbox lands. | Lane 3 |
 | Telemetry/logging | Integration tests for runtime telemetry hooks. | Lane 6 |

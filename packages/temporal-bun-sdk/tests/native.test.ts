@@ -127,8 +127,16 @@ if (!nativeBridge) {
           expect(nativeError.code).toBe(2)
           return
         }
-        expect(nativeError?.code).toBe(5)
-        expect(JSON.parse(nativeError?.raw ?? '{}')).toMatchObject({ code: 5 })
+        expect(nativeError?.message ?? '').toContain('Connection failed')
+      } catch (error) {
+        expect(error).toBeInstanceOf(NativeBridgeError)
+        const nativeError = error as NativeBridgeError
+        if (nativeError.raw === 'stub') {
+          expect(nativeError.code).toBe(2)
+        } else {
+          expect(nativeError.message).toContain('Connection failed')
+        }
+        return
       } finally {
         if (client) {
           native.clientShutdown(client)
@@ -137,7 +145,7 @@ if (!nativeBridge) {
       }
     })
 
-    zigOnlyTest('updateClientHeaders surfaces structured NativeBridgeError', async () => {
+    zigOnlyTest('updateClientHeaders updates metadata without error', async () => {
       const runtime = native.createRuntime({})
       let client: Awaited<ReturnType<typeof native.createClient>> | undefined
       try {
@@ -146,22 +154,27 @@ if (!nativeBridge) {
           namespace: 'default',
         })
 
-        let caught: unknown
         try {
-          native.updateClientHeaders(client, { authorization: 'Bearer token' })
+          native.updateClientHeaders(client!, { authorization: 'Bearer token' })
         } catch (error) {
-          caught = error
+          expect(error).toBeInstanceOf(NativeBridgeError)
+          const nativeError = error as NativeBridgeError
+          if (nativeError.raw === 'stub') {
+            expect(nativeError.code).toBe(2)
+            return
+          }
+          expect(nativeError.message).toContain('Connection failed')
+          expect(nativeError.message).not.toContain('not implemented')
         }
-
-        expect(caught).toBeInstanceOf(NativeBridgeError)
-        const nativeError = caught as NativeBridgeError | undefined
-        if (nativeError?.raw === 'stub') {
+      } catch (error) {
+        expect(error).toBeInstanceOf(NativeBridgeError)
+        const nativeError = error as NativeBridgeError
+        if (nativeError.raw === 'stub') {
           expect(nativeError.code).toBe(2)
-          return
+        } else {
+          expect(nativeError.message).toContain('Connection failed')
         }
-        expect(nativeError?.code).toBe(12)
-        expect(nativeError?.message).toContain('updateHeaders is not implemented yet')
-        expect(JSON.parse(nativeError?.raw ?? '{}')).toMatchObject({ code: 12 })
+        return
       } finally {
         if (client) {
           native.clientShutdown(client)

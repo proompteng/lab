@@ -67,7 +67,7 @@ flowchart LR
 | Client | `temporal_bun_client_signal` | ✅ | Validates payloads, dispatches RPC in a detached thread, maps Temporal errors to gRPC codes. |
 | Client | `temporal_bun_client_terminate_workflow` | ✅ | Calls Temporal core terminate RPC and surfaces gRPC status codes. |
 | Client | `temporal_bun_client_cancel_workflow` | ⚠️ TODO | Returns `grpc.unimplemented`; needs JSON validation + RPC wiring. |
-| Client | `temporal_bun_client_update_headers` | ⚠️ TODO | Returns `grpc.unimplemented`; requires metadata conversion before calling Temporal core. |
+| Client | `temporal_bun_client_update_headers` | ✅ | Accepts newline-delimited metadata and forwards updates to Temporal core. |
 | Byte transport | `temporal_bun_pending_*`, `temporal_bun_byte_array_free` | ✅ | Shared infrastructure used by connect/query/signal flows. |
 | Worker | `temporal_bun_worker_*` family | ❌ | All stubs except `complete_workflow_task`; primary focus for Bun-native worker delivery. |
 
@@ -140,7 +140,7 @@ Delivering these tasks unblocks swapping out `@temporalio/worker` with the Bun-n
 ## 9. Roadmap (FFI-Focused)
 
 1. **Finish client parity** (target: late Oct 2025)
-   - Implement `update_headers`, `cancel`, and real `signal` RPC.
+- Implement `cancel` and real `signal` RPC.
    - Add Bun tests covering each RPC against Temporal CLI server.
 2. **Telemetry & logging** (depends on upstream API availability)
    - Expose telemetry config struct; support Prometheus + OTLP exporters.
@@ -170,7 +170,7 @@ Delivering these tasks unblocks swapping out `@temporalio/worker` with the Bun-n
 ## 11. Open Questions
 
 1. Should we generate Zig bindings from the upstream C header at build time to ensure parity, or continue hand-authoring signatures?
-2. How do we expose long-lived metadata changes? (Option A: `update_headers` RPC; Option B: recreate client.)
+2. Should we surface read-backs or change notifications for long-lived metadata after updates are applied?
 3. Do we need a shared thread pool for pending handles, or is one thread per request acceptable given expected QPS?
 4. When worker exports land, do we mirror the Node worker activity/workflow sandbox model or design a Bun-specific isolate strategy?
 5. Should we gate unimplemented RPCs behind feature flags in TypeScript to make failures clearer to early adopters?

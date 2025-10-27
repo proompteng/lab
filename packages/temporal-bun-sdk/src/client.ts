@@ -1,3 +1,4 @@
+import type { ArrayBufferView } from 'node:buffer'
 import { z } from 'zod'
 import {
   buildCancelRequest,
@@ -33,26 +34,54 @@ const toStartWorkflowResult = (metadata: WorkflowHandleMetadata): StartWorkflowR
   handle: createWorkflowHandle(metadata),
 })
 
+const isPrintableAscii = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code < 0x20 || code > 0x7e) {
+      return false
+    }
+  }
+  return true
+}
+
+const toUint8Array = (value: ArrayBuffer | ArrayBufferView): Uint8Array => {
+  if (value instanceof ArrayBuffer) {
+    return new Uint8Array(value)
+  }
+  return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+}
+
 const metadataHeadersSchema = z
-  .record(z.string(), z.string().trim().min(1, 'Header values must be non-empty strings'))
-  .superRefine((headers, ctx) => {
+  .record(
+    z.union([
+      z.string(),
+      z.instanceof(ArrayBuffer),
+      z.custom<ArrayBufferView>(
+        (value) => typeof value === 'object' && value !== null && ArrayBuffer.isView(value),
+        'Header values must be strings or byte arrays',
+      ),
+    ]),
+  )
+  .transform((headers, ctx) => {
+    const normalized: Record<string, string> = {}
     const seen = new Set<string>()
-    for (const key of Object.keys(headers)) {
-      const trimmedKey = key.trim()
+
+    for (const [rawKey, rawValue] of Object.entries(headers)) {
+      const trimmedKey = rawKey.trim()
       if (trimmedKey.length === 0) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: 'Header keys must be non-empty strings',
-          path: [key],
+          path: [rawKey],
         })
         continue
       }
 
-      if (trimmedKey !== key) {
+      if (trimmedKey !== rawKey) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: 'Header keys must not include leading or trailing whitespace',
-          path: [key],
+          path: [rawKey],
         })
       }
 
@@ -61,20 +90,83 @@ const metadataHeadersSchema = z
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: `Header key '${normalizedKey}' is duplicated (case-insensitive match)`,
-          path: [key],
+          path: [rawKey],
         })
-      } else {
-        seen.add(normalizedKey)
+        continue
       }
+      seen.add(normalizedKey)
+
+      const isBinaryKey = normalizedKey.endsWith('-bin')
+
+      if (typeof rawValue === 'string') {
+        const trimmedValue = rawValue.trim()
+        if (trimmedValue.length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Header values must be non-empty strings',
+            path: [rawKey],
+          })
+          continue
+        }
+
+        if (isBinaryKey) {
+          normalized[normalizedKey] = Buffer.from(trimmedValue, 'utf8').toString('base64')
+          continue
+        }
+
+        if (!isPrintableAscii(trimmedValue)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Header '${normalizedKey}' values must contain printable ASCII characters; use '-bin' for binary metadata`,
+            path: [rawKey],
+          })
+          continue
+        }
+
+        normalized[normalizedKey] = trimmedValue
+        continue
+      }
+
+      const isArrayBuffer = rawValue instanceof ArrayBuffer
+      const isArrayBufferView = !isArrayBuffer && ArrayBuffer.isView(rawValue)
+
+      if (!isArrayBuffer && !isArrayBufferView) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Header values must be strings or byte arrays',
+          path: [rawKey],
+        })
+        continue
+      }
+
+      if (!isBinaryKey) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Header '${normalizedKey}' accepts string values only; append '-bin' to use binary metadata`,
+          path: [rawKey],
+        })
+        continue
+      }
+
+      const bytes = toUint8Array(rawValue as ArrayBuffer | ArrayBufferView)
+      if (bytes.byteLength === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Header values must be non-empty byte arrays',
+          path: [rawKey],
+        })
+        continue
+      }
+
+      normalized[normalizedKey] = Buffer.from(bytes).toString('base64')
     }
-  })
-  .transform((headers) => {
-    const normalized: Record<string, string> = {}
-    for (const [key, value] of Object.entries(headers)) {
-      normalized[key.trim().toLowerCase()] = value
-    }
+
     return normalized
   })
+
+type ClientHeaderValue = string | ArrayBuffer | ArrayBufferView
+type ClientHeaderInput = Record<string, ClientHeaderValue>
+export type ClientMetadataHeaders = ClientHeaderInput
 
 const retryPolicySchema = z
   .object({
@@ -139,7 +231,7 @@ export interface TemporalClient {
   cancelWorkflow(handle: WorkflowHandle): Promise<void>
   signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult>
   describeNamespace(namespace?: string): Promise<Uint8Array>
-  updateHeaders(headers: Record<string, string>): Promise<void>
+  updateHeaders(headers: ClientHeaderInput): Promise<void>
   shutdown(): Promise<void>
 }
 
@@ -331,7 +423,7 @@ class TemporalClientImpl implements TemporalClient {
     return native.describeNamespace(this.client, targetNamespace ?? this.namespace)
   }
 
-  async updateHeaders(headers: Record<string, string>): Promise<void> {
+  async updateHeaders(headers: ClientHeaderInput): Promise<void> {
     if (this.closed) {
       throw new Error('Temporal client has already been shut down')
     }

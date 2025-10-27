@@ -36,10 +36,12 @@ export interface TemporalClient {
   cancelWorkflow(handle: WorkflowHandle): Promise<void>      // throws (bridge TODO)
   signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult>
   describeNamespace(namespace?: string): Promise<Uint8Array>
-  updateHeaders(headers: Record<string, string>): Promise<void> // throws (bridge TODO)
+  updateHeaders(headers: ClientMetadataHeaders): Promise<void> // updates ASCII + -bin metadata via Zig bridge
   shutdown(): Promise<void>
 }
 ```
+
+`ClientMetadataHeaders` accepts string values for ASCII keys and `ArrayBuffer`/typed-array inputs for binary keys ending in `-bin`. The TypeScript layer base64-encodes binary payloads and rejects non-printable ASCII so Temporal core receives gRPC-compliant metadata.
 
 The `workflow` helper simply delegates to the instance methods so higher layers can keep using familiar ergonomics (`client.workflow.start`, etc.).
 
@@ -97,7 +99,7 @@ All helpers rely on Zod schemas in `src/client.ts` to validate inputs. Any failu
 
 - `NativeBridgeError` (defined in `src/internal/core-bridge/native.ts`) wraps gRPC status codes emitted by the Zig bridge.  
 - `native.*` helpers convert JSON payloads or status codes into `NativeBridgeError` when the Zig layer reports failures (`temporal_bun_error_message`).  
-- `signalWorkflow` and `queryWorkflow` await pending handles; `cancelWorkflow`/`updateHeaders` still reject because their Zig exports return `UNIMPLEMENTED`.  
+- `signalWorkflow` and `queryWorkflow` await pending handles; `cancelWorkflow` still rejects because its Zig export returns `UNIMPLEMENTED`.  
 - Callers must invoke `client.shutdown()` to release native resources. The method is idempotent and safe to call multiple times.
 
 ---
@@ -118,9 +120,8 @@ When adding features that touch new RPCs, extend these suites or create targeted
 ## 7. Outstanding Work
 
 1. **Cancellation path** — finish `buildCancelRequest`, wire `native.cancelWorkflow` into the Zig bridge once `temporal_bun_client_cancel_workflow` is implemented, and add integration coverage.  
-2. **Metadata updates** — implement `temporal_bun_client_update_headers` so long-lived clients can mutate headers without reconnecting.  
-3. **Telemetry & logging** — hook `Runtime.configureTelemetry` and `Runtime.installLogger` once the Zig exports land (`temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger`).  
-4. **Data converters** — today we forward raw JSON arguments. When custom payload codecs ship (see `payloads-codec.md`), update serialization to encode Temporal payloads instead of plain JSON arrays.
+2. **Telemetry & logging** — hook `Runtime.configureTelemetry` and `Runtime.installLogger` once the Zig exports land (`temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger`).  
+3. **Data converters** — today we forward raw JSON arguments. When custom payload codecs ship (see `payloads-codec.md`), update serialization to encode Temporal payloads instead of plain JSON arrays.
 
 Track these items in `docs/parallel-implementation-plan.md` (lanes 1, 4, and 5) so they remain visible during planning.
 

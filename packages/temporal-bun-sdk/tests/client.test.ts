@@ -410,7 +410,7 @@ if (nativeModule && stubPath) {
       })
     })
 
-    test('updateHeaders normalizes keys and values then forwards to native', async () => {
+    test('updateHeaders serializes ASCII and binary metadata before forwarding to native', async () => {
       const config: TemporalConfig = {
         host: 'localhost',
         port: 7233,
@@ -426,11 +426,20 @@ if (nativeModule && stubPath) {
 
       const { client } = await createTemporalClient({ config })
 
-      await client.updateHeaders({ Authorization: 'Bearer token-123  ', 'X-Custom': '  value ' })
+      const traceBytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
+
+      await client.updateHeaders({
+        Authorization: 'Bearer token-123  ',
+        'User-Agent': ' temporal-bun-sdk/1.0 ',
+        'X-Trace-Bin': traceBytes,
+        'x-json-bin': ' {"hello":"world"} ',
+      })
 
       expect(native.updateClientHeaders).toHaveBeenCalledWith(clientHandle, {
         authorization: 'Bearer token-123',
-        'x-custom': 'value',
+        'user-agent': 'temporal-bun-sdk/1.0',
+        'x-trace-bin': Buffer.from(traceBytes).toString('base64'),
+        'x-json-bin': Buffer.from('{"hello":"world"}', 'utf8').toString('base64'),
       })
 
       await client.shutdown()
@@ -487,6 +496,75 @@ if (nativeModule && stubPath) {
       await expect(client.updateHeaders({ authorization: 'Bearer rotate' })).rejects.toThrow(
         'Temporal client has already been shut down',
       )
+    })
+
+    test('updateHeaders rejects non-ASCII characters for ASCII headers', async () => {
+      const config: TemporalConfig = {
+        host: 'localhost',
+        port: 7233,
+        address: 'localhost:7233',
+        namespace: 'default',
+        taskQueue: 'prix',
+        apiKey: undefined,
+        tls: undefined,
+        allowInsecureTls: false,
+        workerIdentity: 'worker-default',
+        workerIdentityPrefix: 'temporal-bun-worker',
+      }
+
+      const { client } = await createTemporalClient({ config })
+
+      await expect(client.updateHeaders({ Authorization: 'Béârér token' })).rejects.toThrow(
+        "Header 'authorization' values must contain printable ASCII characters; use '-bin' for binary metadata",
+      )
+
+      await client.shutdown()
+    })
+
+    test('updateHeaders rejects binary payloads on non -bin headers', async () => {
+      const config: TemporalConfig = {
+        host: 'localhost',
+        port: 7233,
+        address: 'localhost:7233',
+        namespace: 'default',
+        taskQueue: 'prix',
+        apiKey: undefined,
+        tls: undefined,
+        allowInsecureTls: false,
+        workerIdentity: 'worker-default',
+        workerIdentityPrefix: 'temporal-bun-worker',
+      }
+
+      const { client } = await createTemporalClient({ config })
+
+      await expect(client.updateHeaders({ Authorization: new Uint8Array([0xde, 0xad]) })).rejects.toThrow(
+        "Header 'authorization' accepts string values only; append '-bin' to use binary metadata",
+      )
+
+      await client.shutdown()
+    })
+
+    test('updateHeaders enforces non-empty binary payloads', async () => {
+      const config: TemporalConfig = {
+        host: 'localhost',
+        port: 7233,
+        address: 'localhost:7233',
+        namespace: 'default',
+        taskQueue: 'prix',
+        apiKey: undefined,
+        tls: undefined,
+        allowInsecureTls: false,
+        workerIdentity: 'worker-default',
+        workerIdentityPrefix: 'temporal-bun-worker',
+      }
+
+      const { client } = await createTemporalClient({ config })
+
+      await expect(client.updateHeaders({ 'x-trace-bin': new ArrayBuffer(0) })).rejects.toThrow(
+        'Header values must be non-empty byte arrays',
+      )
+
+      await client.shutdown()
     })
 
     test('queryWorkflow applies defaults and parses JSON response', async () => {
