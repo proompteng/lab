@@ -224,6 +224,51 @@ describe('temporal-bun CLI utilities', () => {
     expect(nativeBridge.describeNamespace).toHaveBeenCalled()
   })
 
+  it('handleCheck keeps HTTPS when allowInsecureTls is true without TLS configuration', async () => {
+    const runtimeHandle = { type: 'runtime' as const, handle: 909 }
+    const clientHandle = { type: 'client' as const, handle: 910 }
+
+    const loadConfig = mock(
+      async (): Promise<TemporalConfig> => ({
+        host: 'secure.tmprl.cloud',
+        port: 7233,
+        address: 'secure.tmprl.cloud:7233',
+        namespace: 'secure',
+        taskQueue: 'prix',
+        apiKey: undefined,
+        tls: undefined,
+        allowInsecureTls: true,
+        workerIdentity: 'temporal-bun-worker-host-allow-insecure',
+        workerIdentityPrefix: 'temporal-bun-worker',
+      }),
+    )
+
+    const nativeBridge = {
+      createRuntime: mock(() => runtimeHandle),
+      runtimeShutdown: mock(() => {}),
+      createClient: mock(async () => clientHandle),
+      clientShutdown: mock(() => {}),
+      describeNamespace: mock(async () => new Uint8Array([10, 11, 12])),
+    }
+
+    await handleCheck(
+      [],
+      {},
+      {
+        loadConfig,
+        nativeBridge: nativeBridge as unknown as NativeBridge,
+      },
+    )
+
+    expect(nativeBridge.createClient).toHaveBeenCalledWith(
+      runtimeHandle,
+      expect.objectContaining({
+        address: 'https://secure.tmprl.cloud:7233',
+        allowInsecureTls: true,
+      }),
+    )
+  })
+
   it('handleCheck keeps HTTPS when allowInsecureTls is true but TLS is configured', async () => {
     const runtimeHandle = { type: 'runtime' as const, handle: 505 }
     const clientHandle = { type: 'client' as const, handle: 606 }

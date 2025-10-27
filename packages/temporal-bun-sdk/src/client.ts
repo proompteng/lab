@@ -259,8 +259,10 @@ export const createTemporalClient = async (
   const taskQueue = options.taskQueue ?? config.taskQueue
 
   const runtime = native.createRuntime(options.runtimeOptions ?? {})
+  const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
+
   const nativeConfig: Record<string, unknown> = {
-    address: formatTemporalAddress(config.address, Boolean(config.tls)),
+    address: formatTemporalAddress(config.address, shouldUseTls),
     namespace,
     identity,
   }

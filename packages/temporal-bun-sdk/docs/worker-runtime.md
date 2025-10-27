@@ -2,9 +2,9 @@
 
 **Status Snapshot (27 Oct 2025)**  
 - ✅ Shipping worker experience still relies on the upstream `@temporalio/worker`. `src/worker.ts` wraps `Worker.create`, and `src/bin/start-worker.ts` simply starts the vendor worker with our default config.  
-- ✅ The Zig bridge exposes worker handles (`temporal_bun_worker_new/free/...`), but only creation and test scaffolding are wired; poll/completion/heartbeat/shutdown exports return `UNIMPLEMENTED`.  
-- ⚠️ `src/worker/runtime.ts` contains a placeholder `WorkerRuntime` class and guard helpers (`maybeCreateNativeWorker`, `destroyNativeWorker`) used for future Zig integration. Methods such as `run()` and `shutdown()` currently throw.  
-- ⚠️ `TEMPORAL_BUN_SDK_USE_ZIG=1` enables native worker handle creation, but practical polling loops do not exist yet, so this flag should not be flipped outside tests.  
+- ✅ The Zig bridge now drives real workflow poll/completion loops when `TEMPORAL_BUN_SDK_USE_ZIG=1`. `tests/worker/zig-poll-workflow.test.ts` and `tests/zig-worker-completion.test.ts` assert activations flow through Temporal core and completions are acknowledged.  
+- ⚠️ `src/worker/runtime.ts` boots a minimal `WorkerRuntime` that responds to activations with empty command sets. Workflow execution and command generation remain TODO.  
+- ⚠️ Activity polling/completion, heartbeats, and graceful shutdown are still tracked under `TODO(codex, zig-worker-05+)`.  
 - ❌ No Bun-native workflow runtime exists; workflows still execute inside the Node SDK sandbox. See `docs/workflow-runtime.md` for the roadmap.
 
 This document captures the current wiring and, in the sections tagged **Target Architecture**, the envisioned Bun-native worker once the Zig bridge supports full task handling.
@@ -29,19 +29,20 @@ createWorker(options)
 
 ## 2. Zig Bridge Hooks (Experimental)
 
-`src/worker/runtime.ts` and `src/internal/core-bridge/native.ts` expose helpers that will eventually back the Bun-native worker:
+`src/worker/runtime.ts` and `src/internal/core-bridge/native.ts` expose helpers that now power the experimental Bun-native worker:
 
 - `isZigWorkerBridgeEnabled()` — checks both `TEMPORAL_BUN_SDK_USE_ZIG` and the loaded bridge variant.  
 - `maybeCreateNativeWorker({ runtime, client, namespace, taskQueue, identity })` — validates inputs and calls `native.createWorker`. Throws `NativeBridgeError` when prerequisites are missing.  
-- `destroyNativeWorker(worker)` — frees the worker handle if it exists.
-
-All higher-level orchestration (`WorkerRuntime.create`, `run`, `shutdown`) is left as TODOs with doc references (`docs/worker-runtime.md`, `docs/ffi-surface.md`).
+- `destroyNativeWorker(worker)` — frees the worker handle if it exists.  
+- `WorkerRuntime.create()` loads Temporal config, provisions native runtime/client handles, and instantiates a Zig worker when the bridge flag is enabled.  
+- `WorkerRuntime.run()` launches a workflow polling loop, decodes `PollWorkflowTaskQueueResponse` payloads, and acknowledges each activation with an empty `RespondWorkflowTaskCompletedRequest`.  
+- `WorkerRuntime.shutdown()` aborts the polling loop and disposes the Zig handles. Graceful draining, activity lanes, and heartbeat streaming remain TODO.
 
 On the Zig side (`bruke/src/worker.zig`):
 
 - Creation validates config, saves copies of namespace/task queue/identity, and stores the Temporal core worker pointer.  
-- Polling (`pollWorkflowTask`, `pollActivityTask`) spawns threads and returns pending handles, but the completion/heartbeat/shutdown paths still return `grpc.unimplemented`.  
-- Unit tests cover permit bookkeeping and pending-handle lifecycle, yet no end-to-end workflow execution occurs today.
+- Workflow polling/completion now marshal activations through pending handles and pipe completions back to Temporal core; activity completion, heartbeats, and shutdown still carry `TODO` markers.  
+- Unit tests cover permit bookkeeping, activation success/failure, and completion error propagation.
 
 ---
 
@@ -90,7 +91,7 @@ stateDiagram-v2
 ## 4. Implementation Roadmap
 
 1. **Finish Zig worker exports** (lanes 7 & 5 in `parallel-implementation-plan.md`): complete/heartbeat/shutdown RPCs, ensure errors bubble up via `NativeBridgeError`.  
-2. **Add Bun worker runtime loops**: implement `WorkerRuntime.create/run/shutdown`, integrate with `maybeCreateNativeWorker`, and gate behind an opt-in environment flag until stable.  
+2. **Add Bun worker runtime loops**: ✅ Minimal `WorkerRuntime.create/run/shutdown` logic now instantiates Zig handles and acknowledges workflow activations; follow-up work will route commands, activities, and graceful shutdown semantics.  
 3. **Workflow runtime**: replace Node sandbox with Bun-native implementation (see companion doc).  
 4. **Remove Node fallback**: once Bun worker reaches parity, drop the dependency on `@temporalio/worker` and update the CLI scaffolding + README.  
 5. **Testing**: extend `tests/worker/**` with end-to-end cases (workflow activation, activity success/failure, shutdown) and run them under `TEMPORAL_BUN_SDK_USE_ZIG=1` in CI.

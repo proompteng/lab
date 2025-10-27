@@ -264,6 +264,36 @@ pub export fn temporal_bun_test_worker_install_poll_stub() void {
     test_helpers.installWorkerPollStub();
 }
 
+pub export fn temporal_bun_test_worker_install_completion_stub() void {
+    test_helpers.installWorkerCompletionStub();
+}
+
+pub export fn temporal_bun_test_worker_set_poll_payload(payload_ptr: ?[*]const u8, len: u64) i32 {
+    const size: usize = @intCast(len);
+    const slice = if (size == 0 or payload_ptr == null)
+        ""[0..0]
+    else
+        payload_ptr.?[0..size];
+    return test_helpers.setWorkerPollWorkflowSuccessPayload(slice);
+}
+
+pub export fn temporal_bun_test_worker_take_completion_payload() ?*byte_array.ByteArray {
+    return test_helpers.takeWorkerCompletionPayload();
+}
+
+pub export fn temporal_bun_test_worker_completion_count() usize {
+    return test_helpers.workerCompletionCount();
+}
+
+pub export fn temporal_bun_test_worker_completion_size() usize {
+    return test_helpers.workerCompletionSize();
+}
+
+pub export fn temporal_bun_test_worker_consume_completion(dest_ptr: ?[*]u8, len: u64) i32 {
+    const size: usize = @intCast(len);
+    return test_helpers.consumeWorkerCompletion(dest_ptr, size);
+}
+
 pub export fn temporal_bun_test_worker_set_mode(mode: u8) i32 {
     const converted = std.meta.intToEnum(test_helpers.PollMode, mode) catch {
         return -1;
