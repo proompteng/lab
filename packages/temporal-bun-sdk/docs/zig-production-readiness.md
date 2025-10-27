@@ -13,8 +13,8 @@
 ## 2. Automated Verification
 - [ ] Dedicated Zig CI workflow (e.g. `.github/workflows/temporal-bun-sdk-zig.yml`) runs `zig build test` plus Bun
   smoke tests on every PR.
-- [ ] Nightly Docker-based smoke (`tests/docker-compose.yaml`) exercises the Zig bridge path and reports separately
-  from the Rust bridge.
+- [ ] Nightly Temporal CLI smoke (`scripts/start-temporal-cli.ts` + `TEMPORAL_TEST_SERVER=1` suites) exercises the
+  Zig bridge path and reports separately from the Rust bridge.
 - [ ] Flaky Zig tests, if any, are triaged with documented owners and follow-ups.
 
 ## 3. Packaging & Distribution
