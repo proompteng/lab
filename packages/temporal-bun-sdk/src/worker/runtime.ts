@@ -318,6 +318,11 @@ export class WorkerRuntime {
       return
     }
 
+    if (!this.#handles.worker.handle) {
+      this.#nativeShutdownRequested = true
+      return
+    }
+
     this.#nativeShutdownRequested = true
 
     try {
@@ -381,7 +386,10 @@ export class WorkerRuntime {
     }
     this.#disposed = true
     this.#nativeShutdownRequested = true
-    destroyNativeWorker(this.#handles.worker)
+
+    if (this.#handles.worker.handle) {
+      destroyNativeWorker(this.#handles.worker)
+    }
     native.clientShutdown(this.#handles.client)
     native.runtimeShutdown(this.#handles.runtime)
   }
