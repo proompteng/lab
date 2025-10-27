@@ -127,6 +127,11 @@ spec:
             namespace: froussard
             annotations:
               argocd.argoproj.io/sync-wave: "6"
+            ignoreDifferences:
+              - group: serving.knative.dev
+                kind: Service
+                jsonPointers:
+                  - /metadata/annotations
             automation: manual
             enabled: true
       selector:
@@ -150,6 +155,7 @@ spec:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
+          - RespectIgnoreDifferences=true
   templatePatch: |
     {{- if .annotations }}
     metadata:
@@ -159,17 +165,22 @@ spec:
     {{- end }}
     {{- end }}
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
-    {{- if or $useLovely (eq .automation "auto") }}
+    {{- $auto := eq .automation "auto" -}}
+    {{- $needsSpec := or $useLovely (or $auto (hasKey . "ignoreDifferences")) -}}
+    {{- if $needsSpec }}
     spec:
       {{- if $useLovely }}
       source:
         plugin:
           name: lovely
       {{- end }}
-      {{- if eq .automation "auto" }}
+      {{- if $auto }}
       syncPolicy:
         automated:
           prune: true
           selfHeal: true
+      {{- end }}
+      {{- if hasKey . "ignoreDifferences" }}
+      ignoreDifferences: {{ toJson .ignoreDifferences }}
       {{- end }}
     {{- end }}
