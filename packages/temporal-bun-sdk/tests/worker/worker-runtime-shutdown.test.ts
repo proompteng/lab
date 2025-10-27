@@ -127,6 +127,7 @@ describe('WorkerRuntime.shutdown', () => {
       expect(runtimeShutdownCalls).toBe(1)
       expect(clientShutdownCalls).toBe(1)
     } finally {
+      mock.restore()
       if (previousFlag === undefined) {
         delete process.env.TEMPORAL_BUN_SDK_USE_ZIG
       } else {
