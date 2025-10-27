@@ -47,6 +47,7 @@ Prod deployments mirror that behaviour via Knative Eventing — `kubernetes/fact
 issue number, and delivery identifier for observability.
 ## Prerequisites
 
+- Use the **Codex Task** GitHub issue template (`.github/ISSUE_TEMPLATE/codex-task.md`) when opening automation requests. The form keeps summary, scope guardrails, validation commands, and the Codex prompt structured so Froussard can forward them directly to the Argo workflows.
 - Secrets `github-token` and `codex-openai` in `argo-workflows` namespace.
 - Discord secrets regenerated in `argocd/applications/froussard/discord-secrets.yaml` (provides both `discord-bot` and `discord-codex-bot` sealed manifests).
 - Kafka topics `github.webhook.events`, `github.codex.tasks`, and `github.issues.codex.tasks` deployed via Strimzi.
