@@ -1,5 +1,7 @@
 # Workflow Runtime Plan
 
+**Status Snapshot (27 Oct 2025):** No Bun-native workflow runtime exists yet. Workflows still run inside the upstream `@temporalio/worker` sandbox, and all sections below describe the planned architecture. Keep the plan updated as implementation progresses.  
+
 **Goal:** Provide a deterministic workflow execution environment compatible with Temporal’s expectations, implemented purely with Bun primitives while matching the behaviour described in the Temporal TypeScript workflow documentation.<br>
 [Workflows overview](https://docs.temporal.io/develop/typescript/workflows)
 

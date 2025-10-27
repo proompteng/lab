@@ -1,109 +1,86 @@
-# Payloads Codec & Data Conversion Guide
+# Payload Codec & Data Conversion Guide
 
-**Purpose:** Define how the Bun SDK encodes/decodes Temporal payloads without relying on upstream Node packages, while following the Temporal TypeScript data converter contract.<br>
-[Data converter overview](https://docs.temporal.io/visibility-and-data-conversion/data-conversion)
-
----
-
-## 1. Requirements
-
-- Support Temporal payload metadata (encoding, message type, encoding-envelope).
-- Provide JSON + binary (protobuf) codecs with extensibility for custom converters (match the behaviour of the upstream `DefaultDataConverter`).<br>
-  [TypeScript data converter API](https://typescript.temporal.io/api/interfaces/worker.DataConverter)
-- Expose API similar to upstream `DataConverter` (`toPayloads`, `fromPayloads`).
-- Handle failure serialization (stack traces, application-specific data) consistent with Temporal’s failure types.<br>
-  [Failures guide](https://docs.temporal.io/develop/typescript/failures)
+**Status Snapshot (27 Oct 2025)**  
+- ✅ All client RPCs currently send plain JSON payloads (`args`, `memo`, `headers`, etc.) constructed in `src/client/serialization.ts`. The Zig bridge encodes the final Temporal protobuf structures.  
+- ❌ No `DataConverter` abstraction exists yet. There is no pluggable codec registry comparable to Temporal’s `DefaultDataConverter`.  
+- ❌ Activity/workflow failure payloads are passed through as-is from Temporal core; Bun does not yet encode/decode structured failures.  
+- ⚠️ Docs and TODO markers reference a future payload codec module; work has not begun. This guide explains the desired end state while documenting the current behaviour so the mismatch is obvious.
 
 ---
 
-## 2. Module Layout
+## 1. Current Behaviour
+
+- Workflow/activity arguments are forwarded as JSON-compatible values.  
+- Signal/query payloads are stringified via `JSON.stringify` when required (see `computeSignalRequestId` and `buildSignalRequest`).  
+- Temporal core performs payload encoding internally, so consumers see the same results as the upstream TypeScript SDK for simple JSON payloads.  
+- Binary payloads, custom converters, and structured failure types are **not** supported yet; callers must manually encode base64 data if they need binary semantics today.
+
+---
+
+## 2. Target Architecture
+
+Once we replace the ad-hoc JSON encoding, aim for a module layout like:
 
 ```
 src/common/payloads/
   index.ts              // public exports
-  codec.ts              // base codec interface + registry
-  json-codec.ts         // default JSON codec
-  binary-codec.ts       // optional binary codec (uses protobuf definitions)
-  failure.ts            // convert errors to payloads and back
+  converter.ts          // DataConverter implementation
+  json-codec.ts         // default JSON codec (parity with upstream)
+  binary-codec.ts       // optional protobuf codec (future)
+  failure.ts            // error <-> failure payload helpers
 ```
 
-```mermaid
-flowchart LR
-  InputValue --> DataConverter
-  DataConverter -->|select codec| CodecRegistry
-  CodecRegistry --> JSONCodec
-  CodecRegistry --> BinaryCodec
-  JSONCodec --> Payload
-  BinaryCodec --> Payload
-  Payload --> DataConverter
-  DataConverter -->|decode| OutputValue
-  DataConverter --> FailureCodec
-  FailureCodec --> FailurePayload
-```
+Design goals:
+
+- Match the TypeScript SDK’s `DataConverter` surface (`toPayloads`, `fromPayloads`, `toFailure`, `fromFailure`).  
+- Allow users to register custom codecs without forking the SDK.  
+- Preserve determinism by ensuring workflow replay sees identical payloads.  
+- Keep Bun-specific dependencies (e.g. `Bun.Transpiler`) out of this module to facilitate reuse across worker/client code.
 
 ---
 
-## 3. Codec Interface
+## 3. Incremental Plan
 
-```ts
-export interface PayloadCodec {
-  encoding: string               // e.g., 'json/plain', 'binary/protobuf'
-  toPayload(value: unknown): Promise<Payload>
-  fromPayload(payload: Payload): Promise<unknown>
-}
+1. **Introduce JSON codec wrapper**  
+   - Wrap the existing JSON behaviour in a `JsonPayloadCodec` class.  
+   - Update client serialization helpers to rely on the codec for argument conversion.  
+   - Add unit tests for round-trip encoding (`bun test`).
 
-export interface DataConverter {
-  toPayloads(values: unknown[]): Promise<Payloads>
-  fromPayloads<T = unknown>(payloads: Payloads, target?: TypeHint<T>): Promise<T[]>
-  toFailure(error: unknown): Promise<Failure>
-  fromFailure(failure: Failure): Promise<unknown>
-}
-```
+2. **Add converter entry point**  
+   - Create `createDefaultDataConverter()` returning a converter with the JSON codec.  
+   - Thread the converter through `createTemporalClient` options (without breaking current callers).  
+   - Update signal/query tests to assert codec usage.
 
-`Payload` mirrors the Temporal protobuf structure defined in `temporal/api/common/v1/message.proto`. The metadata keys should include `encoding`, `messageType`, and any converter-specific markers.<br>
-[Temporal payload reference](https://github.com/temporalio/api/blob/main/temporal/api/common/v1/message.proto)
+3. **Extend to failures**  
+   - Implement `toFailure` / `fromFailure` mirroring the upstream `DefaultDataConverter`.  
+   - Ensure activity/workflow failure payloads propagate correctly through the Zig bridge.
 
-```ts
-interface Payload {
-  metadata: Record<string, Uint8Array>
-  data: Uint8Array
-}
-```
+4. **Optional binary/protobuf support**  
+   - Leverage `@temporalio/proto` already bundled in dependencies to support binary codecs.  
+   - Provide documentation + samples on how to opt in.
+
+5. **Worker integration**  
+   - When the Bun-native worker arrives, share the same converter so workflows and activities respect custom codecs.
 
 ---
 
-## 4. Default Behavior
+## 4. Testing Considerations
 
-- `json/plain` codec serializes using `JSON.stringify`, stores encoding + content type (`application/json`).
-- `binary/protobuf` relies on vendored `@temporalio/proto` TypeScript definitions to encode payloads (optional initial implementation).
-- `DataConverter` composes an array of codecs: try each until one returns payload.
-- Allow user-supplied codecs via options on `createTemporalClient` / `createWorker`.
+| Scenario | Tests |
+|----------|-------|
+| JSON round trip | `bun test` userland unit tests (primitives, objects, arrays, dates). |
+| Failure conversion | Activity throws `ApplicationFailure`, verify payload fields survive round trip. |
+| Binary codec (future) | Encode/decode `Uint8Array`, ensure encoding metadata present. |
+| Integration | `tests/native.integration.test.ts` extended to run with custom converter once implemented. |
 
----
-
-## 5. Failure Handling
-
-- On `toFailure`, include:
-  - `message`
-  - `stack` (string)
-  - optional `applicationFailureType`
-  - `nonRetryable` flag
-- For `fromFailure`, reconstruct Error subclass (default `ApplicationFailure`).
-- Ensure heartbeats and activity completions propagate failure payloads correctly.
+Ensure tests run under `TEMPORAL_TEST_SERVER=1` for integration coverage, and under plain unit tests for converter logic.
 
 ---
 
-## 6. Testing
+## 5. References
 
-- Codec unit tests: round-trip JS primitives, buffers, complex objects.
-- Failure serialization tests: error with cause chain, non-retryable flag.
-- Integration: workflow returning JSON, signal passing binary, activity throwing error (see Temporal’s TypeScript samples for reference workflows).
+- Current serialization utilities: `src/client/serialization.ts`.  
+- Temporal upstream documentation: [Data conversion](https://docs.temporal.io/visibility-and-data-conversion/data-conversion).  
+- Upstream TypeScript source: `packages/common/src/converter/data-converter.ts` (Temporal repo).
 
----
-
-## 7. Migration Considerations
-
-- Document that initial release supports JSON only (if binary deferred).
-- Provide extension hook so adopters can supply their own codecs without forking.
-
-Maintain this document whenever payload handling evolves.
+Update this guide as soon as the codec module begins to take shape so contributors know the canonical plan and the current limitations.

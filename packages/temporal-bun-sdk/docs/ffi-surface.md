@@ -1,7 +1,7 @@
 # Temporal Bun SDK — Native FFI Surface Blueprint
 
 **Audience:** Platform Runtime & Codex implementers  
-**Status:** Living document (25 Oct 2025)  
+**Status:** Living document (27 Oct 2025)  
 **Goal:** Capture the Zig-based Bun ↔ Temporal Core surface so we can finish replacing all `@temporalio/*` dependencies with a Bun-native SDK while keeping the unsafe layer constrained and well-tested.
 
 ---
@@ -36,9 +36,8 @@ flowchart LR
 
 ### Client (`client.zig`)
 - ✅ Async connect (`temporal_bun_client_connect_async`) with pending handles and thread pool.
-- ✅ DescribeNamespace, QueryWorkflow, StartWorkflow, and SignalWithStart marshal protobuf payloads directly in Zig and decode responses for Bun.
-- ⚠️ SignalWorkflow validates payloads and uses pending handles, but the underlying Temporal RPC is still stubbed in `core.zig` (`zig-wf-05`).
-- ❌ TerminateWorkflow, CancelWorkflow, and UpdateHeaders return `UNIMPLEMENTED` placeholders—TypeScript callers receive `NativeBridgeError` with `code: grpc.unimplemented`.
+- ✅ DescribeNamespace, QueryWorkflow, StartWorkflow, SignalWorkflow, TerminateWorkflow, and SignalWithStart marshal protobuf payloads directly in Zig and decode responses for Bun.
+- ⚠️ CancelWorkflow and UpdateHeaders still return `UNIMPLEMENTED` placeholders—TypeScript callers receive `NativeBridgeError` with `code: grpc.unimplemented`.
 - ⚠️ Byte-array helpers allocate buffers via `byte_array.zig`; free path is wired, but we still need `temporal_bun_byte_array_new` once upstream expects Bun to allocate memory for large payloads.
 
 ### Worker (`worker.zig`)
@@ -65,10 +64,10 @@ flowchart LR
 | Client | `temporal_bun_client_start_workflow` | ✅ | Builds `StartWorkflowExecutionRequest`, invokes `temporal_core_client_rpc_call`, returns JSON `{ runId, workflowId, namespace }`. |
 | Client | `temporal_bun_client_signal_with_start` | ✅ | Shares start encoders, adds signal payload, reuses start result parsing. |
 | Client | `temporal_bun_client_query_workflow` | ✅ | Threaded pending handle; decodes `QueryWorkflowResponse`, surfaces gRPC rejection codes. |
-| Client | `temporal_bun_client_signal` | ⚠️ Stub | Validates JSON and spins worker thread, but `core.signalWorkflow` currently short-circuits; implement RPC call via `temporal_core_client_rpc_call`. |
+| Client | `temporal_bun_client_signal` | ✅ | Validates payloads, dispatches RPC in a detached thread, maps Temporal errors to gRPC codes. |
 | Client | `temporal_bun_client_terminate_workflow` | ✅ | Calls Temporal core terminate RPC and surfaces gRPC status codes. |
-| Client | `temporal_bun_client_cancel_workflow` | ❌ | Placeholder returning `grpc.unimplemented`; should reuse pending handle infrastructure. |
-| Client | `temporal_bun_client_update_headers` | ❌ | Stub; require conversion of headers map into `TemporalCoreMetadataRef`. |
+| Client | `temporal_bun_client_cancel_workflow` | ⚠️ TODO | Returns `grpc.unimplemented`; needs JSON validation + RPC wiring. |
+| Client | `temporal_bun_client_update_headers` | ⚠️ TODO | Returns `grpc.unimplemented`; requires metadata conversion before calling Temporal core. |
 | Byte transport | `temporal_bun_pending_*`, `temporal_bun_byte_array_free` | ✅ | Shared infrastructure used by connect/query/signal flows. |
 | Worker | `temporal_bun_worker_*` family | ❌ | All stubs except `complete_workflow_task`; primary focus for Bun-native worker delivery. |
 

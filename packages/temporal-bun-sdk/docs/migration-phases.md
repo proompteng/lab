@@ -4,18 +4,18 @@
 
 ---
 
-## Phase 0 — Baseline (Current)
+## Phase 0 — Baseline (Complete ✅)
 
-- Minimal FFI (runtime + client connect).
-- TypeScript layer re-exports upstream packages.
-- CLI scaffolding available, but workers rely on `@temporalio/worker`.
-- Example project uses workspace link but still depends on upstream packages.
+- Bun FFI bootstrap in place (`native.createRuntime`, `native.createClient`).
+- TypeScript client initially re-exported upstream packages while plans were drafted.
+- CLI scaffolding established; worker continued to rely on `@temporalio/worker`.
+- Documentation set created (this folder).
 
-**Exit Criteria:** FFI blueprint, module-specific plans (this doc set) complete. ✅
+**Outcome:** Completed 11 Oct 2025. Serves as historical reference only.
 
 ---
 
-## Phase 1 — Client Parity
+## Phase 1 — Client Parity (In Progress)
 
 ```mermaid
 flowchart LR
@@ -26,26 +26,29 @@ flowchart LR
   P4 --> P5["Phase 5<br/>Release readiness"]
 ```
 
-- Implement FFI for client operations (start, signal, query, terminate, headers, TLS) aligning with the [Temporal TypeScript client API](https://docs.temporal.io/develop/typescript/temporal-client).
-- Rewrite `src/client.ts` to use new Core bridge client.
-- ✅ `start_workflow` wired through Rust bridge + Bun client (`createTemporalClient.workflow.start`).
-- Remove `@temporalio/client` dependency.
-- Add unit + integration tests for client operations.
+- ✅ Implemented: start, signal, signal-with-start, query, describe namespace, terminate (via Zig bridge).  
+- ✅ `src/client.ts` now uses the Bun-native bridge; no dependency on `@temporalio/client`.  
+- ✅ Integration tests (`tests/native.integration.test.ts`, `tests/zig-signal.test.ts`) cover the happy paths.  
+- ⚠️ Outstanding: workflow cancellation and header updates (Zig bridge still returns `UNIMPLEMENTED`).  
+- ⚠️ Outstanding: optional telemetry/logger passthroughs once Zig runtime hooks exist.  
+- ⚠️ Outstanding: payload converter/codec modularisation.
 
 **Deliverables:**
-- Passing tests (`client` suites).
-- Docs/README updated.
-- Example project uses new client for workflow start/query.
+- Passing client tests and integration suites.  
+- README/docs call out limitations (cancellation/header updates).  
+- Example project relies on Bun client for workflow start/query.  
+
+**Target exit:** After cancellation + headers land and documentation/README updated (ETA Nov 2025).
 
 ---
 
-## Phase 2 — Worker Core
+## Phase 2 — Worker Core (Not Started)
 
-- FFI for worker poll/complete/heartbeat/shutdown.
-- Implement new worker runtime loops.
-- Build minimal workflow runtime to process activations following the [worker and workflow docs](https://docs.temporal.io/develop/typescript/workers).
-- Replace `@temporalio/worker` dependency.
-- CLI worker runs successfully against local Temporal server.
+- FFI todos: worker poll/complete/heartbeat/shutdown (`zig-worker-06`…`zig-worker-09`).  
+- Implement Bun-native worker runtime loops (see `docs/worker-runtime.md`).  
+- Introduce workflow runtime sandbox (coordinated with Phase 3).  
+- Replace `@temporalio/worker` dependency once parity achieved.  
+- Ensure CLI worker runs against Temporal CLI server using Zig bridge.
 
 **Milestones:**
 - Unit tests for worker loops.
@@ -54,12 +57,11 @@ flowchart LR
 
 ---
 
-## Phase 3 — Workflow Runtime Parity
+## Phase 3 — Workflow Runtime Parity (Not Started)
 
-- Support deterministic features (patch markers, continue-as-new, child workflows) as documented in the [workflow versioning guide](https://docs.temporal.io/develop/typescript/workflows#versioning).
-- Implement interceptor pipeline.
-- Provide payload codec extensibility (JSON + optional binary).
-- Add determinism replay harness.
+- Deliver Bun-native workflow sandbox with determinism, timers, signals, patch markers.  
+- Implement interceptors and payload codec integration.  
+- Add determinism replay harness before rolling out to production workflows.
 
 **Success Metrics:**
 - Replay tests green.
@@ -67,23 +69,22 @@ flowchart LR
 
 ---
 
-## Phase 4 — Ecosystem Integration
+## Phase 4 — Ecosystem Integration (Not Started)
 
-- Telemetry exports (Prometheus, OTLP) matching the best practices in [Temporal’s observability guide](https://docs.temporal.io/production-readiness/observability).
-- Metrics/logging callbacks wired into runtime.
-- CLI and Docker templates updated to use native stack only.
-- Documentation and tutorials refreshed.
-
-**Optional:** Provide pre-built native binaries for macOS/Linux to streamline installs.
+- Telemetry exports (Prometheus, OTLP) once runtime hooks exist.  
+- Structured logging callbacks forwarded from Zig runtime.  
+- CLI + Docker templates updated for Bun-native worker.  
+- Documentation/tutorials refreshed; release notes include migration steps.  
+- Optional: ship prebuilt Zig libraries for macOS/Linux/Windows.
 
 ---
 
-## Phase 5 — Release Readiness
+## Phase 5 — Release Readiness (Not Started)
 
-- CI lanes stable on macOS/Linux (unit + integration).
-- Publish RC build to npm (`0.1.0-rc.1`) once the native bridge compiles successfully across macOS/Linux (see [Zig getting started](https://ziglang.org/learn/getting-started/) for supported toolchains).
-- Manual QA across local Temporal + Temporal Cloud.
-- Collect feedback, address bugs, finalize stable release.
+- CI lanes stable on macOS/Linux (unit + integration + Zig).  
+- Publish RC build (`0.1.0-rc.1`) after native bridge compiles on all platforms.  
+- Manual QA: local Temporal, Temporal Cloud with TLS/API key.  
+- Gather feedback, triage bugs, cut stable release.
 
 ---
 
