@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { buildCodexPrompt } from '../../../codex'
 import { runCodexPlan } from '../codex-plan'
 
 const utilMocks = vi.hoisted(() => ({
@@ -117,12 +118,23 @@ describe('runCodexPlan', () => {
     process.env.POST_TO_GITHUB = 'true'
     process.env.ISSUE_REPO = 'owner/repo'
     process.env.ISSUE_NUMBER = '123'
+    process.env.CODEX_PROMPT = buildCodexPrompt({
+      stage: 'planning',
+      issueTitle: 'Test issue',
+      issueBody: 'Body',
+      repositoryFullName: 'owner/repo',
+      issueNumber: 123,
+      baseBranch: 'main',
+      headBranch: 'feature/test',
+      issueUrl: 'https://example.com',
+    })
 
     await runCodexPlan()
 
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
     expect(invocation?.prompt).toContain('write it to PLAN.md')
     expect(invocation?.prompt).toContain('Do not post to GitHub manually')
+    expect(invocation?.prompt).toContain('Never emit raw')
   })
 
   it('posts the generated plan to GitHub when configured', async () => {
