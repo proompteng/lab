@@ -1,16 +1,16 @@
 import { resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import Long from 'long'
-import { defaultFailureConverter, defaultPayloadConverter, type WorkflowInfo } from '@temporalio/common'
 import type { WorkerDeploymentVersion } from '@temporalio/common'
-import { coresdk } from '@temporalio/proto'
-import type { temporal } from '@temporalio/proto'
+import { defaultFailureConverter, defaultPayloadConverter, type WorkflowInfo } from '@temporalio/common'
 import {
   decodeSearchAttributes,
   decodeTypedSearchAttributes,
 } from '@temporalio/common/lib/converter/payload-search-attributes'
-import { ensureWorkflowRuntimeBootstrap, withTemporalGlobals } from './bootstrap'
+import type { temporal } from '@temporalio/proto'
+import { coresdk } from '@temporalio/proto'
+import type Long from 'long'
 import { native } from '../../internal/core-bridge/native'
+import { ensureWorkflowRuntimeBootstrap, withTemporalGlobals } from './bootstrap'
 import { convertParentWorkflowInfo, convertRootWorkflowInfo } from './info'
 
 export interface WorkflowEnvironmentOptions {
@@ -49,6 +49,11 @@ const flushMicrotasks = async (): Promise<void> => {
   await Promise.resolve()
 }
 
+type WorkflowGlobalAttributesModule = {
+  maybeGetActivatorUntyped?: () => unknown
+  setActivatorUntyped?: (activator: unknown) => void
+}
+
 export class WorkflowEnvironment {
   readonly #runId: string
   readonly #info: WorkflowInfo
@@ -61,6 +66,8 @@ export class WorkflowEnvironment {
   #workflowModule: unknown | null = null
   #interceptorsCache: unknown[] | null = null
   #workflowModuleApi: typeof import('@temporalio/workflow/lib/worker-interface.js') | null = null
+  #globalAttributes: WorkflowGlobalAttributesModule | null = null
+  #activator: unknown | null = null
 
   private constructor(options: WorkflowEnvironmentOptions) {
     ensureWorkflowRuntimeBootstrap()
@@ -92,6 +99,7 @@ export class WorkflowEnvironment {
 
     try {
       const api = this.#workflowModuleApi ?? failWorkflowModuleNotLoaded(this.#runId)
+      this.#restoreWorkflowActivator()
       await withTemporalGlobals(
         {
           importWorkflows: () => this.#workflowModule ?? failWorkflowModuleNotLoaded(this.#runId),
@@ -183,6 +191,23 @@ export class WorkflowEnvironment {
         })
       },
     )
+
+    const globalAttributes = (await import(
+      '@temporalio/workflow/lib/global-attributes.js'
+    )) as WorkflowGlobalAttributesModule
+    this.#globalAttributes = globalAttributes
+    const activator = globalAttributes.maybeGetActivatorUntyped?.()
+    if (!activator) {
+      throw new Error('Workflow runtime failed to initialize activator for workflow environment')
+    }
+    this.#activator = activator
+  }
+
+  #restoreWorkflowActivator(): void {
+    if (!this.#activator || !this.#globalAttributes?.setActivatorUntyped) {
+      return
+    }
+    this.#globalAttributes.setActivatorUntyped(this.#activator)
   }
 }
 

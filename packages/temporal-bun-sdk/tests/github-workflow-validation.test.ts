@@ -116,7 +116,7 @@ describe('GitHub Workflow Validation Tests', () => {
       const workflowContent = readFileSync(temporalBunSdkWorkflow, 'utf-8')
 
       // Validate environment variables
-      expect(workflowContent).toContain("USE_PREBUILT_LIBS: 'true'")
+      expect(workflowContent).not.toContain('USE_PREBUILT_LIBS')
 
       // Validate download step
       expect(workflowContent).toContain('bun run libs:download')
@@ -211,8 +211,8 @@ describe('GitHub Workflow Validation Tests', () => {
         // Should use ARM64 runners for better performance
         expect(bunSdkContent).toContain('arc-arm64')
 
-        // Should use pre-built libraries to avoid compilation
-        expect(bunSdkContent).toContain("USE_PREBUILT_LIBS: 'true'")
+        // Ensure workflow does not rely on legacy USE_PREBUILT_LIBS toggle
+        expect(bunSdkContent).not.toContain('USE_PREBUILT_LIBS')
 
         // Should not have Rust compilation steps
         expect(bunSdkContent).not.toContain('cargo build')

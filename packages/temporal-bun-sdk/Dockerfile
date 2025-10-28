@@ -33,7 +33,6 @@ RUN bun install
 
 # Download pre-built libraries (required)
 # This replaces the previous lengthy Rust compilation process
-ENV USE_PREBUILT_LIBS=true
 RUN bun run libs:download
 
 # Build TypeScript and native Zig components using pre-built libraries
@@ -43,7 +42,6 @@ RUN bun run build:native:zig:bundle
 FROM oven/bun:1.1.20 AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-ENV USE_PREBUILT_LIBS=true
 
 # Install minimal runtime dependencies
 RUN apt-get update && apt-get install -y \

@@ -1,10 +1,10 @@
 # Worker Runtime Implementation Guide
 
-**Status Snapshot (27 Oct 2025)**
+**Status Snapshot (28 Oct 2025)**
 - ✅ `createWorker` now constructs the Bun-native runtime by default whenever the Zig bridge is available. The vendor `@temporalio/worker` implementation is only used when `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1`.
 - ✅ `WorkerRuntime` wires workflow polling to the new `WorkflowEngine`, which decodes core activations, executes workflows inside the Bun process using the TypeScript SDK runtime, and streams `WorkflowActivationCompletion` payloads back to Temporal Core.
 - ✅ `WorkflowEngine` supports deterministic command generation (timers, completions) and loads workflow bundles directly from the filesystem. Unit coverage lives under `tests/worker.runtime.workflow.test.ts`.
-- ⚠️ Activity task execution, heartbeats, and metrics emission remain stubbed pending #1612. Pollers are not yet started for activity lanes.
+- ✅ Activity task execution and heartbeats now run through the Zig bridge; metrics emission remains a TODO tracked in #1612.
 - ⚠️ Graceful shutdown honours abort semantics but still lacks drain coordination with the Zig bridge for in-flight activities.
 
 This document captures the live wiring and lists the remaining gaps before the Bun worker reaches feature parity with the Node SDK.
@@ -47,8 +47,8 @@ createWorker(options)
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Workflow task loop | ✅ | `WorkflowEngine` executes workflows using the TypeScript runtime shipped in `@temporalio/workflow`. Commands are encoded as core `WorkflowActivationCompletion` payloads. |
-| Activity task loop | ⚠️ | Polling and completion helpers exist in Zig but are not yet wired through the Bun runtime. Blocked on #1612 for end-to-end completion APIs. |
-| Heartbeats & metrics | ⚠️ | Heartbeat streaming and metrics emission remain TODO. |
+| Activity task loop | ✅ | `WorkerRuntime` polls activity tasks, runs registered handlers, and completes/cancels via the Zig bridge-based FFI. |
+| Heartbeats & metrics | ⚠️ | Activity heartbeats stream through the Zig bridge; metrics emission remains TODO. |
 | Graceful shutdown | ⚠️ | Poll loop aborts and native shutdown work, but draining running activities is still pending. |
 | Vendor fallback | ✅ | `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` preserves the old `@temporalio/worker` code path for platforms without the Zig bridge. |
 

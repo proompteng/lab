@@ -118,7 +118,7 @@ Bun (bun:ffi) ──▶ Zig Bridge (libtemporal_bun_bridge.zig)
 1. **Zig Toolchain Version** — Standardize on Zig 0.15.1 (matches `services/galette`). Document installation in README.  
 2. **Package Scripts** — ✅ **COMPLETED** - Replaced `cargo build` scripts with pre-built library downloads:
    ```json
-   "build:native": "USE_PREBUILT_LIBS=true bun run libs:download && USE_PREBUILT_LIBS=true zig build -Doptimize=ReleaseFast --build-file bruke/build.zig"
+   "build:native": "bun run libs:download && zig build -Doptimize=ReleaseFast --build-file bruke/build.zig"
    ```
 3. **CI Images** — ✅ **COMPLETED** - Removed Rust from Docker images, using only Zig with pre-built libraries.  
 4. **Prebuilt Artifacts** — Use `zig build install` to stage artifacts under `native/artifacts/<platform>/`.  

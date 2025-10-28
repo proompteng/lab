@@ -264,9 +264,17 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.int32_t,
     },
+    temporal_bun_worker_complete_activity_task: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.int32_t,
+    },
     temporal_bun_worker_poll_activity_task: {
       args: [FFIType.ptr],
       returns: FFIType.ptr,
+    },
+    temporal_bun_worker_record_activity_heartbeat: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.int32_t,
     },
     temporal_bun_worker_test_handle_new: {
       args: [],
@@ -340,7 +348,9 @@ const {
     temporal_bun_worker_free,
     temporal_bun_worker_poll_workflow_task,
     temporal_bun_worker_complete_workflow_task,
+    temporal_bun_worker_complete_activity_task,
     temporal_bun_worker_poll_activity_task,
+    temporal_bun_worker_record_activity_heartbeat,
     temporal_bun_worker_test_handle_new,
     temporal_bun_worker_test_handle_release,
   },
@@ -356,6 +366,8 @@ const workerFfi = {
   pollActivityTask: temporal_bun_worker_poll_activity_task,
   pollWorkflowTask: temporal_bun_worker_poll_workflow_task,
   completeWorkflowTask: temporal_bun_worker_complete_workflow_task,
+  completeActivityTask: temporal_bun_worker_complete_activity_task,
+  recordActivityHeartbeat: temporal_bun_worker_record_activity_heartbeat,
 }
 
 export const native = {
@@ -537,6 +549,21 @@ export const native = {
       throw buildNativeBridgeError()
     }
   },
+  workerCompleteActivityTask(worker: NativeWorker, payload: Uint8Array | Buffer): void {
+    const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
+
+    const status = Number(workerFfi.completeActivityTask(worker.handle, ptr(buffer), buffer.byteLength))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+  workerRecordActivityHeartbeat(worker: NativeWorker, payload: Uint8Array | Buffer): void {
+    const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
+    const status = Number(workerFfi.recordActivityHeartbeat(worker.handle, ptr(buffer), buffer.byteLength))
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
 
   worker: {
     async pollWorkflowTask(worker: NativeWorker): Promise<Uint8Array> {
@@ -561,6 +588,22 @@ export const native = {
     completeWorkflowTask(worker: NativeWorker, payload: Uint8Array | Buffer): void {
       const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
       const status = Number(workerFfi.completeWorkflowTask(worker.handle, ptr(buffer), buffer.byteLength))
+      if (status !== 0) {
+        throw buildNativeBridgeError()
+      }
+    },
+
+    completeActivityTask(worker: NativeWorker, payload: Uint8Array | Buffer): void {
+      const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
+      const status = Number(workerFfi.completeActivityTask(worker.handle, ptr(buffer), buffer.byteLength))
+      if (status !== 0) {
+        throw buildNativeBridgeError()
+      }
+    },
+
+    recordActivityHeartbeat(worker: NativeWorker, payload: Uint8Array | Buffer): void {
+      const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
+      const status = Number(workerFfi.recordActivityHeartbeat(worker.handle, ptr(buffer), buffer.byteLength))
       if (status !== 0) {
         throw buildNativeBridgeError()
       }

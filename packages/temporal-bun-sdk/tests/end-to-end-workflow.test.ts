@@ -114,7 +114,6 @@ describe('End-to-End Workflow Tests', () => {
     }
 
     // Reset environment variables
-    delete process.env.USE_PREBUILT_LIBS
     delete process.env.TEMPORAL_LIBS_VERSION
 
     console.log('End-to-end workflow tests cleanup completed')
@@ -361,10 +360,9 @@ describe('End-to-End Workflow Tests', () => {
 
       // Test various CI environment configurations
       const testCases = [
-        { USE_PREBUILT_LIBS: 'true', TEMPORAL_LIBS_VERSION: 'latest' },
-        { USE_PREBUILT_LIBS: 'true', TEMPORAL_LIBS_VERSION: 'v1.0.0' },
-        { USE_PREBUILT_LIBS: 'false' },
-        { USE_PREBUILT_LIBS: 'true' }, // No version specified
+        { TEMPORAL_LIBS_VERSION: 'latest' },
+        { TEMPORAL_LIBS_VERSION: 'v1.0.0' },
+        {},
       ]
 
       for (const envConfig of testCases) {
@@ -402,7 +400,6 @@ describe('End-to-End Workflow Tests', () => {
 
       // Simulate CI environment
       process.env.CI = 'true'
-      process.env.USE_PREBUILT_LIBS = 'true'
       process.env.TEMPORAL_LIBS_VERSION = 'latest'
 
       try {
@@ -423,9 +420,9 @@ describe('End-to-End Workflow Tests', () => {
         // Test script execution (dry run)
         console.log('  Verifying script configurations...')
 
-        // Verify scripts use correct environment variables
-        expect(packageJson.scripts['build:native:zig']).toContain('USE_PREBUILT_LIBS=true')
-        expect(packageJson.scripts['ci:native:zig']).toContain('USE_PREBUILT_LIBS=true')
+        // Verify scripts include the download step
+        expect(packageJson.scripts['build:native:zig']).toContain('bun run libs:download')
+        expect(packageJson.scripts['ci:native:zig']).toContain('bun run libs:download')
 
         const buildTime = Date.now() - buildStartTime
         performanceMetrics.buildTime += buildTime
@@ -433,7 +430,6 @@ describe('End-to-End Workflow Tests', () => {
         console.log(`✓ Build system integration validated in ${Math.round(buildTime / 1000)}s`)
       } finally {
         delete process.env.CI
-        delete process.env.USE_PREBUILT_LIBS
         delete process.env.TEMPORAL_LIBS_VERSION
       }
     })
@@ -454,9 +450,11 @@ describe('End-to-End Workflow Tests', () => {
         const hasRustInstall = dockerfileContent.includes('rustup') || dockerfileContent.includes('cargo install')
 
         if (hasRustInstall) {
-          // If Rust is still installed, it should be conditional
-          expect(dockerfileContent).toMatch(/if.*USE_PREBUILT_LIBS.*false|RUN.*\[.*USE_PREBUILT_LIBS/i)
+          // If Rust tooling remains, ensure it is clearly documented
+          console.warn('⚠️  Dockerfile still references Rust toolchain; verify this is intentional.')
         }
+
+        expect(dockerfileContent).not.toContain('USE_PREBUILT_LIBS')
 
         console.log('✓ Docker integration workflow validated')
       } else {

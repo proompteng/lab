@@ -19,7 +19,6 @@ async function buildLibraries(platform: string, arch: string, target: string) {
   try {
     execSync(`zig build -Doptimize=ReleaseFast -Dtarget=${target} --build-file bruke/build.zig`, {
       stdio: 'inherit',
-      env: { ...process.env, USE_PREBUILT_LIBS: 'true' },
     })
 
     console.log(`✓ Build completed for ${platform}-${arch}`)

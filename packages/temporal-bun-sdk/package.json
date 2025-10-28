@@ -49,17 +49,17 @@
     "libs:cache-cleanup": "bun run scripts/download-temporal-libs.ts cache-cleanup",
     "libs:cache-validate": "bun run scripts/download-temporal-libs.ts cache-validate",
     "libs:help": "bun run scripts/download-temporal-libs.ts help",
-    "build:native": "USE_PREBUILT_LIBS=true bun run libs:download && USE_PREBUILT_LIBS=true zig build -Doptimize=ReleaseFast --build-file bruke/build.zig",
-    "build:native:zig": "USE_PREBUILT_LIBS=true bun run libs:download && USE_PREBUILT_LIBS=true zig build -Doptimize=ReleaseFast --build-file bruke/build.zig",
-    "build:native:zig:bundle": "USE_PREBUILT_LIBS=true bun run libs:download && bun run scripts/build-zig-artifacts.ts",
-    "build:native:zig:debug": "USE_PREBUILT_LIBS=true bun run libs:download && USE_PREBUILT_LIBS=true zig build -Doptimize=Debug --build-file bruke/build.zig",
+    "build:native": "bun run libs:download && zig build -Doptimize=ReleaseFast --build-file bruke/build.zig",
+    "build:native:zig": "bun run libs:download && zig build -Doptimize=ReleaseFast --build-file bruke/build.zig",
+    "build:native:zig:bundle": "bun run libs:download && bun run scripts/build-zig-artifacts.ts",
+    "build:native:zig:debug": "bun run libs:download && zig build -Doptimize=Debug --build-file bruke/build.zig",
     "temporal:start": "bun scripts/start-temporal-cli.ts",
     "temporal:stop": "bun scripts/stop-temporal-cli.ts",
 
-    "ci:native:zig": "USE_PREBUILT_LIBS=true bun run libs:download && USE_PREBUILT_LIBS=true sh -c \"zig build -Doptimize=ReleaseFast --build-file bruke/build.zig && zig build -Doptimize=Debug --build-file bruke/build.zig test\"",
+    "ci:native:zig": "bun run libs:download && sh -c \"zig build -Doptimize=ReleaseFast --build-file bruke/build.zig && zig build -Doptimize=Debug --build-file bruke/build.zig test\"",
     "package:native:zig": "bun run scripts/package-zig-artifacts.ts",
-    "test:native:zig": "USE_PREBUILT_LIBS=true bun run libs:download && USE_PREBUILT_LIBS=true zig build -Doptimize=Debug --build-file bruke/build.zig test",
-    "prepack": "bun run build && USE_PREBUILT_LIBS=true bun run libs:download && bun run build:native:zig:bundle && bun run package:native:zig"
+    "test:native:zig": "bun run libs:download && zig build -Doptimize=Debug --build-file bruke/build.zig test",
+    "prepack": "bun run build && bun run libs:download && bun run build:native:zig:bundle && bun run package:native:zig"
   },
   "engines": {
     "bun": ">=1.1.20"

@@ -43,7 +43,6 @@ async function buildTarget(target: (typeof zigTargets)[number]) {
   // Build with pre-built libraries
   const command = $`zig build -Doptimize=ReleaseFast -Dtarget=${target.triple} -Dinstall-subpath=${destSubpath} --build-file ${buildFile}`
   command.cwd = zigProjectDir
-  command.env = { ...process.env, USE_PREBUILT_LIBS: 'true' }
   await command
 }
 

@@ -140,15 +140,6 @@ pub fn build(b: *std.Build) void {
 
     const resolved_target = target.result;
 
-    // Check for USE_PREBUILT_LIBS environment variable
-    const use_prebuilt_libs = std.process.getEnvVarOwned(b.allocator, "USE_PREBUILT_LIBS") catch null;
-    defer if (use_prebuilt_libs) |value| b.allocator.free(value);
-
-    const should_use_prebuilt = if (use_prebuilt_libs) |value|
-        std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1")
-    else
-        false;
-
     // Get version for pre-built libraries (default to "latest")
     const prebuilt_version = std.process.getEnvVarOwned(b.allocator, "TEMPORAL_LIBS_VERSION") catch null;
     defer if (prebuilt_version) |value| b.allocator.free(value);
@@ -156,13 +147,6 @@ pub fn build(b: *std.Build) void {
 
     // Get platform string for pre-built libraries
     const platform = getPlatformString(resolved_target);
-
-    if (!should_use_prebuilt) {
-        std.debug.print("✗ USE_PREBUILT_LIBS=false is no longer supported.\n", .{});
-        std.debug.print("   The Rust bridge has been removed; pre-built Temporal static libraries are required.\n", .{});
-        std.debug.print("   Run 'bun run scripts/download-temporal-libs.ts download' to fetch the libraries, then rerun the build.\n", .{});
-        std.debug.panic("Pre-built libraries are mandatory for the Zig bridge", .{});
-    }
 
     if (platform == null) {
         std.debug.print("✗ Platform {s}-{s} is not supported for pre-built libraries\n", .{ @tagName(resolved_target.cpu.arch), @tagName(resolved_target.os.tag) });

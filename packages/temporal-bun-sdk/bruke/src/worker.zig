@@ -1339,25 +1339,164 @@ pub fn pollActivityTask(_handle: ?*WorkerHandle) ?*pending.PendingByteArray {
 }
 
 pub fn completeActivityTask(_handle: ?*WorkerHandle, _payload: []const u8) i32 {
-    // TODO(codex, zig-worker-06): Complete activity tasks and propagate results to Temporal core.
-    _ = _handle;
-    _ = _payload;
-    errors.setStructuredError(.{
-        .code = grpc.unimplemented,
-        .message = "temporal-bun-bridge-zig: completeActivityTask is not implemented yet",
-    });
-    return -1;
+    if (_handle == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: completeActivityTask received null worker handle",
+            .details = null,
+        });
+        return -1;
+    }
+
+    const worker_handle = _handle.?;
+
+    if (worker_handle.core_worker == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: worker core handle is not initialized",
+            .details = null,
+        });
+        return -1;
+    }
+
+    if (worker_handle.runtime == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: worker runtime handle is not initialized",
+            .details = null,
+        });
+        return -1;
+    }
+
+    const runtime_handle = worker_handle.runtime.?;
+
+    if (runtime_handle.core_runtime == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: worker runtime core handle is not initialized",
+            .details = null,
+        });
+        return -1;
+    }
+
+    if (_payload.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: completeActivityTask requires an activity completion payload",
+            .details = null,
+        });
+        return -1;
+    }
+
+    var state = CompletionState{};
+    defer state.wait_group.reset();
+    state.wait_group.start();
+
+    const completion = core.ByteArrayRef{
+        .data = _payload.ptr,
+        .size = _payload.len,
+    };
+
+    core.workerCompleteActivityTask(
+        worker_handle.core_worker,
+        completion,
+        @as(?*anyopaque, @ptrCast(&state)),
+        workflowCompletionCallback,
+    );
+
+    state.wait_group.wait();
+
+    if (state.fail_ptr) |fail| {
+        const message = byteArraySlice(fail);
+        const description = if (message.len > 0)
+            message
+        else
+            "temporal-bun-bridge-zig: activity completion failed with an unknown error";
+        errors.setStructuredErrorJson(.{
+            .code = grpc.internal,
+            .message = description,
+            .details = null,
+        });
+        core.runtimeByteArrayFree(runtime_handle.core_runtime, fail);
+        return -1;
+    }
+
+    errors.setLastError(""[0..0]);
+    return 0;
 }
 
 pub fn recordActivityHeartbeat(_handle: ?*WorkerHandle, _payload: []const u8) i32 {
-    // TODO(codex, zig-worker-07): Stream activity heartbeats to Temporal core.
-    _ = _handle;
-    _ = _payload;
-    errors.setStructuredError(.{
-        .code = grpc.unimplemented,
-        .message = "temporal-bun-bridge-zig: recordActivityHeartbeat is not implemented yet",
-    });
-    return -1;
+    if (_handle == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: recordActivityHeartbeat received null worker handle",
+            .details = null,
+        });
+        return -1;
+    }
+
+    const worker_handle = _handle.?;
+
+    if (worker_handle.core_worker == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: worker core handle is not initialized",
+            .details = null,
+        });
+        return -1;
+    }
+
+    if (worker_handle.runtime == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: worker runtime handle is not initialized",
+            .details = null,
+        });
+        return -1;
+    }
+
+    const runtime_handle = worker_handle.runtime.?;
+
+    if (runtime_handle.core_runtime == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: worker runtime core handle is not initialized",
+            .details = null,
+        });
+        return -1;
+    }
+
+    if (_payload.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: recordActivityHeartbeat requires a heartbeat payload",
+            .details = null,
+        });
+        return -1;
+    }
+
+    const heartbeat = core.ByteArrayRef{
+        .data = _payload.ptr,
+        .size = _payload.len,
+    };
+
+    if (core.workerRecordActivityHeartbeat(worker_handle.core_worker, heartbeat)) |fail| {
+        const message = byteArraySlice(fail);
+        const description = if (message.len > 0)
+            message
+        else
+            "temporal-bun-bridge-zig: activity heartbeat failed with an unknown error";
+        errors.setStructuredErrorJson(.{
+            .code = grpc.internal,
+            .message = description,
+            .details = null,
+        });
+        core.runtimeByteArrayFree(runtime_handle.core_runtime, fail);
+        return -1;
+    }
+
+    errors.setLastError(""[0..0]);
+    return 0;
 }
 
 pub fn initiateShutdown(_handle: ?*WorkerHandle) i32 {

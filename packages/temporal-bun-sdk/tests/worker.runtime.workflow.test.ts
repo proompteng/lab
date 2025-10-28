@@ -122,4 +122,75 @@ describe('WorkflowEngine', () => {
     const value = payload ? defaultPayloadConverter.fromPayload(payload) : undefined
     expect(value).toBe('timer fired')
   })
+
+  test('restores activator when workflows are interleaved', async () => {
+    const engine = new WorkflowEngine({ workflowsPath: WORKFLOWS_PATH })
+
+    const run1Init = buildActivationBase('run-interleave-1')
+    run1Init.jobs = [
+      coresdk.workflow_activation.WorkflowActivationJob.create({
+        initializeWorkflow: {
+          namespace: 'default',
+          workflowId: 'interleave-1',
+          workflowType: 'timerWorkflow',
+          randomnessSeed: Long.fromNumber(11),
+          attempt: 1,
+          taskQueue: 'unit-test',
+          firstExecutionRunId: 'run-interleave-1',
+          startTime: toTimestamp(),
+          workflowTaskTimeout: { seconds: 10, nanos: 0 },
+          arguments: encodeArgs(1),
+        },
+      }),
+    ]
+
+    const run1First = await engine.processWorkflowActivation(run1Init, {
+      namespace: 'default',
+      taskQueue: 'unit-test',
+    })
+
+    const startTimerCommand = run1First.completion.successful?.commands?.find((cmd) => cmd.startTimer)
+    const timerSeq = startTimerCommand?.startTimer?.seq ?? 0
+
+    const run2Init = buildActivationBase('run-interleave-2')
+    run2Init.jobs = [
+      coresdk.workflow_activation.WorkflowActivationJob.create({
+        initializeWorkflow: {
+          namespace: 'default',
+          workflowId: 'interleave-2',
+          workflowType: 'simpleWorkflow',
+          randomnessSeed: Long.fromNumber(13),
+          attempt: 1,
+          taskQueue: 'unit-test',
+          firstExecutionRunId: 'run-interleave-2',
+          startTime: toTimestamp(),
+          workflowTaskTimeout: { seconds: 10, nanos: 0 },
+          arguments: encodeArgs('Temporal'),
+        },
+      }),
+    ]
+
+    await engine.processWorkflowActivation(run2Init, {
+      namespace: 'default',
+      taskQueue: 'unit-test',
+    })
+
+    const run1Fire = buildActivationBase('run-interleave-1')
+    run1Fire.jobs = [
+      coresdk.workflow_activation.WorkflowActivationJob.create({
+        fireTimer: { seq: timerSeq },
+      }),
+    ]
+
+    const run1Final = await engine.processWorkflowActivation(run1Fire, {
+      namespace: 'default',
+      taskQueue: 'unit-test',
+    })
+
+    const completionCommand = run1Final.completion.successful?.commands?.find((cmd) => cmd.completeWorkflowExecution)
+    expect(completionCommand?.completeWorkflowExecution).toBeDefined()
+    const payload = completionCommand?.completeWorkflowExecution?.result
+    const value = payload ? defaultPayloadConverter.fromPayload(payload) : undefined
+    expect(value).toBe('timer fired')
+  })
 })
