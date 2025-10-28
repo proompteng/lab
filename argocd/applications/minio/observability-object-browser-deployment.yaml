@@ -30,7 +30,7 @@ spec:
           emptyDir: {}
       initContainers:
         - name: download-console
-          image: golang:1.24.4-bullseye
+          image: golang:1.25.3-bookworm
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
