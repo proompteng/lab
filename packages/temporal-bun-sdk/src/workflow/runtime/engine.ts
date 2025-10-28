@@ -1,6 +1,7 @@
-import Long from 'long'
 import type { coresdk } from '@temporalio/proto'
-import { WorkflowEnvironment, type WorkflowActivationResult, buildWorkflowInfo } from './environment'
+import Long from 'long'
+
+import { buildWorkflowInfo, type WorkflowActivationResult, WorkflowEnvironment } from './environment'
 
 export interface WorkflowEngineOptions {
   workflowsPath: string

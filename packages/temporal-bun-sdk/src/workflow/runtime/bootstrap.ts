@@ -1,7 +1,6 @@
-import Module from 'module'
-import { AsyncLocalStorage as NodeAsyncLocalStorage } from 'node:async_hooks'
 import assert from 'node:assert'
-import { createRequire } from 'node:module'
+import { AsyncLocalStorage as NodeAsyncLocalStorage } from 'node:async_hooks'
+import Module, { createRequire } from 'node:module'
 import { URL, URLSearchParams } from 'node:url'
 import { TextDecoder, TextEncoder } from 'node:util'
 
@@ -55,56 +54,73 @@ export const ensureWorkflowRuntimeBootstrap = (): void => {
   bootstrapCompleted = true
 
   const globalAny = globalThis as typeof globalThis & {
-    AsyncLocalStorage?: typeof AsyncLocalStorage
-    URL?: typeof URL
-    URLSearchParams?: typeof URLSearchParams
+    AsyncLocalStorage?: typeof NodeAsyncLocalStorage | typeof SimpleAsyncLocalStorage
+    URL?: typeof globalThis.URL
+    URLSearchParams?: typeof globalThis.URLSearchParams
     assert?: typeof assert
     TextEncoder?: typeof TextEncoder
     TextDecoder?: typeof TextDecoder
-  } & {
     __TEMPORAL__?: TemporalGlobals
   }
 
-  globalAny.AsyncLocalStorage = NodeAsyncLocalStorage ?? SimpleAsyncLocalStorage
+  globalAny.AsyncLocalStorage =
+    (NodeAsyncLocalStorage as typeof NodeAsyncLocalStorage | undefined) ?? SimpleAsyncLocalStorage
   if (!globalAny.URL) {
-    globalAny.URL = URL
+    globalAny.URL = URL as unknown as typeof globalThis.URL
   }
   if (!globalAny.URLSearchParams) {
-    globalAny.URLSearchParams = URLSearchParams
+    globalAny.URLSearchParams = URLSearchParams as unknown as typeof globalThis.URLSearchParams
   }
   if (!globalAny.assert) {
     globalAny.assert = assert
   }
   if (!globalAny.TextEncoder) {
-    globalAny.TextEncoder = TextEncoder
+    globalAny.TextEncoder = TextEncoder as unknown as typeof globalThis.TextEncoder
   }
   if (!globalAny.TextDecoder) {
-    globalAny.TextDecoder = TextDecoder
+    globalAny.TextDecoder = TextDecoder as unknown as typeof globalThis.TextDecoder
   }
 
   // Install a module cache entry so CJS require lookups for the webpack aliases resolve.
   const requireBootstrap = createRequire(import.meta.url)
 
+  type ModuleInternals = typeof Module & {
+    _resolveFilename?: (request: string, parent?: NodeJS.Module | null, isMain?: boolean, options?: unknown) => string
+    _nodeModulePaths?: (from: string) => string[]
+  }
+
+  const moduleInternals = Module as ModuleInternals
+
   if (!requireBootstrap.cache[stubModuleCacheKey]) {
-    requireBootstrap.cache[stubModuleCacheKey] = {
+    const modulePaths = moduleInternals._nodeModulePaths?.(process.cwd()) ?? []
+    const moduleCacheEntry = {
       id: stubModuleCacheKey,
       filename: stubModuleCacheKey,
+      path: process.cwd(),
       loaded: true,
       exports: {
         payloadConverter: undefined,
         failureConverter: undefined,
       },
-      children: [],
-      paths: Module._nodeModulePaths(process.cwd()),
-    }
+      parent: null,
+      children: [] as NodeJS.Module[],
+      paths: modulePaths,
+      require: requireBootstrap,
+    } as unknown as NodeJS.Module
+
+    requireBootstrap.cache[stubModuleCacheKey] = moduleCacheEntry
   }
 
-  const originalResolveFilename = Module._resolveFilename
-  Module._resolveFilename = function patchedResolveFilename(request, parent, isMain, options) {
-    if (temporalModuleRequests.has(request)) {
-      return stubModuleCacheKey
+  const originalResolveFilename = moduleInternals._resolveFilename
+  if (originalResolveFilename) {
+    const patchedResolveFilename: typeof originalResolveFilename = (request, parent, isMain, options) => {
+      if (temporalModuleRequests.has(request)) {
+        return stubModuleCacheKey
+      }
+      return Reflect.apply(originalResolveFilename, moduleInternals, [request, parent, isMain, options])
     }
-    return originalResolveFilename.call(this, request, parent, isMain, options)
+
+    moduleInternals._resolveFilename = patchedResolveFilename
   }
 }
 

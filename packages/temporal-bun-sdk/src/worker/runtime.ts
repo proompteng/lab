@@ -1,7 +1,9 @@
 import { Buffer } from 'node:buffer'
+
 import { CancelledFailure, defaultFailureConverter, defaultPayloadConverter } from '@temporalio/common'
-import { coresdk, type temporal } from '@temporalio/proto'
+import { coresdk, type google, type temporal } from '@temporalio/proto'
 import type Long from 'long'
+
 import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from '../config'
 import {
   NativeBridgeError,
@@ -79,7 +81,10 @@ export const maybeCreateNativeWorker = (options: NativeWorkerOptions): NativeWor
     if (error instanceof NativeBridgeError) {
       throw error
     }
-    throw new NativeBridgeError({ message: error instanceof Error ? error.message : String(error) })
+    throw new NativeBridgeError({
+      code: 2,
+      message: error instanceof Error ? error.message : String(error),
+    })
   }
 }
 
@@ -552,7 +557,7 @@ export class WorkerRuntime {
   }
 
   async #respondWorkflowFailure(runId: string | undefined, error: unknown): Promise<void> {
-    const failure = defaultFailureConverter.errorToFailure(normalizeError(error))
+    const failure = defaultFailureConverter.errorToFailure(normalizeError(error), defaultPayloadConverter)
     const completion = coresdk.workflow_completion.WorkflowActivationCompletion.create({
       runId: runId ?? '',
       failed: coresdk.workflow_completion.Failure.create({ failure }),
@@ -575,35 +580,35 @@ export class WorkerRuntime {
     const payload = result === undefined ? undefined : defaultPayloadConverter.toPayload(result)
     const completed = coresdk.activity_result.Success.create(payload ? { result: payload } : {})
     const executionResult = coresdk.activity_result.ActivityExecutionResult.create({ completed })
-    const completion = coresdk.activity_task.ActivityTaskCompletion.create({
+    const completion = coresdk.ActivityTaskCompletion.create({
       taskToken,
       result: executionResult,
     })
-    const buffer = coresdk.activity_task.ActivityTaskCompletion.encode(completion).finish()
+    const buffer = coresdk.ActivityTaskCompletion.encode(completion).finish()
     native.worker.completeActivityTask(this.#handles.worker, buffer)
   }
 
   async #completeActivityFailure(taskToken: Uint8Array, error: unknown): Promise<void> {
-    const failure = defaultFailureConverter.errorToFailure(normalizeError(error))
+    const failure = defaultFailureConverter.errorToFailure(normalizeError(error), defaultPayloadConverter)
     const failed = coresdk.activity_result.Failure.create({ failure })
     const executionResult = coresdk.activity_result.ActivityExecutionResult.create({ failed })
-    const completion = coresdk.activity_task.ActivityTaskCompletion.create({
+    const completion = coresdk.ActivityTaskCompletion.create({
       taskToken,
       result: executionResult,
     })
-    const buffer = coresdk.activity_task.ActivityTaskCompletion.encode(completion).finish()
+    const buffer = coresdk.ActivityTaskCompletion.encode(completion).finish()
     native.worker.completeActivityTask(this.#handles.worker, buffer)
   }
 
   async #completeActivityCancelled(taskToken: Uint8Array, failure: CancelledFailure): Promise<void> {
-    const failurePayload = defaultFailureConverter.errorToFailure(failure)
+    const failurePayload = defaultFailureConverter.errorToFailure(failure, defaultPayloadConverter)
     const cancelled = coresdk.activity_result.Cancellation.create({ failure: failurePayload })
     const executionResult = coresdk.activity_result.ActivityExecutionResult.create({ cancelled })
-    const completion = coresdk.activity_task.ActivityTaskCompletion.create({
+    const completion = coresdk.ActivityTaskCompletion.create({
       taskToken,
       result: executionResult,
     })
-    const buffer = coresdk.activity_task.ActivityTaskCompletion.encode(completion).finish()
+    const buffer = coresdk.ActivityTaskCompletion.encode(completion).finish()
     native.worker.completeActivityTask(this.#handles.worker, buffer)
   }
 
@@ -861,7 +866,7 @@ const normalizeError = (error: unknown): Error => {
   return new Error(typeof error === 'string' ? error : JSON.stringify(error))
 }
 
-const timestampToDate = (timestamp: temporal.google.protobuf.ITimestamp | null | undefined): Date | undefined => {
+const timestampToDate = (timestamp: google.protobuf.ITimestamp | null | undefined): Date | undefined => {
   if (!timestamp) {
     return undefined
   }
@@ -870,7 +875,7 @@ const timestampToDate = (timestamp: temporal.google.protobuf.ITimestamp | null |
   return new Date(millis)
 }
 
-const durationToMs = (duration: temporal.google.protobuf.IDuration | null | undefined): number | undefined => {
+const durationToMs = (duration: google.protobuf.IDuration | null | undefined): number | undefined => {
   if (!duration) {
     return undefined
   }

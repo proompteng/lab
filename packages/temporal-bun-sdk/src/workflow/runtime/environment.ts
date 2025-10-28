@@ -1,15 +1,17 @@
 import { resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
+
 import type { WorkerDeploymentVersion } from '@temporalio/common'
-import { defaultFailureConverter, defaultPayloadConverter, type WorkflowInfo } from '@temporalio/common'
+import { defaultFailureConverter, defaultPayloadConverter } from '@temporalio/common'
 import {
   decodeSearchAttributes,
   decodeTypedSearchAttributes,
 } from '@temporalio/common/lib/converter/payload-search-attributes'
-import type { temporal } from '@temporalio/proto'
-import { coresdk } from '@temporalio/proto'
+import { coresdk, type google, type temporal } from '@temporalio/proto'
+import type { WorkflowInfo } from '@temporalio/workflow'
+import type { WorkflowCreateOptionsInternal } from '@temporalio/workflow/lib/interfaces.js'
 import type Long from 'long'
-import { native } from '../../internal/core-bridge/native'
+
 import { ensureWorkflowRuntimeBootstrap, withTemporalGlobals } from './bootstrap'
 import { convertParentWorkflowInfo, convertRootWorkflowInfo } from './info'
 
@@ -25,16 +27,17 @@ export interface WorkflowEnvironmentOptions {
 
 export interface WorkflowActivationResult {
   completion: coresdk.workflow_completion.IWorkflowActivationCompletion
-  logs?: temporal.api.common.v1.ILogMessage[]
 }
 
+type WorkflowSourceMap = WorkflowCreateOptionsInternal['sourceMap']
+
 const SOURCE_MAP_STUB = Object.freeze({
-  version: 3,
+  version: '3',
   file: '',
   sources: [] as string[],
   names: [] as string[],
   mappings: '',
-})
+}) as unknown as WorkflowSourceMap
 
 const makeModuleSpecifier = (absolutePath: string, runId: string) => {
   const url = pathToFileURL(absolutePath)
@@ -112,7 +115,10 @@ export class WorkflowEnvironment {
         },
       )
     } catch (error) {
-      const failure = defaultFailureConverter.errorToFailure(error instanceof Error ? error : new Error(String(error)))
+      const failure = defaultFailureConverter.errorToFailure(
+        error instanceof Error ? error : new Error(String(error)),
+        defaultPayloadConverter,
+      )
       const completion = coresdk.workflow_completion.WorkflowActivationCompletion.create({
         runId: activation.runId,
         failed: coresdk.workflow_completion.Failure.create({ failure }),
@@ -171,8 +177,7 @@ export class WorkflowEnvironment {
       this.#interceptorsCache = []
     }
 
-    const timeSource =
-      typeof native.getTimeOfDay === 'function' ? native.getTimeOfDay : () => BigInt(Date.now()) * 1000n
+    const timeSource = () => BigInt(Date.now()) * 1000n
 
     await withTemporalGlobals(
       {
@@ -264,7 +269,7 @@ export const buildWorkflowInfo = (
     historyLength: activation.historyLength ?? 0,
     historySize: activation.historySizeBytes?.toNumber?.() ?? 0,
     continueAsNewSuggested: activation.continueAsNewSuggested ?? false,
-    currentBuildId: activation.deploymentVersionForCurrentTask?.buildId ?? '',
+    currentBuildId: activation.deploymentVersionForCurrentTask?.buildId,
     currentDeploymentVersion: convertDeploymentVersion(activation.deploymentVersionForCurrentTask),
     unsafe: {
       now: () => Date.now(),
@@ -272,21 +277,23 @@ export const buildWorkflowInfo = (
     },
     priority: undefined,
     lastResult: decodeLastResult(init.lastCompletionResult),
-    lastFailure: init.continuedFailure ? defaultFailureConverter.failureToError(init.continuedFailure) : undefined,
+    lastFailure: init.continuedFailure
+      ? defaultFailureConverter.failureToError(init.continuedFailure, defaultPayloadConverter)
+      : undefined,
   }
 
   return info
 }
 
 const convertDeploymentVersion = (
-  version: temporal.api.deployment.v1.IDeploymentVersion | null | undefined,
+  version: coresdk.common.IWorkerDeploymentVersion | null | undefined,
 ): WorkerDeploymentVersion | undefined => {
-  if (!version?.buildId) {
+  if (!version?.buildId || !version.deploymentName) {
     return undefined
   }
   return {
     buildId: version.buildId,
-    version: version.version ?? undefined,
+    deploymentName: version.deploymentName,
   }
 }
 
@@ -312,7 +319,7 @@ const decodeLastResult = (payloads: temporal.api.common.v1.IPayloads | null | un
   return first ? defaultPayloadConverter.fromPayload(first) : undefined
 }
 
-const timestampToDate = (timestamp: temporal.google.protobuf.ITimestamp | null | undefined): Date | undefined => {
+const timestampToDate = (timestamp: google.protobuf.ITimestamp | null | undefined): Date | undefined => {
   if (!timestamp) {
     return undefined
   }
@@ -321,7 +328,7 @@ const timestampToDate = (timestamp: temporal.google.protobuf.ITimestamp | null |
   return new Date(millis)
 }
 
-const durationToMs = (duration: temporal.google.protobuf.IDuration | null | undefined): number | undefined => {
+const durationToMs = (duration: google.protobuf.IDuration | null | undefined): number | undefined => {
   if (!duration) {
     return undefined
   }
@@ -329,10 +336,7 @@ const durationToMs = (duration: temporal.google.protobuf.IDuration | null | unde
   return seconds * 1000 + Math.floor((duration.nanos ?? 0) / 1_000_000)
 }
 
-const durationToMsRequired = (
-  duration: temporal.google.protobuf.IDuration | null | undefined,
-  label: string,
-): number => {
+const durationToMsRequired = (duration: google.protobuf.IDuration | null | undefined, label: string): number => {
   const ms = durationToMs(duration)
   if (ms === undefined) {
     throw new Error(`${label} must be provided`)

@@ -1,5 +1,5 @@
-import type { coresdk } from '@temporalio/proto'
-import type { ParentWorkflowInfo, RootWorkflowInfo } from '@temporalio/common'
+import type { coresdk, temporal } from '@temporalio/proto'
+import type { ParentWorkflowInfo, RootWorkflowInfo } from '@temporalio/workflow'
 import { IllegalStateError } from '@temporalio/workflow'
 
 export const convertParentWorkflowInfo = (
@@ -18,7 +18,7 @@ export const convertParentWorkflowInfo = (
 }
 
 export const convertRootWorkflowInfo = (
-  root: coresdk.common.IWorkflowExecution | null | undefined,
+  root: temporal.api.common.v1.IWorkflowExecution | null | undefined,
 ): RootWorkflowInfo | undefined => {
   if (!root) {
     return undefined

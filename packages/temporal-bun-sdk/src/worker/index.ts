@@ -1,8 +1,8 @@
-export { BunWorker, createWorker, runWorker } from '../worker'
 export type { BunWorkerHandle, CreateWorkerOptions, WorkerOptionOverrides } from '../worker'
+export { BunWorker, createWorker, runWorker } from '../worker'
 export {
-  WorkerRuntime,
+  destroyNativeWorker,
   isZigWorkerBridgeEnabled,
   maybeCreateNativeWorker,
-  destroyNativeWorker,
+  WorkerRuntime,
 } from './runtime'

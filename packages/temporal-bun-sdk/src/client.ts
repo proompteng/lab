@@ -1,4 +1,3 @@
-import type { ArrayBufferView } from 'node:buffer'
 import { z } from 'zod'
 import {
   buildCancelRequest,

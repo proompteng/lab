@@ -1,11 +1,11 @@
 # Worker Runtime Implementation Guide
 
 **Status Snapshot (28 Oct 2025)**
-- ✅ `createWorker` now constructs the Bun-native runtime by default whenever the Zig bridge is available. The vendor `@temporalio/worker` implementation is only used when `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1`.
-- ✅ `WorkerRuntime` wires workflow polling to the new `WorkflowEngine`, which decodes core activations, executes workflows inside the Bun process using the TypeScript SDK runtime, and streams `WorkflowActivationCompletion` payloads back to Temporal Core.
-- ✅ `WorkflowEngine` supports deterministic command generation (timers, completions) and loads workflow bundles directly from the filesystem. Unit coverage lives under `tests/worker.runtime.workflow.test.ts`.
-- ✅ Activity task execution and heartbeats now run through the Zig bridge; metrics emission remains a TODO tracked in #1612.
-- ⚠️ Graceful shutdown honours abort semantics but still lacks drain coordination with the Zig bridge for in-flight activities.
+- ✅ `createWorker` now constructs the Bun-native runtime by default whenever the Zig bridge is available. Set `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` to opt back into the legacy `@temporalio/worker` codepath when the bridge is missing.
+- ✅ `WorkerRuntime` wires workflow polling to the `WorkflowEngine`, which decodes core activations, executes workflows inside Bun via the Temporal TypeScript runtime, and streams `WorkflowActivationCompletion` payloads back to Temporal Core.
+- ✅ Activity task execution, cancellation, and heartbeats now travel through the Zig bridge. Tests live under `tests/worker/worker-runtime-*.test.ts`.
+- ✅ `loadTemporalConfig` exposes `TEMPORAL_SHOW_STACK_SOURCES`; when true, workflow stack traces include source snippets to aid debugging.
+- ⚠️ Graceful shutdown honours abort semantics but still lacks coordinated draining for in-flight activities; telemetry hooks remain tracked in #1612.
 
 This document captures the live wiring and lists the remaining gaps before the Bun worker reaches feature parity with the Node SDK.
 
@@ -28,9 +28,16 @@ createWorker(options)
 
 ---
 
-## 2. Zig Bridge Hooks
+## 2. Configuration Flags
 
-`src/internal/core-bridge/native.ts` continues to surface the FFI surface required by the runtime:
+- `TEMPORAL_BUN_SDK_USE_ZIG=1` — required to enable the Bun worker runtime; unset or `0` short-circuits before the bridge loads.
+- `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` — forces the legacy `@temporalio/worker` implementation even when the bridge is available (useful for comparison or unsupported environments).
+- `TEMPORAL_SHOW_STACK_SOURCES=1` — emits workflow stack traces with inline source excerpts when Temporal schedules a workflow task (defaults to `false` to keep payloads slim).
+- `NODE_TLS_REJECT_UNAUTHORIZED=0` is still toggled automatically when `allowInsecureTls` is set in config; prefer TLS in production.
+
+## 3. Zig Bridge Hooks
+
+`src/internal/core-bridge/native.ts` surfaces the FFI surface required by the runtime:
 
 - `isZigWorkerBridgeEnabled()` guards Bun worker construction behind `TEMPORAL_BUN_SDK_USE_ZIG=1` and the detected bridge variant.
 - `maybeCreateNativeWorker` and `destroyNativeWorker` manage the native worker handle lifecycle.
@@ -40,21 +47,21 @@ createWorker(options)
 
 ---
 
-## 3. Remaining Runtime Work
+## 4. Remaining Runtime Work
 
 > **Target Architecture:** The diagrams and responsibilities in this section describe the desired end state once Bun-native worker loops replace the current Node SDK dependency. They are not implemented yet.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Workflow task loop | ✅ | `WorkflowEngine` executes workflows using the TypeScript runtime shipped in `@temporalio/workflow`. Commands are encoded as core `WorkflowActivationCompletion` payloads. |
-| Activity task loop | ✅ | `WorkerRuntime` polls activity tasks, runs registered handlers, and completes/cancels via the Zig bridge-based FFI. |
-| Heartbeats & metrics | ⚠️ | Activity heartbeats stream through the Zig bridge; metrics emission remains TODO. |
-| Graceful shutdown | ⚠️ | Poll loop aborts and native shutdown work, but draining running activities is still pending. |
-| Vendor fallback | ✅ | `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` preserves the old `@temporalio/worker` code path for platforms without the Zig bridge. |
+| Activity task loop | ✅ | `WorkerRuntime` polls, executes, cancels, and completes activity tasks via the Zig bridge. Heartbeats rely on native `recordActivityHeartbeat`. |
+| Telemetry & metrics | ⚠️ | Activity heartbeats are live; metrics/telemetry callbacks are still stubbed in the bridge. |
+| Graceful shutdown | ⚠️ | Poll loop aborts and native handles are disposed, but draining long-running activities requires coordination work. |
+| Vendor fallback | ✅ | `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` preserves the old `@temporalio/worker` path when the Zig bridge is unavailable. |
 
 ---
 
-## 4. Implementation Roadmap
+## 5. Implementation Roadmap
 
 1. **Finish Zig worker exports** (lanes 7 & 5 in `parallel-implementation-plan.md`): complete/heartbeat/shutdown RPCs, ensure errors bubble up via `NativeBridgeError`.
 2. **Stabilise the Bun workflow engine**: ✅ `WorkflowEngine` now decodes activations, executes workflows via the TypeScript runtime, and encodes `WorkflowActivationCompletion` payloads. Remaining work covers interceptor hot-reload support and memory profiling.
@@ -64,7 +71,18 @@ createWorker(options)
 
 ---
 
-## 5. References
+## 6. Validation Checklist
+
+- `pnpm --filter @proompteng/temporal-bun-sdk exec bun test packages/temporal-bun-sdk/tests/worker.runtime.workflow.test.ts`
+- `pnpm --filter @proompteng/temporal-bun-sdk exec bun test packages/temporal-bun-sdk/tests/worker/worker-runtime-*.test.ts`
+- `TEMPORAL_TEST_SERVER=1 pnpm --filter @proompteng/temporal-bun-sdk exec bun test packages/temporal-bun-sdk/tests/native.integration.test.ts`
+- `pnpm --filter @proompteng/temporal-bun-sdk build`
+
+Keep this list in sync with issue #1454’s Definition of Done.
+
+---
+
+## 7. References
 
 - TypeScript sources: `src/worker.ts`, `src/worker/runtime.ts`, `src/internal/core-bridge/native.ts`.
 - Zig worker implementation: `bruke/src/worker.zig`, `bruke/src/test_helpers.zig`.

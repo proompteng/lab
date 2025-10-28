@@ -2,7 +2,7 @@
 
 **Published:** 20 Oct 2025  
 **Authors:** Platform Runtime (Temporal Bun)  
-**Status:** Draft — guides implementation toward the npm GA release of the Bun-native Temporal SDK. Current progress (28 Oct 2025): client RPCs (start/query/signal/terminate), workflow task execution, and activity completion/heartbeats are live via the Zig bridge; metadata updates, telemetry, and the remaining worker parity items are still open.
+**Status:** Draft — guides implementation toward the npm GA release of the Bun-native Temporal SDK. Current progress (28 Oct 2025): client RPCs (start/query/signal/terminate), workflow task execution, activity completion/heartbeats, and Bun stack-trace enrichment (`TEMPORAL_SHOW_STACK_SOURCES`) are live via the Zig bridge. Metadata updates, telemetry, and the remaining worker parity items are still open.
 
 ---
 
@@ -73,6 +73,7 @@ Dates assume we prioritize the Zig bridge alongside existing Rust bridge mainten
 - **Worker Versioning & Deployment Guide:** tailored to Bun packaging/deploy flows (see [Worker versioning](https://docs.temporal.io/worker-versioning)).
 - **Troubleshooting TLS/Docker:** collect known issues and fixes from community threads (see [Temporal community report](https://community.temporal.io/t/temporal-client-fails-to-connect-inside-docker-container-node-js-bun/17982)).
 - **Release Notes Template:** highlight Bun minimum version, platform coverage, experimental warnings.
+- **Runtime Configuration:** document `TEMPORAL_BUN_SDK_USE_ZIG`, `TEMPORAL_BUN_SDK_VENDOR_FALLBACK`, and `TEMPORAL_SHOW_STACK_SOURCES` so operators can toggle behaviour predictably.
 
 Keep this list synchronized with `zig-production-readiness.md`.
 

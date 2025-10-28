@@ -1,9 +1,11 @@
 import { fileURLToPath } from 'node:url'
+
 import type { NativeConnection, NativeConnectionOptions, WorkerOptions } from '@temporalio/worker'
+
 import * as defaultActivities from './activities'
 import { loadTemporalConfig, type TemporalConfig } from './config'
 import { NativeBridgeError } from './internal/core-bridge/native'
-import { WorkerRuntime, type WorkerRuntimeOptions, isZigWorkerBridgeEnabled } from './worker/runtime'
+import { isZigWorkerBridgeEnabled, WorkerRuntime, type WorkerRuntimeOptions } from './worker/runtime'
 
 const DEFAULT_WORKFLOWS_PATH = fileURLToPath(new URL('./workflows/index.js', import.meta.url))
 const VENDOR_FALLBACK_ENV = 'TEMPORAL_BUN_SDK_VENDOR_FALLBACK'
@@ -145,14 +147,15 @@ const resolveActivities = (
 }
 
 const resolveWorkflowsPath = (input: CreateWorkerOptions['workflowsPath']): string => {
-  if (!input) {
+  if (input === undefined || input === null) {
     return DEFAULT_WORKFLOWS_PATH
   }
   if (typeof input === 'string') {
     return input
   }
-  if (Array.isArray(input) && input.length > 0) {
-    const [first] = input
+  const candidate = input as unknown
+  if (Array.isArray(candidate) && candidate.length > 0) {
+    const [first] = candidate
     if (typeof first === 'string') {
       return first
     }
