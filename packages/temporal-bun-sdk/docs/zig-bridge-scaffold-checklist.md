@@ -50,8 +50,8 @@ The items below slice the Zig bridge effort into PR-sized TODOs. Every ID maps b
 | zig-worker-03 | Poll workflow tasks and surface activations via pending handles. | `src/worker.zig`, `src/lib.zig` | ✅ `zig-poll-workflow.test.ts` exercises real activations via the Zig bridge. |
 | zig-worker-04 | Complete workflow tasks with success/error payloads. | `src/worker.zig`, `src/lib.zig` | ✅ `zig-worker-completion.test.ts` records completions and error propagation. |
 | zig-worker-05 | Poll activity tasks through Temporal core worker. | `src/worker.zig`, `src/lib.zig` | ✅ Activity polling returns payloads, surfaces cancellations, and handles shutdown sentinel in Bun tests. |
-| zig-worker-06 | Complete activity tasks (success & failure). | `src/worker.zig`, `src/lib.zig` | Activity completion test verifies response propagation. |
-| zig-worker-07 | Record activity heartbeats through FFI bridge. | `src/worker.zig`, `src/lib.zig` | Heartbeat updates visible in Temporal server during tests. |
+| zig-worker-06 | Complete activity tasks (success & failure). | `src/worker.zig`, `src/lib.zig` | ✅ Activity completion tests cover success/failure payloads through the Bun runtime. |
+| zig-worker-07 | Record activity heartbeats through FFI bridge. | `src/worker.zig`, `src/lib.zig` | ✅ Heartbeat payloads stream to Temporal core; Bun tests assert heartbeat encoding. |
 | zig-worker-08 | Initiate graceful shutdown (stop polling). | `src/worker.zig`, `src/lib.zig` | Worker halts new polls while allowing inflight work to finish. |
 | zig-worker-09 | Finalize shutdown and wait for inflight tasks. | `src/worker.zig`, `src/lib.zig` | Shutdown completes without dangling handles. |
 

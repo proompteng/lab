@@ -45,7 +45,6 @@ describe('Build System Integration Tests', () => {
     }
 
     // Reset environment variables
-    delete process.env.USE_PREBUILT_LIBS
     delete process.env.TEMPORAL_LIBS_VERSION
 
     console.log('Build system integration tests cleanup completed')
@@ -55,8 +54,6 @@ describe('Build System Integration Tests', () => {
     test('should attempt to download pre-built libraries and handle missing releases', async () => {
       const startTime = Date.now()
 
-      // Set environment variables for pre-built libraries
-      process.env.USE_PREBUILT_LIBS = 'true'
       process.env.TEMPORAL_LIBS_VERSION = 'latest'
 
       try {
@@ -134,7 +131,6 @@ describe('Build System Integration Tests', () => {
 
         console.log(`✓ Pre-built library test completed in ${Math.round(buildTime / 1000)}s`)
       } finally {
-        delete process.env.USE_PREBUILT_LIBS
         delete process.env.TEMPORAL_LIBS_VERSION
       }
     })
@@ -221,9 +217,6 @@ describe('Build System Integration Tests', () => {
 
   describe('Cache Management Integration', () => {
     test('should test cache management functionality', async () => {
-      process.env.USE_PREBUILT_LIBS = 'true'
-
-      try {
         console.log('Testing cache management functionality...')
 
         // Create a fresh download client with a clean cache directory
@@ -256,9 +249,6 @@ describe('Build System Integration Tests', () => {
         expect(Array.isArray(validationResult.errors)).toBe(true)
 
         console.log('✓ Cache validation functionality works')
-      } finally {
-        delete process.env.USE_PREBUILT_LIBS
-      }
     })
   })
 
@@ -274,86 +264,4 @@ describe('Build System Integration Tests', () => {
     })
   })
 
-  describe('Environment Variable Integration', () => {
-    test('should respect environment variables in build system', async () => {
-      if (!existsSync(BUILD_ZIG_PATH)) {
-        console.warn('Skipping environment variable integration tests: build.zig not found')
-        return
-      }
-      console.log('Testing environment variable integration...')
-
-      // Test USE_PREBUILT_LIBS=false
-      process.env.USE_PREBUILT_LIBS = 'false'
-
-      try {
-        console.log('Testing USE_PREBUILT_LIBS=false...')
-
-        // Run Zig build with USE_PREBUILT_LIBS=false
-        const zigBuild = Bun.spawn(['zig', 'build', '-Doptimize=ReleaseFast', '--build-file', BUILD_ZIG_PATH], {
-          cwd: PACKAGE_ROOT,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env: {
-            ...process.env,
-            USE_PREBUILT_LIBS: 'false',
-          },
-        })
-
-        let buildOutput = ''
-        if (zigBuild.stdout) {
-          const reader = zigBuild.stdout.getReader()
-          const decoder = new TextDecoder()
-
-          try {
-            while (true) {
-              const { done, value } = await reader.read()
-              if (done) break
-              const text = decoder.decode(value)
-              buildOutput += text
-              process.stdout.write(text)
-            }
-          } finally {
-            reader.releaseLock()
-          }
-        }
-
-        const exitCode = await zigBuild.exited
-        let stderr = ''
-
-        if (zigBuild.stderr) {
-          stderr = await new Response(zigBuild.stderr).text()
-        }
-
-        const combinedOutput = `${buildOutput}\n${stderr}`
-
-        // Fallback to Cargo is no longer supported; expect a clear error
-        expect(exitCode).not.toBe(0)
-        expect(combinedOutput).toMatch(/USE_PREBUILT_LIBS=false is no longer supported/)
-        console.log('✓ USE_PREBUILT_LIBS=false surfaces the expected error message')
-      } finally {
-        delete process.env.USE_PREBUILT_LIBS
-      }
-
-      // Test TEMPORAL_LIBS_VERSION environment variable handling
-      process.env.USE_PREBUILT_LIBS = 'true'
-      process.env.TEMPORAL_LIBS_VERSION = 'nonexistent-version'
-
-      try {
-        console.log('Testing TEMPORAL_LIBS_VERSION with invalid version...')
-
-        // This should fail to find the version but handle it gracefully
-        try {
-          await downloadClient.downloadLibraries()
-          // If it succeeds, that's unexpected but not necessarily wrong
-          console.log('⚠️  Download succeeded with nonexistent version (unexpected but handled)')
-        } catch (error) {
-          // Expected to fail with version not found
-          expect(error instanceof Error).toBe(true)
-          console.log('✓ TEMPORAL_LIBS_VERSION validation works correctly')
-        }
-      } finally {
-        delete process.env.USE_PREBUILT_LIBS
-        delete process.env.TEMPORAL_LIBS_VERSION
-      }
-    })
-  })
 })

@@ -2,7 +2,7 @@
 
 **Author:** Platform Runtime Team  
 **Original Publish Date:** 17 Oct 2025  
-**Last Updated:** 27 Oct 2025  
+**Last Updated:** 28 Oct 2025  
 **Status:** In progress
 
 ---
@@ -26,10 +26,11 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 ### TypeScript layer
 - ✅ `createTemporalClient` loads the Zig bridge through `bun:ffi`, applies TLS/API key metadata, and exposes workflow helpers (see `src/client.ts`).
 - ✅ CLI commands (`temporal-bun init|check|docker-build`) ship in `src/bin/temporal-bun.ts`.
-- ✅ Worker bootstrap (`createWorker`, `runWorker`) keeps parity with the existing Node SDK via `@temporalio/worker`, ensuring teams can run workflows today.
+- ✅ Worker bootstrap (`createWorker`, `runWorker`) defaults to the Bun-native runtime backed by the Zig bridge, with an opt-in `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` escape hatch to reuse `@temporalio/worker` when needed.
 - ⚠️ `client.workflow.cancel` still surfaces `NativeBridgeError` because the Zig bridge export is stubbed; `client.workflow.signal` now routes through Temporal core with deterministic request IDs plus client identity.
 - ✅ `client.updateHeaders` hot-swaps metadata via the Zig bridge and returns Temporal core status codes without forcing a reconnect.
-- ⚠️ `WorkerRuntime` (native Bun worker loop) is scaffolded in `src/worker/runtime.ts` but not yet wired to the native bridge.
+- ✅ `WorkerRuntime` and the `WorkflowEngine` execute workflow activations inside Bun, emitting `WorkflowActivationCompletion` payloads through the Zig bridge. Activity polling, cancellation, and heartbeats are implemented; telemetry hooks remain TODO.
+- ✅ `loadTemporalConfig` now surfaces `TEMPORAL_SHOW_STACK_SOURCES`, letting operators opt into inline workflow stack traces.
 
 ### Zig native bridge (`packages/temporal-bun-sdk/bruke`)
 - ✅ Uses `@cImport("temporal-sdk-core-c-bridge.h")` to call Temporal core runtime/client APIs.
@@ -37,7 +38,7 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 - ✅ Encodes workflow start and signal-with-start requests directly in Zig, returning JSON metadata to Bun.
 - ✅ `core.signalWorkflow` now builds `SignalWorkflowExecutionRequest`, forwards gRPC statuses, and acknowledges pending handles with Temporal core responses.
 - ⚠️ `temporal_bun_client_cancel_workflow` still returns `UNIMPLEMENTED`; header updates now flow through `temporal_bun_client_update_headers`.
-- ⚠️ Worker exports (`temporal_bun_worker_*`) are placeholders; only workflow completion goes through stubbed callbacks to support unit tests.
+- ✅ Worker exports (`temporal_bun_worker_*`) now poll workflow and activity tasks, record heartbeats, and complete/cancel activity executions. Open work focuses on telemetry and graceful drain behaviour.
 - ⚠️ Telemetry and logger configuration hooks (`temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger`) report `UNIMPLEMENTED`.
 
 ### Tooling & Distribution
@@ -45,7 +46,8 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 - ✅ `pnpm run build:native:zig` compiles `libtemporal_bun_bridge_zig` for macOS/Linux and `package:native:zig` stages artifacts under `dist/native/<platform>/<arch>/` (source in `bruke/`).
 - ✅ `prepack` hook builds TypeScript, fetches native libs, compiles Zig, and packages artifacts automatically.
 - ✅ `tests/native.integration.test.ts`, `tests/end-to-end-workflow.test.ts`, and `tests/zig-signal.test.ts` exercise the bridge against the Temporal CLI dev server.
-- ⚠️ `zig build test` executes stubbed unit tests only; coverage for worker APIs remains TODO.
+- ✅ `tests/worker.runtime.workflow.test.ts`, `tests/worker/worker-runtime-*.test.ts`, and `tests/worker/zig-poll-workflow.test.ts` cover workflow and activity loops via the Bun runtime.
+- ⚠️ `zig build test` executes stubbed unit tests only; coverage for worker telemetry remains TODO.
 
 ## 3. Architecture Overview
 
@@ -53,7 +55,7 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 ┌──────────────────────────────────────────┐
 │ @proompteng/temporal-bun-sdk (TypeScript)│
 │  ├─ Config & client helpers              │
-│  ├─ Worker (Node fallback)               │
+│  ├─ Worker (Bun runtime + WorkflowEngine)│
 │  └─ CLI / scaffolding                    │
 └──────────────────────┬───────────────────┘
                       │ bun:ffi
@@ -134,12 +136,13 @@ Key properties:
 - Bun tests:
   - `tests/native.integration.test.ts` spins up Temporal CLI dev server and exercises workflow start/query via Zig bridge.
   - `tests/end-to-end-workflow.test.ts` validates sample workflow execution.
+  - `tests/worker.runtime.workflow.test.ts`, `tests/worker/worker-runtime-activity.test.ts`, `tests/worker/worker-runtime-shutdown.test.ts`, and `tests/worker/zig-poll-workflow.test.ts` cover workflow activations, activity lifecycles, and shutdown semantics when `TEMPORAL_BUN_SDK_USE_ZIG=1`.
   - `tests/zig-signal.test.ts` exercises signal delivery end-to-end against the Temporal CLI dev server when available.
   - `tests/client.test.ts` mocks the native module to verify payload encoding and validation logic.
 - Zig tests:
   - `zig build test` covers JSON validation helpers and pending-handle state machines.
-  - Worker completion tests assert callback plumbing in `worker.zig`, even though polling is unimplemented.
-- Manual QA: `pnpm --filter @proompteng/temporal-bun-sdk run temporal:start` launches a local server; `bun test tests/native.integration.test.ts` performs smoke validation.
+  - Worker completion tests assert callback plumbing in `worker.zig`; polling is now exercised via Bun tests.
+- Manual QA: `pnpm --filter @proompteng/temporal-bun-sdk run temporal:start` launches a local server; `TEMPORAL_BUN_SDK_USE_ZIG=1 bun test tests/native.integration.test.ts` performs smoke validation; enable `TEMPORAL_SHOW_STACK_SOURCES=1` to inspect stack trace sources.
 
 ## 9. Remaining Work & Milestones
 
@@ -152,8 +155,8 @@ maps to one or more lanes so parallel Codex instances can implement features wit
    - Wire `temporal_bun_runtime_update_telemetry` and `*_set_logger` through Temporal core once upstream exposes the hooks.
    - Surface metrics/logging configuration helpers in TypeScript (`configureTelemetry`, `installLogger`).
 3. **Worker bridge**
-   - Implement worker creation, poll/complete loops, activity heartbeats, and graceful shutdown in Zig (`zig-worker-01`…`zig-worker-09`).
-   - Deliver Bun `WorkerRuntime` to replace the Node fallback and update docs/CLI to default to Bun-native workers.
+   - Finalise graceful shutdown and activity metrics support in Zig (`zig-worker-08`/`zig-worker-09`).
+   - Harden Bun `WorkerRuntime` parity (activity interception, metrics, diagnostics) and document the vendor fallback toggle.
 4. **Developer experience**
    - Expand CLI (`temporal-bun init`) templates with Zig bridge usage instructions.
    - Provide `demo:e2e` script referenced in the doc (currently a follow-up).

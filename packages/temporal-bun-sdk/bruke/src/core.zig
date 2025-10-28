@@ -54,6 +54,8 @@ pub const RuntimeByteArrayFreeFn =
 pub const WorkerInitiateShutdownFn = *const fn (?*WorkerOpaque) callconv(.c) void;
 pub const WorkerFinalizeShutdownFn =
     *const fn (?*WorkerOpaque, ?*anyopaque, WorkerCallback) callconv(.c) void;
+pub const WorkerRecordHeartbeatFn =
+    *const fn (?*WorkerOpaque, ByteArrayRef) callconv(.c) ?*const ByteArray;
 
 const fallback_error_slice =
     "temporal-bun-bridge-zig: temporal core bridge is not linked"[0..];
@@ -116,20 +118,55 @@ fn fallbackWorkerPollActivityTask(
     }
 }
 
+fn fallbackWorkerCompleteActivityTask(
+    worker: ?*WorkerOpaque,
+    completion: ByteArrayRef,
+    user_data: ?*anyopaque,
+    callback: WorkerCallback,
+) callconv(.c) void {
+    _ = worker;
+    _ = completion;
+
+    if (user_data == null) {
+        return;
+    }
+
+    if (callback) |cb| {
+        cb(user_data, &fallback_error_array);
+    }
+}
+
+fn fallbackWorkerRecordActivityHeartbeat(
+    worker: ?*WorkerOpaque,
+    heartbeat: ByteArrayRef,
+) callconv(.c) ?*const ByteArray {
+    _ = worker;
+    _ = heartbeat;
+    return &fallback_error_array;
+}
+
 pub var worker_complete_workflow_activation: WorkerCompleteFn = fallbackWorkerCompleteWorkflowActivation;
 pub var runtime_byte_array_free: RuntimeByteArrayFreeFn = fallbackRuntimeByteArrayFree;
 pub var worker_poll_workflow_activation: WorkerPollFn = fallbackWorkerPollWorkflowActivation;
+pub var worker_complete_activity_task: WorkerCompleteFn = fallbackWorkerCompleteActivityTask;
+pub var worker_record_activity_heartbeat: WorkerRecordHeartbeatFn = fallbackWorkerRecordActivityHeartbeat;
 
 pub fn registerTemporalCoreCallbacks(
     worker_complete: ?WorkerCompleteFn,
     byte_array_free: ?RuntimeByteArrayFreeFn,
     worker_poll: ?WorkerPollFn,
+    activity_complete: ?WorkerCompleteFn,
+    activity_heartbeat: ?WorkerRecordHeartbeatFn,
 ) void {
     worker_complete_workflow_activation =
         worker_complete orelse fallbackWorkerCompleteWorkflowActivation;
     runtime_byte_array_free = byte_array_free orelse fallbackRuntimeByteArrayFree;
     worker_poll_workflow_activation =
         worker_poll orelse fallbackWorkerPollWorkflowActivation;
+    worker_complete_activity_task =
+        activity_complete orelse fallbackWorkerCompleteActivityTask;
+    worker_record_activity_heartbeat =
+        activity_heartbeat orelse fallbackWorkerRecordActivityHeartbeat;
 }
 
 pub fn workerCompleteWorkflowActivation(
@@ -141,8 +178,24 @@ pub fn workerCompleteWorkflowActivation(
     worker_complete_workflow_activation(worker, completion, user_data, callback);
 }
 
+pub fn workerCompleteActivityTask(
+    worker: ?*WorkerOpaque,
+    completion: ByteArrayRef,
+    user_data: ?*anyopaque,
+    callback: WorkerCallback,
+) void {
+    worker_complete_activity_task(worker, completion, user_data, callback);
+}
+
 pub fn runtimeByteArrayFree(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArray) void {
     runtime_byte_array_free(runtime, bytes);
+}
+
+pub fn workerRecordActivityHeartbeat(
+    worker: ?*WorkerOpaque,
+    heartbeat: ByteArrayRef,
+) ?*const ByteArray {
+    return worker_record_activity_heartbeat(worker, heartbeat);
 }
 
 const stub_runtime_or_fail = RuntimeOrFail{
@@ -306,6 +359,8 @@ pub fn ensureExternalApiInstalled() void {
             c.temporal_core_worker_complete_workflow_activation,
             c.temporal_core_byte_array_free,
             c.temporal_core_worker_poll_workflow_activation,
+            c.temporal_core_worker_complete_activity_task,
+            c.temporal_core_worker_record_activity_heartbeat,
         );
     }
 }

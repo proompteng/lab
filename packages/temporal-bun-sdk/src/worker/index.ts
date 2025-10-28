@@ -1,2 +1,8 @@
-// Re-export the vendor Temporal worker to preserve existing behavior until Bun-native runtime is complete.
-export * from '@temporalio/worker'
+export type { BunWorkerHandle, CreateWorkerOptions, WorkerOptionOverrides } from '../worker'
+export { BunWorker, createWorker, runWorker } from '../worker'
+export {
+  destroyNativeWorker,
+  isZigWorkerBridgeEnabled,
+  maybeCreateNativeWorker,
+  WorkerRuntime,
+} from './runtime'

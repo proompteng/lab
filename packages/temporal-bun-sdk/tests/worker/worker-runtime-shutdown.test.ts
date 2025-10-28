@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { fileURLToPath } from 'node:url'
 
 type Deferred<T> = {
   promise: Promise<T>
@@ -55,7 +56,7 @@ describe('WorkerRuntime.shutdown', () => {
       clientShutdown: nativeModule.native.clientShutdown,
       createWorker: nativeModule.native.createWorker,
       destroyWorker: nativeModule.native.destroyWorker,
-      workerCompleteWorkflowTask: nativeModule.native.workerCompleteWorkflowTask,
+      workerCompleteWorkflowTask: nativeModule.native.worker.completeWorkflowTask,
       workerPollWorkflowTask: nativeModule.native.worker.pollWorkflowTask,
     } as const
 
@@ -79,7 +80,7 @@ describe('WorkerRuntime.shutdown', () => {
         currentDeferred.reject(new Error('cancelled'))
       }
     }
-    nativeModule.native.workerCompleteWorkflowTask = () => {}
+    nativeModule.native.worker.completeWorkflowTask = () => {}
     nativeModule.native.worker.pollWorkflowTask = async () => {
       pollCalls += 1
       pollReady.resolve()
@@ -100,8 +101,10 @@ describe('WorkerRuntime.shutdown', () => {
 
     try {
       const { WorkerRuntime } = await import('../../src/worker/runtime.ts?shutdown-test')
+      const workflowsUrl = new URL('../fixtures/workflows/simple.workflow.ts', import.meta.url)
+      const resolvedWorkflowsPath = fileURLToPath(workflowsUrl)
       const runtime = await WorkerRuntime.create({
-        workflowsPath: '/tmp/workflows',
+        workflowsPath: resolvedWorkflowsPath,
         taskQueue: 'unit-test-queue',
       })
 
@@ -122,7 +125,7 @@ describe('WorkerRuntime.shutdown', () => {
       nativeModule.native.clientShutdown = originalNative.clientShutdown
       nativeModule.native.createWorker = originalNative.createWorker
       nativeModule.native.destroyWorker = originalNative.destroyWorker
-      nativeModule.native.workerCompleteWorkflowTask = originalNative.workerCompleteWorkflowTask
+      nativeModule.native.worker.completeWorkflowTask = originalNative.workerCompleteWorkflowTask
       nativeModule.native.worker.pollWorkflowTask = originalNative.workerPollWorkflowTask
       process.env.TEMPORAL_ADDRESS = previousEnv.TEMPORAL_ADDRESS
       process.env.TEMPORAL_NAMESPACE = previousEnv.TEMPORAL_NAMESPACE

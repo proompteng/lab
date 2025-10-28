@@ -27,7 +27,6 @@ jobs:
     env:
       TEMPORAL_TEST_SERVER: '1'
       TEMPORAL_BUN_SDK_USE_ZIG: '1'
-      USE_PREBUILT_LIBS: 'true'
 
     steps:
       - name: Checkout repository

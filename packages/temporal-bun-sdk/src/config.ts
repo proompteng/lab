@@ -22,6 +22,7 @@ const envSchema = z.object({
   TEMPORAL_ALLOW_INSECURE: z.string().trim().optional(),
   ALLOW_INSECURE_TLS: z.string().trim().optional(),
   TEMPORAL_WORKER_IDENTITY_PREFIX: z.string().trim().min(1).optional(),
+  TEMPORAL_SHOW_STACK_SOURCES: z.string().trim().optional(),
 })
 
 const truthyValues = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
@@ -63,6 +64,7 @@ export interface TemporalConfig {
   allowInsecureTls: boolean
   workerIdentity: string
   workerIdentityPrefix: string
+  showStackTraceSources?: boolean
 }
 
 export interface TLSCertPair {
@@ -130,6 +132,8 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     env.TEMPORAL_WORKER_IDENTITY_PREFIX ?? options.defaults?.workerIdentityPrefix ?? DEFAULT_IDENTITY_PREFIX
   const workerIdentity = `${workerIdentityPrefix}-${hostname()}-${process.pid}`
   const tls = await buildTlsConfig(env, options)
+  const showStackTraceSources =
+    coerceBoolean(env.TEMPORAL_SHOW_STACK_SOURCES) ?? options.defaults?.showStackTraceSources ?? false
 
   return {
     host,
@@ -142,6 +146,7 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     allowInsecureTls: allowInsecure,
     workerIdentity,
     workerIdentityPrefix,
+    showStackTraceSources,
   }
 }
 

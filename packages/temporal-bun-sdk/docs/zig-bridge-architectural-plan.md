@@ -2,7 +2,7 @@
 
 **Published:** 20 Oct 2025  
 **Authors:** Platform Runtime (Temporal Bun)  
-**Status:** Draft — guides implementation toward the npm GA release of the Bun-native Temporal SDK. Current progress (27 Oct 2025): client RPCs (start/query/signal/terminate) are live via the Zig bridge; cancellation, metadata updates, telemetry, and worker parity remain open.
+**Status:** Draft — guides implementation toward the npm GA release of the Bun-native Temporal SDK. Current progress (28 Oct 2025): client RPCs (start/query/signal/terminate), workflow task execution, activity completion/heartbeats, and Bun stack-trace enrichment (`TEMPORAL_SHOW_STACK_SOURCES`) are live via the Zig bridge. Metadata updates, telemetry, and the remaining worker parity items are still open.
 
 ---
 
@@ -58,7 +58,7 @@ Ship `@proompteng/temporal-bun-sdk` to npm so Bun developers can:
 |-------|---------------|-------|---------------|
 | 0. Foundations | Q4 2025 | Harden pending handles (#1526), correct documentation, prove TLS against Temporal Cloud sandbox. | Zig tests green, TLS smoke succeeds on macOS & Linux. |
 | 1. Client Parity | Q4 2025 – Q1 2026 | Implement `zig-cl-*` / `zig-wf-*`, wrap in Bun client API, ship quickstart docs. | Integration suite passes for connect/start/signal/query/terminate; docs publish “Temporal on Bun” tutorial. |
-| 2. Worker Parity | Q1 2026 | Complete `zig-worker-*`, run workflow/activity loops in Bun worker. | Bun worker handles timers, retries, signals; example app demonstrates end-to-end flow. |
+| 2. Worker Parity | Q1 2026 | Complete `zig-worker-*`, run workflow/activity loops in Bun worker. | Workflow and activity task execution (including heartbeats) are live; remaining work covers activity metrics, graceful shutdown, and operational telemetry. |
 | 3. Observability | Q1 – Q2 2026 | Telemetry/logging wiring, dashboards, alerting runbooks. | Prometheus + OTLP exporters validated; logging callbacks verified from Bun. |
 | 4. Release & Adoption | Q2 2026 | Package native binaries, publish npm canaries/GA, monitor early adopters. | npm package released with release notes, SBOM, and support policy; Temporal Cloud smoke part of CI. |
 
@@ -73,6 +73,7 @@ Dates assume we prioritize the Zig bridge alongside existing Rust bridge mainten
 - **Worker Versioning & Deployment Guide:** tailored to Bun packaging/deploy flows (see [Worker versioning](https://docs.temporal.io/worker-versioning)).
 - **Troubleshooting TLS/Docker:** collect known issues and fixes from community threads (see [Temporal community report](https://community.temporal.io/t/temporal-client-fails-to-connect-inside-docker-container-node-js-bun/17982)).
 - **Release Notes Template:** highlight Bun minimum version, platform coverage, experimental warnings.
+- **Runtime Configuration:** document `TEMPORAL_BUN_SDK_USE_ZIG`, `TEMPORAL_BUN_SDK_VENDOR_FALLBACK`, and `TEMPORAL_SHOW_STACK_SOURCES` so operators can toggle behaviour predictably.
 
 Keep this list synchronized with `zig-production-readiness.md`.
 

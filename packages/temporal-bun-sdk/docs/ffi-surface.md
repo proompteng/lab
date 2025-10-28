@@ -42,7 +42,7 @@ flowchart LR
 
 ### Worker (`worker.zig`)
 - ⚠️ Workflow completion uses stub callbacks for unit tests.
-- ⚠️ Worker creation/teardown remain stubs, but activity polling now bridges Temporal core byte arrays via pending handles (tests cover success, failure, and shutdown sentinels). Activity completion, heartbeats, and shutdown APIs are still pending (`zig-worker-06`–`zig-worker-09`).
+- ⚠️ Worker creation/teardown remain stubs, but activity polling now bridges Temporal core byte arrays via pending handles (tests cover success, failure, and shutdown sentinels). Activity completion and heartbeats are implemented; shutdown APIs remain pending (`zig-worker-08`–`zig-worker-09`).
 
 ### Support crates
 - ✅ `pending.zig` implements reference-counted pending handles for clients and byte arrays.

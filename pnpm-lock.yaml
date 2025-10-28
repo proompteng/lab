@@ -619,6 +619,9 @@ importers:
       '@temporalio/workflow':
         specifier: ^1.13.0
         version: 1.13.1
+      long:
+        specifier: ^5.2.3
+        version: 5.3.1
       zod:
         specifier: ^3.23.8
         version: 3.24.2
@@ -9869,8 +9872,8 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
-  typescript@6.0.0-dev.20251024:
-    resolution: {integrity: sha512-LCvfW9FEmkdnIDeQX+GdDF/N2yvy6UvR5RFUuwFCmpjoBlAXJr84AC2L0f7Fw4pqpPeS5xwwlCRDs26Sdke2DA==}
+  typescript@6.0.0-dev.20251027:
+    resolution: {integrity: sha512-rGAY+HgHFOCqrFDxjuCkzLetu5z6GpLt+0EKp/ybP8BXvsSfs+lkWd+C8vKka8l4Hn4eXS/+v3YLEHwyhT2jIg==}
     engines: {node: '>=14.17'}
     hasBin: true
 
@@ -17589,7 +17592,7 @@ snapshots:
     dependencies:
       semver: 7.7.2
       shelljs: 0.8.5
-      typescript: 6.0.0-dev.20251024
+      typescript: 6.0.0-dev.20251027
 
   dunder-proto@1.0.1:
     dependencies:
@@ -21913,7 +21916,7 @@ snapshots:
 
   typescript@5.9.3: {}
 
-  typescript@6.0.0-dev.20251024: {}
+  typescript@6.0.0-dev.20251027: {}
 
   ufo@1.5.4: {}
 
