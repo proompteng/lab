@@ -487,7 +487,7 @@ export class WorkerRuntime {
       return
     }
 
-    const args = decodePayloads(start.input)
+    const args = decodePayloads(start.input?.payloads ?? [])
     const info: ActivityInfo = {
       activityId: start.activityId ?? '',
       activityType,
@@ -504,7 +504,7 @@ export class WorkerRuntime {
       scheduledTime: timestampToDate(start.scheduledTime),
       startedTime: timestampToDate(start.startedTime),
       currentAttemptScheduledTime: timestampToDate(start.currentAttemptScheduledTime),
-      lastHeartbeatDetails: decodePayloads(start.heartbeatDetails),
+      lastHeartbeatDetails: decodePayloads(start.heartbeatDetails?.payloads ?? []),
     }
 
     const context = new ActivityContextImpl(info, (details) => this.#recordActivityHeartbeat(taskToken, details))
