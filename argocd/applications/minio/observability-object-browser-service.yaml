@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: observability-object-browser
+  namespace: minio
+  annotations:
+    tailscale.com/hostname: minio
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app.kubernetes.io/name: observability-object-browser
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -7,3 +7,5 @@ resources:
   - observability-minio-secret.yaml
   - observability-tenant.yaml
   - observability-minio-service.yaml
+  - observability-object-browser-deployment.yaml
+  - observability-object-browser-service.yaml
