@@ -115,8 +115,8 @@ pub fn build(b: *std.Build) void {
         defer allocator.free(lib_dir);
         lib.addLibraryPath(.{ .cwd_relative = lib_dir });
         // These libraries map to the Temporal core Rust build artifacts once generated via cbindgen.
-    lib.linkSystemLibrary("temporalio_sdk_core_c_bridge");
-    lib.linkSystemLibrary("temporalio_sdk_core");
+        lib.linkSystemLibrary("temporalio_sdk_core_c_bridge");
+        lib.linkSystemLibrary("temporalio_sdk_core");
     } else |_| {}
 
     var install_options: std.Build.Step.InstallArtifact.Options = .{};
