@@ -8,7 +8,7 @@ the build graph and exports stub functions so that TypeScript can experiment wit
 
 - `build.zig` — shared library target (`libtemporal_bun_bridge_zig`) plus a placeholder `zig build test`.
 - `src/lib.zig` — exported symbol table matching the existing Rust bridge surface.
-- `src/runtime.zig` — runtime handle lifecycle scaffold (TODO: hook into `temporal_sdk_core` runtime).
+- `src/runtime.zig` — runtime handle lifecycle scaffold (TODO: hook into `temporalio_sdk_core` runtime).
 - `src/client.zig` — client lifecycle and RPC entry points (TODO: forward to low-level Temporal C-ABI).
 - `src/byte_array.zig` — helpers for managing Bun-owned buffers.
 - `src/errors.zig` — temporary last-error plumbing used by the stub implementation.
@@ -18,8 +18,8 @@ the build graph and exports stub functions so that TypeScript can experiment wit
 
 The TODO markers in the source files reference these bite-sized tasks:
 
-1. Generate C headers from `temporal-sdk-core` crates via `cbindgen` and expose them in `src/core.zig`.
-2. Replace the stubbed runtime bootstrap with real `temporal_sdk_core_runtime_new` wiring.
+1. Generate C headers from `temporalio-sdk-core` crates via `cbindgen` and expose them in `src/core.zig`.
+2. Replace the stubbed runtime bootstrap with real `temporalio_sdk_core_runtime_new` wiring.
 3. Implement async client connect + poll/consume state machine backed by Zig worker threads.
 4. Marshal byte arrays returned from Temporal core into Bun-readable buffers.
 5. Port workflow RPCs (start, signal-with-start, terminate, query, cancel, signal) to Zig.
