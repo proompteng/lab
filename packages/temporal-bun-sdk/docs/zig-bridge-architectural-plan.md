@@ -2,7 +2,7 @@
 
 **Published:** 20 Oct 2025  
 **Authors:** Platform Runtime (Temporal Bun)  
-**Status:** Draft — guides implementation toward the npm GA release of the Bun-native Temporal SDK. Current progress (28 Oct 2025): client RPCs (start/query/signal/terminate/update headers/cancel wiring in progress), workflow task execution, activity completion/heartbeats, and Bun stack-trace enrichment (`TEMPORAL_SHOW_STACK_SOURCES`) are live via the Zig bridge. Remaining gaps focus on workflow cancel RPC parity, telemetry/logging hooks, and graceful worker shutdown instrumentation.
+**Status:** Draft — guides implementation toward the npm GA release of the Bun-native Temporal SDK. Current progress (28 Oct 2025): client RPCs (start/query/signal/terminate/update headers/cancel wiring in progress) flow through [`src/internal/core-bridge/native.ts`](../src/internal/core-bridge/native.ts) into the Zig layer, workflow task execution and activity completion/heartbeats run via [`bruke/src/worker.zig`](../bruke/src/worker.zig), and Bun stack-trace enrichment (`TEMPORAL_SHOW_STACK_SOURCES`) ships today. Remaining gaps focus on workflow cancel RPC parity, telemetry/logging hooks, and graceful worker shutdown instrumentation.
 
 ---
 

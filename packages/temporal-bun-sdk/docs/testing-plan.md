@@ -1,9 +1,9 @@
 # Testing & Validation Plan
 
 **Status Snapshot (28 Oct 2025)**  
-- ✅ Bun unit tests cover client serialization (`tests/client.test.ts`), CLI commands, config parsing, and native bridge error propagation (`tests/core-bridge.test.ts`, `tests/native.test.ts`).  
-- ✅ Integration tests (`tests/native.integration.test.ts`, `tests/zig-signal.test.ts`, `tests/end-to-end-workflow.test.ts`) exercise the Zig bridge against the Temporal CLI dev server when `TEMPORAL_TEST_SERVER=1`.  
-- ✅ Worker-focused suites (`tests/worker/**`, `tests/zig-worker-completion.test.ts`) drive Zig polling, activity completion, and shutdown flows when `TEMPORAL_BUN_SDK_USE_ZIG=1`; follow-up work tracks graceful drain telemetry and cancellation parity.  
+- ✅ Bun unit tests cover client serialization ([`tests/client.test.ts`](../tests/client.test.ts)), CLI commands, config parsing, and native bridge error propagation ([`tests/core-bridge.test.ts`](../tests/core-bridge.test.ts), [`tests/native.test.ts`](../tests/native.test.ts)).  
+- ✅ Integration tests ([`tests/native.integration.test.ts`](../tests/native.integration.test.ts), [`tests/zig-signal.test.ts`](../tests/zig-signal.test.ts), [`tests/end-to-end-workflow.test.ts`](../tests/end-to-end-workflow.test.ts)) exercise the Zig bridge against the Temporal CLI dev server when `TEMPORAL_TEST_SERVER=1`.  
+- ✅ Worker-focused suites ([`tests/worker`](../tests/worker), [`tests/zig-worker-completion.test.ts`](../tests/zig-worker-completion.test.ts)) drive Zig polling, activity completion, and shutdown flows when `TEMPORAL_BUN_SDK_USE_ZIG=1`; follow-up work tracks graceful drain telemetry and cancellation parity.  
 - ❌ Replay/determinism harness, payload codec tests, and telemetry validation are not implemented.  
 - ❌ CI orchestration for Zig tests (macOS/Linux matrix) is still manual; contributors run commands locally.
 
@@ -15,8 +15,8 @@ This plan documents the current pyramid and the steps required to reach producti
 
 | Layer | Purpose | Current Coverage | Gaps |
 |-------|---------|------------------|------|
-| Unit (Bun) | Validate serialization, config, CLI flows, native bridge shims | `client.test.ts`, `config.test.ts`, `cli.test.ts`, `core-bridge.test.ts`, `native.test.ts`, `worker-runtime-*.test.ts` | Need payload codec coverage and workflow determinism harness |
-| Integration (Temporal CLI) | Exercise real Temporal server with Bun client | `native.integration.test.ts`, `end-to-end-workflow.test.ts`, `zig-signal.test.ts` | Cancellation RPC still stubbed; graceful drain telemetry pending |
+| Unit (Bun) | Validate serialization, config, CLI flows, native bridge shims | [`client.test.ts`](../tests/client.test.ts), [`config.test.ts`](../tests/config.test.ts), [`cli.test.ts`](../tests/cli.test.ts), [`core-bridge.test.ts`](../tests/core-bridge.test.ts), [`native.test.ts`](../tests/native.test.ts), [`worker-runtime-*.test.ts`](../tests/worker) | Need payload codec coverage and workflow determinism harness |
+| Integration (Temporal CLI) | Exercise real Temporal server with Bun client | [`native.integration.test.ts`](../tests/native.integration.test.ts), [`end-to-end-workflow.test.ts`](../tests/end-to-end-workflow.test.ts), [`zig-signal.test.ts`](../tests/zig-signal.test.ts) | Cancellation RPC still stubbed; graceful drain telemetry pending |
 | Zig tests (`zig build test`) | Validate pending-handle state machines, worker scaffolding | Enabled in `package.json` (`test:native:zig`) | Need broader coverage once worker/client features land |
 | Smoke / CLI | Ensure scaffolding commands succeed | `cli.test.ts`, `cli-check.test.ts` | Future: `temporal-bun init` end-to-end run after worker rewrite |
 | Replay | Guarantee deterministic workflow execution | N/A | Requires determinism/replay harness on top of Bun workflow runtime |
@@ -41,23 +41,23 @@ This plan documents the current pyramid and the steps required to reach producti
 ## 3. Existing Suites
 
 ### Bun Unit Tests
-- `tests/client.test.ts` — serialization helpers (`buildStartWorkflowRequest`, `computeSignalRequestId`, `signalWithStart` defaults).  
-- `tests/client/serialization.test.ts` ( colocated in `src/client`) — deterministic hashing & payload building.  
-- `tests/config.test.ts` — environment parsing and TLS file loading.  
-- `tests/core-bridge.test.ts` — native bridge error handling, library discovery fallbacks.  
-- `tests/native.test.ts` — sanity checks around `NativeBridgeError` and stubbed exports.  
-- `tests/worker.runtime.workflow.test.ts`, `tests/worker/worker-runtime-activity.test.ts`, `tests/worker/worker-runtime-shutdown.test.ts`, `tests/worker/zig-poll-workflow.test.ts` — drive Bun-native worker loops (poll, complete, heartbeat) via the Zig bridge.  
-- `tests/cli.test.ts` / `tests/cli-check.test.ts` — CLI argument parsing and connectivity checks.  
-- `tests/github-workflow-validation.test.ts` — ensures GitHub workflows reference existing scripts.
+- [`tests/client.test.ts`](../tests/client.test.ts) — serialization helpers (`buildStartWorkflowRequest`, `computeSignalRequestId`, `signalWithStart` defaults).  
+- [`tests/client/serialization.test.ts`](../tests/client/serialization.test.ts) — deterministic hashing & payload building.  
+- [`tests/config.test.ts`](../tests/config.test.ts) — environment parsing and TLS file loading.  
+- [`tests/core-bridge.test.ts`](../tests/core-bridge.test.ts) — native bridge error handling, library discovery fallbacks.  
+- [`tests/native.test.ts`](../tests/native.test.ts) — sanity checks around `NativeBridgeError` and stubbed exports.  
+- [`tests/worker.runtime.workflow.test.ts`](../tests/worker.runtime.workflow.test.ts), [`tests/worker/worker-runtime-activity.test.ts`](../tests/worker/worker-runtime-activity.test.ts), [`tests/worker/worker-runtime-shutdown.test.ts`](../tests/worker/worker-runtime-shutdown.test.ts), [`tests/worker/zig-poll-workflow.test.ts`](../tests/worker/zig-poll-workflow.test.ts) — drive Bun-native worker loops (poll, complete, heartbeat) via the Zig bridge.  
+- [`tests/cli.test.ts`](../tests/cli.test.ts) / [`tests/cli-check.test.ts`](../tests/cli-check.test.ts) — CLI argument parsing and connectivity checks.  
+- [`tests/github-workflow-validation.test.ts`](../tests/github-workflow-validation.test.ts) — ensures GitHub workflows reference existing scripts.
 
 ### Integration
-- `tests/native.integration.test.ts` — start/query workflow using Zig bridge.  
-- `tests/end-to-end-workflow.test.ts` — runs sample workflow using Node worker fallback.  
-- `tests/zig-signal.test.ts` — validates signal path when Zig bridge is active.  
-- `tests/download-client.integration.test.ts` — ensures bundled Temporal libs download correctly.
+- [`tests/native.integration.test.ts`](../tests/native.integration.test.ts) — start/query workflow using Zig bridge.  
+- [`tests/end-to-end-workflow.test.ts`](../tests/end-to-end-workflow.test.ts) — runs sample workflow using Node worker fallback.  
+- [`tests/zig-signal.test.ts`](../tests/zig-signal.test.ts) — validates signal path when Zig bridge is active.  
+- [`tests/download-client.integration.test.ts`](../tests/download-client.integration.test.ts) — ensures bundled Temporal libs download correctly.
 
 ### Zig (`zig build test`)
-- Covers JSON parsing helpers, pending handle transitions, and worker stubs in `bruke/src`. Expand as new Zig modules ship.
+- Covers JSON parsing helpers, pending handle transitions, and worker stubs in [`bruke/src`](../bruke/src). Expand as new Zig modules ship.
 
 ---
 
@@ -67,7 +67,7 @@ This plan documents the current pyramid and the steps required to reach producti
 |------|-------------|--------------|
 | Cancellation integration | Add Bun + Zig tests once `temporal_bun_client_cancel_workflow` is implemented. | Lane 5 |
 | Header updates | ✅ Bun + Zig coverage for metadata mutation (Oct 2025). | Lane 5 |
-| Worker polling loops | Extend `tests/worker/**` to cover graceful drain telemetry, cancellation once implemented, and Temporal CLI-backed smoke. | Lane 7 |
+| Worker polling loops | Extend [`tests/worker/**`](../tests/worker) to cover graceful drain telemetry, cancellation once implemented, and Temporal CLI-backed smoke. | Lane 7 |
 | Workflow runtime | Determinism/replay harness after workflow sandbox lands. | Lane 3 |
 | Telemetry/logging | Integration tests for runtime telemetry hooks. | Lane 6 |
 | Payload codecs | Unit + integration coverage for new data converter module. | Lane 10 (docs & DX) |
@@ -92,8 +92,8 @@ Document outcomes in `docs/parallel-implementation-plan.md` as each lane complet
 1. Run `temporal-bun init` in a clean directory, install dependencies with Bun, start worker via `bun run dev`.  
 2. Use `temporal-bun check` against Temporal CLI dev server and (optionally) Temporal Cloud with TLS/API key.  
 3. Execute `bun test` followed by integration suites with `TEMPORAL_TEST_SERVER=1`.  
-4. Validate the Zig bridge by setting `TEMPORAL_BUN_SDK_USE_ZIG=1`, re-running client workflow tests, and executing the worker suites (`bun test tests/worker`) to confirm polling/completion loops succeed (cancellation remains TODO).  
-5. Inspect `nativeLibraryPath` output from `src/internal/core-bridge/native.ts` when debugging loading issues.
+4. Validate the Zig bridge by setting `TEMPORAL_BUN_SDK_USE_ZIG=1`, re-running client workflow tests, and executing the worker suites (`bun test tests/worker`) to confirm polling/completion loops succeed (cancellation remains TODO). See [`tests/worker`](../tests/worker) for individual cases.  
+5. Inspect `nativeLibraryPath` output from [`src/internal/core-bridge/native.ts`](../src/internal/core-bridge/native.ts) when debugging loading issues.
 
 ---
 
