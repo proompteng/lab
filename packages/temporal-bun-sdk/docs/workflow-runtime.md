@@ -1,6 +1,6 @@
 # Workflow Runtime Plan
 
-**Status Snapshot (27 Oct 2025):** No Bun-native workflow runtime exists yet. Workflows still run inside the upstream `@temporalio/worker` sandbox, and all sections below describe the planned architecture. Keep the plan updated as implementation progresses.  
+**Status Snapshot (28 Oct 2025):** The Bun-native workflow runtime is live. [`WorkflowEngine`](../src/workflow/runtime/engine.ts) and [`WorkflowEnvironment`](../src/workflow/runtime/environment.ts) execute activations inside Bun and integrate with the Zig worker polling loops backed by [`bruke/src/worker.zig`](../bruke/src/worker.zig). Determinism tooling (history replay harness, patch marker coverage, richer interceptor DX) remains in flight, so keep the plan updated as those pieces land.  
 
 **Goal:** Provide a deterministic workflow execution environment compatible with Temporal’s expectations, implemented purely with Bun primitives while matching the behaviour described in the Temporal TypeScript workflow documentation.<br>
 [Workflows overview](https://docs.temporal.io/develop/typescript/workflows)
@@ -55,14 +55,16 @@ flowchart TD
 
 ## 3. Modules to Implement
 
+[`src/workflow/runtime/engine.ts`](../src/workflow/runtime/engine.ts), [`environment.ts`](../src/workflow/runtime/environment.ts), [`bootstrap.ts`](../src/workflow/runtime/bootstrap.ts), and [`info.ts`](../src/workflow/runtime/info.ts) already back the live runtime. The table below tracks the remaining follow-on modules needed to round out determinism tooling and developer ergonomics.
+
 | Module | Description |
 |--------|-------------|
-| `src/workflow/runtime/context.ts` | Builds the `workflow` namespace exports (activities proxy, condition, sleep). |
-| `src/workflow/runtime/activator.ts` | Applies activations, manages pending commands. |
-| `src/workflow/runtime/history.ts` | Lightweight history/event parser (can reuse proto definitions). |
-| `src/workflow/runtime/determinism.ts` | Shims for deterministic random/timer. |
-| `src/workflow/runtime/interceptors.ts` | Register & execute interceptors chain. |
-| `src/workflow/runtime/encoder.ts` | Convert JS results/errors into completion payloads. |
+| [`src/workflow/runtime/context.ts`](../src/workflow/runtime/context.ts) | Builds the `workflow` namespace exports (activities proxy, condition, sleep). |
+| [`src/workflow/runtime/activator.ts`](../src/workflow/runtime/activator.ts) | Applies activations, manages pending commands. |
+| [`src/workflow/runtime/history.ts`](../src/workflow/runtime/history.ts) | Lightweight history/event parser (can reuse proto definitions). |
+| [`src/workflow/runtime/determinism.ts`](../src/workflow/runtime/determinism.ts) | Shims for deterministic random/timer. |
+| [`src/workflow/runtime/interceptors.ts`](../src/workflow/runtime/interceptors.ts) | Register & execute interceptors chain. |
+| [`src/workflow/runtime/encoder.ts`](../src/workflow/runtime/encoder.ts) | Convert JS results/errors into completion payloads. |
 
 ---
 
