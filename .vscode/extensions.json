@@ -11,6 +11,7 @@
     "nrwl.angular-console",
     "yoavbls.pretty-ts-errors",
     "tomrijndorp.find-it-faster",
-    "asvetliakov.vscode-neovim"
+    "asvetliakov.vscode-neovim",
+    "redhat.vscode-knative"
   ]
 }
