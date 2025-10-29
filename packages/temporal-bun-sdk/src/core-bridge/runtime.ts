@@ -1,4 +1,4 @@
-import { type Runtime as NativeRuntime, native } from '../internal/core-bridge/native'
+import { type Runtime as NativeRuntime, native, type TemporalCoreLogger } from '../internal/core-bridge/native'
 
 export interface RuntimeOptions {
   readonly options?: Record<string, unknown>
@@ -6,6 +6,7 @@ export interface RuntimeOptions {
 
 export class Runtime {
   #native: NativeRuntime | undefined
+  #loggerInstalled = false
 
   static create(options: RuntimeOptions = {}): Runtime {
     return new Runtime(options)
@@ -29,13 +30,29 @@ export class Runtime {
     return native.configureTelemetry(this.nativeHandle, options)
   }
 
-  installLogger(callback: (...args: unknown[]) => void): never {
-    // TODO(codex): Forward Temporal Core logs into Bun via the native bridge per docs/ffi-surface.md.
-    return native.installLogger(this.nativeHandle, callback)
+  installLogger(callback: TemporalCoreLogger): void {
+    if (this.#loggerInstalled) {
+      throw new Error('A logger is already installed for this runtime')
+    }
+
+    native.installLogger(this.nativeHandle, callback)
+    this.#loggerInstalled = true
+  }
+
+  removeLogger(): void {
+    if (!this.#native || !this.#loggerInstalled) {
+      return
+    }
+    native.removeLogger(this.#native)
+    this.#loggerInstalled = false
   }
 
   async shutdown(): Promise<void> {
     if (!this.#native) return
+    if (this.#loggerInstalled) {
+      native.removeLogger(this.#native)
+      this.#loggerInstalled = false
+    }
     native.runtimeShutdown(this.#native)
     runtimeFinalizer.unregister(this)
     this.#native = undefined
@@ -57,3 +74,5 @@ export const createRuntime = (options: RuntimeOptions = {}): Runtime => Runtime.
 export const __TEST__ = {
   finalizeRuntime,
 }
+
+export type { TemporalCoreLogEvent, TemporalCoreLogLevel } from '../internal/core-bridge/native'
