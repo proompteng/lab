@@ -12,6 +12,7 @@ const grpc = pending.GrpcStatus;
 
 const DestroyState = enum(u8) {
     idle,
+    shutdown_requested,
     destroying,
     destroyed,
 };
@@ -648,7 +649,13 @@ pub fn destroy(handle: ?*WorkerHandle) i32 {
             worker_handle.poll_lock.unlock();
             return 0;
         },
-        .destroying => {},
+        .destroying => {
+            worker_handle.poll_lock.unlock();
+            return 0;
+        },
+        .shutdown_requested => {
+            worker_handle.destroy_state = .destroying;
+        },
         .idle => {
             worker_handle.destroy_state = .destroying;
             should_initiate_core_shutdown = true;
@@ -1526,12 +1533,12 @@ pub fn initiateShutdown(_handle: ?*WorkerHandle) i32 {
     worker_handle.poll_lock.lock();
     switch (worker_handle.destroy_state) {
         .idle => {
-            worker_handle.destroy_state = .destroying;
+            worker_handle.destroy_state = .shutdown_requested;
             should_call_core = true;
             core_worker_ptr = worker_handle.core_worker;
             worker_handle.poll_condition.broadcast();
         },
-        .destroying, .destroyed => {
+        .shutdown_requested, .destroying, .destroyed => {
             worker_handle.poll_lock.unlock();
             errors.setLastError(""[0..0]);
             return 0;
@@ -2033,7 +2040,7 @@ test "initiateShutdown transitions once and fences poll permits" {
 
     const rc = initiateShutdown(&worker_handle);
     try testing.expectEqual(@as(i32, 0), rc);
-    try testing.expect(worker_handle.destroy_state == .destroying);
+    try testing.expect(worker_handle.destroy_state == .shutdown_requested);
     try testing.expectEqual(@as(usize, 1), WorkerTests.stub_worker_initiate_calls);
     try testing.expectEqualStrings("", errors.snapshot());
 
@@ -2056,12 +2063,12 @@ test "initiateShutdown is idempotent" {
 
     try testing.expectEqual(@as(i32, 0), initiateShutdown(&worker_handle));
     try testing.expectEqual(@as(usize, 1), WorkerTests.stub_worker_initiate_calls);
-    try testing.expect(worker_handle.destroy_state == .destroying);
+    try testing.expect(worker_handle.destroy_state == .shutdown_requested);
     try testing.expectEqualStrings("", errors.snapshot());
 
     try testing.expectEqual(@as(i32, 0), initiateShutdown(&worker_handle));
     try testing.expectEqual(@as(usize, 1), WorkerTests.stub_worker_initiate_calls);
-    try testing.expect(worker_handle.destroy_state == .destroying);
+    try testing.expect(worker_handle.destroy_state == .shutdown_requested);
     try testing.expectEqualStrings("", errors.snapshot());
 }
 
