@@ -12,6 +12,7 @@ const grpc = pending.GrpcStatus;
 
 const DestroyState = enum(u8) {
     idle,
+    shutdown_requested,
     destroying,
     destroyed,
 };
@@ -29,6 +30,7 @@ pub const WorkerHandle = struct {
     poll_condition: std.Thread.Condition = .{},
     pending_polls: usize = 0,
     destroy_state: DestroyState = .idle,
+    shutdown_initiating: bool = false,
     buffers_released: bool = false,
     owns_allocation: bool = false,
     destroy_reclaims_allocation: bool = false,
@@ -104,6 +106,7 @@ fn releaseHandle(handle: *WorkerHandle) void {
     handle.destroy_reclaims_allocation = false;
 }
 
+/// Pollers must secure a permit before invoking core APIs so shutdown fences new work.
 fn acquirePollPermit(handle: *WorkerHandle) bool {
     handle.poll_lock.lock();
     defer handle.poll_lock.unlock();
@@ -638,17 +641,31 @@ pub fn destroy(handle: ?*WorkerHandle) i32 {
     }
 
     const worker_handle = handle.?;
+    var should_initiate_core_shutdown = false;
+
     worker_handle.poll_lock.lock();
 
     switch (worker_handle.destroy_state) {
-        .destroying, .destroyed => {
+        .destroyed => {
             worker_handle.poll_lock.unlock();
             return 0;
         },
-        .idle => {},
+        .destroying => {
+            worker_handle.poll_lock.unlock();
+            return 0;
+        },
+        .shutdown_requested => {
+            while (worker_handle.shutdown_initiating) {
+                worker_handle.poll_condition.wait(&worker_handle.poll_lock);
+            }
+            worker_handle.destroy_state = .destroying;
+        },
+        .idle => {
+            worker_handle.destroy_state = .destroying;
+            should_initiate_core_shutdown = true;
+        },
     }
 
-    worker_handle.destroy_state = .destroying;
     while (worker_handle.pending_polls != 0) {
         worker_handle.poll_condition.wait(&worker_handle.poll_lock);
     }
@@ -660,6 +677,7 @@ pub fn destroy(handle: ?*WorkerHandle) i32 {
     defer {
         worker_handle.poll_lock.lock();
         worker_handle.destroy_state = if (completed) .destroyed else .idle;
+        worker_handle.shutdown_initiating = false;
         worker_handle.poll_condition.broadcast();
         worker_handle.poll_lock.unlock();
         if (completed and owns_allocation and destroy_reclaims_allocation) {
@@ -680,7 +698,9 @@ pub fn destroy(handle: ?*WorkerHandle) i32 {
     const core_worker_ptr = worker_handle.core_worker.?;
     core.ensureExternalApiInstalled();
 
-    core.api.worker_initiate_shutdown(core_worker_ptr);
+    if (should_initiate_core_shutdown) {
+        core.api.worker_initiate_shutdown(core_worker_ptr);
+    }
 
     var state = ShutdownState{};
     defer state.wait_group.reset();
@@ -755,6 +775,7 @@ pub fn createTestHandle() ?*WorkerHandle {
         .poll_condition = .{},
         .pending_polls = 0,
         .destroy_state = .idle,
+        .shutdown_initiating = false,
         .buffers_released = false,
         .owns_allocation = true,
         .destroy_reclaims_allocation = false,
@@ -808,6 +829,7 @@ pub fn pollWorkflowTask(_handle: ?*WorkerHandle) ?*pending.PendingByteArray {
         );
     };
 
+    // Poll loops must respect shutdown gating; no core poll without a permit.
     if (!acquirePollPermit(worker_handle)) {
         return pendingByteArrayError(
             grpc.failed_precondition,
@@ -1270,6 +1292,7 @@ pub fn pollActivityTask(_handle: ?*WorkerHandle) ?*pending.PendingByteArray {
         );
     }
 
+    // Poll loops must respect shutdown gating; no core poll without a permit.
     if (!acquirePollPermit(worker_handle)) {
         return pendingByteArrayError(
             grpc.failed_precondition,
@@ -1500,13 +1523,52 @@ pub fn recordActivityHeartbeat(_handle: ?*WorkerHandle, _payload: []const u8) i3
 }
 
 pub fn initiateShutdown(_handle: ?*WorkerHandle) i32 {
-    // TODO(codex, zig-worker-08): Initiate graceful worker shutdown (no new polls).
-    _ = _handle;
-    errors.setStructuredError(.{
-        .code = grpc.unimplemented,
-        .message = "temporal-bun-bridge-zig: initiateShutdown is not implemented yet",
-    });
-    return -1;
+    if (_handle == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: initiateShutdown received null worker handle",
+            .details = null,
+        });
+        return -1;
+    }
+
+    const worker_handle = _handle.?;
+    var should_call_core = false;
+    var core_worker_ptr: ?*core.WorkerOpaque = null;
+
+    worker_handle.poll_lock.lock();
+    switch (worker_handle.destroy_state) {
+        .idle => {
+            worker_handle.destroy_state = .shutdown_requested;
+            core_worker_ptr = worker_handle.core_worker;
+            should_call_core = core_worker_ptr != null;
+            if (should_call_core) {
+                worker_handle.shutdown_initiating = true;
+            }
+            worker_handle.poll_condition.broadcast();
+        },
+        .shutdown_requested, .destroying, .destroyed => {
+            worker_handle.poll_lock.unlock();
+            errors.setLastError(""[0..0]);
+            return 0;
+        },
+    }
+
+    if (should_call_core) {
+        const core_worker = core_worker_ptr.?;
+        worker_handle.poll_lock.unlock();
+        core.ensureExternalApiInstalled();
+        core.api.worker_initiate_shutdown(core_worker);
+        worker_handle.poll_lock.lock();
+        worker_handle.shutdown_initiating = false;
+        worker_handle.poll_condition.broadcast();
+        worker_handle.poll_lock.unlock();
+    } else {
+        worker_handle.poll_lock.unlock();
+    }
+
+    errors.setLastError(""[0..0]);
+    return 0;
 }
 
 pub fn finalizeShutdown(_handle: ?*WorkerHandle) i32 {
@@ -1809,6 +1871,7 @@ const WorkerTests = struct {
             .poll_condition = .{},
             .pending_polls = 0,
             .destroy_state = .idle,
+            .shutdown_initiating = false,
             .buffers_released = false,
             .owns_allocation = false,
             .destroy_reclaims_allocation = false,
@@ -1964,6 +2027,66 @@ test "create surfaces core worker failure payload" {
     try testing.expect(std.mem.containsAtLeast(u8, snapshot, 1, "bad worker config"));
 }
 
+test "initiateShutdown rejects null handle" {
+    errors.setLastError(""[0..0]);
+    const rc = initiateShutdown(null);
+    try testing.expectEqual(@as(i32, -1), rc);
+    const snapshot = errors.snapshot();
+    try testing.expect(std.mem.containsAtLeast(u8, snapshot, 1, "\"code\":3"));
+    try testing.expect(std.mem.containsAtLeast(u8, snapshot, 1, "initiateShutdown received null worker handle"));
+}
+
+test "initiateShutdown transitions once and fences poll permits" {
+    core.ensureExternalApiInstalled();
+    const original_worker_initiate = core.api.worker_initiate_shutdown;
+    defer core.api.worker_initiate_shutdown = original_worker_initiate;
+
+    core.api.worker_initiate_shutdown = WorkerTests.stubWorkerInitiateShutdown;
+
+    WorkerTests.resetStubs();
+    errors.setLastError(""[0..0]);
+
+    var rt = WorkerTests.fakeRuntimeHandle();
+    var worker_handle = WorkerTests.fakeWorkerHandle(&rt);
+
+    try testing.expect(acquirePollPermit(&worker_handle));
+    releasePollPermit(&worker_handle);
+    try testing.expectEqual(@as(usize, 0), worker_handle.pending_polls);
+
+    const rc = initiateShutdown(&worker_handle);
+    try testing.expectEqual(@as(i32, 0), rc);
+    try testing.expect(worker_handle.destroy_state == .shutdown_requested);
+    try testing.expectEqual(@as(usize, 1), WorkerTests.stub_worker_initiate_calls);
+    try testing.expectEqualStrings("", errors.snapshot());
+
+    try testing.expect(!acquirePollPermit(&worker_handle));
+    try testing.expectEqual(@as(usize, 0), worker_handle.pending_polls);
+}
+
+test "initiateShutdown is idempotent" {
+    core.ensureExternalApiInstalled();
+    const original_worker_initiate = core.api.worker_initiate_shutdown;
+    defer core.api.worker_initiate_shutdown = original_worker_initiate;
+
+    core.api.worker_initiate_shutdown = WorkerTests.stubWorkerInitiateShutdown;
+
+    WorkerTests.resetStubs();
+    errors.setLastError(""[0..0]);
+
+    var rt = WorkerTests.fakeRuntimeHandle();
+    var worker_handle = WorkerTests.fakeWorkerHandle(&rt);
+
+    try testing.expectEqual(@as(i32, 0), initiateShutdown(&worker_handle));
+    try testing.expectEqual(@as(usize, 1), WorkerTests.stub_worker_initiate_calls);
+    try testing.expect(worker_handle.destroy_state == .shutdown_requested);
+    try testing.expectEqualStrings("", errors.snapshot());
+
+    try testing.expectEqual(@as(i32, 0), initiateShutdown(&worker_handle));
+    try testing.expectEqual(@as(usize, 1), WorkerTests.stub_worker_initiate_calls);
+    try testing.expect(worker_handle.destroy_state == .shutdown_requested);
+    try testing.expectEqualStrings("", errors.snapshot());
+}
+
 test "destroy handles null and missing worker pointers" {
     const original_worker_free = core.api.worker_free;
     defer {
@@ -1997,6 +2120,7 @@ test "destroy handles null and missing worker pointers" {
         .poll_condition = .{},
         .pending_polls = 0,
         .destroy_state = .idle,
+        .shutdown_initiating = false,
         .buffers_released = false,
         .owns_allocation = false,
         .destroy_reclaims_allocation = false,

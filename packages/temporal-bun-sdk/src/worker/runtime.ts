@@ -265,12 +265,12 @@ export class WorkerRuntime {
         { namespace, identity, taskQueue, config },
         workflowEngine,
       )
-    } catch (error) {
+    } catch (_error) {
       if (client) {
         native.clientShutdown(client)
       }
       native.runtimeShutdown(runtime)
-      throw error
+      throw _error
     }
   }
 
@@ -352,10 +352,14 @@ export class WorkerRuntime {
     this.#nativeShutdownRequested = true
 
     try {
-      destroyNativeWorker(this.#handles.worker)
-    } catch (error) {
-      this.#nativeShutdownRequested = false
-      throw error
+      native.worker.initiateShutdown(this.#handles.worker)
+    } catch (_error) {
+      try {
+        destroyNativeWorker(this.#handles.worker)
+      } catch (destroyError) {
+        this.#nativeShutdownRequested = false
+        throw destroyError
+      }
     }
   }
 

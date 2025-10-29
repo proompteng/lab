@@ -280,6 +280,10 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.int32_t,
     },
+    temporal_bun_worker_initiate_shutdown: {
+      args: [FFIType.ptr],
+      returns: FFIType.int32_t,
+    },
     temporal_bun_worker_test_handle_new: {
       args: [],
       returns: FFIType.ptr,
@@ -356,6 +360,7 @@ const {
     temporal_bun_worker_complete_activity_task,
     temporal_bun_worker_poll_activity_task,
     temporal_bun_worker_record_activity_heartbeat,
+    temporal_bun_worker_initiate_shutdown,
     temporal_bun_worker_test_handle_new,
     temporal_bun_worker_test_handle_release,
   },
@@ -373,6 +378,7 @@ const workerFfi = {
   completeWorkflowTask: temporal_bun_worker_complete_workflow_task,
   completeActivityTask: temporal_bun_worker_complete_activity_task,
   recordActivityHeartbeat: temporal_bun_worker_record_activity_heartbeat,
+  initiateShutdown: temporal_bun_worker_initiate_shutdown,
 }
 
 export const native = {
@@ -615,6 +621,13 @@ export const native = {
     recordActivityHeartbeat(worker: NativeWorker, payload: Uint8Array | Buffer): void {
       const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload)
       const status = Number(workerFfi.recordActivityHeartbeat(worker.handle, ptr(buffer), buffer.byteLength))
+      if (status !== 0) {
+        throw buildNativeBridgeError()
+      }
+    },
+
+    initiateShutdown(worker: NativeWorker): void {
+      const status = Number(workerFfi.initiateShutdown(worker.handle))
       if (status !== 0) {
         throw buildNativeBridgeError()
       }

@@ -285,7 +285,19 @@ if (!nativeBridge) {
             return
           }
 
-          const { Connection, WorkflowClient, WorkflowExecutionCancelledError } = temporalClient
+          const {
+            Connection,
+            WorkflowClient,
+            WorkflowExecutionCancelledError,
+            WorkflowFailedError,
+            CancelledFailure,
+          } = temporalClient
+          const cancellationErrorCtor =
+            typeof WorkflowExecutionCancelledError === 'function'
+              ? WorkflowExecutionCancelledError
+              : (WorkflowFailedError as (new (...args: unknown[]) => Error) | undefined)
+          expect(cancellationErrorCtor, 'Temporal client missing cancellation error type').toBeTruthy()
+
           connection = await Connection.connect({ address: workerAddress })
           const workflowClient = new WorkflowClient({ connection, namespace: 'default' })
           const handle = workflowClient.getHandle(workflowId)
@@ -295,7 +307,10 @@ if (!nativeBridge) {
             await handle.result()
           } catch (err) {
             threw = true
-            expect(err).toBeInstanceOf(WorkflowExecutionCancelledError)
+            expect(err).toBeInstanceOf(cancellationErrorCtor!)
+            if (typeof CancelledFailure === 'function' && err instanceof WorkflowFailedError) {
+              expect(err.cause).toBeInstanceOf(CancelledFailure)
+            }
           }
 
           expect(threw).toBe(true)
