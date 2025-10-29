@@ -27,7 +27,7 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 - ✅ `createTemporalClient` loads the Zig bridge through `bun:ffi`, applies TLS/API key metadata, and exposes workflow helpers (see `src/client.ts`).
 - ✅ CLI commands (`temporal-bun init|check|docker-build`) ship in `src/bin/temporal-bun.ts`.
 - ✅ Worker bootstrap (`createWorker`, `runWorker`) defaults to the Bun-native runtime backed by the Zig bridge, with an opt-in `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` escape hatch to reuse `@temporalio/worker` when needed.
-- ⚠️ `client.workflow.cancel` still surfaces `NativeBridgeError` because the Zig bridge export is stubbed; `client.workflow.signal` now routes through Temporal core with deterministic request IDs plus client identity.
+- ✅ `client.workflow.cancel` encodes RequestCancelWorkflowExecution payloads and resolves Zig pending handles through Temporal core; `client.workflow.signal` continues to route through core with deterministic request IDs plus client identity.
 - ✅ `client.updateHeaders` hot-swaps metadata via the Zig bridge and returns Temporal core status codes without forcing a reconnect.
 - ✅ `WorkerRuntime` and the `WorkflowEngine` execute workflow activations inside Bun, emitting `WorkflowActivationCompletion` payloads through the Zig bridge. Activity polling, cancellation, and heartbeats are implemented; telemetry hooks remain TODO.
 - ✅ `loadTemporalConfig` now surfaces `TEMPORAL_SHOW_STACK_SOURCES`, letting operators opt into inline workflow stack traces.
@@ -37,7 +37,7 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 - ✅ Implements async pending handles for client connect, DescribeNamespace, workflow queries, and workflow signals via dedicated worker threads.
 - ✅ Encodes workflow start and signal-with-start requests directly in Zig, returning JSON metadata to Bun.
 - ✅ `core.signalWorkflow` now builds `SignalWorkflowExecutionRequest`, forwards gRPC statuses, and acknowledges pending handles with Temporal core responses.
-- ⚠️ `temporal_bun_client_cancel_workflow` still returns `UNIMPLEMENTED`; header updates now flow through `temporal_bun_client_update_headers`.
+- ✅ `temporal_bun_client_cancel_workflow` forwards cancellation payloads to Temporal core using `client_rpc_call`, returning structured errors via pending handles.
 - ✅ Worker exports (`temporal_bun_worker_*`) now poll workflow and activity tasks, record heartbeats, and complete/cancel activity executions. Open work focuses on telemetry and graceful drain behaviour.
 - ⚠️ Telemetry and logger configuration hooks (`temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger`) report `UNIMPLEMENTED`.
 
@@ -94,7 +94,7 @@ Key properties:
 | Client | `temporal_bun_client_query_workflow` | ✅ | Spawns worker thread, decodes `QueryWorkflowResponse`, maps errors. |
 | Client | `temporal_bun_client_signal` | ✅ Complete | Encodes `SignalWorkflowExecutionRequest` with identity/request IDs and surfaces Temporal core statuses via Zig bridge (`zig-wf-05`). |
 | Client | `temporal_bun_client_terminate_workflow` | ✅ | Executes Temporal core termination RPC and propagates gRPC status codes. |
-| Client | `temporal_bun_client_cancel_workflow` | ❌ Not implemented | Stub returning `UNIMPLEMENTED`. |
+| Client | `temporal_bun_client_cancel_workflow` | ✅ Implemented | Routes RequestCancelWorkflowExecution via `client_rpc_call`. |
 | Client | `temporal_bun_client_update_headers` | ✅ | Accepts JSON metadata, normalizes headers, and forwards updates to Temporal core. |
 | Worker | `temporal_bun_worker_*` | ❌ Not implemented | Creation, poll, heartbeat, and shutdown functions are placeholders. |
 | Byte transport | Pending + byte array helpers | ✅ | Shared across client RPCs; ensures buffers freed via Temporal core callbacks. |
@@ -129,7 +129,7 @@ Key properties:
   - `TEMPORAL_ALLOW_INSECURE` toggles TLS verification (mirrors existing Go worker behavior).
 - `serializeTlsConfig` (CLI + client) base64-encodes cert/key pairs before handing them to the Zig bridge, matching Temporal core expectations.
 - Docs include `.env.example` guidance and link to Temporal Cloud setup references.
-- Follow-up: validate metadata update behaviour against a live Temporal server and extend CLI docs once cancellation lands.
+- Follow-up: validate metadata update behaviour against a live Temporal server and extend CLI docs with cancellation walkthroughs.
 
 ## 8. Testing & Validation
 
@@ -150,7 +150,7 @@ The detailed lane breakdown lives in [`docs/parallel-implementation-plan.md`](./
 maps to one or more lanes so parallel Codex instances can implement features without clobbering each other.
 
 1. **Client parity**
-   - Implement `temporal_bun_client_cancel_workflow`, plus add end-to-end Bun tests for the `terminate_workflow` and future signal paths.
+   - Add automated Temporal Cloud/Compose coverage so cancellation tests run with a live server in CI.
 2. **Runtime telemetry & logging**
    - Wire `temporal_bun_runtime_update_telemetry` and `*_set_logger` through Temporal core once upstream exposes the hooks.
    - Surface metrics/logging configuration helpers in TypeScript (`configureTelemetry`, `installLogger`).
@@ -169,7 +169,7 @@ maps to one or more lanes so parallel Codex instances can implement features wit
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | Zig bridge diverges from Temporal core updates | Runtime incompatibilities | Pin upstream commits; add sync checklist in release process. |
-| Incomplete cancel/update paths surprise users | Workflow management gaps | Mark methods as beta in README, add runtime warnings, prioritize bridge implementation. |
+| Live cancellation coverage gaps | Workflow management | Document cancellation capabilities, coordinate CI access to a Temporal server, and keep README status badges in sync. |
 | Worker rewrite stalls | Teams rely on Node worker indefinitely | Deliver Bun worker incrementally (client parity first), keep Node fallback documented. |
 | Native builds fail on CI | Blocks releases | Cache prebuilt libs, document Zig toolchain requirements, add `zig env` diagnostics. |
 
