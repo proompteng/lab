@@ -25,6 +25,7 @@ permissions:
 jobs:
   build:
     name: Build Static Libraries
+    if: github.event_name != 'pull_request'
     strategy:
       matrix:
         include:
