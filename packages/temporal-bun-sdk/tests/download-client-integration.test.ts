@@ -95,7 +95,7 @@ describe('Download Client Integration Tests', () => {
       const versionCacheDir = join(cacheDir, version, platformStr)
       mkdirSync(versionCacheDir, { recursive: true })
 
-      const libPath = join(versionCacheDir, 'libtemporal_sdk_core.a')
+  const libPath = join(versionCacheDir, 'libtemporalio_sdk_core.a')
       writeFileSync(libPath, testContent)
 
       const isValid = cacheManager.isCached(version, platformStr)
@@ -127,8 +127,8 @@ describe('Download Client Integration Tests', () => {
       const versionCacheDir = join(cacheDir, 'v1.0.0', 'linux-arm64')
       mkdirSync(versionCacheDir, { recursive: true })
 
-      writeFileSync(join(versionCacheDir, 'libtemporal_sdk_core.a'), 'content1')
-      writeFileSync(join(versionCacheDir, 'libtemporal_client.a'), 'content2')
+  writeFileSync(join(versionCacheDir, 'libtemporalio_sdk_core.a'), 'content1')
+  writeFileSync(join(versionCacheDir, 'libtemporalio_client.a'), 'content2')
 
       // Test that cache can be checked
       const isCached = cacheManager.isCached('v1.0.0', 'linux-arm64')

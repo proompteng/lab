@@ -6,11 +6,11 @@ const TemporalCrate = struct {
 };
 
 const temporal_crates = [_]TemporalCrate{
-    .{ .package = "temporal-sdk-core", .archive = "temporal_sdk_core" },
-    .{ .package = "temporal-sdk-core-c-bridge", .archive = "temporal_sdk_core_c_bridge" },
-    .{ .package = "temporal-client", .archive = "temporal_client" },
-    .{ .package = "temporal-sdk-core-api", .archive = "temporal_sdk_core_api" },
-    .{ .package = "temporal-sdk-core-protos", .archive = "temporal_sdk_core_protos" },
+    .{ .package = "temporalio-sdk-core", .archive = "temporalio_sdk_core" },
+    .{ .package = "temporalio-sdk-core-c-bridge", .archive = "temporalio_sdk_core_c_bridge" },
+    .{ .package = "temporalio-client", .archive = "temporalio_client" },
+    .{ .package = "temporalio-sdk", .archive = "temporalio_sdk" },
+    .{ .package = "temporalio-common", .archive = "temporalio_common" },
 };
 
 const temporal_cache_root = "../.temporal-libs-cache";
@@ -115,8 +115,8 @@ pub fn build(b: *std.Build) void {
         defer allocator.free(lib_dir);
         lib.addLibraryPath(.{ .cwd_relative = lib_dir });
         // These libraries map to the Temporal core Rust build artifacts once generated via cbindgen.
-        lib.linkSystemLibrary("temporal_sdk_core_c_bridge");
-        lib.linkSystemLibrary("temporal_sdk_core");
+    lib.linkSystemLibrary("temporalio_sdk_core_c_bridge");
+    lib.linkSystemLibrary("temporalio_sdk_core");
     } else |_| {}
 
     var install_options: std.Build.Step.InstallArtifact.Options = .{};
