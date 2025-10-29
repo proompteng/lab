@@ -12,12 +12,6 @@ on:
         required: false
         default: true
         type: boolean
-  pull_request:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/temporal-static-libraries.yml'
-      - 'packages/temporal-bun-sdk/**'
 
 permissions:
   contents: write
@@ -25,7 +19,6 @@ permissions:
 jobs:
   build:
     name: Build Static Libraries
-    if: github.event_name != 'pull_request'
     strategy:
       matrix:
         include:
