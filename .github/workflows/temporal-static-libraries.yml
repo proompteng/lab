@@ -12,6 +12,12 @@ on:
         required: false
         default: true
         type: boolean
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/temporal-static-libraries.yml'
+      - 'packages/temporal-bun-sdk/**'
 
 permissions:
   contents: write
@@ -35,6 +41,8 @@ jobs:
             arch: arm64
             runner: macos-14
     runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.sha }}
 
     steps:
       - name: Checkout repository
@@ -62,6 +70,7 @@ jobs:
       - name: Prepare Temporal vendor sources
         run: |
           mkdir -p packages/temporal-bun-sdk/vendor
+          rm -rf packages/temporal-bun-sdk/vendor/sdk-core
           git clone --depth 1 --branch master https://github.com/temporalio/sdk-core.git packages/temporal-bun-sdk/vendor/sdk-core
 
       - name: Configure cross-compilation environment
@@ -103,7 +112,6 @@ jobs:
           # Create archive
           PLATFORM="${{ matrix.platform }}"
           ARCH="${{ matrix.arch }}"
-          VERSION="${{ inputs.version }}"
           ARCHIVE_NAME="temporal-static-libs-${PLATFORM}-${ARCH}-${VERSION}.tar.gz"
           tar -czf "$ARCHIVE_NAME" -C artifacts .
 
@@ -130,7 +138,7 @@ jobs:
     name: Create Release
     needs: build
     runs-on: arc-arm64
-    if: ${{ inputs.create_release }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.create_release }}
 
     steps:
       - name: Checkout repository
