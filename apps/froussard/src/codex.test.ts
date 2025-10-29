@@ -54,15 +54,41 @@ describe('buildCodexPrompt', () => {
       issueUrl: 'https://github.com/proompteng/lab/issues/77',
     })
 
-    expect(prompt).toContain('Draft the plan the next Codex run will execute.')
-    expect(prompt).toContain('Guidance:')
-    expect(prompt).toContain('Use internet search (web.run) when the plan needs up-to-date facts.')
+    expect(prompt).toContain('Draft the final plan the next Codex run will execute.')
+    expect(prompt).toContain('Execution contract:')
+    expect(prompt).toContain(
+      'Replace the `_Planning in progress…_` comment anchored by the plan marker with this finished plan.',
+    )
+    expect(prompt).toContain(
+      'Respond with only the Markdown template; do not add preambles, analysis, or TODO placeholders.',
+    )
+    expect(prompt).toContain(
+      'Reference repository paths, files, and symbols precisely so the executor knows exactly where to work.',
+    )
+    expect(prompt).toContain(
+      'Call out commands with working directories and expected outputs so validation is reproducible.',
+    )
+    expect(prompt).toContain(
+      'Highlight dependencies, migrations, approvals, or coordination steps so the executor can schedule work without guessing.',
+    )
+    expect(prompt).toContain(
+      'GitHub CLI (`gh`) is installed and authenticated; use it for issue comments or metadata as needed.',
+    )
+    expect(prompt).toContain('Use internet search (web.run) when fresh knowledge is required')
     expect(prompt).toContain('Never emit raw')
+    expect(prompt).toContain(
+      'Keep tone concise but comprehensive so the next Codex run can finish the task end to end.',
+    )
     expect(prompt).toContain('Plan template (copy verbatim):')
     expect(prompt).toContain(PLAN_COMMENT_MARKER)
     expect(prompt).toContain('### Steps')
     expect(prompt).toContain('### Handoff Notes')
-    expect(prompt).toContain('Guidance: describe concrete files, commands, or checks; note why each step matters.')
+    expect(prompt).toContain(
+      'Guidance: describe concrete files, commands, or checks; explain why each step matters and how success is proven.',
+    )
+    expect(prompt).toContain(
+      'Ensure validation aligns with the issue acceptance criteria and capture evidence the executor can record in the progress comment.',
+    )
     expect(prompt).toContain('"""\nFocus on retry logic and logging.\n"""')
   })
 
@@ -80,17 +106,32 @@ describe('buildCodexPrompt', () => {
     })
 
     expect(prompt).toContain(
-      'Execute the approved plan end to end. Keep notes concise and call out any deviations with their rationale.',
+      'Execute the approved plan end to end. Do not stop until the work is complete, validation passes, and a pull request referencing the issue is open.',
     )
     expect(prompt).toContain('Approved plan:')
     expect(prompt).toContain('1. Step one')
     expect(prompt).toContain('Implementation branch: codex/issue-77-abc123')
-    expect(prompt).toContain('Guidance:')
-    expect(prompt).toContain('Use internet search (web.run) when fresh context is needed')
-    expect(prompt).toContain('Populate the PR description using .github/PULL_REQUEST_TEMPLATE.md')
-    expect(prompt).toContain('wait 30 seconds, re-check CI; if checks are still running, wait another 30 seconds')
+    expect(prompt).toContain('Execution contract:')
     expect(prompt).toContain(
-      `Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} up to date using apps/froussard/src/codex/cli/codex-progress-comment.ts.`,
+      'Follow the approved plan step by step; document any deviations with rationale in the progress comment and handoff notes.',
+    )
+    expect(prompt).toContain(
+      `Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} current with timestamps, commands, exit codes, links to logs, and validation evidence.`,
+    )
+    expect(prompt).toContain(
+      'Use apps/froussard/src/codex/cli/codex-progress-comment.ts for every progress update and the final summary.',
+    )
+    expect(prompt).toContain(
+      'GitHub CLI (`gh`) is installed and authenticated; use it to create or update pull requests and issue comments.',
+    )
+    expect(prompt).toContain(
+      'Use internet search (web.run) when fresh context is needed and cite GitHub links or docs in progress updates or code comments as appropriate.',
+    )
+    expect(prompt).toContain(
+      'Open or update a draft pull request targeting `main`, populate .github/PULL_REQUEST_TEMPLATE.md completely, and link #77.',
+    )
+    expect(prompt).toContain(
+      'Do not exit until the pull request exists, CI has passed or failing checks are documented with mitigation steps, and the progress comment contains the final status.',
     )
   })
 
@@ -156,12 +197,22 @@ describe('buildCodexPrompt', () => {
       },
     })
 
-    expect(prompt).toContain('Address outstanding reviewer feedback and failing checks')
+    expect(prompt).toContain(
+      'Drive the Codex-authored pull request to a merge-ready state by resolving outstanding review feedback and failing checks.',
+    )
     expect(prompt).toContain('Outstanding items from GitHub:')
     expect(prompt).toContain('Open review threads:')
     expect(prompt).toContain('Add unit coverage for the new webhook branch.')
     expect(prompt).toContain('ci / lint')
     expect(prompt).toContain('Biome formatting check is failing')
+    expect(prompt).toContain('Execution contract:')
+    expect(prompt).toContain('Keep the progress comment anchored by')
+    expect(prompt).toContain(
+      'Use apps/froussard/src/codex/cli/codex-progress-comment.ts to post review updates without manual formatting.',
+    )
+    expect(prompt).toContain(
+      'GitHub CLI (`gh`) is installed and authenticated; use it to update the pull request and reply to reviewers.',
+    )
     expect(prompt).toContain(PROGRESS_COMMENT_MARKER)
   })
 
