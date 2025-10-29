@@ -7,14 +7,6 @@ import type {
   WorkflowHandle,
 } from './types'
 
-const DOCS_ROOT = 'packages/temporal-bun-sdk/docs'
-const FFI_SURFACE_DOC = `${DOCS_ROOT}/ffi-surface.md`
-const _CLIENT_RUNTIME_DOC = `${DOCS_ROOT}/client-runtime.md`
-
-const notImplemented = (feature: string, docPath: string): never => {
-  throw new Error(`${feature} is not implemented yet. See ${docPath} for the step-by-step plan.`)
-}
-
 const ensureWorkflowNamespace = (handle: WorkflowHandle): string => {
   if (!handle.namespace || handle.namespace.trim().length === 0) {
     throw new Error('Workflow handle must include a non-empty namespace')
@@ -249,9 +241,25 @@ export const buildTerminateRequest = (
 }
 
 export const buildCancelRequest = (handle: WorkflowHandle): Record<string, unknown> => {
-  void handle
-  // TODO(codex): Emit cancellation payloads for `temporal_bun_client_cancel_workflow` per ${FFI_SURFACE_DOC}.
-  return notImplemented('Workflow cancel serialization', FFI_SURFACE_DOC)
+  if (!handle.workflowId || handle.workflowId.trim().length === 0) {
+    throw new Error('Workflow handle must include a non-empty workflowId')
+  }
+
+  const namespace = ensureWorkflowNamespace(handle)
+  const payload: Record<string, unknown> = {
+    namespace,
+    workflow_id: handle.workflowId,
+  }
+
+  if (handle.runId && handle.runId.trim().length > 0) {
+    payload.run_id = handle.runId
+  }
+
+  if (handle.firstExecutionRunId && handle.firstExecutionRunId.trim().length > 0) {
+    payload.first_execution_run_id = handle.firstExecutionRunId
+  }
+
+  return payload
 }
 
 export const buildSignalWithStartRequest = ({

@@ -373,6 +373,14 @@ pub const SignalWorkflowError = error{
 
 const signal_workflow_rpc = "SignalWorkflowExecution";
 
+pub const CancelWorkflowError = error{
+    NotFound,
+    ClientUnavailable,
+    Internal,
+};
+
+const cancel_workflow_rpc = "RequestCancelWorkflowExecution";
+
 fn makeByteArrayRef(slice: []const u8) ByteArrayRef {
     return .{ .data = if (slice.len == 0) null else slice.ptr, .size = slice.len };
 }
@@ -484,6 +492,15 @@ const SignalWorkflowRequestParts = struct {
     args: ?*std.json.Array = null,
 };
 
+const CancelWorkflowRequestParts = struct {
+    namespace: []const u8,
+    workflow_id: []const u8,
+    run_id: ?[]const u8 = null,
+    identity: ?[]const u8 = null,
+    request_id: ?[]const u8 = null,
+    first_execution_run_id: ?[]const u8 = null,
+};
+
 fn encodeSignalWorkflowRequest(
     allocator: std.mem.Allocator,
     params: SignalWorkflowRequestParts,
@@ -515,6 +532,40 @@ fn encodeSignalWorkflowRequest(
     if (params.request_id) |request_id_slice| {
         if (request_id_slice.len != 0) {
             try appendString(&request, 6, request_id_slice);
+        }
+    }
+
+    return request.toOwnedSlice();
+}
+
+fn encodeCancelWorkflowRequest(
+    allocator: std.mem.Allocator,
+    params: CancelWorkflowRequestParts,
+) ![]u8 {
+    var request = ArrayListManaged(u8).init(allocator);
+    defer request.deinit();
+
+    try appendString(&request, 1, params.namespace);
+
+    const execution_bytes = try encodeWorkflowExecution(allocator, params.workflow_id, params.run_id);
+    defer allocator.free(execution_bytes);
+    try appendLengthDelimited(&request, 2, execution_bytes);
+
+    if (params.identity) |identity_slice| {
+        if (identity_slice.len != 0) {
+            try appendString(&request, 3, identity_slice);
+        }
+    }
+
+    if (params.request_id) |request_id_slice| {
+        if (request_id_slice.len != 0) {
+            try appendString(&request, 4, request_id_slice);
+        }
+    }
+
+    if (params.first_execution_run_id) |first_slice| {
+        if (first_slice.len != 0) {
+            try appendString(&request, 5, first_slice);
         }
     }
 
@@ -559,18 +610,26 @@ fn signalWorkflowRpcCallback(
     }
 }
 
-fn requireStringField(object: *std.json.ObjectMap, key: []const u8) SignalWorkflowError![]const u8 {
-    const value_ptr = object.getPtr(key) orelse return SignalWorkflowError.Internal;
+fn requireStringFieldGeneric(
+    comptime ErrorType: type,
+    object: *std.json.ObjectMap,
+    key: []const u8,
+) ErrorType![]const u8 {
+    const value_ptr = object.getPtr(key) orelse return ErrorType.Internal;
     return switch (value_ptr.*) {
         .string => |s| {
-            if (s.len == 0) return SignalWorkflowError.Internal;
+            if (s.len == 0) return ErrorType.Internal;
             return s;
         },
-        else => SignalWorkflowError.Internal,
+        else => ErrorType.Internal,
     };
 }
 
-fn optionalStringField(object: *std.json.ObjectMap, key: []const u8) SignalWorkflowError!?[]const u8 {
+fn optionalStringFieldGeneric(
+    comptime ErrorType: type,
+    object: *std.json.ObjectMap,
+    key: []const u8,
+) ErrorType!?[]const u8 {
     if (object.getPtr(key)) |value_ptr| {
         return switch (value_ptr.*) {
             .string => |s| {
@@ -578,21 +637,37 @@ fn optionalStringField(object: *std.json.ObjectMap, key: []const u8) SignalWorkf
                 return s;
             },
             .null => null,
-            else => SignalWorkflowError.Internal,
+            else => ErrorType.Internal,
         };
     }
     return null;
 }
 
-fn optionalArrayField(object: *std.json.ObjectMap, key: []const u8) SignalWorkflowError!?*std.json.Array {
+fn optionalArrayFieldGeneric(
+    comptime ErrorType: type,
+    object: *std.json.ObjectMap,
+    key: []const u8,
+) ErrorType!?*std.json.Array {
     if (object.getPtr(key)) |value_ptr| {
         return switch (value_ptr.*) {
             .array => |*arr| arr,
             .null => null,
-            else => SignalWorkflowError.Internal,
+            else => ErrorType.Internal,
         };
     }
     return null;
+}
+
+fn requireStringField(object: *std.json.ObjectMap, key: []const u8) SignalWorkflowError![]const u8 {
+    return requireStringFieldGeneric(SignalWorkflowError, object, key);
+}
+
+fn optionalStringField(object: *std.json.ObjectMap, key: []const u8) SignalWorkflowError!?[]const u8 {
+    return optionalStringFieldGeneric(SignalWorkflowError, object, key);
+}
+
+fn optionalArrayField(object: *std.json.ObjectMap, key: []const u8) SignalWorkflowError!?*std.json.Array {
+    return optionalArrayFieldGeneric(SignalWorkflowError, object, key);
 }
 
 pub fn signalWorkflow(_client: ?*ClientOpaque, request_json: []const u8) SignalWorkflowError!void {
@@ -680,6 +755,130 @@ pub fn signalWorkflow(_client: ?*ClientOpaque, request_json: []const u8) SignalW
             5 => SignalWorkflowError.NotFound,
             14 => SignalWorkflowError.ClientUnavailable,
             else => SignalWorkflowError.Internal,
+        };
+    }
+}
+
+const CancelWorkflowRpcContext = struct {
+    wait_group: std.Thread.WaitGroup = .{},
+    success: bool = false,
+    status_code: u32 = 0,
+};
+
+fn cancelWorkflowRpcCallback(
+    user_data: ?*anyopaque,
+    success: ?*const ByteArray,
+    status_code: u32,
+    failure_message: ?*const ByteArray,
+    failure_details: ?*const ByteArray,
+) callconv(.c) void {
+    if (user_data == null) return;
+    const context = @as(*CancelWorkflowRpcContext, @ptrCast(@alignCast(user_data.?)));
+    defer context.wait_group.finish();
+
+    if (success) |ptr| {
+        api.byte_array_free(null, ptr);
+    }
+
+    if (failure_message) |ptr| {
+        api.byte_array_free(null, ptr);
+    }
+
+    if (failure_details) |ptr| {
+        api.byte_array_free(null, ptr);
+    }
+
+    if (status_code == 0) {
+        context.success = true;
+        context.status_code = 0;
+        return;
+    }
+
+    context.success = false;
+    context.status_code = status_code;
+}
+
+pub fn cancelWorkflow(_client: ?*ClientOpaque, request_json: []const u8) CancelWorkflowError!void {
+    if (_client == null) {
+        return CancelWorkflowError.ClientUnavailable;
+    }
+
+    if (api.client_rpc_call == stub_api.client_rpc_call) {
+        return CancelWorkflowError.ClientUnavailable;
+    }
+
+    const allocator = std.heap.c_allocator;
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, request_json, .{
+        .ignore_unknown_fields = true,
+    }) catch {
+        return CancelWorkflowError.Internal;
+    };
+    defer parsed.deinit();
+
+    const root = parsed.value;
+    if (root != .object) {
+        return CancelWorkflowError.Internal;
+    }
+
+    var object = root.object;
+
+    const namespace_slice = requireStringFieldGeneric(CancelWorkflowError, &object, "namespace") catch {
+        return CancelWorkflowError.Internal;
+    };
+    const workflow_id_slice = requireStringFieldGeneric(CancelWorkflowError, &object, "workflow_id") catch {
+        return CancelWorkflowError.Internal;
+    };
+    const run_id_slice = optionalStringFieldGeneric(CancelWorkflowError, &object, "run_id") catch {
+        return CancelWorkflowError.Internal;
+    };
+    const identity_slice = optionalStringFieldGeneric(CancelWorkflowError, &object, "identity") catch {
+        return CancelWorkflowError.Internal;
+    };
+    const request_id_slice = optionalStringFieldGeneric(CancelWorkflowError, &object, "request_id") catch {
+        return CancelWorkflowError.Internal;
+    };
+    const first_execution_run_id_slice =
+        optionalStringFieldGeneric(CancelWorkflowError, &object, "first_execution_run_id") catch {
+            return CancelWorkflowError.Internal;
+        };
+
+    const params = CancelWorkflowRequestParts{
+        .namespace = namespace_slice,
+        .workflow_id = workflow_id_slice,
+        .run_id = run_id_slice,
+        .identity = identity_slice,
+        .request_id = request_id_slice,
+        .first_execution_run_id = first_execution_run_id_slice,
+    };
+
+    const request_bytes = encodeCancelWorkflowRequest(allocator, params) catch {
+        return CancelWorkflowError.Internal;
+    };
+    defer allocator.free(request_bytes);
+
+    const client = _client.?;
+
+    var context = CancelWorkflowRpcContext{};
+    context.wait_group.start();
+
+    var call_options = std.mem.zeroes(RpcCallOptions);
+    call_options.service = 1; // Workflow service
+    call_options.rpc = makeByteArrayRef(cancel_workflow_rpc);
+    call_options.req = makeByteArrayRef(request_bytes);
+    call_options.retry = true;
+    call_options.metadata = emptyByteArrayRef();
+    call_options.timeout_millis = 0;
+    call_options.cancellation_token = null;
+
+    api.client_rpc_call(client, &call_options, &context, cancelWorkflowRpcCallback);
+    context.wait_group.wait();
+
+    if (!context.success) {
+        return switch (context.status_code) {
+            5 => CancelWorkflowError.NotFound,
+            14 => CancelWorkflowError.ClientUnavailable,
+            else => CancelWorkflowError.Internal,
         };
     }
 }

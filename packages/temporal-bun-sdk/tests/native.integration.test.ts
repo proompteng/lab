@@ -227,6 +227,88 @@ if (!nativeBridge) {
       }
     })
 
+    test('cancelWorkflow cancels a running workflow', async () => {
+      if (!workerProcess) {
+        console.log('Skipping test: worker not available')
+        return
+      }
+
+      const maxAttempts = 10
+      const waitMs = 500
+
+      const client = await withRetry(
+        async () => {
+          return native.createClient(runtime, {
+            address: temporalAddress,
+            namespace: 'default',
+            identity: 'bun-integration-client',
+          })
+        },
+        maxAttempts,
+        waitMs,
+      )
+
+      try {
+        const workflowId = `cancel-workflow-${Date.now()}`
+        const startRequest = {
+          namespace: 'default',
+          workflow_id: workflowId,
+          workflow_type: 'queryWorkflowSample',
+          task_queue: taskQueue,
+          identity: 'bun-integration-client',
+          args: ['state-before-cancel'],
+        }
+
+        const startBytes = await withRetry(
+          async () => native.startWorkflow(client, startRequest),
+          maxAttempts,
+          waitMs,
+        )
+        const startInfo = JSON.parse(decoder.decode(startBytes)) as { runId: string }
+
+        const cancelRequest = {
+          namespace: 'default',
+          workflow_id: workflowId,
+          run_id: startInfo.runId,
+        }
+
+        await withRetry(async () => native.cancelWorkflow(client, cancelRequest), maxAttempts, waitMs)
+
+        let connection: { close: () => Promise<void> } | undefined
+        try {
+          const temporalClient = await import('@temporalio/client').catch((error) => {
+            console.warn('Skipping cancellation verification: @temporalio/client not available', error)
+            return null
+          })
+
+          if (!temporalClient) {
+            return
+          }
+
+          const { Connection, WorkflowClient, WorkflowExecutionCancelledError } = temporalClient
+          connection = await Connection.connect({ address: workerAddress })
+          const workflowClient = new WorkflowClient({ connection, namespace: 'default' })
+          const handle = workflowClient.getHandle(workflowId)
+
+          let threw = false
+          try {
+            await handle.result()
+          } catch (err) {
+            threw = true
+            expect(err).toBeInstanceOf(WorkflowExecutionCancelledError)
+          }
+
+          expect(threw).toBe(true)
+        } finally {
+          if (connection) {
+            await connection.close()
+          }
+        }
+      } finally {
+        native.clientShutdown(client)
+      }
+    })
+
     test('queryWorkflow returns JSON payload for running workflow', async () => {
       const maxAttempts = 10
       const waitMs = 500
