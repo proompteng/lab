@@ -9,6 +9,9 @@
     "ms-kubernetes-tools.vscode-kubernetes-tools",
     "ms-playwright.playwright",
     "nrwl.angular-console",
-    "yoavbls.pretty-ts-errors"
+    "yoavbls.pretty-ts-errors",
+    "tomrijndorp.find-it-faster",
+    "asvetliakov.vscode-neovim",
+    "redhat.vscode-knative"
   ]
 }
