@@ -639,17 +639,22 @@ pub fn destroy(handle: ?*WorkerHandle) i32 {
     }
 
     const worker_handle = handle.?;
+    var should_initiate_core_shutdown = false;
+
     worker_handle.poll_lock.lock();
 
     switch (worker_handle.destroy_state) {
-        .destroying, .destroyed => {
+        .destroyed => {
             worker_handle.poll_lock.unlock();
             return 0;
         },
-        .idle => {},
+        .destroying => {},
+        .idle => {
+            worker_handle.destroy_state = .destroying;
+            should_initiate_core_shutdown = true;
+        },
     }
 
-    worker_handle.destroy_state = .destroying;
     while (worker_handle.pending_polls != 0) {
         worker_handle.poll_condition.wait(&worker_handle.poll_lock);
     }
@@ -681,7 +686,9 @@ pub fn destroy(handle: ?*WorkerHandle) i32 {
     const core_worker_ptr = worker_handle.core_worker.?;
     core.ensureExternalApiInstalled();
 
-    core.api.worker_initiate_shutdown(core_worker_ptr);
+    if (should_initiate_core_shutdown) {
+        core.api.worker_initiate_shutdown(core_worker_ptr);
+    }
 
     var state = ShutdownState{};
     defer state.wait_group.reset();

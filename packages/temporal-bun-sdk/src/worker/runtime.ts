@@ -270,7 +270,7 @@ export class WorkerRuntime {
         native.clientShutdown(client)
       }
       native.runtimeShutdown(runtime)
-      throw error
+      throw _error
     }
   }
 
