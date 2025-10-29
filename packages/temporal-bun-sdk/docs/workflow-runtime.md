@@ -1,6 +1,6 @@
 # Workflow Runtime Plan
 
-**Status Snapshot (27 Oct 2025):** No Bun-native workflow runtime exists yet. Workflows still run inside the upstream `@temporalio/worker` sandbox, and all sections below describe the planned architecture. Keep the plan updated as implementation progresses.  
+**Status Snapshot (28 Oct 2025):** The Bun-native workflow runtime is live. `WorkflowEngine` and `WorkflowEnvironment` execute activations inside Bun and integrate with the Zig worker polling loops. Determinism tooling (history replay harness, patch marker coverage, richer interceptor DX) remains in flight, so keep the plan updated as those pieces land.  
 
 **Goal:** Provide a deterministic workflow execution environment compatible with Temporal’s expectations, implemented purely with Bun primitives while matching the behaviour described in the Temporal TypeScript workflow documentation.<br>
 [Workflows overview](https://docs.temporal.io/develop/typescript/workflows)
@@ -54,6 +54,8 @@ flowchart TD
 ---
 
 ## 3. Modules to Implement
+
+`src/workflow/runtime/engine.ts`, `environment.ts`, `bootstrap.ts`, and `info.ts` already back the live runtime. The table below tracks the remaining follow-on modules needed to round out determinism tooling and developer ergonomics.
 
 | Module | Description |
 |--------|-------------|
