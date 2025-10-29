@@ -30,6 +30,7 @@ pub const WorkerHandle = struct {
     poll_condition: std.Thread.Condition = .{},
     pending_polls: usize = 0,
     destroy_state: DestroyState = .idle,
+    shutdown_initiating: bool = false,
     buffers_released: bool = false,
     owns_allocation: bool = false,
     destroy_reclaims_allocation: bool = false,
@@ -654,6 +655,9 @@ pub fn destroy(handle: ?*WorkerHandle) i32 {
             return 0;
         },
         .shutdown_requested => {
+            while (worker_handle.shutdown_initiating) {
+                worker_handle.poll_condition.wait(&worker_handle.poll_lock);
+            }
             worker_handle.destroy_state = .destroying;
         },
         .idle => {
@@ -673,6 +677,7 @@ pub fn destroy(handle: ?*WorkerHandle) i32 {
     defer {
         worker_handle.poll_lock.lock();
         worker_handle.destroy_state = if (completed) .destroyed else .idle;
+        worker_handle.shutdown_initiating = false;
         worker_handle.poll_condition.broadcast();
         worker_handle.poll_lock.unlock();
         if (completed and owns_allocation and destroy_reclaims_allocation) {
@@ -770,6 +775,7 @@ pub fn createTestHandle() ?*WorkerHandle {
         .poll_condition = .{},
         .pending_polls = 0,
         .destroy_state = .idle,
+        .shutdown_initiating = false,
         .buffers_released = false,
         .owns_allocation = true,
         .destroy_reclaims_allocation = false,
@@ -1534,8 +1540,11 @@ pub fn initiateShutdown(_handle: ?*WorkerHandle) i32 {
     switch (worker_handle.destroy_state) {
         .idle => {
             worker_handle.destroy_state = .shutdown_requested;
-            should_call_core = true;
             core_worker_ptr = worker_handle.core_worker;
+            should_call_core = core_worker_ptr != null;
+            if (should_call_core) {
+                worker_handle.shutdown_initiating = true;
+            }
             worker_handle.poll_condition.broadcast();
         },
         .shutdown_requested, .destroying, .destroyed => {
@@ -1544,13 +1553,18 @@ pub fn initiateShutdown(_handle: ?*WorkerHandle) i32 {
             return 0;
         },
     }
-    worker_handle.poll_lock.unlock();
 
     if (should_call_core) {
-        if (core_worker_ptr) |core_worker| {
-            core.ensureExternalApiInstalled();
-            core.api.worker_initiate_shutdown(core_worker);
-        }
+        const core_worker = core_worker_ptr.?;
+        worker_handle.poll_lock.unlock();
+        core.ensureExternalApiInstalled();
+        core.api.worker_initiate_shutdown(core_worker);
+        worker_handle.poll_lock.lock();
+        worker_handle.shutdown_initiating = false;
+        worker_handle.poll_condition.broadcast();
+        worker_handle.poll_lock.unlock();
+    } else {
+        worker_handle.poll_lock.unlock();
     }
 
     errors.setLastError(""[0..0]);
@@ -1857,6 +1871,7 @@ const WorkerTests = struct {
             .poll_condition = .{},
             .pending_polls = 0,
             .destroy_state = .idle,
+            .shutdown_initiating = false,
             .buffers_released = false,
             .owns_allocation = false,
             .destroy_reclaims_allocation = false,
@@ -2105,6 +2120,7 @@ test "destroy handles null and missing worker pointers" {
         .poll_condition = .{},
         .pending_polls = 0,
         .destroy_state = .idle,
+        .shutdown_initiating = false,
         .buffers_released = false,
         .owns_allocation = false,
         .destroy_reclaims_allocation = false,
