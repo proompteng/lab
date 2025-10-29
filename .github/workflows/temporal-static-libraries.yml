@@ -12,6 +12,12 @@ on:
         required: false
         default: true
         type: boolean
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/temporal-static-libraries.yml'
+      - 'packages/temporal-bun-sdk/**'
 
 permissions:
   contents: write
@@ -35,6 +41,8 @@ jobs:
             arch: arm64
             runner: macos-14
     runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.sha }}
 
     steps:
       - name: Checkout repository
@@ -62,6 +70,7 @@ jobs:
       - name: Prepare Temporal vendor sources
         run: |
           mkdir -p packages/temporal-bun-sdk/vendor
+          rm -rf packages/temporal-bun-sdk/vendor/sdk-core
           git clone --depth 1 --branch master https://github.com/temporalio/sdk-core.git packages/temporal-bun-sdk/vendor/sdk-core
 
       - name: Configure cross-compilation environment
@@ -79,11 +88,11 @@ jobs:
         run: |
           # Build each crate as a static library
           TARGET="${{ matrix.target }}"
-          cargo rustc -p temporal-sdk-core --crate-type staticlib --target "$TARGET" --release
-          cargo rustc -p temporal-sdk-core-c-bridge --crate-type staticlib --target "$TARGET" --release
-          cargo rustc -p temporal-client --crate-type staticlib --target "$TARGET" --release
-          cargo rustc -p temporal-sdk-core-api --crate-type staticlib --target "$TARGET" --release
-          cargo rustc -p temporal-sdk-core-protos --crate-type staticlib --target "$TARGET" --release
+          cargo rustc -p temporalio-sdk-core --crate-type staticlib --target "$TARGET" --release
+          cargo rustc -p temporalio-sdk-core-c-bridge --crate-type staticlib --target "$TARGET" --release
+          cargo rustc -p temporalio-client --crate-type staticlib --target "$TARGET" --release
+          cargo rustc -p temporalio-sdk --crate-type staticlib --target "$TARGET" --release
+          cargo rustc -p temporalio-common --crate-type staticlib --target "$TARGET" --release
 
       - name: Collect and package artifacts
         run: |
@@ -94,16 +103,15 @@ jobs:
           TARGET_DIR="packages/temporal-bun-sdk/vendor/sdk-core/target/${{ matrix.target }}/release"
 
           # Copy static libraries
-          cp "$TARGET_DIR/libtemporal_sdk_core.a" artifacts/
-          cp "$TARGET_DIR/libtemporal_sdk_core_c_bridge.a" artifacts/
-          cp "$TARGET_DIR/libtemporal_client.a" artifacts/
-          cp "$TARGET_DIR/libtemporal_sdk_core_api.a" artifacts/
-          cp "$TARGET_DIR/libtemporal_sdk_core_protos.a" artifacts/
+          cp "$TARGET_DIR/libtemporalio_sdk_core.a" artifacts/
+          cp "$TARGET_DIR/libtemporalio_sdk_core_c_bridge.a" artifacts/
+          cp "$TARGET_DIR/libtemporalio_client.a" artifacts/
+          cp "$TARGET_DIR/libtemporalio_sdk.a" artifacts/
+          cp "$TARGET_DIR/libtemporalio_common.a" artifacts/
 
           # Create archive
           PLATFORM="${{ matrix.platform }}"
           ARCH="${{ matrix.arch }}"
-          VERSION="${{ inputs.version }}"
           ARCHIVE_NAME="temporal-static-libs-${PLATFORM}-${ARCH}-${VERSION}.tar.gz"
           tar -czf "$ARCHIVE_NAME" -C artifacts .
 
@@ -130,7 +138,7 @@ jobs:
     name: Create Release
     needs: build
     runs-on: arc-arm64
-    if: ${{ inputs.create_release }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.create_release }}
 
     steps:
       - name: Checkout repository
@@ -168,10 +176,11 @@ jobs:
             ### Usage
             Download the appropriate archive for your platform and extract the static libraries.
             Each archive contains:
-            - `libtemporal_sdk_core.a`
-            - `libtemporal_client.a`
-            - `libtemporal_sdk_core_api.a`
-            - `libtemporal_sdk_core_protos.a`
+            - `libtemporalio_sdk_core.a`
+            - `libtemporalio_sdk_core_c_bridge.a`
+            - `libtemporalio_client.a`
+            - `libtemporalio_sdk.a`
+            - `libtemporalio_common.a`
 
             ### Verification
             Verify the integrity of downloaded archives using the provided SHA256 checksums:

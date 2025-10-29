@@ -74,11 +74,11 @@ describe('Build System Integration Tests', () => {
 
           // Verify all expected libraries are present
           const expectedLibraries = [
-            'libtemporal_sdk_core.a',
-            'libtemporal_sdk_core_c_bridge.a',
-            'libtemporal_client.a',
-            'libtemporal_sdk_core_api.a',
-            'libtemporal_sdk_core_protos.a',
+            'libtemporalio_sdk_core.a',
+            'libtemporalio_sdk_core_c_bridge.a',
+            'libtemporalio_client.a',
+            'libtemporalio_sdk.a',
+            'libtemporalio_common.a',
           ]
 
           const libraryNames = librarySet.libraries.map((lib) => lib.name)

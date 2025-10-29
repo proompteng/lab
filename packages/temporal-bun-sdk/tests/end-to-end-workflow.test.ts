@@ -546,10 +546,10 @@ describe('End-to-End Workflow Tests', () => {
 
       // Create mock library files
       const mockLibraries = [
-        'libtemporal_sdk_core.a',
-        'libtemporal_client.a',
-        'libtemporal_sdk_core_api.a',
-        'libtemporal_sdk_core_protos.a',
+        'libtemporalio_sdk_core.a',
+        'libtemporalio_client.a',
+        'libtemporalio_sdk.a',
+        'libtemporalio_common.a',
       ]
 
       for (const lib of mockLibraries) {
@@ -673,10 +673,10 @@ async function createMockArtifacts(): Promise<void> {
 async function simulateStaticLibraryBuild(platformConfig: any): Promise<string[]> {
   // Simulate building static libraries for a platform
   const libraries = [
-    'libtemporal_sdk_core.a',
-    'libtemporal_client.a',
-    'libtemporal_sdk_core_api.a',
-    'libtemporal_sdk_core_protos.a',
+    'libtemporalio_sdk_core.a',
+    'libtemporalio_client.a',
+    'libtemporalio_sdk.a',
+    'libtemporalio_common.a',
   ]
 
   const buildDir = join(MOCK_ARTIFACTS_DIR, 'build', `${platformConfig.platform}-${platformConfig.arch}`)
