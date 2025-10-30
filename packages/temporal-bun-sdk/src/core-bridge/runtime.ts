@@ -24,10 +24,8 @@ export class Runtime {
     return this.#native
   }
 
-  configureTelemetry(options: Record<string, unknown> = {}): never {
-    // TODO(codex): Wire telemetry exporters through the native bridge once
-    // `temporal_bun_runtime_update_telemetry` exists (see packages/temporal-bun-sdk/docs/ffi-surface.md).
-    return native.configureTelemetry(this.nativeHandle, options)
+  configureTelemetry(options: Record<string, unknown> = {}): void {
+    native.configureTelemetry(this.nativeHandle, options)
   }
 
   installLogger(callback: TemporalCoreLogger): void {

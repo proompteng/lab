@@ -99,6 +99,10 @@ fn releaseHandle(handle: *WorkerHandle) void {
         handle.identity = ""[0..0];
     }
 
+    if (handle.runtime) |runtime_handle| {
+        runtime.unregisterWorker(runtime_handle);
+    }
+
     handle.runtime = null;
     handle.client = null;
     handle.buffers_released = true;
@@ -724,6 +728,17 @@ pub fn create(
         .owns_allocation = true,
         .destroy_reclaims_allocation = true,
     };
+
+    if (!runtime.registerWorker(runtime_handle)) {
+        handle.runtime = null;
+        releaseHandle(handle);
+        core.api.worker_free(result.worker);
+        errors.setStructuredError(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: runtime is shutting down",
+        });
+        return null;
+    }
 
     if (result.fail) |fail_ptr| {
         core.api.byte_array_free(runtime_handle.core_runtime, fail_ptr);

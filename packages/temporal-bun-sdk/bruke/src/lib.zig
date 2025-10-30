@@ -45,6 +45,38 @@ pub export fn temporal_bun_runtime_set_logger(
     return runtime.setLogger(runtime_ptr, callback_ptr);
 }
 
+pub export fn temporal_bun_runtime_test_get_mode(handle: ?*runtime.RuntimeHandle) u32 {
+    return runtime.telemetryModeForTest(handle);
+}
+
+pub export fn temporal_bun_runtime_test_get_metric_prefix(handle: ?*runtime.RuntimeHandle) ?*byte_array.ByteArray {
+    return runtime.telemetryMetricPrefixForTest(handle);
+}
+
+pub export fn temporal_bun_runtime_test_get_socket_addr(handle: ?*runtime.RuntimeHandle) ?*byte_array.ByteArray {
+    return runtime.telemetrySocketAddrForTest(handle);
+}
+
+pub export fn temporal_bun_runtime_test_get_attach_service_name(handle: ?*runtime.RuntimeHandle) i32 {
+    return if (runtime.telemetryAttachServiceNameForTest(handle)) 1 else 0;
+}
+
+pub export fn temporal_bun_runtime_test_register_client(handle: ?*runtime.RuntimeHandle) i32 {
+    return if (runtime.registerClientForTest(handle)) 1 else 0;
+}
+
+pub export fn temporal_bun_runtime_test_unregister_client(handle: ?*runtime.RuntimeHandle) void {
+    runtime.unregisterClientForTest(handle);
+}
+
+pub export fn temporal_bun_runtime_test_register_worker(handle: ?*runtime.RuntimeHandle) i32 {
+    return if (runtime.registerWorkerForTest(handle)) 1 else 0;
+}
+
+pub export fn temporal_bun_runtime_test_unregister_worker(handle: ?*runtime.RuntimeHandle) void {
+    runtime.unregisterWorkerForTest(handle);
+}
+
 pub export fn temporal_bun_error_message(len_ptr: ?*u64) ?[*]u8 {
     return errors.takeForFfi(len_ptr);
 }

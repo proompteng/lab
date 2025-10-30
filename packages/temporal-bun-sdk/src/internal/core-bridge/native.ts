@@ -247,6 +247,10 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.ptr,
     },
+    temporal_bun_runtime_update_telemetry: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.int32_t,
+    },
     temporal_bun_runtime_free: {
       args: [FFIType.ptr],
       returns: FFIType.void,
@@ -254,6 +258,38 @@ function buildBridgeSymbolMap() {
     temporal_bun_runtime_set_logger: {
       args: [FFIType.ptr, FFIType.ptr],
       returns: FFIType.int32_t,
+    },
+    temporal_bun_runtime_test_get_mode: {
+      args: [FFIType.ptr],
+      returns: FFIType.uint32_t,
+    },
+    temporal_bun_runtime_test_get_metric_prefix: {
+      args: [FFIType.ptr],
+      returns: FFIType.ptr,
+    },
+    temporal_bun_runtime_test_get_socket_addr: {
+      args: [FFIType.ptr],
+      returns: FFIType.ptr,
+    },
+    temporal_bun_runtime_test_get_attach_service_name: {
+      args: [FFIType.ptr],
+      returns: FFIType.int32_t,
+    },
+    temporal_bun_runtime_test_register_client: {
+      args: [FFIType.ptr],
+      returns: FFIType.int32_t,
+    },
+    temporal_bun_runtime_test_unregister_client: {
+      args: [FFIType.ptr],
+      returns: FFIType.void,
+    },
+    temporal_bun_runtime_test_register_worker: {
+      args: [FFIType.ptr],
+      returns: FFIType.int32_t,
+    },
+    temporal_bun_runtime_test_unregister_worker: {
+      args: [FFIType.ptr],
+      returns: FFIType.void,
     },
     temporal_bun_runtime_test_emit_log: {
       args: [
@@ -431,7 +467,16 @@ const {
     temporal_bun_runtime_new,
     temporal_bun_runtime_free,
     temporal_bun_runtime_set_logger,
+    temporal_bun_runtime_update_telemetry,
     temporal_bun_runtime_test_emit_log,
+    temporal_bun_runtime_test_get_mode,
+    temporal_bun_runtime_test_get_metric_prefix,
+    temporal_bun_runtime_test_get_socket_addr,
+    temporal_bun_runtime_test_get_attach_service_name,
+    temporal_bun_runtime_test_register_client,
+    temporal_bun_runtime_test_unregister_client,
+    temporal_bun_runtime_test_register_worker,
+    temporal_bun_runtime_test_unregister_worker,
     temporal_bun_error_message,
     temporal_bun_error_free,
     temporal_bun_client_connect_async,
@@ -540,12 +585,12 @@ export const native = {
     return readByteArray(arrayPtr)
   },
 
-  configureTelemetry(runtime: Runtime, options: Record<string, unknown> = {}): never {
-    void runtime
-    void options
-    // TODO(codex): Bridge telemetry configuration through `temporal_bun_runtime_update_telemetry`
-    // per packages/temporal-bun-sdk/docs/ffi-surface.md (Function Matrix, Runtime section).
-    return notImplemented('Runtime telemetry configuration', 'docs/ffi-surface.md')
+  configureTelemetry(runtime: Runtime, options: Record<string, unknown> = {}): void {
+    const payload = Buffer.from(JSON.stringify(options), 'utf8')
+    const result = temporal_bun_runtime_update_telemetry(runtime.handle, ptr(payload), payload.byteLength)
+    if (result !== 0) {
+      throw buildNativeBridgeError()
+    }
   },
 
   installLogger(runtime: Runtime, callback: TemporalCoreLogger, onDetach?: () => void): void {
@@ -635,6 +680,43 @@ export const native = {
         pointerFromBuffer(fieldsBuffer),
         fieldsBuffer?.length ?? 0,
       )
+    },
+    getTelemetrySnapshot(runtime: Runtime): {
+      mode: 'none' | 'prometheus' | 'otlp'
+      metricPrefix: string
+      socketAddr: string
+      attachServiceName: boolean
+    } {
+      const modeValue = Number(temporal_bun_runtime_test_get_mode(runtime.handle))
+      const metricPrefixPtr = Number(temporal_bun_runtime_test_get_metric_prefix(runtime.handle))
+      const socketAddrPtr = Number(temporal_bun_runtime_test_get_socket_addr(runtime.handle))
+      const attachServiceName = temporal_bun_runtime_test_get_attach_service_name(runtime.handle) !== 0
+
+      const decodeFromByteArrayPointer = (pointer: number): string => {
+        if (!pointer) return ''
+        return utf8Decoder.decode(readByteArray(pointer))
+      }
+
+      const mode: 'none' | 'prometheus' | 'otlp' = modeValue === 1 ? 'prometheus' : modeValue === 2 ? 'otlp' : 'none'
+
+      return {
+        mode,
+        metricPrefix: decodeFromByteArrayPointer(metricPrefixPtr),
+        socketAddr: decodeFromByteArrayPointer(socketAddrPtr),
+        attachServiceName,
+      }
+    },
+    registerClient(runtime: Runtime): boolean {
+      return temporal_bun_runtime_test_register_client(runtime.handle) !== 0
+    },
+    unregisterClient(runtime: Runtime): void {
+      temporal_bun_runtime_test_unregister_client(runtime.handle)
+    },
+    registerWorker(runtime: Runtime): boolean {
+      return temporal_bun_runtime_test_register_worker(runtime.handle) !== 0
+    },
+    unregisterWorker(runtime: Runtime): void {
+      temporal_bun_runtime_test_unregister_worker(runtime.handle)
     },
   },
 
@@ -1222,14 +1304,4 @@ function mapZigErrorCode(message: string): number {
 
 function buildNativeBridgeError(): NativeBridgeError {
   return new NativeBridgeError(readLastErrorPayload())
-}
-
-function buildNotImplementedError(feature: string, docPath: string): Error {
-  return new Error(
-    `${feature} is not implemented yet. See packages/temporal-bun-sdk/${docPath} for the implementation plan.`,
-  )
-}
-
-function notImplemented(feature: string, docPath: string): never {
-  throw buildNotImplementedError(feature, docPath)
 }

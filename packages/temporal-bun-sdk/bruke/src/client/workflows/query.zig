@@ -25,6 +25,7 @@ const QueryWorkflowRpcContext = struct {
     pending_handle: *pending.PendingByteArray,
     runtime_handle: *runtime.RuntimeHandle,
     wait_group: std.Thread.WaitGroup = .{},
+    core_runtime: ?*core.RuntimeOpaque = null,
 };
 
 fn clientQueryWorkflowCallback(
@@ -38,16 +39,18 @@ fn clientQueryWorkflowCallback(
     const context = @as(*QueryWorkflowRpcContext, @ptrCast(@alignCast(user_data.?)));
     defer context.wait_group.finish();
 
+    const core_runtime_ptr = context.core_runtime orelse context.runtime_handle.core_runtime;
+
     defer {
-        if (failure_message) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
-        if (failure_details) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+        if (failure_message) |ptr| core.api.byte_array_free(core_runtime_ptr, ptr);
+        if (failure_details) |ptr| core.api.byte_array_free(core_runtime_ptr, ptr);
     }
 
     if (success != null and status_code == 0) {
         const slice = byteArraySlice(success.?);
 
         if (slice.len == 0) {
-            core.api.byte_array_free(context.runtime_handle.core_runtime, success.?);
+            core.api.byte_array_free(core_runtime_ptr, success.?);
             _ = pending.rejectByteArray(
                 context.pending_handle,
                 grpc.internal,
@@ -61,7 +64,7 @@ fn clientQueryWorkflowCallback(
         }
 
         const array_ptr = byte_array.allocate(.{ .slice = slice }) orelse {
-            core.api.byte_array_free(context.runtime_handle.core_runtime, success.?);
+            core.api.byte_array_free(core_runtime_ptr, success.?);
             _ = pending.rejectByteArray(
                 context.pending_handle,
                 grpc.resource_exhausted,
@@ -74,7 +77,7 @@ fn clientQueryWorkflowCallback(
             return;
         };
 
-        core.api.byte_array_free(context.runtime_handle.core_runtime, success.?);
+        core.api.byte_array_free(core_runtime_ptr, success.?);
 
         if (!pending.resolveByteArray(context.pending_handle, array_ptr)) {
             byte_array.free(array_ptr);
@@ -94,7 +97,7 @@ fn clientQueryWorkflowCallback(
         return;
     }
 
-    if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+    if (success) |ptr| core.api.byte_array_free(core_runtime_ptr, ptr);
 
     const code: i32 = if (status_code == 0) grpc.internal else @as(i32, @intCast(status_code));
     const message_slice = if (failure_message) |ptr| byteArraySlice(ptr) else "temporal-bun-bridge-zig: queryWorkflow failed"[0..];
@@ -142,6 +145,16 @@ fn queryWorkflowWorker(task: *QueryWorkflowTask) void {
         return;
     }
     defer runtime.endPendingClientConnect(runtime_handle);
+
+    const retained_core_runtime = runtime.retainCoreRuntime(runtime_handle) orelse {
+        errors.setStructuredError(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: runtime is shutting down",
+        });
+        _ = pending.rejectByteArray(pending_handle, grpc.failed_precondition, "temporal-bun-bridge-zig: runtime is shutting down");
+        return;
+    };
+    defer runtime.releaseCoreRuntime(runtime_handle);
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
@@ -340,6 +353,7 @@ fn queryWorkflowWorker(task: *QueryWorkflowTask) void {
         .allocator = allocator,
         .pending_handle = pending_handle,
         .runtime_handle = runtime_handle,
+        .core_runtime = retained_core_runtime,
     };
     context.wait_group.start();
 

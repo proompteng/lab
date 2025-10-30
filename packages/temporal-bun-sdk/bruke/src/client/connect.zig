@@ -85,6 +85,12 @@ fn wantsLiveTemporalServer(allocator: std.mem.Allocator) bool {
 }
 
 fn temporalServerReachable(config_json: []const u8) bool {
+    const allocator = std.heap.c_allocator;
+    const require_live_server = wantsLiveTemporalServer(allocator);
+    if (!require_live_server) {
+        return true;
+    }
+
     if (core.api.client_connect == core.stub_api.client_connect) {
         return true;
     }
@@ -95,12 +101,7 @@ fn temporalServerReachable(config_json: []const u8) bool {
     }
 
     const host_port = parseHostPort(address) orelse return true;
-    const allocator = std.heap.c_allocator;
-    const require_live_server = wantsLiveTemporalServer(allocator);
     const stream = std.net.tcpConnectToHost(allocator, host_port.host, host_port.port) catch {
-        if (!require_live_server) {
-            return true;
-        }
         return false;
     };
     defer stream.close();
@@ -127,6 +128,7 @@ const ConnectCallbackContext = struct {
     result_client: ?*core.Client = null,
     error_message: []u8 = ""[0..0],
     runtime_handle: *runtime.RuntimeHandle,
+    core_runtime: ?*core.RuntimeOpaque = null,
 };
 
 fn clientConnectCallback(
@@ -138,10 +140,12 @@ fn clientConnectCallback(
     const context = @as(*ConnectCallbackContext, @ptrCast(@alignCast(user_data.?)));
     defer context.wait_group.finish();
 
+    const core_runtime_ptr = context.core_runtime orelse context.runtime_handle.core_runtime;
+
     if (success) |client_ptr| {
         context.result_client = client_ptr;
         if (fail) |fail_ptr| {
-            core.api.byte_array_free(context.runtime_handle.core_runtime, fail_ptr);
+            core.api.byte_array_free(core_runtime_ptr, fail_ptr);
         }
         return;
     }
@@ -150,12 +154,12 @@ fn clientConnectCallback(
         const slice = common.byteArraySlice(fail_ptr);
         if (slice.len > 0) {
             context.error_message = context.allocator.alloc(u8, slice.len) catch {
-                core.api.byte_array_free(context.runtime_handle.core_runtime, fail_ptr);
+                core.api.byte_array_free(core_runtime_ptr, fail_ptr);
                 return;
             };
             @memcpy(context.error_message, slice);
         }
-        core.api.byte_array_free(context.runtime_handle.core_runtime, fail_ptr);
+        core.api.byte_array_free(core_runtime_ptr, fail_ptr);
     }
 }
 
@@ -306,9 +310,19 @@ fn connectCoreClient(
     options.grpc_override_callback = null;
     options.grpc_override_callback_user_data = null;
 
-    var context = ConnectCallbackContext{ .allocator = allocator, .runtime_handle = runtime_handle };
+    const retained_core_runtime = runtime.retainCoreRuntime(runtime_handle) orelse {
+        errors.setStructuredError(.{ .code = grpc.failed_precondition, .message = "temporal-bun-bridge-zig: runtime is shutting down" });
+        return ConnectError.ConnectFailed;
+    };
+    defer runtime.releaseCoreRuntime(runtime_handle);
+
+    var context = ConnectCallbackContext{
+        .allocator = allocator,
+        .runtime_handle = runtime_handle,
+        .core_runtime = retained_core_runtime,
+    };
     context.wait_group.start();
-    core.api.client_connect(runtime_handle.core_runtime, &options, &context, clientConnectCallback);
+    core.api.client_connect(retained_core_runtime, &options, &context, clientConnectCallback);
     context.wait_group.wait();
 
     defer if (context.error_message.len > 0) allocator.free(context.error_message);
@@ -401,6 +415,8 @@ fn connectAsyncWorker(task: *ConnectTask) void {
         return;
     };
 
+    const runtime_handle = runtime_ptr;
+
     const client_handle = allocator.create(ClientHandle) catch |err| {
         allocator.free(config_copy);
         core.api.client_free(core_client);
@@ -422,6 +438,21 @@ fn connectAsyncWorker(task: *ConnectTask) void {
         .config = config_copy,
         .core_client = core_client,
     };
+
+    if (!runtime.registerClient(runtime_handle)) {
+        client_handle.runtime = null;
+        common.destroy(client_handle);
+        errors.setStructuredError(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: runtime is shutting down",
+        });
+        _ = pending.rejectClient(
+            pending_handle,
+            grpc.failed_precondition,
+            "temporal-bun-bridge-zig: runtime is shutting down",
+        );
+        return;
+    }
 
     if (!pending.resolveClient(
         pending_handle,
