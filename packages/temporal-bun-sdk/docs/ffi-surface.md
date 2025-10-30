@@ -32,7 +32,7 @@ flowchart LR
 
 ### Runtime (`runtime.zig`)
 - ✅ `temporal_bun_runtime_new/free` create and dispose Temporal core runtimes, tracking in-flight client connects.
-- ⚠️ Telemetry (`temporal_bun_runtime_update_telemetry`) remains unimplemented; ✅ logger installation (`temporal_bun_runtime_set_logger`) forwards Temporal core logs into Bun callbacks.
+- ✅ Telemetry (`temporal_bun_runtime_update_telemetry`) wires Prometheus/OTLP exporters; ✅ logger installation (`temporal_bun_runtime_set_logger`) forwards Temporal core logs into Bun callbacks.
 
 ### Client (`client.zig`)
 - ✅ Async connect (`temporal_bun_client_connect_async`) with pending handles and thread pool.
@@ -57,7 +57,7 @@ flowchart LR
 | Area | Export | Status | Notes |
 |------|--------|--------|-------|
 | Runtime | `temporal_bun_runtime_new` / `free` | ✅ | Allocates runtime handle, copies JSON config, releases pending connects before shutdown. |
-| Runtime | `temporal_bun_runtime_update_telemetry` | ⚠️ TODO | Returns `grpc.unimplemented`; wire Prom/OTLP exporters once upstream APIs are exposed (tracked as `zig-runtime-02`). |
+| Runtime | `temporal_bun_runtime_update_telemetry` | ✅ | Applies Prometheus or OTLP telemetry configuration and propagates Temporal core errors. |
 | Runtime | `temporal_bun_runtime_set_logger` | ✅ | Installs Bun callbacks for Temporal core log forwarding and clears them on shutdown. |
 | Client | `temporal_bun_client_connect_async` | ✅ | Spawns thread, honors runtime destroy semantics, returns pending handle. |
 | Client | `temporal_bun_client_describe_namespace_async` | ✅ | Encodes protobuf request (`DescribeNamespaceRequest`), resolves pending byte array. |

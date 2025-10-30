@@ -185,6 +185,77 @@ if (!nativeBridge) {
       }
     })
 
+    zigOnlyTest('configureTelemetry supports Prometheus and OTLP exporters', () => {
+      const runtime = native.createRuntime({})
+      try {
+        try {
+          native.configureTelemetry(runtime, {
+            logExporter: { filter: 'temporal_sdk_core=debug' },
+            telemetry: { metricPrefix: 'bun_', attachServiceName: false },
+            metricsExporter: {
+              type: 'prometheus',
+              socketAddr: '127.0.0.1:0',
+              countersTotalSuffix: true,
+              unitSuffix: true,
+              useSecondsForDurations: true,
+              globalTags: { env: 'test', platform: 'bun' },
+              histogramBucketOverrides: {
+                'temporal_sdk_core.workflow_completion_latency': [1, 5, 10],
+              },
+            },
+          })
+        } catch (error) {
+          console.error('configureTelemetry prometheus error', error)
+          throw error
+        }
+
+        try {
+          native.configureTelemetry(runtime, {
+            logExporter: { filter: 'temporal_sdk_core=info' },
+            telemetry: { metricPrefix: 'otlp_', attachServiceName: true },
+            metricsExporter: {
+              type: 'otel',
+              url: 'http://127.0.0.1:4318',
+              protocol: 'http',
+              metricPeriodicity: 5000,
+              metricTemporality: 'cumulative',
+              useSecondsForDurations: false,
+              headers: { Authorization: 'Bearer test' },
+              globalTags: { env: 'test', exporter: 'otlp' },
+              histogramBucketOverrides: {
+                'temporal_sdk_core.workflow_completion_latency': [1, 5, 10, 20],
+              },
+            },
+          })
+        } catch (error) {
+          console.error('configureTelemetry otlp error', error)
+          throw error
+        }
+      } finally {
+        native.runtimeShutdown(runtime)
+      }
+    })
+
+    zigOnlyTest('configureTelemetry rejects invalid payloads with NativeBridgeError', () => {
+      const runtime = native.createRuntime({})
+      try {
+        try {
+          native.configureTelemetry(runtime, {
+            metricsExporter: { type: 'prometheus' },
+          })
+          throw new Error('expected configureTelemetry to throw for incomplete payload')
+        } catch (error) {
+          expect(error).toBeInstanceOf(NativeBridgeError)
+          const nativeError = error as NativeBridgeError
+          expect(nativeError.code).toBe(3)
+          expect(nativeError.message).toContain('missing a required field')
+          expect(nativeError.raw).toContain('"code":3')
+        }
+      } finally {
+        native.runtimeShutdown(runtime)
+      }
+    })
+
     zigOnlyTest('destroyWorker is idempotent for Zig handles', () => {
       const worker = native.createWorkerHandleForTest()
       expect(worker.type).toBe('worker')

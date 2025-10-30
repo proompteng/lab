@@ -10,6 +10,11 @@ pub const RuntimeOptions = c.TemporalCoreRuntimeOptions;
 pub const RuntimeOrFail = c.TemporalCoreRuntimeOrFail;
 pub const TelemetryOptions = c.TemporalCoreTelemetryOptions;
 pub const LoggingOptions = c.TemporalCoreLoggingOptions;
+pub const MetricsOptions = c.TemporalCoreMetricsOptions;
+pub const OpenTelemetryOptions = c.TemporalCoreOpenTelemetryOptions;
+pub const PrometheusOptions = c.TemporalCorePrometheusOptions;
+pub const OpenTelemetryMetricTemporality = c.TemporalCoreOpenTelemetryMetricTemporality;
+pub const OpenTelemetryProtocol = c.TemporalCoreOpenTelemetryProtocol;
 
 pub const Client = c.TemporalCoreClient;
 pub const ClientOptions = c.TemporalCoreClientOptions;

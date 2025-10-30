@@ -95,9 +95,9 @@ Bun (bun:ffi) ──▶ Zig Bridge (libtemporal_bun_bridge.zig)
    - Represent as struct `{ ptr: [*]u8, len: usize, cap: usize }` to match existing layout.  
    - Provide constructor helpers to zero-copy when safe or allocate copy when required.
 
-5. **Telemetry & Logging Hooks (Forward-Looking)**  
-   - Keep slots for telemetry + logger callbacks; Zig will forward to Bun via function pointers (`extern struct`).  
-   - Ensure `configureTelemetry` becomes a no-op until the underlying C-ABI exposes toggles.
+5. **Telemetry & Logging Hooks**  
+   - Keep slots for telemetry + logger callbacks; Zig forwards to Bun via function pointers (`extern struct`).  
+   - `configureTelemetry` now delegates Prometheus/OTLP exporter wiring through the Zig runtime.
 
 ---
 
@@ -144,7 +144,7 @@ Bun (bun:ffi) ──▶ Zig Bridge (libtemporal_bun_bridge.zig)
 | Linking Rust static libs into Zig. | Build failures, symbol mismatch. | Introduce C shim crate exporting stable ABI; pin commit + verify with `zig build check`. |
 | Release artifacts size/regression. | Consumer install friction. | Strip symbols (`zig build -Dstrip`) and compress binaries post-build. |
 | Windows support parity. | Bun users on Windows blocked. | Validate MSVC toolchain early; add GitHub Actions job gating merges. |
-| Telemetry/logging fallbacks. | Feature parity gap. | Keep Rust bridge available behind flag until telemetry features ship. Document limitations. |
+| Telemetry/logging fallbacks. | Feature parity gap. | Prometheus and OTLP exporters now ship via Zig runtime; keep Rust bridge behind flag until worker telemetry lands. |
 
 ---
 

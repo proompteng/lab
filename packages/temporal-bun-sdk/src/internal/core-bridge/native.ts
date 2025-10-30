@@ -247,6 +247,10 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr, FFIType.uint64_t],
       returns: FFIType.ptr,
     },
+    temporal_bun_runtime_update_telemetry: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.int32_t,
+    },
     temporal_bun_runtime_free: {
       args: [FFIType.ptr],
       returns: FFIType.void,
@@ -431,6 +435,7 @@ const {
     temporal_bun_runtime_new,
     temporal_bun_runtime_free,
     temporal_bun_runtime_set_logger,
+    temporal_bun_runtime_update_telemetry,
     temporal_bun_runtime_test_emit_log,
     temporal_bun_error_message,
     temporal_bun_error_free,
@@ -540,12 +545,12 @@ export const native = {
     return readByteArray(arrayPtr)
   },
 
-  configureTelemetry(runtime: Runtime, options: Record<string, unknown> = {}): never {
-    void runtime
-    void options
-    // TODO(codex): Bridge telemetry configuration through `temporal_bun_runtime_update_telemetry`
-    // per packages/temporal-bun-sdk/docs/ffi-surface.md (Function Matrix, Runtime section).
-    return notImplemented('Runtime telemetry configuration', 'docs/ffi-surface.md')
+  configureTelemetry(runtime: Runtime, options: Record<string, unknown> = {}): void {
+    const payload = Buffer.from(JSON.stringify(options), 'utf8')
+    const result = temporal_bun_runtime_update_telemetry(runtime.handle, ptr(payload), payload.byteLength)
+    if (result !== 0) {
+      throw buildNativeBridgeError()
+    }
   },
 
   installLogger(runtime: Runtime, callback: TemporalCoreLogger, onDetach?: () => void): void {
@@ -1222,14 +1227,4 @@ function mapZigErrorCode(message: string): number {
 
 function buildNativeBridgeError(): NativeBridgeError {
   return new NativeBridgeError(readLastErrorPayload())
-}
-
-function buildNotImplementedError(feature: string, docPath: string): Error {
-  return new Error(
-    `${feature} is not implemented yet. See packages/temporal-bun-sdk/${docPath} for the implementation plan.`,
-  )
-}
-
-function notImplemented(feature: string, docPath: string): never {
-  throw buildNotImplementedError(feature, docPath)
 }

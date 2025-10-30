@@ -48,7 +48,7 @@ When adding new exports, extend both the symbol map and the high-level wrappers.
 - Holds a `Runtime` class that allocates a Zig runtime in the constructor and registers a `FinalizationRegistry` cleanup hook.  
 - Exposes:
   - `get nativeHandle()` with defensive checks (`throw` if already shut down).  
-  - `configureTelemetry(options)` and `installLogger(callback)` which currently call into `native.configureTelemetry` / `native.installLogger` and throw (`NativeBridgeError`), since the Zig bridge reports unimplemented status. These methods exist so higher layers can wire telemetry once the native work lands.  
+  - `configureTelemetry(options)` and `installLogger(callback)` delegate to `native.configureTelemetry` / `native.installLogger`; telemetry updates now reach Temporal core and raise `NativeBridgeError` diagnostics if payloads are invalid.  
   - `shutdown()` that is safe to call multiple times and clears the finalizer registration.
 
 Update the doc once telemetry/logging implementations exist.

@@ -39,7 +39,7 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 - ✅ `core.signalWorkflow` now builds `SignalWorkflowExecutionRequest`, forwards gRPC statuses, and acknowledges pending handles with Temporal core responses.
 - ✅ `temporal_bun_client_cancel_workflow` forwards cancellation payloads to Temporal core using `client_rpc_call`, returning structured errors via pending handles.
 - ✅ Worker exports (`temporal_bun_worker_*`) now poll workflow and activity tasks, record heartbeats, and complete/cancel activity executions. Open work focuses on telemetry and graceful drain behaviour.
-- ⚠️ Telemetry configuration (`temporal_bun_runtime_update_telemetry`) still reports `UNIMPLEMENTED`; ✅ logger installation (`temporal_bun_runtime_set_logger`) now forwards Temporal core logs into Bun callbacks.
+- ✅ Telemetry configuration (`temporal_bun_runtime_update_telemetry`) applies Prometheus and OTLP exporters; ✅ logger installation (`temporal_bun_runtime_set_logger`) now forwards Temporal core logs into Bun callbacks.
 
 ### Tooling & Distribution
 - ✅ `scripts/download-temporal-libs.ts` downloads pinned Temporal core static libs, enabling reproducible Zig builds.
