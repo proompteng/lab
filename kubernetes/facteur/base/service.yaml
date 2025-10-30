@@ -35,6 +35,11 @@ spec:
                   key: application-id
             - name: FACTEUR_REDIS_URL
               value: redis://facteur-redis:6379/0
+            - name: FACTEUR_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: facteur-vector-cluster-app
+                  key: uri
             - name: FACTEUR_ARGO_NAMESPACE
               value: argo-workflows
             - name: FACTEUR_ARGO_WORKFLOW_TEMPLATE

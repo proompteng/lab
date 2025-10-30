@@ -13,6 +13,7 @@ Configuration can be supplied via YAML or environment variables prefixed with `F
 | `discord.bot_token` | `FACTEUR_DISCORD_BOT_TOKEN` | Discord bot token used for interactions API calls. |
 | `discord.application_id` | `FACTEUR_DISCORD_APPLICATION_ID` | Discord application identifier for validating interaction payloads. |
 | `redis.url` | `FACTEUR_REDIS_URL` | Redis connection string (e.g. `redis://host:6379/0`) for session storage. |
+| `postgres.dsn` | `FACTEUR_POSTGRES_DSN` | Postgres connection string for Facteur-managed schema migrations and application state. |
 | `argo.namespace` | `FACTEUR_ARGO_NAMESPACE` | Kubernetes namespace containing the Argo Workflows controller (see the [Argo Workflows install docs](https://argo-workflows.readthedocs.io/en/stable/getting-started/)). |
 | `argo.workflow_template` | `FACTEUR_ARGO_WORKFLOW_TEMPLATE` | WorkflowTemplate name to clone when dispatching workflows. |
 
@@ -59,6 +60,7 @@ The role map controls which Discord roles can invoke specific commands. Schema d
 - `pnpm run build:facteur` builds and pushes the multi-arch image via Docker (override registry/tag with `FACTEUR_IMAGE_*`).
 - `pnpm run facteur:reseal` refreshes the `facteur-discord` SealedSecret from 1Password (`op` must be logged in). Kafka credentials are sourced from Strimzi-managed `KafkaUser` secrets instead of SealedSecrets.
 - `pnpm run facteur:deploy` builds a fresh container image, pushes it to the registry, reapplies supporting manifests, and then rolls the Knative Service via `kn service apply`. Override `FACTEUR_IMAGE_TAG`/`FACTEUR_IMAGE_REGISTRY`/`FACTEUR_IMAGE_REPOSITORY` as needed before running.
+- `go run ./services/facteur/cmd/facteur migrate` (or `facteur migrate` from a released image) applies database migrations out of band. Use it for manual smoke-tests before rolling a new binary.
 - `pnpm run facteur:consume` runs the local Kafka consumer with `services/facteur/config/example.yaml` (override via `FACTEUR_CONSUMER_CONFIG`).
 
 ### Kafka credentials
@@ -70,12 +72,12 @@ Create a dedicated `KafkaUser` (the repo defines one named `facteur`) in the Str
 Facteur now owns a dedicated CloudNativePG cluster so Codex automation can persist the artefacts generated during `plan` → `implement` → `review` runs.
 
 - Cluster: `facteur-vector-cluster` (namespace `facteur`) running `registry.ide-newton.ts.net/lab/vecteur:18-trixie`, three instances, 20&nbsp;Gi Longhorn volumes with data checksums enabled.
-- Database: `facteur_kb`, owned by the `facteur` role. The bootstrap routine enables the `pgcrypto` and `vector` extensions before seeding schema objects.
-- Connection secret: `facteur-vector-cluster-app` (namespace `facteur`). It follows the standard CloudNativePG app secret contract (`host`, `port`, `dbname`, `user`, `password`, `uri`). Mount or template this secret into consuming workloads to hydrate Codex clients.
+- Database: `facteur_kb`, owned by the `facteur` role. Facteur applies embedded goose migrations at startup, enabling the `pgcrypto` and `vector` extensions and seeding schema objects.
+- Connection secret: `facteur-vector-cluster-app` (namespace `facteur`). It follows the standard CloudNativePG app secret contract (`host`, `port`, `dbname`, `user`, `password`, `uri`). The Knative Service maps the `uri` key into `FACTEUR_POSTGRES_DSN` so the binary can run migrations on startup. Mount or template this secret into consuming workloads to hydrate Codex clients.
 - Schema: `codex_kb` with two tables.
   - `runs` – UUID primary key (defaults to `gen_random_uuid()`), stores `repo_slug`, `issue_number`, `workflow`, lifecycle timestamps, and JSONB `metadata`. Intended to capture one Codex execution per issue/workflow combination.
   - `entries` – UUID primary key with a foreign key to `runs.id`, carries `step_label`, `artifact_type`, `artifact_stage`, free-form `content`, JSONB `metadata`, and a `vector(1536)` embedding column. An IVFFLAT index (`codex_kb_entries_embedding_idx`, cosine distance, 100 lists) accelerates similarity search.
-- Privileges: the bootstrap script assigns ownership of `runs` and `entries` to the `facteur` role, grants schema usage, applies direct CRUD privileges on existing tables, and sets default table grants so future objects remain writeable without extra migrations.
+- Privileges: the migrations assign ownership of `runs` and `entries` to the `facteur` role, grant schema usage, apply direct CRUD privileges on existing tables, and set default table grants so future objects remain writeable without extra scripts.
 
 Future changes to the embedding dimensionality will require `ALTER TABLE codex_kb.entries ALTER COLUMN embedding TYPE vector(<new_dim>)` followed by `REINDEX INDEX codex_kb_entries_embedding_idx`.
 
