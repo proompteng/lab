@@ -390,7 +390,7 @@ describe('handleReviewComment', () => {
     })
 
     expect(secondAttempt).toEqual({ handled: true, stage: null })
-    expect(fetchPullRequest).toHaveBeenCalledTimes(3)
+    expect(fetchPullRequest).toHaveBeenCalledTimes(2)
     expect(listPullRequestReviewThreads).not.toHaveBeenCalled()
     expect(listPullRequestCheckFailures).not.toHaveBeenCalled()
     expect(mockedExecuteWorkflowCommands).not.toHaveBeenCalled()
