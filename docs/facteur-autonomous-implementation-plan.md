@@ -3,9 +3,9 @@
 This plan operationalises the autonomous knowledge base, schema, and vector strategies. Each milestone references a unique TODO marker (e.g. `TODO(codex-autonomy-step-01)`) that is mirrored in the code scaffolding for low-conflict incremental development.
 
 ## Phase 1 – Runtime Data Ingestion
-- [ ] `TODO(codex-autonomy-step-01)`: Wire new `codex_kb` tables into the ORM/data layer (repositories for `ideas`, `tasks`, `task_runs`).
-- [ ] `TODO(codex-autonomy-step-02)`: Capture Froussard webhook payloads in `ideas` when Facteur handles GitHub events.
-- [ ] `TODO(codex-autonomy-step-03)`: Persist task lifecycle updates (`tasks`, `task_runs`, `run_events`) inside the orchestrator code paths.
+- [x] `TODO(codex-autonomy-step-01)`: Wire new `codex_kb` tables into the ORM/data layer (repositories for `ideas`, `tasks`, `task_runs`).
+- [x] `TODO(codex-autonomy-step-02)`: Capture Froussard webhook payloads in `ideas` when Facteur handles GitHub events.
+- [x] `TODO(codex-autonomy-step-03)`: Persist task lifecycle updates (`tasks`, `task_runs`, `run_events`) inside the orchestrator code paths.
 
 ## Phase 2 – Reflection Memory & Retrieval
 - [ ] `TODO(codex-autonomy-step-04)`: Store agent reflections and register them with the vector index.

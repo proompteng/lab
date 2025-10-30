@@ -46,6 +46,7 @@ The role map controls which Discord roles can invoke specific commands. Schema d
 - **Bridge (`internal/bridge`)** – Facade around Argo clients and business logic for workflow execution.
 - **Session store (`internal/session`)** – Redis-backed storage for in-flight command interactions (deployed via the OT-Container-Kit Redis Operator).
 - **Argo integration (`internal/argo`)** – Workflow submission and status inspection plumbing.
+- **Knowledge store (`internal/knowledge`)** – Codex knowledge base persistence layer for ideas, tasks, task runs, and future reflection/metrics surfaces.
 
 ## Deployment artifacts
 
@@ -178,6 +179,19 @@ Facteur initialises OpenTelemetry during startup, enabling spans and metrics acr
 Knative does not inject the observability wiring automatically; the Argo CD overlay now provisions a dedicated Grafana Alloy deployment (`facteur-alloy`) that tails all pods in the `facteur` namespace and pushes the output to the in-cluster Loki gateway. The manifests live in `argocd/applications/facteur/overlays/cluster/alloy-*.yaml`, keeping the observability routing alongside the rest of the service configuration.
 
 Locally, point the same variables at your observability environment to capture traces and metrics. Instrumentation surfaces counters such as `facteur_command_events_processed_total`, `facteur_command_events_failed_total`, and `facteur_command_events_dlq_total`, plus spans scoped to Kafka message handling and workflow submissions.
+
+## Codex task ingestion
+
+- **Endpoint**: `POST /codex/tasks` expects a `github.v1.CodexTask` protobuf payload (binary wire format).
+- **Storage**: the handler upserts rows into `codex_kb.ideas`, `codex_kb.tasks`, and `codex_kb.task_runs`, using `delivery_id` to guarantee idempotent retries (`ON CONFLICT (delivery_id) DO UPDATE …`).
+- **Dependencies**: set `FACTEUR_POSTGRES_DSN` and `redis.url`; migrations run automatically on startup (`go run ./cmd/facteur migrate` runs them manually).
+- **Sample payload**: `docs/examples/codex-task.json` mirrors the fields emitted by Froussard. Encode it via `buf beta protoc --encode github.v1.CodexTask proto/github/v1/codex_task.proto`.
+- **Manual validation**:
+  1. Start Postgres (`postgres://postgres:postgres@127.0.0.1:6543/postgres?sslmode=disable`) and Redis.
+  2. Run `go run . serve --config config/example.yaml`.
+  3. `curl -H 'Content-Type: application/x-protobuf' --data-binary @/tmp/codex-task.bin http://127.0.0.1:8080/codex/tasks`.
+  4. Inspect persisted rows using `psql "$FACTEUR_POSTGRES_DSN" -c "SELECT idea_id, stage, delivery_id FROM codex_kb.task_runs JOIN codex_kb.tasks ON task_runs.task_id = tasks.id;"`.
+- **Idempotency check**: re-send the same `delivery_id` and verify the handler responds `202 Accepted` while returning the existing `task_run_id`.
 
 ## Next steps
 

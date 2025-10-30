@@ -71,6 +71,7 @@ flowchart TD
 
 ## Operational Guardrails
 - **Index maintenance**: monitor reflection corpus size; rebuild IVFFlat indexes when growth >4× or drift detected.[^pgvector-guidelines]
+- **Idempotent intake**: reuse `delivery_id` when retrying Codex deliveries—`codex_kb.task_runs.delivery_id` is unique and replay-safe (`ON CONFLICT (delivery_id) DO UPDATE`).
 - **Quality gates**: require faithfulness delta ≥0 and retrieval relevance improvement before promoting new models.
 - **Retention**: keep reflections and events ≥1 year to allow long-tail analysis; older artifacts archived to object storage per retention class.
 - **Access**: Facteur service account owns writes; analytics roles granted read-only to history tables.
