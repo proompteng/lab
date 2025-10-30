@@ -24,3 +24,6 @@ spec:
       owner: facteur
       dataChecksums: true
       encoding: "UTF8"
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+        - CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
