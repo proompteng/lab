@@ -46,7 +46,7 @@ This plan documents the current pyramid and the steps required to reach producti
 - `tests/client.test.ts`, `src/client/serialization.test.ts` — serialization helpers (`buildStartWorkflowRequest`, `computeSignalRequestId`, signal-with-start defaults) with converter-aware expectations.  
 - `tests/config.test.ts` — environment parsing and TLS file loading.  
 - `tests/core-bridge.test.ts` / `tests/native.test.ts` — native bridge error handling, library discovery fallbacks.  
-- `tests/worker.runtime.workflow.test.ts`, `tests/worker/worker-runtime-activity.test.ts`, `tests/worker/worker-runtime-shutdown.test.ts`, `tests/worker/zig-poll-workflow.test.ts` — drive Bun-native worker loops (poll, complete, heartbeat) via the Zig bridge and verify codec application on workflow completions.  
+- `tests/worker.runtime.workflow.test.ts`, `tests/worker/worker-runtime-activity.test.ts`, `tests/worker/worker-runtime-shutdown.test.ts`, `tests/worker/zig-poll-workflow.test.ts` — drive Bun-native worker loops (poll, complete, heartbeat) via the Zig bridge; `worker.runtime.workflow` includes a regression case to ensure command payloads aren’t re-encoded.  
 - `tests/cli.test.ts`, `tests/cli-check.test.ts` — CLI argument parsing and connectivity checks.  
 - `tests/github-workflow-validation.test.ts` — ensures GitHub workflows reference existing scripts.
 

@@ -12,9 +12,9 @@ import {
   encodeValuesToPayloads,
   jsonToPayload,
   payloadToJson,
-  type PayloadMap,
 } from '../src/common/payloads'
 import { DefaultPayloadConverter, type PayloadCodec } from '@temporalio/common'
+import { encodeValuesToPayloads } from '../src/common/payloads'
 
 const WORKFLOWS_PATH = fileURLToPath(new URL('./fixtures/workflows/simple.workflow.ts', import.meta.url))
 
@@ -349,213 +349,43 @@ describe('WorkflowEngine', () => {
     expect(value).toBe('hello Temporal')
   })
 
-  test('applies payload codecs to workflow command payloads', async () => {
+  test('does not double encode workflow command payloads', async () => {
     const converter = createDataConverter({ payloadCodecs: [new JsonEnvelopeCodec()] })
-    const makePayload = (value: unknown) => jsonToPayload(value)
-    const decoder = new TextDecoder()
+    const [encodedPayload] = (await encodeValuesToPayloads(converter, ['activity-arg'])) ?? []
+    expect(encodedPayload).toBeDefined()
 
-    const scheduleActivityCommand = coresdk.workflow_commands.WorkflowCommand.create({
+    const originalData = encodedPayload?.data ? new Uint8Array(encodedPayload.data) : undefined
+    const originalEncoding = encodedPayload?.metadata?.encoding
+      ? new Uint8Array(encodedPayload.metadata.encoding)
+      : undefined
+
+    const command = coresdk.workflow_commands.WorkflowCommand.create({
       scheduleActivity: coresdk.workflow_commands.ScheduleActivity.create({
         seq: 1,
         activityId: 'activity-1',
         activityType: 'exampleActivity',
         taskQueue: 'unit-test-queue',
-        arguments: [makePayload('activity-arg')],
-      }),
-    })
-
-    const scheduleLocalActivityCommand = coresdk.workflow_commands.WorkflowCommand.create({
-      scheduleLocalActivity: coresdk.workflow_commands.ScheduleLocalActivity.create({
-        seq: 2,
-        activityId: 'local-1',
-        activityType: 'localActivity',
-        arguments: [makePayload('local-arg')],
-      }),
-    })
-
-    const startChildCommand = coresdk.workflow_commands.WorkflowCommand.create({
-      startChildWorkflowExecution: coresdk.workflow_commands.StartChildWorkflowExecution.create({
-        seq: 3,
-        namespace: 'default',
-        workflowId: 'child-1',
-        workflowType: 'childWorkflow',
-        taskQueue: 'unit-test-queue',
-        input: [makePayload('child-input')],
-        memo: { childMemo: makePayload('child-memo') },
-        searchAttributes: temporal.api.common.v1.SearchAttributes.create({
-          indexedFields: { childSearch: makePayload('child-search') },
-        }) as unknown as { indexedFields?: PayloadMap },
-      }),
-    })
-
-    const continueCommand = coresdk.workflow_commands.WorkflowCommand.create({
-      continueAsNewWorkflowExecution: coresdk.workflow_commands.ContinueAsNewWorkflowExecution.create({
-        workflowType: 'nextWorkflow',
-        taskQueue: 'unit-test-queue',
-        arguments: [makePayload('continue-arg')],
-        memo: { continueMemo: makePayload('continue-memo') },
-        headers: { continueHeader: makePayload('continue-header') },
-        searchAttributes: temporal.api.common.v1.SearchAttributes.create({
-          indexedFields: { continueSearch: makePayload('continue-search') },
-        }) as unknown as { indexedFields?: PayloadMap },
-      }),
-    })
-
-    const signalExternalCommand = coresdk.workflow_commands.WorkflowCommand.create({
-      signalExternalWorkflowExecution: coresdk.workflow_commands.SignalExternalWorkflowExecution.create({
-        seq: 4,
-        childWorkflowId: 'child-1',
-        signalName: 'externalSignal',
-        args: [makePayload('external-arg')],
-      }),
-    })
-
-    const upsertCommand = coresdk.workflow_commands.WorkflowCommand.create({
-      upsertWorkflowSearchAttributes: coresdk.workflow_commands.UpsertWorkflowSearchAttributes.create({
-        searchAttributes: { upsertKey: makePayload('upsert-search') },
-      }),
-    })
-
-    const queryFailure = temporal.api.failure.v1.Failure.create({
-      message: 'query failed',
-      applicationFailureInfo: {
-        type: 'QueryFailure',
-        details: { payloads: [makePayload('query-detail')] },
-      },
-    })
-
-    const respondCommand = coresdk.workflow_commands.WorkflowCommand.create({
-      respondToQuery: coresdk.workflow_commands.QueryResult.create({
-        queryId: 'query-1',
-        succeeded: coresdk.workflow_commands.QuerySuccess.create({
-          response: makePayload('query-response'),
-        }),
-        failed: queryFailure,
-      }),
-    })
-
-    const updateFailure = temporal.api.failure.v1.Failure.create({
-      message: 'update rejected',
-      applicationFailureInfo: {
-        type: 'UpdateFailure',
-        details: { payloads: [makePayload('update-detail')] },
-      },
-    })
-
-    const updateCommand = coresdk.workflow_commands.WorkflowCommand.create({
-      updateResponse: coresdk.workflow_commands.UpdateResponse.create({
-        protocolInstanceId: 'update-1',
-        completed: makePayload('update-completed'),
-        rejected: updateFailure,
-      }),
-    })
-
-    const nexusCommand = coresdk.workflow_commands.WorkflowCommand.create({
-      scheduleNexusOperation: coresdk.workflow_commands.ScheduleNexusOperation.create({
-        seq: 5,
-        endpoint: 'nexus-endpoint',
-        service: 'nexus-service',
-        operation: 'nexus-operation',
-        input: makePayload('nexus-input'),
-      }),
-    })
-
-    const modifyCommand = coresdk.workflow_commands.WorkflowCommand.create({
-      modifyWorkflowProperties: coresdk.workflow_commands.ModifyWorkflowProperties.create({
-        upsertedMemo: temporal.api.common.v1.Memo.create({
-          fields: { modifyMemo: makePayload('modify-memo') },
-        }),
-      }),
-    })
-
-    const userMetadataCommand = coresdk.workflow_commands.WorkflowCommand.create({
-      userMetadata: temporal.api.sdk.v1.UserMetadata.create({
-        summary: makePayload('summary-text'),
-        details: makePayload('details-text'),
+        arguments: encodedPayload ? [encodedPayload] : [],
       }),
     })
 
     const completion = coresdk.workflow_completion.WorkflowActivationCompletion.create({
-      runId: 'codec-commands',
+      runId: 'avoid-double-encode',
       successful: coresdk.workflow_completion.Success.create({
-        commands: [
-          scheduleActivityCommand,
-          scheduleLocalActivityCommand,
-          startChildCommand,
-          continueCommand,
-          signalExternalCommand,
-          upsertCommand,
-          respondCommand,
-          updateCommand,
-          nexusCommand,
-          modifyCommand,
-          userMetadataCommand,
-        ],
+        commands: [command],
       }),
     })
 
     await applyDataConverterToWorkflowCompletion(converter, completion)
 
-    const readEncoding = (payload?: temporal.api.common.v1.IPayload | null): string | undefined => {
-      const encoding = payload?.metadata?.encoding
-      if (!encoding) {
-        return undefined
-      }
-      return decoder.decode(encoding)
+    const [postPayload] = command.scheduleActivity?.arguments ?? []
+    expect(postPayload).toBeDefined()
+
+    if (originalData) {
+      expect(new Uint8Array(postPayload?.data ?? [])).toEqual(originalData)
     }
-
-    const expectBinaryCustom = (payload?: temporal.api.common.v1.IPayload | null) => {
-      expect(readEncoding(payload)).toBe('binary/custom')
+    if (originalEncoding) {
+      expect(new Uint8Array(postPayload?.metadata?.encoding ?? [])).toEqual(originalEncoding)
     }
-
-    expectBinaryCustom(scheduleActivityCommand.scheduleActivity?.arguments?.[0])
-    expectBinaryCustom(scheduleLocalActivityCommand.scheduleLocalActivity?.arguments?.[0])
-    expectBinaryCustom(startChildCommand.startChildWorkflowExecution?.input?.[0])
-    expectBinaryCustom(continueCommand.continueAsNewWorkflowExecution?.arguments?.[0])
-    expectBinaryCustom(signalExternalCommand.signalExternalWorkflowExecution?.args?.[0])
-    expectBinaryCustom(respondCommand.respondToQuery?.succeeded?.response ?? undefined)
-    expectBinaryCustom(updateCommand.updateResponse?.completed)
-    expectBinaryCustom(nexusCommand.scheduleNexusOperation?.input)
-    expectBinaryCustom(userMetadataCommand.userMetadata?.summary ?? undefined)
-    expectBinaryCustom(userMetadataCommand.userMetadata?.details ?? undefined)
-
-    const startChildMemoValues = Object.values(startChildCommand.startChildWorkflowExecution?.memo ?? {})
-    expect(startChildMemoValues).not.toHaveLength(0)
-    startChildMemoValues.forEach((value) => expectBinaryCustom(value))
-
-    const encodedChildSearch = (startChildCommand.startChildWorkflowExecution?.searchAttributes as
-      | { indexedFields?: PayloadMap }
-      | undefined)?.indexedFields
-    expect(encodedChildSearch).toBeDefined()
-    Object.values(encodedChildSearch ?? {}).forEach((value) => expectBinaryCustom(value))
-
-    const continueMemoValues = Object.values(continueCommand.continueAsNewWorkflowExecution?.memo ?? {})
-    expect(continueMemoValues).not.toHaveLength(0)
-    continueMemoValues.forEach((value) => expectBinaryCustom(value))
-
-    const encodedContinueHeaders = Object.values(continueCommand.continueAsNewWorkflowExecution?.headers ?? {})
-    expect(encodedContinueHeaders).not.toHaveLength(0)
-    encodedContinueHeaders.forEach((value) => expectBinaryCustom(value))
-
-    const continueSearch = (continueCommand.continueAsNewWorkflowExecution?.searchAttributes as
-      | { indexedFields?: PayloadMap }
-      | undefined)?.indexedFields
-    expect(continueSearch).toBeDefined()
-    Object.values(continueSearch ?? {}).forEach((value) => expectBinaryCustom(value))
-
-    const upsertValues = Object.values(upsertCommand.upsertWorkflowSearchAttributes?.searchAttributes ?? {})
-    expect(upsertValues).not.toHaveLength(0)
-    upsertValues.forEach((value) => expectBinaryCustom(value))
-
-    const modifyValues = Object.values(modifyCommand.modifyWorkflowProperties?.upsertedMemo?.fields ?? {})
-    expect(modifyValues).not.toHaveLength(0)
-    modifyValues.forEach((value) => expectBinaryCustom(value))
-
-    const queryFailurePayload = respondCommand.respondToQuery?.failed?.applicationFailureInfo?.details?.payloads?.[0]
-    expectBinaryCustom(queryFailurePayload ?? undefined)
-
-    const updateFailurePayload =
-      updateCommand.updateResponse?.rejected?.applicationFailureInfo?.details?.payloads?.[0]
-    expectBinaryCustom(updateFailurePayload ?? undefined)
   })
 })
