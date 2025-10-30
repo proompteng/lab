@@ -20,6 +20,14 @@ go run . serve --config config/example.yaml
 
 The `--config` flag is optional if you provide the required `FACTEUR_*` environment variables. Press `Ctrl+C` to stop the server; it will shut down gracefully.
 
+Set `FACTEUR_POSTGRES_DSN` to point at a Postgres instance before starting locally. The server applies embedded migrations on boot so the schema stays in sync.
+
+To run migrations without launching the HTTP server, invoke:
+
+```bash
+go run ./cmd/facteur migrate --config config/example.yaml
+```
+
 ## Observability
 
 Facteur boots with OpenTelemetry telemetry enabled. Traces and metrics are exported via OTLP/HTTP, targeting the in-cluster observability deployment by default. The Knative manifest supplies the following environment variables:
@@ -55,8 +63,12 @@ It will:
 3. `kubectl apply -k kubernetes/facteur/overlays/cluster` to reconcile config/Redis/Kafka sources.
 4. `kn service apply` the refreshed image so a new revision rolls out.
 
+The new revision will apply database migrations on startup using `FACTEUR_POSTGRES_DSN`. Monitor the first pod logs for `migration …` messages to confirm goose finished before traffic arrives. Run `go run ./cmd/facteur migrate` ahead of time if you want to validate the schema without rolling pods.
+
 If you prefer to drive the deployment manually, you can still fall back to `kn service apply -f kubernetes/facteur/base/service.yaml`, but you must ensure the container image tag in `kubernetes/facteur/overlays/cluster/kustomization.yaml` is updated first.
 
 ## Infrastructure dependencies
 
 `kubernetes/facteur/base/redis.yaml` requests a standalone `Redis` instance managed by the OT-Container-Kit Redis Operator. The Knative Service targets the generated ClusterIP service (`redis://facteur-redis:6379/0`). Ensure the platform `redis-operator` Application remains healthy before syncing facteur; it must be available to reconcile the custom resource.
+
+CloudNativePG delivers application credentials via the `facteur-vector-cluster-app` secret. The Knative Service maps the secret’s `uri` key into `FACTEUR_POSTGRES_DSN`, so keep that secret in sync before rolling deployments or running the standalone `facteur migrate` command.

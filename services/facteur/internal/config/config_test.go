@@ -21,6 +21,8 @@ func TestLoadWithOptions(t *testing.T) {
   guild_id: guild-123
 redis:
   url: redis://localhost:6379/0
+postgres:
+  dsn: postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable
 argo:
   namespace: argo-workflows
   workflow_template: facteur-dispatch
@@ -52,6 +54,7 @@ codex_listener:
 		require.Equal(t, "file-pub", cfg.Discord.PublicKey)
 		require.Equal(t, "guild-123", cfg.Discord.GuildID)
 		require.Equal(t, "redis://localhost:6379/0", cfg.Redis.URL)
+		require.Equal(t, "postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable", cfg.Postgres.DSN)
 		require.Equal(t, "argo-workflows", cfg.Argo.Namespace)
 		require.Equal(t, "facteur-dispatch", cfg.Argo.WorkflowTemplate)
 		require.Equal(t, "facteur-workflow", cfg.Argo.ServiceAccount)
@@ -75,6 +78,8 @@ codex_listener:
   application_id: file-app
 redis:
   url: redis://localhost:6379/0
+postgres:
+  dsn: postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable
 argo:
   namespace: argo
   workflow_template: template
@@ -83,11 +88,13 @@ argo:
 
 		t.Setenv("FACTEUR_DISCORD_BOT_TOKEN", "env-token")
 		t.Setenv("FACTEUR_ARGO_WORKFLOW_TEMPLATE", "env-template")
+		t.Setenv("FACTEUR_POSTGRES_DSN", "postgres://override")
 
 		cfg, err := config.LoadWithOptions(config.Options{Path: path, EnvPrefix: "FACTEUR"})
 		require.NoError(t, err)
 		require.Equal(t, "env-token", cfg.Discord.BotToken)
 		require.Equal(t, "env-template", cfg.Argo.WorkflowTemplate)
+		require.Equal(t, "postgres://override", cfg.Postgres.DSN)
 		require.Equal(t, ":8080", cfg.Server.ListenAddress)
 		require.False(t, cfg.Codex.Enabled)
 	})
@@ -106,6 +113,7 @@ redis:
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "discord.application_id is required")
 		require.Contains(t, err.Error(), "argo.namespace is required")
+		require.Contains(t, err.Error(), "postgres.dsn is required")
 	})
 
 	t.Run("env only", func(t *testing.T) {
@@ -114,12 +122,14 @@ redis:
 		t.Setenv("FACTEUR_REDIS_URL", "redis://localhost:6379/1")
 		t.Setenv("FACTEUR_ARGO_NAMESPACE", "argo-workflows")
 		t.Setenv("FACTEUR_ARGO_WORKFLOW_TEMPLATE", "template")
+		t.Setenv("FACTEUR_POSTGRES_DSN", "postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable")
 
 		cfg, err := config.LoadWithOptions(config.Options{EnvPrefix: "FACTEUR"})
 		require.NoError(t, err)
 		require.Equal(t, "token", cfg.Discord.BotToken)
 		require.Equal(t, "app", cfg.Discord.ApplicationID)
 		require.Equal(t, "redis://localhost:6379/1", cfg.Redis.URL)
+		require.Equal(t, "postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable", cfg.Postgres.DSN)
 		require.Equal(t, ":8080", cfg.Server.ListenAddress)
 		require.NotNil(t, cfg.RoleMap)
 		require.Empty(t, cfg.RoleMap)
@@ -134,6 +144,8 @@ redis:
   application_id: app
 redis:
   url: redis://localhost:6379/0
+postgres:
+  dsn: postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable
 argo:
   namespace: argo
   workflow_template: template
