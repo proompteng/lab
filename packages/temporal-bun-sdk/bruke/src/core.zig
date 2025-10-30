@@ -8,6 +8,8 @@ const c = @cImport({
 pub const Runtime = c.TemporalCoreRuntime;
 pub const RuntimeOptions = c.TemporalCoreRuntimeOptions;
 pub const RuntimeOrFail = c.TemporalCoreRuntimeOrFail;
+pub const TelemetryOptions = c.TemporalCoreTelemetryOptions;
+pub const LoggingOptions = c.TemporalCoreLoggingOptions;
 
 pub const Client = c.TemporalCoreClient;
 pub const ClientOptions = c.TemporalCoreClientOptions;
@@ -42,6 +44,10 @@ pub const ByteBuf = ByteArray;
 pub const ByteBufDestroyFn = *const fn (?*RuntimeOpaque, ?*const ByteBuf) callconv(.c) void;
 
 const ArrayListManaged = std.array_list.Managed;
+
+pub const ForwardedLog = c.TemporalCoreForwardedLog;
+pub const ForwardedLogLevel = c.TemporalCoreForwardedLogLevel;
+pub const ForwardedLogCallback = c.TemporalCoreForwardedLogCallback;
 
 pub const WorkerCallback = c.TemporalCoreWorkerCallback;
 pub const WorkerCompleteFn =
@@ -196,6 +202,22 @@ pub fn workerRecordActivityHeartbeat(
     heartbeat: ByteArrayRef,
 ) ?*const ByteArray {
     return worker_record_activity_heartbeat(worker, heartbeat);
+}
+
+pub fn forwardedLogTarget(log: ?*const ForwardedLog) ByteArrayRef {
+    return c.temporal_core_forwarded_log_target(log);
+}
+
+pub fn forwardedLogMessage(log: ?*const ForwardedLog) ByteArrayRef {
+    return c.temporal_core_forwarded_log_message(log);
+}
+
+pub fn forwardedLogTimestampMillis(log: ?*const ForwardedLog) u64 {
+    return c.temporal_core_forwarded_log_timestamp_millis(log);
+}
+
+pub fn forwardedLogFieldsJson(log: ?*const ForwardedLog) ByteArrayRef {
+    return c.temporal_core_forwarded_log_fields_json(log);
 }
 
 const stub_runtime_or_fail = RuntimeOrFail{

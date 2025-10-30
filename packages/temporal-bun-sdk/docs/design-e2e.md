@@ -39,7 +39,7 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 - ✅ `core.signalWorkflow` now builds `SignalWorkflowExecutionRequest`, forwards gRPC statuses, and acknowledges pending handles with Temporal core responses.
 - ✅ `temporal_bun_client_cancel_workflow` forwards cancellation payloads to Temporal core using `client_rpc_call`, returning structured errors via pending handles.
 - ✅ Worker exports (`temporal_bun_worker_*`) now poll workflow and activity tasks, record heartbeats, and complete/cancel activity executions. Open work focuses on telemetry and graceful drain behaviour.
-- ⚠️ Telemetry and logger configuration hooks (`temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger`) report `UNIMPLEMENTED`.
+- ⚠️ Telemetry configuration (`temporal_bun_runtime_update_telemetry`) still reports `UNIMPLEMENTED`; ✅ logger installation (`temporal_bun_runtime_set_logger`) now forwards Temporal core logs into Bun callbacks.
 
 ### Tooling & Distribution
 - ✅ `scripts/download-temporal-libs.ts` downloads pinned Temporal core static libs, enabling reproducible Zig builds.
@@ -86,7 +86,7 @@ Key properties:
 |------|--------|--------|-------|
 | Runtime | `temporal_bun_runtime_new` / `free` | ✅ | Creates Temporal core runtime and tracks pending connects with thread-safe counters. |
 | Runtime | `temporal_bun_runtime_update_telemetry` | ⚠️ TODO | Returns `UNIMPLEMENTED`; telemetry wiring planned in `zig-runtime-02`. |
-| Runtime | `temporal_bun_runtime_set_logger` | ⚠️ TODO | Placeholder until Temporal core exposes logger callbacks. |
+| Runtime | `temporal_bun_runtime_set_logger` | ✅ | Registers Bun callbacks and forwards Temporal core logs via the Zig bridge. |
 | Client | `temporal_bun_client_connect_async` | ✅ | Async connect with pending handle + thread pool. |
 | Client | `temporal_bun_client_describe_namespace_async` | ✅ | Encodes protobuf request and resolves via pending handle. |
 | Client | `temporal_bun_client_start_workflow` | ✅ | Encodes workflow start protobufs, returns JSON metadata. |
@@ -152,8 +152,8 @@ maps to one or more lanes so parallel Codex instances can implement features wit
 1. **Client parity**
    - Add automated Temporal Cloud/Compose coverage so cancellation tests run with a live server in CI.
 2. **Runtime telemetry & logging**
-   - Wire `temporal_bun_runtime_update_telemetry` and `*_set_logger` through Temporal core once upstream exposes the hooks.
-   - Surface metrics/logging configuration helpers in TypeScript (`configureTelemetry`, `installLogger`).
+   - Wire `temporal_bun_runtime_update_telemetry` through Temporal core once upstream exposes the hooks.
+   - Surface metrics configuration helpers in TypeScript (`configureTelemetry`).
 3. **Worker bridge**
    - Finalise graceful shutdown and activity metrics support in Zig (`zig-worker-08`/`zig-worker-09`).
    - Harden Bun `WorkerRuntime` parity (activity interception, metrics, diagnostics) and document the vendor fallback toggle.

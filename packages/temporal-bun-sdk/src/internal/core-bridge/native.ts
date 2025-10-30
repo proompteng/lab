@@ -1,4 +1,4 @@
-import { dlopen, FFIType, type Pointer, ptr, toArrayBuffer } from 'bun:ffi'
+import { dlopen, FFIType, JSCallback, type Pointer, ptr, toArrayBuffer } from 'bun:ffi'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -68,6 +68,20 @@ export class NativeBridgeError extends Error {
   }
 }
 
+export type TemporalCoreLogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error'
+
+export interface TemporalCoreLogEvent {
+  level: TemporalCoreLogLevel
+  levelIndex: number
+  target: string
+  message: string
+  timestampMillis: number
+  fieldsJson?: string
+  fields?: unknown
+}
+
+export type TemporalCoreLogger = (event: TemporalCoreLogEvent) => void
+
 type ZigPreference = 'auto' | 'enable' | 'disable'
 
 interface BridgeLibraryLoadResult {
@@ -80,6 +94,67 @@ interface BridgeLoadErrorContext {
   variant: BridgeVariant
   preference: ZigPreference
   override: boolean
+}
+
+interface LoggerRegistration {
+  runtime: Runtime
+  jsCallback: JSCallback
+  onDetach?: () => void
+}
+
+const nativeLogLevels: readonly TemporalCoreLogLevel[] = ['trace', 'debug', 'info', 'warn', 'error'] as const
+const utf8Decoder = new TextDecoder('utf-8')
+const runtimeLoggerState = new Map<number, LoggerRegistration>()
+
+const decodeUtf8 = (pointer: Pointer, length: number): string => {
+  if (!pointer || length === 0) return ''
+  return utf8Decoder.decode(new Uint8Array(toArrayBuffer(pointer, length)))
+}
+
+const pointerFromBuffer = (buffer: Buffer | null): Pointer => {
+  if (!buffer || buffer.length === 0) {
+    return 0 as unknown as Pointer
+  }
+  return ptr(buffer)
+}
+
+const mapLogLevel = (levelIndex: number): TemporalCoreLogLevel => {
+  const value = nativeLogLevels[levelIndex]
+  return value ?? 'info'
+}
+
+const parseFields = (json?: string): unknown => {
+  if (!json || json.length === 0) {
+    return undefined
+  }
+  try {
+    return JSON.parse(json)
+  } catch {
+    return undefined
+  }
+}
+
+const detachLoggerOrThrow = (runtime: Runtime): void => {
+  const status = Number(temporal_bun_runtime_set_logger(runtime.handle, 0))
+  if (status !== 0) {
+    throw buildNativeBridgeError()
+  }
+
+  const handleId = Number(runtime.handle)
+  const registration = runtimeLoggerState.get(handleId)
+  if (registration) {
+    runtimeLoggerState.delete(handleId)
+    try {
+      registration.onDetach?.()
+    } catch {}
+    registration.jsCallback.close()
+  }
+}
+
+const detachLoggerUnsafe = (runtime: Runtime): void => {
+  try {
+    detachLoggerOrThrow(runtime)
+  } catch {}
 }
 
 function loadBridgeLibrary(): BridgeLibraryLoadResult {
@@ -174,6 +249,23 @@ function buildBridgeSymbolMap() {
     },
     temporal_bun_runtime_free: {
       args: [FFIType.ptr],
+      returns: FFIType.void,
+    },
+    temporal_bun_runtime_set_logger: {
+      args: [FFIType.ptr, FFIType.ptr],
+      returns: FFIType.int32,
+    },
+    temporal_bun_runtime_test_emit_log: {
+      args: [
+        FFIType.uint32_t,
+        FFIType.ptr,
+        FFIType.uint64_t,
+        FFIType.ptr,
+        FFIType.uint64_t,
+        FFIType.uint64_t,
+        FFIType.ptr,
+        FFIType.uint64_t,
+      ],
       returns: FFIType.void,
     },
     temporal_bun_error_message: {
@@ -334,6 +426,8 @@ const {
   symbols: {
     temporal_bun_runtime_new,
     temporal_bun_runtime_free,
+    temporal_bun_runtime_set_logger,
+    temporal_bun_runtime_test_emit_log,
     temporal_bun_error_message,
     temporal_bun_error_free,
     temporal_bun_client_connect_async,
@@ -394,6 +488,7 @@ export const native = {
   },
 
   runtimeShutdown(runtime: Runtime): void {
+    detachLoggerUnsafe(runtime)
     temporal_bun_runtime_free(runtime.handle)
   },
 
@@ -447,11 +542,92 @@ export const native = {
     return notImplemented('Runtime telemetry configuration', 'docs/ffi-surface.md')
   },
 
-  installLogger(runtime: Runtime, _callback: (...args: unknown[]) => void): never {
-    void runtime
-    // TODO(codex): Install Bun logger hook via `temporal_bun_runtime_set_logger` once the native bridge
-    // supports forwarding core logs (docs/ffi-surface.md — Runtime exports).
-    return notImplemented('Runtime logger installation', 'docs/ffi-surface.md')
+  installLogger(runtime: Runtime, callback: TemporalCoreLogger, onDetach?: () => void): void {
+    if (typeof callback !== 'function') {
+      throw new TypeError('Runtime logger callback must be a function')
+    }
+
+    const handleId = Number(runtime.handle)
+    if (runtimeLoggerState.has(handleId)) {
+      throw new NativeBridgeError('Temporal runtime logger already installed')
+    }
+
+    const jsCallback = new JSCallback(
+      (level, targetPtr, targetLen, messagePtr, messageLen, timestampMillis, fieldsPtr, fieldsLen) => {
+        const levelIndex = Number(level)
+        const fieldsLength = Number(fieldsLen)
+        const event: TemporalCoreLogEvent = {
+          level: mapLogLevel(levelIndex),
+          levelIndex,
+          target: decodeUtf8(targetPtr, Number(targetLen)),
+          message: decodeUtf8(messagePtr, Number(messageLen)),
+          timestampMillis: Number(timestampMillis),
+        }
+
+        if (fieldsLength > 0) {
+          const fieldsJson = decodeUtf8(fieldsPtr, fieldsLength)
+          event.fieldsJson = fieldsJson
+          event.fields = parseFields(fieldsJson)
+        }
+
+        callback(event)
+      },
+      {
+        returns: 'void',
+        args: ['u32', 'pointer', 'usize', 'pointer', 'usize', 'u64', 'pointer', 'usize'],
+        threadsafe: true,
+        onError(error) {
+          detachLoggerUnsafe(runtime)
+          throw error
+        },
+      },
+    )
+
+    const status = Number(temporal_bun_runtime_set_logger(runtime.handle, jsCallback.ptr))
+    if (status !== 0) {
+      jsCallback.close()
+      throw buildNativeBridgeError()
+    }
+
+    runtimeLoggerState.set(handleId, { runtime, jsCallback, onDetach })
+  },
+
+  removeLogger(runtime: Runtime): void {
+    detachLoggerOrThrow(runtime)
+  },
+
+  __TEST__: {
+    emitSyntheticLog({
+      level = 'info',
+      target = '',
+      message = '',
+      timestampMillis = Date.now(),
+      fieldsJson,
+    }: {
+      level?: TemporalCoreLogLevel | number
+      target?: string
+      message?: string
+      timestampMillis?: number
+      fieldsJson?: string
+    } = {}): void {
+      const levelIndex = typeof level === 'number' ? level : nativeLogLevels.indexOf(level ?? 'info')
+      const normalizedLevel = levelIndex >= 0 ? levelIndex : nativeLogLevels.indexOf('info')
+
+      const targetBuffer = Buffer.from(target ?? '', 'utf8')
+      const messageBuffer = Buffer.from(message ?? '', 'utf8')
+      const fieldsBuffer = fieldsJson ? Buffer.from(fieldsJson, 'utf8') : null
+
+      temporal_bun_runtime_test_emit_log(
+        normalizedLevel,
+        pointerFromBuffer(targetBuffer),
+        targetBuffer.length,
+        pointerFromBuffer(messageBuffer),
+        messageBuffer.length,
+        BigInt(Math.trunc(timestampMillis ?? Date.now())),
+        pointerFromBuffer(fieldsBuffer),
+        fieldsBuffer?.length ?? 0,
+      )
+    },
   },
 
   updateClientHeaders(client: NativeClient, headers: Record<string, string>): void {
