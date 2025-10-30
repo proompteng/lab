@@ -28,15 +28,15 @@ flowchart LR
   Froussard -->|raw body| Raw
   Froussard -->|codex task JSON| Tasks
   Froussard -->|codex task structured| Structured
-  Structured --> Facteur
+  Structured --> Facteur[Facteur service]
   subgraph ArgoEvents[Argo Events]
     Sensor[github-codex Sensor]
   end
   Tasks --> Sensor
-  Facteur --> Planning[Workflow facteur-dispatch (planning)]
-  Sensor --> Implementation[Workflow github-codex-implementation]
-  Sensor --> Review[Workflow github-codex-review]
-  Sensor -. fallback component .-> Planning
+  Facteur --> FacteurPlanning["Workflow facteur-dispatch (planning)"]
+  Sensor --> Implementation["Workflow github-codex-implementation"]
+  Sensor --> Review["Workflow github-codex-review"]
+  Sensor -. fallback component .-> FacteurPlanning
 ```
 
 Run `facteur codex-listen --config <path>` to stream the structured payloads while you build consumers; the command uses the
@@ -122,7 +122,7 @@ Use this flow to validate the planner path locally without relying on Argo Event
 
 1. **Create a test issue** in `proompteng/lab` (while logged in as `gregkonush`).
    - Check `argo get @latest -n argo-workflows` to see the planning workflow run via `codex-planning-*` (dispatched by Facteur).
-   - Confirm the issue received a comment beginning with `<!-- codex:plan -->` that follows the Summary/Steps/Validation/Risks/Handoff Notes template.
+   - Confirm the issue received a comment beginning with `<!-- codex:plan -->` that follows the Objective/Context & Constraints/Task Breakdown/Deliverables/Validation & Observability/Risks & Contingencies/Communication & Handoff/Ready Checklist template.
 2. **Approve the plan** by validating that the planning workflow's comment contains `<!-- codex:plan -->`. Froussard will enqueue implementation automatically once that comment lands.
    - Watch for a new workflow named `github-codex-implementation-*`; it should push a branch ( `codex/issue-<number>-*` ), open a draft PR, and upload `.codex-implementation.log` as an artifact.
    - If automation fails, reply `execute plan` on the issue (still as `gregkonush`) to trigger the manual fallback.
