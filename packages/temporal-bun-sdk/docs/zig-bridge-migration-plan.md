@@ -34,7 +34,7 @@ To provide first-class Bun developer ergonomics we will reimplement the native b
 
 | Area | Symbol(s) | Current Status |
 |------|-----------|----------------|
-| Runtime | `temporal_bun_runtime_new`, `temporal_bun_runtime_free`, `temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger` | `runtime_new`/`free` ship today; telemetry/logger hooks still return `grpc.unimplemented` (`zig-rt-02`, `zig-rt-03`). |
+| Runtime | `temporal_bun_runtime_new`, `temporal_bun_runtime_free`, `temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger` | Runtime bootstrap, telemetry updates, and logger hooks ship; telemetry surfaces Temporal core gRPC statuses (`zig-rt-03` complete). |
 | Client Async | `temporal_bun_client_connect_async`, pending poll/consume/free trio | Connect now spawns worker threads and resolves pending handles; concurrency guardrails from #1526 are merged. |
 | Client RPCs | `temporal_bun_client_describe_namespace_async`, `temporal_bun_client_start_workflow`, `temporal_bun_client_signal*`, `temporal_bun_client_query_workflow`, `temporal_bun_client_terminate_workflow`, `temporal_bun_client_update_headers` | Describe, start, signal-with-start, signal, query, terminate, and header updates implemented; cancel (`temporal_bun_client_cancel_workflow`) remains `UNIMPLEMENTED` (`zig-wf-06`). |
 | Error Surface | `temporal_bun_error_message`, `temporal_bun_error_free` | Functional; mirrors the Rust bridge behaviour. |
@@ -45,7 +45,7 @@ Supporting modules:
 
 - `bruke/src/pending.zig` needs the hardening from #1526 to be thread-safe.
 - `bruke/src/byte_array.zig` still awaits telemetry/guardrails (`zig-buf-02`).
-- TypeScript loader (`src/internal/core-bridge/native.ts`) leaves telemetry/logging/cancelation paths as TODOs pending Zig parity.
+- TypeScript loader (`src/internal/core-bridge/native.ts`) now routes telemetry and logging through Zig; cancellation fallback handling remains under review.
 - Client bridge code now lives in `bruke/src/client/` with dedicated modules for connect, describe, workflow RPCs, and a lightweight aggregator `client/mod.zig` so teams can work in parallel without editing a monolith.
 
 ---
@@ -57,7 +57,7 @@ Supporting modules:
 | 0. Foundations | Land pending-handle fixes (#1526), correct docs, validate TLS against Temporal Cloud sandbox. | Zig 0.15.x toolchain, Temporal Cloud sandbox access. | Zig unit tests + TLS smoke succeed on macOS/Linux. |
 | 1. Client Parity | Implement `zig-cl-*` / `zig-wf-*`, wrap Bun client API, publish quickstart docs. | `zig-pack-01` linkage, Bun FFI loaders. | Integration suite passes for connect/start/signal/query/terminate; docs author “Temporal on Bun”. |
 | 2. Worker Parity | Complete `zig-worker-*`, run workflow/activity loops in Bun worker. | Client parity shipped; workflow runtime scaffolding. | Sample workflow executes end-to-end with timers, activities, signals. |
-| 3. Observability | Wire telemetry/logging FFI, provide dashboards/runbooks. | Runtime parity, metrics exporters. | Prometheus + OTLP exporters validated; logging callback invoked from Bun. |
+| 3. Observability | Harden telemetry/logging FFI and publish dashboards/runbooks. | Runtime parity, metrics exporters. | ✅ Prometheus + OTLP exporters validated; logging callback invoked from Bun. |
 | 4. Release & Adoption | Package native binaries, publish npm canary/GA, gather feedback. | Packaging pipeline, CI matrix ready. | npm release published with SBOM + signatures; Temporal Cloud smoke in CI. |
 
 The detailed architectural context for each phase lives in `zig-bridge-architectural-plan.md`.

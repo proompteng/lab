@@ -29,7 +29,7 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 - ✅ Worker bootstrap (`createWorker`, `runWorker`) defaults to the Bun-native runtime backed by the Zig bridge, with an opt-in `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` escape hatch to reuse `@temporalio/worker` when needed.
 - ✅ `client.workflow.cancel` encodes RequestCancelWorkflowExecution payloads and resolves Zig pending handles through Temporal core; `client.workflow.signal` continues to route through core with deterministic request IDs plus client identity.
 - ✅ `client.updateHeaders` hot-swaps metadata via the Zig bridge and returns Temporal core status codes without forcing a reconnect.
-- ✅ `WorkerRuntime` and the `WorkflowEngine` execute workflow activations inside Bun, emitting `WorkflowActivationCompletion` payloads through the Zig bridge. Activity polling, cancellation, and heartbeats are implemented; telemetry hooks remain TODO.
+- ✅ `WorkerRuntime` and the `WorkflowEngine` execute workflow activations inside Bun, emitting `WorkflowActivationCompletion` payloads through the Zig bridge. Activity polling, cancellation, and heartbeats are implemented; worker telemetry hooks remain TODO.
 - ✅ `loadTemporalConfig` now surfaces `TEMPORAL_SHOW_STACK_SOURCES`, letting operators opt into inline workflow stack traces.
 
 ### Zig native bridge (`packages/temporal-bun-sdk/bruke`)
@@ -85,7 +85,7 @@ Key properties:
 | Area | Export | Status | Notes |
 |------|--------|--------|-------|
 | Runtime | `temporal_bun_runtime_new` / `free` | ✅ | Creates Temporal core runtime and tracks pending connects with thread-safe counters. |
-| Runtime | `temporal_bun_runtime_update_telemetry` | ⚠️ TODO | Returns `UNIMPLEMENTED`; telemetry wiring planned in `zig-runtime-02`. |
+| Runtime | `temporal_bun_runtime_update_telemetry` | ✅ | Applies Prometheus/OTLP telemetry configuration and propagates Temporal core errors. |
 | Runtime | `temporal_bun_runtime_set_logger` | ✅ | Registers Bun callbacks and forwards Temporal core logs via the Zig bridge. |
 | Client | `temporal_bun_client_connect_async` | ✅ | Async connect with pending handle + thread pool. |
 | Client | `temporal_bun_client_describe_namespace_async` | ✅ | Encodes protobuf request and resolves via pending handle. |
@@ -152,8 +152,8 @@ maps to one or more lanes so parallel Codex instances can implement features wit
 1. **Client parity**
    - Add automated Temporal Cloud/Compose coverage so cancellation tests run with a live server in CI.
 2. **Runtime telemetry & logging**
-   - Wire `temporal_bun_runtime_update_telemetry` through Temporal core once upstream exposes the hooks.
-   - Surface metrics configuration helpers in TypeScript (`configureTelemetry`).
+   - Expand automated coverage for Prometheus and OTLP exporters (native + Bun tests) and capture regression fixtures.
+   - Document operational playbooks for telemetry dashboards and emitted metrics fields.
 3. **Worker bridge**
    - Add activity metrics support in Zig and surface telemetry for shutdown timing (follow-up after `zig-worker-09`).
    - Harden Bun `WorkerRuntime` parity (activity interception, metrics, diagnostics) and document the vendor fallback toggle.
