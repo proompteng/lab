@@ -279,6 +279,123 @@ describe('handleReviewComment', () => {
     expect(mockedExecuteWorkflowCommands).not.toHaveBeenCalled()
   })
 
+  it('skips review publishing when pull request metadata is missing head sha or base ref', async () => {
+    const { executionContext, fetchPullRequest, listPullRequestReviewThreads, listPullRequestCheckFailures } =
+      buildExecutionContext()
+
+    fetchPullRequest.mockImplementationOnce(() =>
+      Effect.succeed({
+        ok: true as const,
+        pullRequest: {
+          number: 21,
+          title: 'Incomplete metadata',
+          body: 'Head SHA missing',
+          htmlUrl: 'https://github.com/owner/repo/pull/21',
+          draft: false,
+          merged: false,
+          state: 'open',
+          headRef: 'codex/issue-21-branch',
+          headSha: undefined,
+          baseRef: 'main',
+          authorLogin: 'user',
+          mergeableState: 'clean',
+        },
+      }),
+    )
+
+    const firstAttempt = await handleReviewComment({
+      parsedPayload: {
+        action: 'created',
+        issue: {
+          number: 21,
+          pull_request: {
+            url: 'https://api.github.com/repos/owner/repo/pulls/21',
+            html_url: 'https://github.com/owner/repo/pull/21',
+          },
+          repository_url: 'https://api.github.com/repos/owner/repo',
+        },
+        repository: { full_name: 'owner/repo', default_branch: 'main' },
+        comment: {
+          id: 211,
+          body: '@tuslagch review please',
+          author_association: 'MEMBER',
+          updated_at: '2025-10-30T00:00:00Z',
+          html_url: 'https://github.com/owner/repo/pull/21#issuecomment-211',
+          user: { login: 'maintainer' },
+        },
+        sender: { login: 'maintainer' },
+      },
+      headers,
+      config: buildConfig(),
+      executionContext,
+      deliveryId: 'delivery-id',
+      senderLogin: 'maintainer',
+      actionValue: 'created',
+    })
+
+    expect(firstAttempt).toEqual({ handled: true, stage: null })
+    expect(fetchPullRequest).toHaveBeenCalled()
+    expect(listPullRequestReviewThreads).not.toHaveBeenCalled()
+    expect(listPullRequestCheckFailures).not.toHaveBeenCalled()
+    expect(mockedExecuteWorkflowCommands).not.toHaveBeenCalled()
+
+    fetchPullRequest.mockImplementationOnce(() =>
+      Effect.succeed({
+        ok: true as const,
+        pullRequest: {
+          number: 22,
+          title: 'Missing base ref',
+          body: 'Base ref missing',
+          htmlUrl: 'https://github.com/owner/repo/pull/22',
+          draft: false,
+          merged: false,
+          state: 'open',
+          headRef: 'codex/issue-22-branch',
+          headSha: 'feedbe',
+          baseRef: undefined,
+          authorLogin: 'user',
+          mergeableState: 'clean',
+        },
+      }),
+    )
+
+    const secondAttempt = await handleReviewComment({
+      parsedPayload: {
+        action: 'created',
+        issue: {
+          number: 22,
+          pull_request: {
+            url: 'https://api.github.com/repos/owner/repo/pulls/22',
+            html_url: 'https://github.com/owner/repo/pull/22',
+          },
+          repository_url: 'https://api.github.com/repos/owner/repo',
+        },
+        repository: { full_name: 'owner/repo', default_branch: 'main' },
+        comment: {
+          id: 221,
+          body: '@tuslagch review please',
+          author_association: 'MEMBER',
+          updated_at: '2025-10-30T00:10:00Z',
+          html_url: 'https://github.com/owner/repo/pull/22#issuecomment-221',
+          user: { login: 'maintainer' },
+        },
+        sender: { login: 'maintainer' },
+      },
+      headers,
+      config: buildConfig(),
+      executionContext,
+      deliveryId: 'delivery-id',
+      senderLogin: 'maintainer',
+      actionValue: 'created',
+    })
+
+    expect(secondAttempt).toEqual({ handled: true, stage: null })
+    expect(fetchPullRequest).toHaveBeenCalledTimes(3)
+    expect(listPullRequestReviewThreads).not.toHaveBeenCalled()
+    expect(listPullRequestCheckFailures).not.toHaveBeenCalled()
+    expect(mockedExecuteWorkflowCommands).not.toHaveBeenCalled()
+  })
+
   it('dedupes repeated review comments with identical timestamps', async () => {
     const { executionContext } = buildExecutionContext()
 

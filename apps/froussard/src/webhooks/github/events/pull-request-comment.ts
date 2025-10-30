@@ -153,6 +153,20 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
     return { handled: true, stage: null }
   }
 
+  if (!pull.headSha || !pull.baseRef) {
+    logger.warn(
+      {
+        action: actionValue,
+        repository: repositoryFullName,
+        pullNumber,
+        headSha: pull.headSha ?? null,
+        baseRef: pull.baseRef ?? null,
+      },
+      'failed to process @tuslagch review comment: missing head sha or base ref',
+    )
+    return { handled: true, stage: null }
+  }
+
   const issueNumber = parseIssueNumberFromBranch(pull.headRef, config.codebase.branchPrefix)
   if (issueNumber === null) {
     logger.warn(
