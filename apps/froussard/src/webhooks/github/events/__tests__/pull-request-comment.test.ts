@@ -154,7 +154,7 @@ describe('handleReviewComment', () => {
         repository: { full_name: 'owner/repo', default_branch: 'main' },
         comment: {
           id: 10,
-          body: '@berik review please',
+          body: '@tuslagch review please',
           author_association: 'CONTRIBUTOR',
           updated_at: '2025-10-30T00:00:00Z',
           html_url: 'https://github.com/owner/repo/pull/42#issuecomment-10',
@@ -175,7 +175,7 @@ describe('handleReviewComment', () => {
     expect(mockedExecuteWorkflowCommands).not.toHaveBeenCalled()
   })
 
-  it('publishes review commands for authorized @berik review comments', async () => {
+  it('publishes review commands for authorized @tuslagch review comments', async () => {
     const { executionContext, fetchPullRequest, listPullRequestReviewThreads, listPullRequestCheckFailures } =
       buildExecutionContext()
 
@@ -193,7 +193,7 @@ describe('handleReviewComment', () => {
         repository: { full_name: 'owner/repo', default_branch: 'main' },
         comment: {
           id: 10,
-          body: '@berik review please',
+          body: '@tuslagch review please',
           author_association: 'MEMBER',
           updated_at: '2025-10-30T00:00:00Z',
           html_url: 'https://github.com/owner/repo/pull/42#issuecomment-10',
@@ -236,7 +236,7 @@ describe('handleReviewComment', () => {
       repository: { full_name: 'owner/repo', default_branch: 'main' },
       comment: {
         id: 555,
-        body: '@berik review please',
+        body: '@tuslagch review please',
         author_association: 'OWNER',
         updated_at: '2025-10-30T00:00:00Z',
         html_url: 'https://github.com/owner/repo/pull/42#issuecomment-555',

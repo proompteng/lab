@@ -15,7 +15,7 @@ import { executeWorkflowCommands } from '../workflow'
 import type { BaseIssueParams, IssueCommentPayload } from './issues'
 import { IssueCommentPayloadSchema } from './issues'
 
-const REVIEW_TRIGGER_PATTERN = /(?:^|\s)@berik\s+review(?:\b|[.!?]|$)/i
+const REVIEW_TRIGGER_PATTERN = /(?:^|\s)@tuslagch\s+review(?:\b|[.!?]|$)/i
 const AUTHORIZED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR'])
 
 interface ReviewCommentParams extends BaseIssueParams {
@@ -68,7 +68,7 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
         commentId: payload.comment?.id ?? null,
         association: authorAssociation,
       },
-      'ignoring @berik review comment from unauthorized author',
+      'ignoring @tuslagch review comment from unauthorized author',
     )
     return { handled: false, stage: null }
   }
@@ -87,7 +87,7 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
         commentId,
         updatedAt,
       },
-      'insufficient data to process @berik review comment; falling back to default handler',
+      'insufficient data to process @tuslagch review comment; falling back to default handler',
     )
     return { handled: false, stage: null }
   }
@@ -99,7 +99,7 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
       pullNumber,
       commentId,
     },
-    'processing @berik review comment',
+    'processing @tuslagch review comment',
   )
 
   const pullResult = await executionContext.runGithub(() =>
@@ -120,7 +120,7 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
         pullNumber,
         reason: pullResult.reason,
       },
-      'failed to load pull request for @berik review comment',
+      'failed to load pull request for @tuslagch review comment',
     )
     return { handled: true, stage: null }
   }
@@ -135,7 +135,7 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
         state: pull.state,
         merged: pull.merged,
       },
-      'ignoring @berik review comment for closed pull request',
+      'ignoring @tuslagch review comment for closed pull request',
     )
     return { handled: true, stage: null }
   }
@@ -158,7 +158,7 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
         pullNumber,
         reason: threadsResult.reason,
       },
-      'failed to load review threads for @berik review comment',
+      'failed to load review threads for @tuslagch review comment',
     )
     return { handled: true, stage: null }
   }
@@ -181,7 +181,7 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
         pullNumber,
         reason: checksResult.reason,
       },
-      'failed to load check failures for @berik review comment',
+      'failed to load check failures for @tuslagch review comment',
     )
     return { handled: true, stage: null }
   }
@@ -210,7 +210,7 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
         commentId,
         fingerprint: reviewArtifacts.fingerprint,
       },
-      'skipping duplicate codex review request from @berik comment',
+      'skipping duplicate codex review request from @tuslagch comment',
     )
     return { handled: true, stage: null }
   }

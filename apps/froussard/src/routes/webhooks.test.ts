@@ -671,7 +671,7 @@ describe('createWebhookHandler', () => {
         sender: { login: 'maintainer' },
         comment: {
           id: 101,
-          body: 'Please @berik review this change.',
+          body: 'Please @tuslagch review this change.',
           html_url: 'https://github.com/owner/repo/pull/5#issuecomment-101',
           author_association: 'MEMBER',
           updated_at: '2025-10-30T00:00:00Z',
@@ -724,7 +724,7 @@ describe('createWebhookHandler', () => {
       expect(reviewProto.issueNumber).toBe(BigInt(5))
     })
 
-    it('ignores @berik review comments from unauthorized authors', async () => {
+    it('ignores @tuslagch review comments from unauthorized authors', async () => {
       const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
       const payload = {
         action: 'created',
@@ -737,7 +737,7 @@ describe('createWebhookHandler', () => {
         sender: { login: 'contributor' },
         comment: {
           id: 204,
-          body: '@berik review when ready',
+          body: '@tuslagch review when ready',
           html_url: 'https://github.com/owner/repo/pull/8#issuecomment-204',
           author_association: 'CONTRIBUTOR',
           updated_at: '2025-10-30T01:00:00Z',
@@ -763,7 +763,7 @@ describe('createWebhookHandler', () => {
       expect(mockBuildCodexPrompt).not.toHaveBeenCalled()
     })
 
-    it('dedupes repeated @berik review comments while allowing edited timestamps to retrigger', async () => {
+    it('dedupes repeated @tuslagch review comments while allowing edited timestamps to retrigger', async () => {
       githubServiceMock.fetchPullRequest.mockReturnValue(
         Effect.succeed({
           ok: true as const,
@@ -797,7 +797,7 @@ describe('createWebhookHandler', () => {
         sender: { login: 'maintainer' },
         comment: {
           id: 404,
-          body: '@berik review please',
+          body: '@tuslagch review please',
           html_url: 'https://github.com/owner/repo/pull/11#issuecomment-404',
           author_association: 'OWNER',
           updated_at: '2025-10-30T02:00:00Z',
