@@ -53,6 +53,11 @@ interface CommandResult {
 }
 
 const ensurePullRequestExists = async (repository: string, headBranch: string, logger: CodexLogger) => {
+  if (process.env.CODEX_SKIP_PR_CHECK === '1') {
+    logger.debug('Skipping pull request verification (CODEX_SKIP_PR_CHECK=1)')
+    return
+  }
+
   if (!repository || !headBranch) {
     throw new Error('Repository and head branch are required to verify pull request state')
   }
