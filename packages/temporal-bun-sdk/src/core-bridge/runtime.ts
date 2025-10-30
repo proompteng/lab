@@ -35,7 +35,9 @@ export class Runtime {
       throw new Error('A logger is already installed for this runtime')
     }
 
-    native.installLogger(this.nativeHandle, callback)
+    native.installLogger(this.nativeHandle, callback, () => {
+      this.#loggerInstalled = false
+    })
     this.#loggerInstalled = true
   }
 

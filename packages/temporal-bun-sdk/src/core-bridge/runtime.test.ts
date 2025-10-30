@@ -57,6 +57,21 @@ describe('Runtime.installLogger', () => {
     runtime.removeLogger()
     await runtime.shutdown()
   })
+
+  it('allows reinstalling a logger after the native bridge detaches it', async () => {
+    const runtime = Runtime.create()
+
+    runtime.installLogger(() => {
+      throw new Error('logger failure')
+    })
+
+    expect(() => native.__TEST__.emitSyntheticLog({ message: 'first' })).toThrow()
+
+    expect(() => runtime.installLogger(() => {})).not.toThrow()
+
+    runtime.removeLogger()
+    await runtime.shutdown()
+  })
 })
 
 const buildEventSnapshot = (event: TemporalCoreLogEvent) => ({

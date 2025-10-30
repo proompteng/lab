@@ -99,6 +99,7 @@ interface BridgeLoadErrorContext {
 interface LoggerRegistration {
   runtime: Runtime
   jsCallback: JSCallback
+  onDetach?: () => void
 }
 
 const nativeLogLevels: readonly TemporalCoreLogLevel[] = ['trace', 'debug', 'info', 'warn', 'error'] as const
@@ -143,6 +144,9 @@ const detachLoggerOrThrow = (runtime: Runtime): void => {
   const registration = runtimeLoggerState.get(handleId)
   if (registration) {
     runtimeLoggerState.delete(handleId)
+    try {
+      registration.onDetach?.()
+    } catch {}
     registration.jsCallback.close()
   }
 }
@@ -538,7 +542,7 @@ export const native = {
     return notImplemented('Runtime telemetry configuration', 'docs/ffi-surface.md')
   },
 
-  installLogger(runtime: Runtime, callback: TemporalCoreLogger): void {
+  installLogger(runtime: Runtime, callback: TemporalCoreLogger, onDetach?: () => void): void {
     if (typeof callback !== 'function') {
       throw new TypeError('Runtime logger callback must be a function')
     }
@@ -585,7 +589,7 @@ export const native = {
       throw buildNativeBridgeError()
     }
 
-    runtimeLoggerState.set(handleId, { runtime, jsCallback })
+    runtimeLoggerState.set(handleId, { runtime, jsCallback, onDetach })
   },
 
   removeLogger(runtime: Runtime): void {
