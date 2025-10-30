@@ -50,6 +50,10 @@ codex_listener:
     - kafka:9092
   topic: github.issues.codex.tasks
   group_id: facteur-codex
+codex_dispatch:
+  planning_enabled: true
+  payload_overrides:
+    postToGithub: "true"
 `)
 		require.NoError(t, os.WriteFile(path, data, 0o600))
 
@@ -80,6 +84,8 @@ codex_listener:
 		require.Equal(t, []string{"kafka:9092"}, cfg.Codex.Brokers)
 		require.Equal(t, "github.issues.codex.tasks", cfg.Codex.Topic)
 		require.Equal(t, "facteur-codex", cfg.Codex.GroupID)
+		require.True(t, cfg.CodexDispatch.PlanningEnabled)
+		require.Equal(t, map[string]string{"posttogithub": "true"}, cfg.CodexDispatch.PayloadOverrides)
 	})
 
 	t.Run("env overrides file", func(t *testing.T) {
@@ -113,6 +119,8 @@ argo:
 		require.False(t, cfg.Codex.Enabled)
 		require.True(t, cfg.Planner.Enabled)
 		require.Equal(t, "env-planning", cfg.Planner.WorkflowTemplate)
+		require.False(t, cfg.CodexDispatch.PlanningEnabled)
+		require.Empty(t, cfg.CodexDispatch.PayloadOverrides)
 	})
 
 	t.Run("missing required fields", func(t *testing.T) {
@@ -152,6 +160,9 @@ redis:
 		require.False(t, cfg.Planner.Enabled)
 		require.NotNil(t, cfg.Planner.Parameters)
 		require.Empty(t, cfg.Planner.Parameters)
+		require.False(t, cfg.CodexDispatch.PlanningEnabled)
+		require.NotNil(t, cfg.CodexDispatch.PayloadOverrides)
+		require.Empty(t, cfg.CodexDispatch.PayloadOverrides)
 	})
 
 	t.Run("validates codex listener when enabled", func(t *testing.T) {

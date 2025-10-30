@@ -10,14 +10,15 @@ import (
 
 // Config captures runtime configuration for the facteur service.
 type Config struct {
-	Discord  DiscordConfig       `mapstructure:"discord"`
-	Redis    RedisConfig         `mapstructure:"redis"`
-	Argo     ArgoConfig          `mapstructure:"argo"`
-	RoleMap  map[string][]string `mapstructure:"role_map"`
-	Server   ServerConfig        `mapstructure:"server"`
-	Codex    CodexListenerConfig `mapstructure:"codex_listener"`
-	Planner  PlannerConfig       `mapstructure:"codex_orchestrator"`
-	Postgres DatabaseConfig      `mapstructure:"postgres"`
+	Discord       DiscordConfig       `mapstructure:"discord"`
+	Redis         RedisConfig         `mapstructure:"redis"`
+	Argo          ArgoConfig          `mapstructure:"argo"`
+	RoleMap       map[string][]string `mapstructure:"role_map"`
+	Server        ServerConfig        `mapstructure:"server"`
+	Codex         CodexListenerConfig `mapstructure:"codex_listener"`
+	Planner       PlannerConfig       `mapstructure:"codex_orchestrator"`
+	Postgres      DatabaseConfig      `mapstructure:"postgres"`
+	CodexDispatch CodexDispatchConfig `mapstructure:"codex_dispatch"`
 }
 
 // DiscordConfig aggregates Discord bot credentials and routing data.
@@ -84,6 +85,12 @@ type DatabaseConfig struct {
 	DSN string `mapstructure:"dsn"`
 }
 
+// CodexDispatchConfig governs Codex-triggered workflow submissions.
+type CodexDispatchConfig struct {
+	PlanningEnabled  bool              `mapstructure:"planning_enabled"`
+	PayloadOverrides map[string]string `mapstructure:"payload_overrides"`
+}
+
 // Options customises how configuration should be loaded.
 type Options struct {
 	Path      string
@@ -139,6 +146,8 @@ func LoadWithOptions(opts Options) (*Config, error) {
 		{key: "codex_orchestrator.workflow_template"},
 		{key: "codex_orchestrator.service_account"},
 		{key: "codex_orchestrator.parameters"},
+		{key: "codex_dispatch.planning_enabled"},
+		{key: "codex_dispatch.payload_overrides"},
 	} {
 		if len(binding.envs) == 0 {
 			if err := v.BindEnv(binding.key); err != nil {
@@ -188,6 +197,9 @@ func normaliseConfig(cfg *Config) {
 	}
 	if cfg.Codex.GroupID == "" {
 		cfg.Codex.GroupID = "facteur-codex-listener"
+	}
+	if cfg.CodexDispatch.PayloadOverrides == nil {
+		cfg.CodexDispatch.PayloadOverrides = map[string]string{}
 	}
 }
 

@@ -9,6 +9,9 @@ discord:
   public_key: ''
 redis:
   url: redis://facteur-redis:6379/0
+codex_dispatch:
+  planning_enabled: false
+  payload_overrides: {}
 role_map:
   plan:
   - '987654321098765432'

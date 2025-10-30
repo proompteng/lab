@@ -58,7 +58,7 @@ func NewCodexEchoCommand() *cobra.Command {
 			}
 
 			logger := log.New(cmd.OutOrStdout(), "", log.LstdFlags)
-			listener := codex.NewListener(reader, logger)
+			listener := codex.NewListener(reader, logger, nil, codex.DispatchConfig{})
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
