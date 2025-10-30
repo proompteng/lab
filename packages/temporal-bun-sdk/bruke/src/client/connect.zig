@@ -127,6 +127,7 @@ const ConnectCallbackContext = struct {
     result_client: ?*core.Client = null,
     error_message: []u8 = ""[0..0],
     runtime_handle: *runtime.RuntimeHandle,
+    core_runtime: ?*core.RuntimeOpaque = null,
 };
 
 fn clientConnectCallback(
@@ -138,10 +139,12 @@ fn clientConnectCallback(
     const context = @as(*ConnectCallbackContext, @ptrCast(@alignCast(user_data.?)));
     defer context.wait_group.finish();
 
+    const core_runtime_ptr = context.core_runtime orelse context.runtime_handle.core_runtime;
+
     if (success) |client_ptr| {
         context.result_client = client_ptr;
         if (fail) |fail_ptr| {
-            core.api.byte_array_free(context.runtime_handle.core_runtime, fail_ptr);
+            core.api.byte_array_free(core_runtime_ptr, fail_ptr);
         }
         return;
     }
@@ -150,12 +153,12 @@ fn clientConnectCallback(
         const slice = common.byteArraySlice(fail_ptr);
         if (slice.len > 0) {
             context.error_message = context.allocator.alloc(u8, slice.len) catch {
-                core.api.byte_array_free(context.runtime_handle.core_runtime, fail_ptr);
+                core.api.byte_array_free(core_runtime_ptr, fail_ptr);
                 return;
             };
             @memcpy(context.error_message, slice);
         }
-        core.api.byte_array_free(context.runtime_handle.core_runtime, fail_ptr);
+        core.api.byte_array_free(core_runtime_ptr, fail_ptr);
     }
 }
 
@@ -306,9 +309,19 @@ fn connectCoreClient(
     options.grpc_override_callback = null;
     options.grpc_override_callback_user_data = null;
 
-    var context = ConnectCallbackContext{ .allocator = allocator, .runtime_handle = runtime_handle };
+    const retained_core_runtime = runtime.retainCoreRuntime(runtime_handle) orelse {
+        errors.setStructuredError(.{ .code = grpc.failed_precondition, .message = "temporal-bun-bridge-zig: runtime is shutting down" });
+        return ConnectError.ConnectFailed;
+    };
+    defer runtime.releaseCoreRuntime(runtime_handle);
+
+    var context = ConnectCallbackContext{
+        .allocator = allocator,
+        .runtime_handle = runtime_handle,
+        .core_runtime = retained_core_runtime,
+    };
     context.wait_group.start();
-    core.api.client_connect(runtime_handle.core_runtime, &options, &context, clientConnectCallback);
+    core.api.client_connect(retained_core_runtime, &options, &context, clientConnectCallback);
     context.wait_group.wait();
 
     defer if (context.error_message.len > 0) allocator.free(context.error_message);

@@ -24,6 +24,7 @@ const RpcCallContext = struct {
     pending_handle: *pending.PendingByteArray,
     wait_group: std.Thread.WaitGroup = .{},
     runtime_handle: *runtime.RuntimeHandle,
+    core_runtime: ?*core.RuntimeOpaque = null,
 };
 
 const describe_namespace_rpc = "DescribeNamespace";
@@ -63,6 +64,8 @@ fn clientDescribeCallback(
     const context = @as(*RpcCallContext, @ptrCast(@alignCast(user_data.?)));
     defer context.wait_group.finish();
 
+    const core_runtime_ptr = context.core_runtime orelse context.runtime_handle.core_runtime;
+
     if (success != null and status_code == 0) {
         const slice = common.byteArraySlice(success.?);
         if (slice.len == 0) {
@@ -78,9 +81,9 @@ fn clientDescribeCallback(
             errors.setStructuredError(.{ .code = grpc.resource_exhausted, .message = "temporal-bun-bridge-zig: failed to allocate describeNamespace response" });
             _ = pending.rejectByteArray(context.pending_handle, grpc.resource_exhausted, "temporal-bun-bridge-zig: failed to allocate describeNamespace response");
         }
-        core.api.byte_array_free(context.runtime_handle.core_runtime, success.?);
-        if (failure_message) |msg| core.api.byte_array_free(context.runtime_handle.core_runtime, msg);
-        if (failure_details) |details| core.api.byte_array_free(context.runtime_handle.core_runtime, details);
+        core.api.byte_array_free(core_runtime_ptr, success.?);
+        if (failure_message) |msg| core.api.byte_array_free(core_runtime_ptr, msg);
+        if (failure_details) |details| core.api.byte_array_free(core_runtime_ptr, details);
         return;
     }
 
@@ -88,9 +91,9 @@ fn clientDescribeCallback(
     const message_slice = if (failure_message) |msg| common.byteArraySlice(msg) else "temporal-bun-bridge-zig: describeNamespace failed"[0..];
     _ = pending.rejectByteArray(context.pending_handle, code, message_slice);
     errors.setStructuredError(.{ .code = code, .message = message_slice });
-    if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
-    if (failure_message) |msg| core.api.byte_array_free(context.runtime_handle.core_runtime, msg);
-    if (failure_details) |details| core.api.byte_array_free(context.runtime_handle.core_runtime, details);
+    if (success) |ptr| core.api.byte_array_free(core_runtime_ptr, ptr);
+    if (failure_message) |msg| core.api.byte_array_free(core_runtime_ptr, msg);
+    if (failure_details) |details| core.api.byte_array_free(core_runtime_ptr, details);
 }
 
 fn describeNamespaceWorker(task: *DescribeNamespaceTask) void {
@@ -125,6 +128,16 @@ fn describeNamespaceWorker(task: *DescribeNamespaceTask) void {
     }
     defer runtime.endPendingClientConnect(runtime_handle);
 
+    const retained_core_runtime = runtime.retainCoreRuntime(runtime_handle) orelse {
+        errors.setStructuredError(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: runtime is shutting down",
+        });
+        _ = pending.rejectByteArray(pending_handle, grpc.failed_precondition, "temporal-bun-bridge-zig: runtime is shutting down");
+        return;
+    };
+    defer runtime.releaseCoreRuntime(runtime_handle);
+
     const core_client = client_ptr.core_client orelse {
         errors.setStructuredError(.{
             .code = grpc.failed_precondition,
@@ -142,7 +155,12 @@ fn describeNamespaceWorker(task: *DescribeNamespaceTask) void {
     };
     defer allocator.free(request_bytes);
 
-    var rpc_context = RpcCallContext{ .allocator = allocator, .pending_handle = pending_handle, .runtime_handle = runtime_handle };
+    var rpc_context = RpcCallContext{
+        .allocator = allocator,
+        .pending_handle = pending_handle,
+        .runtime_handle = runtime_handle,
+        .core_runtime = retained_core_runtime,
+    };
     rpc_context.wait_group.start();
 
     var call_options = std.mem.zeroes(core.RpcCallOptions);

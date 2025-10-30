@@ -16,6 +16,7 @@ pub const StartWorkflowRpcContext = struct {
     allocator: std.mem.Allocator,
     wait_group: std.Thread.WaitGroup = .{},
     runtime_handle: *runtime.RuntimeHandle,
+    core_runtime: ?*core.RuntimeOpaque = null,
     response: []u8 = ""[0..0],
     error_message_owned: bool = false,
     error_message: []const u8 = ""[0..0],
@@ -40,16 +41,18 @@ pub fn clientStartWorkflowCallback(
     const context = @as(*StartWorkflowRpcContext, @ptrCast(@alignCast(user_data.?)));
     defer context.wait_group.finish();
 
+    const core_runtime_ptr = context.core_runtime orelse context.runtime_handle.core_runtime;
+
     defer {
-        if (failure_message) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
-        if (failure_details) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+        if (failure_message) |ptr| core.api.byte_array_free(core_runtime_ptr, ptr);
+        if (failure_details) |ptr| core.api.byte_array_free(core_runtime_ptr, ptr);
     }
 
     if (success != null and status_code == 0) {
         const slice = common.byteArraySlice(success.?);
 
         if (slice.len == 0) {
-            if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+            if (success) |ptr| core.api.byte_array_free(core_runtime_ptr, ptr);
             context.error_code = grpc.internal;
             if (context.error_message_owned) {
                 freeContextSlice(context, context.error_message);
@@ -61,7 +64,7 @@ pub fn clientStartWorkflowCallback(
         }
 
         const copy = context.allocator.alloc(u8, slice.len) catch {
-            if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+            if (success) |ptr| core.api.byte_array_free(core_runtime_ptr, ptr);
             context.error_code = grpc.resource_exhausted;
             if (context.error_message_owned) {
                 freeContextSlice(context, context.error_message);
@@ -73,7 +76,7 @@ pub fn clientStartWorkflowCallback(
         };
 
         @memcpy(copy, slice);
-        if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+        if (success) |ptr| core.api.byte_array_free(core_runtime_ptr, ptr);
         freeContextSlice(context, context.response);
         context.response = copy;
         context.success = true;
@@ -86,7 +89,7 @@ pub fn clientStartWorkflowCallback(
         return;
     }
 
-    if (success) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+    if (success) |ptr| core.api.byte_array_free(core_runtime_ptr, ptr);
     const code: i32 = if (status_code == 0) grpc.internal else @as(i32, @intCast(status_code));
     context.error_code = code;
 
@@ -159,6 +162,16 @@ pub fn startWorkflow(_client: ?*common.ClientHandle, _payload: []const u8) ?*byt
         });
         return null;
     };
+
+    const retained_core_runtime = runtime.retainCoreRuntime(runtime_handle) orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: runtime is shutting down",
+            .details = null,
+        });
+        return null;
+    };
+    defer runtime.releaseCoreRuntime(runtime_handle);
 
     const allocator = std.heap.c_allocator;
 
@@ -537,6 +550,7 @@ pub fn startWorkflow(_client: ?*common.ClientHandle, _payload: []const u8) ?*byt
     var context = StartWorkflowRpcContext{
         .allocator = allocator,
         .runtime_handle = runtime_handle,
+        .core_runtime = retained_core_runtime,
     };
     context.wait_group.start();
 

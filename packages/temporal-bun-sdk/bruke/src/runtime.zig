@@ -191,6 +191,7 @@ pub const RuntimeHandle = struct {
     telemetry_otel_use_seconds: bool = false,
     telemetry_otel_temporality: core.OpenTelemetryMetricTemporality = otel_temporality_cumulative,
     telemetry_otel_protocol: core.OpenTelemetryProtocol = otel_protocol_grpc,
+    pending_core_ops: usize = 0,
     pending_lock: std.Thread.Mutex = .{},
     pending_condition: std.Thread.Condition = .{},
     pending_connects: usize = 0,
@@ -825,7 +826,7 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
 
     runtime.pending_lock.lock();
     runtime.destroying = true;
-    while (runtime.pending_connects != 0) {
+    while (runtime.pending_connects != 0 or runtime.pending_core_ops != 0) {
         runtime.pending_condition.wait(&runtime.pending_lock);
     }
     runtime.pending_lock.unlock();
@@ -862,7 +863,7 @@ pub fn updateTelemetry(handle: ?*RuntimeHandle, options_json: []const u8) i32 {
     const runtime = handle.?;
 
     runtime.pending_lock.lock();
-    if (runtime.destroying or runtime.pending_connects != 0) {
+    if (runtime.destroying) {
         runtime.pending_lock.unlock();
         errors.setStructuredError(.{
             .code = grpc.failed_precondition,
@@ -875,8 +876,15 @@ pub fn updateTelemetry(handle: ?*RuntimeHandle, options_json: []const u8) i32 {
     defer {
         runtime.pending_lock.lock();
         runtime.destroying = false;
+        runtime.pending_condition.broadcast();
         runtime.pending_lock.unlock();
     }
+
+    runtime.pending_lock.lock();
+    while (runtime.pending_connects != 0 or runtime.pending_core_ops != 0) {
+        runtime.pending_condition.wait(&runtime.pending_lock);
+    }
+    runtime.pending_lock.unlock();
 
     const existing_filter = if (runtime.logger_filter.len > 0)
         runtime.logger_filter
@@ -1050,8 +1058,43 @@ pub fn endPendingClientConnect(handle: *RuntimeHandle) void {
         handle.pending_connects -= 1;
     }
 
-    if (handle.destroying and handle.pending_connects == 0) {
+    if (handle.destroying and handle.pending_connects == 0 and handle.pending_core_ops == 0) {
         handle.pending_condition.broadcast();
+    }
+}
+
+pub fn retainCoreRuntime(handle: ?*RuntimeHandle) ?*core.RuntimeOpaque {
+    if (handle == null) {
+        return null;
+    }
+
+    const runtime_handle = handle.?;
+    runtime_handle.pending_lock.lock();
+    defer runtime_handle.pending_lock.unlock();
+
+    if (runtime_handle.destroying) {
+        return null;
+    }
+
+    const core_runtime_ptr = runtime_handle.core_runtime orelse return null;
+    runtime_handle.pending_core_ops += 1;
+    return core_runtime_ptr;
+}
+
+pub fn releaseCoreRuntime(handle: ?*RuntimeHandle) void {
+    if (handle == null) {
+        return;
+    }
+
+    const runtime_handle = handle.?;
+    runtime_handle.pending_lock.lock();
+    defer runtime_handle.pending_lock.unlock();
+
+    if (runtime_handle.pending_core_ops > 0) {
+        runtime_handle.pending_core_ops -= 1;
+        if (runtime_handle.destroying and runtime_handle.pending_connects == 0 and runtime_handle.pending_core_ops == 0) {
+            runtime_handle.pending_condition.broadcast();
+        }
     }
 }
 
@@ -1163,19 +1206,7 @@ pub fn telemetryAttachServiceNameForTest(handle: ?*RuntimeHandle) bool {
 
 test "parseTelemetryConfig preserves metrics when payload omits metricsExporter" {
     const initial_payload =
-        "{\n"
-        ++ "  \"logExporter\": { \"filter\": \"temporal_sdk_core=info\" },\n"
-        ++ "  \"telemetry\": { \"metricPrefix\": \"bun_\", \"attachServiceName\": false },\n"
-        ++ "  \"metricsExporter\": {\n"
-        ++ "    \"type\": \"prometheus\",\n"
-        ++ "    \"socketAddr\": \"127.0.0.1:0\",\n"
-        ++ "    \"countersTotalSuffix\": true,\n"
-        ++ "    \"unitSuffix\": true,\n"
-        ++ "    \"useSecondsForDurations\": true,\n"
-        ++ "    \"globalTags\": { \"env\": \"test\", \"platform\": \"bun\" },\n"
-        ++ "    \"histogramBucketOverrides\": { \"temporal.metric\": [1, 2, 3] }\n"
-        ++ "  }\n"
-        ++ "}";
+        "{\n" ++ "  \"logExporter\": { \"filter\": \"temporal_sdk_core=info\" },\n" ++ "  \"telemetry\": { \"metricPrefix\": \"bun_\", \"attachServiceName\": false },\n" ++ "  \"metricsExporter\": {\n" ++ "    \"type\": \"prometheus\",\n" ++ "    \"socketAddr\": \"127.0.0.1:0\",\n" ++ "    \"countersTotalSuffix\": true,\n" ++ "    \"unitSuffix\": true,\n" ++ "    \"useSecondsForDurations\": true,\n" ++ "    \"globalTags\": { \"env\": \"test\", \"platform\": \"bun\" },\n" ++ "    \"histogramBucketOverrides\": { \"temporal.metric\": [1, 2, 3] }\n" ++ "  }\n" ++ "}";
 
     var prepared = try parseTelemetryConfig(initial_payload, ""[0..0], null);
     defer prepared.deinit();
@@ -1215,9 +1246,7 @@ test "parseTelemetryConfig preserves metrics when payload omits metricsExporter"
     }
 
     const update_payload =
-        "{\n"
-        ++ "  \"logExporter\": { \"filter\": \"temporal_sdk_core=debug\" }\n"
-        ++ "}";
+        "{\n" ++ "  \"logExporter\": { \"filter\": \"temporal_sdk_core=debug\" }\n" ++ "}";
 
     var merged = try parseTelemetryConfig(update_payload, handle.logger_filter, &handle);
     defer merged.deinit();

@@ -510,7 +510,17 @@ pub fn signalWithStart(_client: ?*common.ClientHandle, _payload: []const u8) ?*b
         return null;
     };
 
-    var context = StartWorkflowRpcContext{ .allocator = allocator, .runtime_handle = runtime_handle };
+    const retained_core_runtime = runtime.retainCoreRuntime(runtime_handle) orelse {
+        errors.setStructuredErrorJson(.{ .code = grpc.failed_precondition, .message = "temporal-bun-bridge-zig: runtime is shutting down", .details = null });
+        return null;
+    };
+    defer runtime.releaseCoreRuntime(runtime_handle);
+
+    var context = StartWorkflowRpcContext{
+        .allocator = allocator,
+        .runtime_handle = runtime_handle,
+        .core_runtime = retained_core_runtime,
+    };
     context.wait_group.start();
 
     var call_options = std.mem.zeroes(core.RpcCallOptions);

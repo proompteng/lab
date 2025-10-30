@@ -19,6 +19,7 @@ const TerminateWorkflowRpcContext = struct {
     allocator: std.mem.Allocator,
     wait_group: std.Thread.WaitGroup = .{},
     runtime_handle: *runtime.RuntimeHandle,
+    core_runtime: ?*core.RuntimeOpaque = null,
     error_message_owned: bool = false,
     error_message: []const u8 = ""[0..0],
     success: bool = false,
@@ -46,12 +47,14 @@ fn clientTerminateWorkflowCallback(
     const context = @as(*TerminateWorkflowRpcContext, @ptrCast(@alignCast(user_data.?)));
     defer context.wait_group.finish();
 
+    const core_runtime_ptr = context.core_runtime orelse context.runtime_handle.core_runtime;
+
     defer {
-        if (failure_details) |ptr| core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+        if (failure_details) |ptr| core.api.byte_array_free(core_runtime_ptr, ptr);
     }
 
     if (success) |ptr| {
-        core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+        core.api.byte_array_free(core_runtime_ptr, ptr);
     }
 
     if (status_code == 0) {
@@ -60,7 +63,7 @@ fn clientTerminateWorkflowCallback(
         context.error_code = 0;
         context.error_message = ""[0..0];
         if (failure_message) |ptr| {
-            core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+            core.api.byte_array_free(core_runtime_ptr, ptr);
         }
         return;
     }
@@ -85,7 +88,7 @@ fn clientTerminateWorkflowCallback(
             context.error_message = terminate_workflow_failure_default;
             context.error_message_owned = false;
         }
-        core.api.byte_array_free(context.runtime_handle.core_runtime, ptr);
+        core.api.byte_array_free(core_runtime_ptr, ptr);
     } else {
         context.error_message = terminate_workflow_failure_default;
         context.error_message_owned = false;
@@ -356,9 +359,20 @@ pub fn terminateWorkflow(_client: ?*common.ClientHandle, _payload: []const u8) i
     }
     defer runtime.endPendingClientConnect(runtime_handle);
 
+    const retained_core_runtime = runtime.retainCoreRuntime(runtime_handle) orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: runtime is shutting down",
+            .details = null,
+        });
+        return -1;
+    };
+    defer runtime.releaseCoreRuntime(runtime_handle);
+
     var context = TerminateWorkflowRpcContext{
         .allocator = allocator,
         .runtime_handle = runtime_handle,
+        .core_runtime = retained_core_runtime,
     };
     context.wait_group.start();
 

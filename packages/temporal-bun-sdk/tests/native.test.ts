@@ -275,6 +275,43 @@ if (!nativeBridge) {
       }
     })
 
+    zigOnlyTest('configureTelemetry waits for in-flight RPCs before swapping runtime', async () => {
+      const runtime = native.createRuntime({})
+      try {
+        const connectAttempt = native
+          .createClient(runtime, {
+            address: 'http://127.0.0.1:65535',
+            namespace: 'default',
+          })
+          .catch((error) => error)
+
+        native.configureTelemetry(runtime, {
+          logExporter: { filter: 'temporal_sdk_core=info' },
+          telemetry: { metricPrefix: 'bun_', attachServiceName: false },
+          metricsExporter: {
+            type: 'prometheus',
+            socketAddr: '127.0.0.1:0',
+            countersTotalSuffix: true,
+            unitSuffix: true,
+            useSecondsForDurations: true,
+            globalTags: { env: 'test', platform: 'bun' },
+            histogramBucketOverrides: {
+              'temporal_sdk_core.workflow_completion_latency': [1, 5, 10],
+            },
+          },
+        })
+
+        const connectResult = await connectAttempt
+        expect(connectResult).toBeInstanceOf(NativeBridgeError)
+
+        const snapshot = native.__TEST__.getTelemetrySnapshot(runtime)
+        expect(snapshot.mode).toBe('prometheus')
+        expect(snapshot.metricPrefix).toBe('bun_')
+      } finally {
+        native.runtimeShutdown(runtime)
+      }
+    })
+
     zigOnlyTest('configureTelemetry rejects invalid payloads with NativeBridgeError', () => {
       const runtime = native.createRuntime({})
       try {
