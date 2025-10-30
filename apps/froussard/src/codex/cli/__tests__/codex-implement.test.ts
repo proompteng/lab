@@ -64,6 +64,7 @@ describe('runCodexImplementation', () => {
     process.env.WORKTREE = workdir
     process.env.LGTM_LOKI_ENDPOINT = 'http://localhost/loki'
     process.env.RELAY_SCRIPT = ''
+    process.env.CODEX_SKIP_PR_CHECK = '1'
 
     const payload = {
       prompt: 'Implementation prompt',
