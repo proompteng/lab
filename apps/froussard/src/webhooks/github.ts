@@ -45,6 +45,45 @@ const buildHeaders = (
   return headers
 }
 
+const extractEventIdentifiers = (payload: unknown) => {
+  if (!payload || typeof payload !== 'object') {
+    return {}
+  }
+
+  const repositoryFullName =
+    typeof (payload as { repository?: { full_name?: unknown } }).repository?.full_name === 'string'
+      ? (payload as { repository: { full_name: string } }).repository.full_name
+      : undefined
+
+  const issueNumber =
+    typeof (payload as { issue?: { number?: unknown } }).issue?.number === 'number'
+      ? (payload as { issue: { number: number } }).issue.number
+      : undefined
+
+  const pullNumber =
+    typeof (payload as { pull_request?: { number?: unknown } }).pull_request?.number === 'number'
+      ? (payload as { pull_request: { number: number } }).pull_request.number
+      : undefined
+
+  const commentId =
+    typeof (payload as { comment?: { id?: unknown } }).comment?.id === 'number'
+      ? (payload as { comment: { id: number } }).comment.id
+      : undefined
+
+  const discussionId =
+    typeof (payload as { discussion?: { node_id?: unknown } }).discussion?.node_id === 'string'
+      ? (payload as { discussion: { node_id: string } }).discussion.node_id
+      : undefined
+
+  return {
+    repositoryFullName,
+    issueNumber,
+    pullNumber,
+    commentId,
+    discussionId,
+  }
+}
+
 export const createGithubWebhookHandler = ({ runtime, webhooks, config }: GithubWebhookDependencies) => {
   const githubService = runtime.runSync(
     Effect.gen(function* (_) {
@@ -116,6 +155,24 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
       typeof (parsedPayload as { sender?: { login?: unknown } }).sender?.login === 'string'
         ? (parsedPayload as { sender: { login: string } }).sender.login
         : undefined
+
+    const identifiers = extractEventIdentifiers(parsedPayload)
+
+    logger.info(
+      {
+        deliveryId,
+        eventName,
+        action: actionValue ?? null,
+        sender: senderLogin ?? null,
+        repository: identifiers.repositoryFullName ?? null,
+        issueNumber: identifiers.issueNumber ?? null,
+        pullNumber: identifiers.pullNumber ?? null,
+        commentId: identifiers.commentId ?? null,
+        discussionId: identifiers.discussionId ?? null,
+        workflowIdentifier,
+      },
+      'github webhook dispatch',
+    )
 
     try {
       if (eventName === 'issues' && actionValue === 'opened') {
@@ -215,7 +272,10 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
         },
       )
     } catch (error) {
-      logger.error({ err: error, deliveryId, eventName }, 'failed to enqueue github webhook event')
+      logger.error(
+        { err: error, deliveryId, eventName, action: actionValue ?? null, identifiers },
+        'failed to enqueue github webhook event',
+      )
       return new Response('Failed to enqueue webhook event', { status: 500 })
     }
   }
