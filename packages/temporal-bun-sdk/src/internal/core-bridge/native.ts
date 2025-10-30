@@ -259,6 +259,22 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr, FFIType.ptr],
       returns: FFIType.int32_t,
     },
+    temporal_bun_runtime_test_get_mode: {
+      args: [FFIType.ptr],
+      returns: FFIType.uint32_t,
+    },
+    temporal_bun_runtime_test_get_metric_prefix: {
+      args: [FFIType.ptr],
+      returns: FFIType.ptr,
+    },
+    temporal_bun_runtime_test_get_socket_addr: {
+      args: [FFIType.ptr],
+      returns: FFIType.ptr,
+    },
+    temporal_bun_runtime_test_get_attach_service_name: {
+      args: [FFIType.ptr],
+      returns: FFIType.int32_t,
+    },
     temporal_bun_runtime_test_emit_log: {
       args: [
         FFIType.uint32_t,
@@ -437,6 +453,10 @@ const {
     temporal_bun_runtime_set_logger,
     temporal_bun_runtime_update_telemetry,
     temporal_bun_runtime_test_emit_log,
+    temporal_bun_runtime_test_get_mode,
+    temporal_bun_runtime_test_get_metric_prefix,
+    temporal_bun_runtime_test_get_socket_addr,
+    temporal_bun_runtime_test_get_attach_service_name,
     temporal_bun_error_message,
     temporal_bun_error_free,
     temporal_bun_client_connect_async,
@@ -640,6 +660,31 @@ export const native = {
         pointerFromBuffer(fieldsBuffer),
         fieldsBuffer?.length ?? 0,
       )
+    },
+    getTelemetrySnapshot(runtime: Runtime): {
+      mode: 'none' | 'prometheus' | 'otlp'
+      metricPrefix: string
+      socketAddr: string
+      attachServiceName: boolean
+    } {
+      const modeValue = Number(temporal_bun_runtime_test_get_mode(runtime.handle))
+      const metricPrefixPtr = Number(temporal_bun_runtime_test_get_metric_prefix(runtime.handle))
+      const socketAddrPtr = Number(temporal_bun_runtime_test_get_socket_addr(runtime.handle))
+      const attachServiceName = temporal_bun_runtime_test_get_attach_service_name(runtime.handle) !== 0
+
+      const decodeFromByteArrayPointer = (pointer: number): string => {
+        if (!pointer) return ''
+        return utf8Decoder.decode(readByteArray(pointer))
+      }
+
+      const mode: 'none' | 'prometheus' | 'otlp' = modeValue === 1 ? 'prometheus' : modeValue === 2 ? 'otlp' : 'none'
+
+      return {
+        mode,
+        metricPrefix: decodeFromByteArrayPointer(metricPrefixPtr),
+        socketAddr: decodeFromByteArrayPointer(socketAddrPtr),
+        attachServiceName,
+      }
     },
   },
 

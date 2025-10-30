@@ -236,6 +236,45 @@ if (!nativeBridge) {
       }
     })
 
+    zigOnlyTest('configureTelemetry preserves metrics exporter on log-only updates', () => {
+      const runtime = native.createRuntime({})
+      try {
+        native.configureTelemetry(runtime, {
+          logExporter: { filter: 'temporal_sdk_core=debug' },
+          telemetry: { metricPrefix: 'bun_', attachServiceName: false },
+          metricsExporter: {
+            type: 'prometheus',
+            socketAddr: '127.0.0.1:0',
+            countersTotalSuffix: true,
+            unitSuffix: true,
+            useSecondsForDurations: true,
+            globalTags: { env: 'test', platform: 'bun' },
+            histogramBucketOverrides: {
+              'temporal_sdk_core.workflow_completion_latency': [1, 5, 10],
+            },
+          },
+        })
+
+        const before = native.__TEST__.getTelemetrySnapshot(runtime)
+        expect(before.mode).toBe('prometheus')
+        expect(before.metricPrefix).toBe('bun_')
+        expect(before.socketAddr).toBe('127.0.0.1:0')
+        expect(before.attachServiceName).toBe(false)
+
+        native.configureTelemetry(runtime, {
+          logExporter: { filter: 'temporal_sdk_core=warn' },
+        })
+
+        const after = native.__TEST__.getTelemetrySnapshot(runtime)
+        expect(after.mode).toBe('prometheus')
+        expect(after.metricPrefix).toBe('bun_')
+        expect(after.socketAddr).toBe('127.0.0.1:0')
+        expect(after.attachServiceName).toBe(false)
+      } finally {
+        native.runtimeShutdown(runtime)
+      }
+    })
+
     zigOnlyTest('configureTelemetry rejects invalid payloads with NativeBridgeError', () => {
       const runtime = native.createRuntime({})
       try {

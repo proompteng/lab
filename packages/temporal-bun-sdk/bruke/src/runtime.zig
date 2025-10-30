@@ -2,6 +2,7 @@ const std = @import("std");
 const errors = @import("errors.zig");
 const core = @import("core.zig");
 const pending = @import("pending.zig");
+const byte_array = @import("byte_array.zig");
 
 const grpc = pending.GrpcStatus;
 
@@ -1131,6 +1132,33 @@ pub export fn temporal_bun_runtime_test_emit_log(
         fields_ptr,
         fields_len,
     );
+}
+
+fn duplicateForTest(slice: []const u8) ?*byte_array.ByteArray {
+    if (slice.len == 0) {
+        return byte_array.allocateFromSlice(""[0..0]);
+    }
+    return byte_array.allocateFromSlice(slice);
+}
+
+pub fn telemetryModeForTest(handle: ?*RuntimeHandle) u32 {
+    const runtime = handle orelse return @intFromEnum(TelemetryMode.none);
+    return @intFromEnum(runtime.telemetry_mode);
+}
+
+pub fn telemetryMetricPrefixForTest(handle: ?*RuntimeHandle) ?*byte_array.ByteArray {
+    const runtime = handle orelse return null;
+    return duplicateForTest(runtime.telemetry_metric_prefix);
+}
+
+pub fn telemetrySocketAddrForTest(handle: ?*RuntimeHandle) ?*byte_array.ByteArray {
+    const runtime = handle orelse return null;
+    return duplicateForTest(runtime.telemetry_socket_addr);
+}
+
+pub fn telemetryAttachServiceNameForTest(handle: ?*RuntimeHandle) bool {
+    const runtime = handle orelse return true;
+    return runtime.telemetry_attach_service_name;
 }
 
 test "parseTelemetryConfig preserves metrics when payload omits metricsExporter" {
