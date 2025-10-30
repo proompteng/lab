@@ -10,12 +10,13 @@ import (
 
 // Config captures runtime configuration for the facteur service.
 type Config struct {
-	Discord DiscordConfig       `mapstructure:"discord"`
-	Redis   RedisConfig         `mapstructure:"redis"`
-	Argo    ArgoConfig          `mapstructure:"argo"`
-	RoleMap map[string][]string `mapstructure:"role_map"`
-	Server  ServerConfig        `mapstructure:"server"`
-	Codex   CodexListenerConfig `mapstructure:"codex_listener"`
+	Discord  DiscordConfig       `mapstructure:"discord"`
+	Redis    RedisConfig         `mapstructure:"redis"`
+	Argo     ArgoConfig          `mapstructure:"argo"`
+	RoleMap  map[string][]string `mapstructure:"role_map"`
+	Server   ServerConfig        `mapstructure:"server"`
+	Codex    CodexListenerConfig `mapstructure:"codex_listener"`
+	Postgres DatabaseConfig      `mapstructure:"postgres"`
 }
 
 // DiscordConfig aggregates Discord bot credentials and routing data.
@@ -68,6 +69,11 @@ type KafkaSASLConfig struct {
 	Password  string `mapstructure:"password"`
 }
 
+// DatabaseConfig identifies the Postgres DSN used for application storage.
+type DatabaseConfig struct {
+	DSN string `mapstructure:"dsn"`
+}
+
 // Options customises how configuration should be loaded.
 type Options struct {
 	Path      string
@@ -95,6 +101,7 @@ func LoadWithOptions(opts Options) (*Config, error) {
 		"discord.public_key",
 		"discord.guild_id",
 		"redis.url",
+		"postgres.dsn",
 		"argo.namespace",
 		"argo.workflow_template",
 		"argo.service_account",
@@ -165,6 +172,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.Redis.URL == "" {
 		errs = append(errs, "redis.url is required")
+	}
+	if cfg.Postgres.DSN == "" {
+		errs = append(errs, "postgres.dsn is required")
 	}
 	if cfg.Argo.Namespace == "" {
 		errs = append(errs, "argo.namespace is required")

@@ -8,6 +8,8 @@ discord:
   guild_id: "987654321098765432"
 redis:
   url: redis://facteur-redis:6379/0
+postgres:
+  dsn: postgres://facteur:facteur@facteur-db:5432/facteur_kb?sslmode=disable
 consumer:
   enabled: true
   brokers:

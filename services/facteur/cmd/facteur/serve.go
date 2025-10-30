@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -37,6 +38,12 @@ func NewServeCommand() *cobra.Command {
 				return fmt.Errorf("load configuration: %w", err)
 			}
 
+			dsn := strings.TrimSpace(cfg.Postgres.DSN)
+			if dsn == "" {
+				return missingDSNError()
+			}
+			cfg.Postgres.DSN = dsn
+
 			teleShutdown, err := telemetry.Setup(cmd.Context(), "facteur", "")
 			if err != nil {
 				return fmt.Errorf("init telemetry: %w", err)
@@ -52,6 +59,12 @@ func NewServeCommand() *cobra.Command {
 					cmd.PrintErrf("telemetry shutdown: %v\n", shutdownErr)
 				}
 			}()
+
+			results, err := applyMigrations(cmd.Context(), cmd, cfg.Postgres.DSN)
+			if err != nil {
+				return err
+			}
+			logMigrationResults(cmd, results)
 
 			store, err := session.NewRedisStoreFromURL(cfg.Redis.URL)
 			if err != nil {
