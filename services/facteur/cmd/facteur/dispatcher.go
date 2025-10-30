@@ -15,29 +15,34 @@ import (
 	"github.com/proompteng/lab/services/facteur/internal/config"
 )
 
-func buildDispatcher(cfg *config.Config) (bridge.Dispatcher, error) {
+func buildDispatcher(cfg *config.Config) (bridge.Dispatcher, argo.Runner, error) {
 	if isDispatcherDisabled() {
-		return bridge.NoopDispatcher{}, nil
+		return bridge.NoopDispatcher{}, nil, nil
 	}
 
 	restCfg, err := resolveRESTConfig()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	argoClient, err := argo.NewKubernetesClientForConfig(restCfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	runner := argo.NewWorkflowRunner(argoClient)
 
-	return bridge.NewDispatcher(runner, bridge.ServiceConfig{
+	dispatcher, err := bridge.NewDispatcher(runner, bridge.ServiceConfig{
 		Namespace:        cfg.Argo.Namespace,
 		WorkflowTemplate: cfg.Argo.WorkflowTemplate,
 		ServiceAccount:   cfg.Argo.ServiceAccount,
 		Parameters:       cfg.Argo.Parameters,
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return dispatcher, runner, nil
 }
 
 func isDispatcherDisabled() bool {

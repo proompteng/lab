@@ -13,13 +13,18 @@ import (
 
 	"github.com/gofiber/contrib/otelfiber"
 	"github.com/gofiber/fiber/v2"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/proompteng/lab/services/facteur/internal/bridge"
 	"github.com/proompteng/lab/services/facteur/internal/consumer"
 	"github.com/proompteng/lab/services/facteur/internal/facteurpb"
 	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/orchestrator"
 	"github.com/proompteng/lab/services/facteur/internal/session"
+	"github.com/proompteng/lab/services/facteur/internal/telemetry"
 )
 
 var (
@@ -47,13 +52,14 @@ type Options struct {
 	Prefork       bool
 	Dispatcher    bridge.Dispatcher
 	Store         session.Store
-	CodexStore    CodexStore
 	SessionTTL    time.Duration
+	CodexPlanner  CodexPlannerOptions
 }
 
-// CodexStore defines the storage surface required for Codex task ingestion.
-type CodexStore interface {
-	IngestCodexTask(context.Context, *githubpb.CodexTask) (ideaID, taskID, runID string, err error)
+// CodexPlannerOptions wires the planning orchestrator into the HTTP layer.
+type CodexPlannerOptions struct {
+	Enabled bool
+	Planner orchestrator.Planner
 }
 
 // Server wraps a Fiber application with lifecycle helpers.
@@ -220,10 +226,6 @@ func registerRoutes(app *fiber.App, opts Options) {
 	})
 
 	app.Post("/codex/tasks", func(c *fiber.Ctx) error {
-		if opts.CodexStore == nil {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "codex store unavailable"})
-		}
-
 		body := c.Body()
 		if len(body) == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "empty payload"})
@@ -248,33 +250,46 @@ func registerRoutes(app *fiber.App, opts Options) {
 			ctx = context.Background()
 		}
 
-		ideaID, taskID, runID, err := opts.CodexStore.IngestCodexTask(ctx, &task)
-		if err != nil {
-			log.Printf(
-				"codex task ingest failed: delivery=%s stage=%s repo=%s issue=%d err=%v",
-				task.GetDeliveryId(),
-				task.GetStage().String(),
-				task.GetRepository(),
-				task.GetIssueNumber(),
-				err,
-			)
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "ingest failed"})
-		}
+		ctx, span := telemetry.Tracer().Start(ctx, "facteur.server.codex_tasks", trace.WithSpanKind(trace.SpanKindServer))
+		defer span.End()
 
-		log.Printf(
-			"codex task ingested: idea_id=%s task_id=%s run_id=%s stage=%s delivery=%s",
-			emptyIfNone(ideaID),
-			emptyIfNone(taskID),
-			emptyIfNone(runID),
-			task.GetStage().String(),
-			task.GetDeliveryId(),
+		span.SetAttributes(
+			attribute.String("codex.stage", strings.ToLower(strings.TrimPrefix(task.GetStage().String(), "CODEX_TASK_STAGE_"))),
+			attribute.String("codex.repository", task.GetRepository()),
+			attribute.Int64("codex.issue_number", task.GetIssueNumber()),
+			attribute.String("codex.delivery_id", task.GetDeliveryId()),
 		)
 
-		return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
-			"ideaId":    ideaID,
-			"taskId":    taskID,
-			"taskRunId": runID,
-		})
+		if opts.CodexPlanner.Enabled && opts.CodexPlanner.Planner != nil && task.GetStage() == githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
+			result, err := opts.CodexPlanner.Planner.Plan(ctx, &task)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "planning orchestrator failed")
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error":   "planning orchestrator failed",
+					"details": err.Error(),
+				})
+			}
+
+			span.SetAttributes(
+				attribute.String("facteur.codex.namespace", result.Namespace),
+				attribute.String("facteur.codex.workflow", result.WorkflowName),
+				attribute.Bool("facteur.codex.duplicate", result.Duplicate),
+			)
+			span.SetStatus(codes.Ok, "planning orchestrator dispatched")
+
+			return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+				"stage":        "planning",
+				"namespace":    result.Namespace,
+				"workflowName": result.WorkflowName,
+				"submittedAt":  result.SubmittedAt.UTC().Format(time.RFC3339),
+				"duplicate":    result.Duplicate,
+			})
+		}
+
+		span.SetStatus(codes.Ok, "planner bypassed")
+
+		return c.SendStatus(fiber.StatusAccepted)
 	})
 }
 

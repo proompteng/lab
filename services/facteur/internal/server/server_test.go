@@ -3,6 +3,7 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"github.com/proompteng/lab/services/facteur/internal/bridge"
 	"github.com/proompteng/lab/services/facteur/internal/facteurpb"
 	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/orchestrator"
 	"github.com/proompteng/lab/services/facteur/internal/server"
 	"github.com/proompteng/lab/services/facteur/internal/session"
 )
@@ -98,18 +100,8 @@ func TestEventsEndpointRejectsEmptyPayload(t *testing.T) {
 	require.Equal(t, 400, resp.StatusCode)
 }
 
-func TestCodexTasksEndpointPersists(t *testing.T) {
-	codex := &stubCodexStore{
-		ideaID: "idea-1",
-		taskID: "task-1",
-		runID:  "run-1",
-	}
-
-	srv, err := server.New(server.Options{
-		Dispatcher: &stubDispatcher{},
-		Store:      &stubStore{},
-		CodexStore: codex,
-	})
+func TestCodexTasksEndpointLogs(t *testing.T) {
+	srv, err := server.New(server.Options{Dispatcher: &stubDispatcher{}, Store: &stubStore{}})
 	require.NoError(t, err)
 
 	buf := &bytes.Buffer{}
@@ -128,41 +120,72 @@ func TestCodexTasksEndpointPersists(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/x-protobuf")
+	req.Header.Set("ce-id", "delivery-1")
 
 	resp, err := srv.App().Test(req)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = resp.Body.Close()
-	})
-
 	require.Equal(t, 202, resp.StatusCode)
 
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.Contains(t, string(body), `"ideaId":"idea-1"`)
-	require.Contains(t, string(body), `"taskRunId":"run-1"`)
-
-	require.Equal(t, 1, codex.calls)
-	require.Equal(t, "delivery-1", codex.lastTask.GetDeliveryId())
-
 	logs := buf.String()
-	require.Contains(t, logs, "codex task ingested: idea_id=idea-1 task_id=task-1 run_id=run-1")
+	require.Contains(t, logs, "codex task received: stage=CODEX_TASK_STAGE_IMPLEMENTATION repo=proompteng/lab issue=42")
 }
 
-func TestCodexTasksEndpointHandlesError(t *testing.T) {
-	codex := &stubCodexStore{err: errors.New("boom")}
+func TestCodexTasksPlanningDispatches(t *testing.T) {
+	planner := &stubPlanner{result: orchestrator.Result{
+		Namespace:    "argo-workflows",
+		WorkflowName: "github-codex-planning-abc123",
+		SubmittedAt:  time.Unix(1735600300, 0).UTC(),
+	}}
 
 	srv, err := server.New(server.Options{
-		Dispatcher: &stubDispatcher{},
-		Store:      &stubStore{},
-		CodexStore: codex,
+		Dispatcher:   &stubDispatcher{},
+		Store:        &stubStore{},
+		CodexPlanner: server.CodexPlannerOptions{Enabled: true, Planner: planner},
 	})
 	require.NoError(t, err)
 
 	payload, err := proto.Marshal(&githubpb.CodexTask{
 		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Repository:  "proompteng/lab",
-		IssueNumber: 7,
+		IssueNumber: 1636,
+		DeliveryId:  "delivery-planning",
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/x-protobuf")
+
+	resp, err := srv.App().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 202, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+
+	var data map[string]any
+	require.NoError(t, json.Unmarshal(body, &data))
+	require.Equal(t, "planning", data["stage"])
+	require.Equal(t, "argo-workflows", data["namespace"])
+	require.Equal(t, "github-codex-planning-abc123", data["workflowName"])
+	require.Equal(t, planner.result.SubmittedAt.Format(time.RFC3339), data["submittedAt"])
+	require.False(t, data["duplicate"].(bool))
+	require.Equal(t, 1, planner.calls)
+}
+
+func TestCodexTasksPlanningPlannerError(t *testing.T) {
+	planner := &stubPlanner{err: errors.New("planner boom")}
+	srv, err := server.New(server.Options{
+		Dispatcher:   &stubDispatcher{},
+		Store:        &stubStore{},
+		CodexPlanner: server.CodexPlannerOptions{Enabled: true, Planner: planner},
+	})
+	require.NoError(t, err)
+
+	payload, err := proto.Marshal(&githubpb.CodexTask{
+		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+		Repository:  "proompteng/lab",
+		IssueNumber: 1636,
 		DeliveryId:  "delivery-error",
 	})
 	require.NoError(t, err)
@@ -172,23 +195,33 @@ func TestCodexTasksEndpointHandlesError(t *testing.T) {
 
 	resp, err := srv.App().Test(req)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = resp.Body.Close()
-	})
-
 	require.Equal(t, 500, resp.StatusCode)
-	require.Equal(t, 1, codex.calls)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+
+	var data map[string]any
+	require.NoError(t, json.Unmarshal(body, &data))
+	require.Equal(t, "planning orchestrator failed", data["error"])
+	require.Contains(t, data["details"].(string), "planner boom")
+	require.Equal(t, 1, planner.calls)
 }
 
-func TestCodexTasksEndpointUnavailable(t *testing.T) {
-	srv, err := server.New(server.Options{})
+func TestCodexTasksPlannerBypass(t *testing.T) {
+	planner := &stubPlanner{}
+	srv, err := server.New(server.Options{
+		Dispatcher:   &stubDispatcher{},
+		Store:        &stubStore{},
+		CodexPlanner: server.CodexPlannerOptions{Enabled: false, Planner: planner},
+	})
 	require.NoError(t, err)
 
 	payload, err := proto.Marshal(&githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_REVIEW,
+		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
 		Repository:  "proompteng/lab",
-		IssueNumber: 99,
-		DeliveryId:  "delivery-none",
+		IssueNumber: 1636,
+		DeliveryId:  "delivery-bypass",
 	})
 	require.NoError(t, err)
 
@@ -197,11 +230,8 @@ func TestCodexTasksEndpointUnavailable(t *testing.T) {
 
 	resp, err := srv.App().Test(req)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = resp.Body.Close()
-	})
-
-	require.Equal(t, 503, resp.StatusCode)
+	require.Equal(t, 202, resp.StatusCode)
+	require.Equal(t, 0, planner.calls)
 }
 
 type stubDispatcher struct {
@@ -232,20 +262,16 @@ func (s *stubStore) Get(context.Context, string) ([]byte, error) { return nil, s
 
 func (s *stubStore) Delete(context.Context, string) error { return nil }
 
-type stubCodexStore struct {
-	ideaID   string
-	taskID   string
-	runID    string
-	err      error
-	calls    int
-	lastTask *githubpb.CodexTask
+type stubPlanner struct {
+	result orchestrator.Result
+	err    error
+	calls  int
 }
 
-func (s *stubCodexStore) IngestCodexTask(_ context.Context, task *githubpb.CodexTask) (string, string, string, error) {
+func (s *stubPlanner) Plan(_ context.Context, _ *githubpb.CodexTask) (orchestrator.Result, error) {
 	s.calls++
-	s.lastTask = task
 	if s.err != nil {
-		return "", "", "", s.err
+		return orchestrator.Result{}, s.err
 	}
-	return s.ideaID, s.taskID, s.runID, nil
+	return s.result, nil
 }

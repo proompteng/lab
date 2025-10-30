@@ -16,6 +16,7 @@ import (
 
 	"github.com/proompteng/lab/services/facteur/internal/config"
 	"github.com/proompteng/lab/services/facteur/internal/knowledge"
+	"github.com/proompteng/lab/services/facteur/internal/orchestrator"
 	"github.com/proompteng/lab/services/facteur/internal/server"
 	"github.com/proompteng/lab/services/facteur/internal/session"
 	"github.com/proompteng/lab/services/facteur/internal/telemetry"
@@ -87,11 +88,53 @@ func NewServeCommand() *cobra.Command {
 				}
 			}()
 
-			kbStore := knowledge.NewStore(db)
-
-			dispatcher, err := buildDispatcher(cfg)
+			dispatcher, runner, err := buildDispatcher(cfg)
 			if err != nil {
 				return err
+			}
+
+			plannerOpts := server.CodexPlannerOptions{}
+			if cfg.Planner.Enabled {
+				knowledgeStore := knowledge.NewStore(db)
+				plannerCfg := orchestrator.Config{
+					Namespace:        cfg.Planner.Namespace,
+					WorkflowTemplate: cfg.Planner.WorkflowTemplate,
+					ServiceAccount:   cfg.Planner.ServiceAccount,
+					Parameters:       map[string]string{},
+				}
+
+				for k, v := range cfg.Argo.Parameters {
+					plannerCfg.Parameters[k] = v
+				}
+				for k, v := range cfg.Planner.Parameters {
+					plannerCfg.Parameters[k] = v
+				}
+
+				if plannerCfg.Namespace == "" {
+					plannerCfg.Namespace = cfg.Argo.Namespace
+				}
+				if plannerCfg.WorkflowTemplate == "" {
+					plannerCfg.WorkflowTemplate = cfg.Argo.WorkflowTemplate
+				}
+				if plannerCfg.ServiceAccount == "" {
+					plannerCfg.ServiceAccount = cfg.Argo.ServiceAccount
+				}
+				plannerCfg.GenerateNamePrefix = "github-codex-planning-"
+
+				planner, err := orchestrator.NewPlanner(knowledgeStore, runner, plannerCfg)
+				if err != nil {
+					return fmt.Errorf("init codex planner: %w", err)
+				}
+
+				plannerOpts = server.CodexPlannerOptions{
+					Enabled: true,
+					Planner: planner,
+				}
+				cmd.Printf(
+					"codex planner orchestration enabled (namespace=%s template=%s)\n",
+					plannerCfg.Namespace,
+					plannerCfg.WorkflowTemplate,
+				)
 			}
 
 			srv, err := server.New(server.Options{
@@ -99,7 +142,7 @@ func NewServeCommand() *cobra.Command {
 				Prefork:       prefork,
 				Dispatcher:    dispatcher,
 				Store:         sessionStore,
-				CodexStore:    kbStore,
+				CodexPlanner:  plannerOpts,
 			})
 			if err != nil {
 				return fmt.Errorf("init server: %w", err)

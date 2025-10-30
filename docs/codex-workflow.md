@@ -5,14 +5,10 @@ This guide explains how the three-stage Codex automation pipeline works and how 
 ## Architecture
 
 1. **Froussard** consumes GitHub webhooks and normalises them into Kafka topics (`github.codex.tasks`, `github.issues.codex.tasks`). When the planning workflow leaves a `<!-- codex:plan -->` marker the service promotes the issue to implementation, mirroring GitHub’s recommended pattern for approval comments (see the [GitHub webhooks guide](https://docs.github.com/en/webhooks-and-events/webhooks/about-webhooks)).
-2. **Argo Events** (`github-codex` EventSource/Sensor) consumes those Kafka messages and fans out to dedicated workflow templates for each stage as documented in the [Argo Events manual](https://argo-events.readthedocs.io/en/stable/).
-   - `github-codex-planning` for planning requests.
-   - `github-codex-implementation` for approved plans.
-   - `github-codex-review` for review/maintenance loops until the PR becomes mergeable.
-   Argo Events remains pointed at the JSON stream (`github.codex.tasks`) because the Kafka EventSource only offers raw/JSON
-   decoding today; the structured mirror exists for services that want to deserialize the protobuf payload directly.
-3. Each **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`), orchestrated by [Argo Workflows](https://argo-workflows.readthedocs.io/en/stable/).
-   - `stage=planning`: `codex-plan.ts` (via the `github-codex-planning` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`.
+2. **Facteur** consumes the structured stream via `POST /codex/tasks`. When `FACTEUR_CODEX_ENABLE_PLANNING_ORCHESTRATION=true` it persists the planning task into `codex_kb`, submits the `github-codex-planning` workflow through Argo, and returns workflow metadata while emitting OTEL spans tagged `codex.stage=planning`. With the flag disabled, Facteur logs the delivery and defers to the legacy Argo Events trigger.
+3. **Argo Events** (`github-codex` EventSource/Sensor) now owns the implementation and review fan-out by default. The optional component at `argocd/applications/froussard/components/codex-planning-argo-fallback/` re-adds the planning dependency/trigger if you need to roll back to the sensor-driven path.
+4. Each **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`), orchestrated by [Argo Workflows](https://argo-workflows.readthedocs.io/en/stable/).
+   - `stage=planning`: `codex-plan.ts` (via the `github-codex-planning` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`. Facteur dispatches this template when the planning flag is enabled; the fallback component reuses the same template from Argo Events.
    - `stage=implementation`: `codex-implement.ts` executes the approved plan, pushes the feature branch, opens a **draft** PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.ts`, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
    - `stage=review`: `codex-review.ts` consumes the review payload, synthesises the reviewer feedback plus failing checks into a new prompt, reuses the existing Codex branch, and streams the run into `.codex-review.log` for artifacts and Discord updates.
    - Each template carries a `codex.stage` label so downstream sensors can reference the stage without parsing the workflow name.
@@ -34,18 +30,18 @@ flowchart LR
     Sensor[github-codex Sensor]
   end
   Tasks --> Sensor
-  Sensor --> Planning[Workflow github-codex-planning]
   Sensor --> Implementation[Workflow github-codex-implementation]
   Sensor --> Review[Workflow github-codex-review]
-  Structured -. optional typed consumer .-> Facteur
+  Structured --> Facteur
+  Facteur --> Planning[Workflow github-codex-planning]
+  Sensor -. fallback component .-> Planning
 ```
 
 Run `facteur codex-listen --config <path>` to stream the structured payloads while you build consumers; the command uses the
 `github.issues.codex.tasks` topic and simply echoes the decoded `github.v1.CodexTask` message.
 
 Prod deployments mirror that behaviour via Knative Eventing — `kubernetes/facteur/base/codex-kafkasource.yaml` configures the KafkaSource → KService flow described in the [Knative KafkaSource documentation](https://knative.dev/docs/eventing/sources/kafka-source/).
-`github.issues.codex.tasks` into the Factor service (`POST /codex/tasks`), where the handler logs the stage, repository,
-issue number, and delivery identifier for observability.
+`github.issues.codex.tasks` feed the Facteur service (`POST /codex/tasks`), which now emits OTEL spans, persists intake data, and returns workflow metadata whenever planning orchestration is enabled. With the flag turned off the endpoint still logs the delivery and lets the fallback Argo Events trigger own dispatch.
 ## Prerequisites
 
 - Use the **Codex Task** GitHub issue template (`.github/ISSUE_TEMPLATE/codex-task.md`) when opening automation requests. The form keeps summary, scope guardrails, validation commands, and the Codex prompt structured so Froussard can forward them directly to the Argo workflows.
@@ -79,6 +75,39 @@ Codex now mirrors planning and implementation output into a per-run Discord chan
    - Expect stderr to show the fabricated channel name, metadata banner, and echoed log lines.
 4. **End-to-end smoke check**
    - Trigger the planning workflow and confirm a new Discord channel appears under the configured category with the Codex transcript streaming live. Implementation runs reuse the same secret and stage metadata but post into their own channels.
+
+### Facteur Planner Replay (curl)
+
+Use this flow to validate the planner path locally without relying on Argo Events:
+
+1. Start Facteur with the planner flag enabled:
+   ```bash
+   FACTEUR_CODEX_ENABLE_PLANNING_ORCHESTRATION=true \
+   FACTEUR_CONFIG_FILE=services/facteur/config/example.yaml \
+   go run ./services/facteur/cmd/facteur serve
+   ```
+   Set `FACTEUR_POSTGRES_DSN` and `FACTEUR_REDIS_URL` through the config or environment before running the server.
+2. Craft a planning payload in protobuf text format and convert it to the binary wire format:
+   ```bash
+   cat <<'EOF' > payload.txt
+   stage: CODEX_TASK_STAGE_PLANNING
+   prompt: "Capture planner replay instructions"
+   repository: "proompteng/lab"
+   base: "main"
+   head: "codex/replay"
+   issue_number: 1636
+   issue_url: "https://github.com/proompteng/lab/issues/1636"
+   issue_title: "Replay planning workflow"
+   issue_body: "Testing the Facteur planner orchestration path."
+   delivery_id: "manual-planning-test"
+   EOF
+
+   protoc --encode=github.v1.CodexTask proto/github/v1/codex_task.proto < payload.txt \
+     | curl -sS http://localhost:8080/codex/tasks --data-binary @- \
+       -H 'Content-Type: application/x-protobuf' | jq
+   ```
+   Expect a `202 Accepted` response containing the workflow namespace/name, the RFC 3339 submission timestamp, and a `duplicate` flag.
+3. Replaying the same `delivery_id` returns the prior metadata with `duplicate: true` and does not submit another Argo workflow. Observe the `facteur.server.codex_tasks` and nested `facteur.orchestrator.plan` spans in your tracing backend—they carry `codex.stage=planning`, `facteur.codex.workflow`, and `facteur.codex.duplicate` attributes for run-level observability.
 
 ### Implementation Progress Comment Lifecycle
 

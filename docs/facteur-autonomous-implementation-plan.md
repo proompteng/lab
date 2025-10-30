@@ -26,3 +26,9 @@ This plan operationalises the autonomous knowledge base, schema, and vector stra
 ## Notes
 - Stages build on the schema defined in `services/facteur/migrations/000001_init_codex_kb.sql` and the knowledge base design in `docs/facteur-autonomous-knowledge-base.md`.
 - Keep commits scoped to one or two TODO markers to simplify reviews and minimise merge conflicts.
+
+## Rollout Checklist
+- Ship Issue #1635 (knowledge store persistence) before toggling `FACTEUR_CODEX_ENABLE_PLANNING_ORCHESTRATION` in production; the planner path currently fails fast while the store methods are stubbed.
+- Enable the planner flag in staging, replay a planning payload via the `protoc`/`curl` recipe in `docs/codex-workflow.md`, and confirm the OTEL spans (`facteur.server.codex_tasks`, `facteur.orchestrator.plan`) record the run metadata.
+- Keep the Argo fallback ready by referencing `components/codex-planning-argo-fallback/` only when you intentionally hand planning back to the sensor.
+- Run `scripts/argo-lint.sh argocd` and `go test ./services/facteur/...` before promoting changes so Argo CD and CI remain green after the switch.
