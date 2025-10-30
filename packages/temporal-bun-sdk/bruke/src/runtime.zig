@@ -893,8 +893,8 @@ pub fn updateTelemetry(handle: ?*RuntimeHandle, options_json: []const u8) i32 {
         runtime.pending_lock.lock();
         if (runtime.destroying_epoch == telemetry_epoch) {
             runtime.destroying = false;
-            runtime.pending_condition.broadcast();
         }
+        runtime.pending_condition.broadcast();
         runtime.pending_lock.unlock();
     }
 
