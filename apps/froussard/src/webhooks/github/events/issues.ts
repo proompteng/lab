@@ -15,7 +15,7 @@ import type { WebhookConfig } from '../types'
 import type { WorkflowExecutionContext, WorkflowStage } from '../workflow'
 import { executeWorkflowCommands } from '../workflow'
 
-interface BaseIssueParams {
+export interface BaseIssueParams {
   parsedPayload: unknown
   headers: Record<string, string>
   config: WebhookConfig
@@ -37,6 +37,13 @@ const IssueSchema = Schema.Struct({
   body: Schema.optionalWith(Schema.String, { nullable: true }),
   html_url: Schema.optionalWith(Schema.String, { nullable: true }),
   repository_url: Schema.optionalWith(Schema.String, { nullable: true }),
+  pull_request: Schema.optionalWith(
+    Schema.Struct({
+      url: Schema.optionalWith(Schema.String, { nullable: true }),
+      html_url: Schema.optionalWith(Schema.String, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
   user: Schema.optionalWith(
     Schema.Struct({
       login: Schema.optionalWith(Schema.String, { nullable: true }),
@@ -61,7 +68,7 @@ const IssueOpenedPayloadSchema = Schema.Struct({
 
 type IssueOpenedPayload = Schema.Type<typeof IssueOpenedPayloadSchema>
 
-const IssueCommentPayloadSchema = Schema.Struct({
+export const IssueCommentPayloadSchema = Schema.Struct({
   issue: IssueSchema,
   repository: RepositorySchema,
   sender: SenderSchema,
@@ -69,10 +76,18 @@ const IssueCommentPayloadSchema = Schema.Struct({
     id: Schema.optionalWith(Schema.Number, { nullable: true }),
     body: Schema.optionalWith(Schema.String, { nullable: true }),
     html_url: Schema.optionalWith(Schema.String, { nullable: true }),
+    author_association: Schema.optionalWith(Schema.String, { nullable: true }),
+    updated_at: Schema.optionalWith(Schema.String, { nullable: true }),
+    user: Schema.optionalWith(
+      Schema.Struct({
+        login: Schema.optionalWith(Schema.String, { nullable: true }),
+      }),
+      { nullable: true },
+    ),
   }),
 })
 
-type IssueCommentPayload = Schema.Type<typeof IssueCommentPayloadSchema>
+export type IssueCommentPayload = Schema.Type<typeof IssueCommentPayloadSchema>
 
 export const handleIssueOpened = async (params: BaseIssueParams): Promise<WorkflowStage | null> => {
   const { parsedPayload, headers, config, executionContext, deliveryId, senderLogin } = params

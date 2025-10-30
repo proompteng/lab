@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   evaluateCodexWorkflow,
   type ReadyCommentCommand,
+  type ReviewCommand,
   type ReviewEvaluation,
   shouldPostReadyCommentGuard,
   type WorkflowContext,
@@ -52,6 +53,16 @@ describe('evaluateCodexWorkflow', () => {
     marker: '<!-- codex:ready -->',
   }
 
+  const reviewCommand: ReviewCommand = {
+    stage: 'review',
+    key: 'pull-42-review-abc123',
+    codexMessage: { stage: 'review' },
+    structuredMessage: { foo: 'bar' },
+    topics: { codex: 'codex', codexStructured: 'codex-structured' },
+    jsonHeaders: {},
+    structuredHeaders: {},
+  }
+
   it('does not queue a ready comment when forceReview is true', () => {
     const result = evaluateCodexWorkflow({
       type: 'PR_ACTIVITY',
@@ -82,5 +93,33 @@ describe('evaluateCodexWorkflow', () => {
 
     expect(result.commands).toEqual([{ type: 'postReadyComment', data: readyComment }])
     expect(result.state).toBe('reviewReadyComment')
+  })
+
+  it('does not queue a review from PR activity even when outstanding work exists', () => {
+    const result = evaluateCodexWorkflow({
+      type: 'PR_ACTIVITY',
+      data: {
+        outstandingWork: true,
+        forceReview: false,
+        isDraft: false,
+        mergeStateRequiresAttention: false,
+      } as ReviewEvaluation,
+    })
+
+    expect(result.commands).toEqual([])
+    expect(result.state).toBe('ignored')
+  })
+
+  it('queues review commands for REVIEW_REQUESTED events regardless of outstanding work', () => {
+    const result = evaluateCodexWorkflow({
+      type: 'REVIEW_REQUESTED',
+      data: {
+        reviewCommand,
+        outstandingWork: false,
+      },
+    })
+
+    expect(result.commands).toEqual([{ type: 'publishReview', data: reviewCommand }])
+    expect(result.state).toBe('reviewRequested')
   })
 })

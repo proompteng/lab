@@ -16,6 +16,7 @@ This guide explains how the three-stage Codex automation pipeline works and how 
    - `stage=implementation`: `codex-implement.ts` executes the approved plan, pushes the feature branch, opens a **draft** PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.ts`, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
    - `stage=review`: `codex-review.ts` consumes the review payload, synthesises the reviewer feedback plus failing checks into a new prompt, reuses the existing Codex branch, and streams the run into `.codex-review.log` for artifacts and Discord updates.
    - Each template carries a `codex.stage` label so downstream sensors can reference the stage without parsing the workflow name.
+4. Review automation is now opt-in: Froussard only emits `stage: "review"` payloads when an authorized collaborator comments `@berik review` on the pull request. PR mergeability, outstanding threads, or check failures no longer trigger review runs automatically.
 
 ```mermaid
 flowchart LR
@@ -137,7 +138,7 @@ argo submit --from workflowtemplate/github-codex-implementation -n argo-workflow
   -p eventBody='{"stage":"implementation","prompt":"<codex prompt>","repository":"proompteng/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/proompteng/lab/issues/999","issueTitle":"Codex dry run","issueBody":"Testing orchestration","planCommentBody":"<!-- codex:plan -->\n..."}'
 ```
 
-Exercise the review workflow by seeding a payload with unresolved threads/check failures:
+Exercise the review workflow by posting an authorized `@berik review` comment (OWNER/MEMBER/COLLABORATOR) on the pull request. Froussard will fetch the latest threads and check failures, emit a single `stage:"review"` payload, and Argo will launch the `github-codex-review` workflow. If you need to bypass the webhook layer for isolated testing, you can still seed the workflow template directly:
 
 ```bash
 argo submit --from workflowtemplate/github-codex-review -n argo-workflows \
@@ -174,5 +175,5 @@ Both lint scripts are what CI uses, so matching their output locally keeps Argo 
 - **No plan comment**: verify the webhook secret/names.
 - **Workflows not triggered**: check the `github-codex` sensor/eventsource pods.
 - **Draft PR missing**: confirm the GitHub token has `repo` scope and the workflow pod can push.
-- **Merge conflicts**: Codex now treats GitHub’s `mergeable_state=dirty` as outstanding work, so review runs fire even when threads/checks are clean. Resolve conflicts (or rebase) before retrying to avoid endless review loops.
-- **Ready-to-merge signal**: Once the Codex branch is clean and mergeable, Froussard automatically posts `@codex review`, flips the PR out of draft, and follows up with a “ready to merge” comment so humans know automation has finished.
+- **Merge conflicts**: Codex flags GitHub’s `mergeable_state=dirty` inside the review payload, but automation will not re-run until an authorized collaborator comments `@berik review`. Resolve conflicts (or rebase) before asking for a new review so the workflow has a clean base to inspect.
+- **Ready-to-merge signal**: When the branch is clean, Froussard still removes draft status (if applicable) and posts the ready-to-merge handoff. It no longer auto-requests review—use `@berik review` when you’re ready for Codex to take another pass.

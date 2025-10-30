@@ -11,7 +11,7 @@ import {
   PROTO_CONTENT_TYPE,
 } from './constants'
 
-export type WorkflowStage = 'planning' | 'implementation' | 'review'
+export type WorkflowStage = 'planning' | 'implementation' | 'reviewRequested'
 
 export interface WorkflowExecutionContext {
   runtime: AppRuntime
@@ -131,7 +131,7 @@ export const executeWorkflowCommands = async (
         break
       }
       case 'publishReview': {
-        stage = 'review'
+        stage = 'reviewRequested'
         logger.info({ key: command.data.key, deliveryId: context.deliveryId }, 'publishing codex review message')
         await context.runtime.runPromise(
           publishKafkaMessage({
