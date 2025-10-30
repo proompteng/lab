@@ -376,6 +376,10 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr],
       returns: FFIType.int32_t,
     },
+    temporal_bun_worker_finalize_shutdown: {
+      args: [FFIType.ptr],
+      returns: FFIType.int32_t,
+    },
     temporal_bun_worker_test_handle_new: {
       args: [],
       returns: FFIType.ptr,

@@ -157,16 +157,26 @@ fn finalizeWorkerShutdown(
     if (state.fail_ptr) |fail| {
         const runtime_handle = worker_handle.runtime;
         const message = byteArraySlice(fail);
-        const description = if (message.len > 0)
-            message
-        else
-            "temporal-bun-bridge-zig: worker shutdown failed";
+        const base_description = "temporal-bun-bridge-zig: worker shutdown failed";
+        var description_slice: []const u8 = base_description;
+        var allocated_description: ?[]u8 = null;
+
+        if (message.len > 0) {
+            allocated_description = std.fmt.allocPrint(std.heap.c_allocator, "{s}: {s}", .{ base_description, message }) catch null;
+            if (allocated_description) |buffer| {
+                description_slice = buffer;
+            }
+        }
 
         errors.setStructuredErrorJson(.{
             .code = grpc.internal,
-            .message = description,
+            .message = description_slice,
             .details = null,
         });
+
+        if (allocated_description) |buffer| {
+            std.heap.c_allocator.free(buffer);
+        }
 
         if (runtime_handle) |runtime_ptr| {
             if (runtime_ptr.core_runtime) |core_runtime_ptr| {
