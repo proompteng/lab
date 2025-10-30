@@ -1,11 +1,11 @@
 # Worker Runtime Implementation Guide
 
-**Status Snapshot (28 Oct 2025)**
+**Status Snapshot (30 Oct 2025)**
 - ✅ `createWorker` now constructs the Bun-native runtime by default whenever the Zig bridge is available. Set `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` to opt back into the legacy `@temporalio/worker` codepath when the bridge is missing.
 - ✅ `WorkerRuntime` wires workflow polling to the `WorkflowEngine`, which decodes core activations, executes workflows inside Bun via the Temporal TypeScript runtime, and streams `WorkflowActivationCompletion` payloads back to Temporal Core.
 - ✅ Activity task execution, cancellation, and heartbeats now travel through the Zig bridge. Tests live under `tests/worker/worker-runtime-*.test.ts`.
 - ✅ `loadTemporalConfig` exposes `TEMPORAL_SHOW_STACK_SOURCES`; when true, workflow stack traces include source snippets to aid debugging.
-- ⚠️ Graceful shutdown honours abort semantics but still lacks coordinated draining for in-flight activities; telemetry hooks remain tracked in #1612.
+- ✅ Graceful shutdown now mirrors the Temporal Node worker: initiate shutdown fences new polls, `native.worker.finalizeShutdown` drains core, and `destroyNativeWorker` reclaims the handle; draining long-lived activity handlers plus telemetry hooks remain tracked in #1612.
 
 This document captures the live wiring and lists the remaining gaps before the Bun worker reaches feature parity with the Node SDK.
 
@@ -40,7 +40,7 @@ createWorker(options)
 `src/internal/core-bridge/native.ts` surfaces the FFI surface required by the runtime:
 
 - `isZigWorkerBridgeEnabled()` guards Bun worker construction behind `TEMPORAL_BUN_SDK_USE_ZIG=1` and the detected bridge variant.
-- `maybeCreateNativeWorker` and `destroyNativeWorker` manage the native worker handle lifecycle.
+- `maybeCreateNativeWorker`, `native.worker.finalizeShutdown`, and `destroyNativeWorker` manage the native worker handle lifecycle.
 - `native.worker.pollWorkflowTask` resolves `WorkflowActivation` byte buffers sourced from Temporal Core via the Zig bridge.
 - `native.worker.completeWorkflowTask` accepts the encoded `WorkflowActivationCompletion` returned by the engine.
 - Shutdown mirrors the existing logic: abort the poll loop, request native shutdown, and release runtime/client handles.
@@ -56,7 +56,7 @@ createWorker(options)
 | Workflow task loop | ✅ | `WorkflowEngine` executes workflows using the TypeScript runtime shipped in `@temporalio/workflow`. Commands are encoded as core `WorkflowActivationCompletion` payloads. |
 | Activity task loop | ✅ | `WorkerRuntime` polls, executes, cancels, and completes activity tasks via the Zig bridge. Heartbeats rely on native `recordActivityHeartbeat`. |
 | Telemetry & metrics | ⚠️ | Activity heartbeats are live; metrics/telemetry callbacks are still stubbed in the bridge. |
-| Graceful shutdown | ⚠️ | Poll loop aborts and native handles are disposed, but draining long-running activities requires coordination work. |
+| Graceful shutdown | ⚠️ | Native shutdown now issues initiate + finalize before freeing handles; draining long-running activities and reporting telemetry remain open. |
 | Vendor fallback | ✅ | `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` preserves the old `@temporalio/worker` path when the Zig bridge is unavailable. |
 
 ---

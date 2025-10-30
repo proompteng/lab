@@ -42,10 +42,10 @@ flowchart LR
 
 ---
 
-## Phase 2 — Worker Core (Not Started)
+## Phase 2 — Worker Core (In Progress)
 
-- FFI todos: worker poll/complete/heartbeat/shutdown (`zig-worker-06`…`zig-worker-09`).  
-- Implement Bun-native worker runtime loops (see `docs/worker-runtime.md`).  
+- FFI layer now implements worker poll/complete/heartbeat/shutdown (initiate + finalize); follow-up work tracks activity draining telemetry and metrics.  
+- Continue hardening the Bun-native worker runtime loops (see `docs/worker-runtime.md`).  
 - Introduce workflow runtime sandbox (coordinated with Phase 3).  
 - Replace `@temporalio/worker` dependency once parity achieved.  
 - Ensure CLI worker runs against Temporal CLI server using Zig bridge.

@@ -1,4 +1,4 @@
-import { dlopen, FFIType, JSCallback, type Pointer, ptr, toArrayBuffer } from 'bun:ffi'
+import { dlopen, type FFIFunction, FFIType, JSCallback, type Pointer, ptr, toArrayBuffer } from 'bun:ffi'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -253,7 +253,7 @@ function buildBridgeSymbolMap() {
     },
     temporal_bun_runtime_set_logger: {
       args: [FFIType.ptr, FFIType.ptr],
-      returns: FFIType.int32,
+      returns: FFIType.int32_t,
     },
     temporal_bun_runtime_test_emit_log: {
       args: [
@@ -455,6 +455,7 @@ const {
     temporal_bun_worker_poll_activity_task,
     temporal_bun_worker_record_activity_heartbeat,
     temporal_bun_worker_initiate_shutdown,
+    temporal_bun_worker_finalize_shutdown,
     temporal_bun_worker_test_handle_new,
     temporal_bun_worker_test_handle_release,
   },
@@ -473,6 +474,7 @@ const workerFfi = {
   completeActivityTask: temporal_bun_worker_complete_activity_task,
   recordActivityHeartbeat: temporal_bun_worker_record_activity_heartbeat,
   initiateShutdown: temporal_bun_worker_initiate_shutdown,
+  finalizeShutdown: temporal_bun_worker_finalize_shutdown,
 }
 
 export const native = {
@@ -552,6 +554,16 @@ export const native = {
       throw new NativeBridgeError('Temporal runtime logger already installed')
     }
 
+    const callbackOptions = {
+      returns: 'void',
+      args: ['u32', 'pointer', 'usize', 'pointer', 'usize', 'u64', 'pointer', 'usize'],
+      threadsafe: true,
+      onError(error: unknown) {
+        detachLoggerUnsafe(runtime)
+        throw error
+      },
+    } satisfies Record<string, unknown>
+
     const jsCallback = new JSCallback(
       (level, targetPtr, targetLen, messagePtr, messageLen, timestampMillis, fieldsPtr, fieldsLen) => {
         const levelIndex = Number(level)
@@ -572,15 +584,7 @@ export const native = {
 
         callback(event)
       },
-      {
-        returns: 'void',
-        args: ['u32', 'pointer', 'usize', 'pointer', 'usize', 'u64', 'pointer', 'usize'],
-        threadsafe: true,
-        onError(error) {
-          detachLoggerUnsafe(runtime)
-          throw error
-        },
-      },
+      callbackOptions as unknown as FFIFunction,
     )
 
     const status = Number(temporal_bun_runtime_set_logger(runtime.handle, jsCallback.ptr))
@@ -807,6 +811,17 @@ export const native = {
       if (status !== 0) {
         throw buildNativeBridgeError()
       }
+    },
+
+    finalizeShutdown(worker: NativeWorker): void {
+      const status = Number(workerFfi.finalizeShutdown(worker.handle))
+      if (status === 0) {
+        return
+      }
+      if (status === -1) {
+        throw buildNativeBridgeError()
+      }
+      throw buildNativeBridgeError()
     },
 
     async pollActivityTask(worker: NativeWorker): Promise<Uint8Array | null> {

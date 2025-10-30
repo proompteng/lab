@@ -29,7 +29,7 @@ This document captures the module boundaries inside `packages/temporal-bun-sdk/b
 | File | Responsibility |
 |------|----------------|
 | `runtime/*.zig` | Runtime allocation, telemetry, and logger hooks. |
-| `worker.zig` | Existing worker scaffolding (poll/complete stubs). |
+| `worker.zig` | Worker creation, poll/complete/heartbeat loops, and shutdown (`initiate`/`finalize`/`destroy`). |
 
 ## Aggregation
 

@@ -1,7 +1,7 @@
 # Temporal Bun SDK — Native FFI Surface Blueprint
 
 **Audience:** Platform Runtime & Codex implementers  
-**Status:** Living document (27 Oct 2025)  
+**Status:** Living document (30 Oct 2025)
 **Goal:** Capture the Zig-based Bun ↔ Temporal Core surface so we can finish replacing all `@temporalio/*` dependencies with a Bun-native SDK while keeping the unsafe layer constrained and well-tested.
 
 ---
@@ -42,7 +42,7 @@ flowchart LR
 
 ### Worker (`worker.zig`)
 - ⚠️ Workflow completion uses stub callbacks for unit tests.
-- ⚠️ Worker creation/teardown remain stubs, but activity polling now bridges Temporal core byte arrays via pending handles (tests cover success, failure, and shutdown sentinels). Activity completion and heartbeats are implemented; shutdown APIs remain pending (`zig-worker-08`–`zig-worker-09`).
+- ✅ Worker creation/teardown now issue native initiate + finalize shutdown calls before freeing worker handles; polling, activity completion, and heartbeats run end-to-end with coverage.
 
 ### Support crates
 - ✅ `pending.zig` implements reference-counted pending handles for clients and byte arrays.
@@ -116,7 +116,7 @@ Legend: ✅ shipped · ⚠️ partial/stub · ❌ not implemented yet.
 | `zig-worker-06` | Complete activity tasks | Forward completion payload to Temporal core; surface failure payloads. |
 | `zig-worker-07` | Heartbeats | Forward payloads and handle cancellation. |
 | `zig-worker-08` | Initiate shutdown | Signal no new polls; allow graceful drain. |
-| `zig-worker-09` | Finalize shutdown | Await outstanding completions, release handles. |
+| `zig-worker-09` | Finalize shutdown | ✅ Await outstanding completions, release handles. |
 
 Delivering these tasks unblocks swapping out `@temporalio/worker` with the Bun-native worker runtime.
 
