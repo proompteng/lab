@@ -16,7 +16,7 @@
 
 ```mermaid
 flowchart TD
-  Froussard[GitHub Issue Webhook (Froussard)] --> Intake[Facteur Intake API]
+  FroussardTrigger[GitHub Issue Webhook via Froussard] --> Intake[Facteur Intake API]
   Intake --> IdeaStore[(ideas)]
   IdeaStore -->|stage enqueue| TaskStore[(tasks)]
   TaskStore --> Orchestrator[Facteur Orchestrator]
@@ -25,7 +25,7 @@ flowchart TD
   Workflows -->|artifacts| ArtifactStore[(artifacts)]
   Workflows -->|reflections| ReflectionStore[(reflections)]
   RunStore --> EventLog[(run_events)]
-  ReflectionStore --> VectorIndex[(IVFFlat Index)]
+  ReflectionStore --> VectorIndex[IVFFlat Index]
   VectorIndex --> RetrievalLoop[Self-RAG Retrieval]
   EventLog --> Faithfulness[SSFO Trainer]
   ArtifactStore --> RouterFeedback[Self-Routing Signals]
