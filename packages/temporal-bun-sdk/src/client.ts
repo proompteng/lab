@@ -1,3 +1,4 @@
+import { temporal } from '@temporalio/proto'
 import { z } from 'zod'
 import {
   buildCancelRequest,
@@ -18,8 +19,9 @@ import {
   type WorkflowHandle,
   type WorkflowHandleMetadata,
 } from './client/types'
+import { createDefaultDataConverter, type DataConverter, decodePayloadsToValues } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
-import { type NativeClient, native, type Runtime } from './internal/core-bridge/native'
+import { NativeBridgeError, type NativeClient, native, type Runtime } from './internal/core-bridge/native'
 
 const startWorkflowMetadataSchema = z.object({
   runId: z.string().min(1),
@@ -222,6 +224,7 @@ export interface TemporalWorkflowClient {
 export interface TemporalClient {
   readonly namespace: string
   readonly config: TemporalConfig
+  readonly dataConverter: DataConverter
   readonly workflow: TemporalWorkflowClient
   startWorkflow(options: StartWorkflowOptions): Promise<StartWorkflowResult>
   signalWorkflow(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void>
@@ -240,6 +243,7 @@ export interface CreateTemporalClientOptions {
   namespace?: string
   identity?: string
   taskQueue?: string
+  dataConverter?: DataConverter
 }
 
 const textDecoder = new TextDecoder()
@@ -256,6 +260,7 @@ export const createTemporalClient = async (
   const namespace = options.namespace ?? config.namespace
   const identity = options.identity ?? config.workerIdentity
   const taskQueue = options.taskQueue ?? config.taskQueue
+  const dataConverter = options.dataConverter ?? createDefaultDataConverter()
 
   const runtime = native.createRuntime(options.runtimeOptions ?? {})
   const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
@@ -288,6 +293,7 @@ export const createTemporalClient = async (
     namespace,
     identity,
     taskQueue,
+    dataConverter,
   })
 
   return { client, config }
@@ -296,6 +302,7 @@ export const createTemporalClient = async (
 class TemporalClientImpl implements TemporalClient {
   readonly namespace: string
   readonly config: TemporalConfig
+  readonly dataConverter: DataConverter
   readonly workflow: TemporalWorkflowClient
 
   private closed = false
@@ -311,11 +318,13 @@ class TemporalClientImpl implements TemporalClient {
     namespace: string
     identity: string
     taskQueue: string
+    dataConverter: DataConverter
   }) {
     this.runtime = handles.runtime
     this.client = handles.client
     this.config = handles.config
     this.namespace = handles.namespace
+    this.dataConverter = handles.dataConverter
     this.defaultIdentity = handles.identity
     this.defaultTaskQueue = handles.taskQueue
     this.workflow = {
@@ -330,14 +339,17 @@ class TemporalClientImpl implements TemporalClient {
 
   async startWorkflow(options: StartWorkflowOptions): Promise<StartWorkflowResult> {
     const parsed = startWorkflowOptionsSchema.parse(options)
-    const payload = buildStartWorkflowRequest({
-      options: parsed as unknown as StartWorkflowOptions,
-      defaults: {
-        namespace: this.namespace,
-        identity: this.defaultIdentity,
-        taskQueue: this.defaultTaskQueue,
+    const payload = await buildStartWorkflowRequest(
+      {
+        options: parsed as unknown as StartWorkflowOptions,
+        defaults: {
+          namespace: this.namespace,
+          identity: this.defaultIdentity,
+          taskQueue: this.defaultTaskQueue,
+        },
       },
-    })
+      this.dataConverter,
+    )
 
     const bytes = await native.startWorkflow(this.client, payload)
     const response = parseJson(bytes)
@@ -356,7 +368,7 @@ class TemporalClientImpl implements TemporalClient {
 
     const identity = this.defaultIdentity
     const entropy = createSignalRequestEntropy()
-    const requestId = computeSignalRequestId(
+    const requestId = await computeSignalRequestId(
       {
         namespace: resolvedHandle.namespace,
         workflowId: resolvedHandle.workflowId,
@@ -366,16 +378,20 @@ class TemporalClientImpl implements TemporalClient {
         identity,
         args,
       },
+      this.dataConverter,
       { entropy },
     )
 
-    const request = buildSignalRequest({
-      handle: resolvedHandle,
-      signalName,
-      args,
-      identity,
-      requestId,
-    })
+    const request = await buildSignalRequest(
+      {
+        handle: resolvedHandle,
+        signalName,
+        args,
+        identity,
+        requestId,
+      },
+      this.dataConverter,
+    )
     await native.signalWorkflow(this.client, request)
   }
 
@@ -389,14 +405,39 @@ class TemporalClientImpl implements TemporalClient {
     }
 
     const parsedQueryName = workflowQueryNameSchema.parse(queryName)
-    const request = buildQueryRequest(resolvedHandle, parsedQueryName, args)
+    const request = await buildQueryRequest(resolvedHandle, parsedQueryName, args, this.dataConverter)
     const bytes = await native.queryWorkflow(this.client, request)
-    return parseJson(bytes)
+    const response = temporal.api.workflowservice.v1.QueryWorkflowResponse.decode(bytes)
+
+    if (response.queryRejected) {
+      throw new NativeBridgeError({
+        code: 9,
+        message: 'Temporal query was rejected',
+        details: response.queryRejected,
+        raw: JSON.stringify(response.queryRejected),
+      })
+    }
+
+    if (!response.queryResult) {
+      throw new NativeBridgeError({
+        code: 13,
+        message: 'Temporal query response missing query_result payloads',
+        raw: 'missing query_result',
+      })
+    }
+
+    const payloads = response.queryResult.payloads ?? []
+    if (!payloads.length) {
+      return null
+    }
+
+    const [value] = await decodePayloadsToValues(this.dataConverter, payloads)
+    return value ?? null
   }
 
   async terminateWorkflow(handle: WorkflowHandle, options: TerminateWorkflowOptions = {}): Promise<void> {
     const parsedOptions = terminateWorkflowOptionsSchema.parse(options)
-    const request = buildTerminateRequest(handle, parsedOptions)
+    const request = await buildTerminateRequest(handle, parsedOptions, this.dataConverter)
     await native.terminateWorkflow(this.client, request)
   }
 
@@ -406,14 +447,17 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult> {
-    const request = buildSignalWithStartRequest({
-      options,
-      defaults: {
-        namespace: this.namespace,
-        identity: this.defaultIdentity,
-        taskQueue: this.defaultTaskQueue,
+    const request = await buildSignalWithStartRequest(
+      {
+        options,
+        defaults: {
+          namespace: this.namespace,
+          identity: this.defaultIdentity,
+          taskQueue: this.defaultTaskQueue,
+        },
       },
-    })
+      this.dataConverter,
+    )
     const bytes = await native.signalWithStart(this.client, request)
     const response = parseJson(bytes)
     const metadata = startWorkflowMetadataSchema.parse(response) as unknown as WorkflowHandleMetadata

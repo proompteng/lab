@@ -1,9 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 import { fileURLToPath } from 'node:url'
 import Long from 'long'
-import { defaultPayloadConverter } from '@temporalio/common'
 import { coresdk } from '@temporalio/proto'
 import { WorkflowEngine } from '../src/workflow/runtime'
+import {
+  PAYLOAD_TUNNEL_FIELD,
+  createDataConverter,
+  createDefaultDataConverter,
+  decodePayloadsToValues,
+  encodeValuesToPayloads,
+  jsonToPayload,
+  payloadToJson,
+} from '../src/common/payloads'
+import type { PayloadCodec } from '@temporalio/common'
 
 const WORKFLOWS_PATH = fileURLToPath(new URL('./fixtures/workflows/simple.workflow.ts', import.meta.url))
 
@@ -23,12 +32,40 @@ const buildActivationBase = (runId: string): coresdk.workflow_activation.Workflo
     timestamp: toTimestamp(),
   })
 
-const encodeArgs = (...args: unknown[]) => args.map((value) => defaultPayloadConverter.toPayload(value)!)
+const dataConverter = createDefaultDataConverter()
+
+class JsonEnvelopeCodec implements PayloadCodec {
+  readonly #encoder = new TextEncoder()
+  readonly #decoder = new TextDecoder()
+
+  async encode(payloads: ReturnType<typeof jsonToPayload>[]): Promise<ReturnType<typeof jsonToPayload>[]> {
+    return payloads.map((payload) => {
+      const serialized = JSON.stringify(payloadToJson(payload))
+      return {
+        metadata: { encoding: this.#encoder.encode('binary/custom') },
+        data: this.#encoder.encode(serialized),
+      }
+    })
+  }
+
+  async decode(payloads: ReturnType<typeof jsonToPayload>[]): Promise<ReturnType<typeof jsonToPayload>[]> {
+    return payloads.map((payload) => {
+      const encoding = payload.metadata?.encoding ? new TextDecoder().decode(payload.metadata.encoding) : undefined
+      if (encoding !== 'binary/custom') {
+        return payload
+      }
+      const raw = this.#decoder.decode(payload.data ?? new Uint8Array(0))
+      const value = raw.length === 0 ? null : JSON.parse(raw)
+      return jsonToPayload(value)
+    })
+  }
+}
 
 describe('WorkflowEngine', () => {
   test('completes a simple workflow in a single activation', async () => {
     const engine = new WorkflowEngine({ workflowsPath: WORKFLOWS_PATH })
     const activation = buildActivationBase('run-simple')
+    const initArgs = (await encodeValuesToPayloads(dataConverter, ['Temporal'])) ?? []
     activation.jobs = [
       coresdk.workflow_activation.WorkflowActivationJob.create({
         initializeWorkflow: {
@@ -41,7 +78,7 @@ describe('WorkflowEngine', () => {
           firstExecutionRunId: 'run-simple',
           startTime: toTimestamp(),
           workflowTaskTimeout: { seconds: 10, nanos: 0 },
-          arguments: encodeArgs('Temporal'),
+          arguments: initArgs,
         },
       }),
     ]
@@ -61,13 +98,17 @@ describe('WorkflowEngine', () => {
     const command = success?.commands?.[0]
     expect(command?.completeWorkflowExecution).toBeDefined()
     const payload = command?.completeWorkflowExecution?.result
-    const value = payload ? defaultPayloadConverter.fromPayload(payload) : undefined
+    const value =
+      payload && payload !== undefined
+        ? (await decodePayloadsToValues(dataConverter, [payload]))[0]
+        : undefined
     expect(value).toBe('hello Temporal')
   })
 
   test('schedules timers and completes after firing', async () => {
     const engine = new WorkflowEngine({ workflowsPath: WORKFLOWS_PATH })
     const activation = buildActivationBase('run-timer')
+    const initArgs = (await encodeValuesToPayloads(dataConverter, [1])) ?? []
     activation.jobs = [
       coresdk.workflow_activation.WorkflowActivationJob.create({
         initializeWorkflow: {
@@ -80,7 +121,7 @@ describe('WorkflowEngine', () => {
           firstExecutionRunId: 'run-timer',
           startTime: toTimestamp(),
           workflowTaskTimeout: { seconds: 10, nanos: 0 },
-          arguments: encodeArgs(1),
+          arguments: initArgs,
         },
       }),
     ]
@@ -119,7 +160,10 @@ describe('WorkflowEngine', () => {
     const completionCommand = second.completion.successful?.commands?.find((cmd) => cmd.completeWorkflowExecution)
     expect(completionCommand?.completeWorkflowExecution).toBeDefined()
     const payload = completionCommand?.completeWorkflowExecution?.result
-    const value = payload ? defaultPayloadConverter.fromPayload(payload) : undefined
+    const value =
+      payload && payload !== undefined
+        ? (await decodePayloadsToValues(dataConverter, [payload]))[0]
+        : undefined
     expect(value).toBe('timer fired')
   })
 
@@ -127,6 +171,7 @@ describe('WorkflowEngine', () => {
     const engine = new WorkflowEngine({ workflowsPath: WORKFLOWS_PATH })
 
     const run1Init = buildActivationBase('run-interleave-1')
+    const run1Args = (await encodeValuesToPayloads(dataConverter, [1])) ?? []
     run1Init.jobs = [
       coresdk.workflow_activation.WorkflowActivationJob.create({
         initializeWorkflow: {
@@ -139,7 +184,7 @@ describe('WorkflowEngine', () => {
           firstExecutionRunId: 'run-interleave-1',
           startTime: toTimestamp(),
           workflowTaskTimeout: { seconds: 10, nanos: 0 },
-          arguments: encodeArgs(1),
+          arguments: run1Args,
         },
       }),
     ]
@@ -153,6 +198,7 @@ describe('WorkflowEngine', () => {
     const timerSeq = startTimerCommand?.startTimer?.seq ?? 0
 
     const run2Init = buildActivationBase('run-interleave-2')
+    const run2Args = (await encodeValuesToPayloads(dataConverter, ['Temporal'])) ?? []
     run2Init.jobs = [
       coresdk.workflow_activation.WorkflowActivationJob.create({
         initializeWorkflow: {
@@ -165,7 +211,7 @@ describe('WorkflowEngine', () => {
           firstExecutionRunId: 'run-interleave-2',
           startTime: toTimestamp(),
           workflowTaskTimeout: { seconds: 10, nanos: 0 },
-          arguments: encodeArgs('Temporal'),
+          arguments: run2Args,
         },
       }),
     ]
@@ -190,7 +236,46 @@ describe('WorkflowEngine', () => {
     const completionCommand = run1Final.completion.successful?.commands?.find((cmd) => cmd.completeWorkflowExecution)
     expect(completionCommand?.completeWorkflowExecution).toBeDefined()
     const payload = completionCommand?.completeWorkflowExecution?.result
-    const value = payload ? defaultPayloadConverter.fromPayload(payload) : undefined
+    const value =
+      payload && payload !== undefined
+        ? (await decodePayloadsToValues(dataConverter, [payload]))[0]
+        : undefined
     expect(value).toBe('timer fired')
+  })
+
+  test('supports custom data converters for workflow payloads', async () => {
+    const customConverter = createDataConverter({ payloadCodecs: [new JsonEnvelopeCodec()] })
+    const engine = new WorkflowEngine({ workflowsPath: WORKFLOWS_PATH, dataConverter: customConverter })
+
+    const activation = buildActivationBase('run-binary')
+    activation.jobs = [
+      coresdk.workflow_activation.WorkflowActivationJob.create({
+        initializeWorkflow: {
+          namespace: 'default',
+          workflowId: 'binary-001',
+          workflowType: 'binaryWorkflow',
+          randomnessSeed: Long.fromNumber(21),
+          attempt: 1,
+          taskQueue: 'unit-test',
+          firstExecutionRunId: 'run-binary',
+          startTime: toTimestamp(),
+          workflowTaskTimeout: { seconds: 10, nanos: 0 },
+        },
+      }),
+    ]
+
+    const result = await engine.processWorkflowActivation(activation, {
+      namespace: 'default',
+      taskQueue: 'unit-test',
+    })
+
+    const command = result.completion.successful?.commands?.[0]
+    const payload = command?.completeWorkflowExecution?.result
+    const value =
+      payload && payload !== undefined
+        ? (await decodePayloadsToValues(customConverter, [payload]))[0]
+        : undefined
+    expect(value).toBeInstanceOf(Uint8Array)
+    expect(Array.from(value as Uint8Array)).toEqual([1, 2, 3])
   })
 })

@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
+import type { PayloadCodec } from '@temporalio/common'
+import { temporal } from '@temporalio/proto'
 import type { TemporalConfig } from '../src/config'
+import {
+  PAYLOAD_TUNNEL_FIELD,
+  createDataConverter,
+  encodeValuesToPayloads,
+  jsonToPayload,
+  payloadToJson,
+} from '../src/common/payloads'
 import { importNativeBridge } from './helpers/native-bridge'
 
 const { module: nativeModule, stubPath } = await importNativeBridge()
@@ -20,6 +29,58 @@ if (nativeModule && stubPath) {
 }
 
 const encodeJson = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value))
+
+const encodeQueryResponse = (value: unknown): Uint8Array => {
+  const encoder = new TextEncoder()
+  const payload = {
+    metadata: {
+      encoding: encoder.encode('json/plain'),
+    },
+    data: encoder.encode(JSON.stringify(value ?? null)),
+  }
+
+  const response = temporal.api.workflowservice.v1.QueryWorkflowResponse.create({
+    queryResult: { payloads: [payload] },
+  })
+
+  return temporal.api.workflowservice.v1.QueryWorkflowResponse.encode(response).finish()
+}
+
+const encodeQueryRejection = (): Uint8Array => {
+  const response = temporal.api.workflowservice.v1.QueryWorkflowResponse.create({
+    queryRejected: {
+      status: temporal.api.enums.v1.WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TERMINATED,
+    },
+  })
+  return temporal.api.workflowservice.v1.QueryWorkflowResponse.encode(response).finish()
+}
+
+class JsonEnvelopeCodec implements PayloadCodec {
+  readonly #encoder = new TextEncoder()
+  readonly #decoder = new TextDecoder()
+
+  async encode(payloads: ReturnType<typeof jsonToPayload>[]): Promise<ReturnType<typeof jsonToPayload>[]> {
+    return payloads.map((payload) => {
+      const serialized = JSON.stringify(payloadToJson(payload))
+      return {
+        metadata: { encoding: this.#encoder.encode('binary/custom') },
+        data: this.#encoder.encode(serialized),
+      }
+    })
+  }
+
+  async decode(payloads: ReturnType<typeof jsonToPayload>[]): Promise<ReturnType<typeof jsonToPayload>[]> {
+    return payloads.map((payload) => {
+      const encoding = payload.metadata?.encoding ? this.#decoder.decode(payload.metadata.encoding) : undefined
+      if (encoding !== 'binary/custom') {
+        return payload
+      }
+      const raw = this.#decoder.decode(payload.data ?? new Uint8Array(0))
+      const value = raw.length === 0 ? null : JSON.parse(raw)
+      return jsonToPayload(value)
+    })
+  }
+}
 
 if (nativeModule && stubPath) {
   describe('temporal client (native bridge)', () => {
@@ -49,7 +110,7 @@ if (nativeModule && stubPath) {
       native.describeNamespace = mock(async () => new Uint8Array())
       native.updateClientHeaders = mock(() => {})
       native.signalWorkflow = mock(async () => {})
-      native.queryWorkflow = mock(async () => encodeJson(null))
+      native.queryWorkflow = mock(async () => encodeQueryResponse(null))
     })
 
     afterEach(() => {
@@ -211,7 +272,7 @@ if (nativeModule && stubPath) {
           123,
         )
 
-        const expectedRequestId = computeSignalRequestId(
+        const expectedRequestId = await computeSignalRequestId(
           {
             namespace: 'analytics',
             workflowId: 'wf-signal',
@@ -221,6 +282,7 @@ if (nativeModule && stubPath) {
             identity: 'worker',
             args: [{ foo: 'bar' }, 123],
           },
+          client.dataConverter,
           { entropy },
         )
 
@@ -275,7 +337,50 @@ if (nativeModule && stubPath) {
         ),
       ).rejects.toThrow('native signal failure')
 
-      expect(native.signalWorkflow).toHaveBeenCalledTimes(1)
+    expect(native.signalWorkflow).toHaveBeenCalledTimes(1)
+    await client.shutdown()
+  })
+
+    test('client uses custom data converter for signals and queries', async () => {
+      const config: TemporalConfig = {
+        host: 'localhost',
+        port: 7233,
+        address: 'localhost:7233',
+        namespace: 'default',
+        taskQueue: 'prix',
+        apiKey: undefined,
+        tls: undefined,
+        allowInsecureTls: false,
+        workerIdentity: 'worker-custom',
+        workerIdentityPrefix: 'temporal-bun-worker',
+      }
+
+      const converter = createDataConverter({ payloadCodecs: [new JsonEnvelopeCodec()] })
+      const capturedSignals: Record<string, unknown>[] = []
+      native.signalWorkflow = mock(async (_client, payload: Record<string, unknown>) => {
+        capturedSignals.push(payload)
+      })
+
+      const encodedPayloads = await encodeValuesToPayloads(converter, ['custom-result'])
+      native.queryWorkflow = mock(async () =>
+        temporal.api.workflowservice.v1.QueryWorkflowResponse.encode({
+          queryResult: { payloads: encodedPayloads ?? [] },
+        }).finish(),
+      )
+
+      const { client } = await createTemporalClient({ config, dataConverter: converter })
+
+      await client.workflow.signal({ workflowId: 'wf-custom', namespace: 'default' }, 'custom', new Uint8Array([10, 11]))
+
+      expect(capturedSignals).toHaveLength(1)
+      const [signalPayload] = capturedSignals
+      const [firstArg] = (signalPayload.args ?? []) as unknown[]
+      expect(firstArg && typeof firstArg === 'object').toBe(true)
+      expect((firstArg as Record<string, unknown>)[PAYLOAD_TUNNEL_FIELD]).toBeDefined()
+
+      const queryResult = await client.workflow.query({ workflowId: 'wf-custom' }, 'customQuery')
+      expect(queryResult).toBe('custom-result')
+
       await client.shutdown()
     })
 
@@ -571,7 +676,7 @@ if (nativeModule && stubPath) {
       let capturedRequest: Record<string, unknown> | undefined
       native.queryWorkflow = mock(async (_handle, request: Record<string, unknown>) => {
         capturedRequest = request
-        return encodeJson({ state: 'running', count: 2 })
+        return encodeQueryResponse({ state: 'running', count: 2 })
       })
 
       const config: TemporalConfig = {
@@ -606,7 +711,7 @@ if (nativeModule && stubPath) {
       let capturedRequest: Record<string, unknown> | undefined
       native.queryWorkflow = mock(async (_handle, request: Record<string, unknown>) => {
         capturedRequest = request
-        return encodeJson('ok')
+        return encodeQueryResponse('ok')
       })
 
       const config: TemporalConfig = {
@@ -639,6 +744,29 @@ if (nativeModule && stubPath) {
         run_id: 'run-123',
         args: ['arg-1', 42],
       })
+
+      await client.shutdown()
+    })
+
+    test('queryWorkflow surfaces query rejections from the server', async () => {
+      native.queryWorkflow = mock(async () => encodeQueryRejection())
+
+      const config: TemporalConfig = {
+        host: 'localhost',
+        port: 7233,
+        address: 'localhost:7233',
+        namespace: 'default',
+        taskQueue: 'prix',
+        apiKey: undefined,
+        tls: undefined,
+        allowInsecureTls: false,
+        workerIdentity: 'worker-reject',
+        workerIdentityPrefix: 'temporal-bun-worker',
+      }
+
+      const { client } = await createTemporalClient({ config })
+
+      await expect(client.workflow.query({ workflowId: 'wf-reject' }, 'inspect')).rejects.toBeInstanceOf(NativeBridgeError)
 
       await client.shutdown()
     })

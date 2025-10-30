@@ -1,86 +1,173 @@
 # Payload Codec & Data Conversion Guide
 
-**Status Snapshot (27 Oct 2025)**  
-- ✅ All client RPCs currently send plain JSON payloads (`args`, `memo`, `headers`, etc.) constructed in `src/client/serialization.ts`. The Zig bridge encodes the final Temporal protobuf structures.  
-- ❌ No `DataConverter` abstraction exists yet. There is no pluggable codec registry comparable to Temporal’s `DefaultDataConverter`.  
-- ❌ Activity/workflow failure payloads are passed through as-is from Temporal core; Bun does not yet encode/decode structured failures.  
-- ⚠️ Docs and TODO markers reference a future payload codec module; work has not begun. This guide explains the desired end state while documenting the current behaviour so the mismatch is obvious.
+**Status Snapshot (30 Oct 2025)**  
+- DONE: Data conversion now ships with the Bun SDK via `src/common/payloads` and is re-exported from `src/index.ts`.  
+- DONE: The client, workflow runtime, and worker runtime all accept a shared `dataConverter`, defaulting to Temporal's JSON converter when none is provided.  
+- DONE: Payload metadata is tunnelled through the existing Zig bridge JSON surfaces using `__temporal_bun_payload__` envelopes so codec metadata is preserved without native changes.  
+- TODO: optional binary/protobuf codecs and replay tooling that exercises non-JSON payloads at scale remain outstanding.
 
 ---
 
-## 1. Current Behaviour
+## 1. Module Overview
 
-- Workflow/activity arguments are forwarded as JSON-compatible values.  
-- Signal/query payloads are stringified via `JSON.stringify` when required (see `computeSignalRequestId` and `buildSignalRequest`).  
-- Temporal core performs payload encoding internally, so consumers see the same results as the upstream TypeScript SDK for simple JSON payloads.  
-- Binary payloads, custom converters, and structured failure types are **not** supported yet; callers must manually encode base64 data if they need binary semantics today.
+The Bun SDK mirrors the upstream Temporal TypeScript SDK's `DataConverter` contract. The module lives under `src/common/payloads` and provides:
+
+- `createDataConverter`, `createDefaultDataConverter`: instantiate a `LoadedDataConverter` backed by Temporal's `DefaultPayloadConverter` and `DefaultFailureConverter` with optional codec overrides.
+- JSON helpers (`encodeValuesToJson`, `decodeJsonToValues`, `encodeMapToJson`, `decodeJsonToMap`) that adapt converter payloads to the Zig bridge's current JSON expectations.
+- Failure helpers `encodeFailurePayloads` / `decodeFailurePayloads` for round-tripping `temporal.api.failure.v1.Failure` protos through the converter.
+- Pure JSON utilities (`jsonToPayload`, `payloadToJson`, `jsonToPayloads`, `payloadsToJson`) used by tests and adapters.
+
+All exports are surfaced via `src/common/index.ts` and therefore publicly available from `@proompteng/temporal-bun-sdk/common`.
 
 ---
 
-## 2. Target Architecture
+## 2. Default Converter Behaviour
 
-Once we replace the ad-hoc JSON encoding, aim for a module layout like:
+`createDefaultDataConverter()` wraps Temporal's upstream defaults:
 
+```ts
+import { createDefaultDataConverter } from '@proompteng/temporal-bun-sdk/common'
+
+const converter = createDefaultDataConverter()
+const payloads = await converter.payloadConverter.toPayloads(['hello', { key: 1 }])
 ```
-src/common/payloads/
-  index.ts              // public exports
-  converter.ts          // DataConverter implementation
-  json-codec.ts         // default JSON codec (parity with upstream)
-  binary-codec.ts       // optional protobuf codec (future)
-  failure.ts            // error <-> failure payload helpers
+
+The surrounding helpers take care of:
+
+- Returning `undefined` when no values are provided (matching Temporal's `encodeToPayloads` behaviour).
+- Normalising empty maps to `{}` so the Zig bridge still receives an object, preserving backwards compatibility.
+- Applying codec pipelines (`payloadConverter` -> `payloadCodecs`) automatically; custom codecs can be appended via the optional `payloadCodecs` array.
+
+---
+
+## 3. JSON Tunnel Compatibility
+
+The Zig native bridge today still expects JSON payloads. To avoid losing metadata when non-JSON codecs run, the Bun SDK wraps encoded payloads in a tiny JSON tunnel structure:
+
+```json
+{
+  "__temporal_bun_payload__": {
+    "v": 1,
+    "metadata": {
+      "encoding": "anNvbi9wbGFpbg=="
+    },
+    "data": "eyJhIjoxfQ=="
+  }
+}
 ```
 
-Design goals:
+Key points:
 
-- Match the TypeScript SDK’s `DataConverter` surface (`toPayloads`, `fromPayloads`, `toFailure`, `fromFailure`).  
-- Allow users to register custom codecs without forking the SDK.  
-- Preserve determinism by ensuring workflow replay sees identical payloads.  
-- Keep Bun-specific dependencies (e.g. `Bun.Transpiler`) out of this module to facilitate reuse across worker/client code.
+- The sentinel property name is `__temporal_bun_payload__` (`PAYLOAD_TUNNEL_FIELD`).
+- Metadata values and payload bytes are base64-encoded so the envelope remains plain JSON.
+- When a payload uses `encoding=json/plain` and parses successfully as JSON, we pass the decoded value through directly (no tunnel) for parity with today's behaviour.
+- On decode, the helper detects the envelope shape and reconstructs `temporal.api.common.v1.Payload` objects before handing control back to the converter.
 
----
-
-## 3. Incremental Plan
-
-1. **Introduce JSON codec wrapper**  
-   - Wrap the existing JSON behaviour in a `JsonPayloadCodec` class.  
-   - Update client serialization helpers to rely on the codec for argument conversion.  
-   - Add unit tests for round-trip encoding (`bun test`).
-
-2. **Add converter entry point**  
-   - Create `createDefaultDataConverter()` returning a converter with the JSON codec.  
-   - Thread the converter through `createTemporalClient` options (without breaking current callers).  
-   - Update signal/query tests to assert codec usage.
-
-3. **Extend to failures**  
-   - Implement `toFailure` / `fromFailure` mirroring the upstream `DefaultDataConverter`.  
-   - Ensure activity/workflow failure payloads propagate correctly through the Zig bridge.
-
-4. **Optional binary/protobuf support**  
-   - Leverage `@temporalio/proto` already bundled in dependencies to support binary codecs.  
-   - Provide documentation + samples on how to opt in.
-
-5. **Worker integration**  
-   - When the Bun-native worker arrives, share the same converter so workflows and activities respect custom codecs.
+This strategy keeps compatibility with the existing Zig layer while enabling deterministic hashing (the tunnel structure is what feeds into `computeSignalRequestId`).
 
 ---
 
-## 4. Testing Considerations
+## 4. API Cheatsheet
 
-| Scenario | Tests |
-|----------|-------|
-| JSON round trip | `bun test` userland unit tests (primitives, objects, arrays, dates). |
-| Failure conversion | Activity throws `ApplicationFailure`, verify payload fields survive round trip. |
-| Binary codec (future) | Encode/decode `Uint8Array`, ensure encoding metadata present. |
-| Integration | `tests/native.integration.test.ts` extended to run with custom converter once implemented. |
+| Helper | Purpose |
+|--------|---------|
+| `encodeValuesToPayloads(converter, values)` | Wraps `converter.payloadConverter.toPayloads` and normalises empty lists. |
+| `decodePayloadsToValues(converter, payloads)` | Inverse helper that returns decoded JS values or `[]`. |
+| `encodeMapValuesToPayloads(converter, record)` | Converts string-keyed maps to payload maps, returning `{}` for empty maps. |
+| `decodePayloadMapToValues(converter, payloadMap)` | Inverse helper that returns `undefined` for `null` payload maps. |
+| `encodeValuesToJson(converter, values)` | Produces JSON-ready structures for the Zig bridge by encoding then tunnelling payload data. |
+| `decodeJsonToValues(converter, values)` | Reverses `encodeValuesToJson`; useful for deterministic hashing and tests. |
+| `encodeFailurePayloads(converter, failure)` | Ensures activity/workflow failures reuse the shared converter. |
+| `decodeFailurePayloads(converter, failure)` | Converts Temporal failure payloads back into decoded JS values. |
 
-Ensure tests run under `TEMPORAL_TEST_SERVER=1` for integration coverage, and under plain unit tests for converter logic.
+See `src/common/payloads/converter.ts` and `failure.ts` for the full implementation.
 
 ---
 
-## 5. References
+## 5. Integration Points
 
-- Current serialization utilities: `src/client/serialization.ts`.  
-- Temporal upstream documentation: [Data conversion](https://docs.temporal.io/visibility-and-data-conversion/data-conversion).  
-- Upstream TypeScript source: `packages/common/src/converter/data-converter.ts` (Temporal repo).
+- **Client**: `createTemporalClient` accepts an optional `dataConverter`. All request builders (`buildStartWorkflowRequest`, `buildSignalRequest`, `buildQueryRequest`, etc.) call `encodeValuesToJson` / `encodeMapToJson`. Query responses and signal IDs decode via the same converter.
+- **Workflow runtime**: `WorkflowEnvironment` stores the converter per run. Workflow completions, continue-as-new commands, headers, memo, and search attributes are re-encoded before returning to the worker.
+- **Worker runtime**: Activity inputs, heartbeats, and completions flow through converter helpers so custom codecs see the same payloads as workflows.
+- **Native bridge**: `native.queryWorkflow` now surfaces raw payload bytes; the Bun layer is responsible for decoding them with the configured converter.
 
-Update this guide as soon as the codec module begins to take shape so contributors know the canonical plan and the current limitations.
+These touch-points mean providing a custom converter once (client or worker factory) is enough to keep payload semantics consistent across the stack.
+
+---
+
+## 6. Custom Codec Example
+
+The tests include a `JsonEnvelopeCodec` that wraps payloads in an additional layer before handing them to Temporal core. To use a similar codec in production:
+
+```ts
+import { createDataConverter } from '@proompteng/temporal-bun-sdk/common'
+import type { PayloadCodec } from '@temporalio/common'
+
+class JsonEnvelopeCodec implements PayloadCodec {
+  async encode(payloads) {
+    const encoder = new TextEncoder()
+    return payloads.map((payload) => ({
+      metadata: {
+        ...payload.metadata,
+        encoding: encoder.encode('binary/custom'),
+      },
+      data: encoder.encode(JSON.stringify(payload)),
+    }))
+  }
+
+  async decode(payloads) {
+    const decoder = new TextDecoder()
+    return payloads.map((payload) => {
+      const encoding = payload.metadata?.encoding
+        ? decoder.decode(payload.metadata.encoding)
+        : undefined
+      if (encoding !== 'binary/custom') {
+        return payload
+      }
+      const raw = payload.data ? decoder.decode(payload.data) : 'null'
+      return JSON.parse(raw)
+    })
+  }
+}
+
+const dataConverter = createDataConverter({
+  payloadCodecs: [new JsonEnvelopeCodec()],
+})
+
+const { client } = await createTemporalClient({ dataConverter })
+```
+
+Because the converter is threaded through both the workflow runtime and the worker, activities, signals, and queries all observe the codec.
+
+---
+
+## 7. Failure Handling
+
+`failure.ts` mirrors the upstream SDK's `DefaultFailureConverter` helpers so structured failures retain payload metadata:
+
+- `encodeFailurePayloads` walks nested `Failure` protos (including activity and child workflow failures) to call `encodeValuesToPayloads` on each payload.
+- `decodeFailurePayloads` does the reverse when failures are received from Temporal core.
+
+Tests under `tests/payloads/failure.test.ts` confirm round-trips for application and activity failures, including tunneled metadata.
+
+---
+
+## 8. Testing Coverage
+
+| Suite | Scenario |
+|-------|----------|
+| `tests/payloads/json-codec.test.ts` | JSON tunnel encode/decode parity, base64 metadata preservation. |
+| `tests/payloads/converter.test.ts` | `encodeValuesToPayloads`, map helpers, and failure conversion helpers. |
+| `tests/client.test.ts` | Deterministic `computeSignalRequestId` hashing against tunneled payloads. |
+| `tests/worker.runtime.workflow.test.ts` | Workflow completions and continue-as-new commands re-encoding payloads via the converter. |
+| `tests/native.integration.test.ts` | Full custom codec round trip against the Temporal dev server (requires `TEMPORAL_TEST_SERVER=1`). |
+
+Run `pnpm exec biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests packages/temporal-bun-sdk/docs` followed by `pnpm --filter @proompteng/temporal-bun-sdk test` to exercise the suites.
+
+---
+
+## 9. Follow-Ups
+
+- Add binary/protobuf codecs once we settle on packaging for large payload types.  
+- Build replay/determinism harness coverage for tunneled payloads to ensure history replays remain deterministic.  
+- Investigate whether the Zig bridge can accept raw payload bytes in a future iteration, which would allow us to drop the JSON tunnel entirely.

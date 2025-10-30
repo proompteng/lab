@@ -2,8 +2,6 @@ import { dlopen, type FFIFunction, FFIType, JSCallback, type Pointer, ptr, toArr
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DefaultPayloadConverter } from '@temporalio/common'
-import { temporal } from '@temporalio/proto'
 
 type RuntimePtr = Pointer
 
@@ -34,7 +32,6 @@ const distNativeDir = join(packageRoot, 'dist', 'native')
 const zigStageLibDir = join(packageRoot, 'bruke', 'zig-out', 'lib')
 
 const UNKNOWN_NATIVE_ERROR_CODE = 2
-const payloadConverter = new DefaultPayloadConverter()
 
 export interface NativeBridgeErrorInit {
   code: number
@@ -666,11 +663,7 @@ export const native = {
       throw buildNativeBridgeError()
     }
     try {
-      const rawBytes = await waitForByteArray(pendingHandle, pendingByteArrayFfi)
-      if (isZigBridge) {
-        return await decodeZigQueryWorkflowResponse(rawBytes)
-      }
-      return rawBytes
+      return await waitForByteArray(pendingHandle, pendingByteArrayFfi)
     } finally {
       pendingByteArrayFfi.free(pendingHandle)
     }
@@ -915,45 +908,6 @@ function resolveBridgeLibraryCandidates(preference: ZigPreference): BridgeResolu
   }
 
   return candidates
-}
-
-async function decodeZigQueryWorkflowResponse(bytes: Uint8Array): Promise<Uint8Array> {
-  const response = temporal.api.workflowservice.v1.QueryWorkflowResponse.decode(bytes)
-
-  if (response.queryRejected) {
-    throw new NativeBridgeError({
-      code: 9,
-      message: 'Temporal query was rejected',
-      details: response.queryRejected,
-      raw: JSON.stringify(response.queryRejected),
-    })
-  }
-
-  if (!response.queryResult) {
-    throw new NativeBridgeError({
-      code: 13,
-      message: 'Temporal query response missing query_result payloads',
-      raw: 'missing query_result',
-    })
-  }
-
-  const firstPayload = response.queryResult.payloads?.[0]
-  let value: unknown = null
-  if (firstPayload) {
-    try {
-      value = payloadConverter.fromPayload(firstPayload)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      throw new NativeBridgeError({
-        code: 13,
-        message: `Failed to decode queryWorkflow payload: ${message}`,
-        details: error,
-      })
-    }
-  }
-
-  const jsonString = JSON.stringify(value ?? null)
-  return Buffer.from(jsonString, 'utf8')
 }
 
 function getZigPreference(): ZigPreference {

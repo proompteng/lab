@@ -6,6 +6,7 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 ## Features
 - Zod-backed environment parsing (`loadTemporalConfig`) with sane defaults and TLS loading.
 - Factories for Temporal connections, workflow clients, and workers.
+- Configurable data conversion module (`createDataConverter`) with JSON defaults and codec hooks.
 - Example workflows/activities plus an executable `temporal-bun-worker` binary.
 - Project scaffolding CLI (`temporal-bun init`) with Docker packaging helpers.
 - Generated projects rely on the Temporal CLI dev server helper instead of Docker Compose.
@@ -72,9 +73,11 @@ Packaged Zig bridge artifacts load automatically when present. Set `TEMPORAL_BUN
 ## Usage
 
 ```ts
-import { createTemporalClient, loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
+import { createTemporalClient, createDefaultDataConverter } from '@proompteng/temporal-bun-sdk'
 
-const { client } = await createTemporalClient()
+const dataConverter = createDefaultDataConverter()
+const { client } = await createTemporalClient({ dataConverter })
+
 const start = await client.workflow.start({
   workflowId: 'helloTemporal-001',
   workflowType: 'helloTemporal',
@@ -83,13 +86,16 @@ const start = await client.workflow.start({
 })
 console.log('Workflow execution started', start.runId)
 
-// Persist start.handle for follow-up signal/query calls once they land.
 const handle = start.handle
+await client.workflow.signal(handle, 'complete', { ok: true })
 
-// Example (pending implementation): await client.workflow.signal(handle, 'complete', { ok: true })
+const result = await client.workflow.query(handle, 'currentState')
+console.log('Current state', result)
 
-> **Note:** The current Bun-native client supports workflow starts today. Signal, query, and termination APIs are under active development. The start result surfaces `firstExecutionRunId` when Temporal returns it so you can correlate resets or continue-as-new runs.
+// Use client.dataConverter when constructing workers so payload semantics stay aligned.
 ```
+
+> Note: Payload metadata is tunnelled through the Zig bridge as JSON. Custom codecs must be deterministic, and should expect additional envelope fields. See [`docs/payloads-codec.md`](./docs/payloads-codec.md) for details.
 
 Start the bundled worker (after building):
 

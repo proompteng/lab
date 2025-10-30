@@ -1,9 +1,19 @@
 import { Buffer } from 'node:buffer'
 
-import { CancelledFailure, defaultFailureConverter, defaultPayloadConverter } from '@temporalio/common'
+import { CancelledFailure } from '@temporalio/common'
 import { coresdk, type google, type temporal } from '@temporalio/proto'
 import type Long from 'long'
-
+import {
+  createDefaultDataConverter,
+  type DataConverter,
+  type PayloadMap,
+  decodePayloadMapToValues,
+  decodePayloadsToValues,
+  encodeErrorToFailure,
+  encodeFailurePayloads,
+  encodeMapValuesToPayloads,
+  encodeValuesToPayloads,
+} from '../common/payloads'
 import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from '../config'
 import {
   NativeBridgeError,
@@ -26,6 +36,7 @@ export interface WorkerRuntimeOptions {
   taskQueue?: string
   namespace?: string
   concurrency?: { workflow?: number; activity?: number }
+  dataConverter?: DataConverter
 }
 
 export interface NativeWorkerOptions {
@@ -155,6 +166,7 @@ export class WorkerRuntime {
   #workflowEngine: WorkflowEngine
   #activityHandlers: Record<string, ActivityHandler>
   #state: WorkerRuntimeState = 'idle'
+  #dataConverter: DataConverter
   #abortController: AbortController | null = null
   #runPromise: Promise<void> | null = null
   #shutdownPromise: Promise<void> | null = null
@@ -170,11 +182,13 @@ export class WorkerRuntime {
     handles: WorkerHandles,
     context: WorkerRuntimeContext,
     workflowEngine: WorkflowEngine,
+    dataConverter: DataConverter,
   ) {
     this.#handles = handles
     this.#context = context
     this.#workflowEngine = workflowEngine
     this.#activityHandlers = { ...(options.activities ?? {}) }
+    this.#dataConverter = dataConverter
   }
 
   static async create(options: WorkerRuntimeOptions): Promise<WorkerRuntime> {
@@ -253,10 +267,13 @@ export class WorkerRuntime {
         })
       }
 
+      const dataConverter = options.dataConverter ?? createDefaultDataConverter()
+
       const workflowEngine = new WorkflowEngine({
         workflowsPath: options.workflowsPath,
         activities: options.activities,
         showStackTraceSources: config.showStackTraceSources ?? false,
+        dataConverter,
       })
 
       return new WorkerRuntime(
@@ -264,6 +281,7 @@ export class WorkerRuntime {
         { runtime, client, worker: workerHandle },
         { namespace, identity, taskQueue, config },
         workflowEngine,
+        dataConverter,
       )
     } catch (_error) {
       if (client) {
@@ -431,8 +449,71 @@ export class WorkerRuntime {
       throw error
     }
 
+    await this.#applyDataConverterToWorkflowCompletion(result.completion)
+
     const payload = coresdk.workflow_completion.WorkflowActivationCompletion.encode(result.completion).finish()
     native.worker.completeWorkflowTask(this.#handles.worker, payload)
+  }
+
+  async #applyDataConverterToWorkflowCompletion(
+    completion: coresdk.workflow_completion.IWorkflowActivationCompletion,
+  ): Promise<void> {
+    const success = completion.successful
+    if (!success?.commands) {
+      return
+    }
+
+    for (const command of success.commands) {
+      const complete = command.completeWorkflowExecution
+      if (complete?.result) {
+        const decoded = await decodePayloadsToValues(this.#dataConverter, [complete.result])
+        const encoded = await encodeValuesToPayloads(this.#dataConverter, decoded)
+        complete.result = encoded?.[0]
+      }
+
+      const failure = command.failWorkflowExecution
+      if (failure?.failure) {
+        failure.failure = await encodeFailurePayloads(this.#dataConverter, failure.failure)
+      }
+
+      const continueAsNew = command.continueAsNewWorkflowExecution
+      if (continueAsNew) {
+        const argsArray = extractPayloadArray(continueAsNew.arguments)
+        if (argsArray.length > 0) {
+          const decodedArgs = await decodePayloadsToValues(this.#dataConverter, argsArray)
+          const encodedArgs = await encodeValuesToPayloads(this.#dataConverter, decodedArgs)
+          if (encodedArgs && encodedArgs.length > 0) {
+            continueAsNew.arguments = encodedArgs
+          } else {
+            continueAsNew.arguments = []
+          }
+        }
+
+        if (continueAsNew.memo) {
+          const decodedMemo = await decodePayloadMapToValues(this.#dataConverter, continueAsNew.memo as PayloadMap)
+          const encodedMemo = await encodeMapValuesToPayloads(this.#dataConverter, decodedMemo ?? {})
+          continueAsNew.memo = encodedMemo ?? {}
+        }
+
+        if (continueAsNew.searchAttributes?.indexedFields) {
+          const decodedSearch = await decodePayloadMapToValues(
+            this.#dataConverter,
+            continueAsNew.searchAttributes.indexedFields as PayloadMap,
+          )
+          const encodedSearch = await encodeMapValuesToPayloads(this.#dataConverter, decodedSearch ?? {})
+          continueAsNew.searchAttributes.indexedFields = encodedSearch ?? {}
+        }
+
+        if (continueAsNew.headers) {
+          const decodedHeaders = await decodePayloadMapToValues(
+            this.#dataConverter,
+            continueAsNew.headers as PayloadMap,
+          )
+          const encodedHeaders = await encodeMapValuesToPayloads(this.#dataConverter, decodedHeaders ?? {})
+          continueAsNew.headers = encodedHeaders ?? {}
+        }
+      }
+    }
   }
 
   async #processActivityTask(bytes: Uint8Array): Promise<void> {
@@ -491,7 +572,7 @@ export class WorkerRuntime {
       return
     }
 
-    const args = decodePayloads(extractPayloadArray(start.input))
+    const args = await decodePayloadsToValues(this.#dataConverter, extractPayloadArray(start.input))
     const info: ActivityInfo = {
       activityId: start.activityId ?? '',
       activityType,
@@ -508,10 +589,15 @@ export class WorkerRuntime {
       scheduledTime: timestampToDate(start.scheduledTime),
       startedTime: timestampToDate(start.startedTime),
       currentAttemptScheduledTime: timestampToDate(start.currentAttemptScheduledTime),
-      lastHeartbeatDetails: decodePayloads(extractPayloadArray(start.heartbeatDetails)),
+      lastHeartbeatDetails: await decodePayloadsToValues(
+        this.#dataConverter,
+        extractPayloadArray(start.heartbeatDetails),
+      ),
     }
 
-    const context = new ActivityContextImpl(info, (details) => this.#recordActivityHeartbeat(taskToken, details))
+    const context = new ActivityContextImpl(info, async (details) => {
+      await this.#recordActivityHeartbeat(taskToken, details)
+    })
 
     const execution = new ActivityExecution({
       tokenKey,
@@ -561,7 +647,7 @@ export class WorkerRuntime {
   }
 
   async #respondWorkflowFailure(runId: string | undefined, error: unknown): Promise<void> {
-    const failure = defaultFailureConverter.errorToFailure(normalizeError(error), defaultPayloadConverter)
+    const failure = await encodeErrorToFailure(this.#dataConverter, normalizeError(error))
     const completion = coresdk.workflow_completion.WorkflowActivationCompletion.create({
       runId: runId ?? '',
       failed: coresdk.workflow_completion.Failure.create({ failure }),
@@ -570,18 +656,23 @@ export class WorkerRuntime {
     native.worker.completeWorkflowTask(this.#handles.worker, payload)
   }
 
-  #recordActivityHeartbeat(taskToken: Uint8Array, details?: unknown[]): void {
-    const payloads = encodePayloads(details ?? [])
+  async #recordActivityHeartbeat(taskToken: Uint8Array, details?: unknown[]): Promise<void> {
+    const payloads =
+      details && details.length > 0 ? await encodeValuesToPayloads(this.#dataConverter, details) : undefined
     const heartbeat = coresdk.ActivityHeartbeat.create({
       taskToken,
-      ...(payloads.length > 0 ? { details: payloads } : {}),
+      ...(payloads && payloads.length > 0 ? { details: payloads } : {}),
     })
     const buffer = coresdk.ActivityHeartbeat.encode(heartbeat).finish()
     native.worker.recordActivityHeartbeat(this.#handles.worker, buffer)
   }
 
   async #completeActivitySuccess(taskToken: Uint8Array, result: unknown): Promise<void> {
-    const payload = result === undefined ? undefined : defaultPayloadConverter.toPayload(result)
+    let payload: temporal.api.common.v1.IPayload | undefined
+    if (result !== undefined) {
+      const payloads = await encodeValuesToPayloads(this.#dataConverter, [result])
+      payload = payloads?.[0]
+    }
     const completed = coresdk.activity_result.Success.create(payload ? { result: payload } : {})
     const executionResult = coresdk.activity_result.ActivityExecutionResult.create({ completed })
     const completion = coresdk.ActivityTaskCompletion.create({
@@ -593,7 +684,7 @@ export class WorkerRuntime {
   }
 
   async #completeActivityFailure(taskToken: Uint8Array, error: unknown): Promise<void> {
-    const failure = defaultFailureConverter.errorToFailure(normalizeError(error), defaultPayloadConverter)
+    const failure = await encodeErrorToFailure(this.#dataConverter, normalizeError(error))
     const failed = coresdk.activity_result.Failure.create({ failure })
     const executionResult = coresdk.activity_result.ActivityExecutionResult.create({ failed })
     const completion = coresdk.ActivityTaskCompletion.create({
@@ -605,7 +696,7 @@ export class WorkerRuntime {
   }
 
   async #completeActivityCancelled(taskToken: Uint8Array, failure: CancelledFailure): Promise<void> {
-    const failurePayload = defaultFailureConverter.errorToFailure(failure, defaultPayloadConverter)
+    const failurePayload = await encodeErrorToFailure(this.#dataConverter, failure)
     const cancelled = coresdk.activity_result.Cancellation.create({ failure: failurePayload })
     const executionResult = coresdk.activity_result.ActivityExecutionResult.create({ cancelled })
     const completion = coresdk.ActivityTaskCompletion.create({
@@ -765,7 +856,7 @@ class ActivityExecution {
 
 class ActivityContextImpl implements ActivityContext {
   readonly info: ActivityInfo
-  #recordHeartbeat: (details: unknown[]) => void
+  #recordHeartbeat: (details: unknown[]) => void | Promise<void>
   #abortController = new AbortController()
   #cancelled = false
   #cancelFailure: CancelledFailure | null = null
@@ -773,7 +864,7 @@ class ActivityContextImpl implements ActivityContext {
   #resolveCancel?: (failure: CancelledFailure) => void
   #cancelPromise: Promise<CancelledFailure>
 
-  constructor(info: ActivityInfo, recordHeartbeat: (details: unknown[]) => void) {
+  constructor(info: ActivityInfo, recordHeartbeat: (details: unknown[]) => void | Promise<void>) {
     this.info = info
     this.#recordHeartbeat = recordHeartbeat
     this.#cancelPromise = new Promise<CancelledFailure>((resolve) => {
@@ -809,7 +900,7 @@ class ActivityContextImpl implements ActivityContext {
   }
 
   heartbeat(...details: unknown[]): void {
-    this.#recordHeartbeat(details)
+    void this.#recordHeartbeat(details)
   }
 
   throwIfCancelled(): void {
@@ -829,24 +920,6 @@ class ActivityContextImpl implements ActivityContext {
   close(): void {
     this.#cancelHandlers.clear()
   }
-}
-
-const encodePayloads = (values: unknown[]): temporal.api.common.v1.IPayload[] => {
-  const payloads: temporal.api.common.v1.IPayload[] = []
-  for (const value of values) {
-    const payload = defaultPayloadConverter.toPayload(value)
-    if (payload) {
-      payloads.push(payload)
-    }
-  }
-  return payloads
-}
-
-const decodePayloads = (payloads: temporal.api.common.v1.IPayload[] | null | undefined): unknown[] => {
-  if (!payloads || payloads.length === 0) {
-    return []
-  }
-  return payloads.map((payload) => defaultPayloadConverter.fromPayload(payload))
 }
 
 const extractPayloadArray = (
