@@ -414,6 +414,8 @@ fn connectAsyncWorker(task: *ConnectTask) void {
         return;
     };
 
+    const runtime_handle = runtime_ptr;
+
     const client_handle = allocator.create(ClientHandle) catch |err| {
         allocator.free(config_copy);
         core.api.client_free(core_client);
@@ -435,6 +437,21 @@ fn connectAsyncWorker(task: *ConnectTask) void {
         .config = config_copy,
         .core_client = core_client,
     };
+
+    if (!runtime.registerClient(runtime_handle)) {
+        client_handle.runtime = null;
+        common.destroy(client_handle);
+        errors.setStructuredError(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: runtime is shutting down",
+        });
+        _ = pending.rejectClient(
+            pending_handle,
+            grpc.failed_precondition,
+            "temporal-bun-bridge-zig: runtime is shutting down",
+        );
+        return;
+    }
 
     if (!pending.resolveClient(
         pending_handle,

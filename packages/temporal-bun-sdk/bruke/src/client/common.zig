@@ -201,6 +201,11 @@ pub fn destroy(handle: ?*ClientHandle) void {
     var allocator = std.heap.c_allocator;
     const client = handle.?;
 
+    if (client.runtime) |runtime_handle| {
+        runtime.unregisterClient(runtime_handle);
+        client.runtime = null;
+    }
+
     if (client.core_client) |core_client_ptr| {
         core.api.client_free(core_client_ptr);
         client.core_client = null;

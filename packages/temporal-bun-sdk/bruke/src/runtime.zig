@@ -191,6 +191,8 @@ pub const RuntimeHandle = struct {
     telemetry_otel_use_seconds: bool = false,
     telemetry_otel_temporality: core.OpenTelemetryMetricTemporality = otel_temporality_cumulative,
     telemetry_otel_protocol: core.OpenTelemetryProtocol = otel_protocol_grpc,
+    active_clients: usize = 0,
+    active_workers: usize = 0,
     pending_core_ops: usize = 0,
     pending_lock: std.Thread.Mutex = .{},
     pending_condition: std.Thread.Condition = .{},
@@ -826,7 +828,7 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
 
     runtime.pending_lock.lock();
     runtime.destroying = true;
-    while (runtime.pending_connects != 0 or runtime.pending_core_ops != 0) {
+    while (runtime.pending_connects != 0 or runtime.pending_core_ops != 0 or runtime.active_clients != 0 or runtime.active_workers != 0) {
         runtime.pending_condition.wait(&runtime.pending_lock);
     }
     runtime.pending_lock.unlock();
@@ -871,6 +873,16 @@ pub fn updateTelemetry(handle: ?*RuntimeHandle, options_json: []const u8) i32 {
         });
         return -1;
     }
+
+    if (runtime.active_clients != 0 or runtime.active_workers != 0) {
+        runtime.pending_lock.unlock();
+        errors.setStructuredError(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: telemetry update requires all clients and workers to be shut down",
+        });
+        return -1;
+    }
+
     runtime.destroying = true;
     runtime.pending_lock.unlock();
     defer {
@@ -1058,7 +1070,7 @@ pub fn endPendingClientConnect(handle: *RuntimeHandle) void {
         handle.pending_connects -= 1;
     }
 
-    if (handle.destroying and handle.pending_connects == 0 and handle.pending_core_ops == 0) {
+    if (handle.destroying and handle.pending_connects == 0 and handle.pending_core_ops == 0 and handle.active_clients == 0 and handle.active_workers == 0) {
         handle.pending_condition.broadcast();
     }
 }
@@ -1092,9 +1104,59 @@ pub fn releaseCoreRuntime(handle: ?*RuntimeHandle) void {
 
     if (runtime_handle.pending_core_ops > 0) {
         runtime_handle.pending_core_ops -= 1;
-        if (runtime_handle.destroying and runtime_handle.pending_connects == 0 and runtime_handle.pending_core_ops == 0) {
+        if (runtime_handle.destroying and runtime_handle.pending_connects == 0 and runtime_handle.pending_core_ops == 0 and runtime_handle.active_clients == 0 and runtime_handle.active_workers == 0) {
             runtime_handle.pending_condition.broadcast();
         }
+    }
+}
+
+pub fn registerClient(handle: *RuntimeHandle) bool {
+    handle.pending_lock.lock();
+    defer handle.pending_lock.unlock();
+
+    if (handle.destroying) {
+        return false;
+    }
+
+    handle.active_clients += 1;
+    return true;
+}
+
+pub fn unregisterClient(handle: *RuntimeHandle) void {
+    handle.pending_lock.lock();
+    defer handle.pending_lock.unlock();
+
+    if (handle.active_clients > 0) {
+        handle.active_clients -= 1;
+    }
+
+    if (handle.destroying and handle.pending_connects == 0 and handle.pending_core_ops == 0 and handle.active_clients == 0 and handle.active_workers == 0) {
+        handle.pending_condition.broadcast();
+    }
+}
+
+pub fn registerWorker(handle: *RuntimeHandle) bool {
+    handle.pending_lock.lock();
+    defer handle.pending_lock.unlock();
+
+    if (handle.destroying) {
+        return false;
+    }
+
+    handle.active_workers += 1;
+    return true;
+}
+
+pub fn unregisterWorker(handle: *RuntimeHandle) void {
+    handle.pending_lock.lock();
+    defer handle.pending_lock.unlock();
+
+    if (handle.active_workers > 0) {
+        handle.active_workers -= 1;
+    }
+
+    if (handle.destroying and handle.pending_connects == 0 and handle.pending_core_ops == 0 and handle.active_clients == 0 and handle.active_workers == 0) {
+        handle.pending_condition.broadcast();
     }
 }
 
@@ -1202,6 +1264,34 @@ pub fn telemetrySocketAddrForTest(handle: ?*RuntimeHandle) ?*byte_array.ByteArra
 pub fn telemetryAttachServiceNameForTest(handle: ?*RuntimeHandle) bool {
     const runtime = handle orelse return true;
     return runtime.telemetry_attach_service_name;
+}
+
+pub fn registerClientForTest(handle: ?*RuntimeHandle) bool {
+    if (handle == null) {
+        return false;
+    }
+    return registerClient(handle.?);
+}
+
+pub fn unregisterClientForTest(handle: ?*RuntimeHandle) void {
+    if (handle == null) {
+        return;
+    }
+    unregisterClient(handle.?);
+}
+
+pub fn registerWorkerForTest(handle: ?*RuntimeHandle) bool {
+    if (handle == null) {
+        return false;
+    }
+    return registerWorker(handle.?);
+}
+
+pub fn unregisterWorkerForTest(handle: ?*RuntimeHandle) void {
+    if (handle == null) {
+        return;
+    }
+    unregisterWorker(handle.?);
 }
 
 test "parseTelemetryConfig preserves metrics when payload omits metricsExporter" {

@@ -275,6 +275,52 @@ if (!nativeBridge) {
       }
     })
 
+    zigOnlyTest('configureTelemetry rejects when clients are active', () => {
+      const runtime = native.createRuntime({})
+      try {
+        const registered = native.__TEST__.registerClient(runtime)
+        expect(registered).toBe(true)
+
+        let caught: unknown
+        try {
+          native.configureTelemetry(runtime, {
+            logExporter: { filter: 'temporal_sdk_core=debug' },
+          })
+        } catch (error) {
+          caught = error
+        }
+
+        expect(caught).toBeInstanceOf(NativeBridgeError)
+        expect((caught as NativeBridgeError).code).toBe(9)
+      } finally {
+        native.__TEST__.unregisterClient(runtime)
+        native.runtimeShutdown(runtime)
+      }
+    })
+
+    zigOnlyTest('configureTelemetry rejects when workers are active', () => {
+      const runtime = native.createRuntime({})
+      try {
+        const registered = native.__TEST__.registerWorker(runtime)
+        expect(registered).toBe(true)
+
+        let caught: unknown
+        try {
+          native.configureTelemetry(runtime, {
+            logExporter: { filter: 'temporal_sdk_core=debug' },
+          })
+        } catch (error) {
+          caught = error
+        }
+
+        expect(caught).toBeInstanceOf(NativeBridgeError)
+        expect((caught as NativeBridgeError).code).toBe(9)
+      } finally {
+        native.__TEST__.unregisterWorker(runtime)
+        native.runtimeShutdown(runtime)
+      }
+    })
+
     zigOnlyTest('configureTelemetry waits for in-flight RPCs before swapping runtime', async () => {
       const runtime = native.createRuntime({})
       try {

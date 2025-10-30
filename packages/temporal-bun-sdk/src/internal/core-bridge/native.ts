@@ -275,6 +275,22 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr],
       returns: FFIType.int32_t,
     },
+    temporal_bun_runtime_test_register_client: {
+      args: [FFIType.ptr],
+      returns: FFIType.int32_t,
+    },
+    temporal_bun_runtime_test_unregister_client: {
+      args: [FFIType.ptr],
+      returns: FFIType.void,
+    },
+    temporal_bun_runtime_test_register_worker: {
+      args: [FFIType.ptr],
+      returns: FFIType.int32_t,
+    },
+    temporal_bun_runtime_test_unregister_worker: {
+      args: [FFIType.ptr],
+      returns: FFIType.void,
+    },
     temporal_bun_runtime_test_emit_log: {
       args: [
         FFIType.uint32_t,
@@ -457,6 +473,10 @@ const {
     temporal_bun_runtime_test_get_metric_prefix,
     temporal_bun_runtime_test_get_socket_addr,
     temporal_bun_runtime_test_get_attach_service_name,
+    temporal_bun_runtime_test_register_client,
+    temporal_bun_runtime_test_unregister_client,
+    temporal_bun_runtime_test_register_worker,
+    temporal_bun_runtime_test_unregister_worker,
     temporal_bun_error_message,
     temporal_bun_error_free,
     temporal_bun_client_connect_async,
@@ -685,6 +705,18 @@ export const native = {
         socketAddr: decodeFromByteArrayPointer(socketAddrPtr),
         attachServiceName,
       }
+    },
+    registerClient(runtime: Runtime): boolean {
+      return temporal_bun_runtime_test_register_client(runtime.handle) !== 0
+    },
+    unregisterClient(runtime: Runtime): void {
+      temporal_bun_runtime_test_unregister_client(runtime.handle)
+    },
+    registerWorker(runtime: Runtime): boolean {
+      return temporal_bun_runtime_test_register_worker(runtime.handle) !== 0
+    },
+    unregisterWorker(runtime: Runtime): void {
+      temporal_bun_runtime_test_unregister_worker(runtime.handle)
     },
   },
 
