@@ -3,6 +3,8 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"log"
 	"net/http/httptest"
 	"testing"
@@ -96,8 +98,18 @@ func TestEventsEndpointRejectsEmptyPayload(t *testing.T) {
 	require.Equal(t, 400, resp.StatusCode)
 }
 
-func TestCodexTasksEndpointLogs(t *testing.T) {
-	srv, err := server.New(server.Options{Dispatcher: &stubDispatcher{}, Store: &stubStore{}})
+func TestCodexTasksEndpointPersists(t *testing.T) {
+	codex := &stubCodexStore{
+		ideaID: "idea-1",
+		taskID: "task-1",
+		runID:  "run-1",
+	}
+
+	srv, err := server.New(server.Options{
+		Dispatcher: &stubDispatcher{},
+		Store:      &stubStore{},
+		CodexStore: codex,
+	})
 	require.NoError(t, err)
 
 	buf := &bytes.Buffer{}
@@ -116,14 +128,80 @@ func TestCodexTasksEndpointLogs(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/x-protobuf")
-	req.Header.Set("ce-id", "delivery-1")
 
 	resp, err := srv.App().Test(req)
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = resp.Body.Close()
+	})
+
 	require.Equal(t, 202, resp.StatusCode)
 
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"ideaId":"idea-1"`)
+	require.Contains(t, string(body), `"taskRunId":"run-1"`)
+
+	require.Equal(t, 1, codex.calls)
+	require.Equal(t, "delivery-1", codex.lastTask.GetDeliveryId())
+
 	logs := buf.String()
-	require.Contains(t, logs, "codex task received: stage=CODEX_TASK_STAGE_IMPLEMENTATION repo=proompteng/lab issue=42")
+	require.Contains(t, logs, "codex task ingested: idea_id=idea-1 task_id=task-1 run_id=run-1")
+}
+
+func TestCodexTasksEndpointHandlesError(t *testing.T) {
+	codex := &stubCodexStore{err: errors.New("boom")}
+
+	srv, err := server.New(server.Options{
+		Dispatcher: &stubDispatcher{},
+		Store:      &stubStore{},
+		CodexStore: codex,
+	})
+	require.NoError(t, err)
+
+	payload, err := proto.Marshal(&githubpb.CodexTask{
+		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+		Repository:  "proompteng/lab",
+		IssueNumber: 7,
+		DeliveryId:  "delivery-error",
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/x-protobuf")
+
+	resp, err := srv.App().Test(req)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = resp.Body.Close()
+	})
+
+	require.Equal(t, 500, resp.StatusCode)
+	require.Equal(t, 1, codex.calls)
+}
+
+func TestCodexTasksEndpointUnavailable(t *testing.T) {
+	srv, err := server.New(server.Options{})
+	require.NoError(t, err)
+
+	payload, err := proto.Marshal(&githubpb.CodexTask{
+		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_REVIEW,
+		Repository:  "proompteng/lab",
+		IssueNumber: 99,
+		DeliveryId:  "delivery-none",
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/x-protobuf")
+
+	resp, err := srv.App().Test(req)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = resp.Body.Close()
+	})
+
+	require.Equal(t, 503, resp.StatusCode)
 }
 
 type stubDispatcher struct {
@@ -153,3 +231,21 @@ func (s *stubStore) Set(_ context.Context, key string, _ []byte, _ time.Duration
 func (s *stubStore) Get(context.Context, string) ([]byte, error) { return nil, session.ErrNotFound }
 
 func (s *stubStore) Delete(context.Context, string) error { return nil }
+
+type stubCodexStore struct {
+	ideaID   string
+	taskID   string
+	runID    string
+	err      error
+	calls    int
+	lastTask *githubpb.CodexTask
+}
+
+func (s *stubCodexStore) IngestCodexTask(_ context.Context, task *githubpb.CodexTask) (string, string, string, error) {
+	s.calls++
+	s.lastTask = task
+	if s.err != nil {
+		return "", "", "", s.err
+	}
+	return s.ideaID, s.taskID, s.runID, nil
+}

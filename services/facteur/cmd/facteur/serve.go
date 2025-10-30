@@ -2,6 +2,7 @@ package facteur
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"os/signal"
@@ -11,11 +12,16 @@ import (
 
 	"github.com/spf13/cobra"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
+
 	"github.com/proompteng/lab/services/facteur/internal/config"
+	"github.com/proompteng/lab/services/facteur/internal/knowledge"
 	"github.com/proompteng/lab/services/facteur/internal/server"
 	"github.com/proompteng/lab/services/facteur/internal/session"
 	"github.com/proompteng/lab/services/facteur/internal/telemetry"
 )
+
+var postgresOpener = openPostgres
 
 // NewServeCommand scaffolds the "serve" CLI command.
 func NewServeCommand() *cobra.Command {
@@ -66,10 +72,22 @@ func NewServeCommand() *cobra.Command {
 			}
 			logMigrationResults(cmd, results)
 
-			store, err := session.NewRedisStoreFromURL(cfg.Redis.URL)
+			sessionStore, err := session.NewRedisStoreFromURL(cfg.Redis.URL)
 			if err != nil {
 				return fmt.Errorf("init redis store: %w", err)
 			}
+
+			db, err := postgresOpener(cmd.Context(), cfg.Postgres.DSN)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if closeErr := db.Close(); closeErr != nil {
+					cmd.PrintErrf("close postgres: %v\n", closeErr)
+				}
+			}()
+
+			kbStore := knowledge.NewStore(db)
 
 			dispatcher, err := buildDispatcher(cfg)
 			if err != nil {
@@ -80,7 +98,8 @@ func NewServeCommand() *cobra.Command {
 				ListenAddress: cfg.Server.ListenAddress,
 				Prefork:       prefork,
 				Dispatcher:    dispatcher,
-				Store:         store,
+				Store:         sessionStore,
+				CodexStore:    kbStore,
 			})
 			if err != nil {
 				return fmt.Errorf("init server: %w", err)
@@ -104,4 +123,29 @@ func NewServeCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&prefork, "prefork", false, "Enable Fiber prefork mode for maximised throughput")
 
 	return cmd
+}
+
+func openPostgres(ctx context.Context, dsn string) (*sql.DB, error) {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open postgres: %w", err)
+	}
+
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	db.SetConnMaxLifetime(60 * time.Minute)
+
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(pingCtx); err != nil {
+		closeErr := db.Close()
+		if closeErr != nil {
+			return nil, fmt.Errorf("ping postgres: %v (close error: %w)", err, closeErr)
+		}
+		return nil, fmt.Errorf("ping postgres: %w", err)
+	}
+
+	return db, nil
 }
