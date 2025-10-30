@@ -833,6 +833,10 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
     const runtime = handle.?;
 
     runtime.pending_lock.lock();
+    while (runtime.destroying) {
+        runtime.pending_condition.wait(&runtime.pending_lock);
+    }
+
     runtime.destroying_epoch = runtime.destroying_epoch +% 1;
     runtime.destroying = true;
     while (runtime.pending_connects != 0 or runtime.pending_core_ops != 0 or runtime.active_clients != 0 or runtime.active_workers != 0) {
