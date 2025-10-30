@@ -741,6 +741,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   let resumeContext: ResumeContext | undefined
   let resumeSessionId: string | undefined
   let capturedSessionId: string | undefined
+  let runSucceeded = false
 
   try {
     resumeContext = await loadResumeMetadata({
@@ -862,6 +863,7 @@ export const runCodexImplementation = async (eventPath: string) => {
     }
 
     await ensurePullRequestExists(repository, headBranch, logger)
+    runSucceeded = true
     return {
       repository,
       issueNumber,
