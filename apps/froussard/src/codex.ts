@@ -252,7 +252,7 @@ const buildReviewPrompt = ({
     '- GitHub CLI (`gh`) is installed and authenticated; use it to fetch issue context, update the pull request, and interact with reviewers.',
     '- Re-run required tests, linters, and builds after each significant change; capture command output and attach it to the progress comment.',
     '- Keep the branch rebased with the base branch, resolve merge conflicts promptly, and ensure fingerprint dedupe continues to work after modifications.',
-    '- If all plan steps and acceptance criteria are complete with passing validation, post an approval on the pull request (e.g., `gh pr review --approve --body "Plan complete; validation evidence: ..."`).',
+    '- If all plan steps and acceptance criteria are complete with passing validation, post an approval comment on the pull request summarizing the evidence (e.g., `gh pr comment --body "Plan complete; validation evidence: ..."`).',
     '- If blockers remain, leave a clear progress update describing what is missing and continue iterating until the pull request is genuinely merge-ready.',
     '- Always reason step by step, cite precise files or line numbers when giving feedback, and avoid speculation.',
   ].join('\n')

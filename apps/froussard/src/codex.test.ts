@@ -213,7 +213,7 @@ describe('buildCodexPrompt', () => {
       'GitHub CLI (`gh`) is installed and authenticated; use it to fetch issue context, update the pull request, and interact with reviewers.',
     )
     expect(prompt).toContain(
-      'post an approval on the pull request (e.g., `gh pr review --approve --body "Plan complete; validation evidence: ..."`).',
+      'post an approval comment on the pull request summarizing the evidence (e.g., `gh pr comment --body "Plan complete; validation evidence: ..."`).',
     )
     expect(prompt).toContain(PROGRESS_COMMENT_MARKER)
   })
