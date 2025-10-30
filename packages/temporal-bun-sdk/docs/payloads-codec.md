@@ -148,7 +148,7 @@ Because the converter is threaded through both the workflow runtime and the work
 - `encodeFailurePayloads` walks nested `Failure` protos (including activity and child workflow failures) to call `encodeValuesToPayloads` on each payload.
 - `decodeFailurePayloads` does the reverse when failures are received from Temporal core.
 
-Tests under `tests/payloads/failure.test.ts` confirm round-trips for application and activity failures, including tunneled metadata.
+Tests under `tests/payloads/converter.test.ts` confirm round-trips for application and activity failures, including tunneled metadata.
 
 ---
 
@@ -157,8 +157,8 @@ Tests under `tests/payloads/failure.test.ts` confirm round-trips for application
 | Suite | Scenario |
 |-------|----------|
 | `tests/payloads/json-codec.test.ts` | JSON tunnel encode/decode parity, base64 metadata preservation. |
-| `tests/payloads/converter.test.ts` | `encodeValuesToPayloads`, map helpers, and failure conversion helpers. |
-| `tests/client.test.ts` | Deterministic `computeSignalRequestId` hashing against tunneled payloads. |
+| `tests/payloads/converter.test.ts` | `encodeValuesToPayloads`, map helpers, and failure conversion helpers (previously documented separately as `failure.test.ts`). |
+| `tests/client/serialization.test.ts` | Deterministic `computeSignalRequestId` hashing against tunneled payloads. |
 | `tests/worker.runtime.workflow.test.ts` | Workflow completions and continue-as-new commands re-encoding payloads via the converter. |
 | `tests/native.integration.test.ts` | Full custom codec round trip against the Temporal dev server (requires `TEMPORAL_TEST_SERVER=1`). |
 

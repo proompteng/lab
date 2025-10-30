@@ -19,7 +19,7 @@ import {
   encodeErrorToFailure,
   failureToError,
 } from '../../common/payloads'
-import { ensureWorkflowRuntimeBootstrap, withTemporalGlobals } from './bootstrap'
+import { ensureWorkflowRuntimeBootstrap, setWorkflowDataConverter, withTemporalGlobals } from './bootstrap'
 import { convertParentWorkflowInfo, convertRootWorkflowInfo } from './info'
 
 export interface WorkflowEnvironmentOptions {
@@ -195,6 +195,7 @@ export class WorkflowEnvironment {
         importInterceptors: () => this.#interceptorsCache ?? [],
       },
       async () => {
+        setWorkflowDataConverter(this.#dataConverter)
         workflowApi.initRuntime({
           info: this.#info,
           randomnessSeed: this.#randomnessSeed,

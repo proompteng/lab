@@ -2,8 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { DefaultPayloadConverter } from '@temporalio/common'
+import { temporal } from '@temporalio/proto'
+
 import { createTemporalClient } from '../src'
-import { createDataConverter } from '../src/common/payloads'
+import { createDataConverter, createDefaultDataConverter, decodePayloadsToValues } from '../src/common/payloads'
 import { importNativeBridge } from './helpers/native-bridge'
 import { isTemporalServerAvailable, parseTemporalAddress } from './helpers/temporal-server'
 import { withRetry, waitForWorkerReady } from './helpers/retry'
@@ -33,6 +35,17 @@ if (!nativeBridge) {
   })()
 
   const { native } = nativeBridge
+  const defaultDataConverter = createDefaultDataConverter()
+
+  const decodeQueryResult = async (bytes: Uint8Array): Promise<unknown> => {
+    const response = temporal.api.workflowservice.v1.QueryWorkflowResponse.decode(bytes)
+    const payloads = response.queryResult?.payloads ?? []
+    if (!payloads.length) {
+      return null
+    }
+    const [value] = await decodePayloadsToValues(defaultDataConverter, payloads)
+    return value ?? null
+  }
 
   const restoreEnv = (original: Record<string, string | undefined>) => {
     for (const [key, value] of Object.entries(original)) {
@@ -191,9 +204,9 @@ if (!nativeBridge) {
         }
         const state = await withRetry(async () => {
           const stateBytes = await native.queryWorkflow(client, queryRequest)
-          const curr = JSON.parse(decoder.decode(stateBytes)) as string
+          const curr = await decodeQueryResult(stateBytes)
           if (curr !== 'updated') throw new Error('state not updated yet')
-          return curr
+          return curr as string
         }, maxAttempts, waitMs)
         expect(state).toBe('updated')
       } finally {
@@ -262,11 +275,11 @@ if (!nativeBridge) {
 
         const state = await withRetry(async () => {
           const bytes = await native.queryWorkflow(client, queryRequest)
-          const value = JSON.parse(decoder.decode(bytes)) as string
+          const value = await decodeQueryResult(bytes)
           if (value !== 'updated-state') {
             throw new Error(`state not updated yet: ${value}`)
           }
-          return value
+          return value as string
         }, maxAttempts, waitMs)
 
         expect(state).toBe('updated-state')
@@ -372,7 +385,7 @@ if (!nativeBridge) {
       }
     })
 
-    test('queryWorkflow returns JSON payload for running workflow', async () => {
+    test('queryWorkflow returns payload for running workflow', async () => {
       if (!workerProcess) {
         console.log('Skipping test: worker not available')
         return
@@ -417,7 +430,7 @@ if (!nativeBridge) {
 
         const resultBytes = await withRetry(async () => native.queryWorkflow(client, queryRequest), maxAttempts, waitMs)
 
-        const result = JSON.parse(decoder.decode(resultBytes)) as string
+        const result = await decodeQueryResult(resultBytes)
         expect(result).toBe('initial-state')
       } finally {
         native.clientShutdown(client)

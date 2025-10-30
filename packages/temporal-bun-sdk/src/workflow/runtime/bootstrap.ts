@@ -3,6 +3,9 @@ import { AsyncLocalStorage as NodeAsyncLocalStorage } from 'node:async_hooks'
 import Module, { createRequire } from 'node:module'
 import { URL, URLSearchParams } from 'node:url'
 import { TextDecoder, TextEncoder } from 'node:util'
+import type { FailureConverter, PayloadConverter } from '@temporalio/common'
+
+import type { DataConverter } from '../../common/payloads'
 
 type TemporalGlobals = {
   importWorkflows: () => unknown
@@ -41,6 +44,13 @@ class SimpleAsyncLocalStorage<T> {
 let bootstrapCompleted = false
 
 const temporalModuleRequests = new Set(['__temporal_custom_payload_converter', '__temporal_custom_failure_converter'])
+
+type ConverterModuleExports = {
+  payloadConverter?: PayloadConverter
+  failureConverter?: FailureConverter
+}
+
+let converterExports: ConverterModuleExports | undefined
 
 /**
  * Ensure the ambient JS runtime exposes the globals that Temporal's workflow runtime
@@ -109,6 +119,12 @@ export const ensureWorkflowRuntimeBootstrap = (): void => {
     } as unknown as NodeJS.Module
 
     requireBootstrap.cache[stubModuleCacheKey] = moduleCacheEntry
+    converterExports = moduleCacheEntry.exports as ConverterModuleExports
+  } else {
+    const existing = requireBootstrap.cache[stubModuleCacheKey]
+    if (existing) {
+      converterExports = existing.exports as ConverterModuleExports
+    }
   }
 
   const originalResolveFilename = moduleInternals._resolveFilename
@@ -137,4 +153,13 @@ export const withTemporalGlobals = async <T>(globals: TemporalGlobals, execute: 
       globalAny.__TEMPORAL__ = previous
     }
   }
+}
+
+export const setWorkflowDataConverter = (converter: DataConverter | null | undefined): void => {
+  if (!converterExports) {
+    throw new Error('Temporal workflow runtime stub was not initialized')
+  }
+
+  converterExports.payloadConverter = converter?.payloadConverter ?? undefined
+  converterExports.failureConverter = converter?.failureConverter ?? undefined
 }

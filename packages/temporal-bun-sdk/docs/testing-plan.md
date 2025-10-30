@@ -42,8 +42,8 @@ This plan documents the current pyramid and the steps required to reach producti
 ## 3. Existing Suites
 
 ### Bun Unit Tests
-- `tests/payloads/json-codec.test.ts`, `tests/payloads/converter.test.ts`, `tests/payloads/failure.test.ts` — tunnel encoding, converter helpers, and failure payload round-trips.  
-- `tests/client.test.ts` / `tests/client/serialization.test.ts` — serialization helpers (`buildStartWorkflowRequest`, `computeSignalRequestId`, signal-with-start defaults) with converter-aware expectations.  
+- `tests/payloads/json-codec.test.ts`, `tests/payloads/converter.test.ts` — tunnel encoding, converter helpers, and failure payload round-trips (now consolidated in the converter suite).  
+- `tests/client.test.ts`, `src/client/serialization.test.ts` — serialization helpers (`buildStartWorkflowRequest`, `computeSignalRequestId`, signal-with-start defaults) with converter-aware expectations.  
 - `tests/config.test.ts` — environment parsing and TLS file loading.  
 - `tests/core-bridge.test.ts` / `tests/native.test.ts` — native bridge error handling, library discovery fallbacks.  
 - `tests/worker.runtime.workflow.test.ts`, `tests/worker/worker-runtime-activity.test.ts`, `tests/worker/worker-runtime-shutdown.test.ts`, `tests/worker/zig-poll-workflow.test.ts` — drive Bun-native worker loops (poll, complete, heartbeat) via the Zig bridge.  

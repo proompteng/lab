@@ -12,7 +12,7 @@ import {
   jsonToPayload,
   payloadToJson,
 } from '../src/common/payloads'
-import type { PayloadCodec } from '@temporalio/common'
+import { DefaultPayloadConverter, type PayloadCodec } from '@temporalio/common'
 
 const WORKFLOWS_PATH = fileURLToPath(new URL('./fixtures/workflows/simple.workflow.ts', import.meta.url))
 
@@ -58,6 +58,37 @@ class JsonEnvelopeCodec implements PayloadCodec {
       const value = raw.length === 0 ? null : JSON.parse(raw)
       return jsonToPayload(value)
     })
+  }
+}
+
+class PrefixingPayloadConverter extends DefaultPayloadConverter {
+  readonly #encoder = new TextEncoder()
+  readonly #decoder = new TextDecoder()
+
+  override toPayload(value: unknown) {
+    if (typeof value === 'string') {
+      return {
+        metadata: {
+          encoding: this.#encoder.encode('binary/custom'),
+        },
+        data: this.#encoder.encode(`codec:${value}`),
+      }
+    }
+
+    return super.toPayload(value)
+  }
+
+  override fromPayload(payload: Parameters<DefaultPayloadConverter['fromPayload']>[0]) {
+    const encoding = payload.metadata?.encoding ? this.#decoder.decode(payload.metadata.encoding) : undefined
+    if (encoding === 'binary/custom') {
+      const raw = payload.data ? this.#decoder.decode(payload.data) : ''
+      if (!raw.startsWith('codec:')) {
+        throw new Error('unexpected payload format')
+      }
+      return raw.slice('codec:'.length)
+    }
+
+    return super.fromPayload(payload)
   }
 }
 
@@ -277,5 +308,42 @@ describe('WorkflowEngine', () => {
         : undefined
     expect(value).toBeInstanceOf(Uint8Array)
     expect(Array.from(value as Uint8Array)).toEqual([1, 2, 3])
+  })
+
+  test('initializes workflow runtime with custom payload converter', async () => {
+    const customConverter = createDataConverter({ payloadConverter: new PrefixingPayloadConverter() })
+    const engine = new WorkflowEngine({ workflowsPath: WORKFLOWS_PATH, dataConverter: customConverter })
+
+    const activation = buildActivationBase('run-prefixed')
+    const initArgs = (await encodeValuesToPayloads(customConverter, ['Temporal'])) ?? []
+    activation.jobs = [
+      coresdk.workflow_activation.WorkflowActivationJob.create({
+        initializeWorkflow: {
+          namespace: 'default',
+          workflowId: 'prefixed-001',
+          workflowType: 'simpleWorkflow',
+          randomnessSeed: Long.fromNumber(32),
+          attempt: 1,
+          taskQueue: 'unit-test',
+          firstExecutionRunId: 'run-prefixed',
+          startTime: toTimestamp(),
+          workflowTaskTimeout: { seconds: 10, nanos: 0 },
+          arguments: initArgs,
+        },
+      }),
+    ]
+
+    const result = await engine.processWorkflowActivation(activation, {
+      namespace: 'default',
+      taskQueue: 'unit-test',
+    })
+
+    const command = result.completion.successful?.commands?.[0]
+    const payload = command?.completeWorkflowExecution?.result
+    const value =
+      payload && payload !== undefined
+        ? (await decodePayloadsToValues(customConverter, [payload]))[0]
+        : undefined
+    expect(value).toBe('hello Temporal')
   })
 })
