@@ -183,6 +183,13 @@ pub const RuntimeHandle = struct {
     telemetry_socket_addr: []u8 = ""[0..0],
     telemetry_url: []u8 = ""[0..0],
     telemetry_attach_service_name: bool = true,
+    telemetry_prom_counters_total_suffix: bool = false,
+    telemetry_prom_unit_suffix: bool = false,
+    telemetry_prom_use_seconds: bool = false,
+    telemetry_otel_metric_periodicity_millis: u32 = 0,
+    telemetry_otel_use_seconds: bool = false,
+    telemetry_otel_temporality: core.OpenTelemetryMetricTemporality = otel_temporality_cumulative,
+    telemetry_otel_protocol: core.OpenTelemetryProtocol = otel_protocol_grpc,
     pending_lock: std.Thread.Mutex = .{},
     pending_condition: std.Thread.Condition = .{},
     pending_connects: usize = 0,
@@ -229,6 +236,13 @@ const PreparedTelemetry = struct {
 
         handle.telemetry_attach_service_name = self.attach_service_name;
         handle.telemetry_mode = self.mode;
+        handle.telemetry_prom_counters_total_suffix = self.prom_counters_total_suffix;
+        handle.telemetry_prom_unit_suffix = self.prom_unit_suffix;
+        handle.telemetry_prom_use_seconds = self.prom_use_seconds;
+        handle.telemetry_otel_metric_periodicity_millis = self.otel_metric_periodicity_millis;
+        handle.telemetry_otel_use_seconds = self.otel_use_seconds;
+        handle.telemetry_otel_temporality = self.otel_temporality;
+        handle.telemetry_otel_protocol = self.otel_protocol;
 
         handle.telemetry_metric_prefix = self.metric_prefix;
         self.metric_prefix = ""[0..0];
@@ -342,7 +356,11 @@ fn encodeHistogramOverrides(map: *JsonObject) TelemetryParseError![]u8 {
     return builder.toOwnedSlice(allocator) catch TelemetryParseError.AllocationFailed;
 }
 
-fn parseTelemetryConfig(options_json: []const u8, existing_filter: []const u8) TelemetryParseError!PreparedTelemetry {
+fn parseTelemetryConfig(
+    options_json: []const u8,
+    existing_filter: []const u8,
+    existing: ?*const RuntimeHandle,
+) TelemetryParseError!PreparedTelemetry {
     const parser = std.json.parseFromSlice(std.json.Value, allocator, options_json, .{
         .ignore_unknown_fields = true,
     }) catch return TelemetryParseError.InvalidShape;
@@ -355,24 +373,37 @@ fn parseTelemetryConfig(options_json: []const u8, existing_filter: []const u8) T
 
     const base_filter = if (existing_filter.len > 0) existing_filter else default_log_filter;
 
+    const existing_handle = existing;
+
+    const base_metric_prefix = if (existing_handle) |ex|
+        if (ex.telemetry_metric_prefix.len > 0) ex.telemetry_metric_prefix else "temporal_"[0..]
+    else
+        "temporal_"[0..];
+
+    const base_global_tags = if (existing_handle) |ex| ex.telemetry_global_tags else ""[0..0];
+    const base_histogram_overrides = if (existing_handle) |ex| ex.telemetry_histogram_overrides else ""[0..0];
+    const base_headers = if (existing_handle) |ex| ex.telemetry_headers else ""[0..0];
+    const base_socket_addr = if (existing_handle) |ex| ex.telemetry_socket_addr else ""[0..0];
+    const base_url = if (existing_handle) |ex| ex.telemetry_url else ""[0..0];
+
     var config = PreparedTelemetry{
         .allocator = allocator,
         .filter_owned = try allocSlice(base_filter),
-        .attach_service_name = true,
-        .metric_prefix = try allocSlice("temporal_"[0..]),
-        .global_tags = ""[0..0],
-        .histogram_overrides = ""[0..0],
-        .headers = ""[0..0],
-        .socket_addr = ""[0..0],
-        .url = ""[0..0],
-        .mode = .none,
-        .prom_counters_total_suffix = false,
-        .prom_unit_suffix = false,
-        .prom_use_seconds = false,
-        .otel_metric_periodicity_millis = 0,
-        .otel_use_seconds = false,
-        .otel_temporality = otel_temporality_cumulative,
-        .otel_protocol = otel_protocol_grpc,
+        .attach_service_name = if (existing_handle) |ex| ex.telemetry_attach_service_name else true,
+        .metric_prefix = try allocSlice(base_metric_prefix),
+        .global_tags = try allocSlice(base_global_tags),
+        .histogram_overrides = try allocSlice(base_histogram_overrides),
+        .headers = try allocSlice(base_headers),
+        .socket_addr = try allocSlice(base_socket_addr),
+        .url = try allocSlice(base_url),
+        .mode = if (existing_handle) |ex| ex.telemetry_mode else TelemetryMode.none,
+        .prom_counters_total_suffix = if (existing_handle) |ex| ex.telemetry_prom_counters_total_suffix else false,
+        .prom_unit_suffix = if (existing_handle) |ex| ex.telemetry_prom_unit_suffix else false,
+        .prom_use_seconds = if (existing_handle) |ex| ex.telemetry_prom_use_seconds else false,
+        .otel_metric_periodicity_millis = if (existing_handle) |ex| ex.telemetry_otel_metric_periodicity_millis else 0,
+        .otel_use_seconds = if (existing_handle) |ex| ex.telemetry_otel_use_seconds else false,
+        .otel_temporality = if (existing_handle) |ex| ex.telemetry_otel_temporality else otel_temporality_cumulative,
+        .otel_protocol = if (existing_handle) |ex| ex.telemetry_otel_protocol else otel_protocol_grpc,
     };
     errdefer config.deinit();
 
@@ -420,7 +451,30 @@ fn parseTelemetryConfig(options_json: []const u8, existing_filter: []const u8) T
     if (root_obj.getPtr("metricsExporter")) |metrics_ptr| {
         const metrics_value = metrics_ptr.*;
         if (metrics_value == .null) {
-            // No metrics exporter configured.
+            // Explicitly disable metrics.
+            config.mode = .none;
+            config.prom_counters_total_suffix = false;
+            config.prom_unit_suffix = false;
+            config.prom_use_seconds = false;
+            config.otel_metric_periodicity_millis = 0;
+            config.otel_use_seconds = false;
+            config.otel_temporality = otel_temporality_cumulative;
+            config.otel_protocol = otel_protocol_grpc;
+
+            freeOwnedSlice(config.global_tags);
+            config.global_tags = ""[0..0];
+
+            freeOwnedSlice(config.histogram_overrides);
+            config.histogram_overrides = ""[0..0];
+
+            freeOwnedSlice(config.headers);
+            config.headers = ""[0..0];
+
+            freeOwnedSlice(config.socket_addr);
+            config.socket_addr = ""[0..0];
+
+            freeOwnedSlice(config.url);
+            config.url = ""[0..0];
         } else if (metrics_value == .object) {
             const metrics_obj = metrics_value.object;
             const type_ptr = metrics_obj.getPtr("type") orelse return TelemetryParseError.MissingField;
@@ -472,6 +526,17 @@ fn parseTelemetryConfig(options_json: []const u8, existing_filter: []const u8) T
                     .bool => ptr.bool,
                     else => return TelemetryParseError.InvalidValue,
                 } else false;
+
+                freeOwnedSlice(config.url);
+                config.url = ""[0..0];
+
+                freeOwnedSlice(config.headers);
+                config.headers = ""[0..0];
+
+                config.otel_metric_periodicity_millis = 0;
+                config.otel_use_seconds = false;
+                config.otel_temporality = otel_temporality_cumulative;
+                config.otel_protocol = otel_protocol_grpc;
 
                 config.mode = .prometheus;
             } else if (std.mem.eql(u8, exporter_type, "otel") or std.mem.eql(u8, exporter_type, "otlp")) {
@@ -552,6 +617,13 @@ fn parseTelemetryConfig(options_json: []const u8, existing_filter: []const u8) T
                 }
 
                 config.mode = .otlp;
+
+                freeOwnedSlice(config.socket_addr);
+                config.socket_addr = ""[0..0];
+
+                config.prom_counters_total_suffix = false;
+                config.prom_unit_suffix = false;
+                config.prom_use_seconds = false;
             } else {
                 return TelemetryParseError.InvalidValue;
             }
@@ -593,7 +665,7 @@ pub fn create(options_json: []const u8) ?*RuntimeHandle {
 
     core.ensureExternalApiInstalled();
 
-    var telemetry_config = parseTelemetryConfig(options_json, ""[0..0]) catch |err| {
+    var telemetry_config = parseTelemetryConfig(options_json, ""[0..0], null) catch |err| {
         allocator.free(copy);
         allocator.destroy(handle);
 
@@ -810,7 +882,7 @@ pub fn updateTelemetry(handle: ?*RuntimeHandle, options_json: []const u8) i32 {
     else
         default_log_filter;
 
-    var telemetry_config = parseTelemetryConfig(options_json, existing_filter) catch |err| {
+    var telemetry_config = parseTelemetryConfig(options_json, existing_filter, runtime) catch |err| {
         var scratch: [256]u8 = undefined;
         const message = switch (err) {
             TelemetryParseError.AllocationFailed => std.fmt.bufPrint(
@@ -1059,4 +1131,77 @@ pub export fn temporal_bun_runtime_test_emit_log(
         fields_ptr,
         fields_len,
     );
+}
+
+test "parseTelemetryConfig preserves metrics when payload omits metricsExporter" {
+    const initial_payload =
+        "{\n"
+        ++ "  \"logExporter\": { \"filter\": \"temporal_sdk_core=info\" },\n"
+        ++ "  \"telemetry\": { \"metricPrefix\": \"bun_\", \"attachServiceName\": false },\n"
+        ++ "  \"metricsExporter\": {\n"
+        ++ "    \"type\": \"prometheus\",\n"
+        ++ "    \"socketAddr\": \"127.0.0.1:0\",\n"
+        ++ "    \"countersTotalSuffix\": true,\n"
+        ++ "    \"unitSuffix\": true,\n"
+        ++ "    \"useSecondsForDurations\": true,\n"
+        ++ "    \"globalTags\": { \"env\": \"test\", \"platform\": \"bun\" },\n"
+        ++ "    \"histogramBucketOverrides\": { \"temporal.metric\": [1, 2, 3] }\n"
+        ++ "  }\n"
+        ++ "}";
+
+    var prepared = try parseTelemetryConfig(initial_payload, ""[0..0], null);
+    defer prepared.deinit();
+
+    var handle = RuntimeHandle{
+        .id = 1,
+        .config = ""[0..0],
+        .core_runtime = null,
+        .logger_callback = null,
+        .logger_filter = ""[0..0],
+        .telemetry_mode = .none,
+        .telemetry_metric_prefix = ""[0..0],
+        .telemetry_global_tags = ""[0..0],
+        .telemetry_histogram_overrides = ""[0..0],
+        .telemetry_headers = ""[0..0],
+        .telemetry_socket_addr = ""[0..0],
+        .telemetry_url = ""[0..0],
+        .telemetry_attach_service_name = true,
+        .telemetry_prom_counters_total_suffix = false,
+        .telemetry_prom_unit_suffix = false,
+        .telemetry_prom_use_seconds = false,
+        .telemetry_otel_metric_periodicity_millis = 0,
+        .telemetry_otel_use_seconds = false,
+        .telemetry_otel_temporality = otel_temporality_cumulative,
+        .telemetry_otel_protocol = otel_protocol_grpc,
+        .pending_lock = .{},
+        .pending_condition = .{},
+        .pending_connects = 0,
+        .destroying = false,
+    };
+
+    prepared.adopt(&handle);
+    defer {
+        freeTelemetryBuffers(&handle);
+        freeOwnedSlice(handle.logger_filter);
+        handle.logger_filter = ""[0..0];
+    }
+
+    const update_payload =
+        "{\n"
+        ++ "  \"logExporter\": { \"filter\": \"temporal_sdk_core=debug\" }\n"
+        ++ "}";
+
+    var merged = try parseTelemetryConfig(update_payload, handle.logger_filter, &handle);
+    defer merged.deinit();
+
+    try std.testing.expectEqual(TelemetryMode.prometheus, merged.mode);
+    try std.testing.expectEqualStrings("temporal_sdk_core=debug", merged.filter_owned);
+    try std.testing.expectEqualStrings("bun_", merged.metric_prefix);
+    try std.testing.expect(!merged.attach_service_name);
+    try std.testing.expectEqualStrings("127.0.0.1:0", merged.socket_addr);
+    try std.testing.expectEqualStrings("env\ntest\nplatform\nbun", merged.global_tags);
+    try std.testing.expectEqualStrings("temporal.metric\n1,2,3", merged.histogram_overrides);
+    try std.testing.expect(merged.prom_counters_total_suffix);
+    try std.testing.expect(merged.prom_unit_suffix);
+    try std.testing.expect(merged.prom_use_seconds);
 }
