@@ -198,6 +198,7 @@ pub const RuntimeHandle = struct {
     pending_condition: std.Thread.Condition = .{},
     pending_connects: usize = 0,
     destroying: bool = false,
+    destroying_epoch: usize = 0,
 };
 
 var next_runtime_id: u64 = 1;
@@ -827,6 +828,7 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
     const runtime = handle.?;
 
     runtime.pending_lock.lock();
+    runtime.destroying_epoch = runtime.destroying_epoch +% 1;
     runtime.destroying = true;
     while (runtime.pending_connects != 0 or runtime.pending_core_ops != 0 or runtime.active_clients != 0 or runtime.active_workers != 0) {
         runtime.pending_condition.wait(&runtime.pending_lock);
@@ -883,12 +885,16 @@ pub fn updateTelemetry(handle: ?*RuntimeHandle, options_json: []const u8) i32 {
         return -1;
     }
 
+    const telemetry_epoch = runtime.destroying_epoch +% 1;
+    runtime.destroying_epoch = telemetry_epoch;
     runtime.destroying = true;
     runtime.pending_lock.unlock();
     defer {
         runtime.pending_lock.lock();
-        runtime.destroying = false;
-        runtime.pending_condition.broadcast();
+        if (runtime.destroying_epoch == telemetry_epoch) {
+            runtime.destroying = false;
+            runtime.pending_condition.broadcast();
+        }
         runtime.pending_lock.unlock();
     }
 
