@@ -85,6 +85,12 @@ fn wantsLiveTemporalServer(allocator: std.mem.Allocator) bool {
 }
 
 fn temporalServerReachable(config_json: []const u8) bool {
+    const allocator = std.heap.c_allocator;
+    const require_live_server = wantsLiveTemporalServer(allocator);
+    if (!require_live_server) {
+        return true;
+    }
+
     if (core.api.client_connect == core.stub_api.client_connect) {
         return true;
     }
@@ -95,12 +101,7 @@ fn temporalServerReachable(config_json: []const u8) bool {
     }
 
     const host_port = parseHostPort(address) orelse return true;
-    const allocator = std.heap.c_allocator;
-    const require_live_server = wantsLiveTemporalServer(allocator);
     const stream = std.net.tcpConnectToHost(allocator, host_port.host, host_port.port) catch {
-        if (!require_live_server) {
-            return true;
-        }
         return false;
     };
     defer stream.close();
