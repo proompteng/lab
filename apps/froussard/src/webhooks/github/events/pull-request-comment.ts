@@ -113,6 +113,17 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
     }),
   )
 
+  logger.info(
+    {
+      action: actionValue,
+      repository: repositoryFullName,
+      pullNumber,
+      pullResultOk: pullResult.ok,
+      reason: pullResult.ok ? null : pullResult.reason,
+    },
+    'review comment: pull request fetch result',
+  )
+
   if (!pullResult.ok) {
     logger.warn(
       {
@@ -192,6 +203,17 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
     }),
   )
 
+  logger.info(
+    {
+      action: actionValue,
+      repository: repositoryFullName,
+      pullNumber,
+      threadsResultOk: threadsResult.ok,
+      reason: threadsResult.ok ? null : threadsResult.reason,
+    },
+    'review comment: review threads fetch result',
+  )
+
   if (!threadsResult.ok) {
     logger.warn(
       {
@@ -213,6 +235,17 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
       apiBaseUrl: config.github.apiBaseUrl,
       userAgent: config.github.userAgent,
     }),
+  )
+
+  logger.info(
+    {
+      action: actionValue,
+      repository: repositoryFullName,
+      pullNumber,
+      checksResultOk: checksResult.ok,
+      reason: checksResult.ok ? null : checksResult.reason,
+    },
+    'review comment: check failures fetch result',
   )
 
   if (!checksResult.ok) {
