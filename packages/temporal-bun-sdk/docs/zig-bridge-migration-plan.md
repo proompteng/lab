@@ -38,7 +38,7 @@ To provide first-class Bun developer ergonomics we will reimplement the native b
 | Client Async | `temporal_bun_client_connect_async`, pending poll/consume/free trio | Connect now spawns worker threads and resolves pending handles; concurrency guardrails from #1526 are merged. |
 | Client RPCs | `temporal_bun_client_describe_namespace_async`, `temporal_bun_client_start_workflow`, `temporal_bun_client_signal*`, `temporal_bun_client_query_workflow`, `temporal_bun_client_terminate_workflow`, `temporal_bun_client_update_headers` | Describe, start, signal-with-start, signal, query, terminate, and header updates implemented; cancel (`temporal_bun_client_cancel_workflow`) remains `UNIMPLEMENTED` (`zig-wf-06`). |
 | Error Surface | `temporal_bun_error_message`, `temporal_bun_error_free` | Functional; mirrors the Rust bridge behaviour. |
-| Worker | `temporal_bun_worker_*` suite | Creation path ships behind `TEMPORAL_BUN_SDK_USE_ZIG=1` (`zig-worker-01` complete); polling, completion, and shutdown remain TODOs (`zig-worker-02` … `zig-worker-09`). |
+| Worker | `temporal_bun_worker_*` suite | Creation ships behind `TEMPORAL_BUN_SDK_USE_ZIG=1`; polling, completion, heartbeats, and shutdown (initiate + finalize) now implemented (`zig-worker-02`…`zig-worker-09` complete). |
 | Packaging | `build.zig` + scripts | `zig-pack-01` linking to Temporal static libs is not implemented; bridge builds without real core symbols. |
 
 Supporting modules:

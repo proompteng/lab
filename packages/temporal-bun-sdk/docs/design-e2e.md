@@ -155,7 +155,7 @@ maps to one or more lanes so parallel Codex instances can implement features wit
    - Wire `temporal_bun_runtime_update_telemetry` through Temporal core once upstream exposes the hooks.
    - Surface metrics configuration helpers in TypeScript (`configureTelemetry`).
 3. **Worker bridge**
-   - Finalise graceful shutdown and activity metrics support in Zig (`zig-worker-08`/`zig-worker-09`).
+   - Add activity metrics support in Zig and surface telemetry for shutdown timing (follow-up after `zig-worker-09`).
    - Harden Bun `WorkerRuntime` parity (activity interception, metrics, diagnostics) and document the vendor fallback toggle.
 4. **Developer experience**
    - Expand CLI (`temporal-bun init`) templates with Zig bridge usage instructions.

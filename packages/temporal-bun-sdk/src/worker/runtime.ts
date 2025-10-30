@@ -491,7 +491,7 @@ export class WorkerRuntime {
       return
     }
 
-    const args = decodePayloads(start.input?.payloads ?? [])
+    const args = decodePayloads(extractPayloadArray(start.input))
     const info: ActivityInfo = {
       activityId: start.activityId ?? '',
       activityType,
@@ -508,7 +508,7 @@ export class WorkerRuntime {
       scheduledTime: timestampToDate(start.scheduledTime),
       startedTime: timestampToDate(start.startedTime),
       currentAttemptScheduledTime: timestampToDate(start.currentAttemptScheduledTime),
-      lastHeartbeatDetails: decodePayloads(start.heartbeatDetails?.payloads ?? []),
+      lastHeartbeatDetails: decodePayloads(extractPayloadArray(start.heartbeatDetails)),
     }
 
     const context = new ActivityContextImpl(info, (details) => this.#recordActivityHeartbeat(taskToken, details))
@@ -657,7 +657,28 @@ export class WorkerRuntime {
     this.#cancelAllActivities('Worker runtime disposed')
     this.#workflowEngine.shutdown()
     if (this.#handles.worker.handle) {
-      destroyNativeWorker(this.#handles.worker)
+      let finalizeError: unknown = null
+      try {
+        native.worker.finalizeShutdown(this.#handles.worker)
+      } catch (error) {
+        finalizeError = error
+      }
+
+      try {
+        destroyNativeWorker(this.#handles.worker)
+      } catch (destroyError) {
+        if (finalizeError) {
+          if (finalizeError instanceof Error) {
+            ;(finalizeError as Error & { cause?: unknown }).cause = destroyError
+          }
+          throw finalizeError
+        }
+        throw destroyError
+      }
+
+      if (finalizeError) {
+        throw finalizeError
+      }
     }
     native.clientShutdown(this.#handles.client)
     native.runtimeShutdown(this.#handles.runtime)
@@ -826,6 +847,20 @@ const decodePayloads = (payloads: temporal.api.common.v1.IPayload[] | null | und
     return []
   }
   return payloads.map((payload) => defaultPayloadConverter.fromPayload(payload))
+}
+
+const extractPayloadArray = (
+  value: temporal.api.common.v1.IPayloads | temporal.api.common.v1.IPayload[] | null | undefined,
+): temporal.api.common.v1.IPayload[] => {
+  if (!value) {
+    return []
+  }
+
+  if (Array.isArray(value)) {
+    return value
+  }
+
+  return value.payloads ?? []
 }
 
 const describeCancellationDetails = (

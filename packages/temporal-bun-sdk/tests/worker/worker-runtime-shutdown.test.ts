@@ -43,6 +43,8 @@ describe('WorkerRuntime.shutdown', () => {
 
     const pollReady = createDeferred<void>()
     let currentDeferred = createDeferred<Uint8Array>()
+    let finalizeCalls = 0
+    let initiateCalls = 0
     let destroyCalls = 0
     let runtimeShutdownCalls = 0
     let clientShutdownCalls = 0
@@ -58,6 +60,8 @@ describe('WorkerRuntime.shutdown', () => {
       destroyWorker: nativeModule.native.destroyWorker,
       workerCompleteWorkflowTask: nativeModule.native.worker.completeWorkflowTask,
       workerPollWorkflowTask: nativeModule.native.worker.pollWorkflowTask,
+      workerInitiateShutdown: nativeModule.native.worker.initiateShutdown,
+      workerFinalizeShutdown: nativeModule.native.worker.finalizeShutdown,
     } as const
 
     const runtimeHandle = { type: 'runtime' as const, handle: 1 }
@@ -73,6 +77,15 @@ describe('WorkerRuntime.shutdown', () => {
       clientShutdownCalls += 1
     }
     nativeModule.native.createWorker = () => workerHandle
+    nativeModule.native.worker.initiateShutdown = () => {
+      initiateCalls += 1
+      if (!currentDeferred.settled) {
+        currentDeferred.reject(new Error('cancelled'))
+      }
+    }
+    nativeModule.native.worker.finalizeShutdown = () => {
+      finalizeCalls += 1
+    }
     nativeModule.native.destroyWorker = (worker: typeof workerHandle) => {
       destroyCalls += 1
       worker.handle = 0
@@ -115,7 +128,9 @@ describe('WorkerRuntime.shutdown', () => {
       await runPromise
 
       expect(pollCalls).toBeGreaterThanOrEqual(1)
+      expect(finalizeCalls).toBeGreaterThan(0)
       expect(destroyCalls).toBeGreaterThan(0)
+      expect(initiateCalls).toBeGreaterThan(0)
       expect(runtimeShutdownCalls).toBe(1)
       expect(clientShutdownCalls).toBe(1)
     } finally {
@@ -127,6 +142,8 @@ describe('WorkerRuntime.shutdown', () => {
       nativeModule.native.destroyWorker = originalNative.destroyWorker
       nativeModule.native.worker.completeWorkflowTask = originalNative.workerCompleteWorkflowTask
       nativeModule.native.worker.pollWorkflowTask = originalNative.workerPollWorkflowTask
+      nativeModule.native.worker.initiateShutdown = originalNative.workerInitiateShutdown
+      nativeModule.native.worker.finalizeShutdown = originalNative.workerFinalizeShutdown
       process.env.TEMPORAL_ADDRESS = previousEnv.TEMPORAL_ADDRESS
       process.env.TEMPORAL_NAMESPACE = previousEnv.TEMPORAL_NAMESPACE
       process.env.TEMPORAL_TASK_QUEUE = previousEnv.TEMPORAL_TASK_QUEUE
