@@ -52,6 +52,49 @@ interface CommandResult {
   stderr: string
 }
 
+const ensurePullRequestExists = async (repository: string, headBranch: string, logger: CodexLogger) => {
+  if (!repository || !headBranch) {
+    throw new Error('Repository and head branch are required to verify pull request state')
+  }
+
+  const owner = repository.includes('/') ? (repository.split('/')[0] ?? '') : ''
+  const headSelector = headBranch.includes(':') || !owner ? headBranch : `${owner}:${headBranch}`
+
+  const prResult = await runCommand('gh', [
+    'pr',
+    'list',
+    '--repo',
+    repository,
+    '--state',
+    'all',
+    '--head',
+    headSelector,
+    '--json',
+    'number,url,state',
+    '--limit',
+    '1',
+  ])
+
+  if (prResult.exitCode !== 0) {
+    throw new Error(
+      `Failed to verify pull request for ${repository}#${headBranch}: ${prResult.stderr.trim() || prResult.stdout.trim()}`,
+    )
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(prResult.stdout || '[]')
+  } catch (error) {
+    throw new Error(`Failed to parse gh pr list output: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error(`No pull request found for branch '${headBranch}' in ${repository}`)
+  }
+
+  logger.debug('Found pull request for branch', { repository, headBranch })
+}
+
 const runCommand = async (command: string, args: string[], options: { cwd?: string } = {}): Promise<CommandResult> => {
   return await new Promise<CommandResult>((resolve, reject) => {
     const child = spawnChild(command, args, {
@@ -642,6 +685,10 @@ export const runCodexImplementation = async (eventPath: string) => {
   const baseBranch = sanitizeNullableString(event.base) || process.env.BASE_BRANCH || 'main'
   const headBranch = sanitizeNullableString(event.head) || process.env.HEAD_BRANCH || ''
 
+  if (!headBranch) {
+    throw new Error('Missing head branch metadata in event payload')
+  }
+
   const planCommentId =
     event.planCommentId !== undefined && event.planCommentId !== null ? String(event.planCommentId) : ''
   const planCommentUrl = sanitizeNullableString(event.planCommentUrl)
@@ -689,7 +736,6 @@ export const runCodexImplementation = async (eventPath: string) => {
   let resumeContext: ResumeContext | undefined
   let resumeSessionId: string | undefined
   let capturedSessionId: string | undefined
-  let runSucceeded = false
 
   try {
     resumeContext = await loadResumeMetadata({
@@ -810,7 +856,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       // ignore missing json log
     }
 
-    runSucceeded = true
+    await ensurePullRequestExists(repository, headBranch, logger)
     return {
       repository,
       issueNumber,
