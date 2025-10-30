@@ -591,7 +591,12 @@ fn parseTelemetryConfig(
                 } else false;
 
                 config.otel_metric_periodicity_millis = if (metrics_obj.getPtr("metricPeriodicity")) |ptr| switch (ptr.*) {
-                    .integer => |value| if (value < 0) return TelemetryParseError.InvalidValue else @intCast(value),
+                    .integer => |value| blk: {
+                        if (value < 0 or value > std.math.maxInt(u32)) {
+                            return TelemetryParseError.InvalidValue;
+                        }
+                        break :blk @as(u32, @intCast(value));
+                    },
                     else => return TelemetryParseError.InvalidValue,
                 } else 0;
 
