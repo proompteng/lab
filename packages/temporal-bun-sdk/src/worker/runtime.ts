@@ -6,13 +6,13 @@ import type Long from 'long'
 import {
   createDefaultDataConverter,
   type DataConverter,
-  type PayloadMap,
   decodePayloadMapToValues,
   decodePayloadsToValues,
   encodeErrorToFailure,
   encodeFailurePayloads,
   encodeMapValuesToPayloads,
   encodeValuesToPayloads,
+  type PayloadMap,
 } from '../common/payloads'
 import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from '../config'
 import {
@@ -899,8 +899,8 @@ class ActivityContextImpl implements ActivityContext {
     return this.#cancelFailure
   }
 
-  heartbeat(...details: unknown[]): void {
-    void this.#recordHeartbeat(details)
+  heartbeat(...details: unknown[]): Promise<void> {
+    return Promise.resolve(this.#recordHeartbeat(details))
   }
 
   throwIfCancelled(): void {

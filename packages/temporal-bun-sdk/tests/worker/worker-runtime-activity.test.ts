@@ -121,8 +121,8 @@ describe('ActivityExecution', () => {
 
   test('records heartbeats via context', async () => {
     const { execution, context, recordedHeartbeats } = createExecution({
-      handler: () => {
-        context.heartbeat('tick', 1)
+      handler: async () => {
+        await context.heartbeat('tick', 1)
         return 'done'
       },
     })

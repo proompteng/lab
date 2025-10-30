@@ -23,7 +23,7 @@ export interface ActivityContext {
   readonly info: ActivityInfo
   readonly cancellationSignal: AbortSignal
   readonly isCancellationRequested: boolean
-  heartbeat(...details: unknown[]): void
+  heartbeat(...details: unknown[]): Promise<void>
   throwIfCancelled(): void
 }
 
