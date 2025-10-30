@@ -27,7 +27,7 @@ const headers = {
 }
 
 const buildConfig = (): WebhookConfig => ({
-  codebase: { branchPrefix: 'codex', baseBranch: 'main' },
+  codebase: { branchPrefix: 'codex/issue-', baseBranch: 'main' },
   github: {
     token: baseConfig.github.token,
     ackReaction: '+1',
@@ -216,6 +216,67 @@ describe('handleReviewComment', () => {
     expect(mockedExecuteWorkflowCommands).toHaveBeenCalledTimes(1)
     const [commands] = mockedExecuteWorkflowCommands.mock.calls[0]
     expect(commands).toEqual([{ type: 'publishReview', data: expect.objectContaining({ stage: 'review' }) }])
+  })
+
+  it('skips review publishing when the issue number cannot be derived from the pull request branch', async () => {
+    const { executionContext, fetchPullRequest, listPullRequestReviewThreads, listPullRequestCheckFailures } =
+      buildExecutionContext()
+
+    fetchPullRequest.mockImplementationOnce(() =>
+      Effect.succeed({
+        ok: true as const,
+        pullRequest: {
+          number: 17,
+          title: 'Branch without issue id',
+          body: 'Missing codex issue reference',
+          htmlUrl: 'https://github.com/owner/repo/pull/17',
+          draft: false,
+          merged: false,
+          state: 'open',
+          headRef: 'feature/no-issue-id',
+          headSha: 'deadbe',
+          baseRef: 'main',
+          authorLogin: 'user',
+          mergeableState: 'clean',
+        },
+      }),
+    )
+
+    const result = await handleReviewComment({
+      parsedPayload: {
+        action: 'created',
+        issue: {
+          number: 17,
+          pull_request: {
+            url: 'https://api.github.com/repos/owner/repo/pulls/17',
+            html_url: 'https://github.com/owner/repo/pull/17',
+          },
+          repository_url: 'https://api.github.com/repos/owner/repo',
+        },
+        repository: { full_name: 'owner/repo', default_branch: 'main' },
+        comment: {
+          id: 77,
+          body: '@tuslagch review please',
+          author_association: 'MEMBER',
+          updated_at: '2025-10-30T00:00:00Z',
+          html_url: 'https://github.com/owner/repo/pull/17#issuecomment-77',
+          user: { login: 'maintainer' },
+        },
+        sender: { login: 'maintainer' },
+      },
+      headers,
+      config: buildConfig(),
+      executionContext,
+      deliveryId: 'delivery-id',
+      senderLogin: 'maintainer',
+      actionValue: 'created',
+    })
+
+    expect(result).toEqual({ handled: true, stage: null })
+    expect(fetchPullRequest).toHaveBeenCalled()
+    expect(listPullRequestReviewThreads).not.toHaveBeenCalled()
+    expect(listPullRequestCheckFailures).not.toHaveBeenCalled()
+    expect(mockedExecuteWorkflowCommands).not.toHaveBeenCalled()
   })
 
   it('dedupes repeated review comments with identical timestamps', async () => {

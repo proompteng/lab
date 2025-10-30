@@ -4,6 +4,7 @@ import { evaluateCodexWorkflow } from '@/codex/workflow-machine'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent } from '@/github-payload'
 import { logger } from '@/logger'
 
+import { parseIssueNumberFromBranch } from '../helpers'
 import { buildReviewCommand } from '../review-command'
 import {
   buildCommentReviewFingerprintKey,
@@ -140,6 +141,33 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
     return { handled: true, stage: null }
   }
 
+  if (!pull.headRef) {
+    logger.warn(
+      {
+        action: actionValue,
+        repository: repositoryFullName,
+        pullNumber,
+      },
+      'failed to derive codex issue number for @tuslagch review comment: missing head ref',
+    )
+    return { handled: true, stage: null }
+  }
+
+  const issueNumber = parseIssueNumberFromBranch(pull.headRef, config.codebase.branchPrefix)
+  if (issueNumber === null) {
+    logger.warn(
+      {
+        action: actionValue,
+        repository: repositoryFullName,
+        pullNumber,
+        headRef: pull.headRef,
+        branchPrefix: config.codebase.branchPrefix,
+      },
+      'failed to derive codex issue number for @tuslagch review comment',
+    )
+    return { handled: true, stage: null }
+  }
+
   const threadsResult = await executionContext.runGithub(() =>
     executionContext.githubService.listPullRequestReviewThreads({
       repositoryFullName,
@@ -190,7 +218,7 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
     config,
     deliveryId,
     headers,
-    issueNumber: pull.number,
+    issueNumber,
     pull: { ...pull, repositoryFullName },
     reviewThreads: threadsResult.threads,
     failingChecks: checksResult.checks,

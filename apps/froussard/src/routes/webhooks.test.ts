@@ -623,7 +623,7 @@ describe('createWebhookHandler', () => {
             draft: false,
             merged: false,
             state: 'open',
-            headRef: 'codex/issue-5-branch',
+            headRef: 'codex/issue-9-branch',
             headSha: 'abc123',
             baseRef: 'main',
             authorLogin: 'user',
@@ -696,6 +696,7 @@ describe('createWebhookHandler', () => {
       expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
         expect.objectContaining({
           stage: 'review',
+          issueNumber: 9,
           reviewContext: expect.objectContaining({
             reviewThreads: expect.arrayContaining([
               expect.objectContaining({ summary: 'Add unit tests for webhook logic' }),
@@ -716,12 +717,12 @@ describe('createWebhookHandler', () => {
       expect(reviewJsonMessage.headers?.['x-codex-review-head-sha']).toBe('abc123')
       const reviewJsonPayload = JSON.parse(toBuffer(reviewJsonMessage.value).toString('utf8'))
       expect(reviewJsonPayload.stage).toBe('review')
-      expect(reviewJsonPayload.issueNumber).toBe(5)
+      expect(reviewJsonPayload.issueNumber).toBe(9)
       expect(reviewJsonPayload.reviewContext.failingChecks[0].name).toBe('ci / test')
       expect(reviewJsonPayload.reviewContext.additionalNotes[0]).toContain('mergeable_state=blocked')
       const reviewProto = CodexTask.fromBinary(toBuffer(reviewStructuredMessage.value))
       expect(reviewProto.stage).toBe(CodexTaskStage.REVIEW)
-      expect(reviewProto.issueNumber).toBe(BigInt(5))
+      expect(reviewProto.issueNumber).toBe(BigInt(9))
     })
 
     it('ignores @tuslagch review comments from unauthorized authors', async () => {
