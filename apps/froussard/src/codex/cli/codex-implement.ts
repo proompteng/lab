@@ -52,6 +52,11 @@ interface CommandResult {
   stderr: string
 }
 
+const sleep = async (durationMs: number) =>
+  await new Promise((resolve) => {
+    setTimeout(resolve, durationMs)
+  })
+
 const ensurePullRequestExists = async (repository: string, headBranch: string, logger: CodexLogger) => {
   if (process.env.CODEX_SKIP_PR_CHECK === '1') {
     logger.debug('Skipping pull request verification (CODEX_SKIP_PR_CHECK=1)')
@@ -65,39 +70,62 @@ const ensurePullRequestExists = async (repository: string, headBranch: string, l
   const owner = repository.includes('/') ? (repository.split('/')[0] ?? '') : ''
   const headSelector = headBranch.includes(':') || !owner ? headBranch : `${owner}:${headBranch}`
 
-  const prResult = await runCommand('gh', [
-    'pr',
-    'list',
-    '--repo',
-    repository,
-    '--state',
-    'all',
-    '--head',
-    headSelector,
-    '--json',
-    'number,url,state',
-    '--limit',
-    '1',
-  ])
+  const maxAttempts = Math.max(1, Number.parseInt(process.env.CODEX_PR_CHECK_ATTEMPTS ?? '4', 10))
+  const retryDelayMs = Math.max(0, Number.parseInt(process.env.CODEX_PR_CHECK_RETRY_MS ?? '2000', 10))
 
-  if (prResult.exitCode !== 0) {
-    throw new Error(
-      `Failed to verify pull request for ${repository}#${headBranch}: ${prResult.stderr.trim() || prResult.stdout.trim()}`,
-    )
+  let lastError: Error | undefined
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const prResult = await runCommand('gh', [
+      'pr',
+      'list',
+      '--repo',
+      repository,
+      '--state',
+      'all',
+      '--head',
+      headSelector,
+      '--json',
+      'number,url,state',
+      '--limit',
+      '1',
+    ])
+
+    if (prResult.exitCode === 0) {
+      try {
+        const parsed = JSON.parse(prResult.stdout || '[]')
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          logger.debug('Found pull request for branch', { repository, headBranch, attempt })
+          return
+        }
+        lastError = new Error(`No pull request found for branch '${headBranch}' in ${repository}`)
+      } catch (error) {
+        lastError = new Error(
+          `Failed to parse gh pr list output: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    } else {
+      const message = prResult.stderr.trim() || prResult.stdout.trim()
+      lastError = new Error(`Failed to verify pull request for ${repository}#${headBranch}: ${message}`)
+    }
+
+    if (attempt < maxAttempts) {
+      logger.info('Retrying pull request verification', {
+        repository,
+        headBranch,
+        attempt,
+        maxAttempts,
+        retryDelayMs,
+      })
+      await sleep(retryDelayMs)
+    }
   }
 
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(prResult.stdout || '[]')
-  } catch (error) {
-    throw new Error(`Failed to parse gh pr list output: ${error instanceof Error ? error.message : String(error)}`)
+  if (lastError) {
+    throw lastError
   }
 
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw new Error(`No pull request found for branch '${headBranch}' in ${repository}`)
-  }
-
-  logger.debug('Found pull request for branch', { repository, headBranch })
+  throw new Error(`No pull request found for branch '${headBranch}' in ${repository}`)
 }
 
 const runCommand = async (command: string, args: string[], options: { cwd?: string } = {}): Promise<CommandResult> => {
