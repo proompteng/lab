@@ -449,71 +449,10 @@ export class WorkerRuntime {
       throw error
     }
 
-    await this.#applyDataConverterToWorkflowCompletion(result.completion)
+    await applyDataConverterToWorkflowCompletion(this.#dataConverter, result.completion)
 
     const payload = coresdk.workflow_completion.WorkflowActivationCompletion.encode(result.completion).finish()
     native.worker.completeWorkflowTask(this.#handles.worker, payload)
-  }
-
-  async #applyDataConverterToWorkflowCompletion(
-    completion: coresdk.workflow_completion.IWorkflowActivationCompletion,
-  ): Promise<void> {
-    const success = completion.successful
-    if (!success?.commands) {
-      return
-    }
-
-    for (const command of success.commands) {
-      const complete = command.completeWorkflowExecution
-      if (complete?.result) {
-        const decoded = await decodePayloadsToValues(this.#dataConverter, [complete.result])
-        const encoded = await encodeValuesToPayloads(this.#dataConverter, decoded)
-        complete.result = encoded?.[0]
-      }
-
-      const failure = command.failWorkflowExecution
-      if (failure?.failure) {
-        failure.failure = await encodeFailurePayloads(this.#dataConverter, failure.failure)
-      }
-
-      const continueAsNew = command.continueAsNewWorkflowExecution
-      if (continueAsNew) {
-        const argsArray = extractPayloadArray(continueAsNew.arguments)
-        if (argsArray.length > 0) {
-          const decodedArgs = await decodePayloadsToValues(this.#dataConverter, argsArray)
-          const encodedArgs = await encodeValuesToPayloads(this.#dataConverter, decodedArgs)
-          if (encodedArgs && encodedArgs.length > 0) {
-            continueAsNew.arguments = encodedArgs
-          } else {
-            continueAsNew.arguments = []
-          }
-        }
-
-        if (continueAsNew.memo) {
-          const decodedMemo = await decodePayloadMapToValues(this.#dataConverter, continueAsNew.memo as PayloadMap)
-          const encodedMemo = await encodeMapValuesToPayloads(this.#dataConverter, decodedMemo ?? {})
-          continueAsNew.memo = encodedMemo ?? {}
-        }
-
-        if (continueAsNew.searchAttributes?.indexedFields) {
-          const decodedSearch = await decodePayloadMapToValues(
-            this.#dataConverter,
-            continueAsNew.searchAttributes.indexedFields as PayloadMap,
-          )
-          const encodedSearch = await encodeMapValuesToPayloads(this.#dataConverter, decodedSearch ?? {})
-          continueAsNew.searchAttributes.indexedFields = encodedSearch ?? {}
-        }
-
-        if (continueAsNew.headers) {
-          const decodedHeaders = await decodePayloadMapToValues(
-            this.#dataConverter,
-            continueAsNew.headers as PayloadMap,
-          )
-          const encodedHeaders = await encodeMapValuesToPayloads(this.#dataConverter, decodedHeaders ?? {})
-          continueAsNew.headers = encodedHeaders ?? {}
-        }
-      }
-    }
   }
 
   async #processActivityTask(bytes: Uint8Array): Promise<void> {
@@ -934,6 +873,208 @@ const extractPayloadArray = (
   }
 
   return value.payloads ?? []
+}
+
+const encodePayloadArrayWithConverter = async (
+  converter: DataConverter,
+  payloads: temporal.api.common.v1.IPayloads | temporal.api.common.v1.IPayload[] | null | undefined,
+): Promise<temporal.api.common.v1.IPayload[] | undefined> => {
+  if (payloads == null) {
+    return undefined
+  }
+
+  const array = extractPayloadArray(payloads)
+  if (array.length === 0) {
+    return []
+  }
+
+  const decoded = await decodePayloadsToValues(converter, array)
+  const encoded = await encodeValuesToPayloads(converter, decoded)
+  return encoded ?? []
+}
+
+const encodePayloadMapWithConverter = async (
+  converter: DataConverter,
+  map: PayloadMap | null | undefined,
+): Promise<PayloadMap | undefined> => {
+  if (map == null) {
+    return undefined
+  }
+
+  const decoded = await decodePayloadMapToValues(converter, map)
+  const encoded = await encodeMapValuesToPayloads(converter, decoded ?? {})
+  return encoded ?? {}
+}
+
+const encodeSinglePayloadWithConverter = async (
+  converter: DataConverter,
+  payload: temporal.api.common.v1.IPayload | null | undefined,
+): Promise<temporal.api.common.v1.IPayload | null | undefined> => {
+  if (payload == null) {
+    return payload ?? undefined
+  }
+
+  const [decoded] = await decodePayloadsToValues(converter, [payload])
+  const encoded = await encodeValuesToPayloads(converter, [decoded])
+  return encoded?.[0] ?? null
+}
+
+export const applyDataConverterToWorkflowCompletion = async (
+  converter: DataConverter,
+  completion: coresdk.workflow_completion.IWorkflowActivationCompletion,
+): Promise<void> => {
+  const success = completion.successful
+  if (!success?.commands) {
+    return
+  }
+
+  for (const command of success.commands) {
+    const complete = command.completeWorkflowExecution
+    if (complete?.result) {
+      complete.result = await encodeSinglePayloadWithConverter(converter, complete.result)
+    }
+
+    const failure = command.failWorkflowExecution
+    if (failure?.failure) {
+      failure.failure = await encodeFailurePayloads(converter, failure.failure)
+    }
+
+    const continueAsNew = command.continueAsNewWorkflowExecution
+    if (continueAsNew) {
+      const encodedArgs = await encodePayloadArrayWithConverter(converter, continueAsNew.arguments)
+      if (encodedArgs !== undefined) {
+        continueAsNew.arguments = encodedArgs ?? []
+      }
+
+      if (continueAsNew.memo) {
+        const encodedMemo = await encodePayloadMapWithConverter(converter, continueAsNew.memo as PayloadMap)
+        continueAsNew.memo = encodedMemo ?? {}
+      }
+
+      if (continueAsNew.searchAttributes) {
+        if ('indexedFields' in continueAsNew.searchAttributes) {
+          const encodedSearch = await encodePayloadMapWithConverter(
+            converter,
+            (continueAsNew.searchAttributes as { indexedFields?: PayloadMap }).indexedFields as PayloadMap,
+          )
+          ;(continueAsNew.searchAttributes as { indexedFields?: PayloadMap }).indexedFields = encodedSearch ?? {}
+        } else {
+          const encodedSearch = await encodePayloadMapWithConverter(
+            converter,
+            continueAsNew.searchAttributes as PayloadMap,
+          )
+          continueAsNew.searchAttributes = encodedSearch ?? {}
+        }
+      }
+
+      if (continueAsNew.headers) {
+        const encodedHeaders = await encodePayloadMapWithConverter(converter, continueAsNew.headers as PayloadMap)
+        continueAsNew.headers = encodedHeaders ?? {}
+      }
+    }
+
+    const scheduleActivity = command.scheduleActivity
+    if (scheduleActivity?.arguments) {
+      const encodedArguments = await encodePayloadArrayWithConverter(converter, scheduleActivity.arguments)
+      if (encodedArguments !== undefined) {
+        scheduleActivity.arguments = encodedArguments ?? []
+      }
+    }
+
+    const scheduleLocalActivity = command.scheduleLocalActivity
+    if (scheduleLocalActivity?.arguments) {
+      const encodedArguments = await encodePayloadArrayWithConverter(converter, scheduleLocalActivity.arguments)
+      if (encodedArguments !== undefined) {
+        scheduleLocalActivity.arguments = encodedArguments ?? []
+      }
+    }
+
+    const startChild = command.startChildWorkflowExecution
+    if (startChild) {
+      const encodedInput = await encodePayloadArrayWithConverter(converter, startChild.input)
+      if (encodedInput !== undefined) {
+        startChild.input = encodedInput ?? []
+      }
+
+      if (startChild.memo) {
+        const encodedMemo = await encodePayloadMapWithConverter(converter, startChild.memo as PayloadMap)
+        startChild.memo = encodedMemo ?? {}
+      }
+
+      if (startChild.searchAttributes) {
+        const searchAttributes = startChild.searchAttributes as
+          | PayloadMap
+          | { indexedFields?: PayloadMap | null | undefined }
+        if ('indexedFields' in searchAttributes) {
+          const encodedSearch = await encodePayloadMapWithConverter(
+            converter,
+            searchAttributes.indexedFields as PayloadMap,
+          )
+          searchAttributes.indexedFields = encodedSearch ?? {}
+        } else {
+          const encodedSearch = await encodePayloadMapWithConverter(converter, searchAttributes as PayloadMap)
+          startChild.searchAttributes = encodedSearch ?? {}
+        }
+      }
+    }
+
+    const signalExternal = command.signalExternalWorkflowExecution
+    if (signalExternal?.args) {
+      const encodedArgs = await encodePayloadArrayWithConverter(converter, signalExternal.args)
+      if (encodedArgs !== undefined) {
+        signalExternal.args = encodedArgs ?? []
+      }
+    }
+
+    const upsertSearch = command.upsertWorkflowSearchAttributes
+    if (upsertSearch?.searchAttributes) {
+      const encodedSearch = await encodePayloadMapWithConverter(converter, upsertSearch.searchAttributes as PayloadMap)
+      upsertSearch.searchAttributes = encodedSearch ?? {}
+    }
+
+    const respondToQuery = command.respondToQuery
+    if (respondToQuery?.succeeded?.response) {
+      respondToQuery.succeeded.response = await encodeSinglePayloadWithConverter(
+        converter,
+        respondToQuery.succeeded.response,
+      )
+    }
+    if (respondToQuery?.failed) {
+      respondToQuery.failed = await encodeFailurePayloads(converter, respondToQuery.failed)
+    }
+
+    const updateResponse = command.updateResponse
+    if (updateResponse?.completed) {
+      updateResponse.completed = await encodeSinglePayloadWithConverter(converter, updateResponse.completed)
+    }
+    if (updateResponse?.rejected) {
+      updateResponse.rejected = await encodeFailurePayloads(converter, updateResponse.rejected)
+    }
+
+    const scheduleNexus = command.scheduleNexusOperation
+    if (scheduleNexus?.input) {
+      scheduleNexus.input = await encodeSinglePayloadWithConverter(converter, scheduleNexus.input)
+    }
+
+    const modifyProperties = command.modifyWorkflowProperties
+    if (modifyProperties?.upsertedMemo?.fields) {
+      const encodedMemo = await encodePayloadMapWithConverter(
+        converter,
+        modifyProperties.upsertedMemo.fields as PayloadMap,
+      )
+      modifyProperties.upsertedMemo.fields = encodedMemo ?? {}
+    }
+
+    const userMetadata = command.userMetadata
+    if (userMetadata) {
+      if (userMetadata.summary) {
+        userMetadata.summary = await encodeSinglePayloadWithConverter(converter, userMetadata.summary)
+      }
+      if (userMetadata.details) {
+        userMetadata.details = await encodeSinglePayloadWithConverter(converter, userMetadata.details)
+      }
+    }
+  }
 }
 
 const describeCancellationDetails = (

@@ -88,7 +88,7 @@ See `src/common/payloads/converter.ts` and `failure.ts` for the full implementat
 
 - **Client**: `createTemporalClient` accepts an optional `dataConverter`. All request builders (`buildStartWorkflowRequest`, `buildSignalRequest`, `buildQueryRequest`, etc.) call `encodeValuesToJson` / `encodeMapToJson`. Query responses and signal IDs decode via the same converter.
 - **Workflow runtime**: `WorkflowEnvironment` stores the converter per run. Workflow completions, continue-as-new commands, headers, memo, and search attributes are re-encoded before returning to the worker.
-- **Worker runtime**: Activity inputs, heartbeats, and completions flow through converter helpers so custom codecs see the same payloads as workflows.
+- **Worker runtime**: Activity inputs, heartbeats, and completions flow through converter helpers so custom codecs see the same payloads as workflows. Workflow command payloads (activities, child workflows, external signals, updates, Nexus operations, memo/search-attribute upserts, etc.) are re-encoded via `applyDataConverterToWorkflowCompletion` before handing completions back to the native worker, ensuring payload codecs run uniformly.
 - **Native bridge**: `native.queryWorkflow` now surfaces raw payload bytes; the Bun layer is responsible for decoding them with the configured converter.
 
 These touch-points mean providing a custom converter once (client or worker factory) is enough to keep payload semantics consistent across the stack.
