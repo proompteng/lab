@@ -22,7 +22,7 @@ erDiagram
   TASK_RUN ||--o{ TASK_RUN_HISTORY : "archives"
   TASK_RUN ||--o{ RUN_EVENT : "emits"
   TASK_RUN ||--o{ ARTIFACT : "produces"
-  ARTIFACT ||--o{ ARTIFACT_EMBEDDING : "embeds"
+  TASK_RUN ||--o{ REFLECTION : "captures"
   IDEA ||--o{ POLICY_CHECK : "gates"
   TASK_RUN ||--o{ RUN_METRIC : "records"
 ```
@@ -104,14 +104,18 @@ erDiagram
 | `metadata` | JSONB | Format, size, mime type, etc. |
 | Index | `(task_run_id, artifact_type)` | Fetch latest outputs quickly. |
 
-### `artifact_embeddings`
+### `reflections`
 | Column | Type | Notes |
 | --- | --- | --- |
-| `artifact_id` | UUID FK → `artifacts.id` | One embedding per artifact variant. |
-| `embedding` | VECTOR(1536) | Maintains compatibility with existing pgvector usage. |
-| `model` | TEXT | Embedding model identifier. |
-| `version` | TEXT | Track embedding refreshes. |
-| Index | `ivfflat (embedding vector_cosine_ops)` with `lists` tuned to dataset scale; rebuild when growth >4×.[^pgvector-guidelines]
+| `id` | UUID PK | Reflection identifier. |
+| `task_run_id` | UUID FK | Run that generated the reflection. |
+| `author` | TEXT | Agent or reviewer that produced the reflection. |
+| `reflection_type` | TEXT | `critique`, `plan_insight`, `failure_postmortem`, etc. |
+| `content` | TEXT | Raw reflection text. |
+| `embedding` | VECTOR(1536) | Supports Self-RAG style retrieval of prior lessons.[^self-rag] |
+| `embedding_version` | TEXT | Embedding model/tag for drift tracking. |
+| `metadata` | JSONB | Tokens, scoring, or confidence values. |
+| Index | `ivfflat (embedding vector_cosine_ops)` with tuned `lists`; rebuild when growth >4×.[^pgvector-guidelines]
 
 ### `policy_checks`
 | Column | Type | Notes |
@@ -139,9 +143,9 @@ erDiagram
 - **Event replay**: provide ordered stream via `run_events` keyed by `task_run_id` for audit and debugging.
 
 ## Vector Storage Guidance
-- Build IVFFlat indexes only after ≥10k embeddings are present to avoid low-recall warnings; prefer `lists = sqrt(n)` as baseline, adjusting per workload benchmarks.[^pgvector-guidelines]
+- Build IVFFlat indexes on `reflections.embedding` only after ≥10k entries exist to avoid low-recall warnings; prefer `lists = sqrt(n)` as baseline, adjusting per workload benchmarks.[^pgvector-guidelines]
 - Monitor query recall and latency; increase `lists`/`probes` or consider HNSW when accuracy must exceed 95%.[^pgvector-tuning]
-- Document operational playbook for index rebuilds when dataset distribution shifts significantly.[^pgvector-guidelines]
+- Document operational playbook for index rebuilds when the reflection corpus distribution shifts significantly.[^pgvector-guidelines]
 
 ## Retention & Compliance
 - Retain runtime data for active tasks only; archive to `task_runs_history` immediately on terminal state with retention class metadata.
@@ -150,7 +154,7 @@ erDiagram
 
 ## Migration Roadmap
 1. **Phase 0 – Baseline cleanup**: current change removes legacy `runs`/`entries` DDL so goose baseline only sets up schema + privileges.
-2. **Phase 1 – Table introduction**: create `ideas`, `tasks`, `task_dependencies`, `task_runs`, `run_events`, `artifacts`, `artifact_embeddings` in new migrations; gate writes behind feature flag.
+2. **Phase 1 – Table introduction**: create `ideas`, `tasks`, `task_dependencies`, `task_runs`, `run_events`, `artifacts`, `reflections` in new migrations; gate writes behind feature flag.
 3. **Phase 2 – History extraction**: add `task_runs_history`, `policy_checks`, `run_metrics`; implement job to move terminal runs nightly.
 4. **Phase 3 – Backfill & validation**: replay existing telemetry sources into new tables; verify counts, referential integrity, and SLO dashboards.
 5. **Phase 4 – Decommission legacy usage**: remove codepaths relying on deprecated tables; update docs and runbooks.
