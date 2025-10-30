@@ -62,6 +62,13 @@ flowchart TD
 - **Anomaly Defense (D5)**: Synthetic incidents appended to `run_events`; detectors retrained and measured through `policy_checks` precision/recall.
 - **Retrieval Reinforcement (D6)**: Store re-ranker keep/drop decisions in `artifacts` and feed back into scoring models alongside SSFO results.
 
+### Reflection Persistence & Validation
+- Apply goose migration `000003_reflection_idempotency.sql` after deduping any conflicting rows; it adds `updated_at` and enforces `UNIQUE (task_run_id, reflection_type)` so repeated saves stay idempotent. Run `go run ./cmd/facteur migrate --config config/example.yaml` in each environment before enabling the store.
+- Save operations update `updated_at` on conflict and emit `facteur_reflections_saved_total`; retrieval increments `facteur_reflections_retrieved_total` so observability dashboards can track usage.
+- Retrieval callers may raise recall by issuing `SET LOCAL ivfflat.probes = <n>` inside the session before querying. Start with 10 in staging, 20 in production hot paths, and reset to defaults after the transaction when not needed.
+- Rebuild `codex_kb.idx_reflections_embedding` with `REINDEX (CONCURRENTLY)` whenever `lists` or `probes` change materially, matching the migration comment so REINDEX windows are captured in runbooks.
+- Manual spot check: `psql "$FACTEUR_POSTGRES_DSN" -c "SELECT task_run_id, reflection_type, content FROM codex_kb.reflections ORDER BY embedding <-> (SELECT embedding FROM codex_kb.reflections WHERE task_run_id = '<seed-run>' LIMIT 1) LIMIT 3;"` verifies cosine ordering against a known seed reflection.
+
 ## Implementation Roadmap
 1. **Phase 0** – Baseline schema cleanup (complete).
 2. **Phase 1** – Create `reflections` table, expand orchestrator to log router decisions, and persist SSFO artifacts.
