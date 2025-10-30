@@ -1,4 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
+
+import { type DataConverter, encodeMapToJson, encodeValuesToJson } from '../common/payloads'
 import type {
   RetryPolicyOptions,
   SignalWithStartOptions,
@@ -95,7 +97,7 @@ const stableStringify = (value: unknown): string => {
   return JSON.stringify(normalize(value))
 }
 
-export const computeSignalRequestId = (
+export const computeSignalRequestId = async (
   input: {
     namespace: string
     workflowId: string
@@ -105,10 +107,13 @@ export const computeSignalRequestId = (
     identity?: string
     args: unknown[]
   },
+  dataConverter: DataConverter,
   options: { entropy?: string } = {},
-): string => {
+): Promise<string> => {
   const hash = createHash('sha256')
   const entropy = (options.entropy ?? createSignalRequestEntropy()).trim()
+  const encodedArgs = await encodeValuesToJson(dataConverter, Array.isArray(input.args) ? input.args : [])
+
   const segments = [
     input.namespace.trim(),
     input.workflowId.trim(),
@@ -116,7 +121,7 @@ export const computeSignalRequestId = (
     (input.firstExecutionRunId ?? '').trim(),
     input.signalName.trim(),
     (input.identity ?? '').trim(),
-    stableStringify(Array.isArray(input.args) ? input.args : []),
+    stableStringify(encodedArgs),
     entropy,
   ]
 
@@ -128,19 +133,18 @@ export const computeSignalRequestId = (
   return hash.digest('hex')
 }
 
-export const buildSignalRequest = ({
-  handle,
-  signalName,
-  args,
-  identity,
-  requestId,
-}: {
-  handle: WorkflowHandle
-  signalName: string
-  args: unknown[]
-  identity?: string
-  requestId?: string
-}): Record<string, unknown> => {
+export const buildSignalRequest = async (
+  params: {
+    handle: WorkflowHandle
+    signalName: string
+    args: unknown[]
+    identity?: string
+    requestId?: string
+  },
+  dataConverter: DataConverter,
+): Promise<Record<string, unknown>> => {
+  const { handle, signalName, args, identity, requestId } = params
+
   if (!handle.workflowId || handle.workflowId.trim().length === 0) {
     throw new Error('Workflow handle must include a non-empty workflowId')
   }
@@ -150,12 +154,11 @@ export const buildSignalRequest = ({
   }
 
   const namespace = ensureWorkflowNamespace(handle)
-
   const payload: Record<string, unknown> = {
     namespace,
     workflow_id: handle.workflowId,
     signal_name: signalName,
-    args: Array.isArray(args) ? [...args] : [],
+    args: await encodeValuesToJson(dataConverter, Array.isArray(args) ? args : []),
   }
 
   if (handle.runId) {
@@ -177,11 +180,12 @@ export const buildSignalRequest = ({
   return payload
 }
 
-export const buildQueryRequest = (
+export const buildQueryRequest = async (
   handle: WorkflowHandle,
   queryName: string,
   args: unknown[],
-): Record<string, unknown> => {
+  dataConverter: DataConverter,
+): Promise<Record<string, unknown>> => {
   if (!handle.workflowId || handle.workflowId.trim().length === 0) {
     throw new Error('Workflow handle must include a non-empty workflowId')
   }
@@ -191,12 +195,11 @@ export const buildQueryRequest = (
   }
 
   const namespace = ensureWorkflowNamespace(handle)
-
   const payload: Record<string, unknown> = {
     namespace,
     workflow_id: handle.workflowId,
     query_name: queryName,
-    args: Array.isArray(args) ? [...args] : [],
+    args: await encodeValuesToJson(dataConverter, Array.isArray(args) ? args : []),
   }
 
   if (handle.runId) {
@@ -210,10 +213,11 @@ export const buildQueryRequest = (
   return payload
 }
 
-export const buildTerminateRequest = (
+export const buildTerminateRequest = async (
   handle: WorkflowHandle,
   options: TerminateWorkflowOptions = {},
-): Record<string, unknown> => {
+  dataConverter: DataConverter,
+): Promise<Record<string, unknown>> => {
   const payload: Record<string, unknown> = {
     namespace: handle.namespace,
     workflow_id: handle.workflowId,
@@ -234,7 +238,7 @@ export const buildTerminateRequest = (
   }
 
   if (options.details !== undefined) {
-    payload.details = options.details
+    payload.details = await encodeValuesToJson(dataConverter, Array.isArray(options.details) ? options.details : [])
   }
 
   return payload
@@ -262,51 +266,62 @@ export const buildCancelRequest = (handle: WorkflowHandle): Record<string, unkno
   return payload
 }
 
-export const buildSignalWithStartRequest = ({
-  options,
-  defaults,
-}: {
-  options: SignalWithStartOptions
-  defaults: { namespace: string; identity: string; taskQueue: string }
-}): Record<string, unknown> => {
-  const payload = buildStartWorkflowRequest({ options, defaults })
-  return {
-    ...payload,
-    signal_name: options.signalName,
-    signal_args: options.signalArgs ?? [],
-  }
+export const buildSignalWithStartRequest = async (
+  params: {
+    options: SignalWithStartOptions
+    defaults: { namespace: string; identity: string; taskQueue: string }
+  },
+  dataConverter: DataConverter,
+): Promise<Record<string, unknown>> => {
+  const payload = await buildStartWorkflowRequest(params, dataConverter)
+  payload.signal_name = params.options.signalName
+  payload.signal_args = await encodeValuesToJson(
+    dataConverter,
+    Array.isArray(params.options.signalArgs) ? params.options.signalArgs : [],
+  )
+  return payload
 }
 
-export const buildStartWorkflowRequest = ({
-  options,
-  defaults,
-}: {
-  options: StartWorkflowOptions
-  defaults: { namespace: string; identity: string; taskQueue: string }
-}): Record<string, unknown> => {
+export const buildStartWorkflowRequest = async (
+  params: {
+    options: StartWorkflowOptions
+    defaults: { namespace: string; identity: string; taskQueue: string }
+  },
+  dataConverter: DataConverter,
+): Promise<Record<string, unknown>> => {
+  const { options, defaults } = params
   const payload: Record<string, unknown> = {
     namespace: options.namespace ?? defaults.namespace,
     workflow_id: options.workflowId,
     workflow_type: options.workflowType,
     task_queue: options.taskQueue ?? defaults.taskQueue,
     identity: options.identity ?? defaults.identity,
-    args: options.args ?? [],
+    args: await encodeValuesToJson(dataConverter, Array.isArray(options.args) ? options.args : []),
   }
 
   if (options.cronSchedule) {
     payload.cron_schedule = options.cronSchedule
   }
 
-  if (options.memo) {
-    payload.memo = options.memo
+  if (options.memo !== undefined) {
+    const memoPayload = await encodeMapToJson(dataConverter, options.memo)
+    if (memoPayload !== undefined) {
+      payload.memo = memoPayload
+    }
   }
 
-  if (options.headers) {
-    payload.headers = options.headers
+  if (options.headers !== undefined) {
+    const headersPayload = await encodeMapToJson(dataConverter, options.headers)
+    if (headersPayload !== undefined) {
+      payload.headers = headersPayload
+    }
   }
 
-  if (options.searchAttributes) {
-    payload.search_attributes = options.searchAttributes
+  if (options.searchAttributes !== undefined) {
+    const searchAttributesPayload = await encodeMapToJson(dataConverter, options.searchAttributes)
+    if (searchAttributesPayload !== undefined) {
+      payload.search_attributes = searchAttributesPayload
+    }
   }
 
   if (options.requestId) {

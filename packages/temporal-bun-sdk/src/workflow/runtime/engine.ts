@@ -1,6 +1,6 @@
 import type { coresdk } from '@temporalio/proto'
 import Long from 'long'
-
+import { createDefaultDataConverter, type DataConverter } from '../../common/payloads'
 import { buildWorkflowInfo, type WorkflowActivationResult, WorkflowEnvironment } from './environment'
 
 export interface WorkflowEngineOptions {
@@ -8,6 +8,7 @@ export interface WorkflowEngineOptions {
   activities?: Record<string, (...args: unknown[]) => unknown>
   showStackTraceSources?: boolean
   interceptors?: readonly string[]
+  dataConverter?: DataConverter
 }
 
 export interface WorkflowTaskContext {
@@ -18,9 +19,11 @@ export interface WorkflowTaskContext {
 export class WorkflowEngine {
   readonly #options: WorkflowEngineOptions
   readonly #environments = new Map<string, WorkflowEnvironment>()
+  readonly #dataConverter: DataConverter
 
   constructor(options: WorkflowEngineOptions) {
     this.#options = options
+    this.#dataConverter = options.dataConverter ?? createDefaultDataConverter()
   }
 
   async processWorkflowActivation(
@@ -65,7 +68,7 @@ export class WorkflowEngine {
       )
     }
 
-    const info = buildWorkflowInfo(initJob, activation, context)
+    const info = await buildWorkflowInfo(initJob, activation, context, this.#dataConverter)
     const randomnessSeed = toRandomnessSeed(initJob.randomnessSeed)
     const registeredActivityNames = new Set<string>(Object.keys(this.#options.activities ?? {}))
 
@@ -77,6 +80,7 @@ export class WorkflowEngine {
       registeredActivityNames,
       showStackTraceSources: Boolean(this.#options.showStackTraceSources),
       interceptors: this.#options.interceptors,
+      dataConverter: this.#dataConverter,
     })
 
     this.#environments.set(activation.runId, environment)

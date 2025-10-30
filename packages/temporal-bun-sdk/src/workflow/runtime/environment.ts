@@ -2,7 +2,6 @@ import { resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { WorkerDeploymentVersion } from '@temporalio/common'
-import { defaultFailureConverter, defaultPayloadConverter } from '@temporalio/common'
 import {
   decodeSearchAttributes,
   decodeTypedSearchAttributes,
@@ -12,7 +11,15 @@ import type { WorkflowInfo } from '@temporalio/workflow'
 import type { WorkflowCreateOptionsInternal } from '@temporalio/workflow/lib/interfaces.js'
 import type Long from 'long'
 
-import { ensureWorkflowRuntimeBootstrap, withTemporalGlobals } from './bootstrap'
+import {
+  createDefaultDataConverter,
+  type DataConverter,
+  decodePayloadMapToValues,
+  decodePayloadsToValues,
+  encodeErrorToFailure,
+  failureToError,
+} from '../../common/payloads'
+import { ensureWorkflowRuntimeBootstrap, setWorkflowDataConverter, withTemporalGlobals } from './bootstrap'
 import { convertParentWorkflowInfo, convertRootWorkflowInfo } from './info'
 
 export interface WorkflowEnvironmentOptions {
@@ -23,6 +30,7 @@ export interface WorkflowEnvironmentOptions {
   registeredActivityNames: Set<string>
   showStackTraceSources: boolean
   interceptors?: readonly string[]
+  dataConverter?: DataConverter
 }
 
 export interface WorkflowActivationResult {
@@ -65,6 +73,7 @@ export class WorkflowEnvironment {
   readonly #showStackTraceSources: boolean
   readonly #workflowsModuleSpecifier: string
   readonly #interceptors: readonly string[]
+  readonly #dataConverter: DataConverter
   #disposed = false
   #workflowModule: unknown | null = null
   #interceptorsCache: unknown[] | null = null
@@ -81,6 +90,7 @@ export class WorkflowEnvironment {
     this.#showStackTraceSources = options.showStackTraceSources
     this.#workflowsModuleSpecifier = makeModuleSpecifier(resolve(options.workflowsPath), options.info.runId)
     this.#interceptors = Array.isArray(options.interceptors) ? [...options.interceptors] : []
+    this.#dataConverter = options.dataConverter ?? createDefaultDataConverter()
   }
 
   static async create(options: WorkflowEnvironmentOptions): Promise<WorkflowEnvironment> {
@@ -115,9 +125,9 @@ export class WorkflowEnvironment {
         },
       )
     } catch (error) {
-      const failure = defaultFailureConverter.errorToFailure(
+      const failure = await encodeErrorToFailure(
+        this.#dataConverter,
         error instanceof Error ? error : new Error(String(error)),
-        defaultPayloadConverter,
       )
       const completion = coresdk.workflow_completion.WorkflowActivationCompletion.create({
         runId: activation.runId,
@@ -185,6 +195,7 @@ export class WorkflowEnvironment {
         importInterceptors: () => this.#interceptorsCache ?? [],
       },
       async () => {
+        setWorkflowDataConverter(this.#dataConverter)
         workflowApi.initRuntime({
           info: this.#info,
           randomnessSeed: this.#randomnessSeed,
@@ -228,14 +239,15 @@ const resolveInterceptorSpecifier = (specifier: string): string => {
   return pathToFileURL(resolved).href
 }
 
-export const buildWorkflowInfo = (
+export const buildWorkflowInfo = async (
   init: coresdk.workflow_activation.IInitializeWorkflow,
   activation: coresdk.workflow_activation.WorkflowActivation,
   runtime: {
     namespace: string
     taskQueue: string
   },
-): WorkflowInfo => {
+  dataConverter: DataConverter,
+): Promise<WorkflowInfo> => {
   if (!init.workflowId || !init.workflowType) {
     throw new TypeError('InitializeWorkflow activation is missing required workflow identifiers')
   }
@@ -243,13 +255,17 @@ export const buildWorkflowInfo = (
   const searchAttributes = init.searchAttributes?.indexedFields ?? {}
   const memoFields = init.memo?.fields
 
+  const memo = await decodeMemoFields(memoFields, dataConverter)
+  const lastResult = await decodeLastResult(init.lastCompletionResult, dataConverter)
+  const lastFailure = init.continuedFailure ? await failureToError(dataConverter, init.continuedFailure) : undefined
+
   const info: WorkflowInfo = {
     workflowId: init.workflowId,
     runId: activation.runId,
     workflowType: init.workflowType,
     searchAttributes: decodeSearchAttributes(searchAttributes),
     typedSearchAttributes: decodeTypedSearchAttributes(searchAttributes),
-    memo: decodeMemoFields(memoFields),
+    memo,
     parent: init.parentWorkflowInfo ? convertParentWorkflowInfo(init.parentWorkflowInfo) : undefined,
     root: init.rootWorkflow ? convertRootWorkflowInfo(init.rootWorkflow) : undefined,
     taskQueue: runtime.taskQueue,
@@ -276,10 +292,8 @@ export const buildWorkflowInfo = (
       isReplaying: activation.isReplaying ?? false,
     },
     priority: undefined,
-    lastResult: decodeLastResult(init.lastCompletionResult),
-    lastFailure: init.continuedFailure
-      ? defaultFailureConverter.failureToError(init.continuedFailure, defaultPayloadConverter)
-      : undefined,
+    lastResult,
+    lastFailure,
   }
 
   return info
@@ -297,26 +311,30 @@ const convertDeploymentVersion = (
   }
 }
 
-const decodeMemoFields = (
+const decodeMemoFields = async (
   fields: Record<string, temporal.api.common.v1.IPayload> | null | undefined,
-): Record<string, unknown> => {
+  converter: DataConverter,
+): Promise<Record<string, unknown>> => {
   if (!fields) {
     return {}
   }
-  const result: Record<string, unknown> = {}
-  for (const [key, payload] of Object.entries(fields)) {
-    result[key] = payload ? defaultPayloadConverter.fromPayload(payload) : undefined
-  }
-  return result
+  const decoded = await decodePayloadMapToValues(converter, fields)
+  return decoded ?? {}
 }
 
-const decodeLastResult = (payloads: temporal.api.common.v1.IPayloads | null | undefined): unknown => {
+const decodeLastResult = async (
+  payloads: temporal.api.common.v1.IPayloads | null | undefined,
+  converter: DataConverter,
+): Promise<unknown> => {
   const list = payloads?.payloads
   if (!list || list.length === 0) {
     return undefined
   }
-  const first = list[0]
-  return first ? defaultPayloadConverter.fromPayload(first) : undefined
+  const values = await decodePayloadsToValues(converter, list)
+  if (!values.length) {
+    return undefined
+  }
+  return values[0]
 }
 
 const timestampToDate = (timestamp: google.protobuf.ITimestamp | null | undefined): Date | undefined => {

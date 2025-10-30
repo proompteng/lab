@@ -8,3 +8,7 @@ export async function timerWorkflow(delayMs: number): Promise<string> {
   await sleep(delayMs)
   return 'timer fired'
 }
+
+export async function binaryWorkflow(): Promise<Uint8Array> {
+  return new Uint8Array([1, 2, 3])
+}

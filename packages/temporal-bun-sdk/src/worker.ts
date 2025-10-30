@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import type { NativeConnection, NativeConnectionOptions, WorkerOptions } from '@temporalio/worker'
 
 import * as defaultActivities from './activities'
+import type { DataConverter } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig } from './config'
 import { NativeBridgeError } from './internal/core-bridge/native'
 import { isZigWorkerBridgeEnabled, WorkerRuntime, type WorkerRuntimeOptions } from './worker/runtime'
@@ -20,6 +21,7 @@ export interface CreateWorkerOptions {
   activities?: WorkerOptions['activities']
   workerOptions?: WorkerOptionOverrides
   nativeConnectionOptions?: NativeConnectionOptions
+  dataConverter?: DataConverter
 }
 
 export interface BunWorkerHandle {
@@ -77,6 +79,7 @@ export const createWorker = async (
     activities,
     taskQueue,
     namespace: config.namespace,
+    dataConverter: options.dataConverter,
   }
 
   const runtime = await WorkerRuntime.create(runtimeOptions)
