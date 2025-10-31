@@ -16,6 +16,7 @@ type Config struct {
 	RoleMap  map[string][]string `mapstructure:"role_map"`
 	Server   ServerConfig        `mapstructure:"server"`
 	Codex    CodexListenerConfig `mapstructure:"codex_listener"`
+	Planner  PlannerConfig       `mapstructure:"codex_orchestrator"`
 	Postgres DatabaseConfig      `mapstructure:"postgres"`
 }
 
@@ -34,6 +35,15 @@ type RedisConfig struct {
 
 // ArgoConfig contains the settings necessary to submit workflows.
 type ArgoConfig struct {
+	Namespace        string            `mapstructure:"namespace"`
+	WorkflowTemplate string            `mapstructure:"workflow_template"`
+	ServiceAccount   string            `mapstructure:"service_account"`
+	Parameters       map[string]string `mapstructure:"parameters"`
+}
+
+// PlannerConfig controls Facteur-led Codex orchestration behaviour.
+type PlannerConfig struct {
+	Enabled          bool              `mapstructure:"enabled"`
 	Namespace        string            `mapstructure:"namespace"`
 	WorkflowTemplate string            `mapstructure:"workflow_template"`
 	ServiceAccount   string            `mapstructure:"service_account"`
@@ -95,32 +105,50 @@ func LoadWithOptions(opts Options) (*Config, error) {
 	v.SetEnvPrefix(opts.EnvPrefix)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
-	for _, key := range []string{
-		"discord.bot_token",
-		"discord.application_id",
-		"discord.public_key",
-		"discord.guild_id",
-		"redis.url",
-		"postgres.dsn",
-		"argo.namespace",
-		"argo.workflow_template",
-		"argo.service_account",
-		"argo.parameters",
-		"role_map",
-		"server.listen_address",
-		"codex_listener.enabled",
-		"codex_listener.brokers",
-		"codex_listener.topic",
-		"codex_listener.group_id",
-		"codex_listener.tls.enabled",
-		"codex_listener.tls.insecure_skip_verify",
-		"codex_listener.sasl.enabled",
-		"codex_listener.sasl.mechanism",
-		"codex_listener.sasl.username",
-		"codex_listener.sasl.password",
+	for _, binding := range []struct {
+		key  string
+		envs []string
+	}{
+		{key: "discord.bot_token"},
+		{key: "discord.application_id"},
+		{key: "discord.public_key"},
+		{key: "discord.guild_id"},
+		{key: "redis.url"},
+		{key: "postgres.dsn"},
+		{key: "argo.namespace"},
+		{key: "argo.workflow_template"},
+		{key: "argo.service_account"},
+		{key: "argo.parameters"},
+		{key: "role_map"},
+		{key: "server.listen_address"},
+		{key: "codex_listener.enabled"},
+		{key: "codex_listener.brokers"},
+		{key: "codex_listener.topic"},
+		{key: "codex_listener.group_id"},
+		{key: "codex_listener.tls.enabled"},
+		{key: "codex_listener.tls.insecure_skip_verify"},
+		{key: "codex_listener.sasl.enabled"},
+		{key: "codex_listener.sasl.mechanism"},
+		{key: "codex_listener.sasl.username"},
+		{key: "codex_listener.sasl.password"},
+		{
+			key:  "codex_orchestrator.enabled",
+			envs: []string{"FACTEUR_CODEX_ORCHESTRATOR_ENABLED", "FACTEUR_CODEX_ENABLE_PLANNING_ORCHESTRATION"},
+		},
+		{key: "codex_orchestrator.namespace"},
+		{key: "codex_orchestrator.workflow_template"},
+		{key: "codex_orchestrator.service_account"},
+		{key: "codex_orchestrator.parameters"},
 	} {
-		if err := v.BindEnv(key); err != nil {
-			return nil, fmt.Errorf("bind env %s: %w", key, err)
+		if len(binding.envs) == 0 {
+			if err := v.BindEnv(binding.key); err != nil {
+				return nil, fmt.Errorf("bind env %s: %w", binding.key, err)
+			}
+			continue
+		}
+		args := append([]string{binding.key}, binding.envs...)
+		if err := v.BindEnv(args...); err != nil {
+			return nil, fmt.Errorf("bind env %s: %w", binding.key, err)
 		}
 	}
 
@@ -151,6 +179,9 @@ func normaliseConfig(cfg *Config) {
 	}
 	if cfg.Argo.Parameters == nil {
 		cfg.Argo.Parameters = map[string]string{}
+	}
+	if cfg.Planner.Parameters == nil {
+		cfg.Planner.Parameters = map[string]string{}
 	}
 	if cfg.Server.ListenAddress == "" {
 		cfg.Server.ListenAddress = ":8080"

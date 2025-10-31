@@ -29,6 +29,13 @@ argo:
   service_account: facteur-workflow
   parameters:
     payload: '{}'
+codex_orchestrator:
+  enabled: true
+  namespace: planning
+  workflow_template: github-codex-planning
+  service_account: planner
+  parameters:
+    rawEvent: '{}'
 server:
   listen_address: ":9000"
 role_map:
@@ -59,6 +66,11 @@ codex_listener:
 		require.Equal(t, "facteur-dispatch", cfg.Argo.WorkflowTemplate)
 		require.Equal(t, "facteur-workflow", cfg.Argo.ServiceAccount)
 		require.Equal(t, map[string]string{"payload": "{}"}, cfg.Argo.Parameters)
+		require.True(t, cfg.Planner.Enabled)
+		require.Equal(t, "planning", cfg.Planner.Namespace)
+		require.Equal(t, "github-codex-planning", cfg.Planner.WorkflowTemplate)
+		require.Equal(t, "planner", cfg.Planner.ServiceAccount)
+		require.Equal(t, map[string]string{"rawevent": "{}"}, cfg.Planner.Parameters)
 		require.Equal(t, ":9000", cfg.Server.ListenAddress)
 		require.Equal(t, map[string][]string{
 			"plan":   []string{"admin", "operator"},
@@ -89,6 +101,8 @@ argo:
 		t.Setenv("FACTEUR_DISCORD_BOT_TOKEN", "env-token")
 		t.Setenv("FACTEUR_ARGO_WORKFLOW_TEMPLATE", "env-template")
 		t.Setenv("FACTEUR_POSTGRES_DSN", "postgres://override")
+		t.Setenv("FACTEUR_CODEX_ENABLE_PLANNING_ORCHESTRATION", "true")
+		t.Setenv("FACTEUR_CODEX_ORCHESTRATOR_WORKFLOW_TEMPLATE", "env-planning")
 
 		cfg, err := config.LoadWithOptions(config.Options{Path: path, EnvPrefix: "FACTEUR"})
 		require.NoError(t, err)
@@ -97,6 +111,8 @@ argo:
 		require.Equal(t, "postgres://override", cfg.Postgres.DSN)
 		require.Equal(t, ":8080", cfg.Server.ListenAddress)
 		require.False(t, cfg.Codex.Enabled)
+		require.True(t, cfg.Planner.Enabled)
+		require.Equal(t, "env-planning", cfg.Planner.WorkflowTemplate)
 	})
 
 	t.Run("missing required fields", func(t *testing.T) {
@@ -123,7 +139,6 @@ redis:
 		t.Setenv("FACTEUR_ARGO_NAMESPACE", "argo-workflows")
 		t.Setenv("FACTEUR_ARGO_WORKFLOW_TEMPLATE", "template")
 		t.Setenv("FACTEUR_POSTGRES_DSN", "postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable")
-
 		cfg, err := config.LoadWithOptions(config.Options{EnvPrefix: "FACTEUR"})
 		require.NoError(t, err)
 		require.Equal(t, "token", cfg.Discord.BotToken)
@@ -134,6 +149,9 @@ redis:
 		require.NotNil(t, cfg.RoleMap)
 		require.Empty(t, cfg.RoleMap)
 		require.False(t, cfg.Codex.Enabled)
+		require.False(t, cfg.Planner.Enabled)
+		require.NotNil(t, cfg.Planner.Parameters)
+		require.Empty(t, cfg.Planner.Parameters)
 	})
 
 	t.Run("validates codex listener when enabled", func(t *testing.T) {
@@ -159,4 +177,29 @@ codex_listener:
 		require.Contains(t, err.Error(), "codex_listener.brokers is required when enabled")
 		require.Contains(t, err.Error(), "codex_listener.topic is required when enabled")
 	})
+}
+
+func TestLoadUsesDefaultOptions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "facteur.yaml")
+	data := []byte(`discord:
+  bot_token: token
+  application_id: app
+  public_key: key
+  guild_id: guild
+redis:
+  url: redis://localhost:6379/0
+postgres:
+  dsn: postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable
+argo:
+  namespace: argo
+  workflow_template: template
+  service_account: sa
+`)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+
+	cfg, err := config.Load(path)
+	require.NoError(t, err)
+	require.Equal(t, "token", cfg.Discord.BotToken)
+	require.Equal(t, "sa", cfg.Argo.ServiceAccount)
 }
