@@ -112,14 +112,17 @@ export const ReviewEvaluationSchema = Schema.Struct({
 
 export type ReviewEvaluation = Schema.Type<typeof ReviewEvaluationSchema>
 
+export interface ReviewRequestEvent {
+  reviewCommand: ReviewCommand
+  outstandingWork: boolean
+}
+
 export type WorkflowEvent =
   | { type: 'ISSUE_OPENED'; data: PlanningCommand }
   | { type: 'PLAN_APPROVED'; data: ImplementationCommand }
   | { type: 'PR_ACTIVITY'; data: ReviewEvaluation }
+  | { type: 'REVIEW_REQUESTED'; data: ReviewRequestEvent }
   | { type: 'IGNORE' }
-
-export const shouldRequestReviewGuard = (_context: WorkflowContext, event: WorkflowEvent) =>
-  event.type === 'PR_ACTIVITY' && (event.data.outstandingWork || event.data.forceReview)
 
 export const shouldUndraftGuard = (_context: WorkflowContext, event: WorkflowEvent) =>
   event.type === 'PR_ACTIVITY' && !event.data.outstandingWork && event.data.isDraft && !!event.data.undraftCommand
@@ -152,6 +155,10 @@ export const codexWorkflowMachine = createMachine({
           actions: ['queueImplementation'],
         },
         PR_ACTIVITY: 'reviewRouting',
+        REVIEW_REQUESTED: {
+          target: 'reviewRequested',
+          actions: ['queueReview'],
+        },
         IGNORE: 'ignored',
       },
     },
@@ -163,11 +170,6 @@ export const codexWorkflowMachine = createMachine({
     },
     reviewRouting: {
       always: [
-        {
-          target: 'reviewOutstanding',
-          guard: 'shouldRequestReview',
-          actions: ['queueReview'],
-        },
         {
           target: 'reviewUndraft',
           guard: 'shouldUndraft',
@@ -181,13 +183,13 @@ export const codexWorkflowMachine = createMachine({
         { target: 'ignored' },
       ],
     },
-    reviewOutstanding: {
-      type: 'final',
-    },
     reviewUndraft: {
       type: 'final',
     },
     reviewReadyComment: {
+      type: 'final',
+    },
+    reviewRequested: {
       type: 'final',
     },
     ignored: {
@@ -210,7 +212,7 @@ export const codexWorkflowMachine = createMachine({
     }),
     queueReview: assign({
       commands: ({ context }, event) =>
-        event.type === 'PR_ACTIVITY' && event.data.reviewCommand
+        event.type === 'REVIEW_REQUESTED'
           ? [...context.commands, { type: 'publishReview', data: event.data.reviewCommand }]
           : context.commands,
     }),
@@ -228,7 +230,6 @@ export const codexWorkflowMachine = createMachine({
     }),
   },
   guards: {
-    shouldRequestReview: shouldRequestReviewGuard,
     shouldUndraft: shouldUndraftGuard,
     shouldPostReadyComment: shouldPostReadyCommentGuard,
   },
@@ -257,11 +258,6 @@ export const evaluateCodexWorkflow = (event: WorkflowEvent): WorkflowResult => {
       const commands: WorkflowCommand[] = []
       let state: string = 'ignored'
 
-      if (shouldRequestReviewGuard({ commands: [] }, event) && event.data.reviewCommand) {
-        commands.push({ type: 'publishReview', data: event.data.reviewCommand })
-        state = 'reviewOutstanding'
-      }
-
       if (shouldUndraftGuard({ commands: [] }, event) && event.data.undraftCommand) {
         commands.push({ type: 'markReadyForReview', data: event.data.undraftCommand })
         if (state === 'ignored') {
@@ -277,6 +273,12 @@ export const evaluateCodexWorkflow = (event: WorkflowEvent): WorkflowResult => {
       }
 
       return { commands, state }
+    }
+    case 'REVIEW_REQUESTED': {
+      return {
+        commands: [{ type: 'publishReview', data: event.data.reviewCommand }],
+        state: 'reviewRequested',
+      }
     }
     default:
       return { commands: [], state: 'ignored' }

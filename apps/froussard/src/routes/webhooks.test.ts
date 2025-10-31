@@ -311,7 +311,7 @@ describe('createWebhookHandler', () => {
       },
     },
     {
-      name: 'requests Codex review when outstanding feedback exists',
+      name: 'does not publish review message when outstanding feedback exists without comment trigger',
       event: 'pull_request',
       action: 'synchronize',
       payload: {
@@ -372,7 +372,8 @@ describe('createWebhookHandler', () => {
         )
       },
       assert: (body) => {
-        expect(body).toMatchObject({ codexStageTriggered: 'review' })
+        expect(body).toMatchObject({ codexStageTriggered: null })
+        expect(publishedMessages.some((message) => message.topic === 'codex-topic')).toBe(false)
         expect(mockBuildCodexPrompt).toHaveBeenCalledWith(expect.objectContaining({ stage: 'review', issueNumber: 5 }))
       },
     },
@@ -609,220 +610,259 @@ describe('createWebhookHandler', () => {
     expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-plan-marker' })
   })
 
-  it('publishes review message when a Codex pull request has outstanding feedback', async () => {
-    githubServiceMock.fetchPullRequest.mockReturnValueOnce(
-      Effect.succeed({
-        ok: true as const,
-        pullRequest: {
-          number: 5,
-          title: 'Review automation',
-          body: 'Ensure Codex keeps iterating.',
-          htmlUrl: 'https://github.com/owner/repo/pull/5',
-          draft: false,
-          merged: false,
-          state: 'open',
-          headRef: 'codex/issue-5-branch',
-          headSha: 'abc123',
-          baseRef: 'main',
-          authorLogin: 'user',
-          mergeableState: 'blocked',
-        },
-      }),
-    )
-    githubServiceMock.listPullRequestReviewThreads.mockReturnValueOnce(
-      Effect.succeed({
-        ok: true as const,
-        threads: [
-          {
-            summary: 'Add unit tests for webhook logic',
-            url: 'https://github.com/owner/repo/pull/5#discussion-1',
-            author: 'octocat',
+  describe('review comment trigger', () => {
+    it('publishes review message when an authorized collaborator requests review', async () => {
+      githubServiceMock.fetchPullRequest.mockReturnValueOnce(
+        Effect.succeed({
+          ok: true as const,
+          pullRequest: {
+            number: 5,
+            title: 'Review automation',
+            body: 'Ensure Codex keeps iterating.',
+            htmlUrl: 'https://github.com/owner/repo/pull/5',
+            draft: false,
+            merged: false,
+            state: 'open',
+            headRef: 'codex/issue-9-branch',
+            headSha: 'abc123',
+            baseRef: 'main',
+            authorLogin: 'user',
+            mergeableState: 'blocked',
           },
-        ],
-      }),
-    )
-    githubServiceMock.listPullRequestCheckFailures.mockReturnValueOnce(
-      Effect.succeed({
-        ok: true as const,
-        checks: [
-          {
-            name: 'ci / test',
-            conclusion: 'failure',
-            url: 'https://ci.example.com/run/1',
-            details: 'Integration tests are failing',
-          },
-        ],
-      }),
-    )
-
-    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-    const payload = {
-      action: 'submitted',
-      repository: { full_name: 'owner/repo' },
-      sender: { login: 'reviewer' },
-      pull_request: {
-        number: 5,
-        head: { ref: 'codex/issue-5-branch', sha: 'abc123' },
-        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
-        user: { login: 'USER' },
-      },
-    }
-
-    const response = await handler(
-      buildRequest(payload, {
-        'x-github-event': 'pull_request_review',
-        'x-github-delivery': 'delivery-review-1',
-        'x-github-action': 'submitted',
-        'x-hub-signature-256': 'sig',
-        'content-type': 'application/json',
-      }),
-      'github',
-    )
-
-    expect(response.status).toBe(202)
-    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: 'review' })
-
-    expect(githubServiceMock.fetchPullRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ repositoryFullName: 'owner/repo', pullNumber: 5 }),
-    )
-    expect(githubServiceMock.markPullRequestReadyForReview).not.toHaveBeenCalled()
-    expect(githubServiceMock.findLatestPlanComment).not.toHaveBeenCalled()
-    expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
-    expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        stage: 'review',
-        reviewContext: expect.objectContaining({
-          reviewThreads: expect.arrayContaining([
-            expect.objectContaining({ summary: 'Add unit tests for webhook logic' }),
-          ]),
         }),
-      }),
-    )
+      )
 
-    expect(publishedMessages).toHaveLength(3)
-    const reviewJsonMessage = publishedMessages.find((message) => message.topic === 'codex-topic')
-    expect(reviewJsonMessage).toBeTruthy()
-    if (!reviewJsonMessage) {
-      throw new Error('Expected review JSON message to be published')
-    }
-    expect(reviewJsonMessage.headers?.['x-codex-review-fingerprint']).toMatch(/^[a-f0-9]{32}$/)
-    expect(reviewJsonMessage.headers?.['x-codex-review-head-sha']).toBe('abc123')
-    const reviewStructuredMessage = publishedMessages.find((message) => message.topic === 'github.issues.codex.tasks')
-    expect(reviewStructuredMessage).toBeTruthy()
-    if (!reviewStructuredMessage) {
-      throw new Error('Expected review structured message to be published')
-    }
-    expect(reviewStructuredMessage.headers?.['x-codex-review-fingerprint']).toMatch(/^[a-f0-9]{32}$/)
-    expect(reviewStructuredMessage.headers?.['x-codex-review-head-sha']).toBe('abc123')
+      githubServiceMock.listPullRequestReviewThreads.mockReturnValueOnce(
+        Effect.succeed({
+          ok: true as const,
+          threads: [
+            {
+              summary: 'Add unit tests for webhook logic',
+              url: 'https://github.com/owner/repo/pull/5#discussion_r1',
+              author: 'octocat',
+            },
+          ],
+        }),
+      )
 
-    const reviewJsonPayload = JSON.parse(toBuffer(reviewJsonMessage.value).toString('utf8'))
-    expect(reviewJsonPayload.stage).toBe('review')
-    expect(reviewJsonPayload.reviewContext.reviewThreads[0].summary).toBe('Add unit tests for webhook logic')
-    expect(reviewJsonPayload.reviewContext.failingChecks[0].name).toBe('ci / test')
-    expect(reviewJsonPayload.reviewContext.additionalNotes[0]).toContain('mergeable_state=blocked')
-    expect(reviewJsonPayload.issueNumber).toBe(5)
+      githubServiceMock.listPullRequestCheckFailures.mockReturnValueOnce(
+        Effect.succeed({
+          ok: true as const,
+          checks: [
+            {
+              name: 'ci / test',
+              conclusion: 'failure',
+              url: 'https://ci.example.com/run/1',
+              details: 'Integration tests are failing',
+            },
+          ],
+        }),
+      )
 
-    const reviewProto = CodexTask.fromBinary(toBuffer(reviewStructuredMessage.value))
-    expect(reviewProto.stage).toBe(CodexTaskStage.REVIEW)
-    expect(reviewProto.issueNumber).toBe(BigInt(5))
-    expect(reviewProto.reviewContext?.reviewThreads[0]?.summary).toBe('Add unit tests for webhook logic')
-    expect(reviewProto.reviewContext?.failingChecks[0]?.name).toBe('ci / test')
-    expect(reviewProto.reviewContext?.additionalNotes[0]).toContain('mergeable_state=blocked')
-  })
-
-  it('skips launching duplicate review workflows when fingerprint is unchanged', async () => {
-    githubServiceMock.fetchPullRequest.mockReturnValue(
-      Effect.succeed({
-        ok: true as const,
-        pullRequest: {
-          number: 9,
-          title: 'Duplicate review test',
-          body: 'Ensure single workflow per state',
-          htmlUrl: 'https://github.com/owner/repo/pull/9',
-          draft: false,
-          merged: false,
-          state: 'open',
-          headRef: 'codex/issue-9-branch',
-          headSha: 'sha456',
-          baseRef: 'main',
-          authorLogin: 'user',
-          mergeableState: 'blocked',
+      const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+      const payload = {
+        action: 'created',
+        issue: {
+          number: 5,
+          pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/5' },
+          repository_url: 'https://api.github.com/repos/owner/repo',
         },
-      }),
-    )
+        repository: { full_name: 'owner/repo' },
+        sender: { login: 'maintainer' },
+        comment: {
+          id: 101,
+          body: 'Please @tuslagch review this change.',
+          html_url: 'https://github.com/owner/repo/pull/5#issuecomment-101',
+          author_association: 'MEMBER',
+          updated_at: '2025-10-30T00:00:00Z',
+          user: { login: 'maintainer' },
+        },
+      }
 
-    githubServiceMock.listPullRequestReviewThreads.mockReturnValue(
-      Effect.succeed({
-        ok: true as const,
-        threads: [
-          {
-            summary: 'Update failing integration test',
-            url: 'https://github.com/owner/repo/pull/9#discussion-1',
-            author: 'reviewer',
+      const response = await handler(
+        buildRequest(payload, {
+          'x-github-event': 'issue_comment',
+          'x-github-delivery': 'delivery-review-comment',
+          'x-github-action': 'created',
+          'x-hub-signature-256': 'sig',
+          'content-type': 'application/json',
+        }),
+        'github',
+      )
+
+      expect(response.status).toBe(202)
+      await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: 'reviewRequested' })
+
+      expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stage: 'review',
+          issueNumber: 9,
+          reviewContext: expect.objectContaining({
+            reviewThreads: expect.arrayContaining([
+              expect.objectContaining({ summary: 'Add unit tests for webhook logic' }),
+            ]),
+          }),
+        }),
+      )
+
+      const reviewJsonMessage = publishedMessages.find((message) => message.topic === 'codex-topic')
+      const reviewStructuredMessage = publishedMessages.find((message) => message.topic === 'github.issues.codex.tasks')
+      expect(reviewJsonMessage).toBeTruthy()
+      expect(reviewStructuredMessage).toBeTruthy()
+      if (!reviewJsonMessage || !reviewStructuredMessage) {
+        throw new Error('expected codex review messages to be published')
+      }
+
+      expect(reviewJsonMessage.headers?.['x-codex-review-fingerprint']).toMatch(/^[a-f0-9]{32}$/)
+      expect(reviewJsonMessage.headers?.['x-codex-review-head-sha']).toBe('abc123')
+      const reviewJsonPayload = JSON.parse(toBuffer(reviewJsonMessage.value).toString('utf8'))
+      expect(reviewJsonPayload.stage).toBe('review')
+      expect(reviewJsonPayload.issueNumber).toBe(9)
+      expect(reviewJsonPayload.reviewContext.failingChecks[0].name).toBe('ci / test')
+      expect(reviewJsonPayload.reviewContext.additionalNotes[0]).toContain('mergeable_state=blocked')
+      const reviewProto = CodexTask.fromBinary(toBuffer(reviewStructuredMessage.value))
+      expect(reviewProto.stage).toBe(CodexTaskStage.REVIEW)
+      expect(reviewProto.issueNumber).toBe(BigInt(9))
+    })
+
+    it('ignores @tuslagch review comments from unauthorized authors', async () => {
+      const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+      const payload = {
+        action: 'created',
+        issue: {
+          number: 8,
+          pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/8' },
+          repository_url: 'https://api.github.com/repos/owner/repo',
+        },
+        repository: { full_name: 'owner/repo' },
+        sender: { login: 'contributor' },
+        comment: {
+          id: 204,
+          body: '@tuslagch review when ready',
+          html_url: 'https://github.com/owner/repo/pull/8#issuecomment-204',
+          author_association: 'CONTRIBUTOR',
+          updated_at: '2025-10-30T01:00:00Z',
+          user: { login: 'contributor' },
+        },
+      }
+
+      const response = await handler(
+        buildRequest(payload, {
+          'x-github-event': 'issue_comment',
+          'x-github-delivery': 'delivery-review-comment-unauth',
+          'x-github-action': 'created',
+          'x-hub-signature-256': 'sig',
+          'content-type': 'application/json',
+        }),
+        'github',
+      )
+
+      expect(response.status).toBe(202)
+      await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
+      expect(publishedMessages).toHaveLength(1)
+      expect(publishedMessages[0]).toMatchObject({ topic: 'raw-topic', key: 'delivery-review-comment-unauth' })
+      expect(mockBuildCodexPrompt).not.toHaveBeenCalled()
+    })
+
+    it('dedupes repeated @tuslagch review comments while allowing edited timestamps to retrigger', async () => {
+      githubServiceMock.fetchPullRequest.mockReturnValue(
+        Effect.succeed({
+          ok: true as const,
+          pullRequest: {
+            number: 11,
+            title: 'Deduplication test',
+            body: 'Check comment dedupe.',
+            htmlUrl: 'https://github.com/owner/repo/pull/11',
+            draft: false,
+            merged: false,
+            state: 'open',
+            headRef: 'codex/issue-11',
+            headSha: 'dedupsha',
+            baseRef: 'main',
+            authorLogin: 'user',
+            mergeableState: 'clean',
           },
-        ],
-      }),
-    )
+        }),
+      )
+      githubServiceMock.listPullRequestReviewThreads.mockReturnValue(Effect.succeed({ ok: true as const, threads: [] }))
+      githubServiceMock.listPullRequestCheckFailures.mockReturnValue(Effect.succeed({ ok: true as const, checks: [] }))
 
-    githubServiceMock.listPullRequestCheckFailures.mockReturnValue(
-      Effect.succeed({
-        ok: true as const,
-        checks: [
+      const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+      const basePayload = {
+        issue: {
+          number: 11,
+          pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/11' },
+          repository_url: 'https://api.github.com/repos/owner/repo',
+        },
+        repository: { full_name: 'owner/repo' },
+        sender: { login: 'maintainer' },
+        comment: {
+          id: 404,
+          body: '@tuslagch review please',
+          html_url: 'https://github.com/owner/repo/pull/11#issuecomment-404',
+          author_association: 'OWNER',
+          updated_at: '2025-10-30T02:00:00Z',
+          user: { login: 'maintainer' },
+        },
+      }
+
+      await handler(
+        buildRequest(
+          { ...basePayload, action: 'created' },
           {
-            name: 'ci / build',
-            conclusion: 'failure',
-            url: 'https://ci.example.com/run/9',
-            details: 'Build failed',
+            'x-github-event': 'issue_comment',
+            'x-github-delivery': 'review-dedupe-1',
+            'x-github-action': 'created',
+            'x-hub-signature-256': 'sig',
+            'content-type': 'application/json',
           },
-        ],
-      }),
-    )
+        ),
+        'github',
+      )
+      expect(publishedMessages.some((message) => message.topic === 'codex-topic')).toBe(true)
 
-    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-    const payload = {
-      action: 'submitted',
-      repository: { full_name: 'owner/repo' },
-      sender: { login: 'reviewer' },
-      pull_request: {
-        number: 9,
-        head: { ref: 'codex/issue-9-branch', sha: 'sha456' },
-        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
-        user: { login: 'USER' },
-      },
-    }
+      publishedMessages = []
 
-    await handler(
-      buildRequest(payload, {
-        'x-github-event': 'pull_request_review',
-        'x-github-delivery': 'delivery-review-dup-1',
-        'x-github-action': 'submitted',
-        'x-hub-signature-256': 'sig',
-        'content-type': 'application/json',
-      }),
-      'github',
-    )
+      await handler(
+        buildRequest(
+          { ...basePayload, action: 'created' },
+          {
+            'x-github-event': 'issue_comment',
+            'x-github-delivery': 'review-dedupe-2',
+            'x-github-action': 'created',
+            'x-hub-signature-256': 'sig',
+            'content-type': 'application/json',
+          },
+        ),
+        'github',
+      )
+      expect(publishedMessages).toHaveLength(1)
+      expect(publishedMessages[0]).toMatchObject({ topic: 'raw-topic', key: 'review-dedupe-2' })
 
-    expect(publishedMessages.filter((message) => message.topic === 'codex-topic')).toHaveLength(1)
-    expect(publishedMessages.filter((message) => message.topic === 'github.issues.codex.tasks')).toHaveLength(1)
+      publishedMessages = []
 
-    publishedMessages = []
-
-    await handler(
-      buildRequest(payload, {
-        'x-github-event': 'pull_request_review',
-        'x-github-delivery': 'delivery-review-dup-2',
-        'x-github-action': 'submitted',
-        'x-hub-signature-256': 'sig',
-        'content-type': 'application/json',
-      }),
-      'github',
-    )
-
-    expect(publishedMessages).toHaveLength(1)
-    expect(publishedMessages[0]).toMatchObject({ topic: 'raw-topic', key: 'delivery-review-dup-2' })
+      await handler(
+        buildRequest(
+          {
+            ...basePayload,
+            action: 'edited',
+            comment: { ...basePayload.comment, updated_at: '2025-10-30T02:05:00Z' },
+          },
+          {
+            'x-github-event': 'issue_comment',
+            'x-github-delivery': 'review-dedupe-3',
+            'x-github-action': 'edited',
+            'x-hub-signature-256': 'sig',
+            'content-type': 'application/json',
+          },
+        ),
+        'github',
+      )
+      expect(publishedMessages.some((message) => message.topic === 'codex-topic')).toBe(true)
+    })
   })
 
-  it('publishes review message and skips ready comment when a Codex pull request opens cleanly', async () => {
+  it('does not publish review messages for pull request events without explicit comment trigger', async () => {
     githubServiceMock.fetchPullRequest.mockReturnValueOnce(
       Effect.succeed({
         ok: true as const,
@@ -868,24 +908,9 @@ describe('createWebhookHandler', () => {
     )
 
     expect(response.status).toBe(202)
-    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: 'review' })
-
-    expect(githubServiceMock.markPullRequestReadyForReview).not.toHaveBeenCalled()
-    expect(githubServiceMock.findLatestPlanComment).not.toHaveBeenCalled()
-    expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
-    expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        stage: 'review',
-        repositoryFullName: 'owner/repo',
-        issueNumber: 7,
-      }),
-    )
-
-    expect(publishedMessages).toHaveLength(3)
-    const reviewJsonMessage = publishedMessages.find((message) => message.topic === 'codex-topic')
-    expect(reviewJsonMessage).toBeTruthy()
-    const reviewStructuredMessage = publishedMessages.find((message) => message.topic === 'github.issues.codex.tasks')
-    expect(reviewStructuredMessage).toBeTruthy()
+    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
+    expect(publishedMessages).toHaveLength(1)
+    expect(publishedMessages[0]).toMatchObject({ topic: 'raw-topic', key: 'delivery-review-opened' })
   })
 
   it('posts a ready comment when a clean Codex pull request updates outside forced review actions', async () => {
@@ -950,7 +975,6 @@ describe('createWebhookHandler', () => {
         body: expect.stringContaining('ready to merge'),
       }),
     )
-    expect(mockBuildCodexPrompt).not.toHaveBeenCalled()
     expect(publishedMessages).toHaveLength(1)
     expect(publishedMessages[0]).toMatchObject({
       topic: 'raw-topic',
@@ -1005,23 +1029,10 @@ describe('createWebhookHandler', () => {
 
     expect(response.status).toBe(202)
     const body = await response.json()
-    expect(body).toMatchObject({ codexStageTriggered: 'review' })
+    expect(body).toMatchObject({ codexStageTriggered: null })
 
     expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
-
-    const reviewJsonMessage = publishedMessages.find((message) => message.topic === 'codex-topic')
-    expect(reviewJsonMessage).toBeTruthy()
-    if (!reviewJsonMessage) {
-      throw new Error('Expected review JSON message to be published')
-    }
-    const reviewJsonPayload = JSON.parse(toBuffer(reviewJsonMessage.value).toString('utf8'))
-    expect(reviewJsonPayload.reviewContext.summary).toBe('Outstanding items: merge conflicts detected.')
-    expect(reviewJsonPayload.reviewContext.additionalNotes).toEqual(
-      expect.arrayContaining([
-        'GitHub reports mergeable_state=dirty.',
-        'Resolve merge conflicts with the base branch before retrying.',
-      ]),
-    )
+    expect(publishedMessages.some((message) => message.topic === 'codex-topic')).toBe(false)
   })
 
   it('converts draft Codex pull requests to ready-for-review when clean', async () => {
@@ -1078,7 +1089,6 @@ describe('createWebhookHandler', () => {
     )
     expect(publishedMessages).toHaveLength(1)
     expect(publishedMessages[0]).toMatchObject({ topic: 'raw-topic', key: 'delivery-undraft-1' })
-    expect(mockBuildCodexPrompt).not.toHaveBeenCalled()
   })
 
   it('returns 401 when Discord signature verification fails', async () => {

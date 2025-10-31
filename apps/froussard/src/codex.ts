@@ -233,7 +233,7 @@ const buildReviewPrompt = ({
         ].join('\n')
 
   return [
-    'Drive the Codex-authored pull request to a merge-ready state by resolving outstanding review feedback and failing checks.',
+    'Drive the Codex-authored pull request to a merge-ready state by verifying every approved plan step, finishing any outstanding work, and recording an explicit verdict.',
     `Repository: ${repositoryFullName}`,
     `Issue: #${issueNumber} - ${issueTitle}`,
     `Issue URL: ${issueUrl}`,
@@ -244,14 +244,17 @@ const buildReviewPrompt = ({
     contextBlock,
     '',
     'Execution contract:',
-    `- Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} current with reviewer responses, validation reruns, and timestamps.`,
-    '- Use apps/froussard/src/codex/cli/codex-progress-comment.ts to post review updates without manual formatting.',
-    '- GitHub CLI (`gh`) is installed and authenticated; use it to update the pull request and reply to reviewers.',
-    '- Address every review thread listed below and any new feedback by pushing fixes or replying with evidence.',
-    '- Re-run required tests, linters, and builds after each significant change; record outputs and ensure they pass or document blockers.',
-    '- Sync the branch with the base branch as needed, resolve merge conflicts, and push updates promptly.',
-    '- Update the pull request description, checklist, and linked issue with the actions taken, validation results, and remaining risks.',
-    '- Do not merge automatically; exit only when the pull request is mergeable, reviewers are unblocked, and any residual risks are documented for handoff.',
+    `- Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} current with reviewer responses, validation reruns, commands, and timestamps.`,
+    `- Fetch the latest approved plan anchored by ${PLAN_COMMENT_MARKER} on issue #${issueNumber}; treat each step as mandatory acceptance work.`,
+    '- Summarise the pull request description, linked commits, and outstanding GitHub feedback before making changes.',
+    '- For every plan step and acceptance criterion, gather proof from the code diff, tests, fixtures, or docs. If a gap remains, implement the missing work before re-checking.',
+    '- Use apps/froussard/src/codex/cli/codex-progress-comment.ts to post review updates without manual formatting and to document validation evidence.',
+    '- GitHub CLI (`gh`) is installed and authenticated; use it to fetch issue context, update the pull request, and interact with reviewers.',
+    '- Re-run required tests, linters, and builds after each significant change; capture command output and attach it to the progress comment.',
+    '- Keep the branch rebased with the base branch, resolve merge conflicts promptly, and ensure fingerprint dedupe continues to work after modifications.',
+    '- If all plan steps and acceptance criteria are complete with passing validation, post an approval comment on the pull request summarizing the evidence (e.g., `gh pr comment --body "Plan complete; validation evidence: ..."`).',
+    '- If blockers remain, leave a clear progress update describing what is missing and continue iterating until the pull request is genuinely merge-ready.',
+    '- Always reason step by step, cite precise files or line numbers when giving feedback, and avoid speculation.',
   ].join('\n')
 }
 

@@ -79,6 +79,21 @@ export const buildReviewFingerprint = (options: BuildReviewFingerprintOptions): 
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 32)
 }
 
+const sanitizeKeySegment = (value: unknown) => sanitizeValue(value).replace(/[^a-z0-9-_./:]/gi, '')
+
+export const buildPullReviewFingerprintKey = (repositoryFullName: string, pullNumber: number) =>
+  `${sanitizeKeySegment(repositoryFullName)}#${pullNumber}`
+
+export const buildCommentReviewFingerprintKey = (
+  repositoryFullName: string,
+  pullNumber: number,
+  commentId: number,
+  commentUpdatedAt: string,
+) =>
+  `${buildPullReviewFingerprintKey(repositoryFullName, pullNumber)}#comment-${commentId}-${sanitizeKeySegment(
+    commentUpdatedAt,
+  )}`
+
 const trimCache = () => {
   if (fingerprintCache.size <= MAX_CACHE_SIZE) {
     return

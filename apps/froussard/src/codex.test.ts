@@ -198,7 +198,7 @@ describe('buildCodexPrompt', () => {
     })
 
     expect(prompt).toContain(
-      'Drive the Codex-authored pull request to a merge-ready state by resolving outstanding review feedback and failing checks.',
+      'Drive the Codex-authored pull request to a merge-ready state by verifying every approved plan step, finishing any outstanding work, and recording an explicit verdict.',
     )
     expect(prompt).toContain('Outstanding items from GitHub:')
     expect(prompt).toContain('Open review threads:')
@@ -207,11 +207,13 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain('Biome formatting check is failing')
     expect(prompt).toContain('Execution contract:')
     expect(prompt).toContain('Keep the progress comment anchored by')
+    expect(prompt).toContain('Fetch the latest approved plan anchored by')
+    expect(prompt).toContain('Use apps/froussard/src/codex/cli/codex-progress-comment.ts to post review updates')
     expect(prompt).toContain(
-      'Use apps/froussard/src/codex/cli/codex-progress-comment.ts to post review updates without manual formatting.',
+      'GitHub CLI (`gh`) is installed and authenticated; use it to fetch issue context, update the pull request, and interact with reviewers.',
     )
     expect(prompt).toContain(
-      'GitHub CLI (`gh`) is installed and authenticated; use it to update the pull request and reply to reviewers.',
+      'post an approval comment on the pull request summarizing the evidence (e.g., `gh pr comment --body "Plan complete; validation evidence: ..."`).',
     )
     expect(prompt).toContain(PROGRESS_COMMENT_MARKER)
   })
