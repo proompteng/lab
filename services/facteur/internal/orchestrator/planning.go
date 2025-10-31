@@ -68,8 +68,8 @@ type Config struct {
 }
 
 type knowledgeStore interface {
-	UpsertIdea(ctx context.Context, record knowledge.IdeaRecord) error
-	RecordTaskLifecycle(ctx context.Context, task knowledge.TaskRecord, run knowledge.TaskRunRecord) error
+	UpsertIdea(ctx context.Context, record knowledge.IdeaRecord) (string, error)
+	RecordTaskLifecycle(ctx context.Context, task knowledge.TaskRecord, run knowledge.TaskRunRecord) (knowledge.TaskRecord, knowledge.TaskRunRecord, error)
 }
 
 type requestState struct {
@@ -79,12 +79,15 @@ type requestState struct {
 }
 
 type planner struct {
-	store      knowledgeStore
-	runner     argo.Runner
-	cfg        Config
-	deliveries sync.Map
-	tracer     trace.Tracer
-	now        func() time.Time
+	store            knowledgeStore
+	runner           argo.Runner
+	cfg              Config
+	deliveries       sync.Map
+	completed        sync.Map
+	tracer           trace.Tracer
+	now              func() time.Time
+	evictionAfter    time.Duration
+	scheduleEviction func(deliveryID string, expiresAt time.Time, ttl time.Duration, deleteFn func())
 }
 
 // NewPlanner constructs a planning orchestrator backed by the provided store and Argo runner.
@@ -115,8 +118,12 @@ func NewPlanner(store knowledgeStore, runner argo.Runner, cfg Config) (Planner, 
 			Parameters:         mergedParams,
 			GenerateNamePrefix: cfg.GenerateNamePrefix,
 		},
-		tracer: telemetry.Tracer(),
-		now:    func() time.Time { return time.Now().UTC() },
+		tracer:        telemetry.Tracer(),
+		now:           func() time.Time { return time.Now().UTC() },
+		evictionAfter: time.Hour,
+		scheduleEviction: func(_ string, _ time.Time, ttl time.Duration, deleteFn func()) {
+			time.AfterFunc(ttl, deleteFn)
+		},
 	}, nil
 }
 
@@ -131,6 +138,16 @@ func (p *planner) Plan(ctx context.Context, task *githubpb.CodexTask) (Result, e
 	deliveryID := strings.TrimSpace(task.GetDeliveryId())
 	if deliveryID == "" {
 		return Result{}, ErrMissingDeliveryID
+	}
+
+	if value, ok := p.completed.Load(deliveryID); ok {
+		entry := value.(completedEntry)
+		if !p.now().After(entry.expiresAt) {
+			duplicate := entry.result
+			duplicate.Duplicate = true
+			return duplicate, nil
+		}
+		p.completed.Delete(deliveryID)
 	}
 
 	ctx, span := p.tracer.Start(ctx, "facteur.orchestrator.plan", trace.WithSpanKind(trace.SpanKindInternal))
@@ -181,7 +198,30 @@ func (p *planner) Plan(ctx context.Context, task *githubpb.CodexTask) (Result, e
 	span.SetStatus(codes.Ok, "planning workflow dispatched")
 
 	state.result = result
+	expiresAt := p.now().Add(p.evictionAfter)
+	entry := completedEntry{
+		result:    result,
+		expiresAt: expiresAt,
+	}
+	p.completed.Store(deliveryID, entry)
+	deleteFn := func() {
+		if value, ok := p.completed.Load(deliveryID); ok {
+			stored := value.(completedEntry)
+			if stored.expiresAt.Equal(expiresAt) {
+				p.completed.Delete(deliveryID)
+			}
+		}
+	}
+	if p.scheduleEviction != nil {
+		p.scheduleEviction(deliveryID, expiresAt, p.evictionAfter, deleteFn)
+	}
+	p.deliveries.Delete(deliveryID)
 	return result, nil
+}
+
+type completedEntry struct {
+	result    Result
+	expiresAt time.Time
 }
 
 func (p *planner) execute(ctx context.Context, span trace.Span, deliveryID string, task *githubpb.CodexTask) (Result, error) {
@@ -229,6 +269,7 @@ func (p *planner) execute(ctx context.Context, span trace.Span, deliveryID strin
 	}
 
 	taskRecord := knowledge.TaskRecord{
+		IdeaID:    "",
 		Stage:     planningStageLabel,
 		State:     taskStateQueued,
 		Metadata:  append([]byte(nil), taskMetadata...),
@@ -250,6 +291,7 @@ func (p *planner) execute(ctx context.Context, span trace.Span, deliveryID strin
 		Status:        taskRunStatusQueued,
 		QueuedAt:      now,
 		Metadata:      append([]byte(nil), runMetadata...),
+		DeliveryID:    deliveryID,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		ExternalRunID: sql.NullString{},
@@ -258,13 +300,16 @@ func (p *planner) execute(ctx context.Context, span trace.Span, deliveryID strin
 		ErrorCode:     sql.NullString{},
 	}
 
-	if err := p.store.UpsertIdea(ctx, idea); err != nil {
+	ideaID, err := p.store.UpsertIdea(ctx, idea)
+	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "upsert idea failed")
 		return Result{}, fmt.Errorf("planning orchestrator: upsert idea: %w", err)
 	}
 
-	if err := p.store.RecordTaskLifecycle(ctx, taskRecord, taskRun); err != nil {
+	taskRecord.IdeaID = ideaID
+
+	if _, _, err := p.store.RecordTaskLifecycle(ctx, taskRecord, taskRun); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "record task lifecycle failed")
 		return Result{}, fmt.Errorf("planning orchestrator: record task lifecycle: %w", err)

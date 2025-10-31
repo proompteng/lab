@@ -178,3 +178,28 @@ codex_listener:
 		require.Contains(t, err.Error(), "codex_listener.topic is required when enabled")
 	})
 }
+
+func TestLoadUsesDefaultOptions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "facteur.yaml")
+	data := []byte(`discord:
+  bot_token: token
+  application_id: app
+  public_key: key
+  guild_id: guild
+redis:
+  url: redis://localhost:6379/0
+postgres:
+  dsn: postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable
+argo:
+  namespace: argo
+  workflow_template: template
+  service_account: sa
+`)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+
+	cfg, err := config.Load(path)
+	require.NoError(t, err)
+	require.Equal(t, "token", cfg.Discord.BotToken)
+	require.Equal(t, "sa", cfg.Argo.ServiceAccount)
+}

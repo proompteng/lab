@@ -53,7 +53,13 @@ type Options struct {
 	Dispatcher    bridge.Dispatcher
 	Store         session.Store
 	SessionTTL    time.Duration
+	CodexStore    CodexStore
 	CodexPlanner  CodexPlannerOptions
+}
+
+// CodexStore defines the storage surface required for Codex task ingestion.
+type CodexStore interface {
+	IngestCodexTask(ctx context.Context, task *githubpb.CodexTask) (ideaID, taskID, runID string, err error)
 }
 
 // CodexPlannerOptions wires the planning orchestrator into the HTTP layer.
@@ -289,7 +295,47 @@ func registerRoutes(app *fiber.App, opts Options) {
 
 		span.SetStatus(codes.Ok, "planner bypassed")
 
-		return c.SendStatus(fiber.StatusAccepted)
+		if opts.CodexStore == nil {
+			span.SetStatus(codes.Error, "codex store unavailable")
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "codex store unavailable"})
+		}
+
+		ideaID, taskID, runID, err := opts.CodexStore.IngestCodexTask(ctx, &task)
+		if err != nil {
+			log.Printf(
+				"codex task ingest failed: delivery=%s stage=%s repo=%s issue=%d err=%v",
+				task.GetDeliveryId(),
+				task.GetStage().String(),
+				task.GetRepository(),
+				task.GetIssueNumber(),
+				err,
+			)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "codex ingest failed")
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "codex ingest failed"})
+		}
+
+		log.Printf(
+			"codex task ingested: idea_id=%s task_id=%s run_id=%s stage=%s delivery=%s",
+			emptyIfNone(ideaID),
+			emptyIfNone(taskID),
+			emptyIfNone(runID),
+			task.GetStage().String(),
+			task.GetDeliveryId(),
+		)
+
+		span.SetAttributes(
+			attribute.String("facteur.codex.idea_id", ideaID),
+			attribute.String("facteur.codex.task_id", taskID),
+			attribute.String("facteur.codex.run_id", runID),
+		)
+		span.SetStatus(codes.Ok, "codex task ingested")
+
+		return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+			"ideaId":    ideaID,
+			"taskId":    taskID,
+			"taskRunId": runID,
+		})
 	})
 }
 

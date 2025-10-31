@@ -22,7 +22,10 @@ import (
 	"github.com/proompteng/lab/services/facteur/internal/telemetry"
 )
 
-var postgresOpener = openPostgres
+var (
+	postgresOpener   = openPostgres
+	migrationsRunner = applyMigrations
+)
 
 // NewServeCommand scaffolds the "serve" CLI command.
 func NewServeCommand() *cobra.Command {
@@ -67,7 +70,7 @@ func NewServeCommand() *cobra.Command {
 				}
 			}()
 
-			results, err := applyMigrations(cmd.Context(), cmd, cfg.Postgres.DSN)
+			results, err := migrationsRunner(cmd.Context(), cmd, cfg.Postgres.DSN)
 			if err != nil {
 				return err
 			}
@@ -93,9 +96,10 @@ func NewServeCommand() *cobra.Command {
 				return err
 			}
 
+			knowledgeStore := knowledge.NewStore(db)
+
 			plannerOpts := server.CodexPlannerOptions{}
 			if cfg.Planner.Enabled {
-				knowledgeStore := knowledge.NewStore(db)
 				plannerCfg := orchestrator.Config{
 					Namespace:        cfg.Planner.Namespace,
 					WorkflowTemplate: cfg.Planner.WorkflowTemplate,
@@ -142,6 +146,7 @@ func NewServeCommand() *cobra.Command {
 				Prefork:       prefork,
 				Dispatcher:    dispatcher,
 				Store:         sessionStore,
+				CodexStore:    knowledgeStore,
 				CodexPlanner:  plannerOpts,
 			})
 			if err != nil {

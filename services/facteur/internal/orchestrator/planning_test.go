@@ -15,6 +15,9 @@ import (
 )
 
 type storeResponse struct {
+	ideaID       string
+	taskID       string
+	runID        string
 	upsertErr    error
 	lifecycleErr error
 }
@@ -28,20 +31,23 @@ type fakeStore struct {
 	lastRun        knowledge.TaskRunRecord
 }
 
-func (s *fakeStore) UpsertIdea(_ context.Context, record knowledge.IdeaRecord) error {
+func (s *fakeStore) UpsertIdea(_ context.Context, record knowledge.IdeaRecord) (string, error) {
 	s.ideaCalls++
 	s.lastIdea = record
 	if len(s.responses) > 0 {
 		resp := s.responses[0]
 		if resp.upsertErr != nil {
 			s.responses[0].upsertErr = nil
-			return resp.upsertErr
+			return "", resp.upsertErr
+		}
+		if resp.ideaID != "" {
+			return resp.ideaID, nil
 		}
 	}
-	return nil
+	return "idea-auto", nil
 }
 
-func (s *fakeStore) RecordTaskLifecycle(_ context.Context, task knowledge.TaskRecord, run knowledge.TaskRunRecord) error {
+func (s *fakeStore) RecordTaskLifecycle(_ context.Context, task knowledge.TaskRecord, run knowledge.TaskRunRecord) (knowledge.TaskRecord, knowledge.TaskRunRecord, error) {
 	s.lifecycleCalls++
 	s.lastTask = task
 	s.lastRun = run
@@ -49,13 +55,34 @@ func (s *fakeStore) RecordTaskLifecycle(_ context.Context, task knowledge.TaskRe
 		resp := s.responses[0]
 		if resp.lifecycleErr != nil {
 			s.responses[0].lifecycleErr = nil
-			return resp.lifecycleErr
+			return knowledge.TaskRecord{}, knowledge.TaskRunRecord{}, resp.lifecycleErr
+		}
+		if resp.ideaID != "" && task.IdeaID == "" {
+			task.IdeaID = resp.ideaID
+		}
+		if resp.taskID != "" {
+			task.ID = resp.taskID
+		}
+		if resp.runID != "" {
+			run.ID = resp.runID
 		}
 		if s.responses[0].upsertErr == nil && s.responses[0].lifecycleErr == nil {
 			s.responses = s.responses[1:]
 		}
 	}
-	return nil
+	if task.IdeaID == "" {
+		task.IdeaID = "idea-auto"
+	}
+	if task.ID == "" {
+		task.ID = "task-auto"
+	}
+	if run.ID == "" {
+		run.ID = "run-auto"
+	}
+	if run.DeliveryID == "" {
+		run.DeliveryID = "delivery-auto"
+	}
+	return task, run, nil
 }
 
 type runnerResponse struct {
@@ -131,6 +158,14 @@ func TestPlanner_Success(t *testing.T) {
 	require.Equal(t, "github_issue", store.lastIdea.SourceType)
 	require.Equal(t, "proompteng/lab#1636", store.lastIdea.SourceRef)
 
+	_, exists := p.deliveries.Load("delivery-123")
+	require.False(t, exists)
+
+	value, ok := p.completed.Load("delivery-123")
+	require.True(t, ok)
+	entry := value.(completedEntry)
+	require.Equal(t, runner.responses[0].result.WorkflowName, entry.result.WorkflowName)
+
 	var payloadBody map[string]any
 	require.NoError(t, json.Unmarshal(store.lastIdea.Payload, &payloadBody))
 	require.Equal(t, "proompteng/lab", payloadBody["repository"])
@@ -199,6 +234,12 @@ func TestPlanner_DuplicateDelivery(t *testing.T) {
 	require.Equal(t, 1, runner.calls)
 	require.Equal(t, 1, store.ideaCalls)
 	require.Equal(t, 1, store.lifecycleCalls)
+
+	value, ok := p.completed.Load("dup-1")
+	require.True(t, ok)
+	entry := value.(completedEntry)
+	require.Equal(t, first.WorkflowName, entry.result.WorkflowName)
+	require.False(t, p.now().After(entry.expiresAt))
 }
 
 func TestPlanner_StoreFailure(t *testing.T) {
@@ -261,4 +302,103 @@ func TestPlanner_RunnerFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, result.Duplicate)
 	require.Equal(t, 2, runner.calls)
+}
+
+func TestPlanner_EvictsCompletedEntries(t *testing.T) {
+	store := &fakeStore{}
+	runner := &fakeRunner{
+		responses: []runnerResponse{
+			{result: argo.RunResult{Namespace: "codex", WorkflowName: "wf-1", SubmittedAt: time.Unix(1735600300, 0)}},
+			{result: argo.RunResult{Namespace: "codex", WorkflowName: "wf-2", SubmittedAt: time.Unix(1735600310, 0)}},
+		},
+	}
+
+	plannerInstance, err := NewPlanner(store, runner, Config{})
+	require.NoError(t, err)
+	p := plannerInstance.(*planner)
+	p.evictionAfter = 10 * time.Millisecond
+
+	task := &githubpb.CodexTask{
+		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+		Repository:  "proompteng/lab",
+		IssueNumber: 1636,
+		DeliveryId:  "evict-1",
+	}
+
+	first, err := plannerInstance.Plan(context.Background(), task)
+	require.NoError(t, err)
+	require.False(t, first.Duplicate)
+
+	time.Sleep(20 * time.Millisecond)
+
+	second, err := plannerInstance.Plan(context.Background(), task)
+	require.NoError(t, err)
+	require.False(t, second.Duplicate)
+	require.Equal(t, 2, runner.calls)
+}
+
+func TestPlanner_OldTimerDoesNotRemoveNewEntry(t *testing.T) {
+	store := &fakeStore{}
+	runner := &fakeRunner{
+		responses: []runnerResponse{
+			{result: argo.RunResult{Namespace: "codex", WorkflowName: "wf-1", SubmittedAt: time.Unix(1735600400, 0)}},
+			{result: argo.RunResult{Namespace: "codex", WorkflowName: "wf-2", SubmittedAt: time.Unix(1735600500, 0)}},
+		},
+	}
+
+	plannerInstance, err := NewPlanner(store, runner, Config{})
+	require.NoError(t, err)
+	p := plannerInstance.(*planner)
+	p.evictionAfter = time.Minute
+
+	var scheduled []struct {
+		id      string
+		expires time.Time
+		fn      func()
+	}
+	p.scheduleEviction = func(id string, expires time.Time, ttl time.Duration, fn func()) {
+		scheduled = append(scheduled, struct {
+			id      string
+			expires time.Time
+			fn      func()
+		}{id: id, expires: expires, fn: fn})
+	}
+
+	base := time.Unix(1735600000, 0).UTC()
+	current := base
+	p.now = func() time.Time { return current }
+
+	task := &githubpb.CodexTask{
+		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+		Repository:  "proompteng/lab",
+		IssueNumber: 1637,
+		DeliveryId:  "dedup-1",
+	}
+
+	first, err := plannerInstance.Plan(context.Background(), task)
+	require.NoError(t, err)
+	require.False(t, first.Duplicate)
+	require.Len(t, scheduled, 1)
+	firstExpiry := scheduled[0].expires
+
+	// Advance time past the first expiry so the entry is considered stale.
+	current = firstExpiry.Add(10 * time.Second)
+
+	second, err := plannerInstance.Plan(context.Background(), task)
+	require.NoError(t, err)
+	require.False(t, second.Duplicate)
+	require.Len(t, scheduled, 2)
+
+	// Simulate the original timer firing after the new entry was stored.
+	scheduled[0].fn()
+
+	value, ok := p.completed.Load("dedup-1")
+	require.True(t, ok)
+	restored := value.(completedEntry)
+	require.Equal(t, scheduled[1].expires, restored.expiresAt)
+
+	// When the new timer fires, the entry should be removed.
+	scheduled[1].fn()
+	_, ok = p.completed.Load("dedup-1")
+	require.False(t, ok)
 }

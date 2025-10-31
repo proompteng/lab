@@ -30,9 +30,15 @@ jobs:
       - name: Vet
         working-directory: services/facteur
         run: go vet ./...
-      - name: Test
+      - name: Test (with coverage)
         working-directory: services/facteur
-        run: go test ./...
+        run: go test ./... -coverprofile=coverage.out
+      - name: Publish coverage summary
+        working-directory: services/facteur
+        run: |
+          summary=$(go tool cover -func=coverage.out | grep '^total:')
+          echo '### Facteur Coverage' >> $GITHUB_STEP_SUMMARY
+          echo "- ${summary}" >> $GITHUB_STEP_SUMMARY
   e2e:
     runs-on: ubuntu-latest
     needs: build-and-test
