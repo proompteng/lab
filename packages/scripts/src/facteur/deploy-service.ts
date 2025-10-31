@@ -37,10 +37,16 @@ export const main = async () => {
 
   await updateManifests({ tag, rolloutTimestamp: new Date().toISOString() })
 
-  const overlay = resolve(repoRoot, process.env.FACTEUR_KUSTOMIZE_PATH ?? 'kubernetes/facteur/overlays/cluster')
+  const overlay = resolve(
+    repoRoot,
+    process.env.FACTEUR_KUSTOMIZE_PATH ?? 'argocd/applications/facteur/overlays/cluster',
+  )
   await $`kubectl apply -k ${overlay}`
 
-  const serviceManifest = resolve(repoRoot, 'kubernetes/facteur/base/service.yaml')
+  const serviceManifest = resolve(
+    repoRoot,
+    process.env.FACTEUR_SERVICE_MANIFEST ?? 'argocd/applications/facteur/overlays/cluster/facteur-service.yaml',
+  )
   await $`kn service apply facteur --namespace facteur --filename ${serviceManifest} --image ${image}`
 }
 
@@ -60,7 +66,7 @@ type ManifestUpdateOptions = {
 function updateManifests(options: ManifestUpdateOptions) {
   const { tag, rolloutTimestamp } = options
 
-  const kustomizationPath = resolve(repoRoot, 'kubernetes/facteur/overlays/cluster/kustomization.yaml')
+  const kustomizationPath = resolve(repoRoot, 'argocd/applications/facteur/overlays/cluster/kustomization.yaml')
   const kustomization = readFileSync(kustomizationPath, 'utf8')
   const updatedKustomization = kustomization.replace(
     /(name:\s+registry\.ide-newton\.ts\.net\/lab\/facteur\s*\n\s*newTag:\s*)(.+)/,
@@ -73,7 +79,7 @@ function updateManifests(options: ManifestUpdateOptions) {
     console.log(`Updated ${kustomizationPath} with tag ${tag}`)
   }
 
-  const servicePath = resolve(repoRoot, 'kubernetes/facteur/base/service.yaml')
+  const servicePath = resolve(repoRoot, 'argocd/applications/facteur/overlays/cluster/facteur-service.yaml')
   const service = readFileSync(servicePath, 'utf8')
   const updatedService = service.replace(/(deploy\.knative\.dev\/rollout:\s*").+(")/, `$1${rolloutTimestamp}$2`)
   if (service === updatedService) {

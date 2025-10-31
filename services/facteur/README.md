@@ -106,7 +106,7 @@ Cluster deployments rely on a namespace-scoped Grafana Alloy deployment (`argocd
 
 ## Container image
 
-The service ships as `registry.ide-newton.ts.net/lab/facteur`. Pushes to `main` that touch `services/facteur/**` or `.github/workflows/facteur-build-push.yaml` trigger the `Facteur Docker Build and Push` workflow, which cross-builds (linux/amd64 + linux/arm64) using the local Dockerfile and pushes tags for `main`, `latest`, and the commit SHA. Rotate the image in Kubernetes by updating tags in `kubernetes/facteur/overlays/cluster/kustomization.yaml` or allow Argo tooling to reference the desired tag.
+The service ships as `registry.ide-newton.ts.net/lab/facteur`. Pushes to `main` that touch `services/facteur/**` or `.github/workflows/facteur-build-push.yaml` trigger the `Facteur Docker Build and Push` workflow, which cross-builds (linux/amd64 + linux/arm64) using the local Dockerfile and pushes tags for `main`, `latest`, and the commit SHA. Rotate the image in Kubernetes by updating tags in `argocd/applications/facteur/overlays/cluster/kustomization.yaml` or allow Argo tooling to reference the desired tag.
 
 ## Deploying
 
@@ -121,15 +121,15 @@ It will:
 
 1. Build `registry.ide-newton.ts.net/lab/facteur:<current commit>` (override with `FACTEUR_IMAGE_TAG`).
 2. Push the image.
-3. `kubectl apply -k kubernetes/facteur/overlays/cluster` to reconcile config/Redis/Kafka sources.
+3. `kubectl apply -k argocd/applications/facteur/overlays/cluster` to reconcile config/Redis/Kafka sources.
 4. `kn service apply` the refreshed image so a new revision rolls out.
 
 The new revision will apply database migrations on startup using `FACTEUR_POSTGRES_DSN`. Monitor the first pod logs for `migration …` messages to confirm goose finished before traffic arrives. Run `go run ./cmd/facteur migrate` ahead of time if you want to validate the schema without rolling pods.
 
-If you prefer to drive the deployment manually, you can still fall back to `kn service apply -f kubernetes/facteur/base/service.yaml`, but you must ensure the container image tag in `kubernetes/facteur/overlays/cluster/kustomization.yaml` is updated first.
+If you prefer to drive the deployment manually, you can still fall back to `kn service apply -f argocd/applications/facteur/overlays/cluster/facteur-service.yaml`, but you must ensure the container image tag in `argocd/applications/facteur/overlays/cluster/kustomization.yaml` is updated first.
 
 ## Infrastructure dependencies
 
-`kubernetes/facteur/base/redis.yaml` requests a standalone `Redis` instance managed by the OT-Container-Kit Redis Operator. The Knative Service targets the generated ClusterIP service (`redis://facteur-redis:6379/0`). Ensure the platform `redis-operator` Application remains healthy before syncing facteur; it must be available to reconcile the custom resource.
+`argocd/applications/facteur/overlays/cluster/facteur-redis.yaml` requests a standalone Redis instance managed by the OT-Container-Kit Redis Operator. The Knative Service targets the generated ClusterIP service (`redis://facteur-redis:6379/0`). Ensure the platform `redis-operator` Application remains healthy before syncing facteur; it must be available to reconcile the custom resource.
 
 CloudNativePG delivers application credentials via the `facteur-vector-cluster-app` secret. The Knative Service maps the secret’s `uri` key into `FACTEUR_POSTGRES_DSN`, so keep that secret in sync before rolling deployments or running the standalone `facteur migrate` command.

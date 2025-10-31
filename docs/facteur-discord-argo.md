@@ -54,8 +54,8 @@ The role map controls which Discord roles can invoke specific commands. Schema d
 
 - `services/facteur/Dockerfile` builds a distroless container.
 - Pushes to `main` run `.github/workflows/facteur-build-push.yaml`, cross-building the image for linux/amd64 and linux/arm64 and publishing it to `registry.ide-newton.ts.net/lab/facteur`.
-- Kubernetes manifests live under `kubernetes/facteur` (base + overlays) and include a Knative `Service`, ConfigMap, RBAC, a Redis custom resource, and WorkflowTemplate resources so the runtime can scale-to-zero when idle.
-- `kubernetes/facteur/base/redis.yaml` provisions an in-cluster Redis instance via the OT-Container-Kit Redis Operator; confirm the platform `redis-operator` Application stays healthy before syncing facteur.
+- Kubernetes manifests live under `argocd/applications/facteur` (base + overlays) and include a Knative `Service`, ConfigMap, RBAC, a Redis custom resource, and WorkflowTemplate resources so the runtime can scale-to-zero when idle.
+- `argocd/applications/facteur/overlays/cluster/facteur-redis.yaml` provisions an in-cluster Redis instance via the OT-Container-Kit Redis Operator; confirm the platform `redis-operator` Application stays healthy before syncing facteur.
 - Argo CD applications reside in `argocd/applications/facteur` and are referenced by `argocd/applicationsets/product.yaml` so the automation discovers and syncs the service.
 
 ## Operations scripts
@@ -105,7 +105,7 @@ topic, deserialises the message via the protobuf stubs, and drives the workflow 
 for using the interaction token carried in the event to post follow-up updates back to Discord once the workflow
 completes.
 
-Structured Codex tasks arrive through a dedicated KafkaSource (`kubernetes/facteur/base/codex-kafkasource.yaml`) that
+Structured Codex tasks arrive through a dedicated KafkaSource (`argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasource.yaml`) that
 subscribes to `github.issues.codex.tasks` and forwards each protobuf payload to the Knative service at `/codex/tasks`.
 The handler simply logs the stage, repository, issue number, and delivery identifier today so operators can verify the
 feed before deeper integrations are wired up.

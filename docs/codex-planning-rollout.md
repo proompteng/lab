@@ -17,7 +17,7 @@ This runbook sequences the handoff of planning workflow dispatch from Argo Event
 
 1. Render a temporary ConfigMap manifest with planning enabled:
    ```bash
-   kubectl kustomize kubernetes/facteur/overlays/cluster \
+  kubectl kustomize argocd/applications/facteur/overlays/cluster \
      | yq '(.data."config.yaml" | from_yaml | .codex_dispatch.planning_enabled) = true | .data."config.yaml" = (.data."config.yaml" | tostring)' \
      > /tmp/facteur-config-planning.yaml
    kubectl apply -f /tmp/facteur-config-planning.yaml
@@ -53,10 +53,10 @@ This runbook sequences the handoff of planning workflow dispatch from Argo Event
 
 ## Production Enablement
 
-1. Update `kubernetes/facteur/overlays/cluster/config.yaml` with `codex_dispatch.planning_enabled: true` (commit + PR or cherry-pick the staging patch once approved).
+1. Update `argocd/applications/facteur/overlays/cluster/facteur-config.yaml` with `codex_dispatch.planning_enabled: true` (commit + PR or cherry-pick the staging patch once approved).
 2. Deploy the change:
    ```bash
-   kubectl apply -k kubernetes/facteur/overlays/cluster
+   kubectl apply -k argocd/applications/facteur/overlays/cluster
    kubectl -n facteur rollout status deploy/facteur
    ```
 3. Confirm the ConfigMap and env injection:

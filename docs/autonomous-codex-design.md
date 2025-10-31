@@ -5,7 +5,7 @@
 The current Codex automation stack is split across two services:
 
 - **Froussard** (`apps/froussard`) ingests GitHub/Discord events, derives Codex prompts, and publishes JSON plus protobuf messages (`github.codex.tasks`, `github.issues.codex.tasks`) to Kafka. Planning/implementation/review stages are gated inside `apps/froussard/src/webhooks/github/events/*.ts`.
-- **Facteur** (`services/facteur`) handles Discord workflows and logs Codex tasks delivered by the Knative KafkaSource (`kubernetes/facteur/base/codex-kafkasource.yaml`) to `/codex/tasks` but does _not yet_ orchestrate Argo workflows. Dispatch of Codex work is owned by an **Argo Events** sensor (`argocd/applications/froussard/github-codex-sensor.yaml`) that clones workflow templates for each stage.
+- **Facteur** (`services/facteur`) handles Discord workflows and logs Codex tasks delivered by the Knative KafkaSource (`argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasource.yaml`) to `/codex/tasks` but does _not yet_ orchestrate Argo workflows. Dispatch of Codex work is owned by an **Argo Events** sensor (`argocd/applications/froussard/github-codex-sensor.yaml`) that clones workflow templates for each stage.
 
 Limitations:
 

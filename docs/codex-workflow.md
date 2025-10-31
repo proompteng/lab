@@ -41,7 +41,7 @@ flowchart LR
 
 Run `facteur codex-listen --config <path>` to stream the structured payloads while you build consumers; the command uses the
 `github.issues.codex.tasks` topic and mirrors the behaviour of the Knative KafkaSource. In production the same feed reaches
-Facteur via `kubernetes/facteur/base/codex-kafkasource.yaml`. When `codex_dispatch.planning_enabled` is `false` the handler logs
+Facteur via `argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasource.yaml`. When `codex_dispatch.planning_enabled` is `false` the handler logs
 stage/repository/issue metadata for observability; once the flag flips, planning payloads enqueue the `facteur-dispatch`
 WorkflowTemplate, persist intake data, emit structured logs (`workflow submitted: stage=PLANNING …`), and surface workflow metadata before committing the Kafka message.
 ## Prerequisites
