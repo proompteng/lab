@@ -14,3 +14,9 @@ Argo Events sensors mutate WorkflowTemplate parameters via `template.k8s.paramet
 2. Enable planning orchestration on Facteur (`FACTEUR_CODEX_ENABLE_PLANNING_ORCHESTRATION=true`) and replay a planning payload with `curl` as described in `docs/codex-workflow.md`.
 3. Verify that Argo submits `github-codex-planning` via the Facteur orchestrator and that the `github-codex` sensor did not create a duplicate workflow.
 4. To exercise the fallback path, add `components/codex-planning-argo-fallback/` to the Argo CD Application (or uncomment the component in `kustomization.yaml`), sync, and confirm the planning trigger reappears under the sensor.
+
+## Validation Log (2025-10-31)
+
+- `go test ./services/facteur/...` → ✅ (commit ec517332)
+- `kubectl apply -k argocd/applications/froussard` → synced trimmed sensor + supporting manifests
+- `kubectl get sensor github-codex -n argo-workflows -o yaml` → dependencies include only `implementation` and `review` events (planning trigger absent)
