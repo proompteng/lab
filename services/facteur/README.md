@@ -20,7 +20,7 @@ go run . serve --config config/example.yaml
 
 The `--config` flag is optional if you provide the required `FACTEUR_*` environment variables. Press `Ctrl+C` to stop the server; it will shut down gracefully.
 
-Set `FACTEUR_POSTGRES_DSN` to point at a Postgres instance before starting locally. The server applies embedded migrations on boot so the schema stays in sync. A simple local setup uses Postgres on `127.0.0.1:6543/postgres` with the `facteur` role:
+Set `FACTEUR_POSTGRES_DSN` to point at a Postgres instance before starting locally. The server applies embedded migrations on boot so the schema stays in sync. When you do not have a Kubernetes cluster handy, export `FACTEUR_DISABLE_DISPATCHER=true` so the Argo dispatcher is stubbed out and the service boots without a kubeconfig. A simple local setup uses Postgres on `127.0.0.1:6543/postgres` with the `facteur` role:
 
 ```bash
 # Terminal 1 – Postgres
@@ -41,6 +41,24 @@ To run migrations without launching the HTTP server, invoke:
 
 ```bash
 go run ./cmd/facteur migrate --config config/example.yaml
+```
+
+### Docker Compose sandbox
+
+A convenience Compose stack lives at `services/facteur/docker-compose.yml`; it starts Postgres 18 with pgvector, Redis 8, and the Facteur server with the correct environment wiring (including `FACTEUR_DISABLE_DISPATCHER=true` to skip Argo during local runs). From the repository root run:
+
+```bash
+docker compose -f services/facteur/docker-compose.yml up -d --build
+# ...
+docker compose -f services/facteur/docker-compose.yml down --volumes --remove-orphans
+```
+
+Run the end-to-end Codex ingestion check (spins the stack, posts a sample task, and asserts persistence) with:
+
+```bash
+export FACTEUR_E2E_BASE_URL="http://127.0.0.1:18080"
+export FACTEUR_E2E_POSTGRES_DSN="postgres://facteur:facteur@127.0.0.1:15432/facteur_kb?sslmode=disable"
+go test -tags e2e ./services/facteur/test/e2e
 ```
 
 ### Codex knowledge base ingestion

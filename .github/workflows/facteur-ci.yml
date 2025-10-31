@@ -1,42 +1,102 @@
 name: facteur
-
 on:
   push:
     branches:
       - main
     paths:
-      - "services/facteur/**"
-      - ".github/workflows/facteur-ci.yml"
+      - services/facteur/**
+      - .github/workflows/facteur-ci.yml
   pull_request:
     paths:
-      - "services/facteur/**"
-      - ".github/workflows/facteur-ci.yml"
-
+      - services/facteur/**
+      - .github/workflows/facteur-ci.yml
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24.1"
+          go-version: 1.25.3
           cache: true
-
       - name: Download dependencies
         working-directory: services/facteur
         run: go mod download
-
       - name: Build
         working-directory: services/facteur
         run: go build ./...
-
       - name: Vet
         working-directory: services/facteur
         run: go vet ./...
-
       - name: Test
         working-directory: services/facteur
         run: go test ./...
+  e2e:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    services:
+      postgres:
+        image: postgres:18
+        ports:
+          - "15432:5432"
+        env:
+          POSTGRES_DB: facteur_kb
+          POSTGRES_USER: facteur
+          POSTGRES_PASSWORD: facteur
+        options: >-
+          --health-cmd "pg_isready -U facteur -d facteur_kb"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:8.2.2
+        ports:
+          - "16379:6379"
+        options: >-
+          --health-cmd "redis-cli ping || exit 1"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.25.3
+          cache: true
+      - name: Build facteur binary
+        working-directory: services/facteur
+        run: go build -o ../facteur-e2e ./cmd/facteur
+      - name: Start facteur server
+        env:
+          FACTEUR_POSTGRES_DSN: postgres://facteur:facteur@127.0.0.1:15432/facteur_kb?sslmode=disable
+          FACTEUR_REDIS_URL: redis://127.0.0.1:16379/0
+          FACTEUR_DISCORD_BOT_TOKEN: local-token
+          FACTEUR_DISCORD_APPLICATION_ID: "000000000000000001"
+          FACTEUR_DISCORD_PUBLIC_KEY: local-public-key
+          FACTEUR_DISCORD_GUILD_ID: "000000000000000002"
+          FACTEUR_DISABLE_DISPATCHER: "true"
+        run: |
+          chmod +x ./facteur-e2e
+          nohup ./facteur-e2e serve --config services/facteur/config/docker-compose.yaml \
+            > facteur-e2e.log 2>&1 &
+          echo $! > facteur-e2e.pid
+      - name: Wait for serveur ready
+        run: >
+          timeout 120 bash -c 'until curl -sf http://127.0.0.1:8080/readyz; do
+          sleep 2; done'
+      - name: Run Codex ingestion e2e
+        working-directory: services/facteur
+        env:
+          FACTEUR_E2E_BASE_URL: http://127.0.0.1:8080
+          FACTEUR_E2E_POSTGRES_DSN: >-
+            postgres://facteur:facteur@127.0.0.1:15432/facteur_kb?sslmode=disable
+        run: go test -tags e2e ./test/e2e
+      - name: Dump container logs on failure
+        if: failure()
+        run: cat facteur-e2e.log || true
+      - name: Cleanup facteur process
+        if: always()
+        run: |
+          if [ -f "facteur-e2e.pid" ]; then
+            kill $(cat facteur-e2e.pid) || true
+          fi

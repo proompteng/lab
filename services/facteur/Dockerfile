@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7-labs
 
-FROM --platform=$BUILDPLATFORM golang:1.24 AS build
+FROM --platform=$BUILDPLATFORM golang:1.25.3 AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG SERVICE_PATH=services/facteur
