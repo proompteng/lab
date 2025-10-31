@@ -13,9 +13,13 @@ spec:
   net:
     sasl:
       enable: true
+      type:
+        secretKeyRef:
+          name: facteur-kafka-sasl
+          key: saslType
       user:
         secretKeyRef:
-          name: facteur-kafka-username
+          name: facteur-kafka-sasl
           key: username
       password:
         secretKeyRef:
