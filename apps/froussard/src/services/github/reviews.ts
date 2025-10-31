@@ -284,28 +284,33 @@ const collectReviewThreads = (
   owner: string,
   repo: string,
   pullNumber: number,
-): Effect.Effect<ReviewApiError, PullRequestReviewThread[]> => {
-  const loop = (
-    cursor: string | null,
-    acc: PullRequestReviewThread[],
-  ): Effect.Effect<ReviewApiError, PullRequestReviewThread[]> =>
-    fetchThreadsPage(
-      fetchFn,
-      graphqlUrl,
-      headers,
-      JSON.stringify({
-        query: LIST_REVIEW_THREADS_QUERY,
-        variables: cursor ? { owner, repo, pullNumber, cursor } : { owner, repo, pullNumber },
-      }),
-    ).pipe(
-      Effect.flatMap(({ items, nextCursor }) => {
-        const nextAcc = acc.concat(items)
-        return nextCursor ? loop(nextCursor, nextAcc) : Effect.succeed(nextAcc)
-      }),
-    )
+): Effect.Effect<ReviewApiError, PullRequestReviewThread[]> =>
+  Effect.gen(function* (_) {
+    let cursor: string | null = null
+    const accumulator: PullRequestReviewThread[] = []
 
-  return loop(null, [])
-}
+    while (true) {
+      const { items, nextCursor } = yield* fetchThreadsPage(
+        fetchFn,
+        graphqlUrl,
+        headers,
+        JSON.stringify({
+          query: LIST_REVIEW_THREADS_QUERY,
+          variables: cursor ? { owner, repo, pullNumber, cursor } : { owner, repo, pullNumber },
+        }),
+      )
+
+      accumulator.push(...items)
+
+      if (!nextCursor) {
+        break
+      }
+
+      cursor = nextCursor
+    }
+
+    return accumulator
+  })
 
 const recordCheckRunFailures = (runs: unknown[], record: (failure: PullRequestCheckFailure) => void) => {
   for (const run of runs) {
@@ -360,66 +365,70 @@ const collectCheckFailures = (
   checkRunsUrl: string,
   commitStatusUrl: string,
   headers: Record<string, string>,
-): Effect.Effect<ReviewApiError, PullRequestCheckFailure[]> => {
-  const failureMap = new Map<string, PullRequestCheckFailure>()
-  const recordFailure = (failure: PullRequestCheckFailure) => {
-    failureMap.set(failure.name, failure)
-  }
+): Effect.Effect<ReviewApiError, PullRequestCheckFailure[]> =>
+  Effect.gen(function* (_) {
+    const failureMap = new Map<string, PullRequestCheckFailure>()
+    const recordFailure = (failure: PullRequestCheckFailure) => {
+      failureMap.set(failure.name, failure)
+    }
 
-  const fetchCheckRunsPage = (page: number): Effect.Effect<ReviewApiError, boolean> =>
-    requestJson(fetchFn, `${checkRunsUrl}${page}`, { method: 'GET', headers }).pipe(
-      Effect.flatMap((parsed) => {
-        const runs = Array.isArray((parsed as { check_runs?: unknown }).check_runs)
-          ? (parsed as { check_runs: unknown[] }).check_runs
-          : []
-        recordCheckRunFailures(runs, recordFailure)
-        return Effect.succeed(runs.length === 100)
-      }),
-    )
+    const fetchCheckRunsPage = (page: number): Effect.Effect<ReviewApiError, boolean> =>
+      requestJson(fetchFn, `${checkRunsUrl}${page}`, { method: 'GET', headers }).pipe(
+        Effect.map((parsed) =>
+          Array.isArray((parsed as { check_runs?: unknown }).check_runs)
+            ? ((parsed as { check_runs: unknown[] }).check_runs as unknown[])
+            : [],
+        ),
+        Effect.map((runs) => {
+          recordCheckRunFailures(runs, recordFailure)
+          return runs.length === 100
+        }),
+      )
 
-  const fetchCommitStatuses = () =>
-    requestJson(fetchFn, commitStatusUrl, { method: 'GET', headers }).pipe(
+    let page = 1
+    while (true) {
+      const hasMore = yield* fetchCheckRunsPage(page)
+      if (!hasMore) {
+        break
+      }
+      page += 1
+    }
+
+    const statusesResponse = yield* requestJson(fetchFn, commitStatusUrl, { method: 'GET', headers }).pipe(
       Effect.map((parsed) =>
-        Array.isArray((parsed as { statuses?: unknown }).statuses) ? (parsed as { statuses: unknown[] }).statuses : [],
+        Array.isArray((parsed as { statuses?: unknown }).statuses)
+          ? ((parsed as { statuses: unknown[] }).statuses as unknown[])
+          : [],
       ),
-      Effect.tap((statuses) => {
-        const failureStates = new Set(['failure', 'error'])
-        for (const statusEntry of statuses) {
-          if (!statusEntry || typeof statusEntry !== 'object') {
-            continue
-          }
-          const state = (statusEntry as { state?: unknown }).state
-          const context = (statusEntry as { context?: unknown }).context
-          if (typeof state !== 'string' || typeof context !== 'string') {
-            continue
-          }
-          if (!failureStates.has(state)) {
-            continue
-          }
-
-          const targetUrlValue = (statusEntry as { target_url?: unknown }).target_url
-          const descriptionValue = (statusEntry as { description?: unknown }).description
-
-          recordFailure({
-            name: context,
-            conclusion: state,
-            url: typeof targetUrlValue === 'string' ? targetUrlValue : undefined,
-            details: summarizeText(descriptionValue, 240) ?? undefined,
-          })
-        }
-      }),
-      Effect.asUndefined,
     )
 
-  const checkRunsLoop = (page: number): Effect.Effect<ReviewApiError, void> =>
-    fetchCheckRunsPage(page).pipe(
-      Effect.flatMap((hasMore) => (hasMore ? checkRunsLoop(page + 1) : Effect.succeed(undefined))),
-    )
+    const failureStates = new Set(['failure', 'error'])
+    for (const statusEntry of statusesResponse) {
+      if (!statusEntry || typeof statusEntry !== 'object') {
+        continue
+      }
+      const state = (statusEntry as { state?: unknown }).state
+      const context = (statusEntry as { context?: unknown }).context
+      if (typeof state !== 'string' || typeof context !== 'string') {
+        continue
+      }
+      if (!failureStates.has(state)) {
+        continue
+      }
 
-  return checkRunsLoop(1)
-    .pipe(Effect.flatMap(fetchCommitStatuses))
-    .pipe(Effect.map(() => Array.from(failureMap.values())))
-}
+      const targetUrlValue = (statusEntry as { target_url?: unknown }).target_url
+      const descriptionValue = (statusEntry as { description?: unknown }).description
+
+      recordFailure({
+        name: context,
+        conclusion: state,
+        url: typeof targetUrlValue === 'string' ? targetUrlValue : undefined,
+        details: summarizeText(descriptionValue, 240) ?? undefined,
+      })
+    }
+
+    return Array.from(failureMap.values())
+  })
 
 export const listPullRequestReviewThreads = (
   options: ListReviewThreadsOptions,
