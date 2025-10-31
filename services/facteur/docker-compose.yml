@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg18
+    image: pgvector/pgvector:pg18-bookworm
     container_name: facteur-postgres
     environment:
       POSTGRES_DB: facteur_kb
