@@ -15,11 +15,11 @@ spec:
       enable: true
       user:
         secretKeyRef:
-          name: facteur-kafka
+          name: facteur-kafka-username
           key: username
       password:
         secretKeyRef:
-          name: facteur-kafka
+          name: facteur
           key: password
   sink:
     ref:

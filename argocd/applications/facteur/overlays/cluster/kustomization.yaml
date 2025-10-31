@@ -7,6 +7,7 @@ resources:
   - facteur-workflow-serviceaccount.yaml
   - facteur-workflows-clusterrolebinding.yaml
   - facteur-config.yaml
+  - facteur-kafka-username-secret.yaml
   - facteur-service.yaml
   - facteur-internal-service.yaml
   - facteur-redis.yaml
