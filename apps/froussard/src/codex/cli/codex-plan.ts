@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
-import { PLAN_COMMENT_MARKER } from '../codex'
+import { PLAN_COMMENT_MARKER } from '../../codex'
 import { runCli } from './lib/cli'
 import { pushCodexEventsToLoki, runCodexSession } from './lib/codex-runner'
 import {
