@@ -52,8 +52,18 @@ spec:
               secretKeyRef:
                 name: github-token
                 key: token
+          - name: DOCKER_HOST
+            value: tcp://localhost:2375
+          - name: DOCKER_ENABLED
+            value: "1"
+          - name: DOCKER_TLS_VERIFY
+            value: "0"
           - name: LGTM_LOKI_ENDPOINT
             value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
+        volumeMounts:
+          - name: docker-state
+            mountPath: /var/lib/docker
+            readOnly: true
         command: ["/usr/local/bin/codex-bootstrap"]
         args:
           - "/bin/bash"
@@ -84,3 +94,42 @@ spec:
           limits:
             cpu: "6"
             memory: 12Gi
+      sidecars:
+        - name: docker
+          image: docker:25.0-dind-rootless
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DOCKER_HOST
+              value: tcp://0.0.0.0:2375
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+            - name: XDG_RUNTIME_DIR
+              value: /var/lib/docker/run
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              set -euo pipefail
+              mkdir -p "${XDG_RUNTIME_DIR}"
+              exec dockerd-rootless.sh --host tcp://0.0.0.0:2375
+          ports:
+            - containerPort: 2375
+              name: docker-tcp
+              protocol: TCP
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          volumeMounts:
+            - name: docker-state
+              mountPath: /var/lib/docker
+      volumes:
+        - name: docker-state
+          emptyDir: {}

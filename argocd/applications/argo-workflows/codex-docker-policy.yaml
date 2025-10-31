@@ -1,0 +1,35 @@
+apiVersion: kyverno.io/v1
+kind: Policy
+metadata:
+  name: codex-privileged-guardrails
+  namespace: argo-workflows
+spec:
+  background: true
+  validationFailureAction: Enforce
+  rules:
+    - name: restrict-privileged-containers
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - argo-workflows
+      validate:
+        message: Only Codex workflows may run privileged containers via argo-workflows-workflow.
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.object.spec.containers[?(@.securityContext.privileged == true)] | length(@) }}"
+                operator: GreaterThan
+                value: 0
+            any:
+              - key: "{{ request.object.spec.serviceAccountName }}"
+                operator: NotEquals
+                value: argo-workflows-workflow
+              - key: "{{ request.object.metadata.labels['codex.stage'] }}"
+                operator: Equals
+                value: ""
+              - key: "{{ request.object.metadata.labels['codex.stage'] }}"
+                operator: Equals
+                value: null

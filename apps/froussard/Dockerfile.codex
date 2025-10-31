@@ -14,11 +14,35 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PLAN_OUTPUT_PATH=/workspace/lab/.codex-plan-output.md \
     IMPLEMENTATION_OUTPUT_PATH=/workspace/lab/.codex-implementation.log \
     GIT_TERMINAL_PROMPT=0 \
-    BUN_INSTALL=/usr/local
+    BUN_INSTALL=/usr/local \
+    DOCKER_HOST=tcp://localhost:2375 \
+    DOCKER_TLS_VERIFY=0 \
+    DOCKER_ENABLED=1
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends git gh jq python3 curl xz-utils protobuf-compiler libprotobuf-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      gh \
+      gnupg \
+      jq \
+      libprotobuf-dev \
+      protobuf-compiler \
+      python3 \
+      xz-utils; \
+    install -m 0755 -d /etc/apt/keyrings; \
+    . /etc/os-release; \
+    curl -fsSL "https://download.docker.com/linux/${ID}/gpg" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; \
+    chmod a+r /etc/apt/keyrings/docker.gpg; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${ID} ${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      docker-buildx-plugin \
+      docker-ce-cli \
+      docker-compose-plugin; \
+    rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
     ARCH=${TARGETARCH:-arm64}; \

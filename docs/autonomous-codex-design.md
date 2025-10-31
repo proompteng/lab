@@ -169,6 +169,14 @@ Key components evolve from the current codebase:
    - Wrap existing deployment scripts (`packages/scripts/src/froussard/deploy-service.ts`, etc.) inside Argo steps.
    - Validate deployment metrics (via metrics API) before signalling success.
 
+#### Docker-Enabled Workflow Runtime
+
+- **Codex image tooling:** `apps/froussard/Dockerfile.codex` now bundles `docker-ce-cli`, Buildx, and Compose plugins. The image exports `DOCKER_HOST=tcp://localhost:2375`, `DOCKER_TLS_VERIFY=0`, and `DOCKER_ENABLED=1` so Codex scripts automatically target an in-pod daemon.
+- **Rootless sidecar:** Every GitHub Codex WorkflowTemplate mounts a privileged `docker:25.0-dind-rootless` sidecar that executes `dockerd-rootless.sh --host tcp://0.0.0.0:2375`. Both the main container and sidecar share an `emptyDir` volume at `/var/lib/docker`, with the Codex container mounting it read-only to preserve daemon state while preventing accidental writes.
+- **Bootstrap handshake:** `codex-bootstrap` detects warm `node_modules/.pnpm` caches when `DOCKER_ENABLED=1`, skips redundant `pnpm install`, persists a lockfile checksum, and polls `docker info` before invoking stage commands so workflows fail fast if the daemon is unavailable.
+- **Security guardrails:** A Kyverno policy (`argocd/applications/argo-workflows/codex-docker-policy.yaml`) requires pods that request privileged containers in `argo-workflows` to use the `argo-workflows-workflow` service account and carry a `codex.stage` label, preventing unrelated workloads from escalating.
+- **Rollout checklist:** Publish the refreshed `codex-universal` image, sync the workflow templates and policy, then run staging executions that record `docker version`, `docker run hello-world`, and a sample `docker build` (`apps/froussard/Dockerfile.codex`) to confirm end-to-end container builds. Detailed operations live in `docs/runbooks/codex-docker.md`.
+
 ## 7. Data Flow & Topics
 
 | Topic | Producer | Consumer | Payload |
