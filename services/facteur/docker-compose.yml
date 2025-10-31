@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg18-bookworm
+    container_name: facteur-postgres
+    environment:
+      POSTGRES_DB: facteur_kb
+      POSTGRES_USER: facteur
+      POSTGRES_PASSWORD: facteur
+    ports:
+      - '15432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U facteur -d facteur_kb']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:8.2.2
+    container_name: facteur-redis
+    command: ['redis-server', '--save', '""', '--appendonly', 'no']
+    ports:
+      - '16379:6379'
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli ping']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  facteur:
+    build:
+      context: ../..
+      dockerfile: services/facteur/Dockerfile
+    container_name: facteur-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      FACTEUR_CONFIG_FILE: /config/docker-compose.yaml
+      FACTEUR_DISABLE_DISPATCHER: "true"
+    ports:
+      - '18080:8080'
+    volumes:
+      - ./config/docker-compose.yaml:/config/docker-compose.yaml:ro

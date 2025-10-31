@@ -1,0 +1,38 @@
+{
+  "stage": "CODEX_TASK_STAGE_IMPLEMENTATION",
+  "prompt": "Implement codex_kb ingestion wiring in Facteur",
+  "repository": "proompteng/lab",
+  "base": "main",
+  "head": "codex/issue-1635-ingestion",
+  "issueNumber": 1635,
+  "issueUrl": "https://github.com/proompteng/lab/issues/1635",
+  "issueTitle": "Codex: persist codex_kb intake for /codex/tasks",
+  "issueBody": "Ensure Facteur stores Codex ideas, tasks, and task runs for downstream retrieval.",
+  "sender": "froussard-bot",
+  "issuedAt": "2025-10-30T20:55:00Z",
+  "planCommentId": 123456789,
+  "planCommentUrl": "https://github.com/proompteng/lab/issues/1635#issuecomment-123456789",
+  "planCommentBody": "Automation plan approved; proceed to implementation.",
+  "deliveryId": "delivery-1635-implementation",
+  "reviewContext": {
+    "summary": "Initial review underway",
+    "reviewThreads": [
+      {
+        "summary": "Clarify PostgreSQL constraint strategy",
+        "url": "https://github.com/proompteng/lab/pull/999#discussion_r1",
+        "author": "reviewer-bot"
+      }
+    ],
+    "failingChecks": [
+      {
+        "name": "lint",
+        "conclusion": "failure",
+        "url": "https://github.com/proompteng/lab/actions/runs/123456789",
+        "details": "Biome reported formatting issues in store.go"
+      }
+    ],
+    "additionalNotes": [
+      "Retry after applying database migrations."
+    ]
+  }
+}

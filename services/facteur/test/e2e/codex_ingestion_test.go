@@ -1,0 +1,129 @@
+//go:build e2e
+
+package e2e
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+)
+
+func TestCodexIngestionEndToEnd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	baseURL := strings.TrimSpace(os.Getenv("FACTEUR_E2E_BASE_URL"))
+	if baseURL == "" {
+		t.Skip("FACTEUR_E2E_BASE_URL not set")
+	}
+	dsn := strings.TrimSpace(os.Getenv("FACTEUR_E2E_POSTGRES_DSN"))
+	if dsn == "" {
+		t.Skip("FACTEUR_E2E_POSTGRES_DSN not set")
+	}
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	deliveryID := fmt.Sprintf("delivery-%d", time.Now().UnixNano())
+	task := &githubpb.CodexTask{
+		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
+		Prompt:      "Codex ingestion e2e",
+		Repository:  "proompteng/lab",
+		Base:        "main",
+		Head:        "codex/e2e",
+		IssueNumber: 1635,
+		IssueUrl:    "https://github.com/proompteng/lab/issues/1635",
+		IssueTitle:  "Codex: persist codex_kb intake for /codex/tasks",
+		IssueBody:   "Check persistence path end-to-end.",
+		Sender:      "codex-e2e",
+		IssuedAt:    timestamppb.Now(),
+		DeliveryId:  deliveryID,
+	}
+
+	payload, err := proto.Marshal(task)
+	require.NoError(t, err)
+
+	first := postCodexTask(t, client, baseURL, payload)
+
+	db, err := sql.Open("pgx", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var persisted struct {
+		RunID  string
+		TaskID string
+		IdeaID string
+	}
+
+	require.Eventually(t, func() bool {
+		queryErr := db.QueryRowContext(ctx, `
+			SELECT tr.id, tr.task_id, t.idea_id
+			FROM codex_kb.task_runs tr
+			JOIN codex_kb.tasks t ON tr.task_id = t.id
+			WHERE tr.delivery_id = $1
+		`, deliveryID).Scan(&persisted.RunID, &persisted.TaskID, &persisted.IdeaID)
+
+		return queryErr == nil && persisted.RunID != "" && persisted.TaskID != "" && persisted.IdeaID != ""
+	}, 30*time.Second, time.Second)
+
+	require.Equal(t, first.TaskRunID, persisted.RunID)
+	require.Equal(t, first.TaskID, persisted.TaskID)
+	require.Equal(t, first.IdeaID, persisted.IdeaID)
+
+	second := postCodexTask(t, client, baseURL, payload)
+	require.Equal(t, first, second, "idempotent replay should return identical identifiers")
+
+	var runCount int
+	require.NoError(t, db.QueryRow(`
+		SELECT COUNT(*) FROM codex_kb.task_runs WHERE delivery_id = $1
+	`, deliveryID).Scan(&runCount))
+	require.Equal(t, 1, runCount)
+}
+
+type codexResponse struct {
+	IdeaID    string `json:"ideaId"`
+	TaskID    string `json:"taskId"`
+	TaskRunID string `json:"taskRunId"`
+}
+
+func postCodexTask(t *testing.T, client *http.Client, baseURL string, payload []byte) codexResponse {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/codex/tasks", bytes.NewReader(payload))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/x-protobuf")
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+
+	var body codexResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.NotEmpty(t, body.IdeaID)
+	require.NotEmpty(t, body.TaskID)
+	require.NotEmpty(t, body.TaskRunID)
+	return body
+}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -15,6 +16,10 @@ import (
 )
 
 func buildDispatcher(cfg *config.Config) (bridge.Dispatcher, error) {
+	if isDispatcherDisabled() {
+		return bridge.NoopDispatcher{}, nil
+	}
+
 	restCfg, err := resolveRESTConfig()
 	if err != nil {
 		return nil, err
@@ -33,6 +38,20 @@ func buildDispatcher(cfg *config.Config) (bridge.Dispatcher, error) {
 		ServiceAccount:   cfg.Argo.ServiceAccount,
 		Parameters:       cfg.Argo.Parameters,
 	})
+}
+
+func isDispatcherDisabled() bool {
+	value := strings.TrimSpace(os.Getenv("FACTEUR_DISABLE_DISPATCHER"))
+	if value == "" {
+		return false
+	}
+	value = strings.ToLower(value)
+	switch value {
+	case "0", "false", "no":
+		return false
+	default:
+		return true
+	}
 }
 
 func resolveRESTConfig() (*rest.Config, error) {

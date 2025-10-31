@@ -47,7 +47,13 @@ type Options struct {
 	Prefork       bool
 	Dispatcher    bridge.Dispatcher
 	Store         session.Store
+	CodexStore    CodexStore
 	SessionTTL    time.Duration
+}
+
+// CodexStore defines the storage surface required for Codex task ingestion.
+type CodexStore interface {
+	IngestCodexTask(context.Context, *githubpb.CodexTask) (ideaID, taskID, runID string, err error)
 }
 
 // Server wraps a Fiber application with lifecycle helpers.
@@ -214,6 +220,10 @@ func registerRoutes(app *fiber.App, opts Options) {
 	})
 
 	app.Post("/codex/tasks", func(c *fiber.Ctx) error {
+		if opts.CodexStore == nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "codex store unavailable"})
+		}
+
 		body := c.Body()
 		if len(body) == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "empty payload"})
@@ -233,7 +243,38 @@ func registerRoutes(app *fiber.App, opts Options) {
 			task.GetDeliveryId(),
 		)
 
-		return c.SendStatus(fiber.StatusAccepted)
+		ctx := c.UserContext()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		ideaID, taskID, runID, err := opts.CodexStore.IngestCodexTask(ctx, &task)
+		if err != nil {
+			log.Printf(
+				"codex task ingest failed: delivery=%s stage=%s repo=%s issue=%d err=%v",
+				task.GetDeliveryId(),
+				task.GetStage().String(),
+				task.GetRepository(),
+				task.GetIssueNumber(),
+				err,
+			)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "ingest failed"})
+		}
+
+		log.Printf(
+			"codex task ingested: idea_id=%s task_id=%s run_id=%s stage=%s delivery=%s",
+			emptyIfNone(ideaID),
+			emptyIfNone(taskID),
+			emptyIfNone(runID),
+			task.GetStage().String(),
+			task.GetDeliveryId(),
+		)
+
+		return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+			"ideaId":    ideaID,
+			"taskId":    taskID,
+			"taskRunId": runID,
+		})
 	})
 }
 
