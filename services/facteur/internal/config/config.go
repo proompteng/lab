@@ -3,9 +3,11 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // Config captures runtime configuration for the facteur service.
@@ -175,6 +177,8 @@ func LoadWithOptions(opts Options) (*Config, error) {
 
 	normaliseConfig(&cfg)
 
+	cfg.CodexDispatch.PayloadOverrides = mergePayloadOverridesCaseSensitive(opts, cfg.CodexDispatch.PayloadOverrides)
+
 	if err := validate(cfg); err != nil {
 		return nil, err
 	}
@@ -242,4 +246,113 @@ func validate(cfg Config) error {
 	}
 
 	return nil
+}
+
+func mergePayloadOverridesCaseSensitive(opts Options, fallback map[string]string) map[string]string {
+	caseSensitive := map[string]string{}
+	keyIndex := map[string]string{}
+
+	set := func(key, value string) {
+		if key == "" {
+			return
+		}
+		lower := strings.ToLower(key)
+		if existingKey, ok := keyIndex[lower]; ok && existingKey != key {
+			delete(caseSensitive, existingKey)
+		}
+		caseSensitive[key] = value
+		keyIndex[lower] = key
+	}
+
+	for k, v := range readPayloadOverridesFromFile(opts.Path) {
+		set(k, v)
+	}
+
+	for k, v := range readPayloadOverridesFromEnv(opts.EnvPrefix) {
+		set(k, v)
+	}
+
+	if len(caseSensitive) == 0 {
+		if fallback == nil {
+			return map[string]string{}
+		}
+		return fallback
+	}
+
+	for k, v := range fallback {
+		if _, ok := keyIndex[strings.ToLower(k)]; ok {
+			continue
+		}
+		set(k, v)
+	}
+
+	return caseSensitive
+}
+
+func readPayloadOverridesFromFile(path string) map[string]string {
+	if path == "" {
+		return nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var root map[string]any
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil
+	}
+
+	dispatchRaw, ok := root["codex_dispatch"]
+	if !ok {
+		return nil
+	}
+
+	dispatchMap, ok := dispatchRaw.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	overridesRaw, ok := dispatchMap["payload_overrides"]
+	if !ok {
+		return nil
+	}
+
+	overrideMap, ok := overridesRaw.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	result := make(map[string]string, len(overrideMap))
+	for key, value := range overrideMap {
+		result[key] = fmt.Sprint(value)
+	}
+
+	return result
+}
+
+func readPayloadOverridesFromEnv(prefix string) map[string]string {
+	upperPrefix := strings.ToUpper(prefix)
+	if upperPrefix == "" {
+		upperPrefix = "FACTEUR"
+	}
+	envPrefix := upperPrefix + "_CODEX_DISPATCH_PAYLOAD_OVERRIDES__"
+
+	result := map[string]string{}
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, envPrefix) {
+			continue
+		}
+		pair := strings.TrimPrefix(entry, envPrefix)
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := parts[0]
+		value := parts[1]
+		result[key] = value
+	}
+
+	return result
 }
