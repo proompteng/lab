@@ -17,7 +17,7 @@ data:
     redis:
       url: redis://facteur-redis:6379/0
     codex_dispatch:
-      planning_enabled: false
+      planning_enabled: true
       payload_overrides: {}
     role_map:
       plan:
