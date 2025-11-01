@@ -1,7 +1,7 @@
 # Temporal Bun SDK — Native FFI Surface Blueprint
 
 **Audience:** Platform Runtime & Codex implementers  
-**Status:** Living document (30 Oct 2025)
+**Status:** Living document (1 Nov 2025)
 **Goal:** Capture the Zig-based Bun ↔ Temporal Core surface so we can finish replacing all `@temporalio/*` dependencies with a Bun-native SDK while keeping the unsafe layer constrained and well-tested.
 
 ---
@@ -35,7 +35,7 @@ flowchart LR
 - ✅ Telemetry (`temporal_bun_runtime_update_telemetry`) wires Prometheus/OTLP exporters; ✅ logger installation (`temporal_bun_runtime_set_logger`) forwards Temporal core logs into Bun callbacks.
 
 ### Client (`client.zig`)
-- ✅ Async connect (`temporal_bun_client_connect_async`) with pending handles and thread pool.
+- ✅ Async connect (`temporal_bun_client_connect_async`) enqueues pending handles onto the shared bounded executor instead of spawning ad-hoc threads per request.
 - ✅ DescribeNamespace, QueryWorkflow, StartWorkflow, SignalWorkflow, TerminateWorkflow, and SignalWithStart marshal protobuf payloads directly in Zig and decode responses for Bun.
 - ⚠️ CancelWorkflow and UpdateHeaders still return `UNIMPLEMENTED` placeholders—TypeScript callers receive `NativeBridgeError` with `code: grpc.unimplemented`.
 - ⚠️ Byte-array helpers allocate buffers via `byte_array.zig`; free path is wired, but we still need `temporal_bun_byte_array_new` once upstream expects Bun to allocate memory for large payloads.
@@ -45,7 +45,7 @@ flowchart LR
 - ✅ Worker creation/teardown now issue native initiate + finalize shutdown calls before freeing worker handles; polling, activity completion, and heartbeats run end-to-end with coverage.
 
 ### Support crates
-- ✅ `pending.zig` implements reference-counted pending handles for clients and byte arrays.
+- ✅ `pending.zig` implements reference-counted pending handles for clients and byte arrays and now owns the bounded pending-handle executor with graceful startup/shutdown semantics.
 - ✅ `errors.zig` stores the last error as JSON (`{ code, message, details }`) for Bun to consume.
 - ✅ `core.zig` installs real Temporal core API pointers at runtime; fallback stubs keep tests running without bundled libs.
 - ✅ `byte_array.zig` allocates/frees buffers that Bun can copy into `Uint8Array`.
@@ -59,7 +59,7 @@ flowchart LR
 | Runtime | `temporal_bun_runtime_new` / `free` | ✅ | Allocates runtime handle, copies JSON config, releases pending connects before shutdown. |
 | Runtime | `temporal_bun_runtime_update_telemetry` | ✅ | Applies Prometheus or OTLP telemetry configuration and propagates Temporal core errors. |
 | Runtime | `temporal_bun_runtime_set_logger` | ✅ | Installs Bun callbacks for Temporal core log forwarding and clears them on shutdown. |
-| Client | `temporal_bun_client_connect_async` | ✅ | Spawns thread, honors runtime destroy semantics, returns pending handle. |
+| Client | `temporal_bun_client_connect_async` | ✅ | Enqueues work on the bounded pending executor, honors runtime destroy semantics, returns pending handle. |
 | Client | `temporal_bun_client_describe_namespace_async` | ✅ | Encodes protobuf request (`DescribeNamespaceRequest`), resolves pending byte array. |
 | Client | `temporal_bun_client_start_workflow` | ✅ | Builds `StartWorkflowExecutionRequest`, invokes `temporal_core_client_rpc_call`, returns JSON `{ runId, workflowId, namespace }`. |
 | Client | `temporal_bun_client_signal_with_start` | ✅ | Shares start encoders, adds signal payload, reuses start result parsing. |
@@ -77,10 +77,10 @@ Legend: ✅ shipped · ⚠️ partial/stub · ❌ not implemented yet.
 
 ## 4. Pending Handles & Threading Model
 
-- Pending handles (`pending.zig`) wrap tasks executed on detached Zig threads. Each handle maintains a tiny state machine (`PendingState`) with atomic transitions.
+- Pending handles (`pending.zig`) now dispatch work onto the runtime-owned bounded executor. Each handle maintains a tiny state machine (`PendingState`) with atomic transitions while the executor controls concurrency and back-pressure.
 - Runtime connects increment a counter on `RuntimeHandle`; destruction waits for outstanding connects before freeing Temporal core runtime pointers.
 - Byte-array pending handles own both the Zig buffer and the eventual result pointer consumed by Bun. Callers **must** invoke `temporal_bun_pending_*_free` to avoid leaks.
-- For long-running RPCs (signal/query), we spawn a thread per request today; TODO (`zig-runtime-04`) is to pool threads or reuse an async executor once benchmarks confirm the need.
+- The executor scales between 2–8 worker threads (based on CPU count) with a bounded queue; runtime shutdown signals the pool to drain before handles are freed, preventing orphaned threads.
 
 ---
 
@@ -149,7 +149,7 @@ Delivering these tasks unblocks swapping out `@temporalio/worker` with the Bun-n
    - Implement tasks outlined in §7; ship Bun `WorkerRuntime` consuming new exports.
    - Provide integration test running hello-world workflow entirely via Zig worker.
 4. **Performance tuning**
-   - Benchmark thread-per-request vs. pooled executor for pending handles.
+   - Validate pooled executor sizing under load and expose configuration knobs if needed.
    - Investigate zero-copy payload hand-off using `temporal_bun_byte_array_new` or shared memory.
 5. **Packaging**
    - Automate `zig build -Doptimize=ReleaseFast` for darwin/linux (arm64/x64) and upload artifacts to GitHub Releases.
@@ -171,7 +171,7 @@ Delivering these tasks unblocks swapping out `@temporalio/worker` with the Bun-n
 
 1. Should we generate Zig bindings from the upstream C header at build time to ensure parity, or continue hand-authoring signatures?
 2. Should we surface read-backs or change notifications for long-lived metadata after updates are applied?
-3. Do we need a shared thread pool for pending handles, or is one thread per request acceptable given expected QPS?
+3. Should we surface configuration (env vars or runtime API) so operators can tune pending executor worker/queue sizes per deployment?
 4. When worker exports land, do we mirror the Node worker activity/workflow sandbox model or design a Bun-specific isolate strategy?
 5. Should we gate unimplemented RPCs behind feature flags in TypeScript to make failures clearer to early adopters?
 

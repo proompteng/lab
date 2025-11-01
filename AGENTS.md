@@ -46,6 +46,7 @@
 - Adopt Conventional Commits (e.g. `feat: add prix cache`); use bodies for extra context or breaking notes.
 - Commits and PR titles MUST use the approved types (`build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`).
 - PRs should summarize the change, link issues, list verification (`go test`, `pnpm run lint:<app>`), and attach UI screenshots when visuals shift.
+- Always seed new PRs with the default template. Copy `.github/PULL_REQUEST_TEMPLATE.md` to a scratch file (e.g. `/tmp/pr.md`), fill in every section (Summary, Related Issues, Testing, Screenshots/None, Breaking Changes/None, Checklist), then run `gh pr create --body-file /tmp/pr.md`.
 - Keep scope tight, track follow-ups with TODOs, and document rollout or operational impacts.
 - NEVER edit lockfiles (e.g. `pnpm-lock.yaml`, `bun.lock`) by hand—regenerate them with the package manager instead.
 

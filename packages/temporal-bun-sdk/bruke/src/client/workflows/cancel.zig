@@ -1,5 +1,7 @@
 const std = @import("std");
 const common = @import("../common.zig");
+const errors = @import("../../errors.zig");
+const runtime = @import("../../runtime.zig");
 const pending = @import("../../pending.zig");
 const byte_array = @import("../../byte_array.zig");
 const core = @import("../../core.zig");
@@ -57,32 +59,43 @@ fn validateCancelPayload(payload: []const u8) CancelPayloadError!void {
     }
 }
 
-fn runCancelWorkflow(context: CancelWorkerContext) void {
-    defer std.heap.c_allocator.free(context.payload);
-    defer pending.release(context.handle);
+fn cancelWorkflowWorker(context_ptr: *CancelWorkerContext) void {
+    const handle = context_ptr.handle;
+    const client = context_ptr.client;
+    const payload = context_ptr.payload;
 
-    core.cancelWorkflow(context.client.core_client, context.payload) catch |err| {
+    defer std.heap.c_allocator.destroy(context_ptr);
+    defer std.heap.c_allocator.free(payload);
+    defer pending.release(handle);
+
+    core.cancelWorkflow(client.core_client, payload) catch |err| {
         const Rejection = struct { code: i32, message: []const u8 };
         const failure: Rejection = switch (err) {
             core.CancelWorkflowError.NotFound => .{ .code = grpc.not_found, .message = "temporal-bun-bridge-zig: workflow not found" },
             core.CancelWorkflowError.ClientUnavailable => .{ .code = grpc.unavailable, .message = "temporal-bun-bridge-zig: Temporal core client unavailable" },
             core.CancelWorkflowError.Internal => .{ .code = grpc.internal, .message = "temporal-bun-bridge-zig: failed to cancel workflow" },
         };
-        _ = pending.rejectByteArray(context.handle, failure.code, failure.message);
+        _ = pending.rejectByteArray(handle, failure.code, failure.message);
         return;
     };
 
     const ack = byte_array.allocate(.{ .slice = "" }) orelse {
         const message = "temporal-bun-bridge-zig: failed to allocate cancel acknowledgment";
-        _ = pending.rejectByteArray(context.handle, grpc.internal, message);
+        _ = pending.rejectByteArray(handle, grpc.internal, message);
         return;
     };
 
-    if (!pending.resolveByteArray(context.handle, ack)) {
+    if (!pending.resolveByteArray(handle, ack)) {
         byte_array.free(ack);
         const message = "temporal-bun-bridge-zig: failed to resolve cancel pending handle";
-        _ = pending.rejectByteArray(context.handle, grpc.internal, message);
+        _ = pending.rejectByteArray(handle, grpc.internal, message);
     }
+}
+
+fn runCancelWorkflowTask(context: ?*anyopaque) void {
+    const raw = context orelse return;
+    const context_ptr = @as(*CancelWorkerContext, @ptrCast(@alignCast(raw)));
+    cancelWorkflowWorker(context_ptr);
 }
 
 pub fn cancelWorkflow(client_ptr: ?*common.ClientHandle, payload: []const u8) ?*pending.PendingByteArray {
@@ -131,7 +144,16 @@ pub fn cancelWorkflow(client_ptr: ?*common.ClientHandle, payload: []const u8) ?*
     const pending_handle = @as(*pending.PendingByteArray, @ptrCast(pending_handle_ptr));
     const client_handle = client_ptr.?;
 
-    const context = CancelWorkerContext{
+    const context_ptr = allocator.create(CancelWorkerContext) catch {
+        allocator.free(copy);
+        pending.free(pending_handle_ptr);
+        return common.createByteArrayError(
+            grpc.resource_exhausted,
+            "temporal-bun-bridge-zig: failed to allocate cancel worker context",
+        );
+    };
+
+    context_ptr.* = .{
         .handle = pending_handle,
         .client = client_handle,
         .payload = copy,
@@ -139,6 +161,7 @@ pub fn cancelWorkflow(client_ptr: ?*common.ClientHandle, payload: []const u8) ?*
 
     if (!pending.retain(pending_handle_ptr)) {
         allocator.free(copy);
+        allocator.destroy(context_ptr);
         pending.free(pending_handle_ptr);
         return common.createByteArrayError(
             grpc.resource_exhausted,
@@ -146,19 +169,40 @@ pub fn cancelWorkflow(client_ptr: ?*common.ClientHandle, payload: []const u8) ?*
         );
     }
 
-    const thread = std.Thread.spawn(.{}, runCancelWorkflow, .{context}) catch |err| {
+    const runtime_handle = client_handle.runtime orelse {
         allocator.free(copy);
+        allocator.destroy(context_ptr);
         pending.release(pending_handle_ptr);
-        pending.free(pending_handle_ptr);
-        var scratch: [128]u8 = undefined;
-        const formatted = std.fmt.bufPrint(
-            &scratch,
-            "temporal-bun-bridge-zig: failed to spawn cancel worker thread: {}",
-            .{err},
-        ) catch "temporal-bun-bridge-zig: failed to spawn cancel worker thread";
-        return common.createByteArrayError(grpc.internal, formatted);
+        const message = "temporal-bun-bridge-zig: cancelWorkflow missing runtime handle";
+        errors.setStructuredError(.{ .code = grpc.failed_precondition, .message = message });
+        _ = pending.rejectByteArray(pending_handle, grpc.failed_precondition, message);
+        return pending_handle;
     };
-    thread.detach();
+
+    const context_any: ?*anyopaque = @as(?*anyopaque, @ptrCast(@alignCast(context_ptr)));
+    runtime.schedulePendingTask(runtime_handle, .{
+        .run = runCancelWorkflowTask,
+        .context = context_any,
+    }) catch |err| switch (err) {
+        runtime.SchedulePendingTaskError.ShuttingDown => blk: {
+            allocator.free(copy);
+            allocator.destroy(context_ptr);
+            pending.release(pending_handle_ptr);
+            const message = "temporal-bun-bridge-zig: runtime is shutting down";
+            errors.setStructuredError(.{ .code = grpc.failed_precondition, .message = message });
+            _ = pending.rejectByteArray(pending_handle, grpc.failed_precondition, message);
+            break :blk;
+        },
+        runtime.SchedulePendingTaskError.ExecutorUnavailable => blk: {
+            allocator.free(copy);
+            allocator.destroy(context_ptr);
+            pending.release(pending_handle_ptr);
+            const formatted = "temporal-bun-bridge-zig: pending executor unavailable";
+            errors.setStructuredError(.{ .code = grpc.internal, .message = formatted });
+            _ = pending.rejectByteArray(pending_handle, grpc.internal, formatted);
+            break :blk;
+        },
+    };
 
     return pending_handle;
 }
