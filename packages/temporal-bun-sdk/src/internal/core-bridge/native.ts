@@ -272,6 +272,14 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr],
       returns: FFIType.int32_t,
     },
+    temporal_bun_runtime_test_get_pending_worker_count: {
+      args: [FFIType.ptr],
+      returns: FFIType.uint64_t,
+    },
+    temporal_bun_runtime_test_get_pending_queue_capacity: {
+      args: [FFIType.ptr],
+      returns: FFIType.uint64_t,
+    },
     temporal_bun_runtime_test_register_client: {
       args: [FFIType.ptr],
       returns: FFIType.int32_t,
@@ -470,6 +478,8 @@ const {
     temporal_bun_runtime_test_get_metric_prefix,
     temporal_bun_runtime_test_get_socket_addr,
     temporal_bun_runtime_test_get_attach_service_name,
+    temporal_bun_runtime_test_get_pending_worker_count,
+    temporal_bun_runtime_test_get_pending_queue_capacity,
     temporal_bun_runtime_test_register_client,
     temporal_bun_runtime_test_unregister_client,
     temporal_bun_runtime_test_register_worker,
@@ -588,6 +598,14 @@ export const native = {
     if (result !== 0) {
       throw buildNativeBridgeError()
     }
+  },
+
+  pendingExecutorWorkerCount(runtime: Runtime): number {
+    return Number(temporal_bun_runtime_test_get_pending_worker_count(runtime.handle))
+  },
+
+  pendingExecutorQueueCapacity(runtime: Runtime): number {
+    return Number(temporal_bun_runtime_test_get_pending_queue_capacity(runtime.handle))
   },
 
   installLogger(runtime: Runtime, callback: TemporalCoreLogger, onDetach?: () => void): void {

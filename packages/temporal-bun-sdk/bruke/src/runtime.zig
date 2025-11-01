@@ -40,6 +40,20 @@ var logger_lock: std.Thread.Mutex = .{};
 var global_logger_owner = std.atomic.Value(?*RuntimeHandle).init(null);
 var global_logger_callback = std.atomic.Value(?LoggerCallback).init(null);
 
+fn recommendedPendingWorkerCount() usize {
+    const cpu_count_result = std.Thread.getCpuCount() catch 4;
+    const cpu_count: usize = @intCast(cpu_count_result);
+    return std.math.clamp(cpu_count, 2, 8);
+}
+
+fn recommendedPendingQueueCapacity(worker_count: usize) usize {
+    if (worker_count == 0) {
+        return 0;
+    }
+    const per_worker: usize = 16;
+    return worker_count * per_worker;
+}
+
 const fallback_error_array = core.ByteArray{
     .data = runtime_error_message.ptr,
     .size = runtime_error_message.len,
@@ -199,6 +213,9 @@ pub const RuntimeHandle = struct {
     pending_connects: usize = 0,
     destroying: bool = false,
     destroying_epoch: usize = 0,
+    pending_executor: ?*pending.PendingExecutor = null,
+    pending_executor_workers: usize = 0,
+    pending_executor_queue_capacity: usize = 0,
 };
 
 var next_runtime_id: u64 = 1;
@@ -812,7 +829,55 @@ pub fn create(options_json: []const u8) ?*RuntimeHandle {
         .pending_condition = .{},
         .pending_connects = 0,
         .destroying = false,
+        .pending_executor = null,
+        .pending_executor_workers = 0,
+        .pending_executor_queue_capacity = 0,
     };
+
+    const executor_workers = recommendedPendingWorkerCount();
+    const executor_queue_capacity = recommendedPendingQueueCapacity(executor_workers);
+
+    const executor = allocator.create(pending.PendingExecutor) catch {
+        if (created.fail) |fail_ptr| {
+            core.api.byte_array_free(created.runtime, fail_ptr);
+        }
+        core.api.runtime_free(created.runtime);
+        telemetry_config.deinit();
+        allocator.free(copy);
+        allocator.destroy(handle);
+        errors.setStructuredError(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to allocate pending executor",
+        });
+        return null;
+    };
+    executor.* = .{};
+
+    executor.init(allocator, .{
+        .worker_count = executor_workers,
+        .queue_capacity = executor_queue_capacity,
+    }) catch |err| {
+        allocator.destroy(executor);
+        if (created.fail) |fail_ptr| {
+            core.api.byte_array_free(created.runtime, fail_ptr);
+        }
+        core.api.runtime_free(created.runtime);
+        telemetry_config.deinit();
+        allocator.free(copy);
+        allocator.destroy(handle);
+        var scratch: [192]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to start pending executor: {}",
+            .{err},
+        ) catch "temporal-bun-bridge-zig: failed to start pending executor";
+        errors.setStructuredError(.{ .code = grpc.resource_exhausted, .message = message });
+        return null;
+    };
+
+    handle.pending_executor = executor;
+    handle.pending_executor_workers = executor_workers;
+    handle.pending_executor_queue_capacity = executor_queue_capacity;
 
     telemetry_config.adopt(handle);
     telemetry_config.deinit();
@@ -843,6 +908,14 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
         runtime.pending_condition.wait(&runtime.pending_lock);
     }
     runtime.pending_lock.unlock();
+
+    if (runtime.pending_executor) |executor| {
+        executor.shutdown();
+        allocator.destroy(executor);
+        runtime.pending_executor = null;
+        runtime.pending_executor_workers = 0;
+        runtime.pending_executor_queue_capacity = 0;
+    }
 
     clearLoggerForHandle(runtime);
 
@@ -1090,6 +1163,30 @@ pub fn endPendingClientConnect(handle: *RuntimeHandle) void {
     }
 }
 
+pub const SchedulePendingTaskError = error{
+    ShuttingDown,
+    ExecutorUnavailable,
+};
+
+pub fn schedulePendingTask(handle: *RuntimeHandle, task: pending.PendingTask) SchedulePendingTaskError!void {
+    handle.pending_lock.lock();
+    const destroying = handle.destroying;
+    handle.pending_lock.unlock();
+
+    if (destroying) {
+        return SchedulePendingTaskError.ShuttingDown;
+    }
+
+    if (handle.pending_executor) |executor| {
+        executor.submit(task) catch |err| switch (err) {
+            pending.PendingExecutorSubmitError.ShuttingDown => return SchedulePendingTaskError.ShuttingDown,
+        };
+        return;
+    }
+
+    task.run(task.context);
+}
+
 pub fn retainCoreRuntime(handle: ?*RuntimeHandle) ?*core.RuntimeOpaque {
     if (handle == null) {
         return null;
@@ -1279,6 +1376,16 @@ pub fn telemetrySocketAddrForTest(handle: ?*RuntimeHandle) ?*byte_array.ByteArra
 pub fn telemetryAttachServiceNameForTest(handle: ?*RuntimeHandle) bool {
     const runtime = handle orelse return true;
     return runtime.telemetry_attach_service_name;
+}
+
+pub fn pendingExecutorWorkerCountForTest(handle: ?*RuntimeHandle) usize {
+    const runtime = handle orelse return 0;
+    return runtime.pending_executor_workers;
+}
+
+pub fn pendingExecutorQueueCapacityForTest(handle: ?*RuntimeHandle) usize {
+    const runtime = handle orelse return 0;
+    return runtime.pending_executor_queue_capacity;
 }
 
 pub fn registerClientForTest(handle: ?*RuntimeHandle) bool {

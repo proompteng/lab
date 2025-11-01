@@ -34,6 +34,78 @@ void temporal_bun_runtime_free(void *handle) {
   (void)handle;
 }
 
+int32_t temporal_bun_runtime_update_telemetry(void *handle, void *payload, uint64_t len) {
+  (void)handle;
+  (void)payload;
+  (void)len;
+  return 0;
+}
+
+int32_t temporal_bun_runtime_set_logger(void *handle, void *callback) {
+  (void)handle;
+  (void)callback;
+  return 0;
+}
+
+uint32_t temporal_bun_runtime_test_get_mode(void *handle) {
+  (void)handle;
+  return 0;
+}
+
+void *temporal_bun_runtime_test_get_metric_prefix(void *handle) {
+  (void)handle;
+  return NULL;
+}
+
+void *temporal_bun_runtime_test_get_socket_addr(void *handle) {
+  (void)handle;
+  return NULL;
+}
+
+int32_t temporal_bun_runtime_test_get_attach_service_name(void *handle) {
+  (void)handle;
+  return 1;
+}
+
+int32_t temporal_bun_runtime_test_register_client(void *handle) {
+  (void)handle;
+  return 1;
+}
+
+void temporal_bun_runtime_test_unregister_client(void *handle) {
+  (void)handle;
+}
+
+int32_t temporal_bun_runtime_test_register_worker(void *handle) {
+  (void)handle;
+  return 1;
+}
+
+void temporal_bun_runtime_test_unregister_worker(void *handle) {
+  (void)handle;
+}
+
+void temporal_bun_runtime_test_emit_log(uint32_t level, const char *target_ptr, uint64_t target_len, const char *message_ptr, uint64_t message_len, uint64_t timestamp_millis, const char *fields_ptr, uint64_t fields_len) {
+  (void)level;
+  (void)target_ptr;
+  (void)target_len;
+  (void)message_ptr;
+  (void)message_len;
+  (void)timestamp_millis;
+  (void)fields_ptr;
+  (void)fields_len;
+}
+
+uint64_t temporal_bun_runtime_test_get_pending_worker_count(void *handle) {
+  (void)handle;
+  return 4;
+}
+
+uint64_t temporal_bun_runtime_test_get_pending_queue_capacity(void *handle) {
+  (void)handle;
+  return 64;
+}
+
 const char *temporal_bun_error_message(uint64_t *len_out) {
   if (len_out) {
     *len_out = (uint64_t)strlen(kNoError);

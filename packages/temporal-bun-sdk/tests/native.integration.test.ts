@@ -37,6 +37,19 @@ if (!nativeBridge) {
   const { native } = nativeBridge
   const defaultDataConverter = createDefaultDataConverter()
 
+  async function readThreadCount(): Promise<number | null> {
+    if (process.platform !== 'linux') {
+      return null
+    }
+    try {
+      const status = await Bun.file('/proc/self/status').text()
+      const match = /^Threads:\s+(\d+)/m.exec(status)
+      return match ? Number.parseInt(match[1] ?? '0', 10) : null
+    } catch {
+      return null
+    }
+  }
+
   const decodeQueryResult = async (bytes: Uint8Array): Promise<unknown> => {
     const response = temporal.api.workflowservice.v1.QueryWorkflowResponse.decode(bytes)
     const payloads = response.queryResult?.payloads ?? []
@@ -495,6 +508,49 @@ if (!nativeBridge) {
           taskQueue,
           args: ['initial-state'],
         })
+    test('pending handle executor reuses bounded thread pool under burst load', async () => {
+      if (!workerProcess) {
+        console.log('Skipping test: worker not available')
+        return
+      }
+
+      const workerCount = native.pendingExecutorWorkerCount(runtime)
+      const queueCapacity = native.pendingExecutorQueueCapacity(runtime)
+      expect(workerCount).toBeGreaterThan(0)
+      expect(queueCapacity).toBeGreaterThanOrEqual(workerCount)
+
+      const baselineThreads = await readThreadCount()
+
+      const maxAttempts = 10
+      const waitMs = 250
+      const client = await withRetry(
+        async () =>
+          native.createClient(runtime, {
+            address: temporalAddress,
+            namespace: 'default',
+            identity: 'bun-integration-client-pool',
+          }),
+        maxAttempts,
+        waitMs,
+      )
+
+      try {
+        const burstSize = Math.max(workerCount * 3, 12)
+        await Promise.all(
+          Array.from({ length: burstSize }, () =>
+            withRetry(() => native.describeNamespace(client, 'default'), maxAttempts, waitMs),
+          ),
+        )
+      } finally {
+        native.clientShutdown(client)
+      }
+
+      const afterThreads = await readThreadCount()
+      if (baselineThreads !== null && afterThreads !== null) {
+        const allowance = Math.max(workerCount, 4)
+        expect(afterThreads).toBeLessThanOrEqual(baselineThreads + workerCount + allowance)
+      }
+    })
 
         expect(payloadConverter.encodedValues).toContain('initial-state')
 

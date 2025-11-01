@@ -470,6 +470,12 @@ fn connectAsyncWorker(task: *ConnectTask) void {
     errors.setLastError(""[0..0]);
 }
 
+fn runConnectTask(context: ?*anyopaque) void {
+    const raw = context orelse return;
+    const task_ptr = @as(*ConnectTask, @ptrCast(@alignCast(raw)));
+    connectAsyncWorker(task_ptr);
+}
+
 pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u8) ?*pending.PendingClient {
     if (runtime_ptr == null) {
         return common.createClientError(grpc.invalid_argument, "temporal-bun-bridge-zig: connectAsync received null runtime handle");
@@ -522,22 +528,30 @@ pub fn connectAsync(runtime_ptr: ?*runtime.RuntimeHandle, config_json: []const u
         return @as(?*pending.PendingClient, pending_handle);
     }
 
-    const thread = std.Thread.spawn(.{}, connectAsyncWorker, .{task}) catch |err| {
-        allocator.free(config_copy);
-        allocator.destroy(task);
-        pending.release(pending_handle_ptr);
-        pending.free(pending_handle_ptr);
-        var scratch: [128]u8 = undefined;
-        const message = std.fmt.bufPrint(
-            &scratch,
-            "temporal-bun-bridge-zig: failed to spawn connect worker: {}",
-            .{err},
-        ) catch "temporal-bun-bridge-zig: failed to spawn connect worker";
-        _ = pending.rejectClient(pending_handle, grpc.internal, message);
-        return @as(?*pending.PendingClient, pending_handle);
+    const context_ptr: ?*anyopaque = @as(?*anyopaque, @ptrCast(@alignCast(task)));
+    runtime.schedulePendingTask(runtime_ptr.?, .{
+        .run = runConnectTask,
+        .context = context_ptr,
+    }) catch |err| switch (err) {
+        runtime.SchedulePendingTaskError.ShuttingDown => blk: {
+            allocator.free(config_copy);
+            allocator.destroy(task);
+            pending.release(pending_handle_ptr);
+            const message = "temporal-bun-bridge-zig: runtime is shutting down";
+            errors.setStructuredError(.{ .code = grpc.failed_precondition, .message = message });
+            _ = pending.rejectClient(pending_handle, grpc.failed_precondition, message);
+            break :blk;
+        },
+        runtime.SchedulePendingTaskError.ExecutorUnavailable => blk: {
+            allocator.free(config_copy);
+            allocator.destroy(task);
+            pending.release(pending_handle_ptr);
+            const message = "temporal-bun-bridge-zig: pending executor unavailable";
+            errors.setStructuredError(.{ .code = grpc.internal, .message = message });
+            _ = pending.rejectClient(pending_handle, grpc.internal, message);
+            break :blk;
+        },
     };
-
-    thread.detach();
 
     return @as(?*pending.PendingClient, pending_handle);
 }

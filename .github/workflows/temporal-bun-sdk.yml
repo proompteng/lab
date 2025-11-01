@@ -88,6 +88,9 @@ jobs:
       - name: Build and test Zig bridge
         run: pnpm --filter @proompteng/temporal-bun-sdk run ci:native:zig
 
+      - name: Stress pending executor
+        run: zig run packages/temporal-bun-sdk/bruke/src/pending_executor_stress.zig
+
       - name: Start Temporal CLI dev server
         run: |
           cd packages/temporal-bun-sdk
