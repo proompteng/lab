@@ -280,6 +280,22 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr],
       returns: FFIType.uint64_t,
     },
+    temporal_bun_runtime_test_get_byte_array_metrics: {
+      args: [],
+      returns: FFIType.ptr,
+    },
+    temporal_bun_runtime_test_reset_byte_array_metrics: {
+      args: [],
+      returns: FFIType.void,
+    },
+    temporal_bun_byte_array_test_allocate_from_slice: {
+      args: [FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.ptr,
+    },
+    temporal_bun_byte_array_test_free: {
+      args: [FFIType.ptr],
+      returns: FFIType.void,
+    },
     temporal_bun_runtime_test_register_client: {
       args: [FFIType.ptr],
       returns: FFIType.int32_t,
@@ -484,6 +500,10 @@ const {
     temporal_bun_runtime_test_unregister_client,
     temporal_bun_runtime_test_register_worker,
     temporal_bun_runtime_test_unregister_worker,
+    temporal_bun_runtime_test_get_byte_array_metrics,
+    temporal_bun_runtime_test_reset_byte_array_metrics,
+    temporal_bun_byte_array_test_allocate_from_slice,
+    temporal_bun_byte_array_test_free,
     temporal_bun_error_message,
     temporal_bun_error_free,
     temporal_bun_client_connect_async,
@@ -732,6 +752,29 @@ export const native = {
     },
     unregisterWorker(runtime: Runtime): void {
       temporal_bun_runtime_test_unregister_worker(runtime.handle)
+    },
+    getByteArrayMetrics(): Record<string, unknown> {
+      const bufferPtr = Number(temporal_bun_runtime_test_get_byte_array_metrics())
+      if (!bufferPtr) return {}
+      try {
+        const bytes = readByteArray(bufferPtr)
+        const json = utf8Decoder.decode(bytes)
+        return JSON.parse(json) as Record<string, unknown>
+      } finally {
+        temporal_bun_byte_array_free(bufferPtr as unknown as Pointer)
+      }
+    },
+    resetByteArrayMetrics(): void {
+      temporal_bun_runtime_test_reset_byte_array_metrics()
+    },
+    allocateTestByteArray(input: string): number {
+      const buffer = Buffer.from(input, 'utf8')
+      const rawPtr = temporal_bun_byte_array_test_allocate_from_slice(ptr(buffer), buffer.byteLength)
+      if (!rawPtr) throw new NativeBridgeError('Failed to allocate test byte array')
+      return Number(rawPtr)
+    },
+    freeTestByteArray(pointer: number): void {
+      temporal_bun_byte_array_test_free(pointer as unknown as Pointer)
     },
   },
 

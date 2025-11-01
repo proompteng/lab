@@ -15,6 +15,17 @@ pub const OpenTelemetryOptions = c.TemporalCoreOpenTelemetryOptions;
 pub const PrometheusOptions = c.TemporalCorePrometheusOptions;
 pub const OpenTelemetryMetricTemporality = c.TemporalCoreOpenTelemetryMetricTemporality;
 pub const OpenTelemetryProtocol = c.TemporalCoreOpenTelemetryProtocol;
+pub const MetricMeter = c.TemporalCoreMetricMeter;
+pub const Metric = c.TemporalCoreMetric;
+pub const MetricAttributes = c.TemporalCoreMetricAttributes;
+pub const MetricAttribute = c.TemporalCoreMetricAttribute;
+pub const MetricAttributeValue = c.TemporalCoreMetricAttributeValue;
+pub const MetricAttributeValueType = c.TemporalCoreMetricAttributeValueType;
+pub const MetricOptions = c.TemporalCoreMetricOptions;
+pub const MetricKind = c.TemporalCoreMetricKind;
+pub const metric_kind_counter_integer: MetricKind = @intCast(c.CounterInteger);
+pub const metric_kind_gauge_integer: MetricKind = @intCast(c.GaugeInteger);
+pub const metric_attr_type_string: MetricAttributeValueType = @intCast(c.String);
 
 pub const Client = c.TemporalCoreClient;
 pub const ClientOptions = c.TemporalCoreClientOptions;
@@ -207,6 +218,50 @@ pub fn workerRecordActivityHeartbeat(
     heartbeat: ByteArrayRef,
 ) ?*const ByteArray {
     return worker_record_activity_heartbeat(worker, heartbeat);
+}
+
+pub fn metricMeterNew(runtime: *RuntimeOpaque) ?*MetricMeter {
+    ensureExternalApiInstalled();
+    return c.temporal_core_metric_meter_new(runtime);
+}
+
+pub fn metricMeterFree(meter: ?*MetricMeter) void {
+    if (meter) |ptr| {
+        ensureExternalApiInstalled();
+        c.temporal_core_metric_meter_free(ptr);
+    }
+}
+
+pub fn metricAttributesNew(meter: *MetricMeter, attrs: []const MetricAttribute) ?*MetricAttributes {
+    ensureExternalApiInstalled();
+    if (attrs.len == 0) {
+        return null;
+    }
+    return c.temporal_core_metric_attributes_new(meter, attrs.ptr, attrs.len);
+}
+
+pub fn metricAttributesFree(attrs: ?*MetricAttributes) void {
+    if (attrs) |ptr| {
+        ensureExternalApiInstalled();
+        c.temporal_core_metric_attributes_free(ptr);
+    }
+}
+
+pub fn metricNew(meter: *MetricMeter, options: *const MetricOptions) ?*Metric {
+    ensureExternalApiInstalled();
+    return c.temporal_core_metric_new(meter, options);
+}
+
+pub fn metricFree(metric: ?*Metric) void {
+    if (metric) |ptr| {
+        ensureExternalApiInstalled();
+        c.temporal_core_metric_free(ptr);
+    }
+}
+
+pub fn metricRecordInteger(metric: *const Metric, value: u64, attrs: ?*const MetricAttributes) void {
+    ensureExternalApiInstalled();
+    c.temporal_core_metric_record_integer(metric, value, attrs);
 }
 
 pub fn forwardedLogTarget(log: ?*const ForwardedLog) ByteArrayRef {

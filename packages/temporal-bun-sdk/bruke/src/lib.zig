@@ -69,6 +69,23 @@ pub export fn temporal_bun_runtime_test_get_pending_queue_capacity(handle: ?*run
     return runtime.pendingExecutorQueueCapacityForTest(handle);
 }
 
+pub export fn temporal_bun_runtime_test_get_byte_array_metrics() ?*byte_array.ByteArray {
+    return byte_array.metricsSnapshotJson();
+}
+
+pub export fn temporal_bun_runtime_test_reset_byte_array_metrics() void {
+    byte_array.resetMetricsForTest();
+}
+
+pub export fn temporal_bun_byte_array_test_allocate_from_slice(payload_ptr: ?[*]const u8, len: u64) ?*byte_array.ByteArray {
+    const payload = sliceFrom(payload_ptr, len);
+    return byte_array.allocateFromSlice(payload);
+}
+
+pub export fn temporal_bun_byte_array_test_free(array: ?*byte_array.ByteArray) void {
+    byte_array.free(array);
+}
+
 pub export fn temporal_bun_runtime_test_register_client(handle: ?*runtime.RuntimeHandle) i32 {
     return if (runtime.registerClientForTest(handle)) 1 else 0;
 }

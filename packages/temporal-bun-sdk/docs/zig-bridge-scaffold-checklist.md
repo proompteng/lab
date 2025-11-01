@@ -38,7 +38,7 @@ The items below slice the Zig bridge effort into PR-sized TODOs. Every ID maps b
 | ID | Description | Entry point | Acceptance |
 |----|-------------|-------------|------------|
 | zig-buf-01 | Swap stub allocator for zero-copy handling of Temporal-owned buffers. | `src/byte_array.zig` | Roundtrip tests prove no leaks and zero-copy when possible. |
-| zig-buf-02 | Add guardrails + telemetry counters for buffer allocations. | `src/byte_array.zig` | Metrics surfaced to TS layer; unit tests cover failure cases. |
+| zig-buf-02 | Add guardrails + telemetry counters for buffer allocations. | `src/byte_array.zig` | ✅ Metrics surface through runtime telemetry; Zig + Bun tests cover failures and double-free detection. |
 | zig-pend-01 | Implement reusable pending handle state machine for clients + byte arrays. | `src/pending.zig` | ✅ Concurrent stress test passes; bounded executor replaces per-request threads and TS polling logic remains unchanged. |
 
 ### Worker Lifecycle

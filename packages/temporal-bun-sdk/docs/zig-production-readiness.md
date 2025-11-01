@@ -4,7 +4,7 @@
 
 ## 1. Technical Completeness
 - [ ] Feature parity issues for `zig-rt-*`, `zig-cl-*`, `zig-wf-*`, `zig-buf-*`, `zig-pend-*` are closed. (Remaining gaps:
-  `zig-rt-03`, `zig-cl-03`, `zig-wf-06`, `zig-buf-02`, `zig-pend-01`.)
+  `zig-rt-03`, `zig-cl-03`, `zig-wf-06`, `zig-pend-01`.)
 - [ ] All inline `TODO(codex, …)` markers are removed or mapped to open issues. Current gaps include
   `zig-core-02`, `zig-cl-04`, and `zig-pack-01`.
 - [ ] `docs/testing-plan.md` documents Zig scenarios next to Rust, and the test matrix reflects the planned
@@ -30,7 +30,7 @@
 - [x] Downgrade/rollback guidance for the Zig bridge versus Rust fallback is documented (legacy only) — Rust fallback removed on October 24, 2025.
 
 ## 5. Observability & Ops
-- [ ] Telemetry and tracing parity is delivered (`zig-rt-03`, byte-array metrics surfaced to Bun); ✅ log forwarding (`zig-rt-04`) now streams Temporal core logs into Bun callbacks.
+- [ ] Telemetry and tracing parity is delivered (`zig-rt-03` still pending; byte-array metrics (`zig-buf-02`) now surface counters via Bun helpers); ✅ log forwarding (`zig-rt-04`) now streams Temporal core logs into Bun callbacks.
 - [ ] Runbooks describe Zig-specific failure signatures and debugging workflows.
 - [ ] Platform dashboards/SLOs include Zig bridge metrics and alert hooks.
 
