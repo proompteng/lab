@@ -111,12 +111,8 @@ When adding features that touch new RPCs, extend these suites or create targeted
 ## 7. Outstanding Work
 
 1. **Telemetry & logging** — hook `Runtime.configureTelemetry` and `Runtime.installLogger` once the Zig exports land (`temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger`).  
-<<<<<<< Updated upstream
 2. **Determinism tooling** — expand replay/determinism harnesses so converter-driven payloads are exercised against recorded histories.  
 3. **Cancellation QA** — keep integration coverage green (`tests/native.integration.test.ts`) and document manual validation steps in the README/CLI guides.
-=======
-2. **Determinism tooling** — expand replay/determinism harnesses so converter-driven payloads are exercised against recorded histories.
->>>>>>> Stashed changes
 
 Track these items in `docs/parallel-implementation-plan.md` (lanes 1, 4, and 5) so they remain visible during planning.
 
