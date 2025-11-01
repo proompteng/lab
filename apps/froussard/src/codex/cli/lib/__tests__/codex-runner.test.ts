@@ -126,12 +126,43 @@ describe('codex-runner', () => {
     expect(result.sessionId).toBe('resume-42')
   })
 
-  it('streams output to a Discord relay when configured', async () => {
+  it('captures session ids from SessionConfiguredEvent log lines', async () => {
+    const promptSink: string[] = []
+    const sessionLog = [
+      '2025-11-01T19:29:14.313728Z  INFO codex_exec: Codex initialized with event: SessionConfiguredEvent { ',
+      'session_id: ConversationId { uuid: 019a40e5-341a-7501-ad84-5ccdb240e7ff }, model: "gpt-5-codex", ',
+      'reasoning_effort: Some(High), history_log_id: 0, history_entry_count: 0, initial_messages: None, ',
+      'rollout_path: "/root/.codex/sessions/2025/11/01/rollout-2025-11-01T19-29-14-019a40e5-341a-7501-ad84-5ccdb240e7ff.jsonl" }',
+    ].join('')
+    const codexMessages = [
+      sessionLog,
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'hi' } }),
+    ]
+    spawnMock.mockImplementation(() => createCodexProcess(codexMessages, promptSink))
+
+    const outputPath = join(workspace, 'output.log')
+    const jsonOutputPath = join(workspace, 'events.jsonl')
+    const agentOutputPath = join(workspace, 'agent.log')
+
+    const result = await runCodexSession({
+      stage: 'planning',
+      prompt: 'Plan',
+      outputPath,
+      jsonOutputPath,
+      agentOutputPath,
+    })
+
+    expect(result.sessionId).toBe('019a40e5-341a-7501-ad84-5ccdb240e7ff')
+  })
+
+  it('streams agent messages and tool calls to a Discord relay when configured', async () => {
     const relaySink: string[] = []
     const promptSink: string[] = []
     const discordProcess = createDiscordProcess(relaySink)
+    const toolCallLine =
+      '2025-11-01T19:29:20.903182Z  INFO codex_core::codex: ToolCall: shell {"command":["bash","-lc","echo hello"]}'
     const codexProcess = createCodexProcess(
-      [JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'relay copy' } })],
+      [toolCallLine, JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'relay copy' } })],
       promptSink,
     )
 
@@ -153,6 +184,7 @@ describe('codex-runner', () => {
     })
 
     expect(relaySink.some((chunk) => chunk.includes('relay copy'))).toBe(true)
+    expect(relaySink.some((chunk) => chunk.includes('ToolCall → shell {"command"'))).toBe(true)
   })
 
   it('pushes Loki payloads when events exist', async () => {

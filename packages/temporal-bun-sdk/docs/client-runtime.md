@@ -3,7 +3,7 @@
 **Status Snapshot (1 Nov 2025)**  
 - DONE: `createTemporalClient` threads a configurable `dataConverter` through request serialization, query decoding, and signal hashing.  
 - DONE: Serialization helpers now encode memo, headers, search attributes, and failure details via `encodeValuesToJson` / `encodeMapToJson`, preserving codec metadata for the Zig bridge.  
-- DONE: `cancelWorkflow` now delegates to the Zig bridge implementation, returning structured gRPC status codes from Temporal core.  
+- DONE: `cancelWorkflow` now delegates to the Zig bridge implementation (`temporal_bun_client_cancel_workflow`), returning structured Temporal core errors through pending handles.  
 - TODO: Telemetry/logging hooks from the upstream SDK remain unimplemented pending additional Zig exports.
 
 Keep this document aligned with the current source so new work can focus on the remaining gaps rather than rediscovering the existing surface.
@@ -90,7 +90,7 @@ const runtime = native.createRuntime(options.runtimeOptions ?? {})
 
 - `NativeBridgeError` (defined in `src/internal/core-bridge/native.ts`) wraps gRPC status codes emitted by the Zig bridge.  
 - `native.*` helpers convert JSON payloads or status codes into `NativeBridgeError` when the Zig layer reports failures (`temporal_bun_error_message`).  
-- `signalWorkflow`, `queryWorkflow`, and `cancelWorkflow` await pending handles; cancellation now resolves via Zig and surfaces Temporal core statuses (success or failure).  
+- `signalWorkflow`, `queryWorkflow`, and `cancelWorkflow` await pending handles; cancellation resolves via Zig and surfaces Temporal core status codes.  
 - Callers must invoke `client.shutdown()` to release native resources. The method is idempotent and safe to call multiple times.
 
 ---
@@ -111,8 +111,12 @@ When adding features that touch new RPCs, extend these suites or create targeted
 ## 7. Outstanding Work
 
 1. **Telemetry & logging** — hook `Runtime.configureTelemetry` and `Runtime.installLogger` once the Zig exports land (`temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger`).  
+<<<<<<< Updated upstream
 2. **Determinism tooling** — expand replay/determinism harnesses so converter-driven payloads are exercised against recorded histories.  
 3. **Cancellation QA** — keep integration coverage green (`tests/native.integration.test.ts`) and document manual validation steps in the README/CLI guides.
+=======
+2. **Determinism tooling** — expand replay/determinism harnesses so converter-driven payloads are exercised against recorded histories.
+>>>>>>> Stashed changes
 
 Track these items in `docs/parallel-implementation-plan.md` (lanes 1, 4, and 5) so they remain visible during planning.
 

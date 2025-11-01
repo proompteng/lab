@@ -38,6 +38,55 @@ export interface PushCodexEventsToLokiOptions {
 }
 
 const decoder = new TextDecoder()
+const toolCallPattern = /codex_core::codex:\s+ToolCall:\s+(.*)$/
+const sessionConfiguredPattern =
+  /SessionConfiguredEvent\s*\{\s*session_id:\s*ConversationId\s*\{\s*uuid:\s*([0-9a-fA-F-]+)\s*}/
+
+const extractToolCallPayload = (line: string): string | undefined => {
+  const match = line.match(toolCallPattern)
+  if (!match) {
+    return undefined
+  }
+  const payload = match[1]?.trim()
+  return payload && payload.length > 0 ? payload : 'Tool call invoked'
+}
+
+const normalizeSessionCandidate = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+const extractSessionIdFromParsedEvent = (parsed: Record<string, unknown>): string | undefined => {
+  const direct =
+    normalizeSessionCandidate((parsed.session as Record<string, unknown> | undefined)?.id) ??
+    normalizeSessionCandidate(parsed.session_id) ??
+    normalizeSessionCandidate(parsed.sessionId)
+  if (direct) {
+    return direct
+  }
+
+  const item = parsed.item as Record<string, unknown> | undefined
+  const fromItem =
+    normalizeSessionCandidate((item?.session as Record<string, unknown> | undefined)?.id) ??
+    normalizeSessionCandidate(item?.session_id) ??
+    normalizeSessionCandidate(item?.sessionId)
+  if (fromItem) {
+    return fromItem
+  }
+
+  return normalizeSessionCandidate(parsed.conversation_id) ?? normalizeSessionCandidate(parsed.conversationId)
+}
+
+const extractSessionIdFromLogLine = (line: string): string | undefined => {
+  const match = line.match(sessionConfiguredPattern)
+  if (match?.[1]) {
+    return match[1].trim()
+  }
+  return undefined
+}
 
 interface WritableHandle {
   write: (chunk: string) => Promise<void>
@@ -225,28 +274,34 @@ export const runCodexSession = async ({
 
     await writeLine(jsonStream, line)
 
+    const toolCallPayload = extractToolCallPayload(line)
+    const logLineSession = extractSessionIdFromLogLine(line)
+
+    if (!sessionId && logLineSession) {
+      sessionId = logLineSession
+    }
+
+    if (toolCallPayload && discordWriter && !discordClosed) {
+      try {
+        await discordWriter.write(`ToolCall → ${toolCallPayload}\n`)
+      } catch (error) {
+        discordClosed = true
+        await discordWriter.close().catch(() => {})
+        if (discordRelay?.onError && error instanceof Error) {
+          discordRelay.onError(error)
+        } else {
+          log.error('Failed to write tool call to Discord relay:', error)
+        }
+      }
+    }
+
     try {
       const parsed = JSON.parse(line)
       const item = parsed?.item
       if (!sessionId) {
-        const candidateSession =
-          typeof parsed?.session?.id === 'string'
-            ? parsed.session.id
-            : typeof parsed?.session_id === 'string'
-              ? parsed.session_id
-              : typeof parsed?.sessionId === 'string'
-                ? parsed.sessionId
-                : typeof item?.session?.id === 'string'
-                  ? item.session.id
-                  : typeof item?.session_id === 'string'
-                    ? item.session_id
-                    : typeof item?.sessionId === 'string'
-                      ? item.sessionId
-                      : typeof parsed?.conversation_id === 'string'
-                        ? parsed.conversation_id
-                        : undefined
-        if (candidateSession && candidateSession.trim().length > 0) {
-          sessionId = candidateSession.trim()
+        const candidateSession = extractSessionIdFromParsedEvent(parsed)
+        if (candidateSession) {
+          sessionId = candidateSession
         }
       }
       if (parsed?.type === 'item.completed' && item?.type === 'agent_message' && typeof item?.text === 'string') {
@@ -268,7 +323,9 @@ export const runCodexSession = async ({
         }
       }
     } catch (error) {
-      log.error('Failed to parse Codex event line as JSON:', error)
+      if (!toolCallPayload && !logLineSession) {
+        log.error('Failed to parse Codex event line as JSON:', error)
+      }
     }
   }
 
