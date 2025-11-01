@@ -28,6 +28,14 @@
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
     },
+    "./workflow": {
+      "types": "./dist/workflow/index.d.ts",
+      "default": "./dist/workflow/index.js"
+    },
+    "./workflow/runtime": {
+      "types": "./dist/workflow/runtime/index.d.ts",
+      "default": "./dist/workflow/runtime/index.js"
+    },
     "./worker": {
       "types": "./dist/worker.d.ts",
       "default": "./dist/worker.js"
