@@ -4,7 +4,7 @@
 - DONE: `createTemporalClient` threads a configurable `dataConverter` through request serialization, query decoding, and signal hashing.  
 - DONE: Serialization helpers now encode memo, headers, search attributes, and failure details via `encodeValuesToJson` / `encodeMapToJson`, preserving codec metadata for the Zig bridge.  
 - DONE: `cancelWorkflow` now delegates to the Zig bridge implementation (`temporal_bun_client_cancel_workflow`), returning structured Temporal core errors through pending handles.  
-- TODO: Telemetry/logging hooks from the upstream SDK remain unimplemented pending additional Zig exports.
+- DONE: Telemetry configuration and logger registration are exposed via `Runtime.configureTelemetry` / `Runtime.installLogger` and backed by Zig exports.
 
 Keep this document aligned with the current source so new work can focus on the remaining gaps rather than rediscovering the existing surface.
 

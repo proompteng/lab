@@ -11,8 +11,7 @@
   end-to-end coverage.
 
 ## 2. Automated Verification
-- [ ] Dedicated Zig CI workflow (e.g. `.github/workflows/temporal-bun-sdk-zig.yml`) runs `zig build test` plus Bun
-  smoke tests on every PR.
+- [x] Zig CI coverage lives in `.github/workflows/temporal-bun-sdk.yml`, which runs `pnpm --filter @proompteng/temporal-bun-sdk run ci:native:zig` (Release + Debug `zig build` tests) alongside Bun suites on every push/PR.
 - [ ] Nightly Temporal CLI smoke (`scripts/start-temporal-cli.ts` + `TEMPORAL_TEST_SERVER=1` suites) exercises the
   Zig bridge path and reports separately from the Rust bridge.
 - [ ] Flaky Zig tests, if any, are triaged with documented owners and follow-ups.
