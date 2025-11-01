@@ -9,6 +9,8 @@ type ClientPtr = Pointer
 
 type WorkerPtr = Pointer
 
+type WorkerReplayPtr = Pointer
+
 export interface Runtime {
   type: 'runtime'
   handle: RuntimePtr
@@ -22,6 +24,12 @@ export interface NativeClient {
 export interface NativeWorker {
   type: 'worker'
   handle: WorkerPtr
+}
+
+export interface NativeReplayWorker {
+  type: 'replay-worker'
+  handle: WorkerReplayPtr
+  worker: NativeWorker
 }
 
 type BridgeVariant = 'zig'
@@ -457,6 +465,22 @@ function buildBridgeSymbolMap() {
       args: [FFIType.ptr],
       returns: FFIType.int32_t,
     },
+    temporal_bun_worker_replayer_new: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.ptr,
+    },
+    temporal_bun_worker_replayer_free: {
+      args: [FFIType.ptr],
+      returns: FFIType.int32_t,
+    },
+    temporal_bun_worker_replay_push: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t, FFIType.ptr, FFIType.uint64_t],
+      returns: FFIType.int32_t,
+    },
+    temporal_bun_worker_replay_get_worker: {
+      args: [FFIType.ptr],
+      returns: FFIType.ptr,
+    },
     temporal_bun_worker_test_handle_new: {
       args: [],
       returns: FFIType.ptr,
@@ -552,6 +576,10 @@ const {
     temporal_bun_worker_record_activity_heartbeat,
     temporal_bun_worker_initiate_shutdown,
     temporal_bun_worker_finalize_shutdown,
+    temporal_bun_worker_replayer_new,
+    temporal_bun_worker_replayer_free,
+    temporal_bun_worker_replay_push,
+    temporal_bun_worker_replay_get_worker,
     temporal_bun_worker_test_handle_new,
     temporal_bun_worker_test_handle_release,
   },
@@ -571,6 +599,13 @@ const workerFfi = {
   recordActivityHeartbeat: temporal_bun_worker_record_activity_heartbeat,
   initiateShutdown: temporal_bun_worker_initiate_shutdown,
   finalizeShutdown: temporal_bun_worker_finalize_shutdown,
+}
+
+const workerReplayFfi = {
+  create: temporal_bun_worker_replayer_new,
+  free: temporal_bun_worker_replayer_free,
+  push: temporal_bun_worker_replay_push,
+  getWorker: temporal_bun_worker_replay_get_worker,
 }
 
 export const native = {
@@ -974,6 +1009,68 @@ export const native = {
     throw buildNativeBridgeError()
   },
 
+  createReplayWorker(runtime: Runtime, config: Record<string, unknown>): NativeReplayWorker {
+    const payload = Buffer.from(JSON.stringify(config), 'utf8')
+    const handlePtrNum = Number(workerReplayFfi.create(runtime.handle, ptr(payload), payload.byteLength))
+    if (!handlePtrNum) {
+      throw buildNativeBridgeError()
+    }
+    const handlePtr = handlePtrNum as unknown as Pointer
+    const workerPtrNum = Number(workerReplayFfi.getWorker(handlePtr))
+    if (!workerPtrNum) {
+      workerReplayFfi.free(handlePtr)
+      throw new NativeBridgeError('Failed to resolve native worker handle for replay worker')
+    }
+    const replayWorker: NativeWorker = { type: 'worker', handle: workerPtrNum as unknown as Pointer }
+    return { type: 'replay-worker', handle: handlePtr, worker: replayWorker }
+  },
+
+  destroyReplayWorker(replay: NativeReplayWorker): void {
+    if (Number(replay.handle) === 0) {
+      return
+    }
+    const status = Number(workerReplayFfi.free(replay.handle))
+    if (status === 0) {
+      replay.handle = 0 as unknown as Pointer
+      replay.worker.handle = 0 as unknown as Pointer
+      return
+    }
+    throw buildNativeBridgeError()
+  },
+
+  pushReplayHistory(replay: NativeReplayWorker, workflowId: string, history: Uint8Array | Buffer | string): void {
+    if (Number(replay.handle) === 0) {
+      throw new NativeBridgeError('Replay worker handle is not initialized')
+    }
+    if (!workflowId || workflowId.length === 0) {
+      throw new NativeBridgeError('Workflow ID must be provided for replay push')
+    }
+
+    const workflowIdBuffer = Buffer.from(workflowId, 'utf8')
+    let historyBuffer: Buffer
+    if (Buffer.isBuffer(history)) {
+      historyBuffer = history
+    } else if (typeof history === 'string') {
+      historyBuffer = Buffer.from(history, 'utf8')
+    } else {
+      historyBuffer = Buffer.from(history)
+    }
+
+    const status = Number(
+      workerReplayFfi.push(
+        replay.handle,
+        ptr(workflowIdBuffer),
+        workflowIdBuffer.byteLength,
+        ptr(historyBuffer),
+        historyBuffer.byteLength,
+      ),
+    )
+
+    if (status !== 0) {
+      throw buildNativeBridgeError()
+    }
+  },
+
   createWorkerHandleForTest(): NativeWorker {
     const handleNum = Number(temporal_bun_worker_test_handle_new())
     if (!handleNum) {
@@ -1100,6 +1197,7 @@ export const native = {
 export const __testing = {
   pendingByteArrayFfi,
   workerFfi,
+  workerReplayFfi,
 }
 
 function resolvePackageRoot(): string {
