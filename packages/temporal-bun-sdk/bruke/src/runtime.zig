@@ -882,6 +882,8 @@ pub fn create(options_json: []const u8) ?*RuntimeHandle {
     telemetry_config.adopt(handle);
     telemetry_config.deinit();
 
+    byte_array.configureTelemetry(handle.core_runtime, handle.telemetry_mode != .none);
+
     if (created.fail) |fail_ptr| {
         core.api.byte_array_free(handle.core_runtime, fail_ptr);
     }
@@ -918,6 +920,8 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
     }
 
     clearLoggerForHandle(runtime);
+
+    byte_array.configureTelemetry(null, false);
 
     if (runtime.core_runtime) |core_runtime_ptr| {
         core.api.runtime_free(core_runtime_ptr);
@@ -1129,6 +1133,8 @@ pub fn updateTelemetry(handle: ?*RuntimeHandle, options_json: []const u8) i32 {
 
     telemetry_config.adopt(runtime);
     telemetry_config.deinit();
+
+    byte_array.configureTelemetry(runtime.core_runtime, runtime.telemetry_mode != .none);
 
     if (created.fail) |fail_ptr| {
         core.api.byte_array_free(runtime.core_runtime, fail_ptr);

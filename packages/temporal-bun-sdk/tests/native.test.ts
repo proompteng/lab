@@ -392,5 +392,27 @@ if (!nativeBridge) {
         native.releaseWorkerHandleForTest(handle)
       }
     })
+
+    zigOnlyTest('byte array metrics reflect allocations, frees, and double-free prevention', () => {
+      native.__TEST__.resetByteArrayMetrics()
+
+      const baseline = native.__TEST__.getByteArrayMetrics() as Record<string, number>
+      expect(baseline.totalAllocations ?? 0).toBe(0)
+      expect(baseline.totalFrees ?? 0).toBe(0)
+
+      const pointer = native.__TEST__.allocateTestByteArray('telemetry-metrics')
+      const afterAllocate = native.__TEST__.getByteArrayMetrics() as Record<string, number>
+      expect(afterAllocate.totalAllocations).toBeGreaterThanOrEqual(1)
+      expect(afterAllocate.activeBuffers).toBeGreaterThanOrEqual(1)
+
+      native.__TEST__.freeTestByteArray(pointer)
+      const afterFree = native.__TEST__.getByteArrayMetrics() as Record<string, number>
+      expect(afterFree.totalFrees).toBeGreaterThanOrEqual(1)
+      expect(afterFree.activeBuffers).toBe(0)
+
+      native.__TEST__.freeTestByteArray(pointer)
+      const afterDoubleFree = native.__TEST__.getByteArrayMetrics() as Record<string, number>
+      expect(afterDoubleFree.doubleFreePreventions).toBeGreaterThanOrEqual(1)
+    })
   })
 }

@@ -44,7 +44,7 @@ To provide first-class Bun developer ergonomics we will reimplement the native b
 Supporting modules:
 
 - `bruke/src/pending.zig` needs the hardening from #1526 to be thread-safe.
-- `bruke/src/byte_array.zig` still awaits telemetry/guardrails (`zig-buf-02`).
+- `bruke/src/byte_array.zig` now emits telemetry counters and guardrails (`zig-buf-02` ✅).
 - TypeScript loader (`src/internal/core-bridge/native.ts`) now routes telemetry and logging through Zig; cancellation fallback handling remains under review.
 - Client bridge code now lives in `bruke/src/client/` with dedicated modules for connect, describe, workflow RPCs, and a lightweight aggregator `client/mod.zig` so teams can work in parallel without editing a monolith.
 
