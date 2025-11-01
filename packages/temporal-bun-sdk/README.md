@@ -1,107 +1,133 @@
 # `@proompteng/temporal-bun-sdk`
 
-A Bun-first starter kit for running Temporal workers that mirrors our existing Go-based setup (namespace `default`, task queue `prix`, gRPC port `7233`) while providing typed helpers for connection, workflow, and activity registration.
-<!-- TODO(codex, zig-pack-03): Expand Zig toolchain prerequisites section and link install script. -->
+A Bun-first Temporal SDK that ships a Zig-backed bridge, Bun-native client/worker wrappers, and a CLI for scaffolding Temporal projects without Node.js runtime dependencies.
 
-## Features
-- Zod-backed environment parsing (`loadTemporalConfig`) with sane defaults and TLS loading.
-- Factories for Temporal connections, workflow clients, and workers.
-- Configurable data conversion module (`createDataConverter`) with JSON defaults and codec hooks.
-- Example workflows/activities plus an executable `temporal-bun-worker` binary.
-- Project scaffolding CLI (`temporal-bun init`) with Docker packaging helpers.
-- Deterministic replay helper (`runReplayHistory`) and CLI workflow validator (`temporal-bun replay`).
-- Generated projects rely on the Temporal CLI dev server helper instead of Docker Compose.
-- Detailed FFI implementation blueprint in [`docs/ffi-surface.md`](./docs/ffi-surface.md) to guide future native bridge work.
-- Zig migration roadmap in [`docs/zig-bridge-migration-plan.md`](./docs/zig-bridge-migration-plan.md) documenting the phased replacement of the former Rust bridge.
+## Highlights
+- Zod-backed environment parser (`loadTemporalConfig`) with TLS, API key, and identity defaults that match our Go workers.
+- Bun-native factories for Temporal connections, workflow clients, and workers that talk to Temporal Core through the Zig bridge.
+- Pluggable data conversion (`createDataConverter`) with JSON defaults and codec hooks for custom payload handling.
+- CLI utilities (`temporal-bun`) for scaffolding apps, packaging Docker images, replaying histories, and checking cluster connectivity.
+- Prebuilt Zig bridge artefacts for macOS (arm64) and Linux (x64/arm64) included in the published tarball so most contributors never invoke `zig build`.
+- Deterministic replay helper (`runReplayHistory`) and workflow runtime abstractions designed for Bun’s module graph.
 
-## Documentation
+## Prerequisites
+- **Bun ≥ 1.1.20** – required for the Bun-native runtime, worker bootstrapping, and CLI commands.
+- **Zig 0.15.1** – only needed when rebuilding the bridge locally (`bun run build:native:zig`). The published package includes precompiled libraries for Linux arm64/x64 and macOS arm64.
+- **Temporal CLI ≥ 1.4** – optional, but recommended for the quickstart and demo workflow.
+- **`protoc` ≥ 28** (macOS: `brew install protobuf`, Debian/Ubuntu: `apt install protobuf-compiler libprotobuf-dev`) so the SDK’s generated bindings stay reproducible.
 
-- [`docs/design-e2e.md`](./docs/design-e2e.md) – product and architecture overview.
-- [`docs/ffi-surface.md`](./docs/ffi-surface.md) – native bridge blueprint.
-- [`docs/ts-core-bridge.md`](./docs/ts-core-bridge.md) – TypeScript core bridge implementation.
-- [`docs/client-runtime.md`](./docs/client-runtime.md) – Bun Temporal client rewrite.
-- [`docs/worker-runtime.md`](./docs/worker-runtime.md) – worker orchestration plan.
-- [`docs/workflow-runtime.md`](./docs/workflow-runtime.md) – deterministic workflow runtime strategy.
-- [`docs/payloads-codec.md`](./docs/payloads-codec.md) – payload encoding & data conversion.
-- [`docs/testing-plan.md`](./docs/testing-plan.md) – validation matrix.
-- [`docs/migration-phases.md`](./docs/migration-phases.md) – phased rollout checklist.
-- [`docs/zig-bridge-scaffold-checklist.md`](./docs/zig-bridge-scaffold-checklist.md) – bite-sized TODOs for the Zig bridge rollout.
-- [`docs/zig-production-readiness.md`](./docs/zig-production-readiness.md) – formalities required before making Zig the default bridge.
-- [`docs/zig-module-map.md`](./docs/zig-module-map.md) – current Zig module ownership map for parallel development.
+Intel macOS and Windows hosts are not yet supported by the prebuilt Zig artefacts. Use a Linux arm64/x64 or macOS arm64 environment (local or containerised) when running the worker.
 
-## Installation
+## Quickstart
+1. **Install dependencies and fetch bridge artefacts**
+   ```bash
+   bun install
+   bun run libs:download
+   ```
+
+2. **Configure Temporal access**
+   Create an `.env` (or export variables in your shell) with the connection details. `loadTemporalConfig` reads these at runtime:
+   ```env
+   TEMPORAL_ADDRESS=temporal.example.com:7233
+   TEMPORAL_NAMESPACE=default
+   TEMPORAL_API_KEY=temporal-cloud-api-key-123
+   TEMPORAL_TLS_CA_PATH=certs/cloud-ca.pem
+   TEMPORAL_TLS_CERT_PATH=certs/worker.crt        # optional – only for mTLS
+   TEMPORAL_TLS_KEY_PATH=certs/worker.key         # optional – only for mTLS
+   TEMPORAL_TLS_SERVER_NAME=temporal.example.com  # optional – SNI override
+   TEMPORAL_TASK_QUEUE=prix
+   TEMPORAL_BUN_SDK_USE_ZIG=1
+   ```
+
+   > Need to run against a local Temporal CLI dev server? Omit the TLS variables and set `TEMPORAL_ADDRESS=127.0.0.1:7233`. Set `TEMPORAL_ALLOW_INSECURE=1` when testing against self-signed certificates.
+
+3. **Build the SDK once**
+   ```bash
+   bun run build
+   ```
+
+4. **Run the Bun-native worker**
+   ```bash
+   # optional: start the Temporal CLI dev server in another terminal
+   bun scripts/start-temporal-cli.ts
+
+   # run the Bun worker backed by the Zig bridge
+   TEMPORAL_BUN_SDK_USE_ZIG=1 bun run start:worker
+   ```
+
+5. **Interact with your namespace using the CLI**
+   ```bash
+   # Check connectivity and TLS/API key wiring
+   TEMPORAL_BUN_SDK_USE_ZIG=1 temporal-bun check --namespace "$TEMPORAL_NAMESPACE"
+
+   # Scaffold a fresh worker project (outputs into ./hello-worker)
+   temporal-bun init hello-worker
+   ```
+
+The CLI and worker automatically load the prepackaged Zig libraries. Setting `TEMPORAL_BUN_SDK_USE_ZIG=1` ensures the Bun-native bridge is mandatory; unset it only when opting into the vendor fallback described in the troubleshooting guide.
+
+## Guides & References
+- [Migration guide](./docs/migration-guide.md) – move from the hybrid `@temporalio/*` packages to the Bun SDK.
+- [Troubleshooting & FAQ](./docs/troubleshooting.md) – bridge loading, TLS, API keys, CI environments, and vendor fallback.
+- [TypeScript core bridge](./docs/ts-core-bridge.md) – Bun ↔ Zig FFI design.
+- [Migration phases](./docs/migration-phases.md) – phased rollout checklist with status.
+- [Worker runtime](./docs/worker-runtime.md) – architecture for Bun-native polling, activities, and shutdown.
+- [Workflow runtime](./docs/workflow-runtime.md) – deterministic execution and replay mechanics.
+- [Design overview](./docs/design-e2e.md) – full-stack architecture and testing strategy.
+
+## Packaging & Release Tasks
+The package’s `prepack` hook downloads the Temporal static libraries, bundles the Zig artefacts, and compiles TypeScript output so `pnpm pack` always produces a ready-to-publish tarball.
 
 ```bash
-pnpm install
+pnpm --filter @proompteng/temporal-bun-sdk run build
+pnpm pack --filter @proompteng/temporal-bun-sdk
 
-# Download pre-built static libraries (automatic during build)
-# No manual setup required — `bun run libs:download` pulls the latest release into `.temporal-libs-cache`
-# (Linux arm64/x64 and macOS arm64 artifacts only; Intel macOS hosts must consume the published binaries.)
-
-# Build the Zig bridge (downloads pre-built libraries automatically)
-pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
-pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:bundle
-pnpm --filter @proompteng/temporal-bun-sdk run package:native:zig
-# Optional: build a Debug variant of the Zig bridge for local investigation
-# pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:debug
+tar tf @proompteng-temporal-bun-sdk-*.tgz | sed 's/^/• /'
 ```
 
-**No Rust toolchain installation is required.** The build process automatically downloads pre-built static libraries from GitHub releases, eliminating the need for local Rust compilation.
+Expect to see:
+- `package/dist/**` – compiled TypeScript output.
+- `package/dist/native/{darwin,linux}/{arm64,x64}/libtemporal_bun_bridge_zig.*` – prebuilt Zig libraries.
+- `package/README.md` – this guide.
 
+Set `TEMPORAL_BUN_SDK_TARGETS=linux-arm64,linux-x64` when running on hosts without the macOS SDK; the packaging scripts will restrict the Zig build to the requested targets. CI should run with the default (all targets) so both macOS and Linux artefacts ship.
 
-
-The bundling script cross-compiles ReleaseFast builds for `darwin` and `linux` (arm64 and x64), staging
-them under `bruke/zig-out/lib/<platform>/<arch>/`. The packaging helper then
-copies those artifacts into `dist/native/<platform>/<arch>/` so `pnpm pack --filter
-@proompteng/temporal-bun-sdk` ships prebuilt Zig libraries alongside the TypeScript output. Running
-`pnpm pack` or the publish workflow automatically executes both steps via the package `prepack` hook.
-
-> **Note:** Windows/MSVC builds remain on the roadmap (`zig-pack-03`). Until platform-compatible Zig artefacts are ready, Windows hosts are not yet supported. Intel macOS is also out of scope; the static-library workflow publishes macOS arm64 archives only.
-
-> **Tip:** For deterministic builds, stay on `sdk-typescript@v1.13.1` and the referenced `sdk-core` commit `de674173c664d42f85d0dee1ff3b2ac47e36d545`. Both are wired into this workspace’s vendor clones and match the Temporal 1.13 line as of October 20 2025.
-
-Ensure `protoc` ≥ 28 is installed (`brew install protobuf` on macOS, `apt install protobuf-compiler` on Debian/Ubuntu).
-On Debian/Ubuntu, also install `libprotobuf-dev` so the well-known types referenced by Temporal's Rust crates are available to `protoc`.
-
-Build and test the package:
+The `scripts/package-zig-artifacts.ts` helper copies staged artefacts from `bruke/zig-out/lib/<platform>/<arch>` into `dist/native`. When building on a new platform, run:
 
 ```bash
-pnpm --filter @proompteng/temporal-bun-sdk build
-pnpm --filter @proompteng/temporal-bun-sdk test
+bun run build:native:zig        # ReleaseFast build
+bun run build:native:zig:bundle # Stage artefacts under bruke/zig-out/lib
+bun run package:native:zig      # Copy into dist/native
 ```
 
-Packaged Zig bridge artifacts load automatically when present. Set `TEMPORAL_BUN_SDK_USE_ZIG=1` to assert Zig usage. Disabling the flag (`TEMPORAL_BUN_SDK_USE_ZIG=0`) is no longer supported because the Rust bridge has been removed.
-
-## Usage
+## Usage Example
 
 ```ts
 import { createTemporalClient, createDefaultDataConverter } from '@proompteng/temporal-bun-sdk'
 
 const dataConverter = createDefaultDataConverter()
-const { client } = await createTemporalClient({ dataConverter })
+const { client } = await createTemporalClient({
+  address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
+  namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
+  identityPrefix: 'temporal-bun-example',
+  dataConverter,
+  apiKey: process.env.TEMPORAL_API_KEY,
+  tls: undefined, // loadTemporalConfig() populates TLS automatically when env vars are set
+})
 
-const start = await client.workflow.start({
+const handle = await client.workflow.start({
   workflowId: 'helloTemporal-001',
   workflowType: 'helloTemporal',
   taskQueue: 'prix',
   args: ['Proompteng'],
 })
-console.log('Workflow execution started', start.runId)
 
-const handle = start.handle
 await client.workflow.signal(handle, 'complete', { ok: true })
-
 const result = await client.workflow.query(handle, 'currentState')
 console.log('Current state', result)
-
-// Use client.dataConverter when constructing workers so payload semantics stay aligned.
 ```
 
-> Note: Payload metadata is tunnelled through the Zig bridge as JSON. Custom codecs must be deterministic, and should expect additional envelope fields. See [`docs/payloads-codec.md`](./docs/payloads-codec.md) for details.
-
-### Deterministic Replay
-
-Programmatically validate recorded histories with the shared workflow runtime:
+For deterministic replay, reuse the same converter:
 
 ```ts
 import { runReplayHistory } from '@proompteng/temporal-bun-sdk/workflow/runtime'
@@ -114,100 +140,19 @@ await runReplayHistory({
   namespace: 'default',
   taskQueue: 'replay-task-queue',
   history,
+  dataConverter,
 })
 ```
 
-Set `TEMPORAL_BUN_SDK_USE_ZIG=1` so the Zig bridge exposes replay bindings. Pass `dataConverter` to reuse custom codecs during replay.
-
-Start the bundled worker (after building):
-
-```bash
-pnpm --filter @proompteng/temporal-bun-sdk run start:worker
-```
-
-## CLI
-
-The package ships a CLI for project scaffolding and container packaging.
+## CLI Reference
 
 ```bash
 temporal-bun init my-worker
 cd my-worker
 bun install
-bun run dev          # runs the worker locally
-bun run docker:build # builds Docker image via Bun script
+TEMPORAL_BUN_SDK_USE_ZIG=1 bun run dev           # runs the worker locally against TEMPORAL_ADDRESS
+bun run docker:build --tag my-worker:latest      # builds a Docker image using Bun
+TEMPORAL_BUN_SDK_USE_ZIG=1 temporal-bun check --namespace default
 ```
 
-Verify connectivity to your Temporal cluster using the Bun-native bridge:
-
-```bash
-temporal-bun check --namespace default
-```
-
-To build an image from the current directory without scaffolding:
-
-```bash
-temporal-bun docker-build --tag my-worker:latest
-```
-
-Replay recorded histories (requires `TEMPORAL_BUN_SDK_USE_ZIG=1` to load the Zig bridge):
-
-```bash
-TEMPORAL_BUN_SDK_USE_ZIG=1 temporal-bun replay tests/fixtures/histories/simple-workflow.json \
-  --workflows-path tests/fixtures/workflows/simple.workflow.ts \
-  --converter ./my-custom-converter.ts
-```
-
-The command accepts individual files or directories and surfaces nondeterminism failures. Use `--converter` to supply a module exporting a custom `DataConverter` so replay uses the same codecs as live workers.
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TEMPORAL_ADDRESS` | `${TEMPORAL_HOST}:${TEMPORAL_GRPC_PORT}` | Direct address override (e.g. `temporal.example.com:7233`). |
-| `TEMPORAL_HOST` | `127.0.0.1` | Hostname used when `TEMPORAL_ADDRESS` is unset. |
-| `TEMPORAL_GRPC_PORT` | `7233` | Temporal gRPC port. |
-| `TEMPORAL_NAMESPACE` | `default` | Namespace passed to the workflow client. |
-| `TEMPORAL_TASK_QUEUE` | `prix` | Worker task queue. |
-| `TEMPORAL_API_KEY` | _unset_ | Injected into connection metadata for Cloud/API auth. |
-| `TEMPORAL_TLS_CA_PATH` | _unset_ | Path to trusted CA bundle. |
-| `TEMPORAL_TLS_CERT_PATH` / `TEMPORAL_TLS_KEY_PATH` | _unset_ | Paths to mTLS client certificate & key (require both). |
-| `TEMPORAL_TLS_SERVER_NAME` | _unset_ | Overrides TLS server name. |
-| `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS` | `false` | Accepts `1/true/on` to disable TLS verification (sets `NODE_TLS_REJECT_UNAUTHORIZED=0`). |
-| `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (appends host + PID). |
-
-These align with the existing Temporal setup (`services/prix/worker/main.go`, `packages/atelier/src/create-default-namespace.ts`) so Bun workers can drop into current environments without additional configuration.
-
-## Local Temporal Dev Server
-
-Install the [Temporal CLI](https://github.com/temporalio/cli) (v1.0 or newer), then start the embedded dev server via the bundled helper script (set `TEMPORAL_CLI_PATH=/full/path/to/temporal` if it isn’t on `PATH`):
-
-```bash
-# from repo root
-pnpm --filter @proompteng/temporal-bun-sdk run temporal:start
-```
-
-This starts `temporal server start-dev` in the background, writes the PID to `.temporal-cli.pid`, and tails logs to `.temporal-cli.log`.
-
-With the server running on `127.0.0.1:7233`, execute the native integration suite:
-
-```bash
-cd packages/temporal-bun-sdk
-TEMPORAL_TEST_SERVER=1 bun test tests/native.integration.test.ts
-```
-
-Shut the server down with:
-
-```bash
-pnpm --filter @proompteng/temporal-bun-sdk run temporal:stop
-```
-
-## Scripts
-
-| Script | Description |
-|--------|-------------|
-| `pnpm --filter @proompteng/temporal-bun-sdk dev` | Watch `src/bin/start-worker.ts` with Bun. |
-| `pnpm --filter @proompteng/temporal-bun-sdk build` | Type-check and emit to `dist/`. |
-| `pnpm --filter @proompteng/temporal-bun-sdk test` | Run Bun tests under `tests/`. |
-| `pnpm --filter @proompteng/temporal-bun-sdk run test:coverage` | Run tests with Bun coverage output under `.coverage/`. |
-| `pnpm --filter @proompteng/temporal-bun-sdk run start:worker` | Launch the compiled worker. |
-| `pnpm --filter @proompteng/temporal-bun-sdk run build:native` | Build the Bun ↔ Temporal native bridge. |
+`temporal-bun replay` validates recorded histories and surfaces nondeterminism failures. Provide `--converter` to ensure custom codecs run during replay.

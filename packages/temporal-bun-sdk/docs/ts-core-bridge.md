@@ -1,9 +1,9 @@
 # TypeScript Core Bridge Guide
 
 **Status Snapshot (1 Nov 2025)**  
-- ✅ `src/internal/core-bridge/native.ts` dynamically loads `libtemporal_bun_bridge_zig` via `bun:ffi` and exposes strongly typed helpers for runtime/client/worker handles.  
+- ✅ `src/internal/core-bridge/native.ts` dynamically loads `libtemporal_bun_bridge_zig` via `bun:ffi` and exposes strongly typed helpers for runtime/client handles.  
 - ✅ `src/core-bridge/runtime.ts` and `src/core-bridge/client.ts` wrap the native handles with ergonomic classes, including `FinalizationRegistry` cleanup and TLS serialization.  
-- ⚠️ `src/core-bridge/index.ts` exports the native helpers plus the runtime/client wrappers, but the worker export still re-exports `@temporalio/worker` until the Bun-native worker ships.  
+- ✅ `src/core-bridge/index.ts` intentionally exports only `native`, `runtime`, and `client`; worker orchestration now lives in `src/worker/runtime.ts` behind the Zig bridge with a documented vendor fallback.  
 - ⚠️ Telemetry configuration and logger installation throw `NativeBridgeError` because the Zig bridge reports `UNIMPLEMENTED`.  
 - ⚠️ Header updates share the new Zig metadata path; expand regression coverage, but cancellation now routes through the Zig bridge and returns structured codes.  
 
@@ -83,15 +83,9 @@ A `FinalizationRegistry` ensures unattended clients still release resources, but
 
 ---
 
-## 5. Worker Wrapper (Future Work)
+## 5. Worker Integration
 
-`core-bridge` deliberately does **not** expose a worker class yet. When the Zig worker RPCs are ready:
-
-1. Add `worker.ts` under `src/core-bridge/` implementing `createWorker`, `run`, and `shutdown` by delegating to the Zig exports (`native.createWorker`, `native.worker.pollWorkflowTask`, etc.).  
-2. Update `index.ts` to export the new worker helpers.  
-3. Remove the re-export of `@temporalio/worker` from `src/worker/index.ts` and `src/worker.ts`.
-
-Coordinate with `docs/worker-runtime.md` and the Zig FFI plan to avoid divergence.
+The worker lifecycle is implemented separately in `src/worker/runtime.ts` so that higher-level APIs can gate Bun-native worker startup behind feature flags (`TEMPORAL_BUN_SDK_USE_ZIG=1`) and preserve an escape hatch to the vendor (`@temporalio/worker`) fallback. Keep the `core-bridge` barrel focused on generic FFI primitives; worker wrappers should import from `internal/core-bridge/native.ts` directly until we stabilise the surface.
 
 ---
 
@@ -112,7 +106,7 @@ When adding new FFI calls, extend the test suite with mocks to ensure argument s
 
 1. Add client cancellation regression tests in `core-bridge/client.test.ts` to guard the new Zig path.  
 2. Surface telemetry/logger configuration once the native bridge supports it; update docs and add unit tests.  
-3. Introduce a worker wrapper and migrate the rest of the SDK away from `@temporalio/worker`.  
+3. Expand coverage for metadata/header updates and TLS serialization (negative cases).  
 4. Evaluate moving common error-handling utilities into a shared helper (`src/internal/core-bridge/error.ts`) if the surface grows further.
 
 Track progress in `docs/parallel-implementation-plan.md` (lanes 1, 4, 5, and 7).

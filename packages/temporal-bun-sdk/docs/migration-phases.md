@@ -15,7 +15,7 @@
 
 ---
 
-## Phase 1 — Client Parity (In Progress)
+## Phase 1 — Client Parity (Complete ✅)
 
 ```mermaid
 flowchart LR
@@ -29,16 +29,16 @@ flowchart LR
 - ✅ Implemented: start, signal, signal-with-start, query, describe namespace, terminate, and cancel (via Zig bridge).  
 - ✅ `src/client.ts` now uses the Bun-native bridge; no dependency on `@temporalio/client`.  
 - ✅ Integration tests (`tests/native.integration.test.ts`, `tests/zig-signal.test.ts`) cover the happy paths, including cancellation.  
-- ⚠️ Outstanding: document header update behaviour and surface CLI examples.  
+- ✅ README/docs explain header updates, TLS/API key configuration, and CLI usage.  
 - ⚠️ Outstanding: optional telemetry/logger passthroughs once Zig runtime hooks exist.  
 - ⚠️ Outstanding: payload converter/codec modularisation.
 
-**Deliverables:**
+**Deliverables:**  
 - Passing client tests and integration suites.  
-- README/docs call out remaining gaps (telemetry/logger, header update rollout artefacts).  
+- README/docs highlight cancellation support, header updates, telemetry/logger gaps, and TLS/API key handling.  
 - Example project relies on Bun client for workflow start/query/cancel.  
 
-**Target exit:** After docs/README highlight cancellation support, header update guidance, and telemetry/logger follow-ups (ETA Nov 2025).
+**Exit:** Locked 1 Nov 2025 with documentation and example updates merged.  
 
 ---
 
@@ -47,7 +47,7 @@ flowchart LR
 - FFI layer now implements worker poll/complete/heartbeat/shutdown (initiate + finalize); follow-up work tracks activity draining telemetry and metrics.  
 - Continue hardening the Bun-native worker runtime loops (see `docs/worker-runtime.md`).  
 - Introduce workflow runtime sandbox (coordinated with Phase 3).  
-- Replace `@temporalio/worker` dependency once parity achieved.  
+- Default to the Bun-native worker while preserving the vendor (`@temporalio/worker`) fallback for unsupported hosts.  
 - Ensure CLI worker runs against Temporal CLI server using Zig bridge.
 
 **Milestones:**
