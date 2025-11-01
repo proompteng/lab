@@ -3,7 +3,21 @@ kind: Kustomization
 resources:
   - ../../base
   - secrets.yaml
+  - facteur-serviceaccount.yaml
+  - facteur-workflow-serviceaccount.yaml
+  - facteur-workflows-clusterrolebinding.yaml
+  - facteur-config.yaml
+  - facteur-kafka-sasl-secret.yaml
+  - facteur-service.yaml
+  - facteur-internal-service.yaml
+  - facteur-redis.yaml
+  - facteur-codex-kafkasource.yaml
+  - facteur-commands-kafkasource.yaml
+  - facteur-workflowtemplate.yaml
   - facteur-vector-cluster.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/facteur
+    newTag: 6e5ddc13

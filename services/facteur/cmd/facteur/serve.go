@@ -14,6 +14,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/proompteng/lab/services/facteur/internal/codex"
 	"github.com/proompteng/lab/services/facteur/internal/config"
 	"github.com/proompteng/lab/services/facteur/internal/knowledge"
 	"github.com/proompteng/lab/services/facteur/internal/orchestrator"
@@ -148,6 +149,10 @@ func NewServeCommand() *cobra.Command {
 				Store:         sessionStore,
 				CodexStore:    knowledgeStore,
 				CodexPlanner:  plannerOpts,
+				CodexDispatch: codex.DispatchConfig{
+					PlanningEnabled:  cfg.CodexDispatch.PlanningEnabled,
+					PayloadOverrides: cloneStringMap(cfg.CodexDispatch.PayloadOverrides),
+				},
 			})
 			if err != nil {
 				return fmt.Errorf("init server: %w", err)
@@ -196,4 +201,15 @@ func openPostgres(ctx context.Context, dsn string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return map[string]string{}
+	}
+	cloned := make(map[string]string, len(input))
+	for k, v := range input {
+		cloned[k] = v
+	}
+	return cloned
 }

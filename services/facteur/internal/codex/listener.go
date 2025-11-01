@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/proompteng/lab/services/facteur/internal/bridge"
 	"github.com/proompteng/lab/services/facteur/internal/githubpb"
 )
 
@@ -27,18 +28,25 @@ type Logger interface {
 
 // Listener consumes structured Codex tasks and emits human-friendly logs.
 type Listener struct {
-	reader MessageReader
-	logger Logger
+	reader      MessageReader
+	logger      Logger
+	dispatcher  bridge.Dispatcher
+	dispatchCfg DispatchConfig
 }
 
 // NewListener constructs a Listener from the provided reader and logger.
-func NewListener(reader MessageReader, logger Logger) *Listener {
+func NewListener(reader MessageReader, logger Logger, dispatcher bridge.Dispatcher, cfg DispatchConfig) *Listener {
 	if logger == nil {
 		logger = log.Default()
 	}
 	return &Listener{
-		reader: reader,
-		logger: logger,
+		reader:     reader,
+		logger:     logger,
+		dispatcher: dispatcher,
+		dispatchCfg: DispatchConfig{
+			PlanningEnabled:  cfg.PlanningEnabled,
+			PayloadOverrides: cloneOverrides(cfg.PayloadOverrides),
+		},
 	}
 }
 
@@ -86,6 +94,33 @@ func (l *Listener) Run(ctx context.Context) error {
 				task.GetIssueNumber(),
 				string(payload),
 			)
+		}
+
+		if task.GetStage() == githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
+			if !l.dispatchCfg.PlanningEnabled {
+				l.logger.Printf(
+					"codex listener: planning dispatch disabled key=%s repo=%s issue=%d",
+					string(msg.Key),
+					task.GetRepository(),
+					task.GetIssueNumber(),
+				)
+			} else if l.dispatcher == nil {
+				l.logger.Printf(
+					"codex listener: dispatcher unavailable key=%s repo=%s issue=%d",
+					string(msg.Key),
+					task.GetRepository(),
+					task.GetIssueNumber(),
+				)
+			} else {
+				if _, dispatchErr := DispatchPlanning(ctx, l.dispatcher, &task, l.dispatchCfg.PayloadOverrides); dispatchErr != nil {
+					return fmt.Errorf("dispatch planning task: %w", dispatchErr)
+				}
+				l.logger.Printf(
+					"codex listener: workflow submitted repo=%s issue=%d",
+					task.GetRepository(),
+					task.GetIssueNumber(),
+				)
+			}
 		}
 
 		if commitErr := l.reader.CommitMessages(ctx, msg); commitErr != nil {

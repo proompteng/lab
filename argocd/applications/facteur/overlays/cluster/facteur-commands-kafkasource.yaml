@@ -1,25 +1,29 @@
 apiVersion: sources.knative.dev/v1
 kind: KafkaSource
 metadata:
-  name: facteur-codex-tasks
+  name: facteur-commands
   namespace: facteur
 spec:
   bootstrapServers:
     - kafka-kafka-bootstrap.kafka:9092
   topics:
-    - github.issues.codex.tasks
-  consumerGroup: facteur-codex-listener
+    - discord.commands.incoming
+  consumerGroup: facteur-consumer
   initialOffset: earliest
   net:
     sasl:
       enable: true
+      type:
+        secretKeyRef:
+          name: facteur-kafka-sasl
+          key: saslType
       user:
         secretKeyRef:
-          name: facteur-kafka
+          name: facteur-kafka-sasl
           key: username
       password:
         secretKeyRef:
-          name: facteur-kafka
+          name: facteur
           key: password
   sink:
     ref:
@@ -27,4 +31,4 @@ spec:
       kind: Service
       name: facteur-internal
       namespace: facteur
-    uri: /codex/tasks
+    uri: /events

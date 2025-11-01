@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
+import { PLAN_COMMENT_MARKER } from '../../codex'
 import { runCli } from './lib/cli'
 import { pushCodexEventsToLoki, runCodexSession } from './lib/codex-runner'
 import {
@@ -36,6 +37,24 @@ const dedent = (value: string) => {
   return lines.map((line) => (line.startsWith(' '.repeat(minIndent)) ? line.slice(minIndent) : line)).join('\n')
 }
 
+const planTemplateLines = [
+  PLAN_COMMENT_MARKER,
+  '### Objective',
+  '### Context & Constraints',
+  '### Task Breakdown',
+  '### Deliverables',
+  '### Validation & Observability',
+  '### Risks & Contingencies',
+  '### Communication & Handoff',
+  '### Ready Checklist',
+  '- [ ] Dependencies clarified (feature flags, secrets, linked services)',
+  '- [ ] Test and validation environments are accessible',
+  '- [ ] Required approvals/reviewers identified',
+  '- [ ] Rollback or mitigation steps documented',
+]
+
+const planTemplateBlock = ['Plan template (copy verbatim):', planTemplateLines.join('\n')].join('\n')
+
 const buildPrompt = ({
   basePrompt,
   issueRepo,
@@ -54,32 +73,34 @@ const buildPrompt = ({
   const trimmedBase = dedent(basePrompt).trim()
   const shouldPost = postToGitHub && !!issueRepo && !!issueNumber
 
+  const commonGuidance = [
+    'Execution notes:',
+    '- Use the plan template below verbatim; keep bullets concise with file paths, commands, and owners when relevant.',
+    '- Echo the final plan to stdout when finished and exit 0.',
+    '- Do not invent scope beyond the stated constraints.',
+    `- Ensure the first line of the output remains ${PLAN_COMMENT_MARKER} so automation can locate the plan comment.`,
+    '',
+  ]
+
   if (shouldPost) {
     const addon = [
-      'Execution notes (do not restate plan requirements above):',
+      ...commonGuidance,
       `- Work from the existing checkout at ${worktree}, already aligned with origin/${baseBranch}.`,
       '- After generating the plan, write it to PLAN.md and keep the file in place for automation.',
       '- Echo PLAN.md to stdout when finished.',
       '- Do not post to GitHub manually; automation handles comment publication.',
       '- If PLAN.md is missing or empty, exit non-zero.',
+      '',
+      planTemplateBlock,
     ].join('\n')
     return `${trimmedBase}\n\n${addon}`
   }
 
   const addon = [
-    'Execution notes:',
-    '- Produce a concise Markdown plan using the template below.',
-    '- Sections must appear in this order: Summary, Steps, Validation, Risks, Handoff Notes.',
-    '- Keep each section brief and action-focused so humans can follow quickly.',
-    '- Echo the final plan to stdout when finished and exit 0.',
-    '- Use Markdown headings and bullet points where appropriate.',
+    ...commonGuidance,
+    '- Use Markdown headings exactly as provided in the template.',
     '',
-    'Plan template (copy verbatim):',
-    '### Summary',
-    '### Steps',
-    '### Validation',
-    '### Risks',
-    '### Handoff Notes',
+    planTemplateBlock,
   ].join('\n')
 
   return `${trimmedBase}\n\n${addon}`

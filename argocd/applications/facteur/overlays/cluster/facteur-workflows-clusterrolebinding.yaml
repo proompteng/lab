@@ -7,9 +7,9 @@ roleRef:
   kind: ClusterRole
   name: argo-workflows-edit
 subjects:
-- kind: ServiceAccount
-  name: facteur
-  namespace: facteur
-- kind: ServiceAccount
-  name: facteur-workflow
-  namespace: argo-workflows
+  - kind: ServiceAccount
+    name: facteur
+    namespace: facteur
+  - kind: ServiceAccount
+    name: facteur-workflow
+    namespace: argo-workflows

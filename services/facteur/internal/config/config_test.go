@@ -50,6 +50,10 @@ codex_listener:
     - kafka:9092
   topic: github.issues.codex.tasks
   group_id: facteur-codex
+codex_dispatch:
+  planning_enabled: true
+  payload_overrides:
+    postToGithub: "true"
 `)
 		require.NoError(t, os.WriteFile(path, data, 0o600))
 
@@ -80,6 +84,8 @@ codex_listener:
 		require.Equal(t, []string{"kafka:9092"}, cfg.Codex.Brokers)
 		require.Equal(t, "github.issues.codex.tasks", cfg.Codex.Topic)
 		require.Equal(t, "facteur-codex", cfg.Codex.GroupID)
+		require.True(t, cfg.CodexDispatch.PlanningEnabled)
+		require.Equal(t, map[string]string{"postToGithub": "true"}, cfg.CodexDispatch.PayloadOverrides)
 	})
 
 	t.Run("env overrides file", func(t *testing.T) {
@@ -113,6 +119,9 @@ argo:
 		require.False(t, cfg.Codex.Enabled)
 		require.True(t, cfg.Planner.Enabled)
 		require.Equal(t, "env-planning", cfg.Planner.WorkflowTemplate)
+		require.False(t, cfg.CodexDispatch.PlanningEnabled)
+		require.NotNil(t, cfg.CodexDispatch.PayloadOverrides)
+		require.Empty(t, cfg.CodexDispatch.PayloadOverrides)
 	})
 
 	t.Run("missing required fields", func(t *testing.T) {
@@ -152,6 +161,25 @@ redis:
 		require.False(t, cfg.Planner.Enabled)
 		require.NotNil(t, cfg.Planner.Parameters)
 		require.Empty(t, cfg.Planner.Parameters)
+		require.False(t, cfg.CodexDispatch.PlanningEnabled)
+		require.NotNil(t, cfg.CodexDispatch.PayloadOverrides)
+		require.Empty(t, cfg.CodexDispatch.PayloadOverrides)
+	})
+
+	t.Run("env override preserves key casing", func(t *testing.T) {
+		t.Setenv("FACTEUR_DISCORD_BOT_TOKEN", "token")
+		t.Setenv("FACTEUR_DISCORD_APPLICATION_ID", "app")
+		t.Setenv("FACTEUR_REDIS_URL", "redis://localhost:6379/1")
+		t.Setenv("FACTEUR_ARGO_NAMESPACE", "argo-workflows")
+		t.Setenv("FACTEUR_ARGO_WORKFLOW_TEMPLATE", "template")
+		t.Setenv("FACTEUR_POSTGRES_DSN", "postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable")
+		t.Setenv("FACTEUR_CODEX_DISPATCH_PAYLOAD_OVERRIDES__postToGithub", "true")
+
+		cfg, err := config.LoadWithOptions(config.Options{EnvPrefix: "FACTEUR"})
+		require.NoError(t, err)
+		require.Equal(t, "true", cfg.CodexDispatch.PayloadOverrides["postToGithub"])
+		_, lowerExists := cfg.CodexDispatch.PayloadOverrides["posttogithub"]
+		require.False(t, lowerExists)
 	})
 
 	t.Run("validates codex listener when enabled", func(t *testing.T) {

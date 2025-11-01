@@ -83,9 +83,14 @@ let processOnSpy: ReturnType<typeof vi.spyOn>
 let processOnceSpy: ReturnType<typeof vi.spyOn>
 
 describe('telemetry', () => {
+  const globalContext = globalThis as typeof globalThis & {
+    __froussardTelemetryState?: unknown
+  }
+
   beforeEach(() => {
     vi.resetModules()
     resetEnv()
+    delete globalContext.__froussardTelemetryState
     nodeSdkCtorMock.mockClear()
     nodeSdkStartMock.mockClear()
     nodeSdkShutdownMock.mockClear()
@@ -103,6 +108,7 @@ describe('telemetry', () => {
     processOnSpy.mockRestore()
     processOnceSpy.mockRestore()
     resetEnv()
+    delete globalContext.__froussardTelemetryState
   })
 
   it('initialises NodeSDK with provided LGTM endpoints and resource metadata', async () => {
