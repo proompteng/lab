@@ -57,7 +57,7 @@ const sleep = async (durationMs: number) =>
     setTimeout(resolve, durationMs)
   })
 
-const ensurePullRequestExists = async (repository: string, headBranch: string, logger: CodexLogger) => {
+export const ensurePullRequestExists = async (repository: string, headBranch: string, logger: CodexLogger) => {
   if (process.env.CODEX_SKIP_PR_CHECK === '1') {
     logger.debug('Skipping pull request verification (CODEX_SKIP_PR_CHECK=1)')
     return
@@ -70,43 +70,48 @@ const ensurePullRequestExists = async (repository: string, headBranch: string, l
   const owner = repository.includes('/') ? (repository.split('/')[0] ?? '') : ''
   const headSelector = headBranch.includes(':') || !owner ? headBranch : `${owner}:${headBranch}`
 
-  const maxAttempts = Math.max(1, Number.parseInt(process.env.CODEX_PR_CHECK_ATTEMPTS ?? '4', 10))
-  const retryDelayMs = Math.max(0, Number.parseInt(process.env.CODEX_PR_CHECK_RETRY_MS ?? '2000', 10))
+  const maxAttempts = Math.max(1, Number.parseInt(process.env.CODEX_PR_CHECK_ATTEMPTS ?? '8', 10))
+  const retryDelayMs = Math.max(0, Number.parseInt(process.env.CODEX_PR_CHECK_RETRY_MS ?? '5000', 10))
+
+  const selectors = Array.from(new Set([headSelector, headBranch].filter((value) => Boolean(value)) as string[]))
 
   let lastError: Error | undefined
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const prResult = await runCommand('gh', [
-      'pr',
-      'list',
-      '--repo',
-      repository,
-      '--state',
-      'all',
-      '--head',
-      headSelector,
-      '--json',
-      'number,url,state',
-      '--limit',
-      '1',
-    ])
+    for (const selector of selectors) {
+      logger.debug('Verifying pull request existence', { repository, head: selector, attempt })
+      const prResult = await runCommand('gh', [
+        'pr',
+        'list',
+        '--repo',
+        repository,
+        '--state',
+        'all',
+        '--head',
+        selector,
+        '--json',
+        'number,url,state',
+        '--limit',
+        '1',
+      ])
 
-    if (prResult.exitCode === 0) {
-      try {
-        const parsed = JSON.parse(prResult.stdout || '[]')
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          logger.debug('Found pull request for branch', { repository, headBranch, attempt })
-          return
+      if (prResult.exitCode === 0) {
+        try {
+          const parsed = JSON.parse(prResult.stdout || '[]')
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            logger.debug('Found pull request for branch', { repository, head: selector, attempt })
+            return
+          }
+          lastError = new Error(`No pull request found for branch '${selector}' in ${repository}`)
+        } catch (error) {
+          lastError = new Error(
+            `Failed to parse gh pr list output: ${error instanceof Error ? error.message : String(error)}`,
+          )
         }
-        lastError = new Error(`No pull request found for branch '${headBranch}' in ${repository}`)
-      } catch (error) {
-        lastError = new Error(
-          `Failed to parse gh pr list output: ${error instanceof Error ? error.message : String(error)}`,
-        )
+      } else {
+        const message = prResult.stderr.trim() || prResult.stdout.trim()
+        lastError = new Error(`Failed to verify pull request for ${repository}#${selector}: ${message}`)
       }
-    } else {
-      const message = prResult.stderr.trim() || prResult.stdout.trim()
-      lastError = new Error(`Failed to verify pull request for ${repository}#${headBranch}: ${message}`)
     }
 
     if (attempt < maxAttempts) {
