@@ -42,6 +42,18 @@ ansible-playbook -i inventory/hosts.ini playbooks/install_tailscale.yml
 ansible-playbook -i inventory/hosts.ini playbooks/start_enable_tailscale.yml
 ```
 
+If you need to fan the run out across all Kubernetes masters and workers at once (30 parallel forks), while passing an auth key from the shell and relaxing host-key checks for newly rebuilt nodes:
+
+```bash
+ANSIBLE_CONFIG=ansible/ansible.cfg \
+  TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY}" \
+  ansible-playbook -i ansible/inventory/hosts.ini -u kalmyk -b \
+    ansible/playbooks/start_enable_tailscale.yml \
+    -l 'kube_masters:kube_workers' -f 30 \
+    --ssh-extra-args '-o StrictHostKeyChecking=accept-new' \
+    --ask-vault-pass
+```
+
 ### Supplying the Ansible Vault password
 
 - Prompt each run:
