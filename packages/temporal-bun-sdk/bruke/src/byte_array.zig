@@ -169,8 +169,49 @@ pub const MetricsSnapshot = struct {
     activeBuffers: usize = 0,
 };
 
+const GuardInfo = struct {
+    source: Source,
+    tracked: bool,
+};
+
+const FreedCache = struct {
+    map: std.AutoHashMap(usize, GuardInfo),
+
+    fn init() FreedCache {
+        return .{ .map = std.AutoHashMap(usize, GuardInfo).init(std.heap.c_allocator) };
+    }
+
+    fn add(self: *FreedCache, address: usize, info: GuardInfo, capacity: usize) void {
+        if (self.map.count() >= capacity) {
+            var it = self.map.iterator();
+            if (it.next()) |entry| {
+                _ = self.map.remove(entry.key_ptr.*);
+            }
+        }
+        self.map.put(address, info) catch {};
+    }
+
+    fn remove(self: *FreedCache, address: usize) void {
+        _ = self.map.remove(address);
+    }
+
+    fn lookup(self: *FreedCache, address: usize) ?GuardInfo {
+        if (self.map.get(address)) |info| {
+            return info;
+        }
+        return null;
+    }
+
+    fn clear(self: *FreedCache) void {
+        self.map.clearRetainingCapacity();
+    }
+};
+
+const freed_cache_capacity = 1024;
+
 const GuardEntry = struct {
     source: Source,
+    tracked: bool,
     freed: bool,
 };
 
@@ -178,12 +219,18 @@ const GuardRegistry = struct {
     mutex: std.Thread.Mutex = .{},
     map: std.AutoHashMap(usize, GuardEntry),
     available: bool = true,
+    freed_cache: FreedCache = FreedCache.init(),
 
     fn init() GuardRegistry {
-        return .{ .mutex = .{}, .map = std.AutoHashMap(usize, GuardEntry).init(std.heap.c_allocator), .available = true };
+        return .{
+            .mutex = .{},
+            .map = std.AutoHashMap(usize, GuardEntry).init(std.heap.c_allocator),
+            .available = true,
+            .freed_cache = FreedCache.init(),
+        };
     }
 
-    fn register(self: *GuardRegistry, ptr: *ByteArray, source: Source) void {
+    fn register(self: *GuardRegistry, ptr: *ByteArray, source: Source, tracked: bool) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -193,22 +240,25 @@ const GuardRegistry = struct {
 
         const address = @intFromPtr(ptr);
         if (self.map.getPtr(address)) |entry| {
-            entry.* = .{ .source = source, .freed = false };
+            entry.* = .{ .source = source, .tracked = tracked, .freed = false };
             return;
         }
 
-        self.map.put(address, .{ .source = source, .freed = false }) catch {
+        self.map.put(address, .{ .source = source, .tracked = tracked, .freed = false }) catch {
             self.available = false;
             self.map.clearRetainingCapacity();
             std.log.err("temporal-bun-bridge-zig: guard registry allocation failed; double-free protection disabled", .{});
+            return;
         };
+
+        self.freed_cache.remove(address);
     }
 
     const GuardStatus = union(enum) {
         disabled,
         not_found,
-        double_free: Source,
-        ok: Source,
+        double_free: GuardInfo,
+        ok: GuardInfo,
     };
 
     fn flagFreed(self: *GuardRegistry, ptr: *ByteArray) GuardStatus {
@@ -221,12 +271,16 @@ const GuardRegistry = struct {
 
         const address = @intFromPtr(ptr);
         if (self.map.getPtr(address)) |entry| {
-            const source = entry.source;
+            const info = GuardInfo{ .source = entry.source, .tracked = entry.tracked };
             if (entry.freed) {
-                return .{ .double_free = source };
+                return .{ .double_free = info };
             }
             entry.freed = true;
-            return .{ .ok = source };
+            return .{ .ok = info };
+        }
+
+        if (self.freed_cache.lookup(address)) |info| {
+            return .{ .double_free = info };
         }
 
         return .not_found;
@@ -237,6 +291,22 @@ const GuardRegistry = struct {
         defer self.mutex.unlock();
         self.available = true;
         self.map.clearRetainingCapacity();
+        self.freed_cache.clear();
+    }
+
+    fn unregister(self: *GuardRegistry, ptr: *ByteArray, info: GuardInfo) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (!self.available) {
+            return;
+        }
+
+        const address = @intFromPtr(ptr);
+        _ = self.map.remove(address);
+        if (info.tracked) {
+            self.freed_cache.add(address, info, freed_cache_capacity);
+        }
     }
 };
 
@@ -538,15 +608,6 @@ fn emitDoubleFree(source: Source, value: u64) void {
     }
 }
 
-fn emitActive(value: usize) void {
-    if (acquireTelemetryHandles()) |handles| {
-        defer releaseTelemetryHandles(handles);
-        if (handles.active_metric) |metric| {
-            core.metricRecordInteger(metric, value, null);
-        }
-    }
-}
-
 fn configureTelemetryInternal(core_runtime: ?*core.RuntimeOpaque, telemetry_enabled: bool) void {
     telemetry_mutex.lock();
     defer telemetry_mutex.unlock();
@@ -621,7 +682,7 @@ fn emitSnapshotWithHandles(handles: *TelemetryHandles, snapshot: MetricsSnapshot
         emitDoubleFreeWithHandles(handles, .temporal_core, snapshot.coreDoubleFreePreventions);
     }
 
-    emitActiveWithHandles(handles, snapshot.activeBuffers);
+    _ = snapshot.activeBuffers;
 }
 
 fn emitAllocationWithHandles(handles: *TelemetryHandles, source: Source, value: u64) void {
@@ -658,12 +719,6 @@ fn emitDoubleFreeWithHandles(handles: *TelemetryHandles, source: Source, value: 
         if (handles.double_free_attrs[@intFromEnum(source)]) |attrs| {
             core.metricRecordInteger(metric, value, attrs);
         }
-    }
-}
-
-fn emitActiveWithHandles(handles: *TelemetryHandles, value: usize) void {
-    if (handles.active_metric) |metric| {
-        core.metricRecordInteger(metric, value, null);
     }
 }
 
@@ -738,9 +793,8 @@ fn decrementActive() ?usize {
 
 fn recordAllocationSuccess(source: Source) void {
     _ = metrics_state.allocations[@intFromEnum(source)].fetchAdd(1, .release);
-    const active_value = incrementActive();
     emitAllocation(source, 1);
-    emitActive(active_value);
+    _ = incrementActive();
 }
 
 fn recordAllocationFailure(source: Source, reason: FailureReason) void {
@@ -750,11 +804,7 @@ fn recordAllocationFailure(source: Source, reason: FailureReason) void {
 
 fn recordFreeSuccess(source: Source) void {
     _ = metrics_state.frees[@intFromEnum(source)].fetchAdd(1, .release);
-    if (decrementActive()) |value| {
-        emitActive(value);
-    } else {
-        emitActive(0);
-    }
+    _ = decrementActive();
     emitFree(source, 1);
 }
 
@@ -789,10 +839,66 @@ const Ownership = union(enum) {
 const ManagedByteArray = struct {
     header: ByteArray,
     ownership: Ownership,
+    tracked: bool,
 };
 
 fn toManaged(array: *ByteArray) *ManagedByteArray {
     return @fieldParentPtr("header", array);
+}
+
+fn allocateSliceInternal(bytes: []const u8, tracked: bool) ?*ByteArray {
+    const alloc = allocator();
+    const container = alloc.create(ManagedByteArray) catch |err| {
+        recordAllocationFailure(.slice, .container);
+        errors.setLastErrorFmt(
+            "temporal-bun-bridge-zig: failed to allocate byte array container: {}",
+            .{err},
+        );
+        return null;
+    };
+
+    if (bytes.len == 0) {
+        container.* = .{
+            .header = .{
+                .data = null,
+                .size = 0,
+                .cap = 0,
+                .disable_free = false,
+            },
+            .ownership = .duplicated,
+            .tracked = tracked,
+        };
+    } else {
+        const copy = alloc.alloc(u8, bytes.len) catch |err| {
+            alloc.destroy(container);
+            recordAllocationFailure(.slice, .buffer);
+            errors.setLastErrorFmt(
+                "temporal-bun-bridge-zig: failed to allocate byte array: {}",
+                .{err},
+            );
+            return null;
+        };
+        @memcpy(copy, bytes);
+
+        container.* = .{
+            .header = .{
+                .data = copy.ptr,
+                .size = bytes.len,
+                .cap = bytes.len,
+                .disable_free = false,
+            },
+            .ownership = .duplicated,
+            .tracked = tracked,
+        };
+    }
+
+    guard_registry.register(&container.header, .slice, tracked);
+    if (tracked) {
+        recordAllocationSuccess(.slice);
+    }
+
+    errors.setLastError(""[0..0]);
+    return &container.header;
 }
 
 pub fn allocate(source: AllocationSource) ?*ByteArray {
@@ -810,38 +916,8 @@ pub fn allocate(source: AllocationSource) ?*ByteArray {
 
     switch (source) {
         .slice => |bytes| {
-            if (bytes.len == 0) {
-                container.* = .{
-                    .header = .{
-                        .data = null,
-                        .size = 0,
-                        .cap = 0,
-                        .disable_free = false,
-                    },
-                    .ownership = .duplicated,
-                };
-            } else {
-                const copy = alloc.alloc(u8, bytes.len) catch |err| {
-                    alloc.destroy(container);
-                    recordAllocationFailure(classified, .buffer);
-                    errors.setLastErrorFmt(
-                        "temporal-bun-bridge-zig: failed to allocate byte array: {}",
-                        .{err},
-                    );
-                    return null;
-                };
-                @memcpy(copy, bytes);
-
-                container.* = .{
-                    .header = .{
-                        .data = copy.ptr,
-                        .size = bytes.len,
-                        .cap = bytes.len,
-                        .disable_free = false,
-                    },
-                    .ownership = .duplicated,
-                };
-            }
+            alloc.destroy(container);
+            return allocateSliceInternal(bytes, true);
         },
         .adopt_core => |adoption| {
             const buf = adoption.byte_buf;
@@ -861,11 +937,12 @@ pub fn allocate(source: AllocationSource) ?*ByteArray {
                     .byte_buf = buf,
                     .destroy = adoption.destroy,
                 } },
+                .tracked = true,
             };
         },
     }
 
-    guard_registry.register(&container.header, classified);
+    guard_registry.register(&container.header, classified, true);
     recordAllocationSuccess(classified);
 
     errors.setLastError(""[0..0]);
@@ -884,21 +961,29 @@ pub fn free(array: ?*ByteArray) void {
             freeWithoutGuard(handle);
         },
         .not_found => {
-        std.log.warn(
-            "temporal-bun-bridge-zig: byte array free invoked on untracked buffer (ptr=0x{x})",
-            .{@intFromPtr(handle)},
-        );
-        recordDoubleFree(.slice);
-        },
-        .double_free => |source| {
-            recordDoubleFree(source);
             std.log.warn(
-                "temporal-bun-bridge-zig: double free prevented for byte array (ptr=0x{x}, source={s})",
-                .{ @intFromPtr(handle), sourceLabel(source) },
+                "temporal-bun-bridge-zig: byte array free invoked on untracked buffer (ptr=0x{x})",
+                .{@intFromPtr(handle)},
             );
+            recordDoubleFree(.slice);
         },
-        .ok => |source| {
-            freeManaged(handle, source);
+        .double_free => |info| {
+            if (info.tracked) {
+                recordDoubleFree(info.source);
+                std.log.warn(
+                    "temporal-bun-bridge-zig: double free prevented for byte array (ptr=0x{x}, source={s})",
+                    .{ @intFromPtr(handle), sourceLabel(info.source) },
+                );
+            } else {
+                std.log.warn(
+                    "temporal-bun-bridge-zig: double free prevented for untracked byte array (ptr=0x{x})",
+                    .{@intFromPtr(handle)},
+                );
+            }
+        },
+        .ok => |info| {
+            freeManaged(handle, info.source);
+            guard_registry.unregister(handle, info);
         },
     }
 }
@@ -928,7 +1013,9 @@ fn freeManaged(handle: *ByteArray, source: Source) void {
         },
     }
 
-    recordFreeSuccess(source);
+    if (managed.tracked) {
+        recordFreeSuccess(source);
+    }
 
     alloc.destroy(managed);
 }
@@ -953,11 +1040,10 @@ pub fn metricsSnapshotJson() ?*ByteArray {
         return null;
     };
     defer alloc.free(json_bytes);
-    return allocate(.{ .slice = json_bytes });
+    return allocateSliceInternal(json_bytes, false);
 }
 
 pub fn resetMetricsForTest() void {
-    if (!builtin.is_test) return;
     metrics_state.reset();
     guard_registry.reset();
     const alloc = allocator();
@@ -1151,6 +1237,18 @@ test "double free detection increments metrics and logs" {
     try testing.expectEqual(@as(u64, 1), snapshot.doubleFreePreventions);
 }
 
+test "guard registry removes entries after successful free" {
+    resetMetricsForTest();
+    guard_registry.reset();
+    defer guard_registry.reset();
+
+    const array = allocate(.{ .slice = "registry" }) orelse return error.OutOfMemory;
+    try testing.expectEqual(@as(usize, 1), guard_registry.map.count());
+
+    free(array);
+    try testing.expectEqual(@as(usize, 0), guard_registry.map.count());
+}
+
 test "metrics snapshot json encodes counters" {
     resetMetricsForTest();
     const array = allocate(.{ .slice = "json" }) orelse return error.OutOfMemory;
@@ -1161,4 +1259,13 @@ test "metrics snapshot json encodes counters" {
     const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, slice, .{});
     defer parsed.deinit();
     try testing.expect(parsed.value == .object);
+}
+
+test "metrics snapshot json does not mutate counters" {
+    resetMetricsForTest();
+    const before = metricsSnapshot();
+    const json_ptr = metricsSnapshotJson() orelse return error.OutOfMemory;
+    defer free(json_ptr);
+    const after = metricsSnapshot();
+    try expectMetricsEqual(after, before);
 }

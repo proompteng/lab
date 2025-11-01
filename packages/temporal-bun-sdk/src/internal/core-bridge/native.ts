@@ -756,13 +756,9 @@ export const native = {
     getByteArrayMetrics(): Record<string, unknown> {
       const bufferPtr = Number(temporal_bun_runtime_test_get_byte_array_metrics())
       if (!bufferPtr) return {}
-      try {
-        const bytes = readByteArray(bufferPtr)
-        const json = utf8Decoder.decode(bytes)
-        return JSON.parse(json) as Record<string, unknown>
-      } finally {
-        temporal_bun_byte_array_free(bufferPtr as unknown as Pointer)
-      }
+      const bytes = readByteArray(bufferPtr)
+      const json = utf8Decoder.decode(bytes)
+      return JSON.parse(json) as Record<string, unknown>
     },
     resetByteArrayMetrics(): void {
       temporal_bun_runtime_test_reset_byte_array_metrics()
