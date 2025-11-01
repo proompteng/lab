@@ -325,6 +325,7 @@ const TelemetryHandles = struct {
     double_free_metric: ?*core.Metric,
     double_free_attrs: [source_count]?*core.MetricAttributes,
     active_metric: ?*core.Metric,
+    active_attrs: ?*core.MetricAttributes,
 
     fn init() TelemetryHandles {
         return .{
@@ -340,6 +341,7 @@ const TelemetryHandles = struct {
             .double_free_metric = null,
             .double_free_attrs = [_]?*core.MetricAttributes{null} ** source_count,
             .active_metric = null,
+            .active_attrs = null,
         };
     }
 
@@ -408,6 +410,9 @@ fn freeTelemetryHandles(handles: *TelemetryHandles) void {
     if (handles.active_metric) |metric| {
         core.metricFree(metric);
     }
+    if (handles.active_attrs) |attrs| {
+        core.metricAttributesFree(attrs);
+    }
 
     inline for (handles.allocation_attrs) |maybe_attr| {
         if (maybe_attr) |attrs| {
@@ -446,6 +451,7 @@ fn createTelemetryHandles(runtime_ptr: *core.RuntimeOpaque) !*TelemetryHandles {
     const alloc = std.heap.c_allocator;
     var handles = try alloc.create(TelemetryHandles);
     handles.* = TelemetryHandles.init();
+    errdefer freeTelemetryHandles(handles);
 
     const meter = core.metricMeterNew(runtime_ptr) orelse return error.MeterUnavailable;
     handles.meter = meter;
@@ -544,6 +550,8 @@ fn configureMetricActive(handles: *TelemetryHandles, meter: *core.MetricMeter) !
         .kind = core.metric_kind_gauge_integer,
     };
     handles.active_metric = core.metricNew(meter, &options) orelse return error.MetricUnavailable;
+    const attrs = [_]core.MetricAttribute{metricAttributeForString("state", "current")};
+    handles.active_attrs = core.metricAttributesNew(meter, &attrs) orelse return error.AttributeUnavailable;
 }
 
 fn sourceLabel(source: Source) []const u8 {
@@ -635,8 +643,8 @@ fn configureTelemetryInternal(core_runtime: ?*core.RuntimeOpaque, telemetry_enab
     const snapshot_after = metrics_state.snapshot();
     emitDeltaSnapshot(handles, snapshot_before, snapshot_after);
 
-    handles.active.store(true, .release);
     telemetry_handles.store(handles, .release);
+    handles.active.store(true, .release);
 }
 
 fn emitInitialSnapshot(handles: *TelemetryHandles, snapshot: MetricsSnapshot) void {
@@ -681,8 +689,6 @@ fn emitSnapshotWithHandles(handles: *TelemetryHandles, snapshot: MetricsSnapshot
     if (snapshot.coreDoubleFreePreventions > 0) {
         emitDoubleFreeWithHandles(handles, .temporal_core, snapshot.coreDoubleFreePreventions);
     }
-
-    _ = snapshot.activeBuffers;
 }
 
 fn emitAllocationWithHandles(handles: *TelemetryHandles, source: Source, value: u64) void {
@@ -719,6 +725,19 @@ fn emitDoubleFreeWithHandles(handles: *TelemetryHandles, source: Source, value: 
         if (handles.double_free_attrs[@intFromEnum(source)]) |attrs| {
             core.metricRecordInteger(metric, value, attrs);
         }
+    }
+}
+
+fn emitActiveSample(value: usize) void {
+    if (acquireTelemetryHandles()) |handles| {
+        defer releaseTelemetryHandles(handles);
+        emitActiveWithHandles(handles, value);
+    }
+}
+
+fn emitActiveWithHandles(handles: *TelemetryHandles, value: usize) void {
+    if (handles.active_metric) |metric| {
+        core.metricRecordInteger(metric, value, handles.active_attrs);
     }
 }
 
@@ -793,8 +812,9 @@ fn decrementActive() ?usize {
 
 fn recordAllocationSuccess(source: Source) void {
     _ = metrics_state.allocations[@intFromEnum(source)].fetchAdd(1, .release);
+    const active_value = incrementActive();
     emitAllocation(source, 1);
-    _ = incrementActive();
+    emitActiveSample(active_value);
 }
 
 fn recordAllocationFailure(source: Source, reason: FailureReason) void {
@@ -804,8 +824,9 @@ fn recordAllocationFailure(source: Source, reason: FailureReason) void {
 
 fn recordFreeSuccess(source: Source) void {
     _ = metrics_state.frees[@intFromEnum(source)].fetchAdd(1, .release);
-    _ = decrementActive();
+    const active_value = decrementActive() orelse 0;
     emitFree(source, 1);
+    emitActiveSample(active_value);
 }
 
 fn recordDoubleFree(source: Source) void {
