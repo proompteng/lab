@@ -44,8 +44,9 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 
 ### Tooling & Distribution
 - ✅ `scripts/download-temporal-libs.ts` downloads pinned Temporal core static libs, enabling reproducible Zig builds.
-- ✅ `pnpm run build:native:zig` compiles `libtemporal_bun_bridge_zig` for macOS/Linux and `package:native:zig` stages artifacts under `dist/native/<platform>/<arch>/` (source in `bruke/`).
-- ✅ `prepack` hook builds TypeScript, fetches native libs, compiles Zig, and packages artifacts automatically.
+- ✅ `pnpm run build:native:zig` compiles `libtemporal_bun_bridge_zig` for macOS/Linux and `package:native:zig` stages artifacts under `dist/native/<platform>/<arch>/` (source in `bruke/`).  
+- ✅ `prepack` hook builds TypeScript, fetches native libs, compiles Zig, and packages artifacts automatically.  
+- ✅ `.github/workflows/temporal-static-libraries.yml` publishes prebuilt Temporal core archives for Linux (arm64/x64) and macOS arm64; `scripts/download-temporal-libs.ts` hydrates `.temporal-libs-cache` before builds (Intel macOS is intentionally out of scope).
 - ✅ `tests/native.integration.test.ts`, `tests/end-to-end-workflow.test.ts`, and `tests/zig-signal.test.ts` exercise the bridge against the Temporal CLI dev server.
 - ✅ `tests/worker.runtime.workflow.test.ts`, `tests/worker/worker-runtime-*.test.ts`, and `tests/worker/zig-poll-workflow.test.ts` cover workflow and activity loops via the Bun runtime.
 - ⚠️ `zig build test` executes stubbed unit tests only; coverage for worker telemetry remains TODO.

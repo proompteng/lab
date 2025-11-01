@@ -39,7 +39,7 @@ To provide first-class Bun developer ergonomics we will reimplement the native b
 | Client RPCs | `temporal_bun_client_describe_namespace_async`, `temporal_bun_client_start_workflow`, `temporal_bun_client_signal*`, `temporal_bun_client_query_workflow`, `temporal_bun_client_terminate_workflow`, `temporal_bun_client_update_headers` | Describe, start, signal-with-start, signal, query, terminate, cancel, and header updates implemented (`zig-wf-06` closed). |
 | Error Surface | `temporal_bun_error_message`, `temporal_bun_error_free` | Functional; mirrors the Rust bridge behaviour. |
 | Worker | `temporal_bun_worker_*` suite | Creation ships behind `TEMPORAL_BUN_SDK_USE_ZIG=1`; polling, completion, heartbeats, and shutdown (initiate + finalize) now implemented (`zig-worker-02`…`zig-worker-09` complete). |
-| Packaging | `build.zig` + scripts | `zig-pack-01` linking to Temporal static libs is not implemented; bridge builds without real core symbols. |
+| Packaging | `build.zig` + scripts | Prebuilt static archives are published via `.github/workflows/temporal-static-libraries.yml`; `build.zig` links against the cached artifacts fetched by `scripts/download-temporal-libs.ts` (`zig-pack-01`/`02` ✅). |
 
 Supporting modules:
 
@@ -47,6 +47,8 @@ Supporting modules:
 - `bruke/src/byte_array.zig` now emits telemetry counters and guardrails (`zig-buf-02` ✅).
 - TypeScript loader (`src/internal/core-bridge/native.ts`) now routes telemetry and logging through Zig; cancellation fallback handling removed in favour of the Zig implementation.
 - Client bridge code now lives in `bruke/src/client/` with dedicated modules for connect, describe, workflow RPCs, and a lightweight aggregator `client/mod.zig` so teams can work in parallel without editing a monolith.
+
+Packaging note: the static archive workflow intentionally targets Linux (arm64/x64) and macOS arm64 only. Intel macOS builds are out of scope; developers on those machines must consume the published artifacts rather than compiling locally.
 
 ---
 

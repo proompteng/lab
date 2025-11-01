@@ -21,7 +21,7 @@ Ship `@proompteng/temporal-bun-sdk` to npm so Bun developers can:
 
 ### 2.1 Core Native Bridge
 
-- Complete `zig-pack-01` / `zig-pack-02` so `zig build` links against the vendored Temporal static archives and stages per-target shared objects in `zig-out/lib/<platform>/<arch>/`.  
+- Complete `zig-pack-01` / `zig-pack-02` so `zig build` links against the vendored Temporal static archives and stages per-target shared objects in `zig-out/lib/<platform>/<arch>/`. `.github/workflows/temporal-static-libraries.yml` now publishes Linux (arm64/x64) and macOS arm64 archives; Intel macOS remains unsupported.  
 - Harden the pending-handle concurrency model (merge PR #1526) before wiring additional async APIs.  
 - Implement all runtime/client/worker TODOs (`zig-rt-*`, `zig-cl-*`, `zig-wf-*`, `zig-worker-*`) by calling the Temporal core C-ABI.  
 - Keep the bridge crash-safe: null checks, deterministic errors via `temporal_bun_error_message`, and structured telemetry/logging callbacks.

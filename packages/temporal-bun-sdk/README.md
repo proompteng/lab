@@ -34,7 +34,8 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 pnpm install
 
 # Download pre-built static libraries (automatic during build)
-# No manual setup required - libraries are downloaded from GitHub releases
+# No manual setup required — `bun run libs:download` pulls the latest release into `.temporal-libs-cache`
+# (Linux arm64/x64 and macOS arm64 artifacts only; Intel macOS hosts must consume the published binaries.)
 
 # Build the Zig bridge (downloads pre-built libraries automatically)
 pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
@@ -54,7 +55,7 @@ copies those artifacts into `dist/native/<platform>/<arch>/` so `pnpm pack --fil
 @proompteng/temporal-bun-sdk` ships prebuilt Zig libraries alongside the TypeScript output. Running
 `pnpm pack` or the publish workflow automatically executes both steps via the package `prepack` hook.
 
-> **Note:** Windows/MSVC builds remain on the roadmap (`zig-pack-03`). Until platform-compatible Zig artefacts are ready, Windows hosts are not yet supported.
+> **Note:** Windows/MSVC builds remain on the roadmap (`zig-pack-03`). Until platform-compatible Zig artefacts are ready, Windows hosts are not yet supported. Intel macOS is also out of scope; the static-library workflow publishes macOS arm64 archives only.
 
 > **Tip:** For deterministic builds, stay on `sdk-typescript@v1.13.1` and the referenced `sdk-core` commit `de674173c664d42f85d0dee1ff3b2ac47e36d545`. Both are wired into this workspace’s vendor clones and match the Temporal 1.13 line as of October 20 2025.
 

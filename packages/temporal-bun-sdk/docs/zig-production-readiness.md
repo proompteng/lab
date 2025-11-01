@@ -18,10 +18,10 @@
 - [ ] Flaky Zig tests, if any, are triaged with documented owners and follow-ups.
 
 ## 3. Packaging & Distribution
-- [ ] `zig-pack-01` links the bridge against vendored Temporal static libraries; `zig-pack-02` copies platform
-  artifacts into `dist/native/<platform>/<arch>/`.
-- [ ] Release automation publishes Zig binaries (macOS arm64/x64, Linux arm64/x64, Windows/MSVC once available) with
-  signatures/provenance.
+- [x] `zig-pack-01` links the bridge against vendored Temporal static libraries; `zig-pack-02` copies platform
+  artifacts into `dist/native/<platform>/<arch>/`. Prebuilt archives ship via `.github/workflows/temporal-static-libraries.yml`
+  and `scripts/download-temporal-libs.ts` pulls them into `.temporal-libs-cache` before each build.
+- [ ] Release automation publishes Zig binaries (macOS arm64, Linux arm64/x64) with signatures/provenance. (Windows/MSVC and Intel macOS remain unsupported.)
 - [ ] README and publish notes explain how SDK consumers opt into/out of the Zig bridge and which platforms are supported.
 
 ## 4. Security & Compliance
