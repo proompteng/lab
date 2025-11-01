@@ -115,6 +115,8 @@ erDiagram
 | `embedding` | VECTOR(1536) | Supports Self-RAG style retrieval of prior lessons.[^self-rag] |
 | `embedding_version` | TEXT | Embedding model/tag for drift tracking. |
 | `metadata` | JSONB | Tokens, scoring, or confidence values. |
+| `updated_at` | TIMESTAMPTZ | Auto-refreshed on every idempotent upsert for freshness tracking. |
+| Constraint | `UNIQUE (task_run_id, reflection_type)` | Guarantees one reflection per run/type pair. |
 | Index | `ivfflat (embedding vector_cosine_ops)` with tuned `lists`; rebuild when growth >4×.[^pgvector-guidelines]
 
 ### `policy_checks`
@@ -145,6 +147,7 @@ erDiagram
 ## Vector Storage Guidance
 - Build IVFFlat indexes on `reflections.embedding` only after ≥10k entries exist to avoid low-recall warnings; prefer `lists = sqrt(n)` as baseline, adjusting per workload benchmarks.[^pgvector-guidelines]
 - Monitor query recall and latency; increase `lists`/`probes` or consider HNSW when accuracy must exceed 95%.[^pgvector-tuning]
+- Allow orchestrators to raise recall ad hoc with `SET LOCAL ivfflat.probes = <n>` inside retrieval transactions; reset to defaults once the query completes.
 - Document operational playbook for index rebuilds when the reflection corpus distribution shifts significantly.[^pgvector-guidelines]
 
 ## Retention & Compliance
