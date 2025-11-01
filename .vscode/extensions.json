@@ -12,6 +12,7 @@
     "yoavbls.pretty-ts-errors",
     "tomrijndorp.find-it-faster",
     "asvetliakov.vscode-neovim",
-    "redhat.vscode-knative"
+    "redhat.vscode-knative",
+    "golang.go"
   ]
 }
