@@ -1,11 +1,11 @@
 # TypeScript Core Bridge Guide
 
-**Status Snapshot (27 Oct 2025)**  
+**Status Snapshot (1 Nov 2025)**  
 - ✅ `src/internal/core-bridge/native.ts` dynamically loads `libtemporal_bun_bridge_zig` via `bun:ffi` and exposes strongly typed helpers for runtime/client/worker handles.  
 - ✅ `src/core-bridge/runtime.ts` and `src/core-bridge/client.ts` wrap the native handles with ergonomic classes, including `FinalizationRegistry` cleanup and TLS serialization.  
 - ⚠️ `src/core-bridge/index.ts` exports the native helpers plus the runtime/client wrappers, but the worker export still re-exports `@temporalio/worker` until the Bun-native worker ships.  
 - ⚠️ Telemetry configuration and logger installation throw `NativeBridgeError` because the Zig bridge reports `UNIMPLEMENTED`.  
-- ⚠️ Header updates and workflow cancellation surface runtime errors (`NativeBridgeError` code `grpc.unimplemented`) since the Zig bridge does not yet support these RPCs.  
+- ⚠️ Header updates share the new Zig metadata path; expand regression coverage, but cancellation now routes through the Zig bridge and returns structured codes.  
 
 Use this guide to understand the current layering and what remains before we can drop the remaining upstream dependencies.
 
@@ -110,7 +110,7 @@ When adding new FFI calls, extend the test suite with mocks to ensure argument s
 
 ## 7. Outstanding Items
 
-1. Implement client cancellation in the Zig bridge, then expose it through the wrapper with regression tests.  
+1. Add client cancellation regression tests in `core-bridge/client.test.ts` to guard the new Zig path.  
 2. Surface telemetry/logger configuration once the native bridge supports it; update docs and add unit tests.  
 3. Introduce a worker wrapper and migrate the rest of the SDK away from `@temporalio/worker`.  
 4. Evaluate moving common error-handling utilities into a shared helper (`src/internal/core-bridge/error.ts`) if the surface grows further.

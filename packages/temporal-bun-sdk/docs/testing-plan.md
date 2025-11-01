@@ -16,7 +16,7 @@ This plan documents the current pyramid and the steps required to reach producti
 | Layer | Purpose | Current Coverage | Gaps |
 |-------|---------|------------------|------|
 | Unit (Bun) | Validate serialization, converter helpers, config, CLI flows, native bridge shims | `tests/client.test.ts`, `tests/client/serialization.test.ts`, `tests/payloads/**/*.test.ts`, `tests/config.test.ts`, `tests/cli*.test.ts`, `tests/core-bridge.test.ts`, `tests/native.test.ts`, `tests/worker/**/*.test.ts` | Replay harness, telemetry validation |
-| Integration (Temporal CLI) | Exercise real Temporal server with Bun client and worker | `tests/native.integration.test.ts`, `tests/end-to-end-workflow.test.ts`, `tests/zig-signal.test.ts`, `tests/download-client.integration.test.ts` | Cancellation RPC still stubbed; graceful drain telemetry pending |
+| Integration (Temporal CLI) | Exercise real Temporal server with Bun client and worker | `tests/native.integration.test.ts`, `tests/end-to-end-workflow.test.ts`, `tests/zig-signal.test.ts`, `tests/download-client.integration.test.ts` | Ensure Temporal CLI available; expand graceful drain telemetry coverage |
 | Zig tests (`zig build test`) | Validate pending-handle state machines, worker scaffolding | `pnpm --filter @proompteng/temporal-bun-sdk run test:native:zig` | Need broader coverage once worker/client features land |
 | Smoke / CLI | Ensure scaffolding commands succeed | `tests/cli.test.ts`, `tests/cli-check.test.ts` | Future: `temporal-bun init` end-to-end run after worker rewrite |
 | Replay | Guarantee deterministic workflow execution | N/A | Requires determinism/replay harness on top of Bun workflow runtime |
@@ -65,7 +65,7 @@ This plan documents the current pyramid and the steps required to reach producti
 
 | Area | Description | Owner / Lane |
 |------|-------------|--------------|
-| Cancellation integration | Add Bun + Zig tests once `temporal_bun_client_cancel_workflow` is implemented. | Lane 5 |
+| Cancellation regression | Keep Bun + Zig tests green and add negative cases (PermissionDenied, NotFound) for cancellation. | Lane 5 |
 | Worker polling loops | Extend `tests/worker/**` to cover graceful drain telemetry, cancellation, and Temporal CLI-backed smoke once cancellation lands. | Lane 7 |
 | Workflow runtime | Determinism/replay harness after workflow sandbox lands; ensure tunneled payloads replay correctly. | Lane 3 |
 | Telemetry/logging | Integration tests for runtime telemetry hooks once Zig exports arrive. | Lane 6 |
@@ -90,7 +90,7 @@ Document outcomes in `docs/parallel-implementation-plan.md` as each lane complet
 1. Run `temporal-bun init` in a clean directory, install dependencies with Bun, start worker via `bun run dev`.  
 2. Use `temporal-bun check` against Temporal CLI dev server and (optionally) Temporal Cloud with TLS/API key.  
 3. Execute `bun test` followed by integration suites with `TEMPORAL_TEST_SERVER=1`.  
-4. Validate the Zig bridge by setting `TEMPORAL_BUN_SDK_USE_ZIG=1`, re-running client workflow tests, and executing the worker suites (`bun test tests/worker`) to confirm polling/completion loops succeed (cancellation remains TODO). See `tests/worker` for individual cases.  
+4. Validate the Zig bridge by setting `TEMPORAL_BUN_SDK_USE_ZIG=1`, re-running client workflow tests, and executing the worker suites (`bun test tests/worker`) to confirm polling/completion loops succeed and cancellation resolves via the Zig bridge. See `tests/worker` for individual cases.  
 5. Inspect `nativeLibraryPath` output from `src/internal/core-bridge/native.ts` when debugging loading issues.
 
 ---
