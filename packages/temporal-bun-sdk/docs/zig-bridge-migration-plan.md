@@ -117,14 +117,24 @@ Bun (bun:ffi) ──▶ Zig Bridge (libtemporal_bun_bridge.zig)
 
 ## 6. Build & Tooling Updates
 
-1. **Zig Toolchain Version** — Standardize on Zig 0.15.1 (matches `services/galette`). Document installation in README.  
+1. **Zig Toolchain Version** — Standardize on Zig 0.15.1 (matches `services/galette`) and follow the install guidance in [`README.md#zig-toolchain`](../README.md#zig-toolchain).  
+   - When bumping Zig, update `.github/workflows/temporal-bun-sdk.yml`, `packages/temporal-bun-sdk/Dockerfile`, and the README section in the same PR so CI, local docs, and our container image stay aligned.  
+   - Re-run `pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig` plus `pnpm exec biome check packages/temporal-bun-sdk/README.md` after the upgrade to confirm local builds pass and docs stay formatted.  
+   - Debian/Ubuntu developers must install `xz-utils` before unpacking official tarballs; macOS users should `brew pin zig` after installing 0.15.1 to avoid automatic upgrades that break parity with CI.
 2. **Package Scripts** — ✅ **COMPLETED** - Replaced `cargo build` scripts with pre-built library downloads:
    ```json
    "build:native": "bun run libs:download && zig build -Doptimize=ReleaseFast --build-file bruke/build.zig"
    ```
-3. **CI Images** — ✅ **COMPLETED** - Removed Rust from Docker images, using only Zig with pre-built libraries.  
-4. **Prebuilt Artifacts** — Use `zig build install` to stage artifacts under `native/artifacts/<platform>/`.  
+3. **CI Images** — ✅ **COMPLETED** - Removed Rust from Docker images, using only Zig with pre-built libraries.
+4. **Prebuilt Artifacts** — Use `zig build install` to stage artifacts under `native/artifacts/<platform>/`.
 5. **NPM Packaging** — Update publish step to copy Zig binaries into `dist/native/<platform>/`.
+
+### Toolchain troubleshooting
+
+- Run `zig version` and `zig env` whenever `build:native:zig` fails; a missing `zig` binary on `PATH` or the wrong version (≠0.15.1) is the most common issue.
+- Verify Temporal libraries downloaded via `bun run scripts/download-temporal-libs.ts` before rebuilding; stale caches surface as linker errors.
+- Windows/MSVC support remains deferred—call it out in release notes and onboarding docs until we publish compatible artifacts.
+- Capture upgrade steps in the issue checklist: update workflow + Dockerfile + README, regenerate release notes, and notify Bun SDK maintainers.
 
 ---
 

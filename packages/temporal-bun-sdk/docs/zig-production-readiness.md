@@ -21,7 +21,7 @@
   artifacts into `dist/native/<platform>/<arch>/`. Prebuilt archives ship via `.github/workflows/temporal-static-libraries.yml`
   and `scripts/download-temporal-libs.ts` pulls them into `.temporal-libs-cache` before each build.
 - [ ] Release automation publishes Zig binaries (macOS arm64, Linux arm64/x64) with signatures/provenance. (Windows/MSVC and Intel macOS remain unsupported.)
-- [ ] README and publish notes explain how SDK consumers opt into/out of the Zig bridge and which platforms are supported.
+- [ ] README and publish notes explain how SDK consumers opt into/out of the Zig bridge and which platforms are supported (`README.md#zig-toolchain` documents the current version and install paths).
 
 ## 4. Security & Compliance
 - [ ] Supply-chain review covers the Zig toolchain, vendored headers, and build scripts.
