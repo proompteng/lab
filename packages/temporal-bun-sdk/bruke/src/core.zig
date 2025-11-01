@@ -38,6 +38,9 @@ pub const ClientHttpConnectProxyOptions = c.TemporalCoreClientHttpConnectProxyOp
 pub const Worker = c.TemporalCoreWorker;
 pub const WorkerOptions = c.TemporalCoreWorkerOptions;
 pub const WorkerOrFail = c.TemporalCoreWorkerOrFail;
+pub const WorkerReplayerOrFail = c.TemporalCoreWorkerReplayerOrFail;
+pub const WorkerReplayPusher = c.TemporalCoreWorkerReplayPusher;
+pub const WorkerReplayPushResult = c.TemporalCoreWorkerReplayPushResult;
 pub const WorkerVersioningStrategy = c.TemporalCoreWorkerVersioningStrategy;
 pub const WorkerVersioningStrategyTag = c.TemporalCoreWorkerVersioningStrategy_Tag;
 pub const WorkerTunerHolder = c.TemporalCoreTunerHolder;
@@ -377,6 +380,36 @@ fn stubWorkerFinalizeShutdown(
     }
 }
 
+fn stubWorkerReplayerNew(
+    _runtime: ?*Runtime,
+    _options: *const WorkerOptions,
+) callconv(.c) WorkerReplayerOrFail {
+    _ = _runtime;
+    _ = _options;
+    return .{
+        .worker = null,
+        .worker_replay_pusher = null,
+        .fail = &fallback_error_array,
+    };
+}
+
+fn stubWorkerReplayPush(
+    _worker: ?*Worker,
+    _pusher: ?*WorkerReplayPusher,
+    _workflow_id: ByteArrayRef,
+    _history: ByteArrayRef,
+) callconv(.c) WorkerReplayPushResult {
+    _ = _worker;
+    _ = _pusher;
+    _ = _workflow_id;
+    _ = _history;
+    return .{ .fail = &fallback_error_array };
+}
+
+fn stubWorkerReplayPusherFree(_pusher: ?*WorkerReplayPusher) callconv(.c) void {
+    _ = _pusher;
+}
+
 pub const Api = struct {
     runtime_new: *const fn (*const RuntimeOptions) callconv(.c) RuntimeOrFail,
     runtime_free: *const fn (?*Runtime) callconv(.c) void,
@@ -394,6 +427,9 @@ pub const Api = struct {
     worker_initiate_shutdown: WorkerInitiateShutdownFn,
     /// Mirrors `temporal_core_worker_finalize_shutdown(worker, user_data, callback)` and reuses `TemporalCoreWorkerCallback`.
     worker_finalize_shutdown: WorkerFinalizeShutdownFn,
+    worker_replayer_new: *const fn (?*Runtime, *const WorkerOptions) callconv(.c) WorkerReplayerOrFail,
+    worker_replay_push: *const fn (?*Worker, ?*WorkerReplayPusher, ByteArrayRef, ByteArrayRef) callconv(.c) WorkerReplayPushResult,
+    worker_replay_pusher_free: *const fn (?*WorkerReplayPusher) callconv(.c) void,
 };
 
 pub const stub_api: Api = .{
@@ -411,6 +447,9 @@ pub const stub_api: Api = .{
     .worker_poll_activity_task = stubWorkerPollActivityTask,
     .worker_initiate_shutdown = stubWorkerInitiateShutdown,
     .worker_finalize_shutdown = stubWorkerFinalizeShutdown,
+    .worker_replayer_new = stubWorkerReplayerNew,
+    .worker_replay_push = stubWorkerReplayPush,
+    .worker_replay_pusher_free = stubWorkerReplayPusherFree,
 };
 
 pub const extern_api: Api = .{
@@ -428,6 +467,9 @@ pub const extern_api: Api = .{
     .worker_poll_activity_task = c.temporal_core_worker_poll_activity_task,
     .worker_initiate_shutdown = c.temporal_core_worker_initiate_shutdown,
     .worker_finalize_shutdown = c.temporal_core_worker_finalize_shutdown,
+    .worker_replayer_new = c.temporal_core_worker_replayer_new,
+    .worker_replay_push = c.temporal_core_worker_replay_push,
+    .worker_replay_pusher_free = c.temporal_core_worker_replay_pusher_free,
 };
 
 pub var api: Api = stub_api;

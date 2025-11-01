@@ -264,6 +264,35 @@ pub export fn temporal_bun_worker_free(handle: ?*worker.WorkerHandle) i32 {
     return worker.destroy(handle);
 }
 
+pub export fn temporal_bun_worker_replayer_new(
+    runtime_ptr: ?*runtime.RuntimeHandle,
+    payload_ptr: ?[*]const u8,
+    len: u64,
+) ?*worker.WorkerReplayHandle {
+    const payload = sliceFrom(payload_ptr, len);
+    return worker.createReplay(runtime_ptr, payload);
+}
+
+pub export fn temporal_bun_worker_replayer_free(handle: ?*worker.WorkerReplayHandle) i32 {
+    return worker.destroyReplay(handle);
+}
+
+pub export fn temporal_bun_worker_replay_push(
+    handle: ?*worker.WorkerReplayHandle,
+    workflow_id_ptr: ?[*]const u8,
+    workflow_id_len: u64,
+    history_ptr: ?[*]const u8,
+    history_len: u64,
+) i32 {
+    const workflow_id = sliceFrom(workflow_id_ptr, workflow_id_len);
+    const history = sliceFrom(history_ptr, history_len);
+    return worker.pushReplayHistory(handle, workflow_id, history);
+}
+
+pub export fn temporal_bun_worker_replay_get_worker(handle: ?*worker.WorkerReplayHandle) ?*worker.WorkerHandle {
+    return worker.replayWorkerHandle(handle);
+}
+
 pub export fn temporal_bun_worker_poll_workflow_task(handle: ?*worker.WorkerHandle) ?*anyopaque {
     if (worker.pollWorkflowTask(handle)) |pending_handle| {
         return @as(?*anyopaque, @ptrCast(pending_handle));

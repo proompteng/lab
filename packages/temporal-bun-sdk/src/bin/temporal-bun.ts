@@ -1,12 +1,16 @@
 #!/usr/bin/env bun
 
 import { existsSync, mkdirSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
+import { pathToFileURL } from 'node:url'
+import type { DataConverter } from '../common/payloads'
 import type { TemporalConfig } from '../config'
 import { loadTemporalConfig } from '../config'
+import { createRuntime as createCoreRuntime } from '../core-bridge/runtime'
 import type { NativeClient } from '../internal/core-bridge/native'
+import { runReplayHistory } from '../workflow/runtime'
 
 type CommandHandler = (args: string[], flags: Record<string, string | boolean>) => Promise<void>
 
@@ -14,6 +18,7 @@ const commands: Record<string, CommandHandler> = {
   init: handleInit,
   check: handleCheck,
   'docker-build': handleDockerBuild,
+  replay: handleReplay,
   help: async () => {
     printHelp()
   },
@@ -168,6 +173,170 @@ const serializeTlsConfig = (tls: NonNullable<TemporalConfig['tls']>) => {
   return serialized
 }
 
+type LoadedHistory = {
+  source: string
+  history: string
+  workflowId?: string
+  runId?: string
+  namespace?: string
+  taskQueue?: string
+}
+
+async function handleReplay(args: string[], flags: Record<string, string | boolean>): Promise<void> {
+  if (process.env.TEMPORAL_BUN_SDK_USE_ZIG !== '1') {
+    throw new Error(
+      'Deterministic replay requires TEMPORAL_BUN_SDK_USE_ZIG=1. Set the environment variable and rebuild the Zig bridge.',
+    )
+  }
+
+  if (args.length === 0) {
+    throw new Error('Provide at least one workflow history file or directory to replay.')
+  }
+
+  const workflowsPathFlag = typeof flags['workflows-path'] === 'string' ? (flags['workflows-path'] as string) : ''
+  if (!workflowsPathFlag) {
+    throw new Error('Replay command requires --workflows-path <path> pointing to compiled workflows.')
+  }
+
+  const workflowsPath = resolve(cwd(), workflowsPathFlag)
+  const namespaceFlag = typeof flags.namespace === 'string' ? (flags.namespace as string) : undefined
+  const taskQueueFlag = typeof flags['task-queue'] === 'string' ? (flags['task-queue'] as string) : undefined
+  const identityFlag = typeof flags.identity === 'string' ? (flags.identity as string) : undefined
+  const converterModule = typeof flags.converter === 'string' ? (flags.converter as string) : undefined
+
+  const histories = await loadReplayHistories(args)
+  if (histories.length === 0) {
+    throw new Error('No workflow history files were discovered under the provided paths.')
+  }
+
+  const dataConverter = converterModule ? await loadReplayDataConverter(converterModule) : undefined
+  const runtime = createCoreRuntime()
+
+  try {
+    for (const history of histories) {
+      const label = history.source
+      console.log(`Replaying history ${label}…`)
+      try {
+        await runReplayHistory({
+          runtime,
+          workflowsPath,
+          dataConverter,
+          namespace: namespaceFlag,
+          taskQueue: taskQueueFlag,
+          identity: identityFlag,
+          history: history.history,
+          workflowId: history.workflowId,
+          runId: history.runId,
+        })
+        console.log(`✔ Replay succeeded for ${label}`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        throw new Error(`Replay failed for ${label}: ${message}`)
+      }
+    }
+    console.log(
+      `Replayed ${histories.length} workflow ${histories.length === 1 ? 'history' : 'histories'} successfully.`,
+    )
+  } finally {
+    await runtime.shutdown()
+  }
+}
+
+const loadReplayDataConverter = async (moduleSpecifier: string): Promise<DataConverter> => {
+  const absolute = resolve(cwd(), moduleSpecifier)
+  const url = pathToFileURL(absolute).href
+  let loaded: unknown
+
+  try {
+    loaded = await import(url)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Failed to load data converter module at ${moduleSpecifier}: ${message}`)
+  }
+
+  const candidate = await resolveDataConverter(loaded)
+  if (!isDataConverter(candidate)) {
+    throw new Error(
+      `Module ${moduleSpecifier} did not export a DataConverter. Export "createDataConverter()", "dataConverter", or a default value.`,
+    )
+  }
+  return candidate
+}
+
+const resolveDataConverter = async (module: unknown): Promise<unknown> => {
+  if (module && typeof module === 'object') {
+    const record = module as Record<string, unknown>
+    if (typeof record.createDataConverter === 'function') {
+      return await record.createDataConverter()
+    }
+    if (record.dataConverter) {
+      return record.dataConverter
+    }
+    if (typeof record.default === 'function') {
+      return await record.default()
+    }
+    if (record.default) {
+      return record.default
+    }
+  }
+  return undefined
+}
+
+const isDataConverter = (value: unknown): value is DataConverter => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const record = value as Record<string, unknown>
+  return 'payloadConverter' in record && 'failureConverter' in record && Array.isArray(record.payloadCodecs)
+}
+
+const loadReplayHistories = async (inputs: string[]): Promise<LoadedHistory[]> => {
+  const histories: LoadedHistory[] = []
+  for (const input of inputs) {
+    const absolute = resolve(cwd(), input)
+    let stats: Awaited<ReturnType<typeof stat>>
+    try {
+      stats = await stat(absolute)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`Unable to access history path "${input}": ${message}`)
+    }
+
+    if (stats.isDirectory()) {
+      const entries = await readdir(absolute)
+      entries.sort()
+      for (const entry of entries) {
+        const fullPath = join(absolute, entry)
+        const entryStats = await stat(fullPath)
+        if (entryStats.isFile() && isHistoryFile(fullPath)) {
+          histories.push(await readHistoryFile(fullPath))
+        }
+      }
+      continue
+    }
+
+    if (stats.isFile()) {
+      histories.push(await readHistoryFile(absolute))
+    }
+  }
+
+  return histories
+}
+
+const readHistoryFile = async (filePath: string): Promise<LoadedHistory> => {
+  const contents = await readFile(filePath, 'utf8')
+  const source = relative(cwd(), filePath) || filePath
+  return {
+    source,
+    history: contents,
+  }
+}
+
+const isHistoryFile = (filePath: string): boolean => {
+  const lower = filePath.toLowerCase()
+  return lower.endsWith('.json') || lower.endsWith('.history')
+}
+
 async function handleInit(args: string[], flags: Record<string, string | boolean>) {
   const target = args[0] ? resolve(cwd(), args[0]) : cwd()
   const projectName = inferPackageName(target)
@@ -227,6 +396,7 @@ Commands:
   init [directory]        Scaffold a new Temporal worker project
   check [namespace]       Verify Temporal connectivity using the native bridge
   docker-build            Build a Docker image for the current project
+  replay <paths...>       Replay workflow histories against compiled workflows
   help                    Show this help message
 
 Options:
@@ -235,6 +405,10 @@ Options:
   --tag <name>            Image tag for docker-build (default: temporal-worker:latest)
   --context <path>        Build context for docker-build (default: .)
   --file <path>           Dockerfile path for docker-build (default: ./Dockerfile)
+  --workflows-path <path> Workflow entry file used when replaying histories (required for replay)
+  --converter <path>      Module exporting a DataConverter for replay (optional)
+  --task-queue <name>     Override task queue associated with replayed histories
+  --identity <value>      Identity reported by the replay worker (default: temporal-bun-replay-<pid>)
 `)
 }
 

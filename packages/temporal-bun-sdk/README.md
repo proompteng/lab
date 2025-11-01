@@ -9,6 +9,7 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 - Configurable data conversion module (`createDataConverter`) with JSON defaults and codec hooks.
 - Example workflows/activities plus an executable `temporal-bun-worker` binary.
 - Project scaffolding CLI (`temporal-bun init`) with Docker packaging helpers.
+- Deterministic replay helper (`runReplayHistory`) and CLI workflow validator (`temporal-bun replay`).
 - Generated projects rely on the Temporal CLI dev server helper instead of Docker Compose.
 - Detailed FFI implementation blueprint in [`docs/ffi-surface.md`](./docs/ffi-surface.md) to guide future native bridge work.
 - Zig migration roadmap in [`docs/zig-bridge-migration-plan.md`](./docs/zig-bridge-migration-plan.md) documenting the phased replacement of the former Rust bridge.
@@ -98,6 +99,26 @@ console.log('Current state', result)
 
 > Note: Payload metadata is tunnelled through the Zig bridge as JSON. Custom codecs must be deterministic, and should expect additional envelope fields. See [`docs/payloads-codec.md`](./docs/payloads-codec.md) for details.
 
+### Deterministic Replay
+
+Programmatically validate recorded histories with the shared workflow runtime:
+
+```ts
+import { runReplayHistory } from '@proompteng/temporal-bun-sdk/workflow/runtime'
+import { readFile } from 'node:fs/promises'
+
+const history = await readFile('histories/simple-workflow.json', 'utf8')
+
+await runReplayHistory({
+  workflowsPath: new URL('./workflows/index.ts', import.meta.url).pathname,
+  namespace: 'default',
+  taskQueue: 'replay-task-queue',
+  history,
+})
+```
+
+Set `TEMPORAL_BUN_SDK_USE_ZIG=1` so the Zig bridge exposes replay bindings. Pass `dataConverter` to reuse custom codecs during replay.
+
 Start the bundled worker (after building):
 
 ```bash
@@ -127,6 +148,16 @@ To build an image from the current directory without scaffolding:
 ```bash
 temporal-bun docker-build --tag my-worker:latest
 ```
+
+Replay recorded histories (requires `TEMPORAL_BUN_SDK_USE_ZIG=1` to load the Zig bridge):
+
+```bash
+TEMPORAL_BUN_SDK_USE_ZIG=1 temporal-bun replay tests/fixtures/histories/simple-workflow.json \
+  --workflows-path tests/fixtures/workflows/simple.workflow.ts \
+  --converter ./my-custom-converter.ts
+```
+
+The command accepts individual files or directories and surfaces nondeterminism failures. Use `--converter` to supply a module exporting a custom `DataConverter` so replay uses the same codecs as live workers.
 
 ## Environment Variables
 

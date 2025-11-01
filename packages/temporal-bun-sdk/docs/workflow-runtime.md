@@ -1,10 +1,10 @@
 # Workflow Runtime Plan
 
-**Status Snapshot (30 Oct 2025)**  
+**Status Snapshot (1 Nov 2025)**  
 - DONE: `WorkflowEngine` and `WorkflowEnvironment` load the shared data converter so workflow activations, signals, queries, and continue-as-new commands reuse the same codec configuration.  
 - DONE: Workflow completions tunnel payload metadata back through the worker runtime to keep compatibility with the Zig bridge.  
-- TODO: Determinism tooling (history replay harness, patch marker coverage, richer interceptor DX) remains in flight.  
-- TODO: Telemetry and replay diagnostics still need to be ported from the upstream TypeScript SDK.
+- DONE: Determinism tooling now ships with the `runReplayHistory` helper and the `temporal-bun replay` CLI, backed by history fixtures and Bun tests.  
+- TODO: Telemetry diagnostics still need to be ported from the upstream TypeScript SDK.
 
 **Goal:** Provide a deterministic workflow execution environment compatible with Temporal's expectations, implemented purely with Bun primitives while matching the behaviour described in the Temporal TypeScript workflow documentation. See the [Temporal workflows overview](https://docs.temporal.io/develop/typescript/workflows).
 
@@ -56,6 +56,7 @@
 | `determinism.ts` | Shims for deterministic random/timer. |
 | `interceptors.ts` | Register and execute interceptor chain. |
 | `encoder.ts` | Convert JS results/errors into completion payloads (now layered on the shared converter). |
+| `runtime/replay.ts` | Deterministic replay harness that streams history events through `WorkflowEngine`. |
 
 ---
 
@@ -92,6 +93,16 @@
 - **Workflow bundling:** For now rely on Bun to execute TS modules directly. Later evaluate bundling to JS for deployable artifacts.
 - **Node compatibility:** Intentionally Bun-only; document this and ensure errors clearly state unsupported platform.
 - **Resource cleanup:** Use `FinalizationRegistry` to dispose workflow environments if worker shuts down mid-execution.
-- **Determinism tooling:** Build history replay harness that consumes tunneled payloads to confirm converter metadata does not break replays.
+- **Determinism tooling:** PATCH markers and richer interceptor DX remain; replay harness is complete as of Nov 2025.
+
+---
+
+## 7. Replay Harness & Tooling
+
+- **Programmatic API:** `runReplayHistory` / `runReplayHistories` (see `src/workflow/runtime/replay.ts`) accept recorded Temporal histories, reuse the shared data converter, and drive `WorkflowEngine` to detect nondeterminism.
+- **CLI:** `temporal-bun replay <file-or-directory> --workflows-path ./path/to/workflows` loads JSON histories (files or directories) and reports mismatches; `--converter` accepts a module exporting a custom `DataConverter`.
+- **Fixtures & Tests:** Sample histories live under `tests/fixtures/histories/` with coverage in `tests/workflow.replay.test.ts`. Native FFI exposure is verified via `tests/native.test.ts`.
+- **Requirements:** Replay requires `TEMPORAL_BUN_SDK_USE_ZIG=1` so the Zig bridge (and `temporal_core_worker_replayer_new`) is loaded.
+- **Future work:** integrate patch-marker coverage and richer replay diagnostics (per-event diffing, CLI summaries) once outstanding TODOs land.
 
 Keep this plan in sync with actual runtime capabilities; append change logs as features land.

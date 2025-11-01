@@ -36,6 +36,11 @@ pub const WorkerHandle = struct {
     destroy_reclaims_allocation: bool = false,
 };
 
+pub const WorkerReplayHandle = struct {
+    worker: ?*WorkerHandle,
+    replay_pusher: ?*core.WorkerReplayPusher,
+};
+
 var next_worker_id: u64 = 1;
 const default_identity = "temporal-bun-worker";
 
@@ -754,6 +759,334 @@ pub fn create(
     return handle;
 }
 
+pub fn createReplay(
+    runtime_ptr: ?*runtime.RuntimeHandle,
+    config_json: []const u8,
+) ?*WorkerReplayHandle {
+    if (runtime_ptr == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker replay creation received null runtime handle",
+            .details = null,
+        });
+        return null;
+    }
+
+    const runtime_handle = runtime_ptr.?;
+    if (runtime_handle.core_runtime == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: runtime core handle is not initialized",
+            .details = null,
+        });
+        return null;
+    }
+
+    const config_copy = duplicateConfig(config_json) orelse {
+        errors.setStructuredError(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to allocate worker replay config",
+        });
+        return null;
+    };
+
+    const allocator = std.heap.c_allocator;
+    const parse_opts = json.ParseOptions{
+        .duplicate_field_behavior = .use_first,
+        .ignore_unknown_fields = true,
+    };
+
+    var parsed = json.parseFromSlice(json.Value, allocator, config_json, parse_opts) catch {
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker replay config is not valid JSON",
+        });
+        return null;
+    };
+    defer parsed.deinit();
+
+    if (parsed.value != .object) {
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker replay config must be a JSON object",
+        });
+        return null;
+    }
+
+    var obj = parsed.value.object;
+
+    const namespace_lookup = lookupStringField(&obj, &.{ "namespace", "namespace_", "Namespace" });
+    if (!namespace_lookup.found) {
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker replay config missing namespace",
+        });
+        return null;
+    }
+    if (namespace_lookup.invalid_type or namespace_lookup.value == null) {
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker replay namespace must be a string",
+        });
+        return null;
+    }
+    const namespace_slice = namespace_lookup.value.?;
+    if (namespace_slice.len == 0) {
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker replay namespace must be non-empty",
+        });
+        return null;
+    }
+
+    const namespace_copy = duplicateBytes(namespace_slice) orelse {
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to allocate worker replay namespace",
+        });
+        return null;
+    };
+
+    const task_queue_lookup = lookupStringField(&obj, &.{ "taskQueue", "task_queue" });
+    if (!task_queue_lookup.found) {
+        allocator.free(namespace_copy);
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker replay config missing taskQueue",
+        });
+        return null;
+    }
+    if (task_queue_lookup.invalid_type or task_queue_lookup.value == null) {
+        allocator.free(namespace_copy);
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker replay taskQueue must be a string",
+        });
+        return null;
+    }
+    const task_queue_slice = task_queue_lookup.value.?;
+    if (task_queue_slice.len == 0) {
+        allocator.free(namespace_copy);
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker replay taskQueue must be non-empty",
+        });
+        return null;
+    }
+
+    const task_queue_copy = duplicateBytes(task_queue_slice) orelse {
+        allocator.free(namespace_copy);
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to allocate worker replay taskQueue",
+        });
+        return null;
+    };
+
+    const identity_lookup = lookupStringField(&obj, &.{ "identity", "identityOverride", "identity_override" });
+    if (identity_lookup.invalid_type) {
+        allocator.free(task_queue_copy);
+        allocator.free(namespace_copy);
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker replay identity must be a string when provided",
+        });
+        return null;
+    }
+
+    var identity_copy: []u8 = ""[0..0];
+    var identity_slice: []const u8 = default_identity;
+    if (identity_lookup.value) |identity_value| {
+        identity_copy = duplicateBytes(identity_value) orelse {
+            allocator.free(task_queue_copy);
+            allocator.free(namespace_copy);
+            if (config_copy.len > 0) {
+                allocator.free(config_copy);
+            }
+            errors.setStructuredError(.{
+                .code = grpc.resource_exhausted,
+                .message = "temporal-bun-bridge-zig: failed to allocate worker replay identity",
+            });
+            return null;
+        };
+        identity_slice = identity_copy;
+    }
+
+    core.ensureExternalApiInstalled();
+
+    var options: core.WorkerOptions = undefined;
+    @memset(std.mem.asBytes(&options), 0);
+    options.namespace_ = makeByteArrayRef(namespace_copy);
+    options.task_queue = makeByteArrayRef(task_queue_copy);
+    options.identity_override = makeByteArrayRef(identity_slice);
+    options.versioning_strategy.tag = 0;
+    options.nondeterminism_as_workflow_fail_for_types = .{
+        .data = null,
+        .size = 0,
+    };
+    options.max_cached_workflows = 16;
+
+    const result = core.api.worker_replayer_new(runtime_handle.core_runtime, &options);
+
+    if (result.worker == null or result.worker_replay_pusher == null) {
+        if (identity_copy.len > 0) {
+            allocator.free(identity_copy);
+        }
+        allocator.free(task_queue_copy);
+        allocator.free(namespace_copy);
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        const failure_slice = byteArraySlice(result.fail);
+        const parsed_fail = parseWorkerFailPayload(failure_slice);
+
+        const fallback_message = "temporal-bun-bridge-zig: Temporal core worker replay creation failed";
+        const error_message = if (parsed_fail.message.len > 0) parsed_fail.message else fallback_message;
+        const error_details = parsed_fail.details;
+
+        errors.setStructuredErrorJson(.{
+            .code = parsed_fail.code,
+            .message = error_message,
+            .details = error_details,
+        });
+
+        if (parsed_fail.details_allocated and parsed_fail.details != null) {
+            allocator.free(@constCast(parsed_fail.details.?));
+        }
+        if (parsed_fail.message_allocated) {
+            allocator.free(@constCast(parsed_fail.message));
+        }
+        if (result.fail) |fail_ptr| {
+            core.api.byte_array_free(runtime_handle.core_runtime, fail_ptr);
+        }
+        if (result.worker_replay_pusher) |pusher_ptr| {
+            core.api.worker_replay_pusher_free(pusher_ptr);
+        }
+        if (result.worker) |worker_ptr| {
+            core.api.worker_free(worker_ptr);
+        }
+        return null;
+    }
+
+    const handle = allocator.create(WorkerHandle) catch |err| {
+        core.api.worker_replay_pusher_free(result.worker_replay_pusher);
+        core.api.worker_free(result.worker);
+        if (identity_copy.len > 0) {
+            allocator.free(identity_copy);
+        }
+        allocator.free(task_queue_copy);
+        allocator.free(namespace_copy);
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        var scratch: [160]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to allocate worker replay handle: {}",
+            .{err},
+        ) catch "temporal-bun-bridge-zig: failed to allocate worker replay handle";
+        errors.setStructuredError(.{ .code = grpc.resource_exhausted, .message = message });
+        if (result.fail) |fail_ptr| {
+            core.api.byte_array_free(runtime_handle.core_runtime, fail_ptr);
+        }
+        return null;
+    };
+
+    const id = next_worker_id;
+    next_worker_id += 1;
+
+    handle.* = .{
+        .id = id,
+        .runtime = runtime_ptr,
+        .client = null,
+        .config = config_copy,
+        .namespace = namespace_copy,
+        .task_queue = task_queue_copy,
+        .identity = identity_copy,
+        .core_worker = result.worker,
+        .owns_allocation = true,
+        .destroy_reclaims_allocation = true,
+    };
+
+    if (!runtime.registerWorker(runtime_handle)) {
+        handle.runtime = null;
+        releaseHandle(handle);
+        core.api.worker_free(result.worker);
+        core.api.worker_replay_pusher_free(result.worker_replay_pusher);
+        allocator.destroy(handle);
+        errors.setStructuredError(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: runtime is shutting down",
+        });
+        if (result.fail) |fail_ptr| {
+            core.api.byte_array_free(runtime_handle.core_runtime, fail_ptr);
+        }
+        return null;
+    }
+
+    if (result.fail) |fail_ptr| {
+        core.api.byte_array_free(runtime_handle.core_runtime, fail_ptr);
+    }
+
+    const replay_handle = allocator.create(WorkerReplayHandle) catch |err| {
+        runtime.unregisterWorker(runtime_handle);
+        handle.runtime = null;
+        releaseHandle(handle);
+        core.api.worker_free(result.worker);
+        core.api.worker_replay_pusher_free(result.worker_replay_pusher);
+        allocator.destroy(handle);
+        var scratch: [176]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &scratch,
+            "temporal-bun-bridge-zig: failed to allocate worker replay container: {}",
+            .{err},
+        ) catch "temporal-bun-bridge-zig: failed to allocate worker replay container";
+        errors.setStructuredError(.{ .code = grpc.resource_exhausted, .message = message });
+        return null;
+    };
+
+    replay_handle.* = .{
+        .worker = handle,
+        .replay_pusher = result.worker_replay_pusher,
+    };
+
+    errors.setLastError(""[0..0]);
+    return replay_handle;
+}
+
 pub fn destroy(handle: ?*WorkerHandle) i32 {
     if (handle == null) {
         return 0;
@@ -1069,6 +1402,154 @@ fn testWorkerFinalizeShutdownStub(
             .fail => cb(user_data, test_hooks.finalize_fail_ptr),
         }
     }
+}
+
+pub fn destroyReplay(handle: ?*WorkerReplayHandle) i32 {
+    if (handle == null) {
+        return 0;
+    }
+
+    const replay_handle = handle.?;
+    const worker_handle = replay_handle.worker;
+    if (worker_handle) |worker_ptr| {
+        const result = destroy(worker_ptr);
+        if (result != 0) {
+            return result;
+        }
+        replay_handle.worker = null;
+    }
+
+    if (replay_handle.replay_pusher) |pusher| {
+        core.ensureExternalApiInstalled();
+        core.api.worker_replay_pusher_free(pusher);
+        replay_handle.replay_pusher = null;
+    }
+
+    std.heap.c_allocator.destroy(replay_handle);
+    return 0;
+}
+
+pub fn pushReplayHistory(
+    handle: ?*WorkerReplayHandle,
+    workflow_id: []const u8,
+    history: []const u8,
+) i32 {
+    if (handle == null) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker replay push received null handle",
+            .details = null,
+        });
+        return -1;
+    }
+
+    const replay_handle = handle.?;
+    const worker_handle = replay_handle.worker orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: worker replay push requires initialized worker",
+            .details = null,
+        });
+        return -1;
+    };
+
+    const core_worker_ptr = worker_handle.core_worker orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: worker replay push missing core worker",
+            .details = null,
+        });
+        return -1;
+    };
+
+    const runtime_handle = worker_handle.runtime orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: worker replay runtime handle is not initialized",
+            .details = null,
+        });
+        return -1;
+    };
+
+    const core_runtime_ptr = runtime_handle.core_runtime orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: worker replay runtime core handle is not initialized",
+            .details = null,
+        });
+        return -1;
+    };
+
+    const replay_pusher = replay_handle.replay_pusher orelse {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.failed_precondition,
+            .message = "temporal-bun-bridge-zig: worker replay push missing replay pusher",
+            .details = null,
+        });
+        return -1;
+    };
+
+    if (workflow_id.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker replay workflowId must be non-empty",
+            .details = null,
+        });
+        return -1;
+    }
+
+    if (history.len == 0) {
+        errors.setStructuredErrorJson(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker replay history payload must be non-empty",
+            .details = null,
+        });
+        return -1;
+    }
+
+    core.ensureExternalApiInstalled();
+
+    const result = core.api.worker_replay_push(
+        core_worker_ptr,
+        replay_pusher,
+        makeByteArrayRef(workflow_id),
+        makeByteArrayRef(history),
+    );
+
+    if (result.fail) |fail_ptr| {
+        const failure_slice = byteArraySlice(fail_ptr);
+        const parsed_fail = parseWorkerFailPayload(failure_slice);
+
+        const fallback_message = "temporal-bun-bridge-zig: Temporal worker replay push failed";
+        const error_message = if (parsed_fail.message.len > 0) parsed_fail.message else fallback_message;
+        const error_details = parsed_fail.details;
+
+        errors.setStructuredErrorJson(.{
+            .code = parsed_fail.code,
+            .message = error_message,
+            .details = error_details,
+        });
+
+        if (parsed_fail.details_allocated and parsed_fail.details != null) {
+            std.heap.c_allocator.free(@constCast(parsed_fail.details.?));
+        }
+        if (parsed_fail.message_allocated) {
+            std.heap.c_allocator.free(@constCast(parsed_fail.message));
+        }
+
+        core.api.byte_array_free(core_runtime_ptr, fail_ptr);
+        return -1;
+    }
+
+    errors.setLastError(""[0..0]);
+    return 0;
+}
+
+pub fn replayWorkerHandle(handle: ?*WorkerReplayHandle) ?*WorkerHandle {
+    if (handle == null) {
+        return null;
+    }
+    return handle.?.worker;
 }
 
 fn testWorkerFreeStub(_worker: ?*core.WorkerOpaque) callconv(.c) void {
