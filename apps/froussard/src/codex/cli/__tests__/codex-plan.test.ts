@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -135,6 +135,21 @@ describe('runCodexPlan', () => {
     expect(invocation?.prompt).toContain('write it to PLAN.md')
     expect(invocation?.prompt).toContain('Do not post to GitHub manually')
     expect(invocation?.prompt).toContain('Never emit raw')
+  })
+
+  it('uses PLAN_COMMENT_MARKER from the worktree codex module when available', async () => {
+    const codexDir = join(workdir, 'apps/froussard/src')
+    await mkdir(codexDir, { recursive: true })
+    await writeFile(
+      join(codexDir, 'codex.mjs'),
+      "export const PLAN_COMMENT_MARKER = '<!-- codex:plan-override -->'\n",
+      'utf8',
+    )
+
+    await runCodexPlan()
+
+    const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+    expect(invocation?.prompt).toContain('<!-- codex:plan-override -->')
   })
 
   it('posts the generated plan to GitHub when configured', async () => {

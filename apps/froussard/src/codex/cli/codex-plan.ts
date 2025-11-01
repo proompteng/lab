@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
-import { PLAN_COMMENT_MARKER } from '../../codex'
+import { pathToFileURL } from 'node:url'
 import { runCli } from './lib/cli'
 import { pushCodexEventsToLoki, runCodexSession } from './lib/codex-runner'
 import {
@@ -15,6 +15,93 @@ import {
   timestampUtc,
 } from './lib/codex-utils'
 import { createCodexLogger } from './lib/logger'
+
+const DEFAULT_PLAN_COMMENT_MARKER = '<!-- codex:plan -->'
+
+let PLAN_COMMENT_MARKER = DEFAULT_PLAN_COMMENT_MARKER
+
+const buildPlanTemplateLines = (marker: string): string[] => [
+  marker,
+  '### Objective',
+  '### Context & Constraints',
+  '### Task Breakdown',
+  '### Deliverables',
+  '### Validation & Observability',
+  '### Risks & Contingencies',
+  '### Communication & Handoff',
+  '### Ready Checklist',
+  '- [ ] Dependencies clarified (feature flags, secrets, linked services)',
+  '- [ ] Test and validation environments are accessible',
+  '- [ ] Required approvals/reviewers identified',
+  '- [ ] Rollback or mitigation steps documented',
+]
+
+let planTemplateLines = buildPlanTemplateLines(PLAN_COMMENT_MARKER)
+
+const getPlanTemplateBlock = () => ['Plan template (copy verbatim):', planTemplateLines.join('\n')].join('\n')
+
+const updatePlanCommentMarker = (marker: string) => {
+  const trimmed = marker.trim()
+  if (trimmed.length === 0) {
+    return
+  }
+  PLAN_COMMENT_MARKER = trimmed
+  planTemplateLines = buildPlanTemplateLines(PLAN_COMMENT_MARKER)
+}
+
+const resolvePlanCommentMarker = async (): Promise<string> => {
+  const candidates: string[] = []
+  const seen = new Set<string>()
+
+  const addCandidate = (value?: string) => {
+    const candidate = value?.trim()
+    if (!candidate || seen.has(candidate)) {
+      return
+    }
+    seen.add(candidate)
+    candidates.push(candidate)
+  }
+
+  const worktreeRoots = [process.env.WORKTREE, '/workspace/lab'].filter(
+    (value): value is string => !!value && value.trim().length > 0,
+  )
+
+  for (const root of worktreeRoots) {
+    addCandidate(pathToFileURL(join(root, 'apps/froussard/src/codex.ts')).href)
+    addCandidate(pathToFileURL(join(root, 'apps/froussard/src/codex.js')).href)
+    addCandidate(pathToFileURL(join(root, 'apps/froussard/src/codex.mjs')).href)
+  }
+
+  const relativeSpecs = ['../../codex.ts', '../../codex.js', '../../codex']
+  for (const spec of relativeSpecs) {
+    try {
+      addCandidate(new URL(spec, import.meta.url).href)
+    } catch {
+      // ignore invalid URLs when running from bundled scripts
+    }
+  }
+
+  for (const specifier of candidates) {
+    try {
+      const module = await import(specifier)
+      const candidate = typeof module?.PLAN_COMMENT_MARKER === 'string' ? module.PLAN_COMMENT_MARKER.trim() : ''
+      if (candidate.length > 0) {
+        return candidate
+      }
+    } catch (error) {
+      if (process.env.DEBUG?.includes('codex-plan')) {
+        console.warn(`codex-plan: failed to load PLAN_COMMENT_MARKER from ${specifier}:`, error)
+      }
+    }
+  }
+
+  return DEFAULT_PLAN_COMMENT_MARKER
+}
+
+const refreshPlanCommentMarker = async () => {
+  const marker = await resolvePlanCommentMarker()
+  updatePlanCommentMarker(marker)
+}
 
 const dedent = (value: string) => {
   const normalized = value.replace(/\r\n/g, '\n')
@@ -36,24 +123,6 @@ const dedent = (value: string) => {
   }
   return lines.map((line) => (line.startsWith(' '.repeat(minIndent)) ? line.slice(minIndent) : line)).join('\n')
 }
-
-const planTemplateLines = [
-  PLAN_COMMENT_MARKER,
-  '### Objective',
-  '### Context & Constraints',
-  '### Task Breakdown',
-  '### Deliverables',
-  '### Validation & Observability',
-  '### Risks & Contingencies',
-  '### Communication & Handoff',
-  '### Ready Checklist',
-  '- [ ] Dependencies clarified (feature flags, secrets, linked services)',
-  '- [ ] Test and validation environments are accessible',
-  '- [ ] Required approvals/reviewers identified',
-  '- [ ] Rollback or mitigation steps documented',
-]
-
-const planTemplateBlock = ['Plan template (copy verbatim):', planTemplateLines.join('\n')].join('\n')
 
 const buildPrompt = ({
   basePrompt,
@@ -91,7 +160,7 @@ const buildPrompt = ({
       '- Do not post to GitHub manually; automation handles comment publication.',
       '- If PLAN.md is missing or empty, exit non-zero.',
       '',
-      planTemplateBlock,
+      getPlanTemplateBlock(),
     ].join('\n')
     return `${trimmedBase}\n\n${addon}`
   }
@@ -100,7 +169,7 @@ const buildPrompt = ({
     ...commonGuidance,
     '- Use Markdown headings exactly as provided in the template.',
     '',
-    planTemplateBlock,
+    getPlanTemplateBlock(),
   ].join('\n')
 
   return `${trimmedBase}\n\n${addon}`
@@ -154,6 +223,8 @@ export const runCodexPlan = async () => {
   const issueTitle = sanitizeEnv(process.env.ISSUE_TITLE)
   const postToGitHub = parseBoolean(process.env.POST_TO_GITHUB, true)
   const shouldPost = postToGitHub && !!issueRepo && !!issueNumber
+
+  await refreshPlanCommentMarker()
 
   const defaultOutputPath = process.env.PLAN_OUTPUT_PATH ?? `${worktree}/.codex-plan-output.md`
   const outputPath = process.env.OUTPUT_PATH ?? defaultOutputPath
