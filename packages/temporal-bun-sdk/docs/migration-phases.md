@@ -26,19 +26,19 @@ flowchart LR
   P4 --> P5["Phase 5<br/>Release readiness"]
 ```
 
-- ✅ Implemented: start, signal, signal-with-start, query, describe namespace, terminate (via Zig bridge).  
+- ✅ Implemented: start, signal, signal-with-start, query, describe namespace, terminate, and cancel (via Zig bridge).  
 - ✅ `src/client.ts` now uses the Bun-native bridge; no dependency on `@temporalio/client`.  
-- ✅ Integration tests (`tests/native.integration.test.ts`, `tests/zig-signal.test.ts`) cover the happy paths.  
-- ⚠️ Outstanding: workflow cancellation and header updates (Zig bridge still returns `UNIMPLEMENTED`).  
+- ✅ Integration tests (`tests/native.integration.test.ts`, `tests/zig-signal.test.ts`) cover the happy paths, including cancellation.  
+- ⚠️ Outstanding: document header update behaviour and surface CLI examples.  
 - ⚠️ Outstanding: optional telemetry/logger passthroughs once Zig runtime hooks exist.  
 - ⚠️ Outstanding: payload converter/codec modularisation.
 
 **Deliverables:**
 - Passing client tests and integration suites.  
-- README/docs call out limitations (cancellation/header updates).  
-- Example project relies on Bun client for workflow start/query.  
+- README/docs call out remaining gaps (telemetry/logger, header update rollout artefacts).  
+- Example project relies on Bun client for workflow start/query/cancel.  
 
-**Target exit:** After cancellation + headers land and documentation/README updated (ETA Nov 2025).
+**Target exit:** After docs/README highlight cancellation support, header update guidance, and telemetry/logger follow-ups (ETA Nov 2025).
 
 ---
 

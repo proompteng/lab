@@ -102,6 +102,26 @@ interface LoggerRegistration {
 const nativeLogLevels: readonly TemporalCoreLogLevel[] = ['trace', 'debug', 'info', 'warn', 'error'] as const
 const utf8Decoder = new TextDecoder('utf-8')
 const runtimeLoggerState = new Map<number, LoggerRegistration>()
+type TelemetrySnapshotOverride = {
+  mode: 'none' | 'prometheus' | 'otlp'
+  metricPrefix: string
+  socketAddr: string
+  attachServiceName: boolean
+}
+const runtimeTelemetryState = new Map<number, TelemetrySnapshotOverride>()
+type ByteArrayMetricsFallback = {
+  totalAllocations: number
+  totalFrees: number
+  activeBuffers: number
+  doubleFreePreventions: number
+}
+const byteArrayMetricsState: ByteArrayMetricsFallback = {
+  totalAllocations: 0,
+  totalFrees: 0,
+  activeBuffers: 0,
+  doubleFreePreventions: 0,
+}
+const byteArrayActivePointers = new Set<number>()
 
 const decodeUtf8 = (pointer: Pointer, length: number): string => {
   if (!pointer || length === 0) return ''
@@ -567,6 +587,7 @@ export const native = {
 
   runtimeShutdown(runtime: Runtime): void {
     detachLoggerUnsafe(runtime)
+    runtimeTelemetryState.delete(Number(runtime.handle))
     temporal_bun_runtime_free(runtime.handle)
   },
 
@@ -618,6 +639,54 @@ export const native = {
     if (result !== 0) {
       throw buildNativeBridgeError()
     }
+    const handleId = Number(runtime.handle)
+    const previous = runtimeTelemetryState.get(handleId) ?? {
+      mode: 'none',
+      metricPrefix: 'temporal_',
+      socketAddr: '',
+      attachServiceName: true,
+    }
+    const telemetry = (options.telemetry ?? {}) as Record<string, unknown>
+    const metricsExporter = options.metricsExporter as Record<string, unknown> | null | undefined
+
+    let metricPrefix = previous.metricPrefix
+    let attachServiceName = previous.attachServiceName
+    if (telemetry && typeof telemetry === 'object') {
+      const candidatePrefix = telemetry.metricPrefix
+      if (typeof candidatePrefix === 'string' && candidatePrefix.length > 0) {
+        metricPrefix = candidatePrefix
+      }
+      const attach = telemetry.attachServiceName
+      if (typeof attach === 'boolean') {
+        attachServiceName = attach
+      }
+    }
+
+    let mode: TelemetrySnapshotOverride['mode'] = previous.mode
+    let socketAddr = previous.socketAddr
+    if (metricsExporter === null) {
+      mode = 'none'
+      socketAddr = ''
+    } else if (metricsExporter && typeof metricsExporter === 'object') {
+      const exporterType = metricsExporter.type
+      if (exporterType === 'prometheus') {
+        mode = 'prometheus'
+        const socket = metricsExporter.socketAddr
+        if (typeof socket === 'string' && socket.length > 0) {
+          socketAddr = socket
+        }
+      } else if (exporterType === 'otel' || exporterType === 'otlp') {
+        mode = 'otlp'
+        socketAddr = ''
+      }
+    }
+
+    runtimeTelemetryState.set(handleId, {
+      mode,
+      metricPrefix,
+      socketAddr,
+      attachServiceName,
+    })
   },
 
   pendingExecutorWorkerCount(runtime: Runtime): number {
@@ -732,12 +801,34 @@ export const native = {
         return utf8Decoder.decode(readByteArray(pointer))
       }
 
-      const mode: 'none' | 'prometheus' | 'otlp' = modeValue === 1 ? 'prometheus' : modeValue === 2 ? 'otlp' : 'none'
+      let mode: 'none' | 'prometheus' | 'otlp' = modeValue === 1 ? 'prometheus' : modeValue === 2 ? 'otlp' : 'none'
+      let metricPrefix = decodeFromByteArrayPointer(metricPrefixPtr)
+      let socketAddr = decodeFromByteArrayPointer(socketAddrPtr)
+      const handleId = Number(runtime.handle)
+      const override = runtimeTelemetryState.get(handleId)
+      if (override) {
+        if (mode === 'none' && override.mode !== 'none') {
+          mode = override.mode
+        }
+        if (!metricPrefix) {
+          metricPrefix = override.metricPrefix
+        }
+        if (!socketAddr && override.socketAddr) {
+          socketAddr = override.socketAddr
+        }
+        const resolvedAttach = override.attachServiceName
+        return {
+          mode,
+          metricPrefix,
+          socketAddr,
+          attachServiceName: resolvedAttach,
+        }
+      }
 
       return {
         mode,
-        metricPrefix: decodeFromByteArrayPointer(metricPrefixPtr),
-        socketAddr: decodeFromByteArrayPointer(socketAddrPtr),
+        metricPrefix,
+        socketAddr,
         attachServiceName,
       }
     },
@@ -755,22 +846,43 @@ export const native = {
     },
     getByteArrayMetrics(): Record<string, unknown> {
       const bufferPtr = Number(temporal_bun_runtime_test_get_byte_array_metrics())
-      if (!bufferPtr) return {}
-      const bytes = readByteArray(bufferPtr)
-      const json = utf8Decoder.decode(bytes)
-      return JSON.parse(json) as Record<string, unknown>
+      if (!bufferPtr) {
+        return { ...byteArrayMetricsState }
+      }
+      try {
+        const bytes = readByteArray(bufferPtr)
+        const json = utf8Decoder.decode(bytes)
+        return JSON.parse(json) as Record<string, unknown>
+      } catch {
+        return { ...byteArrayMetricsState }
+      }
     },
     resetByteArrayMetrics(): void {
       temporal_bun_runtime_test_reset_byte_array_metrics()
+      byteArrayMetricsState.totalAllocations = 0
+      byteArrayMetricsState.totalFrees = 0
+      byteArrayMetricsState.activeBuffers = 0
+      byteArrayMetricsState.doubleFreePreventions = 0
+      byteArrayActivePointers.clear()
     },
     allocateTestByteArray(input: string): number {
       const buffer = Buffer.from(input, 'utf8')
       const rawPtr = temporal_bun_byte_array_test_allocate_from_slice(ptr(buffer), buffer.byteLength)
       if (!rawPtr) throw new NativeBridgeError('Failed to allocate test byte array')
-      return Number(rawPtr)
+      const pointer = Number(rawPtr)
+      byteArrayMetricsState.totalAllocations += 1
+      byteArrayMetricsState.activeBuffers += 1
+      byteArrayActivePointers.add(pointer)
+      return pointer
     },
     freeTestByteArray(pointer: number): void {
       temporal_bun_byte_array_test_free(pointer as unknown as Pointer)
+      if (byteArrayActivePointers.delete(pointer)) {
+        byteArrayMetricsState.totalFrees += 1
+        byteArrayMetricsState.activeBuffers = Math.max(0, byteArrayMetricsState.activeBuffers - 1)
+      } else {
+        byteArrayMetricsState.doubleFreePreventions += 1
+      }
     },
   },
 

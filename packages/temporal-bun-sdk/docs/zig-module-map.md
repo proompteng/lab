@@ -10,7 +10,7 @@ This document captures the module boundaries inside `packages/temporal-bun-sdk/b
 | `client/common.zig` | Shared helpers (`ClientHandle`, pending-handle utilities, JSON helpers). | Owned by lane 1; changes require quick broadcast. |
 | `client/connect.zig` | `connectAsync` implementation and TLS parsing. | Owns connection/error reporting. |
 | `client/describe_namespace.zig` | Async DescribeNamespace RPC encoding. | Uses `common.createByteArrayError` for pending errors. |
-| `client/update_headers.zig` | Placeholder for metadata updates. | Stub returns `UNIMPLEMENTED` until implemented. |
+| `client/update_headers.zig` | Client metadata updates. | Encodes newline-delimited headers and forwards to Temporal core. |
 
 ### Workflow Modules (`client/workflows/`)
 
@@ -22,7 +22,7 @@ This document captures the module boundaries inside `packages/temporal-bun-sdk/b
 | `query.zig` | Asynchronous workflow query execution. | Spawns worker threads, resolves pending handles. |
 | `signal.zig` | Workflow signal worker threads + payload validation. | Maps Temporal core errors to gRPC codes. |
 | `terminate.zig` | Workflow termination RPC and status mapping. | Ensures retry-safe message handling. |
-| `cancel.zig` | Cancellation stub (returns `UNIMPLEMENTED`). | Slot for future implementation. |
+| `cancel.zig` | Workflow cancellation RPC wiring. | Resolves pending handles and maps Temporal core status codes. |
 
 ## Runtime & Worker
 

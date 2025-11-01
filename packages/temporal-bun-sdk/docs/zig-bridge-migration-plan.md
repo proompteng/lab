@@ -36,7 +36,7 @@ To provide first-class Bun developer ergonomics we will reimplement the native b
 |------|-----------|----------------|
 | Runtime | `temporal_bun_runtime_new`, `temporal_bun_runtime_free`, `temporal_bun_runtime_update_telemetry`, `temporal_bun_runtime_set_logger` | Runtime bootstrap, telemetry updates, and logger hooks ship; telemetry surfaces Temporal core gRPC statuses (`zig-rt-03` complete). |
 | Client Async | `temporal_bun_client_connect_async`, pending poll/consume/free trio | Connect now spawns worker threads and resolves pending handles; concurrency guardrails from #1526 are merged. |
-| Client RPCs | `temporal_bun_client_describe_namespace_async`, `temporal_bun_client_start_workflow`, `temporal_bun_client_signal*`, `temporal_bun_client_query_workflow`, `temporal_bun_client_terminate_workflow`, `temporal_bun_client_update_headers` | Describe, start, signal-with-start, signal, query, terminate, and header updates implemented; cancel (`temporal_bun_client_cancel_workflow`) remains `UNIMPLEMENTED` (`zig-wf-06`). |
+| Client RPCs | `temporal_bun_client_describe_namespace_async`, `temporal_bun_client_start_workflow`, `temporal_bun_client_signal*`, `temporal_bun_client_query_workflow`, `temporal_bun_client_terminate_workflow`, `temporal_bun_client_update_headers` | Describe, start, signal-with-start, signal, query, terminate, cancel, and header updates implemented (`zig-wf-06` closed). |
 | Error Surface | `temporal_bun_error_message`, `temporal_bun_error_free` | Functional; mirrors the Rust bridge behaviour. |
 | Worker | `temporal_bun_worker_*` suite | Creation ships behind `TEMPORAL_BUN_SDK_USE_ZIG=1`; polling, completion, heartbeats, and shutdown (initiate + finalize) now implemented (`zig-worker-02`…`zig-worker-09` complete). |
 | Packaging | `build.zig` + scripts | `zig-pack-01` linking to Temporal static libs is not implemented; bridge builds without real core symbols. |
@@ -45,7 +45,7 @@ Supporting modules:
 
 - `bruke/src/pending.zig` needs the hardening from #1526 to be thread-safe.
 - `bruke/src/byte_array.zig` now emits telemetry counters and guardrails (`zig-buf-02` ✅).
-- TypeScript loader (`src/internal/core-bridge/native.ts`) now routes telemetry and logging through Zig; cancellation fallback handling remains under review.
+- TypeScript loader (`src/internal/core-bridge/native.ts`) now routes telemetry and logging through Zig; cancellation fallback handling removed in favour of the Zig implementation.
 - Client bridge code now lives in `bruke/src/client/` with dedicated modules for connect, describe, workflow RPCs, and a lightweight aggregator `client/mod.zig` so teams can work in parallel without editing a monolith.
 
 ---

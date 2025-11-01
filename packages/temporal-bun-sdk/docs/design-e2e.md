@@ -2,7 +2,7 @@
 
 **Author:** Platform Runtime Team  
 **Original Publish Date:** 17 Oct 2025  
-**Last Updated:** 28 Oct 2025  
+**Last Updated:** 1 Nov 2025  
 **Status:** In progress
 
 ---
@@ -135,7 +135,7 @@ Key properties:
 ## 8. Testing & Validation
 
 - Bun tests:
-  - `tests/native.integration.test.ts` spins up Temporal CLI dev server and exercises workflow start/query via Zig bridge.
+- `tests/native.integration.test.ts` spins up the Temporal CLI dev server and exercises workflow start/query/cancel via the Zig bridge.
   - `tests/end-to-end-workflow.test.ts` validates sample workflow execution.
   - `tests/worker.runtime.workflow.test.ts`, `tests/worker/worker-runtime-activity.test.ts`, `tests/worker/worker-runtime-shutdown.test.ts`, and `tests/worker/zig-poll-workflow.test.ts` cover workflow activations, activity lifecycles, and shutdown semantics when `TEMPORAL_BUN_SDK_USE_ZIG=1`.
   - `tests/zig-signal.test.ts` exercises signal delivery end-to-end against the Temporal CLI dev server when available.
@@ -143,7 +143,7 @@ Key properties:
 - Zig tests:
   - `zig build test` covers JSON validation helpers and pending-handle state machines.
   - Worker completion tests assert callback plumbing in `worker.zig`; polling is now exercised via Bun tests.
-- Manual QA: `pnpm --filter @proompteng/temporal-bun-sdk run temporal:start` launches a local server; `TEMPORAL_BUN_SDK_USE_ZIG=1 bun test tests/native.integration.test.ts` performs smoke validation; enable `TEMPORAL_SHOW_STACK_SOURCES=1` to inspect stack trace sources.
+- Manual QA: `pnpm --filter @proompteng/temporal-bun-sdk run temporal:start` launches a local server; `TEMPORAL_BUN_SDK_USE_ZIG=1 bun test tests/native.integration.test.ts` performs smoke validation (start/query/cancel); enable `TEMPORAL_SHOW_STACK_SOURCES=1` to inspect stack trace sources.
 
 ## 9. Remaining Work & Milestones
 
@@ -170,7 +170,7 @@ maps to one or more lanes so parallel Codex instances can implement features wit
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | Zig bridge diverges from Temporal core updates | Runtime incompatibilities | Pin upstream commits; add sync checklist in release process. |
-| Live cancellation coverage gaps | Workflow management | Document cancellation capabilities, coordinate CI access to a Temporal server, and keep README status badges in sync. |
+| Cancellation regression on Temporal CLI dependency | Workflow management | Ensure CLI availability for integration runs, document manual fallback when the dev server is unavailable, and keep README status badges in sync. |
 | Worker rewrite stalls | Teams rely on Node worker indefinitely | Deliver Bun worker incrementally (client parity first), keep Node fallback documented. |
 | Native builds fail on CI | Blocks releases | Cache prebuilt libs, document Zig toolchain requirements, add `zig env` diagnostics. |
 
