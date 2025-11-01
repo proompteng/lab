@@ -203,6 +203,12 @@ fn describeNamespaceWorker(task: *DescribeNamespaceTask) void {
     allocator.destroy(task);
 }
 
+fn runDescribeNamespaceTask(context: ?*anyopaque) void {
+    const raw = context orelse return;
+    const task_ptr = @as(*DescribeNamespaceTask, @ptrCast(@alignCast(raw)));
+    describeNamespaceWorker(task_ptr);
+}
+
 pub fn describeNamespaceAsync(client_ptr: ?*ClientHandle, payload: []const u8) ?*pending.PendingByteArray {
     if (client_ptr == null) {
         return common.createByteArrayError(grpc.invalid_argument, "temporal-bun-bridge-zig: describeNamespace received null client");
@@ -264,21 +270,40 @@ pub fn describeNamespaceAsync(client_ptr: ?*ClientHandle, payload: []const u8) ?
         return @as(?*pending.PendingByteArray, pending_handle);
     }
 
-    const thread = std.Thread.spawn(.{}, describeNamespaceWorker, .{task}) catch |err| {
+    const runtime_handle = client_ptr.?.runtime orelse {
         allocator.destroy(task);
         allocator.free(namespace_copy);
         pending.release(pending_handle_ptr);
-        pending.free(pending_handle_ptr);
-        var scratch: [160]u8 = undefined;
-        const message = std.fmt.bufPrint(
-            &scratch,
-            "temporal-bun-bridge-zig: failed to spawn describeNamespace worker: {}",
-            .{err},
-        ) catch "temporal-bun-bridge-zig: failed to spawn describeNamespace worker";
-        _ = pending.rejectByteArray(pending_handle, grpc.internal, message);
+        const message = "temporal-bun-bridge-zig: describeNamespace missing runtime handle";
+        errors.setStructuredError(.{ .code = grpc.failed_precondition, .message = message });
+        _ = pending.rejectByteArray(pending_handle, grpc.failed_precondition, message);
         return @as(?*pending.PendingByteArray, pending_handle);
     };
 
-    thread.detach();
+    const context_ptr: ?*anyopaque = @as(?*anyopaque, @ptrCast(@alignCast(task)));
+    runtime.schedulePendingTask(runtime_handle, .{
+        .run = runDescribeNamespaceTask,
+        .context = context_ptr,
+    }) catch |err| switch (err) {
+        runtime.SchedulePendingTaskError.ShuttingDown => blk: {
+            allocator.destroy(task);
+            allocator.free(namespace_copy);
+            pending.release(pending_handle_ptr);
+            const message = "temporal-bun-bridge-zig: runtime is shutting down";
+            errors.setStructuredError(.{ .code = grpc.failed_precondition, .message = message });
+            _ = pending.rejectByteArray(pending_handle, grpc.failed_precondition, message);
+            break :blk;
+        },
+        runtime.SchedulePendingTaskError.ExecutorUnavailable => blk: {
+            allocator.destroy(task);
+            allocator.free(namespace_copy);
+            pending.release(pending_handle_ptr);
+            const message = "temporal-bun-bridge-zig: pending executor unavailable";
+            errors.setStructuredError(.{ .code = grpc.internal, .message = message });
+            _ = pending.rejectByteArray(pending_handle, grpc.internal, message);
+            break :blk;
+        },
+    };
+
     return @as(?*pending.PendingByteArray, pending_handle);
 }

@@ -61,6 +61,14 @@ pub export fn temporal_bun_runtime_test_get_attach_service_name(handle: ?*runtim
     return if (runtime.telemetryAttachServiceNameForTest(handle)) 1 else 0;
 }
 
+pub export fn temporal_bun_runtime_test_get_pending_worker_count(handle: ?*runtime.RuntimeHandle) usize {
+    return runtime.pendingExecutorWorkerCountForTest(handle);
+}
+
+pub export fn temporal_bun_runtime_test_get_pending_queue_capacity(handle: ?*runtime.RuntimeHandle) usize {
+    return runtime.pendingExecutorQueueCapacityForTest(handle);
+}
+
 pub export fn temporal_bun_runtime_test_register_client(handle: ?*runtime.RuntimeHandle) i32 {
     return if (runtime.registerClientForTest(handle)) 1 else 0;
 }

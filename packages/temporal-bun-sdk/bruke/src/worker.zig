@@ -438,6 +438,12 @@ fn pollWorkflowTaskWorker(context: *PollWorkflowTaskContext) void {
     context.allocator.destroy(context);
 }
 
+fn runPollWorkflowTask(context: ?*anyopaque) void {
+    const raw = context orelse return;
+    const ctx = @as(*PollWorkflowTaskContext, @ptrCast(@alignCast(raw)));
+    pollWorkflowTaskWorker(ctx);
+}
+
 pub fn create(
     runtime_ptr: ?*runtime.RuntimeHandle,
     client_ptr: ?*client.ClientHandle,
@@ -958,22 +964,33 @@ pub fn pollWorkflowTask(_handle: ?*WorkerHandle) ?*pending.PendingByteArray {
         .wait_group = .{},
     };
 
-    const thread = std.Thread.spawn(.{}, pollWorkflowTaskWorker, .{context}) catch |err| {
-        allocator.destroy(context);
-        pending.release(pending_base);
-        releasePollPermit(worker_handle);
-        var scratch: [176]u8 = undefined;
-        const message = std.fmt.bufPrint(
-            &scratch,
-            "temporal-bun-bridge-zig: failed to spawn workflow poll thread: {}",
-            .{err},
-        ) catch "temporal-bun-bridge-zig: failed to spawn workflow poll thread";
-        errors.setStructuredError(.{ .code = grpc.internal, .message = message });
-        _ = pending.rejectByteArray(pending_handle_ptr, grpc.internal, message);
-        return pending_handle_ptr;
+    const context_any: ?*anyopaque = @as(?*anyopaque, @ptrCast(@alignCast(context)));
+    runtime.schedulePendingTask(runtime_handle, .{
+        .run = runPollWorkflowTask,
+        .context = context_any,
+    }) catch |err| switch (err) {
+        runtime.SchedulePendingTaskError.ShuttingDown => {
+            allocator.destroy(context);
+            pending.release(pending_base);
+            const message = "temporal-bun-bridge-zig: runtime is shutting down";
+            errors.setStructuredError(.{ .code = grpc.failed_precondition, .message = message });
+            _ = pending.rejectByteArray(pending_handle_ptr, grpc.failed_precondition, message);
+            return pending_handle_ptr;
+        },
+        runtime.SchedulePendingTaskError.ExecutorUnavailable => {
+            allocator.destroy(context);
+            pending.release(pending_base);
+            var scratch: [176]u8 = undefined;
+            const message = std.fmt.bufPrint(
+                &scratch,
+                "temporal-bun-bridge-zig: pending executor unavailable",
+                .{},
+            ) catch "temporal-bun-bridge-zig: pending executor unavailable";
+            errors.setStructuredError(.{ .code = grpc.internal, .message = message });
+            _ = pending.rejectByteArray(pending_handle_ptr, grpc.internal, message);
+            return pending_handle_ptr;
+        },
     };
-
-    thread.detach();
     permit_transferred = true;
     errors.setLastError(""[0..0]);
     return pending_handle_ptr;
@@ -1414,19 +1431,33 @@ pub fn pollActivityTask(_handle: ?*WorkerHandle) ?*pending.PendingByteArray {
         return @as(?*pending.PendingByteArray, pending_handle);
     }
 
-    const thread = std.Thread.spawn(.{}, pollActivityTaskWorker, .{task}) catch |err| {
-        allocator.destroy(task);
-        pending.release(pending_base);
-        var scratch: [160]u8 = undefined;
-        const message = std.fmt.bufPrint(
-            &scratch,
-            "temporal-bun-bridge-zig: failed to spawn activity poll thread: {}",
-            .{err},
-        ) catch "temporal-bun-bridge-zig: failed to spawn activity poll thread";
-        _ = pending.rejectByteArray(pending_handle, grpc.internal, message);
-        return @as(?*pending.PendingByteArray, pending_handle);
+    const context_any: ?*anyopaque = @as(?*anyopaque, @ptrCast(@alignCast(task)));
+    runtime.schedulePendingTask(runtime_handle, .{
+        .run = runPollActivityTask,
+        .context = context_any,
+    }) catch |err| switch (err) {
+        runtime.SchedulePendingTaskError.ShuttingDown => {
+            allocator.destroy(task);
+            pending.release(pending_base);
+            const message = "temporal-bun-bridge-zig: runtime is shutting down";
+            errors.setStructuredError(.{ .code = grpc.failed_precondition, .message = message });
+            _ = pending.rejectByteArray(pending_handle, grpc.failed_precondition, message);
+            return @as(?*pending.PendingByteArray, pending_handle);
+        },
+        runtime.SchedulePendingTaskError.ExecutorUnavailable => {
+            allocator.destroy(task);
+            pending.release(pending_base);
+            var scratch: [160]u8 = undefined;
+            const message = std.fmt.bufPrint(
+                &scratch,
+                "temporal-bun-bridge-zig: pending executor unavailable",
+                .{},
+            ) catch "temporal-bun-bridge-zig: pending executor unavailable";
+            errors.setStructuredError(.{ .code = grpc.internal, .message = message });
+            _ = pending.rejectByteArray(pending_handle, grpc.internal, message);
+            return @as(?*pending.PendingByteArray, pending_handle);
+        },
     };
-    thread.detach();
     permit_transferred = true;
 
     return @as(?*pending.PendingByteArray, pending_handle);
@@ -1704,6 +1735,12 @@ pub fn finalizeShutdown(_handle: ?*WorkerHandle) i32 {
             return -1;
         },
     }
+}
+
+fn runPollActivityTask(context: ?*anyopaque) void {
+    const raw = context orelse return;
+    const task_ptr = @as(*ActivityPollTask, @ptrCast(@alignCast(raw)));
+    pollActivityTaskWorker(task_ptr);
 }
 
 const testing = std.testing;
