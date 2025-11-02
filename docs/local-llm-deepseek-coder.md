@@ -116,8 +116,41 @@ docker compose restart
 
 Browse to `http://192.168.1.190:3000`, sign in, and pick **deepseek-coder:6.7b** from the dropdown (use “Set as default” for coding sessions).
 
+## Optional: Add DeepSeek R1 (reasoning) locally
+The distill-of-Qwen 14B checkpoint from Unsloth is a solid math/logic companion and still fits in 24 GB VRAM when quantized to Q5_K_M.
+
+```bash
+cat <<'EOF' >/tmp/deepseek-r1.modelfile
+FROM hf.co/unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF:DeepSeek-R1-Distill-Qwen-14B-Q5_K_M.gguf
+
+TEMPLATE """{{- if .System }}{{ .System }}{{ end }}
+{{- range .Messages }}
+{{- if eq .Role "user" }}<｜User｜>{{ .Content }}
+{{- else if eq .Role "assistant" }}<｜Assistant｜>{{ .Content }}<｜end▁of▁sentence｜>
+{{- end }}
+{{- end }}<｜Assistant｜>"""
+
+PARAMETER temperature 0.6
+PARAMETER top_p 0.95
+EOF
+
+ollama create deepseek-r1-distill-qwen-14b:q5_k_m -f /tmp/deepseek-r1.modelfile
+rm /tmp/deepseek-r1.modelfile
+```
+
+Refresh Open WebUI so it discovers the new tag:
+
+```bash
+cd ~/ollama-stack
+docker compose restart
+```
+
+## Optional: Surface Codex CLI to Open WebUI via MCP
+Follow [docs/codex-mcp-bridge.md](./codex-mcp-bridge.md) for the complete Codex bridge setup (systemd unit, Tailscale proxy, docker-compose environment, and WebUI import). Once the bridge is running, Codex tools appear under **Settings → External Tools** after you import `~/Downloads/codex-mcp-tool.json`.
+
 ## Runtime notes
 - DeepSeek Coder download size: ~3.8 GB in `/usr/share/ollama/.ollama/models`.
+- DeepSeek R1 Q5_K_M download size: ~10 GB in the same directory.
 - Expected throughput on the 3090: ~30 tokens/s.
 - Keep one heavy model resident at a time to avoid VRAM thrash.
 - Always restart the WebUI container after adding new Ollama models.

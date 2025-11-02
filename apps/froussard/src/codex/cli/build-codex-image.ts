@@ -37,7 +37,8 @@ const loadGitHubToken = async (): Promise<string> => {
     if (!ghCli) {
       throw new Error('gh CLI not found; please install gh or export GH_TOKEN')
     }
-    const output = await $`${ghCli} auth token`.text()
+    const ghUser = process.env.GH_TOKEN_USER ?? process.env.GH_AUTH_USER ?? 'tuslagch'
+    const output = ghUser ? await $`${ghCli} auth token --user ${ghUser}`.text() : await $`${ghCli} auth token`.text()
     const trimmed = output.trim()
     if (trimmed) {
       return trimmed

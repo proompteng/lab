@@ -524,6 +524,8 @@ export const bootstrapRelay = async (
   return relayResult
 }
 
+const FLUSH_THRESHOLD = 900
+
 export const relayStream = async (
   config: DiscordConfig,
   relay: RelayBootstrapResult,
@@ -538,23 +540,64 @@ export const relayStream = async (
   }
 
   let pending = ''
-  for await (const chunk of stream) {
-    pending += chunk
-    const { chunks, remainder } = consumeChunks(pending)
-    for (const part of chunks) {
+  let accumulator = ''
+
+  const flushAccumulator = async (force = false) => {
+    const content = force ? accumulator + pending : accumulator
+    if (!content || !content.trim()) {
+      if (force) {
+        pending = ''
+        accumulator = ''
+      }
+      return
+    }
+
+    let normalized = content
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '\t')
+    const parts = chunkContent(normalized)
+    for (const part of parts) {
       if (part) {
         await postMessage(config, relay.channelId, part)
       }
     }
-    pending = remainder
+    if (force) {
+      pending = ''
+    }
+    accumulator = ''
   }
 
-  if (pending.length > 0) {
-    const parts = chunkContent(pending)
-    for (const part of parts) {
-      await postMessage(config, relay.channelId, part)
+  for await (const chunk of stream) {
+    pending += chunk
+    let newlineIndex = pending.indexOf('\n')
+    while (newlineIndex !== -1) {
+      const segment = pending.slice(0, newlineIndex + 1)
+      pending = pending.slice(newlineIndex + 1)
+      accumulator += segment
+      if (accumulator.length >= FLUSH_THRESHOLD) {
+        await flushAccumulator()
+      }
+      newlineIndex = pending.indexOf('\n')
+    }
+
+    if (accumulator.length >= DISCORD_MESSAGE_LIMIT) {
+      await flushAccumulator()
+    }
+    if (pending.length >= DISCORD_MESSAGE_LIMIT) {
+      const { chunks, remainder } = consumeChunks(pending)
+      for (const part of chunks) {
+        if (part) {
+          await postMessage(config, relay.channelId, part)
+        }
+      }
+      pending = remainder
     }
   }
+
+  accumulator += pending
+  pending = ''
+  await flushAccumulator(true)
 }
 
 export const iterableFromStream = (input: NodeJS.ReadableStream): AsyncIterable<string> => ({
