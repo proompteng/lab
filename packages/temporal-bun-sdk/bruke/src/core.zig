@@ -6,14 +6,23 @@ const c = @cImport({
     @cInclude("temporal-sdk-core-c-bridge.h");
 });
 
+fn assertOpaque(comptime T: type, comptime label: []const u8) void {
+    const info = @typeInfo(T);
+    const tag = std.meta.activeTag(info);
+    const tag_name = @tagName(tag);
+    if (!std.mem.eql(u8, tag_name, "Opaque") and !std.mem.eql(u8, tag_name, "opaque")) {
+        @compileError(std.fmt.comptimePrint("{s} must remain opaque", .{label}));
+    }
+}
+
 pub const CoreRuntime = c.TemporalCoreRuntime;
 pub const CoreClient = c.TemporalCoreClient;
 pub const CoreWorker = c.TemporalCoreWorker;
 
 comptime {
-    if (@typeInfo(CoreRuntime) != .@"opaque") @compileError("CoreRuntime must remain opaque");
-    if (@typeInfo(CoreClient) != .@"opaque") @compileError("CoreClient must remain opaque");
-    if (@typeInfo(CoreWorker) != .@"opaque") @compileError("CoreWorker must remain opaque");
+    assertOpaque(CoreRuntime, "CoreRuntime");
+    assertOpaque(CoreClient, "CoreClient");
+    assertOpaque(CoreWorker, "CoreWorker");
 }
 
 pub const Runtime = CoreRuntime;
