@@ -10,7 +10,7 @@ The Altinity ClickHouse Operator implements a Kubernetes-native control plane fo
 
 ## Configuration Highlights
 - Resources & reliability: the overrides request 250m CPU / 512Mi memory for the operator, and 100m CPU / 256Mi memory for the metrics exporter. A `PodDisruptionBudget` with `maxUnavailable: 0` protects the singleton deployment during voluntary disruptions.
-- Watch scope: `WATCH_NAMESPACES` is set to `clickhouse-*` to scope reconciliation to ClickHouse-focused namespaces. Adjust this list before onboarding workloads in other namespaces.
+- Watch scope: `WATCH_NAMESPACES` is left unset so the operator reconciles ClickHouse resources from any namespace. If you need to constrain scope later, set the env var (via Helm values) to a comma-separated list of prefixes or specific namespaces.
 - Metrics: built-in Prometheus annotations and `serviceMonitor.enabled: true` expose metrics on ports `8888` (ClickHouse) and `9999` (operator). Attach the `release` label in `values.yaml` to match the running Prometheus Operator installation.
 - Templates: `values.yaml` packages baseline `ClickHouseInstallationTemplate` and `ClickHouseKeeperInstallationTemplate` definitions. They default to 2x ClickHouse replicas and 3x Keeper replicas with anti-affinity, tailoring resources for long-running analytics. Persistent volumes bind to the `longhorn` storage class by default; adjust if the target cluster uses a different provider. The ClickHouse template points at the bundled Keeper service `keeper-lab-default-keeper:2181` for embedded coordination.
 - TODO markers must be resolved (storage classes, Prometheus selector) before enabling auto-sync.

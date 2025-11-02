@@ -19,9 +19,6 @@ operator:
     limits:
       cpu: 500m
       memory: 1Gi
-  env:
-    - name: WATCH_NAMESPACES
-      value: "clickhouse-*"
 metrics:
   enabled: true
   resources:
