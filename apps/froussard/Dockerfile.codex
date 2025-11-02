@@ -4,6 +4,7 @@ FROM ghcr.io/openai/codex-universal:latest
 ARG ARGO_VERSION=v3.6.3
 ARG KUBECONFORM_VERSION=v0.6.7
 ARG TARGETARCH=arm64
+ARG TEMPORAL_VERSION=v1.5.0
 ARG ZIG_VERSION=0.15.2
 ARG ZLS_VERSION=0.15.0
 ARG CODEX_AUTH_CHECKSUM=unspecified
@@ -40,6 +41,22 @@ RUN set -eux; \
     tar -xzf "${KUBECONFORM_ARCHIVE}" -C /tmp kubeconform; \
     install -m 0755 /tmp/kubeconform /usr/local/bin/kubeconform; \
     rm -f "${KUBECONFORM_ARCHIVE}" /tmp/kubeconform
+
+RUN set -eux; \
+    ARCH="${TARGETARCH:-arm64}"; \
+    case "${ARCH}" in \
+      amd64|arm64) \
+        ;; \
+      *) \
+        echo "Unsupported TARGETARCH: ${ARCH}" >&2; \
+        exit 1; \
+        ;; \
+    esac; \
+    TEMPORAL_URL="https://temporal.download/cli/archive/${TEMPORAL_VERSION}?platform=linux&arch=${ARCH}"; \
+    TEMPORAL_TMPDIR="$(mktemp -d)"; \
+    curl -fsSL "${TEMPORAL_URL}" | tar -xz -C "${TEMPORAL_TMPDIR}" -f -; \
+    install -m 0755 "${TEMPORAL_TMPDIR}/temporal" /usr/local/bin/temporal; \
+    rm -rf "${TEMPORAL_TMPDIR}"
 
 RUN set -eux; \
     ARCH="${TARGETARCH:-arm64}"; \
