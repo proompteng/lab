@@ -34,7 +34,7 @@ metrics:
 serviceMonitor:
   enabled: true
   additionalLabels:
-    release: kube-prometheus-stack # TODO(data-platform): adjust if observability stack uses a different selector.
+    release: kube-prometheus-stack
 podAnnotations:
   prometheus.io/port: "8888"
   prometheus.io/scrape: "true"
