@@ -33,6 +33,7 @@ export interface WorkerRuntimeOptions {
   namespace?: string
   concurrency?: { workflow?: number; activity?: number }
   dataConverter?: DataConverter
+  buildId: string
 }
 
 export interface NativeWorkerOptions {
@@ -41,6 +42,7 @@ export interface NativeWorkerOptions {
   namespace?: string
   taskQueue?: string
   identity?: string
+  buildId: string
 }
 
 export const isZigWorkerBridgeEnabled = (): boolean => shouldUseZigWorkerBridge() && native.bridgeVariant === 'zig'
@@ -78,11 +80,20 @@ export const maybeCreateNativeWorker = (options: NativeWorkerOptions): NativeWor
     ? options.identity.trim()
     : `${DEFAULT_IDENTITY_PREFIX}-${process.pid}`
 
+  const buildId = options.buildId?.trim()
+  if (!buildId) {
+    throw new NativeBridgeError({
+      code: 3,
+      message: 'Worker buildId must be a non-empty string when TEMPORAL_BUN_SDK_USE_ZIG=1',
+    })
+  }
+
   try {
     return native.createWorker(options.runtime, options.client, {
       namespace,
       taskQueue,
       identity,
+      buildId,
     })
   } catch (error) {
     if (error instanceof NativeBridgeError) {
@@ -152,6 +163,7 @@ interface WorkerRuntimeContext {
   identity: string
   taskQueue: string
   config: TemporalConfig
+  buildId: string
 }
 
 type ActivityHandler = (...args: unknown[]) => unknown | Promise<unknown>
@@ -221,6 +233,14 @@ export class WorkerRuntime {
       ? config.workerIdentity.trim()
       : `${DEFAULT_IDENTITY_PREFIX}-${process.pid}`
 
+    const buildId = options.buildId?.trim()
+    if (!buildId) {
+      throw new NativeBridgeError({
+        code: 3,
+        message: 'Worker buildId must be configured when using the Zig bridge.',
+      })
+    }
+
     const runtime = native.createRuntime({})
     let client: NativeClient | null = null
 
@@ -254,6 +274,7 @@ export class WorkerRuntime {
         namespace,
         taskQueue,
         identity,
+        buildId,
       })
 
       if (!workerHandle) {
@@ -275,7 +296,7 @@ export class WorkerRuntime {
       return new WorkerRuntime(
         options,
         { runtime, client, worker: workerHandle },
-        { namespace, identity, taskQueue, config },
+        { namespace, identity, taskQueue, config, buildId },
         workflowEngine,
         dataConverter,
       )

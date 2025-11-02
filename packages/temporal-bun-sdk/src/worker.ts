@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 import type { NativeConnection, NativeConnectionOptions, WorkerOptions } from '@temporalio/worker'
@@ -10,6 +12,43 @@ import { isZigWorkerBridgeEnabled, WorkerRuntime, type WorkerRuntimeOptions } fr
 
 const DEFAULT_WORKFLOWS_PATH = fileURLToPath(new URL('./workflows/index.js', import.meta.url))
 const VENDOR_FALLBACK_ENV = 'TEMPORAL_BUN_SDK_VENDOR_FALLBACK'
+const PACKAGE_NAME = '@proompteng/temporal-bun-sdk'
+
+let cachedBuildId: string | null = null
+let buildIdLogged = false
+
+const deriveBuildId = (): string => {
+  if (cachedBuildId) {
+    return cachedBuildId
+  }
+
+  const envOverride = process.env.TEMPORAL_WORKER_BUILD_ID?.trim()
+  if (envOverride) {
+    cachedBuildId = envOverride
+    return envOverride
+  }
+
+  try {
+    const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url))
+    const payload = JSON.parse(readFileSync(pkgPath, 'utf8')) as {
+      name?: unknown
+      version?: unknown
+    }
+    const name = typeof payload.name === 'string' ? payload.name.trim() : ''
+    const version = typeof payload.version === 'string' ? payload.version.trim() : ''
+    if (name === PACKAGE_NAME && version.length > 0) {
+      const candidate = `${name}@${version}`
+      cachedBuildId = candidate
+      return candidate
+    }
+  } catch {
+    // ignore and fall back to hostname-based build ID
+  }
+
+  const fallback = `${os.hostname()}-${process.pid}@dev`
+  cachedBuildId = fallback
+  return fallback
+}
 
 export type WorkerOptionOverrides = Omit<WorkerOptions, 'connection' | 'taskQueue' | 'workflowsPath' | 'activities'>
 
@@ -73,6 +112,12 @@ export const createWorker = async (
 
   const workflowsPath = resolveWorkflowsPath(options.workflowsPath)
   const activities = resolveActivities(options.activities)
+  const buildId = deriveBuildId()
+
+  if (!buildIdLogged) {
+    buildIdLogged = true
+    console.info('[temporal-bun-sdk] worker buildId: %s', buildId)
+  }
 
   const runtimeOptions: WorkerRuntimeOptions = {
     workflowsPath,
@@ -80,6 +125,7 @@ export const createWorker = async (
     taskQueue,
     namespace: config.namespace,
     dataConverter: options.dataConverter,
+    buildId,
   }
 
   const runtime = await WorkerRuntime.create(runtimeOptions)

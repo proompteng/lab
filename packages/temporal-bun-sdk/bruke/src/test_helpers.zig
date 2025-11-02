@@ -37,6 +37,7 @@ var test_worker_handle = worker.WorkerHandle{
     .namespace = ""[0..0],
     .task_queue = ""[0..0],
     .identity = ""[0..0],
+    .build_id = ""[0..0],
     .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&fake_worker_storage)),
     .poll_lock = .{},
     .poll_condition = .{},

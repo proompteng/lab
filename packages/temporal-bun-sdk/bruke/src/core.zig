@@ -65,6 +65,8 @@ pub const WorkerVersioningStrategy = c.TemporalCoreWorkerVersioningStrategy;
 pub const WorkerVersioningStrategyTag = c.TemporalCoreWorkerVersioningStrategy_Tag;
 pub const WorkerTunerHolder = c.TemporalCoreTunerHolder;
 pub const WorkerPollerBehavior = c.TemporalCorePollerBehavior;
+pub const WorkerPollerBehaviorSimpleMaximum = c.TemporalCorePollerBehaviorSimpleMaximum;
+pub const WorkerPollerBehaviorAutoscaling = c.TemporalCorePollerBehaviorAutoscaling;
 pub const WorkerByteArrayRefArray = c.TemporalCoreByteArrayRefArray;
 
 pub const RpcService = c.TemporalCoreRpcService;

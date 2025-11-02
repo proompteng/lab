@@ -106,11 +106,13 @@ describe('WorkerRuntime.shutdown', () => {
       TEMPORAL_NAMESPACE: process.env.TEMPORAL_NAMESPACE,
       TEMPORAL_TASK_QUEUE: process.env.TEMPORAL_TASK_QUEUE,
       TEMPORAL_ALLOW_INSECURE: process.env.TEMPORAL_ALLOW_INSECURE,
+      TEMPORAL_WORKER_BUILD_ID: process.env.TEMPORAL_WORKER_BUILD_ID,
     }
     process.env.TEMPORAL_ADDRESS = '127.0.0.1:7233'
     process.env.TEMPORAL_NAMESPACE = 'default'
     process.env.TEMPORAL_TASK_QUEUE = 'unit-test-queue'
     process.env.TEMPORAL_ALLOW_INSECURE = '0'
+    process.env.TEMPORAL_WORKER_BUILD_ID = 'test-build'
 
     try {
       const { WorkerRuntime } = await import('../../src/worker/runtime.ts?shutdown-test')
@@ -119,6 +121,7 @@ describe('WorkerRuntime.shutdown', () => {
       const runtime = await WorkerRuntime.create({
         workflowsPath: resolvedWorkflowsPath,
         taskQueue: 'unit-test-queue',
+        buildId: 'test-build',
       })
 
       const runPromise = runtime.run()
@@ -151,6 +154,11 @@ describe('WorkerRuntime.shutdown', () => {
         delete process.env.TEMPORAL_ALLOW_INSECURE
       } else {
         process.env.TEMPORAL_ALLOW_INSECURE = previousEnv.TEMPORAL_ALLOW_INSECURE
+      }
+      if (previousEnv.TEMPORAL_WORKER_BUILD_ID === undefined) {
+        delete process.env.TEMPORAL_WORKER_BUILD_ID
+      } else {
+        process.env.TEMPORAL_WORKER_BUILD_ID = previousEnv.TEMPORAL_WORKER_BUILD_ID
       }
 
       if (previousFlag === undefined) {
