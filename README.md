@@ -44,7 +44,7 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
 | `services/` | Go microservices (`miel`, `prix`, `prt`, `eclair`) with adjacent tests and Dockerfiles. |
 | `ansible/` | Playbooks and inventory for provisioning supporting hosts. |
 | `tofu/` | OpenTofu (Terraform) configurations for Harvester, Cloudflare, Rancher, and Tailscale. |
-| `kubernetes/` | Cluster manifests, Coder template, and helper scripts (`kubernetes/install.sh`). |
+| `kubernetes/` | Cluster bootstrap/maintenance tooling (install scripts, Coder template); no workload manifests. |
 | `argocd/` | Argo CD application specs and ApplicationSets for GitOps deployment. |
 | `scripts/` | Helper scripts for builds, secrets management, and Tailscale automation. |
 | `AGENTS.md`, `CLAUDE.md` | Notes and prompts for AI agent integrations. |
