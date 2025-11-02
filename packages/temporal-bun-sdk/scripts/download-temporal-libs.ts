@@ -150,6 +150,9 @@ const DEFAULT_CONFIG: TemporalLibsConfig = {
   maxRateLimitRetries: 5, // Maximum rate limit retries
 }
 
+const MAX_RELEASE_PAGES = 10
+const RELEASES_PER_PAGE = 100
+
 /**
  * Platform detection utility
  */
@@ -242,7 +245,26 @@ export class GitHubApiClient {
    * Fetch releases from GitHub API with comprehensive retry logic and rate limiting
    */
   async fetchReleases(): Promise<GitHubRelease[]> {
-    const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/releases`
+    const releases: GitHubRelease[] = []
+    let page = 1
+
+    while (page <= MAX_RELEASE_PAGES) {
+      const { pageReleases, hasNext } = await this.fetchReleasePage(page)
+      releases.push(...pageReleases)
+
+      if (!hasNext) {
+        break
+      }
+
+      page += 1
+    }
+
+    console.log(`✓ Aggregated ${releases.length} releases across ${page} page(s)`)
+    return releases
+  }
+
+  private async fetchReleasePage(page: number): Promise<{ pageReleases: GitHubRelease[]; hasNext: boolean }> {
+    const url = `${this.baseUrl}/repos/${this.owner}/${this.repo}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`
     let rateLimitRetries = 0
 
     for (let attempt = 1; attempt <= this.config.retryAttempts; attempt++) {
@@ -256,7 +278,6 @@ export class GitHubApiClient {
           },
         })
 
-        // Handle rate limiting with special retry logic
         if (response.status === 403) {
           const rateLimitRemaining = response.headers.get('X-RateLimit-Remaining')
           const rateLimitReset = response.headers.get('X-RateLimit-Reset')
@@ -279,7 +300,7 @@ export class GitHubApiClient {
               const timeUntilReset = resetTime.getTime() - now.getTime()
 
               if (timeUntilReset > 0 && timeUntilReset < this.config.rateLimitRetryDelayMs * 2) {
-                waitTime = timeUntilReset + 5000 // Add 5 second buffer
+                waitTime = timeUntilReset + 5000
               }
 
               console.log(
@@ -290,9 +311,8 @@ export class GitHubApiClient {
             }
 
             await new Promise((resolve) => setTimeout(resolve, waitTime))
-            continue // Don't count this as a regular retry attempt
+            continue
           } else {
-            // Other 403 error (permissions, etc.)
             throw new NetworkError(
               `Access denied to repository ${this.owner}/${this.repo}. Check if the repository is public or if you need authentication.`,
             )
@@ -305,27 +325,30 @@ export class GitHubApiClient {
           }
 
           if (response.status >= 500) {
-            // Server error - retry with exponential backoff
             throw new NetworkError(`GitHub API server error: ${response.status} ${response.statusText}`)
           }
 
-          // Client error - don't retry
           throw new NetworkError(`GitHub API request failed: ${response.status} ${response.statusText}`)
         }
 
-        const releases: GitHubRelease[] = await response.json()
-        console.log(`✓ Successfully fetched ${releases.length} releases`)
+        const pageReleases: GitHubRelease[] = await response.json()
 
-        // Log rate limit status for monitoring
         const rateLimitRemaining = response.headers.get('X-RateLimit-Remaining')
         const rateLimitLimit = response.headers.get('X-RateLimit-Limit')
         if (rateLimitRemaining && rateLimitLimit) {
           console.log(`GitHub API rate limit: ${rateLimitRemaining}/${rateLimitLimit} remaining`)
         }
 
-        return releases
+        const linkHeader = response.headers.get('Link') ?? ''
+        const hasNext = linkHeader
+          .split(',')
+          .map((part) => part.trim())
+          .some((part) => part.endsWith('rel="next"'))
+
+        console.log(`✓ Retrieved ${pageReleases.length} releases from page ${page}`)
+
+        return { pageReleases, hasNext }
       } catch (error) {
-        // Don't retry for certain error types
         if (
           error instanceof ArtifactNotFoundError ||
           (error instanceof NetworkError && error.message.includes('Access denied'))
@@ -333,7 +356,6 @@ export class GitHubApiClient {
           throw error
         }
 
-        // Don't retry rate limit errors that have exceeded max retries
         if (error instanceof RateLimitError) {
           throw error
         }
@@ -343,25 +365,26 @@ export class GitHubApiClient {
         if (attempt === this.config.retryAttempts) {
           if (error instanceof Error) {
             throw new NetworkError(
-              `Failed to fetch releases after ${this.config.retryAttempts} attempts: ${error.message}`,
+              `Failed to fetch releases page ${page} after ${this.config.retryAttempts} attempts: ${error.message}`,
               error,
             )
           } else {
-            throw new NetworkError(`Failed to fetch releases after ${this.config.retryAttempts} attempts: ${error}`)
+            throw new NetworkError(
+              `Failed to fetch releases page ${page} after ${this.config.retryAttempts} attempts: ${error}`,
+            )
           }
         }
 
-        // Exponential backoff with jitter and cap
         const baseDelay = this.config.retryDelayMs * 2 ** (attempt - 1)
-        const jitter = Math.random() * 0.1 * baseDelay // Add up to 10% jitter
+        const jitter = Math.random() * 0.1 * baseDelay
         const delay = Math.min(baseDelay + jitter, this.config.maxRetryDelayMs)
 
-        console.log(`Retrying in ${Math.round(delay)}ms...`)
+        console.log(`Retrying page ${page} in ${Math.round(delay)}ms...`)
         await new Promise((resolve) => setTimeout(resolve, delay))
       }
     }
 
-    throw new NetworkError('All retry attempts failed')
+    throw new NetworkError(`All retry attempts failed for releases page ${page}`)
   }
 
   /**
