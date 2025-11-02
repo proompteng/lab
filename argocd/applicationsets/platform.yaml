@@ -271,7 +271,7 @@ spec:
           namespace: clickhouse-operator
           name: clickhouse-operator-altinity-clickhouse-operator
           jqPathExpressions:
-            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
+            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef
             - .spec.template.spec.containers[].env[].valueFrom.fieldRef.apiVersion
         - kind: DaemonSet
           group: apps
