@@ -40,6 +40,42 @@
 | Pending handles | JS `waitForByteArray` polls userland FFI once per request | Zig retains references in shared table; needs explicit release | Error paths may leak/reject handles |
 | Logger/telemetry flush | JS flushes via `runtime.flushLogs()` | Zig lacks periodic flush | Harder to observe core logs |
 
+## LLDB Debugging Notes
+Temporal core is compiled in Rust, so a symbol-aware debug session is invaluable when the bridge misbehaves. A reliable workflow:
+
+1. **Checkout the exact core revision** used by the TypeScript SDK (currently `sdk-core@871b320c8f51d52cb69fcc31f9` tagged `v1.13.1`).
+2. Build the C bridge with full symbols:
+   ```bash
+   git clone https://github.com/temporalio/sdk-core.git ~/debug/sdk-core
+   cd ~/debug/sdk-core
+   RUSTFLAGS='-C debuginfo=2' cargo build -p temporalio-sdk-core-c-bridge
+   ```
+3. Point Bun/Zig to the unstripped dylib:
+   ```bash
+   export DYLD_LIBRARY_PATH=$HOME/debug/sdk-core/target/debug:$DYLD_LIBRARY_PATH
+   ```
+4. Launch the minimal Zig harness under LLDB:
+   ```bash
+   cd packages/temporal-bun-sdk
+   lldb -- zig run bruke/examples/simple_connect.zig -I bruke/include \
+       -L $HOME/debug/sdk-core/target/debug -l temporalio_sdk_core_c_bridge
+   ```
+5. Set breakpoints on the relevant C-bridge entry points:
+   ```lldb
+   (lldb) br set -n temporal_core_worker_poll_workflow_activation
+   (lldb) br set -n temporal_core_worker_complete_workflow_activation
+   (lldb) br set -n temporal_core_worker_poll_activity_task
+   ```
+   Symbol names live under the `temporal_sdk_core_c_bridge` namespace; tab completion helps if they change between releases.
+6. Inspect the async runtime via backtraces. The call stack typically shows `LongPollBuffer::poll` → `WorkflowTaskPoller`. If the breakpoint never hits, the bridge failed before the poll reached core. If it triggers but immediately returns `PollError::ShutDown`, the worker failed registration/versioning checks earlier.
+7. For noisy tracing, enable env vars prior to launching LLDB:
+   ```bash
+   export RUST_LOG=temporal_sdk_core=trace,temporal_client=trace
+   export RUST_BACKTRACE=full
+   ```
+
+These steps helped confirm that the server emitted activations and that the completion callback was never invoked on the Zig side. Keep an eye on `pending_executor` threads—if they terminate prematurely, LLDB will show the panic backtrace during shutdown.
+
 ## Next Steps
 1. **Align WorkerOptions**: Port TypeScript’s `BridgeWorkerOptions` defaults (build ID injection, poll behaviour) into Zig binding. Ensure build ID propagates via `WorkerOptions.versioning_strategy`. 
 2. **Trim pending executor**: Refactor `pollWorkflowTask` to call core API synchronously (spawned thread or direct call) and resolve Bun promise immediately.
