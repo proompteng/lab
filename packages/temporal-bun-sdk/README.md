@@ -64,7 +64,7 @@ Intel macOS and Windows hosts are not yet supported by the prebuilt Zig artefact
    temporal-bun init hello-worker
    ```
 
-The CLI and worker automatically load the prepackaged Zig libraries. Setting `TEMPORAL_BUN_SDK_USE_ZIG=1` ensures the Bun-native bridge is mandatory; unset it only when opting into the vendor fallback described in the troubleshooting guide.
+The CLI and worker automatically load the prepackaged Zig libraries. Setting `TEMPORAL_BUN_SDK_USE_ZIG=1` enables the Bun-native bridge; leaving it unset now triggers a descriptive `NativeBridgeError` that explains how to build or install the Zig artefacts.
 
 ## Temporal Core Logging
 
@@ -100,7 +100,7 @@ To rotate log files, close the stream and call `runtime.removeLogger()` before r
 
 ## Guides & References
 - [Migration guide](./docs/migration-guide.md) – move from the hybrid `@temporalio/*` packages to the Bun SDK.
-- [Troubleshooting & FAQ](./docs/troubleshooting.md) – bridge loading, TLS, API keys, CI environments, and vendor fallback.
+- [Troubleshooting & FAQ](./docs/troubleshooting.md) – bridge loading, TLS, API keys, CI environments, and unsupported-host guidance.
 - [TypeScript core bridge](./docs/ts-core-bridge.md) – Bun ↔ Zig FFI design.
 - [Migration phases](./docs/migration-phases.md) – phased rollout checklist with status.
 - [Worker runtime](./docs/worker-runtime.md) – architecture for Bun-native polling, activities, and shutdown.

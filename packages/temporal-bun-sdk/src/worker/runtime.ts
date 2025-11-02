@@ -47,6 +47,11 @@ export interface NativeWorkerOptions {
 
 export const isZigWorkerBridgeEnabled = (): boolean => shouldUseZigWorkerBridge() && native.bridgeVariant === 'zig'
 
+export const getZigWorkerBridgeDiagnostics = () => ({
+  bridgeVariant: native.bridgeVariant,
+  useZigEnv: process.env.TEMPORAL_BUN_SDK_USE_ZIG ?? 'unset',
+})
+
 export const maybeCreateNativeWorker = (options: NativeWorkerOptions): NativeWorker | null => {
   if (!shouldUseZigWorkerBridge()) {
     return null

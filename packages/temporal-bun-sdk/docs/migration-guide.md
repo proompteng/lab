@@ -4,7 +4,7 @@
 
 ## Who Should Read This?
 - Teams currently running Temporal workers with Node.js and the official `@temporalio/{client,worker,activity,workflow}` packages.
-- Contributors upgrading existing Temporal Bun experiments that still rely on the upstream bridge or the vendor fallback.
+- Contributors upgrading existing Temporal Bun experiments that still rely on the upstream bridge or the legacy Node worker.
 - CI/CD owners validating that the published package carries prebuilt Zig artefacts so workflow deployments stay hermetic.
 
 ## Prerequisites
@@ -56,7 +56,7 @@
 
    await worker.run()
    ```
-   - Ensure `TEMPORAL_BUN_SDK_USE_ZIG=1` in the worker environment. When unset, the helper falls back to `@temporalio/worker` only if `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` is explicitly set.
+   - Ensure `TEMPORAL_BUN_SDK_USE_ZIG=1` in the worker environment. When unset, `createWorker` now throws a `NativeBridgeError` that explains how to enable the Zig bridge.
    - Activities continue to use Bun functions; no additional wrappers are required.
 
 6. **Regenerate build/pack scripts**
@@ -87,7 +87,7 @@
 |------|------------|---------|
 | Connection | `Connection.connect()` from `@temporalio/client` | `createTemporalClient()` backed by Zig-native handles |
 | Worker default | `@temporalio/worker` Node runtime | Bun worker runtime uses Zig bridge when `TEMPORAL_BUN_SDK_USE_ZIG=1` |
-| Vendor fallback | Implicit when Zig bridge missing | Opt-in via `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` |
+| Vendor fallback | Implicit when Zig bridge missing | Not available — the Bun worker is the only runtime and surfaces friendly diagnostics when Zig is disabled |
 | TLS/API keys | Custom bootstrap code required | `loadTemporalConfig()` reads env and loads certificates |
 | Replay | `@temporalio/worker` CLI | `temporal-bun replay` plus `runReplayHistory` |
 
@@ -95,6 +95,6 @@
 - Run `rg '@temporalio/' ./src --glob '*.ts'` to confirm only `@temporalio/workflow` remains in workflow code.
 - Run `pnpm exec biome check <paths>` to satisfy formatting/linting requirements.
 - Add the commands above to CI pipelines (see `.github/workflows/temporal-bun-sdk.yml` for reference).
-- Inform operators that `TEMPORAL_BUN_SDK_USE_ZIG=1` is now mandatory outside the vendor fallback scenarios.
+- Inform operators that `TEMPORAL_BUN_SDK_USE_ZIG=1` is mandatory because the Node fallback has been removed.
 
 Need help? Review the [Troubleshooting & FAQ](./troubleshooting.md) for common issues and escalation steps.

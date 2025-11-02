@@ -38,6 +38,8 @@ describe('createWorker buildId plumbing', () => {
     const workerHandle = { type: 'worker' as const, handle: 3 }
 
     let capturedConfig: Record<string, unknown> | null = null
+    let workerTestHelpers: { setConnectionFactory: (factory: () => Promise<unknown>) => void; resetConnectionFactory: () => void } | null =
+      null
 
     nativeModule.native.createRuntime = () => runtimeHandle
     nativeModule.native.createClient = async () => clientHandle
@@ -58,7 +60,36 @@ describe('createWorker buildId plumbing', () => {
       const pkg = JSON.parse(await Bun.file(pkgUrl).text()) as { name?: string; version?: string }
       const expectedBuildId = `${pkg.name}@${pkg.version}`
 
-      const { createWorker } = await import('../../src/worker.ts?build-id-test')
+      const { createWorker, __testing } = await import('../../src/worker.ts?build-id-test')
+      workerTestHelpers = __testing
+
+      __testing.setConnectionFactory(async () => ({
+        workflowService: {
+          getSystemInfo: async () => ({
+            capabilities: {
+              buildIdBasedVersioning: true,
+            },
+          }),
+          getWorkerVersioningRules: async () => ({
+            assignmentRules: [
+              {
+                rule: {
+                  targetBuildId: expectedBuildId,
+                },
+              },
+            ],
+            compatibleRedirectRules: [],
+          }),
+          updateWorkerVersioningRules: async () => ({}),
+          getWorkerBuildIdCompatibility: async () => ({
+            majorVersionSets: [{ buildIds: [] }],
+          }),
+          updateWorkerBuildIdCompatibility: async () => ({}),
+        },
+        withDeadline: async <T>(_deadline: number | Date, fn: () => Promise<T>) => await fn(),
+        close: async () => {},
+      }))
+
       const workflowsUrl = new URL('../fixtures/workflows/simple.workflow.ts', import.meta.url)
       const resolvedWorkflowsPath = fileURLToPath(workflowsUrl)
 
@@ -71,6 +102,7 @@ describe('createWorker buildId plumbing', () => {
 
       await handle.runtime.shutdown()
     } finally {
+      workerTestHelpers?.resetConnectionFactory()
       nativeModule.native.createRuntime = originalNative.createRuntime
       nativeModule.native.createClient = originalNative.createClient
       nativeModule.native.createWorker = originalNative.createWorker

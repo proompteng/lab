@@ -11,7 +11,7 @@ Use this guide to resolve the most common issues when running the Bun-native Tem
    bun run build:native:zig:bundle
    bun run package:native:zig
    ```
-4. If you are on an unsupported platform (Windows or macOS Intel), set `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` to reuse the Node worker until native artefacts exist.
+4. Confirm the host is supported (Linux x64/arm64 or macOS arm64). The Bun SDK no longer ships a Node fallback; build the Zig bridge from source or run the worker from a supported host when targeting other platforms.
 5. Verify `dist/native/<platform>/<arch>/libtemporal_bun_bridge_zig.*` exists inside the package (`pnpm pack --filter @proompteng/temporal-bun-sdk && tar tf @proompteng-temporal-bun-sdk-*.tgz`).
 
 ## TLS Errors (`certificate verify failed` or `UNKNOWN: bad certificate format`)
@@ -29,17 +29,17 @@ Use this guide to resolve the most common issues when running the Bun-native Tem
 - Ensure the Temporal namespace endpoint is reachable. When using the Temporal CLI dev server, keep `temporal server start-dev` (or the `temporal:start` helper script) running before launching the worker.
 - Verify the Zig bridge library resolved to the expected path by setting `TEMPORAL_BUN_SDK_NATIVE_PATH` and watching for load warnings in stdout.
 - Confirm `TEMPORAL_TASK_QUEUE`, `TEMPORAL_NAMESPACE`, and `TEMPORAL_ADDRESS` are populated; empty strings are rejected with the same error code.
-- If the error persists on unsupported hosts, temporarily set `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` to unblock testing and capture the failing stdout/stderr for the Zig bridge follow-up issue.
+- Inspect the `NativeBridgeError` diagnostics that are logged alongside the failure; resolve the reported configuration or bridge issue before retrying (the Bun worker no longer supports falling back to the Node SDK).
 
 ## CI Pipelines Cannot Access Zig
 - Install Zig 0.15.1 in CI (see `.github/workflows/temporal-bun-sdk.yml`). The scripts assume `zig` is on PATH.
 - Cache `.temporal-libs-cache` between runs to avoid re-downloading large static libraries.
 - Run `bun run libs:download` before `bun run build:native:zig` so the Zig build has the required archives.
 
-## When to Use the Vendor Fallback
-- Set `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` only when running on unsupported platforms (Windows/macOS Intel) or when debugging Zig bridge regressions.
-- The fallback still requires `@temporalio/worker` to be installed; keep the dependency until all production environments can run the Zig bridge.
-- Document any use of the fallback in runbooks so operators know Bun-native telemetry hooks are disabled in that mode.
+## Unsupported Platforms
+- The published Zig artefacts target Linux x64/arm64 and macOS arm64. For other platforms, cross-compile the bridge (`bun run build:native:zig`) or run the worker on a supported host until additional artefacts ship.
+- If you need to compare against the Temporal Node worker, run it from the Node SDK directly; the Bun SDK no longer bundles the vendor fallback.
+- Capture bridge logs and `NativeBridgeError` payloads when reporting unsupported-host issues so the runtime team can prioritise porting work.
 
 ## Where Do Temporal Core Logs Go?
 - Install a logger via `coreBridge.runtime.createRuntime().installLogger(event => { … })`. Without a logger callback, log records are dropped.

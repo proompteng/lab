@@ -73,7 +73,7 @@ Dates assume we prioritize the Zig bridge alongside existing Rust bridge mainten
 - **Worker Versioning & Deployment Guide:** tailored to Bun packaging/deploy flows (see [Worker versioning](https://docs.temporal.io/worker-versioning)).
 - **Troubleshooting TLS/Docker:** collect known issues and fixes from community threads (see [Temporal community report](https://community.temporal.io/t/temporal-client-fails-to-connect-inside-docker-container-node-js-bun/17982)).
 - **Release Notes Template:** highlight Bun minimum version, platform coverage, experimental warnings.
-- **Runtime Configuration:** document `TEMPORAL_BUN_SDK_USE_ZIG`, `TEMPORAL_BUN_SDK_VENDOR_FALLBACK`, and `TEMPORAL_SHOW_STACK_SOURCES` so operators can toggle behaviour predictably.
+- **Runtime Configuration:** document `TEMPORAL_BUN_SDK_USE_ZIG` and `TEMPORAL_SHOW_STACK_SOURCES`; note that the Node fallback has been removed, so operators must enable the Zig bridge.
 
 Keep this list synchronized with `zig-production-readiness.md`.
 
