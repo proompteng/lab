@@ -75,6 +75,65 @@ The CLI and worker automatically load the prepackaged Zig libraries. Setting `TE
 - [Workflow runtime](./docs/workflow-runtime.md) – deterministic execution and replay mechanics.
 - [Design overview](./docs/design-e2e.md) – full-stack architecture and testing strategy.
 
+## Zig Toolchain
+
+The native bridge compiles with Zig **0.15.1**, matching our CI workflow (`.github/workflows/temporal-bun-sdk.yml`) and the Docker build stage (`packages/temporal-bun-sdk/Dockerfile`). Update those references and this section together whenever we bump the toolchain.
+
+### Install options
+
+- **macOS (Homebrew)**
+  ```bash
+  brew update
+  brew install zig
+  zig version
+  ```
+  Homebrew’s `zig` formula tracks stable releases. If `zig version` prints something other than `0.15.1`, install from an alternative below and `brew pin zig` (or uninstall the mismatched version) to prevent PATH conflicts.
+
+- **macOS/Linux (asdf)**
+  ```bash
+  asdf plugin add zig https://github.com/zigcc/asdf-zig.git
+  asdf install zig 0.15.1
+  asdf global zig 0.15.1
+  zig version
+  ```
+  This keeps Zig scoped per-shell via `.tool-versions`. Use `asdf local zig 0.15.1` inside consumer projects if you do not want a global default.
+
+- **Manual tarball (official release)**
+  ```bash
+  ZIG_VERSION=0.15.1
+
+  case "$(uname -s)" in
+    Darwin) ZIG_OS=macos ;;
+    Linux) ZIG_OS=linux ;;
+    *) echo "Unsupported OS for the Zig tarball install"; exit 1 ;;
+  esac
+
+  case "$(uname -m)" in
+    arm64|aarch64) ZIG_ARCH=aarch64 ;;
+    x86_64|amd64) ZIG_ARCH=x86_64 ;;
+    *) echo "Unsupported CPU architecture for the Zig tarball install"; exit 1 ;;
+  esac
+
+  curl -LO "https://ziglang.org/download/${ZIG_VERSION}/zig-${ZIG_OS}-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"
+  tar -xf "zig-${ZIG_OS}-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"
+  sudo mv "zig-${ZIG_OS}-${ZIG_ARCH}-${ZIG_VERSION}" "/usr/local/zig-${ZIG_VERSION}"
+  sudo ln -sf "/usr/local/zig-${ZIG_VERSION}/zig" /usr/local/bin/zig
+  zig version
+  ```
+  Linux hosts need `xz-utils` (`sudo apt-get install xz-utils` on Debian/Ubuntu) before extracting. macOS users should remove or pin any conflicting Homebrew install to keep the downloaded toolchain first on `PATH`.
+
+### Verify your setup
+
+```bash
+zig version             # should report 0.15.1
+zig env | grep cache    # optional sanity check
+pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
+```
+
+The build script (`packages/temporal-bun-sdk/scripts/build-zig-artifacts.ts`) expects `zig` on `PATH`. If the final command fails, confirm the Temporal libraries downloaded via `bun run scripts/download-temporal-libs.ts` and re-run after fixing your Zig install.
+
+> **Windows support:** Windows/MSVC builds remain on the roadmap (`zig-pack-03`). Until compatible Zig artifacts ship, Windows hosts are not supported for native bridge development.
+
 ## Packaging & Release Tasks
 The package’s `prepack` hook downloads the Temporal static libraries, bundles the Zig artefacts, and compiles TypeScript output so `pnpm pack` always produces a ready-to-publish tarball.
 
