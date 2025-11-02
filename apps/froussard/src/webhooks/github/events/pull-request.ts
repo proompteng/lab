@@ -1,4 +1,3 @@
-import { normalizeLogin } from '@/codex'
 import type {
   ReadyCommentCommand as ReadyCommentCommandType,
   ReviewEvaluation,
@@ -97,18 +96,12 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
       return null
     }
 
-    if (normalizeLogin(pull.authorLogin) !== config.codexTriggerLogin) {
-      return null
-    }
-
     if (!pull.headRef || !pull.headSha || !pull.baseRef) {
       return null
     }
 
-    const issueNumber = parseIssueNumberFromBranch(pull.headRef, config.codebase.branchPrefix)
-    if (issueNumber === null) {
-      return null
-    }
+    const issueNumberCandidate = parseIssueNumberFromBranch(pull.headRef, config.codebase.branchPrefix)
+    const issueNumber = issueNumberCandidate ?? pull.number
 
     const threadsResult = await executionContext.runGithub(() =>
       executionContext.githubService.listPullRequestReviewThreads({
