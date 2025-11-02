@@ -27,6 +27,7 @@ The Altinity ClickHouse Operator implements a Kubernetes-native control plane fo
 ## Prometheus & Observability
 - ServiceMonitor: automatically installed when the operator syncs. Ensure Prometheus watches the `clickhouse-operator` namespace.
 - Grafana: add dashboards from the Altinity repo (e.g., ClickHouse Overview, Keeper health) by pulling them into the observability stack after the operator provisions metrics.
+- Metrics pipeline: the lab’s observability stack relies on Grafana Mimir (metrics storage) and Alloy or Prometheus agents for scraping. To record ClickHouse metrics today, deploy an Alloy scraper (patterned after `argocd/applications/argocd/alloy-configmap.yaml`) targeting `clickhouse-operator` and forward via `prometheus.remote_write` to `observability-mimir-nginx`. Alternatively, add a Prometheus Operator release in the `observability` namespace, configure remote write to Mimir, and create a matching `ServiceMonitor`.
 - Alerting: configure alert rules for Keeper quorum loss, ClickHouse replica lag, and operator reconciliation failures.
 
 ## Sync Lifecycle
