@@ -5,6 +5,7 @@ const builtin = @import("builtin");
 const c = @cImport({
     @cInclude("temporal-sdk-core-c-bridge.h");
 });
+pub const c_api = c;
 
 fn assertOpaque(comptime T: type, comptime label: []const u8) void {
     const info = @typeInfo(T);
@@ -15,9 +16,13 @@ fn assertOpaque(comptime T: type, comptime label: []const u8) void {
     }
 }
 
-pub const CoreRuntime = c.TemporalCoreRuntime;
-pub const CoreClient = c.TemporalCoreClient;
-pub const CoreWorker = c.TemporalCoreWorker;
+pub const CoreRuntime = opaque {};
+pub const CoreClient = opaque {};
+pub const CoreWorker = opaque {};
+
+const RawRuntime = c.TemporalCoreRuntime;
+const RawClient = c.TemporalCoreClient;
+const RawWorker = c.TemporalCoreWorker;
 
 comptime {
     assertOpaque(CoreRuntime, "CoreRuntime");
@@ -27,7 +32,6 @@ comptime {
 
 pub const Runtime = CoreRuntime;
 pub const RuntimeOptions = c.TemporalCoreRuntimeOptions;
-pub const RuntimeOrFail = c.TemporalCoreRuntimeOrFail;
 pub const TelemetryOptions = c.TemporalCoreTelemetryOptions;
 pub const LoggingOptions = c.TemporalCoreLoggingOptions;
 pub const MetricsOptions = c.TemporalCoreMetricsOptions;
@@ -56,9 +60,6 @@ pub const ClientKeepAliveOptions = c.TemporalCoreClientKeepAliveOptions;
 pub const ClientHttpConnectProxyOptions = c.TemporalCoreClientHttpConnectProxyOptions;
 
 pub const Worker = CoreWorker;
-pub const WorkerOptions = c.TemporalCoreWorkerOptions;
-pub const WorkerOrFail = c.TemporalCoreWorkerOrFail;
-pub const WorkerReplayerOrFail = c.TemporalCoreWorkerReplayerOrFail;
 pub const WorkerReplayPusher = c.TemporalCoreWorkerReplayPusher;
 pub const WorkerReplayPushResult = c.TemporalCoreWorkerReplayPushResult;
 pub const WorkerVersioningStrategy = c.TemporalCoreWorkerVersioningStrategy;
@@ -74,6 +75,46 @@ pub const RpcCallOptions = c.TemporalCoreRpcCallOptions;
 pub const ClientRpcCallCallback = c.TemporalCoreClientRpcCallCallback;
 pub const CancellationToken = c.TemporalCoreCancellationToken;
 
+inline fn toRuntime(raw: ?*RawRuntime) ?*Runtime {
+    return if (raw) |ptr| @ptrCast(ptr) else null;
+}
+
+inline fn fromRuntime(runtime: ?*Runtime) ?*RawRuntime {
+    return if (runtime) |ptr| @ptrCast(ptr) else null;
+}
+
+inline fn fromRuntimeNonNull(runtime: *Runtime) *RawRuntime {
+    return @ptrCast(runtime);
+}
+
+inline fn toClient(raw: ?*RawClient) ?*Client {
+    return if (raw) |ptr| @ptrCast(ptr) else null;
+}
+
+inline fn fromClient(client: ?*Client) ?*RawClient {
+    return if (client) |ptr| @ptrCast(ptr) else null;
+}
+
+inline fn fromClientNonNull(client: *Client) *RawClient {
+    return @ptrCast(client);
+}
+
+inline fn toWorker(raw: ?*RawWorker) ?*Worker {
+    return if (raw) |ptr| @ptrCast(ptr) else null;
+}
+
+inline fn fromWorker(worker: ?*Worker) ?*RawWorker {
+    return if (worker) |ptr| @ptrCast(ptr) else null;
+}
+
+inline fn fromWorkerNonNull(worker: *Worker) *RawWorker {
+    return @ptrCast(worker);
+}
+
+inline fn toRawWorkerOptions(options: *const WorkerOptions) [*c]const c.TemporalCoreWorkerOptions {
+    return @ptrCast(options);
+}
+
 pub const RuntimeOpaque = Runtime;
 pub const ClientOpaque = Client;
 pub const WorkerOpaque = Worker;
@@ -83,6 +124,86 @@ pub const ByteArrayRef = c.TemporalCoreByteArrayRef;
 pub const MetadataRef = c.TemporalCoreMetadataRef;
 pub const ByteBuf = ByteArray;
 pub const ByteBufDestroyFn = *const fn (?*RuntimeOpaque, ?*const ByteBuf) callconv(.c) void;
+
+pub const WorkerOptions = extern struct {
+    namespace_: ByteArrayRef,
+    task_queue: ByteArrayRef,
+    versioning_strategy: WorkerVersioningStrategy,
+    identity_override: ByteArrayRef,
+    max_cached_workflows: u32,
+    tuner: WorkerTunerHolder,
+    no_remote_activities: bool,
+    sticky_queue_schedule_to_start_timeout_millis: u64,
+    max_heartbeat_throttle_interval_millis: u64,
+    default_heartbeat_throttle_interval_millis: u64,
+    max_activities_per_second: f64,
+    max_task_queue_activities_per_second: f64,
+    graceful_shutdown_period_millis: u64,
+    workflow_task_poller_behavior: WorkerPollerBehavior,
+    nonsticky_to_sticky_poll_ratio: f32,
+    activity_task_poller_behavior: WorkerPollerBehavior,
+    nexus_task_poller_behavior: WorkerPollerBehavior,
+    nondeterminism_as_workflow_fail: bool,
+    nondeterminism_as_workflow_fail_for_types: WorkerByteArrayRefArray,
+};
+
+comptime {
+    std.debug.assert(@sizeOf(WorkerOptions) == 432);
+    std.debug.assert(@alignOf(WorkerOptions) == @alignOf(c.TemporalCoreWorkerOptions));
+}
+
+pub const RuntimeOrFail = extern struct {
+    runtime: ?*Runtime,
+    fail: ?*const ByteArray,
+};
+
+comptime {
+    std.debug.assert(@sizeOf(RuntimeOrFail) == @sizeOf(c.TemporalCoreRuntimeOrFail));
+    std.debug.assert(@alignOf(RuntimeOrFail) == @alignOf(c.TemporalCoreRuntimeOrFail));
+}
+
+pub const WorkerOrFail = extern struct {
+    worker: ?*Worker,
+    fail: ?*const ByteArray,
+};
+
+comptime {
+    std.debug.assert(@sizeOf(WorkerOrFail) == @sizeOf(c.TemporalCoreWorkerOrFail));
+    std.debug.assert(@alignOf(WorkerOrFail) == @alignOf(c.TemporalCoreWorkerOrFail));
+}
+
+pub const WorkerReplayerOrFail = extern struct {
+    worker: ?*Worker,
+    worker_replay_pusher: ?*WorkerReplayPusher,
+    fail: ?*const ByteArray,
+};
+
+comptime {
+    std.debug.assert(@sizeOf(WorkerReplayerOrFail) == @sizeOf(c.TemporalCoreWorkerReplayerOrFail));
+    std.debug.assert(@alignOf(WorkerReplayerOrFail) == @alignOf(c.TemporalCoreWorkerReplayerOrFail));
+}
+
+inline fn runtimeOrFailFromRaw(raw: c.TemporalCoreRuntimeOrFail) RuntimeOrFail {
+    return .{
+        .runtime = toRuntime(raw.runtime),
+        .fail = raw.fail,
+    };
+}
+
+inline fn workerOrFailFromRaw(raw: c.TemporalCoreWorkerOrFail) WorkerOrFail {
+    return .{
+        .worker = toWorker(raw.worker),
+        .fail = raw.fail,
+    };
+}
+
+inline fn workerReplayerOrFailFromRaw(raw: c.TemporalCoreWorkerReplayerOrFail) WorkerReplayerOrFail {
+    return .{
+        .worker = toWorker(raw.worker),
+        .worker_replay_pusher = raw.worker_replay_pusher,
+        .fail = raw.fail,
+    };
+}
 
 const ArrayListManaged = std.array_list.Managed;
 
@@ -247,7 +368,7 @@ pub fn workerRecordActivityHeartbeat(
 
 pub fn metricMeterNew(runtime: *RuntimeOpaque) ?*MetricMeter {
     ensureExternalApiInstalled();
-    return c.temporal_core_metric_meter_new(runtime);
+    return c.temporal_core_metric_meter_new(fromRuntimeNonNull(runtime));
 }
 
 pub fn metricMeterFree(meter: ?*MetricMeter) void {
@@ -432,6 +553,174 @@ fn stubWorkerReplayPusherFree(_pusher: ?*WorkerReplayPusher) callconv(.c) void {
     _ = _pusher;
 }
 
+fn runtimeNewBridge(options: *const RuntimeOptions) callconv(.c) RuntimeOrFail {
+    return runtimeOrFailFromRaw(c.temporal_core_runtime_new(options));
+}
+
+fn runtimeFreeBridge(runtime: ?*Runtime) callconv(.c) void {
+    if (fromRuntime(runtime)) |raw| {
+        c.temporal_core_runtime_free(raw);
+    }
+}
+
+fn runtimeByteArrayFreeBridge(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArray) callconv(.c) void {
+    if (runtime) |_| {
+        c.temporal_core_byte_array_free(fromRuntime(runtime), bytes);
+        return;
+    }
+    fallbackRuntimeByteArrayFree(runtime, bytes);
+}
+
+fn clientConnectBridge(
+    runtime: ?*Runtime,
+    options: *const ClientOptions,
+    user_data: ?*anyopaque,
+    callback: ClientConnectCallback,
+) callconv(.c) void {
+    c.temporal_core_client_connect(fromRuntime(runtime), options, user_data, callback);
+}
+
+fn clientFreeBridge(client: ?*Client) callconv(.c) void {
+    if (fromClient(client)) |raw| {
+        c.temporal_core_client_free(raw);
+    }
+}
+
+fn clientUpdateMetadataBridge(client: ?*Client, metadata: ByteArrayRef) callconv(.c) void {
+    c.temporal_core_client_update_metadata(fromClient(client), metadata);
+}
+
+fn clientUpdateApiKeyBridge(client: ?*Client, api_key: ByteArrayRef) callconv(.c) void {
+    c.temporal_core_client_update_api_key(fromClient(client), api_key);
+}
+
+fn clientRpcCallBridge(
+    client: ?*Client,
+    options: *const RpcCallOptions,
+    user_data: ?*anyopaque,
+    callback: ClientRpcCallCallback,
+) callconv(.c) void {
+    c.temporal_core_client_rpc_call(fromClient(client), options, user_data, callback);
+}
+
+fn workerNewBridge(client: ?*Client, options: *const WorkerOptions) callconv(.c) WorkerOrFail {
+    const raw_options = toRawWorkerOptions(options);
+    return workerOrFailFromRaw(c.temporal_core_worker_new(fromClient(client), raw_options));
+}
+
+fn workerFreeBridge(worker: ?*Worker) callconv(.c) void {
+    if (fromWorker(worker)) |raw| {
+        c.temporal_core_worker_free(raw);
+    }
+}
+
+fn workerPollWorkflowActivationBridge(
+    worker: ?*WorkerOpaque,
+    user_data: ?*anyopaque,
+    callback: WorkerPollCallback,
+) callconv(.c) void {
+    if (fromWorker(worker)) |raw| {
+        c.temporal_core_worker_poll_workflow_activation(raw, user_data, callback);
+        return;
+    }
+    fallbackWorkerPollWorkflowActivation(worker, user_data, callback);
+}
+
+fn workerPollActivityTaskBridge(
+    worker: ?*WorkerOpaque,
+    user_data: ?*anyopaque,
+    callback: WorkerPollCallback,
+) callconv(.c) void {
+    if (fromWorker(worker)) |raw| {
+        c.temporal_core_worker_poll_activity_task(raw, user_data, callback);
+        return;
+    }
+    fallbackWorkerPollActivityTask(worker, user_data, callback);
+}
+
+fn workerInitiateShutdownBridge(worker: ?*WorkerOpaque) callconv(.c) void {
+    if (fromWorker(worker)) |raw| {
+        c.temporal_core_worker_initiate_shutdown(raw);
+    }
+}
+
+fn workerFinalizeShutdownBridge(
+    worker: ?*WorkerOpaque,
+    user_data: ?*anyopaque,
+    callback: WorkerCallback,
+) callconv(.c) void {
+    if (fromWorker(worker)) |raw| {
+        c.temporal_core_worker_finalize_shutdown(raw, user_data, callback);
+        return;
+    }
+    if (callback) |cb| {
+        cb(user_data, &fallback_error_array);
+    }
+}
+
+fn workerReplayerNewBridge(
+    runtime: ?*Runtime,
+    options: *const WorkerOptions,
+) callconv(.c) WorkerReplayerOrFail {
+    return workerReplayerOrFailFromRaw(
+        c.temporal_core_worker_replayer_new(fromRuntime(runtime), toRawWorkerOptions(options)),
+    );
+}
+
+fn workerReplayPushBridge(
+    worker: ?*Worker,
+    pusher: ?*WorkerReplayPusher,
+    workflow_id: ByteArrayRef,
+    history: ByteArrayRef,
+) callconv(.c) WorkerReplayPushResult {
+    if (fromWorker(worker)) |raw| {
+        return c.temporal_core_worker_replay_push(raw, pusher, workflow_id, history);
+    }
+    return .{ .fail = &fallback_error_array };
+}
+
+fn workerReplayPusherFreeBridge(pusher: ?*WorkerReplayPusher) callconv(.c) void {
+    if (pusher) |ptr| {
+        c.temporal_core_worker_replay_pusher_free(ptr);
+    }
+}
+
+fn workerCompleteWorkflowActivationBridge(
+    worker: ?*WorkerOpaque,
+    completion: ByteArrayRef,
+    user_data: ?*anyopaque,
+    callback: WorkerCallback,
+) callconv(.c) void {
+    if (fromWorker(worker)) |raw| {
+        c.temporal_core_worker_complete_workflow_activation(raw, completion, user_data, callback);
+        return;
+    }
+    fallbackWorkerCompleteWorkflowActivation(worker, completion, user_data, callback);
+}
+
+fn workerCompleteActivityTaskBridge(
+    worker: ?*WorkerOpaque,
+    completion: ByteArrayRef,
+    user_data: ?*anyopaque,
+    callback: WorkerCallback,
+) callconv(.c) void {
+    if (fromWorker(worker)) |raw| {
+        c.temporal_core_worker_complete_activity_task(raw, completion, user_data, callback);
+        return;
+    }
+    fallbackWorkerCompleteActivityTask(worker, completion, user_data, callback);
+}
+
+fn workerRecordActivityHeartbeatBridge(
+    worker: ?*WorkerOpaque,
+    heartbeat: ByteArrayRef,
+) callconv(.c) ?*const ByteArray {
+    if (fromWorker(worker)) |raw| {
+        return c.temporal_core_worker_record_activity_heartbeat(raw, heartbeat);
+    }
+    return fallbackWorkerRecordActivityHeartbeat(worker, heartbeat);
+}
+
 pub const Api = struct {
     runtime_new: *const fn (*const RuntimeOptions) callconv(.c) RuntimeOrFail,
     runtime_free: *const fn (?*Runtime) callconv(.c) void,
@@ -475,23 +764,23 @@ pub const stub_api: Api = .{
 };
 
 pub const extern_api: Api = .{
-    .runtime_new = c.temporal_core_runtime_new,
-    .runtime_free = c.temporal_core_runtime_free,
-    .byte_array_free = c.temporal_core_byte_array_free,
-    .client_connect = c.temporal_core_client_connect,
-    .client_free = c.temporal_core_client_free,
-    .client_update_metadata = c.temporal_core_client_update_metadata,
-    .client_update_api_key = c.temporal_core_client_update_api_key,
-    .client_rpc_call = c.temporal_core_client_rpc_call,
-    .worker_new = c.temporal_core_worker_new,
-    .worker_free = c.temporal_core_worker_free,
-    .worker_poll_workflow_activation = c.temporal_core_worker_poll_workflow_activation,
-    .worker_poll_activity_task = c.temporal_core_worker_poll_activity_task,
-    .worker_initiate_shutdown = c.temporal_core_worker_initiate_shutdown,
-    .worker_finalize_shutdown = c.temporal_core_worker_finalize_shutdown,
-    .worker_replayer_new = c.temporal_core_worker_replayer_new,
-    .worker_replay_push = c.temporal_core_worker_replay_push,
-    .worker_replay_pusher_free = c.temporal_core_worker_replay_pusher_free,
+    .runtime_new = runtimeNewBridge,
+    .runtime_free = runtimeFreeBridge,
+    .byte_array_free = runtimeByteArrayFreeBridge,
+    .client_connect = clientConnectBridge,
+    .client_free = clientFreeBridge,
+    .client_update_metadata = clientUpdateMetadataBridge,
+    .client_update_api_key = clientUpdateApiKeyBridge,
+    .client_rpc_call = clientRpcCallBridge,
+    .worker_new = workerNewBridge,
+    .worker_free = workerFreeBridge,
+    .worker_poll_workflow_activation = workerPollWorkflowActivationBridge,
+    .worker_poll_activity_task = workerPollActivityTaskBridge,
+    .worker_initiate_shutdown = workerInitiateShutdownBridge,
+    .worker_finalize_shutdown = workerFinalizeShutdownBridge,
+    .worker_replayer_new = workerReplayerNewBridge,
+    .worker_replay_push = workerReplayPushBridge,
+    .worker_replay_pusher_free = workerReplayPusherFreeBridge,
 };
 
 pub var api: Api = stub_api;
@@ -502,11 +791,11 @@ pub fn ensureExternalApiInstalled() void {
     if (!api_installed.swap(true, .seq_cst)) {
         api = extern_api;
         registerTemporalCoreCallbacks(
-            c.temporal_core_worker_complete_workflow_activation,
-            c.temporal_core_byte_array_free,
-            c.temporal_core_worker_poll_workflow_activation,
-            c.temporal_core_worker_complete_activity_task,
-            c.temporal_core_worker_record_activity_heartbeat,
+            workerCompleteWorkflowActivationBridge,
+            runtimeByteArrayFreeBridge,
+            workerPollWorkflowActivationBridge,
+            workerCompleteActivityTaskBridge,
+            workerRecordActivityHeartbeatBridge,
         );
     }
 }

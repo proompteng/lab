@@ -4,6 +4,7 @@ const errors = @import("../errors.zig");
 const runtime = @import("../runtime.zig");
 const pending = @import("../pending.zig");
 const core = @import("../core.zig");
+const c = core.c_api;
 
 const grpc = common.grpc;
 const StringArena = common.StringArena;
@@ -131,11 +132,11 @@ const ConnectCallbackContext = struct {
     core_runtime: ?*core.RuntimeOpaque = null,
 };
 
-fn clientConnectCallback(
+fn handleClientConnectCallback(
     user_data: ?*anyopaque,
     success: ?*core.Client,
     fail: ?*const core.ByteArray,
-) callconv(.c) void {
+) void {
     if (user_data == null) return;
     const context = @as(*ConnectCallbackContext, @ptrCast(@alignCast(user_data.?)));
     defer context.wait_group.finish();
@@ -338,6 +339,16 @@ fn connectCoreClient(
 
     errors.setStructuredError(.{ .code = grpc.unavailable, .message = message });
     return ConnectError.ConnectFailed;
+}
+
+fn clientConnectCallback(
+    user_data: ?*anyopaque,
+    success_raw: ?*c.TemporalCoreClient,
+    fail_raw: [*c]const c.TemporalCoreByteArray,
+) callconv(.c) void {
+    const success_converted: ?*core.Client = if (success_raw) |ptr| @ptrCast(ptr) else null;
+    const fail_converted: ?*const core.ByteArray = if (fail_raw == null) null else @ptrCast(fail_raw);
+    handleClientConnectCallback(user_data, success_converted, fail_converted);
 }
 
 const ConnectTask = struct {
