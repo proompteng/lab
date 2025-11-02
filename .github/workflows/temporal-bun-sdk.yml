@@ -27,6 +27,7 @@ jobs:
     env:
       TEMPORAL_TEST_SERVER: '1'
       TEMPORAL_BUN_SDK_USE_ZIG: '1'
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout repository
@@ -76,11 +77,6 @@ jobs:
 
       - name: Check Temporal CLI version
         run: temporal --version
-
-      - name: Download pre-built Temporal libraries
-        run: |
-          cd packages/temporal-bun-sdk
-          bun run libs:download
 
       - name: Check Zig formatting
         run: zig fmt --check packages/temporal-bun-sdk/bruke
