@@ -564,11 +564,7 @@ fn runtimeFreeBridge(runtime: ?*Runtime) callconv(.c) void {
 }
 
 fn runtimeByteArrayFreeBridge(runtime: ?*RuntimeOpaque, bytes: ?*const ByteArray) callconv(.c) void {
-    if (runtime) |_| {
-        c.temporal_core_byte_array_free(fromRuntime(runtime), bytes);
-        return;
-    }
-    fallbackRuntimeByteArrayFree(runtime, bytes);
+    c.temporal_core_byte_array_free(fromRuntime(runtime), bytes);
 }
 
 fn clientConnectBridge(
