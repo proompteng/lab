@@ -5,7 +5,7 @@
 - `apps/<app>` contains Next.js/Turbo UIs; keep UI fixtures and tests alongside components.
 - Shared TS utilities stay in `packages/backend`; CDK8s blueprints sit in `packages/cloutt`.
 - Go services live in `services/<service>` with `main.go` and adjacent `*_test.go` files.
-- Infra-as-code spans `tofu/harvester` (OpenTofu), bootstrap tooling under `kubernetes/`, GitOps application specs in `argocd/`, plus automation in `scripts/` and Ansible plays in `ansible/`.
+- Infra-as-code spans `tofu/harvester` (OpenTofu), bootstrap tooling under `kubernetes/`, GitOps application specs in `argocd/`, automation scripts in `packages/scripts` and `scripts/`, plus Ansible plays in `ansible/`.
 
 ## Build, Test & Development Commands
 
