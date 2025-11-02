@@ -3,8 +3,6 @@
 ## Overview
 The Altinity ClickHouse Operator implements a Kubernetes-native control plane for ClickHouse workloads. We deploy version 0.25.4 through Argo CD using the upstream Helm chart (`altinity/altinity-clickhouse-operator`). The GitOps application lives at `argocd/applications/clickhouse-operator/`, and Helm overrides are centralized in `argocd/applications/clickhouse-operator/values.yaml`.
 
-> Note: the top-level `kubernetes/` directory is dedicated to cluster bootstrap and maintenance automation (installer scripts, shared tooling). Commit GitOps-managed manifests, values files, and overlays under the relevant `argocd/applications/` subdirectory instead.
-
 ## Namespace & Access
 - Operator namespace: `clickhouse-operator` (created automatically through the Argo CD `CreateNamespace=true` sync option).
 - Service account: defined by the Helm chart; no custom RBAC overlays are required beyond the chart defaults.

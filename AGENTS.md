@@ -5,7 +5,7 @@
 - `apps/<app>` contains Next.js/Turbo UIs; keep UI fixtures and tests alongside components.
 - Shared TS utilities stay in `packages/backend`; CDK8s blueprints sit in `packages/cloutt`.
 - Go services live in `services/<service>` with `main.go` and adjacent `*_test.go` files.
-- Infra-as-code spans `tofu/harvester` (OpenTofu), `kubernetes/` manifests, `argocd/` app specs, plus automation in `scripts/` and Ansible plays in `ansible/`.
+- Infra-as-code spans `tofu/harvester` (OpenTofu), bootstrap tooling under `kubernetes/`, GitOps application specs in `argocd/`, plus automation in `scripts/` and Ansible plays in `ansible/`.
 
 ## Build, Test & Development Commands
 
@@ -97,7 +97,7 @@
 
 ## Security & Operations Notes
 
-- ArgoCD reconciles desired state; edit manifests in `argocd/` or `kubernetes/` and let automation deploy.
+- ArgoCD reconciles desired state; edit manifests in `argocd/` and let automation deploy.
 - Application directories under `argocd/applications/` must expose Kustomize or raw manifests only; the platform `ApplicationSet` owns the Argo CD `Application` objects (no nested `Application` manifests).
 - Pair Terraform plans from `pnpm run tf:plan` with review before `pnpm run tf:apply`; note outcomes after applies.
 - Prefer read-only `kubectl -n <namespace> get ...` for production checks and capture findings in runbooks.
