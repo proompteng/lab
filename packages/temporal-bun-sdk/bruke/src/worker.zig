@@ -844,8 +844,12 @@ pub fn create(
     options.namespace_ = makeByteArrayRef(namespace_copy);
     options.task_queue = makeByteArrayRef(task_queue_copy);
     options.identity_override = makeByteArrayRef(identity_slice);
-    options.versioning_strategy.tag = @as(@TypeOf(options.versioning_strategy.tag), 0); // None
-    options.versioning_strategy.unnamed_0.unnamed_0.none.build_id = makeByteArrayRef(build_id_ref_slice);
+    options.versioning_strategy.tag = @as(@TypeOf(options.versioning_strategy.tag), 1); // DeploymentBased
+    const deployment_versioning = &options.versioning_strategy.unnamed_0.unnamed_1.deployment_based;
+    deployment_versioning.version.deployment_name = makeByteArrayRef(build_id_ref_slice);
+    deployment_versioning.version.build_id = makeByteArrayRef(build_id_ref_slice);
+    deployment_versioning.use_worker_versioning = true;
+    deployment_versioning.default_versioning_behavior = 0; // Unspecified; server defaults apply
     options.nondeterminism_as_workflow_fail_for_types = .{
         .data = null,
         .size = 0,
