@@ -1,0 +1,177 @@
+namespaceOverride: clickhouse-operator
+commonLabels:
+  app.kubernetes.io/part-of: data-platform
+commonAnnotations:
+  argocd.argoproj.io/sync-wave: "10"
+deployment:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+operator:
+  image:
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  priorityClassName: platform-critical # TODO(data-platform): confirm priority class exists in every cluster scope before enabling auto-sync.
+  env:
+    - name: WATCH_NAMESPACES
+      value: "clickhouse-*"
+metrics:
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 250m
+      memory: 512Mi
+serviceMonitor:
+  enabled: true
+  additionalLabels:
+    release: kube-prometheus-stack # TODO(data-platform): adjust if observability stack uses a different selector.
+podAnnotations:
+  prometheus.io/port: "8888"
+  prometheus.io/scrape: "true"
+  clickhouse-operator-metrics/port: "9999"
+  clickhouse-operator-metrics/scrape: "true"
+nodeSelector:
+  kubernetes.io/arch: arm64
+# TODO(data-platform): add tolerations once dedicated ClickHouse nodes are defined.
+tolerations: []
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - altinity-clickhouse-operator
+configs:
+  templatesdFiles:
+    lab-clickhouse-template.yaml: |
+      apiVersion: clickhouse.altinity.com/v1
+      kind: ClickHouseInstallationTemplate
+      metadata:
+        name: lab-default-clickhouse
+        labels:
+          app.kubernetes.io/part-of: data-platform
+      spec:
+        configuration:
+          zookeeper:
+            nodes: [] # TODO(data-platform): set to managed Keeper endpoints before enabling auto-sync.
+          clusters:
+            - name: default
+              layout:
+                shardsCount: 1
+                replicasCount: 2
+              templates:
+                podTemplates:
+                  - name: chi-default
+                    spec:
+                      affinity:
+                        podAntiAffinity:
+                          requiredDuringSchedulingIgnoredDuringExecution:
+                            - labelSelector:
+                                matchExpressions:
+                                  - key: clickhouse.altinity.com/cluster
+                                    operator: In
+                                    values:
+                                      - default
+                              topologyKey: kubernetes.io/hostname
+                      containers:
+                        - name: clickhouse
+                          resources:
+                            requests:
+                              cpu: 1
+                              memory: 2Gi
+                            limits:
+                              cpu: 2
+                              memory: 4Gi
+                volumeClaimTemplates:
+                  - name: chi-data
+                    spec:
+                      accessModes:
+                        - ReadWriteOnce
+                      resources:
+                        requests:
+                          storage: 200Gi
+                      storageClassName: REPLACE_WITH_STORAGE_CLASS # TODO(data-platform): pick the storage class that maps to the ClickHouse data pool.
+        defaults:
+          templates:
+            podTemplate: chi-default
+            volumeClaimTemplate: chi-data
+  keeperTemplatesdFiles:
+    lab-keeper-template.yaml: |
+      apiVersion: clickhouse-keeper.altinity.com/v1
+      kind: ClickHouseKeeperInstallationTemplate
+      metadata:
+        name: lab-default-keeper
+        labels:
+          app.kubernetes.io/part-of: data-platform
+      spec:
+        configuration:
+          clusters:
+            - name: default
+              layout:
+                replicasCount: 3
+              templates:
+                podTemplates:
+                  - name: chk-default
+                    spec:
+                      affinity:
+                        podAntiAffinity:
+                          requiredDuringSchedulingIgnoredDuringExecution:
+                            - labelSelector:
+                                matchExpressions:
+                                  - key: clickhouse.altinity.com/keeper-cluster
+                                    operator: In
+                                    values:
+                                      - default
+                              topologyKey: kubernetes.io/hostname
+                      containers:
+                        - name: clickhouse-keeper
+                          resources:
+                            requests:
+                              cpu: 500m
+                              memory: 512Mi
+                            limits:
+                              cpu: 1
+                              memory: 1Gi
+                volumeClaimTemplates:
+                  - name: chk-data
+                    spec:
+                      accessModes:
+                        - ReadWriteOnce
+                      resources:
+                        requests:
+                          storage: 20Gi
+                      storageClassName: REPLACE_WITH_STORAGE_CLASS # TODO(data-platform): choose storage class for Keeper metadata.
+additionalResources:
+  - |
+    apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: clickhouse-operator
+      namespace: clickhouse-operator
+      labels:
+        app.kubernetes.io/name: altinity-clickhouse-operator
+        app.kubernetes.io/instance: clickhouse-operator
+        app.kubernetes.io/component: controller
+        app.kubernetes.io/part-of: data-platform
+    spec:
+      maxUnavailable: 0
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: altinity-clickhouse-operator
+          app.kubernetes.io/instance: clickhouse-operator

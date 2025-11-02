@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: clickhouse-operator
+helmCharts:
+  - name: altinity-clickhouse-operator
+    repo: https://helm.altinity.com
+    version: 0.25.4
+    releaseName: clickhouse-operator
+    namespace: clickhouse-operator
+    includeCRDs: true
+    valuesFile: ../../../kubernetes/clickhouse-operator/values.yaml
