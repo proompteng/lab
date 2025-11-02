@@ -14,7 +14,7 @@ fn testLoggerCallback(
     timestamp_millis: u64,
     fields_ptr: ?[*]const u8,
     fields_len: usize,
-) callconv(.C) void {
+) callconv(.c) void {
     _ = level;
     _ = target_ptr;
     _ = target_len;

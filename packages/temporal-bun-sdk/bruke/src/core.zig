@@ -1,11 +1,31 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+// C bridge header: packages/temporal-bun-sdk/bruke/include/temporal-sdk-core-c-bridge.h
 const c = @cImport({
     @cInclude("temporal-sdk-core-c-bridge.h");
 });
 
-pub const Runtime = c.TemporalCoreRuntime;
+fn assertOpaque(comptime T: type, comptime label: []const u8) void {
+    const info = @typeInfo(T);
+    const tag = std.meta.activeTag(info);
+    const tag_name = @tagName(tag);
+    if (!std.mem.eql(u8, tag_name, "Opaque") and !std.mem.eql(u8, tag_name, "opaque")) {
+        @compileError(std.fmt.comptimePrint("{s} must remain opaque", .{label}));
+    }
+}
+
+pub const CoreRuntime = c.TemporalCoreRuntime;
+pub const CoreClient = c.TemporalCoreClient;
+pub const CoreWorker = c.TemporalCoreWorker;
+
+comptime {
+    assertOpaque(CoreRuntime, "CoreRuntime");
+    assertOpaque(CoreClient, "CoreClient");
+    assertOpaque(CoreWorker, "CoreWorker");
+}
+
+pub const Runtime = CoreRuntime;
 pub const RuntimeOptions = c.TemporalCoreRuntimeOptions;
 pub const RuntimeOrFail = c.TemporalCoreRuntimeOrFail;
 pub const TelemetryOptions = c.TemporalCoreTelemetryOptions;
@@ -27,7 +47,7 @@ pub const metric_kind_counter_integer: MetricKind = @intCast(c.CounterInteger);
 pub const metric_kind_gauge_integer: MetricKind = @intCast(c.GaugeInteger);
 pub const metric_attr_type_string: MetricAttributeValueType = @intCast(c.String);
 
-pub const Client = c.TemporalCoreClient;
+pub const Client = CoreClient;
 pub const ClientOptions = c.TemporalCoreClientOptions;
 pub const ClientConnectCallback = c.TemporalCoreClientConnectCallback;
 pub const ClientTlsOptions = c.TemporalCoreClientTlsOptions;
@@ -35,7 +55,7 @@ pub const ClientRetryOptions = c.TemporalCoreClientRetryOptions;
 pub const ClientKeepAliveOptions = c.TemporalCoreClientKeepAliveOptions;
 pub const ClientHttpConnectProxyOptions = c.TemporalCoreClientHttpConnectProxyOptions;
 
-pub const Worker = c.TemporalCoreWorker;
+pub const Worker = CoreWorker;
 pub const WorkerOptions = c.TemporalCoreWorkerOptions;
 pub const WorkerOrFail = c.TemporalCoreWorkerOrFail;
 pub const WorkerReplayerOrFail = c.TemporalCoreWorkerReplayerOrFail;
