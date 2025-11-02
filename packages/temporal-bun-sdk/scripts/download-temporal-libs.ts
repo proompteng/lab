@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { mkdir, rm, stat, symlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
-import { spawn } from 'node:child_process'
+import { pipeline } from 'node:stream/promises'
 
 const OWNER = 'proompteng'
 const REPO = 'lab'
