@@ -92,8 +92,8 @@ RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
     gh auth login --with-token < /tmp/gh_token \
     && gh auth setup-git
 
-RUN git config --global user.name "codex-automation" \
-    && git config --global user.email "codex-automation@users.noreply.github.com"
+RUN git config --global user.name "tuslagch" \
+    && git config --global user.email "tuslagch@proompteng.ai"
 
 COPY apps/froussard/src/codex/cli/codex-bootstrap.ts /usr/local/bin/codex-bootstrap
 COPY apps/froussard/src/codex/cli/codex-plan.ts /usr/local/bin/codex-plan
