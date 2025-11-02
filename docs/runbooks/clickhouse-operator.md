@@ -11,9 +11,9 @@ The Altinity ClickHouse Operator implements a Kubernetes-native control plane fo
 ## Configuration Highlights
 - Resources & reliability: the overrides request 250m CPU / 512Mi memory for the operator, and 100m CPU / 256Mi memory for the metrics exporter. A `PodDisruptionBudget` with `maxUnavailable: 0` protects the singleton deployment during voluntary disruptions.
 - Watch scope: `WATCH_NAMESPACES` is left unset so the operator reconciles ClickHouse resources from any namespace. If you need to constrain scope later, set the env var (via Helm values) to a comma-separated list of prefixes or specific namespaces.
-- Metrics: built-in Prometheus annotations and `serviceMonitor.enabled: true` expose metrics on ports `8888` (ClickHouse) and `9999` (operator). Attach the `release` label in `values.yaml` to match the running Prometheus Operator installation.
+- Metrics: built-in Prometheus annotations expose metrics on ports `8888` (ClickHouse) and `9999` (operator). `serviceMonitor.enabled` is disabled by default because the lab cluster lacks the Prometheus Operator CRDs; enable it only after a compatible Prometheus/Alloy stack is ready to consume the ServiceMonitor.
 - Templates: `values.yaml` packages baseline `ClickHouseInstallationTemplate` and `ClickHouseKeeperInstallationTemplate` definitions. They default to 2x ClickHouse replicas and 3x Keeper replicas with anti-affinity, tailoring resources for long-running analytics. Persistent volumes bind to the `longhorn` storage class by default; adjust if the target cluster uses a different provider. The ClickHouse template points at the bundled Keeper service `keeper-lab-default-keeper:2181` for embedded coordination.
-- TODO markers must be resolved (storage classes, Prometheus selector) before enabling auto-sync.
+- TODO markers must be resolved (storage classes) before enabling auto-sync.
 
 ## Creating ClickHouse Clusters
 1. Copy the `lab-default-clickhouse` template into an application namespace (e.g., `analytics-clickhouse`) and adjust shard/replica counts, resources, and storage to fit the workload.
@@ -25,7 +25,7 @@ The Altinity ClickHouse Operator implements a Kubernetes-native control plane fo
 5. Trigger an Argo sync for the workload namespace and monitor `kubectl -n <namespace> get pods` until all ClickHouse pods are `Ready`.
 
 ## Prometheus & Observability
-- ServiceMonitor: automatically installed when the operator syncs. Ensure Prometheus watches the `clickhouse-operator` namespace.
+- ServiceMonitor: disabled by default. If/when you deploy the Prometheus Operator, set `serviceMonitor.enabled: true` and ensure the Prometheus stack watches `clickhouse-operator`.
 - Grafana: add dashboards from the Altinity repo (e.g., ClickHouse Overview, Keeper health) by pulling them into the observability stack after the operator provisions metrics.
 - Metrics pipeline: the lab’s observability stack relies on Grafana Mimir (metrics storage) and Alloy or Prometheus agents for scraping. To record ClickHouse metrics today, deploy an Alloy scraper (patterned after `argocd/applications/argocd/alloy-configmap.yaml`) targeting `clickhouse-operator` and forward via `prometheus.remote_write` to `observability-mimir-nginx`. Alternatively, add a Prometheus Operator release in the `observability` namespace, configure remote write to Mimir, and create a matching `ServiceMonitor`.
 - Alerting: configure alert rules for Keeper quorum loss, ClickHouse replica lag, and operator reconciliation failures.
