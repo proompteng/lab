@@ -1,11 +1,22 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+// C bridge header: packages/temporal-bun-sdk/bruke/include/temporal-sdk-core-c-bridge.h
 const c = @cImport({
     @cInclude("temporal-sdk-core-c-bridge.h");
 });
 
-pub const Runtime = c.TemporalCoreRuntime;
+pub const CoreRuntime = c.TemporalCoreRuntime;
+pub const CoreClient = c.TemporalCoreClient;
+pub const CoreWorker = c.TemporalCoreWorker;
+
+comptime {
+    if (@typeInfo(CoreRuntime) != .@"opaque") @compileError("CoreRuntime must remain opaque");
+    if (@typeInfo(CoreClient) != .@"opaque") @compileError("CoreClient must remain opaque");
+    if (@typeInfo(CoreWorker) != .@"opaque") @compileError("CoreWorker must remain opaque");
+}
+
+pub const Runtime = CoreRuntime;
 pub const RuntimeOptions = c.TemporalCoreRuntimeOptions;
 pub const RuntimeOrFail = c.TemporalCoreRuntimeOrFail;
 pub const TelemetryOptions = c.TemporalCoreTelemetryOptions;
@@ -27,7 +38,7 @@ pub const metric_kind_counter_integer: MetricKind = @intCast(c.CounterInteger);
 pub const metric_kind_gauge_integer: MetricKind = @intCast(c.GaugeInteger);
 pub const metric_attr_type_string: MetricAttributeValueType = @intCast(c.String);
 
-pub const Client = c.TemporalCoreClient;
+pub const Client = CoreClient;
 pub const ClientOptions = c.TemporalCoreClientOptions;
 pub const ClientConnectCallback = c.TemporalCoreClientConnectCallback;
 pub const ClientTlsOptions = c.TemporalCoreClientTlsOptions;
@@ -35,7 +46,7 @@ pub const ClientRetryOptions = c.TemporalCoreClientRetryOptions;
 pub const ClientKeepAliveOptions = c.TemporalCoreClientKeepAliveOptions;
 pub const ClientHttpConnectProxyOptions = c.TemporalCoreClientHttpConnectProxyOptions;
 
-pub const Worker = c.TemporalCoreWorker;
+pub const Worker = CoreWorker;
 pub const WorkerOptions = c.TemporalCoreWorkerOptions;
 pub const WorkerOrFail = c.TemporalCoreWorkerOrFail;
 pub const WorkerReplayerOrFail = c.TemporalCoreWorkerReplayerOrFail;

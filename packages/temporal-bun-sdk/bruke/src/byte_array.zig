@@ -4,6 +4,8 @@ const errors = @import("errors.zig");
 const core = @import("core.zig");
 const testing = std.testing;
 
+// C bridge header: packages/temporal-bun-sdk/bruke/include/temporal-sdk-core-c-bridge.h
+
 const AtomicBool = std.atomic.Value(bool);
 const AtomicU64 = std.atomic.Value(u64);
 const AtomicUsize = std.atomic.Value(usize);
@@ -840,6 +842,11 @@ pub const ByteArray = extern struct {
     cap: usize,
     disable_free: bool,
 };
+
+comptime {
+    std.debug.assert(@sizeOf(ByteArray) == @sizeOf(core.ByteArray));
+    std.debug.assert(@alignOf(ByteArray) == @alignOf(core.ByteArray));
+}
 
 pub const AllocationSource = union(enum) {
     slice: []const u8,
