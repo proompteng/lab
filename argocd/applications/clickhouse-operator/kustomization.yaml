@@ -8,4 +8,4 @@ helmCharts:
     releaseName: clickhouse-operator
     namespace: clickhouse-operator
     includeCRDs: true
-    valuesFile: ../../../kubernetes/clickhouse-operator/values.yaml
+    valuesFile: ./values.yaml

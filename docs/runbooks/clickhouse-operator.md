@@ -1,7 +1,9 @@
 # Altinity ClickHouse Operator Runbook
 
 ## Overview
-The Altinity ClickHouse Operator implements a Kubernetes-native control plane for ClickHouse workloads. We deploy version 0.25.4 through Argo CD using the upstream Helm chart (`altinity/altinity-clickhouse-operator`). The GitOps application lives at `argocd/applications/clickhouse-operator/`, and Helm overrides are centralized in `kubernetes/clickhouse-operator/values.yaml`.
+The Altinity ClickHouse Operator implements a Kubernetes-native control plane for ClickHouse workloads. We deploy version 0.25.4 through Argo CD using the upstream Helm chart (`altinity/altinity-clickhouse-operator`). The GitOps application lives at `argocd/applications/clickhouse-operator/`, and Helm overrides are centralized in `argocd/applications/clickhouse-operator/values.yaml`.
+
+> Note: the top-level `kubernetes/` directory is dedicated to cluster bootstrap and maintenance automation (installer scripts, shared tooling). Commit GitOps-managed manifests, values files, and overlays under the relevant `argocd/applications/` subdirectory instead.
 
 ## Namespace & Access
 - Operator namespace: `clickhouse-operator` (created automatically through the Argo CD `CreateNamespace=true` sync option).
@@ -21,7 +23,7 @@ The Altinity ClickHouse Operator implements a Kubernetes-native control plane fo
    - Instantiate a `ClickHouseKeeperInstallation` from the `lab-default-keeper` template and reference it in the ClickHouse cluster, or
    - Point the ClickHouse template to an existing ZooKeeper-compatible service.
 3. Store ClickHouse user secrets in the workload namespace; reference them within the `spec.secrets` section of the installation manifest.
-4. Commit the new manifests under `kubernetes/<namespace>/clickhouse/` (or the agreed application path) so Argo CD manages lifecycle events.
+4. Commit the new manifests under a dedicated GitOps path in `argocd/applications/` (e.g., `argocd/applications/analytics-clickhouse/`) so Argo CD manages lifecycle events. Avoid using the repository's `kubernetes/` directory for workload manifests.
 5. Trigger an Argo sync for the workload namespace and monitor `kubectl -n <namespace> get pods` until all ClickHouse pods are `Ready`.
 
 ## Prometheus & Observability
@@ -32,7 +34,7 @@ The Altinity ClickHouse Operator implements a Kubernetes-native control plane fo
 ## Sync Lifecycle
 1. Initial rollout: keep the ApplicationSet entry at `automation: manual`. Apply a manual sync in a sandbox cluster and observe for 48 hours.
 2. Pre-production checklist:
-   - Finalize storage class names and tolerations in `kubernetes/clickhouse-operator/values.yaml`.
+   - Finalize storage class names and tolerations in `argocd/applications/clickhouse-operator/values.yaml`.
    - Confirm the referenced priority class exists on every target cluster.
    - Capture validation output for `pnpm run lint:argocd` and `scripts/kubeconform.sh argocd` in the issue.
 3. Enable automation by switching the ApplicationSet entry to `automation: auto` once sign-off is complete.
@@ -47,4 +49,4 @@ The Altinity ClickHouse Operator implements a Kubernetes-native control plane fo
 - Altinity Operator documentation: https://docs.altinity.com/altinitykubernetesoperator/
 - Helm chart source: https://github.com/Altinity/clickhouse-operator/tree/main/deploy/helm/clickhouse-operator
 - GitOps application path: `argocd/applications/clickhouse-operator/`
-- Values file: `kubernetes/clickhouse-operator/values.yaml`
+- Values file: `argocd/applications/clickhouse-operator/values.yaml`
