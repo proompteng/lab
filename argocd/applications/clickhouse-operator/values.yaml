@@ -19,7 +19,6 @@ operator:
     limits:
       cpu: 500m
       memory: 1Gi
-  priorityClassName: platform-critical # TODO(data-platform): confirm priority class exists in every cluster scope before enabling auto-sync.
   env:
     - name: WATCH_NAMESPACES
       value: "clickhouse-*"

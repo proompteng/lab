@@ -13,7 +13,7 @@ The Altinity ClickHouse Operator implements a Kubernetes-native control plane fo
 - Watch scope: `WATCH_NAMESPACES` is set to `clickhouse-*` to scope reconciliation to ClickHouse-focused namespaces. Adjust this list before onboarding workloads in other namespaces.
 - Metrics: built-in Prometheus annotations and `serviceMonitor.enabled: true` expose metrics on ports `8888` (ClickHouse) and `9999` (operator). Attach the `release` label in `values.yaml` to match the running Prometheus Operator installation.
 - Templates: `values.yaml` packages baseline `ClickHouseInstallationTemplate` and `ClickHouseKeeperInstallationTemplate` definitions. They default to 2x ClickHouse replicas and 3x Keeper replicas with anti-affinity, tailoring resources for long-running analytics. Persistent volumes bind to the `longhorn` storage class by default; adjust if the target cluster uses a different provider.
-- TODO markers must be resolved (storage classes, priority class, tolerations) before enabling auto-sync.
+- TODO markers must be resolved (storage classes, tolerations, keeper endpoints) before enabling auto-sync.
 
 ## Creating ClickHouse Clusters
 1. Copy the `lab-default-clickhouse` template into an application namespace (e.g., `analytics-clickhouse`) and adjust shard/replica counts, resources, and storage to fit the workload.
@@ -33,7 +33,6 @@ The Altinity ClickHouse Operator implements a Kubernetes-native control plane fo
 1. Initial rollout: keep the ApplicationSet entry at `automation: manual`. Apply a manual sync in a sandbox cluster and observe for 48 hours.
 2. Pre-production checklist:
    - Confirm the `longhorn` storage class (or your chosen override) exists in each target cluster.
-   - Confirm the referenced priority class exists on every target cluster.
    - Capture validation output for `pnpm run lint:argocd` and `scripts/kubeconform.sh argocd` in the issue.
 3. Enable automation by switching the ApplicationSet entry to `automation: auto` once sign-off is complete.
 4. Operational monitoring: use `argocd app get clickhouse-operator --watch` and `kubectl -n clickhouse-operator get pods` after each chart or values change.
