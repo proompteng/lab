@@ -102,6 +102,7 @@ describe('createWebhookHandler', () => {
   let publishedMessages: KafkaMessage[]
   let githubServiceMock: {
     postIssueReaction: ReturnType<typeof vi.fn>
+    issueHasReaction: ReturnType<typeof vi.fn>
     findLatestPlanComment: ReturnType<typeof vi.fn>
     fetchPullRequest: ReturnType<typeof vi.fn>
     markPullRequestReadyForReview: ReturnType<typeof vi.fn>
@@ -161,6 +162,7 @@ describe('createWebhookHandler', () => {
     })
     const githubLayer = Layer.succeed(GithubService, {
       postIssueReaction: githubServiceMock.postIssueReaction,
+      issueHasReaction: githubServiceMock.issueHasReaction,
       findLatestPlanComment: githubServiceMock.findLatestPlanComment,
       fetchPullRequest: githubServiceMock.fetchPullRequest,
       markPullRequestReadyForReview: githubServiceMock.markPullRequestReadyForReview,
@@ -210,6 +212,7 @@ describe('createWebhookHandler', () => {
     mockBuildCodexPrompt.mockReturnValue('PROMPT')
     githubServiceMock = {
       postIssueReaction: vi.fn(() => Effect.succeed({ ok: true })),
+      issueHasReaction: vi.fn(() => Effect.succeed({ ok: true as const, hasReaction: true })),
       findLatestPlanComment: vi.fn(() => Effect.succeed({ ok: false, reason: 'not-found' })),
       fetchPullRequest: vi.fn(() => Effect.succeed({ ok: false as const, reason: 'not-found' as const })),
       markPullRequestReadyForReview: vi.fn(() => Effect.succeed({ ok: true })),
@@ -421,12 +424,20 @@ describe('createWebhookHandler', () => {
         githubServiceMock.findLatestPlanComment.mockReturnValueOnce(
           Effect.succeed({ ok: false as const, reason: 'not-found' as const }),
         )
+        githubServiceMock.issueHasReaction.mockReturnValueOnce(Effect.succeed({ ok: true as const, hasReaction: true }))
       },
       assert: (body) => {
         expect(body).toMatchObject({ codexStageTriggered: null })
+        expect(githubServiceMock.issueHasReaction).toHaveBeenCalledWith(
+          expect.objectContaining({
+            repositoryFullName: 'owner/repo',
+            issueNumber: 9,
+            reactionContent: '+1',
+          }),
+        )
         expect(githubServiceMock.findLatestPlanComment).toHaveBeenCalled()
         expect(githubServiceMock.createPullRequestComment).toHaveBeenCalledWith(
-          expect.objectContaining({ body: expect.stringContaining('ready to merge') }),
+          expect.objectContaining({ body: expect.stringContaining(':shipit:') }),
         )
       },
     },
@@ -961,6 +972,13 @@ describe('createWebhookHandler', () => {
     expect(response.status).toBe(202)
     await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
 
+    expect(githubServiceMock.issueHasReaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryFullName: 'owner/repo',
+        issueNumber: 9,
+        reactionContent: '+1',
+      }),
+    )
     expect(githubServiceMock.findLatestPlanComment).toHaveBeenCalledWith(
       expect.objectContaining({
         repositoryFullName: 'owner/repo',
@@ -972,7 +990,7 @@ describe('createWebhookHandler', () => {
       expect.objectContaining({
         repositoryFullName: 'owner/repo',
         pullNumber: 9,
-        body: expect.stringContaining('ready to merge'),
+        body: expect.stringContaining(':shipit:'),
       }),
     )
     expect(publishedMessages).toHaveLength(1)
@@ -980,6 +998,56 @@ describe('createWebhookHandler', () => {
       topic: 'raw-topic',
       key: 'delivery-review-clean-update',
     })
+  })
+
+  it('does not post a ready comment when thumbs up reaction is absent', async () => {
+    githubServiceMock.fetchPullRequest.mockReturnValueOnce(
+      Effect.succeed({
+        ok: true as const,
+        pullRequest: {
+          number: 10,
+          title: 'Needs thumbs up',
+          body: '',
+          htmlUrl: 'https://github.com/owner/repo/pull/10',
+          draft: false,
+          merged: false,
+          state: 'open',
+          headRef: 'codex/issue-10-clean',
+          headSha: 'cleansha2',
+          baseRef: 'main',
+          authorLogin: 'user',
+          mergeableState: 'clean',
+        },
+      }),
+    )
+    githubServiceMock.issueHasReaction.mockReturnValueOnce(Effect.succeed({ ok: true as const, hasReaction: false }))
+
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const payload = {
+      action: 'edited',
+      repository: { full_name: 'owner/repo' },
+      sender: { login: 'user' },
+      pull_request: {
+        number: 10,
+        head: { ref: 'codex/issue-10-clean', sha: 'cleansha2' },
+        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
+        user: { login: 'USER' },
+      },
+    }
+
+    const response = await handler(buildRequest(payload, scenarioHeaders('pull_request', 'edited')), 'github')
+
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
+    expect(githubServiceMock.issueHasReaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryFullName: 'owner/repo',
+        issueNumber: 10,
+        reactionContent: '+1',
+      }),
+    )
+    expect(githubServiceMock.findLatestPlanComment).not.toHaveBeenCalled()
+    expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
   })
 
   it('publishes review message when merge conflicts are detected', async () => {
