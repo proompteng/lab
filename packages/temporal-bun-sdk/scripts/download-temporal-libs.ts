@@ -137,8 +137,10 @@ export interface TemporalLibsConfig {
 }
 
 // Default configuration
+const DEFAULT_VERSION = process.env.TEMPORAL_LIBS_VERSION ?? 'temporal-libs-v1.0.2'
+
 const DEFAULT_CONFIG: TemporalLibsConfig = {
-  version: 'latest',
+  version: DEFAULT_VERSION,
   cacheDir: '.temporal-libs-cache',
   checksumVerification: true,
   retryAttempts: 3,
