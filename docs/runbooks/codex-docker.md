@@ -1,7 +1,7 @@
 # Codex Docker Sidecar Runbook
 
 ## Overview
-Codex workflows rely on a rootless Docker sidecar that exposes `tcp://localhost:2375` to the primary Codex container. The sidecar and Codex container share `/var/lib/docker` via an `emptyDir`; the Codex image mounts this volume read-only and ships the Docker CLI, Buildx, and Compose plugins. This runbook covers validation, recovery, and diagnostic steps for the container build path.
+Codex workflows rely on a rootless Docker sidecar that exposes `tcp://127.0.0.1:2375` (loopback-only) to the primary Codex container. The sidecar and Codex container share `/var/lib/docker` via an `emptyDir`; the Codex image mounts this volume read-only and ships the Docker CLI, Buildx, and Compose plugins. This runbook covers validation, recovery, and diagnostic steps for the container build path.
 
 ## Validating the Sidecar
 1. Identify the workflow pod (stages carry the `codex.stage` label):
@@ -12,7 +12,7 @@ Codex workflows rely on a rootless Docker sidecar that exposes `tcp://localhost:
    ```bash
    kubectl exec -n argo-workflows <pod> -c main -- env | grep DOCKER_
    ```
-   Expect `DOCKER_HOST=tcp://localhost:2375`, `DOCKER_ENABLED=1`, and `DOCKER_TLS_VERIFY=0`.
+   Expect `DOCKER_HOST=tcp://127.0.0.1:2375`, `DOCKER_ENABLED=1`, and `DOCKER_TLS_VERIFY=0`.
 3. Run smoke checks from the Codex container:
    ```bash
    kubectl exec -n argo-workflows <pod> -c main -- docker version
@@ -30,7 +30,7 @@ Codex workflows rely on a rootless Docker sidecar that exposes `tcp://localhost:
 2. If the daemon is unhealthy, restart just the sidecar:
    ```bash
    kubectl exec -n argo-workflows <pod> -c docker -- pkill -f dockerd-rootless || true
-   kubectl exec -n argo-workflows <pod> -c docker -- /bin/sh -ec 'mkdir -p "$XDG_RUNTIME_DIR" && exec dockerd-rootless.sh --host tcp://0.0.0.0:2375'
+   kubectl exec -n argo-workflows <pod> -c docker -- /bin/sh -ec 'mkdir -p "$XDG_RUNTIME_DIR" && exec dockerd-rootless.sh --host tcp://127.0.0.1:2375'
    ```
 3. Confirm readiness via the main container (`docker info`) before resuming workflow steps.
 

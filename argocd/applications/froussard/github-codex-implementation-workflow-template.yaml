@@ -53,7 +53,7 @@ spec:
                 name: github-token
                 key: token
           - name: DOCKER_HOST
-            value: tcp://localhost:2375
+            value: tcp://127.0.0.1:2375
           - name: DOCKER_ENABLED
             value: "1"
           - name: DOCKER_TLS_VERIFY
@@ -102,7 +102,7 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: DOCKER_HOST
-              value: tcp://0.0.0.0:2375
+              value: tcp://127.0.0.1:2375
             - name: DOCKER_TLS_CERTDIR
               value: ""
             - name: XDG_RUNTIME_DIR
@@ -114,11 +114,7 @@ spec:
             - |
               set -euo pipefail
               mkdir -p "${XDG_RUNTIME_DIR}"
-              exec dockerd-rootless.sh --host tcp://0.0.0.0:2375
-          ports:
-            - containerPort: 2375
-              name: docker-tcp
-              protocol: TCP
+              exec dockerd-rootless.sh --host tcp://127.0.0.1:2375
           securityContext:
             privileged: true
             allowPrivilegeEscalation: false
