@@ -42,8 +42,6 @@ podAnnotations:
   clickhouse-operator-metrics/scrape: "true"
 nodeSelector:
   kubernetes.io/arch: arm64
-# TODO(data-platform): add tolerations once dedicated ClickHouse nodes are defined.
-tolerations: []
 affinity:
   podAntiAffinity:
     preferredDuringSchedulingIgnoredDuringExecution:

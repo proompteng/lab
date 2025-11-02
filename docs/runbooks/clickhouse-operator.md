@@ -13,7 +13,7 @@ The Altinity ClickHouse Operator implements a Kubernetes-native control plane fo
 - Watch scope: `WATCH_NAMESPACES` is set to `clickhouse-*` to scope reconciliation to ClickHouse-focused namespaces. Adjust this list before onboarding workloads in other namespaces.
 - Metrics: built-in Prometheus annotations and `serviceMonitor.enabled: true` expose metrics on ports `8888` (ClickHouse) and `9999` (operator). Attach the `release` label in `values.yaml` to match the running Prometheus Operator installation.
 - Templates: `values.yaml` packages baseline `ClickHouseInstallationTemplate` and `ClickHouseKeeperInstallationTemplate` definitions. They default to 2x ClickHouse replicas and 3x Keeper replicas with anti-affinity, tailoring resources for long-running analytics. Persistent volumes bind to the `longhorn` storage class by default; adjust if the target cluster uses a different provider.
-- TODO markers must be resolved (storage classes, tolerations, keeper endpoints) before enabling auto-sync.
+- TODO markers must be resolved (storage classes, keeper endpoints) before enabling auto-sync.
 
 ## Creating ClickHouse Clusters
 1. Copy the `lab-default-clickhouse` template into an application namespace (e.g., `analytics-clickhouse`) and adjust shard/replica counts, resources, and storage to fit the workload.
