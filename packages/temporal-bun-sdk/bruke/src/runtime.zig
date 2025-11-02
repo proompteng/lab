@@ -6,6 +6,20 @@ const byte_array = @import("byte_array.zig");
 
 const grpc = pending.GrpcStatus;
 
+const FlushLogFn = *const fn (*core.c_api.TemporalCoreRuntime) callconv(.c) void;
+
+const flush_logs_fn: ?FlushLogFn = blk: {
+    if (@hasDecl(core.c_api, "temporal_core_runtime_flush_logs")) {
+        break :blk core.c_api.temporal_core_runtime_flush_logs;
+    } else if (@hasDecl(core.c_api, "temporal_core_flush_logs")) {
+        break :blk core.c_api.temporal_core_flush_logs;
+    } else {
+        break :blk null;
+    }
+};
+
+const supports_core_log_flush = flush_logs_fn != null;
+
 const allocator = std.heap.c_allocator;
 
 const runtime_error_message = "temporal-bun-bridge-zig: runtime initialization failed";
@@ -188,6 +202,8 @@ pub const RuntimeHandle = struct {
     /// Raw JSON payload passed from TypeScript; retained until the Rust runtime wiring is complete.
     config: []u8,
     core_runtime: ?*core.RuntimeOpaque,
+    log_flusher_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    log_flusher_thread: ?std.Thread = null,
     logger_callback: ?LoggerCallback = null,
     logger_filter: []u8 = ""[0..0],
     telemetry_mode: TelemetryMode = .none,
@@ -879,6 +895,36 @@ pub fn create(options_json: []const u8) ?*RuntimeHandle {
     handle.pending_executor_workers = executor_workers;
     handle.pending_executor_queue_capacity = executor_queue_capacity;
 
+    if (comptime supports_core_log_flush) {
+        if (handle.core_runtime) |core_runtime_ptr| {
+            handle.log_flusher_stop.store(false, .monotonic);
+            const flusher_runtime: *CoreRuntime = @ptrCast(core_runtime_ptr);
+            const thread = std.Thread.spawn(.{}, logFlusher, .{
+                flusher_runtime,
+                &handle.log_flusher_stop,
+            }) catch |err| {
+                executor.shutdown();
+                allocator.destroy(executor);
+                if (created.fail) |fail_ptr| {
+                    core.api.byte_array_free(core_runtime_ptr, fail_ptr);
+                }
+                core.api.runtime_free(core_runtime_ptr);
+                telemetry_config.deinit();
+                allocator.free(copy);
+                allocator.destroy(handle);
+                var scratch: [192]u8 = undefined;
+                const message = std.fmt.bufPrint(
+                    &scratch,
+                    "temporal-bun-bridge-zig: failed to start log flusher thread: {}",
+                    .{err},
+                ) catch "temporal-bun-bridge-zig: failed to start log flusher thread";
+                errors.setStructuredError(.{ .code = grpc.resource_exhausted, .message = message });
+                return null;
+            };
+            handle.log_flusher_thread = thread;
+        }
+    }
+
     telemetry_config.adopt(handle);
     telemetry_config.deinit();
 
@@ -917,6 +963,16 @@ pub fn destroy(handle: ?*RuntimeHandle) void {
         runtime.pending_executor = null;
         runtime.pending_executor_workers = 0;
         runtime.pending_executor_queue_capacity = 0;
+    }
+
+    if (runtime.log_flusher_thread) |thread| {
+        runtime.log_flusher_stop.store(true, .monotonic);
+        thread.join();
+        runtime.log_flusher_thread = null;
+        if (runtime.core_runtime) |core_runtime_ptr| {
+            const flusher_runtime: *CoreRuntime = @ptrCast(core_runtime_ptr);
+            flushLogs(flusher_runtime);
+        }
     }
 
     clearLoggerForHandle(runtime);
@@ -1479,4 +1535,18 @@ test "parseTelemetryConfig preserves metrics when payload omits metricsExporter"
     try std.testing.expect(merged.prom_counters_total_suffix);
     try std.testing.expect(merged.prom_unit_suffix);
     try std.testing.expect(merged.prom_use_seconds);
+}
+pub const CoreRuntime = opaque {};
+
+fn flushLogs(rt: *CoreRuntime) void {
+    if (flush_logs_fn) |fn_ptr| {
+        fn_ptr(@ptrCast(rt));
+    }
+}
+
+fn logFlusher(rt: *CoreRuntime, stop: *std.atomic.Value(bool)) void {
+    while (!stop.load(.monotonic)) {
+        flushLogs(rt);
+        std.Thread.sleep(300 * std.time.ns_per_ms);
+    }
 }

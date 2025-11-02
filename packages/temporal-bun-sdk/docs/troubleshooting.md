@@ -41,6 +41,13 @@ Use this guide to resolve the most common issues when running the Bun-native Tem
 - The fallback still requires `@temporalio/worker` to be installed; keep the dependency until all production environments can run the Zig bridge.
 - Document any use of the fallback in runbooks so operators know Bun-native telemetry hooks are disabled in that mode.
 
+## Where Do Temporal Core Logs Go?
+- Install a logger via `coreBridge.runtime.createRuntime().installLogger(event => { … })`. Without a logger callback, log records are dropped.
+- The bridge spawns a background flush thread when the linked Temporal Core export supports it. Logs flush roughly every 300 ms and once more during shutdown so the callback sees every record.
+- Write events anywhere you prefer—e.g. mirror to `console` for local dev and append to `./logs/temporal-core.log` in production using Node’s `fs.createWriteStream`.
+- If you rotate files, call `runtime.removeLogger()` before closing the old stream, then reinstall the logger with the new destination.
+- When upgrading static libraries, ensure they export `temporal_core_runtime_flush_logs` (or its legacy alias). Without it the bridge still works, but flushing falls back to Temporal Core’s internal cadence.
+
 ## Packed Tarball Missing Zig Artefacts
 1. Run `pnpm --filter @proompteng/temporal-bun-sdk run build` to emit TypeScript output.
 2. Execute `pnpm pack --filter @proompteng/temporal-bun-sdk`.
