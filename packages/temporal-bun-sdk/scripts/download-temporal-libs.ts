@@ -128,15 +128,15 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-async function createLatestSymlink(versionDir: string): Promise<void> {
+async function createLatestSymlink(versionTag: string): Promise<void> {
   const latestPath = join(CACHE_ROOT, 'latest')
   try {
     await rm(latestPath, { force: true })
   } catch {
-    // ignore
+    // ignore removal errors
   }
   try {
-    await symlink(versionDir, latestPath)
+    await symlink(versionTag, latestPath)
   } catch (error) {
     console.warn('Unable to create latest symlink:', error)
   }
@@ -196,7 +196,7 @@ async function downloadLibraries(versionTag: string, platform: PlatformTriple): 
   console.log(`Extracting archive to ${versionDir}…`)
   await extractTarball(archivePath, versionDir)
 
-  await createLatestSymlink(versionDir)
+  await createLatestSymlink(release.tag_name)
 
   console.log('Downloaded libraries:')
   console.log(`  Version: ${release.tag_name}`)
