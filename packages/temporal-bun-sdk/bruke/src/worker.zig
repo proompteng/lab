@@ -25,6 +25,7 @@ pub const WorkerHandle = struct {
     namespace: []u8,
     task_queue: []u8,
     identity: []u8,
+    build_id: []u8,
     core_worker: ?*core.WorkerOpaque,
     poll_lock: std.Thread.Mutex = .{},
     poll_condition: std.Thread.Condition = .{},
@@ -43,6 +44,27 @@ pub const WorkerReplayHandle = struct {
 
 var next_worker_id: u64 = 1;
 const default_identity = "temporal-bun-worker";
+const default_workflow_poller_simple = core.WorkerPollerBehaviorSimpleMaximum{
+    .simple_maximum = 20,
+};
+const default_activity_poller_simple = core.WorkerPollerBehaviorSimpleMaximum{
+    .simple_maximum = 20,
+};
+const default_nexus_poller_simple = core.WorkerPollerBehaviorSimpleMaximum{
+    .simple_maximum = 4,
+};
+const default_workflow_poller_behavior = core.WorkerPollerBehavior{
+    .simple_maximum = &default_workflow_poller_simple,
+    .autoscaling = null,
+};
+const default_activity_poller_behavior = core.WorkerPollerBehavior{
+    .simple_maximum = &default_activity_poller_simple,
+    .autoscaling = null,
+};
+const default_nexus_poller_behavior = core.WorkerPollerBehavior{
+    .simple_maximum = &default_nexus_poller_simple,
+    .autoscaling = null,
+};
 
 const debug_ptr_env_name = "BUN_SDK_DEBUG_PTR";
 const debug_ptr_state_uninitialized: u8 = 0;
@@ -86,6 +108,20 @@ fn duplicateBytes(slice: []const u8) ?[]u8 {
         return null;
     };
     @memcpy(copy, slice);
+    return copy;
+}
+
+fn duplicateBytesNullTerminated(slice: []const u8) ?[]u8 {
+    if (slice.len == 0) {
+        return ""[0..0];
+    }
+
+    const allocator = std.heap.c_allocator;
+    const copy = allocator.alloc(u8, slice.len + 1) catch {
+        return null;
+    };
+    @memcpy(copy[0..slice.len], slice);
+    copy[slice.len] = 0;
     return copy;
 }
 
@@ -152,6 +188,10 @@ fn releaseHandle(handle: *WorkerHandle) void {
     if (handle.identity.len > 0) {
         allocator.free(handle.identity);
         handle.identity = ""[0..0];
+    }
+    if (handle.build_id.len > 0) {
+        allocator.free(handle.build_id);
+        handle.build_id = ""[0..0];
     }
 
     if (handle.runtime) |runtime_handle| {
@@ -732,6 +772,71 @@ pub fn create(
         identity_slice = identity_copy;
     }
 
+    const build_id_lookup = lookupStringField(&obj, &.{ "buildId", "build_id" });
+    if (!build_id_lookup.found) {
+        if (identity_copy.len > 0) {
+            allocator.free(identity_copy);
+        }
+        allocator.free(task_queue_copy);
+        allocator.free(namespace_copy);
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker config missing buildId",
+        });
+        return null;
+    }
+    if (build_id_lookup.invalid_type or build_id_lookup.value == null) {
+        if (identity_copy.len > 0) {
+            allocator.free(identity_copy);
+        }
+        allocator.free(task_queue_copy);
+        allocator.free(namespace_copy);
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker buildId must be a string",
+        });
+        return null;
+    }
+    const build_id_slice = build_id_lookup.value.?;
+    if (build_id_slice.len == 0) {
+        if (identity_copy.len > 0) {
+            allocator.free(identity_copy);
+        }
+        allocator.free(task_queue_copy);
+        allocator.free(namespace_copy);
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.invalid_argument,
+            .message = "temporal-bun-bridge-zig: worker buildId must be non-empty",
+        });
+        return null;
+    }
+
+    const build_id_copy = duplicateBytesNullTerminated(build_id_slice) orelse {
+        if (identity_copy.len > 0) {
+            allocator.free(identity_copy);
+        }
+        allocator.free(task_queue_copy);
+        allocator.free(namespace_copy);
+        if (config_copy.len > 0) {
+            allocator.free(config_copy);
+        }
+        errors.setStructuredError(.{
+            .code = grpc.resource_exhausted,
+            .message = "temporal-bun-bridge-zig: failed to allocate worker buildId",
+        });
+        return null;
+    };
+    const build_id_ref_slice = build_id_copy[0..build_id_slice.len];
+
     core.ensureExternalApiInstalled();
 
     var options: core.WorkerOptions = undefined;
@@ -739,11 +844,15 @@ pub fn create(
     options.namespace_ = makeByteArrayRef(namespace_copy);
     options.task_queue = makeByteArrayRef(task_queue_copy);
     options.identity_override = makeByteArrayRef(identity_slice);
-    options.versioning_strategy.tag = 0;
+    options.versioning_strategy.tag = @as(@TypeOf(options.versioning_strategy.tag), 0); // None
+    options.versioning_strategy.unnamed_0.unnamed_0.none.build_id = makeByteArrayRef(build_id_ref_slice);
     options.nondeterminism_as_workflow_fail_for_types = .{
         .data = null,
         .size = 0,
     };
+    options.workflow_task_poller_behavior = default_workflow_poller_behavior;
+    options.activity_task_poller_behavior = default_activity_poller_behavior;
+    options.nexus_task_poller_behavior = default_nexus_poller_behavior;
 
     const result = core.api.worker_new(client_handle.core_client, &options);
     debugPrintWorkerPtr("worker@register", result.worker);
@@ -752,6 +861,7 @@ pub fn create(
         if (identity_copy.len > 0) {
             allocator.free(identity_copy);
         }
+        allocator.free(build_id_copy);
         allocator.free(task_queue_copy);
         allocator.free(namespace_copy);
         if (config_copy.len > 0) {
@@ -787,6 +897,7 @@ pub fn create(
         if (identity_copy.len > 0) {
             allocator.free(identity_copy);
         }
+        allocator.free(build_id_copy);
         allocator.free(task_queue_copy);
         allocator.free(namespace_copy);
         if (config_copy.len > 0) {
@@ -813,6 +924,7 @@ pub fn create(
         .namespace = namespace_copy,
         .task_queue = task_queue_copy,
         .identity = identity_copy,
+        .build_id = build_id_copy,
         .core_worker = result.worker,
         .owns_allocation = true,
         .destroy_reclaims_allocation = true,
@@ -1114,6 +1226,7 @@ pub fn createReplay(
         .namespace = namespace_copy,
         .task_queue = task_queue_copy,
         .identity = identity_copy,
+        .build_id = ""[0..0],
         .core_worker = result.worker,
         .owns_allocation = true,
         .destroy_reclaims_allocation = true,
@@ -1258,6 +1371,7 @@ pub fn createTestHandle() ?*WorkerHandle {
         .namespace = ""[0..0],
         .task_queue = ""[0..0],
         .identity = ""[0..0],
+        .build_id = ""[0..0],
         .core_worker = null,
         .poll_lock = .{},
         .poll_condition = .{},
@@ -2587,6 +2701,7 @@ const WorkerTests = struct {
             .namespace = ""[0..0],
             .task_queue = ""[0..0],
             .identity = ""[0..0],
+            .build_id = ""[0..0],
             .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&fake_worker_storage)),
             .poll_lock = .{},
             .poll_condition = .{},
@@ -2695,7 +2810,7 @@ test "create returns worker handle and frees resources on destroy" {
 
     var rt = WorkerTests.fakeRuntimeHandle();
     var client_handle = WorkerTests.fakeClientHandle(&rt);
-    const config = "{\"namespace\":\"unit\",\"taskQueue\":\"queue\",\"identity\":\"worker\"}";
+    const config = "{\"namespace\":\"unit\",\"taskQueue\":\"queue\",\"identity\":\"worker\",\"buildId\":\"test-build\"}";
 
     const maybe_handle = create(&rt, &client_handle, config);
     try testing.expect(maybe_handle != null);
@@ -2734,7 +2849,7 @@ test "create surfaces core worker failure payload" {
 
     var rt = WorkerTests.fakeRuntimeHandle();
     var client_handle = WorkerTests.fakeClientHandle(&rt);
-    const config = "{\"namespace\":\"unit\",\"taskQueue\":\"queue\"}";
+    const config = "{\"namespace\":\"unit\",\"taskQueue\":\"queue\",\"buildId\":\"test-build\"}";
 
     const handle = create(&rt, &client_handle, config);
     try testing.expect(handle == null);
@@ -2916,6 +3031,7 @@ test "destroy frees allocation after finalizeShutdown" {
         .namespace = ""[0..0],
         .task_queue = ""[0..0],
         .identity = ""[0..0],
+        .build_id = ""[0..0],
         .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&worker_storage)),
         .poll_lock = .{},
         .poll_condition = .{},
@@ -2989,6 +3105,7 @@ test "finalizeShutdown surfaces core finalization errors" {
         .namespace = ""[0..0],
         .task_queue = ""[0..0],
         .identity = ""[0..0],
+        .build_id = ""[0..0],
         .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&worker_storage)),
         .poll_lock = .{},
         .poll_condition = .{},
@@ -3044,6 +3161,7 @@ test "destroy handles null and missing worker pointers" {
         .namespace = ""[0..0],
         .task_queue = ""[0..0],
         .identity = ""[0..0],
+        .build_id = ""[0..0],
         .core_worker = null,
         .poll_lock = .{},
         .poll_condition = .{},
@@ -3094,6 +3212,7 @@ test "worker destroy performs single shutdown finalize and free" {
         .namespace = ""[0..0],
         .task_queue = ""[0..0],
         .identity = ""[0..0],
+        .build_id = ""[0..0],
         .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&worker_storage)),
         .poll_lock = .{},
         .poll_condition = .{},
@@ -3149,6 +3268,7 @@ test "worker destroy is idempotent for double invocation and null handle" {
         .namespace = ""[0..0],
         .task_queue = ""[0..0],
         .identity = ""[0..0],
+        .build_id = ""[0..0],
         .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&worker_storage)),
         .poll_lock = .{},
         .poll_condition = .{},
@@ -3220,6 +3340,7 @@ test "worker destroy frees finalize error buffers" {
         .namespace = ""[0..0],
         .task_queue = ""[0..0],
         .identity = ""[0..0],
+        .build_id = ""[0..0],
         .core_worker = @as(?*core.WorkerOpaque, @ptrCast(&worker_storage)),
         .poll_lock = .{},
         .poll_condition = .{},
