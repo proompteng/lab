@@ -59,6 +59,14 @@ async function githubFetch<T>(path: string): Promise<T> {
     throw new Error(`Release not found at ${url}`)
   }
 
+  if (response.status === 403) {
+    const remaining = response.headers.get('X-RateLimit-Remaining')
+    if (remaining === '0') {
+      throw new Error('GitHub API rate limit exceeded. Provide GITHUB_TOKEN or GH_TOKEN to increase the limit.')
+    }
+    throw new Error('GitHub request forbidden. Ensure the repository is accessible and credentials are valid.')
+  }
+
   if (!response.ok) {
     throw new Error(`GitHub request failed: ${response.status} ${response.statusText}`)
   }
@@ -206,7 +214,10 @@ async function main(): Promise<void> {
     process.exit(0)
   }
 
-  const versionTag = versionArg ?? DEFAULT_TAG
+  let versionTag = versionArg ?? DEFAULT_TAG
+  if (versionTag === 'latest') {
+    versionTag = DEFAULT_TAG
+  }
   const platform = platformArg ? (platformArg as PlatformTriple) : await detectPlatform()
 
   if (!['linux-arm64', 'linux-x64', 'macos-arm64'].includes(platform)) {

@@ -77,11 +77,6 @@ jobs:
       - name: Check Temporal CLI version
         run: temporal --version
 
-      - name: Download pre-built Temporal libraries
-        run: |
-          cd packages/temporal-bun-sdk
-          bun run libs:download
-
       - name: Check Zig formatting
         run: zig fmt --check packages/temporal-bun-sdk/bruke
 
