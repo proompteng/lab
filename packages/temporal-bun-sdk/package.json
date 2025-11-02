@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/src/index.js",
+  "module": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "files": [
     "dist",
     "dist/native",
@@ -17,28 +17,28 @@
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
     },
     "./config": {
-      "types": "./dist/config.d.ts",
-      "default": "./dist/config.js"
+      "types": "./dist/src/config.d.ts",
+      "default": "./dist/src/config.js"
     },
     "./client": {
-      "types": "./dist/client.d.ts",
-      "default": "./dist/client.js"
+      "types": "./dist/src/client.d.ts",
+      "default": "./dist/src/client.js"
     },
     "./workflow": {
-      "types": "./dist/workflow/index.d.ts",
-      "default": "./dist/workflow/index.js"
+      "types": "./dist/src/workflow/index.d.ts",
+      "default": "./dist/src/workflow/index.js"
     },
     "./workflow/runtime": {
-      "types": "./dist/workflow/runtime/index.d.ts",
-      "default": "./dist/workflow/runtime/index.js"
+      "types": "./dist/src/workflow/runtime/index.d.ts",
+      "default": "./dist/src/workflow/runtime/index.js"
     },
     "./worker": {
-      "types": "./dist/worker.d.ts",
-      "default": "./dist/worker.js"
+      "types": "./dist/src/worker.d.ts",
+      "default": "./dist/src/worker.js"
     },
     "./bin/start-worker": "./dist/bin/start-worker.js",
     "./bin/cli": "./dist/bin/temporal-bun.js"
@@ -73,7 +73,6 @@
     "bun": ">=1.1.20"
   },
   "dependencies": {
-    "@temporalio/activity": "^1.13.0",
     "@temporalio/common": "^1.13.0",
     "@temporalio/proto": "^1.13.0",
     "@temporalio/worker": "^1.13.0",
