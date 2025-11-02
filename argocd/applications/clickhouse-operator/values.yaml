@@ -106,7 +106,7 @@ configs:
                       resources:
                         requests:
                           storage: 200Gi
-                      storageClassName: REPLACE_WITH_STORAGE_CLASS # TODO(data-platform): pick the storage class that maps to the ClickHouse data pool.
+                      storageClassName: longhorn
         defaults:
           templates:
             podTemplate: chi-default
@@ -156,7 +156,7 @@ configs:
                       resources:
                         requests:
                           storage: 20Gi
-                      storageClassName: REPLACE_WITH_STORAGE_CLASS # TODO(data-platform): choose storage class for Keeper metadata.
+                      storageClassName: longhorn
 additionalResources:
   - |
     apiVersion: policy/v1

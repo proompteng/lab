@@ -12,7 +12,7 @@ The Altinity ClickHouse Operator implements a Kubernetes-native control plane fo
 - Resources & reliability: the overrides request 250m CPU / 512Mi memory for the operator, and 100m CPU / 256Mi memory for the metrics exporter. A `PodDisruptionBudget` with `maxUnavailable: 0` protects the singleton deployment during voluntary disruptions.
 - Watch scope: `WATCH_NAMESPACES` is set to `clickhouse-*` to scope reconciliation to ClickHouse-focused namespaces. Adjust this list before onboarding workloads in other namespaces.
 - Metrics: built-in Prometheus annotations and `serviceMonitor.enabled: true` expose metrics on ports `8888` (ClickHouse) and `9999` (operator). Attach the `release` label in `values.yaml` to match the running Prometheus Operator installation.
-- Templates: `values.yaml` packages baseline `ClickHouseInstallationTemplate` and `ClickHouseKeeperInstallationTemplate` definitions. They default to 2x ClickHouse replicas and 3x Keeper replicas with anti-affinity, reserving placeholders for storage classes and resource tuning. Replace `REPLACE_WITH_STORAGE_CLASS` values when targeting a specific storage backend.
+- Templates: `values.yaml` packages baseline `ClickHouseInstallationTemplate` and `ClickHouseKeeperInstallationTemplate` definitions. They default to 2x ClickHouse replicas and 3x Keeper replicas with anti-affinity, tailoring resources for long-running analytics. Persistent volumes bind to the `longhorn` storage class by default; adjust if the target cluster uses a different provider.
 - TODO markers must be resolved (storage classes, priority class, tolerations) before enabling auto-sync.
 
 ## Creating ClickHouse Clusters
@@ -32,7 +32,7 @@ The Altinity ClickHouse Operator implements a Kubernetes-native control plane fo
 ## Sync Lifecycle
 1. Initial rollout: keep the ApplicationSet entry at `automation: manual`. Apply a manual sync in a sandbox cluster and observe for 48 hours.
 2. Pre-production checklist:
-   - Finalize storage class names and tolerations in `argocd/applications/clickhouse-operator/values.yaml`.
+   - Confirm the `longhorn` storage class (or your chosen override) exists in each target cluster.
    - Confirm the referenced priority class exists on every target cluster.
    - Capture validation output for `pnpm run lint:argocd` and `scripts/kubeconform.sh argocd` in the issue.
 3. Enable automation by switching the ApplicationSet entry to `automation: auto` once sign-off is complete.
