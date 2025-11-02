@@ -441,6 +441,66 @@ describe('createWebhookHandler', () => {
         )
       },
     },
+    {
+      name: 'posts ready comment for non-codex branches once thumbs up reaction exists',
+      event: 'pull_request',
+      action: 'edited',
+      payload: {
+        action: 'edited',
+        repository: { full_name: 'owner/repo' },
+        sender: { login: 'other-user' },
+        pull_request: {
+          number: 11,
+          head: { ref: 'feature/new-ui', sha: 'xyz789' },
+          base: { ref: 'main', repo: { full_name: 'owner/repo' } },
+          user: { login: 'OTHER-USER' },
+        },
+      },
+      setup: () => {
+        githubServiceMock.fetchPullRequest.mockReturnValueOnce(
+          Effect.succeed({
+            ok: true as const,
+            pullRequest: {
+              number: 11,
+              title: 'Feature work',
+              body: '',
+              htmlUrl: 'https://github.com/owner/repo/pull/11',
+              draft: false,
+              merged: false,
+              state: 'open',
+              headRef: 'feature/new-ui',
+              headSha: 'xyz789',
+              baseRef: 'main',
+              authorLogin: 'other-user',
+              mergeableState: 'clean',
+            },
+          }),
+        )
+        githubServiceMock.listPullRequestReviewThreads.mockReturnValueOnce(
+          Effect.succeed({ ok: true as const, threads: [] }),
+        )
+        githubServiceMock.listPullRequestCheckFailures.mockReturnValueOnce(
+          Effect.succeed({ ok: true as const, checks: [] }),
+        )
+        githubServiceMock.issueHasReaction.mockReturnValueOnce(Effect.succeed({ ok: true as const, hasReaction: true }))
+        githubServiceMock.findLatestPlanComment.mockReturnValueOnce(
+          Effect.succeed({ ok: false as const, reason: 'not-found' as const }),
+        )
+      },
+      assert: (body) => {
+        expect(body).toMatchObject({ codexStageTriggered: null })
+        expect(githubServiceMock.issueHasReaction).toHaveBeenCalledWith(
+          expect.objectContaining({
+            repositoryFullName: 'owner/repo',
+            issueNumber: 11,
+            reactionContent: '+1',
+          }),
+        )
+        expect(githubServiceMock.createPullRequestComment).toHaveBeenCalledWith(
+          expect.objectContaining({ body: expect.stringContaining(':shipit:') }),
+        )
+      },
+    },
   ]
 
   it.each(webhookScenarios)('$name', async ({ event, action, payload, setup, assert }) => {
