@@ -44,6 +44,14 @@ pub const WorkerReplayHandle = struct {
 var next_worker_id: u64 = 1;
 const default_identity = "temporal-bun-worker";
 
+const debug_ptr_env_name = "BUN_SDK_DEBUG_PTR";
+const debug_ptr_state_uninitialized: u8 = 0;
+const debug_ptr_state_disabled: u8 = 1;
+const debug_ptr_state_enabled: u8 = 2;
+var debug_ptr_state = std.atomic.Value(u8).init(debug_ptr_state_uninitialized);
+const worker_pointer_mismatch_message =
+    "temporal-bun-bridge-zig: worker pointer mismatch";
+
 fn emptyByteArrayRef() core.ByteArrayRef {
     return .{ .data = null, .size = 0 };
 }
@@ -79,6 +87,48 @@ fn duplicateBytes(slice: []const u8) ?[]u8 {
     };
     @memcpy(copy, slice);
     return copy;
+}
+
+fn computeDebugPtrEnabled() bool {
+    const allocator = std.heap.c_allocator;
+    const value = std.process.getEnvVarOwned(allocator, debug_ptr_env_name) catch {
+        return false;
+    };
+    defer allocator.free(value);
+
+    const trimmed = std.mem.trim(u8, value, " \n\r\t");
+    if (trimmed.len == 0) {
+        return false;
+    }
+
+    if (std.ascii.eqlIgnoreCase(trimmed, "0") or std.ascii.eqlIgnoreCase(trimmed, "false") or std.ascii.eqlIgnoreCase(trimmed, "off")) {
+        return false;
+    }
+
+    return true;
+}
+
+fn debugPtrEnabled() bool {
+    const state = debug_ptr_state.load(.acquire);
+    if (state == debug_ptr_state_uninitialized) {
+        const enabled = computeDebugPtrEnabled();
+        debug_ptr_state.store(
+            if (enabled) debug_ptr_state_enabled else debug_ptr_state_disabled,
+            .release,
+        );
+        return enabled;
+    }
+
+    return state == debug_ptr_state_enabled;
+}
+
+fn debugPrintWorkerPtr(label: []const u8, worker_ptr: ?*core.WorkerOpaque) void {
+    if (!debugPtrEnabled()) {
+        return;
+    }
+
+    const ptr = worker_ptr orelse return;
+    std.debug.print("{s}=0x{x}\n", .{ label, @intFromPtr(ptr) });
 }
 
 fn releaseHandle(handle: *WorkerHandle) void {
@@ -431,6 +481,33 @@ fn pollWorkflowTaskCallback(
 }
 
 fn pollWorkflowTaskWorker(context: *PollWorkflowTaskContext) void {
+    const poll_ptr = context.core_worker;
+    if (context.worker_handle.core_worker) |register_ptr| {
+        if (register_ptr != poll_ptr) {
+            if (debugPtrEnabled()) {
+                std.debug.print("worker@register=0x{x}\n", .{@intFromPtr(register_ptr)});
+                std.debug.print("worker@poll=0x{x}\n", .{@intFromPtr(poll_ptr)});
+            }
+            errors.setStructuredError(.{
+                .code = grpc.internal,
+                .message = worker_pointer_mismatch_message,
+            });
+            _ = pending.rejectByteArray(
+                context.pending_handle,
+                grpc.internal,
+                worker_pointer_mismatch_message,
+            );
+            pending.release(context.pending_handle);
+            releasePollPermit(context.worker_handle);
+            context.allocator.destroy(context);
+            return;
+        }
+    }
+
+    if (debugPtrEnabled()) {
+        std.debug.print("worker@poll=0x{x}\n", .{@intFromPtr(poll_ptr)});
+    }
+
     context.wait_group.start();
     core.api.worker_poll_workflow_activation(
         context.core_worker,
@@ -669,6 +746,7 @@ pub fn create(
     };
 
     const result = core.api.worker_new(client_handle.core_client, &options);
+    debugPrintWorkerPtr("worker@register", result.worker);
 
     if (result.worker == null) {
         if (identity_copy.len > 0) {
