@@ -7,6 +7,8 @@ import type {
   FetchPullRequestResult,
   FindPlanCommentOptions,
   FindPlanCommentResult,
+  IssueReactionPresenceOptions,
+  IssueReactionPresenceResult,
   ListCheckFailuresOptions,
   ListCheckFailuresResult,
   ListReviewThreadsOptions,
@@ -19,6 +21,7 @@ import type {
 
 export interface GithubServiceDefinition {
   readonly postIssueReaction: (options: PostIssueReactionOptions) => Effect.Effect<PostIssueReactionResult>
+  readonly issueHasReaction: (options: IssueReactionPresenceOptions) => Effect.Effect<IssueReactionPresenceResult>
   readonly findLatestPlanComment: (options: FindPlanCommentOptions) => Effect.Effect<FindPlanCommentResult>
   readonly fetchPullRequest: (options: FetchPullRequestOptions) => Effect.Effect<FetchPullRequestResult>
   readonly markPullRequestReadyForReview: (options: ReadyForReviewOptions) => Effect.Effect<ReadyForReviewResult>

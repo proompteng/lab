@@ -33,6 +33,27 @@ export type PostIssueReactionResult =
   | { ok: true }
   | { ok: false; reason: PostIssueReactionFailureReason; status?: number; detail?: string }
 
+export interface IssueReactionPresenceOptions {
+  repositoryFullName: string
+  issueNumber: number
+  reactionContent: string
+  token?: string | null
+  apiBaseUrl?: string
+  userAgent?: string
+  fetchImplementation?: FetchLike | null
+}
+
+export type IssueReactionPresenceFailureReason =
+  | 'invalid-repository'
+  | 'no-fetch'
+  | 'http-error'
+  | 'network-error'
+  | 'invalid-json'
+
+export type IssueReactionPresenceResult =
+  | { ok: true; hasReaction: boolean }
+  | { ok: false; reason: IssueReactionPresenceFailureReason; status?: number; detail?: string }
+
 export interface PlanComment {
   id: number
   body: string

@@ -266,6 +266,12 @@ spec:
           name: istiod
           jqPathExpressions:
             - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
+        - kind: Deployment
+          group: apps
+          namespace: clickhouse-operator
+          name: clickhouse-operator-altinity-clickhouse-operator
+          jqPathExpressions:
+            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
         - kind: DaemonSet
           group: apps
           namespace: istio-system

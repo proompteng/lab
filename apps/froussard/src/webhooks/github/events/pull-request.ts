@@ -138,6 +138,30 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
       return null
     }
 
+    const reactionsResult = await executionContext.runGithub(() =>
+      executionContext.githubService.issueHasReaction({
+        repositoryFullName: repoFullName,
+        issueNumber: pull.number,
+        reactionContent: '+1',
+        token: config.github.token,
+        apiBaseUrl: config.github.apiBaseUrl,
+        userAgent: config.github.userAgent,
+      }),
+    )
+
+    const hasThumbsUpReaction = reactionsResult.ok ? reactionsResult.hasReaction : false
+    if (!reactionsResult.ok) {
+      logger.warn(
+        {
+          repository: repoFullName,
+          pullNumber,
+          reason: reactionsResult.reason,
+          status: reactionsResult.status,
+        },
+        'failed to read pull request reactions; ready comment will not be posted',
+      )
+    }
+
     const unresolvedThreads = threadsResult.threads
     const failingChecks = checksResult.checks
     const shouldForceReviewStage = actionValue ? FORCE_REVIEW_ACTIONS.has(actionValue) : false
@@ -188,7 +212,10 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
     }
 
     const readyCommentCandidate: ReadyCommentCommandType | undefined =
-      !reviewArtifacts.mergeStateRequiresAttention && !shouldForceReviewStage && !reviewArtifacts.outstandingWork
+      hasThumbsUpReaction &&
+      !reviewArtifacts.mergeStateRequiresAttention &&
+      !shouldForceReviewStage &&
+      !reviewArtifacts.outstandingWork
         ? {
             repositoryFullName: repoFullName,
             pullNumber,
