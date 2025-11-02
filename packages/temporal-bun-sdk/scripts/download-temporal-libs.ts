@@ -11,9 +11,11 @@ import { pipeline } from 'node:stream/promises'
 const OWNER = 'proompteng'
 const REPO = 'lab'
 const DEFAULT_TAG = process.env.TEMPORAL_LIBS_VERSION ?? 'temporal-libs-v1.0.2'
-const CACHE_ROOT = '.temporal-libs-cache'
+export const CACHE_ROOT = '.temporal-libs-cache'
 
-type PlatformTriple = 'linux-arm64' | 'linux-x64' | 'macos-arm64'
+export const SUPPORTED_PLATFORMS = ['linux-arm64', 'linux-x64', 'macos-arm64'] as const
+
+export type PlatformTriple = (typeof SUPPORTED_PLATFORMS)[number]
 
 interface ReleaseAsset {
   name: string
@@ -25,7 +27,7 @@ interface ReleaseResponse {
   assets: ReleaseAsset[]
 }
 
-async function detectPlatform(): Promise<PlatformTriple> {
+export function detectPlatform(): PlatformTriple {
   const platform = process.env.FORCE_PLATFORM ?? process.platform
   const arch = process.env.FORCE_ARCH ?? process.arch
 
@@ -39,6 +41,10 @@ async function detectPlatform(): Promise<PlatformTriple> {
   }
 
   throw new Error(`Unsupported platform combination: platform=${platform} arch=${arch}`)
+}
+
+export function isSupportedPlatform(value: string): value is PlatformTriple {
+  return (SUPPORTED_PLATFORMS as readonly string[]).includes(value)
 }
 
 async function githubFetch<T>(path: string): Promise<T> {
@@ -74,12 +80,12 @@ async function githubFetch<T>(path: string): Promise<T> {
   return (await response.json()) as T
 }
 
-async function fetchRelease(tag: string): Promise<ReleaseResponse> {
+export async function fetchRelease(tag: string): Promise<ReleaseResponse> {
   const normalized = tag.startsWith('temporal-libs-') ? tag : `temporal-libs-${tag}`
   return githubFetch<ReleaseResponse>(`/repos/${OWNER}/${REPO}/releases/tags/${normalized}`)
 }
 
-function getAssetNames(platform: PlatformTriple, tag: string): { archive: string; checksum: string } {
+export function getAssetNames(platform: PlatformTriple, tag: string): { archive: string; checksum: string } {
   const versionLabel = tag.replace(/^temporal-libs-/, '')
   const archive = `temporal-static-libs-${platform}-${versionLabel}.tar.gz`
   return { archive, checksum: `${archive}.sha256` }
@@ -142,10 +148,12 @@ async function createLatestSymlink(versionTag: string): Promise<void> {
   }
 }
 
-async function downloadLibraries(versionTag: string, platform: PlatformTriple): Promise<void> {
+export async function downloadLibraries(versionTag: string, platform: PlatformTriple): Promise<void> {
   console.log(`Resolving release ${versionTag} for ${platform}…`)
   const release = await fetchRelease(versionTag)
   console.log(`Found release: ${release.tag_name}`)
+
+  await ensureDir(CACHE_ROOT)
 
   const headers: Record<string, string> = {
     Accept: 'application/octet-stream',
@@ -204,31 +212,37 @@ async function downloadLibraries(versionTag: string, platform: PlatformTriple): 
   console.log(`  Location: ${join(CACHE_ROOT, release.tag_name, platform)}`)
 }
 
-async function main(): Promise<void> {
-  const [command = 'download', versionArg, platformArg] = process.argv.slice(2)
+export async function runCli(args: string[]): Promise<void> {
+  const [command = 'download', versionArg, platformArg] = args
 
   if (command !== 'download') {
     console.log('Usage: bun run download-temporal-libs.ts download [version] [platform]')
     console.log(`Default version: ${DEFAULT_TAG}`)
     console.log('Supported platforms: linux-arm64, linux-x64, macos-arm64')
-    process.exit(0)
+    return
   }
 
   let versionTag = versionArg ?? DEFAULT_TAG
   if (versionTag === 'latest') {
     versionTag = DEFAULT_TAG
   }
-  const platform = platformArg ? (platformArg as PlatformTriple) : await detectPlatform()
 
-  if (!['linux-arm64', 'linux-x64', 'macos-arm64'].includes(platform)) {
-    throw new Error(`Unsupported platform override: ${platform}`)
+  let platform: PlatformTriple
+  if (platformArg) {
+    if (!isSupportedPlatform(platformArg)) {
+      throw new Error(`Unsupported platform override: ${platformArg}`)
+    }
+    platform = platformArg
+  } else {
+    platform = detectPlatform()
   }
 
-  await ensureDir(CACHE_ROOT)
-  await downloadLibraries(versionTag, platform as PlatformTriple)
+  await downloadLibraries(versionTag, platform)
 }
 
-main().catch((error) => {
-  console.error('✗ Error:', error instanceof Error ? error.message : error)
-  process.exit(1)
-})
+if (import.meta.main) {
+  runCli(process.argv.slice(2)).catch((error) => {
+    console.error('✗ Error:', error instanceof Error ? error.message : error)
+    process.exit(1)
+  })
+}
