@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/proompteng/lab/services/facteur/internal/bridge"
-	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 )
 
 const planningCommand = "codex-planning"
@@ -31,7 +31,7 @@ func cloneOverrides(overrides map[string]string) map[string]string {
 }
 
 // DispatchPlanning submits a planning workflow for the provided Codex task.
-func DispatchPlanning(ctx context.Context, dispatcher bridge.Dispatcher, task *githubpb.CodexTask, overrides map[string]string) (bridge.DispatchResult, error) {
+func DispatchPlanning(ctx context.Context, dispatcher bridge.Dispatcher, task *froussardpb.CodexTask, overrides map[string]string) (bridge.DispatchResult, error) {
 	if dispatcher == nil {
 		return bridge.DispatchResult{}, fmt.Errorf("codex dispatch: dispatcher is required")
 	}
@@ -47,8 +47,8 @@ func DispatchPlanning(ctx context.Context, dispatcher bridge.Dispatcher, task *g
 	return dispatcher.Dispatch(ctx, req)
 }
 
-func buildPlanningDispatchRequest(task *githubpb.CodexTask, overrides map[string]string) (bridge.DispatchRequest, error) {
-	if task.GetStage() != githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
+func buildPlanningDispatchRequest(task *froussardpb.CodexTask, overrides map[string]string) (bridge.DispatchRequest, error) {
+	if task.GetStage() != froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
 		return bridge.DispatchRequest{}, fmt.Errorf("codex dispatch: stage %s is not supported", task.GetStage())
 	}
 

@@ -1,19 +1,24 @@
-import { Timestamp } from '@bufbuild/protobuf'
+import { create } from '@bufbuild/protobuf'
+import { timestampFromDate } from '@bufbuild/protobuf/wkt'
 import type { CodexTaskMessage } from '@/codex'
 import {
   CodexTaskStage,
-  CodexFailingCheck as GithubCodexFailingCheck,
-  CodexReviewContext as GithubCodexReviewContext,
-  CodexReviewThread as GithubCodexReviewThread,
-  CodexTask as GithubCodexTaskMessage,
-} from '@/proto/github/v1/codex_task_pb'
+  CodexFailingCheckSchema as GithubCodexFailingCheckSchema,
+  CodexReviewContextSchema as GithubCodexReviewContextSchema,
+  CodexReviewThreadSchema as GithubCodexReviewThreadSchema,
+  type CodexTask as GithubCodexTaskMessage,
+  CodexTaskSchema as GithubCodexTaskSchema,
+} from '@/proto/proompteng/froussard/v1/codex_task_pb'
 
-const toTimestamp = (value: string): Timestamp => {
+const toTimestamp = (value: string | undefined) => {
+  if (!value) {
+    return timestampFromDate(new Date())
+  }
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) {
-    return Timestamp.fromDate(new Date())
+    return timestampFromDate(new Date())
   }
-  return Timestamp.fromDate(date)
+  return timestampFromDate(date)
 }
 
 export const buildReviewContextProto = (context: CodexTaskMessage['reviewContext'] | undefined) => {
@@ -21,24 +26,22 @@ export const buildReviewContextProto = (context: CodexTaskMessage['reviewContext
     return undefined
   }
 
-  return new GithubCodexReviewContext({
+  return create(GithubCodexReviewContextSchema, {
     summary: context.summary,
-    reviewThreads: (context.reviewThreads ?? []).map(
-      (thread) =>
-        new GithubCodexReviewThread({
-          summary: thread.summary,
-          url: thread.url,
-          author: thread.author,
-        }),
+    reviewThreads: (context.reviewThreads ?? []).map((thread) =>
+      create(GithubCodexReviewThreadSchema, {
+        summary: thread.summary,
+        url: thread.url,
+        author: thread.author,
+      }),
     ),
-    failingChecks: (context.failingChecks ?? []).map(
-      (check) =>
-        new GithubCodexFailingCheck({
-          name: check.name,
-          conclusion: check.conclusion,
-          url: check.url,
-          details: check.details,
-        }),
+    failingChecks: (context.failingChecks ?? []).map((check) =>
+      create(GithubCodexFailingCheckSchema, {
+        name: check.name,
+        conclusion: check.conclusion,
+        url: check.url,
+        details: check.details,
+      }),
     ),
     additionalNotes: context.additionalNotes ?? [],
   })
@@ -52,7 +55,7 @@ export const toCodexTaskProto = (message: CodexTaskMessage, deliveryId: string):
         ? CodexTaskStage.REVIEW
         : CodexTaskStage.IMPLEMENTATION
 
-  return new GithubCodexTaskMessage({
+  return create(GithubCodexTaskSchema, {
     stage: protoStage,
     prompt: message.prompt,
     repository: message.repository,

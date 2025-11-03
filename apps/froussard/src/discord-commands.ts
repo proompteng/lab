@@ -7,7 +7,7 @@ import type {
   DiscordMember as FacteurDiscordMemberMessage,
   DiscordUser as FacteurDiscordUserMessage,
   Response as FacteurResponseMessage,
-} from '@/proto/facteur/v1/contract_pb'
+} from '@/proto/proompteng/facteur/v1/contract_pb'
 
 export type FacteurCommandEvent = PlainMessage<FacteurCommandEventMessage>
 export type FacteurDiscordMember = PlainMessage<FacteurDiscordMemberMessage>

@@ -17,7 +17,7 @@ import (
 	"github.com/proompteng/lab/services/facteur/internal/bridge"
 	"github.com/proompteng/lab/services/facteur/internal/codex"
 	"github.com/proompteng/lab/services/facteur/internal/facteurpb"
-	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 	"github.com/proompteng/lab/services/facteur/internal/orchestrator"
 	"github.com/proompteng/lab/services/facteur/internal/server"
 	"github.com/proompteng/lab/services/facteur/internal/session"
@@ -126,8 +126,8 @@ func TestCodexTasksEndpointPersists(t *testing.T) {
 	log.SetOutput(buf)
 	defer log.SetOutput(orig)
 
-	payload, err := proto.Marshal(&githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
+	payload, err := proto.Marshal(&froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
 		Repository:  "proompteng/lab",
 		IssueNumber: 42,
 		Head:        "codex/issue-42-demo",
@@ -168,8 +168,8 @@ func TestCodexTasksEndpointHandlesError(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	payload, err := proto.Marshal(&githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	payload, err := proto.Marshal(&froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Repository:  "proompteng/lab",
 		IssueNumber: 7,
 		DeliveryId:  "delivery-error",
@@ -193,8 +193,8 @@ func TestCodexTasksEndpointUnavailable(t *testing.T) {
 	srv, err := server.New(server.Options{})
 	require.NoError(t, err)
 
-	payload, err := proto.Marshal(&githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_REVIEW,
+	payload, err := proto.Marshal(&froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_REVIEW,
 		Repository:  "proompteng/lab",
 		IssueNumber: 99,
 		DeliveryId:  "delivery-none",
@@ -231,8 +231,8 @@ func TestCodexTasksPlanningDispatches(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	payload, err := proto.Marshal(&githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	payload, err := proto.Marshal(&froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Repository:  "proompteng/lab",
 		IssueNumber: 1636,
 		DeliveryId:  "delivery-planning",
@@ -270,8 +270,8 @@ func TestCodexTasksPlanningPlannerError(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	payload, err := proto.Marshal(&githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	payload, err := proto.Marshal(&froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Repository:  "proompteng/lab",
 		IssueNumber: 1636,
 		DeliveryId:  "delivery-error",
@@ -311,8 +311,8 @@ func TestCodexTasksPlannerBypass(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	payload, err := proto.Marshal(&githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
+	payload, err := proto.Marshal(&froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
 		Repository:  "proompteng/lab",
 		IssueNumber: 1636,
 		DeliveryId:  "delivery-bypass",
@@ -347,8 +347,8 @@ func TestCodexTasksEndpointDispatchesPlanningWhenEnabled(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	payload, err := proto.Marshal(&githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	payload, err := proto.Marshal(&froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Prompt:      "Generate rollout plan",
 		Repository:  "proompteng/lab",
 		IssueNumber: 1638,
@@ -385,7 +385,7 @@ func TestCodexTasksEndpointSkipsWhenPlanningDisabled(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	payload, err := proto.Marshal(&githubpb.CodexTask{Stage: githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING, Prompt: "Generate", DeliveryId: "delivery"})
+	payload, err := proto.Marshal(&froussardpb.CodexTask{Stage: froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING, Prompt: "Generate", DeliveryId: "delivery"})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
@@ -408,7 +408,7 @@ func TestCodexTasksEndpointReturnsServiceUnavailableWhenDispatcherMissing(t *tes
 	})
 	require.NoError(t, err)
 
-	payload, err := proto.Marshal(&githubpb.CodexTask{Stage: githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING, Prompt: "Generate"})
+	payload, err := proto.Marshal(&froussardpb.CodexTask{Stage: froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING, Prompt: "Generate"})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
@@ -432,7 +432,7 @@ func TestCodexTasksEndpointReturnsErrorWhenDispatchFails(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	payload, err := proto.Marshal(&githubpb.CodexTask{Stage: githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING, Prompt: "Generate"})
+	payload, err := proto.Marshal(&froussardpb.CodexTask{Stage: froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING, Prompt: "Generate"})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
@@ -489,10 +489,10 @@ type stubCodexStore struct {
 	runID    string
 	err      error
 	calls    int
-	lastTask *githubpb.CodexTask
+	lastTask *froussardpb.CodexTask
 }
 
-func (s *stubCodexStore) IngestCodexTask(_ context.Context, task *githubpb.CodexTask) (string, string, string, error) {
+func (s *stubCodexStore) IngestCodexTask(_ context.Context, task *froussardpb.CodexTask) (string, string, string, error) {
 	s.calls++
 	s.lastTask = task
 	if s.err != nil {
@@ -507,7 +507,7 @@ type stubPlanner struct {
 	calls  int
 }
 
-func (s *stubPlanner) Plan(_ context.Context, _ *githubpb.CodexTask) (orchestrator.Result, error) {
+func (s *stubPlanner) Plan(_ context.Context, _ *froussardpb.CodexTask) (orchestrator.Result, error) {
 	s.calls++
 	if s.err != nil {
 		return orchestrator.Result{}, s.err

@@ -63,15 +63,15 @@ go test -tags e2e ./services/facteur/test/e2e
 
 ### Codex knowledge base ingestion
 
-Facteur persists Codex deliveries under `/codex/tasks` by normalising the `github.v1.CodexTask` payload into `codex_kb.ideas`, `codex_kb.tasks`, and `codex_kb.task_runs`. The handler requires `FACTEUR_POSTGRES_DSN` and `redis.url`; each delivery must include a unique `delivery_id` so retries remain idempotent.
+Facteur persists Codex deliveries under `/codex/tasks` by normalising the `proompteng.froussard.v1.CodexTask` payload into `codex_kb.ideas`, `codex_kb.tasks`, and `codex_kb.task_runs`. The handler requires `FACTEUR_POSTGRES_DSN` and `redis.url`; each delivery must include a unique `delivery_id` so retries remain idempotent.
 
 1. Ensure the service is running with Postgres and Redis reachable (see above).
 2. Encode the sample payload provided in `docs/examples/codex-task.json`:
    ```bash
-   buf beta protoc \
-     --proto_path=proto \
-     --encode github.v1.CodexTask \
-     proto/github/v1/codex_task.proto \
+  buf beta protoc \
+    --proto_path=proto \
+    --encode proompteng.froussard.v1.CodexTask \
+    proto/proompteng/froussard/v1/codex_task.proto \
      < docs/examples/codex-task.json \
      > /tmp/codex-task.bin
    ```

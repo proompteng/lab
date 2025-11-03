@@ -1,7 +1,9 @@
+import { toBinary } from '@bufbuild/protobuf'
 import type { Effect as EffectType } from 'effect/Effect'
 import type { WorkflowCommand } from '@/codex/workflow-machine'
 import type { AppRuntime } from '@/effect/runtime'
 import { logger } from '@/logger'
+import { CodexTaskSchema } from '@/proto/proompteng/froussard/v1/codex_task_pb'
 import type { GithubServiceDefinition } from '@/services/github/service.types'
 import { publishKafkaMessage } from '@/webhooks/utils'
 import {
@@ -59,7 +61,7 @@ export const executeWorkflowCommands = async (
           publishKafkaMessage({
             topic: command.data.topics.codexStructured,
             key: command.data.key,
-            value: command.data.structuredMessage.toBinary(),
+            value: toBinary(CodexTaskSchema, command.data.structuredMessage),
             headers: {
               ...command.data.structuredHeaders,
               'x-codex-task-stage': 'planning',
@@ -118,7 +120,7 @@ export const executeWorkflowCommands = async (
           publishKafkaMessage({
             topic: command.data.topics.codexStructured,
             key: command.data.key,
-            value: command.data.structuredMessage.toBinary(),
+            value: toBinary(CodexTaskSchema, command.data.structuredMessage),
             headers: {
               ...command.data.structuredHeaders,
               'x-codex-task-stage': 'implementation',
@@ -149,7 +151,7 @@ export const executeWorkflowCommands = async (
           publishKafkaMessage({
             topic: command.data.topics.codexStructured,
             key: command.data.key,
-            value: command.data.structuredMessage.toBinary(),
+            value: toBinary(CodexTaskSchema, command.data.structuredMessage),
             headers: {
               ...command.data.structuredHeaders,
               'x-codex-task-stage': 'review',

@@ -1,10 +1,10 @@
 syntax = "proto3";
 
-package github.v1;
+package proompteng.froussard.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/proompteng/lab/services/facteur/internal/githubpb";
+option go_package = "github.com/proompteng/lab/services/facteur/internal/froussardpb";
 
 enum CodexTaskStage {
   CODEX_TASK_STAGE_UNSPECIFIED = 0;

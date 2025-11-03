@@ -18,7 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -42,8 +42,8 @@ func TestCodexIngestionEndToEnd(t *testing.T) {
 	}
 
 	deliveryID := fmt.Sprintf("delivery-%d", time.Now().UnixNano())
-	task := &githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
+	task := &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
 		Prompt:      "Codex ingestion e2e",
 		Repository:  "proompteng/lab",
 		Base:        "main",

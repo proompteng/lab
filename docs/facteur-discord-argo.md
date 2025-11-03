@@ -99,8 +99,8 @@ The first public cut will ship three Discord slash commands that map to the exis
 Discord slash commands terminate at the shared webhook bridge (`apps/froussard`). The service verifies the Ed25519
 signature (`x-signature-ed25519` and `x-signature-timestamp`), normalises the interaction into a stable payload, and
 publishes it to Kafka topic `discord.commands.incoming` as an `application/x-protobuf` payload. The canonical contract
-is `facteur.v1.CommandEvent` defined in `proto/facteur/v1/contract.proto`; generated stubs live under
-`services/facteur/internal/facteurpb` (Go) and `apps/froussard/src/proto` (TypeScript). Facteur subscribes to that
+is `proompteng.facteur.v1.CommandEvent` defined in `proto/proompteng/facteur/v1/contract.proto`; generated stubs live under
+`services/facteur/internal/facteurpb` (Go) and `apps/froussard/src/proto/proompteng/facteur/v1` (TypeScript). Facteur subscribes to that
 topic, deserialises the message via the protobuf stubs, and drives the workflow dispatcher. Facteur is also responsible
 for using the interaction token carried in the event to post follow-up updates back to Discord once the workflow
 completes.
@@ -112,14 +112,14 @@ feed before deeper integrations are wired up.
 
 ### Protobuf workflow
 
-- The repository is wired to a Buf workspace (`buf.work.yaml`). Run `buf generate` (or `pnpm proto:generate`) to
+- The repository is wired to a Buf workspace (`buf.yaml`). Run `buf generate` (or `pnpm proto:generate`) to
   refresh the Go and TypeScript stubs directly with the locally installed Buf CLI.
 - Go stubs continue to land in `services/facteur/internal/facteurpb` and TypeScript stubs are generated with
   [`protobuf-es`](https://github.com/bufbuild/protobuf-es) for use in `apps/froussard`. Keep dependant services pinned
   to the generated classes instead of hand-rolled JSON structures.
-- GitHub-facing payloads now share the same toolchain via `github/v1/webhook_event.proto` and
-  `github/v1/codex_task.proto`, landing in `services/facteur/internal/githubpb` (Go) and
-  `apps/froussard/src/proto/github/v1` (TypeScript). The structured Codex stream publishes to
+- GitHub-facing payloads now share the same toolchain via `proompteng/froussard/v1/codex_task.proto`, landing in
+  `services/facteur/internal/froussardpb` (Go) and `apps/froussard/src/proto/proompteng/froussard/v1` (TypeScript). The
+  structured Codex stream publishes to
   `github.issues.codex.tasks`; run `facteur codex-listen` to tail those payloads locally before wiring them into the
   workflow dispatcher.
 - Continuous integration runs `buf format --diff` and `buf lint` through `.github/workflows/buf-ci.yml`, with
@@ -184,10 +184,10 @@ Locally, point the same variables at your observability environment to capture t
 
 ## Codex task ingestion
 
-- **Endpoint**: `POST /codex/tasks` expects a `github.v1.CodexTask` protobuf payload (binary wire format).
+- **Endpoint**: `POST /codex/tasks` expects a `proompteng.froussard.v1.CodexTask` protobuf payload (binary wire format).
 - **Storage**: the handler upserts rows into `codex_kb.ideas`, `codex_kb.tasks`, and `codex_kb.task_runs`, using `delivery_id` to guarantee idempotent retries (`ON CONFLICT (delivery_id) DO UPDATE …`).
 - **Dependencies**: set `FACTEUR_POSTGRES_DSN` and `redis.url`; migrations run automatically on startup (`go run ./cmd/facteur migrate` runs them manually).
-- **Sample payload**: `docs/examples/codex-task.json` mirrors the fields emitted by Froussard. Encode it via `buf beta protoc --encode github.v1.CodexTask proto/github/v1/codex_task.proto`.
+- **Sample payload**: `docs/examples/codex-task.json` mirrors the fields emitted by Froussard. Encode it via `buf beta protoc --encode proompteng.froussard.v1.CodexTask proto/proompteng/froussard/v1/codex_task.proto`.
 - **Manual validation**:
   1. Start Postgres (`postgres://postgres:postgres@127.0.0.1:6543/postgres?sslmode=disable`) and Redis.
   2. Run `go run . serve --config config/example.yaml`.

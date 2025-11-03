@@ -1,6 +1,6 @@
 export const PROTO_CONTENT_TYPE = 'application/x-protobuf'
-export const PROTO_CODEX_TASK_FULL_NAME = 'github.v1.CodexTask'
-export const PROTO_CODEX_TASK_SCHEMA = 'github/v1/codex_task.proto'
+export const PROTO_CODEX_TASK_FULL_NAME = 'proompteng.froussard.v1.CodexTask'
+export const PROTO_CODEX_TASK_SCHEMA = 'proompteng/froussard/v1/codex_task.proto'
 
 export const CODEX_PLAN_MARKER = '<!-- codex:plan -->'
 export const CODEX_REVIEW_COMMENT = '@codex review'

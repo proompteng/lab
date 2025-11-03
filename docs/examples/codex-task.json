@@ -31,8 +31,6 @@
         "details": "Biome reported formatting issues in store.go"
       }
     ],
-    "additionalNotes": [
-      "Retry after applying database migrations."
-    ]
+    "additionalNotes": ["Retry after applying database migrations."]
   }
 }

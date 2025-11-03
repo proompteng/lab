@@ -1,4 +1,4 @@
-package githubpb
+package froussardpb
 
 import (
 	"reflect"

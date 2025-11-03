@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package facteur.v1;
+package proompteng.facteur.v1;
 
 option go_package = "github.com/proompteng/lab/services/facteur/internal/facteurpb";
 

@@ -47,4 +47,4 @@ Messages published to both `github.codex.tasks` (JSON) and `github.issues.codex.
 
 Both stages carry the common metadata (`repository`, `base`, `head`, `issueNumber`, etc.) to keep the workflows symmetric.
 
-The structured stream uses the `github.v1.CodexTask` message and adds the GitHub delivery identifier for consumers that need typed payloads.
+The structured stream uses the `proompteng.froussard.v1.CodexTask` message and adds the GitHub delivery identifier for consumers that need typed payloads.

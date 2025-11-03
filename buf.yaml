@@ -1,5 +1,7 @@
-version: v1
-name: buf.build/proompteng/lab-proto
+version: v2
+modules:
+  - path: proto
+    name: buf.build/proompteng/lab
 deps:
   - buf.build/protocolbuffers/wellknowntypes
 lint:
@@ -8,3 +10,5 @@ lint:
 breaking:
   use:
     - FILE
+  except:
+    - FILE_NO_DELETE

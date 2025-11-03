@@ -1,3 +1,4 @@
+import { create, toBinary } from '@bufbuild/protobuf'
 import {
   buildPlanModalResponse,
   type DiscordApplicationCommandInteraction,
@@ -9,7 +10,7 @@ import {
 } from '@/discord-commands'
 import type { AppRuntime } from '@/effect/runtime'
 import { logger } from '@/logger'
-import { CommandEvent as FacteurCommandEventMessage } from '@/proto/facteur/v1/contract_pb'
+import { CommandEventSchema as FacteurCommandEventSchema } from '@/proto/proompteng/facteur/v1/contract_pb'
 
 import type { WebhookConfig } from './types'
 import { publishKafkaMessage } from './utils'
@@ -116,8 +117,8 @@ export const createDiscordWebhookHandler =
         payload: JSON.stringify(planPayload),
       }
 
-      const protoEvent = new FacteurCommandEventMessage(event)
-      const encodedEvent = protoEvent.toBinary()
+      const protoEvent = create(FacteurCommandEventSchema, event)
+      const encodedEvent = toBinary(FacteurCommandEventSchema, protoEvent)
 
       const kafkaHeaders: Record<string, string> = {
         'content-type': 'application/x-protobuf',

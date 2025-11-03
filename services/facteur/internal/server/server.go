@@ -22,7 +22,7 @@ import (
 	"github.com/proompteng/lab/services/facteur/internal/codex"
 	"github.com/proompteng/lab/services/facteur/internal/consumer"
 	"github.com/proompteng/lab/services/facteur/internal/facteurpb"
-	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 	"github.com/proompteng/lab/services/facteur/internal/orchestrator"
 	"github.com/proompteng/lab/services/facteur/internal/session"
 	"github.com/proompteng/lab/services/facteur/internal/telemetry"
@@ -61,7 +61,7 @@ type Options struct {
 
 // CodexStore defines the storage surface required for Codex task ingestion.
 type CodexStore interface {
-	IngestCodexTask(ctx context.Context, task *githubpb.CodexTask) (ideaID, taskID, runID string, err error)
+	IngestCodexTask(ctx context.Context, task *froussardpb.CodexTask) (ideaID, taskID, runID string, err error)
 }
 
 // CodexPlannerOptions wires the planning orchestrator into the HTTP layer.
@@ -242,7 +242,7 @@ func registerRoutes(app *fiber.App, opts Options) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "empty payload"})
 		}
 
-		var task githubpb.CodexTask
+		var task froussardpb.CodexTask
 		if err := proto.Unmarshal(body, &task); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid payload", "details": err.Error()})
 		}
@@ -271,7 +271,7 @@ func registerRoutes(app *fiber.App, opts Options) {
 			attribute.String("codex.delivery_id", task.GetDeliveryId()),
 		)
 
-		if opts.CodexPlanner.Enabled && opts.CodexPlanner.Planner != nil && task.GetStage() == githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
+		if opts.CodexPlanner.Enabled && opts.CodexPlanner.Planner != nil && task.GetStage() == froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
 			result, err := opts.CodexPlanner.Planner.Plan(ctx, &task)
 			if err != nil {
 				span.RecordError(err)
@@ -338,7 +338,7 @@ func registerRoutes(app *fiber.App, opts Options) {
 
 		var dispatchResult *bridge.DispatchResult
 
-		if task.GetStage() == githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
+		if task.GetStage() == froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
 			if !opts.CodexDispatch.PlanningEnabled {
 				log.Printf(
 					"codex planning dispatch disabled: repo=%s issue=%d",
