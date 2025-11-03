@@ -22,6 +22,7 @@ import {
 import { createDefaultDataConverter, type DataConverter, decodePayloadsToValues } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
 import { NativeBridgeError, type NativeClient, native, type Runtime } from './internal/core-bridge/native'
+import { configureRuntimeTelemetry } from './telemetry/runtime'
 
 const startWorkflowMetadataSchema = z.object({
   runId: z.string().min(1),
@@ -263,6 +264,7 @@ export const createTemporalClient = async (
   const dataConverter = options.dataConverter ?? createDefaultDataConverter()
 
   const runtime = native.createRuntime(options.runtimeOptions ?? {})
+  configureRuntimeTelemetry(runtime, config.telemetry)
   const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
 
   const nativeConfig: Record<string, unknown> = {

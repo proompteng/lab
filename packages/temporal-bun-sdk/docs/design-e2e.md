@@ -154,8 +154,8 @@ maps to one or more lanes so parallel Codex instances can implement features wit
 1. **Client parity**
    - Add automated Temporal Cloud/Compose coverage so cancellation tests run with a live server in CI.
 2. **Runtime telemetry & logging**
-   - Expand automated coverage for Prometheus and OTLP exporters (native + Bun tests) and capture regression fixtures.
-   - Document operational playbooks for telemetry dashboards and emitted metrics fields.
+  - Runtime configuration hooks now land in Bun client/worker runtimes; broaden automated coverage for Prometheus and OTLP exporters (native + Bun tests) and capture regression fixtures.
+  - Document operational playbooks for telemetry dashboards, emitted metrics fields, and environment variable configuration.
 3. **Worker bridge**
    - Add activity metrics support in Zig and surface telemetry for shutdown timing (follow-up after `zig-worker-09`).
    - Harden Bun `WorkerRuntime` parity (activity interception, metrics, diagnostics) and document the vendor fallback toggle.

@@ -18,6 +18,7 @@ import {
   type NativeWorker,
   native,
 } from '../internal/core-bridge/native'
+import { configureRuntimeTelemetry } from '../telemetry/runtime'
 import { type WorkflowActivationResult, WorkflowEngine } from '../workflow/runtime'
 import { type ActivityContext, type ActivityInfo, runWithActivityContext } from './activity-context'
 
@@ -242,6 +243,7 @@ export class WorkerRuntime {
     }
 
     const runtime = native.createRuntime({})
+    configureRuntimeTelemetry(runtime, config.telemetry)
     let client: NativeClient | null = null
 
     try {

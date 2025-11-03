@@ -65,4 +65,78 @@ describe('loadTemporalConfig', () => {
     })
     expect(config.allowInsecureTls).toBe(true)
   })
+
+  it('parses telemetry env overrides for Prometheus exporter', async () => {
+    const env = {
+      TEMPORAL_LOG_FILTER: 'debug',
+      TEMPORAL_METRICS_PREFIX: 'bun-sdk',
+      TEMPORAL_METRICS_ATTACH_SERVICE_NAME: 'true',
+      TEMPORAL_METRICS_EXPORTER: 'prometheus',
+      TEMPORAL_PROMETHEUS_ENDPOINT: '127.0.0.1:9464',
+      TEMPORAL_PROMETHEUS_COUNTERS_TOTAL_SUFFIX: '0',
+      TEMPORAL_PROMETHEUS_UNIT_SUFFIX: '1',
+      TEMPORAL_PROMETHEUS_USE_SECONDS: 'true',
+      TEMPORAL_METRICS_GLOBAL_TAGS: '{"service":"sdk","env":"test"}',
+      TEMPORAL_METRICS_HISTOGRAM_OVERRIDES: '{"temporal_activity_schedule_to_start_latency":[1,5,10]}',
+    }
+
+  const config = await loadTemporalConfig({ env: env as unknown as NodeJS.ProcessEnv })
+
+    expect(config.telemetry).toBeDefined()
+    expect(config.telemetry?.logFilter).toBe('debug')
+    expect(config.telemetry?.metricPrefix).toBe('bun-sdk')
+    expect(config.telemetry?.attachServiceName).toBe(true)
+    expect(config.telemetry?.metricsExporter).toEqual({
+      type: 'prometheus',
+      socketAddr: '127.0.0.1:9464',
+      countersTotalSuffix: false,
+      unitSuffix: true,
+      useSecondsForDurations: true,
+      globalTags: {
+        service: 'sdk',
+        env: 'test',
+      },
+      histogramBucketOverrides: {
+        temporal_activity_schedule_to_start_latency: [1, 5, 10],
+      },
+    })
+  })
+
+  it('merges telemetry defaults with OTLP overrides', async () => {
+    const env = {
+      TEMPORAL_METRICS_EXPORTER: 'otlp',
+      TEMPORAL_OTLP_ENDPOINT: 'http://collector:4318',
+      TEMPORAL_OTLP_PROTOCOL: 'http',
+      TEMPORAL_OTLP_METRIC_TEMPORALITY: 'delta',
+      TEMPORAL_METRICS_GLOBAL_TAGS: '{"service":"sdk"}',
+      TEMPORAL_METRICS_HISTOGRAM_OVERRIDES: '{"custom":[0.1,1,10]}',
+    }
+
+    const config = await loadTemporalConfig({
+  env: env as unknown as NodeJS.ProcessEnv,
+      defaults: {
+        telemetry: {
+          logFilter: 'info',
+          metricPrefix: 'default',
+          metricsExporter: {
+            type: 'otel',
+            url: 'http://default:4318',
+            metricPeriodicity: 60000,
+          },
+        },
+      },
+    })
+
+    expect(config.telemetry?.logFilter).toBe('info')
+    expect(config.telemetry?.metricPrefix).toBe('default')
+    expect(config.telemetry?.metricsExporter).toEqual({
+      type: 'otel',
+      url: 'http://collector:4318',
+      protocol: 'http',
+      metricPeriodicity: 60000,
+      metricTemporality: 'delta',
+      globalTags: { service: 'sdk' },
+      histogramBucketOverrides: { custom: [0.1, 1, 10] },
+    })
+  })
 })

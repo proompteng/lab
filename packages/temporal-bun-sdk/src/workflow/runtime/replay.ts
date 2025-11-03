@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer'
 
+import { historyFromJSON } from '@temporalio/common/lib/proto-utils'
 import { coresdk, temporal } from '@temporalio/proto'
 
 import { createDefaultDataConverter, type DataConverter, failureToError } from '../../common/payloads'
@@ -18,7 +19,13 @@ const DEFAULT_IDENTITY_PREFIX = 'temporal-bun-replay'
 
 type HistoryRecord = Record<string, unknown>
 
-type HistoryLike = temporal.api.history.v1.IHistory | HistoryRecord | string | Buffer | Uint8Array
+type HistoryLike =
+  | temporal.api.history.v1.History
+  | temporal.api.history.v1.IHistory
+  | HistoryRecord
+  | string
+  | Buffer
+  | Uint8Array
 
 export interface ReplayHistoryInput {
   history: HistoryLike
@@ -135,7 +142,13 @@ const replaySingleHistory = async ({
   })
 
   try {
+    const pollers: Promise<Uint8Array>[] = [
+      native.worker.pollWorkflowTask(replayWorker.worker),
+      native.worker.pollWorkflowTask(replayWorker.worker),
+    ]
+
     native.pushReplayHistory(replayWorker, workflowId, normalized.buffer)
+
     await drainReplay({
       engine,
       replayWorker,
@@ -144,6 +157,7 @@ const replaySingleHistory = async ({
         taskQueue,
       },
       dataConverter,
+      pollers,
     })
   } finally {
     engine.shutdown()
@@ -156,19 +170,30 @@ const drainReplay = async ({
   replayWorker,
   context,
   dataConverter,
+  pollers,
 }: {
   engine: WorkflowEngine
   replayWorker: NativeReplayWorker
   context: WorkflowTaskContext
   dataConverter: DataConverter
+  pollers: Promise<Uint8Array>[]
 }): Promise<void> => {
+  if (pollers.length < 2) {
+    pollers.push(native.worker.pollWorkflowTask(replayWorker.worker))
+  }
+
+  let activeIndex = 0
+
   for (;;) {
     let payload: Uint8Array
+    const currentIndex = activeIndex
     try {
-      payload = await native.worker.pollWorkflowTask(replayWorker.worker)
+      payload = await pollers[currentIndex]
     } catch (error) {
       throw augmentReplayError(error)
     }
+
+    activeIndex = (currentIndex + 1) % pollers.length
 
     if (!payload || payload.length === 0) {
       break
@@ -183,6 +208,7 @@ const drainReplay = async ({
 
     let completionBytes: Uint8Array | null = null
     let failureError: Error | undefined
+    const shouldStopAfterCompletion = hasRemoveFromCacheJob(activation)
     try {
       const result = await engine.processWorkflowActivation(activation, context)
       completionBytes = coresdk.workflow_completion.WorkflowActivationCompletion.encode(result.completion).finish()
@@ -217,76 +243,197 @@ const drainReplay = async ({
       throw failureError
     }
 
-    if (hasRemoveFromCacheJob(activation)) {
+    if (shouldStopAfterCompletion) {
       break
     }
+
+    pollers[currentIndex] = native.worker.pollWorkflowTask(replayWorker.worker)
+  }
+
+  // Let any outstanding polls settle to avoid dangling rejections.
+  for (const poll of pollers) {
+    poll.catch(() => undefined)
   }
 }
 
 const normalizeHistory = (input: ReplayHistoryInput): NormalizedHistory => {
-  const bufferAndJson = toHistoryJson(input.history)
-  const { json, buffer } = bufferAndJson
-  const historyRecord = json as HistoryRecord
+  const inputMetadata = deriveMetadataFromInput(input.history)
+  const historyMessage = toHistoryMessage(input.history)
+  const encoded = temporal.api.history.v1.History.encode(historyMessage).finish()
+  const historyRecord = historyMessageToRecord(historyMessage)
+  const started = findWorkflowExecutionStartedRecord(historyRecord)
 
-  const started = findWorkflowExecutionStarted(historyRecord)
-
-  const workflowId =
+  const workflowIdCandidate =
     input.workflowId ??
-    (started?.workflowExecution as HistoryRecord | undefined)?.workflowId?.toString() ??
-    (started?.workflowId as string | undefined) ??
-    (historyRecord.workflowExecution as HistoryRecord | undefined)?.workflowId?.toString()
+    inputMetadata.workflowId ??
+    toOptionalString((started?.workflowExecution as HistoryRecord | undefined)?.workflowId) ??
+    toOptionalString(started?.workflowId) ??
+    toOptionalString((historyRecord.workflowExecution as HistoryRecord | undefined)?.workflowId)
 
-  if (!workflowId || workflowId.length === 0) {
+  const workflowId = workflowIdCandidate?.trim()
+  if (!workflowId) {
     throw new NativeBridgeError(
       'Unable to determine workflowId from replay history; provide one via options.workflowId',
     )
   }
 
-  const runId =
+  const runIdCandidate =
     input.runId ??
-    (started?.originalExecutionRunId as string | undefined) ??
-    (started?.workflowExecution as HistoryRecord | undefined)?.runId?.toString() ??
-    (historyRecord.workflowExecution as HistoryRecord | undefined)?.runId?.toString()
+    inputMetadata.runId ??
+    toOptionalString(started?.originalExecutionRunId) ??
+    toOptionalString((started?.workflowExecution as HistoryRecord | undefined)?.runId) ??
+    toOptionalString((historyRecord.workflowExecution as HistoryRecord | undefined)?.runId)
 
-  const taskQueue = input.taskQueue ?? extractTaskQueue(started)
+  const taskQueueCandidate = input.taskQueue ?? inputMetadata.taskQueue ?? extractTaskQueueRecord(started)
 
   return {
-    buffer,
+    buffer: Buffer.from(encoded),
     workflowId,
-    runId,
-    taskQueue,
+    runId: runIdCandidate?.trim(),
+    taskQueue: taskQueueCandidate?.trim(),
   }
 }
 
-const toHistoryJson = (history: HistoryLike): { json: HistoryRecord; buffer: Buffer } => {
+const toHistoryMessage = (history: HistoryLike): temporal.api.history.v1.History => {
   if (typeof history === 'string') {
-    const buffer = Buffer.from(history, 'utf8')
-    return { json: parseHistoryJson(buffer), buffer }
+    return historyFromJsonString(history)
   }
 
   if (Buffer.isBuffer(history) || history instanceof Uint8Array) {
-    const buffer = Buffer.isBuffer(history) ? history : Buffer.from(history)
-    return { json: parseHistoryJson(buffer), buffer }
+    return historyFromBuffer(Buffer.isBuffer(history) ? history : Buffer.from(history))
+  }
+
+  if (isHistoryProtoObject(history)) {
+    return temporal.api.history.v1.History.fromObject(history)
   }
 
   if (typeof history === 'object' && history !== null && 'events' in history) {
-    const jsonString = JSON.stringify(history)
-    const buffer = Buffer.from(jsonString, 'utf8')
-    return { json: JSON.parse(jsonString) as HistoryRecord, buffer }
+    return historyFromJsonObject(history)
   }
 
-  throw new TypeError('Unsupported history input. Provide a JSON string, Uint8Array, Buffer, or history object.')
+  throw new TypeError('Unsupported history input. Provide Temporal history JSON, binary, or a history object.')
 }
 
-const parseHistoryJson = (buffer: Buffer): HistoryRecord => {
+const historyFromJsonString = (json: string): temporal.api.history.v1.History => {
+  let parsed: unknown
   try {
-    return JSON.parse(buffer.toString('utf8')) as HistoryRecord
+    parsed = JSON.parse(json)
   } catch (error) {
     throw new Error(`Workflow history must be valid JSON: ${(error as Error).message}`)
   }
+  return historyFromJsonObject(parsed)
 }
 
-const findWorkflowExecutionStarted = (history: HistoryRecord): HistoryRecord | undefined => {
+const historyFromJsonObject = (value: unknown): temporal.api.history.v1.History => {
+  if (isHistoryProtoObject(value)) {
+    return temporal.api.history.v1.History.fromObject(value)
+  }
+  if (value && typeof value === 'object' && 'events' in value) {
+    try {
+      return temporal.api.history.v1.History.fromObject(value as temporal.api.history.v1.IHistory)
+    } catch {
+      // fall back to canonical JSON normalization below
+    }
+  }
+  const normalized = historyFromJSON(value)
+  return temporal.api.history.v1.History.fromObject(normalized)
+}
+
+const historyFromBuffer = (buffer: Buffer): temporal.api.history.v1.History => {
+  const text = buffer.toString('utf8')
+  try {
+    return historyFromJsonString(text)
+  } catch {
+    try {
+      return temporal.api.history.v1.History.decodeDelimited(buffer)
+    } catch {
+      try {
+        return temporal.api.history.v1.History.decode(buffer)
+      } catch (binaryError) {
+        const message =
+          binaryError instanceof Error ? binaryError.message : 'Unable to decode Temporal history binary payload'
+        throw new Error(`Workflow history must be valid Temporal history data: ${message}`)
+      }
+    }
+  }
+}
+
+const isHistoryProtoObject = (
+  value: unknown,
+): value is temporal.api.history.v1.History | temporal.api.history.v1.IHistory => {
+  if (!value || typeof value !== 'object' || !('events' in value)) {
+    return false
+  }
+  const events = (value as { events?: unknown[] }).events
+  if (!Array.isArray(events) || events.length === 0) {
+    return true
+  }
+  const first = events[0] as Record<string, unknown>
+  const eventId = first?.eventId
+  return typeof eventId !== 'string'
+}
+
+const historyMessageToRecord = (message: temporal.api.history.v1.History): HistoryRecord => {
+  return temporal.api.history.v1.History.toObject(message, {
+    defaults: false,
+    enums: String,
+    longs: String,
+  }) as HistoryRecord
+}
+
+const deriveMetadataFromInput = (
+  history: HistoryLike,
+): Partial<{ workflowId: string; runId: string; taskQueue: string }> => {
+  const record = tryConvertHistoryLikeToRecord(history)
+  if (!record) {
+    return {}
+  }
+  const started = findWorkflowExecutionStartedRecord(record)
+  const workflowId =
+    toOptionalString((record.workflowExecution as HistoryRecord | undefined)?.workflowId) ??
+    toOptionalString((started?.workflowExecution as HistoryRecord | undefined)?.workflowId) ??
+    toOptionalString(started?.workflowId)
+
+  const runId =
+    toOptionalString((record.workflowExecution as HistoryRecord | undefined)?.runId) ??
+    toOptionalString((started?.workflowExecution as HistoryRecord | undefined)?.runId) ??
+    toOptionalString(started?.originalExecutionRunId)
+
+  const taskQueue = extractTaskQueueRecord(started)
+
+  return {
+    workflowId: workflowId?.trim(),
+    runId: runId?.trim(),
+    taskQueue: taskQueue?.trim(),
+  }
+}
+
+const tryConvertHistoryLikeToRecord = (history: HistoryLike): HistoryRecord | undefined => {
+  if (typeof history === 'string') {
+    try {
+      return JSON.parse(history) as HistoryRecord
+    } catch {
+      return undefined
+    }
+  }
+  if (Buffer.isBuffer(history) || history instanceof Uint8Array) {
+    try {
+      return JSON.parse((Buffer.isBuffer(history) ? history : Buffer.from(history)).toString('utf8')) as HistoryRecord
+    } catch {
+      return undefined
+    }
+  }
+  if (isHistoryProtoObject(history)) {
+    const message = temporal.api.history.v1.History.fromObject(history)
+    return historyMessageToRecord(message)
+  }
+  if (history && typeof history === 'object' && 'events' in history) {
+    return history as HistoryRecord
+  }
+  return undefined
+}
+
+const findWorkflowExecutionStartedRecord = (history: HistoryRecord): HistoryRecord | undefined => {
   const events = (history.events as HistoryRecord[] | undefined) ?? []
   for (const event of events) {
     const attrs = event.workflowExecutionStartedEventAttributes as HistoryRecord | undefined
@@ -297,7 +444,7 @@ const findWorkflowExecutionStarted = (history: HistoryRecord): HistoryRecord | u
   return undefined
 }
 
-const extractTaskQueue = (attrs: HistoryRecord | undefined): string | undefined => {
+const extractTaskQueueRecord = (attrs: HistoryRecord | undefined): string | undefined => {
   const taskQueue = attrs?.taskQueue as HistoryRecord | string | undefined
   if (!taskQueue) {
     return undefined
@@ -306,9 +453,24 @@ const extractTaskQueue = (attrs: HistoryRecord | undefined): string | undefined 
     return taskQueue
   }
   if (typeof taskQueue === 'object') {
-    const record = taskQueue as HistoryRecord
-    const name = record.name ?? record.taskQueue
-    return typeof name === 'string' ? name : undefined
+    const name = (taskQueue.name ?? (taskQueue as { taskQueue?: unknown }).taskQueue) as unknown
+    if (typeof name === 'string') {
+      return name
+    }
+  }
+  return undefined
+}
+
+const toOptionalString = (value: unknown): string | undefined => {
+  if (typeof value === 'string') {
+    return value
+  }
+  if (typeof value === 'number' || typeof value === 'bigint') {
+    return value.toString()
+  }
+  if (value && typeof (value as { toString?: () => string }).toString === 'function') {
+    const result = (value as { toString(): unknown }).toString()
+    return typeof result === 'string' ? result : undefined
   }
   return undefined
 }

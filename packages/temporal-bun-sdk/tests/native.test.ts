@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { Runtime } from '../src/internal/core-bridge/native.ts'
+import type { Runtime } from '../src/internal/core-bridge/native'
 import { importNativeBridge } from './helpers/native-bridge'
 import { isTemporalServerAvailable } from './helpers/temporal-server'
 import { withRetry } from './helpers/retry'
@@ -12,6 +12,7 @@ if (!nativeBridge) {
   })
 } else {
   const { NativeBridgeError, native, bridgeVariant } = nativeBridge
+  type NativeBridgeErrorInstance = InstanceType<typeof NativeBridgeError>
   const usingStubBridge = isStub
 
   const temporalAddress = process.env.TEMPORAL_TEST_SERVER_ADDRESS ?? 'http://127.0.0.1:7233'
@@ -90,7 +91,7 @@ if (!nativeBridge) {
       }
 
       expect(caught).toBeInstanceOf(NativeBridgeError)
-      const nativeError = caught as NativeBridgeError | undefined
+  const nativeError = caught as NativeBridgeErrorInstance | undefined
       if (nativeError?.raw === 'stub') {
         expect(nativeError.code).toBe(2)
         return
@@ -122,7 +123,7 @@ if (!nativeBridge) {
         }
 
         expect(caught).toBeInstanceOf(NativeBridgeError)
-        const nativeError = caught as NativeBridgeError | undefined
+  const nativeError = caught as NativeBridgeErrorInstance | undefined
         if (nativeError?.raw === 'stub') {
           expect(nativeError.code).toBe(2)
           return
@@ -132,7 +133,7 @@ if (!nativeBridge) {
         expect(message).toMatch(/Connection failed|workflow not found|NOT_FOUND/i)
       } catch (error) {
         expect(error).toBeInstanceOf(NativeBridgeError)
-        const nativeError = error as NativeBridgeError
+  const nativeError = error as NativeBridgeErrorInstance
         if (nativeError.raw === 'stub') {
           expect(nativeError.code).toBe(2)
         } else {
@@ -160,7 +161,7 @@ if (!nativeBridge) {
           native.updateClientHeaders(client!, { authorization: 'Bearer token' })
         } catch (error) {
           expect(error).toBeInstanceOf(NativeBridgeError)
-          const nativeError = error as NativeBridgeError
+          const nativeError = error as NativeBridgeErrorInstance
           if (nativeError.raw === 'stub') {
             expect(nativeError.code).toBe(2)
             return
@@ -170,7 +171,7 @@ if (!nativeBridge) {
         }
       } catch (error) {
         expect(error).toBeInstanceOf(NativeBridgeError)
-        const nativeError = error as NativeBridgeError
+  const nativeError = error as NativeBridgeErrorInstance
         if (nativeError.raw === 'stub') {
           expect(nativeError.code).toBe(2)
         } else {
@@ -338,7 +339,7 @@ if (!nativeBridge) {
         }
 
         expect(caught).toBeInstanceOf(NativeBridgeError)
-        expect((caught as NativeBridgeError).code).toBe(9)
+  expect((caught as NativeBridgeErrorInstance).code).toBe(9)
       } finally {
         native.__TEST__.unregisterClient(runtime)
         native.runtimeShutdown(runtime)
@@ -361,7 +362,7 @@ if (!nativeBridge) {
         }
 
         expect(caught).toBeInstanceOf(NativeBridgeError)
-        expect((caught as NativeBridgeError).code).toBe(9)
+  expect((caught as NativeBridgeErrorInstance).code).toBe(9)
       } finally {
         native.__TEST__.unregisterWorker(runtime)
         native.runtimeShutdown(runtime)
@@ -419,7 +420,7 @@ if (!nativeBridge) {
           throw new Error('expected configureTelemetry to throw for incomplete payload')
         } catch (error) {
           expect(error).toBeInstanceOf(NativeBridgeError)
-          const nativeError = error as NativeBridgeError
+          const nativeError = error as NativeBridgeErrorInstance
           expect(nativeError.code).toBe(3)
           expect(nativeError.message).toContain('missing a required field')
           expect(nativeError.raw).toContain('"code":3')

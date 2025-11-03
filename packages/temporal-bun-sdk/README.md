@@ -235,6 +235,12 @@ await runReplayHistory({
 })
 ```
 
+### Replay worker defaults
+
+- Core defaults keep workflow caching off and run five workflow pollers by default; the relevant knobs live in [`temporalio/sdk-core/crates/common/src/worker.rs`](https://github.com/temporalio/sdk-core/blob/master/crates/common/src/worker.rs) where `max_cached_workflows` defaults to 0 and `nonsticky_to_sticky_poll_ratio` to 0.2.
+- Our Zig bridge forces replay workers into a single cached workflow, keeps workflow pollers at `SimpleMaximum = 2` (to satisfy sticky-cache validation), drops activity/nexus pollers to `SimpleMaximum = 1`, disables remote activities, and pins the non-sticky poll ratio at 0 so replays stay isolated from live traffic ([`packages/temporal-bun-sdk/bruke/src/worker.zig`](./bruke/src/worker.zig), see `createReplay`).
+- Core’s replay entry point accepts that single-poller layout so the replayer never competes with live workers; the stricter validation remains in place for standard `WorkerConfig` builds on the primary worker path.
+
 ## CLI Reference
 
 ```bash

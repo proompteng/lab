@@ -41,7 +41,7 @@ if (!nativeBridge || nativeBridge.bridgeVariant !== 'zig' || isStub || !replaySu
           history,
         }),
       ).resolves.toBeUndefined()
-    })
+    }, 5000)
 
     test('throws on deterministic mismatch', async () => {
       const history = await readFile(mismatchHistoryPath, 'utf8')
@@ -62,7 +62,7 @@ if (!nativeBridge || nativeBridge.bridgeVariant !== 'zig' || isStub || !replaySu
         expect(caught).toBeInstanceOf(Error)
         expect((caught as Error).message).toMatch(/replay|deterministic/i)
       }
-    })
+    }, 5000)
 
     test('honours custom data converter during replay', async () => {
       const history = await readFile(simpleHistoryPath, 'utf8')
@@ -75,7 +75,7 @@ if (!nativeBridge || nativeBridge.bridgeVariant !== 'zig' || isStub || !replaySu
         }),
       ).resolves.toBeUndefined()
       expect(counter.value).toBeGreaterThan(0)
-    })
+    }, 5000)
   })
 }
 
@@ -86,16 +86,16 @@ const createTrackingConverter = (): { converter: DataConverter; counter: { value
 
   converter.payloadConverter = {
     ...original,
-    async fromPayload(payload, valueType) {
+    fromPayload(payload: Parameters<typeof original.fromPayload>[0]) {
       counter.value += 1
-      return await original.fromPayload(payload, valueType)
+      return original.fromPayload(payload)
     },
   }
 
   return { converter, counter }
 }
 
-async function canCreateReplayWorker(native: typeof import('../src/internal/core-bridge/native.ts').native): Promise<boolean> {
+async function canCreateReplayWorker(native: typeof import('../src/internal/core-bridge/native').native): Promise<boolean> {
   if (!native || native.bridgeVariant !== 'zig') {
     return false
   }

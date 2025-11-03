@@ -1,16 +1,15 @@
-import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 type NativeBridgeArtefact = {
   path: string | null
-  kind: 'release' | 'stub' | 'missing'
+  kind: 'release' | 'debug' | 'missing'
 }
 
-let stubPromise: Promise<NativeBridgeArtefact> | null = null
+let lookupPromise: Promise<NativeBridgeArtefact> | null = null
 
-async function compileStub(): Promise<NativeBridgeArtefact> {
+async function locateNativeBridge(): Promise<NativeBridgeArtefact> {
   const rootDir = fileURLToPath(new URL('../..', import.meta.url))
   const targetDir = join(rootDir, 'bruke/zig-out/lib')
 
@@ -47,51 +46,25 @@ async function compileStub(): Promise<NativeBridgeArtefact> {
 
   const binaryPath = join(targetDir, binaryName)
   if (existsSync(binaryPath)) {
-    return { path: binaryPath, kind: 'stub' }
+    return { path: binaryPath, kind: 'debug' }
   }
 
-  const fixturesDir = join(rootDir, 'tests/fixtures')
-  const stubSource = join(fixturesDir, 'stub_temporal_bridge.c')
-  mkdirSync(targetDir, { recursive: true })
-
-  const compilerArgs: string[] = []
-  if (process.platform === 'darwin') {
-    compilerArgs.push('-dynamiclib', '-install_name', binaryName)
-  } else if (process.platform === 'win32') {
-    compilerArgs.push('-shared')
-  } else {
-    compilerArgs.push('-shared', '-fPIC')
-  }
-  compilerArgs.push(stubSource, '-o', binaryPath)
-
-  const ccCheck = spawnSync('which', ['cc'], { stdio: 'pipe' })
-  if (ccCheck.status !== 0) {
-    console.warn('C compiler not available, skipping native bridge stub compilation')
-    return { path: null, kind: 'missing' }
-  }
-
-  const result = spawnSync('cc', compilerArgs, { stdio: 'inherit' })
-  if (result.status !== 0) {
-    console.warn('Failed to compile Temporal bridge stub for tests')
-    return { path: null, kind: 'missing' }
-  }
-
-  return { path: binaryPath, kind: 'stub' }
+  return { path: null, kind: 'missing' }
 }
 
 export async function ensureNativeBridgeStub(): Promise<NativeBridgeArtefact> {
-  if (!stubPromise) {
-    stubPromise = compileStub()
+  if (!lookupPromise) {
+    lookupPromise = locateNativeBridge()
   }
-  return await stubPromise
+  return await lookupPromise
 }
 
 export async function importNativeBridge() {
   const artefact = await ensureNativeBridgeStub()
   if (artefact.kind === 'missing') {
-    return { module: null, stubPath: artefact.path, isStub: false }
+    return { module: null, stubPath: artefact.path, isStub: true }
   }
-  const module = await import('../../src/internal/core-bridge/native.ts')
-  const isStub = artefact.kind === 'stub'
+  const module = await import('../../src/internal/core-bridge/native')
+  const isStub = false
   return { module, stubPath: artefact.path, isStub }
 }

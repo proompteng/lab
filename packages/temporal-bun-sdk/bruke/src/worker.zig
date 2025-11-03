@@ -66,6 +66,28 @@ const default_nexus_poller_behavior = core.WorkerPollerBehavior{
     .autoscaling = null,
 };
 
+const replay_workflow_poller_simple = core.WorkerPollerBehaviorSimpleMaximum{
+    .simple_maximum = 2,
+};
+const replay_activity_poller_simple = core.WorkerPollerBehaviorSimpleMaximum{
+    .simple_maximum = 1,
+};
+const replay_nexus_poller_simple = core.WorkerPollerBehaviorSimpleMaximum{
+    .simple_maximum = 1,
+};
+const replay_workflow_poller_behavior = core.WorkerPollerBehavior{
+    .simple_maximum = &replay_workflow_poller_simple,
+    .autoscaling = null,
+};
+const replay_activity_poller_behavior = core.WorkerPollerBehavior{
+    .simple_maximum = &replay_activity_poller_simple,
+    .autoscaling = null,
+};
+const replay_nexus_poller_behavior = core.WorkerPollerBehavior{
+    .simple_maximum = &replay_nexus_poller_simple,
+    .autoscaling = null,
+};
+
 const debug_ptr_env_name = "BUN_SDK_DEBUG_PTR";
 const debug_ptr_state_uninitialized: u8 = 0;
 const debug_ptr_state_disabled: u8 = 1;
@@ -1151,7 +1173,12 @@ pub fn createReplay(
         .data = null,
         .size = 0,
     };
-    options.max_cached_workflows = 16;
+    options.max_cached_workflows = 1;
+    options.workflow_task_poller_behavior = replay_workflow_poller_behavior;
+    options.activity_task_poller_behavior = replay_activity_poller_behavior;
+    options.nexus_task_poller_behavior = replay_nexus_poller_behavior;
+    options.no_remote_activities = true;
+    options.nonsticky_to_sticky_poll_ratio = 0;
 
     const result = core.api.worker_replayer_new(runtime_handle.core_runtime, &options);
 

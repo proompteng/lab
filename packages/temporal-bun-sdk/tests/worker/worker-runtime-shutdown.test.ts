@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { fileURLToPath } from 'node:url'
+import type { NativeClient, NativeWorker, Runtime } from '../../src/internal/core-bridge/native'
 
 type Deferred<T> = {
   promise: Promise<T>
@@ -50,7 +51,7 @@ describe('WorkerRuntime.shutdown', () => {
     let clientShutdownCalls = 0
     let pollCalls = 0
 
-    const nativeModule = await import('../../src/internal/core-bridge/native.ts')
+    const nativeModule = await import('../../src/internal/core-bridge/native')
     const originalNative = {
       createRuntime: nativeModule.native.createRuntime,
       runtimeShutdown: nativeModule.native.runtimeShutdown,
@@ -59,14 +60,15 @@ describe('WorkerRuntime.shutdown', () => {
       createWorker: nativeModule.native.createWorker,
       destroyWorker: nativeModule.native.destroyWorker,
       workerCompleteWorkflowTask: nativeModule.native.worker.completeWorkflowTask,
-      workerPollWorkflowTask: nativeModule.native.worker.pollWorkflowTask,
+  workerPollWorkflowTask: nativeModule.native.worker.pollWorkflowTask,
+  workerPollActivityTask: nativeModule.native.worker.pollActivityTask,
       workerInitiateShutdown: nativeModule.native.worker.initiateShutdown,
       workerFinalizeShutdown: nativeModule.native.worker.finalizeShutdown,
     } as const
 
-    const runtimeHandle = { type: 'runtime' as const, handle: 1 }
-    const clientHandle = { type: 'client' as const, handle: 2 }
-    const workerHandle = { type: 'worker' as const, handle: 3 }
+  const runtimeHandle = { type: 'runtime' as const, handle: 1 } as unknown as Runtime
+  const clientHandle = { type: 'client' as const, handle: 2 } as unknown as NativeClient
+  const workerHandle = { type: 'worker' as const, handle: 3 } as unknown as NativeWorker
 
     nativeModule.native.createRuntime = () => runtimeHandle
     nativeModule.native.runtimeShutdown = () => {
@@ -88,7 +90,7 @@ describe('WorkerRuntime.shutdown', () => {
     }
     nativeModule.native.destroyWorker = (worker: typeof workerHandle) => {
       destroyCalls += 1
-      worker.handle = 0
+      worker.handle = 0 as unknown as NativeWorker['handle']
       if (!currentDeferred.settled) {
         currentDeferred.reject(new Error('cancelled'))
       }
@@ -100,6 +102,7 @@ describe('WorkerRuntime.shutdown', () => {
       currentDeferred = createDeferred<Uint8Array>()
       return await currentDeferred.promise
     }
+    nativeModule.native.worker.pollActivityTask = async () => null
 
     const previousEnv = {
       TEMPORAL_ADDRESS: process.env.TEMPORAL_ADDRESS,
@@ -115,7 +118,8 @@ describe('WorkerRuntime.shutdown', () => {
     process.env.TEMPORAL_WORKER_BUILD_ID = 'test-build'
 
     try {
-      const { WorkerRuntime } = await import('../../src/worker/runtime.ts?shutdown-test')
+  // @ts-expect-error Query parameters are used to bypass Bun's module cache for tests
+  const { WorkerRuntime } = await import('../../src/worker/runtime.ts?shutdown-test')
       const workflowsUrl = new URL('../fixtures/workflows/simple.workflow.ts', import.meta.url)
       const resolvedWorkflowsPath = fileURLToPath(workflowsUrl)
       const runtime = await WorkerRuntime.create({
@@ -145,6 +149,7 @@ describe('WorkerRuntime.shutdown', () => {
       nativeModule.native.destroyWorker = originalNative.destroyWorker
       nativeModule.native.worker.completeWorkflowTask = originalNative.workerCompleteWorkflowTask
       nativeModule.native.worker.pollWorkflowTask = originalNative.workerPollWorkflowTask
+  nativeModule.native.worker.pollActivityTask = originalNative.workerPollActivityTask
       nativeModule.native.worker.initiateShutdown = originalNative.workerInitiateShutdown
       nativeModule.native.worker.finalizeShutdown = originalNative.workerFinalizeShutdown
       process.env.TEMPORAL_ADDRESS = previousEnv.TEMPORAL_ADDRESS

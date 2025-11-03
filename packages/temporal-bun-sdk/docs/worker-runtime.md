@@ -5,7 +5,7 @@
 - ✅ `WorkerRuntime` wires workflow polling to the `WorkflowEngine`, which decodes core activations, executes workflows inside Bun via the Temporal TypeScript runtime, and streams `WorkflowActivationCompletion` payloads back to Temporal Core.
 - ✅ Activity task execution, cancellation, and heartbeats now travel through the Zig bridge. Tests live under `tests/worker/worker-runtime-*.test.ts`.
 - ✅ `loadTemporalConfig` exposes `TEMPORAL_SHOW_STACK_SOURCES`; when true, workflow stack traces include source snippets to aid debugging.
-- ✅ Graceful shutdown now mirrors the Temporal Node worker: initiate shutdown fences new polls, `native.worker.finalizeShutdown` drains core, and `destroyNativeWorker` reclaims the handle; draining long-lived activity handlers plus telemetry hooks remain tracked in #1612.
+- ✅ Graceful shutdown now mirrors the Temporal Node worker: initiate shutdown fences new polls, `native.worker.finalizeShutdown` drains core, and `destroyNativeWorker` reclaims the handle; draining long-lived activity handlers remain tracked in #1612.
 
 This document captures the live wiring and lists the remaining gaps before the Bun worker reaches feature parity with the Node SDK.
 

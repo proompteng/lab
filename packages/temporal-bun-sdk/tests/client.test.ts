@@ -89,6 +89,7 @@ if (nativeModule && stubPath) {
       runtimeShutdown: native.runtimeShutdown,
       createClient: native.createClient,
       clientShutdown: native.clientShutdown,
+      configureTelemetry: native.configureTelemetry,
       startWorkflow: native.startWorkflow,
       terminateWorkflow: native.terminateWorkflow,
       describeNamespace: native.describeNamespace,
@@ -106,6 +107,7 @@ if (nativeModule && stubPath) {
       native.createClient = mock(async () => clientHandle)
       native.clientShutdown = mock(() => {})
       native.runtimeShutdown = mock(() => {})
+      native.configureTelemetry = mock(() => {})
       native.terminateWorkflow = mock(async () => {})
       native.describeNamespace = mock(async () => new Uint8Array())
       native.updateClientHeaders = mock(() => {})
@@ -116,6 +118,7 @@ if (nativeModule && stubPath) {
     afterEach(() => {
       Object.assign(native, original)
       serializationModule.__setSignalRequestEntropyGeneratorForTests()
+      native.configureTelemetry = original.configureTelemetry
     })
 
     test('startWorkflow forwards defaults and returns workflow handle metadata', async () => {
@@ -177,6 +180,48 @@ if (nativeModule && stubPath) {
       await client.shutdown()
       expect(native.clientShutdown).toHaveBeenCalledTimes(1)
       expect(native.runtimeShutdown).toHaveBeenCalledTimes(1)
+    })
+
+    test('configures runtime telemetry when provided', async () => {
+      const config: TemporalConfig = {
+        host: 'localhost',
+        port: 7233,
+        address: 'localhost:7233',
+        namespace: 'default',
+        taskQueue: 'prix',
+        apiKey: undefined,
+        tls: undefined,
+        allowInsecureTls: false,
+        workerIdentity: 'worker-telemetry',
+        workerIdentityPrefix: 'temporal-bun-worker',
+        telemetry: {
+          logFilter: 'info',
+          metricPrefix: 'bun-sdk',
+          attachServiceName: true,
+          metricsExporter: {
+            type: 'prometheus',
+            socketAddr: '127.0.0.1:9464',
+            globalTags: { service: 'sdk' },
+            histogramBucketOverrides: { latency: [1, 5, 10] },
+          },
+        },
+      }
+
+      const { client } = await createTemporalClient({ config })
+
+      expect(native.configureTelemetry).toHaveBeenCalledTimes(1)
+      expect(native.configureTelemetry).toHaveBeenCalledWith(runtimeHandle, {
+        logExporter: { filter: 'info' },
+        telemetry: { metricPrefix: 'bun-sdk', attachServiceName: true },
+        metricsExporter: {
+          type: 'prometheus',
+          socketAddr: '127.0.0.1:9464',
+          globalTags: { service: 'sdk' },
+          histogramBucketOverrides: { latency: [1, 5, 10] },
+        },
+      })
+
+      await client.shutdown()
     })
 
     test('startWorkflow builds retry policy payload', async () => {

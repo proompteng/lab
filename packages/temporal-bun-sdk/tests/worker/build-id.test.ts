@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { fileURLToPath } from 'node:url'
+import type { NativeClient, NativeWorker, Runtime } from '../../src/internal/core-bridge/native'
 
 describe('createWorker buildId plumbing', () => {
   test('passes a derived buildId to native.createWorker', async () => {
@@ -19,7 +20,7 @@ describe('createWorker buildId plumbing', () => {
     process.env.TEMPORAL_ALLOW_INSECURE = '0'
     delete process.env.TEMPORAL_WORKER_BUILD_ID
 
-    const nativeModule = await import('../../src/internal/core-bridge/native.ts')
+  const nativeModule = await import('../../src/internal/core-bridge/native')
     const originalNative = {
       createRuntime: nativeModule.native.createRuntime,
       createClient: nativeModule.native.createClient,
@@ -33,15 +34,16 @@ describe('createWorker buildId plumbing', () => {
       workerFinalizeShutdown: nativeModule.native.worker.finalizeShutdown,
     } as const
 
-    const runtimeHandle = { type: 'runtime' as const, handle: 1 }
-    const clientHandle = { type: 'client' as const, handle: 2 }
-    const workerHandle = { type: 'worker' as const, handle: 3 }
+    const runtimeHandle = { type: 'runtime' as const, handle: 1 } as unknown as Runtime
+    const clientHandle = { type: 'client' as const, handle: 2 } as unknown as NativeClient
+    const workerHandle = { type: 'worker' as const, handle: 3 } as unknown as NativeWorker
 
-    let capturedConfig: Record<string, unknown> | null = null
+    type CapturedConfig = Record<string, unknown> & { buildId?: string }
+    let capturedConfig: CapturedConfig | null = null
 
     nativeModule.native.createRuntime = () => runtimeHandle
     nativeModule.native.createClient = async () => clientHandle
-    nativeModule.native.createWorker = (_runtime, _client, config) => {
+    nativeModule.native.createWorker = (_runtime, _client, config: CapturedConfig) => {
       capturedConfig = config
       return workerHandle
     }
@@ -58,16 +60,21 @@ describe('createWorker buildId plumbing', () => {
       const pkg = JSON.parse(await Bun.file(pkgUrl).text()) as { name?: string; version?: string }
       const expectedBuildId = `${pkg.name}@${pkg.version}`
 
-      const { createWorker } = await import('../../src/worker.ts?build-id-test')
+  // @ts-expect-error Query suffix busts Bun's module cache for test instrumentation
+  const { createWorker } = await import('../../src/worker.ts?build-id-test')
       const workflowsUrl = new URL('../fixtures/workflows/simple.workflow.ts', import.meta.url)
       const resolvedWorkflowsPath = fileURLToPath(workflowsUrl)
 
       const handle = await createWorker({ taskQueue: 'unit-test-queue', workflowsPath: resolvedWorkflowsPath })
 
       expect(capturedConfig).not.toBeNull()
-      expect(typeof capturedConfig?.buildId).toBe('string')
-      expect((capturedConfig?.buildId as string | undefined)?.length).toBeGreaterThan(0)
-      expect(capturedConfig?.buildId).toBe(expectedBuildId)
+      if (!capturedConfig) {
+        throw new Error('native createWorker config not captured')
+      }
+      const config = capturedConfig as CapturedConfig
+      expect(typeof config.buildId).toBe('string')
+      expect(config.buildId?.length ?? 0).toBeGreaterThan(0)
+      expect(config.buildId).toBe(expectedBuildId)
 
       await handle.runtime.shutdown()
     } finally {
