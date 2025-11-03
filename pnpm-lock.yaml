@@ -83,8 +83,8 @@ importers:
   apps/froussard:
     dependencies:
       '@bufbuild/protobuf':
-        specifier: ^1.10.0
-        version: 1.10.1
+        specifier: ^2.1.0
+        version: 2.10.0
       '@elysiajs/eden':
         specifier: ^1.4.1
         version: 1.4.1(elysia@1.4.9(@sinclair/typebox@0.27.8)(exact-mirror@0.2.2(@sinclair/typebox@0.27.8))(openapi-types@12.1.3)(typescript@5.9.3))
@@ -1210,8 +1210,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@bufbuild/protobuf@1.10.1':
-    resolution: {integrity: sha512-wJ8ReQbHxsAfXhrf9ixl0aYbZorRuOWpBNzm8pL8ftmSxQx/wnJD5Eg861NwJU/czy2VXFIebCeZnZrI9rktIQ==}
+  '@bufbuild/protobuf@2.10.0':
+    resolution: {integrity: sha512-fdRs9PSrBF7QUntpZpq6BTw58fhgGJojgg39m9oFOJGZT+nip9b0so5cYY1oWl5pvemDLr0cPPsH46vwThEbpQ==}
 
   '@clack/core@0.3.5':
     resolution: {integrity: sha512-5cfhQNH+1VQ2xLQlmzXMqUoiaH0lRBq9/CLW9lTyMbuKLC3+xEK01tHVvyut++mLOn5urSHmkm6I0Lg9MaJSTQ==}
@@ -9869,8 +9869,8 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
-  typescript@6.0.0-dev.20251102:
-    resolution: {integrity: sha512-GPehLluBwvaKWGhIF/TL/wzR/aQcK54ZwDLU2mXqDasCPId0wUpPWcjQJT6BtE1BOIkZKn6iX2wyDZ9ViNnDPQ==}
+  typescript@6.0.0-dev.20251103:
+    resolution: {integrity: sha512-G5POBAyhca9Ie2GfRAJ/xNAk+Fxd8YOaa4A1TXHPzibdQR5Vnn//c3K3rLmIxeqMHOsog0i6ym0zJjOTPIsAsw==}
     engines: {node: '>=14.17'}
     hasBin: true
 
@@ -11451,7 +11451,7 @@ snapshots:
   '@biomejs/cli-win32-x64@2.2.4':
     optional: true
 
-  '@bufbuild/protobuf@1.10.1': {}
+  '@bufbuild/protobuf@2.10.0': {}
 
   '@clack/core@0.3.5':
     dependencies:
@@ -17589,7 +17589,7 @@ snapshots:
     dependencies:
       semver: 7.7.2
       shelljs: 0.8.5
-      typescript: 6.0.0-dev.20251102
+      typescript: 6.0.0-dev.20251103
 
   dunder-proto@1.0.1:
     dependencies:
@@ -21913,7 +21913,7 @@ snapshots:
 
   typescript@5.9.3: {}
 
-  typescript@6.0.0-dev.20251102: {}
+  typescript@6.0.0-dev.20251103: {}
 
   ufo@1.5.4: {}
 

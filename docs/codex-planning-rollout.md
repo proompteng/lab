@@ -42,7 +42,7 @@ This runbook sequences the handoff of planning workflow dispatch from Argo Event
    curl -sS -X POST http://localhost:8080/codex/tasks --data-binary @/tmp/codex-planning.bin
    kill $PF_PID
    ```
-   The sample payload encodes a `github.v1.CodexTask` with stage planning, repo metadata, and delivery ID `dry-run-0001`.
+   The sample payload encodes a `proompteng.froussard.v1.CodexTask` with stage planning, repo metadata, and delivery ID `dry-run-0001`.
 5. Validate the workflow surfaced in Argo:
    ```bash
    argo list -n argo-workflows | rg codex-planning

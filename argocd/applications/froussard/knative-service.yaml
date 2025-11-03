@@ -29,7 +29,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:1f093cb0c63da5133e181bdb16e78be46313bd65898a1f80d903b3ce5fdbac31
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:8e3bb593273e6ccbdaf74c1eec9d716d0d4a14312933a71070a7b8877de9db12
           env:
             - name: GITHUB_WEBHOOK_SECRET
               valueFrom:
@@ -70,9 +70,9 @@ spec:
             - name: OTEL_SERVICE_NAMESPACE
               value: froussard
             - name: FROUSSARD_VERSION
-              value: v0.294.1-2-gd06df19f
+              value: v0.294.6-1-gc4c7308e
             - name: FROUSSARD_COMMIT
-              value: d06df19f9a6724371f145589971d4e836cf00e19
+              value: c4c7308ef7a518b3c6ea3a796cdaed6adc40683c
             - name: LGTM_TEMPO_TRACES_ENDPOINT
               value: http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces
             - name: LGTM_MIMIR_METRICS_ENDPOINT

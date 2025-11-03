@@ -9,7 +9,7 @@ import (
 
 	"github.com/proompteng/lab/services/facteur/internal/bridge"
 	"github.com/proompteng/lab/services/facteur/internal/codex"
-	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 )
 
 type recordingDispatcher struct {
@@ -27,8 +27,8 @@ func (r *recordingDispatcher) Status(context.Context) (bridge.StatusReport, erro
 
 func TestDispatchPlanningBuildsPayload(t *testing.T) {
 	dispatcher := &recordingDispatcher{}
-	task := &githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	task := &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Prompt:      "Generate rollout plan",
 		Repository:  "proompteng/lab",
 		IssueNumber: 1638,
@@ -55,7 +55,7 @@ func TestDispatchPlanningBuildsPayload(t *testing.T) {
 
 func TestDispatchPlanningRequiresPrompt(t *testing.T) {
 	dispatcher := &recordingDispatcher{}
-	task := &githubpb.CodexTask{Stage: githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING}
+	task := &froussardpb.CodexTask{Stage: froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING}
 
 	_, err := codex.DispatchPlanning(context.Background(), dispatcher, task, nil)
 	require.Error(t, err)
@@ -64,7 +64,7 @@ func TestDispatchPlanningRequiresPrompt(t *testing.T) {
 
 func TestDispatchPlanningRejectsNonPlanningStage(t *testing.T) {
 	dispatcher := &recordingDispatcher{}
-	task := &githubpb.CodexTask{Stage: githubpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION, Prompt: "hi"}
+	task := &froussardpb.CodexTask{Stage: froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION, Prompt: "hi"}
 
 	_, err := codex.DispatchPlanning(context.Background(), dispatcher, task, nil)
 	require.Error(t, err)

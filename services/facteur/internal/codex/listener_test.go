@@ -13,7 +13,7 @@ import (
 
 	"github.com/proompteng/lab/services/facteur/internal/bridge"
 	"github.com/proompteng/lab/services/facteur/internal/codex"
-	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 )
 
 type stubReader struct {
@@ -52,8 +52,8 @@ func (s *stubReader) Close() error {
 }
 
 func TestListenerRun_LogsStructuredMessage(t *testing.T) {
-	task := &githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	task := &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Repository:  "proompteng/lab",
 		IssueNumber: 42,
 	}
@@ -86,13 +86,13 @@ func TestListenerRun_LogsStructuredMessage(t *testing.T) {
 }
 
 func TestListenerRun_LogsReviewStage(t *testing.T) {
-	task := &githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_REVIEW,
+	task := &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_REVIEW,
 		Repository:  "proompteng/lab",
 		IssueNumber: 101,
-		ReviewContext: &githubpb.CodexReviewContext{
+		ReviewContext: &froussardpb.CodexReviewContext{
 			Summary: proto.String("1 unresolved thread"),
-			ReviewThreads: []*githubpb.CodexReviewThread{
+			ReviewThreads: []*froussardpb.CodexReviewThread{
 				{
 					Summary: "Update tests",
 					Url:     proto.String("https://example.com/thread"),
@@ -146,7 +146,7 @@ func TestListenerRun_IgnoresInvalidMessage(t *testing.T) {
 }
 
 func TestListenerRun_BubblesCommitError(t *testing.T) {
-	task := &githubpb.CodexTask{}
+	task := &froussardpb.CodexTask{}
 	payload, err := proto.Marshal(task)
 	require.NoError(t, err)
 
@@ -174,8 +174,8 @@ func TestListenerRun_StopsOnContextError(t *testing.T) {
 }
 
 func TestListenerRun_DispatchesPlanningWhenEnabled(t *testing.T) {
-	task := &githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	task := &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Prompt:      "Generate rollout plan",
 		Repository:  "proompteng/lab",
 		IssueNumber: 1638,
@@ -201,8 +201,8 @@ func TestListenerRun_DispatchesPlanningWhenEnabled(t *testing.T) {
 }
 
 func TestListenerRun_ReturnsErrorWhenDispatchFails(t *testing.T) {
-	task := &githubpb.CodexTask{
-		Stage:  githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	task := &froussardpb.CodexTask{
+		Stage:  froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Prompt: "Generate rollout plan",
 	}
 	payload, err := proto.Marshal(task)

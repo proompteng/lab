@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/proompteng/lab/services/facteur/internal/argo"
-	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 	"github.com/proompteng/lab/services/facteur/internal/knowledge"
 )
 
@@ -134,8 +134,8 @@ func TestPlanner_Success(t *testing.T) {
 	fixed := time.Unix(1735599999, 0).UTC()
 	p.now = func() time.Time { return fixed }
 
-	task := &githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	task := &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Prompt:      "Plan work",
 		Repository:  "proompteng/lab",
 		Base:        "main",
@@ -213,8 +213,8 @@ func TestPlanner_DuplicateDelivery(t *testing.T) {
 	fixed := time.Unix(1735600000, 0).UTC()
 	p.now = func() time.Time { return fixed }
 
-	task := &githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	task := &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Repository:  "proompteng/lab",
 		IssueNumber: 1636,
 		DeliveryId:  "dup-1",
@@ -252,8 +252,8 @@ func TestPlanner_StoreFailure(t *testing.T) {
 	p := plannerInstance.(*planner)
 	p.now = func() time.Time { return time.Unix(1735600050, 0).UTC() }
 
-	task := &githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	task := &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Repository:  "proompteng/lab",
 		IssueNumber: 1636,
 		DeliveryId:  "store-failure",
@@ -286,8 +286,8 @@ func TestPlanner_RunnerFailure(t *testing.T) {
 	p := plannerInstance.(*planner)
 	p.now = func() time.Time { return time.Unix(1735600150, 0).UTC() }
 
-	task := &githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	task := &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Repository:  "proompteng/lab",
 		IssueNumber: 1636,
 		DeliveryId:  "runner-failure",
@@ -318,8 +318,8 @@ func TestPlanner_EvictsCompletedEntries(t *testing.T) {
 	p := plannerInstance.(*planner)
 	p.evictionAfter = 10 * time.Millisecond
 
-	task := &githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	task := &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Repository:  "proompteng/lab",
 		IssueNumber: 1636,
 		DeliveryId:  "evict-1",
@@ -368,8 +368,8 @@ func TestPlanner_OldTimerDoesNotRemoveNewEntry(t *testing.T) {
 	current := base
 	p.now = func() time.Time { return current }
 
-	task := &githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+	task := &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
 		Repository:  "proompteng/lab",
 		IssueNumber: 1637,
 		DeliveryId:  "dedup-1",

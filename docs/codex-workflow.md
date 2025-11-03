@@ -5,7 +5,7 @@ This guide explains how the three-stage Codex automation pipeline works and how 
 ## Architecture
 
 1. **Froussard** consumes GitHub webhooks and normalises them into Kafka topics (`github.codex.tasks`, `github.issues.codex.tasks`). When the planning workflow leaves a `<!-- codex:plan -->` marker the service promotes the issue to implementation, mirroring GitHub’s recommended pattern for approval comments (see the [GitHub webhooks guide](https://docs.github.com/en/webhooks-and-events/webhooks/about-webhooks)).
-2. **Facteur** subscribes to the structured mirror via Knative Eventing (`/codex/tasks`) and, when `codex_dispatch.planning_enabled` is `true`, persists planning-stage `github.v1.CodexTask` payloads into `codex_kb`, dispatches the shared `facteur-dispatch` WorkflowTemplate, and records the correlation ID from the Kafka delivery identifier while emitting OTEL spans tagged `codex.stage=planning`. With the flag disabled it logs the delivery and defers to the legacy Argo Events trigger; the optional component at `argocd/applications/froussard/components/codex-planning-argo-fallback/` re-adds the planning dependency/trigger if you need to roll back.
+2. **Facteur** subscribes to the structured mirror via Knative Eventing (`/codex/tasks`) and, when `codex_dispatch.planning_enabled` is `true`, persists planning-stage `proompteng.froussard.v1.CodexTask` payloads into `codex_kb`, dispatches the shared `facteur-dispatch` WorkflowTemplate, and records the correlation ID from the Kafka delivery identifier while emitting OTEL spans tagged `codex.stage=planning`. With the flag disabled it logs the delivery and defers to the legacy Argo Events trigger; the optional component at `argocd/applications/froussard/components/codex-planning-argo-fallback/` re-adds the planning dependency/trigger if you need to roll back.
 3. **Argo Events** (`github-codex` EventSource/Sensor) continues to consume the JSON stream (`github.codex.tasks`) for implementation and review handoffs.
    - `github-codex-implementation` for approved plans.
    - `github-codex-review` for review/maintenance loops until the PR becomes mergeable.
@@ -104,7 +104,7 @@ Use this flow to validate the planner path locally without relying on Argo Event
    delivery_id: "manual-planning-test"
    EOF
 
-   protoc --encode=github.v1.CodexTask proto/github/v1/codex_task.proto < payload.txt \
+   protoc --encode=proompteng.froussard.v1.CodexTask proto/proompteng/froussard/v1/codex_task.proto < payload.txt \
      | curl -sS http://localhost:8080/codex/tasks --data-binary @- \
        -H 'Content-Type: application/x-protobuf' | jq
    ```

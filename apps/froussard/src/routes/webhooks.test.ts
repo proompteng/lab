@@ -1,10 +1,11 @@
+import { fromBinary } from '@bufbuild/protobuf'
 import { Effect, Layer } from 'effect'
 import { type ManagedRuntime, make as makeManagedRuntime } from 'effect/ManagedRuntime'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AppLogger } from '@/logger'
-import { CommandEvent as FacteurCommandEventMessage } from '@/proto/facteur/v1/contract_pb'
-import { CodexTask, CodexTaskStage } from '@/proto/github/v1/codex_task_pb'
+import { CommandEventSchema as FacteurCommandEventSchema } from '@/proto/proompteng/facteur/v1/contract_pb'
+import { CodexTaskSchema, CodexTaskStage } from '@/proto/proompteng/froussard/v1/codex_task_pb'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 import { GithubService } from '@/services/github/service'
 import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
@@ -568,7 +569,7 @@ describe('createWebhookHandler', () => {
     })
     expect(planningStructuredMessage.headers?.['content-type']).toBe('application/x-protobuf')
 
-    const planningProto = CodexTask.fromBinary(toBuffer(planningStructuredMessage.value))
+    const planningProto = fromBinary(CodexTaskSchema, toBuffer(planningStructuredMessage.value))
     expect(planningProto.stage).toBe(CodexTaskStage.PLANNING)
     expect(planningProto.repository).toBe('owner/repo')
     expect(planningProto.issueNumber).toBe(BigInt(1))
@@ -620,7 +621,7 @@ describe('createWebhookHandler', () => {
     })
     expect(implementationStructuredMessage.headers?.['content-type']).toBe('application/x-protobuf')
 
-    const implementationProto = CodexTask.fromBinary(toBuffer(implementationStructuredMessage.value))
+    const implementationProto = fromBinary(CodexTaskSchema, toBuffer(implementationStructuredMessage.value))
     expect(implementationProto.stage).toBe(CodexTaskStage.IMPLEMENTATION)
     expect(implementationProto.deliveryId).toBe('delivery-999')
     expect(implementationProto.planCommentId).toBe(BigInt(10))
@@ -670,7 +671,7 @@ describe('createWebhookHandler', () => {
     })
     expect(implementationStructuredMessage.headers?.['content-type']).toBe('application/x-protobuf')
 
-    const implementationProto = CodexTask.fromBinary(toBuffer(implementationStructuredMessage.value))
+    const implementationProto = fromBinary(CodexTaskSchema, toBuffer(implementationStructuredMessage.value))
     expect(implementationProto.stage).toBe(CodexTaskStage.IMPLEMENTATION)
     expect(implementationProto.issueNumber).toBe(BigInt(3))
     expect(implementationProto.planCommentId).toBe(BigInt(42))
@@ -791,7 +792,7 @@ describe('createWebhookHandler', () => {
       expect(reviewJsonPayload.issueNumber).toBe(9)
       expect(reviewJsonPayload.reviewContext.failingChecks[0].name).toBe('ci / test')
       expect(reviewJsonPayload.reviewContext.additionalNotes[0]).toContain('mergeable_state=blocked')
-      const reviewProto = CodexTask.fromBinary(toBuffer(reviewStructuredMessage.value))
+      const reviewProto = fromBinary(CodexTaskSchema, toBuffer(reviewStructuredMessage.value))
       expect(reviewProto.stage).toBe(CodexTaskStage.REVIEW)
       expect(reviewProto.issueNumber).toBe(BigInt(9))
     })
@@ -1308,7 +1309,7 @@ describe('createWebhookHandler', () => {
     expect(discordMessage).toMatchObject({ topic: 'discord-topic', key: 'interaction-123' })
     expect(discordMessage.headers['content-type']).toBe('application/x-protobuf')
 
-    const protoEvent = FacteurCommandEventMessage.fromBinary(toBuffer(discordMessage.value))
+    const protoEvent = fromBinary(FacteurCommandEventSchema, toBuffer(discordMessage.value))
     expect(protoEvent.options).toEqual(
       expect.objectContaining({
         content: 'Ship the release with QA gating',

@@ -7,11 +7,11 @@
       "subjects": [{ "name": "google.protobuf.Timestamp" }]
     },
     {
-      "file": "facteur/v1/contract.proto",
+      "file": "proompteng/facteur/v1/contract.proto",
       "subjects": [{ "name": "discord.commands.incoming-value" }, { "name": "discord.commands.incoming.dlq-value" }]
     },
     {
-      "file": "github/v1/codex_task.proto",
+      "file": "proompteng/froussard/v1/codex_task.proto",
       "subjects": [
         {
           "name": "github.issues.codex.tasks-value",

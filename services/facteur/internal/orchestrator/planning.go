@@ -17,7 +17,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/proompteng/lab/services/facteur/internal/argo"
-	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 	"github.com/proompteng/lab/services/facteur/internal/knowledge"
 	"github.com/proompteng/lab/services/facteur/internal/telemetry"
 )
@@ -47,7 +47,7 @@ var (
 
 // Planner coordinates Codex planning dispatch.
 type Planner interface {
-	Plan(ctx context.Context, task *githubpb.CodexTask) (Result, error)
+	Plan(ctx context.Context, task *froussardpb.CodexTask) (Result, error)
 }
 
 // Result captures workflow submission metadata.
@@ -127,11 +127,11 @@ func NewPlanner(store knowledgeStore, runner argo.Runner, cfg Config) (Planner, 
 	}, nil
 }
 
-func (p *planner) Plan(ctx context.Context, task *githubpb.CodexTask) (Result, error) {
+func (p *planner) Plan(ctx context.Context, task *froussardpb.CodexTask) (Result, error) {
 	if task == nil {
 		return Result{}, errors.New("planning orchestrator: task is nil")
 	}
-	if task.GetStage() != githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
+	if task.GetStage() != froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
 		return Result{}, ErrUnsupportedStage
 	}
 
@@ -224,7 +224,7 @@ type completedEntry struct {
 	expiresAt time.Time
 }
 
-func (p *planner) execute(ctx context.Context, span trace.Span, deliveryID string, task *githubpb.CodexTask) (Result, error) {
+func (p *planner) execute(ctx context.Context, span trace.Span, deliveryID string, task *froussardpb.CodexTask) (Result, error) {
 	eventBody, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(task)
 	if err != nil {
 		span.RecordError(err)

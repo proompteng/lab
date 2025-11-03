@@ -6,6 +6,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@bufbuild/protobuf/codegenv2': path.resolve(
+        __dirname,
+        './node_modules/@bufbuild/protobuf/dist/esm/codegenv2/index.js',
+      ),
     },
   },
   test: {

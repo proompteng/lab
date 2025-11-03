@@ -11,7 +11,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 )
 
 // Store coordinates writes into the codex_kb schema.
@@ -325,7 +325,7 @@ RETURNING id, task_id, external_run_id, status, queued_at, started_at, completed
 }
 
 // IngestCodexTask normalises and persists a structured Codex task delivery.
-func (s *Store) IngestCodexTask(ctx context.Context, task *githubpb.CodexTask) (ideaID, taskID, runID string, err error) {
+func (s *Store) IngestCodexTask(ctx context.Context, task *froussardpb.CodexTask) (ideaID, taskID, runID string, err error) {
 	if task == nil {
 		return "", "", "", errors.New("codex task payload is required")
 	}
@@ -405,7 +405,7 @@ func buildIdeaSourceRef(repo string, issueNum int64) string {
 	return fmt.Sprintf("%s#%d", repo, issueNum)
 }
 
-func normaliseStage(stage githubpb.CodexTaskStage) string {
+func normaliseStage(stage froussardpb.CodexTaskStage) string {
 	name := stage.String()
 	name = strings.TrimPrefix(name, "CODEX_TASK_STAGE_")
 	name = strings.TrimSuffix(name, "_")
@@ -416,7 +416,7 @@ func normaliseStage(stage githubpb.CodexTaskStage) string {
 	return name
 }
 
-func buildTaskMetadata(task *githubpb.CodexTask) ([]byte, error) {
+func buildTaskMetadata(task *froussardpb.CodexTask) ([]byte, error) {
 	var issuedAt time.Time
 	if ts := task.GetIssuedAt(); ts != nil {
 		issuedAt = ts.AsTime().UTC()
@@ -455,7 +455,7 @@ func buildTaskMetadata(task *githubpb.CodexTask) ([]byte, error) {
 	return json.Marshal(meta)
 }
 
-func buildRunMetadata(task *githubpb.CodexTask) ([]byte, error) {
+func buildRunMetadata(task *froussardpb.CodexTask) ([]byte, error) {
 	meta := map[string]any{
 		"stage":        normaliseStage(task.GetStage()),
 		"repository":   task.GetRepository(),

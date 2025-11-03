@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 	"github.com/proompteng/lab/services/facteur/internal/knowledge"
 )
 
@@ -184,8 +184,8 @@ func TestIngestCodexTask(t *testing.T) {
 
 	expectTaskLifecycle(mock, "idea-ingest", "implementation", "task-ingest", "run-ingest", issuedAt, "delivery-xyz", created)
 
-	ideaID, taskID, runID, err := store.IngestCodexTask(ctx, &githubpb.CodexTask{
-		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
+	ideaID, taskID, runID, err := store.IngestCodexTask(ctx, &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
 		Prompt:      "Implement ingestion",
 		Repository:  "proompteng/lab",
 		Base:        "main",

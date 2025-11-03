@@ -1,12 +1,12 @@
-version: v1
+version: v2
 plugins:
-  - plugin: buf.build/protocolbuffers/go:v1.33.0
+  - remote: buf.build/protocolbuffers/go
     out: .
     opt:
       - module=github.com/proompteng/lab
-      - Mfacteur/v1/contract.proto=github.com/proompteng/lab/services/facteur/internal/facteurpb
-      - Mgithub/v1/codex_task.proto=github.com/proompteng/lab/services/facteur/internal/githubpb
-  - plugin: buf.build/bufbuild/es:v1.10.0
+      - Mproompteng/facteur/v1/contract.proto=github.com/proompteng/lab/services/facteur/internal/facteurpb
+      - Mproompteng/froussard/v1/codex_task.proto=github.com/proompteng/lab/services/facteur/internal/froussardpb
+  - remote: buf.build/bufbuild/es
     out: apps/froussard/src/proto
     opt:
       - target=ts

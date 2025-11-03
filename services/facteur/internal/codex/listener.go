@@ -11,7 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/proompteng/lab/services/facteur/internal/bridge"
-	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 )
 
 // MessageReader represents the subset of kafka.Reader methods used by Listener.
@@ -72,7 +72,7 @@ func (l *Listener) Run(ctx context.Context) error {
 			return fmt.Errorf("fetch message: %w", err)
 		}
 
-		var task githubpb.CodexTask
+		var task froussardpb.CodexTask
 		if unmarshalErr := proto.Unmarshal(msg.Value, &task); unmarshalErr != nil {
 			l.logger.Printf("codex listener: discard invalid payload key=%s err=%v", string(msg.Key), unmarshalErr)
 			if commitErr := l.reader.CommitMessages(ctx, msg); commitErr != nil {
@@ -96,7 +96,7 @@ func (l *Listener) Run(ctx context.Context) error {
 			)
 		}
 
-		if task.GetStage() == githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
+		if task.GetStage() == froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
 			if !l.dispatchCfg.PlanningEnabled {
 				l.logger.Printf(
 					"codex listener: planning dispatch disabled key=%s repo=%s issue=%d",

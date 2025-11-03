@@ -552,7 +552,7 @@ export const relayStream = async (
       return
     }
 
-    let normalized = content
+    const normalized = content
       .replace(/\\r\\n/g, '\n')
       .replace(/\\n/g, '\n')
       .replace(/\\t/g, '\t')
