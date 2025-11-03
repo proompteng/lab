@@ -1,12 +1,14 @@
-import { temporal } from '@temporalio/proto'
+import { ConnectError } from '@connectrpc/connect'
 import { z } from 'zod'
+
 import {
-  buildCancelRequest,
-  buildQueryRequest,
-  buildSignalRequest,
-  buildSignalWithStartRequest,
-  buildStartWorkflowRequest,
-  buildTerminateRequest,
+  buildCancelWorkflowExecutionRequest,
+  buildGetWorkflowExecutionHistoryRequest,
+  buildQueryWorkflowRequest,
+  buildSignalWithStartWorkflowExecutionRequest,
+  buildSignalWorkflowExecutionRequest,
+  buildStartWorkflowExecutionRequest,
+  buildTerminateWorkflowExecutionRequest,
   computeSignalRequestId,
   createSignalRequestEntropy,
 } from './client/serialization'
@@ -21,36 +23,18 @@ import {
 } from './client/types'
 import { createDefaultDataConverter, type DataConverter, decodePayloadsToValues } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
-import { NativeBridgeError, type NativeClient, native, type Runtime } from './internal/core-bridge/native'
-
-const startWorkflowMetadataSchema = z.object({
-  runId: z.string().min(1),
-  workflowId: z.string().min(1),
-  namespace: z.string().min(1),
-  firstExecutionRunId: z.string().min(1).optional(),
-})
-
-const toStartWorkflowResult = (metadata: WorkflowHandleMetadata): StartWorkflowResult => ({
-  ...metadata,
-  handle: createWorkflowHandle(metadata),
-})
-
-const isPrintableAscii = (value: string): boolean => {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index)
-    if (code < 0x20 || code > 0x7e) {
-      return false
-    }
-  }
-  return true
-}
-
-const toUint8Array = (value: ArrayBuffer | ArrayBufferView): Uint8Array => {
-  if (value instanceof ArrayBuffer) {
-    return new Uint8Array(value)
-  }
-  return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
-}
+import {
+  createWorkflowServiceClient,
+  type WorkflowServiceClientOptions,
+  type WorkflowServiceHandle,
+} from './grpc/workflow-service-client'
+import {
+  DescribeNamespaceRequest,
+  type DescribeNamespaceResponse,
+  type GetWorkflowExecutionHistoryResponse,
+  type QueryWorkflowResponse,
+  type SignalWithStartWorkflowExecutionResponse,
+} from './proto/temporal/api/workflowservice/v1/request_response_pb'
 
 const metadataHeadersSchema = z
   .record(
@@ -165,20 +149,6 @@ const metadataHeadersSchema = z
     return normalized
   })
 
-type ClientHeaderValue = string | ArrayBuffer | ArrayBufferView
-type ClientHeaderInput = Record<string, ClientHeaderValue>
-export type ClientMetadataHeaders = ClientHeaderInput
-
-const retryPolicySchema = z
-  .object({
-    initialIntervalMs: z.number().int().positive().optional(),
-    maximumIntervalMs: z.number().int().positive().optional(),
-    maximumAttempts: z.number().int().optional(),
-    backoffCoefficient: z.number().positive().optional(),
-    nonRetryableErrorTypes: z.array(z.string().min(1)).optional(),
-  })
-  .optional()
-
 const startWorkflowOptionsSchema = z.object({
   workflowId: z.string().min(1),
   workflowType: z.string().min(1),
@@ -194,7 +164,15 @@ const startWorkflowOptionsSchema = z.object({
   workflowExecutionTimeoutMs: z.number().int().positive().optional(),
   workflowRunTimeoutMs: z.number().int().positive().optional(),
   workflowTaskTimeoutMs: z.number().int().positive().optional(),
-  retryPolicy: retryPolicySchema,
+  retryPolicy: z
+    .object({
+      initialIntervalMs: z.number().int().positive().optional(),
+      maximumIntervalMs: z.number().int().positive().optional(),
+      maximumAttempts: z.number().int().optional(),
+      backoffCoefficient: z.number().positive().optional(),
+      nonRetryableErrorTypes: z.array(z.string().min(1)).optional(),
+    })
+    .optional(),
 })
 
 const terminateWorkflowOptionsSchema = z.object({
@@ -204,14 +182,41 @@ const terminateWorkflowOptionsSchema = z.object({
   firstExecutionRunId: z.string().min(1).optional(),
 })
 
-const workflowHandleSchema = z.object({
+type ClientHeaderValue = string | ArrayBuffer | ArrayBufferView
+type ClientHeaderInput = Record<string, ClientHeaderValue>
+export type ClientMetadataHeaders = ClientHeaderInput
+
+const startWorkflowMetadataSchema = z.object({
+  runId: z.string().min(1),
   workflowId: z.string().min(1),
-  namespace: z.string().min(1).optional(),
-  runId: z.string().min(1).optional(),
+  namespace: z.string().min(1),
   firstExecutionRunId: z.string().min(1).optional(),
 })
 
-const workflowQueryNameSchema = z.string().min(1)
+const toUint8Array = (value: ArrayBuffer | ArrayBufferView): Uint8Array => {
+  if (value instanceof ArrayBuffer) {
+    return new Uint8Array(value)
+  }
+  return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+}
+
+const isPrintableAscii = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code < 0x20 || code > 0x7e) {
+      return false
+    }
+  }
+  return true
+}
+
+const toStartWorkflowResult = (metadata: WorkflowHandleMetadata): StartWorkflowResult => ({
+  ...metadata,
+  handle: createWorkflowHandle(metadata),
+})
+
+const toNamespaceRequest = (namespace: string): DescribeNamespaceRequest => new DescribeNamespaceRequest({ namespace })
+
 export interface TemporalWorkflowClient {
   start(options: StartWorkflowOptions): Promise<StartWorkflowResult>
   signal(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void>
@@ -232,68 +237,50 @@ export interface TemporalClient {
   terminateWorkflow(handle: WorkflowHandle, options?: TerminateWorkflowOptions): Promise<void>
   cancelWorkflow(handle: WorkflowHandle): Promise<void>
   signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult>
-  describeNamespace(namespace?: string): Promise<Uint8Array>
+  describeNamespace(namespace?: string): Promise<DescribeNamespaceResponse>
   updateHeaders(headers: ClientHeaderInput): Promise<void>
+  getWorkflowExecutionHistory(handle: WorkflowHandle): Promise<GetWorkflowExecutionHistoryResponse>
   shutdown(): Promise<void>
 }
 
 export interface CreateTemporalClientOptions {
   config?: TemporalConfig
-  runtimeOptions?: Record<string, unknown>
   namespace?: string
   identity?: string
   taskQueue?: string
   dataConverter?: DataConverter
+  workflowServiceFactory?: (options: WorkflowServiceClientOptions) => WorkflowServiceHandle
 }
-
-const textDecoder = new TextDecoder()
 
 export const createTemporalClient = async (
   options: CreateTemporalClientOptions = {},
 ): Promise<{ client: TemporalClient; config: TemporalConfig }> => {
   const config = options.config ?? (await loadTemporalConfig())
 
-  if (config.allowInsecureTls) {
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
-  }
-
   const namespace = options.namespace ?? config.namespace
   const identity = options.identity ?? config.workerIdentity
   const taskQueue = options.taskQueue ?? config.taskQueue
   const dataConverter = options.dataConverter ?? createDefaultDataConverter()
 
-  const runtime = native.createRuntime(options.runtimeOptions ?? {})
-  const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
+  const handleFactory =
+    options.workflowServiceFactory ??
+    ((serviceOptions: WorkflowServiceClientOptions) => createWorkflowServiceClient(serviceOptions))
 
-  const nativeConfig: Record<string, unknown> = {
-    address: formatTemporalAddress(config.address, shouldUseTls),
-    namespace,
-    identity,
-  }
-
-  if (config.apiKey) {
-    nativeConfig.apiKey = config.apiKey
-  }
-
-  const tlsPayload = serializeTlsConfig(config.tls)
-  if (tlsPayload) {
-    nativeConfig.tls = tlsPayload
-  }
-
-  if (config.allowInsecureTls) {
-    nativeConfig.allowInsecure = true
-  }
-
-  const clientHandle = await native.createClient(runtime, nativeConfig)
+  const workflowServiceHandle = handleFactory({
+    address: config.address,
+    tls: config.tls as TLSConfig | undefined,
+    apiKey: config.apiKey,
+    metadata: {},
+    allowInsecureTls: config.allowInsecureTls,
+  })
 
   const client = new TemporalClientImpl({
-    runtime,
-    client: clientHandle,
     config,
     namespace,
     identity,
     taskQueue,
     dataConverter,
+    workflowService: workflowServiceHandle,
   })
 
   return { client, config }
@@ -306,27 +293,25 @@ class TemporalClientImpl implements TemporalClient {
   readonly workflow: TemporalWorkflowClient
 
   private closed = false
-  private readonly runtime: Runtime
-  private readonly client: NativeClient
-  private readonly defaultIdentity: string
-  private readonly defaultTaskQueue: string
+  private readonly identity: string
+  private readonly taskQueue: string
+  private readonly serviceHandle: WorkflowServiceHandle
 
-  constructor(handles: {
-    runtime: Runtime
-    client: NativeClient
+  constructor(params: {
     config: TemporalConfig
     namespace: string
     identity: string
     taskQueue: string
     dataConverter: DataConverter
+    workflowService: WorkflowServiceHandle
   }) {
-    this.runtime = handles.runtime
-    this.client = handles.client
-    this.config = handles.config
-    this.namespace = handles.namespace
-    this.dataConverter = handles.dataConverter
-    this.defaultIdentity = handles.identity
-    this.defaultTaskQueue = handles.taskQueue
+    this.config = params.config
+    this.namespace = params.namespace
+    this.identity = params.identity
+    this.taskQueue = params.taskQueue
+    this.dataConverter = params.dataConverter
+    this.serviceHandle = params.workflowService
+
     this.workflow = {
       start: (options) => this.startWorkflow(options),
       signal: (handle, signalName, ...args) => this.signalWorkflow(handle, signalName, ...args),
@@ -338,210 +323,166 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async startWorkflow(options: StartWorkflowOptions): Promise<StartWorkflowResult> {
+    this.ensureOpen()
     const parsed = startWorkflowOptionsSchema.parse(options)
-    const payload = await buildStartWorkflowRequest(
+    const request = await buildStartWorkflowExecutionRequest(
       {
-        options: parsed as unknown as StartWorkflowOptions,
+        options: parsed,
         defaults: {
           namespace: this.namespace,
-          identity: this.defaultIdentity,
-          taskQueue: this.defaultTaskQueue,
+          identity: this.identity,
+          taskQueue: this.taskQueue,
         },
       },
       this.dataConverter,
     )
 
-    const bytes = await native.startWorkflow(this.client, payload)
-    const response = parseJson(bytes)
-    const metadata = startWorkflowMetadataSchema.parse(response) as unknown as WorkflowHandleMetadata
-    return toStartWorkflowResult(metadata)
+    const response = await this.serviceHandle.client.startWorkflowExecution(request)
+    return toStartWorkflowResult(this.extractStartMetadata(parsed.workflowId, request.namespace, response.runId ?? ''))
   }
 
   async signalWorkflow(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void> {
-    const parsedHandle = workflowHandleSchema.parse(handle)
-    const resolvedHandle: WorkflowHandle = {
-      workflowId: parsedHandle.workflowId,
-      namespace: parsedHandle.namespace ?? this.namespace,
-      runId: parsedHandle.runId,
-      firstExecutionRunId: parsedHandle.firstExecutionRunId,
-    }
-
-    const identity = this.defaultIdentity
+    this.ensureOpen()
     const entropy = createSignalRequestEntropy()
     const requestId = await computeSignalRequestId(
       {
-        namespace: resolvedHandle.namespace,
-        workflowId: resolvedHandle.workflowId,
-        runId: resolvedHandle.runId,
-        firstExecutionRunId: resolvedHandle.firstExecutionRunId,
+        namespace: handle.namespace ?? this.namespace,
+        workflowId: handle.workflowId,
+        runId: handle.runId,
+        firstExecutionRunId: handle.firstExecutionRunId,
         signalName,
-        identity,
+        identity: this.identity,
         args,
       },
       this.dataConverter,
       { entropy },
     )
 
-    const request = await buildSignalRequest(
+    const request = await buildSignalWorkflowExecutionRequest(
       {
-        handle: resolvedHandle,
+        handle,
         signalName,
         args,
-        identity,
+        identity: this.identity,
         requestId,
+        namespaceFallback: this.namespace,
       },
       this.dataConverter,
     )
-    await native.signalWorkflow(this.client, request)
+    await this.serviceHandle.client.signalWorkflowExecution(request)
   }
 
   async queryWorkflow(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown> {
-    const parsedHandle = workflowHandleSchema.parse(handle)
-    const resolvedHandle: WorkflowHandle = {
-      workflowId: parsedHandle.workflowId,
-      namespace: parsedHandle.namespace ?? this.namespace,
-      runId: parsedHandle.runId,
-      firstExecutionRunId: parsedHandle.firstExecutionRunId,
-    }
-
-    const parsedQueryName = workflowQueryNameSchema.parse(queryName)
-    const request = await buildQueryRequest(resolvedHandle, parsedQueryName, args, this.dataConverter)
-    const bytes = await native.queryWorkflow(this.client, request)
-    const response = temporal.api.workflowservice.v1.QueryWorkflowResponse.decode(bytes)
-
-    if (response.queryRejected) {
-      throw new NativeBridgeError({
-        code: 9,
-        message: 'Temporal query was rejected',
-        details: response.queryRejected,
-        raw: JSON.stringify(response.queryRejected),
-      })
-    }
-
-    if (!response.queryResult) {
-      throw new NativeBridgeError({
-        code: 13,
-        message: 'Temporal query response missing query_result payloads',
-        raw: 'missing query_result',
-      })
-    }
-
-    const payloads = response.queryResult.payloads ?? []
-    if (!payloads.length) {
-      return null
-    }
-
-    const [value] = await decodePayloadsToValues(this.dataConverter, payloads)
-    return value ?? null
+    this.ensureOpen()
+    const request = await buildQueryWorkflowRequest(handle, queryName, args, this.namespace, this.dataConverter)
+    const response = await this.serviceHandle.client.queryWorkflow(request)
+    return this.decodeQueryResponse(response)
   }
 
-  async terminateWorkflow(handle: WorkflowHandle, options: TerminateWorkflowOptions = {}): Promise<void> {
-    const parsedOptions = terminateWorkflowOptionsSchema.parse(options)
-    const request = await buildTerminateRequest(handle, parsedOptions, this.dataConverter)
-    await native.terminateWorkflow(this.client, request)
+  async terminateWorkflow(handle: WorkflowHandle, options?: TerminateWorkflowOptions): Promise<void> {
+    this.ensureOpen()
+    const parsedOptions = options ? terminateWorkflowOptionsSchema.parse(options) : undefined
+    const request = await buildTerminateWorkflowExecutionRequest(
+      handle,
+      parsedOptions,
+      this.namespace,
+      this.identity,
+      this.dataConverter,
+    )
+    await this.serviceHandle.client.terminateWorkflowExecution(request)
   }
 
   async cancelWorkflow(handle: WorkflowHandle): Promise<void> {
-    const request = buildCancelRequest(handle)
-    await native.cancelWorkflow(this.client, request)
+    this.ensureOpen()
+    const request = buildCancelWorkflowExecutionRequest(handle, this.namespace, this.identity)
+    await this.serviceHandle.client.requestCancelWorkflowExecution(request)
   }
 
   async signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult> {
-    const request = await buildSignalWithStartRequest(
+    this.ensureOpen()
+    const entropy = createSignalRequestEntropy()
+    const requestId = await computeSignalRequestId(
       {
-        options,
+        namespace: options.namespace ?? this.namespace,
+        workflowId: options.workflowId,
+        runId: undefined,
+        firstExecutionRunId: undefined,
+        signalName: options.signalName,
+        identity: options.identity ?? this.identity,
+        args: options.signalArgs ?? [],
+      },
+      this.dataConverter,
+      { entropy },
+    )
+
+    const request = await buildSignalWithStartWorkflowExecutionRequest(
+      {
+        options: {
+          ...options,
+          requestId,
+        },
         defaults: {
           namespace: this.namespace,
-          identity: this.defaultIdentity,
-          taskQueue: this.defaultTaskQueue,
+          identity: this.identity,
+          taskQueue: this.taskQueue,
         },
       },
       this.dataConverter,
     )
-    const bytes = await native.signalWithStart(this.client, request)
-    const response = parseJson(bytes)
-    const metadata = startWorkflowMetadataSchema.parse(response) as unknown as WorkflowHandleMetadata
-    return toStartWorkflowResult(metadata)
+
+    const response: SignalWithStartWorkflowExecutionResponse =
+      await this.serviceHandle.client.signalWithStartWorkflowExecution(request)
+    return toStartWorkflowResult(this.extractStartMetadata(options.workflowId, request.namespace, response.runId ?? ''))
   }
 
-  async describeNamespace(targetNamespace?: string): Promise<Uint8Array> {
-    return native.describeNamespace(this.client, targetNamespace ?? this.namespace)
+  async describeNamespace(namespace?: string): Promise<DescribeNamespaceResponse> {
+    this.ensureOpen()
+    const request = toNamespaceRequest(namespace ?? this.namespace)
+    return await this.serviceHandle.client.describeNamespace(request)
+  }
+
+  async getWorkflowExecutionHistory(handle: WorkflowHandle): Promise<GetWorkflowExecutionHistoryResponse> {
+    this.ensureOpen()
+    const request = buildGetWorkflowExecutionHistoryRequest(handle, this.namespace)
+    return await this.serviceHandle.client.getWorkflowExecutionHistory(request)
   }
 
   async updateHeaders(headers: ClientHeaderInput): Promise<void> {
-    if (this.closed) {
-      throw new Error('Temporal client has already been shut down')
-    }
-
-    const parsed = metadataHeadersSchema.parse(headers)
-    native.updateClientHeaders(this.client, parsed)
+    this.ensureOpen()
+    const normalized = metadataHeadersSchema.parse(headers)
+    this.serviceHandle.setMetadata(normalized)
   }
 
   async shutdown(): Promise<void> {
-    if (this.closed) return
+    if (this.closed) {
+      return
+    }
     this.closed = true
-    native.clientShutdown(this.client)
-    native.runtimeShutdown(this.runtime)
+    this.serviceHandle.setMetadata({})
+  }
+
+  private ensureOpen(): void {
+    if (this.closed) {
+      throw new Error('Temporal client has already been shut down')
+    }
+  }
+
+  private extractStartMetadata(workflowId: string, namespace: string, runId: string): WorkflowHandleMetadata {
+    const metadata = startWorkflowMetadataSchema.parse({
+      workflowId,
+      namespace,
+      runId,
+      firstExecutionRunId: runId,
+    })
+    return metadata
+  }
+
+  private async decodeQueryResponse(response: QueryWorkflowResponse): Promise<unknown> {
+    if (response.queryRejected) {
+      throw new ConnectError('Workflow query rejected', undefined, response.queryRejected)
+    }
+    const payloads = response.queryResult?.payloads ?? []
+    const [value] = await decodePayloadsToValues(this.dataConverter, payloads)
+    return value ?? null
   }
 }
-
-const parseJson = (bytes: Uint8Array): unknown => {
-  const text = textDecoder.decode(bytes)
-  try {
-    return JSON.parse(text)
-  } catch (error) {
-    throw new Error(`Failed to parse Temporal bridge response: ${(error as Error).message}`)
-  }
-}
-
-const formatTemporalAddress = (address: string, useTls: boolean): string => {
-  if (/^https?:\/\//i.test(address)) {
-    return address
-  }
-  return `${useTls ? 'https' : 'http'}://${address}`
-}
-
-const serializeTlsConfig = (tls?: TLSConfig): Record<string, unknown> | undefined => {
-  if (!tls) return undefined
-
-  const payload: Record<string, unknown> = {}
-  const encode = (buffer?: Buffer) => buffer?.toString('base64')
-
-  const caCertificate = encode(tls.serverRootCACertificate)
-  if (caCertificate) {
-    payload.serverRootCACertificate = caCertificate
-    payload.server_root_ca_cert = caCertificate
-  }
-
-  const clientCert = encode(tls.clientCertPair?.crt)
-  const clientPrivateKey = encode(tls.clientCertPair?.key)
-  if (clientCert && clientPrivateKey) {
-    const pair = { crt: clientCert, key: clientPrivateKey }
-    payload.clientCertPair = pair
-    payload.client_cert_pair = pair
-    payload.client_cert = clientCert
-    payload.client_private_key = clientPrivateKey
-  }
-
-  if (tls.serverNameOverride) {
-    payload.serverNameOverride = tls.serverNameOverride
-    payload.server_name_override = tls.serverNameOverride
-  }
-
-  if (Object.keys(payload).length === 0) {
-    return undefined
-  }
-
-  return payload
-}
-
-export type {
-  RetryPolicyOptions,
-  SignalWithStartOptions,
-  StartWorkflowOptions,
-  StartWorkflowResult,
-  TerminateWorkflowOptions,
-  WorkflowHandle,
-  WorkflowHandleMetadata,
-} from './client/types'
-export { createWorkflowHandle } from './client/types'

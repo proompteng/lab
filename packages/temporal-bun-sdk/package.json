@@ -9,11 +9,12 @@
   "files": [
     "dist",
     "dist/native",
-    "README.md"
+    "README.md",
+    "bin"
   ],
   "bin": {
-    "temporal-bun-worker": "./dist/bin/start-worker.js",
-    "temporal-bun": "./dist/bin/temporal-bun.js"
+    "temporal-bun-worker": "./bin/start-worker.js",
+    "temporal-bun": "./bin/temporal-bun.js"
   },
   "exports": {
     ".": {
@@ -40,8 +41,8 @@
       "types": "./dist/src/worker.d.ts",
       "default": "./dist/src/worker.js"
     },
-    "./bin/start-worker": "./dist/bin/start-worker.js",
-    "./bin/cli": "./dist/bin/temporal-bun.js"
+    "./bin/start-worker": "./bin/start-worker.js",
+    "./bin/cli": "./bin/temporal-bun.js"
   },
   "scripts": {
     "clean": "rm -rf dist",
@@ -66,6 +67,9 @@
     "bun": ">=1.1.20"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "^2.10.0",
+    "@connectrpc/connect": "^2.1.0",
+    "@connectrpc/connect-node": "^2.1.0",
     "@temporalio/common": "^1.13.0",
     "@temporalio/proto": "^1.13.0",
     "@temporalio/worker": "^1.13.0",

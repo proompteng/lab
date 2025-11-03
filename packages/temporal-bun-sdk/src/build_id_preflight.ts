@@ -1,152 +1,160 @@
-import type { temporal } from '@temporalio/proto'
-import type { NativeConnectionOptions } from '@temporalio/worker'
-import { NativeConnection } from '@temporalio/worker'
+import { Code, ConnectError } from '@connectrpc/connect'
+import { normalizeTlsConfig, type TLSConfigOption } from '@temporalio/common/lib/internal-non-workflow'
 
-type PreflightConnectionOptions = NativeConnectionOptions & {
+import type { TLSConfig } from './config'
+import { createWorkflowServiceClient } from './grpc/workflow-service-client'
+import type { GetWorkerBuildIdCompatibilityResponse } from './proto/temporal/api/workflowservice/v1/request_response_pb'
+import {
+  GetWorkerBuildIdCompatibilityRequest,
+  UpdateWorkerBuildIdCompatibilityRequest,
+} from './proto/temporal/api/workflowservice/v1/request_response_pb'
+
+export interface BuildIdReachabilityOptions {
+  address?: string
   namespace?: string
+  tls?: TLSConfigOption | TLSConfig | null
+  apiKey?: string
+  metadata?: Record<string, string>
+  allowInsecureTls?: boolean
 }
+
+const DEFAULT_ADDRESS = '127.0.0.1:7233'
+const DEFAULT_NAMESPACE = 'default'
 
 export async function ensureBuildIdReachable(
   taskQueue: string,
   buildId: string,
-  connectionOptions: PreflightConnectionOptions = {},
+  options: BuildIdReachabilityOptions = {},
 ): Promise<void> {
-  const address = connectionOptions.address ?? process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233'
-  const namespace = connectionOptions.namespace ?? process.env.TEMPORAL_NAMESPACE ?? 'default'
+  const address = options.address ?? process.env.TEMPORAL_ADDRESS ?? DEFAULT_ADDRESS
+  const namespace = options.namespace ?? process.env.TEMPORAL_NAMESPACE ?? DEFAULT_NAMESPACE
 
-  const { namespace: _ignoredNamespace, ...nativeOptions } = connectionOptions
-
-  const connection = await NativeConnection.connect({
-    ...nativeOptions,
+  const normalizedTls = normalizeTlsConfig(options.tls as TLSConfigOption)
+  const workflowHandle = createWorkflowServiceClient({
     address,
+    tls: (normalizedTls ?? undefined) as TLSConfig | undefined,
+    apiKey: options.apiKey,
+    metadata: options.metadata,
+    allowInsecureTls: options.allowInsecureTls,
   })
+  const workflowClient = workflowHandle.client
 
+  let existingCompatibility: GetWorkerBuildIdCompatibilityResponse | undefined
   try {
-    let existingCompatibility: temporal.api.workflowservice.v1.IGetWorkerBuildIdCompatibilityResponse | undefined
-    try {
-      existingCompatibility = await connection.workflowService.getWorkerBuildIdCompatibility({
-        namespace,
-        taskQueue,
-      })
-    } catch (error) {
-      if (isWorkerVersioningDisabledError(error)) {
-        return
-      }
-      throw error
-    }
-
-    if (containsBuildId(existingCompatibility, buildId)) {
+    existingCompatibility = await workflowClient.getWorkerBuildIdCompatibility(
+      new GetWorkerBuildIdCompatibilityRequest({ namespace, taskQueue }),
+    )
+  } catch (error) {
+    if (isWorkerVersioningDisabledError(error)) {
       return
     }
+    throw error
+  }
 
-    try {
-      await connection.workflowService.updateWorkerBuildIdCompatibility({
-        namespace,
-        taskQueue,
-        addNewBuildIdInNewDefaultSet: buildId,
-      })
-    } catch (error) {
-      if (isWorkerVersioningDisabledError(error)) {
-        return
-      }
-      if (!isAlreadyExistsError(error)) {
-        throw error
-      }
+  if (containsBuildId(existingCompatibility, buildId)) {
+    return
+  }
+
+  try {
+    const updateRequest = new UpdateWorkerBuildIdCompatibilityRequest({ namespace, taskQueue })
+    updateRequest.operation = { case: 'addNewBuildIdInNewDefaultSet', value: buildId }
+    await workflowClient.updateWorkerBuildIdCompatibility(updateRequest)
+  } catch (error) {
+    if (isWorkerVersioningDisabledError(error)) {
+      return
     }
-
-    let compatibility: temporal.api.workflowservice.v1.IGetWorkerBuildIdCompatibilityResponse | undefined
-    try {
-      compatibility = await connection.workflowService.getWorkerBuildIdCompatibility({
-        namespace,
-        taskQueue,
-      })
-    } catch (error) {
-      if (isWorkerVersioningDisabledError(error)) {
-        return
-      }
+    if (!isAlreadyExistsError(error)) {
       throw error
     }
+  }
 
-    if (!containsBuildId(compatibility, buildId)) {
-      throw new Error('buildId not present in compatibility rules')
+  let compatibility: GetWorkerBuildIdCompatibilityResponse | undefined
+  try {
+    compatibility = await workflowClient.getWorkerBuildIdCompatibility(
+      new GetWorkerBuildIdCompatibilityRequest({ namespace, taskQueue }),
+    )
+  } catch (error) {
+    if (isWorkerVersioningDisabledError(error)) {
+      return
     }
-  } finally {
-    await connection.close()
+    throw error
+  }
+
+  if (!containsBuildId(compatibility, buildId)) {
+    throw new Error('buildId not present in compatibility rules')
   }
 }
 
 const containsBuildId = (
-  compatibility: temporal.api.workflowservice.v1.IGetWorkerBuildIdCompatibilityResponse,
+  compatibility: GetWorkerBuildIdCompatibilityResponse | undefined,
   buildId: string,
 ): boolean => {
-  if (!compatibility.majorVersionSets) {
+  if (!compatibility) {
     return false
   }
 
   for (const versionSet of compatibility.majorVersionSets) {
-    if (!versionSet?.buildIds) {
-      continue
-    }
-    for (const version of versionSet.buildIds) {
-      if (version?.buildId === buildId) {
-        return true
-      }
+    if (versionSet.buildIds.includes(buildId)) {
+      return true
     }
   }
 
   return false
 }
 
-const ALREADY_EXISTS_STATUS_CODE = 6
-const PERMISSION_DENIED_STATUS_CODE = 7
-
 const isAlreadyExistsError = (error: unknown): boolean => {
+  if (error instanceof ConnectError) {
+    if (error.code === Code.AlreadyExists) {
+      return true
+    }
+    return messageContains(error, 'ALREADY_EXISTS')
+  }
+
   if (!error || typeof error !== 'object') {
     return false
   }
 
-  const grpcCode = (error as { code?: unknown }).code
-  if (typeof grpcCode === 'number' && grpcCode === ALREADY_EXISTS_STATUS_CODE) {
-    return true
-  }
-
-  const message = (error as { message?: unknown }).message
-  if (typeof message === 'string' && message.toUpperCase().includes('ALREADY_EXISTS')) {
-    return true
-  }
-
-  const details = (error as { details?: unknown }).details
-  return typeof details === 'string' && details.toUpperCase().includes('ALREADY_EXISTS')
+  return messageContains(error, 'ALREADY_EXISTS')
 }
 
 const isWorkerVersioningDisabledError = (error: unknown): boolean => {
+  if (error instanceof ConnectError) {
+    if (error.code !== Code.PermissionDenied && error.code !== Code.FailedPrecondition) {
+      return false
+    }
+    return messageContains(error, 'WORKER VERSIONING') && messageContains(error, 'DISABLED')
+  }
+
   if (!error || typeof error !== 'object') {
     return false
   }
 
-  const grpcCode = (error as { code?: unknown }).code
-  if (typeof grpcCode === 'number' && grpcCode === PERMISSION_DENIED_STATUS_CODE) {
-    if (hasWorkerVersioningDisabledMessage(error)) {
-      return true
-    }
-  }
-
-  return hasWorkerVersioningDisabledMessage(error)
+  return messageContains(error, 'WORKER VERSIONING') && messageContains(error, 'DISABLED')
 }
 
-const hasWorkerVersioningDisabledMessage = (error: { message?: unknown; details?: unknown }): boolean => {
-  const message = typeof error.message === 'string' ? error.message : undefined
-  const details = typeof error.details === 'string' ? error.details : undefined
+const messageContains = (error: unknown, needle: string): boolean => {
+  const upperNeedle = needle.toUpperCase()
 
-  const haystacks = [message, details]
-  for (const haystack of haystacks) {
-    if (!haystack) {
-      continue
+  if (error instanceof ConnectError) {
+    const candidates = [error.rawMessage, error.message]
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.toUpperCase().includes(upperNeedle)) {
+        return true
+      }
     }
-    const upper = haystack.toUpperCase()
-    if (upper.includes('WORKER VERSIONING') && upper.includes('DISABLED')) {
+  }
+
+  if (error && typeof error === 'object') {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === 'string' && message.toUpperCase().includes(upperNeedle)) {
+      return true
+    }
+
+    const details = (error as { details?: unknown }).details
+    if (typeof details === 'string' && details.toUpperCase().includes(upperNeedle)) {
       return true
     }
   }
+
   return false
 }

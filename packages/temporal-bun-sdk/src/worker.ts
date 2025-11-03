@@ -132,11 +132,12 @@ export const createWorker = async (
   const nativeConnectionOverrides = options.nativeConnectionOptions ?? {}
 
   await ensureBuildIdReachable(taskQueue, buildId, {
-    ...nativeConnectionOverrides,
     address: nativeConnectionOverrides.address ?? config.address,
     namespace: config.namespace,
     tls: nativeConnectionOverrides.tls ?? config.tls ?? (config.allowInsecureTls ? {} : undefined),
     apiKey: nativeConnectionOverrides.apiKey ?? config.apiKey,
+    metadata: nativeConnectionOverrides.metadata,
+    allowInsecureTls: config.allowInsecureTls,
   })
 
   const runtime = await WorkerRuntime.create(runtimeOptions)
