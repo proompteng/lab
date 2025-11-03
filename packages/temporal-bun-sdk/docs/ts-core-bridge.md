@@ -3,7 +3,7 @@
 **Status Snapshot (1 Nov 2025)**  
 - ✅ `src/internal/core-bridge/native.ts` dynamically loads `libtemporal_bun_bridge_zig` via `bun:ffi` and exposes strongly typed helpers for runtime/client handles.  
 - ✅ `src/core-bridge/runtime.ts` and `src/core-bridge/client.ts` wrap the native handles with ergonomic classes, including `FinalizationRegistry` cleanup and TLS serialization.  
-- ✅ `src/core-bridge/index.ts` intentionally exports only `native`, `runtime`, and `client`; worker orchestration now lives in `src/worker/runtime.ts` behind the Zig bridge with a documented vendor fallback.  
+- ✅ `src/core-bridge/index.ts` intentionally exports only `native`, `runtime`, and `client`; worker orchestration now lives in `src/worker/runtime.ts` behind the Zig bridge with Bun-only diagnostics.  
 - ⚠️ Telemetry configuration and logger installation throw `NativeBridgeError` because the Zig bridge reports `UNIMPLEMENTED`.  
 - ⚠️ Header updates share the new Zig metadata path; expand regression coverage, but cancellation now routes through the Zig bridge and returns structured codes.  
 
@@ -85,7 +85,7 @@ A `FinalizationRegistry` ensures unattended clients still release resources, but
 
 ## 5. Worker Integration
 
-The worker lifecycle is implemented separately in `src/worker/runtime.ts` so that higher-level APIs can gate Bun-native worker startup behind feature flags (`TEMPORAL_BUN_SDK_USE_ZIG=1`) and preserve an escape hatch to the vendor (`@temporalio/worker`) fallback. Keep the `core-bridge` barrel focused on generic FFI primitives; worker wrappers should import from `internal/core-bridge/native.ts` directly until we stabilise the surface.
+The worker lifecycle is implemented separately in `src/worker/runtime.ts` so that higher-level APIs can gate Bun-native worker startup behind feature flags (`TEMPORAL_BUN_SDK_USE_ZIG=1`) and surface clear diagnostics when the Zig bridge is unavailable. Keep the `core-bridge` barrel focused on generic FFI primitives; worker wrappers should import from `internal/core-bridge/native.ts` directly until we stabilise the surface.
 
 ---
 

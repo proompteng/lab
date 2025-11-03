@@ -118,7 +118,7 @@ Legend: ✅ shipped · ⚠️ partial/stub · ❌ not implemented yet.
 | `zig-worker-08` | Initiate shutdown | Signal no new polls; allow graceful drain. |
 | `zig-worker-09` | Finalize shutdown | ✅ Await outstanding completions, release handles. |
 
-Delivering these tasks unblocks swapping out `@temporalio/worker` with the Bun-native worker runtime.
+Delivering these tasks completed the swap from `@temporalio/worker` to the Bun-native worker runtime.
 
 ---
 

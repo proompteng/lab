@@ -76,7 +76,7 @@ Environment variables supported by the config loader:
 | `TEMPORAL_TLS_SERVER_NAME` | _unset_ | Overrides TLS server name verification. |
 | `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS` | `false` | Accepts `1/true/on` to skip certificate verification. |
 | `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (host and PID are appended automatically). |
-| `TEMPORAL_BUN_SDK_USE_ZIG` | _auto-detect_ | `1` forces the Zig bridge, `0` keeps the Rust fallback. |
+| `TEMPORAL_BUN_SDK_USE_ZIG` | _auto-detect_ | `1` forces the Zig bridge; leaving it unset now raises a diagnostic `NativeBridgeError` (no Node/Rust fallback). |
 
 `loadTemporalConfig()` returns typed values that the client and worker factories
 consume directly, so you never have to stitch addresses or TLS buffers together

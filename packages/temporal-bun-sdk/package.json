@@ -12,8 +12,8 @@
     "README.md"
   ],
   "bin": {
-    "temporal-bun-worker": "./dist/bin/start-worker.js",
-    "temporal-bun": "./dist/bin/temporal-bun.js"
+    "temporal-bun-worker": "./dist/src/bin/start-worker.js",
+    "temporal-bun": "./dist/src/bin/temporal-bun.js"
   },
   "exports": {
     ".": {
@@ -40,8 +40,8 @@
       "types": "./dist/src/worker.d.ts",
       "default": "./dist/src/worker.js"
     },
-    "./bin/start-worker": "./dist/bin/start-worker.js",
-    "./bin/cli": "./dist/bin/temporal-bun.js"
+    "./bin/start-worker": "./dist/src/bin/start-worker.js",
+    "./bin/cli": "./dist/src/bin/temporal-bun.js"
   },
   "scripts": {
     "clean": "rm -rf dist",
@@ -49,7 +49,7 @@
     "build": "bunx tsc --project tsconfig.json --pretty false",
     "test": "bun test",
     "test:coverage": "bun test --coverage",
-    "start:worker": "bun run dist/bin/start-worker.js",
+    "start:worker": "bun run dist/src/bin/start-worker.js",
     "libs:download": "bun run scripts/download-temporal-libs.ts download",
     "build:native": "bun run libs:download && zig build -Doptimize=ReleaseFast --build-file bruke/build.zig",
     "build:native:zig": "bun run libs:download && zig build -Doptimize=ReleaseFast --build-file bruke/build.zig",
@@ -66,9 +66,10 @@
     "bun": ">=1.1.20"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.12.6",
+    "@temporalio/client": "^1.13.1",
     "@temporalio/common": "^1.13.0",
     "@temporalio/proto": "^1.13.0",
-    "@temporalio/worker": "^1.13.0",
     "@temporalio/workflow": "^1.13.0",
     "long": "^5.2.3",
     "zod": "^3.23.8"

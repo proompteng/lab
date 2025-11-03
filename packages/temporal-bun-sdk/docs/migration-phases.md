@@ -47,7 +47,7 @@ flowchart LR
 - FFI layer now implements worker poll/complete/heartbeat/shutdown (initiate + finalize); follow-up work tracks activity draining telemetry and metrics.  
 - Continue hardening the Bun-native worker runtime loops (see `docs/worker-runtime.md`).  
 - Introduce workflow runtime sandbox (coordinated with Phase 3).  
-- Default to the Bun-native worker while preserving the vendor (`@temporalio/worker`) fallback for unsupported hosts.  
+- Default to the Bun-native worker; vendor (`@temporalio/worker`) fallback removed in favour of Zig bridge diagnostics.  
 - Ensure CLI worker runs against Temporal CLI server using Zig bridge.
 
 **Milestones:**

@@ -2,9 +2,10 @@ process.env.TEMPORAL_BUN_SDK_USE_ZIG = '1'
 
 const { afterAll, beforeAll, describe, expect, test } = await import('bun:test')
 const { createTemporalClient } = await import('../src/client')
+const { createWorker } = await import('../src/worker')
 const { importNativeBridge } = await import('./helpers/native-bridge')
 const { isTemporalServerAvailable, parseTemporalAddress } = await import('./helpers/temporal-server')
-const { withRetry, waitForWorkerReady } = await import('./helpers/retry')
+const { withRetry } = await import('./helpers/retry')
 const { fileURLToPath } = await import('node:url')
 
 const { module: nativeBridge, isStub } = await importNativeBridge()
@@ -27,31 +28,43 @@ suite('zig bridge workflow signals', () => {
   const workerAddress = `${host}:${port}`
 
   let client: TemporalClientHandle | null = null
-  let workerProcess: ReturnType<typeof Bun.spawn> | null = null
+  let workerHandle: Awaited<ReturnType<typeof createWorker>> | null = null
+  let workerRunPromise: Promise<void> | null = null
+  let workerRunError: unknown = null
+  let previousWorkerEnv: Record<string, string | undefined> | null = null
 
   beforeAll(async () => {
     if (!usingZigBridge) return
 
-    const workerScript = fileURLToPath(new URL('./worker/run-query-worker.mjs', import.meta.url))
+    const workflowsPath = fileURLToPath(new URL('./workflows/query-workflow.js', import.meta.url))
+
+    const trackedEnvKeys = ['TEMPORAL_ADDRESS', 'TEMPORAL_NAMESPACE', 'TEMPORAL_TASK_QUEUE'] as const
+    previousWorkerEnv = Object.fromEntries(trackedEnvKeys.map((key) => [key, process.env[key]]))
+    process.env.TEMPORAL_ADDRESS = workerAddress
+    process.env.TEMPORAL_NAMESPACE = 'default'
+    process.env.TEMPORAL_TASK_QUEUE = taskQueue
 
     try {
-      workerProcess = Bun.spawn(['node', workerScript], {
-        stdout: 'pipe',
-        stderr: 'pipe',
-        env: {
-          ...process.env,
-          TEMPORAL_ADDRESS: workerAddress,
-          TEMPORAL_NAMESPACE: 'default',
-          TEMPORAL_TASK_QUEUE: taskQueue,
-        },
-      })
-
-      await waitForWorkerReady(workerProcess)
+      workerHandle = await createWorker({ workflowsPath })
     } catch (error) {
-      console.warn('Skipping zig signal tests: worker dependencies not available', error)
-      workerProcess = null
+      console.warn('Skipping zig signal tests: bun worker unavailable', error)
+      workerHandle = null
+      trackedEnvKeys.forEach((key) => {
+        const previous = previousWorkerEnv?.[key]
+        if (previous === undefined) {
+          delete process.env[key]
+        } else {
+          process.env[key] = previous
+        }
+      })
+      previousWorkerEnv = null
       return
     }
+
+    workerRunPromise = workerHandle.worker.run().catch((error) => {
+      workerRunError = error
+    })
+    await Bun.sleep(200)
 
     const config = {
       host,
@@ -75,22 +88,40 @@ suite('zig bridge workflow signals', () => {
       await client.shutdown()
     }
 
-    if (workerProcess) {
+    if (workerHandle) {
       try {
-        workerProcess.kill()
+        await workerHandle.worker.shutdown()
       } catch (error) {
-        console.error('Failed to terminate worker process', error)
+        console.error('Failed to shutdown bun worker', error)
       }
+    }
+
+    if (workerRunPromise) {
       try {
-        await workerProcess.exited
-      } catch {
-        // ignore
+        await workerRunPromise
+      } catch (error) {
+        console.error('Bun worker run loop failed', error)
       }
+    }
+
+    if (previousWorkerEnv) {
+      for (const [key, value] of Object.entries(previousWorkerEnv)) {
+        if (value === undefined) {
+          delete process.env[key]
+        } else {
+          process.env[key] = value
+        }
+      }
+      previousWorkerEnv = null
+    }
+
+    if (workerRunError) {
+      throw workerRunError
     }
   })
 
   test('signals update workflow state via Temporal core', async () => {
-    if (!client || !workerProcess) {
+    if (!client || !workerHandle) {
       console.log('Skipping test: client or worker unavailable')
       return
     }
@@ -119,7 +150,7 @@ suite('zig bridge workflow signals', () => {
   })
 
   test('signalWorkflow surfaces not found errors', async () => {
-    if (!client || !workerProcess) {
+    if (!client || !workerHandle) {
       console.log('Skipping test: client or worker unavailable')
       return
     }

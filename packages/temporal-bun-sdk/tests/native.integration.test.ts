@@ -6,14 +6,17 @@ import { temporal } from '@temporalio/proto'
 
 import { createTemporalClient } from '../src'
 import { createDataConverter, createDefaultDataConverter, decodePayloadsToValues } from '../src/common/payloads'
+import { createWorker } from '../src/worker'
 import { importNativeBridge } from './helpers/native-bridge'
 import { isTemporalServerAvailable, parseTemporalAddress } from './helpers/temporal-server'
-import { withRetry, waitForWorkerReady } from './helpers/retry'
+import { withRetry } from './helpers/retry'
 
 const { module: nativeBridge } = await importNativeBridge()
 
 process.env.TEMPORAL_ALLOW_INSECURE = '0'
 process.env.ALLOW_INSECURE_TLS = '0'
+const originalUseZigEnv = process.env.TEMPORAL_BUN_SDK_USE_ZIG
+process.env.TEMPORAL_BUN_SDK_USE_ZIG = '1'
 
 const temporalAddress = process.env.TEMPORAL_TEST_SERVER_ADDRESS ?? 'http://127.0.0.1:7233'
 const shouldRun = process.env.TEMPORAL_TEST_SERVER === '1'
@@ -99,7 +102,10 @@ if (!nativeBridge) {
 
   suite('native bridge integration', () => {
     let runtime: ReturnType<typeof native.createRuntime>
-    let workerProcess: ReturnType<typeof Bun.spawn> | undefined
+    let workerHandle: Awaited<ReturnType<typeof createWorker>> | null = null
+    let workerRunPromise: Promise<void> | null = null
+    let workerRunError: unknown = null
+    let previousWorkerEnv: Record<string, string | undefined> | null = null
     const taskQueue = 'bun-sdk-query-tests'
     const swsTaskQueue = taskQueue
     const decoder = new TextDecoder()
@@ -108,43 +114,73 @@ if (!nativeBridge) {
       runtime = native.createRuntime({})
 
       try {
-        const workerScript = fileURLToPath(new URL('./worker/run-query-worker.mjs', import.meta.url))
-        workerProcess = Bun.spawn(['node', workerScript], {
-          stdout: 'pipe',
-          stderr: 'pipe',
-          env: {
-            ...process.env,
-            TEMPORAL_ADDRESS: workerAddress,
-            TEMPORAL_NAMESPACE: 'default',
-            TEMPORAL_TASK_QUEUE: taskQueue,
-          },
-        })
+        const workflowsPath = fileURLToPath(new URL('./workflows/query-workflow.js', import.meta.url))
 
-        await waitForWorkerReady(workerProcess)
+        const trackedEnvKeys = ['TEMPORAL_ADDRESS', 'TEMPORAL_NAMESPACE', 'TEMPORAL_TASK_QUEUE'] as const
+        previousWorkerEnv = Object.fromEntries(trackedEnvKeys.map((key) => [key, process.env[key]]))
+        process.env.TEMPORAL_ADDRESS = workerAddress
+        process.env.TEMPORAL_NAMESPACE = 'default'
+        process.env.TEMPORAL_TASK_QUEUE = taskQueue
+
+        workerHandle = await createWorker({ workflowsPath })
+        workerRunPromise = workerHandle.worker.run().catch((error) => {
+          workerRunError = error
+        })
+        await Bun.sleep(200)
       } catch (_error) {
         console.warn('Skipping native integration tests: worker dependencies not available')
-        workerProcess = null
+        workerHandle = null
+        if (previousWorkerEnv) {
+          for (const [key, value] of Object.entries(previousWorkerEnv)) {
+            if (value === undefined) {
+              delete process.env[key]
+            } else {
+              process.env[key] = value
+            }
+          }
+          previousWorkerEnv = null
+        }
       }
     })
 
     afterAll(async () => {
       native.runtimeShutdown(runtime)
-      if (workerProcess) {
+      if (workerHandle) {
         try {
-          workerProcess.kill()
+          await workerHandle.worker.shutdown()
         } catch (error) {
-          console.error('Failed to kill worker process', error)
+          console.error('Failed to shutdown bun worker', error)
         }
+      }
+      if (workerRunPromise) {
         try {
-          await workerProcess.exited
-        } catch {
-          // ignore
+          await workerRunPromise
+        } catch (error) {
+          console.error('Bun worker run loop failed', error)
         }
+      }
+      if (previousWorkerEnv) {
+        for (const [key, value] of Object.entries(previousWorkerEnv)) {
+          if (value === undefined) {
+            delete process.env[key]
+          } else {
+            process.env[key] = value
+          }
+        }
+        previousWorkerEnv = null
+      }
+      if (workerRunError) {
+        throw workerRunError
+      }
+      if (originalUseZigEnv === undefined) {
+        delete process.env.TEMPORAL_BUN_SDK_USE_ZIG
+      } else {
+        process.env.TEMPORAL_BUN_SDK_USE_ZIG = originalUseZigEnv
       }
     })
 
     test('describe namespace succeeds against live Temporal server', async () => {
-      if (!workerProcess) {
+      if (!workerHandle) {
         console.log('Skipping test: worker not available')
         return
       }
@@ -171,7 +207,7 @@ if (!nativeBridge) {
     })
 
     test('signalWithStart starts and signals workflow', async () => {
-      if (!workerProcess) {
+      if (!workerHandle) {
         console.log('Skipping test: worker not available')
         return
       }
@@ -228,7 +264,7 @@ if (!nativeBridge) {
     })
 
     test('signalWorkflow routes signals through Temporal core', async () => {
-      if (!workerProcess) {
+      if (!workerHandle) {
         console.log('Skipping test: worker not available')
         return
       }
@@ -302,7 +338,7 @@ if (!nativeBridge) {
     })
 
     test('cancelWorkflow cancels a running workflow', async () => {
-      if (!workerProcess) {
+      if (!workerHandle) {
         console.log('Skipping test: worker not available')
         return
       }
@@ -399,7 +435,7 @@ if (!nativeBridge) {
     })
 
     test('queryWorkflow returns payload for running workflow', async () => {
-      if (!workerProcess) {
+      if (!workerHandle) {
         console.log('Skipping test: worker not available')
         return
       }
@@ -473,7 +509,7 @@ if (!nativeBridge) {
     })
 
     test('custom data converter handles start, signal, query, and failure paths', async () => {
-      if (!workerProcess) {
+      if (!workerHandle) {
         console.log('Skipping test: worker not available')
         return
       }
@@ -539,7 +575,7 @@ if (!nativeBridge) {
     })
 
     test('pending handle executor reuses bounded thread pool under burst load', async () => {
-      if (!workerProcess) {
+      if (!workerHandle) {
         console.log('Skipping test: worker not available')
         return
       }

@@ -26,7 +26,7 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 ### TypeScript layer
 - ✅ `createTemporalClient` loads the Zig bridge through `bun:ffi`, applies TLS/API key metadata, and exposes workflow helpers (see `src/client.ts`).
 - ✅ CLI commands (`temporal-bun init|check|docker-build`) ship in `src/bin/temporal-bun.ts`.
-- ✅ Worker bootstrap (`createWorker`, `runWorker`) defaults to the Bun-native runtime backed by the Zig bridge, with an opt-in `TEMPORAL_BUN_SDK_VENDOR_FALLBACK=1` escape hatch to reuse `@temporalio/worker` when needed.
+- ✅ Worker bootstrap (`createWorker`, `runWorker`) defaults to the Bun-native runtime backed by the Zig bridge and now emits friendly diagnostics when the bridge is unavailable (the Node SDK worker dependency has been removed).
 - ✅ `client.workflow.cancel` encodes RequestCancelWorkflowExecution payloads and resolves Zig pending handles through Temporal core; `client.workflow.signal` continues to route through core with deterministic request IDs plus client identity.
 - ✅ `client.updateHeaders` hot-swaps metadata via the Zig bridge and returns Temporal core status codes without forcing a reconnect.
 - ✅ `WorkerRuntime` and the `WorkflowEngine` execute workflow activations inside Bun, emitting `WorkflowActivationCompletion` payloads through the Zig bridge. Activity polling, cancellation, and heartbeats are implemented; worker telemetry hooks remain TODO.
@@ -77,7 +77,7 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that teams can 
 ```
 
 Key properties:
-- All Temporal interactions flow through Zig → Temporal core; Node SDK usage is confined to the worker fallback.
+- All Temporal interactions now flow through Zig → Temporal core; the Node SDK worker has been removed.
 - Pending handles allow Bun to poll async results without blocking its event loop.
 - Zig bridge enforces strict JSON validation before making core RPCs, surfacing structured Temporal gRPC status codes to Bun.
 - Client-facing Zig code is split into modules under `bruke/src/client/` (`common.zig`, `connect.zig`, `workflows/*`, etc.) with a lightweight aggregator `client/mod.zig`, letting teams evolve features in parallel without editing a monolith.
@@ -158,7 +158,7 @@ maps to one or more lanes so parallel Codex instances can implement features wit
    - Document operational playbooks for telemetry dashboards and emitted metrics fields.
 3. **Worker bridge**
    - Add activity metrics support in Zig and surface telemetry for shutdown timing (follow-up after `zig-worker-09`).
-   - Harden Bun `WorkerRuntime` parity (activity interception, metrics, diagnostics) and document the vendor fallback toggle.
+  - Harden Bun `WorkerRuntime` parity (activity interception, metrics, diagnostics) and continue documenting unsupported-host guidance for the Bun-only runtime.
 4. **Developer experience**
    - Expand CLI (`temporal-bun init`) templates with Zig bridge usage instructions.
    - Provide `demo:e2e` script referenced in the doc (currently a follow-up).
@@ -172,7 +172,7 @@ maps to one or more lanes so parallel Codex instances can implement features wit
 |------|--------|------------|
 | Zig bridge diverges from Temporal core updates | Runtime incompatibilities | Pin upstream commits; add sync checklist in release process. |
 | Cancellation regression on Temporal CLI dependency | Workflow management | Ensure CLI availability for integration runs, document manual fallback when the dev server is unavailable, and keep README status badges in sync. |
-| Worker rewrite stalls | Teams rely on Node worker indefinitely | Deliver Bun worker incrementally (client parity first), keep Node fallback documented. |
+| Worker rewrite stalls | Teams rely on Node worker indefinitely | Deliver Bun worker incrementally (client parity first) and keep migration guidance up to date so teams adopt the Bun-only runtime. |
 | Native builds fail on CI | Blocks releases | Cache prebuilt libs, document Zig toolchain requirements, add `zig env` diagnostics. |
 
 ## 11. Open Questions
@@ -180,7 +180,7 @@ maps to one or more lanes so parallel Codex instances can implement features wit
 1. Do we want to ship official prebuilt Zig libraries for Windows, or keep Windows unsupported until Zig produces stable MSVC artifacts?
 2. Should `temporal-bun` CLI embed a smoke test (`temporal-bun check --workflow <id>`) to validate signal/query once those RPCs ship?
 3. How do we expose telemetry configuration ergonomically from Bun (custom config file vs. programmatic API)?
-4. What is the rollout plan for swapping the Node worker fallback with the Bun-native worker in existing services (feature flag vs. semver major)?
+4. How do we communicate and stage the Bun-only worker rollout for existing services (release notes vs. feature flag)?
 
 ---
 
