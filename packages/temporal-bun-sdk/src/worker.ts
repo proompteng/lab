@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import type { NativeConnection, NativeConnectionOptions, WorkerOptions } from '@temporalio/worker'
 
 import * as defaultActivities from './activities'
+import { ensureBuildIdReachable } from './build_id_preflight'
 import type { DataConverter } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig } from './config'
 import { NativeBridgeError } from './internal/core-bridge/native'
@@ -127,6 +128,16 @@ export const createWorker = async (
     dataConverter: options.dataConverter,
     buildId,
   }
+
+  const nativeConnectionOverrides = options.nativeConnectionOptions ?? {}
+
+  await ensureBuildIdReachable(taskQueue, buildId, {
+    ...nativeConnectionOverrides,
+    address: nativeConnectionOverrides.address ?? config.address,
+    namespace: config.namespace,
+    tls: nativeConnectionOverrides.tls ?? config.tls ?? (config.allowInsecureTls ? {} : undefined),
+    apiKey: nativeConnectionOverrides.apiKey ?? config.apiKey,
+  })
 
   const runtime = await WorkerRuntime.create(runtimeOptions)
   const worker = new BunWorker(runtime)
