@@ -66,6 +66,38 @@ Intel macOS and Windows hosts are not yet supported by the prebuilt Zig artefact
 
 The CLI and worker automatically load the prepackaged Zig libraries. Setting `TEMPORAL_BUN_SDK_USE_ZIG=1` ensures the Bun-native bridge is mandatory; unset it only when opting into the vendor fallback described in the troubleshooting guide.
 
+## Temporal Core Logging
+
+The Zig bridge forwards Temporal Core logs to whichever callback you register through `coreBridge.runtime`. A lightweight background thread wakes ~every 300 ms to flush native log buffers and runs one last flush during shutdown, so nothing remains in the core-side queue.
+
+Logs are **not** written to disk automatically—you decide where they land. The example below mirrors Temporal’s structured log output to both `console` and a rolling file:
+
+```ts
+import { coreBridge } from '@proompteng/temporal-bun-sdk'
+import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
+
+const runtime = coreBridge.runtime.createRuntime()
+
+const logFilePath = new URL('../logs/temporal-core.log', import.meta.url).pathname
+const logDir = dirname(logFilePath)
+if (!existsSync(logDir)) {
+  mkdirSync(logDir, { recursive: true })
+}
+const logStream = createWriteStream(logFilePath, { flags: 'a' })
+
+runtime.installLogger((event) => {
+  const line = `${new Date(event.timestampMillis).toISOString()} [${event.level.toUpperCase()}] ${event.target} ${event.message}`
+  console.log(line)
+  if (event.fieldsJson && event.fieldsJson.length > 0) {
+    console.log(`  ${event.fieldsJson}`)
+  }
+  logStream.write(`${line}${event.fieldsJson ? ` ${event.fieldsJson}` : ''}\n`)
+})
+```
+
+To rotate log files, close the stream and call `runtime.removeLogger()` before reopening a new stream. If you never install a logger, core logs are dropped.
+
 ## Guides & References
 - [Migration guide](./docs/migration-guide.md) – move from the hybrid `@temporalio/*` packages to the Bun SDK.
 - [Troubleshooting & FAQ](./docs/troubleshooting.md) – bridge loading, TLS, API keys, CI environments, and vendor fallback.
