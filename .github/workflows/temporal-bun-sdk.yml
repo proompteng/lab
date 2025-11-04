@@ -54,6 +54,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Temporal CLI
+        run: curl -sSfL https://temporal.download/cli.sh | bash -s -- -b /usr/local/bin
+
+      - name: Verify Temporal CLI
+        run: temporal --version
+
       - name: Run Biome check (temporal-bun-sdk)
         run: pnpm exec biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
 
