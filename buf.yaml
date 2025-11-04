@@ -4,6 +4,7 @@ modules:
     name: buf.build/proompteng/lab
 deps:
   - buf.build/protocolbuffers/wellknowntypes
+  - buf.build/googleapis/googleapis
 lint:
   use:
     - STANDARD

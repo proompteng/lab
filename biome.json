@@ -30,6 +30,7 @@
       "!apps/froussard/src/proto",
       "!services/dernier/app/assets/builds",
       "!packages/temporal-bun-sdk/vendor",
+      "!packages/temporal-bun-sdk/src/proto",
       "!packages/backend/convex/_generated",
       "!packages/temporal-bun-sdk/tests",
       "!packages/temporal-bun-sdk-example",
