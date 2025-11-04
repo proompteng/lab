@@ -12,7 +12,7 @@
     "start:proompteng": "pnpm --filter proompteng start",
     "lint:proompteng": "pnpm --filter proompteng lint",
     "lint:argocd": "scripts/kubeconform.sh argocd",
-    "proto:generate": "buf generate",
+    "proto:generate": "buf generate --path proto/proompteng && buf generate --template buf.temporal.gen.yaml --path proto/temporal",
     "clean": "pnpm -r exec rm -rf node_modules && rm -rf node_modules",
     "format": "biome format --write",
     "tf:plan": "tofu -chdir='./tofu/harvester' plan",
