@@ -1,6 +1,6 @@
 import type { ClientSessionOptions, SecureClientSessionOptions } from 'node:http2'
 import { create, toBinary } from '@bufbuild/protobuf'
-import { type CallOptions, Code, ConnectError, createClient } from '@connectrpc/connect'
+import { type CallOptions, Code, ConnectError, createClient, type Transport } from '@connectrpc/connect'
 import { createGrpcTransport, type GrpcTransportOptions } from '@connectrpc/connect-node'
 import { z } from 'zod'
 import { createDefaultHeaders, mergeHeaders } from './client/headers'
@@ -37,6 +37,7 @@ import {
 } from './proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from './proto/temporal/api/workflowservice/v1/service_pb'
 
+type ClosableTransport = Transport & { close?: () => void | Promise<void> }
 type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
 
 const startWorkflowMetadataSchema = z.object({
@@ -138,6 +139,7 @@ export const createTemporalClient = async (
   const initialHeaders = createDefaultHeaders(config.apiKey)
 
   const client = new TemporalClientImpl({
+    transport,
     workflowService,
     config,
     namespace,
@@ -156,6 +158,7 @@ class TemporalClientImpl implements TemporalClient {
   readonly dataConverter: DataConverter
   readonly workflow: TemporalWorkflowClient
 
+  private readonly transport: ClosableTransport
   private readonly workflowService: WorkflowServiceClient
   private readonly defaultIdentity: string
   private readonly defaultTaskQueue: string
@@ -163,6 +166,7 @@ class TemporalClientImpl implements TemporalClient {
   private headers: Record<string, string>
 
   constructor(handles: {
+    transport: ClosableTransport
     workflowService: WorkflowServiceClient
     config: TemporalConfig
     namespace: string
@@ -171,6 +175,7 @@ class TemporalClientImpl implements TemporalClient {
     dataConverter: DataConverter
     headers: Record<string, string>
   }) {
+    this.transport = handles.transport
     this.workflowService = handles.workflowService
     this.config = handles.config
     this.namespace = handles.namespace
@@ -323,7 +328,13 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async shutdown(): Promise<void> {
+    if (this.closed) return
     this.closed = true
+
+    const maybeClose = this.transport.close
+    if (typeof maybeClose === 'function') {
+      await maybeClose.call(this.transport)
+    }
   }
 
   private ensureOpen(): void {

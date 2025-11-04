@@ -55,7 +55,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Temporal CLI
-        run: curl -sSfL https://temporal.download/cli.sh | bash -s -- -b /usr/local/bin
+        run: |
+          curl -sSfL https://temporal.download/cli.sh | bash -s -- -b "${HOME}/.temporalio/bin"
+          echo "${HOME}/.temporalio/bin" >> "$GITHUB_PATH"
 
       - name: Verify Temporal CLI
         run: temporal --version
