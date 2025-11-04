@@ -1,5 +1,14 @@
-export * from './client'
-export * from './common'
-export * as coreBridge from './core-bridge'
-export * from './worker'
-export * from './workflow'
+export type {
+  TemporalClient,
+  TemporalWorkflowClient,
+} from './client'
+export { createTemporalClient } from './client'
+export type {
+  SignalWithStartOptions,
+  StartWorkflowOptions,
+  StartWorkflowResult,
+  TerminateWorkflowOptions,
+  WorkflowHandle,
+} from './client/types'
+export type { TemporalConfig, TLSConfig } from './config'
+export { loadTemporalConfig } from './config'

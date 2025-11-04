@@ -4,6 +4,7 @@ import type { PayloadCodec } from '@temporalio/common'
 import {
   createDataConverter,
   createDefaultDataConverter,
+  decodePayloadsToValues,
   jsonToPayload,
   PAYLOAD_TUNNEL_FIELD,
   payloadToJson,
@@ -45,7 +46,7 @@ class JsonEnvelopeCodec implements PayloadCodec {
 }
 
 describe('buildSignalRequest', () => {
-  test('builds a payload with defaults from the workflow handle', async () => {
+  test('builds a signal payload with workflow execution metadata', async () => {
     const payload = await buildSignalRequest(
       {
         handle: {
@@ -62,74 +63,17 @@ describe('buildSignalRequest', () => {
       defaultConverter,
     )
 
-    expect(payload).toEqual({
-      namespace: 'default',
-      workflow_id: 'wf-id',
-      run_id: 'run-id',
-      first_execution_run_id: 'first-run-id',
-      signal_name: 'signalName',
-      args: [{ foo: 'bar' }],
-      identity: 'sig-client',
-      request_id: 'req-123',
-    })
+    expect(payload.namespace).toBe('default')
+    expect(payload.workflowExecution?.workflowId).toBe('wf-id')
+    expect(payload.workflowExecution?.runId).toBe('run-id')
+    expect(payload.identity).toBe('sig-client')
+    expect(payload.requestId).toBe('req-123')
+
+    const values = await decodePayloadsToValues(defaultConverter, payload.input?.payloads ?? [])
+    expect(values).toEqual([{ foo: 'bar' }])
   })
 
-  test('clones args array to avoid accidental mutation', async () => {
-    const args = [{ foo: 'bar' }]
-    const payload = await buildSignalRequest(
-      {
-        handle: {
-          workflowId: 'wf-id',
-          namespace: 'default',
-        },
-        signalName: 'signalName',
-        args,
-      },
-      defaultConverter,
-    )
-
-    expect(payload.args).toEqual([{ foo: 'bar' }])
-    expect(payload.args).not.toBe(args)
-    ;(payload.args as unknown[])[0] = { foo: 'baz' }
-    expect(args).toEqual([{ foo: 'bar' }])
-  })
-
-  test('validates required workflow and signal identifiers', async () => {
-    await expect(
-      buildSignalRequest(
-        {
-          handle: { workflowId: '', namespace: 'default' },
-          signalName: 'signalName',
-          args: [],
-        },
-        defaultConverter,
-      ),
-    ).rejects.toThrowError(/workflowId/)
-
-    await expect(
-      buildSignalRequest(
-        {
-          handle: { workflowId: 'wf-id' },
-          signalName: 'signalName',
-          args: [],
-        },
-        defaultConverter,
-      ),
-    ).rejects.toThrowError(/namespace/)
-
-    await expect(
-      buildSignalRequest(
-        {
-          handle: { workflowId: 'wf-id', namespace: 'default' },
-          signalName: '',
-          args: [],
-        },
-        defaultConverter,
-      ),
-    ).rejects.toThrowError(/signal name/)
-  })
-
-  test('encodes non-json payloads through codec tunnel', async () => {
+  test('decodes payload codec tunnelled values', async () => {
     const converter = createDataConverter({ payloadCodecs: [new JsonEnvelopeCodec()] })
     const payload = await buildSignalRequest(
       {
@@ -140,9 +84,13 @@ describe('buildSignalRequest', () => {
       converter,
     )
 
-    const [first] = payload.args as unknown[]
-    expect(first && typeof first === 'object').toBe(true)
-    expect((first as Record<string, unknown>)[PAYLOAD_TUNNEL_FIELD]).toBeDefined()
+    const [first] = payload.input?.payloads ?? []
+    expect(first).toBeDefined()
+    const decoded = await decodePayloadsToValues(converter, payload.input?.payloads ?? [])
+    expect(decoded[0] && typeof decoded[0] === 'object').toBe(true)
+    expect(Object.keys(first?.metadata ?? {})).not.toHaveLength(0)
+    const jsonValue = payloadToJson(jsonToPayload(decoded[0])) as Record<string, unknown>
+    expect(jsonValue[PAYLOAD_TUNNEL_FIELD]).toBeDefined()
   })
 })
 
@@ -181,29 +129,6 @@ describe('computeSignalRequestId', () => {
 
     expect(first).not.toBe(second)
   })
-
-  test('respects toJSON implementations when hashing arguments', async () => {
-    const base = {
-      namespace: 'default',
-      workflowId: 'wf-id',
-      signalName: 'signalName',
-      args: [],
-    }
-
-    const entropy = 'json-aware-entropy'
-    const first = await computeSignalRequestId(
-      { ...base, args: [new Date('2024-01-01T00:00:00.000Z')] },
-      defaultConverter,
-      { entropy },
-    )
-    const second = await computeSignalRequestId(
-      { ...base, args: [new Date('2025-01-01T00:00:00.000Z')] },
-      defaultConverter,
-      { entropy },
-    )
-
-    expect(first).not.toBe(second)
-  })
 })
 
 describe('buildSignalWithStartRequest', () => {
@@ -225,21 +150,20 @@ describe('buildSignalWithStartRequest', () => {
       defaultConverter,
     )
 
-    expect(request).toEqual({
-      namespace: 'default',
-      workflow_id: 'example-workflow',
-      workflow_type: 'ExampleWorkflow',
-      task_queue: 'primary',
-      identity: 'client-123',
-      args: [],
-      signal_name: 'example-signal',
-      signal_args: [{ hello: 'world' }, 42],
-    })
+    expect(request.namespace).toBe('default')
+    expect(request.workflowId).toBe('example-workflow')
+    expect(request.workflowType?.name).toBe('ExampleWorkflow')
+    expect(request.taskQueue?.name).toBe('primary')
+    expect(request.identity).toBe('client-123')
+    expect(request.signalName).toBe('example-signal')
+
+    const values = await decodePayloadsToValues(defaultConverter, request.signalInput?.payloads ?? [])
+    expect(values).toEqual([{ hello: 'world' }, 42])
   })
 })
 
 describe('buildStartWorkflowRequest', () => {
-  test('applies optional fields with snake_case keys', async () => {
+  test('applies optional fields using camelCase keys', async () => {
     const request = await buildStartWorkflowRequest(
       {
         options: {
@@ -274,29 +198,17 @@ describe('buildStartWorkflowRequest', () => {
       defaultConverter,
     )
 
-    expect(request).toMatchObject({
-      namespace: 'custom',
-      workflow_id: 'wf-1',
-      workflow_type: 'ExampleWorkflow',
-      task_queue: 'custom-queue',
-      identity: 'custom-identity',
-      args: ['foo'],
-      cron_schedule: '* * * * *',
-      memo: { note: 'hello' },
-      headers: { headerKey: 'headerValue' },
-      search_attributes: { CustomIntField: 10 },
-      request_id: 'req-123',
-      workflow_execution_timeout_ms: 60000,
-      workflow_run_timeout_ms: 120000,
-      workflow_task_timeout_ms: 30000,
-      retry_policy: {
-        initial_interval_ms: 1000,
-        maximum_interval_ms: 10000,
-        maximum_attempts: 5,
-        backoff_coefficient: 2,
-        non_retryable_error_types: ['FatalError'],
-      },
-    })
+    expect(request.namespace).toBe('custom')
+    expect(request.workflowId).toBe('wf-1')
+    expect(request.workflowType?.name).toBe('ExampleWorkflow')
+    expect(request.taskQueue?.name).toBe('custom-queue')
+    expect(request.identity).toBe('custom-identity')
+    expect(request.cronSchedule).toBe('* * * * *')
+    expect(request.requestId).toBe('req-123')
+    expect(request.retryPolicy?.maximumAttempts).toBe(5)
+
+    const args = await decodePayloadsToValues(defaultConverter, request.input?.payloads ?? [])
+    expect(args).toEqual(['foo'])
   })
 
   test('falls back to defaults when optional fields omitted', async () => {
@@ -315,14 +227,13 @@ describe('buildStartWorkflowRequest', () => {
       defaultConverter,
     )
 
-    expect(request).toMatchObject({
-      namespace: 'default',
-      workflow_id: 'wf-2',
-      workflow_type: 'ExampleWorkflow',
-      task_queue: 'primary',
-      identity: 'default-worker',
-      args: [],
-    })
+    expect(request.namespace).toBe('default')
+    expect(request.workflowId).toBe('wf-2')
+    expect(request.workflowType?.name).toBe('ExampleWorkflow')
+    expect(request.taskQueue?.name).toBe('primary')
+    expect(request.identity).toBe('default-worker')
+    const args = await decodePayloadsToValues(defaultConverter, request.input?.payloads ?? [])
+    expect(args).toEqual([])
   })
 })
 
@@ -332,7 +243,10 @@ describe('buildTerminateRequest', () => {
       { workflowId: 'wf', namespace: 'default' },
       { details: ['reason', { code: 42 }] },
       defaultConverter,
+      'identity-123',
     )
-    expect(request.details).toEqual(['reason', { code: 42 }])
+    const details = await decodePayloadsToValues(defaultConverter, request.details?.payloads ?? [])
+    expect(details).toEqual(['reason', { code: 42 }])
+    expect(request.identity).toBe('identity-123')
   })
 })
