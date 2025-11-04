@@ -87,7 +87,14 @@ const containsBuildId = (
     if (!versionSet?.buildIds) {
       continue
     }
-    for (const version of versionSet.buildIds) {
+    const buildIds = versionSet.buildIds as Array<{ buildId?: string } | string | undefined>
+    for (const version of buildIds) {
+      if (typeof version === 'string') {
+        if (version === buildId) {
+          return true
+        }
+        continue
+      }
       if (version?.buildId === buildId) {
         return true
       }

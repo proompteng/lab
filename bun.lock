@@ -284,6 +284,9 @@
         "temporal-bun": "./dist/bin/temporal-bun.js",
       },
       "dependencies": {
+        "@bufbuild/protobuf": "^2.1.0",
+        "@connectrpc/connect": "^2.1.0",
+        "@connectrpc/connect-node": "^2.1.0",
         "@temporalio/common": "^1.13.0",
         "@temporalio/proto": "^1.13.0",
         "@temporalio/worker": "^1.13.0",
@@ -551,6 +554,10 @@
     "@commitlint/top-level": ["@commitlint/top-level@19.8.1", "", { "dependencies": { "find-up": "7.0.0" } }, "sha512-Ph8IN1IOHPSDhURCSXBz44+CIu+60duFwRsg6HqaISFHQHbmBtxVw4ZrFNIYUzEP7WwrNPxa2/5qJ//NK1FGcw=="],
 
     "@commitlint/types": ["@commitlint/types@19.8.1", "", { "dependencies": { "@types/conventional-commits-parser": "5.0.1", "chalk": "5.4.1" } }, "sha512-/yCrWGCoA1SVKOks25EGadP9Pnj0oAIHGpl2wH2M2Y46dPM2ueb8wyCVOD7O3WCTkaJ0IkKvzhl1JY7+uCT2Dw=="],
+
+    "@connectrpc/connect": ["@connectrpc/connect@2.1.0", "", { "peerDependencies": { "@bufbuild/protobuf": "^2.7.0" } }, "sha512-xhiwnYlJNHzmFsRw+iSPIwXR/xweTvTw8x5HiwWp10sbVtd4OpOXbRgE7V58xs1EC17fzusF1f5uOAy24OkBuA=="],
+
+    "@connectrpc/connect-node": ["@connectrpc/connect-node@2.1.0", "", { "peerDependencies": { "@bufbuild/protobuf": "^2.7.0", "@connectrpc/connect": "2.1.0" } }, "sha512-6akCXZSX5uWHLR654ne9Tnq7AnPUkLS65NvgsI5885xBkcuVy2APBd8sA4sLqaplUt84cVEr6LhjEFNx6W1KtQ=="],
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
 
