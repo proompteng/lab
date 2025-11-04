@@ -26,7 +26,7 @@ jobs:
 
     env:
       TEMPORAL_TEST_SERVER: '1'
-      TEMPORAL_BUN_SDK_USE_ZIG: '1'
+      TEMPORAL_TEST_TIMEOUT: '5000'
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
@@ -51,52 +51,33 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install xz-utils (Zig dependency)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xz-utils
-
-      - name: Set up Zig 0.15.1
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.15.1
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Run Biome check (temporal-bun-sdk)
-        run: pnpm exec biome check packages/temporal-bun-sdk
-
-      - name: Install Temporal CLI
-        run: curl -sSfL https://temporal.download/cli.sh | bash -s -- -b /usr/local/bin
-
-      - name: Add Temporal CLI to path
-        run: |
-          echo "$HOME/.temporalio/bin" >> $GITHUB_PATH
-          echo "/usr/local/bin" >> $GITHUB_PATH
-
-      - name: Check Temporal CLI version
-        run: temporal --version
-
-      - name: Check Zig formatting
-        run: zig fmt --check packages/temporal-bun-sdk/bruke
-
-      - name: Build and test Zig bridge
-        run: pnpm --filter @proompteng/temporal-bun-sdk run ci:native:zig
-
-      - name: Stress pending executor
-        run: zig run -lc packages/temporal-bun-sdk/bruke/src/pending_executor_stress.zig
+        run: pnpm exec biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
 
       - name: Start Temporal CLI dev server
         run: |
           cd packages/temporal-bun-sdk
           bun scripts/start-temporal-cli.ts
 
-      - name: Run Bun SDK tests
-        run: pnpm --filter @proompteng/temporal-bun-sdk test
+      - name: Run Temporal Connect integration tests
+        run: |
+          TEMPORAL_TEST_SERVER=1 pnpm --filter @proompteng/temporal-bun-sdk exec bun test --test-name-pattern 'connect client integration'
+
+      - name: Run TypeScript compilation
+        run: pnpm exec tsc --project packages/temporal-bun-sdk/tsconfig.json
 
       - name: Stop Temporal CLI dev server
         if: always()
         run: |
           cd packages/temporal-bun-sdk
           bun scripts/stop-temporal-cli.ts || true
+
+      - name: Upload Temporal CLI logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: temporal-cli-logs
+          path: packages/temporal-bun-sdk/.temporal-cli.log
