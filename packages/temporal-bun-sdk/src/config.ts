@@ -22,6 +22,7 @@ interface TemporalEnvironment {
   ALLOW_INSECURE_TLS?: string
   TEMPORAL_WORKER_IDENTITY_PREFIX?: string
   TEMPORAL_SHOW_STACK_SOURCES?: string
+  TEMPORAL_DISABLE_WORKFLOW_CONTEXT?: string
 }
 
 const truthyValues = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
@@ -52,6 +53,7 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     ALLOW_INSECURE_TLS: read('ALLOW_INSECURE_TLS'),
     TEMPORAL_WORKER_IDENTITY_PREFIX: read('TEMPORAL_WORKER_IDENTITY_PREFIX'),
     TEMPORAL_SHOW_STACK_SOURCES: read('TEMPORAL_SHOW_STACK_SOURCES'),
+    TEMPORAL_DISABLE_WORKFLOW_CONTEXT: read('TEMPORAL_DISABLE_WORKFLOW_CONTEXT'),
   }
 }
 
@@ -92,6 +94,7 @@ export interface TemporalConfig {
   workerIdentity: string
   workerIdentityPrefix: string
   showStackTraceSources?: boolean
+  workflowContextBypass: boolean
 }
 
 export interface TLSCertPair {
@@ -161,6 +164,8 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
   const tls = await buildTlsConfig(env, options)
   const showStackTraceSources =
     coerceBoolean(env.TEMPORAL_SHOW_STACK_SOURCES) ?? options.defaults?.showStackTraceSources ?? false
+  const workflowContextBypass =
+    coerceBoolean(env.TEMPORAL_DISABLE_WORKFLOW_CONTEXT) ?? options.defaults?.workflowContextBypass ?? false
 
   return {
     host,
@@ -174,6 +179,7 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     workerIdentity,
     workerIdentityPrefix,
     showStackTraceSources,
+    workflowContextBypass,
   }
 }
 
@@ -183,4 +189,8 @@ export const temporalDefaults = {
   namespace: DEFAULT_NAMESPACE,
   taskQueue: DEFAULT_TASK_QUEUE,
   workerIdentityPrefix: DEFAULT_IDENTITY_PREFIX,
-} satisfies Pick<TemporalConfig, 'host' | 'port' | 'namespace' | 'taskQueue' | 'workerIdentityPrefix'>
+  workflowContextBypass: false,
+} satisfies Pick<
+  TemporalConfig,
+  'host' | 'port' | 'namespace' | 'taskQueue' | 'workerIdentityPrefix' | 'workflowContextBypass'
+>

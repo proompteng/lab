@@ -55,6 +55,39 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
 
 ## Workflow surface
 
+Workflow handlers receive a rich context that captures command intents deterministically. Alongside `input` you now get:
+
+- `activities.schedule(type, args, options)` – buffers a `SCHEDULE_ACTIVITY_TASK` command. Activity IDs default to `activity-{n}` and inherit the workflow task queue unless overridden.
+- `timers.start({ timeoutMs })` – emits a `START_TIMER` command and returns a handle for bookkeeping.
+- `childWorkflows.start(type, args, options)` – records `START_CHILD_WORKFLOW_EXECUTION` with optional `workflowId`, retry policy, and task queue overrides.
+- `signals.signal(name, args, options)` – queues `SIGNAL_EXTERNAL_WORKFLOW_EXECUTION` for another run or child.
+- `continueAsNew(options)` – records a `CONTINUE_AS_NEW_WORKFLOW_EXECUTION` command and short-circuits the current run.
+- `determinism.now()` / `determinism.random()` – shims for wall clock time and randomness that log values into the replay ledger so replays must produce identical sequences.
+
+Example:
+
+```ts
+import { Effect } from 'effect'
+import * as Schema from 'effect/Schema'
+import { defineWorkflow } from '@proompteng/temporal-bun-sdk/workflow'
+
+export const workflows = [
+  defineWorkflow('greet', Schema.Array(Schema.String), ({ input, activities, timers, determinism }) => {
+    const [name = 'Temporal'] = input
+    return Effect.flatMap(activities.schedule('recordGreeting', [name]), () =>
+      Effect.flatMap(timers.start({ timeoutMs: 1_000 }), () =>
+        Effect.sync(() => {
+          const iso = new Date(determinism.now()).toISOString()
+          return `Greeting enqueued for ${name} at ${iso}`
+        }),
+      ),
+    )
+  }),
+]
+```
+
+On each workflow task the executor compares newly emitted intents, random values, and logical timestamps against the stored determinism state. Mismatches raise `WorkflowNondeterminismError` and cause the worker to fail the task with `WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR`, mirroring Temporal’s official SDK behavior. You can temporarily revert to the legacy “complete or fail only” mode by setting `TEMPORAL_DISABLE_WORKFLOW_CONTEXT=1`.
+
 ## Effect service integration
 
 ```ts

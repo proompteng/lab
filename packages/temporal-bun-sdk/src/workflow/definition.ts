@@ -1,13 +1,11 @@
 import type { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
+import type { WorkflowContext } from './context'
+
 export type WorkflowSchema<I> = Schema.Schema<I>
 
 const defaultWorkflowSchema = Schema.Array(Schema.Unknown) as Schema.Schema<readonly unknown[]>
-
-export interface WorkflowContext<I> {
-  readonly input: I
-}
 
 export type WorkflowHandler<I, O> = (context: WorkflowContext<I>) => Effect.Effect<O, unknown, never>
 

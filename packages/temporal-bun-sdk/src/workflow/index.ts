@@ -1,3 +1,7 @@
+export * from './commands'
+export * from './context'
 export * from './definition'
+export * from './determinism'
+export * from './errors'
 export { WorkflowExecutor } from './executor'
 export { WorkflowRegistry } from './registry'

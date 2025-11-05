@@ -30,6 +30,8 @@ import {
 } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from '../proto/temporal/api/workflowservice/v1/service_pb'
 import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
+import type { WorkflowDeterminismState } from '../workflow/determinism'
+import { WorkflowNondeterminismError } from '../workflow/errors'
 import { WorkflowExecutor } from '../workflow/executor'
 import { WorkflowRegistry } from '../workflow/registry'
 import { type ActivityContext, type ActivityInfo, runWithActivityContext } from './activity-context'
@@ -78,7 +80,11 @@ export class WorkerRuntime {
 
     const registry = new WorkflowRegistry()
     registry.registerMany(workflows)
-    const executor = new WorkflowExecutor({ registry, dataConverter })
+    const executor = new WorkflowExecutor({
+      registry,
+      dataConverter,
+      bypassDeterministicContext: config.workflowContextBypass,
+    })
 
     let workflowService: WorkflowServiceClient
     if (options.workflowService) {
@@ -112,6 +118,7 @@ export class WorkerRuntime {
   readonly #namespace: string
   readonly #taskQueue: string
   readonly #identity: string
+  #determinismState: Map<string, WorkflowDeterminismState>
   #running = false
   #abortController: AbortController | null = null
   #runPromise: Promise<void> | null = null
@@ -136,6 +143,7 @@ export class WorkerRuntime {
     this.#namespace = params.namespace
     this.#taskQueue = params.taskQueue
     this.#identity = params.identity
+    this.#determinismState = new Map()
   }
 
   async run(): Promise<void> {
@@ -223,28 +231,59 @@ export class WorkerRuntime {
   async #processWorkflowTask(response: PollWorkflowTaskQueueResponse): Promise<void> {
     const workflowType = this.#resolveWorkflowType(response)
     const args = await this.#decodeWorkflowArgs(response)
+    const execution = this.#resolveWorkflowExecution(response)
+    const key = this.#buildDeterminismKey(execution.workflowId, execution.runId)
+    const previousState = key ? this.#determinismState.get(key) : undefined
 
     try {
-      const commands = await this.#executor.execute({ workflowType, arguments: args })
+      const output = await this.#executor.execute({
+        workflowType,
+        workflowId: execution.workflowId,
+        runId: execution.runId,
+        namespace: this.#namespace,
+        taskQueue: this.#taskQueue,
+        arguments: args,
+        determinismState: previousState,
+      })
+
+      if (key) {
+        if (output.completion === 'pending') {
+          this.#determinismState.set(key, output.determinismState)
+        } else {
+          this.#determinismState.delete(key)
+        }
+      }
+
       const completion = create(RespondWorkflowTaskCompletedRequestSchema, {
         taskToken: response.taskToken,
-        commands,
+        commands: output.commands,
         identity: this.#identity,
         namespace: this.#namespace,
       })
       await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
     } catch (error) {
+      if (key) {
+        this.#determinismState.delete(key)
+      }
+      if (error instanceof WorkflowNondeterminismError) {
+        await this.#failWorkflowTask(response, error, WorkflowTaskFailedCause.NON_DETERMINISTIC_ERROR)
+        return
+      }
       await this.#failWorkflowTask(response, error)
     }
   }
 
-  async #failWorkflowTask(response: PollWorkflowTaskQueueResponse, error: unknown): Promise<void> {
+  async #failWorkflowTask(
+    response: PollWorkflowTaskQueueResponse,
+    error: unknown,
+    cause: WorkflowTaskFailedCause = WorkflowTaskFailedCause.UNSPECIFIED,
+  ): Promise<void> {
     const failure = await encodeErrorToFailure(this.#dataConverter, error)
     const encoded = await encodeFailurePayloads(this.#dataConverter, failure)
 
     const failed = create(RespondWorkflowTaskFailedRequestSchema, {
       taskToken: response.taskToken,
-      cause: WorkflowTaskFailedCause.UNSPECIFIED,
+      cause,
       failure: encoded,
       identity: this.#identity,
       namespace: this.#namespace,
@@ -393,6 +432,19 @@ export class WorkerRuntime {
       }
     }
     throw new Error('Unable to resolve workflow type from workflow task')
+  }
+
+  #resolveWorkflowExecution(response: PollWorkflowTaskQueueResponse): { workflowId: string; runId: string } {
+    const workflowId = response.workflowExecution?.workflowId ?? ''
+    const runId = response.workflowExecution?.runId ?? ''
+    return { workflowId, runId }
+  }
+
+  #buildDeterminismKey(workflowId: string, runId: string): string | null {
+    if (!workflowId || !runId) {
+      return null
+    }
+    return `${this.#namespace}::${workflowId}::${runId}`
   }
 
   #findWorkflowStartedEvent(events: HistoryEvent[]): HistoryEvent | undefined {
