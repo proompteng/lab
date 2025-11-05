@@ -1,150 +1,75 @@
-import {
-  DefaultFailureConverter,
-  DefaultPayloadConverter,
-  type FailureConverter,
-  type LoadedDataConverter,
-  type PayloadCodec,
-  type PayloadConverter,
-} from '@temporalio/common'
-import {
-  decodeArrayFromPayloads,
-  decodeMapFromPayloads,
-  encodeMapToPayloads,
-  encodeToPayloads,
-} from '@temporalio/common/lib/internal-non-workflow/codec-helpers'
-import type { temporal } from '@temporalio/proto'
+import type { Payload } from '../../proto/temporal/api/common/v1/message_pb'
 
-import { jsonToPayload, payloadToJson } from './json-codec'
+import {
+  jsonToPayload,
+  jsonToPayloadMap,
+  jsonToPayloads,
+  payloadMapToJson,
+  payloadsToJson,
+  payloadToJson,
+} from './json-codec'
 
-export type Payload = temporal.api.common.v1.IPayload
-export type Payloads = temporal.api.common.v1.IPayloads
 export type PayloadMap = Record<string, Payload>
-export type DataConverter = LoadedDataConverter
 
-export interface CreateDataConverterOptions {
-  payloadConverter?: PayloadConverter
-  failureConverter?: FailureConverter
-  payloadCodecs?: PayloadCodec[]
+export interface DataConverter {
+  toPayload(value: unknown): Promise<Payload>
+  fromPayload(payload: Payload | null | undefined): Promise<unknown>
+  toPayloads(values: unknown[]): Promise<Payload[] | undefined>
+  fromPayloads(payloads: Payload[] | null | undefined): Promise<unknown[]>
+  toPayloadMap(map: Record<string, unknown> | undefined): Promise<PayloadMap | undefined>
+  fromPayloadMap(map: PayloadMap | null | undefined): Promise<Record<string, unknown> | undefined>
 }
 
-export const createDataConverter = (options: CreateDataConverterOptions = {}): DataConverter => ({
-  payloadConverter: options.payloadConverter ?? new DefaultPayloadConverter(),
-  failureConverter: options.failureConverter ?? new DefaultFailureConverter(),
-  payloadCodecs: [...(options.payloadCodecs ?? [])],
-})
+class JsonDataConverter implements DataConverter {
+  async toPayload(value: unknown): Promise<Payload> {
+    return jsonToPayload(value)
+  }
 
-export const createDefaultDataConverter = (): DataConverter => createDataConverter()
+  async fromPayload(payload: Payload | null | undefined): Promise<unknown> {
+    return payloadToJson(payload)
+  }
+
+  async toPayloads(values: unknown[]): Promise<Payload[] | undefined> {
+    if (!values || values.length === 0) {
+      return undefined
+    }
+    return jsonToPayloads(values)
+  }
+
+  async fromPayloads(payloads: Payload[] | null | undefined): Promise<unknown[]> {
+    if (!payloads || payloads.length === 0) {
+      return []
+    }
+    return payloadsToJson(payloads)
+  }
+
+  async toPayloadMap(map: Record<string, unknown> | undefined): Promise<PayloadMap | undefined> {
+    return jsonToPayloadMap(map)
+  }
+
+  async fromPayloadMap(map: PayloadMap | null | undefined): Promise<Record<string, unknown> | undefined> {
+    return payloadMapToJson(map)
+  }
+}
+
+export const createDefaultDataConverter = (): DataConverter => new JsonDataConverter()
 
 export const encodeValuesToPayloads = async (
   converter: DataConverter,
   values: unknown[],
-): Promise<Payload[] | undefined> => {
-  if (values.length === 0) {
-    return undefined
-  }
-  return await encodeToPayloads(converter, ...values)
-}
+): Promise<Payload[] | undefined> => converter.toPayloads(values)
 
 export const decodePayloadsToValues = async (
   converter: DataConverter,
   payloads: Payload[] | null | undefined,
-): Promise<unknown[]> => {
-  if (!payloads || payloads.length === 0) {
-    return []
-  }
-  return await decodeArrayFromPayloads(converter, payloads)
-}
+): Promise<unknown[]> => converter.fromPayloads(payloads)
 
 export const encodeMapValuesToPayloads = async (
   converter: DataConverter,
   map: Record<string, unknown> | undefined,
-): Promise<PayloadMap | undefined> => {
-  if (map === undefined) {
-    return undefined
-  }
-  if (Object.keys(map).length === 0) {
-    return {}
-  }
-  return await encodeMapToPayloads(converter, map)
-}
+): Promise<PayloadMap | undefined> => converter.toPayloadMap(map)
 
 export const decodePayloadMapToValues = async (
   converter: DataConverter,
   map: PayloadMap | null | undefined,
-): Promise<Record<string, unknown> | undefined> => {
-  if (map === undefined) {
-    return undefined
-  }
-  if (map === null) {
-    return undefined
-  }
-  if (Object.keys(map).length === 0) {
-    return {}
-  }
-  return await decodeMapFromPayloads(converter, map)
-}
-
-export const payloadsToJson = (payloads: Payload[] | undefined): unknown[] => {
-  if (!payloads || payloads.length === 0) {
-    return []
-  }
-  return payloads.map((payload) => payloadToJson(payload))
-}
-
-export const jsonToPayloads = (values: unknown[] | null | undefined): Payload[] => {
-  if (!values || values.length === 0) {
-    return []
-  }
-  return values.map((value) => jsonToPayload(value))
-}
-
-export const payloadMapToJson = (map: PayloadMap | undefined): Record<string, unknown> | undefined => {
-  if (map === undefined) {
-    return undefined
-  }
-  const entries = Object.entries(map)
-  if (entries.length === 0) {
-    return {}
-  }
-  return Object.fromEntries(entries.map(([key, payload]) => [key, payloadToJson(payload)]))
-}
-
-export const jsonToPayloadMap = (map: Record<string, unknown> | null | undefined): PayloadMap | undefined => {
-  if (map === undefined || map === null) {
-    return undefined
-  }
-  const entries = Object.entries(map)
-  if (entries.length === 0) {
-    return {}
-  }
-  return Object.fromEntries(entries.map(([key, value]) => [key, jsonToPayload(value)]))
-}
-
-export const encodeValuesToJson = async (converter: DataConverter, values: unknown[]): Promise<unknown[]> => {
-  const payloads = await encodeValuesToPayloads(converter, values)
-  return payloadsToJson(payloads)
-}
-
-export const decodeJsonToValues = async (converter: DataConverter, values: unknown[]): Promise<unknown[]> => {
-  const payloads = jsonToPayloads(values)
-  return await decodePayloadsToValues(converter, payloads)
-}
-
-export const encodeMapToJson = async (
-  converter: DataConverter,
-  map: Record<string, unknown> | undefined,
-): Promise<Record<string, unknown> | undefined> => {
-  const payloadMap = await encodeMapValuesToPayloads(converter, map)
-  return payloadMapToJson(payloadMap)
-}
-
-export const decodeJsonToMap = async (
-  converter: DataConverter,
-  map: Record<string, unknown> | null | undefined,
-): Promise<Record<string, unknown> | undefined> => {
-  const payloadMap = jsonToPayloadMap(map)
-  if (payloadMap === undefined) {
-    return undefined
-  }
-  return await decodePayloadMapToValues(converter, payloadMap)
-}
+): Promise<Record<string, unknown> | undefined> => converter.fromPayloadMap(map)

@@ -70,9 +70,9 @@ jobs:
           cd packages/temporal-bun-sdk
           bun scripts/start-temporal-cli.ts
 
-      - name: Run Temporal Connect integration tests
+      - name: Run Temporal Bun SDK tests
         run: |
-          TEMPORAL_TEST_SERVER=1 pnpm --filter @proompteng/temporal-bun-sdk exec bun test --test-name-pattern 'connect client integration'
+          TEMPORAL_TEST_SERVER=1 pnpm --filter @proompteng/temporal-bun-sdk test
 
       - name: Run TypeScript compilation
         run: pnpm exec tsc --project packages/temporal-bun-sdk/tsconfig.json

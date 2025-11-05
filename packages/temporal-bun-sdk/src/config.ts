@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
-import { z } from 'zod'
 
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 7233
@@ -8,25 +7,53 @@ const DEFAULT_NAMESPACE = 'default'
 const DEFAULT_TASK_QUEUE = 'prix'
 const DEFAULT_IDENTITY_PREFIX = 'temporal-bun-worker'
 
-const envSchema = z.object({
-  TEMPORAL_ADDRESS: z.string().trim().min(1).optional(),
-  TEMPORAL_HOST: z.string().trim().min(1).optional(),
-  TEMPORAL_GRPC_PORT: z.string().trim().regex(/^\d+$/, 'TEMPORAL_GRPC_PORT must be a positive integer').optional(),
-  TEMPORAL_NAMESPACE: z.string().trim().min(1).default(DEFAULT_NAMESPACE),
-  TEMPORAL_TASK_QUEUE: z.string().trim().min(1).default(DEFAULT_TASK_QUEUE),
-  TEMPORAL_API_KEY: z.string().trim().optional(),
-  TEMPORAL_TLS_CA_PATH: z.string().trim().min(1).optional(),
-  TEMPORAL_TLS_CERT_PATH: z.string().trim().min(1).optional(),
-  TEMPORAL_TLS_KEY_PATH: z.string().trim().min(1).optional(),
-  TEMPORAL_TLS_SERVER_NAME: z.string().trim().min(1).optional(),
-  TEMPORAL_ALLOW_INSECURE: z.string().trim().optional(),
-  ALLOW_INSECURE_TLS: z.string().trim().optional(),
-  TEMPORAL_WORKER_IDENTITY_PREFIX: z.string().trim().min(1).optional(),
-  TEMPORAL_SHOW_STACK_SOURCES: z.string().trim().optional(),
-})
+interface TemporalEnvironment {
+  TEMPORAL_ADDRESS?: string
+  TEMPORAL_HOST?: string
+  TEMPORAL_GRPC_PORT?: string
+  TEMPORAL_NAMESPACE?: string
+  TEMPORAL_TASK_QUEUE?: string
+  TEMPORAL_API_KEY?: string
+  TEMPORAL_TLS_CA_PATH?: string
+  TEMPORAL_TLS_CERT_PATH?: string
+  TEMPORAL_TLS_KEY_PATH?: string
+  TEMPORAL_TLS_SERVER_NAME?: string
+  TEMPORAL_ALLOW_INSECURE?: string
+  ALLOW_INSECURE_TLS?: string
+  TEMPORAL_WORKER_IDENTITY_PREFIX?: string
+  TEMPORAL_SHOW_STACK_SOURCES?: string
+}
 
 const truthyValues = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
 const falsyValues = new Set(['0', 'false', 'f', 'no', 'n', 'off'])
+
+const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
+  const read = (key: string) => {
+    const value = env[key]
+    if (typeof value !== 'string') {
+      return undefined
+    }
+    const trimmed = value.trim()
+    return trimmed.length === 0 ? undefined : trimmed
+  }
+
+  return {
+    TEMPORAL_ADDRESS: read('TEMPORAL_ADDRESS'),
+    TEMPORAL_HOST: read('TEMPORAL_HOST'),
+    TEMPORAL_GRPC_PORT: read('TEMPORAL_GRPC_PORT'),
+    TEMPORAL_NAMESPACE: read('TEMPORAL_NAMESPACE'),
+    TEMPORAL_TASK_QUEUE: read('TEMPORAL_TASK_QUEUE'),
+    TEMPORAL_API_KEY: read('TEMPORAL_API_KEY'),
+    TEMPORAL_TLS_CA_PATH: read('TEMPORAL_TLS_CA_PATH'),
+    TEMPORAL_TLS_CERT_PATH: read('TEMPORAL_TLS_CERT_PATH'),
+    TEMPORAL_TLS_KEY_PATH: read('TEMPORAL_TLS_KEY_PATH'),
+    TEMPORAL_TLS_SERVER_NAME: read('TEMPORAL_TLS_SERVER_NAME'),
+    TEMPORAL_ALLOW_INSECURE: read('TEMPORAL_ALLOW_INSECURE'),
+    ALLOW_INSECURE_TLS: read('ALLOW_INSECURE_TLS'),
+    TEMPORAL_WORKER_IDENTITY_PREFIX: read('TEMPORAL_WORKER_IDENTITY_PREFIX'),
+    TEMPORAL_SHOW_STACK_SOURCES: read('TEMPORAL_SHOW_STACK_SOURCES'),
+  }
+}
 
 const coerceBoolean = (raw: string | undefined): boolean | undefined => {
   if (!raw) return undefined
@@ -79,7 +106,7 @@ export interface TLSConfig {
 }
 
 const buildTlsConfig = async (
-  env: z.infer<typeof envSchema>,
+  env: TemporalEnvironment,
   options: LoadTemporalConfigOptions,
 ): Promise<TLSConfig | undefined> => {
   const caPath = env.TEMPORAL_TLS_CA_PATH
@@ -117,7 +144,7 @@ const buildTlsConfig = async (
 }
 
 export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}): Promise<TemporalConfig> => {
-  const env = envSchema.parse(options.env ?? process.env)
+  const env = sanitizeEnvironment(options.env ?? process.env)
   const port = parsePort(env.TEMPORAL_GRPC_PORT)
   const host = env.TEMPORAL_HOST ?? options.defaults?.host ?? DEFAULT_HOST
   const address = env.TEMPORAL_ADDRESS ?? options.defaults?.address ?? `${host}:${port}`

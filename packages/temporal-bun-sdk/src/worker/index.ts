@@ -1,8 +1,6 @@
-export type { BunWorkerHandle, CreateWorkerOptions, WorkerOptionOverrides } from '../worker'
+export type { BunWorkerHandle, CreateWorkerOptions } from '../worker'
 export { BunWorker, createWorker, runWorker } from '../worker'
-export {
-  destroyNativeWorker,
-  isZigWorkerBridgeEnabled,
-  maybeCreateNativeWorker,
-  WorkerRuntime,
-} from './runtime'
+export type { ActivityHandler, WorkerRuntimeOptions } from './runtime'
+export { WorkerRuntime } from './runtime'
+export type { WorkerRuntimeService } from './service'
+export { WorkerService } from './service'
