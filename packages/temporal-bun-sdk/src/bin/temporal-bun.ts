@@ -1,24 +1,15 @@
 #!/usr/bin/env bun
 
 import { existsSync, mkdirSync } from 'node:fs'
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, relative, resolve } from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
-import { pathToFileURL } from 'node:url'
-import type { DataConverter } from '../common/payloads'
-import type { TemporalConfig } from '../config'
-import { loadTemporalConfig } from '../config'
-import { createRuntime as createCoreRuntime } from '../core-bridge/runtime'
-import type { NativeClient } from '../internal/core-bridge/native'
-import { runReplayHistory } from '../workflow/runtime'
 
 type CommandHandler = (args: string[], flags: Record<string, string | boolean>) => Promise<void>
 
 const commands: Record<string, CommandHandler> = {
   init: handleInit,
-  check: handleCheck,
   'docker-build': handleDockerBuild,
-  replay: handleReplay,
   help: async () => {
     printHelp()
   },
@@ -39,7 +30,8 @@ export const main = async () => {
   try {
     await handler(args, flags)
   } catch (error) {
-    console.error((error as Error).message ?? error)
+    const message = error instanceof Error ? error.message : String(error)
+    console.error(message)
     exit(1)
   }
 }
@@ -48,293 +40,41 @@ export function parseArgs(argv: string[]) {
   const args: string[] = []
   const flags: Record<string, string | boolean> = {}
 
-  for (let i = 0; i < argv.length; i++) {
-    const value = argv[i]
+  for (let index = 0; index < argv.length; index++) {
+    const value = argv[index]
     if (!value.startsWith('-')) {
       args.push(value)
       continue
     }
 
-    const flag = value.replace(/^-+/, '')
-    const next = argv[i + 1]
-
+    const key = value.replace(/^-+/, '')
+    const next = argv[index + 1]
     if (next && !next.startsWith('-')) {
-      flags[flag] = next
-      i++
-    } else {
-      flags[flag] = true
+      flags[key] = next
+      index++
+      continue
     }
+
+    flags[key] = true
   }
 
   return { args, flags }
 }
 
-type NativeBridge = typeof import('../internal/core-bridge/native').native
-let cachedNativeBridge: NativeBridge | undefined
+function printHelp() {
+  console.log(`temporal-bun <command> [options]
 
-const loadNativeBridge = async (): Promise<NativeBridge> => {
-  if (!cachedNativeBridge) {
-    const module = await import('../internal/core-bridge/native')
-    cachedNativeBridge = module.native
-  }
-  return cachedNativeBridge
-}
+Commands:
+  init [directory]        Scaffold a new Temporal worker project
+  docker-build            Build a Docker image for the current project
+  help                    Show this help message
 
-type CheckDeps = {
-  loadConfig?: typeof loadTemporalConfig
-  nativeBridge?: NativeBridge
-  log?: (message: string) => void
-}
-
-export const formatTemporalAddress = (address: string, hasTls: boolean): string => {
-  if (/^[a-z]+:\/\//i.test(address)) {
-    return address
-  }
-  return `${hasTls ? 'https' : 'http'}://${address}`
-}
-
-export async function handleCheck(
-  args: string[],
-  flags: Record<string, string | boolean>,
-  deps: CheckDeps = {},
-): Promise<void> {
-  const loadConfig = deps.loadConfig ?? loadTemporalConfig
-  const log = deps.log ?? console.log
-  const nativeBridge = deps.nativeBridge ?? (await loadNativeBridge())
-
-  const config = await loadConfig()
-  if (config.allowInsecureTls) {
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
-  }
-
-  const namespaceFlag = typeof flags.namespace === 'string' ? flags.namespace.trim() : ''
-  const namespaceArg = args[0]?.trim()
-  const namespace = namespaceFlag || namespaceArg || config.namespace
-
-  const hasProtocol = /^[a-z]+:\/\//i.test(config.address)
-  const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
-  const address = hasProtocol ? config.address : formatTemporalAddress(config.address, shouldUseTls)
-
-  const runtime = nativeBridge.createRuntime({})
-  let client: NativeClient | undefined
-
-  try {
-    const clientConfig: Record<string, unknown> = {
-      address,
-      namespace,
-      identity: config.workerIdentity,
-      allowInsecureTls: config.allowInsecureTls,
-    }
-
-    if (config.apiKey) {
-      clientConfig.apiKey = config.apiKey
-    }
-
-    if (config.tls) {
-      clientConfig.tls = serializeTlsConfig(config.tls)
-    }
-
-    client = await nativeBridge.createClient(runtime, clientConfig)
-
-    const describePayload = await nativeBridge.describeNamespace(client, namespace)
-    log(
-      [
-        `Temporal connection successful.`,
-        `  Address:    ${address}`,
-        `  Namespace:  ${namespace}`,
-        `  Payload:    ${describePayload.byteLength} bytes (DescribeNamespace)`,
-      ].join('\n'),
-    )
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`Failed to reach Temporal at ${config.address}: ${message}`)
-  } finally {
-    if (client) {
-      nativeBridge.clientShutdown(client)
-    }
-    nativeBridge.runtimeShutdown(runtime)
-  }
-}
-
-const serializeTlsConfig = (tls: NonNullable<TemporalConfig['tls']>) => {
-  const serialized: Record<string, unknown> = {}
-  if (tls.serverRootCACertificate) {
-    serialized.serverRootCACertificate = tls.serverRootCACertificate.toString('base64')
-  }
-  if (tls.serverNameOverride) {
-    serialized.serverNameOverride = tls.serverNameOverride
-  }
-  if (tls.clientCertPair) {
-    serialized.clientCertPair = {
-      crt: tls.clientCertPair.crt.toString('base64'),
-      key: tls.clientCertPair.key.toString('base64'),
-    }
-  }
-  return serialized
-}
-
-type LoadedHistory = {
-  source: string
-  history: string
-  workflowId?: string
-  runId?: string
-  namespace?: string
-  taskQueue?: string
-}
-
-async function handleReplay(args: string[], flags: Record<string, string | boolean>): Promise<void> {
-  if (process.env.TEMPORAL_BUN_SDK_USE_ZIG !== '1') {
-    throw new Error(
-      'Deterministic replay requires TEMPORAL_BUN_SDK_USE_ZIG=1. Set the environment variable and rebuild the Zig bridge.',
-    )
-  }
-
-  if (args.length === 0) {
-    throw new Error('Provide at least one workflow history file or directory to replay.')
-  }
-
-  const workflowsPathFlag = typeof flags['workflows-path'] === 'string' ? (flags['workflows-path'] as string) : ''
-  if (!workflowsPathFlag) {
-    throw new Error('Replay command requires --workflows-path <path> pointing to compiled workflows.')
-  }
-
-  const workflowsPath = resolve(cwd(), workflowsPathFlag)
-  const namespaceFlag = typeof flags.namespace === 'string' ? (flags.namespace as string) : undefined
-  const taskQueueFlag = typeof flags['task-queue'] === 'string' ? (flags['task-queue'] as string) : undefined
-  const identityFlag = typeof flags.identity === 'string' ? (flags.identity as string) : undefined
-  const converterModule = typeof flags.converter === 'string' ? (flags.converter as string) : undefined
-
-  const histories = await loadReplayHistories(args)
-  if (histories.length === 0) {
-    throw new Error('No workflow history files were discovered under the provided paths.')
-  }
-
-  const dataConverter = converterModule ? await loadReplayDataConverter(converterModule) : undefined
-  const runtime = createCoreRuntime()
-
-  try {
-    for (const history of histories) {
-      const label = history.source
-      console.log(`Replaying history ${label}…`)
-      try {
-        await runReplayHistory({
-          runtime,
-          workflowsPath,
-          dataConverter,
-          namespace: namespaceFlag,
-          taskQueue: taskQueueFlag,
-          identity: identityFlag,
-          history: history.history,
-          workflowId: history.workflowId,
-          runId: history.runId,
-        })
-        console.log(`✔ Replay succeeded for ${label}`)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        throw new Error(`Replay failed for ${label}: ${message}`)
-      }
-    }
-    console.log(
-      `Replayed ${histories.length} workflow ${histories.length === 1 ? 'history' : 'histories'} successfully.`,
-    )
-  } finally {
-    await runtime.shutdown()
-  }
-}
-
-const loadReplayDataConverter = async (moduleSpecifier: string): Promise<DataConverter> => {
-  const absolute = resolve(cwd(), moduleSpecifier)
-  const url = pathToFileURL(absolute).href
-  let loaded: unknown
-
-  try {
-    loaded = await import(url)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`Failed to load data converter module at ${moduleSpecifier}: ${message}`)
-  }
-
-  const candidate = await resolveDataConverter(loaded)
-  if (!isDataConverter(candidate)) {
-    throw new Error(
-      `Module ${moduleSpecifier} did not export a DataConverter. Export "createDataConverter()", "dataConverter", or a default value.`,
-    )
-  }
-  return candidate
-}
-
-const resolveDataConverter = async (module: unknown): Promise<unknown> => {
-  if (module && typeof module === 'object') {
-    const record = module as Record<string, unknown>
-    if (typeof record.createDataConverter === 'function') {
-      return await record.createDataConverter()
-    }
-    if (record.dataConverter) {
-      return record.dataConverter
-    }
-    if (typeof record.default === 'function') {
-      return await record.default()
-    }
-    if (record.default) {
-      return record.default
-    }
-  }
-  return undefined
-}
-
-const isDataConverter = (value: unknown): value is DataConverter => {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-  const record = value as Record<string, unknown>
-  return 'payloadConverter' in record && 'failureConverter' in record && Array.isArray(record.payloadCodecs)
-}
-
-const loadReplayHistories = async (inputs: string[]): Promise<LoadedHistory[]> => {
-  const histories: LoadedHistory[] = []
-  for (const input of inputs) {
-    const absolute = resolve(cwd(), input)
-    let stats: Awaited<ReturnType<typeof stat>>
-    try {
-      stats = await stat(absolute)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`Unable to access history path "${input}": ${message}`)
-    }
-
-    if (stats.isDirectory()) {
-      const entries = await readdir(absolute)
-      entries.sort()
-      for (const entry of entries) {
-        const fullPath = join(absolute, entry)
-        const entryStats = await stat(fullPath)
-        if (entryStats.isFile() && isHistoryFile(fullPath)) {
-          histories.push(await readHistoryFile(fullPath))
-        }
-      }
-      continue
-    }
-
-    if (stats.isFile()) {
-      histories.push(await readHistoryFile(absolute))
-    }
-  }
-
-  return histories
-}
-
-const readHistoryFile = async (filePath: string): Promise<LoadedHistory> => {
-  const contents = await readFile(filePath, 'utf8')
-  const source = relative(cwd(), filePath) || filePath
-  return {
-    source,
-    history: contents,
-  }
-}
-
-const isHistoryFile = (filePath: string): boolean => {
-  const lower = filePath.toLowerCase()
-  return lower.endsWith('.json') || lower.endsWith('.history')
+Options:
+  --force                 Overwrite existing files during init
+  --tag <name>            Image tag for docker-build (default: temporal-worker:latest)
+  --context <path>        Build context for docker-build (default: .)
+  --file <path>           Dockerfile path for docker-build (default: ./Dockerfile)
+`)
 }
 
 async function handleInit(args: string[], flags: Record<string, string | boolean>) {
@@ -389,29 +129,6 @@ async function handleDockerBuild(_args: string[], flags: Record<string, string |
   }
 }
 
-function printHelp() {
-  console.log(`temporal-bun <command> [options]
-
-Commands:
-  init [directory]        Scaffold a new Temporal worker project
-  check [namespace]       Verify Temporal connectivity using the native bridge
-  docker-build            Build a Docker image for the current project
-  replay <paths...>       Replay workflow histories against compiled workflows
-  help                    Show this help message
-
-Options:
-  --force                 Overwrite existing files during init
-  --namespace <name>      Target namespace for the check command (default from env/config)
-  --tag <name>            Image tag for docker-build (default: temporal-worker:latest)
-  --context <path>        Build context for docker-build (default: .)
-  --file <path>           Dockerfile path for docker-build (default: ./Dockerfile)
-  --workflows-path <path> Workflow entry file used when replaying histories (required for replay)
-  --converter <path>      Module exporting a DataConverter for replay (optional)
-  --task-queue <name>     Override task queue associated with replayed histories
-  --identity <value>      Identity reported by the replay worker (default: temporal-bun-replay-<pid>)
-`)
-}
-
 export function inferPackageName(dir: string): string {
   const base = basename(resolve(dir))
   return (
@@ -444,6 +161,7 @@ export function projectTemplates(name: string): Template[] {
           },
           dependencies: {
             '@proompteng/temporal-bun-sdk': '^0.1.0',
+            effect: '^3.2.0',
           },
           devDependencies: {
             'bun-types': '^1.1.20',
@@ -477,40 +195,28 @@ peer = true
       ),
     },
     {
-      path: 'src/activities/index.ts',
-      contents: `export type Activities = {
-  echo(input: { message: string }): Promise<string>
-  sleep(milliseconds: number): Promise<void>
-}
-
-export const echo: Activities['echo'] = async ({ message }) => {
-  return message
-}
-
-export const sleep: Activities['sleep'] = async (milliseconds) => {
-  await Bun.sleep(milliseconds)
-}
-`,
-    },
-    {
-      path: 'src/workflows/hello-workflow.ts',
-      contents: `import { proxyActivities } from '@proompteng/temporal-bun-sdk/workflow'
-import type { Activities } from '../activities/index.ts'
-
-const activities = proxyActivities<Activities>({
-  startToCloseTimeout: '1 minute',
-})
-
-export async function helloWorkflow(name: string): Promise<string> {
-  await activities.sleep(10)
-  return await activities.echo({ message: \`Hello, \${name}!\` })
-}
-`,
-    },
-    {
       path: 'src/workflows/index.ts',
-      contents: `export * from './hello-workflow.ts'
-`,
+      contents: [
+        "import { Effect } from 'effect'",
+        "import * as Schema from 'effect/Schema'",
+        "import { defineWorkflow } from '@proompteng/temporal-bun-sdk/workflow'",
+        '',
+        'export const workflows = [',
+        '  defineWorkflow(',
+        "    'helloWorkflow',",
+        '    Schema.Array(Schema.String),',
+        '    ({ input }) =>',
+        '      Effect.sync(() => {',
+        '        const [rawName] = input',
+        "        const name = typeof rawName === 'string' && rawName.length > 0 ? rawName : 'Temporal'",
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: template placeholder required in generated file
+        '        return `Hello, ${name}!`',
+        '      }),',
+        '  ),',
+        ']',
+        '',
+        'export default workflows',
+      ].join('\n'),
     },
     {
       path: 'src/worker.ts',
@@ -618,23 +324,24 @@ dist
     },
     {
       path: 'README.md',
-      contents: `# ${name}
-
-Generated with \`temporal-bun init\`.
-
-## Development
-
-\`\`\`bash
-bun install
-bun run dev
-\`\`\`
-
-## Packaging
-
-\`\`\`bash
-bun run docker:build --tag ${name}:latest
-\`\`\`
-`,
+      contents: [
+        `# ${name}`,
+        '',
+        'Generated with `temporal-bun init`.',
+        '',
+        '## Development',
+        '',
+        '```bash',
+        'bun install',
+        'bun run dev',
+        '```',
+        '',
+        '## Packaging',
+        '',
+        '```bash',
+        `bun run docker:build --tag ${name}:latest`,
+        '```',
+      ].join('\n'),
     },
   ]
 }

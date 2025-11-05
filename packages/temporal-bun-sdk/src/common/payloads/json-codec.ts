@@ -1,8 +1,7 @@
 import { Buffer } from 'node:buffer'
 
-import type { temporal } from '@temporalio/proto'
-
-type Payload = temporal.api.common.v1.IPayload
+import { create } from '@bufbuild/protobuf'
+import { type Payload, PayloadSchema } from '../../proto/temporal/api/common/v1/message_pb'
 
 const JSON_ENCODING = 'json/plain'
 const ENCODING_METADATA_KEY = 'encoding'
@@ -116,10 +115,10 @@ const tunnelToPayload = (envelope: PayloadTunnelEnvelope): Payload => {
 
   const decodedData = base64Decode(envelope.data)
 
-  return {
+  return create(PayloadSchema, {
     ...(metadata ? { metadata } : {}),
     ...(decodedData !== undefined ? { data: decodedData } : {}),
-  }
+  })
 }
 
 const isTunnelEnvelope = (value: unknown): value is Record<typeof PAYLOAD_TUNNEL_FIELD, PayloadTunnelEnvelope> => {
@@ -170,8 +169,51 @@ export const jsonToPayload = (value: unknown): Payload => {
     [ENCODING_METADATA_KEY]: textEncoder.encode(JSON_ENCODING),
   }
 
-  return {
+  return create(PayloadSchema, {
     metadata,
     data: dataBytes,
-  }
+  })
 }
+
+export const jsonToPayloads = (values: unknown[]): Payload[] => values.map((value) => jsonToPayload(value))
+
+export const payloadsToJson = (payloads: Payload[] | null | undefined): unknown[] => {
+  if (!payloads || payloads.length === 0) {
+    return []
+  }
+  return payloads.map((payload) => payloadToJson(payload))
+}
+
+export const jsonToPayloadMap = (map: Record<string, unknown> | undefined): PayloadMap | undefined => {
+  if (map === undefined || map === null) {
+    return undefined
+  }
+  const entries = Object.entries(map)
+  if (entries.length === 0) {
+    return {}
+  }
+  const result: Record<string, Payload> = {}
+  for (const [key, value] of entries) {
+    result[key] = jsonToPayload(value)
+  }
+  return result
+}
+
+export const payloadMapToJson = (
+  map: Record<string, Payload> | null | undefined,
+): Record<string, unknown> | undefined => {
+  if (map === undefined || map === null) {
+    return undefined
+  }
+  const entries = Object.entries(map)
+  if (entries.length === 0) {
+    return {}
+  }
+  const result: Record<string, unknown> = {}
+  for (const [key, payload] of entries) {
+    result[key] = payloadToJson(payload)
+  }
+  return result
+}
+
+type PayloadMap = Record<string, Payload>

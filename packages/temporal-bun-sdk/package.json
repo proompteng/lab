@@ -50,17 +50,9 @@
     "test": "bun test",
     "test:coverage": "bun test --coverage",
     "start:worker": "bun run dist/bin/start-worker.js",
-    "libs:download": "bun run scripts/download-temporal-libs.ts download",
-    "build:native": "bun run libs:download && zig build -Doptimize=ReleaseFast --build-file bruke/build.zig",
-    "build:native:zig": "bun run libs:download && zig build -Doptimize=ReleaseFast --build-file bruke/build.zig",
-    "build:native:zig:bundle": "bun run libs:download && bun run scripts/build-zig-artifacts.ts",
-    "build:native:zig:debug": "bun run libs:download && zig build -Doptimize=Debug --build-file bruke/build.zig",
     "temporal:start": "bun scripts/start-temporal-cli.ts",
     "temporal:stop": "bun scripts/stop-temporal-cli.ts",
-    "ci:native:zig": "bun run libs:download && sh -c \"zig build -Doptimize=ReleaseFast --build-file bruke/build.zig && zig build -Doptimize=Debug --build-file bruke/build.zig test\"",
-    "package:native:zig": "bun run scripts/package-zig-artifacts.ts",
-    "test:native:zig": "bun run libs:download && zig build -Doptimize=Debug --build-file bruke/build.zig test",
-    "prepack": "bun run build && bun run libs:download && bun run build:native:zig:bundle && bun run package:native:zig"
+    "prepack": "bun run build"
   },
   "engines": {
     "bun": ">=1.1.20"
@@ -69,12 +61,7 @@
     "@bufbuild/protobuf": "^2.1.0",
     "@connectrpc/connect": "^2.1.0",
     "@connectrpc/connect-node": "^2.1.0",
-    "@temporalio/common": "^1.13.0",
-    "@temporalio/proto": "^1.13.0",
-    "@temporalio/worker": "^1.13.0",
-    "@temporalio/workflow": "^1.13.0",
-    "long": "^5.2.3",
-    "zod": "^3.23.8"
+    "effect": "^3.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.7.5",

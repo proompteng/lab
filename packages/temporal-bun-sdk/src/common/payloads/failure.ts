@@ -1,32 +1,69 @@
+import { create } from '@bufbuild/protobuf'
 import {
-  decodeOptionalFailureToOptionalError,
-  decodeFailure as upstreamDecodeFailure,
-  encodeErrorToFailure as upstreamEncodeErrorToFailure,
-  encodeFailure as upstreamEncodeFailure,
-} from '@temporalio/common/lib/internal-non-workflow/codec-helpers'
-import type { temporal } from '@temporalio/proto'
-
+  ApplicationFailureInfoSchema,
+  type Failure,
+  FailureSchema,
+} from '../../proto/temporal/api/failure/v1/message_pb'
 import type { DataConverter } from './converter'
 
-export type Failure = temporal.api.failure.v1.IFailure
+const FAILURE_SOURCE = 'temporal-bun-sdk'
 
-export const encodeErrorToFailure = async (converter: DataConverter, error: unknown): Promise<Failure> =>
-  upstreamEncodeErrorToFailure(converter, error)
-
-export const encodeFailurePayloads = async (converter: DataConverter, failure: Failure): Promise<Failure> =>
-  upstreamEncodeFailure(converter.payloadCodecs, failure)
-
-export const decodeFailurePayloads = async (
-  converter: DataConverter,
-  failure: Failure | null | undefined,
-): Promise<Failure | null | undefined> => {
-  if (failure == null) {
-    return failure
+const normalizeError = (error: unknown): { name: string; message: string; stack?: string } => {
+  if (error instanceof Error) {
+    return {
+      name: error.name || 'Error',
+      message: error.message || error.toString(),
+      stack: error.stack,
+    }
   }
-  return await upstreamDecodeFailure(converter.payloadCodecs, failure)
+
+  if (typeof error === 'string') {
+    return { name: 'Error', message: error }
+  }
+
+  try {
+    return { name: 'Error', message: JSON.stringify(error) }
+  } catch {
+    return { name: 'Error', message: String(error) }
+  }
 }
 
-export const failureToError = async (
-  converter: DataConverter,
+export const encodeErrorToFailure = async (_converter: DataConverter, error: unknown): Promise<Failure> => {
+  const normalized = normalizeError(error)
+  return create(FailureSchema, {
+    message: normalized.message,
+    source: FAILURE_SOURCE,
+    stackTrace: normalized.stack ?? '',
+    failureInfo: {
+      case: 'applicationFailureInfo',
+      value: create(ApplicationFailureInfoSchema, {
+        type: normalized.name,
+        nonRetryable: false,
+      }),
+    },
+  })
+}
+
+export const encodeFailurePayloads = async (_converter: DataConverter, failure: Failure): Promise<Failure> => failure
+
+export const decodeFailurePayloads = async (
+  _converter: DataConverter,
   failure: Failure | null | undefined,
-): Promise<Error | undefined> => decodeOptionalFailureToOptionalError(converter, failure)
+): Promise<Failure | null | undefined> => failure
+
+export const failureToError = async (
+  _converter: DataConverter,
+  failure: Failure | null | undefined,
+): Promise<Error | undefined> => {
+  if (!failure) {
+    return undefined
+  }
+
+  const error = new Error(failure.message || 'Temporal workflow failed')
+  error.name =
+    failure.failureInfo?.case === 'applicationFailureInfo' ? failure.failureInfo.value.type || error.name : error.name
+  if (failure.stackTrace) {
+    error.stack = failure.stackTrace
+  }
+  return error
+}

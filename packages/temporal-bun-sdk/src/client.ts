@@ -2,8 +2,7 @@ import type { ClientSessionOptions, SecureClientSessionOptions } from 'node:http
 import { create, toBinary } from '@bufbuild/protobuf'
 import { type CallOptions, Code, ConnectError, createClient, type Transport } from '@connectrpc/connect'
 import { createGrpcTransport, type GrpcTransportOptions } from '@connectrpc/connect-node'
-import { z } from 'zod'
-import { createDefaultHeaders, mergeHeaders } from './client/headers'
+import { createDefaultHeaders, mergeHeaders, normalizeMetadataHeaders } from './client/headers'
 import {
   buildCancelRequest,
   buildQueryRequest,
@@ -16,6 +15,7 @@ import {
 } from './client/serialization'
 import {
   createWorkflowHandle,
+  type RetryPolicyOptions,
   type SignalWithStartOptions,
   type StartWorkflowOptions,
   type StartWorkflowResult,
@@ -23,7 +23,6 @@ import {
   type WorkflowHandle,
   type WorkflowHandleMetadata,
 } from './client/types'
-import { metadataHeadersSchema } from './client/validation'
 import { createDefaultDataConverter, type DataConverter, decodePayloadsToValues } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
 import type { Payload } from './proto/temporal/api/common/v1/message_pb'
@@ -39,53 +38,6 @@ import { WorkflowService } from './proto/temporal/api/workflowservice/v1/service
 
 type ClosableTransport = Transport & { close?: () => void | Promise<void> }
 type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
-
-const startWorkflowMetadataSchema = z.object({
-  runId: z.string().min(1),
-  workflowId: z.string().min(1),
-  namespace: z.string().min(1),
-  firstExecutionRunId: z.string().min(1).optional(),
-})
-
-const startWorkflowOptionsSchema = z.object({
-  workflowId: z.string().min(1),
-  workflowType: z.string().min(1),
-  args: z.array(z.unknown()).optional(),
-  taskQueue: z.string().min(1).optional(),
-  namespace: z.string().min(1).optional(),
-  identity: z.string().min(1).optional(),
-  cronSchedule: z.string().min(1).optional(),
-  memo: z.record(z.unknown()).optional(),
-  headers: z.record(z.unknown()).optional(),
-  searchAttributes: z.record(z.unknown()).optional(),
-  requestId: z.string().min(1).optional(),
-  workflowExecutionTimeoutMs: z.number().int().positive().optional(),
-  workflowRunTimeoutMs: z.number().int().positive().optional(),
-  workflowTaskTimeoutMs: z.number().int().positive().optional(),
-  retryPolicy: z
-    .object({
-      initialIntervalMs: z.number().int().positive().optional(),
-      maximumIntervalMs: z.number().int().positive().optional(),
-      maximumAttempts: z.number().int().optional(),
-      backoffCoefficient: z.number().positive().optional(),
-      nonRetryableErrorTypes: z.array(z.string().min(1)).optional(),
-    })
-    .optional(),
-})
-
-const terminateWorkflowOptionsSchema = z.object({
-  reason: z.string().optional(),
-  details: z.array(z.unknown()).optional(),
-  runId: z.string().min(1).optional(),
-  firstExecutionRunId: z.string().min(1).optional(),
-})
-
-const workflowHandleSchema = z.object({
-  workflowId: z.string().min(1),
-  namespace: z.string().min(1).optional(),
-  runId: z.string().min(1).optional(),
-  firstExecutionRunId: z.string().min(1).optional(),
-})
 
 export interface TemporalWorkflowClient {
   start(options: StartWorkflowOptions): Promise<StartWorkflowResult>
@@ -196,11 +148,11 @@ class TemporalClientImpl implements TemporalClient {
 
   async startWorkflow(options: StartWorkflowOptions): Promise<StartWorkflowResult> {
     this.ensureOpen()
-    const parsedOptions = startWorkflowOptionsSchema.parse(options)
+    const parsedOptions = sanitizeStartWorkflowOptions(options)
 
     const request = await buildStartWorkflowRequest(
       {
-        options: parsedOptions as StartWorkflowOptions,
+        options: parsedOptions,
         defaults: {
           namespace: this.namespace,
           identity: this.defaultIdentity,
@@ -220,8 +172,8 @@ class TemporalClientImpl implements TemporalClient {
 
   async signalWorkflow(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void> {
     this.ensureOpen()
-    const parsedHandle = workflowHandleSchema.parse(handle)
-    const resolvedHandle = resolveHandle(this.namespace, parsedHandle)
+    const resolvedHandle = resolveHandle(this.namespace, handle)
+    const normalizedSignalName = ensureNonEmptyString(signalName, 'signalName')
 
     const identity = this.defaultIdentity
     const entropy = createSignalRequestEntropy()
@@ -231,7 +183,7 @@ class TemporalClientImpl implements TemporalClient {
         workflowId: resolvedHandle.workflowId,
         runId: resolvedHandle.runId,
         firstExecutionRunId: resolvedHandle.firstExecutionRunId,
-        signalName,
+        signalName: normalizedSignalName,
         identity,
         args,
       },
@@ -242,7 +194,7 @@ class TemporalClientImpl implements TemporalClient {
     const request = await buildSignalRequest(
       {
         handle: resolvedHandle,
-        signalName,
+        signalName: normalizedSignalName,
         args,
         identity,
         requestId,
@@ -255,8 +207,7 @@ class TemporalClientImpl implements TemporalClient {
 
   async queryWorkflow(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown> {
     this.ensureOpen()
-    const parsedHandle = workflowHandleSchema.parse(handle)
-    const resolvedHandle = resolveHandle(this.namespace, parsedHandle)
+    const resolvedHandle = resolveHandle(this.namespace, handle)
 
     const request = await buildQueryRequest(resolvedHandle, queryName, args, this.dataConverter)
     const response = await this.workflowService.queryWorkflow(request, this.callOptions())
@@ -266,9 +217,8 @@ class TemporalClientImpl implements TemporalClient {
 
   async terminateWorkflow(handle: WorkflowHandle, options: TerminateWorkflowOptions = {}): Promise<void> {
     this.ensureOpen()
-    const parsedHandle = workflowHandleSchema.parse(handle)
-    const resolvedHandle = resolveHandle(this.namespace, parsedHandle)
-    const parsedOptions = terminateWorkflowOptionsSchema.parse(options)
+    const resolvedHandle = resolveHandle(this.namespace, handle)
+    const parsedOptions = sanitizeTerminateWorkflowOptions(options)
 
     const request = await buildTerminateRequest(resolvedHandle, parsedOptions, this.dataConverter, this.defaultIdentity)
     await this.workflowService.terminateWorkflowExecution(request, this.callOptions())
@@ -276,8 +226,7 @@ class TemporalClientImpl implements TemporalClient {
 
   async cancelWorkflow(handle: WorkflowHandle): Promise<void> {
     this.ensureOpen()
-    const parsedHandle = workflowHandleSchema.parse(handle)
-    const resolvedHandle = resolveHandle(this.namespace, parsedHandle)
+    const resolvedHandle = resolveHandle(this.namespace, handle)
 
     const request = buildCancelRequest(resolvedHandle, this.defaultIdentity)
     await this.workflowService.requestCancelWorkflowExecution(request, this.callOptions())
@@ -285,13 +234,20 @@ class TemporalClientImpl implements TemporalClient {
 
   async signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult> {
     this.ensureOpen()
-    const parsedOptions = startWorkflowOptionsSchema
-      .extend({ signalName: z.string().min(1), signalArgs: z.array(z.unknown()).optional() })
-      .parse(options)
+    const startOptions = sanitizeStartWorkflowOptions(options)
+    const signalName = ensureNonEmptyString(options.signalName, 'signalName')
+    const signalArgs = options.signalArgs ?? []
+    if (!Array.isArray(signalArgs)) {
+      throw new Error('signalArgs must be an array when provided')
+    }
 
     const request = await buildSignalWithStartRequest(
       {
-        options: parsedOptions as SignalWithStartOptions,
+        options: {
+          ...startOptions,
+          signalName,
+          signalArgs,
+        },
         defaults: {
           namespace: this.namespace,
           identity: this.defaultIdentity,
@@ -323,7 +279,7 @@ class TemporalClientImpl implements TemporalClient {
     if (this.closed) {
       throw new Error('Temporal client has already been shut down')
     }
-    const normalized = metadataHeadersSchema.parse(headers)
+    const normalized = normalizeMetadataHeaders(headers)
     this.headers = mergeHeaders(this.headers, normalized)
   }
 
@@ -357,12 +313,19 @@ class TemporalClientImpl implements TemporalClient {
       firstExecutionRunId?: string
     },
   ): StartWorkflowResult {
-    const parsed = startWorkflowMetadataSchema.parse({
-      runId: response.runId,
-      workflowId: metadata.workflowId,
-      namespace: metadata.namespace,
-      firstExecutionRunId: metadata.firstExecutionRunId,
-    }) as unknown as WorkflowHandleMetadata
+    const runId = ensureNonEmptyString(response.runId, 'runId')
+    const workflowId = ensureNonEmptyString(metadata.workflowId, 'workflowId')
+    const namespace = ensureNonEmptyString(metadata.namespace, 'namespace')
+    const firstExecutionRunId = metadata.firstExecutionRunId
+      ? ensureNonEmptyString(metadata.firstExecutionRunId, 'firstExecutionRunId')
+      : undefined
+
+    const parsed: WorkflowHandleMetadata = {
+      runId,
+      workflowId,
+      namespace,
+      firstExecutionRunId,
+    }
 
     return {
       ...parsed,
@@ -387,14 +350,14 @@ class TemporalClientImpl implements TemporalClient {
   }
 }
 
-const normalizeTemporalAddress = (address: string, useTls: boolean): string => {
+export const normalizeTemporalAddress = (address: string, useTls: boolean): string => {
   if (/^http(s)?:\/\//i.test(address)) {
     return address
   }
   return `${useTls ? 'https' : 'http'}://${address}`
 }
 
-const buildTransportOptions = (baseUrl: string, config: TemporalConfig): GrpcTransportOptions => {
+export const buildTransportOptions = (baseUrl: string, config: TemporalConfig): GrpcTransportOptions => {
   const nodeOptions: ClientSessionOptions | SecureClientSessionOptions = {}
 
   if (config.tls) {
@@ -408,10 +371,11 @@ const buildTransportOptions = (baseUrl: string, config: TemporalConfig): GrpcTra
   return {
     baseUrl,
     nodeOptions,
+    defaultTimeoutMs: 60_000,
   }
 }
 
-const applyTlsConfig = (options: ClientSessionOptions | SecureClientSessionOptions, tls: TLSConfig): void => {
+export const applyTlsConfig = (options: ClientSessionOptions | SecureClientSessionOptions, tls: TLSConfig): void => {
   const secure = options as SecureClientSessionOptions
   if (tls.serverRootCACertificate) {
     secure.ca = tls.serverRootCACertificate
@@ -425,12 +389,140 @@ const applyTlsConfig = (options: ClientSessionOptions | SecureClientSessionOptio
   }
 }
 
-const resolveHandle = (defaultNamespace: string, handle: z.infer<typeof workflowHandleSchema>): WorkflowHandle => ({
-  workflowId: handle.workflowId,
-  namespace: handle.namespace ?? defaultNamespace,
-  runId: handle.runId,
-  firstExecutionRunId: handle.firstExecutionRunId,
-})
+const ensureOptionalTrimmedString = (value: string | undefined, field: string, minLength = 0): string | undefined => {
+  if (value === undefined) {
+    return undefined
+  }
+  const trimmed = value.trim()
+  if (trimmed.length < minLength) {
+    throw new Error(`${field} must be at least ${minLength} characters`)
+  }
+  return trimmed
+}
+
+const ensureNonEmptyString = (value: string | undefined, field: string): string => {
+  const trimmed = ensureOptionalTrimmedString(value, field, 1)
+  if (trimmed === undefined) {
+    throw new Error(`${field} must be a non-empty string`)
+  }
+  return trimmed
+}
+
+const ensureOptionalPositiveInteger = (value: number | undefined, field: string): number | undefined => {
+  if (value === undefined) {
+    return undefined
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${field} must be a positive integer`)
+  }
+  return value
+}
+
+const ensureOptionalInteger = (
+  value: number | undefined,
+  field: string,
+  minimum = Number.MIN_SAFE_INTEGER,
+): number | undefined => {
+  if (value === undefined) {
+    return undefined
+  }
+  if (!Number.isInteger(value) || value < minimum) {
+    throw new Error(`${field} must be an integer greater than or equal to ${minimum}`)
+  }
+  return value
+}
+
+const ensureOptionalPositiveNumber = (value: number | undefined, field: string): number | undefined => {
+  if (value === undefined) {
+    return undefined
+  }
+  if (Number.isNaN(value) || value <= 0) {
+    throw new Error(`${field} must be a positive number`)
+  }
+  return value
+}
+
+const sanitizeRetryPolicy = (policy?: RetryPolicyOptions): RetryPolicyOptions | undefined => {
+  if (!policy) {
+    return undefined
+  }
+
+  const sanitized: RetryPolicyOptions = {}
+
+  sanitized.initialIntervalMs = ensureOptionalPositiveInteger(policy.initialIntervalMs, 'retryPolicy.initialIntervalMs')
+  sanitized.maximumIntervalMs = ensureOptionalPositiveInteger(policy.maximumIntervalMs, 'retryPolicy.maximumIntervalMs')
+  sanitized.maximumAttempts = ensureOptionalInteger(policy.maximumAttempts, 'retryPolicy.maximumAttempts', 0)
+  sanitized.backoffCoefficient = ensureOptionalPositiveNumber(
+    policy.backoffCoefficient,
+    'retryPolicy.backoffCoefficient',
+  )
+
+  if (policy.nonRetryableErrorTypes !== undefined) {
+    if (!Array.isArray(policy.nonRetryableErrorTypes)) {
+      throw new Error('retryPolicy.nonRetryableErrorTypes must be an array when provided')
+    }
+    sanitized.nonRetryableErrorTypes = policy.nonRetryableErrorTypes.map((type, index) =>
+      ensureNonEmptyString(type, `retryPolicy.nonRetryableErrorTypes[${index}]`),
+    )
+  }
+
+  return sanitized
+}
+
+const sanitizeStartWorkflowOptions = (options: StartWorkflowOptions): StartWorkflowOptions => {
+  const sanitized: StartWorkflowOptions = {
+    ...options,
+    workflowId: ensureNonEmptyString(options.workflowId, 'workflowId'),
+    workflowType: ensureNonEmptyString(options.workflowType, 'workflowType'),
+  }
+
+  sanitized.taskQueue = ensureOptionalTrimmedString(options.taskQueue, 'taskQueue', 1)
+  sanitized.namespace = ensureOptionalTrimmedString(options.namespace, 'namespace', 1)
+  sanitized.identity = ensureOptionalTrimmedString(options.identity, 'identity', 1)
+  sanitized.cronSchedule = ensureOptionalTrimmedString(options.cronSchedule, 'cronSchedule', 1)
+  sanitized.requestId = ensureOptionalTrimmedString(options.requestId, 'requestId', 1)
+
+  sanitized.workflowExecutionTimeoutMs = ensureOptionalPositiveInteger(
+    options.workflowExecutionTimeoutMs,
+    'workflowExecutionTimeoutMs',
+  )
+  sanitized.workflowRunTimeoutMs = ensureOptionalPositiveInteger(options.workflowRunTimeoutMs, 'workflowRunTimeoutMs')
+  sanitized.workflowTaskTimeoutMs = ensureOptionalPositiveInteger(
+    options.workflowTaskTimeoutMs,
+    'workflowTaskTimeoutMs',
+  )
+
+  sanitized.retryPolicy = sanitizeRetryPolicy(options.retryPolicy)
+
+  return sanitized
+}
+
+const sanitizeTerminateWorkflowOptions = (options: TerminateWorkflowOptions = {}): TerminateWorkflowOptions => {
+  if (options.details !== undefined && !Array.isArray(options.details)) {
+    throw new Error('details must be an array when provided')
+  }
+
+  return {
+    ...options,
+    reason: options.reason === undefined ? undefined : options.reason.trim(),
+    runId: ensureOptionalTrimmedString(options.runId, 'runId', 1),
+    firstExecutionRunId: ensureOptionalTrimmedString(options.firstExecutionRunId, 'firstExecutionRunId', 1),
+  }
+}
+
+const resolveHandle = (defaultNamespace: string, handle: WorkflowHandle): WorkflowHandle => {
+  const workflowId = ensureNonEmptyString(handle.workflowId, 'workflowId')
+  const namespace = ensureOptionalTrimmedString(handle.namespace, 'namespace', 1) ?? defaultNamespace
+  const runId = ensureOptionalTrimmedString(handle.runId, 'runId', 1)
+  const firstExecutionRunId = ensureOptionalTrimmedString(handle.firstExecutionRunId, 'firstExecutionRunId', 1)
+
+  return {
+    workflowId,
+    namespace,
+    runId,
+    firstExecutionRunId,
+  }
+}
 
 export type {
   SignalWithStartOptions,

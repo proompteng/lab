@@ -1,15 +1,16 @@
-import { proxyActivities } from '@temporalio/workflow'
+import { Effect } from 'effect'
+import * as Schema from 'effect/Schema'
 
-type Activities = {
-  echoActivity: (input: { message: string }) => Promise<string>
-  sleepActivity: (milliseconds: number) => Promise<void>
-}
+import { defineWorkflow } from '../workflow'
 
-const activities = proxyActivities<Activities>({
-  startToCloseTimeout: '1 minute',
-})
+export const workflows = [
+  defineWorkflow('helloTemporal', Schema.Array(Schema.String), ({ input }) =>
+    Effect.sync(() => {
+      const [rawName] = input
+      const name = typeof rawName === 'string' && rawName.length > 0 ? rawName : 'Temporal'
+      return `Hello, ${name}!`
+    }),
+  ),
+]
 
-export const helloTemporal = async (name: string): Promise<string> => {
-  await activities.sleepActivity(10)
-  return await activities.echoActivity({ message: `Hello, ${name}!` })
-}
+export default workflows

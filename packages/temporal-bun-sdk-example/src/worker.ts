@@ -1,11 +1,11 @@
 import { fileURLToPath } from 'node:url'
 import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
-import * as activities from './activities/index.ts'
 
+import activities from './activities/index.ts'
 const main = async () => {
   const { worker } = await createWorker({
-    activities,
     workflowsPath: fileURLToPath(new URL('./workflows/index.ts', import.meta.url)),
+    activities,
   })
 
   const shutdown = async (signal: string) => {

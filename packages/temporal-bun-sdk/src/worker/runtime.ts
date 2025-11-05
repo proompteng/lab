@@ -1,981 +1,436 @@
-import { Buffer } from 'node:buffer'
-
-import { CancelledFailure } from '@temporalio/common'
-import { coresdk, type google, type temporal } from '@temporalio/proto'
-import type Long from 'long'
+import { setTimeout as delay } from 'node:timers/promises'
+import { pathToFileURL } from 'node:url'
+import { create } from '@bufbuild/protobuf'
+import { createClient } from '@connectrpc/connect'
+import { createGrpcTransport } from '@connectrpc/connect-node'
+import { buildTransportOptions, normalizeTemporalAddress } from '../client'
 import {
   createDefaultDataConverter,
   type DataConverter,
   decodePayloadsToValues,
-  encodeErrorToFailure,
   encodeValuesToPayloads,
-} from '../common/payloads'
-import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from '../config'
+} from '../common/payloads/converter'
+import { encodeErrorToFailure, encodeFailurePayloads } from '../common/payloads/failure'
+import { loadTemporalConfig, type TemporalConfig } from '../config'
+import { PayloadsSchema } from '../proto/temporal/api/common/v1/message_pb'
+import { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
+import { WorkflowTaskFailedCause } from '../proto/temporal/api/enums/v1/failed_cause_pb'
+import type { HistoryEvent } from '../proto/temporal/api/history/v1/message_pb'
+import { TaskQueueSchema } from '../proto/temporal/api/taskqueue/v1/message_pb'
 import {
-  NativeBridgeError,
-  type NativeClient,
-  type Runtime as NativeRuntime,
-  type NativeWorker,
-  native,
-} from '../internal/core-bridge/native'
-import { type WorkflowActivationResult, WorkflowEngine } from '../workflow/runtime'
+  PollActivityTaskQueueRequestSchema,
+  type PollActivityTaskQueueResponse,
+  PollWorkflowTaskQueueRequestSchema,
+  type PollWorkflowTaskQueueResponse,
+  RespondActivityTaskCanceledRequestSchema,
+  RespondActivityTaskCompletedRequestSchema,
+  RespondActivityTaskFailedRequestSchema,
+  RespondWorkflowTaskCompletedRequestSchema,
+  RespondWorkflowTaskFailedRequestSchema,
+} from '../proto/temporal/api/workflowservice/v1/request_response_pb'
+import { WorkflowService } from '../proto/temporal/api/workflowservice/v1/service_pb'
+import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
+import { WorkflowExecutor } from '../workflow/executor'
+import { WorkflowRegistry } from '../workflow/registry'
 import { type ActivityContext, type ActivityInfo, runWithActivityContext } from './activity-context'
 
-const DEFAULT_NAMESPACE = 'default'
-const DEFAULT_IDENTITY_PREFIX = 'temporal-bun-worker'
+type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
 
-const shouldUseZigWorkerBridge = (): boolean => process.env.TEMPORAL_BUN_SDK_USE_ZIG === '1'
+const POLL_TIMEOUT_MS = 60_000
+const RESPOND_TIMEOUT_MS = 15_000
+
+export type { WorkflowServiceClient }
+
+export type ActivityHandler = (...args: unknown[]) => unknown | Promise<unknown>
 
 export interface WorkerRuntimeOptions {
-  workflowsPath: string
+  workflowsPath?: string
+  workflows?: WorkflowDefinitions
   activities?: Record<string, ActivityHandler>
   taskQueue?: string
   namespace?: string
-  concurrency?: { workflow?: number; activity?: number }
   dataConverter?: DataConverter
-  buildId: string
-}
-
-export interface NativeWorkerOptions {
-  runtime: NativeRuntime
-  client: NativeClient
-  namespace?: string
-  taskQueue?: string
   identity?: string
-  buildId: string
+  config?: TemporalConfig
+  workflowService?: WorkflowServiceClient
 }
 
-export const isZigWorkerBridgeEnabled = (): boolean => shouldUseZigWorkerBridge() && native.bridgeVariant === 'zig'
+export class WorkerRuntime {
+  static async create(options: WorkerRuntimeOptions = {}): Promise<WorkerRuntime> {
+    const config = options.config ?? (await loadTemporalConfig())
+    const dataConverter = options.dataConverter ?? createDefaultDataConverter()
 
-export const maybeCreateNativeWorker = (options: NativeWorkerOptions): NativeWorker | null => {
-  if (!shouldUseZigWorkerBridge()) {
-    return null
-  }
+    const namespace = options.namespace ?? config.namespace
+    if (!namespace) {
+      throw new Error('Temporal namespace must be provided')
+    }
 
-  if (native.bridgeVariant !== 'zig') {
-    throw new NativeBridgeError({
-      code: 2,
-      message: 'TEMPORAL_BUN_SDK_USE_ZIG=1 requires the Zig bridge, but a different native bridge variant was loaded.',
-      details: { bridgeVariant: native.bridgeVariant },
-    })
-  }
+    const taskQueue = options.taskQueue ?? config.taskQueue
+    if (!taskQueue) {
+      throw new Error('Temporal task queue must be provided')
+    }
 
-  const namespace = (options.namespace ?? DEFAULT_NAMESPACE).trim()
-  if (namespace.length === 0) {
-    throw new NativeBridgeError({
-      code: 3,
-      message: 'Worker namespace must be a non-empty string when TEMPORAL_BUN_SDK_USE_ZIG=1',
-    })
-  }
+    const identity = options.identity ?? config.workerIdentity
+    const workflows = await loadWorkflows(options.workflowsPath, options.workflows)
+    if (workflows.length === 0) {
+      throw new Error('No workflow definitions were registered; provide workflows or workflowsPath')
+    }
 
-  const taskQueue = options.taskQueue?.trim()
-  if (!taskQueue) {
-    throw new NativeBridgeError({
-      code: 3,
-      message: 'Worker taskQueue is required when TEMPORAL_BUN_SDK_USE_ZIG=1',
-    })
-  }
+    const registry = new WorkflowRegistry()
+    registry.registerMany(workflows)
+    const executor = new WorkflowExecutor({ registry, dataConverter })
 
-  const identity = options.identity?.trim().length
-    ? options.identity.trim()
-    : `${DEFAULT_IDENTITY_PREFIX}-${process.pid}`
+    let workflowService: WorkflowServiceClient
+    if (options.workflowService) {
+      workflowService = options.workflowService
+    } else {
+      const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
+      const baseUrl = normalizeTemporalAddress(config.address, shouldUseTls)
+      const transport = createGrpcTransport(buildTransportOptions(baseUrl, config))
+      workflowService = createClient(WorkflowService, transport)
+    }
 
-  const buildId = options.buildId?.trim()
-  if (!buildId) {
-    throw new NativeBridgeError({
-      code: 3,
-      message: 'Worker buildId must be a non-empty string when TEMPORAL_BUN_SDK_USE_ZIG=1',
-    })
-  }
-
-  try {
-    return native.createWorker(options.runtime, options.client, {
+    return new WorkerRuntime({
+      config,
+      workflowService,
+      dataConverter,
+      registry,
+      executor,
+      activities: options.activities ?? {},
       namespace,
       taskQueue,
       identity,
-      buildId,
-    })
-  } catch (error) {
-    if (error instanceof NativeBridgeError) {
-      throw error
-    }
-    throw new NativeBridgeError({
-      code: 2,
-      message: error instanceof Error ? error.message : String(error),
     })
   }
-}
 
-export const destroyNativeWorker = (worker: NativeWorker | null | undefined): void => {
-  if (!worker) {
-    return
-  }
-  native.destroyWorker(worker)
-}
-
-const formatTemporalAddress = (address: string, useTls: boolean): string => {
-  if (/^https?:\/\//i.test(address)) {
-    return address
-  }
-  return `${useTls ? 'https' : 'http'}://${address}`
-}
-
-const serializeTlsConfig = (tls?: TLSConfig): Record<string, unknown> | undefined => {
-  if (!tls) return undefined
-
-  const payload: Record<string, unknown> = {}
-  const encode = (buffer?: Buffer) => buffer?.toString('base64')
-
-  const caCertificate = encode(tls.serverRootCACertificate)
-  if (caCertificate) {
-    payload.serverRootCACertificate = caCertificate
-    payload.server_root_ca_cert = caCertificate
-  }
-
-  const clientCert = encode(tls.clientCertPair?.crt)
-  const clientKey = encode(tls.clientCertPair?.key)
-  if (clientCert && clientKey) {
-    const pair = { crt: clientCert, key: clientKey }
-    payload.clientCertPair = pair
-    payload.client_cert_pair = pair
-    payload.client_cert = clientCert
-    payload.client_private_key = clientKey
-  }
-
-  if (tls.serverNameOverride) {
-    payload.serverNameOverride = tls.serverNameOverride
-    payload.server_name_override = tls.serverNameOverride
-  }
-
-  return Object.keys(payload).length === 0 ? undefined : payload
-}
-
-type WorkerRuntimeState = 'idle' | 'running' | 'stopping' | 'stopped'
-
-interface WorkerHandles {
-  runtime: NativeRuntime
-  client: NativeClient
-  worker: NativeWorker
-}
-
-interface WorkerRuntimeContext {
-  namespace: string
-  identity: string
-  taskQueue: string
-  config: TemporalConfig
-  buildId: string
-}
-
-type ActivityHandler = (...args: unknown[]) => unknown | Promise<unknown>
-
-export class WorkerRuntime {
-  #handles: WorkerHandles
-  #context: WorkerRuntimeContext
-  #workflowEngine: WorkflowEngine
-  #activityHandlers: Record<string, ActivityHandler>
-  #state: WorkerRuntimeState = 'idle'
-  #dataConverter: DataConverter
+  readonly #config: TemporalConfig
+  readonly #workflowService: ReturnType<typeof createClient<typeof WorkflowService>>
+  readonly #dataConverter: DataConverter
+  readonly #registry: WorkflowRegistry
+  readonly #executor: WorkflowExecutor
+  readonly #activities: Record<string, ActivityHandler>
+  readonly #namespace: string
+  readonly #taskQueue: string
+  readonly #identity: string
+  #running = false
   #abortController: AbortController | null = null
   #runPromise: Promise<void> | null = null
-  #shutdownPromise: Promise<void> | null = null
-  #resolveShutdown?: () => void
-  #rejectShutdown?: (error: unknown) => void
-  #nativeShutdownRequested = false
-  #disposed = false
-  #activities = new Map<string, ActivityExecution>()
-  #pendingActivityRuns = new Set<Promise<void>>()
 
-  private constructor(
-    readonly options: WorkerRuntimeOptions,
-    handles: WorkerHandles,
-    context: WorkerRuntimeContext,
-    workflowEngine: WorkflowEngine,
-    dataConverter: DataConverter,
-  ) {
-    this.#handles = handles
-    this.#context = context
-    this.#workflowEngine = workflowEngine
-    this.#activityHandlers = { ...(options.activities ?? {}) }
-    this.#dataConverter = dataConverter
-  }
-
-  static async create(options: WorkerRuntimeOptions): Promise<WorkerRuntime> {
-    if (!isZigWorkerBridgeEnabled()) {
-      throw new NativeBridgeError({
-        code: 2,
-        message: 'WorkerRuntime.create requires TEMPORAL_BUN_SDK_USE_ZIG=1 and the Zig bridge.',
-        details: { bridgeVariant: native.bridgeVariant },
-      })
-    }
-
-    const config = await loadTemporalConfig()
-    if (config.allowInsecureTls) {
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
-    }
-
-    const namespace = (options.namespace ?? config.namespace ?? DEFAULT_NAMESPACE).trim()
-    if (namespace.length === 0) {
-      throw new NativeBridgeError({
-        code: 3,
-        message: 'Worker namespace must be configured when using the Zig bridge.',
-      })
-    }
-
-    const taskQueue = (options.taskQueue ?? config.taskQueue ?? '').trim()
-    if (taskQueue.length === 0) {
-      throw new NativeBridgeError({
-        code: 3,
-        message: 'Worker taskQueue must be configured when using the Zig bridge.',
-      })
-    }
-
-    const identity = config.workerIdentity?.trim().length
-      ? config.workerIdentity.trim()
-      : `${DEFAULT_IDENTITY_PREFIX}-${process.pid}`
-
-    const buildId = options.buildId?.trim()
-    if (!buildId) {
-      throw new NativeBridgeError({
-        code: 3,
-        message: 'Worker buildId must be configured when using the Zig bridge.',
-      })
-    }
-
-    const runtime = native.createRuntime({})
-    let client: NativeClient | null = null
-
-    try {
-      const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
-
-      const nativeConfig: Record<string, unknown> = {
-        address: formatTemporalAddress(config.address, shouldUseTls),
-        namespace,
-        identity,
-      }
-
-      if (config.apiKey) {
-        nativeConfig.apiKey = config.apiKey
-      }
-
-      const tlsPayload = serializeTlsConfig(config.tls)
-      if (tlsPayload) {
-        nativeConfig.tls = tlsPayload
-      }
-
-      if (config.allowInsecureTls) {
-        nativeConfig.allowInsecure = true
-      }
-
-      client = await native.createClient(runtime, nativeConfig)
-
-      const workerHandle = maybeCreateNativeWorker({
-        runtime,
-        client,
-        namespace,
-        taskQueue,
-        identity,
-        buildId,
-      })
-
-      if (!workerHandle) {
-        throw new NativeBridgeError({
-          code: 2,
-          message: 'Zig worker bridge is disabled; set TEMPORAL_BUN_SDK_USE_ZIG=1 to enable WorkerRuntime.',
-        })
-      }
-
-      const dataConverter = options.dataConverter ?? createDefaultDataConverter()
-
-      const workflowEngine = new WorkflowEngine({
-        workflowsPath: options.workflowsPath,
-        activities: options.activities,
-        showStackTraceSources: config.showStackTraceSources ?? false,
-        dataConverter,
-      })
-
-      return new WorkerRuntime(
-        options,
-        { runtime, client, worker: workerHandle },
-        { namespace, identity, taskQueue, config, buildId },
-        workflowEngine,
-        dataConverter,
-      )
-    } catch (_error) {
-      if (client) {
-        native.clientShutdown(client)
-      }
-      native.runtimeShutdown(runtime)
-      throw _error
-    }
+  private constructor(params: {
+    config: TemporalConfig
+    workflowService: ReturnType<typeof createClient<typeof WorkflowService>>
+    dataConverter: DataConverter
+    registry: WorkflowRegistry
+    executor: WorkflowExecutor
+    activities: Record<string, ActivityHandler>
+    namespace: string
+    taskQueue: string
+    identity: string
+  }) {
+    this.#config = params.config
+    this.#workflowService = params.workflowService
+    this.#dataConverter = params.dataConverter
+    this.#registry = params.registry
+    this.#executor = params.executor
+    this.#activities = params.activities
+    this.#namespace = params.namespace
+    this.#taskQueue = params.taskQueue
+    this.#identity = params.identity
   }
 
   async run(): Promise<void> {
-    if (this.#state === 'stopped') {
-      throw new Error('WorkerRuntime has already been shut down')
+    if (this.#running) {
+      return this.#runPromise ?? Promise.resolve()
     }
-
-    if (this.#state === 'running' || this.#state === 'stopping') {
-      return this.#shutdownPromise ?? Promise.resolve()
-    }
-
-    this.#state = 'running'
-    this.#nativeShutdownRequested = false
+    this.#running = true
     this.#abortController = new AbortController()
-    this.#shutdownPromise = new Promise<void>((resolve, reject) => {
-      this.#resolveShutdown = resolve
-      this.#rejectShutdown = reject
-    })
-
     const signal = this.#abortController.signal
-    const workflowLoopPromise = this.#workflowLoop(signal)
-    const activityLoopPromise = this.#activityLoop(signal)
-    const loopPromise = Promise.all([workflowLoopPromise, activityLoopPromise])
 
-    this.#runPromise = loopPromise
-      .then(() => this.#finalizeRun())
-      .catch((error) =>
-        this.#finalizeRun(error).then(() => {
-          throw error
-        }),
-      )
-      .finally(() => {
-        this.#resolveShutdown = undefined
-        this.#rejectShutdown = undefined
-        this.#shutdownPromise = null
-      })
+    this.#runPromise = Promise.all([this.#workflowLoop(signal), this.#activityLoop(signal)]).then(() => undefined)
 
-    return this.#shutdownPromise
+    await this.#runPromise
   }
 
-  async shutdown(_gracefulTimeoutMs?: number): Promise<void> {
-    void _gracefulTimeoutMs
-
-    if (this.#state === 'stopped') {
+  async shutdown(): Promise<void> {
+    if (!this.#running) {
       return
     }
-
-    if (this.#state === 'idle') {
-      this.#cancelAllActivities('Worker runtime shut down before start')
-      this.#disposeHandles()
-      this.#state = 'stopped'
-      return
-    }
-
-    if (this.#state === 'running' || this.#state === 'stopping') {
-      this.#state = 'stopping'
-      this.#abortController?.abort()
-      this.#cancelAllActivities('Worker runtime shutting down')
-      this.#requestNativeShutdown()
-      if (this.#runPromise) {
-        await this.#runPromise.catch((error) => {
-          throw error
-        })
-      }
-    }
-  }
-
-  #requestNativeShutdown(): void {
-    if (this.#disposed || this.#nativeShutdownRequested) {
-      return
-    }
-
-    if (!this.#handles.worker.handle) {
-      this.#nativeShutdownRequested = true
-      return
-    }
-
-    this.#nativeShutdownRequested = true
-
-    try {
-      native.worker.initiateShutdown(this.#handles.worker)
-    } catch (_error) {
-      try {
-        destroyNativeWorker(this.#handles.worker)
-      } catch (destroyError) {
-        this.#nativeShutdownRequested = false
-        throw destroyError
-      }
+    this.#running = false
+    this.#abortController?.abort()
+    if (this.#runPromise) {
+      await this.#runPromise
     }
   }
 
   async #workflowLoop(signal: AbortSignal): Promise<void> {
+    const request = create(PollWorkflowTaskQueueRequestSchema, {
+      namespace: this.#namespace,
+      taskQueue: create(TaskQueueSchema, { name: this.#taskQueue }),
+      identity: this.#identity,
+    })
+
     while (!signal.aborted) {
-      let payload: Uint8Array
       try {
-        payload = await native.worker.pollWorkflowTask(this.#handles.worker)
+        const response = await this.#workflowService.pollWorkflowTaskQueue(request, {
+          timeoutMs: POLL_TIMEOUT_MS,
+          signal,
+        })
+        if (!response.taskToken || response.taskToken.length === 0) {
+          continue
+        }
+        await this.#processWorkflowTask(response)
       } catch (error) {
         if (signal.aborted) {
           break
         }
-        throw error
+        console.error('[temporal-bun-sdk] workflow polling failed', error)
+        await delay(250)
       }
-
-      if (signal.aborted) {
-        break
-      }
-
-      if (payload.byteLength === 0) {
-        continue
-      }
-
-      await this.#processWorkflowActivation(payload)
     }
   }
 
   async #activityLoop(signal: AbortSignal): Promise<void> {
+    if (!this.#hasActivities()) {
+      return
+    }
+
+    const request = create(PollActivityTaskQueueRequestSchema, {
+      namespace: this.#namespace,
+      taskQueue: create(TaskQueueSchema, { name: this.#taskQueue }),
+      identity: this.#identity,
+    })
+
     while (!signal.aborted) {
-      let payload: Uint8Array | null
       try {
-        payload = await native.worker.pollActivityTask(this.#handles.worker)
+        const response = await this.#workflowService.pollActivityTaskQueue(request, {
+          timeoutMs: POLL_TIMEOUT_MS,
+          signal,
+        })
+        if (!response.taskToken || response.taskToken.length === 0) {
+          continue
+        }
+        await this.#processActivityTask(response)
       } catch (error) {
         if (signal.aborted) {
           break
         }
-        throw error
+        console.error('[temporal-bun-sdk] activity polling failed', error)
+        await delay(250)
       }
-
-      if (signal.aborted) {
-        break
-      }
-
-      if (payload === null || payload.byteLength === 0) {
-        continue
-      }
-
-      await this.#processActivityTask(payload)
     }
   }
 
-  async #processWorkflowActivation(bytes: Uint8Array): Promise<void> {
-    let activation: coresdk.workflow_activation.WorkflowActivation
-    try {
-      activation = coresdk.workflow_activation.WorkflowActivation.decode(bytes)
-    } catch (error) {
-      await this.#respondWorkflowFailure(undefined, error)
-      throw new Error(`Failed to decode workflow activation: ${(error as Error).message}`)
-    }
+  async #processWorkflowTask(response: PollWorkflowTaskQueueResponse): Promise<void> {
+    const workflowType = this.#resolveWorkflowType(response)
+    const args = await this.#decodeWorkflowArgs(response)
 
-    let result: WorkflowActivationResult
     try {
-      result = await this.#workflowEngine.processWorkflowActivation(activation, {
-        namespace: this.#context.namespace,
-        taskQueue: this.#context.taskQueue,
+      const commands = await this.#executor.execute({ workflowType, arguments: args })
+      const completion = create(RespondWorkflowTaskCompletedRequestSchema, {
+        taskToken: response.taskToken,
+        commands,
+        identity: this.#identity,
+        namespace: this.#namespace,
       })
+      await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
     } catch (error) {
-      await this.#respondWorkflowFailure(activation.runId, error)
-      throw error
+      await this.#failWorkflowTask(response, error)
     }
-
-    await applyDataConverterToWorkflowCompletion(this.#dataConverter, result.completion)
-
-    const payload = coresdk.workflow_completion.WorkflowActivationCompletion.encode(result.completion).finish()
-    native.worker.completeWorkflowTask(this.#handles.worker, payload)
   }
 
-  async #processActivityTask(bytes: Uint8Array): Promise<void> {
-    let task: coresdk.activity_task.ActivityTask
-    try {
-      task = coresdk.activity_task.ActivityTask.decode(bytes)
-    } catch (error) {
-      throw new Error(`Failed to decode activity task: ${(error as Error).message}`)
-    }
+  async #failWorkflowTask(response: PollWorkflowTaskQueueResponse, error: unknown): Promise<void> {
+    const failure = await encodeErrorToFailure(this.#dataConverter, error)
+    const encoded = await encodeFailurePayloads(this.#dataConverter, failure)
 
-    if (!task.taskToken || task.taskToken.length === 0) {
-      throw new Error('Received activity task without a task token')
-    }
+    const failed = create(RespondWorkflowTaskFailedRequestSchema, {
+      taskToken: response.taskToken,
+      cause: WorkflowTaskFailedCause.UNSPECIFIED,
+      failure: encoded,
+      identity: this.#identity,
+      namespace: this.#namespace,
+    })
 
-    const taskToken = new Uint8Array(task.taskToken)
-    const tokenKey = activityTokenToKey(taskToken)
+    await this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS })
+  }
 
-    if (task.start) {
-      await this.#handleActivityStart(tokenKey, taskToken, task.start)
+  async #processActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
+    const cancelRequested = isActivityCancelRequested(response)
+
+    if (cancelRequested) {
+      await this.#cancelActivityTask(response)
       return
     }
 
-    if (task.cancel) {
-      await this.#handleActivityCancel(tokenKey, taskToken, task.cancel)
-      return
-    }
-
-    throw new Error('Received activity task without start or cancel payloads')
-  }
-
-  async #handleActivityStart(
-    tokenKey: string,
-    taskToken: Uint8Array,
-    start: coresdk.activity_task.IStart,
-  ): Promise<void> {
-    const activityType = start.activityType ?? ''
+    const activityType = response.activityType?.name
     if (!activityType) {
-      await this.#completeActivityFailure(taskToken, new Error('Activity type was not provided'))
+      await this.#failActivityTask(response, new Error('Activity task missing type'))
       return
     }
 
-    const handler = this.#activityHandlers[activityType]
+    const handler = this.#activities[activityType]
     if (!handler) {
-      await this.#completeActivityFailure(
-        taskToken,
-        new Error(`Activity handler not registered for type "${activityType}"`),
-      )
+      await this.#failActivityTask(response, new Error(`No handler registered for activity ${activityType}`))
       return
     }
 
-    if (this.#activities.has(tokenKey)) {
-      await this.#completeActivityFailure(
-        taskToken,
-        new Error(`Duplicate activity start received for token "${tokenKey}"`),
-      )
-      return
-    }
+    const args = await decodePayloadsToValues(this.#dataConverter, response.input?.payloads ?? [])
+    const context = this.#createActivityContext(response, cancelRequested)
 
-    const args = await decodePayloadsToValues(this.#dataConverter, extractPayloadArray(start.input))
-    const info: ActivityInfo = {
-      activityId: start.activityId ?? '',
-      activityType,
-      workflowNamespace: start.workflowNamespace ?? this.#context.namespace,
-      workflowType: start.workflowType ?? '',
-      workflowId: start.workflowExecution?.workflowId ?? '',
-      runId: start.workflowExecution?.runId ?? '',
-      taskQueue: this.#context.taskQueue,
-      attempt: start.attempt ?? 1,
-      isLocal: Boolean(start.isLocal),
-      heartbeatTimeoutMs: durationToMs(start.heartbeatTimeout),
-      scheduleToCloseTimeoutMs: durationToMs(start.scheduleToCloseTimeout),
-      startToCloseTimeoutMs: durationToMs(start.startToCloseTimeout),
-      scheduledTime: timestampToDate(start.scheduledTime),
-      startedTime: timestampToDate(start.startedTime),
-      currentAttemptScheduledTime: timestampToDate(start.currentAttemptScheduledTime),
-      lastHeartbeatDetails: await decodePayloadsToValues(
-        this.#dataConverter,
-        extractPayloadArray(start.heartbeatDetails),
-      ),
-    }
-
-    const context = new ActivityContextImpl(info, async (details) => {
-      await this.#recordActivityHeartbeat(taskToken, details)
-    })
-
-    const execution = new ActivityExecution({
-      tokenKey,
-      taskToken,
-      handler,
-      args,
-      context,
-      onSuccess: async (value) => {
-        await this.#completeActivitySuccess(taskToken, value)
-      },
-      onFailure: async (error) => {
-        await this.#completeActivityFailure(taskToken, error)
-      },
-      onCancelled: async (failure) => {
-        await this.#completeActivityCancelled(taskToken, failure)
-      },
-      onFinished: () => {
-        this.#onActivityFinished(tokenKey)
-      },
-    })
-
-    this.#activities.set(tokenKey, execution)
-    const runPromise = execution.start()
-    this.#pendingActivityRuns.add(runPromise)
-    runPromise.finally(() => {
-      this.#pendingActivityRuns.delete(runPromise)
-    })
-  }
-
-  async #handleActivityCancel(
-    tokenKey: string,
-    taskToken: Uint8Array,
-    cancel: coresdk.activity_task.ICancel,
-  ): Promise<void> {
-    const execution = this.#activities.get(tokenKey)
-    const failure = new CancelledFailure(
-      formatActivityCancelReason(cancel.reason),
-      describeCancellationDetails(cancel.details) ?? [],
-    )
-
-    if (execution) {
-      execution.requestCancel(failure)
-      return
-    }
-
-    await this.#completeActivityCancelled(taskToken, failure)
-  }
-
-  async #respondWorkflowFailure(runId: string | undefined, error: unknown): Promise<void> {
-    const failure = await encodeErrorToFailure(this.#dataConverter, normalizeError(error))
-    const completion = coresdk.workflow_completion.WorkflowActivationCompletion.create({
-      runId: runId ?? '',
-      failed: coresdk.workflow_completion.Failure.create({ failure }),
-    })
-    const payload = coresdk.workflow_completion.WorkflowActivationCompletion.encode(completion).finish()
-    native.worker.completeWorkflowTask(this.#handles.worker, payload)
-  }
-
-  async #recordActivityHeartbeat(taskToken: Uint8Array, details?: unknown[]): Promise<void> {
-    const payloads =
-      details && details.length > 0 ? await encodeValuesToPayloads(this.#dataConverter, details) : undefined
-    const heartbeat = coresdk.ActivityHeartbeat.create({
-      taskToken,
-      ...(payloads && payloads.length > 0 ? { details: payloads } : {}),
-    })
-    const buffer = coresdk.ActivityHeartbeat.encode(heartbeat).finish()
-    native.worker.recordActivityHeartbeat(this.#handles.worker, buffer)
-  }
-
-  async #completeActivitySuccess(taskToken: Uint8Array, result: unknown): Promise<void> {
-    let payload: temporal.api.common.v1.IPayload | undefined
-    if (result !== undefined) {
-      const payloads = await encodeValuesToPayloads(this.#dataConverter, [result])
-      payload = payloads?.[0]
-    }
-    const completed = coresdk.activity_result.Success.create(payload ? { result: payload } : {})
-    const executionResult = coresdk.activity_result.ActivityExecutionResult.create({ completed })
-    const completion = coresdk.ActivityTaskCompletion.create({
-      taskToken,
-      result: executionResult,
-    })
-    const buffer = coresdk.ActivityTaskCompletion.encode(completion).finish()
-    native.worker.completeActivityTask(this.#handles.worker, buffer)
-  }
-
-  async #completeActivityFailure(taskToken: Uint8Array, error: unknown): Promise<void> {
-    const failure = await encodeErrorToFailure(this.#dataConverter, normalizeError(error))
-    const failed = coresdk.activity_result.Failure.create({ failure })
-    const executionResult = coresdk.activity_result.ActivityExecutionResult.create({ failed })
-    const completion = coresdk.ActivityTaskCompletion.create({
-      taskToken,
-      result: executionResult,
-    })
-    const buffer = coresdk.ActivityTaskCompletion.encode(completion).finish()
-    native.worker.completeActivityTask(this.#handles.worker, buffer)
-  }
-
-  async #completeActivityCancelled(taskToken: Uint8Array, failure: CancelledFailure): Promise<void> {
-    const failurePayload = await encodeErrorToFailure(this.#dataConverter, failure)
-    const cancelled = coresdk.activity_result.Cancellation.create({ failure: failurePayload })
-    const executionResult = coresdk.activity_result.ActivityExecutionResult.create({ cancelled })
-    const completion = coresdk.ActivityTaskCompletion.create({
-      taskToken,
-      result: executionResult,
-    })
-    const buffer = coresdk.ActivityTaskCompletion.encode(completion).finish()
-    native.worker.completeActivityTask(this.#handles.worker, buffer)
-  }
-
-  #onActivityFinished(tokenKey: string): void {
-    this.#activities.delete(tokenKey)
-  }
-
-  async #awaitOpenActivities(): Promise<void> {
-    while (this.#pendingActivityRuns.size > 0) {
-      const pending = Array.from(this.#pendingActivityRuns)
-      await Promise.allSettled(pending)
-    }
-  }
-
-  #cancelAllActivities(reason: string): void {
-    for (const execution of this.#activities.values()) {
-      execution.requestCancel(new CancelledFailure(reason))
-    }
-  }
-
-  async #finalizeRun(error?: unknown): Promise<void> {
     try {
-      await this.#awaitOpenActivities()
-    } finally {
-      this.#disposeHandles()
-      this.#state = 'stopped'
-      if (error === undefined) {
-        this.#resolveShutdown?.()
-      } else {
-        this.#rejectShutdown?.(error)
-      }
-    }
-  }
-
-  #disposeHandles(): void {
-    if (this.#disposed) {
-      return
-    }
-    this.#disposed = true
-    this.#nativeShutdownRequested = true
-
-    this.#cancelAllActivities('Worker runtime disposed')
-    this.#workflowEngine.shutdown()
-    if (this.#handles.worker.handle) {
-      let finalizeError: unknown = null
-      try {
-        native.worker.finalizeShutdown(this.#handles.worker)
-      } catch (error) {
-        finalizeError = error
-      }
-
-      try {
-        destroyNativeWorker(this.#handles.worker)
-      } catch (destroyError) {
-        if (finalizeError) {
-          if (finalizeError instanceof Error) {
-            ;(finalizeError as Error & { cause?: unknown }).cause = destroyError
-          }
-          throw finalizeError
-        }
-        throw destroyError
-      }
-
-      if (finalizeError) {
-        throw finalizeError
-      }
-    }
-    native.clientShutdown(this.#handles.client)
-    native.runtimeShutdown(this.#handles.runtime)
-  }
-}
-
-class ActivityExecution {
-  readonly tokenKey: string
-  readonly taskToken: Uint8Array
-  #handler: ActivityHandler
-  #args: unknown[]
-  #context: ActivityContextImpl
-  #runPromise: Promise<void> | null = null
-  #onSuccess: (value: unknown) => Promise<void>
-  #onFailure: (error: unknown) => Promise<void>
-  #onCancelled: (failure: CancelledFailure) => Promise<void>
-  #onFinished: () => void
-
-  constructor(params: {
-    tokenKey: string
-    taskToken: Uint8Array
-    handler: ActivityHandler
-    args: unknown[]
-    context: ActivityContextImpl
-    onSuccess: (value: unknown) => Promise<void>
-    onFailure: (error: unknown) => Promise<void>
-    onCancelled: (failure: CancelledFailure) => Promise<void>
-    onFinished: () => void
-  }) {
-    this.tokenKey = params.tokenKey
-    this.taskToken = params.taskToken
-    this.#handler = params.handler
-    this.#args = params.args
-    this.#context = params.context
-    this.#onSuccess = params.onSuccess
-    this.#onFailure = params.onFailure
-    this.#onCancelled = params.onCancelled
-    this.#onFinished = params.onFinished
-  }
-
-  start(): Promise<void> {
-    if (!this.#runPromise) {
-      this.#runPromise = this.#run()
-    }
-    return this.#runPromise
-  }
-
-  requestCancel(failure: CancelledFailure): void {
-    this.#context.requestCancel(failure)
-  }
-
-  async #run(): Promise<void> {
-    try {
-      const result = await this.#runWithCancellation()
-      if (this.#context.isCancellationRequested) {
-        const failure = this.#context.cancellationFailure ?? new CancelledFailure('Activity cancelled')
-        await this.#onCancelled(failure)
-      } else {
-        await this.#onSuccess(result)
-      }
+      const result = await runWithActivityContext(context, async () => await handler(...args))
+      const payloads = await encodeValuesToPayloads(this.#dataConverter, result === undefined ? [] : [result])
+      const completion = create(RespondActivityTaskCompletedRequestSchema, {
+        taskToken: response.taskToken,
+        identity: this.#identity,
+        namespace: this.#namespace,
+        result: payloads && payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined,
+      })
+      await this.#workflowService.respondActivityTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
     } catch (error) {
-      const err = normalizeError(error)
-      if (err instanceof CancelledFailure) {
-        await this.#onCancelled(err)
-      } else {
-        await this.#onFailure(err)
+      if (isAbortError(error)) {
+        await this.#cancelActivityTask(response)
+        return
       }
-    } finally {
-      this.#onFinished()
-      this.#context.close()
+      await this.#failActivityTask(response, error)
     }
   }
 
-  async #runWithCancellation(): Promise<unknown> {
-    const activityPromise = runWithActivityContext(this.#context, async () => {
-      return await this.#handler(...this.#args)
+  async #failActivityTask(response: PollActivityTaskQueueResponse, error: unknown): Promise<void> {
+    const failure = await encodeErrorToFailure(this.#dataConverter, error)
+    const encoded = await encodeFailurePayloads(this.#dataConverter, failure)
+
+    const request = create(RespondActivityTaskFailedRequestSchema, {
+      taskToken: response.taskToken,
+      identity: this.#identity,
+      namespace: this.#namespace,
+      failure: encoded,
     })
-    const cancellationPromise = this.#context.waitForCancellation().then((failure) => {
-      throw failure
-    })
-    return await Promise.race([activityPromise, cancellationPromise])
+
+    await this.#workflowService.respondActivityTaskFailed(request, { timeoutMs: RESPOND_TIMEOUT_MS })
   }
-}
 
-class ActivityContextImpl implements ActivityContext {
-  readonly info: ActivityInfo
-  #recordHeartbeat: (details: unknown[]) => void | Promise<void>
-  #abortController = new AbortController()
-  #cancelled = false
-  #cancelFailure: CancelledFailure | null = null
-  #cancelHandlers = new Set<(failure: CancelledFailure) => void>()
-  #resolveCancel?: (failure: CancelledFailure) => void
-  #cancelPromise: Promise<CancelledFailure>
+  async #cancelActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
+    const request = create(RespondActivityTaskCanceledRequestSchema, {
+      taskToken: response.taskToken,
+      identity: this.#identity,
+      namespace: this.#namespace,
+    })
 
-  constructor(info: ActivityInfo, recordHeartbeat: (details: unknown[]) => void | Promise<void>) {
-    this.info = info
-    this.#recordHeartbeat = recordHeartbeat
-    this.#cancelPromise = new Promise<CancelledFailure>((resolve) => {
-      this.#resolveCancel = (failure) => {
-        if (this.#cancelled) {
-          return
+    await this.#workflowService.respondActivityTaskCanceled(request, { timeoutMs: RESPOND_TIMEOUT_MS })
+  }
+
+  #createActivityContext(response: PollActivityTaskQueueResponse, cancelRequested: boolean): ActivityContext {
+    const abortController = new AbortController()
+    if (cancelRequested) {
+      abortController.abort()
+    }
+
+    const info: ActivityInfo = {
+      activityId: response.activityId ?? '',
+      activityType: response.activityType?.name ?? '',
+      workflowNamespace: response.workflowNamespace ?? this.#namespace,
+      workflowType: response.workflowType?.name ?? '',
+      workflowId: response.workflowExecution?.workflowId ?? '',
+      runId: response.workflowExecution?.runId ?? '',
+      taskQueue: this.#taskQueue,
+      attempt: Number(response.attempt ?? 1),
+      isLocal: false,
+      scheduledTime: response.scheduledTime ? new Date(Number(response.scheduledTime.seconds) * 1000) : undefined,
+      startedTime: response.startedTime ? new Date(Number(response.startedTime.seconds) * 1000) : undefined,
+      currentAttemptScheduledTime: response.currentAttemptScheduledTime
+        ? new Date(Number(response.currentAttemptScheduledTime.seconds) * 1000)
+        : undefined,
+      heartbeatTimeoutMs: undefined,
+      scheduleToCloseTimeoutMs: undefined,
+      startToCloseTimeoutMs: undefined,
+      lastHeartbeatDetails: [],
+    }
+
+    return {
+      info,
+      cancellationSignal: abortController.signal,
+      get isCancellationRequested() {
+        return abortController.signal.aborted
+      },
+      async heartbeat() {
+        // Heartbeats are not yet implemented in the pure TypeScript runtime.
+      },
+      throwIfCancelled() {
+        if (abortController.signal.aborted) {
+          const error = new Error('Activity cancelled')
+          error.name = 'AbortError'
+          throw error
         }
-        this.#cancelled = true
-        this.#cancelFailure = failure
-        this.#abortController.abort()
-        for (const handler of this.#cancelHandlers) {
-          try {
-            handler(failure)
-          } catch {
-            // ignore handler errors
-          }
-        }
-        resolve(failure)
-      }
-    })
-  }
-
-  get cancellationSignal(): AbortSignal {
-    return this.#abortController.signal
-  }
-
-  get isCancellationRequested(): boolean {
-    return this.#cancelled
-  }
-
-  get cancellationFailure(): CancelledFailure | null {
-    return this.#cancelFailure
-  }
-
-  heartbeat(...details: unknown[]): Promise<void> {
-    return Promise.resolve(this.#recordHeartbeat(details))
-  }
-
-  throwIfCancelled(): void {
-    if (this.#cancelFailure) {
-      throw this.#cancelFailure
+      },
     }
   }
 
-  waitForCancellation(): Promise<CancelledFailure> {
-    return this.#cancelPromise
+  async #decodeWorkflowArgs(response: PollWorkflowTaskQueueResponse): Promise<unknown[]> {
+    const startEvent = this.#findWorkflowStartedEvent(response.history?.events ?? [])
+    if (!startEvent) {
+      return []
+    }
+    const attributes =
+      startEvent.attributes?.case === 'workflowExecutionStartedEventAttributes'
+        ? startEvent.attributes.value
+        : undefined
+    if (!attributes) {
+      return []
+    }
+    const inputPayloads = attributes.input?.payloads ?? []
+    return await decodePayloadsToValues(this.#dataConverter, inputPayloads)
   }
 
-  requestCancel(failure: CancelledFailure): void {
-    this.#resolveCancel?.(failure)
+  #resolveWorkflowType(response: PollWorkflowTaskQueueResponse): string {
+    if (response.workflowType?.name) {
+      return response.workflowType.name
+    }
+    const startEvent = this.#findWorkflowStartedEvent(response.history?.events ?? [])
+    if (startEvent?.attributes?.case === 'workflowExecutionStartedEventAttributes') {
+      const workflowTypeName = startEvent.attributes.value.workflowType?.name
+      if (workflowTypeName) {
+        return workflowTypeName
+      }
+    }
+    throw new Error('Unable to resolve workflow type from workflow task')
   }
 
-  close(): void {
-    this.#cancelHandlers.clear()
+  #findWorkflowStartedEvent(events: HistoryEvent[]): HistoryEvent | undefined {
+    return events.find(
+      (event) =>
+        event.eventType === EventType.WORKFLOW_EXECUTION_STARTED &&
+        event.attributes?.case === 'workflowExecutionStartedEventAttributes',
+    )
+  }
+
+  #hasActivities(): boolean {
+    return Object.keys(this.#activities).length > 0
   }
 }
 
-const extractPayloadArray = (
-  value: temporal.api.common.v1.IPayloads | temporal.api.common.v1.IPayload[] | null | undefined,
-): temporal.api.common.v1.IPayload[] => {
-  if (!value) {
+const isActivityCancelRequested = (response: PollActivityTaskQueueResponse): boolean =>
+  Boolean((response as { cancelRequested?: boolean }).cancelRequested)
+
+const isAbortError = (error: unknown): boolean => error instanceof Error && error.name === 'AbortError'
+
+async function loadWorkflows(
+  workflowsPath?: string,
+  overrides?: WorkflowDefinitions,
+): Promise<WorkflowDefinition<unknown, unknown>[]> {
+  if (overrides && overrides.length > 0) {
+    return [...overrides] as WorkflowDefinition<unknown, unknown>[]
+  }
+  if (!workflowsPath) {
     return []
   }
 
-  if (Array.isArray(value)) {
-    return value
+  const moduleUrl = pathToFileURL(workflowsPath)
+  const loaded = await import(moduleUrl.href)
+  const exported = (loaded.workflows ?? loaded.default) as unknown
+
+  if (Array.isArray(exported)) {
+    return exported as WorkflowDefinition<unknown, unknown>[]
   }
 
-  return value.payloads ?? []
-}
-
-export const applyDataConverterToWorkflowCompletion = async (
-  converter: DataConverter,
-  completion: coresdk.workflow_completion.IWorkflowActivationCompletion,
-): Promise<void> => {
-  void converter
-  void completion
-}
-
-const describeCancellationDetails = (
-  details: coresdk.activity_task.IActivityCancellationDetails | null | undefined,
-): unknown[] | undefined => {
-  if (!details) {
-    return undefined
-  }
-  const flags: Record<string, boolean> = {}
-  if (details.isNotFound) flags.isNotFound = true
-  if (details.isCancelled) flags.isCancelled = true
-  if (details.isPaused) flags.isPaused = true
-  if (details.isTimedOut) flags.isTimedOut = true
-  if (details.isWorkerShutdown) flags.isWorkerShutdown = true
-  if (details.isReset) flags.isReset = true
-  return Object.keys(flags).length > 0 ? [flags] : undefined
-}
-
-const formatActivityCancelReason = (reason: coresdk.activity_task.ActivityCancelReason | null | undefined): string => {
-  switch (reason) {
-    case coresdk.activity_task.ActivityCancelReason.NOT_FOUND:
-      return 'Activity not found'
-    case coresdk.activity_task.ActivityCancelReason.TIMED_OUT:
-      return 'Activity timed out'
-    case coresdk.activity_task.ActivityCancelReason.WORKER_SHUTDOWN:
-      return 'Worker shutdown'
-    case coresdk.activity_task.ActivityCancelReason.PAUSED:
-      return 'Activity paused'
-    case coresdk.activity_task.ActivityCancelReason.RESET:
-      return 'Workflow reset'
-    default:
-      return 'Activity cancelled'
-  }
-}
-
-const activityTokenToKey = (token: Uint8Array): string => Buffer.from(token).toString('base64')
-
-const normalizeError = (error: unknown): Error => {
-  if (error instanceof Error) {
-    return error
-  }
-  return new Error(typeof error === 'string' ? error : JSON.stringify(error))
-}
-
-const timestampToDate = (timestamp: google.protobuf.ITimestamp | null | undefined): Date | undefined => {
-  if (!timestamp) {
-    return undefined
-  }
-  const seconds = toNumber(timestamp.seconds)
-  const millis = seconds * 1000 + Math.floor((timestamp.nanos ?? 0) / 1_000_000)
-  return new Date(millis)
-}
-
-const durationToMs = (duration: google.protobuf.IDuration | null | undefined): number | undefined => {
-  if (!duration) {
-    return undefined
-  }
-  const seconds = toNumber(duration.seconds)
-  return seconds * 1000 + Math.floor((duration.nanos ?? 0) / 1_000_000)
-}
-
-const toNumber = (value: Long | number | string | null | undefined): number => {
-  if (value === null || value === undefined) {
-    return 0
-  }
-  if (typeof value === 'number') {
-    return value
-  }
-  if (typeof value === 'string') {
-    return Number(value)
-  }
-  return value.toNumber()
-}
-
-export const __testing = {
-  ActivityContextImpl,
-  ActivityExecution,
-  activityTokenToKey,
-  formatActivityCancelReason,
-  describeCancellationDetails,
+  return []
 }
