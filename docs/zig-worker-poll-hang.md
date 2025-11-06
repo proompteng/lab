@@ -1,5 +1,9 @@
 # Temporal Bun SDK Zig Worker Poll Hang
 
+> **Historical note:** The `TEMPORAL_BUN_SDK_USE_ZIG` flag has been retired. This
+> document records legacy investigations for the Zig bridge; the supported path
+> is the TypeScript runtime.
+
 ## Summary
 - **Issue**: Bun-native worker built on the Zig bridge never receives workflow activations; `pollWorkflowTask` promise remains pending and smoke/integration tests hang.
 - **First observed**: Native integration suite (`packages/temporal-bun-sdk/tests/native.integration.test.ts`) started hanging after enabling the Zig bridge end-to-end path.
@@ -7,7 +11,7 @@
 
 ## Reproduction
 1. Ensure the Temporal test-server binary (CLI) is available on PATH.
-2. From the repo root, run:
+2. From the repo root, run (legacy Zig bridge scenario; the modern TypeScript runtime does not expose this flag):
    ```bash
    TEMPORAL_BUN_SDK_USE_ZIG=1 TEMPORAL_TEST_SERVER=1 pnpm --filter @proompteng/temporal-bun-sdk exec bun test native.integration.test.ts
    ```

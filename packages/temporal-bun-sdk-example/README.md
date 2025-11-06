@@ -13,7 +13,7 @@ Effect-powered activities, and CLI tooling.
   Effect runtime:
   - Do not disable the deterministic context unless explicitly testing legacy paths.
   - Activities/workflows should remain within Effect handlers to preserve replay guarantees.
-- **Optional native bridge flag:** Leave `TEMPORAL_BUN_SDK_USE_ZIG` unset; the example targets the pure TypeScript runtime exclusively.
+- **Native bridge:** The example targets the pure TypeScript runtime exclusively; native bridge flags are not supported.
 
 ## Quickstart
 
@@ -26,8 +26,6 @@ Effect-powered activities, and CLI tooling.
    export TEMPORAL_ADDRESS=127.0.0.1:7233
    export TEMPORAL_NAMESPACE=default
    export TEMPORAL_TASK_QUEUE=prix
-   # Optional: enable native bridge flag (not required for TypeScript runtime)
-   # export TEMPORAL_BUN_SDK_USE_ZIG=1
    ```
 3. (Optional) Start the Temporal CLI dev server:
    ```bash

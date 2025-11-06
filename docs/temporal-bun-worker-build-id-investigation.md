@@ -2,6 +2,10 @@
 
 **Last updated:** 2025-11-02  
 **Owner:** Codex automation (gregkonush workspace)  
+> **Historical note:** `TEMPORAL_BUN_SDK_USE_ZIG` has been retired; the Zig bridge
+> is no longer selectable at runtime. This document remains for archival
+> reference while the TypeScript runtime is the supported path.
+
 **Scope:** `packages/temporal-bun-sdk` Zig bridge (Bun runtime)  
 
 ---
@@ -22,7 +26,7 @@
 | Host | macOS 15 (arm64) |
 | Temporal CLI | `temporal server start-dev` via `pnpm --filter @proompteng/temporal-bun-sdk exec bun run scripts/start-temporal-cli.ts` |
 | Bun Runtime | `bun test` (bundled with repo) |
-| Feature Flag | `TEMPORAL_BUN_SDK_USE_ZIG=1` |
+| Feature Flag | _Removed (legacy `TEMPORAL_BUN_SDK_USE_ZIG`)_ |
 | Build ID | Derived automatically (`<identity>-build`) unless `TEMPORAL_WORKER_BUILD_ID` is set |
 
 ### Steps to Reproduce Hang (before fix)
