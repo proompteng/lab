@@ -13,7 +13,7 @@ Effect-powered activities, and CLI tooling.
   Effect runtime:
   - Do not disable the deterministic context unless explicitly testing legacy paths.
   - Activities/workflows should remain within Effect handlers to preserve replay guarantees.
-- **Optional Zig bridge:** Set `TEMPORAL_BUN_SDK_USE_ZIG=1` only when validating the experimental bridge; the default path uses the TypeScript runtime.
+- **Optional native bridge flag:** Leave `TEMPORAL_BUN_SDK_USE_ZIG` unset; the example targets the pure TypeScript runtime exclusively.
 
 ## Quickstart
 
@@ -26,7 +26,7 @@ Effect-powered activities, and CLI tooling.
    export TEMPORAL_ADDRESS=127.0.0.1:7233
    export TEMPORAL_NAMESPACE=default
    export TEMPORAL_TASK_QUEUE=prix
-   # Optional: enable Zig bridge
+   # Optional: enable native bridge flag (not required for TypeScript runtime)
    # export TEMPORAL_BUN_SDK_USE_ZIG=1
    ```
 3. (Optional) Start the Temporal CLI dev server:
@@ -71,7 +71,7 @@ Effect-powered activities, and CLI tooling.
 ```bash
 bun run docker:build --tag temporal-bun-sdk-example:latest
 ```
-The script produces a multi-stage image that runs `bun install`, bundles the Zig bridge artefacts from `@proompteng/temporal-bun-sdk`, and sets up the worker entrypoint.
+The script produces a multi-stage image that runs `bun install`, bundles the TypeScript runtime artefacts from `@proompteng/temporal-bun-sdk`, and sets up the worker entrypoint.
 
 ## Cleanup
 - Stop the worker with `Ctrl+C`.
