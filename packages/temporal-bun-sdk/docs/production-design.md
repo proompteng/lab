@@ -256,6 +256,8 @@ can contribute independently without re-planning.
   2. Cookbook recipes for activities, timers, signals, updates, heartbeats.
   3. Migration doc from Zig/Rust bridge.
   4. CLI docs reflect new commands and accessibility considerations.
+  5. Example project README documents runtime prerequisites, configuration requirements,
+     and Effect usage expectations so consumers can adopt the SDK confidently.
 
 ### TBS-009 – Release Automation
 
