@@ -354,6 +354,7 @@ can contribute independently without re-planning.
 - Migration path from the Rust/Zig bridge to pure TypeScript runtime.
 - Example apps: update `packages/temporal-bun-sdk-example` to use deterministic
   context primitives (`activities.schedule`, `timers.start`, `determinism.now`).
+  - Refresh `apps/docs/content/docs/temporal-bun-sdk.mdx` with: installation instructions, quickstart tutorials (worker + client), configuration guides, and release notes so new users can adopt the SDK confidently.
 
 ## Error Handling & Observability
 
