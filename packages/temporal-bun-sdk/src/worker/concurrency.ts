@@ -180,9 +180,10 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
         fibers,
         (fiber) =>
           Fiber.await(fiber).pipe(
-            Effect.flatMap((exit) =>
-              Exit.match(exit, {
-                onFailure: (cause) => (Cause.isInterruptedOnly(cause) ? Effect.void : Effect.failCause(cause)),
+            Effect.flatMap(
+              Exit.matchEffect({
+                onFailure: (cause) =>
+                  Cause.isInterruptedOnly(cause) ? Effect.void : logTaskFailure('scheduler shutdown', cause),
                 onSuccess: () => Effect.void,
               }),
             ),
