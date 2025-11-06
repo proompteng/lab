@@ -1,137 +1,448 @@
 # Temporal Bun SDK – Production-Ready Design
 
-## Goals
+_Last updated: November 6, 2025_
 
-- Ship a Bun-first Temporal SDK that communicates with the Temporal service via Connect RPC, executes workflows entirely in TypeScript/Effect, and is published as a reliable npm package.
-- Replace the legacy Zig/Rust bridge while delivering Temporal-grade workflow execution, activity handling, replay, and operational tooling.
-- Provide a developer experience competitive with official Temporal SDKs: project scaffolding, schema-driven payloads, and clear documentation.
+## Purpose
+
+This document is the single source of truth for taking `@proompteng/temporal-bun-sdk`
+to a generally available release on npm that can be trusted by millions of
+Temporal developers. It records what already ships in `main`, what gaps remain,
+and the quality bars we must meet before GA.
+
+## Current State Snapshot
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Workflow execution | **Alpha** | Deterministic command context, activity/timer/child/signal/continue-as-new intents, deterministic guard, legacy bypass flag. |
+| Worker runtime | **Alpha** | Basic poll loops with deterministic snapshot cache. No sticky queues, concurrency, or heartbeats yet. |
+| Client | **Alpha** | Start/signal/query/cancel/update/describe namespace with Connect transport; interceptors and retries pending. |
+| Activities | **Beta-** | Handler registry, cancellation signals. Heartbeats, retries, and failure categorisation remain. |
+| Tooling & docs | **Pre-Alpha** | CLI scaffolds projects and Docker image. Developer docs partially updated for deterministic context. |
+| Testing | **Pre-Alpha** | Unit coverage for executor intents. No Temporal dev-server integration suite or determinism regression harness. |
+
+> **Release target:** GA requires all sections below marked as **Critical for GA**
+to be complete, with supporting validation and documentation.
 
 ## Architecture Overview
 
 - **Workflow Runtime (`src/workflow/*`)**
-  - Workflow definitions, registry, executor. Needs replay engine, command builders, deterministic state machine for production.
+  - _Shipped:_ Deterministic workflow context, command intents, determinism guard,
+    legacy bypass.
+  - _GA requirements:_ History replay ingest, failure categorisation, command
+    metadata (headers/memo/search attributes), workflow cache eviction strategy.
 - **Worker Runtime (`src/worker/*`)**
-  - Long-poll loops, task execution, heartbeats, graceful shutdown, activity sandbox.
+  - _Shipped:_ Single-threaded pollers, deterministic snapshot persistence per run.
+  - _GA requirements:_ Configurable concurrency, sticky task queues, build-id routing,
+    graceful shutdown with drain, heartbeat plumbing, metrics/logging hooks.
 - **Client (`src/client.ts`)**
-  - Temporal WorkflowService client built on Connect RPC; extend with retries, TLS, interceptors.
-- **Example App (`packages/temporal-bun-sdk-example`)**
-  - End-to-end validation of workflows and activities.
-- **Protos (`proto/temporal/...`)**
-  - Buf-generated message/service types; keep synced with upstream Temporal API.
+  - _Shipped:_ Connect WorkflowService client with payload conversion and header
+    normalisation.
+  - _GA requirements:_ Retry/interceptor framework, TLS/auth hardening, memo/search
+    attribute helpers, long-running operation ergonomics.
+- **Activities (`src/activities/*`, `src/worker/activity-context.ts`)**
+  - _Shipped:_ AsyncLocalStorage-based context, cancellation surface.
+  - _GA requirements:_ Heartbeat API, retry policy adherence, progress payload
+    encoding, failure classification.
+- **Tooling**
+  - CLI (`src/bin/temporal-bun.ts`) scaffolds projects; needs connectivity checks,
+    history replay tooling, lint hooks.
+- **Generated Protos (`src/proto/**`)**
+  - Must stay synced with upstream Temporal releases; add automation for updates.
 
-Effect integration: workflows run inside the Effect runtime with schemas enforcing determinism. Activities and worker facilities are exposed as Effect services for ergonomic composition.
+## Functional Roadmap
 
-## Functional Requirements
+| Capability | Status | Acceptance Criteria | GA Critical? |
+| --- | --- | --- | --- |
+| Command coverage | ✅ context + intents | Activities, timers, child workflows, signals, continue-as-new emit correct commands with metadata and retries. | Yes |
+| History replay | 🚧 in design | Worker hydrates history into determinism state, verifies commands, tolerates sticky cache eviction, exposes replay API. | Yes |
+| Activity lifecycle | 🚧 partial | Heartbeats, retries, cancellation reasons, eager activities. | Yes |
+| Worker concurrency | 🚧 not started | Configurable parallelism, sticky queues, build-id routing, per-namespace/task queue isolation. | Yes |
+| Client resilience | 🚧 partial | Retry policies, interceptors, TLS/mTLS test matrix, structured errors. | Yes |
+| Diagnostics | 🚧 not started | Structured logs, OpenTelemetry metrics/traces, hookable logger. | Yes |
+| Testing & QA | 🚧 partial | Deterministic regression suite, integration tests with Temporal dev server, load/perf smoke tests. | Yes |
+| Tooling | 🚧 partial | CLI connectivity check, replay CLI, proto regeneration script, API docs generator. | No (Beta) |
+| Documentation | 🚧 partial | Architecture guide, workflow/activities best practices, migration guide, troubleshooting, accessibility for CLI. | Yes |
+| Release operations | 🚧 not started | Semantic versioning, changelog automation, npm publish pipeline, support SLAs. | Yes |
 
-| Capability | Work Required |
-| --- | --- |
-| Workflow command coverage | Implement scheduling commands (activities, timers, child workflows, signals, continue-as-new, failures/cancellations). Provide command factories with schema validation. |
-| Replay & determinism | Build history processor to replay events, restore state, detect non-determinism. Maintain workflow cache keyed by workflow/run IDs. |
-| Activity lifecycle | Emit `SCHEDULE_ACTIVITY_TASK`, manage retries/timeouts/heartbeats, support cancellation. |
-| Worker loops | Concurrency controls, sticky task queues, build-id routing, error categorization/backoff. |
-| Client features | Typed start/signal/query/cancel/update APIs, memo/headers/search attributes, interceptors. |
-| Configuration | Expand `loadTemporalConfig` for TLS, auth, worker tuning. Support env + file overrides. |
-| Diagnostics | Structured logging, metrics, tracing hooks; integrate with Effect logging. |
-| Testing | Unit + integration suites (Temporal dev server), determinism regression tests. |
-| Tooling | CLI scaffolding, replay tooling, typed doc generation. |
-| Docs | Author architecture, usage guides, configuration references, migration paths. |
+Legend: ✅ complete, 🚧 in progress/planned.
 
-## Non-Functional Requirements
+## Work Breakdown & TODO Map
 
-- **Performance**: Efficient polling, low-latency task handling, configurable concurrency.
-- **Reliability**: gRPC error classification, retries with exponential backoff, resilient transport.
-- **Determinism**: Guard against nondeterministic APIs; expose deterministic helpers (timers via Temporal).
-- **Security**: TLS/mTLS, pluggable auth headers, secret handling conventions.
-- **Packaging**: ESM + type declarations, minimal dependencies, Bun runtime clarified.
+Each deliverable is tracked with a `TBS-xxx` identifier. New scaffolding and TODO
+comments in the repository reference these IDs so multiple Codex runs can execute
+in parallel without collisions.
+
+| ID | Epic | Description | Primary Modules |
+| --- | --- | --- | --- |
+| **TBS-001** | History Replay | Build history ingestion, determinism snapshot persistence, mismatch diagnostics. | `src/workflow/replay.ts`, `src/worker/sticky-cache.ts`, `src/worker/runtime.ts` |
+| **TBS-002** | Activity Lifecycle | Implement heartbeats, retry orchestration, cancellation metadata propagation. | `src/activities/lifecycle.ts`, `src/worker/activity-runtime.ts` |
+| **TBS-003** | Worker Concurrency | Add scheduler for concurrent workflow/activity processors, sticky queues, build-id routing. | `src/worker/concurrency.ts`, `src/worker/runtime.ts` |
+| **TBS-004** | Observability | Emit structured logs, metrics, and tracing hooks across client/worker. | `src/observability/logger.ts`, `src/observability/metrics.ts` |
+| **TBS-005** | Client Resilience | Layered retries, interceptors, TLS/auth validation, memo/search helpers. | `src/client/interceptors.ts`, `src/client/retries.ts` |
+| **TBS-006** | Integration Harness | Temporal dev-server automation, replay regression suite, load tests. | `tests/integration/harness.ts`, `tests/replay/*.ts` |
+| **TBS-007** | CLI Tooling | `temporal-bun doctor`, `temporal-bun replay`, proto regeneration script. | `src/bin/temporal-bun.ts`, `scripts/proto/update-temporal-protos.ts` |
+| **TBS-008** | Documentation & DX | Architecture guide, cookbook, migration path, CLI accessibility. | `apps/docs/content/docs/temporal-bun-sdk.mdx`, `docs/*` |
+| **TBS-009** | Release Automation | CI workflows, changelog, signed publish, support policy artifacts. | `.github/workflows/release-temporal-bun-sdk.yml`, `docs/release-runbook.md` |
+| **TBS-010** | Effect Architecture | Migrate worker/client/config/runtime to Effect Layers, structured dependency injection, and fiber supervision. | `src/runtime/effect-layers.ts`, `src/worker/runtime.ts`, `src/client.ts`, `src/config.ts` |
+
+> **Implementation rule:** Every work item must create or update code that carries
+> a `// TODO(TBS-xxx): ...` marker. Leave stubs effect-safe and executable even
+> before full implementation (e.g., return `Effect.fail` with descriptive
+> placeholders).
+
+## Execution Playbooks
+
+Each playbook below describes the entry points, primary TODOs, recommended
+Effect primitives, acceptance tests, and hand-offs so individual Codex instances
+can contribute independently without re-planning.
+
+### Effect-First Architecture Principles (TBS-010 umbrella)
+
+- All long-running flows (polling, scheduling, replay, CLI commands) should be
+  expressed as `Effect` programs; avoid raw `async`/`await`.
+- Dependencies (Temporal config, WorkflowService client, logger, metrics, sticky
+  cache, scheduler) should be provided via `Layer`/`Context`.
+- Use `Scope` and supervised fibres for worker lifecycle management; no manual
+  `AbortController`.
+- Logging/metrics must route through Effect services, not `console`.
+- Configuration parsing should use `Schema` and `Effect.try` to surface errors
+  effectfully.
+- Manual loops should leverage `Effect.repeat`, `Stream`, or `Queue` primitives
+  to gain back-pressure and cancellation.
+
+### TBS-010 – Effect Architecture
+
+- **Starting points**
+  - `src/runtime/effect-layers.ts` – declare shared `Layer`s for config, logger,
+    metrics, WorkflowService client, sticky cache, scheduler.
+  - `src/worker/runtime.ts` – refactor to consume layers instead of raw Promises.
+  - `src/client.ts` – expose construction via Effect Layer, adopt interceptors/retries.
+  - `src/config.ts` – convert loader to Effect + Schema validation.
+- **Effect guidance**
+  - Use `Layer.scoped`/`Layer.effect` to manage resources (clients, transports).
+  - Replace manual `AbortController` with `Scope` and `Fiber` interruption.
+  - Propagate structured errors via `Effect.fail`.
+- **Acceptance criteria**
+  1. Worker run/shutdown implemented as `Effect` programs (no raw `Promise` orchestration).
+  2. Config, logger, metrics, WorkflowService client available via `Layer`.
+  3. CLI and tests can bootstrap runtime by providing layers.
+  4. Documentation updated with Layer usage patterns.
+- **Dependencies**
+  - Enables observability (TBS-004), concurrency (TBS-003), and client resilience (TBS-005) to plug into shared services.
+
+### TBS-001 – History Replay & Sticky Cache
+
+- **Starting points**
+  - `src/workflow/replay.ts` – implement `ingestWorkflowHistory` and
+    `diffDeterminismState`.
+  - `src/worker/sticky-cache.ts` – replace placeholder eviction strategy, expose metrics.
+  - `src/worker/runtime.ts` – wire cache into poll loop, use `ingestWorkflowHistory`
+    before executing tasks.
+- **Effect guidance**
+  - Use `Effect.gen` and `Stream` to process histories incrementally if needed.
+  - Surface diagnostics through `Effect.fail` with rich error payloads.
+- **Acceptance criteria**
+  1. Determinism state reconstructed from Temporal history (coverage includes timer,
+     activity, child workflow events).
+  2. Sticky cache persists state across multiple workflow tasks + evicts per policy.
+  3. Replay mismatch yields `WorkflowNondeterminismError` that includes event IDs
+     and mismatched command signatures.
+  4. Unit tests and dev-server scenario verifying behaviour.
+- **Dependencies**
+  - Optional integration with TBS-004 for logging metrics.
+  - Provides determinism snapshot for TBS-003 scheduler.
+
+### TBS-002 – Activity Lifecycle
+
+- **Starting points**
+  - `src/activities/lifecycle.ts` – flesh out `registerHeartbeat` (wire to Temporal)
+    and `nextRetryDelay` (match Temporal retry spec).
+  - `src/worker/runtime.ts` – integrate heartbeats and retries when processing activity tasks.
+- **Effect guidance**
+  - Wrap heartbeats in `Effect.retry` with exponential backoff aligned to server timeouts.
+  - Use `Effect.timeout` for heartbeat intervals, store state in `Ref`.
+- **Acceptance criteria**
+  1. Heartbeat API emits to Temporal dev server and respects configured interval.
+  2. Retry logic honours `WorkflowRetryPolicy` (initial + max intervals, backoff coefficient,
+     non-retryable errors, attempt capping).
+  3. Cancellation semantics propagate reason/last heartbeat details to handlers.
+  4. Integration tests covering heartbeat timeout and retry exhaustion.
+- **Dependencies**
+  - Exposes metrics/log hooks for TBS-004.
+  - Scheduler from TBS-003 can leverage retry/backoff outputs.
+
+### TBS-003 – Worker Concurrency & Sticky Queues
+
+- **Starting points**
+  - `src/worker/concurrency.ts` – expand scheduler, implement graceful shutdown,
+    integrate metrics.
+  - `src/worker/runtime.ts` – replace serial loops with scheduler enqueues, manage
+    sticky queue identities.
+- **Effect guidance**
+  - Use `Queue`, `Semaphore`, or `Channel` for concurrency control.
+  - Manage fibre lifecycle with `Scope` for deterministic teardown.
+  - Coordinate with TBS-010 to ensure scheduler runs inside Effect Layer.
+- **Acceptance criteria**
+  1. Configurable concurrency levels (workflow/activity) via config/env.
+  2. Sticky task affinity using cache (TBS-001) with eviction metrics.
+  3. Build-id routing respected when scheduling tasks.
+  4. Graceful shutdown drains tasks, emits metrics/logs.
+  5. Load tests demonstrate throughput improvements.
+- **Dependencies**
+  - Consumes determinism cache (TBS-001), emits metrics for TBS-004.
+
+### TBS-004 – Observability
+
+- **Starting points**
+  - `src/observability/logger.ts`, `src/observability/metrics.ts` – replace console/in-memory stubs.
+  - Thread logger/metrics dependencies through worker and client constructors.
+- **Effect guidance**
+  - Provide Layers (`Effect.Layer`) for injecting logger/metrics (coordinate with TBS-010).
+  - Use structured logging JSON, integrate with OpenTelemetry API.
+- **Acceptance criteria**
+  1. Configurable logger exposing debug/info/warn/error with context.
+  2. Metrics registry exporting poll latency, command counts, retry attempts.
+  3. Optional tracing instrumentation toggled via config.
+  4. Documentation explaining how to plug custom sinks.
+
+### TBS-005 – Client Resilience
+
+- **Starting points**
+  - `src/client/interceptors.ts`, `src/client/retries.ts`, integrate with `src/client.ts`.
+  - Add memo/search attribute helpers and TLS validation improvements.
+- **Effect guidance**
+  - Compose retries using `withTemporalRetry`.
+  - Provide client access via Effect Layer (TBS-010).
+  - Expose interceptors as `Effect<Interceptor[]>`, applying logging/metrics.
+- **Acceptance criteria**
+  1. Retries follow Temporal best practices and are configurable.
+  2. Interceptors provide logging, metrics, and custom header hooks.
+  3. TLS/auth path verifies cert chains, surfaces actionable errors.
+  4. Client API exposes helper methods for memo/search attributes.
+
+### TBS-006 – Integration Harness & Replay Suite
+
+- **Starting points**
+  - `tests/integration/harness.ts`, `tests/replay/`.
+  - Add Bun scripts to orchestrate Temporal dev server (CLI or docker-compose).
+- **Effect guidance**
+  - Harness should use `Managed`/`Layer` for setup/teardown.
+  - Replay suite should re-use `ingestWorkflowHistory` to assert determinism.
+- **Acceptance criteria**
+  1. CLI command (`bun test:integration` or similar) spins up dev server, runs scenarios.
+  2. Replay suite replays stored histories, fails on non-determinism.
+  3. Load test baseline recorded (CPU/memory/poll latency metrics).
+
+### TBS-007 – CLI Tooling
+
+- **Starting points**
+  - `src/bin/temporal-bun.ts` – add new subcommands.
+  - `scripts/update-temporal-protos.ts` – implement regeneration flow.
+- **Effect guidance**
+  - Each CLI command should be effectful with proper exit codes (no raw `process.exit`); plug into Effect runtime (TBS-010).
+  - Use `Effect` to orchestrate external processes (`Bun.spawn`, `Effect.tryPromise`).
+- **Acceptance criteria**
+  1. `temporal-bun doctor` validates config connectivity and prints diagnostics.
+  2. `temporal-bun replay` replays a supplied history file via TBS-001 ingestion.
+  3. Proto update script takes version argument and regenerates stubs idempotently.
+
+### TBS-008 – Documentation & DX
+
+- **Starting points**
+  - `apps/docs/content/docs/temporal-bun-sdk.mdx`, `docs/*`.
+  - Update example app to mirror deterministic APIs (`packages/temporal-bun-sdk-example`).
+- **Acceptance criteria**
+  1. Architecture guide includes diagrams and determinism explanations.
+  2. Cookbook recipes for activities, timers, signals, updates, heartbeats.
+  3. Migration doc from Zig/Rust bridge.
+  4. CLI docs reflect new commands and accessibility considerations.
+  5. Example project README documents runtime prerequisites, configuration requirements,
+     and Effect usage expectations so consumers can adopt the SDK confidently.
+
+### TBS-009 – Release Automation
+
+- **Starting points**
+  - `.github/workflows/release-temporal-bun-sdk.yml` (to be created).
+  - `docs/release-runbook.md` – fill out procedures.
+- **Acceptance criteria**
+  1. CI pipeline covering lint/type/test/integration/build.
+  2. Automated semantic version bump + changelog.
+  3. Signed npm publish (provenance).
+  4. Support policy and security contact doc published.
 
 ## Component Designs
 
 ### Workflow Runtime
 
-- Extend `WorkflowDefinition` metadata (timeouts, task queues, version markers).
-- Build workflow context API for deterministic commands (sleep, scheduleActivity, signal, continueAsNew).
-- Executor pipeline: decode → replay → execute → emit commands.
-- Replay engine: apply history events, compare against new commands, raise non-determinism errors.
+1. **Deterministic context (shipped)**
+   - Command intents: `schedule-activity`, `start-timer`, `start-child-workflow`,
+     `signal-external-workflow`, `continue-as-new`.
+   - Determinism guard captures command history, `Math.random()` and `Date.now()`
+     usage for replay validation.
+   - `TEMPORAL_DISABLE_WORKFLOW_CONTEXT` allows fallback for legacy customers.
+2. **Replay ingestion (GA critical, TBS-001)**
+   - Extract command history, random/time snapshots from Temporal history events.
+   - Maintain per-run snapshot (`namespace::workflowId::runId`) accessible across
+     polls and sticky cache transfers.
+   - Surface mismatch details via `WorkflowNondeterminismError` enriched with
+     event IDs.
+3. **Command metadata & schema validation (TBS-001/TBS-005)**
+   - Enforce schema-based validation for headers, memo, search attributes, retry
+     policies, and backoffs.
+   - Provide helper layers for common patterns (timeouts, workflows-by-task queue).
+4. **Workflow cache management**
+   - Implement LRU cache to retain determinism snapshots for sticky tasks; evict on
+     memory pressure with graceful degradation.
 
 ### Activity Execution
 
-- Activity definitions with schemas, registry similar to workflows.
-- Wrap handlers with timeout/cancellation logic leveraging `ActivityContext`.
-- Implement heartbeat APIs and retry policies.
+1. **Handler registration (shipped)**
+   - Map-based registry with AsyncLocalStorage context and cancellation support.
+2. **Retries & heartbeats (GA critical, TBS-002)**
+   - Honor Temporal retry policy, emit heartbeats through WorkflowService, surface
+     heartbeat timeout and last details.
+   - Provide ergonomic `activities.heartbeat()` that mirrors Node SDK semantics.
+3. **Cancellation semantics**
+   - Distinguish graceful vs. failure cancellations, propagate context to handlers.
+4. **Metrics and structured logging**
+   - Expose activity execution spans, attempt counts, and latencies.
 
 ### Worker Runtime
 
-- Introduce configurable worker pools (workflow and activity processors).
-- Add sticky queues and workflow cache eviction policies.
-- Implement structured logging, metrics, and categorized retries.
-- Provide graceful shutdown with in-flight task draining and forced timeout.
+1. **Polling loops (shipped)**
+   - Workflow/activity poll loops with deterministic snapshot storage.
+2. **Concurrency & sticky queues (GA critical, TBS-003)**
+   - Configurable poller counts, run-multiple workflows concurrently with safe
+     determinism state transitions.
+   - Sticky queue support with cache invalidation and eviction heuristics.
+3. **Build-id routing**
+   - Respect Temporal build IDs and `taskQueue` versioning, with CLI configuration.
+4. **Graceful shutdown**
+   - Drain in-flight work, respect `--graceful-shutdown-timeout`, expose `WorkerService` integrable with Effect layers.
+5. **Observability**
+   - Structured logs (JSON), metrics (poll latency, task failures), optional tracing.
 
 ### Client Library
 
-- High-level typed workflow handle APIs (`start`, `signal`, `query`, `cancel`, `update`).
-- Pluggable data converters (JSON default, allow Proto/binary).
-- Retry/interceptor framework for auth, logging, metrics.
+1. **Connect transport (shipped)**
+   - gRPC-over-HTTP/2 with TLS/mTLS support, metadata canonicalisation.
+2. **Resilience features (GA critical, TBS-005)**
+   - Retry policies with jitter, idempotency keys, exponential backoff tuned to
+     Temporal best practices.
+   - Client interceptors for logging, auth, metrics.
+3. **High-level APIs**
+   - Convenience handles for workflow and activity results, typed search attributes,
+     payload conversion hooks, streaming update support.
 
-### CLI & Tooling
+### Tooling & Automation
 
-- `temporal-bun init` scaffolds workflows, activities, config, scripts.
-- Additional commands: project linting, proto regeneration, history replay.
+- **CLI (TBS-007)**
+  - Add `temporal-bun doctor` for connectivity validation.
+  - Add `temporal-bun replay` for history replay against workflows.
+  - Offer `--use-zig-bridge` toggle if native bridge returns.
+- **Proto updates**
+  - Scripted `buf` regeneration with Temporal release cadence tracking.
+- **Release automation**
+  - GitHub workflow for lint/test/build, version bump, changelog generation,
+    signed npm publish, provenance attestations.
 
-### Payload Handling
+### Documentation & Developer Experience
 
-- Extend converters to support payload metadata, binary encodings, schema-based serialization.
-- Expose hooks for custom converters per namespace/task queue.
+- Architecture guides, quickstarts, troubleshooting covering determinism,
+  payload converters, TLS, deployment recipes (Docker, serverless).
+- API reference via `typedoc`.
+- Migration path from the Rust/Zig bridge to pure TypeScript runtime.
+- Example apps: update `packages/temporal-bun-sdk-example` to use deterministic
+  context primitives (`activities.schedule`, `timers.start`, `determinism.now`).
+  - Refresh `apps/docs/content/docs/temporal-bun-sdk.mdx` with: installation instructions, quickstart tutorials (worker + client), configuration guides, and release notes so new users can adopt the SDK confidently.
+  - Introduce a multi-page docs hierarchy (e.g., Overview, Installation, Tutorials, Configuration, Troubleshooting, Release Notes) and wire it into the docs navigation so content scales beyond a single monolithic page.
 
-## Error Handling Strategy
+## Error Handling & Observability
 
-- Map gRPC codes to retry/fail-fast categories.
-- Emit structured Effect logs and metrics around poll failures, task results, workflow non-determinism.
-- Fail workflow tasks with `WorkflowTaskFailedCause.NON_DETERMINISTIC_ERROR` when mismatches occur.
+- Map Connect/gRPC status codes to Temporal-specific error classes.
+- Provide structured error types for workflow failures (application, timeout,
+  cancellation, deterministic).
+- Integrate with Effect logging; expose `Logger` and `Metrics` interfaces for
+  host applications.
+- Plan for OpenTelemetry metrics (`temporal.worker.poll_time`, `workflow.task.latency`)
+  and tracing instrumentation.
+- TODO(TBS-004): Wire `observability/logger.ts` and `observability/metrics.ts`
+  into worker/client pipelines with hooks for custom sinks.
 
 ## Configuration & Deployment
 
-- Environment variables for address, namespace, task queue, TLS, credentials, worker tuning.
-- Optional config files (JSON/TOML) merged with env.
-- Document Docker/serverless deployment patterns.
+- `loadTemporalConfig` already handles TLS, auth, task queue defaults, and workflow
+  context bypass.
+- GA tasks:
+  - Support external config files (JSON/TOML) with schema validation.
+  - Document environment variables for multi-namespace deployments.
+  - Provide Dockerfile templates with best practices (non-root, minimal image).
+  - Publish Helm/Knative snippets for worker deployment.
 
-## Testing Strategy
+## Testing & Quality Strategy
 
-- **Unit**: command builders, replay engine, activity context, client serialization.
-- **Integration**: run against Temporal dev server; scenarios for timers, retries, cancellations, signals, child workflows.
-- **CI**: Biome linting, Bun tests, Temporal dev server smoke test, TypeScript build.
+1. **Unit tests (shipped + expand)**
+   - Maintain >90% coverage for command builders, determinism guard, config loader.
+2. **Integration tests (GA critical)**
+   - Automated Temporal dev-server suite covering:
+     - Activity retries/heartbeats.
+     - Timers and signals.
+     - Child workflow failure propagation.
+     - Continue-as-new determinism.
+     - Build-id routing acceptance.
+   - Each major functionality (TBS-001 ↔ TBS-007) must add integration tests using the Temporal CLI available in the execution environment, ensuring end-to-end validation is part of every deliverable.
+3. **Replay regression harness**
+   - Capture real histories, replay offline, ensure deterministic snapshots survive
+     worker restarts.
+4. **Performance & soak testing**
+   - Stress test worker concurrency scaling, measure poll latency under load.
+5. **CI pipeline**
+   - Bun tests, lint (Biome), type-check (`bunx tsc --noEmit`), Temporal dev-server
+     smoke test, Docker build verification.
 
 ## Documentation Plan
 
-- Revive `/docs` with architecture overview, workflow guide, activity guide, client usage, config reference, troubleshooting, migration guide.
-- Generate API reference (typedoc) and publish developer FAQ.
+- Update developer docs with deterministic context primitives and bypass flag.
+- Provide cookbook recipes (cron workflows, signal-with-start, updates, activity
+  heartbeat best practices).
+- Accessibility review for CLI output (color contrast, terminal semantics).
+- Generate versioned docs site; keep changelog linked per release.
 
-## Release Plan
+## Release & Support Plan
 
-1. **Alpha** – core command coverage, basic replay, activities.
-2. **Beta** – determinism checks, advanced commands (signals/child workflows), client parity, logging/metrics.
-3. **RC** – polish error handling, telemetry, performance tuning, docs freeze.
-4. **GA** – semantic versioning, changelog, support policy.
+1. **Versioning (TBS-009)**
+   - Semantic versioning, release candidates before GA.
+2. **Changelog**
+   - Automated changelog (Conventional Commits).
+3. **Publishing**
+   - Signed npm publishes with provenance (GitHub OIDC + npm token scoping).
+4. **Support policy**
+   - Define Node/Bun versions supported, Temporal server version compatibility.
+   - Document security disclosure process and SLA for bug fixes.
 
 ## Risks & Mitigations
 
-| Risk | Mitigation |
-| --- | --- |
-| Determinism bugs | Enforce deterministic API usage, provide lint rules/documentation, extensive replay tests. |
-| Transport edge cases | Regularly sync protos, run compatibility tests against Temporal releases. |
-| Bun-specific APIs limit adoption | Document runtime requirements; evaluate Node-compatible build. |
-| Replay engine complexity | Build incrementally, port patterns from official SDKs, invest in integration tests. |
-| Packaging regressions | Add bundler/tree-shaking tests, keep dependency footprint minimal. |
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+| Determinism regressions | Workflow non-determinism in production | Replay harness, sticky cache eviction tests, feature flags for bypass. |
+| Transport incompatibility | Bun HTTP/2 regressions | Continuous compatibility tests against Temporal Cloud and OSS releases. |
+| Performance under load | Missed SLA on task latency | Profiling with CPU/network throttling, concurrency tuning, metrics dashboards. |
+| Packaging regressions | Broken ESM/CJS consumers | Dual-package smoke tests (Bun, Node 20), tree-shaking tests, API lockfile. |
+| Tooling drift | CLI/docs mismatched with runtime | Doc-driven development checklist; docs PR cannot merge without updated CLI behaviour. |
 
-## Next Steps
+## GA Checklist & Next Steps
 
-1. ✅ Implement workflow command builders and context API (Effect-based context, command intents, determinism guardrails).
-2. Build history replay engine with determinism checks.
-3. Add activity scheduling/heartbeat/cancellation support.
-4. Introduce worker concurrency controls and sticky queue handling.
-5. Expand client API with retries/interceptors and typed payloads.
-6. Integrate structured logging/metrics.
-7. Establish integration test harness and CI pipeline.
-8. Rebuild documentation + CLI scaffolding to match the new runtime.
-9. Set up release automation (versioning, changelog, npm publish).
+1. ✅ Deterministic workflow context and command intents.
+2. 🚧 History replay ingestion, sticky cache, determinism persistence tests.
+3. 🚧 Activity lifecycle completeness (heartbeats, retries, failure categorisation).
+4. 🚧 Worker concurrency, sticky queues, graceful shutdown polish.
+5. 🚧 Client retries/interceptors, TLS hardening.
+6. 🚧 Observability: logs, metrics, tracing hooks.
+7. 🚧 Temporal dev-server integration suite + replay regression harness.
+8. 🚧 Documentation overhaul (architecture, tutorials, troubleshooting).
+9. 🚧 Release automation: lint/test/build, versioning, changelog, npm publish pipeline.
+10. 🚧 Support & maintenance guide (compatibility matrix, issue triage, security policy).
 
-Delivering these workstreams will take the current prototype to a production-ready Temporal Bun SDK suitable for npm publication.
+Progress through this checklist gates each release milestone (Alpha → Beta → RC → GA).
+Every GA-critical item requires passing integration tests and updated documentation
+before the release train can proceed.

@@ -147,6 +147,7 @@ const buildTlsConfig = async (
 }
 
 export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}): Promise<TemporalConfig> => {
+  // TODO(TBS-010): Convert to Effect + Schema validation, exposing as Config Layer.
   const env = sanitizeEnvironment(options.env ?? process.env)
   const port = parsePort(env.TEMPORAL_GRPC_PORT)
   const host = env.TEMPORAL_HOST ?? options.defaults?.host ?? DEFAULT_HOST

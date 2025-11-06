@@ -76,7 +76,6 @@ Environment variables supported by the config loader:
 | `TEMPORAL_TLS_SERVER_NAME` | _unset_ | Overrides TLS server name verification. |
 | `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS` | `false` | Accepts `1/true/on` to skip certificate verification. |
 | `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (host and PID are appended automatically). |
-| `TEMPORAL_BUN_SDK_USE_ZIG` | _auto-detect_ | `1` forces the Zig bridge, `0` keeps the Rust fallback. |
 
 `loadTemporalConfig()` returns typed values that the client and worker factories
 consume directly, so you never have to stitch addresses or TLS buffers together
@@ -202,26 +201,18 @@ the package is installed.
 - `init [directory] [--force]` – scaffold a Bun worker project with example
   workflows, activities, Dockerfile, and scripts.
 - `check [namespace] [--namespace <value>]` – verify TLS/API connectivity to your
-  Temporal cluster using the native Bun bridge.
+  Temporal cluster using the TypeScript runtime.
 - `docker-build [--tag <name>]` – package the current directory into a worker
   image using the provided Docker helper.
 - `help` – print the command reference.
 
-## Native bridge and Zig builds
+## Native bridge status
 
-Prebuilt Zig binaries ship with the npm package and cover macOS (arm64/x64) and
-Linux (arm64/x64). Set `TEMPORAL_BUN_SDK_USE_ZIG=1` to require them at runtime or
-`TEMPORAL_BUN_SDK_USE_ZIG=0` to keep the Rust bridge. When bundling from source,
-run:
-
-```bash
-pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
-pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig:bundle
-pnpm --filter @proompteng/temporal-bun-sdk run package:native:zig
-```
-
-The scripts download vendor libraries automatically and stage the artifacts
-under `dist/native/<platform>/<arch>/` so they publish with the package.
+The pure TypeScript runtime is the default (and only) supported execution path.
+Historical Zig bridge assets remain in `packages/temporal-bun-sdk/bruke/` for
+reference, but environment flags such as `TEMPORAL_BUN_SDK_USE_ZIG` are no longer
+wired into the worker or client. Future experiments should introduce new,
+explicit configuration rather than relying on the retired flag.
 
 ## Local development and production tips
 

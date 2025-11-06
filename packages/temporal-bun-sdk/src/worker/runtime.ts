@@ -58,6 +58,8 @@ export interface WorkerRuntimeOptions {
 }
 
 export class WorkerRuntime {
+  // TODO(TBS-010): Refactor WorkerRuntime to consume Effect Layers (Config, Logger, Metrics,
+  // WorkflowService, StickyCache, Scheduler) instead of manual promise orchestration.
   static async create(options: WorkerRuntimeOptions = {}): Promise<WorkerRuntime> {
     const config = options.config ?? (await loadTemporalConfig())
     const dataConverter = options.dataConverter ?? createDefaultDataConverter()

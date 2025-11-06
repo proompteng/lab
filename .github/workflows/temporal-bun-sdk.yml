@@ -54,6 +54,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build Temporal Bun SDK
+        run: pnpm --filter @proompteng/temporal-bun-sdk build
+
       - name: Install Temporal CLI
         run: |
           curl -sSfL https://temporal.download/cli.sh | bash -s -- -b "${HOME}/.temporalio/bin"
@@ -73,9 +76,6 @@ jobs:
       - name: Run Temporal Bun SDK tests
         run: |
           TEMPORAL_TEST_SERVER=1 pnpm --filter @proompteng/temporal-bun-sdk test
-
-      - name: Run TypeScript compilation
-        run: pnpm exec tsc --project packages/temporal-bun-sdk/tsconfig.json
 
       - name: Stop Temporal CLI dev server
         if: always()

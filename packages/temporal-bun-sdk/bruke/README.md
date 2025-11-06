@@ -1,8 +1,9 @@
 ## temporal-bun-bridge-zig (scaffold)
 
 This directory hosts the Zig rewrite of the Temporal Bun native bridge. The initial commit only wires up
-the build graph and exports stub functions so that TypeScript can experiment with the loading path behind
-`TEMPORAL_BUN_SDK_USE_ZIG=1`.
+the build graph and exports stub functions so that TypeScript can experiment with the loading path. The
+runtime flag `TEMPORAL_BUN_SDK_USE_ZIG` has been retired; integrating this bridge now requires explicit
+hookups in the worker/client code.
 
 ### Layout
 
