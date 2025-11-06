@@ -20,22 +20,21 @@ export interface ReplayResult {
  * diagnostics from the returned state.
  */
 export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<ReplayResult, unknown, never> =>
-  Effect.gen(function* () {
-    yield* Effect.unit
-    // TODO(TBS-001): Implement history traversal, command intent reconstruction,
-    // random/time ladder extraction, and event source mapping.
-    // The implementation should reuse protobuf schemas and remain deterministic.
-    void intake
-
-    return {
-      determinismState: {
-        commandHistory: [],
-        randomValues: [],
-        timeValues: [],
-      },
-      lastEventId: null,
-    }
-  })
+  Effect.succeed({
+    determinismState: {
+      commandHistory: [],
+      randomValues: [],
+      timeValues: [],
+    },
+    lastEventId: null,
+  }).pipe(
+    Effect.tap(() =>
+      Effect.sync(() => {
+        /* TODO(TBS-001): Implement history traversal */
+        void intake
+      }),
+    ),
+  )
 
 /**
  * Diff determinism state against freshly emitted intents to produce rich
@@ -45,11 +44,12 @@ export const diffDeterminismState = (
   expected: WorkflowDeterminismState,
   actual: WorkflowDeterminismState,
 ): Effect.Effect<{ mismatches: unknown[] }, never, never> =>
-  Effect.gen(function* () {
-    yield* Effect.unit
-    // TODO(TBS-001): Compare command history, random/time sequences, and return
-    // structured mismatches (e.g., eventId, expected, received).
-    void expected
-    void actual
-    return { mismatches: [] }
-  })
+  Effect.succeed({ mismatches: [] }).pipe(
+    Effect.tap(() =>
+      Effect.sync(() => {
+        /* TODO(TBS-001): Compare determinism states */
+        void expected
+        void actual
+      }),
+    ),
+  )
