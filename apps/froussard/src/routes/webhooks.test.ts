@@ -3,6 +3,7 @@ import { Effect, Layer } from 'effect'
 import { type ManagedRuntime, make as makeManagedRuntime } from 'effect/ManagedRuntime'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { PLAN_COMMENT_MARKER } from '@/codex'
 import { AppLogger } from '@/logger'
 import { CommandEventSchema as FacteurCommandEventSchema } from '@/proto/proompteng/facteur/v1/contract_pb'
 import { CodexTaskSchema, CodexTaskStage } from '@/proto/proompteng/froussard/v1/codex_task_pb'
@@ -53,11 +54,15 @@ vi.mock('@/discord-commands', () => ({
   INTERACTION_TYPE: { PING: 1, APPLICATION_COMMAND: 2, MESSAGE_COMPONENT: 3, MODAL_SUBMIT: 5 },
 }))
 
-vi.mock('@/codex', () => ({
-  buildCodexBranchName: vi.fn(() => 'codex/issue-1-test'),
-  buildCodexPrompt: mockBuildCodexPrompt,
-  normalizeLogin: vi.fn((value: string | undefined | null) => (value ? value.toLowerCase() : null)),
-}))
+vi.mock('@/codex', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/codex')>()
+  return {
+    ...actual,
+    buildCodexBranchName: vi.fn(() => 'codex/issue-1-test'),
+    buildCodexPrompt: mockBuildCodexPrompt,
+    normalizeLogin: vi.fn((value: string | undefined | null) => (value ? value.toLowerCase() : null)),
+  }
+})
 
 vi.mock('@/codex-workflow', () => ({
   selectReactionRepository: vi.fn((issueRepository, repository) => issueRepository ?? repository),
@@ -107,6 +112,7 @@ describe('createWebhookHandler', () => {
     findLatestPlanComment: ReturnType<typeof vi.fn>
     fetchPullRequest: ReturnType<typeof vi.fn>
     markPullRequestReadyForReview: ReturnType<typeof vi.fn>
+    createIssueComment: ReturnType<typeof vi.fn>
     createPullRequestComment: ReturnType<typeof vi.fn>
     listPullRequestReviewThreads: ReturnType<typeof vi.fn>
     listPullRequestCheckFailures: ReturnType<typeof vi.fn>
@@ -143,6 +149,9 @@ describe('createWebhookHandler', () => {
         ephemeral: true,
       },
     },
+    flags: {
+      skipPlanningPlaceholder: true,
+    },
   }
 
   const provideRuntime = () => {
@@ -167,6 +176,7 @@ describe('createWebhookHandler', () => {
       findLatestPlanComment: githubServiceMock.findLatestPlanComment,
       fetchPullRequest: githubServiceMock.fetchPullRequest,
       markPullRequestReadyForReview: githubServiceMock.markPullRequestReadyForReview,
+      createIssueComment: githubServiceMock.createIssueComment,
       createPullRequestComment: githubServiceMock.createPullRequestComment,
       listPullRequestReviewThreads: githubServiceMock.listPullRequestReviewThreads,
       listPullRequestCheckFailures: githubServiceMock.listPullRequestCheckFailures,
@@ -217,6 +227,7 @@ describe('createWebhookHandler', () => {
       findLatestPlanComment: vi.fn(() => Effect.succeed({ ok: false, reason: 'not-found' })),
       fetchPullRequest: vi.fn(() => Effect.succeed({ ok: false as const, reason: 'not-found' as const })),
       markPullRequestReadyForReview: vi.fn(() => Effect.succeed({ ok: true })),
+      createIssueComment: vi.fn(() => Effect.succeed({ ok: true })),
       createPullRequestComment: vi.fn(() => Effect.succeed({ ok: true })),
       listPullRequestReviewThreads: vi.fn(() => Effect.succeed({ ok: true as const, threads: [] })),
       listPullRequestCheckFailures: vi.fn(() => Effect.succeed({ ok: true as const, checks: [] })),
@@ -237,6 +248,7 @@ describe('createWebhookHandler', () => {
     payload: Record<string, unknown>
     setup?: () => void
     assert: (body: unknown, response: Response) => Promise<void> | void
+    configOverride?: Partial<WebhookConfig>
   }
 
   const scenarioHeaders = (event: string, action?: string) => ({
@@ -280,6 +292,70 @@ describe('createWebhookHandler', () => {
         expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
           expect.objectContaining({ stage: 'planning', issueNumber: 42 }),
         )
+      },
+    },
+    {
+      name: 'skips planning workflow when issue body already contains a plan comment',
+      event: 'issues',
+      action: 'opened',
+      payload: {
+        action: 'opened',
+        repository: { full_name: 'owner/repo', default_branch: 'main' },
+        issue: {
+          number: 73,
+          title: 'Existing plan',
+          body: `${PLAN_COMMENT_MARKER}\n### Objective\n- keep existing plan`,
+          html_url: 'https://github.com/owner/repo/issues/73',
+        },
+      },
+      assert: (body) => {
+        expect(body).toMatchObject({ codexStageTriggered: null })
+        expect(githubServiceMock.postIssueReaction).not.toHaveBeenCalled()
+        expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
+        expect(githubServiceMock.findLatestPlanComment).not.toHaveBeenCalled()
+        expect(publishedMessages).toHaveLength(1)
+        expect(publishedMessages[0].topic).toBe('raw-topic')
+      },
+    },
+    {
+      name: 'skips planning workflow when a plan comment already exists on the issue',
+      event: 'issues',
+      action: 'opened',
+      payload: {
+        action: 'opened',
+        repository: { full_name: 'owner/repo', default_branch: 'main' },
+        issue: {
+          number: 74,
+          title: 'Plan already published',
+          body: 'Initial request without plan',
+          html_url: 'https://github.com/owner/repo/issues/74',
+          user: { login: 'USER' },
+          repository_url: 'https://api.github.com/repos/owner/repo',
+        },
+        sender: { login: 'user' },
+      },
+      configOverride: {
+        flags: { skipPlanningPlaceholder: false },
+      },
+      setup: () => {
+        githubServiceMock.findLatestPlanComment.mockReturnValueOnce(
+          Effect.succeed({
+            ok: true as const,
+            comment: {
+              id: 123,
+              body: `${PLAN_COMMENT_MARKER}\n### Objective\n- manual plan`,
+              htmlUrl: 'https://github.com/owner/repo/issues/74#issuecomment-1',
+            },
+          }),
+        )
+      },
+      assert: (body) => {
+        expect(body).toMatchObject({ codexStageTriggered: null })
+        expect(githubServiceMock.postIssueReaction).not.toHaveBeenCalled()
+        expect(githubServiceMock.createIssueComment).not.toHaveBeenCalled()
+        expect(githubServiceMock.findLatestPlanComment).toHaveBeenCalled()
+        expect(publishedMessages).toHaveLength(1)
+        expect(publishedMessages[0].topic).toBe('raw-topic')
       },
     },
     {
@@ -504,9 +580,22 @@ describe('createWebhookHandler', () => {
     },
   ]
 
-  it.each(webhookScenarios)('$name', async ({ event, action, payload, setup, assert }) => {
+  it.each(webhookScenarios)('$name', async ({ event, action, payload, setup, assert, configOverride }) => {
     setup?.()
-    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const config: WebhookConfig = {
+      ...baseConfig,
+      ...(configOverride ?? {}),
+      codebase: { ...baseConfig.codebase, ...(configOverride?.codebase ?? {}) },
+      github: { ...baseConfig.github, ...(configOverride?.github ?? {}) },
+      topics: { ...baseConfig.topics, ...(configOverride?.topics ?? {}) },
+      discord: { ...baseConfig.discord, ...(configOverride?.discord ?? {}) },
+      flags: configOverride?.flags ?? baseConfig.flags,
+    }
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config })
+
+    if (configOverride?.flags) {
+      expect(config.flags?.skipPlanningPlaceholder).toBe(configOverride.flags.skipPlanningPlaceholder)
+    }
 
     const response = await handler(buildRequest(payload, scenarioHeaders(event, action)), 'github')
 

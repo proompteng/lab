@@ -6,6 +6,7 @@ import {
   normalizeLogin,
   PLAN_COMMENT_MARKER,
   PROGRESS_COMMENT_MARKER,
+  REVIEW_COMMENT_MARKER,
   sanitizeBranchComponent,
 } from './codex'
 
@@ -74,6 +75,7 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain(
       'GitHub CLI (`gh`) is installed and authenticated; use it for issue comments or metadata as needed.',
     )
+    expect(prompt).toContain('gh issue comment --repo proompteng/lab 77 --body-file PLAN.md')
     expect(prompt).toContain('Use internet search (web.run) when fresh knowledge is required')
     expect(prompt).toContain('Never emit raw')
     expect(prompt).toContain(
@@ -216,7 +218,9 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain('ci / lint')
     expect(prompt).toContain('Biome formatting check is failing')
     expect(prompt).toContain('Execution contract:')
-    expect(prompt).toContain('Keep the progress comment anchored by')
+    expect(prompt).toContain(
+      `Keep the pull request comment anchored by ${REVIEW_COMMENT_MARKER} current with reviewer responses, validation reruns, commands, timestamps, and the final verdict so automation can detect completion.`,
+    )
     expect(prompt).toContain('Fetch the latest approved plan anchored by')
     expect(prompt).toContain('Use apps/froussard/src/codex/cli/codex-progress-comment.ts to post review updates')
     expect(prompt).toContain(
@@ -225,7 +229,7 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain(
       'post an approval comment on the pull request summarizing the evidence (e.g., `gh pr comment --body "Plan complete; validation evidence: ..."`).',
     )
-    expect(prompt).toContain(PROGRESS_COMMENT_MARKER)
+    expect(prompt).toContain(REVIEW_COMMENT_MARKER)
   })
 
   it('falls back to guidance when no review context is provided', () => {

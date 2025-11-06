@@ -6,6 +6,7 @@ export type CodexTaskStage = 'planning' | 'implementation' | 'review'
 
 export const PLAN_COMMENT_MARKER = '<!-- codex:plan -->'
 export const PROGRESS_COMMENT_MARKER = '<!-- codex:progress -->'
+export const REVIEW_COMMENT_MARKER = '<!-- codex:review -->'
 
 export const normalizeLogin = (login?: Nullable<string>): string | null => {
   if (typeof login === 'string' && login.trim().length > 0) {
@@ -90,6 +91,7 @@ const buildPlanningPrompt = ({
     '- Call out commands with working directories and expected outputs so validation is reproducible.',
     '- Highlight dependencies, migrations, approvals, or coordination steps so the executor can schedule work without guessing.',
     '- GitHub CLI (`gh`) is installed and authenticated; use it for issue comments or metadata as needed.',
+    `- After finalising the plan, run \`gh issue comment --repo ${repositoryFullName} ${issueNumber} --body-file PLAN.md\` to publish it.`,
     `- Use internet search (web.run) when fresh knowledge is required and cite links to GitHub code or docs (for example, \`[packages/foo.ts](https://github.com/${repositoryFullName}/blob/${baseBranch}/packages/foo.ts#L123)\`).`,
     `- Never emit raw \`cite…\` placeholders; format links normally.`,
     '- Keep tone concise but comprehensive so the next Codex run can finish the task end to end.',
@@ -251,7 +253,7 @@ const buildReviewPrompt = ({
     contextBlock,
     '',
     'Execution contract:',
-    `- Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} current with reviewer responses, validation reruns, commands, and timestamps.`,
+    `- Keep the pull request comment anchored by ${REVIEW_COMMENT_MARKER} current with reviewer responses, validation reruns, commands, timestamps, and the final verdict so automation can detect completion.`,
     `- Fetch the latest approved plan anchored by ${PLAN_COMMENT_MARKER} on issue #${issueNumber}; treat each step as mandatory acceptance work.`,
     '- Summarise the pull request description, linked commits, and outstanding GitHub feedback before making changes.',
     '- For every plan step and acceptance criterion, gather proof from the code diff, tests, fixtures, or docs. If a gap remains, implement the missing work before re-checking.',

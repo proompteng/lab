@@ -83,6 +83,28 @@ export type FindPlanCommentResult =
   | { ok: true; comment: PlanComment }
   | { ok: false; reason: FindPlanCommentFailureReason; status?: number; detail?: string }
 
+export interface CreateIssueCommentOptions {
+  repositoryFullName: string
+  issueNumber: number
+  body: string
+  token?: string | null
+  apiBaseUrl?: string
+  userAgent?: string
+  fetchImplementation?: FetchLike | null
+}
+
+export type CreateIssueCommentFailureReason =
+  | 'missing-token'
+  | 'invalid-repository'
+  | 'no-fetch'
+  | 'network-error'
+  | 'http-error'
+  | 'invalid-json'
+
+export type CreateIssueCommentResult =
+  | { ok: true; commentUrl?: string }
+  | { ok: false; reason: CreateIssueCommentFailureReason; status?: number; detail?: string }
+
 export interface PullRequestSummary {
   number: number
   title: string
