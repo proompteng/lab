@@ -197,6 +197,7 @@ export class WorkerRuntime {
       stickyScheduleToStartTimeoutMs,
       deploymentOptions,
       versioningBehavior,
+      stickySchedulingEnabled: false,
     })
   }
 
@@ -212,6 +213,7 @@ export class WorkerRuntime {
   readonly #scheduler: WorkerScheduler
   readonly #stickyCache: StickyCache
   readonly #stickyQueue: string
+  readonly #stickySchedulingEnabled: boolean
   readonly #stickyAttributes: StickyExecutionAttributes
   readonly #deploymentOptions: WorkerDeploymentOptions
   readonly #versioningBehavior: VersioningBehavior | null
@@ -237,6 +239,7 @@ export class WorkerRuntime {
     stickyScheduleToStartTimeoutMs: number
     deploymentOptions: WorkerDeploymentOptions
     versioningBehavior: VersioningBehavior | null
+    stickySchedulingEnabled: boolean
   }) {
     this.#config = params.config
     this.#workflowService = params.workflowService
@@ -250,6 +253,7 @@ export class WorkerRuntime {
     this.#scheduler = params.scheduler
     this.#stickyCache = params.stickyCache
     this.#stickyQueue = params.stickyQueue
+    this.#stickySchedulingEnabled = params.stickySchedulingEnabled
     this.#deploymentOptions = params.deploymentOptions
     this.#versioningBehavior = params.versioningBehavior
     this.#stickyAttributes = create(StickyExecutionAttributesSchema, {
@@ -443,12 +447,14 @@ export class WorkerRuntime {
         determinismState: previousState,
       })
 
-      if (stickyKey) {
+      if (stickyKey && this.#stickySchedulingEnabled) {
         if (output.completion === 'pending') {
           await this.#upsertStickyEntry(stickyKey, output.determinismState)
         } else {
           await this.#removeStickyEntry(stickyKey)
         }
+      } else if (stickyKey) {
+        await this.#removeStickyEntry(stickyKey)
       }
 
       const completion = create(RespondWorkflowTaskCompletedRequestSchema, {
@@ -456,8 +462,8 @@ export class WorkerRuntime {
         commands: output.commands,
         identity: this.#identity,
         namespace: this.#namespace,
-        stickyAttributes: this.#stickyAttributes,
         deploymentOptions: this.#deploymentOptions,
+        ...(this.#stickySchedulingEnabled ? { stickyAttributes: this.#stickyAttributes } : {}),
         ...(this.#versioningBehavior !== null ? { versioningBehavior: this.#versioningBehavior } : {}),
       })
       await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })

@@ -339,7 +339,11 @@ describeIntegration('Temporal worker runtime integration', () => {
     expect(result.completions.length).toBeGreaterThan(0)
     for (const request of result.completions) {
       const workerTaskQueue = request.stickyAttributes?.workerTaskQueue?.name ?? ''
-      expect(workerTaskQueue).toBe(result.stickyQueueName)
+      if (request.stickyAttributes) {
+        expect(workerTaskQueue).toBe(result.stickyQueueName)
+      } else {
+        expect(workerTaskQueue).toBe('')
+      }
       expect(request.deploymentOptions?.deploymentName).toBe(result.deploymentName)
       expect(request.deploymentOptions?.buildId).toBe(result.buildId)
       expect(request.deploymentOptions?.workerVersioningMode).toBe(WorkerVersioningMode.UNVERSIONED)
