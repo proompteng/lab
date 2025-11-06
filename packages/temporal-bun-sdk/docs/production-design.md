@@ -390,6 +390,7 @@ can contribute independently without re-planning.
      - Child workflow failure propagation.
      - Continue-as-new determinism.
      - Build-id routing acceptance.
+   - Each major functionality (TBS-001 ↔ TBS-007) must add integration tests using the Temporal CLI available in the execution environment, ensuring end-to-end validation is part of every deliverable.
 3. **Replay regression harness**
    - Capture real histories, replay offline, ensure deterministic snapshots survive
      worker restarts.
