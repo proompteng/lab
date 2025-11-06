@@ -1,7 +1,6 @@
 import { Effect, Queue, Ref, Schedule } from 'effect'
-
-import type { ActivityHandler } from './runtime'
 import type { WorkflowDeterminismState } from '../workflow/determinism'
+import type { ActivityHandler } from './runtime'
 
 export interface WorkerSchedulerOptions {
   readonly workflowConcurrency: number
