@@ -124,7 +124,7 @@ Effect integration: workflows run inside the Effect runtime with schemas enforci
 
 ## Next Steps
 
-1. Implement workflow command builders and context API.
+1. ✅ Implement workflow command builders and context API (Effect-based context, command intents, determinism guardrails).
 2. Build history replay engine with determinism checks.
 3. Add activity scheduling/heartbeat/cancellation support.
 4. Introduce worker concurrency controls and sticky queue handling.
