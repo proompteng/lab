@@ -106,7 +106,7 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
     return {
       start,
       stop,
-      enqueueWorkflow: (task) => Queue.offer(workflowQueue, task).pipe(Effect.unit),
-      enqueueActivity: (task) => Queue.offer(activityQueue, task).pipe(Effect.unit),
+      enqueueWorkflow: (task) => Queue.offer(workflowQueue, task).pipe(Effect.asUnit),
+      enqueueActivity: (task) => Queue.offer(activityQueue, task).pipe(Effect.asUnit),
     }
   })
