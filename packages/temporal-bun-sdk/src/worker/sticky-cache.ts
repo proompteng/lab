@@ -11,6 +11,7 @@ export interface StickyCacheKey {
 export interface StickyCacheEntry {
   readonly key: StickyCacheKey
   readonly determinismState: WorkflowDeterminismState
+  readonly lastEventId: string | null
   readonly lastAccessed: number
 }
 

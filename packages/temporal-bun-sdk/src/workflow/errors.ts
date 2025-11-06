@@ -5,10 +5,13 @@ export class WorkflowError extends Error {
   }
 }
 
+import type { DeterminismMismatch } from './replay'
+
 export interface WorkflowNondeterminismDetails {
   readonly expected?: unknown
   readonly received?: unknown
   readonly hint?: string
+  readonly mismatches?: DeterminismMismatch[]
 }
 
 export class WorkflowNondeterminismError extends WorkflowError {

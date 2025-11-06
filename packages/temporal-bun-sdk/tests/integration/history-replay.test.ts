@@ -1,0 +1,274 @@
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+
+import { Effect, Exit } from 'effect'
+
+import { createDefaultDataConverter } from '../../src/common/payloads'
+import { loadTemporalConfig } from '../../src/config'
+import { ingestWorkflowHistory, diffDeterminismState } from '../../src/workflow/replay'
+import type { HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
+import { WorkerRuntime } from '../../src/worker/runtime'
+import { makeStickyCache } from '../../src/worker/sticky-cache'
+import type { IntegrationHarness, WorkflowExecutionHandle } from './harness'
+import { createIntegrationHarness, TemporalCliUnavailableError } from './harness'
+import {
+  continueAsNewWorkflow,
+  integrationActivities,
+  integrationWorkflows,
+  parentWorkflow,
+  activityWorkflow,
+  timerWorkflow,
+} from './workflows'
+
+const CLI_CONFIG = {
+  address: '127.0.0.1:7233',
+  namespace: 'default',
+  taskQueue: 'temporal-bun-integration',
+}
+
+let harness: IntegrationHarness | null = null
+let cliUnavailable = false
+let runtime: WorkerRuntime | null = null
+let runtimePromise: Promise<void> | null = null
+let stickyCacheSizeEffect: Effect.Effect<number, never, never> | null = null
+
+const dataConverter = createDefaultDataConverter()
+
+beforeAll(async () => {
+  const harnessExit = await Effect.runPromiseExit(createIntegrationHarness(CLI_CONFIG))
+  if (Exit.isFailure(harnessExit)) {
+    if (harnessExit.cause instanceof TemporalCliUnavailableError) {
+      cliUnavailable = true
+      console.warn(`[temporal-bun-sdk] skipping integration tests: ${harnessExit.cause.message}`)
+      harness = null
+      return
+    }
+    throw harnessExit.cause
+  }
+  harness = harnessExit.value
+  await Effect.runPromise(harness.setup)
+
+  const baseConfig = await loadTemporalConfig()
+  const stickyCache = await Effect.runPromise(makeStickyCache({ maxEntries: 2, ttlMs: 60_000 }))
+  stickyCacheSizeEffect = stickyCache.size
+
+  const runtimeConfig = {
+    ...baseConfig,
+    address: CLI_CONFIG.address,
+    namespace: CLI_CONFIG.namespace,
+    taskQueue: CLI_CONFIG.taskQueue,
+    stickyCacheSize: 2,
+    stickyCacheTtlMs: 60_000,
+    stickyQueueTimeoutMs: 5_000,
+  }
+
+  runtime = await WorkerRuntime.create({
+    config: runtimeConfig,
+    workflows: integrationWorkflows,
+    activities: integrationActivities,
+    stickyCache,
+  })
+
+  runtimePromise = runtime.run()
+})
+
+afterAll(async () => {
+  if (runtime) {
+    await runtime.shutdown()
+  }
+  if (runtimePromise) {
+    await runtimePromise
+  }
+  if (harness && !cliUnavailable) {
+    await Effect.runPromise(harness.teardown)
+  }
+})
+
+const runOrSkip = async <A>(name: string, scenario: () => Promise<A>): Promise<A | undefined> => {
+  if (cliUnavailable) {
+    console.warn(`[temporal-bun-sdk] skipped integration scenario: ${name}`)
+    return undefined
+  }
+  if (!harness) {
+    throw new Error('Integration harness not initialised')
+  }
+  try {
+    return await Effect.runPromise(
+      harness.runScenario(name, () => Effect.tryPromise(scenario)),
+    )
+  } catch (error) {
+    if (error instanceof TemporalCliUnavailableError) {
+      cliUnavailable = true
+      console.warn(`[temporal-bun-sdk] skipped integration scenario ${name}: ${error.message}`)
+      return undefined
+    }
+    throw error
+  }
+}
+
+describe('Temporal CLI history ingestion', () => {
+  test('timer workflow history produces timer determinism snapshot', async () => {
+    await runOrSkip('timer workflow', async () => {
+      const execution = await runTimerWorkflow()
+      const history = await fetchHistory(execution)
+      const replay = await Effect.runPromise(
+        ingestWorkflowHistory({
+          info: buildWorkflowInfo(timerWorkflow.name, execution),
+          history,
+          dataConverter,
+        }),
+      )
+      expect(replay.lastEventId).not.toBeNull()
+      expect(replay.determinismState.commandHistory.length).toBeGreaterThan(0)
+      expect(replay.determinismState.commandHistory[0]?.intent.kind).toBe('start-timer')
+    })
+  })
+
+  test('activity workflow history includes activity command intent', async () => {
+    await runOrSkip('activity workflow', async () => {
+      const execution = await runActivityWorkflow('workflow-activity')
+      const history = await fetchHistory(execution)
+      const replay = await Effect.runPromise(
+        ingestWorkflowHistory({
+          info: buildWorkflowInfo(activityWorkflow.name, execution),
+          history,
+          dataConverter,
+        }),
+      )
+      const commandKinds = replay.determinismState.commandHistory.map((entry) => entry.intent.kind)
+      expect(commandKinds).toContain('schedule-activity')
+    })
+  })
+
+  test('child workflow history captures child command', async () => {
+    await runOrSkip('child workflow', async () => {
+      const execution = await runParentWorkflow('workflow-child')
+      const history = await fetchHistory(execution)
+      const replay = await Effect.runPromise(
+        ingestWorkflowHistory({
+          info: buildWorkflowInfo(parentWorkflow.name, execution),
+          history,
+          dataConverter,
+        }),
+      )
+      const childCommand = replay.determinismState.commandHistory.find((entry) => entry.intent.kind === 'start-child-workflow')
+      expect(childCommand).toBeDefined()
+    })
+  })
+
+  test('continue-as-new workflow produces determinism marker chain', async () => {
+    await runOrSkip('continue-as-new workflow', async () => {
+      const execution = await runContinueWorkflow(3)
+      const history = await fetchHistory(execution)
+      const replay = await Effect.runPromise(
+        ingestWorkflowHistory({
+          info: buildWorkflowInfo(continueAsNewWorkflow.name, execution),
+          history,
+          dataConverter,
+        }),
+      )
+      expect(replay.lastEventId).not.toBeNull()
+      expect(replay.determinismState.commandHistory.some((entry) => entry.intent.kind === 'continue-as-new')).toBe(true)
+    })
+  })
+
+  test('diffDeterminismState surfaces command mismatches', async () => {
+    await runOrSkip('determinism diff', async () => {
+      const execution = await runActivityWorkflow('workflow-diff')
+      const history = await fetchHistory(execution)
+      const replay = await Effect.runPromise(
+        ingestWorkflowHistory({
+          info: buildWorkflowInfo(activityWorkflow.name, execution),
+          history,
+          dataConverter,
+        }),
+      )
+      const mutated = {
+        ...replay.determinismState,
+        commandHistory: replay.determinismState.commandHistory.map((entry, index) =>
+          index === 0 && entry.intent.kind === 'schedule-activity'
+            ? { intent: { ...entry.intent, activityId: 'mutated-activity' } }
+            : entry,
+        ),
+      }
+      const diff = await Effect.runPromise(diffDeterminismState(replay.determinismState, mutated))
+      expect(diff.mismatches.length).toBeGreaterThan(0)
+    })
+  })
+
+  test('sticky cache evicts entries beyond capacity', async () => {
+    await runOrSkip('sticky cache eviction', async () => {
+      if (!stickyCacheSizeEffect) {
+        throw new Error('Sticky cache not initialised')
+      }
+      const stickyCache = await Effect.runPromise(makeStickyCache({ maxEntries: 2, ttlMs: 60_000 }))
+      await Effect.runPromise(
+        stickyCache.upsert({
+          key: { namespace: CLI_CONFIG.namespace, workflowId: 'wf-1', runId: 'run-1' },
+          determinismState: { commandHistory: [], randomValues: [], timeValues: [] },
+          lastEventId: '1',
+          lastAccessed: Date.now(),
+        }),
+      )
+      await Effect.runPromise(
+        stickyCache.upsert({
+          key: { namespace: CLI_CONFIG.namespace, workflowId: 'wf-2', runId: 'run-2' },
+          determinismState: { commandHistory: [], randomValues: [], timeValues: [] },
+          lastEventId: '2',
+          lastAccessed: Date.now(),
+        }),
+      )
+      await Effect.runPromise(
+        stickyCache.upsert({
+          key: { namespace: CLI_CONFIG.namespace, workflowId: 'wf-3', runId: 'run-3' },
+          determinismState: { commandHistory: [], randomValues: [], timeValues: [] },
+          lastEventId: '3',
+          lastAccessed: Date.now(),
+        }),
+      )
+      const size = await Effect.runPromise(stickyCache.size)
+      expect(size).toBeLessThanOrEqual(2)
+    })
+  })
+})
+
+const runTimerWorkflow = async (): Promise<WorkflowExecutionHandle> => {
+  return await harness!.executeWorkflow({
+    workflowType: timerWorkflow.name,
+    taskQueue: CLI_CONFIG.taskQueue,
+    args: [{ timeoutMs: 200 }],
+  })
+}
+
+const runActivityWorkflow = async (workflowId: string): Promise<WorkflowExecutionHandle> =>
+  await harness!.executeWorkflow({
+    workflowType: activityWorkflow.name,
+    workflowId,
+    taskQueue: CLI_CONFIG.taskQueue,
+    args: [{ value: workflowId }],
+  })
+
+const runParentWorkflow = async (workflowId: string): Promise<WorkflowExecutionHandle> =>
+  await harness!.executeWorkflow({
+    workflowType: parentWorkflow.name,
+    workflowId,
+    taskQueue: CLI_CONFIG.taskQueue,
+    args: [{ value: workflowId }],
+  })
+
+const runContinueWorkflow = async (iterations: number): Promise<WorkflowExecutionHandle> =>
+  await harness!.executeWorkflow({
+    workflowType: continueAsNewWorkflow.name,
+    taskQueue: CLI_CONFIG.taskQueue,
+    args: [{ iterations }],
+  })
+
+const fetchHistory = async (handle: WorkflowExecutionHandle): Promise<HistoryEvent[]> =>
+  await harness!.fetchWorkflowHistory(handle)
+
+const buildWorkflowInfo = (workflowType: string, handle: WorkflowExecutionHandle) => ({
+  namespace: CLI_CONFIG.namespace,
+  taskQueue: CLI_CONFIG.taskQueue,
+  workflowId: handle.workflowId,
+  runId: handle.runId,
+  workflowType,
+})
