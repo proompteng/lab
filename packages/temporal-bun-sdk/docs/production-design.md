@@ -355,6 +355,7 @@ can contribute independently without re-planning.
 - Example apps: update `packages/temporal-bun-sdk-example` to use deterministic
   context primitives (`activities.schedule`, `timers.start`, `determinism.now`).
   - Refresh `apps/docs/content/docs/temporal-bun-sdk.mdx` with: installation instructions, quickstart tutorials (worker + client), configuration guides, and release notes so new users can adopt the SDK confidently.
+  - Introduce a multi-page docs hierarchy (e.g., Overview, Installation, Tutorials, Configuration, Troubleshooting, Release Notes) and wire it into the docs navigation so content scales beyond a single monolithic page.
 
 ## Error Handling & Observability
 
