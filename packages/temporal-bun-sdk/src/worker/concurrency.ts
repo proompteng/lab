@@ -58,8 +58,8 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
     const activityConcurrency = sanitizeConcurrency(options.activityConcurrency)
     const hooks = options.hooks ?? {}
 
-    const workflowQueue = yield* Queue.bounded<WorkflowTaskEnvelope>(computeCapacity(workflowConcurrency))
-    const activityQueue = yield* Queue.bounded<ActivityTaskEnvelope>(computeCapacity(activityConcurrency))
+    let workflowQueue = yield* Queue.bounded<WorkflowTaskEnvelope>(computeCapacity(workflowConcurrency))
+    let activityQueue = yield* Queue.bounded<ActivityTaskEnvelope>(computeCapacity(activityConcurrency))
 
     const workflowSemaphore = TSemaphore.unsafeMake(workflowConcurrency)
     const activitySemaphore = TSemaphore.unsafeMake(activityConcurrency)
@@ -208,6 +208,8 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
         yield* Ref.set(activityFiberRef, [])
         yield* awaitDrain(workflowActiveRef)
         yield* awaitDrain(activityActiveRef)
+        workflowQueue = yield* Queue.bounded<WorkflowTaskEnvelope>(computeCapacity(workflowConcurrency))
+        activityQueue = yield* Queue.bounded<ActivityTaskEnvelope>(computeCapacity(activityConcurrency))
       }),
     )
 
