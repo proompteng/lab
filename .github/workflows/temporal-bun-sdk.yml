@@ -54,8 +54,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run TypeScript compilation
-        run: pnpm exec tsc --project packages/temporal-bun-sdk/tsconfig.json
+      - name: Build Temporal Bun SDK
+        run: pnpm --filter @proompteng/temporal-bun-sdk build
 
       - name: Install Temporal CLI
         run: |
