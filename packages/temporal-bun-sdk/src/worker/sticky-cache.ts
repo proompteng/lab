@@ -38,6 +38,9 @@ export const makeStickyCache = (config: StickyCacheConfig): Effect.Effect<Sticky
     }
 
     const evictOverflow = (entries: StickyCacheEntry[]): StickyCacheEntry[] => {
+      if (config.maxEntries <= 0) {
+        return []
+      }
       if (entries.length <= config.maxEntries) {
         return entries
       }
@@ -65,7 +68,8 @@ export const makeStickyCache = (config: StickyCacheConfig): Effect.Effect<Sticky
             candidate.key.workflowId !== entry.key.workflowId ||
             candidate.key.runId !== entry.key.runId,
         )
-        return [...filtered, touch(entry)]
+        const nextEntries = [...filtered, touch(entry)]
+        return evictOverflow(nextEntries)
       })
 
     const get: StickyCache['get'] = (key) =>
