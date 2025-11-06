@@ -53,7 +53,7 @@ run:
     value: http/protobuf
 deploy:
   namespace: froussard
-  image: registry.ide-newton.ts.net/lab/froussard@sha256:8e3bb593273e6ccbdaf74c1eec9d716d0d4a14312933a71070a7b8877de9db12
+  image: registry.ide-newton.ts.net/lab/froussard@sha256:c6aa26d582f30f61983cac8d3e83aae1fd4cc28b343b6f2e40e9fc4c48f5d09c
   annotations:
     serving.knative.dev/revision-history-limit: "3"
   options:
