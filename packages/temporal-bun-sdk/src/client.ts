@@ -1,7 +1,10 @@
 import type { ClientSessionOptions, SecureClientSessionOptions } from 'node:http2'
+import { performance } from 'node:perf_hooks'
+import { metrics as otelMetrics } from '@opentelemetry/api'
 import { create, toBinary } from '@bufbuild/protobuf'
 import { type CallOptions, Code, ConnectError, createClient, type Transport } from '@connectrpc/connect'
 import { createGrpcTransport, type GrpcTransportOptions } from '@connectrpc/connect-node'
+import { Effect } from 'effect'
 import { createDefaultHeaders, mergeHeaders, normalizeMetadataHeaders } from './client/headers'
 import {
   buildCancelRequest,
@@ -25,6 +28,17 @@ import {
 } from './client/types'
 import { createDefaultDataConverter, type DataConverter, decodePayloadsToValues } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
+import { createLogger, type Logger, type LogLevel } from './observability/logger'
+import {
+  type Counter,
+  type Histogram,
+  type MetricAttributes,
+  type MetricsRegistry,
+  makeInMemoryMetrics,
+  makeOpenTelemetryMetrics,
+} from './observability/metrics'
+import type { Span } from './observability/tracing'
+import { makeNoopTracer, makeOpenTelemetryTracer, type Tracer } from './observability/tracing'
 import type { Payload } from './proto/temporal/api/common/v1/message_pb'
 import {
   type DescribeNamespaceRequest,
@@ -38,6 +52,30 @@ import { WorkflowService } from './proto/temporal/api/workflowservice/v1/service
 
 type ClosableTransport = Transport & { close?: () => void | Promise<void> }
 type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
+
+interface ClientMetricsHandles {
+  readonly rpcLatency: Histogram
+  readonly rpcFailures: Counter
+}
+
+const resolveMetricsRegistry = async (
+  metricsConfig: TemporalConfig['observability']['metrics'],
+  override?: MetricsRegistry,
+): Promise<MetricsRegistry> => {
+  if (override) {
+    return override
+  }
+  if (metricsConfig.exporter === 'otel') {
+    const meter =
+      metricsConfig.meter ??
+      otelMetrics.getMeter(metricsConfig.meterName ?? 'temporal-bun-sdk', {
+        schemaUrl: metricsConfig.schemaUrl,
+        version: metricsConfig.meterVersion,
+      })
+    return makeOpenTelemetryMetrics(meter)
+  }
+  return await Effect.runPromise(makeInMemoryMetrics())
+}
 
 export interface TemporalWorkflowClient {
   start(options: StartWorkflowOptions): Promise<StartWorkflowResult>
@@ -70,6 +108,9 @@ export interface CreateTemporalClientOptions {
   identity?: string
   taskQueue?: string
   dataConverter?: DataConverter
+  logger?: Logger
+  metrics?: MetricsRegistry
+  tracer?: Tracer
 }
 
 export const createTemporalClient = async (
@@ -90,6 +131,34 @@ export const createTemporalClient = async (
 
   const initialHeaders = createDefaultHeaders(config.apiKey)
 
+  const observability = config.observability
+  const baseLogger =
+    options.logger ??
+    createLogger({
+      level: observability.logger.level,
+      format: observability.logger.format,
+    })
+  const logger = baseLogger.with({
+    component: 'temporal-client',
+    namespace,
+    identity,
+    taskQueue,
+  })
+
+  const metricsRegistry = await resolveMetricsRegistry(observability.metrics, options.metrics)
+  const metricsHandles = await createClientMetrics(metricsRegistry)
+  const metricBaseAttributes: MetricAttributes = {
+    namespace,
+    identity,
+    task_queue: taskQueue,
+  }
+
+  const tracer =
+    options.tracer ??
+    (observability.tracing.enabled && observability.tracing.exporter === 'otel'
+      ? makeOpenTelemetryTracer({ serviceName: observability.tracing.serviceName })
+      : makeNoopTracer())
+
   const client = new TemporalClientImpl({
     transport,
     workflowService,
@@ -99,6 +168,10 @@ export const createTemporalClient = async (
     taskQueue,
     dataConverter,
     headers: initialHeaders,
+    logger,
+    metricsHandles,
+    metricBaseAttributes,
+    tracer,
   })
 
   return { client, config }
@@ -114,6 +187,10 @@ class TemporalClientImpl implements TemporalClient {
   private readonly workflowService: WorkflowServiceClient
   private readonly defaultIdentity: string
   private readonly defaultTaskQueue: string
+  private readonly logger: Logger
+  private readonly metricsHandles: ClientMetricsHandles
+  private readonly metricBaseAttributes: MetricAttributes
+  private readonly tracer: Tracer
   private closed = false
   private headers: Record<string, string>
 
@@ -126,6 +203,10 @@ class TemporalClientImpl implements TemporalClient {
     taskQueue: string
     dataConverter: DataConverter
     headers: Record<string, string>
+    logger: Logger
+    metricsHandles: ClientMetricsHandles
+    metricBaseAttributes: MetricAttributes
+    tracer: Tracer
   }) {
     this.transport = handles.transport
     this.workflowService = handles.workflowService
@@ -135,6 +216,10 @@ class TemporalClientImpl implements TemporalClient {
     this.defaultTaskQueue = handles.taskQueue
     this.dataConverter = handles.dataConverter
     this.headers = { ...handles.headers }
+    this.logger = handles.logger
+    this.metricsHandles = handles.metricsHandles
+    this.metricBaseAttributes = handles.metricBaseAttributes
+    this.tracer = handles.tracer
 
     this.workflow = {
       start: (options) => this.startWorkflow(options),
@@ -143,6 +228,80 @@ class TemporalClientImpl implements TemporalClient {
       terminate: (handle, options) => this.terminateWorkflow(handle, options),
       cancel: (handle) => this.cancelWorkflow(handle),
       signalWithStart: (options) => this.signalWithStart(options),
+    }
+  }
+
+  private log(level: LogLevel, message: string, fields?: Record<string, unknown>) {
+    Effect.runFork(this.logger.log(level, message, fields))
+  }
+
+  private logDebug(message: string, fields?: Record<string, unknown>) {
+    this.log('debug', message, fields)
+  }
+
+  private logError(message: string, fields?: Record<string, unknown>) {
+    this.log('error', message, fields)
+  }
+
+  private recordMetric(effect: Effect.Effect<void, never, never>) {
+    Effect.runFork(effect)
+  }
+
+  private attributes(extra?: MetricAttributes): MetricAttributes {
+    if (!extra || Object.keys(extra).length === 0) {
+      return { ...this.metricBaseAttributes }
+    }
+    return { ...this.metricBaseAttributes, ...extra }
+  }
+
+  private recordRpcLatency(method: string, durationMs: number) {
+    this.recordMetric(this.metricsHandles.rpcLatency.observe(durationMs, this.attributes({ rpc_method: method })))
+  }
+
+  private recordRpcFailure(method: string, error: unknown) {
+    const info = this.extractErrorInfo(error)
+    this.recordMetric(this.metricsHandles.rpcFailures.inc(1, this.attributes({ rpc_method: method, code: info.code })))
+  }
+
+  private startSpan(name: string, attributes?: MetricAttributes): Span {
+    return this.tracer.startSpan(name, this.attributes(attributes))
+  }
+
+  private extractErrorInfo(error: unknown): { code: string } {
+    if (error instanceof ConnectError) {
+      const codeName = Code[error.code]
+      return { code: typeof codeName === 'string' ? codeName : String(error.code) }
+    }
+    if (error instanceof Error) {
+      return { code: error.name }
+    }
+    return { code: 'unknown' }
+  }
+
+  private async withRpc<T>(method: string, attributes: MetricAttributes, invoke: () => Promise<T>): Promise<T> {
+    const rpcAttributes = this.attributes({ ...attributes, rpc_method: method })
+    this.logDebug('temporal client rpc request', rpcAttributes)
+    const span = this.startSpan(`temporal.client.${method}`, rpcAttributes)
+    const started = performance.now()
+    try {
+      const result = await invoke()
+      const duration = performance.now() - started
+      this.recordRpcLatency(method, duration)
+      this.logDebug('temporal client rpc success', { ...rpcAttributes, durationMs: duration })
+      span.end()
+      return result
+    } catch (error) {
+      const duration = performance.now() - started
+      this.recordRpcLatency(method, duration)
+      this.recordRpcFailure(method, error)
+      this.logError('temporal client rpc failure', {
+        ...rpcAttributes,
+        durationMs: duration,
+        ...toErrorFields(error),
+      })
+      span.recordException(error)
+      span.end()
+      throw error
     }
   }
 
@@ -162,7 +321,19 @@ class TemporalClientImpl implements TemporalClient {
       this.dataConverter,
     )
 
-    const response = await this.workflowService.startWorkflowExecution(request, this.callOptions())
+    const rpcAttributes: Record<string, string | number | boolean> = {
+      workflow_id: request.workflowId,
+      task_queue: request.taskQueue?.name ?? this.defaultTaskQueue,
+    }
+    if (request.workflowType?.name) {
+      rpcAttributes.workflow_type = request.workflowType.name
+    }
+
+    const response = await this.withRpc(
+      'StartWorkflowExecution',
+      rpcAttributes as MetricAttributes,
+      async () => await this.workflowService.startWorkflowExecution(request, this.callOptions()),
+    )
     return this.toStartWorkflowResult(response, {
       workflowId: request.workflowId,
       namespace: request.namespace,
@@ -202,15 +373,41 @@ class TemporalClientImpl implements TemporalClient {
       this.dataConverter,
     )
 
-    await this.workflowService.signalWorkflowExecution(request, this.callOptions())
+    const rpcAttributes: Record<string, string | number | boolean> = {
+      workflow_id: resolvedHandle.workflowId,
+      signal_name: normalizedSignalName,
+    }
+    if (resolvedHandle.runId) {
+      rpcAttributes.run_id = resolvedHandle.runId
+    }
+
+    await this.withRpc(
+      'SignalWorkflowExecution',
+      rpcAttributes as MetricAttributes,
+      async () => await this.workflowService.signalWorkflowExecution(request, this.callOptions()),
+    )
   }
 
   async queryWorkflow(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown> {
     this.ensureOpen()
     const resolvedHandle = resolveHandle(this.namespace, handle)
 
-    const request = await buildQueryRequest(resolvedHandle, queryName, args, this.dataConverter)
-    const response = await this.workflowService.queryWorkflow(request, this.callOptions())
+    const normalizedQueryName = ensureNonEmptyString(queryName, 'queryName')
+    const request = await buildQueryRequest(resolvedHandle, normalizedQueryName, args, this.dataConverter)
+
+    const rpcAttributes: Record<string, string | number | boolean> = {
+      workflow_id: resolvedHandle.workflowId,
+      query_name: normalizedQueryName,
+    }
+    if (resolvedHandle.runId) {
+      rpcAttributes.run_id = resolvedHandle.runId
+    }
+
+    const response = await this.withRpc(
+      'QueryWorkflow',
+      rpcAttributes as MetricAttributes,
+      async () => await this.workflowService.queryWorkflow(request, this.callOptions()),
+    )
 
     return this.parseQueryResult(response)
   }
@@ -221,7 +418,21 @@ class TemporalClientImpl implements TemporalClient {
     const parsedOptions = sanitizeTerminateWorkflowOptions(options)
 
     const request = await buildTerminateRequest(resolvedHandle, parsedOptions, this.dataConverter, this.defaultIdentity)
-    await this.workflowService.terminateWorkflowExecution(request, this.callOptions())
+    const rpcAttributes: Record<string, string | number | boolean> = {
+      workflow_id: resolvedHandle.workflowId,
+    }
+    if (resolvedHandle.runId) {
+      rpcAttributes.run_id = resolvedHandle.runId
+    }
+    if (parsedOptions.reason) {
+      rpcAttributes.reason = parsedOptions.reason
+    }
+
+    await this.withRpc(
+      'TerminateWorkflowExecution',
+      rpcAttributes as MetricAttributes,
+      async () => await this.workflowService.terminateWorkflowExecution(request, this.callOptions()),
+    )
   }
 
   async cancelWorkflow(handle: WorkflowHandle): Promise<void> {
@@ -229,7 +440,18 @@ class TemporalClientImpl implements TemporalClient {
     const resolvedHandle = resolveHandle(this.namespace, handle)
 
     const request = buildCancelRequest(resolvedHandle, this.defaultIdentity)
-    await this.workflowService.requestCancelWorkflowExecution(request, this.callOptions())
+    const rpcAttributes: Record<string, string | number | boolean> = {
+      workflow_id: resolvedHandle.workflowId,
+    }
+    if (resolvedHandle.runId) {
+      rpcAttributes.run_id = resolvedHandle.runId
+    }
+
+    await this.withRpc(
+      'RequestCancelWorkflowExecution',
+      rpcAttributes as MetricAttributes,
+      async () => await this.workflowService.requestCancelWorkflowExecution(request, this.callOptions()),
+    )
   }
 
   async signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult> {
@@ -257,7 +479,20 @@ class TemporalClientImpl implements TemporalClient {
       this.dataConverter,
     )
 
-    const response = await this.workflowService.signalWithStartWorkflowExecution(request, this.callOptions())
+    const rpcAttributes: Record<string, string | number | boolean> = {
+      workflow_id: request.workflowId,
+      signal_name: signalName,
+      task_queue: request.taskQueue?.name ?? this.defaultTaskQueue,
+    }
+    if (request.workflowType?.name) {
+      rpcAttributes.workflow_type = request.workflowType.name
+    }
+
+    const response = await this.withRpc(
+      'SignalWithStartWorkflowExecution',
+      rpcAttributes as MetricAttributes,
+      async () => await this.workflowService.signalWithStartWorkflowExecution(request, this.callOptions()),
+    )
     return this.toStartWorkflowResult(response, {
       workflowId: request.workflowId,
       namespace: request.namespace,
@@ -271,7 +506,11 @@ class TemporalClientImpl implements TemporalClient {
       namespace: targetNamespace ?? this.namespace,
     })
 
-    const response = await this.workflowService.describeNamespace(request, this.callOptions())
+    const response = await this.withRpc(
+      'DescribeNamespace',
+      { namespace: request.namespace } as MetricAttributes,
+      async () => await this.workflowService.describeNamespace(request, this.callOptions()),
+    )
     return toBinary(DescribeNamespaceResponseSchema, response)
   }
 
@@ -347,6 +586,40 @@ class TemporalClientImpl implements TemporalClient {
 
     const [value] = await decodePayloadsToValues(this.dataConverter, payloads as unknown as Payload[])
     return value ?? null
+  }
+}
+
+const toErrorFields = (error: unknown): Record<string, unknown> => {
+  if (error instanceof Error) {
+    return {
+      errorName: error.name,
+      errorMessage: error.message,
+      errorStack: error.stack,
+    }
+  }
+  return {
+    errorMessage: String(error),
+  }
+}
+
+const createClientMetrics = async (metrics: MetricsRegistry): Promise<ClientMetricsHandles> => {
+  const [rpcLatency, rpcFailures] = await Promise.all([
+    Effect.runPromise(
+      metrics.histogram('temporal_client_rpc_latency_ms', {
+        description: 'Latency of Temporal service RPCs invoked by the Temporal client (milliseconds).',
+        unit: 'ms',
+      }),
+    ),
+    Effect.runPromise(
+      metrics.counter('temporal_client_rpc_failures_total', {
+        description: 'Number of Temporal client RPC failures grouped by RPC method and error code.',
+      }),
+    ),
+  ])
+
+  return {
+    rpcLatency,
+    rpcFailures,
   }
 }
 

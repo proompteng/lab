@@ -4,6 +4,12 @@ import { join } from 'node:path'
 import { fromJson } from '@bufbuild/protobuf'
 import { Effect } from 'effect'
 
+import { createLogger, type Logger } from '../../src/observability/logger'
+import {
+  makeInMemoryMetrics,
+  type MetricAttributes,
+  type MetricsRegistry,
+} from '../../src/observability/metrics'
 import { HistorySchema, type HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
 
 export interface TemporalDevServerConfig {
@@ -33,6 +39,8 @@ export interface IntegrationHarness {
   readonly fetchWorkflowHistory: (
     handle: WorkflowExecutionHandle,
   ) => Effect.Effect<HistoryEvent[], TemporalCliError, never>
+  readonly logger: Logger
+  readonly metrics: MetricsRegistry
 }
 
 export interface TemporalWorkflowExecuteOptions {
@@ -78,8 +86,29 @@ const textDecoder = new TextDecoder()
 
 export const createIntegrationHarness = (
   config: TemporalDevServerConfig,
+  options: { logger?: Logger; metrics?: MetricsRegistry } = {},
 ): Effect.Effect<IntegrationHarness, TemporalCliError, never> =>
   Effect.gen(function* () {
+    const baseLogger =
+      options.logger ??
+      createLogger({
+        level: 'info',
+        format: 'json',
+        fields: {},
+      })
+    const logger = baseLogger.with({
+      component: 'temporal-cli-harness',
+      namespace: config.namespace,
+      taskQueue: config.taskQueue,
+    })
+    const metrics = options.metrics ?? (yield* makeInMemoryMetrics())
+    const scenarioCounter = yield* metrics.counter('temporal_integration_scenarios_total', {
+      description: 'Number of integration scenarios executed through the Temporal CLI harness.',
+    })
+    const failureCounter = yield* metrics.counter('temporal_integration_failures_total', {
+      description: 'Integration scenarios that terminated with an error.',
+    })
+
     const projectRoot = join(import.meta.dir, '..', '..')
     const startScript = join(projectRoot, 'scripts', 'start-temporal-cli.ts')
     const stopScript = join(projectRoot, 'scripts', 'stop-temporal-cli.ts')
@@ -121,6 +150,7 @@ export const createIntegrationHarness = (
         throw new TemporalCliCommandError(['bun', startScript], exitCode, stdout, stderr)
       }
       started = true
+      await Effect.runPromise(logger.info('integration harness setup', { projectRoot }))
     })
 
     const teardown = Effect.tryPromise(async () => {
@@ -139,13 +169,18 @@ export const createIntegrationHarness = (
         throw new TemporalCliCommandError(['bun', stopScript], exitCode, stdout, stderr)
       }
       started = false
+      await Effect.runPromise(logger.info('integration harness teardown', { projectRoot }))
     })
 
     const runTemporalCli = (args: readonly string[]) => {
       const command = [cliExecutable, ...args]
       return Effect.tryPromise({
         try: async () => {
-          console.info('[temporal-bun-sdk] running CLI command', command.join(' '))
+          await Effect.runPromise(
+            logger.info('temporal cli command start', {
+              command: command.join(' '),
+            }),
+          )
           const child = Bun.spawn(command, {
             stdout: 'pipe',
             stderr: 'pipe',
@@ -154,13 +189,24 @@ export const createIntegrationHarness = (
           const stdout = child.stdout ? await readStream(child.stdout) : ''
           const stderr = child.stderr ? await readStream(child.stderr) : ''
           if (exitCode !== 0) {
-            console.error('[temporal-bun-sdk] CLI command failed', { command, exitCode, stdout, stderr })
+            await Effect.runPromise(
+              logger.error('temporal cli command failed', {
+                command: command.join(' '),
+                exitCode,
+                stdout,
+                stderr,
+              }),
+            )
             throw new TemporalCliCommandError(command, exitCode, stdout, stderr)
           }
-          console.info('[temporal-bun-sdk] CLI command stdout', stdout)
-          if (stderr.trim().length > 0) {
-            console.info('[temporal-bun-sdk] CLI command stderr', stderr)
-          }
+          await Effect.runPromise(
+            logger.info('temporal cli command completed', {
+              command: command.join(' '),
+              exitCode,
+              stdout,
+              stderr: stderr.trim().length > 0 ? stderr : undefined,
+            }),
+          )
           return stdout
         },
         catch: (error) =>
@@ -226,9 +272,26 @@ export const createIntegrationHarness = (
     }
 
     const runScenario: IntegrationHarness['runScenario'] = (name, scenario) =>
-      Effect.succeed(void console.info(`[temporal-bun-sdk] scenario: ${name}`)).pipe(
-        Effect.zipRight(scenario()),
-      )
+      Effect.gen(function* () {
+        const attributes = scenarioAttributes(name)
+        yield* scenarioCounter.inc(1, attributes)
+        yield* logger.info('integration scenario start', attributes)
+
+        const result = yield* scenario().pipe(
+          Effect.tap(() => logger.info('integration scenario completed', attributes)),
+          Effect.tapError((error) =>
+            Effect.gen(function* () {
+              yield* failureCounter.inc(1, attributes)
+              yield* logger.error('integration scenario failed', {
+                ...attributes,
+                ...toErrorFields(error),
+              })
+            }),
+          ),
+        )
+
+        return result
+      })
 
     return {
       setup,
@@ -236,8 +299,27 @@ export const createIntegrationHarness = (
       runScenario,
       executeWorkflow,
       fetchWorkflowHistory,
+      logger,
+      metrics,
     }
   })
+
+const scenarioAttributes = (name: string): MetricAttributes => ({
+  scenario: name,
+})
+
+const toErrorFields = (error: unknown): Record<string, unknown> => {
+  if (error instanceof Error) {
+    return {
+      errorName: error.name,
+      errorMessage: error.message,
+      errorStack: error.stack,
+    }
+  }
+  return {
+    errorMessage: String(error),
+  }
+}
 
 const readStream = async (stream: ReadableStream<Uint8Array> | null): Promise<string> => {
   if (!stream) {

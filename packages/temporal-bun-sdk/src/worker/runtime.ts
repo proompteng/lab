@@ -1,3 +1,5 @@
+import { metrics as otelMetrics } from '@opentelemetry/api'
+import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 
@@ -15,6 +17,18 @@ import {
 } from '../common/payloads/converter'
 import { encodeErrorToFailure, encodeFailurePayloads } from '../common/payloads/failure'
 import { loadTemporalConfig, type TemporalConfig } from '../config'
+import type { LogLevel } from '../observability/logger'
+import { createLogger, type Logger } from '../observability/logger'
+import {
+  type Counter,
+  type Histogram,
+  type MetricAttributes,
+  type MetricsRegistry,
+  makeInMemoryMetrics,
+  makeOpenTelemetryMetrics,
+} from '../observability/metrics'
+import type { Span } from '../observability/tracing'
+import { makeNoopTracer, makeOpenTelemetryTracer, type Tracer } from '../observability/tracing'
 import {
   type Command,
   CommandSchema,
@@ -84,6 +98,37 @@ export interface WorkerRuntimeOptions {
   config?: TemporalConfig
   workflowService?: WorkflowServiceClient
   stickyCache?: StickyCache
+  logger?: Logger
+  metrics?: MetricsRegistry
+  tracer?: Tracer
+}
+
+interface WorkerMetricsHandles {
+  readonly pollLatency: Histogram
+  readonly taskFailures: Counter
+  readonly taskRetryAttempts: Counter
+  readonly stickyCacheEvents: Counter
+}
+
+type StickyCacheEvent = 'hit' | 'miss' | 'store' | 'evict'
+
+const resolveMetricsRegistry = async (
+  metricsConfig: TemporalConfig['observability']['metrics'],
+  override?: MetricsRegistry,
+): Promise<MetricsRegistry> => {
+  if (override) {
+    return override
+  }
+  if (metricsConfig.exporter === 'otel') {
+    const meter =
+      metricsConfig.meter ??
+      otelMetrics.getMeter(metricsConfig.meterName ?? 'temporal-bun-sdk', {
+        schemaUrl: metricsConfig.schemaUrl,
+        version: metricsConfig.meterVersion,
+      })
+    return makeOpenTelemetryMetrics(meter)
+  }
+  return await Effect.runPromise(makeInMemoryMetrics())
 }
 
 export class WorkerRuntime {
@@ -117,6 +162,36 @@ export class WorkerRuntime {
       bypassDeterministicContext: config.workflowContextBypass,
     })
 
+    const observability = config.observability
+    const baseLogger =
+      options.logger ??
+      createLogger({
+        level: observability.logger.level,
+        format: observability.logger.format,
+        fields: {},
+      })
+    const workerLogger = baseLogger.with({
+      component: 'temporal-worker',
+      namespace,
+      taskQueue,
+      identity,
+    })
+
+    const metricsRegistry = await resolveMetricsRegistry(observability.metrics, options.metrics)
+    const workerMetrics = await createWorkerMetrics(metricsRegistry)
+
+    const tracer =
+      options.tracer ??
+      (observability.tracing.enabled && observability.tracing.exporter === 'otel'
+        ? makeOpenTelemetryTracer({ serviceName: observability.tracing.serviceName })
+        : makeNoopTracer())
+
+    const metricBaseAttributes: MetricAttributes = {
+      namespace,
+      task_queue: taskQueue,
+      identity,
+    }
+
     let workflowService: WorkflowServiceClient
     if (options.workflowService) {
       workflowService = options.workflowService
@@ -142,6 +217,10 @@ export class WorkerRuntime {
       taskQueue,
       identity,
       stickyCache,
+      logger: workerLogger,
+      metricsHandles: workerMetrics,
+      metricBaseAttributes,
+      tracer,
     })
   }
 
@@ -156,9 +235,70 @@ export class WorkerRuntime {
   readonly #identity: string
   readonly #stickyCache: StickyCache
   readonly #stickyTaskQueue: string
+  readonly #logger: Logger
+  readonly #metricsHandles: WorkerMetricsHandles
+  readonly #metricBaseAttributes: MetricAttributes
+  readonly #tracer: Tracer
   #running = false
   #abortController: AbortController | null = null
   #runPromise: Promise<void> | null = null
+
+  #log(level: LogLevel, message: string, fields?: Record<string, unknown>) {
+    Effect.runFork(this.#logger.log(level, message, fields))
+  }
+
+  #logDebug(message: string, fields?: Record<string, unknown>) {
+    this.#log('debug', message, fields)
+  }
+
+  #logInfo(message: string, fields?: Record<string, unknown>) {
+    this.#log('info', message, fields)
+  }
+
+  #logError(message: string, fields?: Record<string, unknown>) {
+    this.#log('error', message, fields)
+  }
+
+  #recordMetric(effect: Effect.Effect<void, never, never>) {
+    Effect.runFork(effect)
+  }
+
+  #attributes(extra?: MetricAttributes): MetricAttributes {
+    if (!extra || Object.keys(extra).length === 0) {
+      return { ...this.#metricBaseAttributes }
+    }
+    return { ...this.#metricBaseAttributes, ...extra }
+  }
+
+  #recordStickyEvent(event: StickyCacheEvent, extra?: MetricAttributes) {
+    this.#recordMetric(this.#metricsHandles.stickyCacheEvents.inc(1, this.#attributes({ event, ...extra })))
+  }
+
+  #startSpan(name: string, attributes?: MetricAttributes): Span {
+    return this.#tracer.startSpan(name, this.#attributes(attributes))
+  }
+
+  #recordPollLatency(taskType: 'workflow' | 'activity', durationMs: number, extra?: MetricAttributes) {
+    this.#recordMetric(
+      this.#metricsHandles.pollLatency.observe(durationMs, this.#attributes({ task_type: taskType, ...extra })),
+    )
+  }
+
+  #recordTaskFailure(taskType: 'workflow' | 'activity', reason: string, extra?: MetricAttributes) {
+    this.#recordMetric(
+      this.#metricsHandles.taskFailures.inc(1, this.#attributes({ task_type: taskType, reason, ...extra })),
+    )
+  }
+
+  #recordRetryAttempt(taskType: 'workflow' | 'activity', attempt: number, extra?: MetricAttributes) {
+    const retries = Math.max(0, attempt - 1)
+    if (retries === 0) {
+      return
+    }
+    this.#recordMetric(
+      this.#metricsHandles.taskRetryAttempts.inc(retries, this.#attributes({ task_type: taskType, attempt, ...extra })),
+    )
+  }
 
   #isStickyExecutionEnabled(): boolean {
     return this.#config.stickyCacheSize > 0
@@ -203,6 +343,10 @@ export class WorkerRuntime {
     taskQueue: string
     identity: string
     stickyCache: StickyCache
+    logger: Logger
+    metricsHandles: WorkerMetricsHandles
+    metricBaseAttributes: MetricAttributes
+    tracer: Tracer
   }) {
     this.#config = params.config
     this.#workflowService = params.workflowService
@@ -215,6 +359,10 @@ export class WorkerRuntime {
     this.#identity = params.identity
     this.#stickyCache = params.stickyCache
     this.#stickyTaskQueue = `${this.#taskQueue}::sticky::${this.#identity}`
+    this.#logger = params.logger
+    this.#metricsHandles = params.metricsHandles
+    this.#metricBaseAttributes = params.metricBaseAttributes
+    this.#tracer = params.tracer
   }
 
   async run(): Promise<void> {
@@ -225,13 +373,22 @@ export class WorkerRuntime {
     this.#abortController = new AbortController()
     const signal = this.#abortController.signal
 
+    this.#logInfo('worker runtime starting', {
+      activitiesRegistered: this.#hasActivities(),
+      stickyCacheEnabled: this.#isStickyExecutionEnabled(),
+    })
+
     const loops: Array<Promise<void>> = [this.#workflowLoop(signal), this.#activityLoop(signal)]
     if (this.#isStickyExecutionEnabled()) {
       loops.unshift(this.#stickyWorkflowLoop(signal))
     }
     this.#runPromise = Promise.all(loops).then(() => undefined)
 
-    await this.#runPromise
+    try {
+      await this.#runPromise
+    } finally {
+      this.#logInfo('worker runtime stopped')
+    }
   }
 
   async shutdown(): Promise<void> {
@@ -239,6 +396,7 @@ export class WorkerRuntime {
       return
     }
     this.#running = false
+    this.#logInfo('worker runtime shutting down')
     this.#abortController?.abort()
     if (this.#runPromise) {
       await this.#runPromise
@@ -253,11 +411,13 @@ export class WorkerRuntime {
     })
 
     while (!signal.aborted) {
+      const startedAt = performance.now()
       try {
         const response = await this.#workflowService.pollWorkflowTaskQueue(request, {
           timeoutMs: POLL_TIMEOUT_MS,
           signal,
         })
+        this.#recordPollLatency('workflow', performance.now() - startedAt)
         if (!response.taskToken || response.taskToken.length === 0) {
           continue
         }
@@ -266,7 +426,12 @@ export class WorkerRuntime {
         if (signal.aborted) {
           break
         }
-        console.error('[temporal-bun-sdk] workflow polling failed', error)
+        this.#recordPollLatency('workflow', performance.now() - startedAt)
+        this.#recordTaskFailure('workflow', 'poll_error')
+        this.#logError('workflow polling failed', {
+          ...toErrorFields(error),
+          pollTimeoutMs: POLL_TIMEOUT_MS,
+        })
         await delay(250)
       }
     }
@@ -284,11 +449,13 @@ export class WorkerRuntime {
     })
 
     while (!signal.aborted) {
+      const startedAt = performance.now()
       try {
         const response = await this.#workflowService.pollWorkflowTaskQueue(request, {
           timeoutMs: POLL_TIMEOUT_MS,
           signal,
         })
+        this.#recordPollLatency('workflow', performance.now() - startedAt, { queue_type: 'sticky' })
         if (!response.taskToken || response.taskToken.length === 0) {
           continue
         }
@@ -297,7 +464,12 @@ export class WorkerRuntime {
         if (signal.aborted) {
           break
         }
-        console.error('[temporal-bun-sdk] sticky workflow polling failed', error)
+        this.#recordPollLatency('workflow', performance.now() - startedAt, { queue_type: 'sticky' })
+        this.#recordTaskFailure('workflow', 'poll_error', { queue_type: 'sticky' })
+        this.#logError('sticky workflow polling failed', {
+          ...toErrorFields(error),
+          pollTimeoutMs: POLL_TIMEOUT_MS,
+        })
         await delay(250)
       }
     }
@@ -315,11 +487,13 @@ export class WorkerRuntime {
     })
 
     while (!signal.aborted) {
+      const startedAt = performance.now()
       try {
         const response = await this.#workflowService.pollActivityTaskQueue(request, {
           timeoutMs: POLL_TIMEOUT_MS,
           signal,
         })
+        this.#recordPollLatency('activity', performance.now() - startedAt)
         if (!response.taskToken || response.taskToken.length === 0) {
           continue
         }
@@ -328,13 +502,21 @@ export class WorkerRuntime {
         if (signal.aborted) {
           break
         }
-        console.error('[temporal-bun-sdk] activity polling failed', error)
+        this.#recordPollLatency('activity', performance.now() - startedAt)
+        this.#recordTaskFailure('activity', 'poll_error')
+        this.#logError('activity polling failed', {
+          ...toErrorFields(error),
+          pollTimeoutMs: POLL_TIMEOUT_MS,
+        })
         await delay(250)
       }
     }
   }
 
   async #processWorkflowTask(response: PollWorkflowTaskQueueResponse): Promise<void> {
+    const attempt = Math.max(1, Number(response.attempt ?? 1))
+    this.#recordRetryAttempt('workflow', attempt)
+
     const workflowType = this.#resolveWorkflowType(response)
     const args = await this.#decodeWorkflowArgs(response)
     const execution = this.#resolveWorkflowExecution(response)
@@ -349,6 +531,21 @@ export class WorkerRuntime {
     const stickyKey = stickyExecutionEnabled ? this.#buildStickyKey(execution.workflowId, execution.runId) : null
     const historyEvents = await this.#collectWorkflowHistory(response, execution)
 
+    const span = this.#startSpan('temporal.worker.workflow_task', {
+      task_type: 'workflow',
+      workflow_type: workflowType,
+      workflow_id: execution.workflowId,
+      run_id: execution.runId,
+      attempt,
+    })
+
+    this.#logDebug('processing workflow task', {
+      workflowType,
+      workflowId: execution.workflowId,
+      runId: execution.runId,
+      attempt,
+    })
+
     const replay = await Effect.runPromise(
       ingestWorkflowHistory({
         info: workflowInfo,
@@ -362,6 +559,7 @@ export class WorkerRuntime {
 
     if (stickyExecutionEnabled && stickyKey) {
       cachedEntry = await Effect.runPromise(this.#stickyCache.get(stickyKey))
+      this.#recordStickyEvent(cachedEntry ? 'hit' : 'miss', { workflow_id: execution.workflowId })
       if (cachedEntry) {
         const historyBaselineEventId = this.#resolvePreviousHistoryEventId(response) ?? replay.lastEventId ?? null
         const cacheMatchesHistory = (cachedEntry.lastEventId ?? null) === historyBaselineEventId
@@ -375,7 +573,11 @@ export class WorkerRuntime {
             diffDeterminismState(cachedEntry.determinismState, replay.determinismState),
           )
           if (diff.mismatches.length > 0) {
-            console.warn('[temporal-bun-sdk] sticky cache determinism snapshot drift detected', diff.mismatches)
+            this.#logInfo('sticky cache determinism snapshot drift detected', {
+              workflowId: execution.workflowId,
+              runId: execution.runId,
+              mismatches: diff.mismatches,
+            })
           }
           if (this.#isValidDeterminismSnapshot(replay.determinismState)) {
             determinismState = replay.determinismState
@@ -433,6 +635,14 @@ export class WorkerRuntime {
         }
       }
 
+      this.#logDebug('workflow task completed', {
+        workflowType,
+        workflowId: execution.workflowId,
+        runId: execution.runId,
+        commands: commandsWithMarker.length,
+        completion: output.completion,
+      })
+
       const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? replay.lastEventId ?? null
 
       if (stickyExecutionEnabled && stickyKey) {
@@ -444,6 +654,7 @@ export class WorkerRuntime {
 
         if (shouldEvict) {
           await Effect.runPromise(this.#stickyCache.remove(stickyKey))
+          this.#recordStickyEvent('evict', { workflow_id: execution.workflowId })
         } else {
           await Effect.runPromise(
             this.#stickyCache.upsert({
@@ -453,6 +664,7 @@ export class WorkerRuntime {
               lastAccessed: Date.now(),
             }),
           )
+          this.#recordStickyEvent('store', { workflow_id: execution.workflowId })
         }
       }
 
@@ -462,14 +674,30 @@ export class WorkerRuntime {
     } catch (error) {
       if (stickyExecutionEnabled && stickyKey) {
         await Effect.runPromise(this.#stickyCache.remove(stickyKey))
+        this.#recordStickyEvent('evict', { workflow_id: execution.workflowId })
       }
+      span.recordException(error)
       if (error instanceof WorkflowNondeterminismError) {
         const mismatches = await this.#computeNondeterminismMismatches(error, expectedDeterminismState)
         const enriched = this.#augmentNondeterminismError(error, mismatches)
+        this.#logError('workflow non-determinism detected', {
+          workflowType,
+          workflowId: execution.workflowId,
+          runId: execution.runId,
+          ...toErrorFields(error),
+        })
         await this.#failWorkflowTask(response, execution, enriched, WorkflowTaskFailedCause.NON_DETERMINISTIC_ERROR)
         return
       }
+      this.#logError('workflow task failed', {
+        workflowType,
+        workflowId: execution.workflowId,
+        runId: execution.runId,
+        ...toErrorFields(error),
+      })
       await this.#failWorkflowTask(response, execution, error)
+    } finally {
+      span.end()
     }
   }
 
@@ -529,6 +757,8 @@ export class WorkerRuntime {
       namespace: this.#namespace,
     })
 
+    this.#recordTaskFailure('workflow', workflowFailureReason(cause))
+
     try {
       await this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS })
     } catch (respondError) {
@@ -541,22 +771,30 @@ export class WorkerRuntime {
   }
 
   async #processActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
+    const attempt = Math.max(1, Number(response.attempt ?? 1))
+    this.#recordRetryAttempt('activity', attempt)
+
     const cancelRequested = isActivityCancelRequested(response)
 
     if (cancelRequested) {
+      this.#logInfo('cancelling activity task due to cancel request', buildActivityLogFields(response, attempt))
       await this.#cancelActivityTask(response)
       return
     }
 
     const activityType = response.activityType?.name
     if (!activityType) {
-      await this.#failActivityTask(response, new Error('Activity task missing type'))
+      await this.#failActivityTask(response, new Error('Activity task missing type'), 'missing_type')
       return
     }
 
     const handler = this.#activities[activityType]
     if (!handler) {
-      await this.#failActivityTask(response, new Error(`No handler registered for activity ${activityType}`))
+      await this.#failActivityTask(
+        response,
+        new Error(`No handler registered for activity ${activityType}`),
+        'handler_missing',
+      )
       return
     }
 
@@ -578,11 +816,15 @@ export class WorkerRuntime {
         await this.#cancelActivityTask(response)
         return
       }
-      await this.#failActivityTask(response, error)
+      await this.#failActivityTask(response, error, 'handler_error')
     }
   }
 
-  async #failActivityTask(response: PollActivityTaskQueueResponse, error: unknown): Promise<void> {
+  async #failActivityTask(
+    response: PollActivityTaskQueueResponse,
+    error: unknown,
+    reason: string,
+  ): Promise<void> {
     const failure = await encodeErrorToFailure(this.#dataConverter, error)
     const encoded = await encodeFailurePayloads(this.#dataConverter, failure)
 
@@ -591,6 +833,13 @@ export class WorkerRuntime {
       identity: this.#identity,
       namespace: this.#namespace,
       failure: encoded,
+    })
+
+    this.#recordTaskFailure('activity', reason)
+    this.#logError('activity task failed', {
+      ...buildActivityLogFields(response, Number(response.attempt ?? 1)),
+      reason,
+      ...toErrorFields(error),
     })
 
     await this.#workflowService.respondActivityTaskFailed(request, { timeoutMs: RESPOND_TIMEOUT_MS })
@@ -602,6 +851,11 @@ export class WorkerRuntime {
       identity: this.#identity,
       namespace: this.#namespace,
     })
+
+    this.#logInfo(
+      'activity task cancellation acknowledged',
+      buildActivityLogFields(response, Number(response.attempt ?? 1)),
+    )
 
     await this.#workflowService.respondActivityTaskCanceled(request, { timeoutMs: RESPOND_TIMEOUT_MS })
   }
@@ -861,7 +1115,7 @@ export class WorkerRuntime {
   }
 
   #logWorkflowTaskNotFound(context: string, execution: { workflowId: string; runId: string }): void {
-    console.warn('[temporal-bun-sdk] workflow task already resolved', {
+    this.#logInfo('workflow task already resolved', {
       context,
       workflowId: execution.workflowId,
       runId: execution.runId,
@@ -873,6 +1127,34 @@ const isActivityCancelRequested = (response: PollActivityTaskQueueResponse): boo
   Boolean((response as { cancelRequested?: boolean }).cancelRequested)
 
 const isAbortError = (error: unknown): boolean => error instanceof Error && error.name === 'AbortError'
+
+const toErrorFields = (error: unknown): Record<string, unknown> => {
+  if (error instanceof Error) {
+    return {
+      errorName: error.name,
+      errorMessage: error.message,
+      errorStack: error.stack,
+    }
+  }
+  return {
+    errorMessage: String(error),
+  }
+}
+
+const workflowFailureReason = (cause: WorkflowTaskFailedCause): string => {
+  const raw = WorkflowTaskFailedCause[cause]
+  return typeof raw === 'string' ? raw.toLowerCase() : 'unspecified'
+}
+
+const buildActivityLogFields = (
+  response: PollActivityTaskQueueResponse,
+  attempt: number,
+): Record<string, unknown> => ({
+  activityType: response.activityType?.name ?? '',
+  workflowId: response.workflowExecution?.workflowId ?? '',
+  runId: response.workflowExecution?.runId ?? '',
+  attempt,
+})
 
 async function loadWorkflows(
   workflowsPath?: string,

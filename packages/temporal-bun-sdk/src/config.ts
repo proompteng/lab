@@ -1,6 +1,10 @@
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 
+import type { LogLevel } from './observability/logger'
+import { normalizeLogLevel } from './observability/logger'
+import type { OtelMeter } from './observability/metrics'
+
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 7233
 const DEFAULT_NAMESPACE = 'default'
@@ -29,6 +33,15 @@ interface TemporalEnvironment {
   TEMPORAL_STICKY_CACHE_SIZE?: string
   TEMPORAL_STICKY_CACHE_TTL_MS?: string
   TEMPORAL_STICKY_QUEUE_TIMEOUT_MS?: string
+  TEMPORAL_LOG_LEVEL?: string
+  TEMPORAL_LOG_FORMAT?: string
+  TEMPORAL_METRICS_EXPORTER?: string
+  TEMPORAL_METRICS_METER_NAME?: string
+  TEMPORAL_METRICS_METER_VERSION?: string
+  TEMPORAL_METRICS_SCHEMA_URL?: string
+  TEMPORAL_TRACING_ENABLED?: string
+  TEMPORAL_TRACING_EXPORTER?: string
+  TEMPORAL_TRACING_SERVICE_NAME?: string
 }
 
 const truthyValues = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
@@ -63,6 +76,15 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     TEMPORAL_STICKY_CACHE_SIZE: read('TEMPORAL_STICKY_CACHE_SIZE'),
     TEMPORAL_STICKY_CACHE_TTL_MS: read('TEMPORAL_STICKY_CACHE_TTL_MS'),
     TEMPORAL_STICKY_QUEUE_TIMEOUT_MS: read('TEMPORAL_STICKY_QUEUE_TIMEOUT_MS'),
+    TEMPORAL_LOG_LEVEL: read('TEMPORAL_LOG_LEVEL'),
+    TEMPORAL_LOG_FORMAT: read('TEMPORAL_LOG_FORMAT'),
+    TEMPORAL_METRICS_EXPORTER: read('TEMPORAL_METRICS_EXPORTER'),
+    TEMPORAL_METRICS_METER_NAME: read('TEMPORAL_METRICS_METER_NAME'),
+    TEMPORAL_METRICS_METER_VERSION: read('TEMPORAL_METRICS_METER_VERSION'),
+    TEMPORAL_METRICS_SCHEMA_URL: read('TEMPORAL_METRICS_SCHEMA_URL'),
+    TEMPORAL_TRACING_ENABLED: read('TEMPORAL_TRACING_ENABLED'),
+    TEMPORAL_TRACING_EXPORTER: read('TEMPORAL_TRACING_EXPORTER'),
+    TEMPORAL_TRACING_SERVICE_NAME: read('TEMPORAL_TRACING_SERVICE_NAME'),
   }
 }
 
@@ -99,7 +121,9 @@ export interface LoadTemporalConfigOptions {
   fs?: {
     readFile?: typeof readFile
   }
-  defaults?: Partial<TemporalConfig>
+  defaults?: Partial<Omit<TemporalConfig, 'observability'>> & {
+    observability?: ObservabilityDefaults
+  }
 }
 
 export interface TemporalConfig {
@@ -118,6 +142,7 @@ export interface TemporalConfig {
   stickyCacheSize: number
   stickyCacheTtlMs: number
   stickyQueueTimeoutMs: number
+  observability: ObservabilityConfig
 }
 
 export interface TLSCertPair {
@@ -129,6 +154,91 @@ export interface TLSConfig {
   serverRootCACertificate?: Buffer
   serverNameOverride?: string
   clientCertPair?: TLSCertPair
+}
+
+export interface LoggerConfig {
+  level: LogLevel
+  format: 'json' | 'pretty'
+}
+
+export type MetricsExporter = 'in-memory' | 'otel'
+
+export interface MetricsConfig {
+  exporter: MetricsExporter
+  meterName?: string
+  meterVersion?: string
+  schemaUrl?: string
+  meter?: OtelMeter
+}
+
+export type TracingExporter = 'none' | 'otel'
+
+export interface TracingConfig {
+  enabled: boolean
+  exporter: TracingExporter
+  serviceName?: string
+}
+
+export interface ObservabilityConfig {
+  logger: LoggerConfig
+  metrics: MetricsConfig
+  tracing: TracingConfig
+}
+
+export type ObservabilityDefaults = Partial<ObservabilityConfig> & {
+  logger?: Partial<LoggerConfig>
+  metrics?: Partial<MetricsConfig>
+  tracing?: Partial<TracingConfig>
+}
+
+const normalizeLogFormat = (value: string | undefined): LoggerConfig['format'] =>
+  value?.toLowerCase() === 'pretty' ? 'pretty' : 'json'
+
+const normalizeMetricsExporter = (value: string | undefined): MetricsExporter =>
+  value?.toLowerCase() === 'otel' ? 'otel' : 'in-memory'
+
+const normalizeTracingExporter = (value: string | undefined): TracingExporter =>
+  value?.toLowerCase() === 'otel' ? 'otel' : 'none'
+
+const buildObservabilityConfig = (env: TemporalEnvironment, defaults?: ObservabilityDefaults): ObservabilityConfig => {
+  const loggerDefaults = defaults?.logger ?? {}
+  const metricsDefaults = defaults?.metrics ?? {}
+  const tracingDefaults = defaults?.tracing ?? {}
+
+  const level = normalizeLogLevel(env.TEMPORAL_LOG_LEVEL ?? loggerDefaults.level)
+  const format = normalizeLogFormat(env.TEMPORAL_LOG_FORMAT ?? loggerDefaults.format)
+
+  const metricsExporter = normalizeMetricsExporter(env.TEMPORAL_METRICS_EXPORTER ?? metricsDefaults.exporter)
+  const metrics: MetricsConfig = {
+    exporter: metricsExporter,
+    meterName: env.TEMPORAL_METRICS_METER_NAME ?? metricsDefaults.meterName,
+    meterVersion: env.TEMPORAL_METRICS_METER_VERSION ?? metricsDefaults.meterVersion,
+    schemaUrl: env.TEMPORAL_METRICS_SCHEMA_URL ?? metricsDefaults.schemaUrl,
+    meter: metricsDefaults.meter,
+  }
+
+  const tracingEnabled = coerceBoolean(env.TEMPORAL_TRACING_ENABLED) ?? tracingDefaults.enabled ?? false
+  const tracingExporter = tracingEnabled
+    ? normalizeTracingExporter(env.TEMPORAL_TRACING_EXPORTER ?? tracingDefaults.exporter)
+    : 'none'
+  const tracingServiceName = tracingEnabled
+    ? (env.TEMPORAL_TRACING_SERVICE_NAME ?? tracingDefaults.serviceName ?? 'temporal-bun-sdk')
+    : tracingDefaults.serviceName
+
+  const tracing: TracingConfig = {
+    enabled: tracingEnabled,
+    exporter: tracingExporter,
+    serviceName: tracingServiceName,
+  }
+
+  return {
+    logger: {
+      level,
+      format,
+    },
+    metrics,
+    tracing,
+  }
 }
 
 const buildTlsConfig = async (
@@ -205,6 +315,7 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     options.defaults?.stickyQueueTimeoutMs ?? DEFAULT_STICKY_QUEUE_TIMEOUT_MS,
     'Temporal sticky queue timeout (ms)',
   )
+  const observability = buildObservabilityConfig(env, options.defaults?.observability)
 
   return {
     host,
@@ -222,6 +333,7 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     stickyCacheSize,
     stickyCacheTtlMs,
     stickyQueueTimeoutMs,
+    observability,
   }
 }
 
