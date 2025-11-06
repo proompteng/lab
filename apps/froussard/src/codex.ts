@@ -91,6 +91,7 @@ const buildPlanningPrompt = ({
     '- Call out commands with working directories and expected outputs so validation is reproducible.',
     '- Highlight dependencies, migrations, approvals, or coordination steps so the executor can schedule work without guessing.',
     '- GitHub CLI (`gh`) is installed and authenticated; use it for issue comments or metadata as needed.',
+    `- After finalising the plan, run \`gh issue comment --repo ${repositoryFullName} ${issueNumber} --body-file PLAN.md\` to publish it.`,
     `- Use internet search (web.run) when fresh knowledge is required and cite links to GitHub code or docs (for example, \`[packages/foo.ts](https://github.com/${repositoryFullName}/blob/${baseBranch}/packages/foo.ts#L123)\`).`,
     `- Never emit raw \`cite…\` placeholders; format links normally.`,
     '- Keep tone concise but comprehensive so the next Codex run can finish the task end to end.',

@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import { Effect, Schema } from 'effect'
 
 import { evaluateCodexWorkflow } from '@/codex/workflow-machine'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent } from '@/github-payload'
@@ -103,194 +103,230 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
     'processing @tuslagch review comment',
   )
 
-  const pullResult = await executionContext.runGithub(() =>
-    executionContext.githubService.fetchPullRequest({
-      repositoryFullName,
-      pullNumber,
-      token: config.github.token,
-      apiBaseUrl: config.github.apiBaseUrl,
-      userAgent: config.github.userAgent,
-    }),
-  )
+  const reviewEffect = Effect.gen(function* (_) {
+    const pullResult = yield* Effect.tryPromise({
+      try: () =>
+        executionContext.runGithub(() =>
+          executionContext.githubService.fetchPullRequest({
+            repositoryFullName,
+            pullNumber,
+            token: config.github.token,
+            apiBaseUrl: config.github.apiBaseUrl,
+            userAgent: config.github.userAgent,
+          }),
+        ),
+      catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+    })
 
-  logger.info(
-    {
-      action: actionValue,
-      repository: repositoryFullName,
-      pullNumber,
-      pullResultOk: pullResult.ok,
-      reason: pullResult.ok ? null : pullResult.reason,
-    },
-    'review comment: pull request fetch result',
-  )
-
-  if (!pullResult.ok) {
-    logger.warn(
-      {
-        action: actionValue,
-        repository: repositoryFullName,
-        pullNumber,
-        reason: pullResult.reason,
-      },
-      'failed to load pull request for @tuslagch review comment',
+    yield* Effect.sync(() =>
+      logger.info(
+        {
+          action: actionValue,
+          repository: repositoryFullName,
+          pullNumber,
+          pullResultOk: pullResult.ok,
+          reason: pullResult.ok ? null : pullResult.reason,
+        },
+        'review comment: pull request fetch result',
+      ),
     )
-    return { handled: true, stage: null }
-  }
 
-  const pull = pullResult.pullRequest
-  if (pull.state !== 'open' || pull.merged) {
-    logger.info(
-      {
-        action: actionValue,
-        repository: repositoryFullName,
-        pullNumber,
-        state: pull.state,
-        merged: pull.merged,
-      },
-      'ignoring @tuslagch review comment for closed pull request',
+    if (!pullResult.ok) {
+      yield* Effect.sync(() =>
+        logger.warn(
+          {
+            action: actionValue,
+            repository: repositoryFullName,
+            pullNumber,
+            reason: pullResult.reason,
+          },
+          'failed to load pull request for @tuslagch review comment',
+        ),
+      )
+      return { handled: true, stage: null }
+    }
+
+    const pull = pullResult.pullRequest
+    if (pull.state !== 'open' || pull.merged) {
+      yield* Effect.sync(() =>
+        logger.info(
+          {
+            action: actionValue,
+            repository: repositoryFullName,
+            pullNumber,
+            state: pull.state,
+            merged: pull.merged,
+          },
+          'ignoring @tuslagch review comment for closed pull request',
+        ),
+      )
+      return { handled: true, stage: null }
+    }
+
+    if (!pull.headRef) {
+      yield* Effect.sync(() =>
+        logger.warn(
+          {
+            action: actionValue,
+            repository: repositoryFullName,
+            pullNumber,
+          },
+          'failed to derive codex issue number for @tuslagch review comment: missing head ref',
+        ),
+      )
+      return { handled: true, stage: null }
+    }
+
+    if (!pull.headSha || !pull.baseRef) {
+      yield* Effect.sync(() =>
+        logger.warn(
+          {
+            action: actionValue,
+            repository: repositoryFullName,
+            pullNumber,
+            headSha: pull.headSha ?? null,
+            baseRef: pull.baseRef ?? null,
+          },
+          'failed to process @tuslagch review comment: missing head sha or base ref',
+        ),
+      )
+      return { handled: true, stage: null }
+    }
+
+    const issueNumber = parseIssueNumberFromBranch(pull.headRef, config.codebase.branchPrefix)
+    if (issueNumber === null) {
+      yield* Effect.sync(() =>
+        logger.warn(
+          {
+            action: actionValue,
+            repository: repositoryFullName,
+            pullNumber,
+            headRef: pull.headRef,
+            branchPrefix: config.codebase.branchPrefix,
+          },
+          'failed to derive codex issue number for @tuslagch review comment',
+        ),
+      )
+      return { handled: true, stage: null }
+    }
+
+    const threadsResult = yield* Effect.tryPromise({
+      try: () =>
+        executionContext.runGithub(() =>
+          executionContext.githubService.listPullRequestReviewThreads({
+            repositoryFullName,
+            pullNumber,
+            token: config.github.token,
+            apiBaseUrl: config.github.apiBaseUrl,
+            userAgent: config.github.userAgent,
+          }),
+        ),
+      catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+    })
+
+    yield* Effect.sync(() =>
+      logger.info(
+        {
+          action: actionValue,
+          repository: repositoryFullName,
+          pullNumber,
+          threadsResultOk: threadsResult.ok,
+          reason: threadsResult.ok ? null : threadsResult.reason,
+        },
+        'review comment: review threads fetch result',
+      ),
     )
-    return { handled: true, stage: null }
-  }
 
-  if (!pull.headRef) {
-    logger.warn(
-      {
-        action: actionValue,
-        repository: repositoryFullName,
-        pullNumber,
-      },
-      'failed to derive codex issue number for @tuslagch review comment: missing head ref',
+    if (!threadsResult.ok) {
+      yield* Effect.sync(() =>
+        logger.warn(
+          {
+            action: actionValue,
+            repository: repositoryFullName,
+            pullNumber,
+            reason: threadsResult.reason,
+          },
+          'failed to load review threads for @tuslagch review comment',
+        ),
+      )
+      return { handled: true, stage: null }
+    }
+
+    const checksResult = yield* Effect.tryPromise({
+      try: () =>
+        executionContext.runGithub(() =>
+          executionContext.githubService.listPullRequestCheckFailures({
+            repositoryFullName,
+            headSha: pull.headSha,
+            token: config.github.token,
+            apiBaseUrl: config.github.apiBaseUrl,
+            userAgent: config.github.userAgent,
+          }),
+        ),
+      catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+    })
+
+    yield* Effect.sync(() =>
+      logger.info(
+        {
+          action: actionValue,
+          repository: repositoryFullName,
+          pullNumber,
+          checksResultOk: checksResult.ok,
+          reason: checksResult.ok ? null : checksResult.reason,
+        },
+        'review comment: check failures fetch result',
+      ),
     )
-    return { handled: true, stage: null }
-  }
 
-  if (!pull.headSha || !pull.baseRef) {
-    logger.warn(
-      {
-        action: actionValue,
-        repository: repositoryFullName,
-        pullNumber,
-        headSha: pull.headSha ?? null,
-        baseRef: pull.baseRef ?? null,
-      },
-      'failed to process @tuslagch review comment: missing head sha or base ref',
+    if (!checksResult.ok) {
+      yield* Effect.sync(() =>
+        logger.warn(
+          {
+            action: actionValue,
+            repository: repositoryFullName,
+            pullNumber,
+            reason: checksResult.reason,
+          },
+          'failed to load check failures for @tuslagch review comment',
+        ),
+      )
+      return { handled: true, stage: null }
+    }
+
+    const reviewArtifacts = buildReviewCommand({
+      config,
+      deliveryId,
+      headers,
+      issueNumber,
+      pull: { ...pull, repositoryFullName },
+      reviewThreads: threadsResult.threads,
+      failingChecks: checksResult.checks,
+      forceReview: false,
+      senderLogin,
+    })
+
+    const fingerprintKey = buildCommentReviewFingerprintKey(repositoryFullName, pull.number, commentId, updatedAt)
+    const fingerprintChanged = yield* Effect.sync(() =>
+      rememberReviewFingerprint(fingerprintKey, reviewArtifacts.fingerprint),
     )
-    return { handled: true, stage: null }
-  }
 
-  const issueNumber = parseIssueNumberFromBranch(pull.headRef, config.codebase.branchPrefix)
-  if (issueNumber === null) {
-    logger.warn(
-      {
-        action: actionValue,
-        repository: repositoryFullName,
-        pullNumber,
-        headRef: pull.headRef,
-        branchPrefix: config.codebase.branchPrefix,
-      },
-      'failed to derive codex issue number for @tuslagch review comment',
-    )
-    return { handled: true, stage: null }
-  }
+    if (!fingerprintChanged) {
+      yield* Effect.sync(() =>
+        logger.info(
+          {
+            action: actionValue,
+            repository: repositoryFullName,
+            pullNumber,
+            commentId,
+            fingerprint: reviewArtifacts.fingerprint,
+          },
+          'skipping duplicate codex review request from @tuslagch comment',
+        ),
+      )
+      return { handled: true, stage: null }
+    }
 
-  const threadsResult = await executionContext.runGithub(() =>
-    executionContext.githubService.listPullRequestReviewThreads({
-      repositoryFullName,
-      pullNumber,
-      token: config.github.token,
-      apiBaseUrl: config.github.apiBaseUrl,
-      userAgent: config.github.userAgent,
-    }),
-  )
-
-  logger.info(
-    {
-      action: actionValue,
-      repository: repositoryFullName,
-      pullNumber,
-      threadsResultOk: threadsResult.ok,
-      reason: threadsResult.ok ? null : threadsResult.reason,
-    },
-    'review comment: review threads fetch result',
-  )
-
-  if (!threadsResult.ok) {
-    logger.warn(
-      {
-        action: actionValue,
-        repository: repositoryFullName,
-        pullNumber,
-        reason: threadsResult.reason,
-      },
-      'failed to load review threads for @tuslagch review comment',
-    )
-    return { handled: true, stage: null }
-  }
-
-  const checksResult = await executionContext.runGithub(() =>
-    executionContext.githubService.listPullRequestCheckFailures({
-      repositoryFullName,
-      headSha: pull.headSha,
-      token: config.github.token,
-      apiBaseUrl: config.github.apiBaseUrl,
-      userAgent: config.github.userAgent,
-    }),
-  )
-
-  logger.info(
-    {
-      action: actionValue,
-      repository: repositoryFullName,
-      pullNumber,
-      checksResultOk: checksResult.ok,
-      reason: checksResult.ok ? null : checksResult.reason,
-    },
-    'review comment: check failures fetch result',
-  )
-
-  if (!checksResult.ok) {
-    logger.warn(
-      {
-        action: actionValue,
-        repository: repositoryFullName,
-        pullNumber,
-        reason: checksResult.reason,
-      },
-      'failed to load check failures for @tuslagch review comment',
-    )
-    return { handled: true, stage: null }
-  }
-
-  const reviewArtifacts = buildReviewCommand({
-    config,
-    deliveryId,
-    headers,
-    issueNumber,
-    pull: { ...pull, repositoryFullName },
-    reviewThreads: threadsResult.threads,
-    failingChecks: checksResult.checks,
-    forceReview: false,
-    senderLogin,
-  })
-
-  const fingerprintKey = buildCommentReviewFingerprintKey(repositoryFullName, pull.number, commentId, updatedAt)
-  const fingerprintChanged = rememberReviewFingerprint(fingerprintKey, reviewArtifacts.fingerprint)
-
-  if (!fingerprintChanged) {
-    logger.info(
-      {
-        action: actionValue,
-        repository: repositoryFullName,
-        pullNumber,
-        commentId,
-        fingerprint: reviewArtifacts.fingerprint,
-      },
-      'skipping duplicate codex review request from @tuslagch comment',
-    )
-    return { handled: true, stage: null }
-  }
-
-  try {
     const evaluation = evaluateCodexWorkflow({
       type: 'REVIEW_REQUESTED',
       data: {
@@ -299,10 +335,15 @@ export const handleReviewComment = async (params: ReviewCommentParams): Promise<
       },
     })
 
-    const { stage } = await executeWorkflowCommands(evaluation.commands, executionContext)
-    return { handled: true, stage: stage ?? null }
-  } catch (error) {
-    forgetReviewFingerprint(fingerprintKey, reviewArtifacts.fingerprint)
-    throw error
-  }
+    const stageResult = yield* Effect.tryPromise({
+      try: () => executeWorkflowCommands(evaluation.commands, executionContext),
+      catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+    }).pipe(
+      Effect.tapError(() => Effect.sync(() => forgetReviewFingerprint(fingerprintKey, reviewArtifacts.fingerprint))),
+    )
+
+    return { handled: true, stage: stageResult.stage ?? null }
+  })
+
+  return executionContext.runGithub(() => reviewEffect)
 }
