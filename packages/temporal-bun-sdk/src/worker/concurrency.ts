@@ -1,4 +1,4 @@
-import { Cause, Effect, Fiber, Ref } from 'effect'
+import { Cause, Effect, Exit, Fiber, Ref } from 'effect'
 import * as Queue from 'effect/Queue'
 import * as TSemaphore from 'effect/TSemaphore'
 
@@ -176,12 +176,19 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
       )
 
     const joinFibers = (fibers: ReadonlyArray<Fiber.RuntimeFiber<void, unknown>>): Effect.Effect<void, never, never> =>
-      Effect.map(
-        Effect.forEach(fibers, (fiber) => Fiber.interrupt(fiber).pipe(Effect.zipRight(Fiber.await(fiber))), {
-          concurrency: 'unbounded',
-        }),
-        () => undefined,
-      )
+      Effect.forEach(
+        fibers,
+        (fiber) =>
+          Fiber.await(fiber).pipe(
+            Effect.flatMap((exit) =>
+              Exit.match(exit, {
+                onFailure: (cause) => (Cause.isInterruptedOnly(cause) ? Effect.void : Effect.failCause(cause)),
+                onSuccess: () => Effect.void,
+              }),
+            ),
+          ),
+        { concurrency: 'unbounded' },
+      ).pipe(Effect.asVoid)
 
     const stop: WorkerScheduler['stop'] = Effect.uninterruptible(
       Effect.gen(function* () {
