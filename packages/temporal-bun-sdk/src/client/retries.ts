@@ -1,5 +1,5 @@
-import { Effect, Schedule } from 'effect'
 import { Code, ConnectError } from '@connectrpc/connect'
+import { Effect, Schedule } from 'effect'
 
 export interface RetryPolicy {
   readonly maxAttempts: number

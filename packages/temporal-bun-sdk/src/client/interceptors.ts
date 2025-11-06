@@ -1,5 +1,5 @@
-import { Effect } from 'effect'
 import type { Interceptor } from '@connectrpc/connect'
+import { Effect } from 'effect'
 
 export type TemporalInterceptor = Interceptor
 

@@ -1,9 +1,8 @@
 import { Context, Effect, Layer } from 'effect'
-
-import { makeConsoleLogger, type Logger } from '../observability/logger'
+import { loadTemporalConfig, type TemporalConfig } from '../config'
+import { type Logger, makeConsoleLogger } from '../observability/logger'
 import type { MetricsRegistry } from '../observability/metrics'
 import { makeInMemoryMetrics } from '../observability/metrics'
-import { loadTemporalConfig, type TemporalConfig } from '../config'
 import type { WorkflowServiceClient } from '../worker/runtime'
 
 export class TemporalConfigService extends Context.Tag('@proompteng/temporal-bun-sdk/TemporalConfig')<

@@ -1,8 +1,8 @@
 import { Effect } from 'effect'
 
 import type { HistoryEvent } from '../proto/temporal/api/history/v1/message_pb'
-import type { WorkflowDeterminismState } from './determinism'
 import type { WorkflowInfo } from './context'
+import type { WorkflowDeterminismState } from './determinism'
 
 export interface ReplayIntake {
   readonly info: WorkflowInfo
@@ -21,6 +21,7 @@ export interface ReplayResult {
  */
 export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<ReplayResult, unknown, never> =>
   Effect.gen(function* () {
+    yield* Effect.unit
     // TODO(TBS-001): Implement history traversal, command intent reconstruction,
     // random/time ladder extraction, and event source mapping.
     // The implementation should reuse protobuf schemas and remain deterministic.
@@ -45,6 +46,7 @@ export const diffDeterminismState = (
   actual: WorkflowDeterminismState,
 ): Effect.Effect<{ mismatches: unknown[] }, never, never> =>
   Effect.gen(function* () {
+    yield* Effect.unit
     // TODO(TBS-001): Compare command history, random/time sequences, and return
     // structured mismatches (e.g., eventId, expected, received).
     void expected
