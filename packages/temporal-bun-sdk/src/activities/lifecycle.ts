@@ -43,22 +43,23 @@ export const makeActivityLifecycle = (
           yield* Ref.set(heartbeatStores, stores)
         }
 
+        const currentStore = store
+
         return (details) =>
-          store!
-            .set(
-              Option.some({
-                lastDetails: details,
-                lastBeat: Date.now(),
+          Ref.set(
+            currentStore,
+            Option.some({
+              lastDetails: details,
+              lastBeat: Date.now(),
+            }),
+          ).pipe(
+            Effect.zipRight(
+              // TODO(TBS-002): Hook into WorkflowService RespondActivityTaskHeartbeat once available.
+              Effect.sync(() => {
+                console.debug('[temporal-bun-sdk] heartbeat details captured', details)
               }),
-            )
-            .pipe(
-              Effect.zipRight(
-                // TODO(TBS-002): Hook into WorkflowService RespondActivityTaskHeartbeat once available.
-                Effect.sync(() => {
-                  console.debug('[temporal-bun-sdk] heartbeat details captured', details)
-                }),
-              ),
-            )
+            ),
+          )
       })
 
     const nextRetryDelay: ActivityLifecycle['nextRetryDelay'] = (retry, state) =>
