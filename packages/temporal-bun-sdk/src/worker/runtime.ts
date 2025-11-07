@@ -20,7 +20,7 @@ import {
   CommandSchema,
   RecordMarkerCommandAttributesSchema,
 } from '../proto/temporal/api/command/v1/message_pb'
-import { type Payloads, PayloadsSchema } from '../proto/temporal/api/common/v1/message_pb'
+import { type Payloads, PayloadsSchema, WorkflowExecutionSchema } from '../proto/temporal/api/common/v1/message_pb'
 import {
   type WorkerDeploymentOptions,
   WorkerDeploymentOptionsSchema,
@@ -29,7 +29,7 @@ import { CommandType } from '../proto/temporal/api/enums/v1/command_type_pb'
 import { WorkerVersioningMode } from '../proto/temporal/api/enums/v1/deployment_pb'
 import { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
 import { WorkflowTaskFailedCause } from '../proto/temporal/api/enums/v1/failed_cause_pb'
-import { VersioningBehavior } from '../proto/temporal/api/enums/v1/workflow_pb'
+import { HistoryEventFilterType, VersioningBehavior } from '../proto/temporal/api/enums/v1/workflow_pb'
 import type { HistoryEvent } from '../proto/temporal/api/history/v1/message_pb'
 import {
   type StickyExecutionAttributes,
@@ -37,6 +37,7 @@ import {
   TaskQueueSchema,
 } from '../proto/temporal/api/taskqueue/v1/message_pb'
 import {
+  GetWorkflowExecutionHistoryRequestSchema,
   PollActivityTaskQueueRequestSchema,
   type PollActivityTaskQueueResponse,
   PollWorkflowTaskQueueRequestSchema,
@@ -76,6 +77,7 @@ type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowServi
 
 const POLL_TIMEOUT_MS = 60_000
 const RESPOND_TIMEOUT_MS = 15_000
+const HISTORY_FETCH_TIMEOUT_MS = 60_000
 const STICKY_QUEUE_PREFIX = 'sticky'
 const COMPLETION_COMMAND_TYPES = new Set<CommandType>([
   CommandType.COMPLETE_WORKFLOW_EXECUTION,
@@ -486,7 +488,7 @@ export class WorkerRuntime {
     let historyReplay: ReplayResult | undefined
 
     if (!previousState) {
-      historyReplay = await this.#ingestDeterminismState(workflowInfo, response)
+      historyReplay = await this.#ingestDeterminismState(workflowInfo, execution, response)
       if (historyReplay?.hasDeterminismMarker) {
         previousState = historyReplay.determinismState
       }
@@ -564,9 +566,10 @@ export class WorkerRuntime {
 
   async #ingestDeterminismState(
     workflowInfo: WorkflowInfo,
+    execution: { workflowId: string; runId: string },
     response: PollWorkflowTaskQueueResponse,
   ): Promise<ReplayResult | undefined> {
-    const historyEvents = response.history?.events ?? []
+    const historyEvents = await this.#collectWorkflowHistory(execution, response)
     if (historyEvents.length === 0) {
       return undefined
     }
@@ -577,6 +580,55 @@ export class WorkerRuntime {
         dataConverter: this.#dataConverter,
       }),
     )
+  }
+
+  async #collectWorkflowHistory(
+    execution: { workflowId: string; runId: string },
+    response: PollWorkflowTaskQueueResponse,
+  ): Promise<HistoryEvent[]> {
+    const events: HistoryEvent[] = [...(response.history?.events ?? [])]
+    let token = response.nextPageToken ?? new Uint8Array()
+
+    while (token && token.length > 0) {
+      const page = await this.#fetchWorkflowHistoryPage(execution, token)
+      if (page.events.length > 0) {
+        events.push(...page.events)
+      }
+      token = page.nextPageToken
+    }
+
+    return events
+  }
+
+  async #fetchWorkflowHistoryPage(
+    execution: { workflowId: string; runId: string },
+    nextPageToken: Uint8Array,
+  ): Promise<{ events: HistoryEvent[]; nextPageToken: Uint8Array }> {
+    if (!execution.workflowId || !execution.runId) {
+      return { events: [], nextPageToken: new Uint8Array() }
+    }
+
+    const historyRequest = create(GetWorkflowExecutionHistoryRequestSchema, {
+      namespace: this.#namespace,
+      execution: create(WorkflowExecutionSchema, {
+        workflowId: execution.workflowId,
+        runId: execution.runId,
+      }),
+      maximumPageSize: 0,
+      nextPageToken,
+      waitNewEvent: false,
+      historyEventFilterType: HistoryEventFilterType.ALL_EVENT,
+      skipArchival: true,
+    })
+
+    const historyResponse = await this.#workflowService.getWorkflowExecutionHistory(historyRequest, {
+      timeoutMs: HISTORY_FETCH_TIMEOUT_MS,
+    })
+
+    return {
+      events: historyResponse.history?.events ?? [],
+      nextPageToken: historyResponse.nextPageToken ?? new Uint8Array(),
+    }
   }
 
   #buildWorkflowInfo(workflowType: string, execution: { workflowId: string; runId: string }): WorkflowInfo {
