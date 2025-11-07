@@ -55,7 +55,13 @@ import type { WorkflowDeterminismState } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import { WorkflowExecutor } from '../workflow/executor'
 import { WorkflowRegistry } from '../workflow/registry'
-import { DETERMINISM_MARKER_NAME, encodeDeterminismMarkerDetails, resolveHistoryLastEventId } from '../workflow/replay'
+import {
+  DETERMINISM_MARKER_NAME,
+  encodeDeterminismMarkerDetails,
+  ingestWorkflowHistory,
+  type ReplayResult,
+  resolveHistoryLastEventId,
+} from '../workflow/replay'
 import { type ActivityContext, type ActivityInfo, runWithActivityContext } from './activity-context'
 import {
   type ActivityTaskEnvelope,
@@ -362,9 +368,17 @@ export class WorkerRuntime {
   }
 
   async #workflowLoop(signal: AbortSignal): Promise<void> {
+    const pollers = [this.#pollWorkflowTaskQueue(this.#taskQueue, signal)]
+    if (this.#stickySchedulingEnabled) {
+      pollers.push(this.#pollWorkflowTaskQueue(this.#stickyQueue, signal))
+    }
+    await Promise.all(pollers)
+  }
+
+  async #pollWorkflowTaskQueue(queueName: string, signal: AbortSignal): Promise<void> {
     const request = create(PollWorkflowTaskQueueRequestSchema, {
       namespace: this.#namespace,
-      taskQueue: create(TaskQueueSchema, { name: this.#taskQueue }),
+      taskQueue: create(TaskQueueSchema, { name: queueName }),
       identity: this.#identity,
       deploymentOptions: this.#deploymentOptions,
     })
@@ -383,7 +397,7 @@ export class WorkerRuntime {
         if (signal.aborted) {
           break
         }
-        console.error('[temporal-bun-sdk] workflow polling failed', error)
+        console.error(`[temporal-bun-sdk] workflow polling failed for ${queueName}`, error)
         await delay(250)
       }
     }
@@ -450,7 +464,13 @@ export class WorkerRuntime {
     const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
     const stickyKey = this.#buildStickyKey(execution.workflowId, execution.runId)
     const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
-    const previousState = stickyEntry?.determinismState
+    let previousState = stickyEntry?.determinismState
+    let historyReplay: ReplayResult | undefined
+
+    if (!previousState) {
+      historyReplay = await this.#ingestDeterminismState(workflowInfo, response)
+      previousState = historyReplay?.determinismState
+    }
 
     try {
       const output = await this.#executor.execute({
@@ -463,7 +483,11 @@ export class WorkerRuntime {
         determinismState: previousState,
       })
 
-      const lastEventId = this.#resolveWorkflowHistoryLastEventId(response)
+      const lastEventId =
+        this.#resolveWorkflowHistoryLastEventId(response) ??
+        historyReplay?.lastEventId ??
+        stickyEntry?.lastEventId ??
+        null
       const markerDetails = await Effect.runPromise(
         encodeDeterminismMarkerDetails(this.#dataConverter, {
           info: workflowInfo,
@@ -516,6 +540,23 @@ export class WorkerRuntime {
       workflowId,
       runId,
     }
+  }
+
+  async #ingestDeterminismState(
+    workflowInfo: WorkflowInfo,
+    response: PollWorkflowTaskQueueResponse,
+  ): Promise<ReplayResult | undefined> {
+    const historyEvents = response.history?.events ?? []
+    if (historyEvents.length === 0) {
+      return undefined
+    }
+    return await Effect.runPromise(
+      ingestWorkflowHistory({
+        info: workflowInfo,
+        history: historyEvents,
+        dataConverter: this.#dataConverter,
+      }),
+    )
   }
 
   #buildWorkflowInfo(workflowType: string, execution: { workflowId: string; runId: string }): WorkflowInfo {
