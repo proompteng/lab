@@ -22,7 +22,7 @@ describe('loadConfig', () => {
     expect(config.kafka.topics.codexStructured).toBe('github.issues.codex.tasks')
     expect(config.codebase.baseBranch).toBe('main')
     expect(config.codebase.branchPrefix).toBe('codex/issue-')
-    expect(config.codex.triggerLogins).toEqual(['gregkonush'])
+    expect(config.codex.triggerLogins).toEqual(['gregkonush', 'tuslagch'])
     expect(config.codex.workflowLogin).toBe('github-actions[bot]')
     expect(config.codex.implementationTriggerPhrase).toBe('execute plan')
     expect(config.discord.publicKey).toBe('public-key')

@@ -95,10 +95,10 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
 }
 
 const parseTriggerLogins = (env: NodeJS.ProcessEnv): string[] => {
-  const raw = env.CODEX_TRIGGER_LOGINS ?? env.CODEX_TRIGGER_LOGIN ?? 'gregkonush'
+  const raw = env.CODEX_TRIGGER_LOGINS ?? env.CODEX_TRIGGER_LOGIN ?? 'gregkonush,tuslagch'
   const logins = raw
     .split(',')
     .map((login) => login.trim().toLowerCase())
     .filter((login) => login.length > 0)
-  return logins.length > 0 ? logins : ['gregkonush']
+  return logins.length > 0 ? logins : ['gregkonush', 'tuslagch']
 }
