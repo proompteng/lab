@@ -133,7 +133,7 @@ describe('createWebhookHandler', () => {
       apiBaseUrl: 'https://api.github.com',
       userAgent: 'froussard',
     },
-    codexTriggerLogin: 'user',
+    codexTriggerLogins: ['user'],
     codexWorkflowLogin: 'github-actions[bot]',
     codexImplementationTriggerPhrase: 'execute plan',
     topics: {

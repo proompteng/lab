@@ -17,7 +17,7 @@ vi.mock('@/effect/config', () => {
       username: 'user',
       password: 'pass',
       clientId: 'client',
-      topics: { raw: 'raw', codex: 'codex', discordCommands: 'discord' },
+      topics: { raw: 'raw', codex: 'codex', codexStructured: 'codex-structured', discordCommands: 'discord' },
       sasl: {
         mechanism: 'scram-sha-512',
         username: 'user',
@@ -29,7 +29,7 @@ vi.mock('@/effect/config', () => {
       branchPrefix: 'codex/issue-',
     },
     codex: {
-      triggerLogin: 'gregkonush',
+      triggerLogins: ['gregkonush'],
       workflowLogin: 'github-actions[bot]',
       implementationTriggerPhrase: 'execute plan',
     },

@@ -192,7 +192,9 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
   }
 
   const issueAuthor = normalizeLogin(issue?.user?.login)
-  if (issueAuthor !== config.codexTriggerLogin) {
+  const isAuthorizedIssueAuthor =
+    typeof issueAuthor === 'string' ? config.codexTriggerLogins.includes(issueAuthor) : false
+  if (!isAuthorizedIssueAuthor) {
     return null
   }
 
@@ -321,7 +323,8 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
   const trimmedCommentBody = rawCommentBody.trim()
   const senderLoginValue = payload.sender?.login
   const normalizedSender = normalizeLogin(senderLoginValue)
-  const isAuthorizedSender = normalizedSender === config.codexTriggerLogin
+  const isAuthorizedSender =
+    typeof normalizedSender === 'string' ? config.codexTriggerLogins.includes(normalizedSender) : false
   const isWorkflowSender = normalizedSender === config.codexWorkflowLogin
   const hasPlanMarker = rawCommentBody.includes(CODEX_PLAN_MARKER)
   const isPlanningPlaceholderComment = hasPlanMarker && isPlanningPlaceholderBody(rawCommentBody)

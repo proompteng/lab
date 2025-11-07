@@ -22,7 +22,7 @@ describe('loadConfig', () => {
     expect(config.kafka.topics.codexStructured).toBe('github.issues.codex.tasks')
     expect(config.codebase.baseBranch).toBe('main')
     expect(config.codebase.branchPrefix).toBe('codex/issue-')
-    expect(config.codex.triggerLogin).toBe('gregkonush')
+    expect(config.codex.triggerLogins).toEqual(['gregkonush'])
     expect(config.codex.workflowLogin).toBe('github-actions[bot]')
     expect(config.codex.implementationTriggerPhrase).toBe('execute plan')
     expect(config.discord.publicKey).toBe('public-key')
@@ -34,7 +34,7 @@ describe('loadConfig', () => {
       ...baseEnv,
       CODEX_BASE_BRANCH: 'develop',
       CODEX_BRANCH_PREFIX: 'custom/',
-      CODEX_TRIGGER_LOGIN: 'TESTUSER',
+      CODEX_TRIGGER_LOGINS: 'user-one, user-two',
       CODEX_WORKFLOW_LOGIN: 'Automation-Bot',
       CODEX_IMPLEMENTATION_TRIGGER: 'run it',
       GITHUB_ACK_REACTION: 'eyes',
@@ -44,11 +44,21 @@ describe('loadConfig', () => {
     const config = loadConfig(env)
     expect(config.codebase.baseBranch).toBe('develop')
     expect(config.codebase.branchPrefix).toBe('custom/')
-    expect(config.codex.triggerLogin).toBe('testuser')
+    expect(config.codex.triggerLogins).toEqual(['user-one', 'user-two'])
     expect(config.codex.workflowLogin).toBe('automation-bot')
     expect(config.codex.implementationTriggerPhrase).toBe('run it')
     expect(config.github.ackReaction).toBe('eyes')
     expect(config.discord.defaultResponse.ephemeral).toBe(false)
+  })
+
+  it('falls back to CODEX_TRIGGER_LOGIN when list env is absent', () => {
+    const env = {
+      ...baseEnv,
+      CODEX_TRIGGER_LOGIN: 'ServiceUser',
+    }
+
+    const config = loadConfig(env)
+    expect(config.codex.triggerLogins).toEqual(['serviceuser'])
   })
 
   it('throws when required env is missing', () => {
