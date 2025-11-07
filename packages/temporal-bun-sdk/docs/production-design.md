@@ -150,7 +150,7 @@ can contribute independently without re-planning.
   4. Unit tests and dev-server scenario verifying behaviour.
 - **Implementation notes**
   - Determinism snapshots are persisted as `temporal-bun-sdk/determinism` record markers (schema v1) that bundle command history, random/time streams, and the last processed event id. The marker payload is stored via the configured `DataConverter`.
-  - `TEMPORAL_STICKY_CACHE_SIZE`, `TEMPORAL_STICKY_CACHE_TTL_MS`, and `TEMPORAL_STICKY_QUEUE_TIMEOUT_MS` control cache capacity, TTL-based eviction, and sticky queue scheduling respectively.
+  - `TEMPORAL_STICKY_CACHE_SIZE` and `TEMPORAL_STICKY_TTL_MS` control cache capacity and eviction; the sticky worker queue schedule-to-start timeout inherits from the TTL so increasing it lengthens deterministic affinity.
   - `tests/integration/harness.ts` provides a Temporal CLI-backed harness that starts the dev server, executes workflows (`temporal workflow execute`), fetches JSON history (`temporal workflow show --output json`), and feeds the ingestion pipeline. Tests log a skip when the CLI is unavailable instead of failing hard.
 - **Dependencies**
   - Optional integration with TBS-004 for logging metrics.

@@ -1,9 +1,19 @@
-import { Effect } from 'effect'
+import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+
+import { fromJson } from '@bufbuild/protobuf'
+import { Effect } from 'effect'
+
+import { HistorySchema, type HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
 
 export interface TemporalDevServerConfig {
   readonly address: string
   readonly namespace: string
+  readonly taskQueue?: string
+  readonly cliBinaryPath?: string
+  readonly cliPort?: number
+  readonly cliUiPort?: number
   readonly tls?: {
     readonly caPath?: string
     readonly certPath?: string
@@ -11,60 +21,86 @@ export interface TemporalDevServerConfig {
   }
 }
 
+export interface WorkflowExecutionHandle {
+  readonly workflowId: string
+  readonly runId: string
+}
+
 export interface IntegrationHarness {
-  readonly setup: Effect.Effect<void, unknown, never>
-  readonly teardown: Effect.Effect<void, unknown, never>
+  readonly setup: Effect.Effect<void, TemporalCliError, never>
+  readonly teardown: Effect.Effect<void, TemporalCliError, never>
   readonly runScenario: <A>(
     name: string,
-    scenario: () => Effect.Effect<A, unknown, never>,
-  ) => Effect.Effect<A, unknown, never>
+    scenario: () => Effect.Effect<A, TemporalCliError, never>,
+  ) => Effect.Effect<A, TemporalCliError, never>
+  readonly executeWorkflow: (
+    options: TemporalWorkflowExecuteOptions,
+  ) => Effect.Effect<WorkflowExecutionHandle, TemporalCliError, never>
+  readonly fetchWorkflowHistory: (
+    handle: WorkflowExecutionHandle,
+  ) => Effect.Effect<HistoryEvent[], TemporalCliError, never>
 }
+
+export interface TemporalWorkflowExecuteOptions {
+  readonly workflowType: string
+  readonly workflowId?: string
+  readonly taskQueue?: string
+  readonly args?: unknown[]
+  readonly signal?: {
+    readonly name: string
+    readonly payload?: unknown[]
+  }
+}
+
+export type TemporalCliError = TemporalCliUnavailableError | TemporalCliCommandError
+
+export class TemporalCliUnavailableError extends Error {
+  readonly attempts: readonly { candidate: string; error: string }[]
+
+  constructor(message: string, attempts: readonly { candidate: string; error: string }[]) {
+    super(message)
+    this.name = 'TemporalCliUnavailableError'
+    this.attempts = attempts
+  }
+}
+
+export class TemporalCliCommandError extends Error {
+  readonly command: readonly string[]
+  readonly exitCode: number
+  readonly stdout: string
+  readonly stderr: string
+
+  constructor(command: readonly string[], exitCode: number, stdout: string, stderr: string) {
+    super(`Temporal CLI command failed (exit ${exitCode}): ${command.join(' ')}`)
+    this.name = 'TemporalCliCommandError'
+    this.command = command
+    this.exitCode = exitCode
+    this.stdout = stdout
+    this.stderr = stderr
+  }
+}
+
+const textDecoder = new TextDecoder()
 
 export const createIntegrationHarness = (
   config: TemporalDevServerConfig,
-): Effect.Effect<IntegrationHarness, unknown, never> =>
+): Effect.Effect<IntegrationHarness, TemporalCliError, never> =>
   Effect.gen(function* () {
-    const packageRoot = join(import.meta.dir, '..', '..')
-    const scriptsDir = join(packageRoot, 'scripts')
-    const startScript = join(scriptsDir, 'start-temporal-cli.ts')
-    const stopScript = join(scriptsDir, 'stop-temporal-cli.ts')
+    const projectRoot = join(import.meta.dir, '..', '..')
+    const startScript = join(projectRoot, 'scripts', 'start-temporal-cli.ts')
+    const stopScript = join(projectRoot, 'scripts', 'stop-temporal-cli.ts')
+
+    if (!existsSync(startScript) || !existsSync(stopScript)) {
+      throw new TemporalCliUnavailableError('Temporal CLI management scripts are missing', [])
+    }
 
     const { hostname, port } = parseAddress(config.address)
-    const uiPort = port + 1000
+    const cliPort = config.cliPort ?? port
+    const cliUiPort = config.cliUiPort ?? cliPort + 1000
 
-    const runScript = (scriptPath: string, overrides: Record<string, string>) =>
-      Effect.tryPromise(async () => {
-        const child = Bun.spawn([process.execPath, scriptPath], {
-          cwd: packageRoot,
-          stdout: 'inherit',
-          stderr: 'inherit',
-          env: { ...process.env, ...overrides },
-        })
-        const exitCode = await child.exited
-        if (exitCode !== 0) {
-          throw new Error(`Script ${scriptPath} exited with code ${exitCode}`)
-        }
-      })
+    const cliExecutable = yield* resolveTemporalCliExecutable(config.cliBinaryPath)
 
-    const setup = Effect.tap(
-      runScript(startScript, {
-        TEMPORAL_PORT: String(port),
-        TEMPORAL_UI_PORT: String(uiPort),
-        TEMPORAL_NAMESPACE: config.namespace,
-      }),
-      () =>
-        Effect.sync(() => {
-          console.info(`[temporal-bun-sdk] Temporal CLI dev server running at ${hostname}:${port}`)
-        }),
-    )
-
-    const teardown = Effect.tap(
-      runScript(stopScript, {}),
-      () =>
-        Effect.sync(() => {
-          console.info('[temporal-bun-sdk] Temporal CLI dev server stopped')
-        }),
-    )
+    let started = false
 
     const scenarioEnv: Record<string, string | undefined> = {
       TEMPORAL_ADDRESS: config.address,
@@ -74,11 +110,152 @@ export const createIntegrationHarness = (
       TEMPORAL_TLS_KEY_PATH: config.tls?.keyPath,
     }
 
+    const setup = Effect.tryPromise(async () => {
+      if (started) {
+        return
+      }
+      const child = Bun.spawn(['bun', startScript], {
+        cwd: projectRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: {
+          ...process.env,
+          TEMPORAL_NAMESPACE: config.namespace,
+          TEMPORAL_CLI_PATH: cliExecutable,
+          TEMPORAL_PORT: String(cliPort),
+          TEMPORAL_UI_PORT: String(cliUiPort),
+        },
+      })
+      const exitCode = await child.exited
+      const stdout = child.stdout ? await readStream(child.stdout) : ''
+      const stderr = child.stderr ? await readStream(child.stderr) : ''
+      if (exitCode !== 0) {
+        if (stderr.includes('Temporal CLI already running')) {
+          return
+        }
+        throw new TemporalCliCommandError(['bun', startScript], exitCode, stdout, stderr)
+      }
+      started = true
+      console.info(
+        `[temporal-bun-sdk] Temporal CLI dev server running at ${hostname}:${cliPort} (ui:${cliUiPort})`,
+      )
+    })
+
+    const teardown = Effect.tryPromise(async () => {
+      if (!started) {
+        return
+      }
+      const child = Bun.spawn(['bun', stopScript], {
+        cwd: projectRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const exitCode = await child.exited
+      const stdout = child.stdout ? await readStream(child.stdout) : ''
+      const stderr = child.stderr ? await readStream(child.stderr) : ''
+      if (exitCode !== 0) {
+        throw new TemporalCliCommandError(['bun', stopScript], exitCode, stdout, stderr)
+      }
+      started = false
+    })
+
+    const runTemporalCli = (args: readonly string[]) => {
+      const command = [cliExecutable, ...args]
+      return Effect.tryPromise({
+        try: async () => {
+          console.info('[temporal-bun-sdk] running CLI command', command.join(' '))
+          const child = Bun.spawn(command, {
+            stdout: 'pipe',
+            stderr: 'pipe',
+          })
+          const exitCode = await child.exited
+          const stdout = child.stdout ? await readStream(child.stdout) : ''
+          const stderr = child.stderr ? await readStream(child.stderr) : ''
+          if (exitCode !== 0) {
+            console.error('[temporal-bun-sdk] CLI command failed', { command, exitCode, stdout, stderr })
+            throw new TemporalCliCommandError(command, exitCode, stdout, stderr)
+          }
+          console.info('[temporal-bun-sdk] CLI command stdout', stdout)
+          if (stderr.trim().length > 0) {
+            console.info('[temporal-bun-sdk] CLI command stderr', stderr)
+          }
+          return stdout
+        },
+        catch: (error) =>
+          error instanceof TemporalCliCommandError
+            ? error
+            : new TemporalCliCommandError(
+                command,
+                -1,
+                '',
+                error instanceof Error ? error.message : String(error),
+              ),
+      })
+    }
+
+    const executeWorkflow = (
+      options: TemporalWorkflowExecuteOptions,
+    ): Effect.Effect<WorkflowExecutionHandle, TemporalCliError, never> => {
+      const workflowId = options.workflowId ?? `cli-integration-${randomUUID()}`
+      const taskQueue = options.taskQueue ?? config.taskQueue
+      if (!taskQueue) {
+        throw new TemporalCliCommandError(
+          ['temporal', 'workflow', 'execute'],
+          -1,
+          '',
+          'Task queue missing for Temporal CLI workflow execution',
+        )
+      }
+      const args = buildInputArgs(options.args)
+      const command = [
+        'workflow',
+        'execute',
+        '--workflow-id',
+        workflowId,
+        '--task-queue',
+        taskQueue,
+        '--type',
+        options.workflowType,
+        '--namespace',
+        config.namespace,
+        '--output',
+        'json',
+        ...args,
+      ]
+
+      const cliCommand = ['temporal', ...command] as const
+
+      return runTemporalCli(command).pipe(
+        Effect.flatMap((stdout) => parseWorkflowExecutionHandle(stdout, workflowId, cliCommand)),
+      )
+    }
+
+    const fetchWorkflowHistory = (
+      handle: WorkflowExecutionHandle,
+    ): Effect.Effect<HistoryEvent[], TemporalCliError, never> => {
+      const showArgs = [
+        'workflow',
+        'show',
+        '--workflow-id',
+        handle.workflowId,
+        '--run-id',
+        handle.runId,
+        '--namespace',
+        config.namespace,
+        '--output',
+        'json',
+      ] as const
+
+      return runTemporalCli(showArgs).pipe(
+        Effect.flatMap((stdout) => parseHistoryEvents(stdout, ['temporal', ...showArgs] as const)),
+      )
+    }
+
     const runScenario: IntegrationHarness['runScenario'] = (name, scenario) =>
       withEnvironment(
         scenarioEnv,
         Effect.sync(() => {
-          console.info(`[temporal-bun-sdk] running integration scenario: ${name}`)
+          console.info(`[temporal-bun-sdk] scenario: ${name}`)
         }).pipe(Effect.zipRight(scenario())),
       )
 
@@ -86,20 +263,179 @@ export const createIntegrationHarness = (
       setup,
       teardown,
       runScenario,
+      executeWorkflow,
+      fetchWorkflowHistory,
     }
   })
+
+const readStream = async (stream: ReadableStream<Uint8Array> | null): Promise<string> => {
+  if (!stream) {
+    return ''
+  }
+  const chunks: Uint8Array[] = []
+  const reader = stream.getReader()
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) {
+      break
+    }
+    if (value) {
+      chunks.push(value)
+    }
+  }
+  if (chunks.length === 0) {
+    return ''
+  }
+  const size = chunks.reduce((total, chunk) => total + chunk.length, 0)
+  const merged = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.length
+  }
+  return textDecoder.decode(merged)
+}
+
+const resolveTemporalCliExecutable = (
+  override?: string,
+): Effect.Effect<string, TemporalCliUnavailableError, never> =>
+  Effect.try({
+    try: () => {
+      const attempts: Array<{ candidate: string; error: string }> = []
+      const home = process.env.HOME?.trim()
+      const candidates = override
+        ? [override]
+        : [
+            'temporal',
+            ...(home ? [`${home}/.temporalio/bin/temporal`, `${home}/.local/bin/temporal`] : []),
+            '/usr/local/bin/temporal',
+            '/usr/bin/temporal',
+            '/opt/homebrew/bin/temporal',
+          ]
+
+      for (const candidate of candidates) {
+        try {
+          const result = Bun.spawnSync([candidate, '--help'], { stdout: 'ignore', stderr: 'pipe' })
+          if (result.exitCode === 0) {
+            return candidate
+          }
+          const stderrMsg = result.stderr ? textDecoder.decode(result.stderr) : `exit code ${result.exitCode}`
+          attempts.push({ candidate, error: stderrMsg.trim() })
+        } catch (error) {
+          attempts.push({ candidate, error: error instanceof Error ? error.message : String(error) })
+        }
+      }
+
+      throw new TemporalCliUnavailableError(
+        'Unable to locate a working `temporal` CLI executable. Set TEMPORAL_CLI_PATH or install https://github.com/temporalio/cli.',
+        attempts,
+      )
+    },
+    catch: (error) => (error instanceof TemporalCliUnavailableError ? error : new TemporalCliUnavailableError(String(error), [])),
+  })
+
+const buildInputArgs = (args: unknown[] | undefined): string[] => {
+  if (!args || args.length === 0) {
+    return []
+  }
+  const parts: string[] = []
+  for (const value of args) {
+    parts.push('--input', JSON.stringify(value))
+  }
+  return parts
+}
+
+const parseWorkflowExecutionHandle = (
+  stdout: string,
+  fallbackWorkflowId: string,
+  command: readonly string[],
+): Effect.Effect<WorkflowExecutionHandle, TemporalCliCommandError, never> =>
+  Effect.try({
+    try: () => {
+      const trimmed = stdout.trim()
+      if (trimmed.length === 0) {
+        throw new Error('Temporal CLI returned empty workflow execute output')
+      }
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>
+      const workflowExecution =
+        (parsed.execution ?? parsed.workflowExecution ?? {}) as Record<string, string | undefined>
+      const resolvedWorkflowId =
+        (parsed.workflowId as string | undefined) ?? workflowExecution.workflowId ?? fallbackWorkflowId
+      const runId =
+        (parsed.runId as string | undefined) ??
+        (parsed.executionRunId as string | undefined) ??
+        workflowExecution.runId
+      if (!runId) {
+        throw new Error('Temporal CLI did not return a runId')
+      }
+      return { workflowId: resolvedWorkflowId, runId }
+    },
+    catch: (error) =>
+      new TemporalCliCommandError(
+        command,
+        0,
+        stdout,
+        error instanceof Error ? error.message : String(error),
+      ),
+  })
+
+const parseHistoryEvents = (
+  stdout: string,
+  command: readonly string[],
+): Effect.Effect<HistoryEvent[], TemporalCliCommandError, never> =>
+  Effect.try({
+    try: () => {
+      const trimmed = stdout.trim()
+      if (trimmed.length === 0) {
+        throw new Error('Temporal CLI returned empty history output')
+      }
+      const parsed = JSON.parse(trimmed) as unknown
+      const historyJson = normalizeHistoryJson(parsed)
+      const history = fromJson(HistorySchema, historyJson)
+      if (!history.events || history.events.length === 0) {
+        throw new Error('Temporal CLI returned empty history events')
+      }
+      return history.events
+    },
+    catch: (error) =>
+      new TemporalCliCommandError(
+        command,
+        0,
+        stdout,
+        error instanceof Error ? error.message : String(error),
+      ),
+  })
+
+const normalizeHistoryJson = (input: unknown): unknown => {
+  if (Array.isArray(input)) {
+    return { events: input }
+  }
+  if (input && typeof input === 'object') {
+    const record = input as Record<string, unknown>
+    if (Array.isArray(record.events)) {
+      return { events: record.events }
+    }
+    if (record.history) {
+      return record.history
+    }
+    if (record.historyJson) {
+      return record.historyJson
+    }
+  }
+  return input
+}
 
 const parseAddress = (value: string): { hostname: string; port: number } => {
   try {
     const url = new URL(value.includes('://') ? value : `http://${value}`)
-    const port = Number(url.port)
-    if (!Number.isInteger(port) || port <= 0) {
+    const parsedPort = Number(url.port)
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0) {
       throw new Error(`address is missing a valid port: ${value}`)
     }
-    return { hostname: url.hostname, port }
+    return { hostname: url.hostname, port: parsedPort }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`Invalid Temporal address "${value}": ${message}`)
+    throw new TemporalCliUnavailableError(`Invalid Temporal address "${value}": ${message}`, [])
   }
 }
 
