@@ -15,11 +15,17 @@ import {
 } from '../common/payloads/converter'
 import { encodeErrorToFailure, encodeFailurePayloads } from '../common/payloads/failure'
 import { loadTemporalConfig, type TemporalConfig } from '../config'
-import { PayloadsSchema } from '../proto/temporal/api/common/v1/message_pb'
+import {
+  type Command,
+  CommandSchema,
+  RecordMarkerCommandAttributesSchema,
+} from '../proto/temporal/api/command/v1/message_pb'
+import { type Payloads, PayloadsSchema } from '../proto/temporal/api/common/v1/message_pb'
 import {
   type WorkerDeploymentOptions,
   WorkerDeploymentOptionsSchema,
 } from '../proto/temporal/api/deployment/v1/message_pb'
+import { CommandType } from '../proto/temporal/api/enums/v1/command_type_pb'
 import { WorkerVersioningMode } from '../proto/temporal/api/enums/v1/deployment_pb'
 import { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
 import { WorkflowTaskFailedCause } from '../proto/temporal/api/enums/v1/failed_cause_pb'
@@ -43,12 +49,13 @@ import {
 } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from '../proto/temporal/api/workflowservice/v1/service_pb'
 import { durationFromMillis } from '../workflow/commands'
+import type { WorkflowInfo } from '../workflow/context'
 import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
 import type { WorkflowDeterminismState } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import { WorkflowExecutor } from '../workflow/executor'
 import { WorkflowRegistry } from '../workflow/registry'
-import { resolveHistoryLastEventId } from '../workflow/replay'
+import { DETERMINISM_MARKER_NAME, encodeDeterminismMarkerDetails, resolveHistoryLastEventId } from '../workflow/replay'
 import { type ActivityContext, type ActivityInfo, runWithActivityContext } from './activity-context'
 import {
   type ActivityTaskEnvelope,
@@ -64,6 +71,11 @@ type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowServi
 const POLL_TIMEOUT_MS = 60_000
 const RESPOND_TIMEOUT_MS = 15_000
 const STICKY_QUEUE_PREFIX = 'sticky'
+const COMPLETION_COMMAND_TYPES = new Set<CommandType>([
+  CommandType.COMPLETE_WORKFLOW_EXECUTION,
+  CommandType.FAIL_WORKFLOW_EXECUTION,
+  CommandType.CONTINUE_AS_NEW_WORKFLOW_EXECUTION,
+])
 
 export type { WorkflowServiceClient }
 
@@ -435,6 +447,7 @@ export class WorkerRuntime {
     const workflowType = this.#resolveWorkflowType(response)
     const args = await this.#decodeWorkflowArgs(response)
     const execution = this.#resolveWorkflowExecution(response)
+    const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
     const stickyKey = this.#buildStickyKey(execution.workflowId, execution.runId)
     const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
     const previousState = stickyEntry?.determinismState
@@ -450,9 +463,19 @@ export class WorkerRuntime {
         determinismState: previousState,
       })
 
+      const lastEventId = this.#resolveWorkflowHistoryLastEventId(response)
+      const markerDetails = await Effect.runPromise(
+        encodeDeterminismMarkerDetails(this.#dataConverter, {
+          info: workflowInfo,
+          determinismState: output.determinismState,
+          lastEventId,
+        }),
+      )
+      const markerCommand = this.#buildDeterminismMarkerCommand(markerDetails)
+      const commandsWithMarker = this.#injectDeterminismMarker(output.commands, markerCommand)
+
       if (stickyKey) {
         if (output.completion === 'pending') {
-          const lastEventId = this.#resolveWorkflowHistoryLastEventId(response)
           await this.#upsertStickyEntry(stickyKey, output.determinismState, lastEventId)
         } else {
           await this.#removeStickyEntry(stickyKey)
@@ -461,7 +484,7 @@ export class WorkerRuntime {
 
       const completion = create(RespondWorkflowTaskCompletedRequestSchema, {
         taskToken: response.taskToken,
-        commands: output.commands,
+        commands: commandsWithMarker,
         identity: this.#identity,
         namespace: this.#namespace,
         deploymentOptions: this.#deploymentOptions,
@@ -495,6 +518,16 @@ export class WorkerRuntime {
     }
   }
 
+  #buildWorkflowInfo(workflowType: string, execution: { workflowId: string; runId: string }): WorkflowInfo {
+    return {
+      namespace: this.#namespace,
+      taskQueue: this.#taskQueue,
+      workflowId: execution.workflowId,
+      runId: execution.runId,
+      workflowType,
+    }
+  }
+
   async #getStickyEntry(key: StickyCacheKey): Promise<StickyCacheEntry | undefined> {
     return await Effect.runPromise(this.#stickyCache.get(key))
   }
@@ -519,6 +552,44 @@ export class WorkerRuntime {
 
   #isTaskNotFoundError(error: unknown): boolean {
     return error instanceof ConnectError && error.code === Code.NotFound
+  }
+
+  #buildDeterminismMarkerCommand(details: Record<string, Payloads>): Command {
+    return create(CommandSchema, {
+      commandType: CommandType.RECORD_MARKER,
+      attributes: {
+        case: 'recordMarkerCommandAttributes',
+        value: create(RecordMarkerCommandAttributesSchema, {
+          markerName: DETERMINISM_MARKER_NAME,
+          details,
+        }),
+      },
+    })
+  }
+
+  #injectDeterminismMarker(commands: Command[], marker: Command): Command[] {
+    const next = [...commands]
+    const existingIndex = next.findIndex((command) => this.#isDeterminismMarkerCommand(command))
+    if (existingIndex !== -1) {
+      next.splice(existingIndex, 1)
+    }
+    const completionIndex = next.findIndex((command) => COMPLETION_COMMAND_TYPES.has(command.commandType))
+    if (completionIndex === -1) {
+      next.push(marker)
+      return next
+    }
+    next.splice(completionIndex, 0, marker)
+    return next
+  }
+
+  #isDeterminismMarkerCommand(command: Command): boolean {
+    if (command.commandType !== CommandType.RECORD_MARKER) {
+      return false
+    }
+    if (command.attributes?.case !== 'recordMarkerCommandAttributes') {
+      return false
+    }
+    return command.attributes.value.markerName === DETERMINISM_MARKER_NAME
   }
 
   async #removeStickyEntry(key: StickyCacheKey): Promise<void> {
