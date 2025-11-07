@@ -14,7 +14,7 @@ and the quality bars we must meet before GA.
 | Area | Status | Notes |
 | --- | --- | --- |
 | Workflow execution | **Alpha** | Deterministic command context, activity/timer/child/signal/continue-as-new intents, deterministic guard, legacy bypass flag. |
-| Worker runtime | **Alpha** | Basic poll loops with deterministic snapshot cache. No sticky queues, concurrency, or heartbeats yet. |
+| Worker runtime | **Beta-** | Effect-based scheduler with configurable concurrency, sticky cache routing, and build-id metadata. Heartbeats and observability still pending. |
 | Client | **Alpha** | Start/signal/query/cancel/update/describe namespace with Connect transport; interceptors and retries pending. |
 | Activities | **Beta-** | Handler registry, cancellation signals. Heartbeats, retries, and failure categorisation remain. |
 | Tooling & docs | **Pre-Alpha** | CLI scaffolds projects and Docker image. Developer docs partially updated for deterministic context. |
@@ -56,7 +56,7 @@ to be complete, with supporting validation and documentation.
 | Command coverage | ✅ context + intents | Activities, timers, child workflows, signals, continue-as-new emit correct commands with metadata and retries. | Yes |
 | History replay | 🚧 in design | Worker hydrates history into determinism state, verifies commands, tolerates sticky cache eviction, exposes replay API. | Yes |
 | Activity lifecycle | 🚧 partial | Heartbeats, retries, cancellation reasons, eager activities. | Yes |
-| Worker concurrency | 🚧 not started | Configurable parallelism, sticky queues, build-id routing, per-namespace/task queue isolation. | Yes |
+| Worker concurrency | ✅ scheduler + sticky queues | Configurable parallelism, sticky queues, build-id routing, per-namespace/task queue isolation. | Yes |
 | Client resilience | 🚧 partial | Retry policies, interceptors, TLS/mTLS test matrix, structured errors. | Yes |
 | Diagnostics | 🚧 not started | Structured logs, OpenTelemetry metrics/traces, hookable logger. | Yes |
 | Testing & QA | 🚧 partial | Deterministic regression suite, integration tests with Temporal dev server, load/perf smoke tests. | Yes |
@@ -150,7 +150,7 @@ can contribute independently without re-planning.
   4. Unit tests and dev-server scenario verifying behaviour.
 - **Implementation notes**
   - Determinism snapshots are persisted as `temporal-bun-sdk/determinism` record markers (schema v1) that bundle command history, random/time streams, and the last processed event id. The marker payload is stored via the configured `DataConverter`.
-  - `TEMPORAL_STICKY_CACHE_SIZE`, `TEMPORAL_STICKY_CACHE_TTL_MS`, and `TEMPORAL_STICKY_QUEUE_TIMEOUT_MS` control cache capacity, TTL-based eviction, and sticky queue scheduling respectively.
+  - `TEMPORAL_STICKY_CACHE_SIZE` and `TEMPORAL_STICKY_TTL_MS` control cache capacity and eviction; the sticky worker queue schedule-to-start timeout inherits from the TTL so increasing it lengthens deterministic affinity.
   - `tests/integration/harness.ts` provides a Temporal CLI-backed harness that starts the dev server, executes workflows (`temporal workflow execute`), fetches JSON history (`temporal workflow show --output json`), and feeds the ingestion pipeline. Tests log a skip when the CLI is unavailable instead of failing hard.
 - **Dependencies**
   - Optional integration with TBS-004 for logging metrics.
@@ -187,11 +187,11 @@ can contribute independently without re-planning.
   - Manage fibre lifecycle with `Scope` for deterministic teardown.
   - Coordinate with TBS-010 to ensure scheduler runs inside Effect Layer.
 - **Acceptance criteria**
-  1. Configurable concurrency levels (workflow/activity) via config/env.
-  2. Sticky task affinity using cache (TBS-001) with eviction metrics.
-  3. Build-id routing respected when scheduling tasks.
-  4. Graceful shutdown drains tasks, emits metrics/logs.
-  5. Load tests demonstrate throughput improvements.
+  1. ✅ Configurable concurrency levels (workflow/activity) via config/env (`TEMPORAL_WORKFLOW_CONCURRENCY`, `TEMPORAL_ACTIVITY_CONCURRENCY`).
+  2. ✅ Sticky task affinity using cache (TBS-001) with eviction metrics and tunable size/TTL (`TEMPORAL_STICKY_CACHE_SIZE`, `TEMPORAL_STICKY_TTL_MS`).
+  3. ✅ Build-id routing respected when scheduling tasks (`TEMPORAL_WORKER_DEPLOYMENT_NAME`, `TEMPORAL_WORKER_BUILD_ID`).
+  4. ✅ Graceful shutdown drains tasks; metrics/log hooks tracked under TBS-004.
+  5. 🚧 Load tests demonstrate throughput improvements.
 - **Dependencies**
   - Consumes determinism cache (TBS-001), emits metrics for TBS-004.
 

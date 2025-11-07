@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -9,10 +10,15 @@ import { HistorySchema, type HistoryEvent } from '../../src/proto/temporal/api/h
 export interface TemporalDevServerConfig {
   readonly address: string
   readonly namespace: string
-  readonly taskQueue: string
+  readonly taskQueue?: string
   readonly cliBinaryPath?: string
   readonly cliPort?: number
   readonly cliUiPort?: number
+  readonly tls?: {
+    readonly caPath?: string
+    readonly certPath?: string
+    readonly keyPath?: string
+  }
 }
 
 export interface WorkflowExecutionHandle {
@@ -88,29 +94,38 @@ export const createIntegrationHarness = (
       throw new TemporalCliUnavailableError('Temporal CLI management scripts are missing', [])
     }
 
+    const { hostname, port } = parseAddress(config.address)
+    const cliPort = config.cliPort ?? port
+    const cliUiPort = config.cliUiPort ?? cliPort + 1000
+
     const cliExecutable = yield* resolveTemporalCliExecutable(config.cliBinaryPath)
 
     let started = false
+
+    const scenarioEnv: Record<string, string | undefined> = {
+      TEMPORAL_ADDRESS: config.address,
+      TEMPORAL_NAMESPACE: config.namespace,
+      TEMPORAL_TLS_CA_PATH: config.tls?.caPath,
+      TEMPORAL_TLS_CERT_PATH: config.tls?.certPath,
+      TEMPORAL_TLS_KEY_PATH: config.tls?.keyPath,
+    }
 
     const setup = Effect.tryPromise(async () => {
       if (started) {
         return
       }
-      const child = Bun.spawn(
-        ['bun', startScript],
-        {
-          cwd: projectRoot,
-          stdout: 'pipe',
-          stderr: 'pipe',
-          env: {
-            ...process.env,
-            TEMPORAL_NAMESPACE: config.namespace,
-            TEMPORAL_CLI_PATH: cliExecutable,
-            TEMPORAL_PORT: String(config.cliPort ?? 7233),
-            TEMPORAL_UI_PORT: String(config.cliUiPort ?? 8233),
-          },
+      const child = Bun.spawn(['bun', startScript], {
+        cwd: projectRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: {
+          ...process.env,
+          TEMPORAL_NAMESPACE: config.namespace,
+          TEMPORAL_CLI_PATH: cliExecutable,
+          TEMPORAL_PORT: String(cliPort),
+          TEMPORAL_UI_PORT: String(cliUiPort),
         },
-      )
+      })
       const exitCode = await child.exited
       const stdout = child.stdout ? await readStream(child.stdout) : ''
       const stderr = child.stderr ? await readStream(child.stderr) : ''
@@ -121,6 +136,9 @@ export const createIntegrationHarness = (
         throw new TemporalCliCommandError(['bun', startScript], exitCode, stdout, stderr)
       }
       started = true
+      console.info(
+        `[temporal-bun-sdk] Temporal CLI dev server running at ${hostname}:${cliPort} (ui:${cliUiPort})`,
+      )
     })
 
     const teardown = Effect.tryPromise(async () => {
@@ -178,8 +196,16 @@ export const createIntegrationHarness = (
     const executeWorkflow = (
       options: TemporalWorkflowExecuteOptions,
     ): Effect.Effect<WorkflowExecutionHandle, TemporalCliError, never> => {
-      const workflowId = options.workflowId ?? `cli-integration-${crypto.randomUUID()}`
+      const workflowId = options.workflowId ?? `cli-integration-${randomUUID()}`
       const taskQueue = options.taskQueue ?? config.taskQueue
+      if (!taskQueue) {
+        throw new TemporalCliCommandError(
+          ['temporal', 'workflow', 'execute'],
+          -1,
+          '',
+          'Task queue missing for Temporal CLI workflow execution',
+        )
+      }
       const args = buildInputArgs(options.args)
       const command = [
         'workflow',
@@ -226,8 +252,11 @@ export const createIntegrationHarness = (
     }
 
     const runScenario: IntegrationHarness['runScenario'] = (name, scenario) =>
-      Effect.succeed(void console.info(`[temporal-bun-sdk] scenario: ${name}`)).pipe(
-        Effect.zipRight(scenario()),
+      withEnvironment(
+        scenarioEnv,
+        Effect.sync(() => {
+          console.info(`[temporal-bun-sdk] scenario: ${name}`)
+        }).pipe(Effect.zipRight(scenario())),
       )
 
     return {
@@ -395,3 +424,47 @@ const normalizeHistoryJson = (input: unknown): unknown => {
   }
   return input
 }
+
+const parseAddress = (value: string): { hostname: string; port: number } => {
+  try {
+    const url = new URL(value.includes('://') ? value : `http://${value}`)
+    const parsedPort = Number(url.port)
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0) {
+      throw new Error(`address is missing a valid port: ${value}`)
+    }
+    return { hostname: url.hostname, port: parsedPort }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new TemporalCliUnavailableError(`Invalid Temporal address "${value}": ${message}`, [])
+  }
+}
+
+const withEnvironment = <A, E, R>(
+  assignments: Record<string, string | undefined>,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const snapshot = new Map<string, string | undefined>()
+      for (const [key, value] of Object.entries(assignments)) {
+        snapshot.set(key, process.env[key])
+        if (value === undefined) {
+          delete process.env[key]
+        } else {
+          process.env[key] = value
+        }
+      }
+      return snapshot
+    }),
+    () => effect,
+    (snapshot) =>
+      Effect.sync(() => {
+        for (const [key, value] of snapshot) {
+          if (value === undefined) {
+            delete process.env[key]
+          } else {
+            process.env[key] = value
+          }
+        }
+      }),
+  )

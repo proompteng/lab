@@ -21,12 +21,21 @@ import {
   RecordMarkerCommandAttributesSchema,
 } from '../proto/temporal/api/command/v1/message_pb'
 import { type Payloads, PayloadsSchema, WorkflowExecutionSchema } from '../proto/temporal/api/common/v1/message_pb'
+import {
+  type WorkerDeploymentOptions,
+  WorkerDeploymentOptionsSchema,
+} from '../proto/temporal/api/deployment/v1/message_pb'
 import { CommandType } from '../proto/temporal/api/enums/v1/command_type_pb'
+import { WorkerVersioningMode } from '../proto/temporal/api/enums/v1/deployment_pb'
 import { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
 import { WorkflowTaskFailedCause } from '../proto/temporal/api/enums/v1/failed_cause_pb'
-import { HistoryEventFilterType } from '../proto/temporal/api/enums/v1/workflow_pb'
+import { HistoryEventFilterType, VersioningBehavior } from '../proto/temporal/api/enums/v1/workflow_pb'
 import type { HistoryEvent } from '../proto/temporal/api/history/v1/message_pb'
-import { StickyExecutionAttributesSchema, TaskQueueSchema } from '../proto/temporal/api/taskqueue/v1/message_pb'
+import {
+  type StickyExecutionAttributes,
+  StickyExecutionAttributesSchema,
+  TaskQueueSchema,
+} from '../proto/temporal/api/taskqueue/v1/message_pb'
 import {
   GetWorkflowExecutionHistoryRequestSchema,
   PollActivityTaskQueueRequestSchema,
@@ -48,14 +57,23 @@ import type { WorkflowDeterminismState } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import { WorkflowExecutor } from '../workflow/executor'
 import { WorkflowRegistry } from '../workflow/registry'
-import type { DeterminismMismatch } from '../workflow/replay'
 import {
   DETERMINISM_MARKER_NAME,
+  type DeterminismMismatch,
   diffDeterminismState,
   encodeDeterminismMarkerDetails,
   ingestWorkflowHistory,
+  type ReplayResult,
+  resolveHistoryLastEventId,
 } from '../workflow/replay'
 import { type ActivityContext, type ActivityInfo, runWithActivityContext } from './activity-context'
+import {
+  type ActivityTaskEnvelope,
+  makeWorkerScheduler,
+  type WorkerScheduler,
+  type WorkerSchedulerHooks,
+  type WorkflowTaskEnvelope,
+} from './concurrency'
 import { makeStickyCache, type StickyCache, type StickyCacheEntry, type StickyCacheKey } from './sticky-cache'
 
 type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
@@ -63,6 +81,7 @@ type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowServi
 const POLL_TIMEOUT_MS = 60_000
 const RESPOND_TIMEOUT_MS = 15_000
 const HISTORY_FETCH_TIMEOUT_MS = 60_000
+const STICKY_QUEUE_PREFIX = 'sticky'
 const COMPLETION_COMMAND_TYPES = new Set<CommandType>([
   CommandType.COMPLETE_WORKFLOW_EXECUTION,
   CommandType.FAIL_WORKFLOW_EXECUTION,
@@ -72,6 +91,27 @@ const COMPLETION_COMMAND_TYPES = new Set<CommandType>([
 export type { WorkflowServiceClient }
 
 export type ActivityHandler = (...args: unknown[]) => unknown | Promise<unknown>
+
+export interface WorkerConcurrencyOptions {
+  workflow?: number
+  activity?: number
+}
+
+export interface WorkerPollerOptions {
+  workflow?: number
+}
+
+export interface WorkerStickyCacheOptions {
+  size?: number
+  ttlMs?: number
+}
+
+export interface WorkerDeploymentConfig {
+  name?: string
+  buildId?: string
+  versioningMode?: WorkerVersioningMode
+  versioningBehavior?: VersioningBehavior
+}
 
 export interface WorkerRuntimeOptions {
   workflowsPath?: string
@@ -83,7 +123,12 @@ export interface WorkerRuntimeOptions {
   identity?: string
   config?: TemporalConfig
   workflowService?: WorkflowServiceClient
-  stickyCache?: StickyCache
+  concurrency?: WorkerConcurrencyOptions
+  pollers?: WorkerPollerOptions
+  stickyCache?: WorkerStickyCacheOptions | StickyCache
+  stickyScheduling?: boolean
+  deployment?: WorkerDeploymentConfig
+  schedulerHooks?: WorkerSchedulerHooks
 }
 
 export class WorkerRuntime {
@@ -117,6 +162,7 @@ export class WorkerRuntime {
       bypassDeterministicContext: config.workflowContextBypass,
     })
 
+    const activities = options.activities ?? {}
     let workflowService: WorkflowServiceClient
     if (options.workflowService) {
       workflowService = options.workflowService
@@ -127,9 +173,51 @@ export class WorkerRuntime {
       workflowService = createClient(WorkflowService, transport)
     }
 
-    const stickyCache =
-      options.stickyCache ??
-      (await Effect.runPromise(makeStickyCache({ maxEntries: config.stickyCacheSize, ttlMs: config.stickyCacheTtlMs })))
+    const workflowConcurrency = options.concurrency?.workflow ?? config.workerWorkflowConcurrency
+    const defaultActivityConcurrency = options.concurrency?.activity ?? config.workerActivityConcurrency
+    const activityConcurrency = defaultActivityConcurrency > 0 ? defaultActivityConcurrency : 1
+    const workflowPollerCount = options.pollers?.workflow ?? Math.max(1, workflowConcurrency)
+
+    const scheduler = await Effect.runPromise(
+      makeWorkerScheduler({
+        workflowConcurrency,
+        activityConcurrency,
+        hooks: options.schedulerHooks,
+      }),
+    )
+
+    const stickyCacheCandidate = options.stickyCache
+    const hasStickyCacheInstance = WorkerRuntime.#isStickyCacheInstance(stickyCacheCandidate)
+    const stickyCacheOptions = hasStickyCacheInstance ? undefined : stickyCacheCandidate
+    const stickyCacheSize = stickyCacheOptions?.size ?? config.workerStickyCacheSize
+    const stickyCacheTtlMs = stickyCacheOptions?.ttlMs ?? config.workerStickyTtlMs
+    const stickyCache = hasStickyCacheInstance
+      ? (stickyCacheCandidate as StickyCache)
+      : await Effect.runPromise(
+          makeStickyCache({
+            maxEntries: stickyCacheSize,
+            ttlMs: stickyCacheTtlMs,
+          }),
+        )
+
+    const stickyQueue = WorkerRuntime.#buildStickyQueueName(taskQueue, identity)
+    const stickyScheduleToStartTimeoutMs = stickyCacheTtlMs
+    const stickySchedulingEnabled =
+      options.stickyScheduling ?? (hasStickyCacheInstance ? config.workerStickyCacheSize > 0 : stickyCacheSize > 0)
+
+    const deploymentName =
+      options.deployment?.name ?? config.workerDeploymentName ?? WorkerRuntime.#defaultDeploymentName(taskQueue)
+    const buildId = options.deployment?.buildId ?? config.workerBuildId ?? identity
+    const workerVersioningMode = options.deployment?.versioningMode ?? WorkerVersioningMode.UNVERSIONED
+    const versioningBehavior =
+      workerVersioningMode === WorkerVersioningMode.VERSIONED
+        ? (options.deployment?.versioningBehavior ?? VersioningBehavior.PINNED)
+        : null
+    const deploymentOptions = create(WorkerDeploymentOptionsSchema, {
+      deploymentName,
+      buildId,
+      workerVersioningMode,
+    })
 
     return new WorkerRuntime({
       config,
@@ -137,11 +225,18 @@ export class WorkerRuntime {
       dataConverter,
       registry,
       executor,
-      activities: options.activities ?? {},
+      activities,
       namespace,
       taskQueue,
       identity,
+      scheduler,
       stickyCache,
+      stickyQueue,
+      stickyScheduleToStartTimeoutMs,
+      deploymentOptions,
+      versioningBehavior,
+      stickySchedulingEnabled,
+      workflowPollerCount,
     })
   }
 
@@ -154,17 +249,65 @@ export class WorkerRuntime {
   readonly #namespace: string
   readonly #taskQueue: string
   readonly #identity: string
+  readonly #scheduler: WorkerScheduler
   readonly #stickyCache: StickyCache
-  readonly #stickyTaskQueue: string
+  readonly #stickyQueue: string
+  readonly #stickySchedulingEnabled: boolean
+  readonly #stickyAttributes: StickyExecutionAttributes
+  readonly #deploymentOptions: WorkerDeploymentOptions
+  readonly #versioningBehavior: VersioningBehavior | null
+  readonly #workflowPollerCount: number
   #running = false
   #abortController: AbortController | null = null
   #runPromise: Promise<void> | null = null
+  #schedulerStarted = false
+  #schedulerStopPromise: Promise<void> | null = null
 
-  #isStickyExecutionEnabled(): boolean {
-    return this.#config.stickyCacheSize > 0
+  private constructor(params: {
+    config: TemporalConfig
+    workflowService: ReturnType<typeof createClient<typeof WorkflowService>>
+    dataConverter: DataConverter
+    registry: WorkflowRegistry
+    executor: WorkflowExecutor
+    activities: Record<string, ActivityHandler>
+    namespace: string
+    taskQueue: string
+    identity: string
+    scheduler: WorkerScheduler
+    stickyCache: StickyCache
+    stickyQueue: string
+    stickyScheduleToStartTimeoutMs: number
+    deploymentOptions: WorkerDeploymentOptions
+    versioningBehavior: VersioningBehavior | null
+    stickySchedulingEnabled: boolean
+    workflowPollerCount: number
+  }) {
+    this.#config = params.config
+    this.#workflowService = params.workflowService
+    this.#dataConverter = params.dataConverter
+    this.#registry = params.registry
+    this.#executor = params.executor
+    this.#activities = params.activities
+    this.#namespace = params.namespace
+    this.#taskQueue = params.taskQueue
+    this.#identity = params.identity
+    this.#scheduler = params.scheduler
+    this.#stickyCache = params.stickyCache
+    this.#stickyQueue = params.stickyQueue
+    this.#stickySchedulingEnabled = params.stickySchedulingEnabled
+    this.#deploymentOptions = params.deploymentOptions
+    this.#versioningBehavior = params.versioningBehavior
+    this.#workflowPollerCount = params.workflowPollerCount
+    this.#stickyAttributes = create(StickyExecutionAttributesSchema, {
+      workerTaskQueue: create(TaskQueueSchema, { name: this.#stickyQueue }),
+      scheduleToStartTimeout: durationFromMillis(params.stickyScheduleToStartTimeoutMs),
+    })
   }
 
-  #isValidDeterminismSnapshot(state: WorkflowDeterminismState): boolean {
+  #isValidDeterminismSnapshot(state: WorkflowDeterminismState | undefined): boolean {
+    if (!state) {
+      return false
+    }
     return state.commandHistory.length > 0 || state.randomValues.length > 0 || state.timeValues.length > 0
   }
 
@@ -192,29 +335,19 @@ export class WorkerRuntime {
     return Number.isFinite(numeric) && numeric > 0 ? numeric.toString() : null
   }
 
-  private constructor(params: {
-    config: TemporalConfig
-    workflowService: ReturnType<typeof createClient<typeof WorkflowService>>
-    dataConverter: DataConverter
-    registry: WorkflowRegistry
-    executor: WorkflowExecutor
-    activities: Record<string, ActivityHandler>
-    namespace: string
-    taskQueue: string
-    identity: string
-    stickyCache: StickyCache
-  }) {
-    this.#config = params.config
-    this.#workflowService = params.workflowService
-    this.#dataConverter = params.dataConverter
-    this.#registry = params.registry
-    this.#executor = params.executor
-    this.#activities = params.activities
-    this.#namespace = params.namespace
-    this.#taskQueue = params.taskQueue
-    this.#identity = params.identity
-    this.#stickyCache = params.stickyCache
-    this.#stickyTaskQueue = `${this.#taskQueue}::sticky::${this.#identity}`
+  static #sanitizeTaskQueueComponent(value: string): string {
+    return value.replace(/[^a-zA-Z0-9_-]/g, '-')
+  }
+
+  static #buildStickyQueueName(taskQueue: string, identity: string): string {
+    const queueComponent = WorkerRuntime.#sanitizeTaskQueueComponent(taskQueue)
+    const identityComponent = WorkerRuntime.#sanitizeTaskQueueComponent(identity) || 'worker'
+    return `${queueComponent}-${STICKY_QUEUE_PREFIX}-${identityComponent}`
+  }
+
+  static #defaultDeploymentName(taskQueue: string): string {
+    const component = WorkerRuntime.#sanitizeTaskQueueComponent(taskQueue) || 'default'
+    return `${component}-deployment`
   }
 
   async run(): Promise<void> {
@@ -225,31 +358,83 @@ export class WorkerRuntime {
     this.#abortController = new AbortController()
     const signal = this.#abortController.signal
 
-    const loops: Array<Promise<void>> = [this.#workflowLoop(signal), this.#activityLoop(signal)]
-    if (this.#isStickyExecutionEnabled()) {
-      loops.unshift(this.#stickyWorkflowLoop(signal))
+    try {
+      await this.#startScheduler()
+    } catch (error) {
+      this.#running = false
+      this.#abortController = null
+      throw error
     }
-    this.#runPromise = Promise.all(loops).then(() => undefined)
+
+    const execution = (async () => {
+      try {
+        const workflowLoops = Array.from({ length: this.#workflowPollerCount }, () => this.#workflowLoop(signal))
+        const activityLoops = this.#hasActivities() ? [this.#activityLoop(signal)] : []
+        await Promise.all([...workflowLoops, ...activityLoops])
+      } finally {
+        await this.#stopScheduler()
+        this.#abortController = null
+        this.#running = false
+      }
+    })()
+
+    this.#runPromise = execution
 
     await this.#runPromise
   }
 
   async shutdown(): Promise<void> {
     if (!this.#running) {
+      await this.#stopScheduler()
       return
     }
-    this.#running = false
     this.#abortController?.abort()
     if (this.#runPromise) {
-      await this.#runPromise
+      try {
+        await this.#runPromise
+      } catch {
+        // ignore failures during shutdown; polling loops log errors before exiting
+      }
+    } else {
+      await this.#stopScheduler()
     }
+  }
+
+  async #startScheduler(): Promise<void> {
+    if (this.#schedulerStarted) {
+      return
+    }
+    await Effect.runPromise(this.#scheduler.start)
+    this.#schedulerStarted = true
+  }
+
+  async #stopScheduler(): Promise<void> {
+    if (!this.#schedulerStarted) {
+      return
+    }
+    if (!this.#schedulerStopPromise) {
+      this.#schedulerStopPromise = Effect.runPromise(this.#scheduler.stop).finally(() => {
+        this.#schedulerStarted = false
+        this.#schedulerStopPromise = null
+      })
+    }
+    await this.#schedulerStopPromise
   }
 
   async #workflowLoop(signal: AbortSignal): Promise<void> {
+    const pollers = [this.#pollWorkflowTaskQueue(this.#taskQueue, signal)]
+    if (this.#stickySchedulingEnabled) {
+      pollers.push(this.#pollWorkflowTaskQueue(this.#stickyQueue, signal))
+    }
+    await Promise.all(pollers)
+  }
+
+  async #pollWorkflowTaskQueue(queueName: string, signal: AbortSignal): Promise<void> {
     const request = create(PollWorkflowTaskQueueRequestSchema, {
       namespace: this.#namespace,
-      taskQueue: create(TaskQueueSchema, { name: this.#taskQueue }),
+      taskQueue: create(TaskQueueSchema, { name: queueName }),
       identity: this.#identity,
+      deploymentOptions: this.#deploymentOptions,
     })
 
     while (!signal.aborted) {
@@ -261,46 +446,27 @@ export class WorkerRuntime {
         if (!response.taskToken || response.taskToken.length === 0) {
           continue
         }
-        await this.#processWorkflowTask(response)
+        await this.#enqueueWorkflowTask(response)
       } catch (error) {
         if (signal.aborted) {
           break
         }
-        console.error('[temporal-bun-sdk] workflow polling failed', error)
+        console.error(`[temporal-bun-sdk] workflow polling failed for ${queueName}`, error)
         await delay(250)
       }
     }
   }
 
-  async #stickyWorkflowLoop(signal: AbortSignal): Promise<void> {
-    if (!this.#isStickyExecutionEnabled()) {
-      return
+  async #enqueueWorkflowTask(response: PollWorkflowTaskQueueResponse): Promise<void> {
+    const taskToken = response.taskToken ?? new Uint8Array()
+    const envelope: WorkflowTaskEnvelope = {
+      taskToken,
+      execute: () =>
+        Effect.promise(async () => {
+          await this.#handleWorkflowTask(response)
+        }),
     }
-
-    const request = create(PollWorkflowTaskQueueRequestSchema, {
-      namespace: this.#namespace,
-      taskQueue: create(TaskQueueSchema, { name: this.#stickyTaskQueue }),
-      identity: this.#identity,
-    })
-
-    while (!signal.aborted) {
-      try {
-        const response = await this.#workflowService.pollWorkflowTaskQueue(request, {
-          timeoutMs: POLL_TIMEOUT_MS,
-          signal,
-        })
-        if (!response.taskToken || response.taskToken.length === 0) {
-          continue
-        }
-        await this.#processWorkflowTask(response)
-      } catch (error) {
-        if (signal.aborted) {
-          break
-        }
-        console.error('[temporal-bun-sdk] sticky workflow polling failed', error)
-        await delay(250)
-      }
-    }
+    await Effect.runPromise(this.#scheduler.enqueueWorkflow(envelope))
   }
 
   async #activityLoop(signal: AbortSignal): Promise<void> {
@@ -312,6 +478,7 @@ export class WorkerRuntime {
       namespace: this.#namespace,
       taskQueue: create(TaskQueueSchema, { name: this.#taskQueue }),
       identity: this.#identity,
+      deploymentOptions: this.#deploymentOptions,
     })
 
     while (!signal.aborted) {
@@ -323,7 +490,7 @@ export class WorkerRuntime {
         if (!response.taskToken || response.taskToken.length === 0) {
           continue
         }
-        await this.#processActivityTask(response)
+        await this.#enqueueActivityTask(response)
       } catch (error) {
         if (signal.aborted) {
           break
@@ -334,63 +501,49 @@ export class WorkerRuntime {
     }
   }
 
-  async #processWorkflowTask(response: PollWorkflowTaskQueueResponse): Promise<void> {
+  async #enqueueActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
+    const taskToken = response.taskToken ?? new Uint8Array()
+    const envelope: ActivityTaskEnvelope = {
+      taskToken,
+      handler: () => this.#processActivityTask(response),
+      args: [],
+    }
+    await Effect.runPromise(this.#scheduler.enqueueActivity(envelope))
+  }
+
+  async #handleWorkflowTask(response: PollWorkflowTaskQueueResponse): Promise<void> {
     const workflowType = this.#resolveWorkflowType(response)
     const args = await this.#decodeWorkflowArgs(response)
     const execution = this.#resolveWorkflowExecution(response)
-    const workflowInfo: WorkflowInfo = {
-      namespace: this.#namespace,
-      taskQueue: this.#taskQueue,
-      workflowId: execution.workflowId,
-      runId: execution.runId,
-      workflowType,
-    }
-    const stickyExecutionEnabled = this.#isStickyExecutionEnabled()
-    const stickyKey = stickyExecutionEnabled ? this.#buildStickyKey(execution.workflowId, execution.runId) : null
-    const historyEvents = await this.#collectWorkflowHistory(response, execution)
+    const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
+    const stickyKey = this.#buildStickyKey(execution.workflowId, execution.runId)
+    const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
+    const historyReplay = await this.#ingestDeterminismState(workflowInfo, execution, response)
+    const hasHistorySnapshot = this.#isValidDeterminismSnapshot(historyReplay?.determinismState)
+    let previousState: WorkflowDeterminismState | undefined
 
-    const replay = await Effect.runPromise(
-      ingestWorkflowHistory({
-        info: workflowInfo,
-        history: historyEvents,
-        dataConverter: this.#dataConverter,
-      }),
-    )
+    if (stickyEntry && this.#isValidDeterminismSnapshot(stickyEntry.determinismState)) {
+      const historyBaselineEventId = this.#resolvePreviousHistoryEventId(response) ?? historyReplay?.lastEventId ?? null
+      const cacheMatchesHistory = (stickyEntry.lastEventId ?? null) === historyBaselineEventId
 
-    let determinismState: WorkflowDeterminismState | undefined
-    let cachedEntry: StickyCacheEntry | undefined
-
-    if (stickyExecutionEnabled && stickyKey) {
-      cachedEntry = await Effect.runPromise(this.#stickyCache.get(stickyKey))
-      if (cachedEntry) {
-        const historyBaselineEventId = this.#resolvePreviousHistoryEventId(response) ?? replay.lastEventId ?? null
-        const cacheMatchesHistory = (cachedEntry.lastEventId ?? null) === historyBaselineEventId
-
-        if (cacheMatchesHistory) {
-          determinismState = cachedEntry.determinismState
-        } else {
-          // If the cache diverges from history prefer the history snapshot and allow the diff
-          // to surface additional diagnostics to the operator.
-          const diff = await Effect.runPromise(
-            diffDeterminismState(cachedEntry.determinismState, replay.determinismState),
-          )
-          if (diff.mismatches.length > 0) {
-            console.warn('[temporal-bun-sdk] sticky cache determinism snapshot drift detected', diff.mismatches)
-          }
-          if (this.#isValidDeterminismSnapshot(replay.determinismState)) {
-            determinismState = replay.determinismState
-          } else {
-            determinismState = undefined
-          }
+      if (cacheMatchesHistory) {
+        previousState = stickyEntry.determinismState
+      } else if (hasHistorySnapshot && historyReplay) {
+        const diff = await Effect.runPromise(
+          diffDeterminismState(stickyEntry.determinismState, historyReplay.determinismState),
+        )
+        if (diff.mismatches.length > 0) {
+          console.warn('[temporal-bun-sdk] sticky cache determinism snapshot drift detected', diff.mismatches)
         }
+        previousState = historyReplay.determinismState
       }
     }
 
-    if (!determinismState && this.#isValidDeterminismSnapshot(replay.determinismState)) {
-      determinismState = replay.determinismState
+    if (!previousState && hasHistorySnapshot && historyReplay) {
+      previousState = historyReplay.determinismState
     }
 
-    const expectedDeterminismState = determinismState
+    const expectedDeterminismState = previousState
 
     try {
       const output = await this.#executor.execute({
@@ -400,68 +553,59 @@ export class WorkerRuntime {
         namespace: this.#namespace,
         taskQueue: this.#taskQueue,
         arguments: args,
-        determinismState,
+        determinismState: previousState,
       })
 
+      const lastEventId =
+        historyReplay?.lastEventId ??
+        this.#resolveWorkflowHistoryLastEventId(response) ??
+        stickyEntry?.lastEventId ??
+        null
       const markerDetails = await Effect.runPromise(
         encodeDeterminismMarkerDetails(this.#dataConverter, {
           info: workflowInfo,
           determinismState: output.determinismState,
-          lastEventId: replay.lastEventId,
+          lastEventId,
         }),
       )
       const markerCommand = this.#buildDeterminismMarkerCommand(markerDetails)
       const commandsWithMarker = this.#injectDeterminismMarker(output.commands, markerCommand)
 
-      const stickyAttributes = stickyExecutionEnabled ? this.#buildStickyAttributes() : undefined
+      const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? historyReplay?.lastEventId ?? null
+
+      if (stickyKey) {
+        if (output.completion === 'pending') {
+          await this.#upsertStickyEntry(stickyKey, output.determinismState, cacheBaselineEventId)
+        } else {
+          await this.#removeStickyEntry(stickyKey)
+        }
+      }
+
       const completion = create(RespondWorkflowTaskCompletedRequestSchema, {
         taskToken: response.taskToken,
         commands: commandsWithMarker,
         identity: this.#identity,
         namespace: this.#namespace,
-        ...(stickyAttributes ? { stickyAttributes } : {}),
+        deploymentOptions: this.#deploymentOptions,
+        ...(this.#stickySchedulingEnabled ? { stickyAttributes: this.#stickyAttributes } : {}),
+        ...(this.#versioningBehavior !== null ? { versioningBehavior: this.#versioningBehavior } : {}),
       })
-      let taskTokenInvalid = false
       try {
         await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
-      } catch (error) {
-        if (this.#isWorkflowTaskNotFoundError(error)) {
-          taskTokenInvalid = true
+      } catch (rpcError) {
+        if (this.#isTaskNotFoundError(rpcError)) {
           this.#logWorkflowTaskNotFound('respondWorkflowTaskCompleted', execution)
-        } else {
-          throw error
+          return
         }
-      }
-
-      const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? replay.lastEventId ?? null
-
-      if (stickyExecutionEnabled && stickyKey) {
-        const shouldEvict =
-          taskTokenInvalid ||
-          output.completion === 'completed' ||
-          output.completion === 'failed' ||
-          output.completion === 'continued-as-new'
-
-        if (shouldEvict) {
-          await Effect.runPromise(this.#stickyCache.remove(stickyKey))
-        } else {
-          await Effect.runPromise(
-            this.#stickyCache.upsert({
-              key: stickyKey,
-              determinismState: output.determinismState,
-              lastEventId: cacheBaselineEventId,
-              lastAccessed: Date.now(),
-            }),
-          )
-        }
-      }
-
-      if (taskTokenInvalid) {
-        return
+        throw rpcError
       }
     } catch (error) {
-      if (stickyExecutionEnabled && stickyKey) {
-        await Effect.runPromise(this.#stickyCache.remove(stickyKey))
+      if (stickyKey) {
+        await this.#removeStickyEntry(stickyKey)
+      }
+      if (this.#isTaskNotFoundError(error)) {
+        this.#logWorkflowTaskNotFound('respondWorkflowTaskCompleted', execution)
+        return
       }
       if (error instanceof WorkflowNondeterminismError) {
         const mismatches = await this.#computeNondeterminismMismatches(error, expectedDeterminismState)
@@ -473,221 +617,6 @@ export class WorkerRuntime {
     }
   }
 
-  async #collectWorkflowHistory(
-    response: PollWorkflowTaskQueueResponse,
-    execution: { workflowId: string; runId: string },
-  ): Promise<HistoryEvent[]> {
-    const events: HistoryEvent[] = [...(response.history?.events ?? [])]
-    let token = response.nextPageToken ?? new Uint8Array()
-
-    if (!token || token.length === 0) {
-      return events
-    }
-
-    while (token.length > 0) {
-      const historyRequest = create(GetWorkflowExecutionHistoryRequestSchema, {
-        namespace: this.#namespace,
-        execution: create(WorkflowExecutionSchema, {
-          workflowId: execution.workflowId,
-          runId: execution.runId,
-        }),
-        maximumPageSize: 0,
-        nextPageToken: token,
-        waitNewEvent: false,
-        historyEventFilterType: HistoryEventFilterType.ALL_EVENT,
-        skipArchival: true,
-      })
-
-      const historyResponse = await this.#workflowService.getWorkflowExecutionHistory(historyRequest, {
-        timeoutMs: HISTORY_FETCH_TIMEOUT_MS,
-      })
-
-      if (historyResponse.history?.events) {
-        events.push(...historyResponse.history.events)
-      }
-
-      token = historyResponse.nextPageToken ?? new Uint8Array()
-    }
-
-    return events
-  }
-
-  async #failWorkflowTask(
-    response: PollWorkflowTaskQueueResponse,
-    execution: { workflowId: string; runId: string },
-    error: unknown,
-    cause: WorkflowTaskFailedCause = WorkflowTaskFailedCause.UNSPECIFIED,
-  ): Promise<void> {
-    const failure = await encodeErrorToFailure(this.#dataConverter, error)
-    const encoded = await encodeFailurePayloads(this.#dataConverter, failure)
-
-    const failed = create(RespondWorkflowTaskFailedRequestSchema, {
-      taskToken: response.taskToken,
-      cause,
-      failure: encoded,
-      identity: this.#identity,
-      namespace: this.#namespace,
-    })
-
-    try {
-      await this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS })
-    } catch (respondError) {
-      if (this.#isWorkflowTaskNotFoundError(respondError)) {
-        this.#logWorkflowTaskNotFound('respondWorkflowTaskFailed', execution)
-        return
-      }
-      throw respondError
-    }
-  }
-
-  async #processActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
-    const cancelRequested = isActivityCancelRequested(response)
-
-    if (cancelRequested) {
-      await this.#cancelActivityTask(response)
-      return
-    }
-
-    const activityType = response.activityType?.name
-    if (!activityType) {
-      await this.#failActivityTask(response, new Error('Activity task missing type'))
-      return
-    }
-
-    const handler = this.#activities[activityType]
-    if (!handler) {
-      await this.#failActivityTask(response, new Error(`No handler registered for activity ${activityType}`))
-      return
-    }
-
-    const args = await decodePayloadsToValues(this.#dataConverter, response.input?.payloads ?? [])
-    const context = this.#createActivityContext(response, cancelRequested)
-
-    try {
-      const result = await runWithActivityContext(context, async () => await handler(...args))
-      const payloads = await encodeValuesToPayloads(this.#dataConverter, result === undefined ? [] : [result])
-      const completion = create(RespondActivityTaskCompletedRequestSchema, {
-        taskToken: response.taskToken,
-        identity: this.#identity,
-        namespace: this.#namespace,
-        result: payloads && payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined,
-      })
-      await this.#workflowService.respondActivityTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
-    } catch (error) {
-      if (isAbortError(error)) {
-        await this.#cancelActivityTask(response)
-        return
-      }
-      await this.#failActivityTask(response, error)
-    }
-  }
-
-  async #failActivityTask(response: PollActivityTaskQueueResponse, error: unknown): Promise<void> {
-    const failure = await encodeErrorToFailure(this.#dataConverter, error)
-    const encoded = await encodeFailurePayloads(this.#dataConverter, failure)
-
-    const request = create(RespondActivityTaskFailedRequestSchema, {
-      taskToken: response.taskToken,
-      identity: this.#identity,
-      namespace: this.#namespace,
-      failure: encoded,
-    })
-
-    await this.#workflowService.respondActivityTaskFailed(request, { timeoutMs: RESPOND_TIMEOUT_MS })
-  }
-
-  async #cancelActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
-    const request = create(RespondActivityTaskCanceledRequestSchema, {
-      taskToken: response.taskToken,
-      identity: this.#identity,
-      namespace: this.#namespace,
-    })
-
-    await this.#workflowService.respondActivityTaskCanceled(request, { timeoutMs: RESPOND_TIMEOUT_MS })
-  }
-
-  #createActivityContext(response: PollActivityTaskQueueResponse, cancelRequested: boolean): ActivityContext {
-    const abortController = new AbortController()
-    if (cancelRequested) {
-      abortController.abort()
-    }
-
-    const info: ActivityInfo = {
-      activityId: response.activityId ?? '',
-      activityType: response.activityType?.name ?? '',
-      workflowNamespace: response.workflowNamespace ?? this.#namespace,
-      workflowType: response.workflowType?.name ?? '',
-      workflowId: response.workflowExecution?.workflowId ?? '',
-      runId: response.workflowExecution?.runId ?? '',
-      taskQueue: this.#taskQueue,
-      attempt: Number(response.attempt ?? 1),
-      isLocal: false,
-      scheduledTime: response.scheduledTime ? new Date(Number(response.scheduledTime.seconds) * 1000) : undefined,
-      startedTime: response.startedTime ? new Date(Number(response.startedTime.seconds) * 1000) : undefined,
-      currentAttemptScheduledTime: response.currentAttemptScheduledTime
-        ? new Date(Number(response.currentAttemptScheduledTime.seconds) * 1000)
-        : undefined,
-      heartbeatTimeoutMs: undefined,
-      scheduleToCloseTimeoutMs: undefined,
-      startToCloseTimeoutMs: undefined,
-      lastHeartbeatDetails: [],
-    }
-
-    return {
-      info,
-      cancellationSignal: abortController.signal,
-      get isCancellationRequested() {
-        return abortController.signal.aborted
-      },
-      async heartbeat() {
-        // Heartbeats are not yet implemented in the pure TypeScript runtime.
-      },
-      throwIfCancelled() {
-        if (abortController.signal.aborted) {
-          const error = new Error('Activity cancelled')
-          error.name = 'AbortError'
-          throw error
-        }
-      },
-    }
-  }
-
-  async #decodeWorkflowArgs(response: PollWorkflowTaskQueueResponse): Promise<unknown[]> {
-    const startEvent = this.#findWorkflowStartedEvent(response.history?.events ?? [])
-    if (!startEvent) {
-      return []
-    }
-    const attributes =
-      startEvent.attributes?.case === 'workflowExecutionStartedEventAttributes'
-        ? startEvent.attributes.value
-        : undefined
-    if (!attributes) {
-      return []
-    }
-    const inputPayloads = attributes.input?.payloads ?? []
-    return await decodePayloadsToValues(this.#dataConverter, inputPayloads)
-  }
-
-  #resolveWorkflowType(response: PollWorkflowTaskQueueResponse): string {
-    if (response.workflowType?.name) {
-      return response.workflowType.name
-    }
-    const startEvent = this.#findWorkflowStartedEvent(response.history?.events ?? [])
-    if (startEvent?.attributes?.case === 'workflowExecutionStartedEventAttributes') {
-      const workflowTypeName = startEvent.attributes.value.workflowType?.name
-      if (workflowTypeName) {
-        return workflowTypeName
-      }
-    }
-    throw new Error('Unable to resolve workflow type from workflow task')
-  }
-
-  #resolveWorkflowExecution(response: PollWorkflowTaskQueueResponse): { workflowId: string; runId: string } {
-    const workflowId = response.workflowExecution?.workflowId ?? ''
-    const runId = response.workflowExecution?.runId ?? ''
-    return { workflowId, runId }
-  }
-
   #buildStickyKey(workflowId: string, runId: string): StickyCacheKey | null {
     if (!workflowId || !runId) {
       return null
@@ -697,6 +626,109 @@ export class WorkerRuntime {
       workflowId,
       runId,
     }
+  }
+
+  async #ingestDeterminismState(
+    workflowInfo: WorkflowInfo,
+    execution: { workflowId: string; runId: string },
+    response: PollWorkflowTaskQueueResponse,
+  ): Promise<ReplayResult | undefined> {
+    const historyEvents = await this.#collectWorkflowHistory(execution, response)
+    if (historyEvents.length === 0) {
+      return undefined
+    }
+    return await Effect.runPromise(
+      ingestWorkflowHistory({
+        info: workflowInfo,
+        history: historyEvents,
+        dataConverter: this.#dataConverter,
+      }),
+    )
+  }
+
+  async #collectWorkflowHistory(
+    execution: { workflowId: string; runId: string },
+    response: PollWorkflowTaskQueueResponse,
+  ): Promise<HistoryEvent[]> {
+    const events: HistoryEvent[] = [...(response.history?.events ?? [])]
+    let token = response.nextPageToken ?? new Uint8Array()
+
+    while (token && token.length > 0) {
+      const page = await this.#fetchWorkflowHistoryPage(execution, token)
+      if (page.events.length > 0) {
+        events.push(...page.events)
+      }
+      token = page.nextPageToken
+    }
+
+    return events
+  }
+
+  async #fetchWorkflowHistoryPage(
+    execution: { workflowId: string; runId: string },
+    nextPageToken: Uint8Array,
+  ): Promise<{ events: HistoryEvent[]; nextPageToken: Uint8Array }> {
+    if (!execution.workflowId || !execution.runId) {
+      return { events: [], nextPageToken: new Uint8Array() }
+    }
+
+    const historyRequest = create(GetWorkflowExecutionHistoryRequestSchema, {
+      namespace: this.#namespace,
+      execution: create(WorkflowExecutionSchema, {
+        workflowId: execution.workflowId,
+        runId: execution.runId,
+      }),
+      maximumPageSize: 0,
+      nextPageToken,
+      waitNewEvent: false,
+      historyEventFilterType: HistoryEventFilterType.ALL_EVENT,
+      skipArchival: true,
+    })
+
+    const historyResponse = await this.#workflowService.getWorkflowExecutionHistory(historyRequest, {
+      timeoutMs: HISTORY_FETCH_TIMEOUT_MS,
+    })
+
+    return {
+      events: historyResponse.history?.events ?? [],
+      nextPageToken: historyResponse.nextPageToken ?? new Uint8Array(),
+    }
+  }
+
+  #buildWorkflowInfo(workflowType: string, execution: { workflowId: string; runId: string }): WorkflowInfo {
+    return {
+      namespace: this.#namespace,
+      taskQueue: this.#taskQueue,
+      workflowId: execution.workflowId,
+      runId: execution.runId,
+      workflowType,
+    }
+  }
+
+  async #getStickyEntry(key: StickyCacheKey): Promise<StickyCacheEntry | undefined> {
+    return await Effect.runPromise(this.#stickyCache.get(key))
+  }
+
+  async #upsertStickyEntry(
+    key: StickyCacheKey,
+    state: WorkflowDeterminismState,
+    lastEventId: string | null,
+  ): Promise<void> {
+    const entry: StickyCacheEntry = {
+      key,
+      determinismState: state,
+      lastEventId,
+      lastAccessed: Date.now(),
+    }
+    await Effect.runPromise(this.#stickyCache.upsert(entry))
+  }
+
+  #resolveWorkflowHistoryLastEventId(response: PollWorkflowTaskQueueResponse): string | null {
+    return resolveHistoryLastEventId(response.history?.events ?? [])
+  }
+
+  #isTaskNotFoundError(error: unknown): boolean {
+    return error instanceof ConnectError && error.code === Code.NotFound
   }
 
   #buildDeterminismMarkerCommand(details: Record<string, Payloads>): Command {
@@ -737,18 +769,15 @@ export class WorkerRuntime {
     return command.attributes.value.markerName === DETERMINISM_MARKER_NAME
   }
 
-  #buildStickyAttributes() {
-    return create(StickyExecutionAttributesSchema, {
-      workerTaskQueue: create(TaskQueueSchema, { name: this.#stickyTaskQueue }),
-      scheduleToStartTimeout: durationFromMillis(this.#config.stickyQueueTimeoutMs),
-    })
-  }
-
   async #computeNondeterminismMismatches(
     error: WorkflowNondeterminismError,
     expectedState: WorkflowDeterminismState | undefined,
   ): Promise<DeterminismMismatch[]> {
-    const baseline: WorkflowDeterminismState = expectedState ?? { commandHistory: [], randomValues: [], timeValues: [] }
+    const baseline: WorkflowDeterminismState = expectedState ?? {
+      commandHistory: [],
+      randomValues: [],
+      timeValues: [],
+    }
     const hint = error.details?.hint
     if (!hint) {
       return []
@@ -844,6 +873,202 @@ export class WorkerRuntime {
     }
   }
 
+  static #isStickyCacheInstance(value: unknown): value is StickyCache {
+    if (!value || typeof value !== 'object') {
+      return false
+    }
+    const candidate = value as Partial<StickyCache>
+    return (
+      typeof candidate.upsert === 'function' &&
+      typeof candidate.get === 'function' &&
+      typeof candidate.remove === 'function'
+    )
+  }
+
+  async #removeStickyEntry(key: StickyCacheKey): Promise<void> {
+    await Effect.runPromise(this.#stickyCache.remove(key))
+  }
+
+  async #failWorkflowTask(
+    response: PollWorkflowTaskQueueResponse,
+    execution: { workflowId: string; runId: string },
+    error: unknown,
+    cause: WorkflowTaskFailedCause = WorkflowTaskFailedCause.UNSPECIFIED,
+  ): Promise<void> {
+    const failure = await encodeErrorToFailure(this.#dataConverter, error)
+    const encoded = await encodeFailurePayloads(this.#dataConverter, failure)
+
+    const failed = create(RespondWorkflowTaskFailedRequestSchema, {
+      taskToken: response.taskToken,
+      cause,
+      failure: encoded,
+      identity: this.#identity,
+      namespace: this.#namespace,
+      deploymentOptions: this.#deploymentOptions,
+    })
+
+    try {
+      await this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS })
+    } catch (rpcError) {
+      if (this.#isTaskNotFoundError(rpcError)) {
+        this.#logWorkflowTaskNotFound('respondWorkflowTaskFailed', execution)
+        return
+      }
+      throw rpcError
+    }
+  }
+
+  async #processActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
+    const cancelRequested = isActivityCancelRequested(response)
+
+    if (cancelRequested) {
+      await this.#cancelActivityTask(response)
+      return
+    }
+
+    const activityType = response.activityType?.name
+    if (!activityType) {
+      await this.#failActivityTask(response, new Error('Activity task missing type'))
+      return
+    }
+
+    const handler = this.#activities[activityType]
+    if (!handler) {
+      await this.#failActivityTask(response, new Error(`No handler registered for activity ${activityType}`))
+      return
+    }
+
+    const args = await decodePayloadsToValues(this.#dataConverter, response.input?.payloads ?? [])
+    const context = this.#createActivityContext(response, cancelRequested)
+
+    try {
+      const result = await runWithActivityContext(context, async () => await handler(...args))
+      const payloads = await encodeValuesToPayloads(this.#dataConverter, result === undefined ? [] : [result])
+      const completion = create(RespondActivityTaskCompletedRequestSchema, {
+        taskToken: response.taskToken,
+        identity: this.#identity,
+        namespace: this.#namespace,
+        result: payloads && payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined,
+        deploymentOptions: this.#deploymentOptions,
+      })
+      await this.#workflowService.respondActivityTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
+    } catch (error) {
+      if (isAbortError(error)) {
+        await this.#cancelActivityTask(response)
+        return
+      }
+      await this.#failActivityTask(response, error)
+    }
+  }
+
+  async #failActivityTask(response: PollActivityTaskQueueResponse, error: unknown): Promise<void> {
+    const failure = await encodeErrorToFailure(this.#dataConverter, error)
+    const encoded = await encodeFailurePayloads(this.#dataConverter, failure)
+
+    const request = create(RespondActivityTaskFailedRequestSchema, {
+      taskToken: response.taskToken,
+      identity: this.#identity,
+      namespace: this.#namespace,
+      failure: encoded,
+      deploymentOptions: this.#deploymentOptions,
+    })
+
+    await this.#workflowService.respondActivityTaskFailed(request, { timeoutMs: RESPOND_TIMEOUT_MS })
+  }
+
+  async #cancelActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
+    const request = create(RespondActivityTaskCanceledRequestSchema, {
+      taskToken: response.taskToken,
+      identity: this.#identity,
+      namespace: this.#namespace,
+      deploymentOptions: this.#deploymentOptions,
+    })
+
+    await this.#workflowService.respondActivityTaskCanceled(request, { timeoutMs: RESPOND_TIMEOUT_MS })
+  }
+
+  #createActivityContext(response: PollActivityTaskQueueResponse, cancelRequested: boolean): ActivityContext {
+    const abortController = new AbortController()
+    if (cancelRequested) {
+      abortController.abort()
+    }
+
+    const info: ActivityInfo = {
+      activityId: response.activityId ?? '',
+      activityType: response.activityType?.name ?? '',
+      workflowNamespace: response.workflowNamespace ?? this.#namespace,
+      workflowType: response.workflowType?.name ?? '',
+      workflowId: response.workflowExecution?.workflowId ?? '',
+      runId: response.workflowExecution?.runId ?? '',
+      taskQueue: this.#taskQueue,
+      attempt: Number(response.attempt ?? 1),
+      isLocal: false,
+      scheduledTime: response.scheduledTime ? new Date(Number(response.scheduledTime.seconds) * 1000) : undefined,
+      startedTime: response.startedTime ? new Date(Number(response.startedTime.seconds) * 1000) : undefined,
+      currentAttemptScheduledTime: response.currentAttemptScheduledTime
+        ? new Date(Number(response.currentAttemptScheduledTime.seconds) * 1000)
+        : undefined,
+      heartbeatTimeoutMs: undefined,
+      scheduleToCloseTimeoutMs: undefined,
+      startToCloseTimeoutMs: undefined,
+      lastHeartbeatDetails: [],
+    }
+
+    return {
+      info,
+      cancellationSignal: abortController.signal,
+      get isCancellationRequested() {
+        return abortController.signal.aborted
+      },
+      async heartbeat() {
+        // Heartbeats are not yet implemented in the pure TypeScript runtime.
+      },
+      throwIfCancelled() {
+        if (abortController.signal.aborted) {
+          const error = new Error('Activity cancelled')
+          error.name = 'AbortError'
+          throw error
+        }
+      },
+    }
+  }
+
+  async #decodeWorkflowArgs(response: PollWorkflowTaskQueueResponse): Promise<unknown[]> {
+    const startEvent = this.#findWorkflowStartedEvent(response.history?.events ?? [])
+    if (!startEvent) {
+      return []
+    }
+    const attributes =
+      startEvent.attributes?.case === 'workflowExecutionStartedEventAttributes'
+        ? startEvent.attributes.value
+        : undefined
+    if (!attributes) {
+      return []
+    }
+    const inputPayloads = attributes.input?.payloads ?? []
+    return await decodePayloadsToValues(this.#dataConverter, inputPayloads)
+  }
+
+  #resolveWorkflowType(response: PollWorkflowTaskQueueResponse): string {
+    if (response.workflowType?.name) {
+      return response.workflowType.name
+    }
+    const startEvent = this.#findWorkflowStartedEvent(response.history?.events ?? [])
+    if (startEvent?.attributes?.case === 'workflowExecutionStartedEventAttributes') {
+      const workflowTypeName = startEvent.attributes.value.workflowType?.name
+      if (workflowTypeName) {
+        return workflowTypeName
+      }
+    }
+    throw new Error('Unable to resolve workflow type from workflow task')
+  }
+
+  #resolveWorkflowExecution(response: PollWorkflowTaskQueueResponse): { workflowId: string; runId: string } {
+    const workflowId = response.workflowExecution?.workflowId ?? ''
+    const runId = response.workflowExecution?.runId ?? ''
+    return { workflowId, runId }
+  }
+
   #findWorkflowStartedEvent(events: HistoryEvent[]): HistoryEvent | undefined {
     return events.find(
       (event) =>
@@ -854,10 +1079,6 @@ export class WorkerRuntime {
 
   #hasActivities(): boolean {
     return Object.keys(this.#activities).length > 0
-  }
-
-  #isWorkflowTaskNotFoundError(error: unknown): boolean {
-    return error instanceof ConnectError && error.code === Code.NotFound
   }
 
   #logWorkflowTaskNotFound(context: string, execution: { workflowId: string; runId: string }): void {

@@ -30,9 +30,12 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    TEMPORAL_TLS_KEY_PATH=certs/worker.key           # optional – only for mTLS
    TEMPORAL_TLS_SERVER_NAME=temporal.example.com    # optional – SNI override
    TEMPORAL_TASK_QUEUE=prix
+   TEMPORAL_WORKFLOW_CONCURRENCY=4                  # optional – workflow pollers
+   TEMPORAL_ACTIVITY_CONCURRENCY=4                  # optional – activity pollers
    TEMPORAL_STICKY_CACHE_SIZE=256                   # optional – determinism cache capacity
-   TEMPORAL_STICKY_CACHE_TTL_MS=300000              # optional – eviction TTL in ms
-   TEMPORAL_STICKY_QUEUE_TIMEOUT_MS=10000           # optional – sticky task queue timeout
+   TEMPORAL_STICKY_TTL_MS=300000                    # optional – eviction TTL in ms
+   TEMPORAL_WORKER_DEPLOYMENT_NAME=prix-deploy      # optional – worker deployment metadata
+   TEMPORAL_WORKER_BUILD_ID=git-sha                 # optional – build-id for versioning
    ```
 
    > Running against `temporal server start-dev`? Omit TLS variables and set `TEMPORAL_ADDRESS=127.0.0.1:7233`. Set `TEMPORAL_ALLOW_INSECURE=1` when testing with self-signed certificates.
@@ -89,7 +92,7 @@ export const workflows = [
 ]
 ```
 
-On each workflow task the executor compares newly emitted intents, random values, and logical timestamps against the stored determinism state. Mismatches raise `WorkflowNondeterminismError` and cause the worker to fail the task with `WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR`, mirroring Temporal’s official SDK behavior. Determinism snapshots are recorded as `temporal-bun-sdk/determinism` markers in workflow history and optionally cached via a sticky determinism cache. Tune cache behaviour with `TEMPORAL_STICKY_CACHE_SIZE`, `TEMPORAL_STICKY_CACHE_TTL_MS`, and `TEMPORAL_STICKY_QUEUE_TIMEOUT_MS`. You can temporarily revert to the legacy “complete or fail only” mode by setting `TEMPORAL_DISABLE_WORKFLOW_CONTEXT=1`.
+On each workflow task the executor compares newly emitted intents, random values, and logical timestamps against the stored determinism state. Mismatches raise `WorkflowNondeterminismError` and cause the worker to fail the task with `WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR`, mirroring Temporal’s official SDK behavior. Determinism snapshots are recorded as `temporal-bun-sdk/determinism` markers in workflow history and optionally cached via a sticky determinism cache. Tune cache behaviour with `TEMPORAL_STICKY_CACHE_SIZE` and `TEMPORAL_STICKY_TTL_MS`; the sticky worker queue inherits its schedule-to-start timeout from the TTL value. You can temporarily revert to the legacy “complete or fail only” mode by setting `TEMPORAL_DISABLE_WORKFLOW_CONTEXT=1`.
 
 ## Integration harness
 

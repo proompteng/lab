@@ -7,6 +7,8 @@ import { createDefaultDataConverter } from '../../src/common/payloads'
 import { loadTemporalConfig } from '../../src/config'
 import { ingestWorkflowHistory, diffDeterminismState } from '../../src/workflow/replay'
 import type { HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
+import { WorkerVersioningMode } from '../../src/proto/temporal/api/enums/v1/deployment_pb'
+import { VersioningBehavior } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
 import { WorkerRuntime } from '../../src/worker/runtime'
 import { makeStickyCache } from '../../src/worker/sticky-cache'
 import type { IntegrationHarness, WorkflowExecutionHandle } from './harness'
@@ -57,9 +59,8 @@ beforeAll(async () => {
     address: CLI_CONFIG.address,
     namespace: CLI_CONFIG.namespace,
     taskQueue: CLI_CONFIG.taskQueue,
-    stickyCacheSize: 2,
-    stickyCacheTtlMs: 60_000,
-    stickyQueueTimeoutMs: 5_000,
+    workerStickyCacheSize: 2,
+    workerStickyTtlMs: 60_000,
   }
 
   runtime = await WorkerRuntime.create({
@@ -67,6 +68,10 @@ beforeAll(async () => {
     workflows: integrationWorkflows,
     activities: integrationActivities,
     stickyCache,
+    deployment: {
+      versioningMode: WorkerVersioningMode.UNVERSIONED,
+      versioningBehavior: VersioningBehavior.UNSPECIFIED,
+    },
   })
 
   runtimePromise = runtime.run()
