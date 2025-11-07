@@ -2,7 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 
 import { create } from '@bufbuild/protobuf'
-import { createClient } from '@connectrpc/connect'
+import { Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
 import { Effect } from 'effect'
 
@@ -98,6 +98,7 @@ export interface WorkerRuntimeOptions {
   workflowService?: WorkflowServiceClient
   concurrency?: WorkerConcurrencyOptions
   stickyCache?: WorkerStickyCacheOptions
+  stickyScheduling?: boolean
   deployment?: WorkerDeploymentConfig
   schedulerHooks?: WorkerSchedulerHooks
 }
@@ -167,6 +168,7 @@ export class WorkerRuntime {
 
     const stickyQueue = WorkerRuntime.#buildStickyQueueName(taskQueue, identity)
     const stickyScheduleToStartTimeoutMs = stickyCacheTtlMs
+    const stickySchedulingEnabled = options.stickyScheduling ?? false
 
     const deploymentName =
       options.deployment?.name ?? config.workerDeploymentName ?? WorkerRuntime.#defaultDeploymentName(taskQueue)
@@ -198,7 +200,7 @@ export class WorkerRuntime {
       stickyScheduleToStartTimeoutMs,
       deploymentOptions,
       versioningBehavior,
-      stickySchedulingEnabled: false,
+      stickySchedulingEnabled,
     })
   }
 
@@ -448,15 +450,13 @@ export class WorkerRuntime {
         determinismState: previousState,
       })
 
-      if (stickyKey && this.#stickySchedulingEnabled) {
+      if (stickyKey) {
         if (output.completion === 'pending') {
           const lastEventId = this.#resolveWorkflowHistoryLastEventId(response)
           await this.#upsertStickyEntry(stickyKey, output.determinismState, lastEventId)
         } else {
           await this.#removeStickyEntry(stickyKey)
         }
-      } else if (stickyKey) {
-        await this.#removeStickyEntry(stickyKey)
       }
 
       const completion = create(RespondWorkflowTaskCompletedRequestSchema, {
@@ -472,6 +472,9 @@ export class WorkerRuntime {
     } catch (error) {
       if (stickyKey) {
         await this.#removeStickyEntry(stickyKey)
+      }
+      if (this.#isTaskNotFoundError(error)) {
+        return
       }
       if (error instanceof WorkflowNondeterminismError) {
         await this.#failWorkflowTask(response, error, WorkflowTaskFailedCause.NON_DETERMINISTIC_ERROR)
@@ -514,6 +517,10 @@ export class WorkerRuntime {
     return resolveHistoryLastEventId(response.history?.events ?? [])
   }
 
+  #isTaskNotFoundError(error: unknown): boolean {
+    return error instanceof ConnectError && error.code === Code.NotFound
+  }
+
   async #removeStickyEntry(key: StickyCacheKey): Promise<void> {
     await Effect.runPromise(this.#stickyCache.remove(key))
   }
@@ -535,7 +542,14 @@ export class WorkerRuntime {
       deploymentOptions: this.#deploymentOptions,
     })
 
-    await this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS })
+    try {
+      await this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS })
+    } catch (rpcError) {
+      if (this.#isTaskNotFoundError(rpcError)) {
+        return
+      }
+      throw rpcError
+    }
   }
 
   async #processActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
