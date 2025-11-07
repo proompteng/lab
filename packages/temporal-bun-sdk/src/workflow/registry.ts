@@ -57,5 +57,9 @@ const isWorkflowDefinition = (value: unknown): value is WorkflowDefinition<unkno
     return false
   }
   const record = value as WorkflowDefinition<unknown, unknown>
-  return typeof record.name === 'string' && typeof record.handler === 'function'
+  return (
+    typeof record.name === 'string' &&
+    typeof record.handler === 'function' &&
+    typeof record.decodeArgumentsAsArray === 'boolean'
+  )
 }

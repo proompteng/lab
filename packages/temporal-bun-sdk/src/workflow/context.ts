@@ -13,6 +13,8 @@ import { ContinueAsNewWorkflowError, WorkflowBlockedError } from './errors'
 
 export type WorkflowCommandIntentId = string
 
+const DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT_MS = 10_000
+
 export interface WorkflowInfo {
   readonly namespace: string
   readonly taskQueue: string
@@ -252,6 +254,9 @@ const buildScheduleActivityIntent = (
   const sequence = ctx.nextSequence()
   const activityId = options.activityId ?? `activity-${sequence}`
   const taskQueue = options.taskQueue ?? ctx.info.taskQueue
+  const startToCloseTimeoutMs =
+    options.startToCloseTimeoutMs ?? options.scheduleToCloseTimeoutMs ?? DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT_MS
+  const scheduleToCloseTimeoutMs = options.scheduleToCloseTimeoutMs ?? startToCloseTimeoutMs
   return {
     id: `schedule-activity-${sequence}`,
     kind: 'schedule-activity',
@@ -261,9 +266,9 @@ const buildScheduleActivityIntent = (
     taskQueue,
     input: args,
     timeouts: {
-      scheduleToCloseTimeoutMs: options.scheduleToCloseTimeoutMs,
+      scheduleToCloseTimeoutMs,
       scheduleToStartTimeoutMs: options.scheduleToStartTimeoutMs,
-      startToCloseTimeoutMs: options.startToCloseTimeoutMs,
+      startToCloseTimeoutMs,
       heartbeatTimeoutMs: options.heartbeatTimeoutMs,
     },
     retry: options.retry,

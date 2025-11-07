@@ -81,7 +81,8 @@ export class WorkflowExecutor {
     }
 
     const definition = this.#registry.get(input.workflowType)
-    const decodedEffect = Schema.decodeUnknown(definition.schema)(input.arguments)
+    const normalizedArguments = this.#normalizeArguments(input.arguments, definition.decodeArgumentsAsArray)
+    const decodedEffect = Schema.decodeUnknown(definition.schema)(normalizedArguments)
     const guard = new DeterminismGuard({ previousState: input.determinismState })
 
     const workflowEffect = Effect.flatMap(decodedEffect, (parsed) => {
@@ -137,7 +138,9 @@ export class WorkflowExecutor {
 
   async #executeLegacy(input: ExecuteWorkflowInput, info: WorkflowInfo): Promise<WorkflowExecutionOutput> {
     const definition = this.#registry.get(input.workflowType)
-    const decodedEffect = Schema.decodeUnknown(definition.schema)(input.arguments)
+    const decodedEffect = Schema.decodeUnknown(definition.schema)(
+      this.#normalizeArguments(input.arguments, definition.decodeArgumentsAsArray),
+    )
     const guard = new DeterminismGuard({ allowBypass: true })
     const workflowEffect = Effect.flatMap(decodedEffect, (parsed) => {
       const { context } = createWorkflowContext({ input: parsed, info, determinismGuard: guard })
@@ -226,5 +229,20 @@ export class WorkflowExecutor {
         },
       }),
     ]
+  }
+
+  #normalizeArguments(raw: unknown, expectArray: boolean): unknown {
+    if (expectArray) {
+      return raw ?? []
+    }
+    if (Array.isArray(raw)) {
+      if (raw.length === 0) {
+        return undefined
+      }
+      if (raw.length === 1) {
+        return raw[0]
+      }
+    }
+    return raw
   }
 }

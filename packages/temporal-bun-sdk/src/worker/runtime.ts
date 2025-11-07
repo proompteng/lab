@@ -2,7 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 
 import { create } from '@bufbuild/protobuf'
-import { createClient } from '@connectrpc/connect'
+import { Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
 import { Effect } from 'effect'
 
@@ -421,12 +421,28 @@ export class WorkerRuntime {
         namespace: this.#namespace,
         ...(stickyAttributes ? { stickyAttributes } : {}),
       })
-      await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
+      let taskTokenInvalid = false
+      try {
+        await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
+      } catch (error) {
+        if (this.#isWorkflowTaskNotFoundError(error)) {
+          taskTokenInvalid = true
+          this.#logWorkflowTaskNotFound('respondWorkflowTaskCompleted', execution)
+        } else {
+          throw error
+        }
+      }
 
       const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? replay.lastEventId ?? null
 
       if (stickyExecutionEnabled && stickyKey) {
-        if (output.completion === 'completed' || output.completion === 'failed') {
+        const shouldEvict =
+          taskTokenInvalid ||
+          output.completion === 'completed' ||
+          output.completion === 'failed' ||
+          output.completion === 'continued-as-new'
+
+        if (shouldEvict) {
           await Effect.runPromise(this.#stickyCache.remove(stickyKey))
         } else {
           await Effect.runPromise(
@@ -439,6 +455,10 @@ export class WorkerRuntime {
           )
         }
       }
+
+      if (taskTokenInvalid) {
+        return
+      }
     } catch (error) {
       if (stickyExecutionEnabled && stickyKey) {
         await Effect.runPromise(this.#stickyCache.remove(stickyKey))
@@ -446,10 +466,10 @@ export class WorkerRuntime {
       if (error instanceof WorkflowNondeterminismError) {
         const mismatches = await this.#computeNondeterminismMismatches(error, expectedDeterminismState)
         const enriched = this.#augmentNondeterminismError(error, mismatches)
-        await this.#failWorkflowTask(response, enriched, WorkflowTaskFailedCause.NON_DETERMINISTIC_ERROR)
+        await this.#failWorkflowTask(response, execution, enriched, WorkflowTaskFailedCause.NON_DETERMINISTIC_ERROR)
         return
       }
-      await this.#failWorkflowTask(response, error)
+      await this.#failWorkflowTask(response, execution, error)
     }
   }
 
@@ -494,6 +514,7 @@ export class WorkerRuntime {
 
   async #failWorkflowTask(
     response: PollWorkflowTaskQueueResponse,
+    execution: { workflowId: string; runId: string },
     error: unknown,
     cause: WorkflowTaskFailedCause = WorkflowTaskFailedCause.UNSPECIFIED,
   ): Promise<void> {
@@ -508,7 +529,15 @@ export class WorkerRuntime {
       namespace: this.#namespace,
     })
 
-    await this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS })
+    try {
+      await this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS })
+    } catch (respondError) {
+      if (this.#isWorkflowTaskNotFoundError(respondError)) {
+        this.#logWorkflowTaskNotFound('respondWorkflowTaskFailed', execution)
+        return
+      }
+      throw respondError
+    }
   }
 
   async #processActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
@@ -825,6 +854,18 @@ export class WorkerRuntime {
 
   #hasActivities(): boolean {
     return Object.keys(this.#activities).length > 0
+  }
+
+  #isWorkflowTaskNotFoundError(error: unknown): boolean {
+    return error instanceof ConnectError && error.code === Code.NotFound
+  }
+
+  #logWorkflowTaskNotFound(context: string, execution: { workflowId: string; runId: string }): void {
+    console.warn('[temporal-bun-sdk] workflow task already resolved', {
+      context,
+      workflowId: execution.workflowId,
+      runId: execution.runId,
+    })
   }
 }
 

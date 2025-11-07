@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { fromJson } from '@bufbuild/protobuf'
 import { Effect } from 'effect'
 
 import { HistorySchema, type HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
@@ -140,59 +141,39 @@ export const createIntegrationHarness = (
       started = false
     })
 
-    const runTemporalCli = (args: readonly string[]) =>
-      Effect.tryPromise(async () => {
-        const command = [cliExecutable, ...args]
-        const child = Bun.spawn(command, {
-          stdout: 'pipe',
-          stderr: 'pipe',
-        })
-        const exitCode = await child.exited
-        const stdout = child.stdout ? await readStream(child.stdout) : ''
-        const stderr = child.stderr ? await readStream(child.stderr) : ''
-        if (exitCode !== 0) {
-          throw new TemporalCliCommandError(command, exitCode, stdout, stderr)
-        }
-        return stdout
-      })
-
-    const describeWorkflow = (workflowId: string): Effect.Effect<WorkflowExecutionHandle, TemporalCliError, never> =>
-      runTemporalCli([
-        'workflow',
-        'show',
-        '--workflow-id',
-        workflowId,
-        '--namespace',
-        config.namespace,
-        '--output',
-        'json',
-      ]).pipe(
-        Effect.flatMap((stdout) =>
-          Effect.try({
-            try: () => {
-              const parsed = JSON.parse(stdout) as Record<string, unknown>
-              const execution = (parsed.execution ??
-                parsed.workflowExecution ??
-                {}) as Record<string, string | undefined>
-              const runId =
-                execution?.runId ??
-                (parsed as Record<string, string | undefined>)?.runId ??
-                (parsed as Record<string, string | undefined>)?.executionRunId
-              if (!runId) {
-                throw new Error('Unable to resolve workflow run id from CLI output')
-              }
-              return { workflowId, runId }
-            },
-            catch: (error) =>
-              new TemporalCliCommandError(
-                ['temporal', 'workflow', 'show', '--workflow-id', workflowId],
-                0,
-                stdout,
+    const runTemporalCli = (args: readonly string[]) => {
+      const command = [cliExecutable, ...args]
+      return Effect.tryPromise({
+        try: async () => {
+          console.info('[temporal-bun-sdk] running CLI command', command.join(' '))
+          const child = Bun.spawn(command, {
+            stdout: 'pipe',
+            stderr: 'pipe',
+          })
+          const exitCode = await child.exited
+          const stdout = child.stdout ? await readStream(child.stdout) : ''
+          const stderr = child.stderr ? await readStream(child.stderr) : ''
+          if (exitCode !== 0) {
+            console.error('[temporal-bun-sdk] CLI command failed', { command, exitCode, stdout, stderr })
+            throw new TemporalCliCommandError(command, exitCode, stdout, stderr)
+          }
+          console.info('[temporal-bun-sdk] CLI command stdout', stdout)
+          if (stderr.trim().length > 0) {
+            console.info('[temporal-bun-sdk] CLI command stderr', stderr)
+          }
+          return stdout
+        },
+        catch: (error) =>
+          error instanceof TemporalCliCommandError
+            ? error
+            : new TemporalCliCommandError(
+                command,
+                -1,
+                '',
                 error instanceof Error ? error.message : String(error),
               ),
-          }),
-        ),
-      )
+      })
+    }
 
     const executeWorkflow = (
       options: TemporalWorkflowExecuteOptions,
@@ -216,15 +197,17 @@ export const createIntegrationHarness = (
         ...args,
       ]
 
+      const cliCommand = ['temporal', ...command] as const
+
       return runTemporalCli(command).pipe(
-        Effect.flatMap(() => describeWorkflow(workflowId)),
+        Effect.flatMap((stdout) => parseWorkflowExecutionHandle(stdout, workflowId, cliCommand)),
       )
     }
 
     const fetchWorkflowHistory = (
       handle: WorkflowExecutionHandle,
-    ): Effect.Effect<HistoryEvent[], TemporalCliError, never> =>
-      runTemporalCli([
+    ): Effect.Effect<HistoryEvent[], TemporalCliError, never> => {
+      const showArgs = [
         'workflow',
         'show',
         '--workflow-id',
@@ -235,28 +218,12 @@ export const createIntegrationHarness = (
         config.namespace,
         '--output',
         'json',
-      ]).pipe(
-        Effect.flatMap((stdout) =>
-          Effect.try({
-            try: () => {
-              const parsed = JSON.parse(stdout) as Record<string, unknown>
-              const historyJson = (parsed.history ?? parsed.historyJson) as unknown
-              if (!historyJson) {
-                throw new Error('Temporal CLI response missing history field')
-              }
-              const history = HistorySchema.fromJson(historyJson)
-              return history.events ?? []
-            },
-            catch: (error) =>
-              new TemporalCliCommandError(
-                ['temporal', 'workflow', 'show', '--workflow-id', handle.workflowId, '--run-id', handle.runId],
-                0,
-                stdout,
-                error instanceof Error ? error.message : String(error),
-              ),
-          }),
-        ),
+      ] as const
+
+      return runTemporalCli(showArgs).pipe(
+        Effect.flatMap((stdout) => parseHistoryEvents(stdout, ['temporal', ...showArgs] as const)),
       )
+    }
 
     const runScenario: IntegrationHarness['runScenario'] = (name, scenario) =>
       Effect.succeed(void console.info(`[temporal-bun-sdk] scenario: ${name}`)).pipe(
@@ -342,6 +309,89 @@ const buildInputArgs = (args: unknown[] | undefined): string[] => {
   if (!args || args.length === 0) {
     return []
   }
-  const encoded = JSON.stringify(args)
-  return ['--input', encoded]
+  const parts: string[] = []
+  for (const value of args) {
+    parts.push('--input', JSON.stringify(value))
+  }
+  return parts
+}
+
+const parseWorkflowExecutionHandle = (
+  stdout: string,
+  fallbackWorkflowId: string,
+  command: readonly string[],
+): Effect.Effect<WorkflowExecutionHandle, TemporalCliCommandError, never> =>
+  Effect.try({
+    try: () => {
+      const trimmed = stdout.trim()
+      if (trimmed.length === 0) {
+        throw new Error('Temporal CLI returned empty workflow execute output')
+      }
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>
+      const workflowExecution =
+        (parsed.execution ?? parsed.workflowExecution ?? {}) as Record<string, string | undefined>
+      const resolvedWorkflowId =
+        (parsed.workflowId as string | undefined) ?? workflowExecution.workflowId ?? fallbackWorkflowId
+      const runId =
+        (parsed.runId as string | undefined) ??
+        (parsed.executionRunId as string | undefined) ??
+        workflowExecution.runId
+      if (!runId) {
+        throw new Error('Temporal CLI did not return a runId')
+      }
+      return { workflowId: resolvedWorkflowId, runId }
+    },
+    catch: (error) =>
+      new TemporalCliCommandError(
+        command,
+        0,
+        stdout,
+        error instanceof Error ? error.message : String(error),
+      ),
+  })
+
+const parseHistoryEvents = (
+  stdout: string,
+  command: readonly string[],
+): Effect.Effect<HistoryEvent[], TemporalCliCommandError, never> =>
+  Effect.try({
+    try: () => {
+      const trimmed = stdout.trim()
+      if (trimmed.length === 0) {
+        throw new Error('Temporal CLI returned empty history output')
+      }
+      const parsed = JSON.parse(trimmed) as unknown
+      const historyJson = normalizeHistoryJson(parsed)
+      const history = fromJson(HistorySchema, historyJson)
+      if (!history.events || history.events.length === 0) {
+        throw new Error('Temporal CLI returned empty history events')
+      }
+      return history.events
+    },
+    catch: (error) =>
+      new TemporalCliCommandError(
+        command,
+        0,
+        stdout,
+        error instanceof Error ? error.message : String(error),
+      ),
+  })
+
+const normalizeHistoryJson = (input: unknown): unknown => {
+  if (Array.isArray(input)) {
+    return { events: input }
+  }
+  if (input && typeof input === 'object') {
+    const record = input as Record<string, unknown>
+    if (Array.isArray(record.events)) {
+      return { events: record.events }
+    }
+    if (record.history) {
+      return record.history
+    }
+    if (record.historyJson) {
+      return record.historyJson
+    }
+  }
+  return input
 }

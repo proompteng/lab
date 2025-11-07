@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import crypto from 'node:crypto'
 
 import { Effect, Exit } from 'effect'
 
@@ -9,7 +10,7 @@ import type { HistoryEvent } from '../../src/proto/temporal/api/history/v1/messa
 import { WorkerRuntime } from '../../src/worker/runtime'
 import { makeStickyCache } from '../../src/worker/sticky-cache'
 import type { IntegrationHarness, WorkflowExecutionHandle } from './harness'
-import { createIntegrationHarness, TemporalCliUnavailableError } from './harness'
+import { createIntegrationHarness, TemporalCliCommandError, TemporalCliUnavailableError } from './harness'
 import {
   continueAsNewWorkflow,
   integrationActivities,
@@ -101,6 +102,10 @@ const runOrSkip = async <A>(name: string, scenario: () => Promise<A>): Promise<A
       console.warn(`[temporal-bun-sdk] skipped integration scenario ${name}: ${error.message}`)
       return undefined
     }
+    console.error(
+      `[temporal-bun-sdk] integration scenario ${name} failed`,
+      error instanceof Error ? error.stack ?? error.message : error,
+    )
     throw error
   }
 }
@@ -232,38 +237,66 @@ describe('Temporal CLI history ingestion', () => {
 })
 
 const runTimerWorkflow = async (): Promise<WorkflowExecutionHandle> => {
-  return await harness!.executeWorkflow({
-    workflowType: timerWorkflow.name,
-    taskQueue: CLI_CONFIG.taskQueue,
-    args: [{ timeoutMs: 200 }],
-  })
+  try {
+    const handle = await Effect.runPromise(
+      harness!.executeWorkflow({
+        workflowType: timerWorkflow.name,
+        workflowId: createWorkflowId('timer'),
+        taskQueue: CLI_CONFIG.taskQueue,
+        args: [{ timeoutMs: 200 }],
+      }),
+    )
+    console.info('[temporal-bun-sdk] timer workflow execution handle', handle)
+    return handle
+  } catch (error) {
+    if (error instanceof TemporalCliCommandError) {
+      console.error('[temporal-bun-sdk] temporal CLI stdout', error.stdout)
+      console.error('[temporal-bun-sdk] temporal CLI stderr', error.stderr)
+    }
+    console.error(
+      '[temporal-bun-sdk] timer workflow execution failed',
+      error instanceof Error ? error.stack ?? error.message : error,
+    )
+    throw error
+  }
 }
 
-const runActivityWorkflow = async (workflowId: string): Promise<WorkflowExecutionHandle> =>
-  await harness!.executeWorkflow({
-    workflowType: activityWorkflow.name,
-    workflowId,
-    taskQueue: CLI_CONFIG.taskQueue,
-    args: [{ value: workflowId }],
-  })
+const runActivityWorkflow = async (seed: string): Promise<WorkflowExecutionHandle> => {
+  const workflowId = createWorkflowId(seed)
+  return await Effect.runPromise(
+    harness!.executeWorkflow({
+      workflowType: activityWorkflow.name,
+      workflowId,
+      taskQueue: CLI_CONFIG.taskQueue,
+      args: [{ value: workflowId }],
+    }),
+  )
+}
 
-const runParentWorkflow = async (workflowId: string): Promise<WorkflowExecutionHandle> =>
-  await harness!.executeWorkflow({
-    workflowType: parentWorkflow.name,
-    workflowId,
-    taskQueue: CLI_CONFIG.taskQueue,
-    args: [{ value: workflowId }],
-  })
+const runParentWorkflow = async (seed: string): Promise<WorkflowExecutionHandle> => {
+  const workflowId = createWorkflowId(seed)
+  return await Effect.runPromise(
+    harness!.executeWorkflow({
+      workflowType: parentWorkflow.name,
+      workflowId,
+      taskQueue: CLI_CONFIG.taskQueue,
+      args: [{ value: workflowId }],
+    }),
+  )
+}
 
 const runContinueWorkflow = async (iterations: number): Promise<WorkflowExecutionHandle> =>
-  await harness!.executeWorkflow({
-    workflowType: continueAsNewWorkflow.name,
-    taskQueue: CLI_CONFIG.taskQueue,
-    args: [{ iterations }],
-  })
+  await Effect.runPromise(
+    harness!.executeWorkflow({
+      workflowType: continueAsNewWorkflow.name,
+      workflowId: createWorkflowId('continue'),
+      taskQueue: CLI_CONFIG.taskQueue,
+      args: [{ iterations }],
+    }),
+  )
 
 const fetchHistory = async (handle: WorkflowExecutionHandle): Promise<HistoryEvent[]> =>
-  await harness!.fetchWorkflowHistory(handle)
+  await Effect.runPromise(harness!.fetchWorkflowHistory(handle))
 
 const buildWorkflowInfo = (workflowType: string, handle: WorkflowExecutionHandle) => ({
   namespace: CLI_CONFIG.namespace,
@@ -272,3 +305,8 @@ const buildWorkflowInfo = (workflowType: string, handle: WorkflowExecutionHandle
   runId: handle.runId,
   workflowType,
 })
+
+const createWorkflowId = (seed?: string): string => {
+  const prefix = seed ?? 'cli-integration'
+  return `${prefix}-${crypto.randomUUID()}`
+}
