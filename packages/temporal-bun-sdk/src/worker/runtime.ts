@@ -168,7 +168,7 @@ export class WorkerRuntime {
 
     const stickyQueue = WorkerRuntime.#buildStickyQueueName(taskQueue, identity)
     const stickyScheduleToStartTimeoutMs = stickyCacheTtlMs
-    const stickySchedulingEnabled = options.stickyScheduling ?? false
+    const stickySchedulingEnabled = options.stickyScheduling ?? stickyCacheSize > 0
 
     const deploymentName =
       options.deployment?.name ?? config.workerDeploymentName ?? WorkerRuntime.#defaultDeploymentName(taskQueue)
