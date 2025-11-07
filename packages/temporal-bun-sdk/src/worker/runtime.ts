@@ -115,7 +115,7 @@ export interface WorkerRuntimeOptions {
   config?: TemporalConfig
   workflowService?: WorkflowServiceClient
   concurrency?: WorkerConcurrencyOptions
-  stickyCache?: WorkerStickyCacheOptions
+  stickyCache?: WorkerStickyCacheOptions | StickyCache
   stickyScheduling?: boolean
   deployment?: WorkerDeploymentConfig
   schedulerHooks?: WorkerSchedulerHooks
@@ -175,18 +175,24 @@ export class WorkerRuntime {
       }),
     )
 
-    const stickyCacheSize = options.stickyCache?.size ?? config.workerStickyCacheSize
-    const stickyCacheTtlMs = options.stickyCache?.ttlMs ?? config.workerStickyTtlMs
-    const stickyCache = await Effect.runPromise(
-      makeStickyCache({
-        maxEntries: stickyCacheSize,
-        ttlMs: stickyCacheTtlMs,
-      }),
-    )
+    const stickyCacheCandidate = options.stickyCache
+    const hasStickyCacheInstance = WorkerRuntime.#isStickyCacheInstance(stickyCacheCandidate)
+    const stickyCacheOptions = hasStickyCacheInstance ? undefined : stickyCacheCandidate
+    const stickyCacheSize = stickyCacheOptions?.size ?? config.workerStickyCacheSize
+    const stickyCacheTtlMs = stickyCacheOptions?.ttlMs ?? config.workerStickyTtlMs
+    const stickyCache = hasStickyCacheInstance
+      ? (stickyCacheCandidate as StickyCache)
+      : await Effect.runPromise(
+          makeStickyCache({
+            maxEntries: stickyCacheSize,
+            ttlMs: stickyCacheTtlMs,
+          }),
+        )
 
     const stickyQueue = WorkerRuntime.#buildStickyQueueName(taskQueue, identity)
     const stickyScheduleToStartTimeoutMs = stickyCacheTtlMs
-    const stickySchedulingEnabled = options.stickyScheduling ?? stickyCacheSize > 0
+    const stickySchedulingEnabled =
+      options.stickyScheduling ?? (hasStickyCacheInstance ? config.workerStickyCacheSize > 0 : stickyCacheSize > 0)
 
     const deploymentName =
       options.deployment?.name ?? config.workerDeploymentName ?? WorkerRuntime.#defaultDeploymentName(taskQueue)
@@ -631,6 +637,18 @@ export class WorkerRuntime {
       return false
     }
     return command.attributes.value.markerName === DETERMINISM_MARKER_NAME
+  }
+
+  static #isStickyCacheInstance(value: unknown): value is StickyCache {
+    if (!value || typeof value !== 'object') {
+      return false
+    }
+    const candidate = value as Partial<StickyCache>
+    return (
+      typeof candidate.upsert === 'function' &&
+      typeof candidate.get === 'function' &&
+      typeof candidate.remove === 'function'
+    )
   }
 
   async #removeStickyEntry(key: StickyCacheKey): Promise<void> {
