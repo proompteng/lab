@@ -208,7 +208,7 @@ export class WorkerRuntime {
     const deploymentName =
       options.deployment?.name ?? config.workerDeploymentName ?? WorkerRuntime.#defaultDeploymentName(taskQueue)
     const buildId = options.deployment?.buildId ?? config.workerBuildId ?? identity
-    const workerVersioningMode = options.deployment?.versioningMode ?? WorkerVersioningMode.VERSIONED
+    const workerVersioningMode = options.deployment?.versioningMode ?? WorkerVersioningMode.UNVERSIONED
     const versioningBehavior =
       workerVersioningMode === WorkerVersioningMode.VERSIONED
         ? (options.deployment?.versioningBehavior ?? VersioningBehavior.PINNED)

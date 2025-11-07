@@ -95,11 +95,15 @@ export const createWorker = async (options: CreateWorkerOptions = {}): Promise<B
 
   const workflowsPath = resolveWorkflowsPath(options.workflowsPath)
   const activities = resolveActivities(options.activities)
-  const buildId = deriveBuildId()
+  const derivedBuildId = deriveBuildId()
+  const resolvedBuildId = config.workerBuildId ?? derivedBuildId
+  if (!config.workerBuildId) {
+    config.workerBuildId = resolvedBuildId
+  }
 
   if (!buildIdLogged) {
     buildIdLogged = true
-    console.info('[temporal-bun-sdk] worker buildId: %s', buildId)
+    console.info('[temporal-bun-sdk] worker buildId: %s', resolvedBuildId)
   }
 
   const runtime = await WorkerRuntime.create({
@@ -111,6 +115,9 @@ export const createWorker = async (options: CreateWorkerOptions = {}): Promise<B
     namespace,
     dataConverter: options.dataConverter,
     identity: options.identity,
+    deployment: {
+      buildId: resolvedBuildId,
+    },
   })
 
   const worker = new BunWorker(runtime)
