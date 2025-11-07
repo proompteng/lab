@@ -32,7 +32,7 @@ export const createApp = () => {
   const webhookConfig: WebhookConfig = {
     codebase: config.codebase,
     github: config.github,
-    codexTriggerLogin: config.codex.triggerLogin,
+    codexTriggerLogins: config.codex.triggerLogins,
     codexWorkflowLogin: config.codex.workflowLogin,
     codexImplementationTriggerPhrase: config.codex.implementationTriggerPhrase,
     topics: config.kafka.topics,

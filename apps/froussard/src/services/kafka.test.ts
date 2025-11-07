@@ -52,7 +52,7 @@ describe('KafkaProducerLayer', () => {
       branchPrefix: 'codex/issue-',
     },
     codex: {
-      triggerLogin: 'user',
+      triggerLogins: ['user'],
       workflowLogin: 'github-actions[bot]',
       implementationTriggerPhrase: 'execute plan',
     },

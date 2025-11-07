@@ -34,7 +34,7 @@ const buildConfig = (): WebhookConfig => ({
     apiBaseUrl: baseConfig.github.apiBaseUrl,
     userAgent: baseConfig.github.userAgent,
   },
-  codexTriggerLogin: 'user',
+  codexTriggerLogins: ['user'],
   codexWorkflowLogin: 'bot',
   codexImplementationTriggerPhrase: 'execute plan',
   topics: {

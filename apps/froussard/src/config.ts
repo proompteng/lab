@@ -27,7 +27,7 @@ export interface AppConfig {
     branchPrefix: string
   }
   codex: {
-    triggerLogin: string
+    triggerLogins: string[]
     workflowLogin: string
     implementationTriggerPhrase: string
   }
@@ -71,7 +71,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
       branchPrefix: env.CODEX_BRANCH_PREFIX ?? 'codex/issue-',
     },
     codex: {
-      triggerLogin: (env.CODEX_TRIGGER_LOGIN ?? 'gregkonush').toLowerCase(),
+      triggerLogins: parseTriggerLogins(env),
       workflowLogin:
         typeof env.CODEX_WORKFLOW_LOGIN === 'string' && env.CODEX_WORKFLOW_LOGIN.trim().length > 0
           ? env.CODEX_WORKFLOW_LOGIN.trim().toLowerCase()
@@ -92,4 +92,13 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
       userAgent: env.GITHUB_USER_AGENT ?? 'froussard-webhook',
     },
   }
+}
+
+const parseTriggerLogins = (env: NodeJS.ProcessEnv): string[] => {
+  const raw = env.CODEX_TRIGGER_LOGINS ?? env.CODEX_TRIGGER_LOGIN ?? 'gregkonush,tuslagch'
+  const logins = raw
+    .split(',')
+    .map((login) => login.trim().toLowerCase())
+    .filter((login) => login.length > 0)
+  return logins.length > 0 ? logins : ['gregkonush', 'tuslagch']
 }
