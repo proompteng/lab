@@ -98,6 +98,7 @@ describeIntegration('Temporal worker runtime integration', () => {
             taskQueue,
             namespace: config.namespace,
             concurrency: { workflow: 2 },
+            stickyScheduling: false,
             deployment: {
               versioningMode: WorkerVersioningMode.UNVERSIONED,
               versioningBehavior: VersioningBehavior.UNSPECIFIED,
@@ -266,6 +267,7 @@ describeIntegration('Temporal worker runtime integration', () => {
             workflows: [workflowDefinition],
             taskQueue,
             namespace: config.namespace,
+            stickyScheduling: true,
             workflowService,
             identity,
             deployment: {

@@ -92,6 +92,10 @@ export interface WorkerConcurrencyOptions {
   activity?: number
 }
 
+export interface WorkerPollerOptions {
+  workflow?: number
+}
+
 export interface WorkerStickyCacheOptions {
   size?: number
   ttlMs?: number
@@ -115,6 +119,7 @@ export interface WorkerRuntimeOptions {
   config?: TemporalConfig
   workflowService?: WorkflowServiceClient
   concurrency?: WorkerConcurrencyOptions
+  pollers?: WorkerPollerOptions
   stickyCache?: WorkerStickyCacheOptions | StickyCache
   stickyScheduling?: boolean
   deployment?: WorkerDeploymentConfig
@@ -166,6 +171,7 @@ export class WorkerRuntime {
     const workflowConcurrency = options.concurrency?.workflow ?? config.workerWorkflowConcurrency
     const defaultActivityConcurrency = options.concurrency?.activity ?? config.workerActivityConcurrency
     const activityConcurrency = defaultActivityConcurrency > 0 ? defaultActivityConcurrency : 1
+    const workflowPollerCount = options.pollers?.workflow ?? Math.max(1, workflowConcurrency)
 
     const scheduler = await Effect.runPromise(
       makeWorkerScheduler({
@@ -225,6 +231,7 @@ export class WorkerRuntime {
       deploymentOptions,
       versioningBehavior,
       stickySchedulingEnabled,
+      workflowPollerCount,
     })
   }
 
@@ -244,6 +251,7 @@ export class WorkerRuntime {
   readonly #stickyAttributes: StickyExecutionAttributes
   readonly #deploymentOptions: WorkerDeploymentOptions
   readonly #versioningBehavior: VersioningBehavior | null
+  readonly #workflowPollerCount: number
   #running = false
   #abortController: AbortController | null = null
   #runPromise: Promise<void> | null = null
@@ -267,6 +275,7 @@ export class WorkerRuntime {
     deploymentOptions: WorkerDeploymentOptions
     versioningBehavior: VersioningBehavior | null
     stickySchedulingEnabled: boolean
+    workflowPollerCount: number
   }) {
     this.#config = params.config
     this.#workflowService = params.workflowService
@@ -283,6 +292,7 @@ export class WorkerRuntime {
     this.#stickySchedulingEnabled = params.stickySchedulingEnabled
     this.#deploymentOptions = params.deploymentOptions
     this.#versioningBehavior = params.versioningBehavior
+    this.#workflowPollerCount = params.workflowPollerCount
     this.#stickyAttributes = create(StickyExecutionAttributesSchema, {
       workerTaskQueue: create(TaskQueueSchema, { name: this.#stickyQueue }),
       scheduleToStartTimeout: durationFromMillis(params.stickyScheduleToStartTimeoutMs),
@@ -322,7 +332,9 @@ export class WorkerRuntime {
 
     const execution = (async () => {
       try {
-        await Promise.all([this.#workflowLoop(signal), this.#activityLoop(signal)])
+        const workflowLoops = Array.from({ length: this.#workflowPollerCount }, () => this.#workflowLoop(signal))
+        const activityLoops = this.#hasActivities() ? [this.#activityLoop(signal)] : []
+        await Promise.all([...workflowLoops, ...activityLoops])
       } finally {
         await this.#stopScheduler()
         this.#abortController = null
@@ -475,7 +487,9 @@ export class WorkerRuntime {
 
     if (!previousState) {
       historyReplay = await this.#ingestDeterminismState(workflowInfo, response)
-      previousState = historyReplay?.determinismState
+      if (historyReplay?.hasDeterminismMarker) {
+        previousState = historyReplay.determinismState
+      }
     }
 
     try {
