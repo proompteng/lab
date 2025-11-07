@@ -212,7 +212,7 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     fallbackActivityConcurrency,
     'TEMPORAL_ACTIVITY_CONCURRENCY',
   )
-  const workerStickyCacheSize = parsePositiveInt(
+  const workerStickyCacheSize = parseNonNegativeInt(
     env.TEMPORAL_STICKY_CACHE_SIZE,
     fallbackStickyCacheSize,
     'TEMPORAL_STICKY_CACHE_SIZE',
