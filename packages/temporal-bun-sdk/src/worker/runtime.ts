@@ -48,6 +48,7 @@ import type { WorkflowDeterminismState } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import { WorkflowExecutor } from '../workflow/executor'
 import { WorkflowRegistry } from '../workflow/registry'
+import { resolveHistoryLastEventId } from '../workflow/replay'
 import { type ActivityContext, type ActivityInfo, runWithActivityContext } from './activity-context'
 import {
   type ActivityTaskEnvelope,
@@ -449,7 +450,8 @@ export class WorkerRuntime {
 
       if (stickyKey && this.#stickySchedulingEnabled) {
         if (output.completion === 'pending') {
-          await this.#upsertStickyEntry(stickyKey, output.determinismState)
+          const lastEventId = this.#resolveWorkflowHistoryLastEventId(response)
+          await this.#upsertStickyEntry(stickyKey, output.determinismState, lastEventId)
         } else {
           await this.#removeStickyEntry(stickyKey)
         }
@@ -494,13 +496,22 @@ export class WorkerRuntime {
     return await Effect.runPromise(this.#stickyCache.get(key))
   }
 
-  async #upsertStickyEntry(key: StickyCacheKey, state: WorkflowDeterminismState): Promise<void> {
+  async #upsertStickyEntry(
+    key: StickyCacheKey,
+    state: WorkflowDeterminismState,
+    lastEventId: string | null,
+  ): Promise<void> {
     const entry: StickyCacheEntry = {
       key,
       determinismState: state,
+      lastEventId,
       lastAccessed: Date.now(),
     }
     await Effect.runPromise(this.#stickyCache.upsert(entry))
+  }
+
+  #resolveWorkflowHistoryLastEventId(response: PollWorkflowTaskQueueResponse): string | null {
+    return resolveHistoryLastEventId(response.history?.events ?? [])
   }
 
   async #removeStickyEntry(key: StickyCacheKey): Promise<void> {
