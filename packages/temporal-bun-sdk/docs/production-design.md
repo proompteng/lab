@@ -197,17 +197,14 @@ can contribute independently without re-planning.
 
 ### TBS-004 – Observability
 
-- **Starting points**
-  - `src/observability/logger.ts`, `src/observability/metrics.ts` – replace console/in-memory stubs.
-  - Thread logger/metrics dependencies through worker and client constructors.
-- **Effect guidance**
-  - Provide Layers (`Effect.Layer`) for injecting logger/metrics (coordinate with TBS-010).
-  - Use structured logging JSON, integrate with OpenTelemetry API.
-- **Acceptance criteria**
-  1. Configurable logger exposing debug/info/warn/error with context.
-  2. Metrics registry exporting poll latency, command counts, retry attempts.
-  3. Optional tracing instrumentation toggled via config.
-  4. Documentation explaining how to plug custom sinks.
+- **Status**: ✅ Completed in `src/observability/*`, `src/worker/runtime.ts`, and `src/client.ts`.
+- **Highlights**
+  - Structured logger with pluggable sinks (`createLogger`) and configurable level/format via `TEMPORAL_LOG_LEVEL` / `TEMPORAL_LOG_FORMAT`.
+  - Metrics registry with in-memory snapshots (`makeInMemoryMetrics`) and OTEL bridge (`makeOpenTelemetryMetrics`); default worker metrics cover poll latency, task failures, retry attempts, and sticky-cache events.
+  - Temporal client instrumentation emits RPC latency/failure metrics and wraps WorkflowService calls in tracing spans.
+  - Optional tracing toggled through `TEMPORAL_TRACING_ENABLED` with OTEL integration (`makeOpenTelemetryTracer`).
+  - Effect layers (`LoggerLayer`, `MetricsLayer`, `TracingLayer`) expose observability services to future Effect-first runtime factories.
+  - Integration harness records metrics/logs while running CLI-driven scenarios, with tests in `tests/integration/observability.test.ts`.
 
 ### TBS-005 – Client Resilience
 

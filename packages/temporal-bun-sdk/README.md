@@ -56,6 +56,73 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    temporal-bun init hello-worker
    ```
 
+## Observability
+
+The SDK now ships structured logging, metrics, and optional tracing hooks. Defaults target local development with JSON logs and an in-memory metrics registry, but everything can be overridden via configuration or custom sinks.
+
+### Environment variables
+
+`loadTemporalConfig()` understands the following observability-specific variables:
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `TEMPORAL_LOG_LEVEL` | Minimum log level (`debug`, `info`, `warn`, `error`). | `info` |
+| `TEMPORAL_LOG_FORMAT` | Console format (`json` or `pretty`). | `json` |
+| `TEMPORAL_METRICS_EXPORTER` | Metrics backend (`in-memory` or `otel`). | `in-memory` |
+| `TEMPORAL_METRICS_METER_NAME` | Meter name when using OTEL. | `temporal-bun-sdk` |
+| `TEMPORAL_METRICS_METER_VERSION` | Optional meter version string. | *(unset)* |
+| `TEMPORAL_METRICS_SCHEMA_URL` | OTEL schema URL if required. | *(unset)* |
+| `TEMPORAL_TRACING_ENABLED` | Enable tracing span emission (`1`, `true`). | `false` |
+| `TEMPORAL_TRACING_EXPORTER` | Tracing exporter (`otel` or `none`). | `none` |
+| `TEMPORAL_TRACING_SERVICE_NAME` | Service name reported to the tracer. | `temporal-bun-sdk` |
+
+### Worker runtime metrics
+
+When you run the Bun worker you'll receive the following time-series by default (attribute labels omitted for brevity):
+
+- `temporal_worker_poll_latency_ms` (histogram) – latency for workflow/activity polls.
+- `temporal_worker_task_failures_total` – workflow/activity failures grouped by cause.
+- `temporal_worker_task_retry_attempts_total` – retry counts observed for workflow/activity tasks.
+- `temporal_worker_sticky_cache_events_total` – sticky-cache hit/miss/store/evict events.
+
+### Temporal client metrics
+
+The Connect client now emits:
+
+- `temporal_client_rpc_latency_ms` (histogram) – WorkflowService RPC latency.
+- `temporal_client_rpc_failures_total` – RPC failures grouped by method and error code.
+
+### Custom sinks
+
+Pass observability services into the runtime constructors to plug in your own ecosystem tooling:
+
+```ts
+import { createLogger } from '@proompteng/temporal-bun-sdk/observability/logger'
+import { makeOpenTelemetryMetrics } from '@proompteng/temporal-bun-sdk/observability/metrics'
+import { makeOpenTelemetryTracer } from '@proompteng/temporal-bun-sdk/observability/tracing'
+
+const logger = createLogger({
+  level: 'debug',
+  sinks: [
+    {
+      write: (record) => Effect.sync(() => lokiStream.write(JSON.stringify(record))),
+    },
+  ],
+})
+
+const metrics = makeOpenTelemetryMetrics(meter) // meter from @opentelemetry/api
+const tracer = makeOpenTelemetryTracer({ serviceName: 'my-service' })
+
+const worker = await WorkerRuntime.create({
+  logger,
+  metrics,
+  tracer,
+  // ...
+})
+```
+
+`createTemporalClient` accepts the same overrides so you can share telemetry wiring across workers and auxiliary services.
+
 ## Workflow surface
 
 Workflow handlers receive a rich context that captures command intents deterministically. Alongside `input` you now get:
