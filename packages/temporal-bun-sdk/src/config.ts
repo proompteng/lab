@@ -6,6 +6,9 @@ const DEFAULT_PORT = 7233
 const DEFAULT_NAMESPACE = 'default'
 const DEFAULT_TASK_QUEUE = 'prix'
 const DEFAULT_IDENTITY_PREFIX = 'temporal-bun-worker'
+const DEFAULT_STICKY_CACHE_SIZE = 256
+const DEFAULT_STICKY_CACHE_TTL_MS = 5 * 60 * 1000
+const DEFAULT_STICKY_QUEUE_TIMEOUT_MS = 10_000
 
 interface TemporalEnvironment {
   TEMPORAL_ADDRESS?: string
@@ -23,6 +26,9 @@ interface TemporalEnvironment {
   TEMPORAL_WORKER_IDENTITY_PREFIX?: string
   TEMPORAL_SHOW_STACK_SOURCES?: string
   TEMPORAL_DISABLE_WORKFLOW_CONTEXT?: string
+  TEMPORAL_STICKY_CACHE_SIZE?: string
+  TEMPORAL_STICKY_CACHE_TTL_MS?: string
+  TEMPORAL_STICKY_QUEUE_TIMEOUT_MS?: string
 }
 
 const truthyValues = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
@@ -54,6 +60,9 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     TEMPORAL_WORKER_IDENTITY_PREFIX: read('TEMPORAL_WORKER_IDENTITY_PREFIX'),
     TEMPORAL_SHOW_STACK_SOURCES: read('TEMPORAL_SHOW_STACK_SOURCES'),
     TEMPORAL_DISABLE_WORKFLOW_CONTEXT: read('TEMPORAL_DISABLE_WORKFLOW_CONTEXT'),
+    TEMPORAL_STICKY_CACHE_SIZE: read('TEMPORAL_STICKY_CACHE_SIZE'),
+    TEMPORAL_STICKY_CACHE_TTL_MS: read('TEMPORAL_STICKY_CACHE_TTL_MS'),
+    TEMPORAL_STICKY_QUEUE_TIMEOUT_MS: read('TEMPORAL_STICKY_QUEUE_TIMEOUT_MS'),
   }
 }
 
@@ -70,6 +79,17 @@ const parsePort = (raw: string | undefined): number => {
   const parsed = Number.parseInt(raw, 10)
   if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 65_535) {
     throw new Error(`Invalid Temporal gRPC port: ${raw}`)
+  }
+  return parsed
+}
+
+const parseNonNegativeInteger = (raw: string | undefined, fallback: number, label: string): number => {
+  if (raw === undefined) {
+    return fallback
+  }
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`Invalid ${label}: ${raw}`)
   }
   return parsed
 }
@@ -95,6 +115,9 @@ export interface TemporalConfig {
   workerIdentityPrefix: string
   showStackTraceSources?: boolean
   workflowContextBypass: boolean
+  stickyCacheSize: number
+  stickyCacheTtlMs: number
+  stickyQueueTimeoutMs: number
 }
 
 export interface TLSCertPair {
@@ -167,6 +190,21 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     coerceBoolean(env.TEMPORAL_SHOW_STACK_SOURCES) ?? options.defaults?.showStackTraceSources ?? false
   const workflowContextBypass =
     coerceBoolean(env.TEMPORAL_DISABLE_WORKFLOW_CONTEXT) ?? options.defaults?.workflowContextBypass ?? false
+  const stickyCacheSize = parseNonNegativeInteger(
+    env.TEMPORAL_STICKY_CACHE_SIZE,
+    options.defaults?.stickyCacheSize ?? DEFAULT_STICKY_CACHE_SIZE,
+    'Temporal sticky cache size',
+  )
+  const stickyCacheTtlMs = parseNonNegativeInteger(
+    env.TEMPORAL_STICKY_CACHE_TTL_MS,
+    options.defaults?.stickyCacheTtlMs ?? DEFAULT_STICKY_CACHE_TTL_MS,
+    'Temporal sticky cache TTL (ms)',
+  )
+  const stickyQueueTimeoutMs = parseNonNegativeInteger(
+    env.TEMPORAL_STICKY_QUEUE_TIMEOUT_MS,
+    options.defaults?.stickyQueueTimeoutMs ?? DEFAULT_STICKY_QUEUE_TIMEOUT_MS,
+    'Temporal sticky queue timeout (ms)',
+  )
 
   return {
     host,
@@ -181,6 +219,9 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     workerIdentityPrefix,
     showStackTraceSources,
     workflowContextBypass,
+    stickyCacheSize,
+    stickyCacheTtlMs,
+    stickyQueueTimeoutMs,
   }
 }
 
@@ -191,7 +232,18 @@ export const temporalDefaults = {
   taskQueue: DEFAULT_TASK_QUEUE,
   workerIdentityPrefix: DEFAULT_IDENTITY_PREFIX,
   workflowContextBypass: false,
+  stickyCacheSize: DEFAULT_STICKY_CACHE_SIZE,
+  stickyCacheTtlMs: DEFAULT_STICKY_CACHE_TTL_MS,
+  stickyQueueTimeoutMs: DEFAULT_STICKY_QUEUE_TIMEOUT_MS,
 } satisfies Pick<
   TemporalConfig,
-  'host' | 'port' | 'namespace' | 'taskQueue' | 'workerIdentityPrefix' | 'workflowContextBypass'
+  | 'host'
+  | 'port'
+  | 'namespace'
+  | 'taskQueue'
+  | 'workerIdentityPrefix'
+  | 'workflowContextBypass'
+  | 'stickyCacheSize'
+  | 'stickyCacheTtlMs'
+  | 'stickyQueueTimeoutMs'
 >

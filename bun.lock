@@ -288,8 +288,6 @@
         "@connectrpc/connect": "^2.1.0",
         "@connectrpc/connect-node": "^2.1.0",
         "effect": "^3.2.0",
-        "long": "^5.2.3",
-        "zod": "^3.23.8",
       },
       "devDependencies": {
         "@types/node": "^22.7.5",
@@ -301,6 +299,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@proompteng/temporal-bun-sdk": "workspace:*",
+        "effect": "^3.2.0",
       },
       "devDependencies": {
         "bun-types": "^1.1.20",

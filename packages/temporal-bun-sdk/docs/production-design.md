@@ -148,6 +148,10 @@ can contribute independently without re-planning.
   3. Replay mismatch yields `WorkflowNondeterminismError` that includes event IDs
      and mismatched command signatures.
   4. Unit tests and dev-server scenario verifying behaviour.
+- **Implementation notes**
+  - Determinism snapshots are persisted as `temporal-bun-sdk/determinism` record markers (schema v1) that bundle command history, random/time streams, and the last processed event id. The marker payload is stored via the configured `DataConverter`.
+  - `TEMPORAL_STICKY_CACHE_SIZE`, `TEMPORAL_STICKY_CACHE_TTL_MS`, and `TEMPORAL_STICKY_QUEUE_TIMEOUT_MS` control cache capacity, TTL-based eviction, and sticky queue scheduling respectively.
+  - `tests/integration/harness.ts` provides a Temporal CLI-backed harness that starts the dev server, executes workflows (`temporal workflow execute`), fetches JSON history (`temporal workflow show --output json`), and feeds the ingestion pipeline. Tests log a skip when the CLI is unavailable instead of failing hard.
 - **Dependencies**
   - Optional integration with TBS-004 for logging metrics.
   - Provides determinism snapshot for TBS-003 scheduler.

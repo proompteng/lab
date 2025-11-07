@@ -30,6 +30,9 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    TEMPORAL_TLS_KEY_PATH=certs/worker.key           # optional – only for mTLS
    TEMPORAL_TLS_SERVER_NAME=temporal.example.com    # optional – SNI override
    TEMPORAL_TASK_QUEUE=prix
+   TEMPORAL_STICKY_CACHE_SIZE=256                   # optional – determinism cache capacity
+   TEMPORAL_STICKY_CACHE_TTL_MS=300000              # optional – eviction TTL in ms
+   TEMPORAL_STICKY_QUEUE_TIMEOUT_MS=10000           # optional – sticky task queue timeout
    ```
 
    > Running against `temporal server start-dev`? Omit TLS variables and set `TEMPORAL_ADDRESS=127.0.0.1:7233`. Set `TEMPORAL_ALLOW_INSECURE=1` when testing with self-signed certificates.
@@ -86,7 +89,20 @@ export const workflows = [
 ]
 ```
 
-On each workflow task the executor compares newly emitted intents, random values, and logical timestamps against the stored determinism state. Mismatches raise `WorkflowNondeterminismError` and cause the worker to fail the task with `WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR`, mirroring Temporal’s official SDK behavior. You can temporarily revert to the legacy “complete or fail only” mode by setting `TEMPORAL_DISABLE_WORKFLOW_CONTEXT=1`.
+On each workflow task the executor compares newly emitted intents, random values, and logical timestamps against the stored determinism state. Mismatches raise `WorkflowNondeterminismError` and cause the worker to fail the task with `WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR`, mirroring Temporal’s official SDK behavior. Determinism snapshots are recorded as `temporal-bun-sdk/determinism` markers in workflow history and optionally cached via a sticky determinism cache. Tune cache behaviour with `TEMPORAL_STICKY_CACHE_SIZE`, `TEMPORAL_STICKY_CACHE_TTL_MS`, and `TEMPORAL_STICKY_QUEUE_TIMEOUT_MS`. You can temporarily revert to the legacy “complete or fail only” mode by setting `TEMPORAL_DISABLE_WORKFLOW_CONTEXT=1`.
+
+## Integration harness
+
+The SDK ships an integration harness that wraps the Temporal CLI dev server scripts. It can execute workflows through `temporal workflow execute`/`temporal workflow show`, turn the emitted history into `HistoryEvent[]`, and feed the ingestion pipeline. To use it locally:
+
+1. Install the [Temporal CLI](https://github.com/temporalio/cli) and ensure the `temporal` binary is on your `PATH` (or set `TEMPORAL_CLI_PATH`).
+2. Start the dev server with `bun scripts/start-temporal-cli.ts` or let the harness do it for you.
+3. Run the integration suite:
+   ```bash
+   bun test tests/integration/history-replay.test.ts
+   ```
+
+If the CLI is missing the tests log a skip and continue so the rest of the suite still passes. The harness lives in `tests/integration/harness.ts` and exposes helpers for bespoke scenarios if you need to extend coverage.
 
 ## Effect service integration
 
