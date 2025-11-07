@@ -49,6 +49,7 @@ import {
   RespondWorkflowTaskFailedRequestSchema,
 } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from '../proto/temporal/api/workflowservice/v1/service_pb'
+import type { WorkflowCommandIntent } from '../workflow/commands'
 import { durationFromMillis } from '../workflow/commands'
 import type { WorkflowInfo } from '../workflow/context'
 import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
@@ -58,6 +59,8 @@ import { WorkflowExecutor } from '../workflow/executor'
 import { WorkflowRegistry } from '../workflow/registry'
 import {
   DETERMINISM_MARKER_NAME,
+  type DeterminismMismatch,
+  diffDeterminismState,
   encodeDeterminismMarkerDetails,
   ingestWorkflowHistory,
   type ReplayResult,
@@ -301,6 +304,37 @@ export class WorkerRuntime {
     })
   }
 
+  #isValidDeterminismSnapshot(state: WorkflowDeterminismState | undefined): boolean {
+    if (!state) {
+      return false
+    }
+    return state.commandHistory.length > 0 || state.randomValues.length > 0 || state.timeValues.length > 0
+  }
+
+  #resolvePreviousHistoryEventId(response: PollWorkflowTaskQueueResponse): string | null {
+    const previous = response.previousStartedEventId
+    if (previous === undefined || previous === null) {
+      return null
+    }
+    if (typeof previous === 'bigint') {
+      return previous > 0n ? previous.toString() : null
+    }
+    const numeric = Number(previous)
+    return Number.isFinite(numeric) && numeric > 0 ? numeric.toString() : null
+  }
+
+  #resolveCurrentStartedEventId(response: PollWorkflowTaskQueueResponse): string | null {
+    const started = response.startedEventId
+    if (started === undefined || started === null) {
+      return null
+    }
+    if (typeof started === 'bigint') {
+      return started > 0n ? started.toString() : null
+    }
+    const numeric = Number(started)
+    return Number.isFinite(numeric) && numeric > 0 ? numeric.toString() : null
+  }
+
   static #sanitizeTaskQueueComponent(value: string): string {
     return value.replace(/[^a-zA-Z0-9_-]/g, '-')
   }
@@ -484,15 +518,32 @@ export class WorkerRuntime {
     const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
     const stickyKey = this.#buildStickyKey(execution.workflowId, execution.runId)
     const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
-    let previousState = stickyEntry?.determinismState
-    let historyReplay: ReplayResult | undefined
+    const historyReplay = await this.#ingestDeterminismState(workflowInfo, execution, response)
+    const hasHistorySnapshot = this.#isValidDeterminismSnapshot(historyReplay?.determinismState)
+    let previousState: WorkflowDeterminismState | undefined
 
-    if (!previousState) {
-      historyReplay = await this.#ingestDeterminismState(workflowInfo, execution, response)
-      if (historyReplay?.hasDeterminismMarker) {
+    if (stickyEntry && this.#isValidDeterminismSnapshot(stickyEntry.determinismState)) {
+      const historyBaselineEventId = this.#resolvePreviousHistoryEventId(response) ?? historyReplay?.lastEventId ?? null
+      const cacheMatchesHistory = (stickyEntry.lastEventId ?? null) === historyBaselineEventId
+
+      if (cacheMatchesHistory) {
+        previousState = stickyEntry.determinismState
+      } else if (hasHistorySnapshot && historyReplay) {
+        const diff = await Effect.runPromise(
+          diffDeterminismState(stickyEntry.determinismState, historyReplay.determinismState),
+        )
+        if (diff.mismatches.length > 0) {
+          console.warn('[temporal-bun-sdk] sticky cache determinism snapshot drift detected', diff.mismatches)
+        }
         previousState = historyReplay.determinismState
       }
     }
+
+    if (!previousState && hasHistorySnapshot && historyReplay) {
+      previousState = historyReplay.determinismState
+    }
+
+    const expectedDeterminismState = previousState
 
     try {
       const output = await this.#executor.execute({
@@ -506,8 +557,8 @@ export class WorkerRuntime {
       })
 
       const lastEventId =
-        this.#resolveWorkflowHistoryLastEventId(response) ??
         historyReplay?.lastEventId ??
+        this.#resolveWorkflowHistoryLastEventId(response) ??
         stickyEntry?.lastEventId ??
         null
       const markerDetails = await Effect.runPromise(
@@ -520,9 +571,11 @@ export class WorkerRuntime {
       const markerCommand = this.#buildDeterminismMarkerCommand(markerDetails)
       const commandsWithMarker = this.#injectDeterminismMarker(output.commands, markerCommand)
 
+      const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? historyReplay?.lastEventId ?? null
+
       if (stickyKey) {
         if (output.completion === 'pending') {
-          await this.#upsertStickyEntry(stickyKey, output.determinismState, lastEventId)
+          await this.#upsertStickyEntry(stickyKey, output.determinismState, cacheBaselineEventId)
         } else {
           await this.#removeStickyEntry(stickyKey)
         }
@@ -537,19 +590,30 @@ export class WorkerRuntime {
         ...(this.#stickySchedulingEnabled ? { stickyAttributes: this.#stickyAttributes } : {}),
         ...(this.#versioningBehavior !== null ? { versioningBehavior: this.#versioningBehavior } : {}),
       })
-      await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
+      try {
+        await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
+      } catch (rpcError) {
+        if (this.#isTaskNotFoundError(rpcError)) {
+          this.#logWorkflowTaskNotFound('respondWorkflowTaskCompleted', execution)
+          return
+        }
+        throw rpcError
+      }
     } catch (error) {
       if (stickyKey) {
         await this.#removeStickyEntry(stickyKey)
       }
       if (this.#isTaskNotFoundError(error)) {
+        this.#logWorkflowTaskNotFound('respondWorkflowTaskCompleted', execution)
         return
       }
       if (error instanceof WorkflowNondeterminismError) {
-        await this.#failWorkflowTask(response, error, WorkflowTaskFailedCause.NON_DETERMINISTIC_ERROR)
+        const mismatches = await this.#computeNondeterminismMismatches(error, expectedDeterminismState)
+        const enriched = this.#augmentNondeterminismError(error, mismatches)
+        await this.#failWorkflowTask(response, execution, enriched, WorkflowTaskFailedCause.NON_DETERMINISTIC_ERROR)
         return
       }
-      await this.#failWorkflowTask(response, error)
+      await this.#failWorkflowTask(response, execution, error)
     }
   }
 
@@ -705,6 +769,110 @@ export class WorkerRuntime {
     return command.attributes.value.markerName === DETERMINISM_MARKER_NAME
   }
 
+  async #computeNondeterminismMismatches(
+    error: WorkflowNondeterminismError,
+    expectedState: WorkflowDeterminismState | undefined,
+  ): Promise<DeterminismMismatch[]> {
+    const baseline: WorkflowDeterminismState = expectedState ?? {
+      commandHistory: [],
+      randomValues: [],
+      timeValues: [],
+    }
+    const hint = error.details?.hint
+    if (!hint) {
+      return []
+    }
+
+    const commandIndex = this.#parseIndexFromHint(hint, 'commandIndex')
+    const randomIndex = this.#parseIndexFromHint(hint, 'randomIndex')
+    const timeIndex = this.#parseIndexFromHint(hint, 'timeIndex')
+
+    const mutableActual: {
+      commandHistory: { intent: WorkflowCommandIntent }[]
+      randomValues: number[]
+      timeValues: number[]
+    } = {
+      commandHistory: baseline.commandHistory.map((entry) => ({ intent: entry.intent })),
+      randomValues: [...baseline.randomValues],
+      timeValues: [...baseline.timeValues],
+    }
+    let mutated = false
+
+    if (commandIndex !== null) {
+      const received = error.details?.received as WorkflowCommandIntent | undefined
+      if (received) {
+        if (commandIndex < mutableActual.commandHistory.length) {
+          mutableActual.commandHistory = mutableActual.commandHistory.map((entry, idx) =>
+            idx === commandIndex ? { intent: received } : entry,
+          )
+        } else {
+          mutableActual.commandHistory = [...mutableActual.commandHistory, { intent: received }]
+        }
+        mutated = true
+      } else if (commandIndex < mutableActual.commandHistory.length) {
+        mutableActual.commandHistory = mutableActual.commandHistory.filter((_, idx) => idx !== commandIndex)
+        mutated = true
+      }
+    }
+
+    if (randomIndex !== null) {
+      this.#ensureArrayLength(mutableActual.randomValues, randomIndex)
+      mutableActual.randomValues[randomIndex] = Number.NaN
+      mutated = true
+    }
+
+    if (timeIndex !== null) {
+      this.#ensureArrayLength(mutableActual.timeValues, timeIndex)
+      mutableActual.timeValues[timeIndex] = Number.NaN
+      mutated = true
+    }
+
+    if (!mutated) {
+      return []
+    }
+
+    const actualState: WorkflowDeterminismState = {
+      commandHistory: mutableActual.commandHistory,
+      randomValues: mutableActual.randomValues,
+      timeValues: mutableActual.timeValues,
+    }
+
+    const diff = await Effect.runPromise(diffDeterminismState(baseline, actualState))
+    return diff.mismatches
+  }
+
+  #augmentNondeterminismError(
+    error: WorkflowNondeterminismError,
+    mismatches: DeterminismMismatch[],
+  ): WorkflowNondeterminismError {
+    if (mismatches.length === 0) {
+      return error
+    }
+    const details = {
+      ...(error.details ?? {}),
+      mismatches,
+    }
+    const enriched = new WorkflowNondeterminismError(error.message, details)
+    enriched.stack = error.stack
+    return enriched
+  }
+
+  #parseIndexFromHint(hint: string, label: string): number | null {
+    const pattern = new RegExp(`${label}=(\\d+)`)
+    const match = pattern.exec(hint)
+    if (!match) {
+      return null
+    }
+    const value = Number.parseInt(match[1] ?? '', 10)
+    return Number.isNaN(value) ? null : value
+  }
+
+  #ensureArrayLength(array: number[], index: number): void {
+    while (array.length <= index) {
+      array.push(Number.NaN)
+    }
+  }
+
   static #isStickyCacheInstance(value: unknown): value is StickyCache {
     if (!value || typeof value !== 'object') {
       return false
@@ -723,6 +891,7 @@ export class WorkerRuntime {
 
   async #failWorkflowTask(
     response: PollWorkflowTaskQueueResponse,
+    execution: { workflowId: string; runId: string },
     error: unknown,
     cause: WorkflowTaskFailedCause = WorkflowTaskFailedCause.UNSPECIFIED,
   ): Promise<void> {
@@ -742,6 +911,7 @@ export class WorkerRuntime {
       await this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS })
     } catch (rpcError) {
       if (this.#isTaskNotFoundError(rpcError)) {
+        this.#logWorkflowTaskNotFound('respondWorkflowTaskFailed', execution)
         return
       }
       throw rpcError
@@ -909,6 +1079,14 @@ export class WorkerRuntime {
 
   #hasActivities(): boolean {
     return Object.keys(this.#activities).length > 0
+  }
+
+  #logWorkflowTaskNotFound(context: string, execution: { workflowId: string; runId: string }): void {
+    console.warn('[temporal-bun-sdk] workflow task already resolved', {
+      context,
+      workflowId: execution.workflowId,
+      runId: execution.runId,
+    })
   }
 }
 
