@@ -1,11 +1,10 @@
-import { metrics as otelMetrics } from '@opentelemetry/api'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
-
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
+import { metrics as otelMetrics } from '@opentelemetry/api'
 import { Effect } from 'effect'
 
 import { buildTransportOptions, normalizeTemporalAddress } from '../client'
@@ -122,9 +121,8 @@ const resolveMetricsRegistry = async (
   if (metricsConfig.exporter === 'otel') {
     const meter =
       metricsConfig.meter ??
-      otelMetrics.getMeter(metricsConfig.meterName ?? 'temporal-bun-sdk', {
+      otelMetrics.getMeter(metricsConfig.meterName ?? 'temporal-bun-sdk', metricsConfig.meterVersion, {
         schemaUrl: metricsConfig.schemaUrl,
-        version: metricsConfig.meterVersion,
       })
     return makeOpenTelemetryMetrics(meter)
   }
@@ -820,11 +818,7 @@ export class WorkerRuntime {
     }
   }
 
-  async #failActivityTask(
-    response: PollActivityTaskQueueResponse,
-    error: unknown,
-    reason: string,
-  ): Promise<void> {
+  async #failActivityTask(response: PollActivityTaskQueueResponse, error: unknown, reason: string): Promise<void> {
     const failure = await encodeErrorToFailure(this.#dataConverter, error)
     const encoded = await encodeFailurePayloads(this.#dataConverter, failure)
 
@@ -1146,15 +1140,46 @@ const workflowFailureReason = (cause: WorkflowTaskFailedCause): string => {
   return typeof raw === 'string' ? raw.toLowerCase() : 'unspecified'
 }
 
-const buildActivityLogFields = (
-  response: PollActivityTaskQueueResponse,
-  attempt: number,
-): Record<string, unknown> => ({
+const buildActivityLogFields = (response: PollActivityTaskQueueResponse, attempt: number): Record<string, unknown> => ({
   activityType: response.activityType?.name ?? '',
   workflowId: response.workflowExecution?.workflowId ?? '',
   runId: response.workflowExecution?.runId ?? '',
   attempt,
 })
+
+const createWorkerMetrics = async (metrics: MetricsRegistry): Promise<WorkerMetricsHandles> => {
+  const [pollLatency, taskFailures, taskRetryAttempts, stickyCacheEvents] = await Promise.all([
+    Effect.runPromise(
+      metrics.histogram('temporal_worker_poll_latency_ms', {
+        description: 'Latency of Temporal poll requests executed by the worker runtime (milliseconds).',
+        unit: 'ms',
+      }),
+    ),
+    Effect.runPromise(
+      metrics.counter('temporal_worker_task_failures_total', {
+        description: 'Total workflow/activity task failures handled by the worker runtime.',
+      }),
+    ),
+    Effect.runPromise(
+      metrics.counter('temporal_worker_task_retry_attempts_total', {
+        description:
+          'Total retry attempts observed for workflow/activity tasks; values count retries beyond the first attempt.',
+      }),
+    ),
+    Effect.runPromise(
+      metrics.counter('temporal_worker_sticky_cache_events_total', {
+        description: 'Sticky cache hit/miss/store/evict events recorded by the worker runtime.',
+      }),
+    ),
+  ])
+
+  return {
+    pollLatency,
+    taskFailures,
+    taskRetryAttempts,
+    stickyCacheEvents,
+  }
+}
 
 async function loadWorkflows(
   workflowsPath?: string,

@@ -201,9 +201,9 @@ const normalizeTracingExporter = (value: string | undefined): TracingExporter =>
   value?.toLowerCase() === 'otel' ? 'otel' : 'none'
 
 const buildObservabilityConfig = (env: TemporalEnvironment, defaults?: ObservabilityDefaults): ObservabilityConfig => {
-  const loggerDefaults = defaults?.logger ?? {}
-  const metricsDefaults = defaults?.metrics ?? {}
-  const tracingDefaults = defaults?.tracing ?? {}
+  const loggerDefaults: Partial<LoggerConfig> = defaults?.logger ?? {}
+  const metricsDefaults: Partial<MetricsConfig> = defaults?.metrics ?? {}
+  const tracingDefaults: Partial<TracingConfig> = defaults?.tracing ?? {}
 
   const level = normalizeLogLevel(env.TEMPORAL_LOG_LEVEL ?? loggerDefaults.level)
   const format = normalizeLogFormat(env.TEMPORAL_LOG_FORMAT ?? loggerDefaults.format)

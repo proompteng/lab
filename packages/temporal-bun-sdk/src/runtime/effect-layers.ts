@@ -35,16 +35,15 @@ export const ConfigLayer: Layer.Layer<never, unknown, TemporalConfigService> = L
   }),
 )
 
-export const LoggerLayer: Layer.Layer<TemporalConfigService, never, LoggerService> = Layer.effect(
+export const LoggerLayer = Layer.effect(
   LoggerService,
   Effect.gen(function* () {
     const config = yield* TemporalConfigService
-    const observability = config.observability ?? {}
-    const loggerConfig = observability.logger ?? {}
+    const loggerConfig = config.observability.logger
 
     return createLogger({
       level: loggerConfig.level,
-      format: loggerConfig.format ?? 'json',
+      format: loggerConfig.format,
       fields: {
         component: 'temporal-bun-sdk',
         namespace: config.namespace,
@@ -54,19 +53,17 @@ export const LoggerLayer: Layer.Layer<TemporalConfigService, never, LoggerServic
   }),
 )
 
-export const MetricsLayer: Layer.Layer<TemporalConfigService, never, MetricsService> = Layer.effect(
+export const MetricsLayer = Layer.effect(
   MetricsService,
   Effect.gen(function* () {
     const config = yield* TemporalConfigService
-    const observability = config.observability ?? {}
-    const metricsConfig = observability.metrics ?? {}
+    const metricsConfig = config.observability.metrics
 
     if (metricsConfig.exporter === 'otel') {
       const meter =
         metricsConfig.meter ??
-        otelMetrics.getMeter(metricsConfig.meterName ?? 'temporal-bun-sdk', {
+        otelMetrics.getMeter(metricsConfig.meterName ?? 'temporal-bun-sdk', metricsConfig.meterVersion, {
           schemaUrl: metricsConfig.schemaUrl,
-          version: metricsConfig.meterVersion,
         })
       return makeOpenTelemetryMetrics(meter)
     }
@@ -75,13 +72,13 @@ export const MetricsLayer: Layer.Layer<TemporalConfigService, never, MetricsServ
   }),
 )
 
-export const TracingLayer: Layer.Layer<TemporalConfigService, never, TracingService> = Layer.effect(
+export const TracingLayer = Layer.effect(
   TracingService,
   Effect.gen(function* () {
     const config = yield* TemporalConfigService
-    const tracingConfig = config.observability?.tracing
+    const tracingConfig = config.observability.tracing
 
-    if (!tracingConfig || !tracingConfig.enabled || tracingConfig.exporter === 'none') {
+    if (!tracingConfig.enabled || tracingConfig.exporter === 'none') {
       return makeNoopTracer()
     }
 

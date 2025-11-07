@@ -1,9 +1,9 @@
 import type { ClientSessionOptions, SecureClientSessionOptions } from 'node:http2'
 import { performance } from 'node:perf_hooks'
-import { metrics as otelMetrics } from '@opentelemetry/api'
 import { create, toBinary } from '@bufbuild/protobuf'
 import { type CallOptions, Code, ConnectError, createClient, type Transport } from '@connectrpc/connect'
 import { createGrpcTransport, type GrpcTransportOptions } from '@connectrpc/connect-node'
+import { metrics as otelMetrics } from '@opentelemetry/api'
 import { Effect } from 'effect'
 import { createDefaultHeaders, mergeHeaders, normalizeMetadataHeaders } from './client/headers'
 import {
@@ -68,9 +68,8 @@ const resolveMetricsRegistry = async (
   if (metricsConfig.exporter === 'otel') {
     const meter =
       metricsConfig.meter ??
-      otelMetrics.getMeter(metricsConfig.meterName ?? 'temporal-bun-sdk', {
+      otelMetrics.getMeter(metricsConfig.meterName ?? 'temporal-bun-sdk', metricsConfig.meterVersion, {
         schemaUrl: metricsConfig.schemaUrl,
-        version: metricsConfig.meterVersion,
       })
     return makeOpenTelemetryMetrics(meter)
   }
