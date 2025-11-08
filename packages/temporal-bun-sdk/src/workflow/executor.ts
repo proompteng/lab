@@ -18,8 +18,8 @@ import { PayloadsSchema } from '../proto/temporal/api/common/v1/message_pb'
 import { CommandType } from '../proto/temporal/api/enums/v1/command_type_pb'
 import { materializeCommands, type WorkflowCommandIntent } from './commands'
 import {
-  createWorkflowContext,
   type ActivityResolution,
+  createWorkflowContext,
   type WorkflowCommandContext,
   type WorkflowInfo,
 } from './context'
@@ -231,7 +231,7 @@ export class WorkflowExecutor {
   }
 }
 
-const unwrapWorkflowError = <T>(error: unknown, ctor: new (...args: any[]) => T): T | undefined => {
+const unwrapWorkflowError = <T>(error: unknown, ctor: new (...args: unknown[]) => T): T | undefined => {
   if (error instanceof ctor) {
     return error
   }

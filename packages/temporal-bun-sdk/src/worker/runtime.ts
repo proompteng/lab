@@ -14,7 +14,6 @@ import {
 } from '../activities/lifecycle'
 import { buildTransportOptions, normalizeTemporalAddress } from '../client'
 import { durationFromMillis, durationToMillis } from '../common/duration'
-import { sleep } from '../common/sleep'
 import {
   createDefaultDataConverter,
   type DataConverter,
@@ -22,6 +21,7 @@ import {
   encodeValuesToPayloads,
 } from '../common/payloads/converter'
 import { encodeErrorToFailure, encodeFailurePayloads, failureToError } from '../common/payloads/failure'
+import { sleep } from '../common/sleep'
 import { loadTemporalConfig, type TemporalConfig } from '../config'
 import {
   type Command,
@@ -63,9 +63,8 @@ import {
 } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from '../proto/temporal/api/workflowservice/v1/service_pb'
 import type { WorkflowCommandIntent } from '../workflow/commands'
-import type { WorkflowInfo } from '../workflow/context'
+import type { ActivityResolution, WorkflowInfo } from '../workflow/context'
 import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
-import type { ActivityResolution } from '../workflow/context'
 import type { WorkflowDeterminismState, WorkflowRetryPolicyInput } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import { WorkflowExecutor } from '../workflow/executor'
