@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 
 import { resolve } from 'node:path'
-import { $ } from 'bun'
-import { ensureCli, repoRoot } from '../shared/cli'
+import { ensureCli, repoRoot, run } from '../shared/cli'
 
 const execGit = (args: string[]): string => {
   const result = Bun.spawnSync(['git', ...args], { cwd: repoRoot })
@@ -44,8 +43,19 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
     commit,
   })
 
-  await $`docker build -f ${dockerfile} -t ${image} --build-arg GRAF_VERSION=${version} --build-arg GRAF_COMMIT=${commit} ${context}`
-  await $`docker push ${image}`
+  await run('docker', [
+    'build',
+    '-f',
+    dockerfile,
+    '-t',
+    image,
+    '--build-arg',
+    `GRAF_VERSION=${version}`,
+    '--build-arg',
+    `GRAF_COMMIT=${commit}`,
+    context,
+  ])
+  await run('docker', ['push', image])
 
   console.log(`Image pushed: ${image}`)
 
