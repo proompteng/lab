@@ -1,9 +1,8 @@
 #!/usr/bin/env bun
 
-import { join } from 'node:path'
 import { $ } from 'bun'
 import { buildImage } from './build-image'
-import { ensureCli, repoRoot, run } from '../shared/cli'
+import { ensureCli } from '../shared/cli'
 
 const ensureResources = () => {
   ensureCli('kubectl')
@@ -17,17 +16,8 @@ const deploy = async () => {
 
   const { image } = await buildImage()
 
-  await run('kn', [
-    'service',
-    'replace',
-    'graf',
-    '--namespace',
-    defaultNamespace,
-    '--image',
-    image,
-    '--force',
-    '--wait',
-  ])
+  console.log('Updating Graf Knative service...')
+  await $`kn service update graf --namespace ${defaultNamespace} --image ${image} --wait`
 }
 
 if (import.meta.main) {
