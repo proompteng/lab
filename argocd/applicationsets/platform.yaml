@@ -203,7 +203,7 @@ spec:
             namespace: graf
             annotations:
               argocd.argoproj.io/sync-wave: "4"
-            automation: auto
+            automation: manual
             enabled: "true"
           - name: convex
             path: argocd/applications/convex
