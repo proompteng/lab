@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 import { $ } from 'bun'
-import { buildImage } from './build-image'
 import { ensureCli } from '../shared/cli'
+import { buildImage } from './build-image'
 
 const ensureResources = () => {
   ensureCli('kubectl')
