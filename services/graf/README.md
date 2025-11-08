@@ -12,9 +12,10 @@ This Kotlin/Ktor microservice implements the persistence layer described in [doc
 ## Environment
 | Variable | Purpose |
 | --- | --- |
-| `NEO4J_URI` | Bolt/Neo4j URI (e.g. `bolt://neo4j:7687`). |
+| `NEO4J_URI` | Bolt/Neo4j URI (e.g. `bolt://graf-neo4j.graf.svc.cluster.local:7687`). |
 | `NEO4J_USER` | Username (defaults to `neo4j`). |
-| `NEO4J_PASSWORD` | Password (required). |
+| `NEO4J_PASSWORD` | Password (required unless `NEO4J_AUTH` is supplied). |
+| `NEO4J_AUTH` | Combined credentials (`neo4j/<password>`) emitted by the Helm chart Secret; overrides `NEO4J_USER`/`NEO4J_PASSWORD`. |
 | `NEO4J_DATABASE` | Database name (defaults to `neo4j`). |
 | `PORT` | HTTP port (default `8080`). |
 

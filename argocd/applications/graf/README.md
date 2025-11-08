@@ -1,12 +1,13 @@
 # Graf (Neo4j)
 
 - Managed through the platform `ApplicationSet` (`argocd/applicationsets/platform.yaml`).
-- This directory exposes a `kustomization.yaml` that renders the latest Neo4j Helm chart (2025.10.1) via the Kustomize `helmCharts` plugin.
-- The Argo CD `graf` application deploys the chart into the `graf` namespace and creates the Helm release named `graf`.
+- This directory exposes a `kustomization.yaml` that renders the latest Neo4j Helm chart (2025.10.1) via the Kustomize `helmCharts` plugin. The chart now installs its CRDs and uses the `longhorn` storage class for the data volume.
+- The Argo CD `graf` application deploys the chart into the `graf` namespace and creates the Helm release named `graf`. It also applies `knative-service.yaml`, which registers the Kotlin persistence service in the same namespace so Temporal/Knative can reach the graph API.
 
 Check status:
 
 ```bash
 kubectl -n argocd get application graf
 kubectl -n graf get sts,svc,secret
+kubectl -n graf get ksvc graf-service
 ```
