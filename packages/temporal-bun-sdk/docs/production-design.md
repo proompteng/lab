@@ -75,7 +75,7 @@ in parallel without collisions.
 | ID | Epic | Description | Primary Modules |
 | --- | --- | --- | --- |
 | **TBS-001** | History Replay | Build history ingestion, determinism snapshot persistence, mismatch diagnostics. | `src/workflow/replay.ts`, `src/worker/sticky-cache.ts`, `src/worker/runtime.ts` |
-| **TBS-002** | Activity Lifecycle | Implement heartbeats, retry orchestration, cancellation metadata propagation. | `src/activities/lifecycle.ts`, `src/worker/activity-runtime.ts` |
+| **TBS-002** | Activity Lifecycle (✅) | Heartbeat helper wired to WorkflowService with retry/cancellation, local retry orchestration, enriched cancellation metadata. | `src/activities/lifecycle.ts`, `src/worker/activity-runtime.ts` |
 | **TBS-003** | Worker Concurrency | Add scheduler for concurrent workflow/activity processors, sticky queues, build-id routing. | `src/worker/concurrency.ts`, `src/worker/runtime.ts` |
 | **TBS-004** | Observability | Emit structured logs, metrics, and tracing hooks across client/worker. | `src/observability/logger.ts`, `src/observability/metrics.ts` |
 | **TBS-005** | Client Resilience | Layered retries, interceptors, TLS/auth validation, memo/search helpers. | `src/client/interceptors.ts`, `src/client/retries.ts` |
@@ -302,10 +302,11 @@ can contribute independently without re-planning.
 
 1. **Handler registration (shipped)**
    - Map-based registry with AsyncLocalStorage context and cancellation support.
-2. **Retries & heartbeats (GA critical, TBS-002)**
-   - Honor Temporal retry policy, emit heartbeats through WorkflowService, surface
-     heartbeat timeout and last details.
-   - Provide ergonomic `activities.heartbeat()` that mirrors Node SDK semantics.
+2. ✅ **Retries & heartbeats (TBS-002)**
+   - WorkerRuntime uses the lifecycle helper to emit throttled heartbeats via `RecordActivityTaskHeartbeat`, retry transient RPC failures, and propagate server-side cancellation through the `ActivityContext`.
+   - Local activity retries mirror the `WorkflowRetryPolicy` (initial/max interval, backoff coefficient, maximum attempts, non-retryable error types, schedule-to-close bounds) before surfacing a terminal failure flagged as non-retryable.
+   - `activityContext.heartbeat(...details)` is now available to user code; details and cancellation reasons flow into `RespondActivityTaskCanceled/Failed` for Temporal UI parity.
+   - Covered by `tests/activities/lifecycle.test.ts` and the Temporal CLI harness suite (`tests/integration/activity-lifecycle.integration.test.ts`) which exercises steady-state heartbeats, heartbeat timeouts, and retry exhaustion.
 3. **Cancellation semantics**
    - Distinguish graceful vs. failure cancellations, propagate context to handlers.
 4. **Metrics and structured logging**
@@ -382,6 +383,7 @@ can contribute independently without re-planning.
   - Document environment variables for multi-namespace deployments.
   - Provide Dockerfile templates with best practices (non-root, minimal image).
   - Publish Helm/Knative snippets for worker deployment.
+- Activity lifecycle knobs (`TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS`, `TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS`) now control heartbeat cadence and RPC timeouts; defaults keep cadence < heartbeat timeout.
 
 ## Testing & Quality Strategy
 
@@ -395,6 +397,7 @@ can contribute independently without re-planning.
      - Continue-as-new determinism.
      - Build-id routing acceptance.
    - Each major functionality (TBS-001 ↔ TBS-007) must add integration tests using the Temporal CLI available in the execution environment, ensuring end-to-end validation is part of every deliverable.
+   - `tests/integration/activity-lifecycle.integration.test.ts` exercises steady heartbeats, heartbeat timeout cancellation, and retry exhaustion with non-retryable errors via the CLI harness.
 3. **Replay regression harness**
    - Capture real histories, replay offline, ensure deterministic snapshots survive
      worker restarts.
@@ -438,7 +441,7 @@ can contribute independently without re-planning.
 
 1. ✅ Deterministic workflow context and command intents.
 2. 🚧 History replay ingestion, sticky cache, determinism persistence tests.
-3. 🚧 Activity lifecycle completeness (heartbeats, retries, failure categorisation).
+3. ✅ Activity lifecycle completeness (heartbeats, retries, failure categorisation).
 4. 🚧 Worker concurrency, sticky queues, graceful shutdown polish.
 5. 🚧 Client retries/interceptors, TLS hardening.
 6. 🚧 Observability: logs, metrics, tracing hooks.

@@ -2,6 +2,7 @@ import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import { defineWorkflow } from '../../../src/workflow/definition'
+import { currentActivityContext } from '../../../src/worker/activity-context'
 
 const timerInputSchema = Schema.Struct({
   timeoutMs: Schema.optional(Schema.Number),
@@ -20,9 +21,31 @@ const continueInputSchema = Schema.Struct({
   counter: Schema.optional(Schema.Number),
 })
 
+const heartbeatInputSchema = Schema.Struct({
+  durationMs: Schema.Number,
+  heartbeatTimeoutMs: Schema.optional(Schema.Number),
+})
+
+const heartbeatTimeoutInputSchema = Schema.Struct({
+  initialBeats: Schema.optional(Schema.Number),
+  stallMs: Schema.optional(Schema.Number),
+  heartbeatTimeoutMs: Schema.optional(Schema.Number),
+})
+
+const retryProbeInputSchema = Schema.Struct({
+  failUntil: Schema.Number,
+  permanentOn: Schema.Number,
+  maxAttempts: Schema.Number,
+})
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+
 export const timerWorkflow = defineWorkflow('integrationTimerWorkflow', timerInputSchema, ({ timers, input }) =>
   timers
-    .start({ timeoutMs: input.timeoutMs ?? 1000 })
+    .start({ timeoutMs: input.timeoutMs ?? 1_000 })
     .pipe(Effect.map(() => 'timer-scheduled')),
 )
 
@@ -66,14 +89,127 @@ export const continueAsNewWorkflow = defineWorkflow(
   },
 )
 
+export const heartbeatWorkflow = defineWorkflow(
+  'integrationHeartbeatWorkflow',
+  heartbeatInputSchema,
+  ({ activities, input }) =>
+    activities
+      .schedule(
+        'integrationHeartbeatActivity',
+        [input.durationMs],
+        {
+          heartbeatTimeoutMs: input.heartbeatTimeoutMs ?? 1_000,
+          startToCloseTimeoutMs: input.durationMs + 1_000,
+        },
+      )
+      .pipe(Effect.map(() => 'heartbeat-complete')),
+)
+
+export const heartbeatTimeoutWorkflow = defineWorkflow(
+  'integrationHeartbeatTimeoutWorkflow',
+  heartbeatTimeoutInputSchema,
+  ({ activities, input }) =>
+    activities.schedule(
+      'integrationHeartbeatTimeoutActivity',
+      [
+        {
+          initialBeats: input.initialBeats ?? 2,
+          stallMs: input.stallMs ?? 2_000,
+        },
+      ],
+      {
+        heartbeatTimeoutMs: input.heartbeatTimeoutMs ?? 750,
+        startToCloseTimeoutMs: (input.stallMs ?? 2_000) + 1_000,
+      },
+    ),
+)
+
+export const retryProbeWorkflow = defineWorkflow(
+  'integrationRetryProbeWorkflow',
+  retryProbeInputSchema,
+  ({ activities, input }) =>
+    activities.schedule(
+      'integrationRetryProbeActivity',
+      [
+        {
+          failUntil: input.failUntil,
+          permanentOn: input.permanentOn,
+        },
+      ],
+      {
+        retry: {
+          maximumAttempts: input.maxAttempts,
+          initialIntervalMs: 200,
+          maximumIntervalMs: 2_000,
+          backoffCoefficient: 2,
+          nonRetryableErrorTypes: ['PermanentIntegrationError'],
+        },
+        startToCloseTimeoutMs: 10_000,
+      },
+    ),
+)
+
 export const integrationWorkflows = [
   timerWorkflow,
   activityWorkflow,
   childWorkflow,
   parentWorkflow,
   continueAsNewWorkflow,
+  heartbeatWorkflow,
+  heartbeatTimeoutWorkflow,
+  retryProbeWorkflow,
 ]
+
+const integrationHeartbeatActivity = async (durationMs: number): Promise<string> => {
+  const ctx = currentActivityContext()
+  const end = Date.now() + durationMs
+  while (Date.now() < end) {
+    if (ctx) {
+      await ctx.heartbeat({ tick: Date.now() })
+      ctx.throwIfCancelled()
+    }
+    await sleep(250)
+  }
+  return 'heartbeat-ok'
+}
+
+const integrationHeartbeatTimeoutActivity = async (options: {
+  initialBeats: number
+  stallMs: number
+}): Promise<void> => {
+  const ctx = currentActivityContext()
+  for (let index = 0; index < options.initialBeats; index += 1) {
+    if (ctx) {
+      await ctx.heartbeat({ stage: 'warmup', beat: index })
+    }
+    await sleep(250)
+  }
+  await sleep(options.stallMs)
+  ctx?.throwIfCancelled()
+}
+
+const integrationRetryProbeActivity = async (plan: {
+  failUntil: number
+  permanentOn: number
+}): Promise<string> => {
+  const ctx = currentActivityContext()
+  const attempt = (ctx?.info.attempt ?? 0) + 1
+  if (attempt >= plan.permanentOn) {
+    const permanent = new Error('Permanent failure')
+    permanent.name = 'PermanentIntegrationError'
+    throw permanent
+  }
+  if (attempt <= plan.failUntil) {
+    const retryable = new Error(`Retryable attempt ${attempt}`)
+    retryable.name = 'RetryableIntegrationError'
+    throw retryable
+  }
+  return `attempt-${attempt}`
+}
 
 export const integrationActivities = {
   integrationEchoActivity: async (value: unknown) => value,
+  integrationHeartbeatActivity,
+  integrationHeartbeatTimeoutActivity,
+  integrationRetryProbeActivity,
 }

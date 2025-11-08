@@ -10,6 +10,8 @@ const DEFAULT_WORKFLOW_CONCURRENCY = 4
 const DEFAULT_ACTIVITY_CONCURRENCY = 4
 const DEFAULT_STICKY_CACHE_SIZE = 128
 const DEFAULT_STICKY_CACHE_TTL_MS = 5 * 60_000
+const DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS = 5_000
+const DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS = 5_000
 
 interface TemporalEnvironment {
   TEMPORAL_ADDRESS?: string
@@ -31,6 +33,8 @@ interface TemporalEnvironment {
   TEMPORAL_ACTIVITY_CONCURRENCY?: string
   TEMPORAL_STICKY_CACHE_SIZE?: string
   TEMPORAL_STICKY_TTL_MS?: string
+  TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS?: string
+  TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS?: string
   TEMPORAL_WORKER_DEPLOYMENT_NAME?: string
   TEMPORAL_WORKER_BUILD_ID?: string
 }
@@ -68,6 +72,8 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     TEMPORAL_ACTIVITY_CONCURRENCY: read('TEMPORAL_ACTIVITY_CONCURRENCY'),
     TEMPORAL_STICKY_CACHE_SIZE: read('TEMPORAL_STICKY_CACHE_SIZE'),
     TEMPORAL_STICKY_TTL_MS: read('TEMPORAL_STICKY_TTL_MS'),
+    TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS: read('TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS'),
+    TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS: read('TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS'),
     TEMPORAL_WORKER_DEPLOYMENT_NAME: read('TEMPORAL_WORKER_DEPLOYMENT_NAME'),
     TEMPORAL_WORKER_BUILD_ID: read('TEMPORAL_WORKER_BUILD_ID'),
   }
@@ -137,6 +143,8 @@ export interface TemporalConfig {
   workerActivityConcurrency: number
   workerStickyCacheSize: number
   workerStickyTtlMs: number
+  activityHeartbeatIntervalMs: number
+  activityHeartbeatRpcTimeoutMs: number
   workerDeploymentName?: string
   workerBuildId?: string
 }
@@ -218,6 +226,20 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     'TEMPORAL_STICKY_CACHE_SIZE',
   )
   const workerStickyTtlMs = parseNonNegativeInt(env.TEMPORAL_STICKY_TTL_MS, fallbackStickyTtl, 'TEMPORAL_STICKY_TTL_MS')
+  const fallbackHeartbeatInterval =
+    options.defaults?.activityHeartbeatIntervalMs ?? DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS
+  const fallbackHeartbeatRpcTimeout =
+    options.defaults?.activityHeartbeatRpcTimeoutMs ?? DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS
+  const activityHeartbeatIntervalMs = parsePositiveInt(
+    env.TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS,
+    fallbackHeartbeatInterval,
+    'TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS',
+  )
+  const activityHeartbeatRpcTimeoutMs = parsePositiveInt(
+    env.TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS,
+    fallbackHeartbeatRpcTimeout,
+    'TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS',
+  )
   const workerDeploymentName = env.TEMPORAL_WORKER_DEPLOYMENT_NAME ?? options.defaults?.workerDeploymentName
   const workerBuildId = env.TEMPORAL_WORKER_BUILD_ID ?? options.defaults?.workerBuildId
   const allowInsecure =
@@ -251,6 +273,8 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     workerActivityConcurrency,
     workerStickyCacheSize,
     workerStickyTtlMs,
+    activityHeartbeatIntervalMs,
+    activityHeartbeatRpcTimeoutMs,
     workerDeploymentName,
     workerBuildId,
   }
@@ -267,6 +291,8 @@ export const temporalDefaults = {
   workerActivityConcurrency: DEFAULT_ACTIVITY_CONCURRENCY,
   workerStickyCacheSize: DEFAULT_STICKY_CACHE_SIZE,
   workerStickyTtlMs: DEFAULT_STICKY_CACHE_TTL_MS,
+  activityHeartbeatIntervalMs: DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS,
+  activityHeartbeatRpcTimeoutMs: DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS,
   workerDeploymentName: undefined,
   workerBuildId: undefined,
 } satisfies Pick<
@@ -281,6 +307,8 @@ export const temporalDefaults = {
   | 'workerActivityConcurrency'
   | 'workerStickyCacheSize'
   | 'workerStickyTtlMs'
+  | 'activityHeartbeatIntervalMs'
+  | 'activityHeartbeatRpcTimeoutMs'
   | 'workerDeploymentName'
   | 'workerBuildId'
 >

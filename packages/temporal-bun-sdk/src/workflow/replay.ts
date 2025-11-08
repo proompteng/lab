@@ -1,7 +1,7 @@
 import { create } from '@bufbuild/protobuf'
-import type { Duration } from '@bufbuild/protobuf/wkt'
 import { Effect } from 'effect'
 
+import { durationToMillis } from '../common/duration'
 import { type DataConverter, decodePayloadsToValues, encodeValuesToPayloads } from '../common/payloads'
 import { type Payloads, PayloadsSchema, type RetryPolicy } from '../proto/temporal/api/common/v1/message_pb'
 import { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
@@ -525,15 +525,6 @@ const decodePayloadArray = (
   payloads: Payloads | undefined,
 ): Effect.Effect<unknown[], unknown, never> =>
   Effect.tryPromise(async () => await decodePayloadsToValues(converter, payloads?.payloads ?? []))
-
-const durationToMillis = (duration: Duration | undefined): number | undefined => {
-  if (!duration) {
-    return undefined
-  }
-  const seconds = Number(duration.seconds ?? 0n)
-  const nanos = duration.nanos ?? 0
-  return seconds * 1_000 + Math.trunc(nanos / 1_000_000)
-}
 
 const convertRetryPolicy = (policy: RetryPolicy | undefined): WorkflowRetryPolicyInput | undefined => {
   if (!policy) {

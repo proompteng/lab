@@ -26,6 +26,9 @@ Effect-powered activities, and CLI tooling.
    export TEMPORAL_ADDRESS=127.0.0.1:7233
    export TEMPORAL_NAMESPACE=default
    export TEMPORAL_TASK_QUEUE=prix
+   # optional heartbeat tuning
+    export TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS=4000
+    export TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS=5000
    ```
 3. (Optional) Start the Temporal CLI dev server:
    ```bash
@@ -59,11 +62,16 @@ Effect-powered activities, and CLI tooling.
 - `src/workflows/index.ts` exports workflows built with `defineWorkflow` and Effect
   combinators. Verify all asynchronous logic is expressed through `Effect` to keep
   replay deterministic.
-- Activities (`src/activities/index.ts`) can leverage the upcoming lifecycle helpers
-  (see `packages/temporal-bun-sdk/src/activities/lifecycle.ts`) once implemented.
+- Activities (`src/activities/index.ts`) should use the lifecycle helpers
+  (`currentActivityContext().heartbeat`, `throwIfCancelled`) described in
+  `packages/temporal-bun-sdk/src/activities/lifecycle.ts`.
 - Advanced usage (replay, sticky cache, diagnostics) will require the shared Effect
   layers documented in `packages/temporal-bun-sdk/docs/production-design.md`.
   Track TODO markers (`TBS-001`, `TBS-002`, etc.) before extending the example.
+
+## Activity lifecycle & retries
+
+Activities can inspect `currentActivityContext()` to emit heartbeats, observe cancellation, and read attempt metadata. Heartbeats are throttled via `TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS` and retried until `TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS` elapses, so long-running handlers simply call `await ctx.heartbeat({ progress })` inside their loops. When you configure `retry` on `activities.schedule(...)`, WorkerRuntime now enforces the policy locally (initial interval, backoff coefficient, maximum interval, maximum attempts, and non-retryable error types) before surfacing a terminal failure, and the last heartbeat payload is attached to cancellation/failure responses for richer diagnostics.
 
 ## Packaging a Docker Image
 ```bash
