@@ -1,5 +1,6 @@
 import { Effect, Ref } from 'effect'
 
+import type { Counter } from '../observability/metrics'
 import type { WorkflowDeterminismState } from '../workflow/determinism'
 
 export interface StickyCacheKey {
@@ -13,11 +14,14 @@ export interface StickyCacheEntry {
   readonly determinismState: WorkflowDeterminismState
   readonly lastEventId: string | null
   readonly lastAccessed: number
+  readonly workflowType?: string
 }
 
 export interface StickyCacheConfig {
   readonly maxEntries: number
   readonly ttlMs: number
+  readonly metrics?: StickyCacheMetrics
+  readonly hooks?: StickyCacheHooks
 }
 
 export interface StickyCache {
@@ -27,77 +31,149 @@ export interface StickyCache {
   readonly size: Effect.Effect<number, never, never>
 }
 
-export const makeStickyCache = (config: StickyCacheConfig): Effect.Effect<StickyCache, never, never> =>
-  Effect.gen(function* () {
-    const state = yield* Ref.make<StickyCacheEntry[]>([])
+export interface StickyCacheMetrics {
+  readonly hits?: Counter
+  readonly misses?: Counter
+  readonly evictions?: Counter
+  readonly ttlExpirations?: Counter
+}
 
-    const evictExpired = (now: number, entries: StickyCacheEntry[]): StickyCacheEntry[] => {
-      if (config.ttlMs <= 0) {
-        return entries
-      }
-      return entries.filter((entry) => now - entry.lastAccessed <= config.ttlMs)
-    }
+export type StickyCacheEvictionReason = 'lru' | 'ttl' | 'manual'
 
-    const evictOverflow = (entries: StickyCacheEntry[]): StickyCacheEntry[] => {
-      if (config.maxEntries <= 0) {
-        return []
-      }
-      if (entries.length <= config.maxEntries) {
-        return entries
-      }
-      return entries
-        .slice()
-        .sort((left, right) => left.lastAccessed - right.lastAccessed)
-        .slice(entries.length - config.maxEntries)
-    }
+export interface StickyCacheHooks {
+  readonly onHit?: (entry: StickyCacheEntry) => Effect.Effect<void, never, never>
+  readonly onMiss?: (key: StickyCacheKey) => Effect.Effect<void, never, never>
+  readonly onEvict?: (entry: StickyCacheEntry, reason: StickyCacheEvictionReason) => Effect.Effect<void, never, never>
+}
 
-    const touch = (entry: StickyCacheEntry): StickyCacheEntry => ({
-      ...entry,
-      lastAccessed: Date.now(),
-    })
+const serializeKey = (key: StickyCacheKey): string => `${key.namespace}::${key.workflowId}::${key.runId}`
 
-    // TODO(TBS-001): Replace naive eviction with configurable strategy (LRU, LFU)
-    // and expose metrics describing cache churn.
+const recordCounter = (counter?: Counter, value = 1) => (counter ? counter.inc(value) : Effect.void)
+
+export const makeStickyCache = (config: StickyCacheConfig): Effect.Effect<StickyCache, never, never> => {
+  if (config.maxEntries <= 0) {
+    return Effect.succeed(makeDisabledStickyCache())
+  }
+  return Effect.gen(function* () {
+    const state = yield* Ref.make(new Map<string, StickyCacheEntry>())
+    const ttlMs = config.ttlMs > 0 ? config.ttlMs : 0
+    const metrics = config.metrics
+    const hooks = config.hooks
+    const maxEntries = Math.max(0, config.maxEntries)
+
+    const recordHit = () => recordCounter(metrics?.hits)
+    const recordMiss = () => recordCounter(metrics?.misses)
+    const recordEviction = (entry: StickyCacheEntry, reason: StickyCacheEvictionReason) =>
+      Effect.gen(function* () {
+        if (reason === 'ttl') {
+          yield* recordCounter(metrics?.ttlExpirations)
+        }
+        if (reason === 'lru' || reason === 'ttl') {
+          yield* recordCounter(metrics?.evictions)
+        }
+        if (hooks?.onEvict) {
+          yield* hooks.onEvict(entry, reason)
+        }
+      })
 
     const upsert: StickyCache['upsert'] = (entry) =>
-      Ref.update(state, (entries) => {
+      Effect.gen(function* () {
         const now = Date.now()
-        const sanitized = evictOverflow(evictExpired(now, entries))
-        const filtered = sanitized.filter(
-          (candidate) =>
-            candidate.key.namespace !== entry.key.namespace ||
-            candidate.key.workflowId !== entry.key.workflowId ||
-            candidate.key.runId !== entry.key.runId,
-        )
-        const nextEntries = [...filtered, touch(entry)]
-        return evictOverflow(nextEntries)
+        const evicted = yield* Ref.modify(state, (map) => {
+          const next = new Map(map)
+          const id = serializeKey(entry.key)
+          const normalized: StickyCacheEntry = {
+            ...entry,
+            lastAccessed: now,
+          }
+          next.delete(id)
+          next.set(id, normalized)
+
+          const evictedEntries: StickyCacheEntry[] = []
+          while (maxEntries > 0 && next.size > maxEntries) {
+            const oldestKey = next.keys().next().value as string | undefined
+            if (!oldestKey) {
+              break
+            }
+            const oldest = next.get(oldestKey)
+            if (!oldest) {
+              break
+            }
+            next.delete(oldestKey)
+            evictedEntries.push(oldest)
+          }
+
+          return [evictedEntries, next] as const
+        })
+
+        for (const evictedEntry of evicted) {
+          yield* recordEviction(evictedEntry, 'lru')
+        }
       })
 
     const get: StickyCache['get'] = (key) =>
-      Ref.modify(state, (entries) => {
+      Effect.gen(function* () {
         const now = Date.now()
-        const sanitized = evictExpired(now, entries)
-        const found = sanitized.find(
-          (entry) =>
-            entry.key.namespace === key.namespace &&
-            entry.key.workflowId === key.workflowId &&
-            entry.key.runId === key.runId,
-        )
-        const updated = found ? sanitized.map((entry) => (entry === found ? touch(entry) : entry)) : sanitized
-        return [found, updated] as const
+        const result = yield* Ref.modify(state, (map) => {
+          const next = new Map(map)
+          const id = serializeKey(key)
+          const existing = next.get(id)
+          if (!existing) {
+            return [{ kind: 'miss' as const }, map] as const
+          }
+          if (ttlMs > 0 && now - existing.lastAccessed > ttlMs) {
+            next.delete(id)
+            return [{ kind: 'expired' as const, entry: existing }, next] as const
+          }
+          const updated = { ...existing, lastAccessed: now }
+          next.delete(id)
+          next.set(id, updated)
+          return [{ kind: 'hit' as const, entry: updated }, next] as const
+        })
+
+        if (result.kind === 'hit') {
+          yield* recordHit()
+          if (hooks?.onHit) {
+            yield* hooks.onHit(result.entry)
+          }
+          return result.entry
+        }
+
+        if (result.kind === 'expired') {
+          yield* recordEviction(result.entry, 'ttl')
+          yield* recordMiss()
+          if (hooks?.onMiss) {
+            yield* hooks.onMiss(key)
+          }
+          return undefined
+        }
+
+        // miss
+        yield* recordMiss()
+        if (hooks?.onMiss) {
+          yield* hooks.onMiss(key)
+        }
+        return undefined
       })
 
     const remove: StickyCache['remove'] = (key) =>
-      Ref.update(state, (entries) =>
-        entries.filter(
-          (entry) =>
-            entry.key.namespace !== key.namespace ||
-            entry.key.workflowId !== key.workflowId ||
-            entry.key.runId !== key.runId,
-        ),
-      )
+      Effect.gen(function* () {
+        const removed = yield* Ref.modify(state, (map) => {
+          const next = new Map(map)
+          const id = serializeKey(key)
+          const existing = next.get(id)
+          if (existing) {
+            next.delete(id)
+          }
+          return [existing, next] as const
+        })
 
-    const size = Ref.get(state).pipe(Effect.map((entries) => entries.length))
+        if (removed) {
+          yield* recordEviction(removed, 'manual')
+        }
+      })
+
+    const size = Ref.get(state).pipe(Effect.map((map) => map.size))
 
     return {
       upsert,
@@ -106,3 +182,11 @@ export const makeStickyCache = (config: StickyCacheConfig): Effect.Effect<Sticky
       size,
     }
   })
+}
+
+const makeDisabledStickyCache = (): StickyCache => ({
+  upsert: () => Effect.void,
+  get: () => Effect.succeed(undefined),
+  remove: () => Effect.void,
+  size: Effect.succeed(0),
+})

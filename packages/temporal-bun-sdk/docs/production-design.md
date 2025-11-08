@@ -145,6 +145,8 @@ can contribute independently without re-planning.
   - Determinism snapshots are persisted as `temporal-bun-sdk/determinism` record markers (schema v1) that bundle command history, random/time streams, and the last processed event id. The marker payload is stored via the configured `DataConverter`.
   - `TEMPORAL_STICKY_CACHE_SIZE` and `TEMPORAL_STICKY_TTL_MS` control cache capacity and eviction; the sticky worker queue schedule-to-start timeout inherits from the TTL so increasing it lengthens deterministic affinity.
   - `tests/integration/harness.ts` provides a Temporal CLI-backed harness that starts the dev server, executes workflows (`temporal workflow execute`), fetches JSON history (`temporal workflow show --output json`), and feeds the ingestion pipeline. Tests log a skip when the CLI is unavailable instead of failing hard.
+  - Sticky cache decisions are now instrumented with counters (`hits`, `misses`, `evictions`, `heal`) and structured logs so nondeterminism causes can be traced via `WorkflowNondeterminismError.details`.
+  - Replay fixtures live under `tests/replay/fixtures/*.json` with a dedicated harness (`tests/replay/fixtures.test.ts`) that locks determinism outputs to real histories.
 - **Dependencies**
   - Optional integration with TBS-004 for logging metrics.
   - Provides determinism snapshot for TBS-003 scheduler.

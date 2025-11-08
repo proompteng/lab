@@ -34,6 +34,7 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    TEMPORAL_ACTIVITY_CONCURRENCY=4                  # optional – activity pollers
    TEMPORAL_STICKY_CACHE_SIZE=256                   # optional – determinism cache capacity
    TEMPORAL_STICKY_TTL_MS=300000                    # optional – eviction TTL in ms
+   TEMPORAL_STICKY_SCHEDULING_ENABLED=1             # optional – disable to bypass sticky scheduling
    TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS=4000     # optional – heartbeat throttle interval in ms
    TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS=5000  # optional – heartbeat RPC timeout in ms
    TEMPORAL_WORKER_DEPLOYMENT_NAME=prix-deploy      # optional – worker deployment metadata

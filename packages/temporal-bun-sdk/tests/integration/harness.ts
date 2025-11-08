@@ -115,6 +115,11 @@ export const createIntegrationHarness = (
       if (started) {
         return
       }
+      if (reuseExistingServer) {
+        console.info('[temporal-bun-sdk] reusing existing Temporal dev server')
+        started = true
+        return
+      }
       const child = Bun.spawn(['bun', startScript], {
         cwd: projectRoot,
         stdout: 'pipe',
@@ -144,6 +149,10 @@ export const createIntegrationHarness = (
 
     const teardown = Effect.tryPromise(async () => {
       if (!started) {
+        return
+      }
+      if (reuseExistingServer) {
+        console.info('[temporal-bun-sdk] leaving Temporal dev server running (reuse enabled)')
         return
       }
       const child = Bun.spawn(['bun', stopScript], {
@@ -537,3 +546,4 @@ const withEnvironment = <A, E, R>(
         }
       }),
   )
+    const reuseExistingServer = process.env.TEMPORAL_TEST_SERVER === '1'

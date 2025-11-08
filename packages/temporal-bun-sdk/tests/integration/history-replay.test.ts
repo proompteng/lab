@@ -239,6 +239,17 @@ describe('Temporal CLI history ingestion', () => {
       expect(size).toBeLessThanOrEqual(2)
     })
   })
+
+  test('sticky cache remains empty after workflow completion', async () => {
+    await runOrSkip('sticky cache cleanup', async () => {
+      if (!stickyCacheSizeEffect) {
+        throw new Error('Sticky cache not initialised')
+      }
+      await runTimerWorkflow()
+      const size = await Effect.runPromise(stickyCacheSizeEffect)
+      expect(size).toBe(0)
+    })
+  })
 })
 
 const runTimerWorkflow = async (): Promise<WorkflowExecutionHandle> => {
