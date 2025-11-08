@@ -1,0 +1,70 @@
+{
+  "name": "activity-retry-workflow",
+  "info": {
+    "workflowType": "activityWorkflow",
+    "namespace": "default",
+    "taskQueue": "prix",
+    "workflowId": "fixture-activity",
+    "runId": "fixture-activity-run",
+    "temporalVersion": "dev-fixture"
+  },
+  "history": [
+    {
+      "eventId": "10",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "version": "0",
+      "taskId": "0",
+      "workerMayIgnore": false,
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "fixture-activity-1",
+        "workflowTaskCompletedEventId": "9",
+        "useWorkflowBuildId": false,
+        "activityType": {
+          "name": "recordMetric"
+        },
+        "taskQueue": {
+          "name": "prix",
+          "kind": 0,
+          "normalName": ""
+        },
+        "input": {
+          "payloads": []
+        },
+        "retryPolicy": {
+          "backoffCoefficient": 2,
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [],
+          "initialInterval": "1s"
+        }
+      }
+    }
+  ],
+  "expectedDeterminismState": {
+    "commandHistory": [
+      {
+        "intent": {
+          "id": "schedule-activity-0",
+          "kind": "schedule-activity",
+          "sequence": 0,
+          "activityType": "recordMetric",
+          "activityId": "fixture-activity-1",
+          "taskQueue": "prix",
+          "input": [],
+          "timeouts": {},
+          "retry": {
+            "initialIntervalMs": 1000,
+            "maximumAttempts": 3,
+            "backoffCoefficient": 2
+          }
+        },
+        "metadata": {
+          "eventId": "10",
+          "eventType": 10,
+          "workflowTaskCompletedEventId": "9"
+        }
+      }
+    ],
+    "randomValues": [],
+    "timeValues": []
+  }
+}

@@ -238,7 +238,11 @@ test('tampered determinism state throws WorkflowNondeterminismError', async () =
 })
 
 const cloneState = (state: WorkflowDeterminismState): WorkflowDeterminismState => ({
-  commandHistory: state.commandHistory.map((entry) => ({ intent: entry.intent })),
+  commandHistory: state.commandHistory.map((entry) => ({
+    intent: entry.intent,
+    metadata: entry.metadata ? { ...entry.metadata } : undefined,
+  })),
   randomValues: [...state.randomValues],
   timeValues: [...state.timeValues],
+  failureMetadata: state.failureMetadata ? { ...state.failureMetadata } : undefined,
 })

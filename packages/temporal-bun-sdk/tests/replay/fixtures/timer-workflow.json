@@ -1,0 +1,45 @@
+{
+  "name": "timer-workflow",
+  "info": {
+    "workflowType": "timerWorkflow",
+    "namespace": "default",
+    "taskQueue": "prix",
+    "workflowId": "fixture-timer",
+    "runId": "fixture-timer-run",
+    "temporalVersion": "dev-fixture"
+  },
+  "history": [
+    {
+      "eventId": "1",
+      "eventType": "EVENT_TYPE_TIMER_STARTED",
+      "version": "0",
+      "taskId": "0",
+      "workerMayIgnore": false,
+      "timerStartedEventAttributes": {
+        "timerId": "fixture-timer-0",
+        "workflowTaskCompletedEventId": "0",
+        "startToFireTimeout": "1s"
+      }
+    }
+  ],
+  "expectedDeterminismState": {
+    "commandHistory": [
+      {
+        "intent": {
+          "id": "start-timer-0",
+          "kind": "start-timer",
+          "sequence": 0,
+          "timerId": "fixture-timer-0",
+          "timeoutMs": 1000
+        },
+        "metadata": {
+          "eventId": "1",
+          "eventType": 17,
+          "workflowTaskCompletedEventId": "0"
+        }
+      }
+    ],
+    "randomValues": [],
+    "timeValues": []
+  }
+}

@@ -5,7 +5,8 @@ import { durationToMillis } from '../common/duration'
 import { type DataConverter, decodePayloadsToValues, encodeValuesToPayloads } from '../common/payloads'
 import { type Payloads, PayloadsSchema, type RetryPolicy } from '../proto/temporal/api/common/v1/message_pb'
 import { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
-import { ParentClosePolicy, WorkflowIdReusePolicy } from '../proto/temporal/api/enums/v1/workflow_pb'
+import { ParentClosePolicy, TimeoutType, WorkflowIdReusePolicy } from '../proto/temporal/api/enums/v1/workflow_pb'
+import type { Failure } from '../proto/temporal/api/failure/v1/message_pb'
 import type {
   ActivityTaskScheduledEventAttributes,
   HistoryEvent,
@@ -13,6 +14,10 @@ import type {
   StartChildWorkflowExecutionInitiatedEventAttributes,
   TimerStartedEventAttributes,
   WorkflowExecutionContinuedAsNewEventAttributes,
+  WorkflowExecutionFailedEventAttributes,
+  WorkflowExecutionTimedOutEventAttributes,
+  WorkflowTaskFailedEventAttributes,
+  WorkflowTaskTimedOutEventAttributes,
 } from '../proto/temporal/api/history/v1/message_pb'
 import type {
   ContinueAsNewWorkflowCommandIntent,
@@ -23,7 +28,13 @@ import type {
   WorkflowCommandIntent,
 } from './commands'
 import type { WorkflowInfo } from './context'
-import type { WorkflowCommandHistoryEntry, WorkflowDeterminismState, WorkflowRetryPolicyInput } from './determinism'
+import type {
+  WorkflowCommandHistoryEntry,
+  WorkflowCommandHistoryEntryMetadata,
+  WorkflowDeterminismFailureMetadata,
+  WorkflowDeterminismState,
+  WorkflowRetryPolicyInput,
+} from './determinism'
 import { intentsEqual } from './determinism'
 
 export interface ReplayIntake {
@@ -62,6 +73,10 @@ export interface DeterminismMismatchCommand {
   readonly index: number
   readonly expected?: WorkflowCommandIntent
   readonly actual?: WorkflowCommandIntent
+  readonly expectedEventId?: string | null
+  readonly actualEventId?: string | null
+  readonly workflowTaskCompletedEventId?: string | null
+  readonly eventType?: EventType
 }
 
 export interface DeterminismMismatchRandom {
@@ -151,7 +166,7 @@ export const decodeDeterminismMarkerEnvelope = (
  */
 export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<ReplayResult, unknown, never> =>
   Effect.gen(function* () {
-    const events = intake.history ?? []
+    const events = sortHistoryEvents(intake.history ?? [])
     let markerSnapshot: DeterminismMarkerEnvelope | undefined
 
     for (const event of events) {
@@ -175,16 +190,24 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
       }
     }
 
+    const extractedFailureMetadata = extractFailureMetadata(events)
+
     if (markerSnapshot) {
+      const determinismState: WorkflowDeterminismState = markerSnapshot.determinismState.failureMetadata
+        ? markerSnapshot.determinismState
+        : {
+            ...markerSnapshot.determinismState,
+            ...(extractedFailureMetadata ? { failureMetadata: extractedFailureMetadata } : {}),
+          }
       const latestEventId = resolveHistoryLastEventId(events) ?? markerSnapshot.lastEventId ?? null
       return {
-        determinismState: markerSnapshot.determinismState,
+        determinismState,
         lastEventId: latestEventId,
         hasDeterminismMarker: true,
       }
     }
 
-    return yield* reconstructDeterminismState(events, intake)
+    return yield* reconstructDeterminismState(events, intake, extractedFailureMetadata)
   })
 
 /**
@@ -200,8 +223,11 @@ export const diffDeterminismState = (
 
     const maxCommands = Math.max(expected.commandHistory.length, actual.commandHistory.length)
     for (let index = 0; index < maxCommands; index += 1) {
-      const expectedIntent = expected.commandHistory[index]?.intent
-      const actualIntent = actual.commandHistory[index]?.intent
+      const expectedEntry = expected.commandHistory[index]
+      const actualEntry = actual.commandHistory[index]
+      const expectedIntent = expectedEntry?.intent
+      const actualIntent = actualEntry?.intent
+      const metadata = resolveCommandMismatchMetadata(expectedEntry, actualEntry)
       if (!expectedIntent || !actualIntent) {
         if (expectedIntent !== actualIntent) {
           mismatches.push({
@@ -209,6 +235,7 @@ export const diffDeterminismState = (
             index,
             expected: expectedIntent,
             actual: actualIntent,
+            ...metadata,
           })
         }
         continue
@@ -219,6 +246,7 @@ export const diffDeterminismState = (
           index,
           expected: expectedIntent,
           actual: actualIntent,
+          ...metadata,
         })
       }
     }
@@ -273,14 +301,195 @@ export const resolveHistoryLastEventId = (events: HistoryEvent[]): string | null
 }
 
 export const cloneDeterminismState = (state: WorkflowDeterminismState): WorkflowDeterminismState => ({
-  commandHistory: state.commandHistory.map((entry) => ({ intent: entry.intent })),
+  commandHistory: state.commandHistory.map((entry) => ({
+    intent: entry.intent,
+    metadata: entry.metadata ? { ...entry.metadata } : undefined,
+  })),
   randomValues: [...state.randomValues],
   timeValues: [...state.timeValues],
+  failureMetadata: state.failureMetadata ? { ...state.failureMetadata } : undefined,
 })
+
+const sortHistoryEvents = (events: HistoryEvent[]): HistoryEvent[] =>
+  events.slice().sort((left, right) => {
+    const leftId = resolveEventIdForSort(left)
+    const rightId = resolveEventIdForSort(right)
+    if (leftId === rightId) {
+      return 0
+    }
+    return leftId < rightId ? -1 : 1
+  })
+
+const resolveEventIdForSort = (event: HistoryEvent): bigint => {
+  const { eventId } = event
+  if (typeof eventId === 'bigint') {
+    return eventId
+  }
+  if (typeof eventId === 'number' && Number.isFinite(eventId)) {
+    return BigInt(eventId)
+  }
+  if (typeof eventId === 'string' && eventId.length > 0) {
+    try {
+      return BigInt(eventId)
+    } catch {
+      return 0n
+    }
+  }
+  return 0n
+}
+
+const buildCommandMetadata = (
+  event: HistoryEvent,
+  attributes: unknown,
+): WorkflowCommandHistoryEntryMetadata | undefined => {
+  const eventId = normalizeEventId(event.eventId)
+  const workflowTaskCompletedEventId = resolveWorkflowTaskCompletedEventId(attributes)
+  const eventType = event.eventType
+  if (!eventId && !workflowTaskCompletedEventId && (eventType === undefined || eventType === EventType.UNSPECIFIED)) {
+    return undefined
+  }
+  return {
+    ...(eventId !== null ? { eventId } : {}),
+    ...(typeof eventType === 'number' ? { eventType } : {}),
+    ...(workflowTaskCompletedEventId ? { workflowTaskCompletedEventId } : {}),
+  }
+}
+
+const resolveWorkflowTaskCompletedEventId = (attributes: unknown): string | null => {
+  if (!attributes || typeof attributes !== 'object') {
+    return null
+  }
+  const candidate = (attributes as { workflowTaskCompletedEventId?: unknown }).workflowTaskCompletedEventId
+  if (candidate === undefined || candidate === null) {
+    return null
+  }
+  try {
+    return normalizeEventId(candidate)
+  } catch {
+    return null
+  }
+}
+
+const extractFailureMetadata = (events: HistoryEvent[]): WorkflowDeterminismFailureMetadata | undefined => {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const metadata = buildFailureMetadata(events[index])
+    if (metadata) {
+      return metadata
+    }
+  }
+  return undefined
+}
+
+const buildFailureMetadata = (event: HistoryEvent): WorkflowDeterminismFailureMetadata | undefined => {
+  const eventId = normalizeEventId(event.eventId)
+  switch (event.eventType) {
+    case EventType.WORKFLOW_EXECUTION_FAILED: {
+      if (event.attributes?.case !== 'workflowExecutionFailedEventAttributes') {
+        return undefined
+      }
+      const attributes = event.attributes.value as WorkflowExecutionFailedEventAttributes
+      return {
+        eventId,
+        eventType: event.eventType,
+        failureType: resolveFailureType(attributes.failure),
+        failureMessage: attributes.failure?.message ?? undefined,
+        retryState: attributes.retryState !== undefined ? Number(attributes.retryState) : undefined,
+      }
+    }
+    case EventType.WORKFLOW_EXECUTION_TIMED_OUT: {
+      if (event.attributes?.case !== 'workflowExecutionTimedOutEventAttributes') {
+        return undefined
+      }
+      const attributes = event.attributes.value as WorkflowExecutionTimedOutEventAttributes
+      return {
+        eventId,
+        eventType: event.eventType,
+        failureType: 'WORKFLOW_EXECUTION_TIMED_OUT',
+        failureMessage: undefined,
+        retryState: attributes.retryState !== undefined ? Number(attributes.retryState) : undefined,
+      }
+    }
+    case EventType.WORKFLOW_TASK_FAILED: {
+      if (event.attributes?.case !== 'workflowTaskFailedEventAttributes') {
+        return undefined
+      }
+      const attributes = event.attributes.value as WorkflowTaskFailedEventAttributes
+      return {
+        eventId,
+        eventType: event.eventType,
+        failureType: resolveFailureType(attributes.failure),
+        failureMessage: attributes.failure?.message ?? undefined,
+      }
+    }
+    case EventType.WORKFLOW_TASK_TIMED_OUT: {
+      if (event.attributes?.case !== 'workflowTaskTimedOutEventAttributes') {
+        return undefined
+      }
+      const attributes = event.attributes.value as WorkflowTaskTimedOutEventAttributes
+      const timeoutTypeName = TimeoutType[attributes.timeoutType] ?? 'TIMEOUT_TYPE_UNSPECIFIED'
+      return {
+        eventId,
+        eventType: event.eventType,
+        failureType: `WORKFLOW_TASK_TIMED_OUT:${timeoutTypeName}`,
+      }
+    }
+    default:
+      return undefined
+  }
+}
+
+const resolveFailureType = (failure: Failure | undefined): string | undefined => {
+  if (!failure) {
+    return undefined
+  }
+  switch (failure.failureInfo?.case) {
+    case 'applicationFailureInfo':
+      return failure.failureInfo.value.type || 'ApplicationFailure'
+    case 'timeoutFailureInfo': {
+      const timeoutName = TimeoutType[failure.failureInfo.value.timeoutType] ?? 'TIMEOUT_TYPE_UNSPECIFIED'
+      return `Timeout:${timeoutName}`
+    }
+    case 'activityFailureInfo':
+      return 'ActivityFailure'
+    case 'childWorkflowExecutionFailureInfo':
+      return 'ChildWorkflowFailure'
+    case 'canceledFailureInfo':
+      return 'CanceledFailure'
+    case 'terminatedFailureInfo':
+      return 'TerminatedFailure'
+    case 'serverFailureInfo':
+      return 'ServerFailure'
+    case 'resetWorkflowFailureInfo':
+      return 'ResetWorkflowFailure'
+    default:
+      return failure.failureInfo?.case ?? failure.source ?? failure.message ?? undefined
+  }
+}
+
+const resolveCommandMismatchMetadata = (
+  expectedEntry: WorkflowCommandHistoryEntry | undefined,
+  actualEntry: WorkflowCommandHistoryEntry | undefined,
+): Pick<
+  DeterminismMismatchCommand,
+  'expectedEventId' | 'actualEventId' | 'workflowTaskCompletedEventId' | 'eventType'
+> => {
+  const expectedMetadata = expectedEntry?.metadata
+  const actualMetadata = actualEntry?.metadata
+  const workflowTaskCompletedEventId =
+    expectedMetadata?.workflowTaskCompletedEventId ?? actualMetadata?.workflowTaskCompletedEventId ?? null
+  const eventType = expectedMetadata?.eventType ?? actualMetadata?.eventType
+  return {
+    expectedEventId: expectedMetadata?.eventId ?? null,
+    actualEventId: actualMetadata?.eventId ?? null,
+    workflowTaskCompletedEventId,
+    eventType,
+  }
+}
 
 const reconstructDeterminismState = (
   events: HistoryEvent[],
   intake: ReplayIntake,
+  failureMetadata?: WorkflowDeterminismFailureMetadata,
 ): Effect.Effect<ReplayResult, unknown, never> =>
   Effect.gen(function* () {
     let sequence = 0
@@ -294,7 +503,10 @@ const reconstructDeterminismState = (
           }
           const intent = yield* fromActivityTaskScheduled(event.attributes.value, sequence, intake)
           if (intent) {
-            commandHistory.push({ intent })
+            commandHistory.push({
+              intent,
+              metadata: buildCommandMetadata(event, event.attributes.value),
+            })
             sequence += 1
           }
           break
@@ -305,7 +517,10 @@ const reconstructDeterminismState = (
           }
           const intent = fromTimerStarted(event.attributes.value, sequence)
           if (intent) {
-            commandHistory.push({ intent })
+            commandHistory.push({
+              intent,
+              metadata: buildCommandMetadata(event, event.attributes.value),
+            })
             sequence += 1
           }
           break
@@ -316,7 +531,10 @@ const reconstructDeterminismState = (
           }
           const intent = yield* fromStartChildWorkflow(event.attributes.value, sequence, intake)
           if (intent) {
-            commandHistory.push({ intent })
+            commandHistory.push({
+              intent,
+              metadata: buildCommandMetadata(event, event.attributes.value),
+            })
             sequence += 1
           }
           break
@@ -327,7 +545,10 @@ const reconstructDeterminismState = (
           }
           const intent = yield* fromSignalExternalWorkflow(event.attributes.value, sequence, intake)
           if (intent) {
-            commandHistory.push({ intent })
+            commandHistory.push({
+              intent,
+              metadata: buildCommandMetadata(event, event.attributes.value),
+            })
             sequence += 1
           }
           break
@@ -338,7 +559,10 @@ const reconstructDeterminismState = (
           }
           const intent = yield* fromContinueAsNew(event.attributes.value, sequence, intake)
           if (intent) {
-            commandHistory.push({ intent })
+            commandHistory.push({
+              intent,
+              metadata: buildCommandMetadata(event, event.attributes.value),
+            })
             sequence += 1
           }
           break
@@ -353,6 +577,7 @@ const reconstructDeterminismState = (
         commandHistory,
         randomValues: [],
         timeValues: [],
+        ...(failureMetadata ? { failureMetadata } : {}),
       },
       lastEventId: resolveHistoryLastEventId(events),
       hasDeterminismMarker: false,
@@ -607,18 +832,73 @@ const sanitizeDeterminismState = (value: unknown): WorkflowDeterminismState => {
     if (!isRecord(entry) || entry.intent === undefined) {
       throw new Error(`Determinism marker command history entry ${index} is invalid`)
     }
+    const metadata = sanitizeCommandMetadata(entry.metadata, index)
     return {
       intent: entry.intent as WorkflowDeterminismState['commandHistory'][number]['intent'],
+      ...(metadata ? { metadata } : {}),
     }
   })
 
   const randomValues = randomValuesRaw.map((val, index) => coerceNumber(val, `determinism.randomValues[${index}]`))
   const timeValues = timeValuesRaw.map((val, index) => coerceNumber(val, `determinism.timeValues[${index}]`))
+  const failureMetadata = sanitizeFailureMetadata(value.failureMetadata)
 
   return {
     commandHistory,
     randomValues,
     timeValues,
+    ...(failureMetadata ? { failureMetadata } : {}),
+  }
+}
+
+const sanitizeCommandMetadata = (value: unknown, index: number): WorkflowCommandHistoryEntryMetadata | undefined => {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  if (!isRecord(value)) {
+    throw new Error(`Determinism marker command history entry ${index} metadata is invalid`)
+  }
+  const eventId = normalizeOptionalEventId(value.eventId, `determinism.commandHistory[${index}].metadata.eventId`)
+  const workflowTaskCompletedEventId = normalizeOptionalEventId(
+    value.workflowTaskCompletedEventId,
+    `determinism.commandHistory[${index}].metadata.workflowTaskCompletedEventId`,
+  )
+  const eventTypeValue = value.eventType
+  const eventType =
+    typeof eventTypeValue === 'number' && Number.isFinite(eventTypeValue) ? (eventTypeValue as EventType) : undefined
+  const hasMetadata = eventId || workflowTaskCompletedEventId || eventType !== undefined
+  if (!hasMetadata) {
+    return undefined
+  }
+  return {
+    ...(eventId ? { eventId } : {}),
+    ...(workflowTaskCompletedEventId ? { workflowTaskCompletedEventId } : {}),
+    ...(eventType !== undefined ? { eventType } : {}),
+  }
+}
+
+const sanitizeFailureMetadata = (value: unknown): WorkflowDeterminismFailureMetadata | undefined => {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  if (!isRecord(value)) {
+    throw new Error('Determinism marker contained invalid failure metadata')
+  }
+  const eventId = normalizeOptionalEventId(value.eventId, 'determinism.failureMetadata.eventId')
+  const failureType = coerceOptionalString(value.failureType, 'determinism.failureMetadata.failureType')
+  const failureMessage = coerceOptionalString(value.failureMessage, 'determinism.failureMetadata.failureMessage')
+  const workflowEventType =
+    typeof value.eventType === 'number' && Number.isFinite(value.eventType) ? (value.eventType as EventType) : undefined
+  const retryState = coerceOptionalNumber(value.retryState, 'determinism.failureMetadata.retryState')
+  if (!eventId && !failureType && !failureMessage && workflowEventType === undefined && retryState === undefined) {
+    return undefined
+  }
+  return {
+    ...(eventId ? { eventId } : {}),
+    ...(workflowEventType !== undefined ? { eventType: workflowEventType } : {}),
+    ...(failureType ? { failureType } : {}),
+    ...(failureMessage ? { failureMessage } : {}),
+    ...(retryState !== undefined ? { retryState } : {}),
   }
 }
 
@@ -655,6 +935,16 @@ const coerceString = (value: unknown, label: string): string => {
   throw new Error(`Determinism marker missing ${label}`)
 }
 
+const coerceOptionalString = (value: unknown, label: string): string | undefined => {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  if (typeof value !== 'string') {
+    throw new Error(`Determinism marker contained invalid ${label}`)
+  }
+  return value.length > 0 ? value : undefined
+}
+
 const coerceNumber = (value: unknown, label: string): number => {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value
@@ -666,6 +956,24 @@ const coerceNumber = (value: unknown, label: string): number => {
     }
   }
   throw new Error(`Determinism marker contained non-finite ${label}`)
+}
+
+const coerceOptionalNumber = (value: unknown, label: string): number | undefined => {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  return coerceNumber(value, label)
+}
+
+const normalizeOptionalEventId = (value: unknown, label: string): string | undefined => {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  try {
+    return normalizeEventId(value) ?? undefined
+  } catch {
+    throw new Error(`Determinism marker contained invalid ${label}`)
+  }
 }
 
 const valuesEqual = (expected: number | undefined, actual: number | undefined): boolean => {
