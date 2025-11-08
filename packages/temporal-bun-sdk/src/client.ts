@@ -70,6 +70,7 @@ export interface CreateTemporalClientOptions {
   identity?: string
   taskQueue?: string
   dataConverter?: DataConverter
+  workflowService?: WorkflowServiceClient
 }
 
 export const createTemporalClient = async (
@@ -82,11 +83,16 @@ export const createTemporalClient = async (
   const taskQueue = options.taskQueue ?? config.taskQueue
   const dataConverter = options.dataConverter ?? createDefaultDataConverter()
   const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
-
-  const baseUrl = normalizeTemporalAddress(config.address, shouldUseTls)
-  const transportOptions = buildTransportOptions(baseUrl, config)
-  const transport = createGrpcTransport(transportOptions)
-  const workflowService = createClient(WorkflowService, transport)
+  let transport: ClosableTransport | undefined
+  const workflowService = options.workflowService
+    ? options.workflowService
+    : (() => {
+        const baseUrl = normalizeTemporalAddress(config.address, shouldUseTls)
+        const transportOptions = buildTransportOptions(baseUrl, config)
+        const created = createGrpcTransport(transportOptions)
+        transport = created
+        return createClient(WorkflowService, created)
+      })()
 
   const initialHeaders = createDefaultHeaders(config.apiKey)
 
@@ -110,7 +116,7 @@ class TemporalClientImpl implements TemporalClient {
   readonly dataConverter: DataConverter
   readonly workflow: TemporalWorkflowClient
 
-  private readonly transport: ClosableTransport
+  private readonly transport: ClosableTransport | undefined
   private readonly workflowService: WorkflowServiceClient
   private readonly defaultIdentity: string
   private readonly defaultTaskQueue: string
@@ -118,7 +124,7 @@ class TemporalClientImpl implements TemporalClient {
   private headers: Record<string, string>
 
   constructor(handles: {
-    transport: ClosableTransport
+    transport?: ClosableTransport
     workflowService: WorkflowServiceClient
     config: TemporalConfig
     namespace: string
@@ -287,9 +293,8 @@ class TemporalClientImpl implements TemporalClient {
     if (this.closed) return
     this.closed = true
 
-    const maybeClose = this.transport.close
-    if (typeof maybeClose === 'function') {
-      await maybeClose.call(this.transport)
+    if (this.transport && typeof this.transport.close === 'function') {
+      await this.transport.close()
     }
   }
 

@@ -36,6 +36,10 @@
       "types": "./dist/src/workflow/runtime/index.d.ts",
       "default": "./dist/src/workflow/runtime/index.js"
     },
+    "./runtime/effect-layers": {
+      "types": "./dist/src/runtime/effect-layers.d.ts",
+      "default": "./dist/src/runtime/effect-layers.js"
+    },
     "./worker": {
       "types": "./dist/src/worker.d.ts",
       "default": "./dist/src/worker.js"

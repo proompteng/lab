@@ -105,6 +105,20 @@ can contribute independently without re-planning.
 
 ### TBS-010 – Effect Architecture
 
+- `src/runtime/effect-layers.ts` now exposes `BaseRuntimeLayer`, `makeWorkerLayer`, and
+  the `WorkerRuntimeService` tag so worker runtime, CLI, and tooling can share managed
+  config/logger/metrics/workflow service/sticky cache/scheduler resources.
+- `src/worker/runtime.ts` runs entirely inside scoped `Effect` programs—pollers,
+  scheduler lifecycle, and sticky cache access are fiber-driven, enabling graceful
+  interruption from CLI signal handlers instead of `AbortController`s.
+- `src/worker.ts` bootstraps through the new layers while preserving the legacy
+  `createWorker` surface area by wrapping a managed runtime composed from
+  `BaseRuntimeLayer` and `makeWorkerLayer`.
+- `src/client.ts` accepts an injected `workflowService` so layer consumers can reuse
+  the shared WorkflowService transport when composing CLIs or tests.
+- TODO: propagate the same layering contract to CLI commands, activity runtimes,
+  and the integration harness so every entry point is Effect-first.
+
 - **Starting points**
   - `src/runtime/effect-layers.ts` – declare shared `Layer`s for config, logger,
     metrics, WorkflowService client, sticky cache, scheduler.

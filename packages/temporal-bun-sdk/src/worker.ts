@@ -2,11 +2,19 @@ import { readFileSync } from 'node:fs'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
+import { Context, Effect, Exit, Layer, Scope } from 'effect'
+
 import * as defaultActivities from './activities'
 import type { DataConverter } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig } from './config'
-import type { ActivityHandler } from './worker/runtime'
-import { WorkerRuntime } from './worker/runtime'
+import {
+  BaseRuntimeLayer,
+  configLayerFromValue,
+  makeBaseRuntimeLayer,
+  makeWorkerLayer,
+  WorkerRuntimeService,
+} from './runtime/effect-layers'
+import type { ActivityHandler, WorkerDeploymentConfig, WorkerRuntime } from './worker/runtime'
 import type { WorkflowDefinitions } from './workflow/definition'
 
 const DEFAULT_WORKFLOWS_PATH = fileURLToPath(new URL('./workflows/index.js', import.meta.url))
@@ -57,6 +65,7 @@ export interface CreateWorkerOptions {
   activities?: Record<string, ActivityHandler>
   dataConverter?: DataConverter
   identity?: string
+  deployment?: WorkerDeploymentConfig
 }
 
 export interface BunWorkerHandle {
@@ -66,14 +75,24 @@ export interface BunWorkerHandle {
 }
 
 export class BunWorker {
-  constructor(private readonly runtime: WorkerRuntime) {}
+  #disposed = false
+
+  constructor(
+    private readonly runtime: WorkerRuntime,
+    private readonly scope: Scope.CloseableScope,
+  ) {}
 
   async run(): Promise<void> {
     await this.runtime.run()
   }
 
   async shutdown(): Promise<void> {
+    if (this.#disposed) {
+      return
+    }
+    this.#disposed = true
     await this.runtime.shutdown()
+    await Effect.runPromise(Scope.close(this.scope, Exit.succeed(undefined)))
   }
 }
 
@@ -106,23 +125,40 @@ export const createWorker = async (options: CreateWorkerOptions = {}): Promise<B
     console.info('[temporal-bun-sdk] worker buildId: %s', resolvedBuildId)
   }
 
-  const runtime = await WorkerRuntime.create({
+  const workerLayerOptions = {
+    ...options,
     config,
+    taskQueue,
+    namespace,
     workflowsPath,
     workflows: options.workflows,
     activities,
-    taskQueue,
-    namespace,
     dataConverter: options.dataConverter,
-    identity: options.identity,
+    identity: options.identity ?? config.workerIdentity,
     deployment: {
+      ...(options.deployment ?? {}),
       buildId: resolvedBuildId,
     },
-  })
+  }
 
-  const worker = new BunWorker(runtime)
+  const configOverride = configLayerFromValue(config)
+  const baseLayer = makeBaseRuntimeLayer(configOverride)
+  const layer = makeWorkerLayer(workerLayerOptions).pipe(Layer.provide(baseLayer)) as Layer.Layer<
+    WorkerRuntimeService,
+    unknown,
+    never
+  >
+  const scope = await Effect.runPromise(Scope.make())
 
-  return { worker, runtime, config }
+  try {
+    const context = await Effect.runPromise(Layer.buildWithScope(scope)(layer))
+    const service = Context.get(context, WorkerRuntimeService)
+    const worker = new BunWorker(service.runtime, scope)
+    return { worker, runtime: service.runtime, config }
+  } catch (error) {
+    await Effect.runPromise(Scope.close(scope, Exit.die(error)))
+    throw error
+  }
 }
 
 export const runWorker = async (options?: CreateWorkerOptions) => {
