@@ -11,17 +11,4 @@ helmCharts:
     releaseName: graf
     namespace: graf
     includeCRDs: true
-    values:
-      disableLookups: true
-      neo4j:
-        name: graf
-        password: ""
-      volumes:
-        data:
-          mode: dynamic
-          dynamic:
-            storageClassName: longhorn
-            accessModes:
-              - ReadWriteOnce
-            requests:
-              storage: 20Gi
+    valuesFile: neo4j-values.yaml
