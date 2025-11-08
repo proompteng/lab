@@ -29,8 +29,8 @@ tail -n +1 build/logs/*
 ```
 
 ## Container image
-Build from the provided multi-stage `Dockerfile`:
+Build and push using the shared script so it tags the image that Argo CD pulls:
 ```bash
-docker build -t graf:latest .
+bun packages/scripts/src/graf/build-image.ts
 ```
 The entrypoint is `bin/graf` from Gradle's `installDist`, and the runtime image is a distroless Java 21 runtime.
