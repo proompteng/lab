@@ -34,9 +34,11 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    TEMPORAL_ACTIVITY_CONCURRENCY=4                  # optional – activity pollers
    TEMPORAL_STICKY_CACHE_SIZE=256                   # optional – determinism cache capacity
    TEMPORAL_STICKY_TTL_MS=300000                    # optional – eviction TTL in ms
+   TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS=4000     # optional – heartbeat throttle interval in ms
+   TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS=5000  # optional – heartbeat RPC timeout in ms
    TEMPORAL_WORKER_DEPLOYMENT_NAME=prix-deploy      # optional – worker deployment metadata
    TEMPORAL_WORKER_BUILD_ID=git-sha                 # optional – build-id for versioning
-   ```
+```
 
    > Running against `temporal server start-dev`? Omit TLS variables and set `TEMPORAL_ADDRESS=127.0.0.1:7233`. Set `TEMPORAL_ALLOW_INSECURE=1` when testing with self-signed certificates.
 
@@ -92,7 +94,33 @@ export const workflows = [
 ]
 ```
 
-On each workflow task the executor compares newly emitted intents, random values, and logical timestamps against the stored determinism state. Mismatches raise `WorkflowNondeterminismError` and cause the worker to fail the task with `WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR`, mirroring Temporal’s official SDK behavior. Determinism snapshots are recorded as `temporal-bun-sdk/determinism` markers in workflow history and optionally cached via a sticky determinism cache. Tune cache behaviour with `TEMPORAL_STICKY_CACHE_SIZE` and `TEMPORAL_STICKY_TTL_MS`; the sticky worker queue inherits its schedule-to-start timeout from the TTL value. You can temporarily revert to the legacy “complete or fail only” mode by setting `TEMPORAL_DISABLE_WORKFLOW_CONTEXT=1`.
+On each workflow task the executor compares newly emitted intents, random values, and logical timestamps against the stored determinism state. Mismatches raise `WorkflowNondeterminismError` and cause the worker to fail the task with `WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR`, mirroring Temporal’s official SDK behavior. Determinism snapshots are recorded as `temporal-bun-sdk/determinism` markers in workflow history and optionally cached via a sticky determinism cache. Tune cache behaviour with `TEMPORAL_STICKY_CACHE_SIZE` and `TEMPORAL_STICKY_TTL_MS`; the sticky worker queue inherits its schedule-to-start timeout from the TTL value.
+
+## Activity lifecycle
+
+Activities run with an ambient `ActivityContext` (available through `currentActivityContext()`) so you can send heartbeats, observe cancellation, and inspect attempt metadata:
+
+```ts
+import { currentActivityContext } from '@proompteng/temporal-bun-sdk/worker'
+
+export const ingestLargeFile = async (chunks: Iterable<string>) => {
+  const ctx = currentActivityContext()
+  let processed = 0
+  for (const chunk of chunks) {
+    // do expensive work
+    await writeChunk(chunk)
+    processed += 1
+    await ctx?.heartbeat({ processed })
+    ctx?.throwIfCancelled()
+  }
+  return processed
+}
+```
+
+- `activityContext.heartbeat(...details)` is throttled by `TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS` and retried with exponential backoff (tunable via `TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS`) so transient RPC failures do not kill the attempt.
+- The latest heartbeat payload automatically flows into cancellation/failure responses so Temporal UI surfaces helpful metadata.
+- WorkerRuntime honours workflow `retry` policies locally: `maximumAttempts`, `initialInterval`, `maximumInterval`, `backoffCoefficient`, and `nonRetryableErrorTypes` all apply before a terminal failure is reported back to the server. Errors flagged as non-retryable (`error.nonRetryable = true` or matching the configured type list) short-circuit the retry loop.
+- Activity attempts that exhaust the policy are reported as `nonRetryable` failures so the Temporal service does not perform redundant retries.
 
 ## Integration harness
 

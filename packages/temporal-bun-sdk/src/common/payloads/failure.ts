@@ -30,6 +30,7 @@ const normalizeError = (error: unknown): { name: string; message: string; stack?
 
 export const encodeErrorToFailure = async (_converter: DataConverter, error: unknown): Promise<Failure> => {
   const normalized = normalizeError(error)
+  const nonRetryable = isNonRetryableError(error)
   return create(FailureSchema, {
     message: normalized.message,
     source: FAILURE_SOURCE,
@@ -38,7 +39,7 @@ export const encodeErrorToFailure = async (_converter: DataConverter, error: unk
       case: 'applicationFailureInfo',
       value: create(ApplicationFailureInfoSchema, {
         type: normalized.name,
-        nonRetryable: false,
+        nonRetryable,
       }),
     },
   })
@@ -67,3 +68,6 @@ export const failureToError = async (
   }
   return error
 }
+
+const isNonRetryableError = (error: unknown): boolean =>
+  Boolean(error && typeof error === 'object' && (error as { nonRetryable?: boolean }).nonRetryable === true)

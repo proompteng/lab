@@ -17,6 +17,8 @@ export type ActivityInfo = {
   startedTime?: Date
   currentAttemptScheduledTime?: Date
   lastHeartbeatDetails: unknown[]
+  lastHeartbeatTime?: Date
+  cancellationReason?: string
 }
 
 export interface ActivityContext {

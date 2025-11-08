@@ -17,9 +17,14 @@ import {
 import { PayloadsSchema } from '../proto/temporal/api/common/v1/message_pb'
 import { CommandType } from '../proto/temporal/api/enums/v1/command_type_pb'
 import { materializeCommands, type WorkflowCommandIntent } from './commands'
-import { createWorkflowContext, type WorkflowInfo } from './context'
+import {
+  type ActivityResolution,
+  createWorkflowContext,
+  type WorkflowCommandContext,
+  type WorkflowInfo,
+} from './context'
 import { DeterminismGuard, snapshotToDeterminismState, type WorkflowDeterminismState } from './determinism'
-import { ContinueAsNewWorkflowError, WorkflowNondeterminismError } from './errors'
+import { ContinueAsNewWorkflowError, WorkflowBlockedError, WorkflowNondeterminismError } from './errors'
 import type { WorkflowRegistry } from './registry'
 
 export interface ExecuteWorkflowInput {
@@ -30,7 +35,7 @@ export interface ExecuteWorkflowInput {
   readonly taskQueue: string
   readonly arguments: unknown
   readonly determinismState?: WorkflowDeterminismState
-  readonly bypassDeterministicContext?: boolean
+  readonly activityResults?: Map<string, ActivityResolution>
 }
 
 export type WorkflowCompletionStatus = 'completed' | 'failed' | 'continued-as-new' | 'pending'
@@ -47,24 +52,15 @@ export interface WorkflowExecutionOutput {
 export interface WorkflowExecutorOptions {
   registry: WorkflowRegistry
   dataConverter: DataConverter
-  bypassDeterministicContext?: boolean
-}
-
-const emptyDeterminismState: WorkflowDeterminismState = {
-  commandHistory: [],
-  randomValues: [],
-  timeValues: [],
 }
 
 export class WorkflowExecutor {
   #registry: WorkflowRegistry
   #dataConverter: DataConverter
-  #bypassDeterministicContext: boolean
 
   constructor(options: WorkflowExecutorOptions) {
     this.#registry = options.registry
     this.#dataConverter = options.dataConverter
-    this.#bypassDeterministicContext = options.bypassDeterministicContext ?? false
   }
 
   async execute(input: ExecuteWorkflowInput): Promise<WorkflowExecutionOutput> {
@@ -76,22 +72,24 @@ export class WorkflowExecutor {
       workflowType: input.workflowType,
     }
 
-    if (this.#bypassDeterministicContext || input.bypassDeterministicContext) {
-      return await this.#executeLegacy(input, info)
-    }
-
     const definition = this.#registry.get(input.workflowType)
     const normalizedArguments = this.#normalizeArguments(input.arguments, definition.decodeArgumentsAsArray)
     const decodedEffect = Schema.decodeUnknown(definition.schema)(normalizedArguments)
     const guard = new DeterminismGuard({ previousState: input.determinismState })
 
+    let lastCommandContext: WorkflowCommandContext | undefined
+
     const workflowEffect = Effect.flatMap(decodedEffect, (parsed) => {
-      const { context, commandContext } = createWorkflowContext({
+      const created = createWorkflowContext({
         input: parsed,
         info,
         determinismGuard: guard,
+        activityResults: input.activityResults,
       })
-      return Effect.flatMap(definition.handler(context), (result) => Effect.sync(() => ({ result, commandContext })))
+      lastCommandContext = created.commandContext
+      return Effect.flatMap(definition.handler(created.context), (result) =>
+        Effect.sync(() => ({ result, commandContext: created.commandContext })),
+      )
     })
 
     const exit = await Effect.runPromiseExit(workflowEffect)
@@ -111,7 +109,8 @@ export class WorkflowExecutor {
 
     const error = this.#resolveError(exit.cause)
 
-    if (error instanceof ContinueAsNewWorkflowError) {
+    const continueAsNewError = unwrapWorkflowError(error, ContinueAsNewWorkflowError)
+    if (continueAsNewError) {
       const intents = rawSnapshot.commandHistory.map((entry) => entry.intent)
       const commands = await materializeCommands(intents, { dataConverter: this.#dataConverter })
       return {
@@ -122,8 +121,27 @@ export class WorkflowExecutor {
       }
     }
 
-    if (error instanceof WorkflowNondeterminismError) {
-      throw error
+    const nondeterminismError = unwrapWorkflowError(error, WorkflowNondeterminismError)
+    if (nondeterminismError) {
+      throw nondeterminismError
+    }
+
+    const blockedError = unwrapWorkflowError(error, WorkflowBlockedError)
+    if (blockedError) {
+      const contextForPending =
+        lastCommandContext ??
+        (() => {
+          throw new Error('Workflow pending without command context')
+        })()
+      const pendingCommands = await materializeCommands(contextForPending.intents, {
+        dataConverter: this.#dataConverter,
+      })
+      return {
+        commands: pendingCommands,
+        intents: contextForPending.intents,
+        determinismState,
+        completion: 'pending',
+      }
     }
 
     const failureCommands = await this.#buildFailureCommands(error)
@@ -131,40 +149,6 @@ export class WorkflowExecutor {
       commands: failureCommands,
       intents: [],
       determinismState,
-      completion: 'failed',
-      failure: error,
-    }
-  }
-
-  async #executeLegacy(input: ExecuteWorkflowInput, info: WorkflowInfo): Promise<WorkflowExecutionOutput> {
-    const definition = this.#registry.get(input.workflowType)
-    const decodedEffect = Schema.decodeUnknown(definition.schema)(
-      this.#normalizeArguments(input.arguments, definition.decodeArgumentsAsArray),
-    )
-    const guard = new DeterminismGuard({ allowBypass: true })
-    const workflowEffect = Effect.flatMap(decodedEffect, (parsed) => {
-      const { context } = createWorkflowContext({ input: parsed, info, determinismGuard: guard })
-      return definition.handler(context)
-    })
-    const exit = await Effect.runPromiseExit(workflowEffect)
-
-    if (Exit.isSuccess(exit)) {
-      const commands = await this.#buildCompleteCommands(exit.value)
-      return {
-        commands,
-        intents: [],
-        determinismState: emptyDeterminismState,
-        completion: 'completed',
-        result: exit.value,
-      }
-    }
-
-    const error = this.#resolveError(exit.cause)
-    const failureCommands = await this.#buildFailureCommands(error)
-    return {
-      commands: failureCommands,
-      intents: [],
-      determinismState: emptyDeterminismState,
       completion: 'failed',
       failure: error,
     }
@@ -245,4 +229,17 @@ export class WorkflowExecutor {
     }
     return raw
   }
+}
+
+const unwrapWorkflowError = <T>(error: unknown, ctor: new (...args: unknown[]) => T): T | undefined => {
+  if (error instanceof ctor) {
+    return error
+  }
+  if (error && typeof error === 'object' && 'cause' in error) {
+    const cause = (error as { cause?: unknown }).cause
+    if (cause instanceof ctor) {
+      return cause
+    }
+  }
+  return undefined
 }

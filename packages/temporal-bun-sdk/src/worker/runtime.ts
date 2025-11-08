@@ -1,26 +1,39 @@
-import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 
 import { create } from '@bufbuild/protobuf'
+import type { Timestamp } from '@bufbuild/protobuf/wkt'
 import { Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
 import { Effect } from 'effect'
 
+import {
+  type ActivityHeartbeatRegistration,
+  type ActivityLifecycle,
+  type ActivityRetryState,
+  makeActivityLifecycle,
+} from '../activities/lifecycle'
 import { buildTransportOptions, normalizeTemporalAddress } from '../client'
+import { durationFromMillis, durationToMillis } from '../common/duration'
 import {
   createDefaultDataConverter,
   type DataConverter,
   decodePayloadsToValues,
   encodeValuesToPayloads,
 } from '../common/payloads/converter'
-import { encodeErrorToFailure, encodeFailurePayloads } from '../common/payloads/failure'
+import { encodeErrorToFailure, encodeFailurePayloads, failureToError } from '../common/payloads/failure'
+import { sleep } from '../common/sleep'
 import { loadTemporalConfig, type TemporalConfig } from '../config'
 import {
   type Command,
   CommandSchema,
   RecordMarkerCommandAttributesSchema,
 } from '../proto/temporal/api/command/v1/message_pb'
-import { type Payloads, PayloadsSchema, WorkflowExecutionSchema } from '../proto/temporal/api/common/v1/message_pb'
+import {
+  type Payloads,
+  PayloadsSchema,
+  type RetryPolicy,
+  WorkflowExecutionSchema,
+} from '../proto/temporal/api/common/v1/message_pb'
 import {
   type WorkerDeploymentOptions,
   WorkerDeploymentOptionsSchema,
@@ -29,7 +42,7 @@ import { CommandType } from '../proto/temporal/api/enums/v1/command_type_pb'
 import { WorkerVersioningMode } from '../proto/temporal/api/enums/v1/deployment_pb'
 import { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
 import { WorkflowTaskFailedCause } from '../proto/temporal/api/enums/v1/failed_cause_pb'
-import { HistoryEventFilterType, VersioningBehavior } from '../proto/temporal/api/enums/v1/workflow_pb'
+import { HistoryEventFilterType, TimeoutType, VersioningBehavior } from '../proto/temporal/api/enums/v1/workflow_pb'
 import type { HistoryEvent } from '../proto/temporal/api/history/v1/message_pb'
 import {
   type StickyExecutionAttributes,
@@ -50,10 +63,9 @@ import {
 } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from '../proto/temporal/api/workflowservice/v1/service_pb'
 import type { WorkflowCommandIntent } from '../workflow/commands'
-import { durationFromMillis } from '../workflow/commands'
-import type { WorkflowInfo } from '../workflow/context'
+import type { ActivityResolution, WorkflowInfo } from '../workflow/context'
 import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
-import type { WorkflowDeterminismState } from '../workflow/determinism'
+import type { WorkflowDeterminismState, WorkflowRetryPolicyInput } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import { WorkflowExecutor } from '../workflow/executor'
 import { WorkflowRegistry } from '../workflow/registry'
@@ -81,6 +93,11 @@ type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowServi
 const POLL_TIMEOUT_MS = 60_000
 const RESPOND_TIMEOUT_MS = 15_000
 const HISTORY_FETCH_TIMEOUT_MS = 60_000
+const HEARTBEAT_RETRY_INITIAL_DELAY_MS = 250
+const HEARTBEAT_RETRY_MAX_DELAY_MS = 5_000
+const HEARTBEAT_RETRY_MAX_ATTEMPTS = 5
+const HEARTBEAT_RETRY_BACKOFF = 2
+const HEARTBEAT_RETRY_JITTER = 0.2
 const STICKY_QUEUE_PREFIX = 'sticky'
 const COMPLETION_COMMAND_TYPES = new Set<CommandType>([
   CommandType.COMPLETE_WORKFLOW_EXECUTION,
@@ -159,7 +176,6 @@ export class WorkerRuntime {
     const executor = new WorkflowExecutor({
       registry,
       dataConverter,
-      bypassDeterministicContext: config.workflowContextBypass,
     })
 
     const activities = options.activities ?? {}
@@ -219,6 +235,20 @@ export class WorkerRuntime {
       workerVersioningMode,
     })
 
+    const activityLifecycle = await Effect.runPromise(
+      makeActivityLifecycle({
+        heartbeatIntervalMs: config.activityHeartbeatIntervalMs,
+        heartbeatRpcTimeoutMs: config.activityHeartbeatRpcTimeoutMs,
+        heartbeatRetry: {
+          initialIntervalMs: HEARTBEAT_RETRY_INITIAL_DELAY_MS,
+          maxIntervalMs: HEARTBEAT_RETRY_MAX_DELAY_MS,
+          backoffCoefficient: HEARTBEAT_RETRY_BACKOFF,
+          maxAttempts: HEARTBEAT_RETRY_MAX_ATTEMPTS,
+          jitterRatio: HEARTBEAT_RETRY_JITTER,
+        },
+      }),
+    )
+
     return new WorkerRuntime({
       config,
       workflowService,
@@ -229,6 +259,7 @@ export class WorkerRuntime {
       namespace,
       taskQueue,
       identity,
+      activityLifecycle,
       scheduler,
       stickyCache,
       stickyQueue,
@@ -249,6 +280,7 @@ export class WorkerRuntime {
   readonly #namespace: string
   readonly #taskQueue: string
   readonly #identity: string
+  readonly #activityLifecycle: ActivityLifecycle
   readonly #scheduler: WorkerScheduler
   readonly #stickyCache: StickyCache
   readonly #stickyQueue: string
@@ -273,6 +305,7 @@ export class WorkerRuntime {
     namespace: string
     taskQueue: string
     identity: string
+    activityLifecycle: ActivityLifecycle
     scheduler: WorkerScheduler
     stickyCache: StickyCache
     stickyQueue: string
@@ -291,6 +324,7 @@ export class WorkerRuntime {
     this.#namespace = params.namespace
     this.#taskQueue = params.taskQueue
     this.#identity = params.identity
+    this.#activityLifecycle = params.activityLifecycle
     this.#scheduler = params.scheduler
     this.#stickyCache = params.stickyCache
     this.#stickyQueue = params.stickyQueue
@@ -452,7 +486,7 @@ export class WorkerRuntime {
           break
         }
         console.error(`[temporal-bun-sdk] workflow polling failed for ${queueName}`, error)
-        await delay(250)
+        await sleep(250)
       }
     }
   }
@@ -496,7 +530,7 @@ export class WorkerRuntime {
           break
         }
         console.error('[temporal-bun-sdk] activity polling failed', error)
-        await delay(250)
+        await sleep(250)
       }
     }
   }
@@ -512,13 +546,14 @@ export class WorkerRuntime {
   }
 
   async #handleWorkflowTask(response: PollWorkflowTaskQueueResponse): Promise<void> {
-    const workflowType = this.#resolveWorkflowType(response)
-    const args = await this.#decodeWorkflowArgs(response)
     const execution = this.#resolveWorkflowExecution(response)
+    const historyEvents = await this.#collectWorkflowHistory(execution, response)
+    const workflowType = this.#resolveWorkflowType(response, historyEvents)
+    const args = await this.#decodeWorkflowArgs(historyEvents)
     const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
     const stickyKey = this.#buildStickyKey(execution.workflowId, execution.runId)
     const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
-    const historyReplay = await this.#ingestDeterminismState(workflowInfo, execution, response)
+    const historyReplay = await this.#ingestDeterminismState(workflowInfo, historyEvents)
     const hasHistorySnapshot = this.#isValidDeterminismSnapshot(historyReplay?.determinismState)
     let previousState: WorkflowDeterminismState | undefined
 
@@ -546,6 +581,8 @@ export class WorkerRuntime {
     const expectedDeterminismState = previousState
 
     try {
+      const activityResults = await this.#extractActivityResolutions(historyEvents)
+
       const output = await this.#executor.execute({
         workflowType,
         workflowId: execution.workflowId,
@@ -554,6 +591,7 @@ export class WorkerRuntime {
         taskQueue: this.#taskQueue,
         arguments: args,
         determinismState: previousState,
+        activityResults,
       })
 
       const lastEventId =
@@ -630,10 +668,8 @@ export class WorkerRuntime {
 
   async #ingestDeterminismState(
     workflowInfo: WorkflowInfo,
-    execution: { workflowId: string; runId: string },
-    response: PollWorkflowTaskQueueResponse,
+    historyEvents: HistoryEvent[],
   ): Promise<ReplayResult | undefined> {
-    const historyEvents = await this.#collectWorkflowHistory(execution, response)
     if (historyEvents.length === 0) {
       return undefined
     }
@@ -648,25 +684,140 @@ export class WorkerRuntime {
 
   async #collectWorkflowHistory(
     execution: { workflowId: string; runId: string },
-    response: PollWorkflowTaskQueueResponse,
+    _response: PollWorkflowTaskQueueResponse,
   ): Promise<HistoryEvent[]> {
-    const events: HistoryEvent[] = [...(response.history?.events ?? [])]
-    let token = response.nextPageToken ?? new Uint8Array()
-
-    while (token && token.length > 0) {
+    const events: HistoryEvent[] = []
+    let token: Uint8Array | undefined
+    while (true) {
       const page = await this.#fetchWorkflowHistoryPage(execution, token)
       if (page.events.length > 0) {
         events.push(...page.events)
       }
+      if (!page.nextPageToken || page.nextPageToken.length === 0) {
+        break
+      }
       token = page.nextPageToken
     }
-
     return events
+  }
+
+  async #extractActivityResolutions(events: HistoryEvent[]): Promise<Map<string, ActivityResolution>> {
+    const resolutions = new Map<string, ActivityResolution>()
+    const scheduledActivityIds = new Map<string, string>()
+
+    const normalizeEventId = (value: bigint | number | string | undefined | null): string | undefined => {
+      if (value === undefined || value === null) {
+        return undefined
+      }
+      if (typeof value === 'string') {
+        return value
+      }
+      return value.toString()
+    }
+
+    const resolveActivityId = (
+      attrs: Record<string, unknown>,
+      scheduledEventId?: bigint | number | string | undefined | null,
+    ): string | undefined => {
+      const direct = typeof attrs.activityId === 'string' ? attrs.activityId : undefined
+      if (direct) {
+        return direct
+      }
+      const key = normalizeEventId(scheduledEventId)
+      if (!key) {
+        return undefined
+      }
+      return scheduledActivityIds.get(key)
+    }
+
+    for (const event of events) {
+      switch (event.eventType) {
+        case EventType.ACTIVITY_TASK_SCHEDULED: {
+          if (event.attributes?.case !== 'activityTaskScheduledEventAttributes') {
+            break
+          }
+          const activityId = event.attributes.value.activityId
+          const scheduledKey = normalizeEventId(event.eventId)
+          if (activityId && scheduledKey) {
+            scheduledActivityIds.set(scheduledKey, activityId)
+          }
+          break
+        }
+        case EventType.ACTIVITY_TASK_COMPLETED: {
+          if (event.attributes?.case !== 'activityTaskCompletedEventAttributes') {
+            break
+          }
+          const activityId = resolveActivityId(event.attributes.value, event.attributes.value.scheduledEventId)
+          if (!activityId) {
+            break
+          }
+          const payloads = event.attributes.value.result?.payloads ?? []
+          const decoded = await decodePayloadsToValues(this.#dataConverter, payloads)
+          const value =
+            decoded.length === 0 ? undefined : decoded.length === 1 ? decoded[0] : Object.freeze([...decoded])
+          resolutions.set(activityId, { status: 'completed', value })
+          break
+        }
+        case EventType.ACTIVITY_TASK_FAILED: {
+          if (event.attributes?.case !== 'activityTaskFailedEventAttributes') {
+            break
+          }
+          const activityId = resolveActivityId(event.attributes.value, event.attributes.value.scheduledEventId)
+          if (!activityId) {
+            break
+          }
+          const failureError =
+            (await failureToError(this.#dataConverter, event.attributes.value.failure)) ??
+            new Error(`Activity ${activityId} failed`)
+          resolutions.set(activityId, { status: 'failed', error: failureError })
+          break
+        }
+        case EventType.ACTIVITY_TASK_TIMED_OUT: {
+          if (event.attributes?.case !== 'activityTaskTimedOutEventAttributes') {
+            break
+          }
+          const activityId = resolveActivityId(event.attributes.value, event.attributes.value.scheduledEventId)
+          if (!activityId) {
+            break
+          }
+          const timeoutFailure = event.attributes.value.failure?.failureInfo
+          const timeoutTypeValue =
+            timeoutFailure?.case === 'timeoutFailureInfo' ? timeoutFailure.value.timeoutType : undefined
+          const timeoutType =
+            timeoutTypeValue !== undefined ? (TimeoutType[timeoutTypeValue] ?? String(timeoutTypeValue)) : 'unknown'
+          const failureError =
+            (await failureToError(this.#dataConverter, event.attributes.value.failure)) ??
+            new Error(`Activity ${activityId} timed out (${timeoutType})`)
+          resolutions.set(activityId, { status: 'failed', error: failureError })
+          break
+        }
+        case EventType.ACTIVITY_TASK_CANCELED: {
+          if (event.attributes?.case !== 'activityTaskCanceledEventAttributes') {
+            break
+          }
+          const activityId = resolveActivityId(event.attributes.value, event.attributes.value.scheduledEventId)
+          if (!activityId) {
+            break
+          }
+          const details = await decodePayloadsToValues(
+            this.#dataConverter,
+            event.attributes.value.details?.payloads ?? [],
+          )
+          const error = new Error(`Activity ${activityId} was canceled`)
+          ;(error as { details?: unknown[] }).details = details
+          resolutions.set(activityId, { status: 'failed', error })
+          break
+        }
+        default:
+          break
+      }
+    }
+    return resolutions
   }
 
   async #fetchWorkflowHistoryPage(
     execution: { workflowId: string; runId: string },
-    nextPageToken: Uint8Array,
+    nextPageToken?: Uint8Array,
   ): Promise<{ events: HistoryEvent[]; nextPageToken: Uint8Array }> {
     if (!execution.workflowId || !execution.runId) {
       return { events: [], nextPageToken: new Uint8Array() }
@@ -679,7 +830,7 @@ export class WorkerRuntime {
         runId: execution.runId,
       }),
       maximumPageSize: 0,
-      nextPageToken,
+      ...(nextPageToken && nextPageToken.length > 0 ? { nextPageToken } : {}),
       waitNewEvent: false,
       historyEventFilterType: HistoryEventFilterType.ALL_EVENT,
       skipArchival: true,
@@ -926,6 +1077,12 @@ export class WorkerRuntime {
       return
     }
 
+    const taskToken = response.taskToken
+    if (!taskToken || taskToken.length === 0) {
+      await this.#failActivityTask(response, new Error('Activity task missing token'))
+      return
+    }
+
     const activityType = response.activityType?.name
     if (!activityType) {
       await this.#failActivityTask(response, new Error('Activity task missing type'))
@@ -939,58 +1096,170 @@ export class WorkerRuntime {
     }
 
     const args = await decodePayloadsToValues(this.#dataConverter, response.input?.payloads ?? [])
-    const context = this.#createActivityContext(response, cancelRequested)
+    const heartbeatDetails = await decodePayloadsToValues(
+      this.#dataConverter,
+      response.heartbeatDetails?.payloads ?? [],
+    )
+    const { context, abortController } = this.#createActivityContext(response, cancelRequested, heartbeatDetails)
+
+    let heartbeatRegistration: ActivityHeartbeatRegistration | undefined
+    try {
+      heartbeatRegistration = await Effect.runPromise(
+        this.#activityLifecycle.registerHeartbeat({
+          context,
+          workflowService: this.#workflowService,
+          taskToken,
+          identity: this.#identity,
+          namespace: this.#namespace,
+          dataConverter: this.#dataConverter,
+          abortController,
+        }),
+      )
+      context.heartbeat = async (...details) => {
+        context.info.lastHeartbeatDetails = details
+        const registration = heartbeatRegistration
+        if (!registration) {
+          return
+        }
+        await Effect.runPromise(registration.heartbeat(details))
+      }
+    } catch (registrationError) {
+      console.warn('[temporal-bun-sdk] failed to register heartbeat handler', {
+        activityType,
+        workflowId: context.info.workflowId,
+        runId: context.info.runId,
+        error: registrationError,
+      })
+      context.heartbeat = async (...details) => {
+        context.info.lastHeartbeatDetails = details
+      }
+    }
+
+    const retryPolicy = this.#convertRetryPolicy(response.retryPolicy)
+    const retryDeadlineMs = this.#computeRetryDeadline(response)
+    let retryState: ActivityRetryState = {
+      attempt: context.info.attempt,
+      retryCount: 0,
+      nextDelayMs: 0,
+    }
 
     try {
-      const result = await runWithActivityContext(context, async () => await handler(...args))
-      const payloads = await encodeValuesToPayloads(this.#dataConverter, result === undefined ? [] : [result])
-      const completion = create(RespondActivityTaskCompletedRequestSchema, {
-        taskToken: response.taskToken,
-        identity: this.#identity,
-        namespace: this.#namespace,
-        result: payloads && payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined,
-        deploymentOptions: this.#deploymentOptions,
-      })
-      await this.#workflowService.respondActivityTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
-    } catch (error) {
-      if (isAbortError(error)) {
-        await this.#cancelActivityTask(response)
-        return
+      while (true) {
+        try {
+          const result = await runWithActivityContext(context, async () => await handler(...args))
+          const payloads = await encodeValuesToPayloads(this.#dataConverter, result === undefined ? [] : [result])
+          const completion = create(RespondActivityTaskCompletedRequestSchema, {
+            taskToken: response.taskToken,
+            identity: this.#identity,
+            namespace: this.#namespace,
+            result: payloads && payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined,
+            deploymentOptions: this.#deploymentOptions,
+          })
+          await this.#workflowService.respondActivityTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
+          break
+        } catch (error) {
+          if (isAbortError(error)) {
+            await this.#cancelActivityTask(response, context)
+            return
+          }
+          if (!retryPolicy || this.#isNonRetryableActivityError(error, retryPolicy)) {
+            await this.#failActivityTask(response, error, context)
+            return
+          }
+          const nextRetry = await Effect.runPromise(this.#activityLifecycle.nextRetryDelay(retryPolicy, retryState))
+          if (!nextRetry) {
+            markErrorNonRetryable(error)
+            await this.#failActivityTask(response, error, context)
+            return
+          }
+          if (retryDeadlineMs !== undefined && Date.now() + nextRetry.nextDelayMs > retryDeadlineMs) {
+            markErrorNonRetryable(error)
+            await this.#failActivityTask(response, error, context)
+            return
+          }
+          await sleep(nextRetry.nextDelayMs)
+          context.throwIfCancelled()
+          context.info.attempt = nextRetry.attempt
+          retryState = nextRetry
+        }
       }
-      await this.#failActivityTask(response, error)
+    } finally {
+      if (heartbeatRegistration) {
+        try {
+          await Effect.runPromise(heartbeatRegistration.shutdown)
+        } catch (shutdownError) {
+          console.warn('[temporal-bun-sdk] heartbeat shutdown failed', shutdownError)
+        }
+      }
     }
   }
 
-  async #failActivityTask(response: PollActivityTaskQueueResponse, error: unknown): Promise<void> {
+  async #failActivityTask(
+    response: PollActivityTaskQueueResponse,
+    error: unknown,
+    context?: ActivityContext,
+  ): Promise<void> {
     const failure = await encodeErrorToFailure(this.#dataConverter, error)
     const encoded = await encodeFailurePayloads(this.#dataConverter, failure)
+    const lastHeartbeatDetails = await this.#encodeHeartbeatPayloads(
+      context?.info.lastHeartbeatDetails,
+      context?.info.cancellationReason,
+    )
 
     const request = create(RespondActivityTaskFailedRequestSchema, {
       taskToken: response.taskToken,
       identity: this.#identity,
       namespace: this.#namespace,
       failure: encoded,
+      lastHeartbeatDetails,
       deploymentOptions: this.#deploymentOptions,
     })
 
     await this.#workflowService.respondActivityTaskFailed(request, { timeoutMs: RESPOND_TIMEOUT_MS })
   }
 
-  async #cancelActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
+  async #cancelActivityTask(response: PollActivityTaskQueueResponse, context?: ActivityContext): Promise<void> {
+    const details = await this.#encodeHeartbeatPayloads(
+      context?.info.lastHeartbeatDetails,
+      context?.info.cancellationReason,
+    )
     const request = create(RespondActivityTaskCanceledRequestSchema, {
       taskToken: response.taskToken,
       identity: this.#identity,
       namespace: this.#namespace,
+      details,
       deploymentOptions: this.#deploymentOptions,
     })
 
     await this.#workflowService.respondActivityTaskCanceled(request, { timeoutMs: RESPOND_TIMEOUT_MS })
   }
 
-  #createActivityContext(response: PollActivityTaskQueueResponse, cancelRequested: boolean): ActivityContext {
+  async #encodeHeartbeatPayloads(details: unknown[] | undefined, reason?: string): Promise<Payloads | undefined> {
+    const finalDetails =
+      details && details.length > 0
+        ? details
+        : reason
+          ? [
+              {
+                cancellationReason: reason,
+              },
+            ]
+          : undefined
+    if (!finalDetails) {
+      return undefined
+    }
+    const payloads = await encodeValuesToPayloads(this.#dataConverter, finalDetails)
+    return payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined
+  }
+
+  #createActivityContext(
+    response: PollActivityTaskQueueResponse,
+    cancelRequested: boolean,
+    lastHeartbeatDetails: unknown[],
+  ): { context: ActivityContext; abortController: AbortController } {
     const abortController = new AbortController()
     if (cancelRequested) {
-      abortController.abort()
+      abortController.abort(createActivityAbortError('Activity cancellation requested by Temporal'))
     }
 
     const info: ActivityInfo = {
@@ -1003,38 +1272,99 @@ export class WorkerRuntime {
       taskQueue: this.#taskQueue,
       attempt: Number(response.attempt ?? 1),
       isLocal: false,
-      scheduledTime: response.scheduledTime ? new Date(Number(response.scheduledTime.seconds) * 1000) : undefined,
-      startedTime: response.startedTime ? new Date(Number(response.startedTime.seconds) * 1000) : undefined,
-      currentAttemptScheduledTime: response.currentAttemptScheduledTime
-        ? new Date(Number(response.currentAttemptScheduledTime.seconds) * 1000)
-        : undefined,
-      heartbeatTimeoutMs: undefined,
-      scheduleToCloseTimeoutMs: undefined,
-      startToCloseTimeoutMs: undefined,
-      lastHeartbeatDetails: [],
+      scheduledTime: timestampToDate(response.scheduledTime),
+      startedTime: timestampToDate(response.startedTime),
+      currentAttemptScheduledTime: timestampToDate(response.currentAttemptScheduledTime),
+      heartbeatTimeoutMs: durationToMillis(response.heartbeatTimeout),
+      scheduleToCloseTimeoutMs: durationToMillis(response.scheduleToCloseTimeout),
+      startToCloseTimeoutMs: durationToMillis(response.startToCloseTimeout),
+      lastHeartbeatDetails,
+      lastHeartbeatTime: undefined,
+      cancellationReason: cancelRequested ? 'poll-cancel-requested' : undefined,
     }
 
-    return {
+    const context: ActivityContext = {
       info,
       cancellationSignal: abortController.signal,
       get isCancellationRequested() {
         return abortController.signal.aborted
       },
-      async heartbeat() {
-        // Heartbeats are not yet implemented in the pure TypeScript runtime.
+      async heartbeat(...details) {
+        info.lastHeartbeatDetails = details
       },
       throwIfCancelled() {
-        if (abortController.signal.aborted) {
-          const error = new Error('Activity cancelled')
-          error.name = 'AbortError'
-          throw error
+        if (!abortController.signal.aborted) {
+          return
         }
+        const reason = abortController.signal.reason
+        if (reason instanceof Error) {
+          throw reason
+        }
+        const error = createActivityAbortError(
+          typeof reason === 'string' && reason.length > 0 ? reason : 'Activity cancelled by Temporal',
+        )
+        throw error
       },
+    }
+
+    return { context, abortController }
+  }
+
+  #convertRetryPolicy(policy: RetryPolicy | undefined | null): WorkflowRetryPolicyInput | undefined {
+    if (!policy) {
+      return undefined
+    }
+    const initialIntervalMs = durationToMillis(policy.initialInterval)
+    const maximumIntervalMs = durationToMillis(policy.maximumInterval)
+    const backoffCoefficient = policy.backoffCoefficient !== 0 ? policy.backoffCoefficient : undefined
+    const maximumAttempts = policy.maximumAttempts > 0 ? policy.maximumAttempts : undefined
+    const nonRetryable = policy.nonRetryableErrorTypes.length > 0 ? [...policy.nonRetryableErrorTypes] : undefined
+
+    if (
+      initialIntervalMs === undefined &&
+      maximumIntervalMs === undefined &&
+      backoffCoefficient === undefined &&
+      maximumAttempts === undefined &&
+      (nonRetryable === undefined || nonRetryable.length === 0)
+    ) {
+      return undefined
+    }
+
+    return {
+      ...(initialIntervalMs !== undefined ? { initialIntervalMs } : {}),
+      ...(backoffCoefficient !== undefined ? { backoffCoefficient } : {}),
+      ...(maximumIntervalMs !== undefined ? { maximumIntervalMs } : {}),
+      ...(maximumAttempts !== undefined ? { maximumAttempts } : {}),
+      ...(nonRetryable !== undefined ? { nonRetryableErrorTypes: nonRetryable } : {}),
     }
   }
 
-  async #decodeWorkflowArgs(response: PollWorkflowTaskQueueResponse): Promise<unknown[]> {
-    const startEvent = this.#findWorkflowStartedEvent(response.history?.events ?? [])
+  #isNonRetryableActivityError(error: unknown, retry: WorkflowRetryPolicyInput): boolean {
+    if (error && typeof error === 'object' && (error as { nonRetryable?: boolean }).nonRetryable === true) {
+      return true
+    }
+    const errorName = error instanceof Error ? error.name : undefined
+    if (!errorName) {
+      return false
+    }
+    return Boolean(retry.nonRetryableErrorTypes?.includes(errorName))
+  }
+
+  #computeRetryDeadline(response: PollActivityTaskQueueResponse): number | undefined {
+    const scheduleToClose = durationToMillis(response.scheduleToCloseTimeout)
+    const startToClose = durationToMillis(response.startToCloseTimeout)
+    const scheduledTime = timestampToDate(response.scheduledTime)
+    const startedTime = timestampToDate(response.startedTime) ?? scheduledTime
+    const scheduleDeadline = scheduleToClose && scheduledTime ? scheduledTime.getTime() + scheduleToClose : undefined
+    const startDeadline = startToClose && startedTime ? startedTime.getTime() + startToClose : undefined
+    if (scheduleDeadline && startDeadline) {
+      return Math.min(scheduleDeadline, startDeadline)
+    }
+    return scheduleDeadline ?? startDeadline ?? undefined
+  }
+
+  async #decodeWorkflowArgs(events: HistoryEvent[]): Promise<unknown[]> {
+    const startEvent = this.#findWorkflowStartedEvent(events)
     if (!startEvent) {
       return []
     }
@@ -1049,11 +1379,11 @@ export class WorkerRuntime {
     return await decodePayloadsToValues(this.#dataConverter, inputPayloads)
   }
 
-  #resolveWorkflowType(response: PollWorkflowTaskQueueResponse): string {
+  #resolveWorkflowType(response: PollWorkflowTaskQueueResponse, events: HistoryEvent[]): string {
     if (response.workflowType?.name) {
       return response.workflowType.name
     }
-    const startEvent = this.#findWorkflowStartedEvent(response.history?.events ?? [])
+    const startEvent = this.#findWorkflowStartedEvent(events)
     if (startEvent?.attributes?.case === 'workflowExecutionStartedEventAttributes') {
       const workflowTypeName = startEvent.attributes.value.workflowType?.name
       if (workflowTypeName) {
@@ -1087,6 +1417,27 @@ export class WorkerRuntime {
       workflowId: execution.workflowId,
       runId: execution.runId,
     })
+  }
+}
+
+const timestampToDate = (timestamp: Timestamp | undefined | null): Date | undefined => {
+  if (!timestamp) {
+    return undefined
+  }
+  const seconds = Number(timestamp.seconds ?? 0n)
+  const nanos = timestamp.nanos ?? 0
+  return new Date(seconds * 1000 + Math.trunc(nanos / 1_000_000))
+}
+
+const createActivityAbortError = (message: string): Error => {
+  const error = new Error(message)
+  error.name = 'AbortError'
+  return error
+}
+
+const markErrorNonRetryable = (error: unknown): void => {
+  if (error && typeof error === 'object') {
+    ;(error as { nonRetryable?: boolean }).nonRetryable = true
   }
 }
 

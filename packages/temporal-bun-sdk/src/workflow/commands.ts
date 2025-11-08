@@ -1,6 +1,5 @@
 import { create } from '@bufbuild/protobuf'
-import type { Duration } from '@bufbuild/protobuf/wkt'
-
+import { durationFromMillis } from '../common/duration'
 import type { DataConverter } from '../common/payloads'
 import { encodeValuesToPayloads } from '../common/payloads/converter'
 import {
@@ -299,18 +298,6 @@ const buildContinueAsNewCommand = async (
       value: attributes,
     },
   })
-}
-
-export const durationFromMillis = (ms?: number): Duration | undefined => {
-  if (typeof ms !== 'number' || Number.isNaN(ms) || ms <= 0) {
-    return undefined
-  }
-  const seconds = BigInt(Math.trunc(ms / 1_000))
-  const nanos = Math.trunc(ms % 1_000) * 1_000_000
-  return {
-    seconds,
-    nanos,
-  } as Duration
 }
 
 const buildRetryPolicy = (input: WorkflowRetryPolicyInput): RetryPolicy =>

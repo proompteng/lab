@@ -13,7 +13,7 @@ and the quality bars we must meet before GA.
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Workflow execution | **Alpha** | Deterministic command context, activity/timer/child/signal/continue-as-new intents, deterministic guard, legacy bypass flag. |
+| Workflow execution | **Alpha** | Deterministic command context, activity/timer/child/signal/continue-as-new intents, deterministic guard. |
 | Worker runtime | **Beta-** | Effect-based scheduler with configurable concurrency, sticky cache routing, and build-id metadata. Heartbeats and observability still pending. |
 | Client | **Alpha** | Start/signal/query/cancel/update/describe namespace with Connect transport; interceptors and retries pending. |
 | Activities | **Beta-** | Handler registry, cancellation signals. Heartbeats, retries, and failure categorisation remain. |
@@ -26,26 +26,19 @@ to be complete, with supporting validation and documentation.
 ## Architecture Overview
 
 - **Workflow Runtime (`src/workflow/*`)**
-  - _Shipped:_ Deterministic workflow context, command intents, determinism guard,
-    legacy bypass.
-  - _GA requirements:_ History replay ingest, failure categorisation, command
-    metadata (headers/memo/search attributes), workflow cache eviction strategy.
+  - _Shipped:_ Deterministic workflow context, command intents, determinism guard.
+  - _GA requirements:_ History replay ingest, failure categorisation, command metadata (headers/memo/search attributes), workflow cache eviction strategy.
 - **Worker Runtime (`src/worker/*`)**
   - _Shipped:_ Single-threaded pollers, deterministic snapshot persistence per run.
-  - _GA requirements:_ Configurable concurrency, sticky task queues, build-id routing,
-    graceful shutdown with drain, heartbeat plumbing, metrics/logging hooks.
+  - _GA requirements:_ Configurable concurrency, sticky task queues, build-id routing, graceful shutdown with drain, heartbeat plumbing, metrics/logging hooks.
 - **Client (`src/client.ts`)**
-  - _Shipped:_ Connect WorkflowService client with payload conversion and header
-    normalisation.
-  - _GA requirements:_ Retry/interceptor framework, TLS/auth hardening, memo/search
-    attribute helpers, long-running operation ergonomics.
+  - _Shipped:_ Connect WorkflowService client with payload conversion and header normalisation.
+  - _GA requirements:_ Retry/interceptor framework, TLS/auth hardening, memo/search attribute helpers, long-running operation ergonomics.
 - **Activities (`src/activities/*`, `src/worker/activity-context.ts`)**
   - _Shipped:_ AsyncLocalStorage-based context, cancellation surface.
-  - _GA requirements:_ Heartbeat API, retry policy adherence, progress payload
-    encoding, failure classification.
+  - _GA requirements:_ Heartbeat API, retry policy adherence, progress payload encoding, failure classification.
 - **Tooling**
-  - CLI (`src/bin/temporal-bun.ts`) scaffolds projects; needs connectivity checks,
-    history replay tooling, lint hooks.
+  - CLI (`src/bin/temporal-bun.ts`) scaffolds projects; needs connectivity checks, history replay tooling, lint hooks.
 - **Generated Protos (`src/proto/**`)**
   - Must stay synced with upstream Temporal releases; add automation for updates.
 
@@ -75,7 +68,7 @@ in parallel without collisions.
 | ID | Epic | Description | Primary Modules |
 | --- | --- | --- | --- |
 | **TBS-001** | History Replay | Build history ingestion, determinism snapshot persistence, mismatch diagnostics. | `src/workflow/replay.ts`, `src/worker/sticky-cache.ts`, `src/worker/runtime.ts` |
-| **TBS-002** | Activity Lifecycle | Implement heartbeats, retry orchestration, cancellation metadata propagation. | `src/activities/lifecycle.ts`, `src/worker/activity-runtime.ts` |
+| **TBS-002** | Activity Lifecycle (✅) | Heartbeat helper wired to WorkflowService with retry/cancellation, local retry orchestration, enriched cancellation metadata. | `src/activities/lifecycle.ts`, `src/worker/activity-runtime.ts` |
 | **TBS-003** | Worker Concurrency | Add scheduler for concurrent workflow/activity processors, sticky queues, build-id routing. | `src/worker/concurrency.ts`, `src/worker/runtime.ts` |
 | **TBS-004** | Observability | Emit structured logs, metrics, and tracing hooks across client/worker. | `src/observability/logger.ts`, `src/observability/metrics.ts` |
 | **TBS-005** | Client Resilience | Layered retries, interceptors, TLS/auth validation, memo/search helpers. | `src/client/interceptors.ts`, `src/client/retries.ts` |
@@ -283,7 +276,7 @@ can contribute independently without re-planning.
      `signal-external-workflow`, `continue-as-new`.
    - Determinism guard captures command history, `Math.random()` and `Date.now()`
      usage for replay validation.
-   - `TEMPORAL_DISABLE_WORKFLOW_CONTEXT` allows fallback for legacy customers.
+   - Deterministic context is enforced for all workflows and cannot be disabled.
 2. **Replay ingestion (GA critical, TBS-001)**
    - Extract command history, random/time snapshots from Temporal history events.
    - Maintain per-run snapshot (`namespace::workflowId::runId`) accessible across
@@ -302,10 +295,11 @@ can contribute independently without re-planning.
 
 1. **Handler registration (shipped)**
    - Map-based registry with AsyncLocalStorage context and cancellation support.
-2. **Retries & heartbeats (GA critical, TBS-002)**
-   - Honor Temporal retry policy, emit heartbeats through WorkflowService, surface
-     heartbeat timeout and last details.
-   - Provide ergonomic `activities.heartbeat()` that mirrors Node SDK semantics.
+2. ✅ **Retries & heartbeats (TBS-002)**
+   - WorkerRuntime uses the lifecycle helper to emit throttled heartbeats via `RecordActivityTaskHeartbeat`, retry transient RPC failures, and propagate server-side cancellation through the `ActivityContext`.
+   - Local activity retries mirror the `WorkflowRetryPolicy` (initial/max interval, backoff coefficient, maximum attempts, non-retryable error types, schedule-to-close bounds) before surfacing a terminal failure flagged as non-retryable.
+   - `activityContext.heartbeat(...details)` is now available to user code; details and cancellation reasons flow into `RespondActivityTaskCanceled/Failed` for Temporal UI parity.
+   - Covered by `tests/activities/lifecycle.test.ts` and the Temporal CLI harness suite (`tests/integration/activity-lifecycle.integration.test.ts`) which exercises steady-state heartbeats, heartbeat timeouts, and retry exhaustion.
 3. **Cancellation semantics**
    - Distinguish graceful vs. failure cancellations, propagate context to handlers.
 4. **Metrics and structured logging**
@@ -375,13 +369,13 @@ can contribute independently without re-planning.
 
 ## Configuration & Deployment
 
-- `loadTemporalConfig` already handles TLS, auth, task queue defaults, and workflow
-  context bypass.
+- `loadTemporalConfig` already handles TLS, auth, task queue defaults, and worker identity configuration.
 - GA tasks:
   - Support external config files (JSON/TOML) with schema validation.
   - Document environment variables for multi-namespace deployments.
   - Provide Dockerfile templates with best practices (non-root, minimal image).
   - Publish Helm/Knative snippets for worker deployment.
+- Activity lifecycle knobs (`TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS`, `TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS`) now control heartbeat cadence and RPC timeouts; defaults keep cadence < heartbeat timeout.
 
 ## Testing & Quality Strategy
 
@@ -395,6 +389,7 @@ can contribute independently without re-planning.
      - Continue-as-new determinism.
      - Build-id routing acceptance.
    - Each major functionality (TBS-001 ↔ TBS-007) must add integration tests using the Temporal CLI available in the execution environment, ensuring end-to-end validation is part of every deliverable.
+   - `tests/integration/activity-lifecycle.integration.test.ts` exercises steady heartbeats, heartbeat timeout cancellation, and retry exhaustion with non-retryable errors via the CLI harness.
 3. **Replay regression harness**
    - Capture real histories, replay offline, ensure deterministic snapshots survive
      worker restarts.
@@ -406,7 +401,7 @@ can contribute independently without re-planning.
 
 ## Documentation Plan
 
-- Update developer docs with deterministic context primitives and bypass flag.
+- Update developer docs with deterministic context primitives and migration guides.
 - Provide cookbook recipes (cron workflows, signal-with-start, updates, activity
   heartbeat best practices).
 - Accessibility review for CLI output (color contrast, terminal semantics).
@@ -428,7 +423,7 @@ can contribute independently without re-planning.
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
-| Determinism regressions | Workflow non-determinism in production | Replay harness, sticky cache eviction tests, feature flags for bypass. |
+| Determinism regressions | Workflow non-determinism in production | Replay harness, sticky cache eviction tests, deterministic guard validations. |
 | Transport incompatibility | Bun HTTP/2 regressions | Continuous compatibility tests against Temporal Cloud and OSS releases. |
 | Performance under load | Missed SLA on task latency | Profiling with CPU/network throttling, concurrency tuning, metrics dashboards. |
 | Packaging regressions | Broken ESM/CJS consumers | Dual-package smoke tests (Bun, Node 20), tree-shaking tests, API lockfile. |
@@ -438,7 +433,7 @@ can contribute independently without re-planning.
 
 1. ✅ Deterministic workflow context and command intents.
 2. 🚧 History replay ingestion, sticky cache, determinism persistence tests.
-3. 🚧 Activity lifecycle completeness (heartbeats, retries, failure categorisation).
+3. ✅ Activity lifecycle completeness (heartbeats, retries, failure categorisation).
 4. 🚧 Worker concurrency, sticky queues, graceful shutdown polish.
 5. 🚧 Client retries/interceptors, TLS hardening.
 6. 🚧 Observability: logs, metrics, tracing hooks.
