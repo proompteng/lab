@@ -59,8 +59,9 @@ export class DeterminismGuard {
   recordCommand(intent: WorkflowCommandIntent): RecordedCommandKind {
     let kind: RecordedCommandKind = 'new'
     if (!this.#allowBypass && this.#previous) {
-      if (this.#commandIndex < this.#previous.commandHistory.length) {
-        const expected = this.#previous.commandHistory[this.#commandIndex]?.intent
+      const previousEntry = this.#previous.commandHistory[this.#commandIndex]
+      if (previousEntry) {
+        const expected = previousEntry.intent
         if (!expected) {
           throw new WorkflowNondeterminismError('Workflow emitted new command on replay', {
             hint: `commandIndex=${this.#commandIndex}`,

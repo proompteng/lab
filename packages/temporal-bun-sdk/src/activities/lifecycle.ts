@@ -99,7 +99,8 @@ export const makeActivityLifecycle = (
         const backoffCoefficient = retry.backoffCoefficient ?? DEFAULT_ACTIVITY_RETRY_BACKOFF
         const maxInterval = retry.maximumIntervalMs ?? initialInterval * DEFAULT_ACTIVITY_RETRY_MAX_INTERVAL_MULTIPLIER
         const retryCount = state.retryCount + 1
-        const exponentialDelay = initialInterval * backoffCoefficient ** Math.max(retryCount - 1, 0)
+        const attemptBasedExponent = Math.max(state.attempt - 1, 0)
+        const exponentialDelay = initialInterval * backoffCoefficient ** attemptBasedExponent
         const nextDelayMs = Math.min(exponentialDelay, maxInterval)
         return {
           attempt: nextAttempt,
