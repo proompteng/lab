@@ -19,6 +19,37 @@
 | **Persistence Service** | Kotlin (Ktor/Spring Boot) running as a Knative service exposes CRUD/complement/clean endpoints, talks to Neo4j via the Bolt driver, and logs provenance in `ResearchSource` nodes. |
 | **Graph Platform** | Neo4j StatefulSet (or Helm release) with PV-backed storage, Bolt+HTTP ports restricted to Tailscale sidecar, schema that supports companies, components, logistics, contracts, and risks. |
 
+### High-level architecture diagram
+```mermaid
+graph LR
+  subgraph Research Streams
+    T(Temporal workflows)
+    AW(Argo Workflow)
+    C1(Codex executor A)
+    C2(Codex executor B)
+    AS(Artifact store)
+  end
+  subgraph Persistence
+    K(Kotlin Knative service)
+    N(Neo4j graph)
+  end
+  subgraph Access
+    TT(Tailscale Browser)
+  end
+  T --> AW
+  AW --> C1
+  AW --> C2
+  C1 --> AS
+  C2 --> AS
+  AS --> T
+  T --> K
+  K --> N
+  N --> TT
+  K -->|metrics| P(Prometheus/Grafana)
+  T -->|metrics| TM(Temporal dashboard)
+  TM --> P
+```
+
 ## Neo4j Schema Highlights
 - **Nodes**: `Company`, `Facility`, `Component`, `LogisticsProvider`, `Product`, `ResearchSource`, `RiskTag`, `Event`, `Certification`.
 - **Relationships**:
@@ -49,6 +80,26 @@
 - **Consistency**: When multiple streams target the same node, merge updates by prioritizing higher confidence/timestamp values, and keep `sourceStreams` collections on edges to prevent accidental overwrites.
 - **Throughput scaling**: Temporal can fan out Argo subworkflows for each stream, allowing multiple Codex instances to research concurrently while the Kotlin service ingests them incrementally; the service supports batch operations to minimize contention.
 
+### Research stream component diagram
+The diagram below shows how Temporal tracks each research stream, launches Argo/Codex units, and funnels artifacts into the shared store that feeds the Kotlin persistence service.
+```mermaid
+graph LR
+  SC(Stream catalog)
+  T(Temporal workflow + stream scheduler)
+  AW(Argo workflow template)
+  CE1(Codex executor cluster 1)
+  CE2(Codex executor cluster 2)
+  AS(Artifact storage / PVC or S3)
+  SC --> T
+  T --> AW
+  AW --> CE1
+  AW --> CE2
+  CE1 --> AS
+  CE2 --> AS
+  AS --> T
+  T --> K(Kotlin service)
+```
+
 ## Kotlin Knative Service Responsibilities
 - **Endpoints**:
   - `POST /entities` – insert nodes with schema validation and provenance annotation.
@@ -61,12 +112,52 @@
 - **Technology stack**: Kotlin + Ktor or Spring Boot, Neo4j Java driver, Knative service definitions (autoscale zero, concurrency), containerized via existing CI/CD pipeline.
 - **Security**: Authenticate request via workload identity token or service account, limit to `supply-chain` namespace.
 
+### Kotlin service component diagram
+This view shows how each endpoint connects to Neo4j, enrichment hooks, cleaning routines, and observability.
+```mermaid
+graph TD
+  E1(POST /entities)
+  E2(POST /relationships)
+  EP(PATCH endpoints)
+  EDEL(DELETE endpoints)
+  ECOM(POST /complement)
+  ECLEAN(POST /clean)
+  E1 --> Neo(Neo4j Bolt driver)
+  E2 --> Neo
+  EP --> Neo
+  EDEL --> Neo
+  ECOM --> Enr(Enrichment/Codex hints)
+  ECLEAN --> Clean(Dedupe/Cleanup)
+  Enr --> Neo
+  Clean --> Neo
+  Neo --> Audit(ResearchSource nodes)
+  K(Kotlin service) -->|metrics| P(Prometheus/Grafana)
+```
+
 ## Neo4j Deployment & Access Control
 - **Namespace**: `neo4j` with StatefulSet or Helm chart.
 - **Storage**: PVC + scheduled backup CronJob persisting to object storage; snapshots versioned and referenced from Temporal for rollback.
 - **Network**: Bolt port only accessible from service account; HTTP Browser port only accessible through Tailscale sidecar.
 - **Tailscale sidecar**: pod runs Tailscale connecting to default tailnet; restrict access with Kubernetes network policy to Tailscale IP range.
 - **Logs/Monitoring**: Export Neo4j metrics (transactions, store size) to Prometheus; alert on conflicting writes or slow queries impacting Temporal ingestion.
+
+### Neo4j & access component diagram
+The diagram below summarizes the Neo4j deployment, its storage/backup claims, and Tailscale-protected browser access.
+```mermaid
+graph TB
+  N(Neo4j StatefulSet)
+  PV(PersistentVolumeClaim)
+  BK(Backup CronJob)
+  Tailscale(Tailscale sidecar)
+  Browser(Neo4j Browser)
+  Users(Authorized operators)
+  N --> PV
+  N --> BK
+  N --> Browser
+  Browser --> Tailscale
+  Tailscale --> Users
+  N -->|metrics| P(Prometheus)
+```
 
 ## Observability & Security
 - **Temporal metrics**: track workflow duration, retries, Argo artifact ingestion success; hook into Grafana dashboards and alert on pilot-timeouts.
