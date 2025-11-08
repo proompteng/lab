@@ -42,7 +42,7 @@ import { CommandType } from '../proto/temporal/api/enums/v1/command_type_pb'
 import { WorkerVersioningMode } from '../proto/temporal/api/enums/v1/deployment_pb'
 import { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
 import { WorkflowTaskFailedCause } from '../proto/temporal/api/enums/v1/failed_cause_pb'
-import { HistoryEventFilterType, VersioningBehavior } from '../proto/temporal/api/enums/v1/workflow_pb'
+import { HistoryEventFilterType, TimeoutType, VersioningBehavior } from '../proto/temporal/api/enums/v1/workflow_pb'
 import type { HistoryEvent } from '../proto/temporal/api/history/v1/message_pb'
 import {
   type StickyExecutionAttributes,
@@ -781,7 +781,11 @@ export class WorkerRuntime {
           if (!activityId) {
             break
           }
-          const timeoutType = event.attributes.value.timeoutType?.name ?? 'unknown'
+          const timeoutFailure = event.attributes.value.failure?.failureInfo
+          const timeoutTypeValue =
+            timeoutFailure?.case === 'timeoutFailureInfo' ? timeoutFailure.value.timeoutType : undefined
+          const timeoutType =
+            timeoutTypeValue !== undefined ? (TimeoutType[timeoutTypeValue] ?? String(timeoutTypeValue)) : 'unknown'
           const failureError =
             (await failureToError(this.#dataConverter, event.attributes.value.failure)) ??
             new Error(`Activity ${activityId} timed out (${timeoutType})`)
