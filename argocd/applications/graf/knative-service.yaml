@@ -1,7 +1,7 @@
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
-  name: graf-persistence
+  name: graf
   namespace: graf
   labels:
     app.kubernetes.io/name: graf
@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/part-of: lab
   annotations:
     serving.knative.dev/rollout-duration: "10s"
-    argocd.argoproj.io/tracking-id: graf-persistence:serving.knative.dev/Service:graf/graf-persistence
+    argocd.argoproj.io/tracking-id: graf:serving.knative.dev/Service:graf/graf
 spec:
   template:
     metadata:
@@ -19,9 +19,9 @@ spec:
     spec:
       timeoutSeconds: 60
       containerConcurrency: 0
-      serviceAccountName: graf-persistence
+      serviceAccountName: graf
       containers:
-        - name: graf-persistence
+        - name: graf
           image: registry.ide-newton.ts.net/proompteng/graf:latest
           imagePullPolicy: Always
           ports:
