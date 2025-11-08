@@ -1,5 +1,13 @@
 import { SQL } from 'bun'
-import { getFlagValue, parseCliFlags, parseCommaList, requireEnv, vectorToPgArray } from './cli'
+import {
+  DEFAULT_DATABASE_URL,
+  getFlagValue,
+  parseCliFlags,
+  parseCommaList,
+  requireEnv,
+  toPgTextArray,
+  vectorToPgArray,
+} from './cli'
 
 type MemoryRow = {
   id: string
@@ -42,7 +50,7 @@ const encoderModel = getFlagValue(flags, 'model') ?? process.env.OPENAI_EMBEDDIN
 const openAiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? 'https://api.openai.com/v1'
 const apiKey = requireEnv('OPENAI_API_KEY')
 const expectedDimension = parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? '1536', 10)
-const databaseUrl = requireEnv('DATABASE_URL')
+const databaseUrl = process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL
 
 const embedResponse = await fetch(`${openAiBaseUrl}/embeddings`, {
   method: 'POST',
@@ -92,6 +100,7 @@ const pushParam = (value: unknown) => {
   return `$${params.length}`
 }
 
+const tagsArrayLiteral = tags.length ? toPgTextArray(tags) : undefined
 const conditions: string[] = ['TRUE']
 if (repositoryRef) {
   conditions.push(`repository_ref = ${pushParam(repositoryRef)}`)
@@ -102,8 +111,8 @@ if (source) {
 if (taskName) {
   conditions.push(`task_name = ${pushParam(taskName)}`)
 }
-if (tags.length) {
-  conditions.push(`tags && ${pushParam(tags)}::text[]`)
+if (tags.length && tagsArrayLiteral) {
+  conditions.push(`tags && ${pushParam(tagsArrayLiteral)}::text[]`)
 }
 const vectorParam = pushParam(vectorString)
 const limitParam = pushParam(limit)
@@ -147,13 +156,16 @@ try {
 
     const ids = rows.map((row) => row.id)
     const snippet = queryText.trim().slice(0, 120)
+    const idsArrayLiteral = toPgTextArray(ids)
 
-    await db.unsafe('UPDATE memories.entries SET last_accessed_at = now() WHERE id = ANY($1::uuid[])', [ids])
+    await db.unsafe('UPDATE memories.entries SET last_accessed_at = now() WHERE id = ANY($1::uuid[])', [
+      idsArrayLiteral,
+    ])
 
     await db.unsafe(
       `INSERT INTO memories.events (entry_id, event_type, event_summary)
        SELECT id, 'retrieved', $2 FROM memories.entries WHERE id = ANY($1::uuid[])`,
-      [ids, `retrieved for query: ${snippet}`],
+      [idsArrayLiteral, `retrieved for query: ${snippet}`],
     )
   }
 } finally {

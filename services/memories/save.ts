@@ -1,5 +1,14 @@
 import { SQL } from 'bun'
-import { getFlagValue, parseCliFlags, parseCommaList, parseJson, requireEnv, vectorToPgArray } from './cli'
+import {
+  DEFAULT_DATABASE_URL,
+  getFlagValue,
+  parseCliFlags,
+  parseCommaList,
+  parseJson,
+  requireEnv,
+  toPgTextArray,
+  vectorToPgArray,
+} from './cli'
 
 const flags = parseCliFlags(process.argv.slice(2))
 
@@ -41,7 +50,7 @@ const encoderVersion = getFlagValue(flags, 'encoder-version')
 const openAiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? 'https://api.openai.com/v1'
 const apiKey = requireEnv('OPENAI_API_KEY')
 const expectedDimension = parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? '1536', 10)
-const databaseUrl = requireEnv('DATABASE_URL')
+const databaseUrl = process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL
 
 const embedResponse = await fetch(`${openAiBaseUrl}/embeddings`, {
   method: 'POST',
@@ -72,6 +81,7 @@ if (embedding.length !== expectedDimension) {
 
 const vectorString = vectorToPgArray(embedding)
 const metadataJson = JSON.stringify(metadata)
+const tagsArrayLiteral = toPgTextArray(tags)
 const db = new SQL(databaseUrl)
 
 const insertParams = [
@@ -83,7 +93,7 @@ const insertParams = [
   summary,
   content,
   metadataJson,
-  tags,
+  tagsArrayLiteral,
   source,
   vectorString,
   encoderModel,

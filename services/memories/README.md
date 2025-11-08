@@ -1,4 +1,4 @@
-# embeddings
+# memories
 
 This directory hosts a small Bun service that backs Codex memory storage and retrieval.
 
@@ -7,6 +7,18 @@ This directory hosts a small Bun service that backs Codex memory storage and ret
 ```bash
 bun install
 ```
+
+### Local Postgres
+
+Bootstrapping the local Postgres schema creates a dedicated `cerebrum` role and database. Run:
+
+```bash
+bun run createdb
+```
+
+The script checks for `cerebrum` before creating the role/database and leaves the password set to `cerebrum` so the bundled helpers can connect locally.
+
+Set `DATABASE_URL` to `postgres://cerebrum:cerebrum@localhost:5432/cerebrum?sslmode=disable` (see `.env.example`) when working locally.
 
 ### Required environment
 

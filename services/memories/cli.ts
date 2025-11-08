@@ -48,6 +48,16 @@ export function requireEnv(name: string): string {
   return value
 }
 
+export const DEFAULT_DATABASE_URL = 'postgres://cerebrum:cerebrum@localhost:5432/cerebrum?sslmode=disable'
+
+export function toPgTextArray(values: string[]) {
+  if (!values.length) {
+    return '{}'
+  }
+  const escaped = values.map((value) => JSON.stringify(value))
+  return `{${escaped.join(',')}}`
+}
+
 export function getFlagValue(flags: FlagMap, key: string): string | undefined {
   const raw = flags[key]
   if (typeof raw === 'string' && raw.length > 0) {

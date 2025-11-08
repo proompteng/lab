@@ -6,6 +6,9 @@ CREATE SCHEMA IF NOT EXISTS memories;
 -- Enables pgvector so we can persist vector embeddings.
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- Enables pgcrypto for gen_random_uuid().
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- Main table for Codex memories.
 CREATE TABLE IF NOT EXISTS memories.entries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

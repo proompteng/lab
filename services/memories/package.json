@@ -1,11 +1,12 @@
 {
-  "name": "embeddings",
+  "name": "memories",
   "module": "index.ts",
   "type": "module",
   "private": true,
   "scripts": {
     "save-memory": "bun run ./save.ts",
     "retrieve-memory": "bun run ./retrieve.ts",
+    "createdb": "bun run ./scripts/create-db.ts",
     "test": "bun test tests"
   },
   "devDependencies": {
