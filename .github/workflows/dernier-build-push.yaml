@@ -44,5 +44,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/dernier:latest
-          cache-to: type=inline
+          cache-from: |
+            type=registry,ref=registry.ide-newton.ts.net/lab/dernier:latest
+            type=registry,ref=registry.ide-newton.ts.net/lab/dernier:cache
+          cache-to: |
+            type=registry,ref=registry.ide-newton.ts.net/lab/dernier:cache,mode=max
+            type=inline

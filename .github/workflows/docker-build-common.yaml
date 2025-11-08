@@ -60,5 +60,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           push: true
-          cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:latest
-          cache-to: type=inline
+          cache-from: |
+            type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:latest
+            type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:cache
+          cache-to: |
+            type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:cache,mode=max
+            type=inline
