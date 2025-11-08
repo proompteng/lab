@@ -1,11 +1,10 @@
-import { setTimeout as delay } from 'node:timers/promises'
-
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { Effect } from 'effect'
 
 import type { DataConverter } from '../common/payloads'
 import { encodeValuesToPayloads } from '../common/payloads/converter'
+import { sleep } from '../common/sleep'
 import { PayloadsSchema } from '../proto/temporal/api/common/v1/message_pb'
 import { RecordActivityTaskHeartbeatRequestSchema } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
 import type { ActivityContext } from '../worker/activity-context'
@@ -165,23 +164,12 @@ class ActivityHeartbeatDriver {
   }
 
   async shutdown(): Promise<void> {
-    if (this.#stopped) {
-      await this.#sending
-      return
-    }
     this.#stopped = true
     if (this.#timer) {
       clearTimeout(this.#timer)
       this.#timer = undefined
     }
-    const pending = this.#pending
-    this.#pending = undefined
-    if (pending) {
-      const abortError = createAbortError('Activity heartbeat stopped')
-      for (const waiter of pending.waiters) {
-        waiter.reject(abortError)
-      }
-    }
+    this.#rejectPending(createAbortError('Activity heartbeat stopped'))
     if (this.#sending) {
       try {
         await this.#sending
@@ -214,13 +202,20 @@ class ActivityHeartbeatDriver {
   }
 
   #startFlush(): void {
-    this.#sending = this.#flush()
-    void this.#sending.finally(() => {
-      this.#sending = undefined
-      if (this.#pending && !this.#stopped) {
-        this.#scheduleFlush()
-      }
-    })
+    const pendingFlush = this.#flush()
+    this.#sending = pendingFlush
+    void pendingFlush
+      .catch((error) => {
+        console.warn('[temporal-bun-sdk] activity heartbeat flush failed', error)
+      })
+      .finally(() => {
+        if (this.#sending === pendingFlush) {
+          this.#sending = undefined
+        }
+        if (this.#pending && !this.#stopped) {
+          this.#scheduleFlush()
+        }
+      })
   }
 
   async #flush(): Promise<void> {
@@ -244,7 +239,7 @@ class ActivityHeartbeatDriver {
   }
 
   async #send(details: unknown[]): Promise<void> {
-    const payloads = await encodeValuesToPayloads(this.#options.dataConverter, details)
+    const payloads = (await encodeValuesToPayloads(this.#options.dataConverter, details)) ?? []
     const request = create(RecordActivityTaskHeartbeatRequestSchema, {
       taskToken: this.#options.taskToken,
       identity: this.#options.identity,
@@ -291,7 +286,7 @@ class ActivityHeartbeatDriver {
         }
         const capped = Math.min(delayMs, this.#config.heartbeatRetry.maxIntervalMs)
         const jittered = applyJitter(capped, this.#retryJitterRatio)
-        await delay(jittered)
+        await sleep(jittered)
         delayMs = Math.min(
           delayMs * this.#config.heartbeatRetry.backoffCoefficient,
           this.#config.heartbeatRetry.maxIntervalMs,
@@ -313,6 +308,18 @@ class ActivityHeartbeatDriver {
     if (this.#timer) {
       clearTimeout(this.#timer)
       this.#timer = undefined
+    }
+    this.#rejectPending(createAbortError('Activity heartbeat stopped'))
+  }
+
+  #rejectPending(error: Error): void {
+    const pending = this.#pending
+    if (!pending) {
+      return
+    }
+    this.#pending = undefined
+    for (const waiter of pending.waiters) {
+      waiter.reject(error)
     }
   }
 }
