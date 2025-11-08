@@ -1,4 +1,4 @@
-model = "gpt-5-codex"
+model = "gpt-5-codex-mini"
 model_reasoning_summary = "detailed"
 model_reasoning_effort = "high"
 approval_policy = "never"
@@ -6,6 +6,10 @@ sandbox_mode = "danger-full-access"
 
 [tools]
 web_search = true
+
+[features]
+unified_exec = true
+streamable_shell = true
 
 [shell_environment_policy]
 ignore_default_excludes = true
