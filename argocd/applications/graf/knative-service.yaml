@@ -23,7 +23,7 @@ spec:
       serviceAccountName: graf-service
       containers:
         - name: graf-service
-          image: ghcr.io/proompteng/graf-service:latest
+          image: registry.ide-newton.ts.net/proompteng/graf-service:latest
           imagePullPolicy: Always
           ports:
             - name: http1
