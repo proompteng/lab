@@ -23,7 +23,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: registry.ide-newton.ts.net/proompteng/graf-service
+          images: registry.ide-newton.ts.net/proompteng/graf
           tags: |
             type=ref,event=branch
             type=sha
@@ -44,5 +44,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=registry.ide-newton.ts.net/proompteng/graf-service:latest
-          cache-to: type=inline
+          cache-from: |
+            type=registry,ref=registry.ide-newton.ts.net/proompteng/graf:latest
+            type=registry,ref=registry.ide-newton.ts.net/proompteng/graf:cache
+          cache-to: |
+            type=registry,ref=registry.ide-newton.ts.net/proompteng/graf:cache,mode=max
+            type=inline

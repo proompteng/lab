@@ -31,6 +31,6 @@ tail -n +1 build/logs/*
 ## Container image
 Build from the provided multi-stage `Dockerfile`:
 ```bash
-docker build -t graf-service:latest .
+docker build -t graf:latest .
 ```
 The entrypoint is `bin/graf` from Gradle's `installDist`, and the runtime image is a distroless Java 21 runtime.
