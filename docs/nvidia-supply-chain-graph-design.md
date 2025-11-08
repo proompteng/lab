@@ -69,6 +69,7 @@ graph LR
    - Fetch artifact reference(s), validate schema and confidence, and correlate them with the stream/instance metadata.
    - Enrich with geo, risk heuristics, procurement delegation tags, and downstream significance scoring.
    - Invoke Kotlin service endpoints (`/entities`, `/relationships`, `/complement`) with artifact metadata + stream lineage, ensuring concurrent writes remain idempotent.
+   - Run the `ingestCodexArtifact` workflow on the `nvidia-supply-chain` queue; it uses the Bun-based Graf client to gate on `SUPPLY_CHAIN_ARTIFACT_CONFIDENCE_THRESHOLD`, attach `artifactId`/`streamId`/`workflowId`/`workflowRunId` in both body and `x-temporal-*` headers, and sequentially call `/entities`, `/relationships`, optional `/complement`, and `/clean` so Graf can audit and deduplicate before the Kotlin service persists anything.
 4. **Neo4j persistence**:
    - Neo4j driver upserts nodes/edges, tagging each mutation with `artifactId`, `ResearchSource`, and originating streams.
    - Deduplicate via `apoc.coll.fuzzyMatch`, resolve conflicts using confidence/timestamp, and trigger `clean` endpoint for TTL/soft-deletes when needed.
@@ -164,6 +165,13 @@ graph TB
 - **Codex artifact validation**: store `confidence` and `citationCount`; if < threshold, flag for manual review and do not persist automatically.
 - **Audit trail**: for every mutation log `artifactId`, `workflowId`, `workflowRunId`; `ResearchSource` nodes link to artifact metadata (prompt, citations).
 - **Secrets**: store Neo4j credentials, Tailscale auth, Temporal namespace tokens in Kubernetes Secrets accessible only to respective namespaces.
+
+### Graf client configuration
+- `GRAF_SERVICE_URL` defaults to `http://graf-service.graf.svc.cluster.local:8080` (Knative service DNS) but can point at any Graf proxy for testing.
+- `GRAF_AUTH_HEADERS` accepts a JSON object (e.g., `{ "Authorization": "Bearer ${TOKEN}" }`) and merges those headers with `Authorization: Bearer <api key>` from `GRAF_API_KEY` if supplied.
+- `SUPPLY_CHAIN_ARTIFACT_CONFIDENCE_THRESHOLD` (default `0.75`) is enforced in the Bun workflow; artifacts below this level return `skipped` and never mutate the graph.
+- `GRAF_REQUEST_TIMEOUT_MS` (default `10000`) bounds HTTP calls, while `GRAF_RETRY_MAX_ATTEMPTS`, `GRAF_RETRY_INITIAL_DELAY_MS`, `GRAF_RETRY_MAX_DELAY_MS`, `GRAF_RETRY_BACKOFF_COEFFICIENT`, and `GRAF_RETRYABLE_STATUS_CODES` (e.g., `429,500,502,503,504`) tune the bounded exponential backoff so Graf can deduplicate without endless loops.
+- Every Graf call carries `artifactId`, `streamId`, and `researchSource` in the payload along with `x-temporal-workflow-id`, `x-temporal-workflow-run-id`, and `x-temporal-artifact-id` headers so Graf logs research provenance before Neo4j mutations.
 
 ## Deployment Steps
 1. Provision Neo4j in Kubernetes with PV, Tailscale sidecar, and backup job; verify Browser access via Tailscale client.

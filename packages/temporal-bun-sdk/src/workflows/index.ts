@@ -2,6 +2,7 @@ import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import { defineWorkflow } from '../workflow'
+import { nvidiaSupplyChainWorkflow } from './nvidia-supply-chain'
 
 export const workflows = [
   defineWorkflow('helloTemporal', Schema.Array(Schema.String), ({ input, activities, determinism }) => {
@@ -15,6 +16,7 @@ export const workflows = [
       }),
     )
   }),
+  nvidiaSupplyChainWorkflow,
 ]
 
 export default workflows

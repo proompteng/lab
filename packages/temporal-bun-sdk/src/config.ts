@@ -1,6 +1,17 @@
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 
+import { createDefaultHeaders, mergeHeaders, normalizeMetadataHeaders } from './client/headers'
+
+const readEnvValue = (env: NodeJS.ProcessEnv, key: string): string | undefined => {
+  const value = env[key]
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const trimmed = value.trim()
+  return trimmed.length === 0 ? undefined : trimmed
+}
+
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 7233
 const DEFAULT_NAMESPACE = 'default'
@@ -12,6 +23,14 @@ const DEFAULT_STICKY_CACHE_SIZE = 128
 const DEFAULT_STICKY_CACHE_TTL_MS = 5 * 60_000
 const DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS = 5_000
 const DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS = 5_000
+const DEFAULT_GRAF_SERVICE_URL = 'http://graf-service.graf.svc.cluster.local:8080'
+const DEFAULT_SUPPLY_CHAIN_ARTIFACT_CONFIDENCE_THRESHOLD = 0.75
+const DEFAULT_GRAF_REQUEST_TIMEOUT_MS = 10_000
+const DEFAULT_GRAF_RETRYABLE_STATUS_CODES = [429, 500, 502, 503, 504]
+const DEFAULT_GRAF_RETRY_MAX_ATTEMPTS = 3
+const DEFAULT_GRAF_RETRY_INITIAL_DELAY_MS = 500
+const DEFAULT_GRAF_RETRY_MAX_DELAY_MS = 3_000
+const DEFAULT_GRAF_RETRY_BACKOFF_COEFFICIENT = 2
 
 interface TemporalEnvironment {
   TEMPORAL_ADDRESS?: string
@@ -38,44 +57,61 @@ interface TemporalEnvironment {
   TEMPORAL_WORKER_BUILD_ID?: string
 }
 
+interface GrafEnvironment {
+  GRAF_SERVICE_URL?: string
+  GRAF_API_KEY?: string
+  GRAF_AUTH_HEADERS?: string
+  SUPPLY_CHAIN_ARTIFACT_CONFIDENCE_THRESHOLD?: string
+  GRAF_REQUEST_TIMEOUT_MS?: string
+  GRAF_RETRY_MAX_ATTEMPTS?: string
+  GRAF_RETRY_INITIAL_DELAY_MS?: string
+  GRAF_RETRY_MAX_DELAY_MS?: string
+  GRAF_RETRY_BACKOFF_COEFFICIENT?: string
+  GRAF_RETRYABLE_STATUS_CODES?: string
+}
+
 const truthyValues = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
 const falsyValues = new Set(['0', 'false', 'f', 'no', 'n', 'off'])
 
 const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
-  const read = (key: string) => {
-    const value = env[key]
-    if (typeof value !== 'string') {
-      return undefined
-    }
-    const trimmed = value.trim()
-    return trimmed.length === 0 ? undefined : trimmed
-  }
-
   return {
-    TEMPORAL_ADDRESS: read('TEMPORAL_ADDRESS'),
-    TEMPORAL_HOST: read('TEMPORAL_HOST'),
-    TEMPORAL_GRPC_PORT: read('TEMPORAL_GRPC_PORT'),
-    TEMPORAL_NAMESPACE: read('TEMPORAL_NAMESPACE'),
-    TEMPORAL_TASK_QUEUE: read('TEMPORAL_TASK_QUEUE'),
-    TEMPORAL_API_KEY: read('TEMPORAL_API_KEY'),
-    TEMPORAL_TLS_CA_PATH: read('TEMPORAL_TLS_CA_PATH'),
-    TEMPORAL_TLS_CERT_PATH: read('TEMPORAL_TLS_CERT_PATH'),
-    TEMPORAL_TLS_KEY_PATH: read('TEMPORAL_TLS_KEY_PATH'),
-    TEMPORAL_TLS_SERVER_NAME: read('TEMPORAL_TLS_SERVER_NAME'),
-    TEMPORAL_ALLOW_INSECURE: read('TEMPORAL_ALLOW_INSECURE'),
-    ALLOW_INSECURE_TLS: read('ALLOW_INSECURE_TLS'),
-    TEMPORAL_WORKER_IDENTITY_PREFIX: read('TEMPORAL_WORKER_IDENTITY_PREFIX'),
-    TEMPORAL_SHOW_STACK_SOURCES: read('TEMPORAL_SHOW_STACK_SOURCES'),
-    TEMPORAL_WORKFLOW_CONCURRENCY: read('TEMPORAL_WORKFLOW_CONCURRENCY'),
-    TEMPORAL_ACTIVITY_CONCURRENCY: read('TEMPORAL_ACTIVITY_CONCURRENCY'),
-    TEMPORAL_STICKY_CACHE_SIZE: read('TEMPORAL_STICKY_CACHE_SIZE'),
-    TEMPORAL_STICKY_TTL_MS: read('TEMPORAL_STICKY_TTL_MS'),
-    TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS: read('TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS'),
-    TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS: read('TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS'),
-    TEMPORAL_WORKER_DEPLOYMENT_NAME: read('TEMPORAL_WORKER_DEPLOYMENT_NAME'),
-    TEMPORAL_WORKER_BUILD_ID: read('TEMPORAL_WORKER_BUILD_ID'),
+    TEMPORAL_ADDRESS: readEnvValue(env, 'TEMPORAL_ADDRESS'),
+    TEMPORAL_HOST: readEnvValue(env, 'TEMPORAL_HOST'),
+    TEMPORAL_GRPC_PORT: readEnvValue(env, 'TEMPORAL_GRPC_PORT'),
+    TEMPORAL_NAMESPACE: readEnvValue(env, 'TEMPORAL_NAMESPACE'),
+    TEMPORAL_TASK_QUEUE: readEnvValue(env, 'TEMPORAL_TASK_QUEUE'),
+    TEMPORAL_API_KEY: readEnvValue(env, 'TEMPORAL_API_KEY'),
+    TEMPORAL_TLS_CA_PATH: readEnvValue(env, 'TEMPORAL_TLS_CA_PATH'),
+    TEMPORAL_TLS_CERT_PATH: readEnvValue(env, 'TEMPORAL_TLS_CERT_PATH'),
+    TEMPORAL_TLS_KEY_PATH: readEnvValue(env, 'TEMPORAL_TLS_KEY_PATH'),
+    TEMPORAL_TLS_SERVER_NAME: readEnvValue(env, 'TEMPORAL_TLS_SERVER_NAME'),
+    TEMPORAL_ALLOW_INSECURE: readEnvValue(env, 'TEMPORAL_ALLOW_INSECURE'),
+    ALLOW_INSECURE_TLS: readEnvValue(env, 'ALLOW_INSECURE_TLS'),
+    TEMPORAL_WORKER_IDENTITY_PREFIX: readEnvValue(env, 'TEMPORAL_WORKER_IDENTITY_PREFIX'),
+    TEMPORAL_SHOW_STACK_SOURCES: readEnvValue(env, 'TEMPORAL_SHOW_STACK_SOURCES'),
+    TEMPORAL_WORKFLOW_CONCURRENCY: readEnvValue(env, 'TEMPORAL_WORKFLOW_CONCURRENCY'),
+    TEMPORAL_ACTIVITY_CONCURRENCY: readEnvValue(env, 'TEMPORAL_ACTIVITY_CONCURRENCY'),
+    TEMPORAL_STICKY_CACHE_SIZE: readEnvValue(env, 'TEMPORAL_STICKY_CACHE_SIZE'),
+    TEMPORAL_STICKY_TTL_MS: readEnvValue(env, 'TEMPORAL_STICKY_TTL_MS'),
+    TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS: readEnvValue(env, 'TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS'),
+    TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS: readEnvValue(env, 'TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS'),
+    TEMPORAL_WORKER_DEPLOYMENT_NAME: readEnvValue(env, 'TEMPORAL_WORKER_DEPLOYMENT_NAME'),
+    TEMPORAL_WORKER_BUILD_ID: readEnvValue(env, 'TEMPORAL_WORKER_BUILD_ID'),
   }
 }
+
+const sanitizeGrafEnvironment = (env: NodeJS.ProcessEnv): GrafEnvironment => ({
+  GRAF_SERVICE_URL: readEnvValue(env, 'GRAF_SERVICE_URL'),
+  GRAF_API_KEY: readEnvValue(env, 'GRAF_API_KEY'),
+  GRAF_AUTH_HEADERS: readEnvValue(env, 'GRAF_AUTH_HEADERS'),
+  SUPPLY_CHAIN_ARTIFACT_CONFIDENCE_THRESHOLD: readEnvValue(env, 'SUPPLY_CHAIN_ARTIFACT_CONFIDENCE_THRESHOLD'),
+  GRAF_REQUEST_TIMEOUT_MS: readEnvValue(env, 'GRAF_REQUEST_TIMEOUT_MS'),
+  GRAF_RETRY_MAX_ATTEMPTS: readEnvValue(env, 'GRAF_RETRY_MAX_ATTEMPTS'),
+  GRAF_RETRY_INITIAL_DELAY_MS: readEnvValue(env, 'GRAF_RETRY_INITIAL_DELAY_MS'),
+  GRAF_RETRY_MAX_DELAY_MS: readEnvValue(env, 'GRAF_RETRY_MAX_DELAY_MS'),
+  GRAF_RETRY_BACKOFF_COEFFICIENT: readEnvValue(env, 'GRAF_RETRY_BACKOFF_COEFFICIENT'),
+  GRAF_RETRYABLE_STATUS_CODES: readEnvValue(env, 'GRAF_RETRYABLE_STATUS_CODES'),
+})
 
 const coerceBoolean = (raw: string | undefined): boolean | undefined => {
   if (!raw) return undefined
@@ -114,6 +150,206 @@ const parseNonNegativeInt = (raw: string | undefined, fallback: number, context:
     throw new Error(`Invalid ${context}: ${raw}`)
   }
   return parsed
+}
+
+export interface GrafRetryPolicy {
+  readonly maxAttempts: number
+  readonly initialDelayMs: number
+  readonly maxDelayMs: number
+  readonly backoffCoefficient: number
+  readonly retryableStatusCodes: number[]
+}
+
+export interface GrafConfig {
+  readonly serviceUrl: string
+  readonly headers: Record<string, string>
+  readonly confidenceThreshold: number
+  readonly requestTimeoutMs: number
+  readonly retryPolicy: GrafRetryPolicy
+}
+
+export interface LoadGrafConfigOptions {
+  env?: NodeJS.ProcessEnv
+  defaults?: Partial<GrafConfig> & {
+    apiKey?: string
+    metadataHeaders?: string
+  }
+}
+
+const parseGrafServiceUrl = (raw: string | undefined, fallback: string): string => {
+  const candidate = raw?.trim() ?? fallback.trim()
+  if (candidate.length === 0) {
+    throw new Error('GRAF_SERVICE_URL cannot be empty')
+  }
+  return candidate
+}
+
+const parseFloatInRange = (
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+  context: string,
+): number => {
+  if (raw === undefined) {
+    return fallback
+  }
+  const parsed = Number.parseFloat(raw)
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    throw new Error(`Invalid ${context}: ${raw}`)
+  }
+  return parsed
+}
+
+const parsePositiveFloat = (raw: string | undefined, fallback: number, context: string): number => {
+  if (raw === undefined) {
+    return fallback
+  }
+  const parsed = Number.parseFloat(raw)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${context}: ${raw}`)
+  }
+  return parsed
+}
+
+const parseRetryableStatusCodes = (raw: string | undefined, fallback: number[]): number[] => {
+  if (!raw) {
+    return fallback
+  }
+  const segments = raw
+    .split(',')
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)
+  if (segments.length === 0) {
+    return fallback
+  }
+  return segments.map((segment) => {
+    const parsed = Number.parseInt(segment, 10)
+    if (!Number.isInteger(parsed) || parsed < 100 || parsed > 599) {
+      throw new Error(`Invalid HTTP status code in GRAF_RETRYABLE_STATUS_CODES: ${segment}`)
+    }
+    return parsed
+  })
+}
+
+const parseGrafMetadataHeaders = (raw: string): Record<string, unknown> => {
+  const trimmed = raw.trim()
+  if (trimmed.length === 0) {
+    throw new Error('GRAF_AUTH_HEADERS must describe at least one header')
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    throw new Error('GRAF_AUTH_HEADERS must be valid JSON')
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('GRAF_AUTH_HEADERS must be a JSON object')
+  }
+
+  const convertValue = (value: unknown): string => {
+    if (typeof value === 'string') {
+      return value
+    }
+    if (value === null || value === undefined) {
+      return ''
+    }
+    if (typeof value === 'boolean' || typeof value === 'number') {
+      return String(value)
+    }
+    return JSON.stringify(value)
+  }
+
+  const headers: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(parsed)) {
+    const converted = convertValue(value).trim()
+    if (converted.length === 0) {
+      continue
+    }
+    headers[key] = converted
+  }
+
+  return headers
+}
+
+const buildGrafHeaders = (
+  env: GrafEnvironment,
+  defaults?: LoadGrafConfigOptions['defaults'],
+): Record<string, string> => {
+  const baseHeaders = defaults?.headers ?? {}
+  const apiKey = env.GRAF_API_KEY ?? defaults?.apiKey
+  let headers = mergeHeaders(baseHeaders, createDefaultHeaders(apiKey))
+  const metadataSource = env.GRAF_AUTH_HEADERS ?? defaults?.metadataHeaders
+  if (metadataSource) {
+    headers = mergeHeaders(headers, normalizeMetadataHeaders(parseGrafMetadataHeaders(metadataSource)))
+  }
+  return headers
+}
+
+const buildGrafRetryPolicy = (env: GrafEnvironment, defaults?: LoadGrafConfigOptions['defaults']): GrafRetryPolicy => {
+  const retryDefaults = defaults?.retryPolicy
+  const maxAttempts = parsePositiveInt(
+    env.GRAF_RETRY_MAX_ATTEMPTS,
+    retryDefaults?.maxAttempts ?? DEFAULT_GRAF_RETRY_MAX_ATTEMPTS,
+    'GRAF_RETRY_MAX_ATTEMPTS',
+  )
+  const initialDelayMs = parsePositiveInt(
+    env.GRAF_RETRY_INITIAL_DELAY_MS,
+    retryDefaults?.initialDelayMs ?? DEFAULT_GRAF_RETRY_INITIAL_DELAY_MS,
+    'GRAF_RETRY_INITIAL_DELAY_MS',
+  )
+  const maxDelayMs = parsePositiveInt(
+    env.GRAF_RETRY_MAX_DELAY_MS,
+    retryDefaults?.maxDelayMs ?? DEFAULT_GRAF_RETRY_MAX_DELAY_MS,
+    'GRAF_RETRY_MAX_DELAY_MS',
+  )
+  const backoffCoefficient = parsePositiveFloat(
+    env.GRAF_RETRY_BACKOFF_COEFFICIENT,
+    retryDefaults?.backoffCoefficient ?? DEFAULT_GRAF_RETRY_BACKOFF_COEFFICIENT,
+    'GRAF_RETRY_BACKOFF_COEFFICIENT',
+  )
+  const retryableStatusCodes = parseRetryableStatusCodes(
+    env.GRAF_RETRYABLE_STATUS_CODES,
+    retryDefaults?.retryableStatusCodes ?? DEFAULT_GRAF_RETRYABLE_STATUS_CODES,
+  )
+
+  if (maxDelayMs < initialDelayMs) {
+    throw new Error('GRAF_RETRY_MAX_DELAY_MS must be >= GRAF_RETRY_INITIAL_DELAY_MS')
+  }
+
+  return {
+    maxAttempts,
+    initialDelayMs,
+    maxDelayMs,
+    backoffCoefficient,
+    retryableStatusCodes,
+  }
+}
+
+export const loadGrafConfig = (options: LoadGrafConfigOptions = {}): GrafConfig => {
+  const env = sanitizeGrafEnvironment(options.env ?? process.env)
+  const defaults = options.defaults
+  const serviceUrl = parseGrafServiceUrl(env.GRAF_SERVICE_URL, defaults?.serviceUrl ?? DEFAULT_GRAF_SERVICE_URL)
+  const confidenceThreshold = parseFloatInRange(
+    env.SUPPLY_CHAIN_ARTIFACT_CONFIDENCE_THRESHOLD,
+    defaults?.confidenceThreshold ?? DEFAULT_SUPPLY_CHAIN_ARTIFACT_CONFIDENCE_THRESHOLD,
+    0,
+    1,
+    'SUPPLY_CHAIN_ARTIFACT_CONFIDENCE_THRESHOLD',
+  )
+  const requestTimeoutMs = parsePositiveInt(
+    env.GRAF_REQUEST_TIMEOUT_MS,
+    defaults?.requestTimeoutMs ?? DEFAULT_GRAF_REQUEST_TIMEOUT_MS,
+    'GRAF_REQUEST_TIMEOUT_MS',
+  )
+
+  return {
+    serviceUrl,
+    headers: buildGrafHeaders(env, defaults),
+    confidenceThreshold,
+    requestTimeoutMs,
+    retryPolicy: buildGrafRetryPolicy(env, defaults),
+  }
 }
 
 export interface LoadTemporalConfigOptions {

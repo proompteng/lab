@@ -135,6 +135,25 @@ The SDK ships an integration harness that wraps the Temporal CLI dev server scri
 
 If the CLI is missing the tests log a skip and continue so the rest of the suite still passes. The harness lives in `tests/integration/harness.ts` and exposes helpers for bespoke scenarios if you need to extend coverage.
 
+## NVIDIA supply chain ingestion
+
+Temporal now ships an `ingestCodexArtifact` workflow and Graf client that validate Codex artifacts, enforce confidence gates, and push nodes/edges into the Kotlin persistence service. The workflow runs on the `nvidia-supply-chain` task queue and adds `artifactId`, `streamId`, `workflowId`, and `workflowRunId` metadata to every `/entities`, `/relationships`, `/complement`, and `/clean` call so Graf can audit and dedupe effectively.
+
+### Runtime configuration
+- `GRAF_SERVICE_URL` – defaults to `http://graf-service.graf.svc.cluster.local:8080` but you can override it for local testing.
+- `GRAF_AUTH_HEADERS` – JSON map of additional HTTP headers (e.g., `{ "Authorization": "Bearer ..." }`).
+- `SUPPLY_CHAIN_ARTIFACT_CONFIDENCE_THRESHOLD` – float in `[0,1]` (default `0.75`). Artifacts below this confidence are logged as `skipped` and never hit Graf.
+- `GRAF_REQUEST_TIMEOUT_MS` – request timeout (default `10000`).
+- `GRAF_RETRY_MAX_ATTEMPTS`, `GRAF_RETRY_INITIAL_DELAY_MS`, `GRAF_RETRY_MAX_DELAY_MS`, `GRAF_RETRY_BACKOFF_COEFFICIENT`, and `GRAF_RETRYABLE_STATUS_CODES` – control the Graf client's bounded exponential backoff (defaults: 3 attempts, 500 ms initial, 3000 ms max, coefficient 2, retry on 429/5xx).
+
+### Running a local smoke test
+1. `bun scripts/start-temporal-cli.ts`
+2. `temporal workflow execute --task-queue nvidia-supply-chain --workflow-type ingestCodexArtifact --input '{"artifact":{"artifactId":"test","streamId":"stream-foo","confidence":0.9,"entities":[{"label":"Company","properties":{"name":"Acme"}}],"relationships":[{"type":"PARTNERS_WITH","fromId":"Company:Acme","toId":"Facility:Fab 1"}]}}'`
+
+After the workflow completes you should see Graf logs for `/entities` and `/relationships` and, when present, `/complement` or `/clean`.
+
+Run `pnpm exec biome check packages/temporal-bun-sdk/src` whenever you touch TypeScript so the README’s tooling guidance stays accurate.
+
 ## Effect service integration
 
 ```ts

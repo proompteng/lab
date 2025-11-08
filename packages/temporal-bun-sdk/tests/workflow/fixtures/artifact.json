@@ -1,0 +1,34 @@
+{
+  "artifact": {
+    "artifactId": "artifact-123",
+    "streamId": "stream-foo",
+    "confidence": 0.92,
+    "entities": [
+      {
+        "label": "Facility",
+        "properties": {
+          "name": "Fab 1"
+        }
+      }
+    ],
+    "relationships": [
+      {
+        "type": "MANUFACTURES_AT",
+        "fromId": "Company:Acme",
+        "toId": "Facility:Fab 1",
+        "properties": {
+          "capacity": "5k"
+        }
+      }
+    ],
+    "complement": {
+      "id": "fab-geo",
+      "hints": {
+        "region": "US"
+      }
+    },
+    "clean": {
+      "olderThanHours": 48
+    }
+  }
+}

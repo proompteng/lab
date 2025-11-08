@@ -10,5 +10,13 @@ export type {
   TerminateWorkflowOptions,
   WorkflowHandle,
 } from './client/types'
-export type { TemporalConfig, TLSConfig } from './config'
-export { loadTemporalConfig } from './config'
+export type { GrafConfig, GrafRetryPolicy, TemporalConfig, TLSConfig } from './config'
+export { loadGrafConfig, loadTemporalConfig } from './config'
+export type { GrafClient, GrafRequestMetadata } from './graf/client'
+export { createGrafClient } from './graf/client'
+export type {
+  GrafCleanRequest,
+  GrafComplementRequest,
+  GrafEntityBatchRequest,
+  GrafRelationshipBatchRequest,
+} from './graf/types'

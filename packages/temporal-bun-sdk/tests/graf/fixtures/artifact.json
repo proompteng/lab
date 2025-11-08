@@ -1,0 +1,30 @@
+{
+  "artifactId": "artifact-123",
+  "streamId": "stream-foo",
+  "confidence": 0.85,
+  "entities": [
+    {
+      "label": "Company",
+      "properties": {
+        "name": "Acme"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "type": "PARTNERS_WITH",
+      "fromId": "Acme",
+      "toId": "Nvidia",
+      "properties": {}
+    }
+  ],
+  "complement": {
+    "id": "acme-geo",
+    "hints": {
+      "country": "USA"
+    }
+  },
+  "clean": {
+    "olderThanHours": 24
+  }
+}
