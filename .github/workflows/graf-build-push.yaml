@@ -1,0 +1,48 @@
+name: Graf Docker Build and Push
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/graf/**'
+      - '.github/workflows/graf-build-push.yaml'
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: arc-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: registry.ide-newton.ts.net/proompteng/graf-service
+          tags: |
+            type=ref,event=branch
+            type=sha
+            type=raw,value=latest
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: services/graf
+          file: services/graf/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=registry.ide-newton.ts.net/proompteng/graf-service:latest
+          cache-to: type=inline
