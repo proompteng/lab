@@ -401,17 +401,19 @@ export class WorkerRuntime {
     const program = this.#runtimeProgram()
     this.#runtimeFiber = Effect.runFork(program)
     const completion = Effect.runPromise(
-      Fiber.join(this.#runtimeFiber)
-        .pipe(Effect.catchAllCause((cause) => (Cause.isInterruptedOnly(cause) ? Effect.unit : Effect.failCause(cause))))
-        .pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              this.#runtimeFiber = null
-              this.#running = false
-              this.#runPromise = null
-            }),
-          ),
+      Fiber.join(this.#runtimeFiber).pipe(
+        Effect.catchAllCause((cause) =>
+          Cause.isInterruptedOnly(cause) ? Effect.succeed(undefined) : Effect.failCause(cause),
         ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            this.#runtimeFiber = null
+            this.#running = false
+            this.#runPromise = null
+          }),
+        ),
+        Effect.map(() => undefined),
+      ),
     )
     this.#runPromise = completion
     await completion
@@ -456,7 +458,7 @@ export class WorkerRuntime {
     )
   }
 
-  #workflowPollLoop(queueName: string): Effect.Effect<void, never, never> {
+  #workflowPollLoop(queueName: string): Effect.Effect<void, unknown, never> {
     const request = create(PollWorkflowTaskQueueRequestSchema, {
       namespace: this.#namespace,
       taskQueue: create(TaskQueueSchema, { name: queueName }),
@@ -470,8 +472,11 @@ export class WorkerRuntime {
       )
       .pipe(
         Effect.tap((response) =>
-          response.taskToken && response.taskToken.length > 0 ? self.#enqueueWorkflowTask(response) : Effect.unit,
+          response.taskToken && response.taskToken.length > 0
+            ? self.#enqueueWorkflowTask(response)
+            : Effect.succeed(undefined),
         ),
+        Effect.map(() => undefined),
       )
     return Effect.gen(function* () {
       while (true) {
@@ -497,7 +502,7 @@ export class WorkerRuntime {
     return this.#scheduler.enqueueWorkflow(envelope)
   }
 
-  #activityPollLoop(): Effect.Effect<void, never, never> {
+  #activityPollLoop(): Effect.Effect<void, unknown, never> {
     const request = create(PollActivityTaskQueueRequestSchema, {
       namespace: this.#namespace,
       taskQueue: create(TaskQueueSchema, { name: this.#taskQueue }),
@@ -511,8 +516,11 @@ export class WorkerRuntime {
       )
       .pipe(
         Effect.tap((response) =>
-          response.taskToken && response.taskToken.length > 0 ? self.#enqueueActivityTask(response) : Effect.unit,
+          response.taskToken && response.taskToken.length > 0
+            ? self.#enqueueActivityTask(response)
+            : Effect.succeed(undefined),
         ),
+        Effect.map(() => undefined),
       )
     return Effect.gen(function* () {
       while (true) {

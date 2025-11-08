@@ -8,7 +8,6 @@ import * as defaultActivities from './activities'
 import type { DataConverter } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig } from './config'
 import {
-  BaseRuntimeLayer,
   configLayerFromValue,
   makeBaseRuntimeLayer,
   makeWorkerLayer,
