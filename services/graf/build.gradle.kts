@@ -8,9 +8,9 @@ plugins {
 }
 
 val ktorVersion = "3.3.2"
-val logbackVersion = "1.4.11"
-val neo4jJavaDriverVersion = "5.11.0"
-val coroutinesVersion = "1.7.3"
+val logbackVersion = "1.5.20"
+val neo4jJavaDriverVersion = "6.0.2"
+val coroutinesVersion = "1.10.2"
 val kotlinLoggingVersion = "3.0.5"
 
 application {
