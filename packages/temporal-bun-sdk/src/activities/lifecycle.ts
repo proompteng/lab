@@ -73,13 +73,13 @@ export const makeActivityLifecycle = (
 ): Effect.Effect<ActivityLifecycle, never, never> =>
   Effect.sync(() => {
     const registerHeartbeat: ActivityLifecycle['registerHeartbeat'] = (options) =>
-      Effect.sync(() => {
+      Effect.try(() => {
         const driver = new ActivityHeartbeatDriver(config, options)
         return {
           heartbeat: (details) => Effect.tryPromise(async () => await driver.enqueue(details)),
           shutdown: Effect.tryPromise(async () => {
             await driver.shutdown()
-          }),
+          }).pipe(Effect.catchAll(() => Effect.void)),
         }
       })
 
