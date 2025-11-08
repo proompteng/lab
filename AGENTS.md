@@ -21,6 +21,10 @@
   - `bun packages/scripts/src/facteur/deploy-service.ts` to build, push, and redeploy Facteur (applies the kustomize overlay and `kn service apply`).
 - Whenever you change any TypeScript/JavaScript files, run the relevant Biome check command (e.g. `pnpm exec biome check <paths>`) and resolve every diagnostic before pushing or opening a PR; mention the run in your PR description if manual fixes were required.
 
+## Memories service helpers
+
+- Save new entries with `bun run save-memory --task-name … --content … --summary … --tags …` and query cached facts with `bun run retrieve-memory --query …`. Both helpers emit logs tied to the `memories` schema defined in `schemas/embeddings/memories.sql` and rely on the OpenAI embedding model (`OPENAI_API_KEY`, `OPENAI_EMBEDDING_MODEL`, `OPENAI_EMBEDDING_DIMENSION`, `OPENAI_API_BASE_URL`), so make sure the env vars are set before running them.
+
 ### Tooling Notes
 
 - **kubectl**: the default kubeconfig on these hosts already targets the shared cluster. Avoid overriding `KUBECONFIG` unless you intentionally need another context; doing so can surface TLS or auth errors that do not occur with the default config.
