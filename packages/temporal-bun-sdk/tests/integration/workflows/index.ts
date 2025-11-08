@@ -98,8 +98,8 @@ export const heartbeatWorkflow = defineWorkflow(
         'integrationHeartbeatActivity',
         [input.durationMs],
         {
-          heartbeatTimeoutMs: input.heartbeatTimeoutMs ?? 1_000,
-          startToCloseTimeoutMs: input.durationMs + 1_000,
+          heartbeatTimeoutMs: input.heartbeatTimeoutMs ?? 400,
+          startToCloseTimeoutMs: input.durationMs + 600,
         },
       )
       .pipe(Effect.map(() => 'heartbeat-complete')),
@@ -114,12 +114,12 @@ export const heartbeatTimeoutWorkflow = defineWorkflow(
       [
         {
           initialBeats: input.initialBeats ?? 2,
-          stallMs: input.stallMs ?? 2_000,
+          stallMs: input.stallMs ?? 1_000,
         },
       ],
       {
-        heartbeatTimeoutMs: input.heartbeatTimeoutMs ?? 750,
-        startToCloseTimeoutMs: (input.stallMs ?? 2_000) + 1_000,
+        heartbeatTimeoutMs: input.heartbeatTimeoutMs ?? 300,
+        startToCloseTimeoutMs: (input.stallMs ?? 1_000) + 600,
       },
     ),
 )

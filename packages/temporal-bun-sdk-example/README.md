@@ -54,8 +54,7 @@ Effect-powered activities, and CLI tooling.
 - For mTLS, set `TEMPORAL_TLS_CA_PATH`, `TEMPORAL_TLS_CERT_PATH`, and `TEMPORAL_TLS_KEY_PATH` to PEM-encoded files.
 - Use `TEMPORAL_TLS_SERVER_NAME=<hostname>` if the certificate requires an SNI override.
 - Allow self-signed certificates during testing with `TEMPORAL_ALLOW_INSECURE=1`.
-- Deterministic context stays enabled by default. Set `TEMPORAL_DISABLE_WORKFLOW_CONTEXT=1`
-  only when reproducing legacy behaviour.
+- Deterministic context stays enabled by default; there is no legacy bypass mode.
 
 ## Effect Patterns in the Example
 

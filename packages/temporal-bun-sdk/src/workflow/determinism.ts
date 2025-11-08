@@ -36,6 +36,8 @@ export const snapshotToDeterminismState = (snapshot: DeterminismGuardSnapshot): 
   timeValues: [...snapshot.timeValues],
 })
 
+export type RecordedCommandKind = 'new' | 'replay'
+
 export class DeterminismGuard {
   readonly #allowBypass: boolean
   readonly #previous: WorkflowDeterminismState | undefined
@@ -54,25 +56,30 @@ export class DeterminismGuard {
     }
   }
 
-  recordCommand(intent: WorkflowCommandIntent): void {
+  recordCommand(intent: WorkflowCommandIntent): RecordedCommandKind {
+    let kind: RecordedCommandKind = 'new'
     if (!this.#allowBypass && this.#previous) {
-      const expected = this.#previous.commandHistory[this.#commandIndex]?.intent
-      if (!expected) {
-        throw new WorkflowNondeterminismError('Workflow emitted new command on replay', {
-          hint: `commandIndex=${this.#commandIndex}`,
-          received: intent,
-        })
-      }
-      if (!intentsEqual(expected, intent)) {
-        throw new WorkflowNondeterminismError('Workflow command intent mismatch during replay', {
-          hint: `commandIndex=${this.#commandIndex}`,
-          expected,
-          received: intent,
-        })
+      if (this.#commandIndex < this.#previous.commandHistory.length) {
+        const expected = this.#previous.commandHistory[this.#commandIndex]?.intent
+        if (!expected) {
+          throw new WorkflowNondeterminismError('Workflow emitted new command on replay', {
+            hint: `commandIndex=${this.#commandIndex}`,
+            received: intent,
+          })
+        }
+        if (!intentsEqual(expected, intent)) {
+          throw new WorkflowNondeterminismError('Workflow command intent mismatch during replay', {
+            hint: `commandIndex=${this.#commandIndex}`,
+            expected,
+            received: intent,
+          })
+        }
+        kind = 'replay'
       }
     }
     this.snapshot.commandHistory.push({ intent })
     this.#commandIndex += 1
+    return kind
   }
 
   nextRandom(generate: () => number): number {

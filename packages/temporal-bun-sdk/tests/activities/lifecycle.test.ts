@@ -70,6 +70,43 @@ describe('activity lifecycle helpers', () => {
     const exhausted = await Effect.runPromise(lifecycle.nextRetryDelay(retryPolicy, next!))
     expect(exhausted).toBeUndefined()
   })
+
+  test('heartbeat without details resolves and omits payloads', async () => {
+    const lifecycle = await Effect.runPromise(
+      makeActivityLifecycle({
+        heartbeatIntervalMs: 10,
+        heartbeatRpcTimeoutMs: 50,
+        heartbeatRetry: {
+          initialIntervalMs: 5,
+          maxIntervalMs: 20,
+          backoffCoefficient: 2,
+          maxAttempts: 3,
+        },
+      }),
+    )
+
+    const controller = new AbortController()
+    const context = createTestContext(controller)
+    const stub = new StubWorkflowService()
+
+    const registration = await Effect.runPromise(
+      lifecycle.registerHeartbeat({
+        context,
+        workflowService: stub,
+        taskToken: new Uint8Array([4, 5, 6]),
+        identity: 'test-worker',
+        namespace: 'default',
+        dataConverter: converter,
+        abortController: controller,
+      }),
+    )
+
+    await Effect.runPromise(registration.heartbeat([]))
+    await Effect.runPromise(registration.shutdown)
+
+    expect(stub.calls.length).toBe(1)
+    expect(stub.calls[0]?.details).toBeUndefined()
+  })
 })
 
 const createTestContext = (abortController: AbortController): ActivityContext => ({

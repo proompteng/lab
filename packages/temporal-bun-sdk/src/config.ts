@@ -28,7 +28,6 @@ interface TemporalEnvironment {
   ALLOW_INSECURE_TLS?: string
   TEMPORAL_WORKER_IDENTITY_PREFIX?: string
   TEMPORAL_SHOW_STACK_SOURCES?: string
-  TEMPORAL_DISABLE_WORKFLOW_CONTEXT?: string
   TEMPORAL_WORKFLOW_CONCURRENCY?: string
   TEMPORAL_ACTIVITY_CONCURRENCY?: string
   TEMPORAL_STICKY_CACHE_SIZE?: string
@@ -67,7 +66,6 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     ALLOW_INSECURE_TLS: read('ALLOW_INSECURE_TLS'),
     TEMPORAL_WORKER_IDENTITY_PREFIX: read('TEMPORAL_WORKER_IDENTITY_PREFIX'),
     TEMPORAL_SHOW_STACK_SOURCES: read('TEMPORAL_SHOW_STACK_SOURCES'),
-    TEMPORAL_DISABLE_WORKFLOW_CONTEXT: read('TEMPORAL_DISABLE_WORKFLOW_CONTEXT'),
     TEMPORAL_WORKFLOW_CONCURRENCY: read('TEMPORAL_WORKFLOW_CONCURRENCY'),
     TEMPORAL_ACTIVITY_CONCURRENCY: read('TEMPORAL_ACTIVITY_CONCURRENCY'),
     TEMPORAL_STICKY_CACHE_SIZE: read('TEMPORAL_STICKY_CACHE_SIZE'),
@@ -138,7 +136,6 @@ export interface TemporalConfig {
   workerIdentity: string
   workerIdentityPrefix: string
   showStackTraceSources?: boolean
-  workflowContextBypass: boolean
   workerWorkflowConcurrency: number
   workerActivityConcurrency: number
   workerStickyCacheSize: number
@@ -253,8 +250,6 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
   const tls = await buildTlsConfig(env, options)
   const showStackTraceSources =
     coerceBoolean(env.TEMPORAL_SHOW_STACK_SOURCES) ?? options.defaults?.showStackTraceSources ?? false
-  const workflowContextBypass =
-    coerceBoolean(env.TEMPORAL_DISABLE_WORKFLOW_CONTEXT) ?? options.defaults?.workflowContextBypass ?? false
 
   return {
     host,
@@ -268,7 +263,6 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     workerIdentity,
     workerIdentityPrefix,
     showStackTraceSources,
-    workflowContextBypass,
     workerWorkflowConcurrency,
     workerActivityConcurrency,
     workerStickyCacheSize,
@@ -286,7 +280,6 @@ export const temporalDefaults = {
   namespace: DEFAULT_NAMESPACE,
   taskQueue: DEFAULT_TASK_QUEUE,
   workerIdentityPrefix: DEFAULT_IDENTITY_PREFIX,
-  workflowContextBypass: false,
   workerWorkflowConcurrency: DEFAULT_WORKFLOW_CONCURRENCY,
   workerActivityConcurrency: DEFAULT_ACTIVITY_CONCURRENCY,
   workerStickyCacheSize: DEFAULT_STICKY_CACHE_SIZE,
@@ -302,7 +295,6 @@ export const temporalDefaults = {
   | 'namespace'
   | 'taskQueue'
   | 'workerIdentityPrefix'
-  | 'workflowContextBypass'
   | 'workerWorkflowConcurrency'
   | 'workerActivityConcurrency'
   | 'workerStickyCacheSize'

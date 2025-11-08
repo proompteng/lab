@@ -6,6 +6,7 @@ import { fromJson } from '@bufbuild/protobuf'
 import { Effect } from 'effect'
 
 import { HistorySchema, type HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
+import { EventType } from '../../src/proto/temporal/api/enums/v1/event_type_pb'
 
 export interface TemporalDevServerConfig {
   readonly address: string
@@ -223,10 +224,30 @@ export const createIntegrationHarness = (
         ...args,
       ]
 
-      const cliCommand = ['temporal', ...command] as const
-
+      const cliCommand = [cliExecutable, ...command] as const
+      const describeArgs = [
+        'workflow',
+        'describe',
+        '--workflow-id',
+        workflowId,
+        '--namespace',
+        config.namespace,
+        '--output',
+        'json',
+      ] as const
+      const describeCommand = [cliExecutable, ...describeArgs] as const
       return runTemporalCli(command).pipe(
         Effect.flatMap((stdout) => parseWorkflowExecutionHandle(stdout, workflowId, cliCommand)),
+        Effect.catchAll((error) => {
+          if (error instanceof TemporalCliCommandError) {
+            console.warn('[temporal-bun-sdk:test] CLI command failed, stdout:', error.stdout)
+            console.warn('[temporal-bun-sdk:test] CLI command failed, stderr:', error.stderr)
+            return runTemporalCli(describeArgs).pipe(
+              Effect.flatMap((stdout) => parseWorkflowDescribeHandle(stdout, workflowId, describeCommand)),
+            )
+          }
+          return Effect.fail(error)
+        }),
       )
     }
 
@@ -379,6 +400,42 @@ const parseWorkflowExecutionHandle = (
       ),
   })
 
+const parseWorkflowDescribeHandle = (
+  stdout: string,
+  fallbackWorkflowId: string,
+  command: readonly string[],
+): Effect.Effect<WorkflowExecutionHandle, TemporalCliCommandError, never> =>
+  Effect.try({
+    try: () => {
+      const trimmed = stdout.trim()
+      if (trimmed.length === 0) {
+        throw new Error('Temporal CLI returned empty workflow describe output')
+      }
+      const parsed = JSON.parse(trimmed) as {
+        workflowExecutionInfo?: {
+          execution?: {
+            workflowId?: string
+            runId?: string
+          }
+        }
+      }
+      const execution = parsed.workflowExecutionInfo?.execution ?? {}
+      const runId = execution.runId
+      if (!runId) {
+        throw new Error('Temporal CLI describe output missing runId')
+      }
+      const resolvedWorkflowId = execution.workflowId ?? fallbackWorkflowId
+      return { workflowId: resolvedWorkflowId, runId }
+    },
+    catch: (error) =>
+      new TemporalCliCommandError(
+        command,
+        0,
+        stdout,
+        error instanceof Error ? error.message : String(error),
+      ),
+  })
+
 const parseHistoryEvents = (
   stdout: string,
   command: readonly string[],
@@ -395,7 +452,7 @@ const parseHistoryEvents = (
       if (!history.events || history.events.length === 0) {
         throw new Error('Temporal CLI returned empty history events')
       }
-      return history.events
+      return history.events.map(normalizeEventTypeFlag)
     },
     catch: (error) =>
       new TemporalCliCommandError(
@@ -423,6 +480,18 @@ const normalizeHistoryJson = (input: unknown): unknown => {
     }
   }
   return input
+}
+
+const normalizeEventTypeFlag = (event: HistoryEvent): HistoryEvent => {
+  if (event.eventType && typeof event.eventType !== 'number') {
+    const raw = String(event.eventType)
+    const key = raw.startsWith('EVENT_TYPE_') ? raw.replace('EVENT_TYPE_', '') : raw
+    const numeric = (EventType as Record<string, number>)[key]
+    if (typeof numeric === 'number') {
+      event.eventType = numeric as typeof event.eventType
+    }
+  }
+  return event
 }
 
 const parseAddress = (value: string): { hostname: string; port: number } => {

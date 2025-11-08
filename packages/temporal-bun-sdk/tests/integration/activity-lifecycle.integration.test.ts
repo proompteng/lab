@@ -95,8 +95,8 @@ describeIntegration('Activity lifecycle integration', () => {
   test('long-running heartbeat keeps activity alive', async () => {
     await runOrSkip('heartbeat-success', async () => {
       const handle = await executeWorkflow(heartbeatWorkflow.name, {
-        durationMs: 3_000,
-        heartbeatTimeoutMs: 750,
+        durationMs: 600,
+        heartbeatTimeoutMs: 300,
       })
       const history = await fetchWorkflowHistory(handle)
       const scheduled = history.filter((event) => event.eventType === EventType.ACTIVITY_TASK_SCHEDULED)
@@ -110,8 +110,8 @@ describeIntegration('Activity lifecycle integration', () => {
     await runOrSkip('heartbeat-timeout', async () => {
       const handle = await executeWorkflow(heartbeatTimeoutWorkflow.name, {
         initialBeats: 2,
-        stallMs: 2_500,
-        heartbeatTimeoutMs: 500,
+        stallMs: 800,
+        heartbeatTimeoutMs: 200,
       })
       const history = await fetchWorkflowHistory(handle)
       const activityTimedOut = history.some((event) => event.eventType === EventType.ACTIVITY_TASK_TIMED_OUT)

@@ -13,7 +13,7 @@ and the quality bars we must meet before GA.
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Workflow execution | **Alpha** | Deterministic command context, activity/timer/child/signal/continue-as-new intents, deterministic guard, legacy bypass flag. |
+| Workflow execution | **Alpha** | Deterministic command context, activity/timer/child/signal/continue-as-new intents, deterministic guard. |
 | Worker runtime | **Beta-** | Effect-based scheduler with configurable concurrency, sticky cache routing, and build-id metadata. Heartbeats and observability still pending. |
 | Client | **Alpha** | Start/signal/query/cancel/update/describe namespace with Connect transport; interceptors and retries pending. |
 | Activities | **Beta-** | Handler registry, cancellation signals. Heartbeats, retries, and failure categorisation remain. |
@@ -26,26 +26,19 @@ to be complete, with supporting validation and documentation.
 ## Architecture Overview
 
 - **Workflow Runtime (`src/workflow/*`)**
-  - _Shipped:_ Deterministic workflow context, command intents, determinism guard,
-    legacy bypass.
-  - _GA requirements:_ History replay ingest, failure categorisation, command
-    metadata (headers/memo/search attributes), workflow cache eviction strategy.
+  - _Shipped:_ Deterministic workflow context, command intents, determinism guard.
+  - _GA requirements:_ History replay ingest, failure categorisation, command metadata (headers/memo/search attributes), workflow cache eviction strategy.
 - **Worker Runtime (`src/worker/*`)**
   - _Shipped:_ Single-threaded pollers, deterministic snapshot persistence per run.
-  - _GA requirements:_ Configurable concurrency, sticky task queues, build-id routing,
-    graceful shutdown with drain, heartbeat plumbing, metrics/logging hooks.
+  - _GA requirements:_ Configurable concurrency, sticky task queues, build-id routing, graceful shutdown with drain, heartbeat plumbing, metrics/logging hooks.
 - **Client (`src/client.ts`)**
-  - _Shipped:_ Connect WorkflowService client with payload conversion and header
-    normalisation.
-  - _GA requirements:_ Retry/interceptor framework, TLS/auth hardening, memo/search
-    attribute helpers, long-running operation ergonomics.
+  - _Shipped:_ Connect WorkflowService client with payload conversion and header normalisation.
+  - _GA requirements:_ Retry/interceptor framework, TLS/auth hardening, memo/search attribute helpers, long-running operation ergonomics.
 - **Activities (`src/activities/*`, `src/worker/activity-context.ts`)**
   - _Shipped:_ AsyncLocalStorage-based context, cancellation surface.
-  - _GA requirements:_ Heartbeat API, retry policy adherence, progress payload
-    encoding, failure classification.
+  - _GA requirements:_ Heartbeat API, retry policy adherence, progress payload encoding, failure classification.
 - **Tooling**
-  - CLI (`src/bin/temporal-bun.ts`) scaffolds projects; needs connectivity checks,
-    history replay tooling, lint hooks.
+  - CLI (`src/bin/temporal-bun.ts`) scaffolds projects; needs connectivity checks, history replay tooling, lint hooks.
 - **Generated Protos (`src/proto/**`)**
   - Must stay synced with upstream Temporal releases; add automation for updates.
 
@@ -283,7 +276,7 @@ can contribute independently without re-planning.
      `signal-external-workflow`, `continue-as-new`.
    - Determinism guard captures command history, `Math.random()` and `Date.now()`
      usage for replay validation.
-   - `TEMPORAL_DISABLE_WORKFLOW_CONTEXT` allows fallback for legacy customers.
+   - Deterministic context is enforced for all workflows and cannot be disabled.
 2. **Replay ingestion (GA critical, TBS-001)**
    - Extract command history, random/time snapshots from Temporal history events.
    - Maintain per-run snapshot (`namespace::workflowId::runId`) accessible across
@@ -376,8 +369,7 @@ can contribute independently without re-planning.
 
 ## Configuration & Deployment
 
-- `loadTemporalConfig` already handles TLS, auth, task queue defaults, and workflow
-  context bypass.
+- `loadTemporalConfig` already handles TLS, auth, task queue defaults, and worker identity configuration.
 - GA tasks:
   - Support external config files (JSON/TOML) with schema validation.
   - Document environment variables for multi-namespace deployments.
@@ -409,7 +401,7 @@ can contribute independently without re-planning.
 
 ## Documentation Plan
 
-- Update developer docs with deterministic context primitives and bypass flag.
+- Update developer docs with deterministic context primitives and migration guides.
 - Provide cookbook recipes (cron workflows, signal-with-start, updates, activity
   heartbeat best practices).
 - Accessibility review for CLI output (color contrast, terminal semantics).
@@ -431,7 +423,7 @@ can contribute independently without re-planning.
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
-| Determinism regressions | Workflow non-determinism in production | Replay harness, sticky cache eviction tests, feature flags for bypass. |
+| Determinism regressions | Workflow non-determinism in production | Replay harness, sticky cache eviction tests, deterministic guard validations. |
 | Transport incompatibility | Bun HTTP/2 regressions | Continuous compatibility tests against Temporal Cloud and OSS releases. |
 | Performance under load | Missed SLA on task latency | Profiling with CPU/network throttling, concurrency tuning, metrics dashboards. |
 | Packaging regressions | Broken ESM/CJS consumers | Dual-package smoke tests (Bun, Node 20), tree-shaking tests, API lockfile. |

@@ -4,6 +4,7 @@ import * as Schema from 'effect/Schema'
 
 import { createDefaultDataConverter, decodePayloadsToValues } from '../src/common/payloads'
 import type { ExecuteWorkflowInput, WorkflowExecutionOutput } from '../src/workflow/executor'
+import type { ActivityResolution } from '../src/workflow/context'
 import { WorkflowExecutor } from '../src/workflow/executor'
 import { defineWorkflow } from '../src/workflow/definition'
 import { WorkflowRegistry } from '../src/workflow/registry'
@@ -30,10 +31,10 @@ const execute = async (
     namespace: overrides.namespace ?? 'default',
     taskQueue: overrides.taskQueue ?? 'test-task-queue',
     determinismState: overrides.determinismState,
-    bypassDeterministicContext: overrides.bypassDeterministicContext,
+    activityResults: overrides.activityResults,
   })
 
-test('schedules an activity command and completes with result', async () => {
+test('schedules an activity command and completes after result', async () => {
   const { registry, executor, dataConverter } = makeExecutor()
   registry.register(
     defineWorkflow(
@@ -44,20 +45,30 @@ test('schedules an activity command and completes with result', async () => {
     ),
   )
 
-  const output = await execute(executor, { workflowType: 'scheduleActivity', arguments: ['hello@acme.test'] })
+  const initial = await execute(executor, { workflowType: 'scheduleActivity', arguments: ['hello@acme.test'] })
 
-  expect(output.commands).toHaveLength(2)
-  const [schedule, completion] = output.commands
-  expect(schedule.commandType).toBe(CommandType.SCHEDULE_ACTIVITY_TASK)
-  expect(schedule.attributes?.case).toBe('scheduleActivityTaskCommandAttributes')
-  const attrs = schedule.attributes?.value
-  expect(attrs?.activityType?.name).toBe('sendEmail')
-  expect(attrs?.activityId).toBe('activity-0')
-  const decoded = await decodePayloadsToValues(dataConverter, attrs?.input?.payloads ?? [])
+  expect(initial.completion).toBe('pending')
+  expect(initial.commands).toHaveLength(1)
+  const scheduleCmd = initial.commands[0]
+  expect(scheduleCmd.commandType).toBe(CommandType.SCHEDULE_ACTIVITY_TASK)
+  const scheduleAttrs = scheduleCmd.attributes?.value
+  expect(scheduleAttrs?.activityType?.name).toBe('sendEmail')
+  expect(scheduleAttrs?.activityId).toBe('activity-0')
+  const decoded = await decodePayloadsToValues(dataConverter, scheduleAttrs?.input?.payloads ?? [])
   expect(decoded).toEqual(['hello@acme.test'])
 
-  expect(completion.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
-  expect(output.completion).toBe('completed')
+  const completionRun = await execute(executor, {
+    workflowType: 'scheduleActivity',
+    arguments: ['hello@acme.test'],
+    determinismState: cloneState(initial.determinismState),
+    activityResults: new Map<string, ActivityResolution>([['activity-0', { status: 'completed', value: 'result' }]]),
+  })
+
+  expect(completionRun.completion).toBe('completed')
+  expect(completionRun.commands).toHaveLength(1)
+  expect(completionRun.commands[0].commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
+  const workflowResult = completionRun.result
+  expect(workflowResult).toBe('scheduled')
 })
 
 test('emits start timer command', async () => {

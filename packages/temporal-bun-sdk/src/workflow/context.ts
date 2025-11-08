@@ -8,7 +8,7 @@ import type {
   StartTimerCommandIntent,
   WorkflowCommandIntent,
 } from './commands'
-import type { DeterminismGuard, WorkflowRetryPolicyInput } from './determinism'
+import type { DeterminismGuard, RecordedCommandKind, WorkflowRetryPolicyInput } from './determinism'
 import { ContinueAsNewWorkflowError, WorkflowBlockedError } from './errors'
 
 export type WorkflowCommandIntentId = string
@@ -76,6 +76,7 @@ export interface WorkflowScheduledCommandRef {
   readonly sequence: number
   readonly activityId?: string
   readonly timerId?: string
+  readonly result?: unknown
 }
 
 export interface WorkflowActivities {
@@ -129,7 +130,10 @@ export interface CreateWorkflowContextParams<I> {
   readonly input: I
   readonly info: WorkflowInfo
   readonly determinismGuard: DeterminismGuard
+  readonly activityResults?: Map<string, ActivityResolution>
 }
+
+export type ActivityResolution = { status: 'completed'; value: unknown } | { status: 'failed'; error: Error }
 
 export class WorkflowCommandContext {
   readonly #info: WorkflowInfo
@@ -146,9 +150,12 @@ export class WorkflowCommandContext {
     return this.#intents
   }
 
-  addIntent(intent: WorkflowCommandIntent): void {
-    this.#guard.recordCommand(intent)
-    this.#intents.push(intent)
+  addIntent(intent: WorkflowCommandIntent): RecordedCommandKind {
+    const kind = this.#guard.recordCommand(intent)
+    if (kind === 'new') {
+      this.#intents.push(intent)
+    }
+    return kind
   }
 
   nextSequence(): number {
@@ -167,12 +174,21 @@ export const createWorkflowContext = <I>(
 ): { context: WorkflowContext<I>; commandContext: WorkflowCommandContext } => {
   const commandContext = new WorkflowCommandContext({ info: params.info, guard: params.determinismGuard })
 
+  const activityResults = params.activityResults ?? new Map<string, ActivityResolution>()
+
   const activities: WorkflowActivities = {
     schedule(activityType, args = [], options = {}) {
       return Effect.sync(() => {
         const intent = buildScheduleActivityIntent(commandContext, activityType, args, options)
         commandContext.addIntent(intent)
-        return createCommandRef(intent, { activityId: intent.activityId })
+        const resolution = activityResults.get(intent.activityId)
+        if (!resolution) {
+          throw new WorkflowBlockedError(`Activity ${intent.activityId} pending`)
+        }
+        if (resolution.status === 'failed') {
+          throw resolution.error
+        }
+        return createCommandRef(intent, { activityId: intent.activityId, result: resolution.value })
       })
     },
   }
@@ -237,7 +253,7 @@ export const createWorkflowContext = <I>(
 
 const createCommandRef = (
   intent: WorkflowCommandIntent,
-  extras?: Partial<Pick<WorkflowScheduledCommandRef, 'activityId' | 'timerId'>>,
+  extras?: Partial<Pick<WorkflowScheduledCommandRef, 'activityId' | 'timerId' | 'result'>>,
 ): WorkflowScheduledCommandRef => ({
   id: intent.id,
   kind: intent.kind,

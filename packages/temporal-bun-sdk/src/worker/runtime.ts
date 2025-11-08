@@ -1,4 +1,3 @@
-import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 
 import { create } from '@bufbuild/protobuf'
@@ -15,13 +14,14 @@ import {
 } from '../activities/lifecycle'
 import { buildTransportOptions, normalizeTemporalAddress } from '../client'
 import { durationFromMillis, durationToMillis } from '../common/duration'
+import { sleep } from '../common/sleep'
 import {
   createDefaultDataConverter,
   type DataConverter,
   decodePayloadsToValues,
   encodeValuesToPayloads,
 } from '../common/payloads/converter'
-import { encodeErrorToFailure, encodeFailurePayloads } from '../common/payloads/failure'
+import { encodeErrorToFailure, encodeFailurePayloads, failureToError } from '../common/payloads/failure'
 import { loadTemporalConfig, type TemporalConfig } from '../config'
 import {
   type Command,
@@ -65,6 +65,7 @@ import { WorkflowService } from '../proto/temporal/api/workflowservice/v1/servic
 import type { WorkflowCommandIntent } from '../workflow/commands'
 import type { WorkflowInfo } from '../workflow/context'
 import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
+import type { ActivityResolution } from '../workflow/context'
 import type { WorkflowDeterminismState, WorkflowRetryPolicyInput } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import { WorkflowExecutor } from '../workflow/executor'
@@ -176,7 +177,6 @@ export class WorkerRuntime {
     const executor = new WorkflowExecutor({
       registry,
       dataConverter,
-      bypassDeterministicContext: config.workflowContextBypass,
     })
 
     const activities = options.activities ?? {}
@@ -487,7 +487,7 @@ export class WorkerRuntime {
           break
         }
         console.error(`[temporal-bun-sdk] workflow polling failed for ${queueName}`, error)
-        await delay(250)
+        await sleep(250)
       }
     }
   }
@@ -531,7 +531,7 @@ export class WorkerRuntime {
           break
         }
         console.error('[temporal-bun-sdk] activity polling failed', error)
-        await delay(250)
+        await sleep(250)
       }
     }
   }
@@ -547,13 +547,14 @@ export class WorkerRuntime {
   }
 
   async #handleWorkflowTask(response: PollWorkflowTaskQueueResponse): Promise<void> {
-    const workflowType = this.#resolveWorkflowType(response)
-    const args = await this.#decodeWorkflowArgs(response)
     const execution = this.#resolveWorkflowExecution(response)
+    const historyEvents = await this.#collectWorkflowHistory(execution, response)
+    const workflowType = this.#resolveWorkflowType(response, historyEvents)
+    const args = await this.#decodeWorkflowArgs(historyEvents)
     const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
     const stickyKey = this.#buildStickyKey(execution.workflowId, execution.runId)
     const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
-    const historyReplay = await this.#ingestDeterminismState(workflowInfo, execution, response)
+    const historyReplay = await this.#ingestDeterminismState(workflowInfo, historyEvents)
     const hasHistorySnapshot = this.#isValidDeterminismSnapshot(historyReplay?.determinismState)
     let previousState: WorkflowDeterminismState | undefined
 
@@ -581,6 +582,8 @@ export class WorkerRuntime {
     const expectedDeterminismState = previousState
 
     try {
+      const activityResults = await this.#extractActivityResolutions(historyEvents)
+
       const output = await this.#executor.execute({
         workflowType,
         workflowId: execution.workflowId,
@@ -589,6 +592,7 @@ export class WorkerRuntime {
         taskQueue: this.#taskQueue,
         arguments: args,
         determinismState: previousState,
+        activityResults,
       })
 
       const lastEventId =
@@ -665,10 +669,8 @@ export class WorkerRuntime {
 
   async #ingestDeterminismState(
     workflowInfo: WorkflowInfo,
-    execution: { workflowId: string; runId: string },
-    response: PollWorkflowTaskQueueResponse,
+    historyEvents: HistoryEvent[],
   ): Promise<ReplayResult | undefined> {
-    const historyEvents = await this.#collectWorkflowHistory(execution, response)
     if (historyEvents.length === 0) {
       return undefined
     }
@@ -683,25 +685,136 @@ export class WorkerRuntime {
 
   async #collectWorkflowHistory(
     execution: { workflowId: string; runId: string },
-    response: PollWorkflowTaskQueueResponse,
+    _response: PollWorkflowTaskQueueResponse,
   ): Promise<HistoryEvent[]> {
-    const events: HistoryEvent[] = [...(response.history?.events ?? [])]
-    let token = response.nextPageToken ?? new Uint8Array()
-
-    while (token && token.length > 0) {
+    const events: HistoryEvent[] = []
+    let token: Uint8Array | undefined
+    while (true) {
       const page = await this.#fetchWorkflowHistoryPage(execution, token)
       if (page.events.length > 0) {
         events.push(...page.events)
       }
+      if (!page.nextPageToken || page.nextPageToken.length === 0) {
+        break
+      }
       token = page.nextPageToken
     }
-
     return events
+  }
+
+  async #extractActivityResolutions(events: HistoryEvent[]): Promise<Map<string, ActivityResolution>> {
+    const resolutions = new Map<string, ActivityResolution>()
+    const scheduledActivityIds = new Map<string, string>()
+
+    const normalizeEventId = (value: bigint | number | string | undefined | null): string | undefined => {
+      if (value === undefined || value === null) {
+        return undefined
+      }
+      if (typeof value === 'string') {
+        return value
+      }
+      return value.toString()
+    }
+
+    const resolveActivityId = (
+      attrs: Record<string, unknown>,
+      scheduledEventId?: bigint | number | string | undefined | null,
+    ): string | undefined => {
+      const direct = typeof attrs.activityId === 'string' ? attrs.activityId : undefined
+      if (direct) {
+        return direct
+      }
+      const key = normalizeEventId(scheduledEventId)
+      if (!key) {
+        return undefined
+      }
+      return scheduledActivityIds.get(key)
+    }
+
+    for (const event of events) {
+      switch (event.eventType) {
+        case EventType.ACTIVITY_TASK_SCHEDULED: {
+          if (event.attributes?.case !== 'activityTaskScheduledEventAttributes') {
+            break
+          }
+          const activityId = event.attributes.value.activityId
+          const scheduledKey = normalizeEventId(event.eventId)
+          if (activityId && scheduledKey) {
+            scheduledActivityIds.set(scheduledKey, activityId)
+          }
+          break
+        }
+        case EventType.ACTIVITY_TASK_COMPLETED: {
+          if (event.attributes?.case !== 'activityTaskCompletedEventAttributes') {
+            break
+          }
+          const activityId = resolveActivityId(event.attributes.value, event.attributes.value.scheduledEventId)
+          if (!activityId) {
+            break
+          }
+          const payloads = event.attributes.value.result?.payloads ?? []
+          const decoded = await decodePayloadsToValues(this.#dataConverter, payloads)
+          const value =
+            decoded.length === 0 ? undefined : decoded.length === 1 ? decoded[0] : Object.freeze([...decoded])
+          resolutions.set(activityId, { status: 'completed', value })
+          break
+        }
+        case EventType.ACTIVITY_TASK_FAILED: {
+          if (event.attributes?.case !== 'activityTaskFailedEventAttributes') {
+            break
+          }
+          const activityId = resolveActivityId(event.attributes.value, event.attributes.value.scheduledEventId)
+          if (!activityId) {
+            break
+          }
+          const failureError =
+            (await failureToError(this.#dataConverter, event.attributes.value.failure)) ??
+            new Error(`Activity ${activityId} failed`)
+          resolutions.set(activityId, { status: 'failed', error: failureError })
+          break
+        }
+        case EventType.ACTIVITY_TASK_TIMED_OUT: {
+          if (event.attributes?.case !== 'activityTaskTimedOutEventAttributes') {
+            break
+          }
+          const activityId = resolveActivityId(event.attributes.value, event.attributes.value.scheduledEventId)
+          if (!activityId) {
+            break
+          }
+          const timeoutType = event.attributes.value.timeoutType?.name ?? 'unknown'
+          const failureError =
+            (await failureToError(this.#dataConverter, event.attributes.value.failure)) ??
+            new Error(`Activity ${activityId} timed out (${timeoutType})`)
+          resolutions.set(activityId, { status: 'failed', error: failureError })
+          break
+        }
+        case EventType.ACTIVITY_TASK_CANCELED: {
+          if (event.attributes?.case !== 'activityTaskCanceledEventAttributes') {
+            break
+          }
+          const activityId = resolveActivityId(event.attributes.value, event.attributes.value.scheduledEventId)
+          if (!activityId) {
+            break
+          }
+          const details = await decodePayloadsToValues(
+            this.#dataConverter,
+            event.attributes.value.details?.payloads ?? [],
+          )
+          const error = new Error(`Activity ${activityId} was canceled`)
+          ;(error as { details?: unknown[] }).details = details
+          resolutions.set(activityId, { status: 'failed', error })
+          break
+        }
+        default:
+          break
+      }
+    }
+    return resolutions
   }
 
   async #fetchWorkflowHistoryPage(
     execution: { workflowId: string; runId: string },
-    nextPageToken: Uint8Array,
+    nextPageToken?: Uint8Array,
   ): Promise<{ events: HistoryEvent[]; nextPageToken: Uint8Array }> {
     if (!execution.workflowId || !execution.runId) {
       return { events: [], nextPageToken: new Uint8Array() }
@@ -714,7 +827,7 @@ export class WorkerRuntime {
         runId: execution.runId,
       }),
       maximumPageSize: 0,
-      nextPageToken,
+      ...(nextPageToken && nextPageToken.length > 0 ? { nextPageToken } : {}),
       waitNewEvent: false,
       historyEventFilterType: HistoryEventFilterType.ALL_EVENT,
       skipArchival: true,
@@ -1061,7 +1174,7 @@ export class WorkerRuntime {
             await this.#failActivityTask(response, error, context)
             return
           }
-          await delay(nextRetry.nextDelayMs)
+          await sleep(nextRetry.nextDelayMs)
           context.throwIfCancelled()
           context.info.attempt = nextRetry.attempt
           retryState = nextRetry
@@ -1247,8 +1360,8 @@ export class WorkerRuntime {
     return scheduleDeadline ?? startDeadline ?? undefined
   }
 
-  async #decodeWorkflowArgs(response: PollWorkflowTaskQueueResponse): Promise<unknown[]> {
-    const startEvent = this.#findWorkflowStartedEvent(response.history?.events ?? [])
+  async #decodeWorkflowArgs(events: HistoryEvent[]): Promise<unknown[]> {
+    const startEvent = this.#findWorkflowStartedEvent(events)
     if (!startEvent) {
       return []
     }
@@ -1263,11 +1376,11 @@ export class WorkerRuntime {
     return await decodePayloadsToValues(this.#dataConverter, inputPayloads)
   }
 
-  #resolveWorkflowType(response: PollWorkflowTaskQueueResponse): string {
+  #resolveWorkflowType(response: PollWorkflowTaskQueueResponse, events: HistoryEvent[]): string {
     if (response.workflowType?.name) {
       return response.workflowType.name
     }
-    const startEvent = this.#findWorkflowStartedEvent(response.history?.events ?? [])
+    const startEvent = this.#findWorkflowStartedEvent(events)
     if (startEvent?.attributes?.case === 'workflowExecutionStartedEventAttributes') {
       const workflowTypeName = startEvent.attributes.value.workflowType?.name
       if (workflowTypeName) {
