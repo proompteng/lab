@@ -2,6 +2,7 @@ disableLookups: true
 neo4j:
   name: graf
   password: ""
+  passwordFromSecret: graf-auth
 volumes:
   data:
     mode: dynamic
