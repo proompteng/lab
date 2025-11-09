@@ -312,3 +312,5 @@ const buildRetryPolicy = (input: WorkflowRetryPolicyInput): RetryPolicy =>
 const buildActivityType = (name: string): ActivityType => create(ActivityTypeSchema, { name })
 
 const buildWorkflowType = (name: string): WorkflowType => create(WorkflowTypeSchema, { name })
+
+export { durationFromMillis }

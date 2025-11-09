@@ -139,14 +139,18 @@ If the CLI is missing the tests log a skip and continue so the rest of the suite
 
 ```ts
 import { Effect, Layer } from 'effect'
-import { WorkerService } from '@proompteng/temporal-bun-sdk/worker'
+import {
+  BaseRuntimeLayer,
+  WorkerRuntimeService,
+  makeWorkerLayer,
+} from '@proompteng/temporal-bun-sdk/runtime/effect-layers'
 
-const workerLayer = WorkerService({
+const workerLayer = makeWorkerLayer({
   workflowsPath: new URL('./workflows/index.ts', import.meta.url).pathname,
-})
+}).pipe(Layer.provide(BaseRuntimeLayer))
 
 const program = Effect.gen(function* () {
-  const { run } = yield* WorkerService
+  const { run } = yield* WorkerRuntimeService
   yield* run
 })
 

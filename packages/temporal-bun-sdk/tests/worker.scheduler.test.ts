@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test'
-import { Effect, Fiber, Ref } from 'effect'
+import { Context, Effect, Fiber, Layer, Ref } from 'effect'
 import * as Deferred from 'effect/Deferred'
 import * as FiberStatus from 'effect/FiberStatus'
 
 import { makeWorkerScheduler } from '../src/worker/concurrency'
+import { WorkerSchedulerService, workerSchedulerLayerFromValue } from '../src/runtime/effect-layers'
 
 const workflowEnvelope = (
   start: Deferred.Deferred<void>,
@@ -97,4 +98,24 @@ test('stop waits for in-flight workflow tasks to finish', async () => {
       })
     }),
   )
+})
+
+test('workerSchedulerLayerFromValue provides the supplied scheduler', async () => {
+  const stubScheduler = {
+    start: Effect.void,
+    stop: Effect.void,
+    enqueueWorkflow: () => Effect.void,
+    enqueueActivity: () => Effect.void,
+  }
+
+  const provided = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const context = yield* Layer.build(workerSchedulerLayerFromValue(stubScheduler))
+        return Context.get(context, WorkerSchedulerService)
+      }),
+    ),
+  )
+
+  expect(provided).toBe(stubScheduler)
 })

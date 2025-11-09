@@ -52,15 +52,18 @@ export interface WorkflowExecutionOutput {
 export interface WorkflowExecutorOptions {
   registry: WorkflowRegistry
   dataConverter: DataConverter
+  bypassDeterministicContext?: boolean
 }
 
 export class WorkflowExecutor {
   #registry: WorkflowRegistry
   #dataConverter: DataConverter
+  #bypassDeterministicContext: boolean
 
   constructor(options: WorkflowExecutorOptions) {
     this.#registry = options.registry
     this.#dataConverter = options.dataConverter
+    this.#bypassDeterministicContext = options.bypassDeterministicContext ?? false
   }
 
   async execute(input: ExecuteWorkflowInput): Promise<WorkflowExecutionOutput> {
@@ -75,7 +78,10 @@ export class WorkflowExecutor {
     const definition = this.#registry.get(input.workflowType)
     const normalizedArguments = this.#normalizeArguments(input.arguments, definition.decodeArgumentsAsArray)
     const decodedEffect = Schema.decodeUnknown(definition.schema)(normalizedArguments)
-    const guard = new DeterminismGuard({ previousState: input.determinismState })
+    const guard = new DeterminismGuard({
+      previousState: input.determinismState,
+      allowBypass: this.#bypassDeterministicContext,
+    })
 
     let lastCommandContext: WorkflowCommandContext | undefined
 
