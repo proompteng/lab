@@ -65,8 +65,20 @@ const updateManifestImage = (image: string) => {
 }
 
 const applyManifest = async () => {
-  await run('kn', ['service', 'apply', 'graf', '--namespace', 'graf', '--filename', manifestPath])
-  console.log('Applied Graf Knative service manifest via kn service apply')
+  const waitTimeout = process.env.GRAF_KN_WAIT_TIMEOUT ?? '300s'
+  await run('kn', [
+    'service',
+    'apply',
+    'graf',
+    '--namespace',
+    'graf',
+    '--filename',
+    manifestPath,
+    '--wait',
+    '--wait-timeout',
+    waitTimeout,
+  ])
+  console.log('Applied Graf Knative service manifest via kn service apply (waited for readiness)')
 }
 
 const deploy = async () => {
