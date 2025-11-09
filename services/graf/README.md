@@ -28,6 +28,10 @@ tail -n +1 build/logs/*
 ./gradlew run
 ```
 
+## Code coverage
+- Run `./gradlew koverHtmlReport` (after `clean`/`build` or on its own). Kover executes unit tests and writes the HTML report to `build/reports/kover/html/index.html` so you can browse the per-class dashboard.
+- To get a JaCoCo-compatible XML summary (e.g. for CI upload), run `./gradlew koverXmlReport`; the default XML path is `build/reports/kover/xml/report.xml`.
+
 ## Formatting
 Run `./gradlew ktlintCheck` (the same plugin also supports `./gradlew ktlintFormat` if you want the auto-format step).
 

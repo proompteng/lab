@@ -7,6 +7,7 @@ plugins {
   kotlin("plugin.serialization") version "2.2.21"
   application
   id("org.jlleitschuh.gradle.ktlint") version "13.1.0"
+  id("org.jetbrains.kotlinx.kover") version "0.9.3"
 }
 
 val ktorVersion = "3.3.2"
