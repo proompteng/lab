@@ -1,6 +1,11 @@
 package ai.proompteng.graf.routes
 
+import ai.proompteng.graf.codex.CodexResearchService
+import ai.proompteng.graf.config.MinioConfig
+import ai.proompteng.graf.model.ArtifactReference
 import ai.proompteng.graf.model.CleanRequest
+import ai.proompteng.graf.model.CodexResearchRequest
+import ai.proompteng.graf.model.CodexResearchResponse
 import ai.proompteng.graf.model.ComplementRequest
 import ai.proompteng.graf.model.DeleteRequest
 import ai.proompteng.graf.model.EntityBatchRequest
@@ -17,8 +22,13 @@ import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
+import java.util.UUID
 
-fun Route.graphRoutes(service: GraphService) {
+fun Route.graphRoutes(
+  service: GraphService,
+  codexResearchService: CodexResearchService,
+  minioConfig: MinioConfig,
+) {
   post("/entities") {
     val payload = call.receive<EntityBatchRequest>()
     val response = service.upsertEntities(payload)
@@ -69,5 +79,29 @@ fun Route.graphRoutes(service: GraphService) {
     val payload = call.receive<CleanRequest>()
     val response = service.clean(payload)
     call.respond(HttpStatusCode.OK, response)
+  }
+
+  post("/codex-research") {
+    val payload = call.receive<CodexResearchRequest>()
+    val argoWorkflowName = "codex-research-${UUID.randomUUID()}"
+    val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
+    val launch = codexResearchService.startResearch(payload, argoWorkflowName, artifactKey)
+    val artifactReference =
+      ArtifactReference(
+        bucket = minioConfig.bucket,
+        key = artifactKey,
+        endpoint = minioConfig.endpoint,
+        region = minioConfig.region,
+      )
+    call.respond(
+      HttpStatusCode.Accepted,
+      CodexResearchResponse(
+        workflowId = launch.workflowId,
+        runId = launch.runId,
+        argoWorkflowName = argoWorkflowName,
+        artifactReferences = listOf(artifactReference),
+        startedAt = launch.startedAt,
+      ),
+    )
   }
 }
