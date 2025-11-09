@@ -42,7 +42,7 @@ const updateManifestImage = (image: string, version: string, commit: string) => 
   }
 
   const target =
-    containers.find((container) => container?.name === 'graf') ??
+    containers.find((container) => container?.name === 'user-container') ??
     containers.find((container) => container?.name) ??
     containers[0]
 
