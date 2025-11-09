@@ -2,21 +2,14 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { $ } from 'bun'
-import { ensureCli, fatal, repoRoot } from '../shared/cli'
+import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
+import { inspectImageDigest } from '../shared/docker'
+import { execGit } from '../shared/git'
+import { applyKnativeServiceImage } from '../shared/kn'
 import { buildImage } from './build-image'
-
-const execGit = (args: string[]): string => {
-  const result = Bun.spawnSync(['git', ...args], { cwd: repoRoot })
-  if (result.exitCode !== 0) {
-    throw new Error(`git ${args.join(' ')} failed`)
-  }
-  return result.stdout.toString().trim()
-}
 
 export const main = async () => {
   ensureCli('kubectl')
-  ensureCli('kn')
 
   const registry = process.env.FACTEUR_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = process.env.FACTEUR_IMAGE_REPOSITORY ?? 'lab/facteur'
@@ -26,13 +19,7 @@ export const main = async () => {
 
   await buildImage({ registry, repository, tag })
 
-  const digest = Bun.spawnSync(['docker', 'image', 'inspect', '--format', '{{index .RepoDigests 0}}', image], {
-    cwd: repoRoot,
-  })
-  if (digest.exitCode !== 0) {
-    throw new Error(`failed to inspect image ${image}: ${digest.stderr.toString()}`)
-  }
-  const repoDigest = digest.stdout.toString().trim()
+  const repoDigest = inspectImageDigest(image)
   console.log(`Image digest: ${repoDigest}`)
 
   await updateManifests({ tag, rolloutTimestamp: new Date().toISOString() })
@@ -41,13 +28,13 @@ export const main = async () => {
     repoRoot,
     process.env.FACTEUR_KUSTOMIZE_PATH ?? 'argocd/applications/facteur/overlays/cluster',
   )
-  await $`kubectl apply -k ${overlay}`
+  await run('kubectl', ['apply', '-k', overlay])
 
   const serviceManifest = resolve(
     repoRoot,
     process.env.FACTEUR_SERVICE_MANIFEST ?? 'argocd/applications/facteur/overlays/cluster/facteur-service.yaml',
   )
-  await $`kn service apply facteur --namespace facteur --filename ${serviceManifest} --image ${image}`
+  await applyKnativeServiceImage('facteur', 'facteur', serviceManifest, image)
 }
 
 if (import.meta.main) {

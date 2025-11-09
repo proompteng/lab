@@ -10,4 +10,4 @@ WORKDIR /app
 COPY --from=builder /workspace/build/install/graf /app
 ENV PORT=8080
 EXPOSE 8080
-ENTRYPOINT ["/app/bin/graf"]
+ENTRYPOINT ["java", "-cp", "/app/lib/*", "ai.proompteng.graf.ApplicationKt"]
