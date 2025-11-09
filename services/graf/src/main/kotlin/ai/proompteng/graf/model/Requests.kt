@@ -146,6 +146,14 @@ data class AutoresearchPlanResponse(
 )
 
 @Serializable
+data class AutoresearchLaunchResponse(
+  val workflowId: String,
+  val runId: String,
+  val startedAt: String,
+  val message: String = "autoresearch workflow started",
+)
+
+@Serializable
 data class GraphRelationshipPlan(
   val objective: String,
   val summary: String,

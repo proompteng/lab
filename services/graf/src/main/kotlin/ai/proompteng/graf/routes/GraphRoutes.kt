@@ -116,7 +116,7 @@ fun Route.graphRoutes(
           mapOf("message" to "Autoresearch agent is disabled"),
         )
     val payload = call.receive<AutoresearchPlanRequest>()
-    val response = planner.generatePlan(payload)
-    call.respond(HttpStatusCode.OK, response)
+    val response = planner.startPlan(payload)
+    call.respond(HttpStatusCode.Accepted, response)
   }
 }

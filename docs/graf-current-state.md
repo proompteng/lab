@@ -28,7 +28,7 @@ This document captures the current architecture of the Graf Neo4j persistence se
 | Runtime | Java 21, Kotlin 2.2, Ktor 3.3.2 |
 | Persistence | Neo4j via Bolt (configurable URI/db/user). |
 | Temporal | Address defaults to `temporal-frontend.temporal.svc.cluster.local:7233`; task queue `graf-codex-research`. |
-| Autoresearch agent | Enabled when `AGENT_ENABLED=true` and `AGENT_OPENAI_API_KEY` (or `OPENAI_API_KEY`) is present. Defaults to OpenAI `gpt-5` with **High** reasoning effort, up to 16 iterations, and a 25-node sample window. |
+| Autoresearch agent | Enabled when `AGENT_ENABLED=true` and `AGENT_OPENAI_API_KEY` (or `OPENAI_API_KEY`) is present. Defaults to OpenAI `gpt-5` with **High** reasoning effort, up to 16 iterations, and a 25-node sample window. The system prompt follows the OpenAI Cookbook planning guidance and emphasizes NVIDIA's broader partner/manufacturer/supplier ecosystem. HTTP callers receive a `202 Accepted` with workflow metadata rather than blocking for the final plan. |
 | Security | `/v1/**` protected by bearer tokens from `GRAF_API_BEARER_TOKENS`. |
 
 ## High-Level Architecture

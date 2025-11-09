@@ -1,7 +1,6 @@
 package ai.proompteng.graf.autoresearch
 
 import ai.proompteng.graf.model.AutoresearchPlanRequest
-import ai.proompteng.graf.model.GraphRelationshipPlan
 import io.mockk.every
 import io.mockk.mockk
 import io.temporal.client.WorkflowClient
@@ -23,31 +22,11 @@ class AutoresearchPlannerServiceTest {
         metadata = mapOf("stream" to "tier1"),
         sampleLimitOverride = 10,
       )
-    val expectedPlan =
-      GraphRelationshipPlan(
-        objective = request.objective,
-        summary = "summary",
-        currentSignals = listOf("signal"),
-        candidateRelationships =
-          listOf(
-            GraphRelationshipPlan.CandidateRelationship(
-              fromId = "a",
-              toId = "b",
-              relationshipType = "SUPPLIES",
-              rationale = "because",
-            ),
-          ),
-        prioritizedPrompts = listOf("prompt"),
-        missingData = emptyList(),
-        recommendedTools = listOf("graph_state_tool"),
-      )
     val expectedResult =
-      AutoresearchWorkflowResult(
+      WorkflowStartResult(
         workflowId = "wf-1",
         runId = "run-1",
         startedAt = "2025-11-09T12:00:00Z",
-        completedAt = "2025-11-09T12:00:05Z",
-        plan = expectedPlan,
       )
     every { workflowClient.newWorkflowStub(AutoresearchWorkflow::class.java, any<WorkflowOptions>()) } returns workflowStub
 
@@ -59,9 +38,8 @@ class AutoresearchPlannerServiceTest {
         expectedResult
       }
 
-    val response = service.generatePlan(request)
+    val response = service.startPlan(request)
     assertEquals(expectedResult.workflowId, response.workflowId)
     assertEquals(expectedResult.runId, response.runId)
-    assertEquals(expectedResult.plan, response.plan)
   }
 }

@@ -1,8 +1,8 @@
 package ai.proompteng.graf.autoresearch
 
+import ai.proompteng.graf.model.AutoresearchLaunchResponse
 import ai.proompteng.graf.model.AutoresearchPlanIntent
 import ai.proompteng.graf.model.AutoresearchPlanRequest
-import ai.proompteng.graf.model.AutoresearchPlanResponse
 import ai.proompteng.graf.model.toIntent
 import io.temporal.client.WorkflowClient
 import io.temporal.client.WorkflowOptions
@@ -12,10 +12,13 @@ class AutoresearchPlannerService(
   private val workflowClient: WorkflowClient,
   private val taskQueue: String,
   private val defaultSampleLimit: Int,
-  private val workflowStarter: (AutoresearchWorkflow, AutoresearchWorkflowInput) -> AutoresearchWorkflowResult =
-    { workflow, input -> workflow.run(input) },
+  private val workflowStarter: (AutoresearchWorkflow, AutoresearchWorkflowInput) -> WorkflowStartResult =
+    { workflow, input ->
+      val execution = WorkflowClient.start(workflow::run, input)
+      WorkflowStartResult(execution.workflowId, execution.runId)
+    },
 ) {
-  fun generatePlan(request: AutoresearchPlanRequest): AutoresearchPlanResponse {
+  fun startPlan(request: AutoresearchPlanRequest): AutoresearchLaunchResponse {
     val workflowId =
       request.metadata["temporal.workflowId"]?.takeIf { it.isNotBlank() }
         ?: "graf-autoresearch-plan-" + UUID.randomUUID().toString()
@@ -28,14 +31,21 @@ class AutoresearchPlannerService(
     val workflow = workflowClient.newWorkflowStub(AutoresearchWorkflow::class.java, options)
     val intent = buildIntent(request)
     val result = workflowStarter(workflow, AutoresearchWorkflowInput(intent))
-    return AutoresearchPlanResponse(
+    return AutoresearchLaunchResponse(
       workflowId = result.workflowId,
       runId = result.runId,
       startedAt = result.startedAt,
-      completedAt = result.completedAt,
-      plan = result.plan,
     )
   }
 
   private fun buildIntent(request: AutoresearchPlanRequest): AutoresearchPlanIntent = request.toIntent(defaultSampleLimit)
 }
+
+data class WorkflowStartResult(
+  val workflowId: String,
+  val runId: String,
+  val startedAt: String =
+    java.time.Instant
+      .now()
+      .toString(),
+)

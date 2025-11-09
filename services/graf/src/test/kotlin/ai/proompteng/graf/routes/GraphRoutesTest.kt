@@ -2,10 +2,9 @@ package ai.proompteng.graf.routes
 
 import ai.proompteng.graf.autoresearch.AutoresearchPlannerService
 import ai.proompteng.graf.autoresearch.AutoresearchWorkflow
-import ai.proompteng.graf.autoresearch.AutoresearchWorkflowResult
+import ai.proompteng.graf.autoresearch.WorkflowStartResult
 import ai.proompteng.graf.config.MinioConfig
 import ai.proompteng.graf.model.AutoresearchPlanRequest
-import ai.proompteng.graf.model.GraphRelationshipPlan
 import ai.proompteng.graf.services.GraphService
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -40,28 +39,13 @@ class GraphRoutesTest {
   fun `POST autoresearch returns planner response`() =
     testApplication {
       val graphService = mockk<GraphService>(relaxed = true)
-      val plan =
-        GraphRelationshipPlan(
-          objective = "test",
-          summary = "summary",
-          candidateRelationships = emptyList(),
-          currentSignals = emptyList(),
-          prioritizedPrompts = emptyList(),
-          missingData = emptyList(),
-          recommendedTools = emptyList(),
-        )
-      val workflowResult =
-        AutoresearchWorkflowResult(
-          workflowId = "wf",
-          runId = "run",
-          startedAt = "start",
-          completedAt = "done",
-          plan = plan,
-        )
       val workflowClient = mockk<WorkflowClient>()
-      every { workflowClient.newWorkflowStub(AutoresearchWorkflow::class.java, any<WorkflowOptions>()) } returns mockk(relaxed = true)
+      every { workflowClient.newWorkflowStub(AutoresearchWorkflow::class.java, any<WorkflowOptions>()) } returns
+        mockk<AutoresearchWorkflow>(relaxed = true)
       val plannerService =
-        AutoresearchPlannerService(workflowClient, "queue", defaultSampleLimit = 5) { _, _ -> workflowResult }
+        AutoresearchPlannerService(workflowClient, "queue", defaultSampleLimit = 5) { _, _ ->
+          WorkflowStartResult("wf", "run", "start")
+        }
 
       application {
         install(ContentNegotiation) { json(this@GraphRoutesTest.json) }
@@ -85,7 +69,7 @@ class GraphRoutesTest {
           setBody(json.encodeToString(AutoresearchPlanRequest.serializer(), AutoresearchPlanRequest(objective = "test")))
         }
 
-      assertEquals(HttpStatusCode.OK, response.status)
+      assertEquals(HttpStatusCode.Accepted, response.status)
       assertTrue(response.bodyAsText().contains("\"workflowId\":\"wf\""))
     }
 
