@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Graf research prompt definition",
+  "type": "object",
+  "required": [
+    "promptId",
+    "title",
+    "streamId",
+    "objective",
+    "promptTemplate",
+    "inputs",
+    "expectedJsonEnvelope",
+    "scoringHeuristics",
+    "citationPolicy"
+  ],
+  "properties": {
+    "promptId": {
+      "type": "string",
+      "description": "Globally unique key for the prompt."
+    },
+    "title": {
+      "type": "string",
+      "description": "Human-readable title for this stream."
+    },
+    "streamId": {
+      "type": "string",
+      "description": "Temporal stream identifier stored on artifacts."
+    },
+    "objective": {
+      "type": "string",
+      "description": "High-level research goal."
+    },
+    "description": {
+      "type": "string",
+      "description": "Extended explanation for maintainers."
+    },
+    "promptTemplate": {
+      "type": "string",
+      "description": "Instructional text sent to Graf/Codex."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Optional tags (priority, cadence, etc.)."
+    },
+    "inputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/inputDefinition"
+      }
+    },
+    "expectedJsonEnvelope": {
+      "type": "object",
+      "required": [
+        "summary",
+        "fields"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "Overview of the JSON layout."
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/fieldDefinition"
+          }
+        }
+      }
+    },
+    "scoringHeuristics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "citationPolicy": {
+      "$ref": "#/$defs/citationPolicy"
+    }
+  },
+  "definitions": {
+    "inputDefinition": {
+      "type": "object",
+      "required": [
+        "name",
+        "type",
+        "description"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "example": {
+          "type": "string"
+        }
+      }
+    },
+    "fieldDefinition": {
+      "type": "object",
+      "required": [
+        "name",
+        "type",
+        "description"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      }
+    },
+    "citationPolicy": {
+      "type": "object",
+      "required": [
+        "summary",
+        "references"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "references": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "enforcement": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

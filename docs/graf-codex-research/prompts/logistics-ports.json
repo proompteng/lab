@@ -1,0 +1,107 @@
+{
+  "promptId": "nvidia-logistics-ports",
+  "title": "Logistics & ports routing intelligence",
+  "streamId": "logistics-ports",
+  "objective": "Document major shipping lanes, port congestion, and logistics providers so the graph captures Visa-level movement constraints for NVIDIA hardware.",
+  "description": "Focus on carriers, terminals, transshipment points, customs delays, and their impact on downstream builds/shipments.",
+  "promptTemplate": "You are the transportation intelligence analyst for NVIDIA's logistics & ports stream. Synthesize the Inputs below to reason about port availability, carrier reliability, and emergent delays that might reroute NVIDIA shipments. Produce EXACT JSON matching the expected envelope and set streamId to \"logistics-ports\". List shipment events, congestion snapshots, and resilience actions, citing docs/nvidia-supply-chain-graph-design.md (LogisticsProvider, Logistics, and Graph fidelity sections) plus any authority reporting the event. Leave artifactId/workflowId null and emit generatedAt as the current RFC 3339 timestamp. Apply the scoring heuristics and citation policy in this entry to determine confidence and risk severity.\n\nInputs:\n- laneSignals: new or rerouted lanes, rerouting approvals, or carrier capacity shifts for NVIDIA-relevant cargo.\n- portAlerts: congestion metrics, berth availability, customs queues, or terminal closures affecting the target ports.\n- transitCapacity: freight rate changes, warehouse constraints, or trucking/rail availability that feeds into port throughput.\n\nReturn only the JSON object described in expectedJsonEnvelope; append no prose afterwards.",
+  "metadata": {
+    "priority": "medium",
+    "cadence": "weekly"
+  },
+  "inputs": [
+    {
+      "name": "laneSignals",
+      "type": "array",
+      "description": "Updates about ocean/air/rail lanes used by NVIDIA for finished goods or components, including forced diversions.",
+      "required": true,
+      "example": "[\"Maersk rerouted Asia-Pacific trans-shipments away from Ningbo\", \"Air freight space tightened between Seattle and Taipei\"]"
+    },
+    {
+      "name": "portAlerts",
+      "type": "array",
+      "description": "Terminal congestion, customs processes, berth shortages, or weather closures that hamper throughput.",
+      "required": false,
+      "example": "[\"Key port reports 6+ day berth delay due to Typhoon\", \"Customs flagged documentation gap for first-party transloading\"]"
+    },
+    {
+      "name": "transitCapacity",
+      "type": "array",
+      "description": "Carrier capacity adjustments, trucking pools, or rail link statuses that inform lead-time changes.",
+      "required": false,
+      "example": "[\"Rail operator advising 40% decline in locomotive availability\", \"Trucking pool limiting hazardous rate loads\"]"
+    }
+  ],
+  "expectedJsonEnvelope": {
+    "summary": "Structured logistics & ports insight object for the Graf graph.",
+    "fields": [
+      {
+        "name": "streamId",
+        "type": "string",
+        "description": "Must be \"logistics-ports\" for this stream.",
+        "required": true
+      },
+      {
+        "name": "workflowId",
+        "type": "string",
+        "description": "Temporal workflow id (null in practice).",
+        "required": false
+      },
+      {
+        "name": "artifactId",
+        "type": "string",
+        "description": "Placeholder for Graf's artifact key.",
+        "required": false
+      },
+      {
+        "name": "generatedAt",
+        "type": "string",
+        "description": "Timestamp in RFC 3339 format.",
+        "required": true
+      },
+      {
+        "name": "findings",
+        "type": "array",
+        "description": "Each finding should include {summary, confidence, evidence, impact, affectedPorts}.",
+        "required": true
+      },
+      {
+        "name": "risks",
+        "type": "array",
+        "description": "List of short-term or systemic logistics risks.",
+        "required": false
+      },
+      {
+        "name": "nextSteps",
+        "type": "array",
+        "description": "Suggestions for re-routing, stockpile moves, or manual review.",
+        "required": false
+      },
+      {
+        "name": "citations",
+        "type": "array",
+        "description": "Citations describing each claim; reference docs/nvidia-supply-chain-graph-design.md and logistics providers.",
+        "required": true
+      },
+      {
+        "name": "confidence",
+        "type": "number",
+        "description": "Confidence score derived from the heuristics in this catalog entry.",
+        "required": true
+      }
+    ]
+  },
+  "scoringHeuristics": [
+    "Confidence should remain ≥0.6 when you cite port capacity reports or verified carrier notices.",
+    "Reduce confidence when the signal is anecdotal or derived from a single unverified terminal update.",
+    "Elevate confidence (≥0.8) for multi-provider consensus (e.g., both port and carrier confirm a reroute) and when referencing docs/nvidia-supply-chain-graph-design.md."
+  ],
+  "citationPolicy": {
+    "summary": "Cite docs/nvidia-supply-chain-graph-design.md (LogisticsProvider, Graph Platform, and Concurrent Codex Stream Considerations) plus carrier or port press releases.",
+    "references": [
+      "docs/nvidia-supply-chain-graph-design.md (Graph fidelity, Concurrent Codex Stream Considerations, Temporal → Argo → Codex Flow)",
+      "docs/nvidia-supply-chain-graph-design.md (Neo4j Schema Highlights for LogisticsProvider nodes)"
+    ],
+    "enforcement": "Every finding should include both the canonical doc reference and an independent carrier/port source with url/excerpt. For risks, cite at least two sources when possible."
+  }
+}

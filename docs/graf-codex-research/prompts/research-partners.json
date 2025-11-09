@@ -1,0 +1,107 @@
+{
+  "promptId": "nvidia-research-partners",
+  "title": "Research partners collaboration intelligence",
+  "streamId": "research-partners",
+  "objective": "Surface research partner programs, academic relationships, and joint technology experiments that feed NVIDIA's innovations.",
+  "description": "Describe collaboration status, mutual deliverables, intellectual property guardrails, and how these partnerships intersect with NVIDIA research goals.",
+  "promptTemplate": "You are the research partnership analyst for NVIDIA's supply chain graph. Leverage the Inputs below to reason about the strength of each partnership, open deliverables, and research confidences. Return EXACT JSON matching the expected envelope and set streamId to \"research-partners\". Document the relevance to the research graph, cite docs/nvidia-supply-chain-graph-design.md (ResearchSource, Research Partners, Architecture Overview) and external technical disclosures, and keep artifactId/workflowId null while populating generatedAt with the current RFC 3339 timestamp. Follow the scoring heuristics and citation policy defined here when deciding confidence or flagging uncertainty.\n\nInputs:\n- partnerUpdates: program updates, memorandum of understanding, or research deliveries in progress.\n- capabilitySignals: breakthrough publications, lab expansions, or equipment acquisitions by a partner.\n- engagementRequests: outstanding requests for tooling, data, or verification from NVIDIA research teams.\n\nDo not append prose outside the JSON object described in expectedJsonEnvelope.",
+  "metadata": {
+    "priority": "medium",
+    "cadence": "monthly"
+  },
+  "inputs": [
+    {
+      "name": "partnerUpdates",
+      "type": "array",
+      "description": "Progress updates from academic or research partners, including contract renewals and joint lab statuses.",
+      "required": true,
+      "example": "[\"University lab X delivered early benchmarking data\", \"Partner Y signed a new data-sharing agreement\"]"
+    },
+    {
+      "name": "capabilitySignals",
+      "type": "array",
+      "description": "Published papers, patents, or prototype test results that show a partner's capability in GPU/AI research.",
+      "required": false,
+      "example": "[\"Partner Z published an AI system optimization for tensor cores\"]"
+    },
+    {
+      "name": "engagementRequests",
+      "type": "array",
+      "description": "Requests for instrumentation, datasets, or point-of-contact support from NVIDIA research leads.",
+      "required": false,
+      "example": "[\"Request for NVSwitch testbeds in Singapore lab\"]"
+    }
+  ],
+  "expectedJsonEnvelope": {
+    "summary": "Research partner insight object that can seed ResearchSource nodes and partnership edges.",
+    "fields": [
+      {
+        "name": "streamId",
+        "type": "string",
+        "description": "Set to \"research-partners\" for this catalog entry.",
+        "required": true
+      },
+      {
+        "name": "workflowId",
+        "type": "string",
+        "description": "Temporal workflow id (left null in the prompt output).",
+        "required": false
+      },
+      {
+        "name": "artifactId",
+        "type": "string",
+        "description": "Placeholder for Graf artifact reference.",
+        "required": false
+      },
+      {
+        "name": "generatedAt",
+        "type": "string",
+        "description": "The RFC 3339 timestamp for this artifact.",
+        "required": true
+      },
+      {
+        "name": "findings",
+        "type": "array",
+        "description": "Findings should describe program status, capability, and alignment to NVIDIA research goals.",
+        "required": true
+      },
+      {
+        "name": "risks",
+        "type": "array",
+        "description": "Risks related to IP, shared tooling, or partner bandwidth.",
+        "required": false
+      },
+      {
+        "name": "nextSteps",
+        "type": "array",
+        "description": "Actions for mentorship, testing, or documentation to fortify the partnership.",
+        "required": false
+      },
+      {
+        "name": "citations",
+        "type": "array",
+        "description": "Each claim must include a citation referencing docs/nvidia-supply-chain-graph-design.md or partner documents.",
+        "required": true
+      },
+      {
+        "name": "confidence",
+        "type": "number",
+        "description": "Normalized confidence derived from the scoring heuristics.",
+        "required": true
+      }
+    ]
+  },
+  "scoringHeuristics": [
+    "Confidence should be ≥0.7 when referencing signed agreements or published joint results.",
+    "Reduce confidence when discussing speculative pipeline items or unsanctioned collaborations.",
+    "Boost confidence when you can tie partner signals to artifacts already stored in the ResearchSource node schema described in docs/nvidia-supply-chain-graph-design.md."
+  ],
+  "citationPolicy": {
+    "summary": "Cite docs/nvidia-supply-chain-graph-design.md (ResearchSource, Research Partners, Architecture Overview) plus partner disclosures or journal publications.",
+    "references": [
+      "docs/nvidia-supply-chain-graph-design.md (Architecture Overview, Neo4j Schema Highlights, Research stream component diagram)",
+      "docs/nvidia-supply-chain-graph-design.md (Concurrent Codex Stream Considerations, Stream catalog)"
+    ],
+    "enforcement": "Record citations that include document titles or urls; pair them with doc references when you discuss how the data should seed ResearchSource nodes in Neo4j."
+  }
+}

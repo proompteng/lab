@@ -1,0 +1,77 @@
+{
+  "catalogId": "nvidia-graf-research-prompts",
+  "name": "NVIDIA Graf research prompt catalog",
+  "description": "Structured definitions for the NVIDIA Graf Codex research streams; each entry enumerates inputs, metadata, scoring heuristics, and citation policy references drawn from docs/nvidia-supply-chain-graph-design.md.",
+  "version": "2025.11.09",
+  "schema": "prompt-schema.json",
+  "updatedAt": "2025-11-09T10:00:00Z",
+  "documentation": "README.md",
+  "streams": [
+    {
+      "promptId": "nvidia-foundries",
+      "streamId": "foundries",
+      "file": "foundries.json",
+      "priority": "high",
+      "cadence": "biweekly",
+      "metadata": {
+        "catalogPosition": "1",
+        "topicGroup": "manufacturing"
+      }
+    },
+    {
+      "promptId": "nvidia-odm-ems",
+      "streamId": "odm-ems",
+      "file": "odm-ems.json",
+      "priority": "high",
+      "cadence": "monthly",
+      "metadata": {
+        "catalogPosition": "2",
+        "topicGroup": "integration"
+      }
+    },
+    {
+      "promptId": "nvidia-logistics-ports",
+      "streamId": "logistics-ports",
+      "file": "logistics-ports.json",
+      "priority": "medium",
+      "cadence": "weekly",
+      "metadata": {
+        "catalogPosition": "3",
+        "topicGroup": "logistics"
+      }
+    },
+    {
+      "promptId": "nvidia-research-partners",
+      "streamId": "research-partners",
+      "file": "research-partners.json",
+      "priority": "medium",
+      "cadence": "monthly",
+      "metadata": {
+        "catalogPosition": "4",
+        "topicGroup": "research"
+      }
+    },
+    {
+      "promptId": "nvidia-financing-risk",
+      "streamId": "financing-risk",
+      "file": "financing-risk.json",
+      "priority": "high",
+      "cadence": "monthly",
+      "metadata": {
+        "catalogPosition": "5",
+        "topicGroup": "risk"
+      }
+    },
+    {
+      "promptId": "nvidia-instrumentation-vendors",
+      "streamId": "instrumentation-vendors",
+      "file": "instrumentation-vendors.json",
+      "priority": "medium",
+      "cadence": "monthly",
+      "metadata": {
+        "catalogPosition": "6",
+        "topicGroup": "auxiliary"
+      }
+    }
+  ]
+}

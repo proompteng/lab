@@ -1,0 +1,107 @@
+{
+  "promptId": "nvidia-financing-risk",
+  "title": "Financing & risk posture research",
+  "streamId": "financing-risk",
+  "objective": "Capture financing shifts, insurance coverage, and macro risk indicators that could reweight NVIDIA's supply commitments.",
+  "description": "Track capital availability, hedging, geopolitical risk, sanctions, and insurance or warranty exposures along the supply graph.",
+  "promptTemplate": "You are the risk intelligence analyst for NVIDIA's financing stream. Use the Inputs below (financialSignals, riskAlerts, policySignals) to produce EXACT JSON matching the expected envelope with streamId \"financing-risk\". Include net exposures, risk migration, and mitigation plans. Reference docs/nvidia-supply-chain-graph-design.md (RiskTag, Graph fidelity, Architecture Overview) plus credible sources for each claim. Leave artifactId/workflowId null and fill generatedAt with the current RFC 3339 timestamp. Apply the scoring heuristics and citation policy tied to this stream when scoring confidence or labeling risk severity.\n\nInputs:\n- financialSignals: statements about budget shifts, financing approvals, or currency hedges relevant to NVIDIA supply partners.\n- riskAlerts: insurance claims, political risk warnings, sanctions chatter, or macro indicators affecting suppliers.\n- policySignals: new legislation, embargoes, or export changes that alter risk footprints.\n\nReturn only the JSON object described in expectedJsonEnvelope; append no prose afterwards.",
+  "metadata": {
+    "priority": "high",
+    "cadence": "monthly"
+  },
+  "inputs": [
+    {
+      "name": "financialSignals",
+      "type": "array",
+      "description": "Capital commitments, credit lines, or liquidity events tied to NVIDIA supply partners or their financiers.",
+      "required": true,
+      "example": "[\"Tier-1 supplier secured a bonded financing facility\", \"Currency hedging desk increased exposure to KRW\"]"
+    },
+    {
+      "name": "riskAlerts",
+      "type": "array",
+      "description": "Insurance claims, credit downgrades, sanctions, or audit outcomes that change the risk posture of nodes in the graph.",
+      "required": true,
+      "example": "[\"Sanctions tightening around a logistics provider in the region\", \"Insurance payout triggered by warehouse fire\"]"
+    },
+    {
+      "name": "policySignals",
+      "type": "array",
+      "description": "Export control updates, legislative reviews, or compliance reminders that could constrain financing or sourcing.",
+      "required": false,
+      "example": "[\"New export licensing rules for advanced packaging equipment to Taiwan\"]"
+    }
+  ],
+  "expectedJsonEnvelope": {
+    "summary": "Risk and financing object for Neo4j risk scoring.",
+    "fields": [
+      {
+        "name": "streamId",
+        "type": "string",
+        "description": "Set to \"financing-risk\" for accurate lineage.",
+        "required": true
+      },
+      {
+        "name": "workflowId",
+        "type": "string",
+        "description": "Temporal workflow identifier (null placeholder).",
+        "required": false
+      },
+      {
+        "name": "artifactId",
+        "type": "string",
+        "description": "Graf artifact reference (null until Graf fills).",
+        "required": false
+      },
+      {
+        "name": "generatedAt",
+        "type": "string",
+        "description": "RFC 3339 timestamp of artifact generation.",
+        "required": true
+      },
+      {
+        "name": "findings",
+        "type": "array",
+        "description": "Findings should describe financing posture, risk likelihood, and mitigation moves.",
+        "required": true
+      },
+      {
+        "name": "risks",
+        "type": "array",
+        "description": "Detailed risk tags (financial, geopolitical, insurance).",
+        "required": true
+      },
+      {
+        "name": "nextSteps",
+        "type": "array",
+        "description": "Actions for compliance, hedging, or financial teams.",
+        "required": false
+      },
+      {
+        "name": "citations",
+        "type": "array",
+        "description": "Citations referencing docs/nvidia-supply-chain-graph-design.md and finance/regulatory sources.",
+        "required": true
+      },
+      {
+        "name": "confidence",
+        "type": "number",
+        "description": "Score between 0.0 and 1.0 guided by the scoring heuristics.",
+        "required": true
+      }
+    ]
+  },
+  "scoringHeuristics": [
+    "Confidence should be ≥0.7 when citing multiple financial/risk data points that align with the Neo4j RiskTag schema.",
+    "Lower confidence by 0.25 when deductions rely on predictive models or indirect signals.",
+    "Boost confidence when multiple sources (financial regulators, partner filings) corroborate a risk migration."
+  ],
+  "citationPolicy": {
+    "summary": "Cite docs/nvidia-supply-chain-graph-design.md (RiskTag, Graph Platform, Neo4j Schema Highlights) plus regulatory or industry disclosures for each risk callout.",
+    "references": [
+      "docs/nvidia-supply-chain-graph-design.md (Neo4j Schema Highlights, RiskTag nodes, Concurrent Codex Stream Considerations)",
+      "docs/nvidia-supply-chain-graph-design.md (Temporal → Argo → Codex → Service Flow, Architecture Overview)"
+    ],
+    "enforcement": "Each risk finding must have at least two citations (one canonical doc reference and one external source) and include the section or url used for verification."
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "promptId": "nvidia-instrumentation-vendors",
+  "title": "Instrumentation vendors and metrology readiness",
+  "streamId": "instrumentation-vendors",
+  "objective": "Document the instrumentation, metrology, and test tooling vendors that NVIDIA relies on so the Neo4j graph includes auxiliary hypothesis that support physical testing.",
+  "description": "Capture availability, certification cycles, service-level impacts, and strategic investments by instrumentation partners (metrology tools, test racks, etc.).",
+  "promptTemplate": "You are the instrumentation analyst for NVIDIA's supply chain graph. Use the Inputs below to reason about tooling availability, service contracts, and calibration needs. Output EXACT JSON per expectedJsonEnvelope and set streamId to \"instrumentation-vendors\". Each finding should note tooling backlog, calibration status, or service coverage, citing docs/nvidia-supply-chain-graph-design.md (Instrumentation/auxiliary industries sections) plus any vendor statements. Keep artifactId/workflowId null and write generatedAt in RFC 3339 format. Follow the scoring heuristics and citation policy in this entry for confidence assignments.\n\nInputs:\n- vendorSignals: vendor announcements about shipments, calibration, or support windows.\n- testCoverage: signals about test rack throughput, certification runs, or new metrology equipment.\n- serviceRequests: service calls, replacement orders, or maintenance visits that may delay instrumentation.\n\nReturn no prose outside the JSON object defined by expectedJsonEnvelope.",
+  "metadata": {
+    "priority": "medium",
+    "cadence": "monthly"
+  },
+  "inputs": [
+    {
+      "name": "vendorSignals",
+      "type": "array",
+      "description": "Messages from instrumentation vendors about delivery slots, calibration cycles, or new tool orders.",
+      "required": true,
+      "example": "[\"Vendor A allocated four EUV metrology units to Nvidia labs\", \"Vendor B reported shipment delay for high-speed test racks\"]"
+    },
+    {
+      "name": "testCoverage",
+      "type": "array",
+      "description": "Updates on test-floor coverage, throughput, and certification runs for NVIDIA hardware.",
+      "required": false,
+      "example": "[\"Test floor reports 12-hour calibration backlog\", \"New automation scripts cleared subsystem validation\"]"
+    },
+    {
+      "name": "serviceRequests",
+      "type": "array",
+      "description": "Service visits, spare part orders, or maintenance narratives that affect instrumentation uptime.",
+      "required": false,
+      "example": "[\"Requested vendor engineer to recalibrate double-sided reflow oven\"]"
+    }
+  ],
+  "expectedJsonEnvelope": {
+    "summary": "Instrumentation vendor insight object for auxiliary industries.",
+    "fields": [
+      {
+        "name": "streamId",
+        "type": "string",
+        "description": "Should read \"instrumentation-vendors\" for this stream.",
+        "required": true
+      },
+      {
+        "name": "workflowId",
+        "type": "string",
+        "description": "Temporal workflow ID placeholder.",
+        "required": false
+      },
+      {
+        "name": "artifactId",
+        "type": "string",
+        "description": "Graf artifact reference (null in the prompt).",
+        "required": false
+      },
+      {
+        "name": "generatedAt",
+        "type": "string",
+        "description": "RFC 3339 timestamp of artifact creation.",
+        "required": true
+      },
+      {
+        "name": "findings",
+        "type": "array",
+        "description": "Findings describing tool availability, calibration, and risk.",
+        "required": true
+      },
+      {
+        "name": "risks",
+        "type": "array",
+        "description": "Risks introduced by instrument downtime, calibration slips, or vendor liquidity.",
+        "required": false
+      },
+      {
+        "name": "nextSteps",
+        "type": "array",
+        "description": "Recommendations for scheduling, buffer stock, or manual verification.",
+        "required": false
+      },
+      {
+        "name": "citations",
+        "type": "array",
+        "description": "Citations referencing docs/nvidia-supply-chain-graph-design.md and vendor notes for each claim.",
+        "required": true
+      },
+      {
+        "name": "confidence",
+        "type": "number",
+        "description": "Confidence score between 0.0 and 1.0 guided by the scoring heuristics.",
+        "required": true
+      }
+    ]
+  },
+  "scoringHeuristics": [
+    "Confidence should read ≥0.7 when multiple vendor/test-floor inputs converge on a single readiness state.",
+    "Reduce confidence when the signal is from a single analyst or lacks confirmed instrumentation data.",
+    "Increase confidence when vendor updates tie directly to the auxiliary industries described in docs/nvidia-supply-chain-graph-design.md."
+  ],
+  "citationPolicy": {
+    "summary": "Cite docs/nvidia-supply-chain-graph-design.md (auxiliary industries, instrumentation vendor context) plus vendor release notes or maintenance logs.",
+    "references": [
+      "docs/nvidia-supply-chain-graph-design.md (Purpose, Architecture Overview, Neo4j Schema Highlights for auxiliary industries)",
+      "docs/nvidia-supply-chain-graph-design.md (Concurrent Codex Stream Considerations, Stream catalog)"
+    ],
+    "enforcement": "Each finding should provide the doc section or url that grounds the instrumentation claim; pair it with a vendor note when discussing availability."
+  }
+}

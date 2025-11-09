@@ -1,0 +1,107 @@
+{
+  "promptId": "nvidia-foundries",
+  "title": "Foundry capacity & resilience research",
+  "streamId": "foundries",
+  "objective": "Capture wafer fabrication capacity, node readiness, and risk for NVIDIA's Tier-0 foundries so the Neo4j model reflects the latest supply constraints.",
+  "description": "Focus on capacity planning, certification upgrades, location risk, alternative sources, and how these impact NVIDIA's multi-node design roadmaps.",
+  "promptTemplate": "You are the NVIDIA supply chain research analyst for the foundries stream. Ingest the latest market signals, wafer fab announcements, and policy risk indicators (see the Inputs section below). Your job is to emit EXACT JSON that matches the expected envelope and tags each finding with the streamId \"foundries\". Every finding should include `summary`, `confidence` (0.0-1.0), and `evidence` that cites docs/nvidia-supply-chain-graph-design.md plus any other verifiable sources you referenced. Set `artifactId`/`workflowId` to `null` (Graf will attach the real values later) and populate `generatedAt` with the current RFC 3339 timestamp. Use the scoring heuristics and citation policy defined in this catalog entry when deciding the confidence score and when to flag risk or mitigation steps.\n\nInputs:\n- capacitySignals: statements about wafer starts, node yields, new tool orders, or fab expansion cadence.\n- fabEvents: alerts on maintenance, regulatory reviews, or disruptions (power, workers, water) affecting the fabs identified in docs/nvidia-supply-chain-graph-design.md.\n- riskIndicators: policy shifts, sanctions updates, or supplier audits that change the resilience posture of each fab.\n\nReturn only the JSON object described in expectedJsonEnvelope; do not append prose outside the object.",
+  "metadata": {
+    "priority": "high",
+    "cadence": "biweekly"
+  },
+  "inputs": [
+    {
+      "name": "capacitySignals",
+      "type": "array",
+      "description": "Statements describing wafer starts, yield changes, node certifications, or intake volume commitments for major fabs (TSMC, Samsung, etc.).",
+      "required": true,
+      "example": "[\"TSMC Q4 wafer bookings climbed 8%\", \"Samsung 3nm line delayed by six weeks\"]"
+    },
+    {
+      "name": "fabEvents",
+      "type": "array",
+      "description": "Events such as maintenance windows, regulatory inspections, or raw material shortages that can constrain production slots.",
+      "required": true,
+      "example": "[\"Power curtailment notice for TSMC Hsinchu plants\", \"Samsung certification for HVM EUV nodes\"]"
+    },
+    {
+      "name": "riskIndicators",
+      "type": "array",
+      "description": "Policy, geopolitical, or downstream demand shifts that may increase the failure probability for each fab relationship.",
+      "required": false,
+      "example": "[\"New export control guidance impacts EUV tool deployment to Taiwan\"]"
+    }
+  ],
+  "expectedJsonEnvelope": {
+    "summary": "Structured insight object that Neo4j can ingest for foundry relationships.",
+    "fields": [
+      {
+        "name": "streamId",
+        "type": "string",
+        "description": "Must equal \"foundries\" to keep lineage correct.",
+        "required": true
+      },
+      {
+        "name": "workflowId",
+        "type": "string",
+        "description": "Temporal workflow identifier (leave null when drafting).",
+        "required": false
+      },
+      {
+        "name": "artifactId",
+        "type": "string",
+        "description": "Graf artifact key (set to null in the prompt output).",
+        "required": false
+      },
+      {
+        "name": "generatedAt",
+        "type": "string",
+        "description": "RFC 3339 timestamp of when the artifact was generated.",
+        "required": true
+      },
+      {
+        "name": "findings",
+        "type": "array",
+        "description": "Array of findings with {summary, confidence, evidence, impact}.",
+        "required": true
+      },
+      {
+        "name": "risks",
+        "type": "array",
+        "description": "Binary or tiered risk buckets (capacity, certifications, sanctions).",
+        "required": false
+      },
+      {
+        "name": "nextSteps",
+        "type": "array",
+        "description": "Recommended nudges for Temporal (refresh cadence, manual validation, supplier outreach).",
+        "required": false
+      },
+      {
+        "name": "citations",
+        "type": "array",
+        "description": "Every major claim must cite docs/nvidia-supply-chain-graph-design.md or another citable source with {source, url, excerpt}.",
+        "required": true
+      },
+      {
+        "name": "confidence",
+        "type": "number",
+        "description": "Normalized 0.0-1.0 score that mirrors the scoring heuristics below.",
+        "required": true
+      }
+    ]
+  },
+  "scoringHeuristics": [
+    "Confidence should start at 0.7 when multiple citations reference docs/nvidia-supply-chain-graph-design.md before weighting others.",
+    "Lower the confidence by at least 0.15 when a signal is purely speculative or lacks an industry announcement.",
+    "Elevate confidence (≥0.85) when you can tie capacity changes to confirmed fab commitments and cite the exact section that describes the stream catalog or graph fidelity."
+  ],
+  "citationPolicy": {
+    "summary": "Always cite docs/nvidia-supply-chain-graph-design.md (Purpose, Graph fidelity, and Stream catalog sections) when describing the canonical model; add source URLs for any external signal.",
+    "references": [
+      "docs/nvidia-supply-chain-graph-design.md (Purpose, Graph fidelity, Temporal → Argo → Codex → Service Flow)",
+      "docs/nvidia-supply-chain-graph-design.md (Concurrent Codex Stream Considerations, Stream catalog)"
+    ],
+    "enforcement": "Every finding and risk callout must cite at least one reference, and citations must include a url or document section identifier. Use the streamId to align this evidence with Neo4j's ResearchSource nodes."
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "promptId": "nvidia-odm-ems",
+  "title": "ODM/EMS execution & integration research",
+  "streamId": "odm-ems",
+  "objective": "Track the ODM/EMS partners that assemble and integrate NVIDIA systems so the graph knows which integrators back which product families.",
+  "description": "Highlight contract status, integration readiness, yield performance, and co-engineering risks while correlating those facts with NVIDIA's planned product launch windows.",
+  "promptTemplate": "You are the NVIDIA supply chain research analyst for the ODM/EMS stream. Use the Inputs section below to reason about assembly partners, integration line readiness, and quality escapes. Emit EXACT JSON that matches the expected envelope and sets streamId to \"odm-ems\". Capture contract remarks, backlog risks, and integration signals, and cite docs/nvidia-supply-chain-graph-design.md plus any OEM/EMS statements. Keep artifactId/workflowId null for now and write generatedAt with the current RFC 3339 timestamp. Apply the scoring heuristics and citation policy in this catalog entry when assigning confidence and flagging follow-up actions or mitigations.\n\nInputs:\n- contractSignals: new contract awards, ramp schedules, or exclusivity clauses affecting ODM/EMS partners.\n- integrationRequests: system-level integration requirements, test coverage updates, or co-design dependencies that impact MOS trust.\n- qualityAlerts: failure modes, recall watchlists, or inspection outcomes reported by labor or partners.\n\nReturn only the JSON object described in expectedJsonEnvelope; append nothing else.",
+  "metadata": {
+    "priority": "high",
+    "cadence": "monthly"
+  },
+  "inputs": [
+    {
+      "name": "contractSignals",
+      "type": "array",
+      "description": "Announcements describing new or amended ODM/EMS contracts, ramp schedules, or changes to assembly volume commitments.",
+      "required": true,
+      "example": "[\"ODM partner X to assemble Blackwell prototypes in Q1\", \"EMS supplier Y adding a dedicated Nvidia line\"]"
+    },
+    {
+      "name": "integrationRequests",
+      "type": "array",
+      "description": "Integration/update requests such as firmware dependencies, validation labs, or shared tooling that must align with NVIDIA's reference designs.",
+      "required": true,
+      "example": "[\"EMS integration lab seeking access to NVLink test rig\", \"ODM claims board-level cooling redesign\"]"
+    },
+    {
+      "name": "qualityAlerts",
+      "type": "array",
+      "description": "Post-production issues, inspections, yield anomalies, or recalls that could affect assembly continuity or release timing.",
+      "required": false,
+      "example": "[\"Operational audit flagged inconsistency in chassis sealing\", \"EMS reported 1.2% yield drop linked to double-sided reflow\"]"
+    }
+  ],
+  "expectedJsonEnvelope": {
+    "summary": "Graph-friendly ODM/EMS intelligence object.",
+    "fields": [
+      {
+        "name": "streamId",
+        "type": "string",
+        "description": "Must equal \"odm-ems\" for stream alignment.",
+        "required": true
+      },
+      {
+        "name": "workflowId",
+        "type": "string",
+        "description": "Temporal workflow identifier (set to null in the prompt output).",
+        "required": false
+      },
+      {
+        "name": "artifactId",
+        "type": "string",
+        "description": "Graf artifact key placeholder.",
+        "required": false
+      },
+      {
+        "name": "generatedAt",
+        "type": "string",
+        "description": "RFC 3339 timestamp of artifact creation.",
+        "required": true
+      },
+      {
+        "name": "findings",
+        "type": "array",
+        "description": "List of {summary, confidence, evidence, impact} describing the current ODM/EMS posture.",
+        "required": true
+      },
+      {
+        "name": "risks",
+        "type": "array",
+        "description": "Risks tied to ramp timing, integration gaps, or quality events.",
+        "required": false
+      },
+      {
+        "name": "nextSteps",
+        "type": "array",
+        "description": "Recommended follow-up actions for Temporal or procurement.",
+        "required": false
+      },
+      {
+        "name": "citations",
+        "type": "array",
+        "description": "Evidence for each claim; reference docs/nvidia-supply-chain-graph-design.md and vendor communications.",
+        "required": true
+      },
+      {
+        "name": "confidence",
+        "type": "number",
+        "description": "Confidence score from 0.0 to 1.0 informed by scoring heuristics.",
+        "required": true
+      }
+    ]
+  },
+  "scoringHeuristics": [
+    "Confidence should lean ≥0.75 when two or more inputs describe the same integration or quality milestone.",
+    "Drop confidence by at least 0.2 when a signal is based on unverified rumors or single-source speculation.",
+    "Raise confidence when OEM/EMS statements align with the Temporal-managed stream catalog described in docs/nvidia-supply-chain-graph-design.md."
+  ],
+  "citationPolicy": {
+    "summary": "Cite docs/nvidia-supply-chain-graph-design.md (Graph fidelity and Stream catalog sections) for canonical metadata and include partner statements for operational claims.",
+    "references": [
+      "docs/nvidia-supply-chain-graph-design.md (Graph fidelity, Stream catalog, Temporal → Argo → Codex → Service Flow)",
+      "docs/nvidia-supply-chain-graph-design.md (Concurrent Codex Stream Considerations)"
+    ],
+    "enforcement": "Every finding should include at least one citation; cite section names or paragraph numbers when possible and pair them with supporting URLs from partner or news statements."
+  }
+}
