@@ -1,8 +1,10 @@
 package ai.proompteng.graf.routes
 
+import ai.proompteng.graf.autoresearch.AutoresearchPlannerService
 import ai.proompteng.graf.codex.CodexResearchService
 import ai.proompteng.graf.config.MinioConfig
 import ai.proompteng.graf.model.ArtifactReference
+import ai.proompteng.graf.model.AutoresearchPlanRequest
 import ai.proompteng.graf.model.CleanRequest
 import ai.proompteng.graf.model.CodexResearchRequest
 import ai.proompteng.graf.model.CodexResearchResponse
@@ -28,6 +30,7 @@ fun Route.graphRoutes(
   service: GraphService,
   codexResearchService: CodexResearchService,
   minioConfig: MinioConfig,
+  autoresearchPlannerService: AutoresearchPlannerService?,
 ) {
   post("/entities") {
     val payload = call.receive<EntityBatchRequest>()
@@ -103,5 +106,17 @@ fun Route.graphRoutes(
         startedAt = launch.startedAt,
       ),
     )
+  }
+
+  post("/autoresearch") {
+    val planner =
+      autoresearchPlannerService
+        ?: return@post call.respond(
+          HttpStatusCode.ServiceUnavailable,
+          mapOf("message" to "Autoresearch agent is disabled"),
+        )
+    val payload = call.receive<AutoresearchPlanRequest>()
+    val response = planner.generatePlan(payload)
+    call.respond(HttpStatusCode.OK, response)
   }
 }

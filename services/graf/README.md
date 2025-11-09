@@ -47,3 +47,19 @@ Run `./gradlew ktlintCheck` (the same plugin also supports `./gradlew ktlintForm
    bun packages/scripts/src/graf/deploy-service.ts
    ```
 The entrypoint is `bin/graf` from Gradle's `installDist`, and the runtime image is a distroless Java 21 runtime.
+
+## Autoresearch GPT-5 relationship planner
+
+- Set `AGENT_ENABLED=true` plus either `AGENT_OPENAI_API_KEY` or `OPENAI_API_KEY`. Optional overrides: `AGENT_OPENAI_BASE_URL`, `AGENT_MODEL` (defaults to `gpt-5`), `AGENT_TEMPERATURE`, `AGENT_MAX_ITERATIONS`, `AGENT_GRAPH_SAMPLE_LIMIT`.
+- When enabled, `POST /v1/autoresearch` kicks off the autoresearch ReAct agent with the `graph_state_tool`. The agent defaults to OpenAI GPT-5 with **High** reasoning effort for deeper chain-of-thought planning. Provide a JSON body:
+  ```json
+  {
+    "objective": "Map Tier-1 packaging partners for NVIDIA's 2025 automotive stack",
+    "focus": "automotive",
+    "streamId": "logistics-west",
+    "metadata": {
+      "artifactId": "temporal://streams/logistics-west/2025-11-09"
+    }
+  }
+  ```
+  The response includes the workflow metadata plus a structured plan (summary, candidate relationships, prioritized prompts) that downstream Codex runs can execute. The agent inspects the live Neo4j graph through the graph snapshot tool before suggesting updates.

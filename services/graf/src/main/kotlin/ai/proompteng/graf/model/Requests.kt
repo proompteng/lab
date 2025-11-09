@@ -117,3 +117,61 @@ data class CodexResearchResponse(
   val artifactReferences: List<ArtifactReference>,
   val startedAt: String? = null,
 )
+
+@Serializable
+data class AutoresearchPlanRequest(
+  val objective: String,
+  val focus: String? = null,
+  val streamId: String? = null,
+  val metadata: Map<String, String> = emptyMap(),
+  val sampleLimitOverride: Int? = null,
+)
+
+@Serializable
+data class AutoresearchPlanIntent(
+  val objective: String,
+  val focus: String? = null,
+  val streamId: String? = null,
+  val metadata: Map<String, String> = emptyMap(),
+  val sampleLimit: Int? = null,
+)
+
+@Serializable
+data class AutoresearchPlanResponse(
+  val workflowId: String,
+  val runId: String,
+  val startedAt: String,
+  val completedAt: String,
+  val plan: GraphRelationshipPlan,
+)
+
+@Serializable
+data class GraphRelationshipPlan(
+  val objective: String,
+  val summary: String,
+  val currentSignals: List<String> = emptyList(),
+  val candidateRelationships: List<CandidateRelationship> = emptyList(),
+  val prioritizedPrompts: List<String> = emptyList(),
+  val missingData: List<String> = emptyList(),
+  val recommendedTools: List<String> = emptyList(),
+) {
+  @Serializable
+  data class CandidateRelationship(
+    val fromId: String,
+    val toId: String,
+    val relationshipType: String,
+    val rationale: String,
+    val confidence: String? = null,
+    val requiredEvidence: List<String> = emptyList(),
+    val suggestedArtifacts: List<String> = emptyList(),
+  )
+}
+
+fun AutoresearchPlanRequest.toIntent(defaultLimit: Int): AutoresearchPlanIntent =
+  AutoresearchPlanIntent(
+    objective = objective.trim(),
+    focus = focus?.trim(),
+    streamId = streamId?.trim(),
+    metadata = metadata,
+    sampleLimit = sampleLimitOverride?.takeIf { it > 0 } ?: defaultLimit,
+  )
