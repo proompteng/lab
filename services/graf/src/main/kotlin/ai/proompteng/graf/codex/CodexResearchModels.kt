@@ -12,6 +12,7 @@ data class CodexResearchWorkflowInput(
   val metadata: Map<String, String> = emptyMap(),
   val argoWorkflowName: String,
   val artifactKey: String,
+  val argoPollTimeoutSeconds: Long,
 )
 
 @Serializable

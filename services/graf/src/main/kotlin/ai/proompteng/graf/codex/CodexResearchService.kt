@@ -9,6 +9,7 @@ import java.util.UUID
 class CodexResearchService(
   private val workflowClient: WorkflowClient,
   private val taskQueue: String,
+  private val argoPollTimeoutSeconds: Long,
 ) {
   fun startResearch(
     request: CodexResearchRequest,
@@ -31,6 +32,7 @@ class CodexResearchService(
         metadata = request.metadata,
         argoWorkflowName = argoWorkflowName,
         artifactKey = artifactKey,
+        argoPollTimeoutSeconds = argoPollTimeoutSeconds,
       )
     val execution = WorkflowClient.start(workflow::run, input)
     return CodexResearchLaunchResult(

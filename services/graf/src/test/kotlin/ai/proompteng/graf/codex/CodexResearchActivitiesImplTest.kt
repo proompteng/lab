@@ -55,7 +55,16 @@ class CodexResearchActivitiesImplTest {
       coEvery { graphPersistence.upsertEntities(any()) } returns BatchResponse(emptyList())
       coEvery { graphPersistence.upsertRelationships(any()) } returns BatchResponse(emptyList())
 
-      activities.persistCodexArtifact(payload, CodexResearchWorkflowInput("prompt", emptyMap(), "name", "key"))
+      activities.persistCodexArtifact(
+        payload,
+        CodexResearchWorkflowInput(
+          prompt = "prompt",
+          metadata = emptyMap(),
+          argoWorkflowName = "name",
+          artifactKey = "key",
+          argoPollTimeoutSeconds = 7200,
+        ),
+      )
 
       coVerify { graphPersistence.upsertEntities(match { it.entities.size == 1 }) }
       coVerify { graphPersistence.upsertRelationships(match { it.relationships.size == 1 }) }

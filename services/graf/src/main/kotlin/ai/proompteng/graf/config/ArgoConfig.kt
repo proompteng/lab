@@ -11,6 +11,8 @@ data class ArgoConfig(
   val pollTimeoutSeconds: Long,
 ) {
   companion object {
+    const val DEFAULT_POLL_TIMEOUT_SECONDS = 7200L
+
     fun fromEnvironment(): ArgoConfig {
       val env = System.getenv()
       val apiServer =
@@ -30,7 +32,8 @@ data class ArgoConfig(
         env["ARGO_CA_CERT_PATH"]?.takeIf { it.isNotBlank() }
           ?: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
       val pollIntervalSeconds = env["ARGO_WORKFLOW_POLL_INTERVAL_SECONDS"]?.toLongOrNull() ?: 10L
-      val pollTimeoutSeconds = env["ARGO_WORKFLOW_POLL_TIMEOUT_SECONDS"]?.toLongOrNull() ?: 600L
+      val pollTimeoutSeconds =
+        env["ARGO_WORKFLOW_POLL_TIMEOUT_SECONDS"]?.toLongOrNull() ?: DEFAULT_POLL_TIMEOUT_SECONDS
       return ArgoConfig(
         apiServer = apiServer,
         namespace = namespace,

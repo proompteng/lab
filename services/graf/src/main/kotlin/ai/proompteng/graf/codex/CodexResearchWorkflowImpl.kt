@@ -27,7 +27,7 @@ class CodexResearchWorkflowImpl : CodexResearchWorkflow {
           artifactKey = input.artifactKey,
         ),
       )
-    val completed = activities.waitForArgoWorkflow(submission.workflowName, 600)
+    val completed = activities.waitForArgoWorkflow(submission.workflowName, input.argoPollTimeoutSeconds)
     val artifactReference =
       completed.artifactReferences.firstOrNull()
         ?: throw IllegalStateException("Argo workflow ${submission.workflowName} completed without artifacts")

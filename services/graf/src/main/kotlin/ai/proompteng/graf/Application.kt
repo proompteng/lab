@@ -108,7 +108,8 @@ fun main() {
   worker.registerActivitiesImplementations(codexActivities)
   workerFactory.start()
 
-  val codexResearchService = CodexResearchService(workflowClient, temporalConfig.taskQueue)
+  val codexResearchService =
+    CodexResearchService(workflowClient, temporalConfig.taskQueue, argoConfig.pollTimeoutSeconds)
 
   val server =
     embeddedServer(Netty, port) {
