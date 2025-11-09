@@ -14,9 +14,9 @@ spec:
   ports:
     - name: http
       protocol: TCP
-      port: 7474
+      port: 80
       targetPort: 7474
     - name: https
       protocol: TCP
-      port: 7473
+      port: 443
       targetPort: 7473
