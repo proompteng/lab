@@ -28,6 +28,9 @@ tail -n +1 build/logs/*
 ./gradlew run
 ```
 
+## Formatting
+Run `./gradlew ktlintCheck` (the same plugin also supports `./gradlew ktlintFormat` if you want the auto-format step).
+
 ## Container image + deployment
 
 1. Build & push the Graf image via the shared script:

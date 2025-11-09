@@ -2,6 +2,8 @@ name: Graf Kotlin service
 
 on:
   push:
+    branches:
+      - main
     paths:
       - 'services/graf/**'
   pull_request:
@@ -21,8 +23,11 @@ jobs:
         with:
           java-version: 25
           distribution: temurin
-          cache: gradle
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: wrapper
       - name: Run Graf tests
         working-directory: services/graf
         run: ./gradlew clean test

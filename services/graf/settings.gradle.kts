@@ -1,7 +1,7 @@
 rootProject.name = "graf"
 
 dependencyResolutionManagement {
-    repositories {
-        mavenCentral()
-    }
+  repositories {
+    mavenCentral()
+  }
 }
