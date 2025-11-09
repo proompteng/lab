@@ -1,11 +1,17 @@
 package ai.proompteng.graf
 
+import ai.proompteng.graf.autoresearch.AgentActivitiesImpl
+import ai.proompteng.graf.autoresearch.AutoresearchAgentService
+import ai.proompteng.graf.autoresearch.AutoresearchPlannerService
+import ai.proompteng.graf.autoresearch.AutoresearchWorkflowImpl
+import ai.proompteng.graf.autoresearch.Neo4jGraphSnapshotProvider
 import ai.proompteng.graf.codex.ArgoWorkflowClient
 import ai.proompteng.graf.codex.CodexResearchActivitiesImpl
 import ai.proompteng.graf.codex.CodexResearchService
 import ai.proompteng.graf.codex.CodexResearchWorkflowImpl
 import ai.proompteng.graf.codex.MinioArtifactFetcherImpl
 import ai.proompteng.graf.config.ArgoConfig
+import ai.proompteng.graf.config.AutoresearchConfig
 import ai.proompteng.graf.config.MinioConfig
 import ai.proompteng.graf.config.Neo4jConfig
 import ai.proompteng.graf.config.TemporalConfig
@@ -63,6 +69,12 @@ private val buildVersion = System.getenv("GRAF_VERSION") ?: "dev"
 private val buildCommit = System.getenv("GRAF_COMMIT") ?: "unknown"
 private const val GRAF_BEARER_AUTH_NAME = "graf-bearer"
 
+private data class AutoresearchRuntime(
+  val agentService: AutoresearchAgentService,
+  val activities: AgentActivitiesImpl,
+  val planner: AutoresearchPlannerService,
+)
+
 fun main() {
   val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
   val neo4jConfig = Neo4jConfig.fromEnvironment()
@@ -78,6 +90,7 @@ fun main() {
   val temporalConfig = TemporalConfig.fromEnvironment()
   val argoConfig = ArgoConfig.fromEnvironment()
   val minioConfig = MinioConfig.fromEnvironment()
+  val agentConfig = AutoresearchConfig.fromEnvironment()
 
   val sharedJson =
     Json {
@@ -103,7 +116,7 @@ fun main() {
       AuthorizationGrpcMetadataProvider(AuthorizationTokenSupplier { bearerToken }),
     )
   }
-  val serviceStubs = WorkflowServiceStubs.newInstance(serviceStubsBuilder.build())
+  val serviceStubs = WorkflowServiceStubs.newServiceStubs(serviceStubsBuilder.build())
   val workflowClient =
     WorkflowClient.newInstance(
       serviceStubs,
@@ -114,17 +127,36 @@ fun main() {
         .build(),
     )
   val workerFactory = WorkerFactory.newInstance(workflowClient)
+  val agentRuntime =
+    if (agentConfig.isReady) {
+      val snapshotProvider = Neo4jGraphSnapshotProvider(client, agentConfig.graphSampleLimit)
+      val agentService = AutoresearchAgentService(agentConfig, snapshotProvider, sharedJson)
+      val activities = AgentActivitiesImpl(agentService)
+      val planner = AutoresearchPlannerService(workflowClient, temporalConfig.taskQueue, agentConfig.graphSampleLimit)
+      AutoresearchRuntime(agentService, activities, planner)
+    } else {
+      null
+    }
   val worker = workerFactory.newWorker(temporalConfig.taskQueue)
   worker.registerWorkflowImplementationTypes(CodexResearchWorkflowImpl::class.java)
-  worker.registerActivitiesImplementations(codexActivities)
+  agentRuntime?.let {
+    worker.registerWorkflowImplementationTypes(AutoresearchWorkflowImpl::class.java)
+  }
+  val activityImplementations =
+    buildList {
+      add(codexActivities as Any)
+      agentRuntime?.let { add(it.activities as Any) }
+    }
+  worker.registerActivitiesImplementations(*activityImplementations.toTypedArray())
   workerFactory.start()
 
   val codexResearchService =
     CodexResearchService(workflowClient, temporalConfig.taskQueue, argoConfig.pollTimeoutSeconds)
+  val autoresearchPlannerService = agentRuntime?.planner
 
   val server =
     embeddedServer(Netty, port) {
-      module(graphService, codexResearchService, minioConfig, sharedJson)
+      module(graphService, codexResearchService, minioConfig, sharedJson, autoresearchPlannerService)
     }
 
   Runtime.getRuntime().addShutdownHook(
@@ -136,6 +168,7 @@ fun main() {
       serviceStubs.shutdown()
       kubernetesClient.close()
       minioClient.close()
+      agentRuntime?.agentService?.close()
     },
   )
   server.start(wait = true)
@@ -147,6 +180,7 @@ fun Application.module(
   codexResearchService: CodexResearchService,
   minioConfig: MinioConfig,
   jsonConfig: Json,
+  autoresearchPlannerService: AutoresearchPlannerService?,
 ) {
   install(ServerContentNegotiation) {
     json(jsonConfig)
@@ -200,7 +234,7 @@ fun Application.module(
     }
     route("/v1") {
       authenticate(GRAF_BEARER_AUTH_NAME) {
-        graphRoutes(graphService, codexResearchService, minioConfig)
+        graphRoutes(graphService, codexResearchService, minioConfig, autoresearchPlannerService)
       }
     }
     get("/healthz") {

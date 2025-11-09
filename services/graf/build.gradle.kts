@@ -15,6 +15,7 @@ val logbackVersion = "1.5.20"
 val neo4jJavaDriverVersion = "6.0.2"
 val coroutinesVersion = "1.10.2"
 val kotlinLoggingVersion = "3.0.5"
+val koogVersion = "0.5.2"
 
 application {
   mainClass.set("ai.proompteng.graf.ApplicationKt")
@@ -53,6 +54,10 @@ dependencies {
   implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
   implementation("io.temporal:temporal-sdk:1.28.3")
   implementation("io.minio:minio:8.6.0")
+  implementation("ai.koog:koog-ktor:$koogVersion")
+  implementation("ai.koog:koog-agents:$koogVersion")
+  implementation("ai.koog:prompt-executor-openai-client:$koogVersion")
+  implementation("ai.koog:prompt-executor-llms:$koogVersion")
 
   testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
   testImplementation("org.jetbrains.kotlin:kotlin-test:2.2.21")

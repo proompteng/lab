@@ -1,11 +1,11 @@
-# NVIDIA Supply Chain Graph Design
+# NVIDIA Relationship Graph Design
 
 ## Purpose
-- Capture the full NVIDIA supply chain—the foundries, ODMs, logistics providers, research partners, financiers, auxiliary industries, and instrumentation vendors—inside a living Neo4j knowledge graph.
+- Capture the full NVIDIA ecosystem—the foundries, ODMs, logistics providers, strategic partners, software vendors, investors, and research alliances—inside a living Neo4j knowledge graph.
 - Automate discovery/enrichment through Temporal → Argo → Codex research artifacts, persist those findings via a Knative-hosted Kotlin service, and make the graph operable through a Tailscale-accessible Neo4j Browser.
 
 ## Key Objectives
-1. **Graph fidelity**: Model multi-tier supply, logistics, contracts, risks, and certifications; keep provenance for every insight.
+1. **Graph fidelity**: Model multi-tier supply, partnerships, logistics, contracts, risks, certifications, and strategic collaborations; keep provenance for every insight.
 2. **Automated research loop**: Temporal orchestrates Argo Workflows that run Codex jobs, produce structured artifacts, and feed the graph service.
 3. **Operational service**: Kotlin Knative API handles insert/update/delete/complement/clean flows, exposed for Temporal activities and manual tooling.
 4. **Secure access**: Neo4j Browser only reachable through a Tailscale sidecar; the service authenticates via short-lived tokens.
@@ -67,8 +67,8 @@ graph LR
    - Emit artifact JSON (timestamps, citations, `artifactId`, `confidence`, `sourceUrl`, `streamId`) to shared storage (PVC/S3) and signal completion.
 3. **Temporal consumption**:
    - Fetch artifact reference(s), validate schema and confidence, and correlate them with the stream/instance metadata.
-   - Enrich with geo, risk heuristics, procurement delegation tags, and downstream significance scoring.
-   - Invoke Kotlin service endpoints (`/entities`, `/relationships`, `/complement`) with artifact metadata + stream lineage, ensuring concurrent writes remain idempotent.
+   - Enrich with geo, partner/supplier/manufacturer context, investment/research tags, and downstream significance scoring.
+   - Invoke Kotlin service endpoints (`/entities`, `/relationships`, `/complement`, `/autoresearch`) with artifact metadata + stream lineage. `/autoresearch` starts long-running GPT agents asynchronously (responding 202 with workflow IDs) so frontends can poll for completion.
 4. **Neo4j persistence**:
    - Neo4j driver upserts nodes/edges, tagging each mutation with `artifactId`, `ResearchSource`, and originating streams.
    - Deduplicate via `apoc.coll.fuzzyMatch`, resolve conflicts using confidence/timestamp, and trigger `clean` endpoint for TTL/soft-deletes when needed.

@@ -24,6 +24,13 @@ class Neo4jClient(
       }
     }
 
+  suspend fun <T> executeRead(block: (TransactionContext) -> T): T =
+    withContext(Dispatchers.IO) {
+      driver.session(SessionConfig.forDatabase(database)).use { session ->
+        session.executeRead { tx -> block(tx) }
+      }
+    }
+
   override fun close() {
     if (closed.compareAndSet(false, true)) {
       driver.close()
