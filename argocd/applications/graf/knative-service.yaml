@@ -23,7 +23,7 @@ spec:
       containerConcurrency: 0
       serviceAccountName: graf
       containers:
-        - name: graf
+        - name: user-container
           image: registry.ide-newton.ts.net/proompteng/graf@sha256:ab9f3d47a6ee44f7ea5765157b44e8e1ecdec600ee9649539351c0c3a9bf2f4f
           imagePullPolicy: Always
           ports:
