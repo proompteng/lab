@@ -3,6 +3,7 @@ package ai.proompteng.graf
 import ai.proompteng.graf.config.Neo4jConfig
 import ai.proompteng.graf.neo4j.Neo4jClient
 import ai.proompteng.graf.routes.graphRoutes
+import ai.proompteng.graf.security.ApiBearerTokenConfig
 import ai.proompteng.graf.services.GraphService
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
@@ -15,6 +16,7 @@ import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.server.auth.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
@@ -24,6 +26,7 @@ import org.slf4j.event.Level
 
 private val buildVersion = System.getenv("GRAF_VERSION") ?: "dev"
 private val buildCommit = System.getenv("GRAF_COMMIT") ?: "unknown"
+private const val grafBearerAuthName = "graf-bearer"
 
 fun main() {
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
@@ -71,6 +74,18 @@ fun Application.module(graphService: GraphService) {
         allowMethod(HttpMethod.Options)
         allowCredentials = true
     }
+    install(Authentication) {
+        bearer(grafBearerAuthName) {
+            realm = "graf-graph-api"
+            authenticate { credential ->
+                if (ApiBearerTokenConfig.isValid(credential.token)) {
+                    UserIdPrincipal("graf")
+                } else {
+                    null
+                }
+            }
+        }
+    }
     install(StatusPages) {
         exception<IllegalArgumentException> { call, cause ->
             call.application.log.warn("Bad request", cause)
@@ -93,7 +108,9 @@ fun Application.module(graphService: GraphService) {
             )
         }
         route("/v1") {
-            graphRoutes(graphService)
+            authenticate(grafBearerAuthName) {
+                graphRoutes(graphService)
+            }
         }
         get("/healthz") {
             call.respond(mapOf("status" to "ok", "port" to System.getenv("PORT")))

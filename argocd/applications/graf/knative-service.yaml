@@ -40,6 +40,11 @@ spec:
                   key: NEO4J_AUTH
             - name: NEO4J_DATABASE
               value: neo4j
+            - name: GRAF_API_BEARER_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: graf-api
+                  key: bearer-tokens
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false

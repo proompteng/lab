@@ -10,7 +10,7 @@ spec:
   loadBalancerClass: tailscale
   selector:
     app: graf
-    helm.neo4j.com/instance: graf
+    helm.neo4j.com/instance: graf-db
   ports:
     - name: http
       protocol: TCP
