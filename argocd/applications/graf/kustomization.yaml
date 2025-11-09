@@ -5,24 +5,11 @@ resources:
   - service-account.yaml
   - knative-service.yaml
   - neo4j-browser-service.yaml
-  - neo4j-clusterip.yaml
 helmCharts:
   - name: neo4j
     repo: https://helm.neo4j.com/neo4j
     version: 2025.10.1
-    releaseName: graf
+    releaseName: graf-db
     namespace: graf
     includeCRDs: true
     valuesFile: neo4j-values.yaml
-patches:
-  - target:
-      group: ""
-      version: v1
-      kind: Service
-      name: graf
-    patch: |-
-      apiVersion: v1
-      kind: Service
-      metadata:
-        name: graf
-      $patch: delete

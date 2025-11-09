@@ -76,4 +76,4 @@ temporal operator namespace create default
 - Deploys: `kubectl kustomize --enable-helm argocd/applications/graf | kubectl apply -f -` (Argo CD runs the same render; Helm release `neo4j` plus Knative service)
 - Secrets: `graf-auth` (Neo4j credentials). Managed as a plain Secret referenced by the Knative service.
 - Helper script: `bun packages/scripts/src/graf/deploy-service.ts` builds/pushes the Kotlin image, writes the digest back to `knative-service.yaml`, and runs `kn service apply`.
-- Neo4j notes: the chart’s default ClusterIP is replaced with `graf-neo4j` so Knative can own `Service/graf`. Any in-cluster Bolt/HTTP clients should now target `graf-neo4j.graf.svc.cluster.local`.
+- Neo4j notes: the Helm release is published as `graf-db`, so Bolt/HTTP clients should use `graf-db.graf.svc.cluster.local` while Knative owns `Service/graf`.

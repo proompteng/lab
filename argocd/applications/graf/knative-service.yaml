@@ -32,7 +32,7 @@ spec:
             - name: ADDRESS
               value: 0.0.0.0
             - name: NEO4J_URI
-              value: bolt://graf-neo4j.graf.svc.cluster.local:7687
+              value: bolt://graf-db.graf.svc.cluster.local:7687
             - name: NEO4J_AUTH
               valueFrom:
                 secretKeyRef:
