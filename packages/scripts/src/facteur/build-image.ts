@@ -1,17 +1,9 @@
 #!/usr/bin/env bun
 
 import { resolve } from 'node:path'
-import { $ } from 'bun'
-import { ensureCli, repoRoot } from '../shared/cli'
-
-const execGit = (args: string[]): string => {
-  const result = Bun.spawnSync(['git', ...args], { cwd: repoRoot })
-  if (result.exitCode !== 0) {
-    const joined = args.join(' ')
-    throw new Error(`git ${joined} failed`)
-  }
-  return result.stdout.toString().trim()
-}
+import { repoRoot } from '../shared/cli'
+import { buildAndPushDockerImage } from '../shared/docker'
+import { execGit } from '../shared/git'
 
 export type BuildImageOptions = {
   registry?: string
@@ -24,13 +16,9 @@ export type BuildImageOptions = {
 }
 
 export const buildImage = async (options: BuildImageOptions = {}) => {
-  ensureCli('docker')
-  ensureCli('git')
-
   const registry = options.registry ?? process.env.FACTEUR_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.FACTEUR_IMAGE_REPOSITORY ?? 'lab/facteur'
   const tag = options.tag ?? process.env.FACTEUR_IMAGE_TAG ?? 'latest'
-  const image = `${registry}/${repository}:${tag}`
   const context = resolve(repoRoot, options.context ?? process.env.FACTEUR_BUILD_CONTEXT ?? '.')
   const dockerfile = resolve(
     repoRoot,
@@ -39,21 +27,19 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const version = options.version ?? process.env.FACTEUR_VERSION ?? execGit(['describe', '--tags', '--always'])
   const commit = options.commit ?? process.env.FACTEUR_COMMIT ?? execGit(['rev-parse', 'HEAD'])
 
-  console.log('Building Facteur image with configuration:', {
-    image,
+  const result = await buildAndPushDockerImage({
+    registry,
+    repository,
+    tag,
     context,
     dockerfile,
-    version,
-    commit,
+    buildArgs: {
+      FACTEUR_VERSION: version,
+      FACTEUR_COMMIT: commit,
+    },
   })
 
-  await $`docker build -f ${dockerfile} -t ${image} --build-arg FACTEUR_VERSION=${version} --build-arg FACTEUR_COMMIT=${commit} ${context}`
-
-  await $`docker push ${image}`
-
-  console.log(`Image pushed: ${image}`)
-
-  return { image, tag, registry, repository }
+  return { ...result, version, commit }
 }
 
 if (import.meta.main) {

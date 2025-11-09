@@ -1,16 +1,9 @@
 #!/usr/bin/env bun
 
 import { resolve } from 'node:path'
-import { ensureCli, repoRoot, run } from '../shared/cli'
-
-const execGit = (args: string[]): string => {
-  const result = Bun.spawnSync(['git', ...args], { cwd: repoRoot })
-  if (result.exitCode !== 0) {
-    const joined = args.join(' ')
-    throw new Error(`git ${joined} failed`)
-  }
-  return result.stdout.toString().trim()
-}
+import { repoRoot } from '../shared/cli'
+import { buildAndPushDockerImage } from '../shared/docker'
+import { execGit } from '../shared/git'
 
 export type BuildImageOptions = {
   registry?: string
@@ -23,43 +16,27 @@ export type BuildImageOptions = {
 }
 
 export const buildImage = async (options: BuildImageOptions = {}) => {
-  ensureCli('docker')
-  ensureCli('git')
-
   const registry = options.registry ?? process.env.GRAF_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.GRAF_IMAGE_REPOSITORY ?? 'proompteng/graf'
   const tag = options.tag ?? process.env.GRAF_IMAGE_TAG ?? 'latest'
-  const image = `${registry}/${repository}:${tag}`
   const context = resolve(repoRoot, options.context ?? process.env.GRAF_BUILD_CONTEXT ?? 'services/graf')
   const dockerfile = resolve(repoRoot, options.dockerfile ?? process.env.GRAF_DOCKERFILE ?? 'services/graf/Dockerfile')
   const version = options.version ?? process.env.GRAF_VERSION ?? execGit(['describe', '--tags', '--always'])
   const commit = options.commit ?? process.env.GRAF_COMMIT ?? execGit(['rev-parse', 'HEAD'])
 
-  console.log('Building Graf image with configuration:', {
-    image,
+  const result = await buildAndPushDockerImage({
+    registry,
+    repository,
+    tag,
     context,
     dockerfile,
-    version,
-    commit,
+    buildArgs: {
+      GRAF_VERSION: version,
+      GRAF_COMMIT: commit,
+    },
   })
 
-  await run('docker', [
-    'build',
-    '-f',
-    dockerfile,
-    '-t',
-    image,
-    '--build-arg',
-    `GRAF_VERSION=${version}`,
-    '--build-arg',
-    `GRAF_COMMIT=${commit}`,
-    context,
-  ])
-  await run('docker', ['push', image])
-
-  console.log(`Image pushed: ${image}`)
-
-  return { image, tag, registry, repository }
+  return { ...result, version, commit }
 }
 
 if (import.meta.main) {
