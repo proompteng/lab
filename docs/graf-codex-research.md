@@ -1,0 +1,83 @@
+# Graf Codex Research Workflow
+
+- Temporal: Graf starts a worker on `graf-codex-research`, connects to the in-cluster namespace (default `default`), and uses the Kubernetes service account token to push Argo workflows.
+- Argo: the new `codex-research-workflow` template (see `argocd/applications/argo-workflows/codex-research-workflow.yaml`) accepts prompts, runs the Codex runner container, and writes a structured JSON artifact to `MinIO`.
+- MinIO: Graf downloads the artifact from the shared bucket (`argo-workflows` by default) using the same ServiceAccount credentials that power the Argo template.
+
+## Configuration
+
+Set the following secrets/configmaps for the Knative Graf service:
+
+| Env var | Description | Default |
+| --- | --- | --- |
+| `TEMPORAL_ADDRESS` | gRPC endpoint for Temporal frontend (`temporal-frontend.temporal.svc.cluster.local:7233`). | required |
+| `TEMPORAL_NAMESPACE` | Namespace Graf worker should use. | `default` |
+| `TEMPORAL_TASK_QUEUE` | Task queue the Codex research workflow listens on. | `graf-codex-research` |
+| `TEMPORAL_IDENTITY` | Worker identity string sent to Temporal. | `graf` |
+| `ARGO_API_SERVER` | Kubernetes API host (usually `https://kubernetes.default.svc`). | default |
+| `ARGO_NAMESPACE` | Namespace where the Argo workflow lives. | `argo-workflows` |
+| `ARGO_WORKFLOW_TEMPLATE_NAME` | Template Graf submits. | `codex-research-workflow` |
+| `MINIO_ENDPOINT` | MinIO URL (e.g., `http://observability-minio.minio.svc.cluster.local:9000`). | required |
+| `MINIO_BUCKET` | Archive bucket where Argo stores the artifact. | `argo-workflows` |
+| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | Credentials for Graf to talk to MinIO. | required |
+
+Graf now bundles the Knative service account with a `Role`/`RoleBinding` in `argocd/applications/argo-workflows/codex-research-rbac.yaml` so it can create and poll workflows in `argo-workflows`.
+
+## HTTP contract
+
+```http
+POST /v1/codex-research
+Content-Type: application/json
+{
+  "prompt": "Summarize the February release notes",
+  "metadata": {"source": "ops"}
+}
+```
+
+**Response** (`202 Accepted`):
+
+```json
+{
+  "workflowId": "graf-codex-research-<uuid>",
+  "runId": "<temporal-run-id>",
+  "argoWorkflowName": "codex-research-<uuid>",
+  "artifactReferences": [
+    {
+      "bucket": "argo-workflows",
+      "key": "codex-research/codex-research-<uuid>/codex-artifact.json",
+      "endpoint": "http://observability-minio.minio.svc.cluster.local:9000"
+    }
+  ]
+}
+```
+
+Graf returns the expected artifact reference immediately; downstream consumers can poll MinIO or watch Temporal history while Graf orchestrates the Argo/Codex run.
+
+## Codex Graf helper
+
+The Codex runtime now ships `codex-graf`, a Bun helper that can POST JSON payloads directly to the Graf HTTP API. It is installed inside the container at `/usr/local/bin/codex-graf` and accepts data via `--body`, `--body-file`, or STDIN.
+
+```bash
+cat payload.json \
+  | codex-graf --endpoint /v1/entities \
+    --graf-url http://graf.graf.svc.cluster.local:8080 \
+    --token-file /var/run/secrets/codex/graf-token
+```
+
+`codex-graf` automatically sets `Content-Type: application/json`, masks the bearer token when logging, and respects the environment variables `CODEX_GRAF_BASE_URL` and `CODEX_GRAF_BEARER_TOKEN` when the CLI flags are omitted. Use it inside Argo/Temporal workflows or interactive sessions to persist Codex findings through the exposed `/v1/*` endpoints (entities, relationships, complement, clean, etc.) without invoking the `/v1/codex-research` route directly from Codex jobs.
+
+## Argo workflow
+
+`codex-research-workflow` lives in `argocd/applications/argo-workflows`. Operators can sync it with:
+
+```bash
+kubectl -n argo-workflows apply -f argocd/applications/argo-workflows/codex-research-workflow.yaml
+kubectl -n argo-workflows apply -f argocd/applications/argo-workflows/codex-research-rbac.yaml
+```
+
+The template ships the prompt into the Codex container, unlocks `codex exec`, and captures `/workspace/lab/codex-artifact.json` as an S3 artifact. The artifact is wired into MinIO via template parameters so Graf can compute the bucket/key before the workflow finishes.
+
+## Testing / Validation
+
+- `./gradlew test` (Graf module) runs the new unit tests for the MinIO fetcher and artifact parser.
+- `curl -X POST http://localhost:8080/v1/codex-research -H Content-Type:

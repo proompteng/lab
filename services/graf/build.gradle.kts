@@ -7,6 +7,7 @@ plugins {
   kotlin("plugin.serialization") version "2.2.21"
   application
   id("org.jlleitschuh.gradle.ktlint") version "13.1.0"
+  id("org.jetbrains.kotlinx.kover") version "0.9.3"
 }
 
 val ktorVersion = "3.3.2"
@@ -46,9 +47,23 @@ dependencies {
   implementation("org.neo4j.driver:neo4j-java-driver:$neo4jJavaDriverVersion")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutinesVersion")
   implementation("io.github.microutils:kotlin-logging-jvm:$kotlinLoggingVersion")
+  implementation("io.ktor:ktor-client-core:$ktorVersion")
+  implementation("io.ktor:ktor-client-cio:$ktorVersion")
+  implementation("io.ktor:ktor-client-content-negotiation:$ktorVersion")
+  implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
+  implementation("io.temporal:temporal-sdk:1.28.3")
+  implementation("io.minio:minio:8.6.0")
 
-  testImplementation("io.ktor:ktor-server-tests-jvm:$ktorVersion")
+  testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
   testImplementation("org.jetbrains.kotlin:kotlin-test:2.2.21")
+  testImplementation("io.temporal:temporal-testing:1.28.3")
+  testImplementation("io.mockk:mockk:1.13.6")
+  testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion")
+  testImplementation("io.ktor:ktor-client-mock:$ktorVersion")
+}
+
+tasks.test {
+  useJUnitPlatform()
 }
 
 ktlint {
@@ -65,8 +80,4 @@ ktlint {
     exclude("**/build/**")
     exclude("**/generated/**")
   }
-}
-
-tasks.test {
-  useJUnitPlatform()
 }

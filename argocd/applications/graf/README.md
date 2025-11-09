@@ -6,6 +6,7 @@
 - The Knative service pulls its image from the shared Tailscale registry host `registry.ide-newton.ts.net/proompteng/graf:latest`.
 - A `graf-neo4j-browser` LoadBalancer service is applied alongside the Helm release; it carries `tailscale.com/hostname=graf` so operators can reach the Neo4j Browser via that tailnet DNS name.
 - The `/v1` graph APIs now require a bearer token. The Knative service reads `GRAF_API_BEARER_TOKENS` from the `graf-api` SealedSecret defined in `graf-api-secret.yaml` (`bearer-tokens` key, comma or newline separated). The checked-in manifest currently contains a placeholder (`REPLACE_WITH_ACTUAL_TOKENS`), so re-seal it with the real tokens before the next sync:
+- The Codex workflow template and its RBAC helpers live in `argocd/applications/argo-workflows` because they must stay in the `argo-workflows` namespace; they are no longer rendered through this `graf` kustomization.
 
   ```bash
   cat <<'YAML' > /tmp/graf-api-secret.yaml

@@ -1,0 +1,71 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: codex-research-workflow
+  namespace: argo-workflows
+  labels:
+    app.kubernetes.io/name: graf
+spec:
+  serviceAccountName: graf
+  entrypoint: codex-research
+  arguments:
+    parameters:
+      - name: prompt
+        value: ""
+      - name: artifactKey
+        value: ""
+      - name: artifactBucket
+        value: argo-workflows
+      - name: artifactEndpoint
+        value: http://observability-minio.minio.svc.cluster.local:9000
+      - name: artifactRegion
+        value: ""
+      - name: metadata
+        value: "{}"
+  templates:
+    - name: codex-research
+      inputs:
+        parameters:
+          - name: prompt
+          - name: artifactKey
+          - name: artifactBucket
+          - name: artifactEndpoint
+          - name: artifactRegion
+          - name: metadata
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: CODEX_GRAF_BEARER_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: graf-api
+                key: bearer-tokens
+                optional: true
+        command:
+          - /bin/bash
+          - -c
+          - |
+            set -euo pipefail
+
+            PROMPT_FILE=$(mktemp)
+            cat <<PROMPT > "$PROMPT_FILE"
+            {{inputs.parameters.prompt}}
+            PROMPT
+
+            export CODEX_STAGE=research
+            printf 'metadata=%q\n' "{{inputs.parameters.metadata}}" >&2
+            codex exec --dangerously-bypass-approvals-and-sandbox --json --output-last-message /workspace/lab/codex-artifact.json < "$PROMPT_FILE"
+        workingDir: /workspace/lab
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnFailure
+      outputs:
+        artifacts:
+          - name: codex-artifact
+            path: /workspace/lab/codex-artifact.json
+            s3:
+              endpoint: "{{inputs.parameters.artifactEndpoint}}"
+              bucket: "{{inputs.parameters.artifactBucket}}"
+              key: "{{inputs.parameters.artifactKey}}"
+              region: "{{inputs.parameters.artifactRegion}}"

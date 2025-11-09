@@ -26,16 +26,22 @@ import java.util.UUID
 
 private val identifierPattern = Regex("^[A-Za-z][A-Za-z0-9_]*$")
 
+interface GraphPersistence {
+  suspend fun upsertEntities(request: EntityBatchRequest): BatchResponse
+
+  suspend fun upsertRelationships(request: RelationshipBatchRequest): BatchResponse
+}
+
 class GraphService(
   private val neo4j: Neo4jClient,
-) {
-  suspend fun upsertEntities(request: EntityBatchRequest): BatchResponse {
+) : GraphPersistence {
+  override suspend fun upsertEntities(request: EntityBatchRequest): BatchResponse {
     require(request.entities.isNotEmpty()) { "entities payload must include at least one entry" }
     val results = request.entities.map { upsertEntity(it) }
     return BatchResponse(results)
   }
 
-  suspend fun upsertRelationships(request: RelationshipBatchRequest): BatchResponse {
+  override suspend fun upsertRelationships(request: RelationshipBatchRequest): BatchResponse {
     require(request.relationships.isNotEmpty()) { "relationships payload must include at least one entry" }
     val results = request.relationships.map { upsertRelationship(it) }
     return BatchResponse(results)
@@ -195,12 +201,12 @@ class GraphService(
         when {
           !request.artifactId.isNullOrBlank() -> {
             params["artifactId"] = request.artifactId
-            "WHERE n.artifactId = \$artifactId"
+            "WHERE n.artifactId = ${'$'}artifactId"
           }
           request.olderThanHours != null && request.olderThanHours > 0 -> {
             val threshold = Instant.now().minus(Duration.ofHours(request.olderThanHours.toLong())).toString()
             params["threshold"] = threshold
-            "WHERE datetime(n.updatedAt) <= datetime(\$threshold)"
+            "WHERE datetime(n.updatedAt) <= datetime(${ '$'}threshold)"
           }
           else -> "WHERE exists(n.deletedAt)"
         }

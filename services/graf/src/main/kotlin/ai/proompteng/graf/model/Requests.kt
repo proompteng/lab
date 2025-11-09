@@ -94,3 +94,26 @@ data class CleanResponse(
   val affected: Long,
   val message: String,
 )
+
+@Serializable
+data class CodexResearchRequest(
+  val prompt: String,
+  val metadata: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+data class ArtifactReference(
+  val bucket: String,
+  val key: String,
+  val endpoint: String,
+  val region: String? = null,
+)
+
+@Serializable
+data class CodexResearchResponse(
+  val workflowId: String,
+  val runId: String,
+  val argoWorkflowName: String,
+  val artifactReferences: List<ArtifactReference>,
+  val startedAt: String? = null,
+)
