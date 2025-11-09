@@ -28,9 +28,15 @@ tail -n +1 build/logs/*
 ./gradlew run
 ```
 
-## Container image
-Build from the provided multi-stage `Dockerfile`:
-```bash
-docker build -t graf:latest .
-```
+## Container image + deployment
+
+1. Build & push the Graf image via the shared script:
+   ```bash
+   bun packages/scripts/src/graf/build-image.ts
+   ```
+
+2. Deploy the Knative service using `kn` (the helper rebuilds the image before deploying):
+   ```bash
+   bun packages/scripts/src/graf/deploy-service.ts
+   ```
 The entrypoint is `bin/graf` from Gradle's `installDist`, and the runtime image is a distroless Java 21 runtime.

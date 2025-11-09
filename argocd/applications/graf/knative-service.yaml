@@ -1,16 +1,15 @@
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
-  name: graf-service
+  name: graf
   namespace: graf
   labels:
     app.kubernetes.io/name: graf
     app.kubernetes.io/component: persistence
     app.kubernetes.io/part-of: lab
   annotations:
-    autoscaling.knative.dev/minScale: "1"
     serving.knative.dev/rollout-duration: "10s"
-    argocd.argoproj.io/tracking-id: graf-service:serving.knative.dev/Service:graf/graf-service
+    argocd.argoproj.io/tracking-id: graf:serving.knative.dev/Service:graf/graf
 spec:
   template:
     metadata:
@@ -20,9 +19,9 @@ spec:
     spec:
       timeoutSeconds: 60
       containerConcurrency: 0
-      serviceAccountName: graf-service
+      serviceAccountName: graf
       containers:
-        - name: graf-service
+        - name: graf
           image: registry.ide-newton.ts.net/proompteng/graf:latest
           imagePullPolicy: Always
           ports:
@@ -31,8 +30,6 @@ spec:
           env:
             - name: ADDRESS
               value: "0.0.0.0"
-            - name: PORT
-              value: "8080"
             - name: NEO4J_URI
               value: bolt://graf-neo4j.graf.svc.cluster.local:7687
             - name: NEO4J_AUTH

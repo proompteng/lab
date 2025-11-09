@@ -11,6 +11,6 @@ Check status:
 ```bash
 kubectl -n argocd get application graf
 kubectl -n graf get sts,svc,secret
-kubectl -n graf get ksvc graf-service
+kubectl -n graf get ksvc graf
 kubectl -n graf get svc graf-neo4j-browser
 ```
