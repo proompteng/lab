@@ -31,7 +31,7 @@ const getImageDigest = (image: string): string => {
   return digest
 }
 
-const updateManifestImage = (image: string) => {
+const updateManifestImage = (image: string, version: string, commit: string) => {
   const existing = readFileSync(manifestPath, 'utf8')
   const doc = YAML.parse(existing)
 
@@ -52,6 +52,19 @@ const updateManifestImage = (image: string) => {
 
   target.image = image
 
+  target.env ??= []
+  const env = target.env
+  const ensureEnvEntry = (name: string, value: string) => {
+    const existing = env.find((entry: { name?: string }) => entry?.name === name)
+    if (existing) {
+      existing.value = value
+    } else {
+      env.push({ name, value })
+    }
+  }
+  ensureEnvEntry('GRAF_VERSION', version)
+  ensureEnvEntry('GRAF_COMMIT', commit)
+
   doc.spec ??= {}
   doc.spec.template ??= {}
   doc.spec.template.metadata ??= {}
@@ -65,7 +78,8 @@ const updateManifestImage = (image: string) => {
 }
 
 const applyManifest = async () => {
-  const waitTimeout = process.env.GRAF_KN_WAIT_TIMEOUT ?? '300s'
+  const rawTimeout = process.env.GRAF_KN_WAIT_TIMEOUT ?? '300s'
+  const waitTimeout = rawTimeout.replace(/s$/, '')
   await run('kn', [
     'service',
     'apply',
@@ -84,10 +98,10 @@ const applyManifest = async () => {
 const deploy = async () => {
   ensureResources()
 
-  const { image } = await buildImage()
+  const { image, version, commit } = await buildImage()
   const digestRef = getImageDigest(image)
 
-  updateManifestImage(digestRef)
+  updateManifestImage(digestRef, version, commit)
   await applyManifest()
 
   console.log(
