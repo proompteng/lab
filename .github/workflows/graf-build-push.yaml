@@ -19,6 +19,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Capture build metadata
+        run: |
+          echo "GRAF_VERSION=$(git describe --tags --always)" >> $GITHUB_ENV
+          echo "GRAF_COMMIT=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
@@ -44,6 +49,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GRAF_VERSION=${{ env.GRAF_VERSION }}
+            GRAF_COMMIT=${{ env.GRAF_COMMIT }}
           cache-from: |
             type=registry,ref=registry.ide-newton.ts.net/proompteng/graf:latest
             type=registry,ref=registry.ide-newton.ts.net/proompteng/graf:cache

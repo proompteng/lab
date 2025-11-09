@@ -16,14 +16,14 @@ spec:
       annotations:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/target: "60"
-        client.knative.dev/updateTimestamp: 2025-11-09T02:01:39.753Z
+        client.knative.dev/updateTimestamp: 2025-11-09T02:21:52.251Z
     spec:
       timeoutSeconds: 60
       containerConcurrency: 0
       serviceAccountName: graf
       containers:
         - name: graf
-          image: registry.ide-newton.ts.net/proompteng/graf@sha256:bfbc2c7421ecaf77dbbd31ac60119e594e358bf9b35565293a5fb9a934c7c405
+          image: registry.ide-newton.ts.net/proompteng/graf@sha256:9042b0891593a3095ed4f2c867366145d2603dc2f323cf2c6425432415338d30
           imagePullPolicy: Always
           ports:
             - name: http1

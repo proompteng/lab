@@ -22,6 +22,9 @@ import org.neo4j.driver.AuthTokens
 import org.neo4j.driver.GraphDatabase
 import org.slf4j.event.Level
 
+private val buildVersion = System.getenv("GRAF_VERSION") ?: "dev"
+private val buildCommit = System.getenv("GRAF_COMMIT") ?: "unknown"
+
 fun main() {
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
     val neo4jConfig = Neo4jConfig.fromEnvironment()
@@ -79,6 +82,16 @@ fun Application.module(graphService: GraphService) {
         }
     }
     routing {
+        get("/") {
+            call.respond(
+                mapOf(
+                    "service" to "graf",
+                    "status" to "ok",
+                    "version" to buildVersion,
+                    "commit" to buildCommit,
+                )
+            )
+        }
         route("/v1") {
             graphRoutes(graphService)
         }
