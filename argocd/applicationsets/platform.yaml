@@ -203,6 +203,7 @@ spec:
             namespace: graf
             annotations:
               argocd.argoproj.io/sync-wave: "4"
+              argocd.argoproj.io/compare-options: IgnoreExtraneous
             automation: manual
             enabled: "true"
           - name: convex
