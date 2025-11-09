@@ -47,7 +47,7 @@ spec:
             PROMPT
 
             export CODEX_STAGE=research
-            echo "metadata={{inputs.parameters.metadata}}" >&2
+            printf 'metadata=%q\n' "{{inputs.parameters.metadata}}" >&2
             codex exec --dangerously-bypass-approvals-and-sandbox --json --output-last-message /workspace/lab/codex-artifact.json < "$PROMPT_FILE"
         workingDir: /workspace/lab
       retryStrategy:

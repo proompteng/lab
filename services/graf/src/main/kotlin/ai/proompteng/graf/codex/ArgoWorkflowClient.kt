@@ -31,6 +31,8 @@ class ArgoWorkflowClient(
         ?.let { json.encodeToJsonElement(it) }
     val payload =
       ArgoWorkflowCreatePayload(
+        apiVersion = "argoproj.io/v1alpha1",
+        kind = "Workflow",
         metadata = ArgoMetadata(name = request.workflowName, labels = mapOf("codex.stage" to "research")),
         spec =
           ArgoWorkflowSpec(
@@ -106,6 +108,8 @@ class ArgoWorkflowClient(
 
 @Serializable
 data class ArgoWorkflowCreatePayload(
+  val apiVersion: String,
+  val kind: String,
   val metadata: ArgoMetadata,
   val spec: ArgoWorkflowSpec,
 )
