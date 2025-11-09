@@ -20,3 +20,7 @@ spec:
       protocol: TCP
       port: 443
       targetPort: 7473
+    - name: bolt
+      protocol: TCP
+      port: 7687
+      targetPort: 7687
