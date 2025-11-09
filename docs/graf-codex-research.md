@@ -53,6 +53,19 @@ Content-Type: application/json
 
 Graf returns the expected artifact reference immediately; downstream consumers can poll MinIO or watch Temporal history while Graf orchestrates the Argo/Codex run.
 
+## Codex Graf helper
+
+The Codex runtime now ships `codex-graf`, a Bun helper that can POST JSON payloads directly to the Graf HTTP API. It is installed inside the container at `/usr/local/bin/codex-graf` and accepts data via `--body`, `--body-file`, or STDIN.
+
+```bash
+cat payload.json \
+  | codex-graf --endpoint /v1/entities \
+    --graf-url http://graf.graf.svc.cluster.local:8080 \
+    --token-file /var/run/secrets/codex/graf-token
+```
+
+`codex-graf` automatically sets `Content-Type: application/json`, masks the bearer token when logging, and respects the environment variables `CODEX_GRAF_BASE_URL` and `CODEX_GRAF_BEARER_TOKEN` when the CLI flags are omitted. Use it inside Argo/Temporal workflows or interactive sessions to persist Codex findings through the exposed `/v1/*` endpoints (entities, relationships, complement, clean, etc.) without invoking the `/v1/codex-research` route directly from Codex jobs.
+
 ## Argo workflow
 
 `codex-research-workflow` lives in `argocd/applications/argo-workflows`. Operators can sync it with:

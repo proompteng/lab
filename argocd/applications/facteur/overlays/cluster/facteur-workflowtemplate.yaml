@@ -37,6 +37,12 @@ spec:
                 name: discord-codex-bot
                 key: category-id
                 optional: true
+          - name: CODEX_GRAF_BEARER_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: graf-api
+                key: bearer-tokens
+                optional: true
           - name: LGTM_LOKI_ENDPOINT
             value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
         command:
