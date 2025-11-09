@@ -1,7 +1,7 @@
 # Graf Codex Research Workflow
 
 - Temporal: Graf starts a worker on `graf-codex-research`, connects to the in-cluster namespace (default `default`), and uses the Kubernetes service account token to push Argo workflows.
-- Argo: the new `codex-research-workflow` template (see `argocd/applications/graf/codex-research-workflow.yaml`) accepts prompts, runs the Codex runner container, and writes a structured JSON artifact to `MinIO`.
+- Argo: the new `codex-research-workflow` template (see `argocd/applications/argo-workflows/codex-research-workflow.yaml`) accepts prompts, runs the Codex runner container, and writes a structured JSON artifact to `MinIO`.
 - MinIO: Graf downloads the artifact from the shared bucket (`argo-workflows` by default) using the same ServiceAccount credentials that power the Argo template.
 
 ## Configuration
@@ -21,7 +21,7 @@ Set the following secrets/configmaps for the Knative Graf service:
 | `MINIO_BUCKET` | Archive bucket where Argo stores the artifact. | `argo-workflows` |
 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | Credentials for Graf to talk to MinIO. | required |
 
-Graf now bundles the Knative service account with a `Role`/`RoleBinding` in `argocd/applications/graf/codex-research-rbac.yaml` so it can create and poll workflows in `argo-workflows`.
+Graf now bundles the Knative service account with a `Role`/`RoleBinding` in `argocd/applications/argo-workflows/codex-research-rbac.yaml` so it can create and poll workflows in `argo-workflows`.
 
 ## HTTP contract
 
@@ -55,11 +55,11 @@ Graf returns the expected artifact reference immediately; downstream consumers c
 
 ## Argo workflow
 
-`codex-research-workflow` lives in `argocd/applications/graf`. Operators can sync it with:
+`codex-research-workflow` lives in `argocd/applications/argo-workflows`. Operators can sync it with:
 
 ```bash
-kubectl -n argo-workflows apply -f argocd/applications/graf/codex-research-workflow.yaml
-kubectl -n argo-workflows apply -f argocd/applications/graf/codex-research-rbac.yaml
+kubectl -n argo-workflows apply -f argocd/applications/argo-workflows/codex-research-workflow.yaml
+kubectl -n argo-workflows apply -f argocd/applications/argo-workflows/codex-research-rbac.yaml
 ```
 
 The template ships the prompt into the Codex container, unlocks `codex exec`, and captures `/workspace/lab/codex-artifact.json` as an S3 artifact. The artifact is wired into MinIO via template parameters so Graf can compute the bucket/key before the workflow finishes.

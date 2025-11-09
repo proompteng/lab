@@ -40,6 +40,8 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.minio.MinioClient
+import io.temporal.authorization.AuthorizationGrpcMetadataProvider
+import io.temporal.authorization.AuthorizationTokenSupplier
 import io.temporal.client.WorkflowClient
 import io.temporal.client.WorkflowClientOptions
 import io.temporal.serviceclient.WorkflowServiceStubs
@@ -51,6 +53,7 @@ import org.neo4j.driver.AuthTokens
 import org.neo4j.driver.GraphDatabase
 import org.slf4j.event.Level
 import java.io.FileInputStream
+import java.net.URI
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
 import javax.net.ssl.TrustManagerFactory
@@ -91,8 +94,16 @@ fun main() {
   val argoClient = ArgoWorkflowClient(argoConfig, kubernetesClient, minioConfig, sharedJson)
   val codexActivities = CodexResearchActivitiesImpl(argoClient, graphService, artifactFetcher, sharedJson)
 
-  val serviceStubs =
-    WorkflowServiceStubs.newInstance(WorkflowServiceStubsOptions.newBuilder().setTarget(temporalConfig.address).build())
+  val serviceStubsBuilder =
+    WorkflowServiceStubsOptions.newBuilder().setTarget(temporalConfig.address)
+  temporalConfig.authToken?.takeIf { it.isNotBlank() }?.let { token ->
+    val bearerToken =
+      if (token.startsWith("Bearer ", ignoreCase = true)) token else "Bearer $token"
+    serviceStubsBuilder.addGrpcMetadataProvider(
+      AuthorizationGrpcMetadataProvider(AuthorizationTokenSupplier { bearerToken }),
+    )
+  }
+  val serviceStubs = WorkflowServiceStubs.newInstance(serviceStubsBuilder.build())
   val workflowClient =
     WorkflowClient.newInstance(
       serviceStubs,
@@ -220,13 +231,36 @@ private fun buildKubernetesHttpClient(
 }
 
 private fun buildMinioClient(config: MinioConfig): MinioClient {
+  val (host, port) = parseMinioEndpoint(config.endpoint, config.secure)
   val builder =
     MinioClient
       .builder()
-      .endpoint(config.endpoint)
+      .endpoint(host, port, config.secure)
       .credentials(config.accessKey, config.secretKey)
   config.region?.let { builder.region(it) }
   return builder.build()
+}
+
+private fun parseMinioEndpoint(
+  endpoint: String,
+  defaultSecure: Boolean,
+): Pair<String, Int> {
+  val normalized =
+    if (endpoint.contains("://")) {
+      endpoint
+    } else {
+      "${if (defaultSecure) "https" else "http"}://$endpoint"
+    }
+  val uri = URI.create(normalized)
+  val host = uri.host ?: throw IllegalArgumentException("MINIO_ENDPOINT must include a host")
+  val port =
+    when {
+      uri.port != -1 -> uri.port
+      uri.scheme.equals("https", ignoreCase = true) -> 443
+      defaultSecure -> 443
+      else -> 80
+    }
+  return host to port
 }
 
 private fun loadServiceAccountToken(path: String): String = FileInputStream(path).use { it.bufferedReader().readText().trim() }

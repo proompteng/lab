@@ -6,6 +6,16 @@ import io.temporal.workflow.Workflow
 import java.time.Duration
 
 class CodexResearchWorkflowImpl : CodexResearchWorkflow {
+  private val submitActivities: CodexResearchActivities =
+    Workflow.newActivityStub(
+      CodexResearchActivities::class.java,
+      ActivityOptions
+        .newBuilder()
+        .setScheduleToCloseTimeout(Duration.ofHours(2))
+        .setStartToCloseTimeout(Duration.ofHours(2))
+        .setRetryOptions(RetryOptions.newBuilder().setMaximumAttempts(1).build())
+        .build(),
+    )
   private val activities: CodexResearchActivities =
     Workflow.newActivityStub(
       CodexResearchActivities::class.java,
@@ -19,7 +29,7 @@ class CodexResearchWorkflowImpl : CodexResearchWorkflow {
 
   override fun run(input: CodexResearchWorkflowInput): CodexResearchWorkflowResult {
     val submission =
-      activities.submitArgoWorkflow(
+      submitActivities.submitArgoWorkflow(
         SubmitArgoWorkflowRequest(
           workflowName = input.argoWorkflowName,
           prompt = input.prompt,
