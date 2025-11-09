@@ -14,5 +14,15 @@ helmCharts:
     namespace: graf
     includeCRDs: true
     valuesFile: neo4j-values.yaml
-patchesStrategicMerge:
-  - patches/delete-neo4j-default-service.yaml
+patches:
+  - target:
+      group: ""
+      version: v1
+      kind: Service
+      name: graf
+    patch: |-
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: graf
+      $patch: delete
