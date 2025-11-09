@@ -9,7 +9,7 @@ helmCharts:
   - name: neo4j
     repo: https://helm.neo4j.com/neo4j
     version: 2025.10.1
-    releaseName: graf
+    releaseName: graf-db
     namespace: graf
     includeCRDs: true
     valuesFile: neo4j-values.yaml

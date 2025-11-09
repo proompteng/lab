@@ -59,5 +59,21 @@ temporal operator namespace create default
 ### facteur
 
 - Git path: `argocd/applications/facteur`
-- Deploys: `argocd/applications/facteur/overlays/cluster`
-- Secrets: `facteur-discord`, `facteur-redis` (provide SealedSecrets in `overlays/cluster/secrets.yaml` before enabling sync)
+- Deploys: `argocd/applications/facteur/overlays/cluster` (kustomize apply managed by Argo CD)
+- Secrets: `facteur-discord`, `facteur-redis` (provide updated SealedSecrets in `overlays/cluster/secrets.yaml` before enabling sync)
+- Helper scripts: `bun packages/scripts/src/facteur/deploy-service.ts` (build/push Knative image + apply overlay), `bun packages/scripts/src/facteur/reseal-secrets.ts`
+
+### froussard
+
+- Git path: `argocd/applications/froussard`
+- Deploys: manifest bundle rooted at `argocd/applications/froussard` (Argo Workflow sensors, Kafka event sources, Knative service). Use `pnpm run froussard:deploy` (invokes `packages/scripts/src/froussard/deploy-service.ts`) for local rollouts.
+- Secrets: `github-secret`, `github-token`, `discord-bot`, `discord-codex-bot`, `kafka-username-secret`. Update via `bun packages/scripts/src/froussard/reseal-secrets.ts`.
+- Notes: Froussard depends on Argo Events (topics under `components/`), so keep the Kafka topics + sensors in sync when updating the service image.
+
+### graf
+
+- Git path: `argocd/applications/graf`
+- Deploys: `kubectl kustomize --enable-helm argocd/applications/graf | kubectl apply -f -` (Argo CD runs the same render; Helm release `neo4j` plus Knative service)
+- Secrets: `graf-auth` (Neo4j credentials). Managed as a plain Secret referenced by the Knative service.
+- Helper script: `bun packages/scripts/src/graf/deploy-service.ts` builds/pushes the Kotlin image, writes the digest back to `knative-service.yaml`, and runs `kn service apply`.
+- Neo4j notes: the Helm release is published as `graf-db`, so Bolt/HTTP clients should use `graf-db.graf.svc.cluster.local` while Knative owns `Service/graf`.
