@@ -53,6 +53,9 @@ dependencies {
   implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
   implementation("io.temporal:temporal-sdk:1.28.3")
   implementation("io.minio:minio:8.6.0")
+  implementation("io.insert-koin:koin-core:4.1.0")
+  implementation("io.insert-koin:koin-ktor-jvm:4.1.0")
+  implementation("io.insert-koin:koin-logger-slf4j:4.1.0")
 
   testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
   testImplementation("org.jetbrains.kotlin:kotlin-test:2.2.21")
@@ -60,6 +63,7 @@ dependencies {
   testImplementation("io.mockk:mockk:1.13.6")
   testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion")
   testImplementation("io.ktor:ktor-client-mock:$ktorVersion")
+  testImplementation("io.insert-koin:koin-test-junit5:4.1.0")
 }
 
 tasks.test {

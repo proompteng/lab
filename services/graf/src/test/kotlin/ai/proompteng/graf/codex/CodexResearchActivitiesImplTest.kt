@@ -1,5 +1,9 @@
 package ai.proompteng.graf.codex
 
+import ai.proompteng.graf.di.configModule
+import ai.proompteng.graf.di.infrastructureModule
+import ai.proompteng.graf.di.serviceModule
+import ai.proompteng.graf.di.standardTestOverrides
 import ai.proompteng.graf.model.ArtifactReference
 import ai.proompteng.graf.model.BatchResponse
 import ai.proompteng.graf.services.GraphPersistence
@@ -10,20 +14,54 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInstance
+import org.koin.dsl.koinApplication
+import org.koin.dsl.module
 import java.io.ByteArrayInputStream
-import kotlin.test.Test
 import kotlin.test.assertEquals
 
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class CodexResearchActivitiesImplTest {
   private val graphPersistence = mockk<GraphPersistence>(relaxed = true)
   private val artifactFetcher = mockk<MinioArtifactFetcher>()
-  private val activities =
-    CodexResearchActivitiesImpl(
-      argoClient = mockk(relaxed = true),
-      graphPersistence = graphPersistence,
-      artifactFetcher = artifactFetcher,
-      json = Json { ignoreUnknownKeys = true },
+  private val argoClient = mockk<ArgoWorkflowClient>(relaxed = true)
+  private val json = Json { ignoreUnknownKeys = true }
+
+  private val codexOverrides =
+    module {
+      single<MinioArtifactFetcher> { artifactFetcher }
+      single<ArgoWorkflowClient> { argoClient }
+      single<GraphPersistence> { graphPersistence }
+      single<Json> { json }
+    }
+
+  private val moduleList =
+    listOf(
+      configModule,
+      infrastructureModule,
+      serviceModule,
+      standardTestOverrides,
+      codexOverrides,
     )
+
+  private val koinApp =
+    koinApplication {
+      allowOverride(true)
+    }.apply {
+      modules(moduleList)
+    }
+
+  private val koin = koinApp.koin
+
+  private val activities: CodexResearchActivities
+    get() = koin.get()
+
+  @AfterAll
+  fun tearDown() {
+    koinApp.close()
+  }
 
   @Test
   fun `downloadArtifact returns payload`() =

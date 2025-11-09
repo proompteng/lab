@@ -12,9 +12,11 @@ import ai.proompteng.graf.model.EntityBatchRequest
 import ai.proompteng.graf.model.EntityPatchRequest
 import ai.proompteng.graf.model.RelationshipBatchRequest
 import ai.proompteng.graf.model.RelationshipPatchRequest
+import ai.proompteng.graf.security.auditContext
 import ai.proompteng.graf.services.GraphService
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
+import io.ktor.server.application.log
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -30,6 +32,8 @@ fun Route.graphRoutes(
   minioConfig: MinioConfig,
 ) {
   post("/entities") {
+    val auditContext = call.auditContext()
+    call.application.log.debug("handling /entities (requestId=${auditContext.requestId}, principal=${auditContext.principal})")
     val payload = call.receive<EntityBatchRequest>()
     val response = service.upsertEntities(payload)
     call.respond(HttpStatusCode.OK, response)
@@ -82,6 +86,8 @@ fun Route.graphRoutes(
   }
 
   post("/codex-research") {
+    val auditContext = call.auditContext()
+    call.application.log.debug("handling /codex-research (requestId=${auditContext.requestId})")
     val payload = call.receive<CodexResearchRequest>()
     val argoWorkflowName = "codex-research-${UUID.randomUUID()}"
     val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"

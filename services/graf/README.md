@@ -19,6 +19,10 @@ This Kotlin/Ktor microservice implements the persistence layer described in [doc
 | `NEO4J_DATABASE` | Database name (defaults to `neo4j`). |
 | `PORT` | HTTP port (default `8080`). |
 
+## Dependency injection
+- Configuration, infrastructure, and service wiring now live in `services/graf/src/main/kotlin/ai/proompteng/graf/di`. Follow the breakdown in [`docs/graf-di.md`](../docs/graf-di.md) before adding new bindings so you place every definition in the correct module and respect lifecycle hooks.
+- Module verification is covered by `services/graf/src/test/kotlin/ai/proompteng/graf/di/ModulesTest.kt`. Run `GRAF_API_BEARER_TOKENS="test" ./gradlew :services:graf:test --tests ai.proompteng.graf.di.ModulesTest` to ensure every binding resolves before pushing.
+
 ## Local development
 ```bash
 cd services/graf

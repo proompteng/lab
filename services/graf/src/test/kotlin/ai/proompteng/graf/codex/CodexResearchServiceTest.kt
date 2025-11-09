@@ -20,7 +20,11 @@ class CodexResearchServiceTest {
 
     val inputSlot = slot<CodexResearchWorkflowInput>()
     val execution =
-      WorkflowExecution.newBuilder().setWorkflowId("custom-id").setRunId("run-1").build()
+      WorkflowExecution
+        .newBuilder()
+        .setWorkflowId("custom-id")
+        .setRunId("run-1")
+        .build()
     val starter: (CodexResearchWorkflow, CodexResearchWorkflowInput) -> WorkflowStartResult =
       { _, input ->
         inputSlot.captured = input
@@ -49,7 +53,12 @@ class CodexResearchServiceTest {
     val workflowStub = mockk<CodexResearchWorkflow>()
     every { workflowClient.newWorkflowStub(any<Class<CodexResearchWorkflow>>(), any<WorkflowOptions>()) } returns workflowStub
     val inputSlot = slot<CodexResearchWorkflowInput>()
-    val execution = WorkflowExecution.newBuilder().setWorkflowId("graf-codex-research-static").setRunId("run-2").build()
+    val execution =
+      WorkflowExecution
+        .newBuilder()
+        .setWorkflowId("graf-codex-research-static")
+        .setRunId("run-2")
+        .build()
     val starter: (CodexResearchWorkflow, CodexResearchWorkflowInput) -> WorkflowStartResult =
       { _, input ->
         inputSlot.captured = input
