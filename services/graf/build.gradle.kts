@@ -59,6 +59,7 @@ dependencies {
   testImplementation("io.temporal:temporal-testing:1.28.3")
   testImplementation("io.mockk:mockk:1.13.6")
   testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion")
+  testImplementation("io.ktor:ktor-client-mock:$ktorVersion")
 }
 
 tasks.test {
