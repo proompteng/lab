@@ -5,6 +5,7 @@ resources:
   - service-account.yaml
   - knative-service.yaml
   - neo4j-browser-service.yaml
+  - neo4j-clusterip.yaml
 helmCharts:
   - name: neo4j
     repo: https://helm.neo4j.com/neo4j
@@ -13,3 +14,5 @@ helmCharts:
     namespace: graf
     includeCRDs: true
     valuesFile: neo4j-values.yaml
+patchesStrategicMerge:
+  - patches/delete-neo4j-default-service.yaml

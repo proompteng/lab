@@ -11,7 +11,7 @@ const manifestPath = resolve(repoRoot, 'argocd/applications/graf/knative-service
 
 const ensureResources = () => {
   ensureCli('docker')
-  ensureCli('kubectl')
+  ensureCli('kn')
 }
 
 const getImageDigest = (image: string): string => {
@@ -65,8 +65,8 @@ const updateManifestImage = (image: string) => {
 }
 
 const applyManifest = async () => {
-  await run('kubectl', ['apply', '-f', manifestPath])
-  console.log('Applied Graf Knative service manifest via kubectl')
+  await run('kn', ['service', 'apply', 'graf', '--namespace', 'graf', '--filename', manifestPath])
+  console.log('Applied Graf Knative service manifest via kn service apply')
 }
 
 const deploy = async () => {
