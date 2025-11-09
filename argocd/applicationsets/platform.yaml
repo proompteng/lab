@@ -243,6 +243,12 @@ spec:
             - .spec.volumeClaimTemplates
         - kind: StatefulSet
           group: apps
+          namespace: graf
+          name: graf-db
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+        - kind: StatefulSet
+          group: apps
           namespace: lgtm
           jqPathExpressions:
             - .spec.volumeClaimTemplates[].apiVersion
@@ -268,6 +274,13 @@ spec:
             - .spec.template.spec.containers[].readinessProbe.periodSeconds
             - .spec.template.spec.containers[].readinessProbe.successThreshold
             - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
+        - kind: Service
+          group: serving.knative.dev
+          namespace: graf
+          name: graf
+          jqPathExpressions:
+            - .spec.template.spec.containers[].ports[].protocol
+            - .spec.template.spec.containers[].readinessProbe.successThreshold
         - kind: Deployment
           group: apps
           namespace: istio-system
