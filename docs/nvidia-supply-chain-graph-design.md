@@ -76,6 +76,19 @@ graph LR
 
 ## Concurrent Codex Stream Considerations
 - **Stream catalog**: Maintain a Temporal-managed catalog of active research streams, each with `streamId`, topic (e.g., foundry/OEM/logistics), priority, prompt templates, and expected cadence.
+
+## Codex prompt catalog
+
+Prompt definitions live under `docs/codex`. Follow the schema in `docs/codex/nvidia-prompt-schema.json` when you adjust metadata, scoring heuristics, citation requirements, or expected artifact structure. Each stream below has its own JSON pack inside `docs/codex/nvidia-prompts` so Graf can ingest the right `promptId` on `/v1/codex-research`:
+
+- **Foundries** (`foundries.json`): production capacity, certifications, and multi-site continuity.
+- **ODM/EMS** (`odm-ems.json`): board-level partners, assembly/test loci, and tooling coverage.
+- **Logistics & ports** (`logistics-ports.json`): carriers, port hubs, and risk-aware lanes.
+- **Research partners** (`research-partners.json`): labs, universities, and financed programs.
+- **Financing & risk** (`financing-risk.json`): credit/liquidity exposure and underwriting partners.
+- **Instrumentation vendors** (`instrumentation-vendors.json`): testers, burn-in houses, and spare-parts availability.
+
+Keep the YAML or TS driver in sync by editing this directory, validating the JSON against `nvidia-prompt-schema.json`, and updating the schema version whenever you change envelope expectations.
 - **Per-instance provenance**: Artifacts include `streamId`, `instanceId`, `promptId`, `generatedAt`, and `confidence`; the Kotlin service can filter/infer updates per stream and tag edges with `sourceStreams`.
 - **Consistency**: When multiple streams target the same node, merge updates by prioritizing higher confidence/timestamp values, and keep `sourceStreams` collections on edges to prevent accidental overwrites.
 - **Throughput scaling**: Temporal can fan out Argo subworkflows for each stream, allowing multiple Codex instances to research concurrently while the Kotlin service ingests them incrementally; the service supports batch operations to minimize contention.

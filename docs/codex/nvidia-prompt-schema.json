@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NVIDIA supply-chain prompt definition",
+  "description": "A prompt envelope Graf uses to seed /v1/codex-research with stream metadata, scoring guidance, and artifact expectations.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "promptId": {
+      "type": "string",
+      "description": "Unique identifier for the prompt pack (matches the catalog filename)."
+    },
+    "streamId": {
+      "type": "string",
+      "description": "Stream identifier (foundries, odm-ems, logistics-ports, research-partners, financing-risk, instrumentation-vendors)."
+    },
+    "objective": {
+      "type": "string",
+      "description": "High-level description of what the prompt must achieve."
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Increment when the envelope definition changes in a non-backwards-compatible way."
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Codex prompt text executed by Graf."
+    },
+    "inputs": {
+      "type": "array",
+      "description": "Fields that should be supplied/validated before running the prompt.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "description"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Field name Graf will submit in metadata."
+          },
+          "description": {
+            "type": "string",
+            "description": "Natural-language hint for the field."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "True when Graf must always populate the field."
+          },
+          "example": {
+            "type": "string",
+            "description": "Optional example value."
+          }
+        }
+      }
+    },
+    "expectedArtifact": {
+      "type": "object",
+      "description": "The JSON structure Graf expects Codex to emit to MinIO.",
+      "required": ["entities", "relationships"],
+      "additionalProperties": false,
+      "properties": {
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "description"],
+            "properties": {
+              "label": { "type": "string" },
+              "description": { "type": "string" },
+              "requiredProperties": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "description", "fromLabel", "toLabel"],
+            "properties": {
+              "type": { "type": "string" },
+              "description": { "type": "string" },
+              "fromLabel": { "type": "string" },
+              "toLabel": { "type": "string" },
+              "requiredProperties": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "citations": {
+      "type": "object",
+      "description": "Citation requirements and preferred sources.",
+      "additionalProperties": false,
+      "required": ["required", "preferredSources"],
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Minimum citation types that must appear in every artifact (sourceUrl, regulatory filings, etc.)."
+        },
+        "preferredSources": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Domains Graf prefers Codex cite first."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Additional guidance for reviewers."
+        },
+        "minimumCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum number of citations required (default: 2)."
+        }
+      }
+    },
+    "scoringHeuristics": {
+      "type": "array",
+      "description": "Heuristics Graf uses to grade the artifact before persistence.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["metric", "target"],
+        "properties": {
+          "metric": { "type": "string" },
+          "target": { "type": "string" },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional prompts-specific metadata Graf uses to tag Neo4j nodes/relationships.",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "required": ["promptId", "streamId", "objective", "schemaVersion", "prompt", "inputs", "expectedArtifact", "citations", "scoringHeuristics"]
+}

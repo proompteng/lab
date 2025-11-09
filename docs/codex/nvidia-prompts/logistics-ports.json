@@ -1,0 +1,102 @@
+{
+    "promptId": "logistics-ports",
+    "streamId": "logistics-ports",
+    "objective": "Describe the third-party logistics providers, ports, and inland hubs that move NVIDIA wafers and finished boards, along with congestion or diversion risks.",
+    "schemaVersion": 1,
+    "prompt": "Return JSON describing shipping corridors, ports, inland hubs, and their support teams. Highlight dual sourcing, alternate routes, and any sanctions/ETA risks. Each entity must include artifact metadata (artifactIdPrefix + timestamp) and streamId=logistics-ports. Capture relationships that span carriers to ports, ports to facilities, and risk events that delay transit. Citations must link to publicly accessible schedules or notices.",
+    "inputs": [
+        {
+            "name": "lane",
+            "description": "Logistics lane or route under review (e.g., Asia->US West Coast).",
+            "required": true,
+            "example": "Shanghai to Long Beach"
+        },
+        {
+            "name": "riskFocus",
+            "description": "Risk vectors (weather, sanctions, port congestion).",
+            "required": false,
+            "example": "typhoon season"
+        }
+    ],
+    "expectedArtifact": {
+        "entities": [
+            {
+                "label": "LogisticsProvider",
+                "description": "Carrier or logistics integrator handling NVIDIA freight.",
+                "requiredProperties": [
+                    "name",
+                    "capabilities"
+                ]
+            },
+            {
+                "label": "Port",
+                "description": "Seaport or airport handling NVIDIA freight.",
+                "requiredProperties": [
+                    "name",
+                    "capacity",
+                    "region"
+                ]
+            },
+            {
+                "label": "Facility",
+                "description": "Inland consolidation or distribution hub.",
+                "requiredProperties": [
+                    "siteId",
+                    "specialization"
+                ]
+            }
+        ],
+        "relationships": [
+            {
+                "type": "LOGISTICS_BY",
+                "description": "Provider serves a port or facility.",
+                "fromLabel": "LogisticsProvider",
+                "toLabel": "Port",
+                "requiredProperties": [
+                    "serviceType"
+                ]
+            },
+            {
+                "type": "CONNECTS_TO",
+                "description": "Port connects to an inland facility/truck ramp.",
+                "fromLabel": "Port",
+                "toLabel": "Facility",
+                "requiredProperties": [
+                    "mode"
+                ]
+            }
+        ]
+    },
+    "citations": {
+        "required": [
+            "sourceUrl",
+            "sourceType"
+        ],
+        "preferredSources": [
+            "portauthority.gov",
+            "shippingnews.com",
+            "customs.gov"
+        ],
+        "notes": "Annotate risk events (weather, labor action, sanctions).",
+        "minimumCount": 2
+    },
+    "scoringHeuristics": [
+        {
+            "metric": "confidence",
+            "target": ">=0.7",
+            "notes": "Backing data must come from official notices or logbook summaries."
+        },
+        {
+            "metric": "riskVisibility",
+            "target": "Identify mitigation options",
+            "notes": "Flag alternative routes if a node is stressed."
+        }
+    ],
+    "metadata": {
+        "artifactIdPrefix": "codex:nvidia-logistics",
+        "researchSource": "graf-codex-logistics",
+        "priority": "high",
+        "confidenceThreshold": "0.7",
+        "streamTag": "transport"
+    }
+}

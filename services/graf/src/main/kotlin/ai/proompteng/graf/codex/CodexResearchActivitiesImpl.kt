@@ -7,6 +7,9 @@ import ai.proompteng.graf.services.GraphPersistence
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import java.util.UUID
 
 class CodexResearchActivitiesImpl(
   private val argoClient: ArgoWorkflowClient,
@@ -38,12 +41,50 @@ class CodexResearchActivitiesImpl(
   ) {
     runBlocking {
       val artifact = json.decodeFromString(CodexArtifact.serializer(), payload)
+      val artifactIdPrefix = input.catalogMetadata.metadata["artifactIdPrefix"]
+      val artifactId =
+        artifact.metadata["artifactId"]?.asStringOrNull()
+          ?: artifactIdPrefix?.let { prefix -> "$prefix-${UUID.randomUUID()}" }
+          ?: "graf-codex-${UUID.randomUUID()}"
+      val researchSource =
+        artifact.metadata["researchSource"]?.asStringOrNull()
+          ?: input.catalogMetadata.metadata["researchSource"]
+          ?: "graf-codex-${input.catalogMetadata.promptId}"
+      val streamId =
+        artifact.metadata["streamId"]?.asStringOrNull() ?: input.catalogMetadata.streamId
+
       if (artifact.entities.isNotEmpty()) {
-        graphPersistence.upsertEntities(EntityBatchRequest(artifact.entities))
+        val enrichedEntities =
+          artifact.entities.map { entity ->
+            entity.copy(
+              artifactId = entity.artifactId.takeUnless { it.isNullOrBlank() } ?: artifactId,
+              researchSource =
+                entity.researchSource.takeUnless { it.isNullOrBlank() } ?: researchSource,
+              streamId = entity.streamId.takeUnless { it.isNullOrBlank() } ?: streamId,
+            )
+          }
+        graphPersistence.upsertEntities(EntityBatchRequest(enrichedEntities))
       }
+
       if (artifact.relationships.isNotEmpty()) {
-        graphPersistence.upsertRelationships(RelationshipBatchRequest(artifact.relationships))
+        val enrichedRelationships =
+          artifact.relationships.map { relationship ->
+            relationship.copy(
+              artifactId =
+                relationship.artifactId.takeUnless { it.isNullOrBlank() } ?: artifactId,
+              researchSource =
+                relationship.researchSource.takeUnless { it.isNullOrBlank() } ?: researchSource,
+              streamId = relationship.streamId.takeUnless { it.isNullOrBlank() } ?: streamId,
+            )
+          }
+        graphPersistence.upsertRelationships(RelationshipBatchRequest(enrichedRelationships))
       }
     }
   }
 }
+
+private fun JsonElement?.asStringOrNull(): String? =
+  when (this) {
+    is JsonPrimitive -> content
+    else -> null
+  }

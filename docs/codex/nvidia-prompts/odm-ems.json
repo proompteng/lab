@@ -1,0 +1,117 @@
+{
+    "promptId": "odm-ems",
+    "streamId": "odm-ems",
+    "objective": "Trace ODM/EMS partners delivering NVIDIA boards, their assembly/test facilities, and schedule constraints so Graf can correlate them with upstream foundries and downstream integrators.",
+    "schemaVersion": 1,
+    "prompt": "Produce an artifact that catalogs contract manufacturers and EMS partners, the product families they own, and any known test or burn-in instrumentation they host. Every entity must include artifactId (use metadata.artifactIdPrefix), researchSource, and streamId=odm-ems. Include relationships that connect companies to facilities and to the specific product families they configure. Provide citations for statements linking to filings, customs declarations, or public disclosures.",
+    "inputs": [
+        {
+            "name": "productFamily",
+            "description": "Product family or platform the ODM/EMS partner supports.",
+            "required": true,
+            "example": "RTX 40-series"
+        },
+        {
+            "name": "regionCoverage",
+            "description": "Regions (Asia, Mexico, US) to prioritize.",
+            "required": false,
+            "example": "Greater China"
+        },
+        {
+            "name": "sampleStage",
+            "description": "Assembly stage (pilot, ramp, sustain).",
+            "required": false,
+            "example": "pilot"
+        }
+    ],
+    "expectedArtifact": {
+        "entities": [
+            {
+                "label": "Company",
+                "description": "ODM/EMS with documented NVIDIA scope.",
+                "requiredProperties": [
+                    "name",
+                    "capacity",
+                    "region"
+                ]
+            },
+            {
+                "label": "Facility",
+                "description": "Assembly or test location tied to the ODM/EMS.",
+                "requiredProperties": [
+                    "siteId",
+                    "specialization"
+                ]
+            },
+            {
+                "label": "Product",
+                "description": "Platform or SKU family the partner builds.",
+                "requiredProperties": [
+                    "name",
+                    "tier"
+                ]
+            }
+        ],
+        "relationships": [
+            {
+                "type": "PARTNERS_WITH",
+                "description": "ODM/EMS partner relationship to NVIDIA or another company.",
+                "fromLabel": "Company",
+                "toLabel": "Company",
+                "requiredProperties": [
+                    "startDate"
+                ]
+            },
+            {
+                "type": "ASSEMBLES",
+                "description": "Company assembles a product at a facility.",
+                "fromLabel": "Company",
+                "toLabel": "Facility",
+                "requiredProperties": [
+                    "volumeShare"
+                ]
+            },
+            {
+                "type": "CONFIGURES",
+                "description": "Facility configures a product or test plan.",
+                "fromLabel": "Facility",
+                "toLabel": "Product",
+                "requiredProperties": [
+                    "stage"
+                ]
+            }
+        ]
+    },
+    "citations": {
+        "required": [
+            "sourceUrl",
+            "sourceType"
+        ],
+        "preferredSources": [
+            "nvidia.com",
+            "customs.gov",
+            "press releases"
+        ],
+        "notes": "Flag compliance or tooling certifications per partner.",
+        "minimumCount": 3
+    },
+    "scoringHeuristics": [
+        {
+            "metric": "confidence",
+            "target": ">=0.7",
+            "notes": "Weight filings and regulatory notices more heavily."
+        },
+        {
+            "metric": "toolingCoverage",
+            "target": "Document test and burn-in capabilities",
+            "notes": "Missing instrumentation must be called out."
+        }
+    ],
+    "metadata": {
+        "artifactIdPrefix": "codex:nvidia-odm",
+        "researchSource": "graf-codex-odm",
+        "priority": "medium",
+        "confidenceThreshold": "0.7",
+        "streamTag": "assembly"
+    }
+}

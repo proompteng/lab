@@ -1,0 +1,101 @@
+{
+    "promptId": "financing-risk",
+    "streamId": "financing-risk",
+    "objective": "Surface financiers, insurers, and risk vectors (credit, liquidity, geopolitical) that affect NVIDIA supply or partners.",
+    "schemaVersion": 1,
+    "prompt": "Return JSON capturing capital providers, underwriting partners, and risk tags tied to NVIDIA partners. Score each risk by confidence, cite filings or rating agencies, and embed artifact metadata (artifactIdPrefix + timestamp). StreamId must be financing-risk. Highlight exposures that could trigger mitigation actions (e.g., credit downgrades, sanctions).",
+    "inputs": [
+        {
+            "name": "coverage",
+            "description": "Type of capital or risk (credit line, insurance, FX).",
+            "required": true,
+            "example": "credit line"
+        },
+        {
+            "name": "counterparty",
+            "description": "Partner or supplier impacted by financing/risk events.",
+            "required": false,
+            "example": "TSMC"
+        }
+    ],
+    "expectedArtifact": {
+        "entities": [
+            {
+                "label": "Company",
+                "description": "Supplier, partner, or financier in the risk story.",
+                "requiredProperties": [
+                    "name",
+                    "role"
+                ]
+            },
+            {
+                "label": "RiskTag",
+                "description": "Risk label (credit, liquidity, sanctions).",
+                "requiredProperties": [
+                    "name",
+                    "severity"
+                ]
+            },
+            {
+                "label": "Event",
+                "description": "Triggering incident (downgrade, audit).",
+                "requiredProperties": [
+                    "name",
+                    "date"
+                ]
+            }
+        ],
+        "relationships": [
+            {
+                "type": "FINANCED_BY",
+                "description": "Company backed by a financier or insurer.",
+                "fromLabel": "Company",
+                "toLabel": "Company",
+                "requiredProperties": [
+                    "amount"
+                ]
+            },
+            {
+                "type": "HAS_RISK",
+                "description": "Company tagged with a risk.",
+                "fromLabel": "Company",
+                "toLabel": "RiskTag",
+                "requiredProperties": [
+                    "confidence"
+                ]
+            }
+        ]
+    },
+    "citations": {
+        "required": [
+            "sourceUrl",
+            "sourceType"
+        ],
+        "preferredSources": [
+            "sec.gov",
+            "ratings agencies",
+            "public filings"
+        ],
+        "notes": "Weight official filings and underwriting announcements over anonymous commentary.",
+        "minimumCount": 2
+    },
+    "scoringHeuristics": [
+        {
+            "metric": "confidence",
+            "target": ">=0.7",
+            "notes": "Use numeric data when available (downgrade rating, insured amount)."
+        },
+        {
+            "metric": "diversity",
+            "target": "Cite at least two source types",
+            "notes": "Mix regulatory filings with press statements."
+        }
+    ],
+    "metadata": {
+        "artifactIdPrefix": "codex:nvidia-financing",
+        "researchSource": "graf-codex-financing",
+        "priority": "medium",
+        "confidenceThreshold": "0.7",
+        "streamTag": "financing"
+    }
+}

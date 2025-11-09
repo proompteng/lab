@@ -3,6 +3,7 @@ package ai.proompteng.graf.codex
 import ai.proompteng.graf.model.ArtifactReference
 import ai.proompteng.graf.model.EntityRequest
 import ai.proompteng.graf.model.RelationshipRequest
+import ai.proompteng.graf.codex.PromptCatalogDefinition
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
@@ -10,6 +11,7 @@ import kotlinx.serialization.json.JsonElement
 data class CodexResearchWorkflowInput(
   val prompt: String,
   val metadata: Map<String, String> = emptyMap(),
+  val catalogMetadata: PromptCatalogDefinition,
   val argoWorkflowName: String,
   val artifactKey: String,
   val argoPollTimeoutSeconds: Long,

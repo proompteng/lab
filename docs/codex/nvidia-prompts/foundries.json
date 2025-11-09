@@ -1,0 +1,112 @@
+{
+    "promptId": "foundries",
+    "streamId": "foundries",
+    "objective": "Capture the global foundry and IDM-capable fabs that NVIDIA can rely on for GPU wafer capacity, certifications, and strategic resilience.",
+    "schemaVersion": 1,
+    "prompt": "You are building a Neo4j-ready artifact that maps NVIDIA-relevant foundries and wafer fabs. Include confidence, citations, artifact metadata, and stream markers. Emit top-level keys: entities (list), relationships (list), metadata (map). Every entity must include id/label/properties. Artifact metadata must contain artifactId (add prefix from metadata.artifactIdPrefix), researchSource, streamId=foundries, and timestamps where possible. Cite at least two authoritative sources (include sourceUrl and sourceType per citation). Focus on manufacturing partners mentioned in docs/nvidia-supply-chain-graph-design.md and public filings after {{inputs.lookbackWindow}}.",
+    "inputs": [
+        {
+            "name": "lookbackWindow",
+            "description": "Duration of news/filings to examine (e.g., 90d).",
+            "required": true,
+            "example": "90d"
+        },
+        {
+            "name": "regionFocus",
+            "description": "Region or fabs to prioritize (e.g., Taiwan, Arizona).",
+            "required": false,
+            "example": "Taiwan + Arizona"
+        },
+        {
+            "name": "tierFocus",
+            "description": "Target manufacturing tiers (Tier 1, Tier 2).",
+            "required": false,
+            "example": "Tier 1"
+        }
+    ],
+    "expectedArtifact": {
+        "entities": [
+            {
+                "label": "Company",
+                "description": "Foundry or IDM owner with NVIDIA exposure.",
+                "requiredProperties": [
+                    "name",
+                    "tier",
+                    "region"
+                ]
+            },
+            {
+                "label": "Facility",
+                "description": "Specific fab or campus where NVIDIA wafers are processed.",
+                "requiredProperties": [
+                    "siteId",
+                    "capacity",
+                    "specialization"
+                ]
+            },
+            {
+                "label": "Certification",
+                "description": "Accreditations (e.g., ISO, IATF, security).",
+                "requiredProperties": [
+                    "name",
+                    "issuer"
+                ]
+            }
+        ],
+        "relationships": [
+            {
+                "type": "MANUFACTURES_AT",
+                "description": "Company fabricates wafers at a named facility.",
+                "fromLabel": "Company",
+                "toLabel": "Facility",
+                "requiredProperties": [
+                    "volumeShare"
+                ]
+            },
+            {
+                "type": "CERTIFIED_BY",
+                "description": "Facility holds a certification.",
+                "fromLabel": "Facility",
+                "toLabel": "Certification",
+                "requiredProperties": []
+            }
+        ]
+    },
+    "citations": {
+        "required": [
+            "sourceUrl",
+            "sourceType"
+        ],
+        "preferredSources": [
+            "nvidia.com",
+            "sec.gov",
+            "semiconductor-datasource.com"
+        ],
+        "notes": "Highlight production cadence, deepening capacity, and mitigation plans.",
+        "minimumCount": 3
+    },
+    "scoringHeuristics": [
+        {
+            "metric": "confidence",
+            "target": ">=0.75",
+            "notes": "Use multiple sources for each assertion."
+        },
+        {
+            "metric": "citationCount",
+            "target": ">=2 per node/relationship",
+            "notes": "Favor filings over analyst notes."
+        },
+        {
+            "metric": "dataFreshness",
+            "target": "Within lookbackWindow",
+            "notes": "Older data must be marked and justified."
+        }
+    ],
+    "metadata": {
+        "artifactIdPrefix": "codex:nvidia:foundries",
+        "researchSource": "graf-codex-foundries",
+        "priority": "high",
+        "confidenceThreshold": "0.75",
+        "streamTag": "manufacturing"
+    }
+}

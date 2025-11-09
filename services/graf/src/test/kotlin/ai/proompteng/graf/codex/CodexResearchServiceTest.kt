@@ -1,5 +1,6 @@
 package ai.proompteng.graf.codex
 
+import ai.proompteng.graf.codex.*
 import ai.proompteng.graf.model.CodexResearchRequest
 import io.mockk.every
 import io.mockk.mockk
@@ -12,6 +13,38 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class CodexResearchServiceTest {
+  private fun promptCatalog(promptId: String = "foundries") =
+    PromptCatalogDefinition(
+      promptId = promptId,
+      streamId = "foundries",
+      objective = "objective",
+      schemaVersion = 1,
+      prompt = "prompt",
+      inputs = listOf(
+        PromptInputSpec(
+          name = "key",
+          description = "desc",
+          required = true,
+        ),
+      ),
+      expectedArtifact =
+        PromptExpectedArtifact(
+          entities = listOf(
+            PromptEntityExpectation(
+              label = "Company",
+              description = "desc",
+            ),
+          ),
+          relationships = emptyList(),
+        ),
+      citations =
+        PromptCitations(
+          required = listOf("sourceUrl"),
+          preferredSources = listOf("nvidia.com"),
+        ),
+      scoringHeuristics = listOf(PromptScoring(metric = "confidence", target = ">=0.5")),
+    )
+
   @Test
   fun `startResearch honors metadata workflow id and poll timeout`() {
     val workflowClient = mockk<WorkflowClient>()
@@ -33,7 +66,12 @@ class CodexResearchServiceTest {
         argoPollTimeoutSeconds = 7200L,
         workflowStarter = starter,
       )
-    val request = CodexResearchRequest("prompt-text", metadata = mapOf("codex.workflow" to "custom-id"))
+    val request =
+      CodexResearchRequest(
+        "prompt-text",
+        metadata = mapOf("codex.workflow" to "custom-id"),
+        catalog = promptCatalog(),
+      )
     val launch = service.startResearch(request, "argo-name", "artifact-key")
 
     assertEquals("custom-id", launch.workflowId)
@@ -62,7 +100,11 @@ class CodexResearchServiceTest {
         argoPollTimeoutSeconds = 3600L,
         workflowStarter = starter,
       )
-    val request = CodexResearchRequest("prompt-text")
+    val request =
+      CodexResearchRequest(
+        "prompt-text",
+        catalog = promptCatalog(),
+      )
     val launch = service.startResearch(request, "argo-name", "artifact-key")
 
     assertTrue(launch.workflowId.startsWith("graf-codex-research-"))

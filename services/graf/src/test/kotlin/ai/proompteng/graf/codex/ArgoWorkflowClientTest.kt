@@ -213,6 +213,69 @@ class ArgoWorkflowClientTest {
   }
 
   @Test
+  fun `waitForCompletion polls until workflow succeeds`() = runBlocking {
+    val statuses =
+      listOf(
+        ArgoWorkflowResource(
+          metadata = ArgoMetadata(name = "codex-workflow", labels = emptyMap()),
+          status =
+            ArgoWorkflowStatus(
+              phase = "Running",
+            ),
+        ),
+        ArgoWorkflowResource(
+          metadata = ArgoMetadata(name = "codex-workflow", labels = emptyMap()),
+          status =
+            ArgoWorkflowStatus(
+              phase = "Succeeded",
+              finishedAt = "now",
+              nodes =
+                mapOf(
+                  "codex" to
+                    ArgoWorkflowNode(
+                      outputs =
+                        ArgoWorkflowOutputs(
+                          artifacts =
+                            listOf(
+                              ArgoWorkflowArtifact(
+                                name = "artifact",
+                                s3 =
+                                  ArgoS3Artifact(
+                                    bucket = "bucket",
+                                    key = "artifact",
+                                    endpoint = "http://minio:9000",
+                                    region = "us-east-1",
+                                  ),
+                              ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+      )
+    var calls = 0
+    val engine =
+      MockEngine { request ->
+        assertEquals(HttpMethod.Get, request.method)
+        val response = statuses[minOf(calls, statuses.lastIndex)]
+        calls++
+        respond(
+          json.encodeToString(response),
+          HttpStatusCode.OK,
+          headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+        )
+      }
+    val client = argoClient(engine, defaultArgoConfig(pollIntervalSeconds = 0, pollTimeoutSeconds = 10))
+    val completed = client.waitForCompletion("codex-workflow", timeoutSeconds = 10)
+    assertEquals("Succeeded", completed.phase)
+    assertEquals("now", completed.finishedAt)
+    assertEquals(1, completed.artifactReferences.size)
+    assertEquals("artifact", completed.artifactReferences.first().key)
+    assertTrue(calls >= 2)
+  }
+
+  @Test
   fun `waitForCompletion throws when workflow fails`() = runBlocking {
     val engine =
       MockEngine {

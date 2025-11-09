@@ -1,5 +1,12 @@
 package ai.proompteng.graf.codex
 
+import ai.proompteng.graf.codex.PromptCatalogDefinition
+import ai.proompteng.graf.codex.PromptCitations
+import ai.proompteng.graf.codex.PromptEntityExpectation
+import ai.proompteng.graf.codex.PromptExpectedArtifact
+import ai.proompteng.graf.codex.PromptInputSpec
+import ai.proompteng.graf.codex.PromptRelationshipExpectation
+import ai.proompteng.graf.codex.PromptScoring
 import ai.proompteng.graf.model.ArtifactReference
 import ai.proompteng.graf.model.BatchResponse
 import ai.proompteng.graf.services.GraphPersistence
@@ -25,6 +32,32 @@ class CodexResearchActivitiesImplTest {
       json = Json { ignoreUnknownKeys = true },
     )
 
+  private fun catalogDefinition() =
+    PromptCatalogDefinition(
+      promptId = "foundries",
+      streamId = "foundries",
+      objective = "record foundries",
+      schemaVersion = 1,
+      prompt = "prompt",
+      inputs = listOf(PromptInputSpec(name = "window", description = "desc", required = true)),
+      expectedArtifact =
+        PromptExpectedArtifact(
+          entities = listOf(PromptEntityExpectation(label = "Company", description = "desc")),
+          relationships =
+            listOf(
+              PromptRelationshipExpectation(
+                type = "LINKS",
+                description = "desc",
+                fromLabel = "Company",
+                toLabel = "Company",
+              ),
+            ),
+        ),
+      citations = PromptCitations(required = listOf("sourceUrl"), preferredSources = listOf("nvidia.com")),
+      scoringHeuristics = listOf(PromptScoring(metric = "confidence", target = ">=0.7")),
+      metadata = mapOf("researchSource" to "graf-codex-foundries", "artifactIdPrefix" to "codex:foundries"),
+    )
+
   @Test
   fun `downloadArtifact returns payload`() =
     runBlocking {
@@ -42,7 +75,7 @@ class CodexResearchActivitiesImplTest {
     }
 
   @Test
-  fun `persistCodexArtifact writes entities and relationships`() =
+  fun `persistCodexArtifact enriches metadata`() =
     runBlocking {
       val payload = """{
             "entities": [
@@ -50,7 +83,12 @@ class CodexResearchActivitiesImplTest {
             ],
             "relationships": [
                 {"type": "LINKS", "fromId": "node:1", "toId": "node:2"}
-            ]
+            ],
+            "metadata": {
+                "artifactId": "artifact-1",
+                "researchSource": "graf-codex-foundries",
+                "streamId": "foundries"
+            }
         }"""
       coEvery { graphPersistence.upsertEntities(any()) } returns BatchResponse(emptyList())
       coEvery { graphPersistence.upsertRelationships(any()) } returns BatchResponse(emptyList())
@@ -60,13 +98,26 @@ class CodexResearchActivitiesImplTest {
         CodexResearchWorkflowInput(
           prompt = "prompt",
           metadata = emptyMap(),
+          catalogMetadata = catalogDefinition(),
           argoWorkflowName = "name",
           artifactKey = "key",
           argoPollTimeoutSeconds = 7200,
         ),
       )
 
-      coVerify { graphPersistence.upsertEntities(match { it.entities.size == 1 }) }
-      coVerify { graphPersistence.upsertRelationships(match { it.relationships.size == 1 }) }
+      coVerify {
+        graphPersistence.upsertEntities(match { record ->
+          record.entities.all {
+            it.artifactId == "artifact-1" && it.researchSource == "graf-codex-foundries" && it.streamId == "foundries"
+          }
+        })
+      }
+      coVerify {
+        graphPersistence.upsertRelationships(match { record ->
+          record.relationships.all {
+            it.artifactId == "artifact-1" && it.researchSource == "graf-codex-foundries" && it.streamId == "foundries"
+          }
+        })
+      }
     }
 }

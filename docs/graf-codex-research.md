@@ -77,7 +77,41 @@ kubectl -n argo-workflows apply -f argocd/applications/argo-workflows/codex-rese
 
 The template ships the prompt into the Codex container, unlocks `codex exec`, and captures `/workspace/lab/codex-artifact.json` as an S3 artifact. The artifact is wired into MinIO via template parameters so Graf can compute the bucket/key before the workflow finishes.
 
+## NVIDIA prompt catalog
+
+Graf ships a versioned catalog under `docs/codex`. `docs/codex/nvidia-prompt-schema.json` defines the metadata envelope that every prompt pack must satisfy (promptId, streamId, expectedArtifact, citations, scoringHeuristics, metadata). The six stream-specific packs (`foundries.json`, `odm-ems.json`, `logistics-ports.json`, `research-partners.json`, `financing-risk.json`, `instrumentation-vendors.json`) live in `docs/codex/nvidia-prompts` and mirror the high-level streams described in `docs/nvidia-supply-chain-graph-design.md`. When you edit or add prompts:
+
+- validate the JSON against `docs/codex/nvidia-prompt-schema.json`
+- keep `schemaVersion` incremented for non-backwards-compatible envelope changes
+- update the metadata section (artifactIdPrefix, researchSource, priority, streamTag) so Graf can label Neo4j nodes before the Temporal workflow even runs
+
+The Kotlin service loads this catalog at startup and binds it to `POST /v1/codex-research`, so prompt updates immediately change how Codex metadata is materialized in Neo4j.
+
+## Graf prompt driver
+
+`packages/scripts/src/graf/run-prompts.ts` is a Bun CLI that walks the catalog, validates each pack against `nvidia-prompt-schema.json`, and POSTs the payload to Graf's `/v1/codex-research`. The script:
+
+- defaults to `http://localhost:8080` but honors `GRAF_BASE_URL`
+- requires `GRAF_TOKEN` unless you are running with `--dry-run`
+- supports `--prompt-id <id>` to target a single stream (e.g., `—prompt-id foundries`)
+- logs promptId, workflowId, runId, and artifactReferences for Temporal/MinIO monitoring
+- fails fast whenever Graf replies with a non-2xx HTTP status
+
+Run it like this:
+
+```bash
+GRAF_BASE_URL=http://localhost:8080 GRAF_TOKEN=test \
+  bun packages/scripts/src/graf/run-prompts.ts --dry-run
+```
+
+To drive production workloads, omit `--dry-run`, point `GRAF_BASE_URL` at the Graf service, and capture the logged workflow/run IDs plus any artifact references for Temporal operators.
+
+## Capturing workflow evidence
+
+The driver logs `promptId`, `workflowId`, `runId`, and the list of `artifactReferences`. Include those triples plus the corresponding Timed `artifactReferences` in PR verification so reviewers can correlate Temporal history with the catalog entry that generated it.
+
 ## Testing / Validation
 
-- `./gradlew test` (Graf module) runs the new unit tests for the MinIO fetcher and artifact parser.
-- `curl -X POST http://localhost:8080/v1/codex-research -H Content-Type:
+- `./gradlew test` (Graf module) runs the new Kotlin unit tests covering ArgoWorkflowClient polling, Minio artifact fetching, and catalog-consistent persistence.
+- `./gradlew koverHtmlReport` publishes coverage so you can point reviewers at the new lines exercising Argo retries, artifact decoding, and GraphService persistence.
+- `GRAF_BASE_URL=http://localhost:8080 GRAF_TOKEN=test bun packages/scripts/src/graf/run-prompts.ts --dry-run` proves prompt loading and schema validation before hitting a live Graf instance.

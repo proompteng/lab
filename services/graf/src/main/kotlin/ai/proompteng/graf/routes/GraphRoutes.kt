@@ -1,6 +1,7 @@
 package ai.proompteng.graf.routes
 
 import ai.proompteng.graf.codex.CodexResearchService
+import ai.proompteng.graf.codex.PromptCatalog
 import ai.proompteng.graf.config.MinioConfig
 import ai.proompteng.graf.model.ArtifactReference
 import ai.proompteng.graf.model.CleanRequest
@@ -28,6 +29,7 @@ fun Route.graphRoutes(
   service: GraphService,
   codexResearchService: CodexResearchService,
   minioConfig: MinioConfig,
+  promptCatalog: PromptCatalog,
 ) {
   post("/entities") {
     val payload = call.receive<EntityBatchRequest>()
@@ -83,9 +85,18 @@ fun Route.graphRoutes(
 
   post("/codex-research") {
     val payload = call.receive<CodexResearchRequest>()
+    val catalog = promptCatalog.findById(payload.catalog.promptId)
+      ?: throw IllegalArgumentException("Unknown promptId ${payload.catalog.promptId}")
+    val enrichedMetadata =
+      payload.metadata + mapOf(
+        "catalogPromptId" to catalog.promptId,
+        "catalogSchemaVersion" to catalog.schemaVersion.toString(),
+        "catalogObjective" to catalog.objective,
+      )
+    val enrichedRequest = payload.copy(metadata = enrichedMetadata, catalog = catalog)
     val argoWorkflowName = "codex-research-${UUID.randomUUID()}"
     val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
-    val launch = codexResearchService.startResearch(payload, argoWorkflowName, artifactKey)
+    val launch = codexResearchService.startResearch(enrichedRequest, argoWorkflowName, artifactKey)
     val artifactReference =
       ArtifactReference(
         bucket = minioConfig.bucket,

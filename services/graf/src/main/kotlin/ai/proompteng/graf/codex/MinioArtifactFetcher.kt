@@ -13,6 +13,8 @@ class MinioArtifactFetcherImpl(
   private val client: MinioClient,
 ) : MinioArtifactFetcher {
   override fun open(reference: ArtifactReference): InputStream {
+    require(reference.bucket.isNotBlank()) { "artifact bucket must be provided" }
+    require(reference.key.isNotBlank()) { "artifact key must be provided" }
     val args =
       GetObjectArgs
         .builder()

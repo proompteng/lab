@@ -35,6 +35,7 @@ class CodexResearchService(
       CodexResearchWorkflowInput(
         prompt = request.prompt,
         metadata = request.metadata,
+        catalogMetadata = request.catalog,
         argoWorkflowName = argoWorkflowName,
         artifactKey = artifactKey,
         argoPollTimeoutSeconds = argoPollTimeoutSeconds,

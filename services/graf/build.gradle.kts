@@ -62,6 +62,14 @@ dependencies {
   testImplementation("io.ktor:ktor-client-mock:$ktorVersion")
 }
 
+sourceSets {
+  main {
+    resources {
+      srcDir(file("../../docs/codex"))
+    }
+  }
+}
+
 tasks.test {
   useJUnitPlatform()
 }

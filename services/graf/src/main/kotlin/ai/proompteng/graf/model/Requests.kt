@@ -1,5 +1,6 @@
 package ai.proompteng.graf.model
 
+import ai.proompteng.graf.codex.PromptCatalogDefinition
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
@@ -99,6 +100,7 @@ data class CleanResponse(
 data class CodexResearchRequest(
   val prompt: String,
   val metadata: Map<String, String> = emptyMap(),
+  val catalog: PromptCatalogDefinition,
 )
 
 @Serializable

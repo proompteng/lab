@@ -1,0 +1,99 @@
+{
+    "promptId": "instrumentation-vendors",
+    "streamId": "instrumentation-vendors",
+    "objective": "Detail test/instrumentation vendors that support NVIDIA qualification labs and how their tooling maps to supply/stability.",
+    "schemaVersion": 1,
+    "prompt": "Emit JSON describing instrumentation vendors, their installed base inside partner labs, and the certifications that demonstrate their fit for defense, reliability, or security programs. Attach metadata (artifactIdPrefix, researchSource, streamId=instrumentation-vendors). Mention delivery lead times, spare parts risks, and citation sources.",
+    "inputs": [
+        {
+            "name": "vendorType",
+            "description": "Type of instrumentation (tester, burn-in, metrology).",
+            "required": true,
+            "example": "tester"
+        },
+        {
+            "name": "labFocus",
+            "description": "Qualification lab (in-house, partner).",
+            "required": false,
+            "example": "Sunnyvale qualification lab"
+        }
+    ],
+    "expectedArtifact": {
+        "entities": [
+            {
+                "label": "Company",
+                "description": "Vendor or supplier of instrumentation.",
+                "requiredProperties": [
+                    "name",
+                    "vendorType"
+                ]
+            },
+            {
+                "label": "Facility",
+                "description": "Lab or vendor campus where instrumentation is staged.",
+                "requiredProperties": [
+                    "siteId",
+                    "capacity"
+                ]
+            },
+            {
+                "label": "Certification",
+                "description": "Quality or security certification for the tooling.",
+                "requiredProperties": [
+                    "name",
+                    "issuer"
+                ]
+            }
+        ],
+        "relationships": [
+            {
+                "type": "DEPLOYED_AT",
+                "description": "Company deploys equipment at a facility.",
+                "fromLabel": "Company",
+                "toLabel": "Facility",
+                "requiredProperties": [
+                    "deploymentDate"
+                ]
+            },
+            {
+                "type": "CERTIFIED_BY",
+                "description": "Facility or tool certified by an accreditation.",
+                "fromLabel": "Facility",
+                "toLabel": "Certification",
+                "requiredProperties": []
+            }
+        ]
+    },
+    "citations": {
+        "required": [
+            "sourceUrl",
+            "sourceType"
+        ],
+        "preferredSources": [
+            "vendor.com",
+            "press releases",
+            "certification bodies"
+        ],
+        "notes": "Tie lead times or spare parts risk to procurement statements.",
+        "minimumCount": 2
+    },
+    "scoringHeuristics": [
+        {
+            "metric": "confidence",
+            "target": ">=0.7",
+            "notes": "Confirm vendor claims with government registrations or procurement notices."
+        },
+        {
+            "metric": "availability",
+            "target": "Describe lead times or spare-part constraints",
+            "notes": "Flag multi-sourcing options when vendors are single-source."
+        }
+    ],
+    "metadata": {
+        "artifactIdPrefix": "codex:nvidia-instrumentation",
+        "researchSource": "graf-codex-instrumentation",
+        "priority": "medium",
+        "confidenceThreshold": "0.7",
+        "streamTag": "instrumentation"
+    }
+}

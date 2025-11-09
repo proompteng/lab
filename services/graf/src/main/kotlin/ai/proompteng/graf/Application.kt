@@ -5,6 +5,8 @@ import ai.proompteng.graf.codex.CodexResearchActivitiesImpl
 import ai.proompteng.graf.codex.CodexResearchService
 import ai.proompteng.graf.codex.CodexResearchWorkflowImpl
 import ai.proompteng.graf.codex.MinioArtifactFetcherImpl
+import ai.proompteng.graf.codex.PromptCatalog
+import ai.proompteng.graf.codex.PromptCatalogLoader
 import ai.proompteng.graf.config.ArgoConfig
 import ai.proompteng.graf.config.MinioConfig
 import ai.proompteng.graf.config.Neo4jConfig
@@ -87,6 +89,8 @@ fun main() {
       ignoreUnknownKeys = true
     }
 
+  val promptCatalog = PromptCatalogLoader.loadCatalog(sharedJson)
+
   val kubernetesToken = loadServiceAccountToken(argoConfig.tokenPath)
   val kubernetesClient = buildKubernetesHttpClient(argoConfig, kubernetesToken, sharedJson)
   val minioClient = buildMinioClient(minioConfig)
@@ -124,7 +128,7 @@ fun main() {
 
   val server =
     embeddedServer(Netty, port) {
-      module(graphService, codexResearchService, minioConfig, sharedJson)
+      module(graphService, codexResearchService, minioConfig, sharedJson, promptCatalog)
     }
 
   Runtime.getRuntime().addShutdownHook(
@@ -147,6 +151,7 @@ fun Application.module(
   codexResearchService: CodexResearchService,
   minioConfig: MinioConfig,
   jsonConfig: Json,
+  promptCatalog: PromptCatalog,
 ) {
   install(ServerContentNegotiation) {
     json(jsonConfig)
@@ -200,7 +205,7 @@ fun Application.module(
     }
     route("/v1") {
       authenticate(GRAF_BEARER_AUTH_NAME) {
-        graphRoutes(graphService, codexResearchService, minioConfig)
+        graphRoutes(graphService, codexResearchService, minioConfig, promptCatalog)
       }
     }
     get("/healthz") {

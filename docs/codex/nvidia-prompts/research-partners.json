@@ -1,0 +1,102 @@
+{
+    "promptId": "research-partners",
+    "streamId": "research-partners",
+    "objective": "Catalog partner institutions, labs, and co-developers that NVIDIA engages for foundational research, tooling, or multi-party test pilots.",
+    "schemaVersion": 1,
+    "prompt": "Produce JSON that captures research partners, their knowledge domains, and shared programs. Include citations for collaborative publications, white papers, or press statements. Ensure every artifact entity is tagged with artifactIdPrefix (from metadata) and streamId=research-partners. Highlight cryptic flows such as knowledge transfer, funding, instrumentation support, and defense/duality reviews.",
+    "inputs": [
+        {
+            "name": "topic",
+            "description": "Research topic (e.g., AI optics, supply chain resilience).",
+            "required": true,
+            "example": "AI/ML testbed"
+        },
+        {
+            "name": "engagementType",
+            "description": "Type of partnership (lab collaboration, funded program).",
+            "required": false,
+            "example": "joint lab"
+        }
+    ],
+    "expectedArtifact": {
+        "entities": [
+            {
+                "label": "ResearchSource",
+                "description": "External organization or lab.",
+                "requiredProperties": [
+                    "name",
+                    "country",
+                    "specialty"
+                ]
+            },
+            {
+                "label": "Event",
+                "description": "Program, consortium, or demo showcasing the research.",
+                "requiredProperties": [
+                    "name",
+                    "date"
+                ]
+            },
+            {
+                "label": "Company",
+                "description": "NVIDIA business unit or OEM partner.",
+                "requiredProperties": [
+                    "name",
+                    "function"
+                ]
+            }
+        ],
+        "relationships": [
+            {
+                "type": "RESEARCHED_BY",
+                "description": "A company sponsors or co-leads research with the source.",
+                "fromLabel": "Company",
+                "toLabel": "ResearchSource",
+                "requiredProperties": [
+                    "scope"
+                ]
+            },
+            {
+                "type": "HOSTS",
+                "description": "ResearchSource hosts an event or pilot.",
+                "fromLabel": "ResearchSource",
+                "toLabel": "Event",
+                "requiredProperties": [
+                    "venue"
+                ]
+            }
+        ]
+    },
+    "citations": {
+        "required": [
+            "sourceUrl",
+            "sourceType"
+        ],
+        "preferredSources": [
+            "arxiv.org",
+            "nvidia.com",
+            "press releases"
+        ],
+        "notes": "Include statements of intent, funding, or hardware access.",
+        "minimumCount": 2
+    },
+    "scoringHeuristics": [
+        {
+            "metric": "confidence",
+            "target": ">=0.8",
+            "notes": "Plasma and academic sources weigh differently; prefer direct quotes."
+        },
+        {
+            "metric": "citationDiversity",
+            "target": ">=2 source types",
+            "notes": "Mix press statements with peer-reviewed references."
+        }
+    ],
+    "metadata": {
+        "artifactIdPrefix": "codex:nvidia-research",
+        "researchSource": "graf-codex-research",
+        "priority": "medium",
+        "confidenceThreshold": "0.8",
+        "streamTag": "research"
+    }
+}
