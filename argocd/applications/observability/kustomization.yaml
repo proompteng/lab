@@ -5,6 +5,8 @@ namespace: observability
 resources:
   - minio-secret.yaml
   - minio-buckets-job.yaml
+  - graf-mimir-rules.yaml
+  - graf-graf-dashboard-configmap.yaml
 
 helmCharts:
   - name: mimir-distributed

@@ -1,44 +1,82 @@
 package ai.proompteng.graf.codex
 
 import ai.proompteng.graf.model.CodexResearchRequest
-import ai.proompteng.graf.codex.WorkflowStartResult
-import ai.proompteng.graf.codex.CodexResearchWorkflowInput
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
+import io.temporal.api.common.v1.WorkflowExecution
+import io.temporal.client.WorkflowClient
+import io.temporal.client.WorkflowExecutionAlreadyStarted
+import io.temporal.client.WorkflowOptions
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
-import io.temporal.client.WorkflowOptions
-import io.temporal.client.WorkflowExecutionAlreadyStarted
-import io.temporal.api.common.v1.WorkflowExecution
 
 class CodexResearchServiceTest {
-  private val workflowClient = mockk<io.temporal.client.WorkflowClient>()
+  private val workflowClient = mockk<WorkflowClient>()
   private val workflowStub = mockk<CodexResearchWorkflow>()
 
   @Test
-  fun `startResearch builds workflow stub and invocation`() {
-    every { workflowClient.newWorkflowStub(CodexResearchWorkflow::class.java, any<io.temporal.client.WorkflowOptions>()) } returns workflowStub
-
+  fun `startResearch honors metadata workflow id and poll timeout`() {
+    every { workflowClient.newWorkflowStub(CodexResearchWorkflow::class.java, any<WorkflowOptions>()) } returns workflowStub
+    val inputSlot = slot<CodexResearchWorkflowInput>()
+    val execution =
+      WorkflowExecution
+        .newBuilder()
+        .setWorkflowId("custom-id")
+        .setRunId("run-1")
+        .build()
     val service =
       CodexResearchService(
         workflowClient = workflowClient,
         taskQueue = "queue",
-        argoPollTimeoutSeconds = 60,
-        workflowStarter = { stub: CodexResearchWorkflow, input: CodexResearchWorkflowInput ->
+        argoPollTimeoutSeconds = 7200L,
+        workflowStarter = { stub, input ->
+          inputSlot.captured = input
           assertEquals(workflowStub, stub)
-          assertEquals("argo-name", input.argoWorkflowName)
-          assertEquals("artifact.json", input.artifactKey)
-          WorkflowStartResult(workflowId = "wf", runId = "run")
+          WorkflowStartResult(execution.workflowId, execution.runId)
         },
       )
 
-    val request = CodexResearchRequest(prompt = "Investigate", metadata = mapOf("stream" to "ecosystem"))
-    val result = service.startResearch(request, argoWorkflowName = "argo-name", artifactKey = "artifact.json")
+    val request = CodexResearchRequest("prompt-text", metadata = mapOf("codex.workflow" to "custom-id"))
+    val launch = service.startResearch(request, "argo-name", "artifact-key")
 
-    assertTrue(result.workflowId.startsWith("graf-codex-research-"))
-    assertEquals("run", result.runId)
-    assertTrue(result.startedAt.isNotBlank())
+    assertEquals("custom-id", launch.workflowId)
+    assertEquals("run-1", launch.runId)
+    assertEquals("argo-name", inputSlot.captured.argoWorkflowName)
+    assertEquals("artifact-key", inputSlot.captured.artifactKey)
+    assertEquals(7200L, inputSlot.captured.argoPollTimeoutSeconds)
+  }
+
+  @Test
+  fun `startResearch generates random id when metadata missing`() {
+    val localWorkflowClient = mockk<WorkflowClient>()
+    val workflowStub = mockk<CodexResearchWorkflow>()
+    every { localWorkflowClient.newWorkflowStub(any<Class<CodexResearchWorkflow>>(), any<WorkflowOptions>()) } returns workflowStub
+    val inputSlot = slot<CodexResearchWorkflowInput>()
+    val execution =
+      WorkflowExecution
+        .newBuilder()
+        .setWorkflowId("graf-codex-research-static")
+        .setRunId("run-2")
+        .build()
+    val service =
+      CodexResearchService(
+        workflowClient = localWorkflowClient,
+        taskQueue = "queue",
+        argoPollTimeoutSeconds = 3600L,
+        workflowStarter = { _, input ->
+          inputSlot.captured = input
+          WorkflowStartResult(execution.workflowId, execution.runId)
+        },
+      )
+
+    val request = CodexResearchRequest("prompt-text")
+    val launch = service.startResearch(request, "argo-name", "artifact-key")
+
+    assertTrue(launch.workflowId.startsWith("graf-codex-research-"))
+    assertEquals("run-2", launch.runId)
+    assertEquals(3600L, inputSlot.captured.argoPollTimeoutSeconds)
   }
 
   @Test
@@ -50,7 +88,7 @@ class CodexResearchServiceTest {
       CodexResearchService(
         workflowClient = workflowClient,
         taskQueue = "queue",
-        argoPollTimeoutSeconds = 60,
+        argoPollTimeoutSeconds = 60L,
         workflowStarter = { _, _ -> throw exception },
       )
 

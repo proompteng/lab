@@ -9,6 +9,10 @@ resources:
   - graf-openai-secret.yaml
   - neo4j-browser-service.yaml
   - graf-workflows-clusterrolebinding.yaml
+  - graf-otel-configmap.yaml
+  - graf-alloy-configmap.yaml
+  - graf-alloy-rbac.yaml
+  - graf-alloy-deployment.yaml
 helmCharts:
   - name: neo4j
     repo: https://helm.neo4j.com/neo4j

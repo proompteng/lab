@@ -45,6 +45,8 @@ mimir:
         secret_access_key: ${MIMIR_S3_SECRET_ACCESS_KEY}
         insecure: true
         bucket_lookup_type: path
+    ruler:
+      rule_path: /etc/mimir/rules/*.yaml
     usage_stats:
       enabled: false
       installation_mode: helm
@@ -87,6 +89,13 @@ query_scheduler:
 
 ruler:
   replicas: 1
+  extraVolumes:
+    - name: graf-mimir-rules
+      configMap:
+        name: graf-mimir-rules
+  extraVolumeMounts:
+    - name: graf-mimir-rules
+      mountPath: /etc/mimir/rules
 
 store_gateway:
   replicas: 1

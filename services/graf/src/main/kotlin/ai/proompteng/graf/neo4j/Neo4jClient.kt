@@ -1,5 +1,6 @@
 package ai.proompteng.graf.neo4j
 
+import ai.proompteng.graf.telemetry.GrafTelemetry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.neo4j.driver.Driver
@@ -17,10 +18,21 @@ class Neo4jClient(
   val isClosed: Boolean
     get() = closed.get()
 
-  suspend fun <T> executeWrite(block: (TransactionContext) -> T): T =
+  suspend fun <T> executeWrite(
+    operation: String,
+    block: (TransactionContext) -> T,
+  ): T =
     withContext(Dispatchers.IO) {
-      driver.session(SessionConfig.forDatabase(database)).use { session ->
-        session.executeWrite { tx -> block(tx) }
+      val start = System.nanoTime()
+      try {
+        GrafTelemetry.withSpan("graf.neo4j.$operation") {
+          driver.session(SessionConfig.forDatabase(database)).use { session ->
+            session.executeWrite { tx -> block(tx) }
+          }
+        }
+      } finally {
+        val durationMs = (System.nanoTime() - start) / 1_000_000
+        GrafTelemetry.recordNeo4jWrite(durationMs, operation, database)
       }
     }
 

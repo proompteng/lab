@@ -42,3 +42,6 @@ datasources:
             datasourceUid: prom
 testFramework:
   enabled: false
+
+dashboardsConfigMaps:
+  graf-graf-dashboard: graf-graf-dashboard

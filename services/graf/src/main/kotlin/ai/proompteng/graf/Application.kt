@@ -20,6 +20,7 @@ import ai.proompteng.graf.neo4j.Neo4jClient
 import ai.proompteng.graf.routes.graphRoutes
 import ai.proompteng.graf.security.ApiBearerTokenConfig
 import ai.proompteng.graf.services.GraphService
+import ai.proompteng.graf.telemetry.GrafTelemetry
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.ktor.client.HttpClient
@@ -27,10 +28,12 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.application.log
@@ -40,15 +43,21 @@ import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.bearer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import io.ktor.server.plugins.callid.CallId
+import io.ktor.server.plugins.callid.callId
 import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.statuspages.StatusPages
+import io.ktor.server.request.httpMethod
+import io.ktor.server.request.path
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.minio.MinioClient
+import io.opentelemetry.instrumentation.ktor.v3_0.KtorClientTelemetry
+import io.opentelemetry.instrumentation.ktor.v3_0.KtorServerTelemetry
 import io.temporal.authorization.AuthorizationGrpcMetadataProvider
 import io.temporal.authorization.AuthorizationTokenSupplier
 import io.temporal.client.WorkflowClient
@@ -67,6 +76,7 @@ import java.io.FileInputStream
 import java.net.URI
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
+import java.util.UUID
 import javax.net.ssl.TrustManagerFactory
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation as ServerContentNegotiation
 
@@ -141,6 +151,7 @@ fun main() {
         .setNamespace(temporalConfig.namespace)
         .setIdentity(temporalConfig.identity)
         .setDataConverter(temporalDataConverter)
+        .setContextPropagators(listOf(GrafTelemetry.openTelemetryContextPropagator()))
         .build(),
     )
   val codexResearchService = CodexResearchService(workflowClient, temporalConfig.taskQueue, argoConfig.pollTimeoutSeconds)
@@ -190,6 +201,7 @@ fun main() {
       openAiHttpClient?.close()
       minioClient.close()
       autoResearchRuntime?.agentService?.close()
+      GrafTelemetry.shutdown()
     },
   )
   server.start(wait = true)
@@ -206,8 +218,28 @@ fun Application.module(
   install(ServerContentNegotiation) {
     json(jsonConfig)
   }
+  install(KtorServerTelemetry) {
+    setOpenTelemetry(GrafTelemetry.openTelemetry)
+  }
+  install(CallId) {
+    header(HttpHeaders.XRequestId)
+    generate { UUID.randomUUID().toString() }
+  }
   install(CallLogging) {
     level = Level.INFO
+    mdc("request_id") { call -> call.callId ?: "" }
+    mdc("trace_id") { GrafTelemetry.currentTraceId() ?: "" }
+    mdc("span_id") { GrafTelemetry.currentSpanId() ?: "" }
+  }
+  intercept(ApplicationCallPipeline.Monitoring) {
+    val start = System.nanoTime()
+    try {
+      proceed()
+    } finally {
+      val statusCode = call.response.status()?.value ?: 0
+      val durationMs = (System.nanoTime() - start) / 1_000_000
+      GrafTelemetry.recordHttpRequest(call.request.httpMethod.value, statusCode, durationMs, call.request.path())
+    }
   }
   install(CORS) {
     anyHost()
@@ -273,6 +305,9 @@ private fun buildKubernetesHttpClient(
   return HttpClient(CIO) {
     install(ContentNegotiation) {
       json(jsonConfig)
+    }
+    install(KtorClientTelemetry) {
+      setOpenTelemetry(GrafTelemetry.openTelemetry)
     }
     defaultRequest {
       header("Authorization", "Bearer $token")
