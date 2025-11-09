@@ -8,6 +8,7 @@ metadata:
     app.kubernetes.io/component: persistence
     app.kubernetes.io/part-of: lab
   annotations:
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
     serving.knative.dev/rollout-duration: 10s
     argocd.argoproj.io/tracking-id: graf:serving.knative.dev/Service:graf/graf
 spec:
