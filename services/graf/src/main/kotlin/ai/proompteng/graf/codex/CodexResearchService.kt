@@ -10,6 +10,11 @@ class CodexResearchService(
   private val workflowClient: WorkflowClient,
   private val taskQueue: String,
   private val argoPollTimeoutSeconds: Long,
+  private val workflowStarter:
+    (CodexResearchWorkflow, CodexResearchWorkflowInput) -> WorkflowStartResult = { workflow, input ->
+      val execution = WorkflowClient.start(workflow::run, input)
+      WorkflowStartResult(workflowId = execution.workflowId, runId = execution.runId)
+    },
 ) {
   fun startResearch(
     request: CodexResearchRequest,
@@ -34,7 +39,7 @@ class CodexResearchService(
         artifactKey = artifactKey,
         argoPollTimeoutSeconds = argoPollTimeoutSeconds,
       )
-    val execution = WorkflowClient.start(workflow::run, input)
+    val execution = workflowStarter(workflow, input)
     return CodexResearchLaunchResult(
       workflowId = workflowId,
       runId = execution.runId,
@@ -42,6 +47,11 @@ class CodexResearchService(
     )
   }
 }
+
+data class WorkflowStartResult(
+  val workflowId: String,
+  val runId: String,
+)
 
 data class CodexResearchLaunchResult(
   val workflowId: String,
