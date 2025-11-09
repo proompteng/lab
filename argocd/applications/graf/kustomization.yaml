@@ -6,8 +6,6 @@ resources:
   - knative-service.yaml
   - graf-api-secret.yaml
   - neo4j-browser-service.yaml
-  - codex-research-workflow.yaml
-  - codex-research-rbac.yaml
 helmCharts:
   - name: neo4j
     repo: https://helm.neo4j.com/neo4j
