@@ -15,13 +15,13 @@ import ai.proompteng.graf.model.EntityPatchRequest
 import ai.proompteng.graf.model.RelationshipBatchRequest
 import ai.proompteng.graf.model.RelationshipPatchRequest
 import ai.proompteng.graf.services.GraphService
+import ai.proompteng.graf.telemetry.setRouteTemplate
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
-import io.ktor.server.routing.get
 import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import java.util.UUID
@@ -33,18 +33,21 @@ fun Route.graphRoutes(
   autoResearchPlannerService: AutoResearchPlannerService?,
 ) {
   post("/entities") {
+    call.setRouteTemplate("POST /v1/entities")
     val payload = call.receive<EntityBatchRequest>()
     val response = service.upsertEntities(payload)
     call.respond(HttpStatusCode.OK, response)
   }
 
   post("/relationships") {
+    call.setRouteTemplate("POST /v1/relationships")
     val payload = call.receive<RelationshipBatchRequest>()
     val response = service.upsertRelationships(payload)
     call.respond(HttpStatusCode.OK, response)
   }
 
   patch("/entities/{id}") {
+    call.setRouteTemplate("PATCH /v1/entities/{id}")
     val id = call.parameters["id"] ?: throw IllegalArgumentException("entity id missing")
     val payload = call.receive<EntityPatchRequest>()
     val response = service.patchEntity(id, payload)
@@ -52,6 +55,7 @@ fun Route.graphRoutes(
   }
 
   patch("/relationships/{id}") {
+    call.setRouteTemplate("PATCH /v1/relationships/{id}")
     val id = call.parameters["id"] ?: throw IllegalArgumentException("relationship id missing")
     val payload = call.receive<RelationshipPatchRequest>()
     val response = service.patchRelationship(id, payload)
@@ -59,6 +63,7 @@ fun Route.graphRoutes(
   }
 
   delete("/entities/{id}") {
+    call.setRouteTemplate("DELETE /v1/entities/{id}")
     val id = call.parameters["id"] ?: throw IllegalArgumentException("entity id missing")
     val payload = call.receive<DeleteRequest>()
     val response = service.deleteEntity(id, payload)
@@ -66,6 +71,7 @@ fun Route.graphRoutes(
   }
 
   delete("/relationships/{id}") {
+    call.setRouteTemplate("DELETE /v1/relationships/{id}")
     val id = call.parameters["id"] ?: throw IllegalArgumentException("relationship id missing")
     val payload = call.receive<DeleteRequest>()
     val response = service.deleteRelationship(id, payload)
@@ -73,18 +79,21 @@ fun Route.graphRoutes(
   }
 
   post("/complement") {
+    call.setRouteTemplate("POST /v1/complement")
     val payload = call.receive<ComplementRequest>()
     val response = service.complement(payload)
     call.respond(HttpStatusCode.OK, response)
   }
 
   post("/clean") {
+    call.setRouteTemplate("POST /v1/clean")
     val payload = call.receive<CleanRequest>()
     val response = service.clean(payload)
     call.respond(HttpStatusCode.OK, response)
   }
 
   post("/codex-research") {
+    call.setRouteTemplate("POST /v1/codex-research")
     val payload = call.receive<CodexResearchRequest>()
     val argoWorkflowName = "codex-research-${UUID.randomUUID()}"
     val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
@@ -109,6 +118,7 @@ fun Route.graphRoutes(
   }
 
   post("/autoresearch") {
+    call.setRouteTemplate("POST /v1/autoresearch")
     val planner =
       autoResearchPlannerService
         ?: return@post call.respond(

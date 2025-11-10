@@ -21,6 +21,8 @@ import ai.proompteng.graf.routes.graphRoutes
 import ai.proompteng.graf.security.ApiBearerTokenConfig
 import ai.proompteng.graf.services.GraphService
 import ai.proompteng.graf.telemetry.GrafTelemetry
+import ai.proompteng.graf.telemetry.currentRouteTemplate
+import ai.proompteng.graf.telemetry.setRouteTemplate
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.ktor.client.HttpClient
@@ -238,7 +240,8 @@ fun Application.module(
     } finally {
       val statusCode = call.response.status()?.value ?: 0
       val durationMs = (System.nanoTime() - start) / 1_000_000
-      GrafTelemetry.recordHttpRequest(call.request.httpMethod.value, statusCode, durationMs, call.request.path())
+      val routeTemplate = call.currentRouteTemplate() ?: "${call.request.httpMethod.value} ${call.request.path()}"
+      GrafTelemetry.recordHttpRequest(call.request.httpMethod.value, statusCode, durationMs, routeTemplate)
     }
   }
   install(CORS) {
@@ -276,6 +279,7 @@ fun Application.module(
   }
   routing {
     get("/") {
+      call.setRouteTemplate("GET /")
       call.respond(
         mapOf(
           "service" to "graf",
@@ -291,6 +295,7 @@ fun Application.module(
       }
     }
     get("/healthz") {
+      call.setRouteTemplate("GET /healthz")
       call.respond(mapOf("status" to "ok", "port" to System.getenv("PORT")))
     }
   }
