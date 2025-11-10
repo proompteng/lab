@@ -42,21 +42,31 @@ spec:
                 name: graf-api
                 key: bearer-tokens
                 optional: true
-        command:
-          - /bin/bash
-          - -c
+        command: ["/usr/local/bin/codex-bootstrap"]
+        args:
+          - "/bin/bash"
+          - "-lc"
           - |
             set -euo pipefail
 
             PROMPT_FILE=$(mktemp)
-            cat <<PROMPT > "$PROMPT_FILE"
+            cat <<'PROMPT' > "$PROMPT_FILE"
             {{inputs.parameters.prompt}}
             PROMPT
 
-            export CODEX_STAGE=research
-            printf 'metadata=%q\n' "{{inputs.parameters.metadata}}" >&2
-            codex exec --dangerously-bypass-approvals-and-sandbox --json --output-last-message /workspace/lab/codex-artifact.json < "$PROMPT_FILE"
-        workingDir: /workspace/lab
+            METADATA_FILE=$(mktemp)
+            cat <<'JSON' > "$METADATA_FILE"
+            {{inputs.parameters.metadata}}
+            JSON
+
+            export AUTO_RESEARCH_METADATA_PATH="$METADATA_FILE"
+            export AUTO_RESEARCH_ARTIFACT_PATH="${AUTO_RESEARCH_ARTIFACT_PATH:-/workspace/lab/codex-artifact.json}"
+            export AUTO_RESEARCH_JSON_LOG="${AUTO_RESEARCH_JSON_LOG:-/workspace/lab/.codex-research-events.jsonl}"
+            export AUTO_RESEARCH_AGENT_LOG="${AUTO_RESEARCH_AGENT_LOG:-/workspace/lab/.codex-research-agent.log}"
+            export AUTO_RESEARCH_RUNTIME_LOG="${AUTO_RESEARCH_RUNTIME_LOG:-/workspace/lab/.codex-research-runtime.log}"
+
+            echo "Launching Codex research run"
+            codex-research "$PROMPT_FILE" "$METADATA_FILE"
       retryStrategy:
         limit: 3
         retryPolicy: OnFailure
