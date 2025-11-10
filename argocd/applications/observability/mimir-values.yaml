@@ -89,12 +89,28 @@ query_scheduler:
 
 ruler:
   replicas: 1
+  extraInitContainers:
+    - name: copy-graf-rules
+      image: docker.io/library/busybox:1.36
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -euo pipefail
+          find /etc/mimir/rules -mindepth 1 -delete
+          cp -a /etc/mimir/rules-src/. /etc/mimir/rules/
   extraVolumes:
     - name: graf-mimir-rules
       configMap:
         name: graf-mimir-rules
+    - name: graf-mimir-rules-writable
+      emptyDir: {}
   extraVolumeMounts:
     - name: graf-mimir-rules
+      mountPath: /etc/mimir/rules-src
+      readOnly: true
+    - name: graf-mimir-rules-writable
       mountPath: /etc/mimir/rules
 
 store_gateway:
