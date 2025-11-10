@@ -72,6 +72,7 @@ import io.temporal.worker.WorkerFactory
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import org.neo4j.driver.AuthTokens
+import io.ktor.util.AttributeKey
 import org.neo4j.driver.GraphDatabase
 import org.slf4j.event.Level
 import java.io.FileInputStream
@@ -85,6 +86,8 @@ import io.ktor.server.plugins.contentnegotiation.ContentNegotiation as ServerCon
 private val buildVersion = System.getenv("GRAF_VERSION") ?: "dev"
 private val buildCommit = System.getenv("GRAF_COMMIT") ?: "unknown"
 private const val GRAF_BEARER_AUTH_NAME = "graf-bearer"
+private val callDurationAttribute = AttributeKey<Long>("graf.call.duration")
+private val ansiRegex = Regex("\\u001B\\[[;\\d]*m")
 
 private data class AutoResearchRuntime(
   val agentService: AutoResearchAgentService,
@@ -232,6 +235,19 @@ fun Application.module(
     mdc("request_id") { call -> call.callId ?: "" }
     mdc("trace_id") { GrafTelemetry.currentTraceId() ?: "" }
     mdc("span_id") { GrafTelemetry.currentSpanId() ?: "" }
+    format { call ->
+      val duration = if (call.attributes.contains(callDurationAttribute)) {
+        call.attributes[callDurationAttribute]
+      } else {
+        null
+      }
+      formatAccessLog(
+        call.request.httpMethod.value,
+        call.request.path(),
+        call.response.status()?.value,
+        duration,
+      )
+    }
   }
   intercept(ApplicationCallPipeline.Monitoring) {
     val start = System.nanoTime()
@@ -240,6 +256,7 @@ fun Application.module(
     } finally {
       val statusCode = call.response.status()?.value ?: 0
       val durationMs = (System.nanoTime() - start) / 1_000_000
+      call.attributes.put(callDurationAttribute, durationMs)
       val routeTemplate = call.currentRouteTemplate() ?: "${call.request.httpMethod.value} ${call.request.path()}"
       GrafTelemetry.recordHttpRequest(call.request.httpMethod.value, statusCode, durationMs, routeTemplate)
     }
@@ -375,3 +392,16 @@ private fun loadTrustManager(caPath: String) =
       }
     factory.trustManagers.firstOrNull()
   }
+
+internal fun formatAccessLog(
+  method: String,
+  path: String,
+  statusCode: Int?,
+  durationMs: Long?,
+): String {
+  val statusText = statusCode?.toString() ?: "unknown"
+  val durationText = durationMs?.let { " in ${it}ms" } ?: ""
+  return "$statusText $method - $path$durationText"
+}
+
+internal fun String.stripAnsi(): String = ansiRegex.replace(this, "")
