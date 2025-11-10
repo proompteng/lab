@@ -21,6 +21,10 @@ class AutoResearchAgentServiceTest {
       graphSampleLimit = 25,
       traceLoggingEnabled = false,
       traceLogLevel = "INFO",
+      knowledgeBaseName = "Graf knowledge base",
+      knowledgeBaseStage = "pilot",
+      operatorGuidance = "Focus on the highest-impact relationships.",
+      defaultStreamId = "auto-research",
     )
 
   @Test

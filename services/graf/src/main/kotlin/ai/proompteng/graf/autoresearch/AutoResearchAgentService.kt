@@ -23,7 +23,6 @@ import ai.proompteng.graf.config.AutoResearchConfig
 import ai.proompteng.graf.model.AutoResearchPlanIntent
 import ai.proompteng.graf.model.GraphRelationshipPlan
 import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import mu.KotlinLogging
 import java.io.Closeable
@@ -38,6 +37,7 @@ class AutoResearchAgentService(
   private val llmClient: LLMClient
   private val promptExecutor: SingleLLMPromptExecutor
   private val agentService: AIAgentService<String, String, *>
+  private val promptBuilder: AutoResearchPromptBuilder
   private val logger = KotlinLogging.logger {}
   private val traceLogger = OshaiKotlinLogging.logger("AutoResearchAgentTrace")
 
@@ -49,6 +49,7 @@ class AutoResearchAgentService(
     promptExecutor = SingleLLMPromptExecutor(llmClient)
     val graphStateTool = GraphStateTool(snapshotProvider, json, config.graphSampleLimit)
     val planValidationTool = GraphPlanValidationTool(json)
+    promptBuilder = AutoResearchPromptBuilder(config, json)
     val promptParams = buildPromptParams()
     val basePrompt =
       prompt(
@@ -108,7 +109,7 @@ class AutoResearchAgentService(
       "AutoResearch agent generating plan objective='${intent.objective}' streamId=${intent.streamId ?: "none"} " +
         "sampleLimit=$sampleLimit metadataKeys=$metadataKeys"
     }
-    val input = buildAgentInput(intent)
+    val input = promptBuilder.build(intent)
     val raw = agentService.createAgentAndRun(input)
     val payload = extractJson(raw)
     val plan =
@@ -126,63 +127,6 @@ class AutoResearchAgentService(
 
   override fun close() {
     (llmClient as? AutoCloseable)?.close()
-  }
-
-  private fun buildAgentInput(intent: AutoResearchPlanIntent): String {
-    val metadataBlock =
-      if (intent.metadata.isEmpty()) {
-        "No metadata was provided."
-      } else {
-        intent.metadata.entries.joinToString(separator = "\n") { (key, value) -> "- $key: $value" }
-      }
-    val focusLine =
-      intent.focus?.takeIf { it.isNotBlank() }?.let { "Primary focus or entity: $it" }
-        ?: "Focus on the highest-value relationship gaps."
-    val streamHint =
-      intent.streamId?.let { "Research stream: $it" } ?: "No explicit stream assigned."
-    val schemaSample =
-      json.encodeToString(
-        GraphRelationshipPlan(
-          objective = intent.objective,
-          summary = "Outline the relationship-building priority for NVIDIA supply tiers.",
-          currentSignals = listOf("Only one certified HBM3 supplier captured."),
-          candidateRelationships =
-            listOf(
-              GraphRelationshipPlan.CandidateRelationship(
-                fromId = "company:hynix",
-                toId = "facility:cheongju-fab",
-                relationshipType = "SUPPLIES",
-                rationale = "HBM3 capacity expansion announced in Sep 2025.",
-                confidence = "high",
-                requiredEvidence = listOf("Link to official capacity announcement"),
-                suggestedArtifacts = listOf("temporal://streams/hbm3"),
-              ),
-            ),
-          prioritizedPrompts = listOf("Gather 2025 wafer capacity disclosures for Tier-2 OSAT partners."),
-          missingData = listOf("Need contract details for NVIDIA ↔︎ ASE Singapore."),
-          recommendedTools = listOf("graph_state_tool", "codex:search"),
-        ),
-      )
-    val sampleLimit = intent.sampleLimit ?: config.graphSampleLimit
-    return buildString {
-      appendLine("You are the NVIDIA Graf relationship planner.")
-      appendLine("Objective: ${intent.objective}")
-      appendLine(focusLine)
-      appendLine(streamHint)
-      appendLine("Default graph sample limit: $sampleLimit")
-      appendLine("Metadata:")
-      appendLine(metadataBlock)
-      appendLine()
-      appendLine("Return ONLY valid JSON that matches the GraphRelationshipPlan schema shown below:")
-      appendLine(schemaSample)
-      appendLine()
-      appendLine(
-        "Use the graph_state_tool before proposing relationships so you know which entities already exist. Pass limit=$sampleLimit unless you need a smaller window.",
-      )
-      appendLine(
-        "Surface 3-5 prioritized prompts that downstream Codex runs can execute to validate or expand the relationships.",
-      )
-    }
   }
 
   private fun extractJson(raw: String): String {
@@ -228,9 +172,9 @@ class AutoResearchAgentService(
   companion object {
     private val SYSTEM_PROMPT =
       """
-      You are the NVIDIA Graf relationship architect described in the OpenAI Cookbook orchestration patterns.
+      You are the Graf knowledge base relationship architect described in the OpenAI Cookbook orchestration patterns.
       - Study the current Neo4j graph via graph_state_tool before proposing actions.
-      - Identify the highest-value relationship gaps across the entire NVIDIA ecosystem: partners, manufacturers, suppliers, investors, research alliances, or operational dependencies (not just supply chain nodes).
+      - Identify the highest-value relationship gaps across the knowledge base (partners, manufacturers, suppliers, research alliances, or operational dependencies).
       - For every suggested relationship or entity delta, cite the missing evidence, confidence, and the concrete actions downstream Codex researchers should perform next.
       - Always emit strict JSON that matches the GraphRelationshipPlan schema: every field (objective, summary, currentSignals, candidateRelationships, prioritizedPrompts, missingData, recommendedTools) must be present. `candidateRelationships` entries must include fromId, toId, relationshipType, rationale, confidence, requiredEvidence, and suggestedArtifacts.
       - Before providing your final answer, call graph_plan_validator with the JSON you intend to return so the schema is validated.

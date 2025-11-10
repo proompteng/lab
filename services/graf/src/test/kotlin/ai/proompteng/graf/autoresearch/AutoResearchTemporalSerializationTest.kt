@@ -13,7 +13,7 @@ import kotlin.test.assertFailsWith
 class AutoResearchTemporalSerializationTest {
   private val intent =
     AutoResearchPlanIntent(
-      objective = "Map NVIDIA supply chain",
+      objective = "Map supply chain partnerships",
       focus = "HBM",
       streamId = "stream-123",
       metadata = mapOf("requester" to "graf-api", "region" to "NA"),

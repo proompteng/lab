@@ -11,6 +11,10 @@ data class AutoResearchConfig(
   val graphSampleLimit: Int,
   val traceLoggingEnabled: Boolean,
   val traceLogLevel: String,
+  val knowledgeBaseName: String,
+  val knowledgeBaseStage: String,
+  val operatorGuidance: String,
+  val defaultStreamId: String,
 ) {
   val isReady: Boolean
     get() = enabled && !openAiApiKey.isNullOrBlank()
@@ -20,6 +24,11 @@ data class AutoResearchConfig(
     private const val DEFAULT_ITERATIONS = 16
     private const val DEFAULT_GRAPH_SAMPLE_LIMIT = 25
     private const val DEFAULT_TRACE_LOG_LEVEL = "INFO"
+    private const val DEFAULT_KNOWLEDGE_BASE_NAME = "Graf knowledge base"
+    private const val DEFAULT_KNOWLEDGE_BASE_STAGE = "pilot"
+    private const val DEFAULT_OPERATOR_GUIDANCE =
+      "Focus on the highest-impact relationships in the knowledge base, explain why each matters, and share any follow-up artifacts ops should capture."
+    private const val DEFAULT_STREAM_ID = "auto-research"
 
     fun fromEnvironment(): AutoResearchConfig = fromEnvironment(System.getenv())
 
@@ -39,6 +48,14 @@ data class AutoResearchConfig(
       val traceLoggingEnabled =
         env["AGENT_TRACE_LOGGING"]?.let { it.equals("true", ignoreCase = true) || it == "1" } ?: true
       val traceLogLevel = env["AGENT_TRACE_LOG_LEVEL"]?.takeIf { it.isNotBlank() } ?: DEFAULT_TRACE_LOG_LEVEL
+      val knowledgeBaseName =
+        env["AGENT_KNOWLEDGE_BASE_NAME"]?.takeIf { it.isNotBlank() } ?: DEFAULT_KNOWLEDGE_BASE_NAME
+      val knowledgeBaseStage =
+        env["AGENT_KNOWLEDGE_BASE_STAGE"]?.takeIf { it.isNotBlank() } ?: DEFAULT_KNOWLEDGE_BASE_STAGE
+      val operatorGuidance =
+        env["AGENT_OPERATOR_GUIDANCE"]?.takeIf { it.isNotBlank() } ?: DEFAULT_OPERATOR_GUIDANCE
+      val defaultStreamId =
+        env["AGENT_DEFAULT_STREAM_ID"]?.takeIf { it.isNotBlank() } ?: DEFAULT_STREAM_ID
       return AutoResearchConfig(
         enabled = enabled,
         openAiApiKey = apiKey,
@@ -48,6 +65,10 @@ data class AutoResearchConfig(
         graphSampleLimit = graphSampleLimit,
         traceLoggingEnabled = traceLoggingEnabled,
         traceLogLevel = traceLogLevel,
+        knowledgeBaseName = knowledgeBaseName,
+        knowledgeBaseStage = knowledgeBaseStage,
+        operatorGuidance = operatorGuidance,
+        defaultStreamId = defaultStreamId,
       )
     }
   }

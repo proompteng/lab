@@ -1,6 +1,6 @@
 # Graf (Neo4j persistence service)
 
-This Kotlin/Ktor microservice implements the persistence layer described in [docs/nvidia-supply-chain-graph-design.md](../../docs/nvidia-supply-chain-graph-design.md). It exposes CRUD/complement/clean endpoints, validates payload shapes, and writes changes to Neo4j using the official Java driver.
+This Kotlin/Ktor microservice implements the persistence layer described in [docs/graf-knowledge-base-design.md](../../docs/graf-knowledge-base-design.md). It exposes CRUD/complement/clean endpoints, validates payload shapes, and writes changes to Neo4j using the official Java driver.
 
 ## Features
 - `POST /v1/entities` / `POST /v1/relationships` for upserts with artifact provenance metadata.
@@ -87,17 +87,18 @@ The entrypoint is `bin/graf` from Gradle's `installDist`, and the runtime image 
 
 ## AutoResearch GPT-5 relationship planner
 
-- Set `AGENT_ENABLED=true` plus either `AGENT_OPENAI_API_KEY` or `OPENAI_API_KEY`. Optional overrides: `AGENT_OPENAI_BASE_URL`, `AGENT_MODEL` (defaults to `gpt-5`), `AGENT_MAX_ITERATIONS`, `AGENT_GRAPH_SAMPLE_LIMIT`.
+- Set `AGENT_ENABLED=true` plus either `AGENT_OPENAI_API_KEY` or `OPENAI_API_KEY`. Optional overrides: `AGENT_OPENAI_BASE_URL`, `AGENT_MODEL` (defaults to `gpt-5`), `AGENT_MAX_ITERATIONS`, `AGENT_GRAPH_SAMPLE_LIMIT`, and the new AutoResearch metadata vars documented in docs/graf-knowledge-base-design.md.
 - Koog trace logs are enabled by default so every agent step/tool execution hits the service logs. Set `AGENT_TRACE_LOGGING=false` to disable. Use `AGENT_TRACE_LOG_LEVEL` (`INFO` or `DEBUG`; any other value falls back to `INFO`) to tune verbosity.
-- When enabled, `POST /v1/autoresearch` kicks off the AutoResearch ReAct agent with the `graph_state_tool`. The agent follows the OpenAI Cookbook guidance for multi-step planners, runs on GPT-5 with **High** reasoning effort, and targets the entire NVIDIA relationship surface (partners, manufacturers, suppliers, investors, research alliances—not only supply chain tiers). Provide a JSON body:
+- When enabled, `POST /v1/autoresearch` kicks off the AutoResearch ReAct agent with the `graph_state_tool`. The agent follows the OpenAI Cookbook guidance for multi-step planners, runs on GPT-5 with **High** reasoning effort, and targets the broader Graf knowledge base (partners, manufacturers, suppliers, research alliances, and operational dependencies). Provide a JSON body:
   ```json
   {
-    "objective": "Map NVIDIA's 2025 AI research alliances across universities and vendors",
+    "objective": "Map 2025 supply chain alliances across universities and vendors",
     "focus": "research",
-    "streamId": "ecosystem-west",
+    "streamId": "knowledge-stream-west",
     "metadata": {
-      "artifactId": "temporal://streams/ecosystem-west/2025-11-09"
+      "artifactId": "temporal://streams/knowledge-stream-west/2025-11-09"
     }
   }
   ```
   The API responds immediately (`202 Accepted`) with the Temporal workflow metadata (IDs, timestamps) so clients can poll progress asynchronously. A downstream worker writes the eventual plan to storage once the agent completes; the agent inspects the live Neo4j graph through the graph snapshot tool before suggesting updates.
+- Retarget the AutoResearch prompt by changing `AGENT_KNOWLEDGE_BASE_NAME`, `AGENT_KNOWLEDGE_BASE_STAGE`, `AGENT_OPERATOR_GUIDANCE`, and `AGENT_DEFAULT_STREAM_ID` so the agent describes the desired domain and metadata tags without touching Kotlin.

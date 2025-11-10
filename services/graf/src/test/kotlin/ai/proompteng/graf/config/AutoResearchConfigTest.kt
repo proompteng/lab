@@ -43,4 +43,36 @@ class AutoResearchConfigTest {
     assertTrue(config.traceLoggingEnabled)
     assertEquals("INFO", config.traceLogLevel)
   }
+
+  @Test
+  fun `knowledge base metadata defaults to neutral values`() {
+    val config = AutoResearchConfig.fromEnvironment(emptyMap<String, String>())
+
+    assertEquals("Graf knowledge base", config.knowledgeBaseName)
+    assertEquals("pilot", config.knowledgeBaseStage)
+    assertEquals(
+      "Focus on the highest-impact relationships in the knowledge base, explain why each matters, and share any follow-up artifacts ops should capture.",
+      config.operatorGuidance,
+    )
+    assertEquals("auto-research", config.defaultStreamId)
+  }
+
+  @Test
+  fun `knowledge base metadata env overrides applied`() {
+    val config =
+      AutoResearchConfig.fromEnvironment(
+        mapOf(
+          "AGENT_KNOWLEDGE_BASE_NAME" to "Summit research base",
+          "AGENT_KNOWLEDGE_BASE_STAGE" to "production",
+          "AGENT_OPERATOR_GUIDANCE" to "Prioritize compliance relationships.",
+          "AGENT_DEFAULT_STREAM_ID" to "summit-stream",
+        ),
+      )
+
+    assertEquals("Summit research base", config.knowledgeBaseName)
+    assertEquals("production", config.knowledgeBaseStage)
+    assertEquals("Prioritize compliance relationships.", config.operatorGuidance)
+    assertEquals("summit-stream", config.defaultStreamId)
+  }
 }
+

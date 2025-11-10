@@ -14,7 +14,7 @@ class GraphStateTool(
   override val argsSerializer = GraphContextQuery.serializer()
   override val name: String = "graph_state_tool"
   override val description: String =
-    "Inspect the NVIDIA Graf Neo4j knowledge graph. Provide a focus keyword, nodeId, or relationshipId to sample the latest state."
+    "Inspect the Graf knowledge base Neo4j graph. Provide a focus keyword, nodeId, or relationshipId to sample the latest state."
 
   override suspend fun doExecute(args: GraphContextQuery): String {
     val safeArgs =

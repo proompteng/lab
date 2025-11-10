@@ -1,423 +1,423 @@
 {
   "info": {
-    "name": "proompteng",
-    "description": "Graf CRUD, complement, clean, and automation routes keyed for the lab platform. Import this collection into Postman, set the base URL + bearer token variables, and run the requests in order to prime the Neo4j persistence layer and automation workflows.",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "name": "proompteng", 
+    "description": "Graf CRUD, complement, clean, and automation routes keyed for the lab platform. Import this collection into Postman, set the base URL + bearer token variables, and run the requests in order to prime the Neo4j persistence layer and automation workflows.", 
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json", 
     "version": {
-      "major": 1,
-      "minor": 0,
+      "major": 1, 
+      "minor": 0, 
       "patch": 0
-    },
+    }, 
     "_postman_id": "bf5e7016-b5a6-4c6d-aa67-3f7abe7f8531"
-  },
+  }, 
   "item": [
     {
-      "name": "Upsert entities",
+      "name": "Upsert entities", 
       "request": {
-        "method": "POST",
+        "method": "POST", 
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{graf_token}}",
-            "type": "text",
+            "key": "Authorization", 
+            "value": "Bearer {{graf_token}}", 
+            "type": "text", 
             "description": "Token from graf-api secret (e.g., graf-api/bearer-tokens entry)."
-          },
+          }, 
           {
-            "key": "Content-Type",
-            "value": "application/json",
+            "key": "Content-Type", 
+            "value": "application/json", 
             "type": "text"
           }
-        ],
+        ], 
         "body": {
-          "mode": "raw",
-          "raw": "{\n  \"entities\": [\n    {\n      \"id\": \"nvidia\",\n      \"label\": \"Company\",\n      \"properties\": {\n        \"name\": \"NVIDIA\",\n        \"focus\": \"AI research\",\n        \"hq\": \"Santa Clara\"\n      },\n      \"streamId\": \"ecosystem-west\",\n      \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-09\"\n    },\n    {\n      \"id\": \"openai\",\n      \"label\": \"ResearchLab\",\n      \"properties\": {\n        \"name\": \"OpenAI\",\n        \"focus\": \"general intelligence\"\n      },\n      \"streamId\": \"ecosystem-west\",\n      \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-09\"\n    }\n  ]\n}",
+          "mode": "raw", 
+          "raw": "{\n  \"entities\": [\n    {\n      \"id\": \"core-dynamo\",\n      \"label\": \"Company\",\n      \"properties\": {\n        \"name\": \"NVIDIA\",\n        \"focus\": \"AI research\",\n        \"hq\": \"Santa Clara\"\n      },\n      \"streamId\": \"ecosystem-west\",\n      \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-09\"\n    },\n    {\n      \"id\": \"altair-labs\",\n      \"label\": \"ResearchLab\",\n      \"properties\": {\n        \"name\": \"OpenAI\",\n        \"focus\": \"general intelligence\"\n      },\n      \"streamId\": \"ecosystem-west\",\n      \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-09\"\n    }\n  ]\n}", 
           "options": {
             "raw": {
               "language": "json"
             }
           }
-        },
+        }, 
         "url": {
-          "raw": "{{graf_base_url}}/v1/entities",
+          "raw": "{{graf_base_url}}/v1/entities", 
           "host": [
             "{{graf_base_url}}"
-          ],
+          ], 
           "path": [
-            "v1",
+            "v1", 
             "entities"
           ]
-        },
+        }, 
         "description": "Creates or updates the nodes that the AutoResearch agent and downstream services will inspect. Returns 200 OK with batch results."
-      },
+      }, 
       "response": []
-    },
+    }, 
     {
-      "name": "Upsert relationships",
+      "name": "Upsert relationships", 
       "request": {
-        "method": "POST",
+        "method": "POST", 
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{graf_token}}",
+            "key": "Authorization", 
+            "value": "Bearer {{graf_token}}", 
             "type": "text"
-          },
+          }, 
           {
-            "key": "Content-Type",
-            "value": "application/json",
+            "key": "Content-Type", 
+            "value": "application/json", 
             "type": "text"
           }
-        ],
+        ], 
         "body": {
-          "mode": "raw",
-          "raw": "{\n  \"relationships\": [\n    {\n      \"id\": \"nvidia-openai\",\n      \"type\": \"PARTNER_WITH\",\n      \"fromId\": \"nvidia\",\n      \"toId\": \"openai\",\n      \"properties\": {\n        \"since\": \"2023\",\n        \"notes\": \"Research collaboration on multimodal models\"\n      },\n      \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-09\"\n    }\n  ]\n}",
+          "mode": "raw", 
+          "raw": "{\n  \"relationships\": [\n    {\n      \"id\": \"core-dynamo-altair-labs\",\n      \"type\": \"PARTNER_WITH\",\n      \"fromId\": \"core-dynamo\",\n      \"toId\": \"altair-labs\",\n      \"properties\": {\n        \"since\": \"2023\",\n        \"notes\": \"Research collaboration on multimodal models\"\n      },\n      \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-09\"\n    }\n  ]\n}", 
           "options": {
             "raw": {
               "language": "json"
             }
           }
-        },
+        }, 
         "url": {
-          "raw": "{{graf_base_url}}/v1/relationships",
+          "raw": "{{graf_base_url}}/v1/relationships", 
           "host": [
             "{{graf_base_url}}"
-          ],
+          ], 
           "path": [
-            "v1",
+            "v1", 
             "relationships"
           ]
-        },
+        }, 
         "description": "Heartbeats a relationship or installs a new edge between nodes; returns 200 OK with batch IDs."
-      },
+      }, 
       "response": []
-    },
+    }, 
     {
-      "name": "Patch entity",
+      "name": "Patch entity", 
       "request": {
-        "method": "PATCH",
+        "method": "PATCH", 
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{graf_token}}",
+            "key": "Authorization", 
+            "value": "Bearer {{graf_token}}", 
             "type": "text"
-          },
+          }, 
           {
-            "key": "Content-Type",
-            "value": "application/json",
+            "key": "Content-Type", 
+            "value": "application/json", 
             "type": "text"
           }
-        ],
+        ], 
         "body": {
-          "mode": "raw",
-          "raw": "{\n  \"set\": {\n    \"hq\": \"Santa Clara, CA\",\n    \"sector\": \"Semiconductors\"\n  },\n  \"remove\": [\"deprecatedTag\"],\n  \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-10\"\n}",
+          "mode": "raw", 
+          "raw": "{\n  \"set\": {\n    \"hq\": \"Santa Clara, CA\",\n    \"sector\": \"Semiconductors\"\n  },\n  \"remove\": [\"deprecatedTag\"],\n  \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-10\"\n}", 
           "options": {
             "raw": {
               "language": "json"
             }
           }
-        },
+        }, 
         "url": {
-          "raw": "{{graf_base_url}}/v1/entities/nvidia",
+          "raw": "{{graf_base_url}}/v1/entities/core-dynamo", 
           "host": [
             "{{graf_base_url}}"
-          ],
+          ], 
           "path": [
-            "v1",
-            "entities",
-            "nvidia"
+            "v1", 
+            "entities", 
+            "core-dynamo"
           ]
-        },
-        "description": "Updates `nvidia` properties by merging `set` and pruning keys listed in `remove`; returns 200 OK."
-      },
+        }, 
+        "description": "Updates `core-dynamo` properties by merging `set` and pruning keys listed in `remove`; returns 200 OK."
+      }, 
       "response": []
-    },
+    }, 
     {
-      "name": "Patch relationship",
+      "name": "Patch relationship", 
       "request": {
-        "method": "PATCH",
+        "method": "PATCH", 
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{graf_token}}",
+            "key": "Authorization", 
+            "value": "Bearer {{graf_token}}", 
             "type": "text"
-          },
+          }, 
           {
-            "key": "Content-Type",
-            "value": "application/json",
+            "key": "Content-Type", 
+            "value": "application/json", 
             "type": "text"
           }
-        ],
+        ], 
         "body": {
-          "mode": "raw",
-          "raw": "{\n  \"set\": {\n    \"confidence\": \"high\",\n    \"evidence\": \"NVIDIA/ OpenAI 2024 memo\"\n  },\n  \"remove\": [],\n  \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-10\"\n}",
+          "mode": "raw", 
+          "raw": "{\n  \"set\": {\n    \"confidence\": \"high\",\n    \"evidence\": \"Core Dynamo / Altair Labs 2024 memo\"\n  },\n  \"remove\": [],\n  \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-10\"\n}", 
           "options": {
             "raw": {
               "language": "json"
             }
           }
-        },
+        }, 
         "url": {
-          "raw": "{{graf_base_url}}/v1/relationships/nvidia-openai",
+          "raw": "{{graf_base_url}}/v1/relationships/core-dynamo-altair-labs", 
           "host": [
             "{{graf_base_url}}"
-          ],
+          ], 
           "path": [
-            "v1",
-            "relationships",
-            "nvidia-openai"
+            "v1", 
+            "relationships", 
+            "core-dynamo-altair-labs"
           ]
-        },
-        "description": "Patch metadata on an existing relationship ID `nvidia-openai`; returns 200 OK indicating success."
-      },
+        }, 
+        "description": "Patch metadata on an existing relationship ID `core-dynamo-altair-labs`; returns 200 OK indicating success."
+      }, 
       "response": []
-    },
+    }, 
     {
-      "name": "Delete entity",
+      "name": "Delete entity", 
       "request": {
-        "method": "DELETE",
+        "method": "DELETE", 
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{graf_token}}",
+            "key": "Authorization", 
+            "value": "Bearer {{graf_token}}", 
             "type": "text"
-          },
+          }, 
           {
-            "key": "Content-Type",
-            "value": "application/json",
+            "key": "Content-Type", 
+            "value": "application/json", 
             "type": "text"
           }
-        ],
+        ], 
         "body": {
-          "mode": "raw",
-          "raw": "{\n  \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-11\",\n  \"reason\": \"Retiring stale vendor record\"\n}",
+          "mode": "raw", 
+          "raw": "{\n  \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-11\",\n  \"reason\": \"Retiring stale vendor record\"\n}", 
           "options": {
             "raw": {
               "language": "json"
             }
           }
-        },
+        }, 
         "url": {
-          "raw": "{{graf_base_url}}/v1/entities/obsolete-node",
+          "raw": "{{graf_base_url}}/v1/entities/obsolete-node", 
           "host": [
             "{{graf_base_url}}"
-          ],
+          ], 
           "path": [
-            "v1",
-            "entities",
+            "v1", 
+            "entities", 
             "obsolete-node"
           ]
-        },
+        }, 
         "description": "Soft deletes a node by adding metadata; response is 200 OK and preserves Neo4j audit fields."
-      },
+      }, 
       "response": []
-    },
+    }, 
     {
-      "name": "Delete relationship",
+      "name": "Delete relationship", 
       "request": {
-        "method": "DELETE",
+        "method": "DELETE", 
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{graf_token}}",
+            "key": "Authorization", 
+            "value": "Bearer {{graf_token}}", 
             "type": "text"
-          },
+          }, 
           {
-            "key": "Content-Type",
-            "value": "application/json",
+            "key": "Content-Type", 
+            "value": "application/json", 
             "type": "text"
           }
-        ],
+        ], 
         "body": {
-          "mode": "raw",
-          "raw": "{\n  \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-11\",\n  \"reason\": \"Relationship no longer relevant\"\n}",
+          "mode": "raw", 
+          "raw": "{\n  \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-11\",\n  \"reason\": \"Relationship no longer relevant\"\n}", 
           "options": {
             "raw": {
               "language": "json"
             }
           }
-        },
+        }, 
         "url": {
-          "raw": "{{graf_base_url}}/v1/relationships/obsolete-edge",
+          "raw": "{{graf_base_url}}/v1/relationships/obsolete-edge", 
           "host": [
             "{{graf_base_url}}"
-          ],
+          ], 
           "path": [
-            "v1",
-            "relationships",
+            "v1", 
+            "relationships", 
             "obsolete-edge"
           ]
-        },
+        }, 
         "description": "Marks the relationship record as deleted without dropping it; response is 200 OK."
-      },
+      }, 
       "response": []
-    },
+    }, 
     {
-      "name": "Complement entity",
+      "name": "Complement entity", 
       "request": {
-        "method": "POST",
+        "method": "POST", 
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{graf_token}}",
+            "key": "Authorization", 
+            "value": "Bearer {{graf_token}}", 
             "type": "text"
-          },
+          }, 
           {
-            "key": "Content-Type",
-            "value": "application/json",
+            "key": "Content-Type", 
+            "value": "application/json", 
             "type": "text"
           }
-        ],
+        ], 
         "body": {
-          "mode": "raw",
-          "raw": "{\n  \"id\": \"nvidia\",\n  \"hints\": {\n    \"goal\": \"Surface new research partners for AI\",\n    \"confidence\": \"draft\"\n  },\n  \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-11\"\n}",
+          "mode": "raw", 
+          "raw": "{\n  \"id\": \"core-dynamo\",\n  \"hints\": {\n    \"goal\": \"Surface new research partners for AI\",\n    \"confidence\": \"draft\"\n  },\n  \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-11\"\n}", 
           "options": {
             "raw": {
               "language": "json"
             }
           }
-        },
+        }, 
         "url": {
-          "raw": "{{graf_base_url}}/v1/complement",
+          "raw": "{{graf_base_url}}/v1/complement", 
           "host": [
             "{{graf_base_url}}"
-          ],
+          ], 
           "path": [
-            "v1",
+            "v1", 
             "complement"
           ]
-        },
+        }, 
         "description": "Asks the complement helper to add hints for the entity before an AutoResearch run; returns 200 OK with complement details."
-      },
+      }, 
       "response": []
-    },
+    }, 
     {
-      "name": "Run clean",
+      "name": "Run clean", 
       "request": {
-        "method": "POST",
+        "method": "POST", 
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{graf_token}}",
+            "key": "Authorization", 
+            "value": "Bearer {{graf_token}}", 
             "type": "text"
-          },
+          }, 
           {
-            "key": "Content-Type",
-            "value": "application/json",
+            "key": "Content-Type", 
+            "value": "application/json", 
             "type": "text"
           }
-        ],
+        ], 
         "body": {
-          "mode": "raw",
-          "raw": "{\n  \"artifactId\": \"temporal://streams/cleanup/2025-11-11\",\n  \"olderThanHours\": 72\n}",
+          "mode": "raw", 
+          "raw": "{\n  \"artifactId\": \"temporal://streams/cleanup/2025-11-11\",\n  \"olderThanHours\": 72\n}", 
           "options": {
             "raw": {
               "language": "json"
             }
           }
-        },
+        }, 
         "url": {
-          "raw": "{{graf_base_url}}/v1/clean",
+          "raw": "{{graf_base_url}}/v1/clean", 
           "host": [
             "{{graf_base_url}}"
-          ],
+          ], 
           "path": [
-            "v1",
+            "v1", 
             "clean"
           ]
-        },
+        }, 
         "description": "Cleans stale records or artifacts, returning 200 OK and the `affected` count."
-      },
+      }, 
       "response": []
-    },
+    }, 
     {
-      "name": "Codex research workflow",
+      "name": "Codex research workflow", 
       "request": {
-        "method": "POST",
+        "method": "POST", 
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{graf_token}}",
+            "key": "Authorization", 
+            "value": "Bearer {{graf_token}}", 
             "type": "text"
-          },
+          }, 
           {
-            "key": "Content-Type",
-            "value": "application/json",
+            "key": "Content-Type", 
+            "value": "application/json", 
             "type": "text"
           }
-        ],
+        ], 
         "body": {
-          "mode": "raw",
-          "raw": "{\n  \"prompt\": \"Summarize the February release notes for the NVIDIA partner graph\",\n  \"metadata\": {\n    \"source\": \"ops-dashboard\"\n  }\n}",
+          "mode": "raw", 
+          "raw": "{\n  \"prompt\": \"Summarize the February release notes for the NVIDIA partner graph\",\n  \"metadata\": {\n    \"source\": \"ops-dashboard\"\n  }\n}", 
           "options": {
             "raw": {
               "language": "json"
             }
           }
-        },
+        }, 
         "url": {
-          "raw": "{{graf_base_url}}/v1/codex-research",
+          "raw": "{{graf_base_url}}/v1/codex-research", 
           "host": [
             "{{graf_base_url}}"
-          ],
+          ], 
           "path": [
-            "v1",
+            "v1", 
             "codex-research"
           ]
-        },
+        }, 
         "description": "Starts the Codex research Argo workflow; returns 202 Accepted with workflow/run IDs and MinIO artifact reference."
-      },
+      }, 
       "response": []
-    },
+    }, 
     {
-      "name": "AutoResearch workflow",
+      "name": "AutoResearch workflow", 
       "request": {
-        "method": "POST",
+        "method": "POST", 
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{graf_token}}",
+            "key": "Authorization", 
+            "value": "Bearer {{graf_token}}", 
             "type": "text"
-          },
+          }, 
           {
-            "key": "Content-Type",
-            "value": "application/json",
+            "key": "Content-Type", 
+            "value": "application/json", 
             "type": "text"
           }
-        ],
+        ], 
         "body": {
-          "mode": "raw",
-          "raw": "{\n  \"objective\": \"Map NVIDIA's 2025 AI research alliances across universities and vendors\",\n  \"focus\": \"research\",\n  \"streamId\": \"ecosystem-west\",\n  \"metadata\": {\n    \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-09\"\n  }\n}",
+          "mode": "raw", 
+          "raw": "{\n  \"objective\": \"Map 2025 supply chain alliances across universities and vendors\",\n  \"focus\": \"research\",\n  \"streamId\": \"ecosystem-west\",\n  \"metadata\": {\n    \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-09\"\n  }\n}", 
           "options": {
             "raw": {
               "language": "json"
             }
           }
-        },
+        }, 
         "url": {
-          "raw": "{{graf_base_url}}/v1/autoresearch",
+          "raw": "{{graf_base_url}}/v1/autoresearch", 
           "host": [
             "{{graf_base_url}}"
-          ],
+          ], 
           "path": [
-            "v1",
+            "v1", 
             "autoresearch"
           ]
-        },
+        }, 
         "description": "Triggers the GPT-5 AutoResearch planner; returns 202 Accepted with Temporal workflow metadata while the agent runs asynchronously."
-      },
+      }, 
       "response": []
     }
-  ],
+  ], 
   "variable": [
     {
-      "key": "graf_base_url",
-      "value": "https://graf.proompteng.ai",
-      "type": "string",
+      "key": "graf_base_url", 
+      "value": "https://graf.proompteng.ai", 
+      "type": "string", 
       "description": "Graf service ingress (override when targeting local/alternate clusters)."
-    },
+    }, 
     {
-      "key": "graf_token",
-      "value": "",
-      "type": "string",
+      "key": "graf_token", 
+      "value": "", 
+      "type": "string", 
       "description": "Bearer token from the graf-api secret (matches graf-api/bearer-tokens)."
     }
   ]

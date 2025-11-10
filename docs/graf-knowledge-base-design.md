@@ -1,7 +1,9 @@
-# NVIDIA Relationship Graph Design
+# Graf Knowledge Base Design
+> **Note:** This document replaces docs/nvidia-supply-chain-graph-design.md with a domain-neutral knowledge base design guide; update bookmarks and references accordingly.
+
 
 ## Purpose
-- Capture the full NVIDIA ecosystem—the foundries, ODMs, logistics providers, strategic partners, software vendors, investors, and research alliances—inside a living Neo4j knowledge graph.
+- Capture the relevant ecosystem—the foundries, ODMs, logistics providers, strategic partners, software vendors, investors, and research alliances—inside a living Neo4j knowledge graph.
 - Automate discovery/enrichment through Temporal → Argo → Codex research artifacts, persist those findings via a Knative-hosted Kotlin service, and make the graph operable through a Tailscale-accessible Neo4j Browser.
 
 ## Key Objectives
@@ -60,7 +62,7 @@ graph LR
 - **Composite modeling**: `CompositeTier` or `CompositeStack` nodes aggregate tiers (Tier 1, Tier 2...) and combine logistic/partner clusters for visualizations.
 
 ## Temporal → Argo → Codex → Service Flow for Concurrent Streams
-1. **Trigger**: Temporal workflow (namespace `nvidia-supply-chain`) schedules research pulses per stream (e.g., foundries, ODMs, logistics). Backlogs, low confidence, or conflicting data escalate through review steps.
+1. **Trigger**: Temporal workflow (namespace `graf`) schedules research pulses per stream (e.g., foundries, ODMs, logistics). Backlogs, low confidence, or conflicting data escalate through review steps.
 2. **Argo workflow execution**:
    - Pull research prompt templates associated with the stream.
    - Launch multiple Codex executors to cover different data sources or geographies for that stream; each executor emits artifacts tagged with `streamId`/`instanceId`.
@@ -176,6 +178,19 @@ graph TB
    - Return artifact metadata for Temporal.
 5. Deploy monitoring (Prometheus/Grafana) for Neo4j, Knative service, and Temporal.
 
+## AutoResearch configuration
+
+Set the following environment variables when you need to retarget AutoResearch prompts, metadata tags, or stream labels without editing Kotlin sources:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AGENT_KNOWLEDGE_BASE_NAME` | `Graf knowledge base` | Friendly label surfaced in the relationship planner prompt. |
+| `AGENT_KNOWLEDGE_BASE_STAGE` | `pilot` | Stage metadata that names the current operating context. |
+| `AGENT_OPERATOR_GUIDANCE` | `Focus on the highest-impact relationships in the knowledge base, explain why each matters, and share any follow-up artifacts ops should capture.` | Supplemental guidance that the agent echoes before analyzing the graph. |
+| `AGENT_DEFAULT_STREAM_ID` | `auto-research` | Default stream identifier inserted into prompts and metadata when callers omit `streamId`. |
+
+The AutoResearch prompt builder logs and renders these values so operators can track which knowledge base and stage produced a given plan.
+
 ## Validation & Testing
 - Unit tests for Kotlin endpoints using embedded Neo4j test harness.
 - Temporal workflow tests mock Argo/Codex responses to ensure path coverage (success, low confidence, cleanup).
@@ -186,4 +201,4 @@ graph TB
 1. Capture Codex artifact schema (entities, relationships, metadata, confidence) and share with Argo/Temporal teams.
 2. Scaffold Kotlin Knative service and Neo4j driver modules.
 3. Define Temporal workflow templates and integrate Argo artifact retrieval logic.
-4. Populate initial graph with known NVIDIA suppliers (foundries + ODMs + logistics) and label with procurement tiers.
+4. Populate initial graph with known supply partners (foundries + ODMs + logistics) and label with procurement tiers.
