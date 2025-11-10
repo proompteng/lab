@@ -6,6 +6,7 @@ resources:
   - knative-service.yaml
   - graf-api-secret.yaml
   - graf-auth-secret.yaml
+  - graf-openai-secret.yaml
   - neo4j-browser-service.yaml
 helmCharts:
   - name: neo4j
