@@ -28,5 +28,6 @@
 
 - If OTLP exporters fail, inspect `kubectl -n graf logs deployment/graf` for `Failed to export` or `context deadline exceeded` errors and verify OTLP env vars from `knative-service`.
 - Alloy failing to ship logs? Check `kubectl -n graf describe configmap graf-alloy` and ensure the `loki.write` endpoint matches `observability-loki-loki-distributed-gateway`.
+- When editing `argocd/applications/graf/graf-alloy-configmap.yaml`, remember that Alloy's River syntax requires commas between every key/value pair (including the last entry) inside `values {}` blocks. Missing commas will keep the `graf-alloy` deployment in `CrashLoopBackOff` and no logs will reach Loki.
 - Missing traces? Confirm `GrafTelemetry` spans appear by using `tempo` query for `/v1/entities` or `graf` service name.
 - No metrics? Validate the Graf deployment exposes `/metrics` and that `up{job="graf"}` exists in Mimir.
