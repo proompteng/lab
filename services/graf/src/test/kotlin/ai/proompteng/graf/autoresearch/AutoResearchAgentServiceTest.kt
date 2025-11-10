@@ -2,8 +2,8 @@ package ai.proompteng.graf.autoresearch
 
 import ai.koog.prompt.executor.clients.openai.OpenAIModels
 import ai.koog.prompt.llm.LLMCapability
-import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.llm.LLMProvider
+import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.params.LLMParams
 import ai.proompteng.graf.config.AutoResearchConfig
 import kotlin.test.Test
