@@ -166,6 +166,88 @@ class ArgoWorkflowClientTest {
     }
 
   @Test
+  fun `submit workflow tolerates missing metadata fields`() =
+    runBlocking {
+      val engine =
+        MockEngine {
+          respond(
+            """{"metadata": {}}""",
+            HttpStatusCode.OK,
+            headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+          )
+        }
+      val client = argoClient(engine)
+      val request =
+        SubmitArgoWorkflowRequest(
+          workflowName = "codex-workflow",
+          prompt = "test prompt",
+          metadata = emptyMap(),
+          artifactKey = "artifact-key",
+        )
+
+      val result = client.submitWorkflow(request)
+
+      assertEquals("codex-workflow", result.workflowName)
+    }
+
+  @Test
+  fun `submit workflow surfaces argo failure status`() =
+    runBlocking {
+      val engine =
+        MockEngine {
+          respond(
+            """{"kind":"Status","apiVersion":"v1","metadata":{},"status":"Failure","message":"workflows.argoproj.io \"codex-workflow\" already exists","reason":"AlreadyExists"}""",
+            HttpStatusCode.Conflict,
+            headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+          )
+        }
+      val client = argoClient(engine)
+
+      val error =
+        assertFailsWith<IllegalStateException> {
+          client.submitWorkflow(
+            SubmitArgoWorkflowRequest(
+              workflowName = "codex-workflow",
+              prompt = "test prompt",
+              metadata = emptyMap(),
+              artifactKey = "artifact-key",
+            ),
+          )
+        }
+
+      assertTrue(error.message!!.contains("status=409 Conflict"))
+      assertTrue(error.message!!.contains("already exists"))
+    }
+
+  @Test
+  fun `submit workflow detects kubernetes failure payloads with 200 status`() =
+    runBlocking {
+      val engine =
+        MockEngine {
+          respond(
+            """{"kind":"Status","apiVersion":"v1","metadata":{},"status":"Failure","message":"workflows.argoproj.io \"codex-workflow\" is invalid","reason":"Invalid"}""",
+            HttpStatusCode.OK,
+            headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+          )
+        }
+      val client = argoClient(engine)
+
+      val error =
+        assertFailsWith<IllegalStateException> {
+          client.submitWorkflow(
+            SubmitArgoWorkflowRequest(
+              workflowName = "codex-workflow",
+              prompt = "test prompt",
+              metadata = emptyMap(),
+              artifactKey = "artifact-key",
+            ),
+          )
+        }
+
+      assertTrue(error.message!!.contains("status\":\"Failure\""))
+    }
+
+  @Test
   fun `waitForCompletion returns when workflow eventually succeeds`() =
     runBlocking {
       val statuses =

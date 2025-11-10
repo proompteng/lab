@@ -8,6 +8,7 @@ resources:
   - graf-auth-secret.yaml
   - graf-openai-secret.yaml
   - neo4j-browser-service.yaml
+  - graf-workflows-clusterrolebinding.yaml
 helmCharts:
   - name: neo4j
     repo: https://helm.neo4j.com/neo4j

@@ -8,8 +8,10 @@ import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -33,7 +35,11 @@ class ArgoWorkflowClient(
       ArgoWorkflowCreatePayload(
         apiVersion = "argoproj.io/v1alpha1",
         kind = "Workflow",
-        metadata = ArgoMetadata(name = request.workflowName, labels = mapOf("codex.stage" to "research")),
+        metadata =
+          ArgoMetadata(
+            name = request.workflowName,
+            labels = mapOf("codex.stage" to "research"),
+          ),
         spec =
           ArgoWorkflowSpec(
             serviceAccountName = config.serviceAccountName,
@@ -54,13 +60,25 @@ class ArgoWorkflowClient(
               ),
           ),
       )
-    val response: ArgoWorkflowResource =
-      httpClient
-        .post("$baseUrl/workflows") {
-          contentType(ContentType.Application.Json)
-          setBody(payload)
-        }.body()
-    return SubmitArgoWorkflowResult(response.metadata.name)
+    val httpResponse =
+      httpClient.post("$baseUrl/workflows") {
+        contentType(ContentType.Application.Json)
+        setBody(payload)
+      }
+    val responseBody = httpResponse.bodyAsText()
+    if (!httpResponse.status.isSuccess()) {
+      throw IllegalStateException(
+        "Argo workflow submission failed status=${httpResponse.status} body=$responseBody",
+      )
+    }
+    if (responseBody.contains("\"status\":\"Failure\"")) {
+      throw IllegalStateException(
+        "Argo workflow submission failed body=$responseBody",
+      )
+    }
+    val response = json.decodeFromString(ArgoWorkflowResource.serializer(), responseBody)
+    val workflowName = response.metadata.name ?: request.workflowName
+    return SubmitArgoWorkflowResult(workflowName)
   }
 
   suspend fun waitForCompletion(
@@ -116,8 +134,8 @@ data class ArgoWorkflowCreatePayload(
 
 @Serializable
 data class ArgoMetadata(
-  val name: String,
-  val labels: Map<String, String>,
+  val name: String? = null,
+  val labels: Map<String, String>? = null,
 )
 
 @Serializable
@@ -145,7 +163,7 @@ data class ArgoParameter(
 
 @Serializable
 data class ArgoWorkflowResource(
-  val metadata: ArgoMetadata,
+  val metadata: ArgoMetadata = ArgoMetadata(),
   val status: ArgoWorkflowStatus? = null,
 )
 
