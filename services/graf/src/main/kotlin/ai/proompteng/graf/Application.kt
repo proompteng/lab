@@ -1,9 +1,10 @@
 package ai.proompteng.graf
 
 import ai.proompteng.graf.autoresearch.AgentActivitiesImpl
-import ai.proompteng.graf.autoresearch.AutoresearchAgentService
-import ai.proompteng.graf.autoresearch.AutoresearchPlannerService
-import ai.proompteng.graf.autoresearch.AutoresearchWorkflowImpl
+import ai.proompteng.graf.autoresearch.AutoResearchAgentService
+import ai.proompteng.graf.autoresearch.AutoResearchFollowupActivitiesImpl
+import ai.proompteng.graf.autoresearch.AutoResearchPlannerService
+import ai.proompteng.graf.autoresearch.AutoResearchWorkflowImpl
 import ai.proompteng.graf.autoresearch.Neo4jGraphSnapshotProvider
 import ai.proompteng.graf.codex.ArgoWorkflowClient
 import ai.proompteng.graf.codex.CodexResearchActivitiesImpl
@@ -11,7 +12,7 @@ import ai.proompteng.graf.codex.CodexResearchService
 import ai.proompteng.graf.codex.CodexResearchWorkflowImpl
 import ai.proompteng.graf.codex.MinioArtifactFetcherImpl
 import ai.proompteng.graf.config.ArgoConfig
-import ai.proompteng.graf.config.AutoresearchConfig
+import ai.proompteng.graf.config.AutoResearchConfig
 import ai.proompteng.graf.config.MinioConfig
 import ai.proompteng.graf.config.Neo4jConfig
 import ai.proompteng.graf.config.TemporalConfig
@@ -19,6 +20,8 @@ import ai.proompteng.graf.neo4j.Neo4jClient
 import ai.proompteng.graf.routes.graphRoutes
 import ai.proompteng.graf.security.ApiBearerTokenConfig
 import ai.proompteng.graf.services.GraphService
+import com.fasterxml.jackson.databind.SerializationFeature
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -50,6 +53,8 @@ import io.temporal.authorization.AuthorizationGrpcMetadataProvider
 import io.temporal.authorization.AuthorizationTokenSupplier
 import io.temporal.client.WorkflowClient
 import io.temporal.client.WorkflowClientOptions
+import io.temporal.common.converter.DefaultDataConverter
+import io.temporal.common.converter.JacksonJsonPayloadConverter
 import io.temporal.serviceclient.WorkflowServiceStubs
 import io.temporal.serviceclient.WorkflowServiceStubsOptions
 import io.temporal.worker.WorkerFactory
@@ -69,10 +74,11 @@ private val buildVersion = System.getenv("GRAF_VERSION") ?: "dev"
 private val buildCommit = System.getenv("GRAF_COMMIT") ?: "unknown"
 private const val GRAF_BEARER_AUTH_NAME = "graf-bearer"
 
-private data class AutoresearchRuntime(
-  val agentService: AutoresearchAgentService,
-  val activities: AgentActivitiesImpl,
-  val planner: AutoresearchPlannerService,
+private data class AutoResearchRuntime(
+  val agentService: AutoResearchAgentService,
+  val agentActivities: AgentActivitiesImpl,
+  val followupActivities: AutoResearchFollowupActivitiesImpl,
+  val planner: AutoResearchPlannerService,
 )
 
 fun main() {
@@ -90,7 +96,16 @@ fun main() {
   val temporalConfig = TemporalConfig.fromEnvironment()
   val argoConfig = ArgoConfig.fromEnvironment()
   val minioConfig = MinioConfig.fromEnvironment()
-  val agentConfig = AutoresearchConfig.fromEnvironment()
+  val agentConfig = AutoResearchConfig.fromEnvironment()
+
+  val temporalObjectMapper =
+    jacksonObjectMapper()
+      .findAndRegisterModules()
+      .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+  val temporalDataConverter =
+    DefaultDataConverter
+      .newDefaultInstance()
+      .withPayloadConverterOverrides(JacksonJsonPayloadConverter(temporalObjectMapper))
 
   val sharedJson =
     Json {
@@ -102,6 +117,7 @@ fun main() {
 
   val kubernetesToken = loadServiceAccountToken(argoConfig.tokenPath)
   val kubernetesClient = buildKubernetesHttpClient(argoConfig, kubernetesToken, sharedJson)
+  val openAiHttpClient: HttpClient? = null
   val minioClient = buildMinioClient(minioConfig)
   val artifactFetcher = MinioArtifactFetcherImpl(minioClient)
   val argoClient = ArgoWorkflowClient(argoConfig, kubernetesClient, minioConfig, sharedJson)
@@ -124,39 +140,43 @@ fun main() {
         .newBuilder()
         .setNamespace(temporalConfig.namespace)
         .setIdentity(temporalConfig.identity)
+        .setDataConverter(temporalDataConverter)
         .build(),
     )
+  val codexResearchService = CodexResearchService(workflowClient, temporalConfig.taskQueue, argoConfig.pollTimeoutSeconds)
   val workerFactory = WorkerFactory.newInstance(workflowClient)
-  val agentRuntime =
+  val autoResearchRuntime =
     if (agentConfig.isReady) {
       val snapshotProvider = Neo4jGraphSnapshotProvider(client, agentConfig.graphSampleLimit)
-      val agentService = AutoresearchAgentService(agentConfig, snapshotProvider, sharedJson)
-      val activities = AgentActivitiesImpl(agentService)
-      val planner = AutoresearchPlannerService(workflowClient, temporalConfig.taskQueue, agentConfig.graphSampleLimit)
-      AutoresearchRuntime(agentService, activities, planner)
+      val agentService = AutoResearchAgentService(agentConfig, snapshotProvider, sharedJson)
+      val agentActivities = AgentActivitiesImpl(agentService)
+      val planner = AutoResearchPlannerService(workflowClient, temporalConfig.taskQueue, agentConfig.graphSampleLimit)
+      val followupActivities = AutoResearchFollowupActivitiesImpl(codexResearchService)
+      AutoResearchRuntime(agentService, agentActivities, followupActivities, planner)
     } else {
       null
     }
   val worker = workerFactory.newWorker(temporalConfig.taskQueue)
   worker.registerWorkflowImplementationTypes(CodexResearchWorkflowImpl::class.java)
-  agentRuntime?.let {
-    worker.registerWorkflowImplementationTypes(AutoresearchWorkflowImpl::class.java)
+  autoResearchRuntime?.let {
+    worker.registerWorkflowImplementationTypes(AutoResearchWorkflowImpl::class.java)
   }
   val activityImplementations =
     buildList {
       add(codexActivities as Any)
-      agentRuntime?.let { add(it.activities as Any) }
+      autoResearchRuntime?.let {
+        add(it.agentActivities as Any)
+        add(it.followupActivities as Any)
+      }
     }
   worker.registerActivitiesImplementations(*activityImplementations.toTypedArray())
   workerFactory.start()
 
-  val codexResearchService =
-    CodexResearchService(workflowClient, temporalConfig.taskQueue, argoConfig.pollTimeoutSeconds)
-  val autoresearchPlannerService = agentRuntime?.planner
+  val autoResearchPlannerService = autoResearchRuntime?.planner
 
   val server =
     embeddedServer(Netty, port) {
-      module(graphService, codexResearchService, minioConfig, sharedJson, autoresearchPlannerService)
+      module(graphService, codexResearchService, minioConfig, sharedJson, autoResearchPlannerService)
     }
 
   Runtime.getRuntime().addShutdownHook(
@@ -167,8 +187,9 @@ fun main() {
       workerFactory.shutdown()
       serviceStubs.shutdown()
       kubernetesClient.close()
+      openAiHttpClient?.close()
       minioClient.close()
-      agentRuntime?.agentService?.close()
+      autoResearchRuntime?.agentService?.close()
     },
   )
   server.start(wait = true)
@@ -180,7 +201,7 @@ fun Application.module(
   codexResearchService: CodexResearchService,
   minioConfig: MinioConfig,
   jsonConfig: Json,
-  autoresearchPlannerService: AutoresearchPlannerService?,
+  autoResearchPlannerService: AutoResearchPlannerService?,
 ) {
   install(ServerContentNegotiation) {
     json(jsonConfig)
@@ -234,7 +255,7 @@ fun Application.module(
     }
     route("/v1") {
       authenticate(GRAF_BEARER_AUTH_NAME) {
-        graphRoutes(graphService, codexResearchService, minioConfig, autoresearchPlannerService)
+        graphRoutes(graphService, codexResearchService, minioConfig, autoResearchPlannerService)
       }
     }
     get("/healthz") {

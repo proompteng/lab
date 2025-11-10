@@ -1,10 +1,10 @@
 package ai.proompteng.graf.routes
 
-import ai.proompteng.graf.autoresearch.AutoresearchPlannerService
-import ai.proompteng.graf.autoresearch.AutoresearchWorkflow
+import ai.proompteng.graf.autoresearch.AutoResearchPlannerService
+import ai.proompteng.graf.autoresearch.AutoResearchWorkflow
 import ai.proompteng.graf.autoresearch.WorkflowStartResult
 import ai.proompteng.graf.config.MinioConfig
-import ai.proompteng.graf.model.AutoresearchPlanRequest
+import ai.proompteng.graf.model.AutoResearchPlanRequest
 import ai.proompteng.graf.services.GraphService
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -36,14 +36,14 @@ class GraphRoutesTest {
     }
 
   @Test
-  fun `POST autoresearch returns planner response`() =
+  fun `POST AutoResearch returns planner response`() =
     testApplication {
       val graphService = mockk<GraphService>(relaxed = true)
       val workflowClient = mockk<WorkflowClient>()
-      every { workflowClient.newWorkflowStub(AutoresearchWorkflow::class.java, any<WorkflowOptions>()) } returns
-        mockk<AutoresearchWorkflow>(relaxed = true)
+      every { workflowClient.newWorkflowStub(AutoResearchWorkflow::class.java, any<WorkflowOptions>()) } returns
+        mockk<AutoResearchWorkflow>(relaxed = true)
       val plannerService =
-        AutoresearchPlannerService(workflowClient, "queue", defaultSampleLimit = 5) { _, _ ->
+        AutoResearchPlannerService(workflowClient, "queue", defaultSampleLimit = 5) { _, _ ->
           WorkflowStartResult("wf", "run", "start")
         }
 
@@ -66,7 +66,7 @@ class GraphRoutesTest {
       val response =
         client.post("/autoresearch") {
           header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
-          setBody(json.encodeToString(AutoresearchPlanRequest.serializer(), AutoresearchPlanRequest(objective = "test")))
+          setBody(json.encodeToString(AutoResearchPlanRequest.serializer(), AutoResearchPlanRequest(objective = "test")))
         }
 
       assertEquals(HttpStatusCode.Accepted, response.status)
@@ -74,7 +74,7 @@ class GraphRoutesTest {
     }
 
   @Test
-  fun `POST autoresearch returns 503 when agent disabled`() =
+  fun `POST AutoResearch returns 503 when agent disabled`() =
     testApplication {
       application {
         install(ContentNegotiation) { json(this@GraphRoutesTest.json) }
@@ -95,8 +95,9 @@ class GraphRoutesTest {
       val response =
         client.post("/autoresearch") {
           header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
-          setBody(json.encodeToString(AutoresearchPlanRequest.serializer(), AutoresearchPlanRequest(objective = "test")))
+          setBody(json.encodeToString(AutoResearchPlanRequest.serializer(), AutoResearchPlanRequest(objective = "test")))
         }
       assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
     }
+
 }

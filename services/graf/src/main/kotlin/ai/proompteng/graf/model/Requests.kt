@@ -119,7 +119,7 @@ data class CodexResearchResponse(
 )
 
 @Serializable
-data class AutoresearchPlanRequest(
+data class AutoResearchPlanRequest(
   val objective: String,
   val focus: String? = null,
   val streamId: String? = null,
@@ -128,7 +128,7 @@ data class AutoresearchPlanRequest(
 )
 
 @Serializable
-data class AutoresearchPlanIntent(
+data class AutoResearchPlanIntent(
   val objective: String,
   val focus: String? = null,
   val streamId: String? = null,
@@ -137,7 +137,7 @@ data class AutoresearchPlanIntent(
 )
 
 @Serializable
-data class AutoresearchPlanResponse(
+data class AutoResearchPlanResponse(
   val workflowId: String,
   val runId: String,
   val startedAt: String,
@@ -146,11 +146,11 @@ data class AutoresearchPlanResponse(
 )
 
 @Serializable
-data class AutoresearchLaunchResponse(
+data class AutoResearchLaunchResponse(
   val workflowId: String,
   val runId: String,
   val startedAt: String,
-  val message: String = "autoresearch workflow started",
+  val message: String = "AutoResearch workflow started",
 )
 
 @Serializable
@@ -175,8 +175,8 @@ data class GraphRelationshipPlan(
   )
 }
 
-fun AutoresearchPlanRequest.toIntent(defaultLimit: Int): AutoresearchPlanIntent =
-  AutoresearchPlanIntent(
+fun AutoResearchPlanRequest.toIntent(defaultLimit: Int): AutoResearchPlanIntent =
+  AutoResearchPlanIntent(
     objective = objective.trim(),
     focus = focus?.trim(),
     streamId = streamId?.trim(),

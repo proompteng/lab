@@ -2,7 +2,7 @@ package ai.proompteng.graf.config
 
 import kotlin.math.max
 
-data class AutoresearchConfig(
+data class AutoResearchConfig(
   val enabled: Boolean,
   val openAiApiKey: String?,
   val openAiBaseUrl: String?,
@@ -20,7 +20,7 @@ data class AutoresearchConfig(
     private const val DEFAULT_ITERATIONS = 16
     private const val DEFAULT_GRAPH_SAMPLE_LIMIT = 25
 
-    fun fromEnvironment(): AutoresearchConfig {
+    fun fromEnvironment(): AutoResearchConfig {
       val env = System.getenv()
       val enabled = env["AGENT_ENABLED"]?.let { it.equals("true", ignoreCase = true) || it == "1" } ?: true
       val apiKey =
@@ -35,7 +35,7 @@ data class AutoresearchConfig(
         env["AGENT_MAX_ITERATIONS"]?.toIntOrNull()?.let { max(1, it) } ?: DEFAULT_ITERATIONS
       val graphSampleLimit =
         env["AGENT_GRAPH_SAMPLE_LIMIT"]?.toIntOrNull()?.let { max(1, it) } ?: DEFAULT_GRAPH_SAMPLE_LIMIT
-      return AutoresearchConfig(
+      return AutoResearchConfig(
         enabled = enabled,
         openAiApiKey = apiKey,
         openAiBaseUrl = baseUrl,

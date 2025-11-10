@@ -48,10 +48,10 @@ Run `./gradlew ktlintCheck` (the same plugin also supports `./gradlew ktlintForm
    ```
 The entrypoint is `bin/graf` from Gradle's `installDist`, and the runtime image is a distroless Java 21 runtime.
 
-## Autoresearch GPT-5 relationship planner
+## AutoResearch GPT-5 relationship planner
 
 - Set `AGENT_ENABLED=true` plus either `AGENT_OPENAI_API_KEY` or `OPENAI_API_KEY`. Optional overrides: `AGENT_OPENAI_BASE_URL`, `AGENT_MODEL` (defaults to `gpt-5`), `AGENT_TEMPERATURE`, `AGENT_MAX_ITERATIONS`, `AGENT_GRAPH_SAMPLE_LIMIT`.
-- When enabled, `POST /v1/autoresearch` kicks off the autoresearch ReAct agent with the `graph_state_tool`. The agent follows the OpenAI Cookbook guidance for multi-step planners, runs on GPT-5 with **High** reasoning effort, and targets the entire NVIDIA relationship surface (partners, manufacturers, suppliers, investors, research alliances—not only supply chain tiers). Provide a JSON body:
+- When enabled, `POST /v1/autoresearch` kicks off the AutoResearch ReAct agent with the `graph_state_tool`. The agent follows the OpenAI Cookbook guidance for multi-step planners, runs on GPT-5 with **High** reasoning effort, and targets the entire NVIDIA relationship surface (partners, manufacturers, suppliers, investors, research alliances—not only supply chain tiers). Provide a JSON body:
   ```json
   {
     "objective": "Map NVIDIA's 2025 AI research alliances across universities and vendors",

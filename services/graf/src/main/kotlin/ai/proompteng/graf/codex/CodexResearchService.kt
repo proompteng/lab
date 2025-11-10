@@ -2,6 +2,7 @@ package ai.proompteng.graf.codex
 
 import ai.proompteng.graf.model.CodexResearchRequest
 import io.temporal.client.WorkflowClient
+import io.temporal.client.WorkflowExecutionAlreadyStarted
 import io.temporal.client.WorkflowOptions
 import java.time.Instant
 import java.util.UUID
@@ -13,9 +14,9 @@ class CodexResearchService(
   private val workflowStarter: (CodexResearchWorkflow, CodexResearchWorkflowInput) -> WorkflowStartResult = { workflow, input ->
     val execution = WorkflowClient.start(workflow::run, input)
     WorkflowStartResult(workflowId = execution.workflowId, runId = execution.runId)
-  },
-) {
-  fun startResearch(
+    },
+) : CodexResearchLauncher {
+  override fun startResearch(
     request: CodexResearchRequest,
     argoWorkflowName: String,
     artifactKey: String,
@@ -38,13 +39,26 @@ class CodexResearchService(
         artifactKey = artifactKey,
         argoPollTimeoutSeconds = argoPollTimeoutSeconds,
       )
-    val execution = workflowStarter(workflow, input)
+    val execution =
+      try {
+        workflowStarter(workflow, input)
+      } catch (ex: WorkflowExecutionAlreadyStarted) {
+        WorkflowStartResult(workflowId = workflowId, runId = ex.execution.runId)
+      }
     return CodexResearchLaunchResult(
       workflowId = workflowId,
       runId = execution.runId,
       startedAt = Instant.now().toString(),
     )
   }
+}
+
+interface CodexResearchLauncher {
+  fun startResearch(
+    request: CodexResearchRequest,
+    argoWorkflowName: String,
+    artifactKey: String,
+  ): CodexResearchLaunchResult
 }
 
 data class WorkflowStartResult(

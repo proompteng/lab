@@ -47,7 +47,7 @@
             "entities"
           ]
         },
-        "description": "Creates or updates the nodes that the autoresearch agent and downstream services will inspect. Returns 200 OK with batch results."
+        "description": "Creates or updates the nodes that the AutoResearch agent and downstream services will inspect. Returns 200 OK with batch results."
       },
       "response": []
     },
@@ -285,7 +285,7 @@
             "complement"
           ]
         },
-        "description": "Asks the complement helper to add hints for the entity before an autoresearch run; returns 200 OK with complement details."
+        "description": "Asks the complement helper to add hints for the entity before an AutoResearch run; returns 200 OK with complement details."
       },
       "response": []
     },
@@ -368,7 +368,7 @@
       "response": []
     },
     {
-      "name": "Autoresearch workflow",
+      "name": "AutoResearch workflow",
       "request": {
         "method": "POST",
         "header": [
@@ -402,7 +402,7 @@
             "autoresearch"
           ]
         },
-        "description": "Triggers the GPT-5 autoresearch planner; returns 202 Accepted with Temporal workflow metadata while the agent runs asynchronously."
+        "description": "Triggers the GPT-5 AutoResearch planner; returns 202 Accepted with Temporal workflow metadata while the agent runs asynchronously."
       },
       "response": []
     }

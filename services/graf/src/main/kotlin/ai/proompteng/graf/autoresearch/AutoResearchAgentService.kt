@@ -15,35 +15,37 @@ import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.params.LLMParams
-import ai.proompteng.graf.config.AutoresearchConfig
-import ai.proompteng.graf.model.AutoresearchPlanIntent
+import ai.proompteng.graf.config.AutoResearchConfig
+import ai.proompteng.graf.model.AutoResearchPlanIntent
 import ai.proompteng.graf.model.GraphRelationshipPlan
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import mu.KotlinLogging
 import java.io.Closeable
 import java.lang.AutoCloseable
 
-class AutoresearchAgentService(
-  private val config: AutoresearchConfig,
+class AutoResearchAgentService(
+  private val config: AutoResearchConfig,
   snapshotProvider: GraphSnapshotProvider,
   private val json: Json,
 ) : Closeable {
   private val llmClient: LLMClient
   private val promptExecutor: SingleLLMPromptExecutor
   private val agentService: AIAgentService<String, String, *>
+  private val logger = KotlinLogging.logger {}
 
   private val llmModel: LLModel = resolveModel(config.model)
 
   init {
-    require(config.isReady) { "Autoresearch agent requested but configuration is disabled or incomplete" }
+    require(config.isReady) { "AutoResearch agent requested but configuration is disabled or incomplete" }
     llmClient = buildLlmClient(config)
     promptExecutor = SingleLLMPromptExecutor(llmClient)
     val graphStateTool = GraphStateTool(snapshotProvider, json, config.graphSampleLimit)
     val promptParams = buildPromptParams()
     val basePrompt =
       prompt(
-        id = "graf-autoresearch-agent",
+        id = "graf-auto-research-agent",
         params = promptParams,
       ) {
         system(SYSTEM_PROMPT)
@@ -66,25 +68,34 @@ class AutoresearchAgentService(
       )
   }
 
-  suspend fun generatePlan(intent: AutoresearchPlanIntent): GraphRelationshipPlan {
+  suspend fun generatePlan(intent: AutoResearchPlanIntent): GraphRelationshipPlan {
+    val sampleLimit = intent.sampleLimit ?: config.graphSampleLimit
+    val metadataKeys = if (intent.metadata.isEmpty()) "none" else intent.metadata.keys.joinToString()
+    logger.info {
+      "AutoResearch agent generating plan objective='${intent.objective}' streamId=${intent.streamId ?: "none"} " +
+        "sampleLimit=$sampleLimit metadataKeys=$metadataKeys"
+    }
     val input = buildAgentInput(intent)
     val raw = agentService.createAgentAndRun(input)
     val payload = extractJson(raw)
     val plan =
       runCatching { json.decodeFromString(GraphRelationshipPlan.serializer(), payload) }
         .getOrElse { failure ->
-          throw IllegalStateException("Autoresearch agent returned unparsable plan: ${failure.message}", failure)
+          logger.error(failure) { "AutoResearch agent returned invalid plan objective='${intent.objective}'" }
+          throw IllegalStateException("AutoResearch agent returned unparsable plan: ${failure.message}", failure)
         }
     return plan.copy(
       objective = plan.objective.ifBlank { intent.objective },
     )
   }
 
+  fun defaultSampleLimit(): Int = config.graphSampleLimit
+
   override fun close() {
     (llmClient as? AutoCloseable)?.close()
   }
 
-  private fun buildAgentInput(intent: AutoresearchPlanIntent): String {
+  private fun buildAgentInput(intent: AutoResearchPlanIntent): String {
     val metadataBlock =
       if (intent.metadata.isEmpty()) {
         "No metadata was provided."
@@ -153,25 +164,17 @@ class AutoresearchAgentService(
     val start = fenced.indexOf('{')
     val end = fenced.lastIndexOf('}')
     if (start == -1 || end == -1 || end <= start) {
-      throw IllegalStateException("Autoresearch agent response did not include JSON payload: $raw")
+      throw IllegalStateException("AutoResearch agent response did not include JSON payload: $raw")
     }
     return fenced.substring(start, end + 1)
   }
 
-  private fun buildPromptParams() =
-    if (llmModel.provider == LLMProvider.OpenAI) {
-      OpenAIChatParams(
-        temperature = config.temperature,
-        reasoningEffort = ReasoningEffort.HIGH,
-      )
-    } else {
-      LLMParams(temperature = config.temperature)
-    }
+  private fun buildPromptParams(): LLMParams = promptParamsForModel(llmModel, config)
 
-  private fun buildLlmClient(config: AutoresearchConfig): LLMClient {
+  private fun buildLlmClient(config: AutoResearchConfig): LLMClient {
     val apiKey =
       requireNotNull(config.openAiApiKey?.takeIf { it.isNotBlank() }) {
-        "OPENAI_API_KEY (or AGENT_OPENAI_API_KEY) must be configured when the autoresearch agent is enabled"
+        "OPENAI_API_KEY (or AGENT_OPENAI_API_KEY) must be configured when the AutoResearch agent is enabled"
       }
     val settings = config.openAiBaseUrl?.let { OpenAIClientSettings(baseUrl = it) } ?: OpenAIClientSettings()
     return OpenAILLMClient(apiKey, settings)
@@ -200,3 +203,15 @@ class AutoresearchAgentService(
       """.trimIndent()
   }
 }
+
+internal fun promptParamsForModel(
+  model: LLModel,
+  config: AutoResearchConfig,
+): LLMParams =
+  if (model.provider == LLMProvider.OpenAI) {
+    OpenAIChatParams(
+      reasoningEffort = ReasoningEffort.HIGH,
+    )
+  } else {
+    LLMParams(temperature = config.temperature)
+  }
