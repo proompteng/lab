@@ -385,7 +385,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"objective\": \"Map NVIDIA's 2025 AI research alliances across universities and vendors\",\n  \"focus\": \"research\",\n  \"streamId\": \"ecosystem-west\",\n  \"metadata\": {\n    \"artifactId\": \"temporal://streams/ecosystem-west/2025-11-09\"\n  }\n}",
+          "raw": "{\n  \"user_prompt\": \"Focus on HBM capacity expansions across ASE, Samsung, and SK hynix\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -402,7 +402,7 @@
             "autoresearch"
           ]
         },
-        "description": "Triggers the GPT-5 AutoResearch planner; returns 202 Accepted with Temporal workflow metadata while the agent runs asynchronously."
+        "description": "Triggers the AutoResearch Codex workflow. Graf injects a prompt that tells the Codex runner to call /usr/local/bin/codex-graf for every entity/relationship and tags the run with streamId=auto-research before returning 202 Accepted with Temporal/Argo metadata."
       },
       "response": []
     }

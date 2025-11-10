@@ -64,13 +64,6 @@ spec:
                 secretKeyRef:
                   name: observability-minio-creds
                   key: secretkey
-            - name: AGENT_ENABLED
-              value: "true"
-            - name: AGENT_OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: graf-openai
-                  key: OPENAI_API_KEY
             - name: MINIO_SECURE
               value: "false"
             - name: OTEL_SERVICE_NAME

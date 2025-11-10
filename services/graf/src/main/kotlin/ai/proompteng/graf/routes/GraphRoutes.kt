@@ -1,10 +1,11 @@
 package ai.proompteng.graf.routes
 
-import ai.proompteng.graf.autoresearch.AutoResearchPlannerService
+import ai.proompteng.graf.autoresearch.AutoResearchLauncher
 import ai.proompteng.graf.codex.CodexResearchService
 import ai.proompteng.graf.config.MinioConfig
 import ai.proompteng.graf.model.ArtifactReference
-import ai.proompteng.graf.model.AutoResearchPlanRequest
+import ai.proompteng.graf.model.AutoResearchLaunchResponse
+import ai.proompteng.graf.model.AutoResearchRequest
 import ai.proompteng.graf.model.CleanRequest
 import ai.proompteng.graf.model.CodexResearchRequest
 import ai.proompteng.graf.model.CodexResearchResponse
@@ -30,7 +31,7 @@ fun Route.graphRoutes(
   service: GraphService,
   codexResearchService: CodexResearchService,
   minioConfig: MinioConfig,
-  autoResearchPlannerService: AutoResearchPlannerService?,
+  autoResearchLauncher: AutoResearchLauncher,
 ) {
   post("/entities") {
     call.setRouteTemplate("POST /v1/entities")
@@ -119,14 +120,27 @@ fun Route.graphRoutes(
 
   post("/autoresearch") {
     call.setRouteTemplate("POST /v1/autoresearch")
-    val planner =
-      autoResearchPlannerService
-        ?: return@post call.respond(
-          HttpStatusCode.ServiceUnavailable,
-          mapOf("message" to "AutoResearch agent is disabled"),
-        )
-    val payload = call.receive<AutoResearchPlanRequest>()
-    val response = planner.startPlan(payload)
-    call.respond(HttpStatusCode.Accepted, response)
+    val payload = call.receive<AutoResearchRequest>()
+    val argoWorkflowName = "auto-research-${UUID.randomUUID()}"
+    val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
+    val launch = autoResearchLauncher.startResearch(payload, argoWorkflowName, artifactKey)
+    val artifactReference =
+      ArtifactReference(
+        bucket = minioConfig.bucket,
+        key = artifactKey,
+        endpoint = minioConfig.endpoint,
+        region = minioConfig.region,
+      )
+      call.respond(
+        HttpStatusCode.Accepted,
+        AutoResearchLaunchResponse(
+          workflowId = launch.workflowId,
+          runId = launch.runId,
+        argoWorkflowName = argoWorkflowName,
+        artifactReferences = listOf(artifactReference),
+        startedAt = launch.startedAt,
+        message = "AutoResearch Codex workflow started",
+      ),
+    )
   }
 }
