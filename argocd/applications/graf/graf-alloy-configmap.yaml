@@ -26,15 +26,15 @@ data:
     loki.process "graf" {
       stage.labels {
         values = {
-          namespace = "{{ .Labels.namespace }}"
-          pod       = "{{ .Labels.pod }}"
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
           container = "{{ .Labels.container }}"
         }
       }
 
       stage.static_labels {
         values = {
-          job = "graf"
+          job = "graf",
         }
       }
 
