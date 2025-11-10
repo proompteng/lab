@@ -15,8 +15,6 @@ val logbackVersion = "1.5.20"
 val neo4jJavaDriverVersion = "6.0.2"
 val coroutinesVersion = "1.10.2"
 val kotlinLoggingVersion = "3.0.5"
-val oshaiKotlinLoggingVersion = "7.0.13"
-val koogVersion = "0.5.2"
 val jacksonVersion = "2.18.1"
 
 application {
@@ -52,18 +50,12 @@ dependencies {
   implementation("org.neo4j.driver:neo4j-java-driver:$neo4jJavaDriverVersion")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutinesVersion")
   implementation("io.github.microutils:kotlin-logging-jvm:$kotlinLoggingVersion")
-  implementation("io.github.oshai:kotlin-logging-jvm:$oshaiKotlinLoggingVersion")
   implementation("io.ktor:ktor-client-core:$ktorVersion")
   implementation("io.ktor:ktor-client-cio:$ktorVersion")
   implementation("io.ktor:ktor-client-content-negotiation:$ktorVersion")
   implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
   implementation("io.temporal:temporal-sdk:1.28.3")
   implementation("io.minio:minio:8.6.0")
-  implementation("ai.koog:koog-ktor:$koogVersion")
-  implementation("ai.koog:koog-agents:$koogVersion")
-  implementation("ai.koog:prompt-executor-openai-client:$koogVersion")
-  implementation("ai.koog:prompt-executor-llms:$koogVersion")
-  implementation("ai.koog:agents-features-trace:$koogVersion")
   implementation("com.fasterxml.jackson.module:jackson-module-kotlin:$jacksonVersion")
   implementation("io.opentelemetry:opentelemetry-sdk")
   implementation("io.opentelemetry:opentelemetry-sdk-metrics")

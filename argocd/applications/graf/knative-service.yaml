@@ -17,14 +17,14 @@ spec:
       annotations:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/target: "60"
-        client.knative.dev/updateTimestamp: 2025-11-10T07:32:58.564Z
+        client.knative.dev/updateTimestamp: 2025-11-10T07:56:54.004Z
     spec:
       timeoutSeconds: 60
       containerConcurrency: 0
       serviceAccountName: graf
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/proompteng/graf@sha256:473a39651d5b2f9b0f70ea9bab30c69e5bbfbd4365aa9558c41b3b266eb1abb8
+          image: registry.ide-newton.ts.net/proompteng/graf@sha256:060609ab551b1238f5f32d47725f5cc62ffa35cca46f870ad3514677338b1ea0
           imagePullPolicy: Always
           ports:
             - name: http1
@@ -47,9 +47,9 @@ spec:
                   name: graf-api
                   key: bearer-tokens
             - name: GRAF_VERSION
-              value: v0.304.1-25-gb342fa38
+              value: v0.304.1-10-g290657eb
             - name: GRAF_COMMIT
-              value: b342fa382609eafd5d3b5a7e2c5a55e5fadecb25
+              value: 290657eb91170902fe93742923871b7659c0e56d
             - name: MINIO_ENDPOINT
               value: http://observability-minio.minio.svc.cluster.local:9000
             - name: MINIO_BUCKET
@@ -64,13 +64,6 @@ spec:
                 secretKeyRef:
                   name: observability-minio-creds
                   key: secretkey
-            - name: AGENT_ENABLED
-              value: "true"
-            - name: AGENT_OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: graf-openai
-                  key: OPENAI_API_KEY
             - name: MINIO_SECURE
               value: "false"
             - name: OTEL_SERVICE_NAME

@@ -85,19 +85,30 @@ Run `./gradlew ktlintCheck` (the same plugin also supports `./gradlew ktlintForm
    ```
 The entrypoint is `bin/graf` from Gradle's `installDist`, and the runtime image is a distroless Java 21 runtime.
 
-## AutoResearch GPT-5 relationship planner
+## AutoResearch Codex workflow
 
-- Set `AGENT_ENABLED=true` plus either `AGENT_OPENAI_API_KEY` or `OPENAI_API_KEY`. Optional overrides: `AGENT_OPENAI_BASE_URL`, `AGENT_MODEL` (defaults to `gpt-5`), `AGENT_MAX_ITERATIONS`, `AGENT_GRAPH_SAMPLE_LIMIT`.
-- Koog trace logs are enabled by default so every agent step/tool execution hits the service logs. Set `AGENT_TRACE_LOGGING=false` to disable. Use `AGENT_TRACE_LOG_LEVEL` (`INFO` or `DEBUG`; any other value falls back to `INFO`) to tune verbosity.
-- When enabled, `POST /v1/autoresearch` kicks off the AutoResearch ReAct agent with the `graph_state_tool`. The agent follows the OpenAI Cookbook guidance for multi-step planners, runs on GPT-5 with **High** reasoning effort, and targets the entire NVIDIA relationship surface (partners, manufacturers, suppliers, investors, research alliances—not only supply chain tiers). Provide a JSON body:
+- `POST /v1/autoresearch` launches the same Temporal/Argo Codex workflow that powers `/v1/codex-research`, but it injects a curated prompt that tells Codex to keep expanding the Graf knowledge graph and to persist findings directly via the bundled `/usr/local/bin/codex-graf` CLI.
+- The request body accepts a single optional field, `user_prompt`, which is appended to the base instructions. Example:
   ```json
   {
-    "objective": "Map NVIDIA's 2025 AI research alliances across universities and vendors",
-    "focus": "research",
-    "streamId": "ecosystem-west",
-    "metadata": {
-      "artifactId": "temporal://streams/ecosystem-west/2025-11-09"
-    }
+    "user_prompt": "Focus on HBM capacity expansions across ASE, Samsung, and SK hynix"
   }
   ```
-  The API responds immediately (`202 Accepted`) with the Temporal workflow metadata (IDs, timestamps) so clients can poll progress asynchronously. A downstream worker writes the eventual plan to storage once the agent completes; the agent inspects the live Neo4j graph through the graph snapshot tool before suggesting updates.
+- Response payload mirrors the Codex endpoint and includes Temporal workflow metadata plus the MinIO artifact reference:
+  ```json
+  {
+    "workflowId": "wf-123",
+    "runId": "run-123",
+    "argoWorkflowName": "auto-research-123",
+    "artifactReferences": [
+      {
+        "bucket": "argo-workflows",
+        "key": "codex-research/auto-research-123/codex-artifact.json",
+        "endpoint": "http://observability-minio.minio.svc.cluster.local:9000"
+      }
+    ],
+    "startedAt": "2025-11-10T05:00:00Z",
+    "message": "AutoResearch Codex workflow started"
+  }
+  ```
+- The injected prompt (see `AutoResearchPromptBuilder`) reminds Codex to log every POST with `streamId = "auto-research"`, set `artifactId` and `researchSource`, and to summarize the published entities/relationships in the final `codex-artifact.json`.
