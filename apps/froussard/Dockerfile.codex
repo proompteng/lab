@@ -93,7 +93,7 @@ RUN curl -fsSL https://bun.sh/install | bash \
     && mkdir -p /opt/homebrew/bin \
     && ln -s /usr/local/bin/bun /opt/homebrew/bin/bun
 
-RUN bash -lc 'source /root/.nvm/nvm.sh && npm install -g @openai/codex@latest && ln -sf "$(command -v codex)" /usr/local/bin/codex'
+RUN bash -lc 'source /root/.nvm/nvm.sh && npm install -g @openai/codex@latest && ln -sf "$(command -v codex)" /usr/local/bin/codex && ln -sf "$(command -v node)" /usr/local/bin/node && ln -sf "$(command -v npm)" /usr/local/bin/npm'
 
 RUN mkdir -p "$WORKSPACE" /root/.codex
 
