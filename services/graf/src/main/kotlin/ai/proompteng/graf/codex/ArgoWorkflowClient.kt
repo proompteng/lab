@@ -51,7 +51,7 @@ class ArgoWorkflowClient(
                     ArgoParameter(name = "prompt", value = request.prompt),
                     ArgoParameter(name = "artifactKey", value = request.artifactKey),
                     ArgoParameter(name = "artifactBucket", value = minioConfig.bucket),
-                    ArgoParameter(name = "artifactEndpoint", value = minioConfig.endpoint),
+                    ArgoParameter(name = "artifactEndpoint", value = minioConfig.artifactEndpoint),
                     minioConfig.region
                       ?.takeUnless(String::isBlank)
                       ?.let { ArgoParameter(name = "artifactRegion", value = it) },
@@ -116,7 +116,7 @@ class ArgoWorkflowClient(
         val s3 = artifact.s3 ?: return@forEach
         val bucket = s3.bucket?.takeIf(String::isNotBlank) ?: minioConfig.bucket
         val key = s3.key ?: return@forEach
-        val endpoint = s3.endpoint?.takeIf(String::isNotBlank) ?: minioConfig.endpoint
+        val endpoint = s3.endpoint?.takeIf(String::isNotBlank) ?: minioConfig.artifactEndpoint
         references += ArtifactReference(bucket, key, endpoint, s3.region)
       }
     }

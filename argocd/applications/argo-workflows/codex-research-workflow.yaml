@@ -17,7 +17,7 @@ spec:
       - name: artifactBucket
         value: argo-workflows
       - name: artifactEndpoint
-        value: http://observability-minio.minio.svc.cluster.local:9000
+        value: observability-minio.minio.svc.cluster.local:9000
       - name: artifactRegion
         value: ""
       - name: metadata
