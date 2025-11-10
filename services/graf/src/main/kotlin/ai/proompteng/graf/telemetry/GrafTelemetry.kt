@@ -45,6 +45,7 @@ object GrafTelemetry {
   private val serviceNamespace =
     System.getenv("OTEL_SERVICE_NAMESPACE")?.takeIf { it.isNotBlank() } ?: "graf"
   private val serviceVersion = System.getenv("GRAF_VERSION")?.takeIf { it.isNotBlank() } ?: "dev"
+  private val headerSupplier: Supplier<Map<String, String>> by lazy { Supplier { parseHeaders() } }
   private val resource = Resource.getDefault().merge(Resource.create(buildResourceAttributes()))
   private val sampler = samplerFromEnv()
   private val spanExporter = buildSpanExporter()
@@ -262,8 +263,6 @@ object GrafTelemetry {
       .setTimeout(Duration.ofSeconds(10))
       .setHeaders(headerSupplier)
       .build()
-
-  private val headerSupplier = Supplier { parseHeaders() }
 
   private fun endpointForSignal(
     signal: String,
