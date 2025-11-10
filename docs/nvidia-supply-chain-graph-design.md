@@ -68,7 +68,7 @@ graph LR
 3. **Temporal consumption**:
    - Fetch artifact reference(s), validate schema and confidence, and correlate them with the stream/instance metadata.
    - Enrich with geo, partner/supplier/manufacturer context, investment/research tags, and downstream significance scoring.
-   - Invoke Kotlin service endpoints (`/entities`, `/relationships`, `/complement`, `/autoresearch`) with artifact metadata + stream lineage. `/autoresearch` starts long-running GPT agents asynchronously (responding 202 with workflow IDs) so frontends can poll for completion.
+   - Invoke Kotlin service endpoints (`/entities`, `/relationships`, `/complement`, `/autoresearch`) with artifact metadata + stream lineage. `/autoresearch` starts long-running GPT agents asynchronously (responding 202 with workflow IDs) so frontends can poll for completion. We refer to this workflow as AutoResearch.
 4. **Neo4j persistence**:
    - Neo4j driver upserts nodes/edges, tagging each mutation with `artifactId`, `ResearchSource`, and originating streams.
    - Deduplicate via `apoc.coll.fuzzyMatch`, resolve conflicts using confidence/timestamp, and trigger `clean` endpoint for TTL/soft-deletes when needed.

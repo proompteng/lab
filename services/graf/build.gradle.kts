@@ -16,6 +16,7 @@ val neo4jJavaDriverVersion = "6.0.2"
 val coroutinesVersion = "1.10.2"
 val kotlinLoggingVersion = "3.0.5"
 val koogVersion = "0.5.2"
+val jacksonVersion = "2.18.1"
 
 application {
   mainClass.set("ai.proompteng.graf.ApplicationKt")
@@ -58,6 +59,7 @@ dependencies {
   implementation("ai.koog:koog-agents:$koogVersion")
   implementation("ai.koog:prompt-executor-openai-client:$koogVersion")
   implementation("ai.koog:prompt-executor-llms:$koogVersion")
+  implementation("com.fasterxml.jackson.module:jackson-module-kotlin:$jacksonVersion")
 
   testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
   testImplementation("org.jetbrains.kotlin:kotlin-test:2.2.21")

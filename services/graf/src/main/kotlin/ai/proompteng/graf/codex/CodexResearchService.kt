@@ -13,9 +13,9 @@ class CodexResearchService(
   private val workflowStarter: (CodexResearchWorkflow, CodexResearchWorkflowInput) -> WorkflowStartResult = { workflow, input ->
     val execution = WorkflowClient.start(workflow::run, input)
     WorkflowStartResult(workflowId = execution.workflowId, runId = execution.runId)
-  },
-) {
-  fun startResearch(
+    },
+) : CodexResearchLauncher {
+  override fun startResearch(
     request: CodexResearchRequest,
     argoWorkflowName: String,
     artifactKey: String,
@@ -45,6 +45,14 @@ class CodexResearchService(
       startedAt = Instant.now().toString(),
     )
   }
+}
+
+interface CodexResearchLauncher {
+  fun startResearch(
+    request: CodexResearchRequest,
+    argoWorkflowName: String,
+    artifactKey: String,
+  ): CodexResearchLaunchResult
 }
 
 data class WorkflowStartResult(

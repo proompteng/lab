@@ -12,8 +12,8 @@ importers:
         specifier: ^2.2.9
         version: 2.2.9(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       xstate:
-        specifier: ^5.23.0
-        version: 5.23.0
+        specifier: ^5.24.0
+        version: 5.24.0
     devDependencies:
       '@biomejs/biome':
         specifier: 2.2.4
@@ -184,13 +184,13 @@ importers:
         version: 1.131.44(@tanstack/react-router@1.131.44(react-dom@19.0.0(react@19.0.0))(react@19.0.0))(vite@7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1))(webpack@5.99.9)
       '@trpc/client':
         specifier: ^11.0.0-rc.818
-        version: 11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251105))(typescript@6.0.0-dev.20251105)
+        version: 11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251109))(typescript@6.0.0-dev.20251109)
       '@trpc/server':
         specifier: ^11.0.0-rc.818
-        version: 11.0.0-rc.824(typescript@6.0.0-dev.20251105)
+        version: 11.0.0-rc.824(typescript@6.0.0-dev.20251109)
       '@trpc/tanstack-react-query':
         specifier: ^11.0.0-rc.818
-        version: 11.0.0-rc.824(@tanstack/react-query@5.89.0(react@19.0.0))(@trpc/client@11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251105))(typescript@6.0.0-dev.20251105))(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251105))(react-dom@19.0.0(react@19.0.0))(react@19.0.0)(typescript@6.0.0-dev.20251105)
+        version: 11.0.0-rc.824(@tanstack/react-query@5.89.0(react@19.0.0))(@trpc/client@11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251109))(typescript@6.0.0-dev.20251109))(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251109))(react-dom@19.0.0(react@19.0.0))(react@19.0.0)(typescript@6.0.0-dev.20251109)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -239,7 +239,7 @@ importers:
         version: 7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@6.0.0-dev.20251105)(vite@7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1))
+        version: 5.1.4(typescript@6.0.0-dev.20251109)(vite@7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1))
 
   apps/nata:
     dependencies:
@@ -9752,8 +9752,8 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
-  typescript@6.0.0-dev.20251105:
-    resolution: {integrity: sha512-1qXzjLkr7/FSYqHvV5GyP/16Y4bJyO4OcboOVBOGcorurTfB2Gf0Vya/3nPVcAunSPBq/VM9hzVPsFX1M9buZg==}
+  typescript@6.0.0-dev.20251109:
+    resolution: {integrity: sha512-kRfs6Op05piLPd5Vdpyciv2lDS2UYN0WnKPiyygNwGtzy9Xj8afUIkze0BIer5+7E12ANb0pZkk9e4XMIuq2mg==}
     engines: {node: '>=14.17'}
     hasBin: true
 
@@ -10206,8 +10206,8 @@ packages:
   xstate@5.19.2:
     resolution: {integrity: sha512-B8fL2aP0ogn5aviAXFzI5oZseAMqN00fg/TeDa3ZtatyDcViYLIfuQl4y8qmHCiKZgGEzmnTyNtNQL9oeJE2gw==}
 
-  xstate@5.23.0:
-    resolution: {integrity: sha512-jo126xWXkU6ySQ91n51+H2xcgnMuZcCQpQoD3FQ79d32a6RQvryRh8rrDHnH4WDdN/yg5xNjlIRol9ispMvzeg==}
+  xstate@5.24.0:
+    resolution: {integrity: sha512-h/213ThFfZbOefUWrLc9ZvYggEVBr0jrD2dNxErxNMLQfZRN19v+80TaXFho17hs8Q2E1mULtm/6nv12um0C4A==}
 
   xtend@4.0.2:
     resolution: {integrity: sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==}
@@ -15781,23 +15781,23 @@ snapshots:
       long: 5.3.1
       protobufjs: 7.4.0
 
-  '@trpc/client@11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251105))(typescript@6.0.0-dev.20251105)':
+  '@trpc/client@11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251109))(typescript@6.0.0-dev.20251109)':
     dependencies:
-      '@trpc/server': 11.0.0-rc.824(typescript@6.0.0-dev.20251105)
-      typescript: 6.0.0-dev.20251105
+      '@trpc/server': 11.0.0-rc.824(typescript@6.0.0-dev.20251109)
+      typescript: 6.0.0-dev.20251109
 
-  '@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251105)':
+  '@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251109)':
     dependencies:
-      typescript: 6.0.0-dev.20251105
+      typescript: 6.0.0-dev.20251109
 
-  '@trpc/tanstack-react-query@11.0.0-rc.824(@tanstack/react-query@5.89.0(react@19.0.0))(@trpc/client@11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251105))(typescript@6.0.0-dev.20251105))(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251105))(react-dom@19.0.0(react@19.0.0))(react@19.0.0)(typescript@6.0.0-dev.20251105)':
+  '@trpc/tanstack-react-query@11.0.0-rc.824(@tanstack/react-query@5.89.0(react@19.0.0))(@trpc/client@11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251109))(typescript@6.0.0-dev.20251109))(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251109))(react-dom@19.0.0(react@19.0.0))(react@19.0.0)(typescript@6.0.0-dev.20251109)':
     dependencies:
       '@tanstack/react-query': 5.89.0(react@19.0.0)
-      '@trpc/client': 11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251105))(typescript@6.0.0-dev.20251105)
-      '@trpc/server': 11.0.0-rc.824(typescript@6.0.0-dev.20251105)
+      '@trpc/client': 11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251109))(typescript@6.0.0-dev.20251109)
+      '@trpc/server': 11.0.0-rc.824(typescript@6.0.0-dev.20251109)
       react: 19.0.0
       react-dom: 19.0.0(react@19.0.0)
-      typescript: 6.0.0-dev.20251105
+      typescript: 6.0.0-dev.20251109
 
   '@tsconfig/node10@1.0.11': {}
 
@@ -17246,7 +17246,7 @@ snapshots:
     dependencies:
       semver: 7.7.2
       shelljs: 0.8.5
-      typescript: 6.0.0-dev.20251105
+      typescript: 6.0.0-dev.20251109
 
   dunder-proto@1.0.1:
     dependencies:
@@ -21483,9 +21483,9 @@ snapshots:
     optionalDependencies:
       '@swc/core': 1.11.8(@swc/helpers@0.5.15)
 
-  tsconfck@3.1.5(typescript@6.0.0-dev.20251105):
+  tsconfck@3.1.5(typescript@6.0.0-dev.20251109):
     optionalDependencies:
-      typescript: 6.0.0-dev.20251105
+      typescript: 6.0.0-dev.20251109
 
   tslib@1.14.1: {}
 
@@ -21523,7 +21523,7 @@ snapshots:
 
   typescript@5.9.3: {}
 
-  typescript@6.0.0-dev.20251105: {}
+  typescript@6.0.0-dev.20251109: {}
 
   ufo@1.5.4: {}
 
@@ -21816,11 +21816,11 @@ snapshots:
       - tsx
       - yaml
 
-  vite-tsconfig-paths@5.1.4(typescript@6.0.0-dev.20251105)(vite@7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1)):
+  vite-tsconfig-paths@5.1.4(typescript@6.0.0-dev.20251109)(vite@7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1)):
     dependencies:
       debug: 4.4.0
       globrex: 0.1.2
-      tsconfck: 3.1.5(typescript@6.0.0-dev.20251105)
+      tsconfck: 3.1.5(typescript@6.0.0-dev.20251109)
     optionalDependencies:
       vite: 7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1)
     transitivePeerDependencies:
@@ -22055,7 +22055,7 @@ snapshots:
 
   xstate@5.19.2: {}
 
-  xstate@5.23.0: {}
+  xstate@5.24.0: {}
 
   xtend@4.0.2: {}
 

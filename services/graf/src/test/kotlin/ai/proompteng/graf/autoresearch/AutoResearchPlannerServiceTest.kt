@@ -1,6 +1,6 @@
 package ai.proompteng.graf.autoresearch
 
-import ai.proompteng.graf.model.AutoresearchPlanRequest
+import ai.proompteng.graf.model.AutoResearchPlanRequest
 import io.mockk.every
 import io.mockk.mockk
 import io.temporal.client.WorkflowClient
@@ -9,14 +9,14 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
 
-class AutoresearchPlannerServiceTest {
+class AutoResearchPlannerServiceTest {
   private val workflowClient = mockk<WorkflowClient>()
-  private val workflowStub = mockk<AutoresearchWorkflow>()
+  private val workflowStub = mockk<AutoResearchWorkflow>()
 
   @Test
   fun `generatePlan returns workflow result`() {
     val request =
-      AutoresearchPlanRequest(
+      AutoResearchPlanRequest(
         objective = "Map Tier-1 suppliers",
         focus = "memory",
         metadata = mapOf("stream" to "tier1"),
@@ -28,10 +28,10 @@ class AutoresearchPlannerServiceTest {
         runId = "run-1",
         startedAt = "2025-11-09T12:00:00Z",
       )
-    every { workflowClient.newWorkflowStub(AutoresearchWorkflow::class.java, any<WorkflowOptions>()) } returns workflowStub
+    every { workflowClient.newWorkflowStub(AutoResearchWorkflow::class.java, any<WorkflowOptions>()) } returns workflowStub
 
     val service =
-      AutoresearchPlannerService(workflowClient, "queue", defaultSampleLimit = 5) { stub, input ->
+      AutoResearchPlannerService(workflowClient, "queue", defaultSampleLimit = 5) { stub, input ->
         assertSame(workflowStub, stub, "expected planner to use the WorkflowClient stub")
         assertEquals(request.objective, input.intent.objective)
         assertEquals(request.sampleLimitOverride, input.intent.sampleLimit)
