@@ -93,49 +93,49 @@ object GrafTelemetry {
 
   private val httpRequestCounter: LongCounter =
     meter
-      .counterBuilder("graf.http.server.requests.count")
+      .counterBuilder("graf_http_server_requests_count")
       .setDescription("total HTTP requests")
       .setUnit("1")
       .build()
 
   private val httpRequestDuration: DoubleHistogram =
     meter
-      .histogramBuilder("graf.http.server.request.duration.ms")
+      .histogramBuilder("graf_http_server_request_duration_ms")
       .setDescription("HTTP request latency")
       .setUnit("ms")
       .build()
 
   private val neo4jWriteCounter: LongCounter =
     meter
-      .counterBuilder("graf.neo4j.write.count")
+      .counterBuilder("graf_neo4j_write_count")
       .setDescription("Neo4j write operations")
       .setUnit("1")
       .build()
 
   private val neo4jWriteLatency: DoubleHistogram =
     meter
-      .histogramBuilder("graf.neo4j.write.duration.ms")
+      .histogramBuilder("graf_neo4j_write_duration_ms")
       .setDescription("Neo4j write latency")
       .setUnit("ms")
       .build()
 
   private val batchSizeHistogram: DoubleHistogram =
     meter
-      .histogramBuilder("graf.graph.batch.size")
+      .histogramBuilder("graf_graph_batch_size")
       .setDescription("Payload batch size")
       .setUnit("1")
       .build()
 
   private val workflowCounter: LongCounter =
     meter
-      .counterBuilder("graf.codex.workflows.started")
+      .counterBuilder("graf_codex_workflows_started")
       .setDescription("Codex workflow launches")
       .setUnit("1")
       .build()
 
   private val artifactFetchLatency: DoubleHistogram =
     meter
-      .histogramBuilder("graf.artifact.fetch.duration.ms")
+      .histogramBuilder("graf_artifact_fetch_duration_ms")
       .setDescription("MinIO artifact fetch latency")
       .setUnit("ms")
       .build()
