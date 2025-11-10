@@ -28,7 +28,7 @@ data:
         values = {
           namespace = "{{ .Labels.namespace }}",
           pod       = "{{ .Labels.pod }}",
-          container = "{{ .Labels.container }}"
+          container = "{{ .Labels.container }}",
         }
       }
 
