@@ -1,16 +1,14 @@
 package ai.proompteng.graf.autoresearch
 
-import ai.koog.prompt.executor.clients.openai.OpenAIChatParams
 import ai.koog.prompt.executor.clients.openai.OpenAIModels
-import ai.koog.prompt.executor.clients.openai.base.models.ReasoningEffort
 import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.llm.LLMProvider
+import ai.koog.prompt.params.LLMParams
 import ai.proompteng.graf.config.AutoResearchConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 class AutoResearchAgentServiceTest {
   private val baseConfig =
@@ -19,18 +17,19 @@ class AutoResearchAgentServiceTest {
       openAiApiKey = "test",
       openAiBaseUrl = null,
       model = "gpt-5",
-      temperature = 0.2,
       maxIterations = 8,
       graphSampleLimit = 25,
+      traceLoggingEnabled = false,
+      traceLogLevel = "INFO",
     )
 
   @Test
   fun `openai prompt params omit explicit temperature`() {
     val params = promptParamsForModel(OpenAIModels.Chat.GPT5, baseConfig)
-
-    assertTrue(params is OpenAIChatParams)
     assertNull(params.temperature)
-    assertEquals(ReasoningEffort.HIGH, params.reasoningEffort)
+    val schema = params.schema as LLMParams.Schema.JSON.Standard
+    assertEquals(GraphRelationshipPlanSchema.SCHEMA_NAME, schema.name)
+    assertEquals(GraphRelationshipPlanSchema.json, schema.schema)
   }
 
   @Test
@@ -40,6 +39,7 @@ class AutoResearchAgentServiceTest {
 
     val params = promptParamsForModel(customModel, baseConfig)
 
-    assertEquals(baseConfig.temperature, params.temperature)
+    assertEquals(0.2, params.temperature)
+    assertNull(params.schema)
   }
 }

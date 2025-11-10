@@ -1,9 +1,13 @@
 package ai.proompteng.graf.autoresearch
 
 import ai.koog.agents.core.agent.AIAgentService
+import ai.koog.agents.core.agent.GraphAIAgent
 import ai.koog.agents.core.agent.config.AIAgentConfig
+import ai.koog.agents.core.feature.writer.FeatureMessageLogWriter
 import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.agents.ext.agent.reActStrategy
+import ai.koog.agents.features.tracing.feature.Tracing
+import ai.koog.agents.features.tracing.writer.TraceFeatureMessageLogWriter
 import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.clients.LLMClient
 import ai.koog.prompt.executor.clients.openai.OpenAIChatParams
@@ -18,6 +22,7 @@ import ai.koog.prompt.params.LLMParams
 import ai.proompteng.graf.config.AutoResearchConfig
 import ai.proompteng.graf.model.AutoResearchPlanIntent
 import ai.proompteng.graf.model.GraphRelationshipPlan
+import io.github.oshai.kotlinlogging.KotlinLogging as OshaiKotlinLogging
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -34,6 +39,7 @@ class AutoResearchAgentService(
   private val promptExecutor: SingleLLMPromptExecutor
   private val agentService: AIAgentService<String, String, *>
   private val logger = KotlinLogging.logger {}
+  private val traceLogger = OshaiKotlinLogging.logger("AutoResearchAgentTrace")
 
   private val llmModel: LLModel = resolveModel(config.model)
 
@@ -42,6 +48,7 @@ class AutoResearchAgentService(
     llmClient = buildLlmClient(config)
     promptExecutor = SingleLLMPromptExecutor(llmClient)
     val graphStateTool = GraphStateTool(snapshotProvider, json, config.graphSampleLimit)
+    val planValidationTool = GraphPlanValidationTool(json)
     val promptParams = buildPromptParams()
     val basePrompt =
       prompt(
@@ -56,15 +63,41 @@ class AutoResearchAgentService(
         model = llmModel,
         maxAgentIterations = config.maxIterations,
       )
+    val traceFeatureInstaller: GraphAIAgent.FeatureContext.() -> Unit =
+      if (config.traceLoggingEnabled) {
+        val logLevel =
+          resolveTraceLogLevel(config.traceLogLevel) { warning ->
+            logger.warn { warning }
+          }
+        logger.info { "AutoResearch agent trace logging enabled level=$logLevel" }
+        val installer: GraphAIAgent.FeatureContext.() -> Unit =
+          {
+            install(Tracing) {
+              addMessageProcessor(
+                TraceFeatureMessageLogWriter(
+                  traceLogger,
+                  logLevel = logLevel,
+                ),
+              )
+            }
+          }
+        installer
+      } else {
+        logger.debug { "AutoResearch agent trace logging disabled" }
+        val noop: GraphAIAgent.FeatureContext.() -> Unit = {}
+        noop
+      }
+
     agentService =
       AIAgentService(
-        promptExecutor = promptExecutor,
-        agentConfig = agentConfig,
-        strategy = reActStrategy(),
-        toolRegistry =
-          ToolRegistry {
-            tool(graphStateTool)
-          },
+        promptExecutor,
+        agentConfig,
+        reActStrategy(),
+        ToolRegistry {
+          tool(graphStateTool)
+          tool(planValidationTool)
+        },
+        traceFeatureInstaller,
       )
   }
 
@@ -199,19 +232,38 @@ class AutoResearchAgentService(
       - Study the current Neo4j graph via graph_state_tool before proposing actions.
       - Identify the highest-value relationship gaps across the entire NVIDIA ecosystem: partners, manufacturers, suppliers, investors, research alliances, or operational dependencies (not just supply chain nodes).
       - For every suggested relationship or entity delta, cite the missing evidence, confidence, and the concrete actions downstream Codex researchers should perform next.
-      - Always emit strict JSON that matches the GraphRelationshipPlan schema—no commentary outside of the JSON payload.
+      - Always emit strict JSON that matches the GraphRelationshipPlan schema: every field (objective, summary, currentSignals, candidateRelationships, prioritizedPrompts, missingData, recommendedTools) must be present. `candidateRelationships` entries must include fromId, toId, relationshipType, rationale, confidence, requiredEvidence, and suggestedArtifacts.
+      - Before providing your final answer, call graph_plan_validator with the JSON you intend to return so the schema is validated.
+      - Never wrap the JSON in Markdown fences or add commentary—the response_format already enforces the schema, so return only the JSON document.
       """.trimIndent()
+
+    internal fun resolveTraceLogLevel(
+      level: String,
+      warn: (String) -> Unit = {},
+    ): FeatureMessageLogWriter.LogLevel =
+      runCatching { FeatureMessageLogWriter.LogLevel.valueOf(level.trim().uppercase()) }
+        .getOrElse {
+          warn("Unknown trace log level '$level', defaulting to INFO")
+          FeatureMessageLogWriter.LogLevel.INFO
+        }
   }
 }
 
 internal fun promptParamsForModel(
   model: LLModel,
   config: AutoResearchConfig,
-): LLMParams =
-  if (model.provider == LLMProvider.OpenAI) {
+): LLMParams {
+  val provider = model.provider
+  val providerId = provider.id
+  val providerClass = provider::class.simpleName.orEmpty()
+  val isOpenAi = providerId.contains("openai", ignoreCase = true) || providerClass.contains("OpenAI", ignoreCase = true)
+  return if (isOpenAi) {
     OpenAIChatParams(
       reasoningEffort = ReasoningEffort.HIGH,
-    )
+    ).copy(schema = GraphRelationshipPlanSchema.llmSchema)
   } else {
-    LLMParams(temperature = config.temperature)
+    LLMParams(temperature = DEFAULT_FALLBACK_TEMPERATURE)
   }
+}
+
+private const val DEFAULT_FALLBACK_TEMPERATURE = 0.2

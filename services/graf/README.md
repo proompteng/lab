@@ -50,7 +50,8 @@ The entrypoint is `bin/graf` from Gradle's `installDist`, and the runtime image 
 
 ## AutoResearch GPT-5 relationship planner
 
-- Set `AGENT_ENABLED=true` plus either `AGENT_OPENAI_API_KEY` or `OPENAI_API_KEY`. Optional overrides: `AGENT_OPENAI_BASE_URL`, `AGENT_MODEL` (defaults to `gpt-5`), `AGENT_TEMPERATURE`, `AGENT_MAX_ITERATIONS`, `AGENT_GRAPH_SAMPLE_LIMIT`.
+- Set `AGENT_ENABLED=true` plus either `AGENT_OPENAI_API_KEY` or `OPENAI_API_KEY`. Optional overrides: `AGENT_OPENAI_BASE_URL`, `AGENT_MODEL` (defaults to `gpt-5`), `AGENT_MAX_ITERATIONS`, `AGENT_GRAPH_SAMPLE_LIMIT`.
+- Koog trace logs are enabled by default so every agent step/tool execution hits the service logs. Set `AGENT_TRACE_LOGGING=false` to disable. Use `AGENT_TRACE_LOG_LEVEL` (`INFO` or `DEBUG`; any other value falls back to `INFO`) to tune verbosity.
 - When enabled, `POST /v1/autoresearch` kicks off the AutoResearch ReAct agent with the `graph_state_tool`. The agent follows the OpenAI Cookbook guidance for multi-step planners, runs on GPT-5 with **High** reasoning effort, and targets the entire NVIDIA relationship surface (partners, manufacturers, suppliers, investors, research alliances—not only supply chain tiers). Provide a JSON body:
   ```json
   {
