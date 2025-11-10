@@ -2,10 +2,10 @@ package ai.proompteng.graf
 
 import ai.proompteng.graf.autoresearch.AgentActivitiesImpl
 import ai.proompteng.graf.autoresearch.AutoResearchAgentService
+import ai.proompteng.graf.autoresearch.AutoResearchFollowupActivitiesImpl
 import ai.proompteng.graf.autoresearch.AutoResearchPlannerService
 import ai.proompteng.graf.autoresearch.AutoResearchWorkflowImpl
 import ai.proompteng.graf.autoresearch.Neo4jGraphSnapshotProvider
-import ai.proompteng.graf.autoresearch.AutoResearchFollowupActivitiesImpl
 import ai.proompteng.graf.codex.ArgoWorkflowClient
 import ai.proompteng.graf.codex.CodexResearchActivitiesImpl
 import ai.proompteng.graf.codex.CodexResearchService
@@ -117,6 +117,7 @@ fun main() {
 
   val kubernetesToken = loadServiceAccountToken(argoConfig.tokenPath)
   val kubernetesClient = buildKubernetesHttpClient(argoConfig, kubernetesToken, sharedJson)
+  val openAiHttpClient: HttpClient? = null
   val minioClient = buildMinioClient(minioConfig)
   val artifactFetcher = MinioArtifactFetcherImpl(minioClient)
   val argoClient = ArgoWorkflowClient(argoConfig, kubernetesClient, minioConfig, sharedJson)
@@ -186,6 +187,7 @@ fun main() {
       workerFactory.shutdown()
       serviceStubs.shutdown()
       kubernetesClient.close()
+      openAiHttpClient?.close()
       minioClient.close()
       autoResearchRuntime?.agentService?.close()
     },

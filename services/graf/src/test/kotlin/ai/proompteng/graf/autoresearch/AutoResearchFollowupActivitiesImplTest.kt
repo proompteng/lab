@@ -15,10 +15,11 @@ class AutoResearchFollowupActivitiesImplTest {
 
   @Test
   fun `handlePlanOutcome launches codex research for each prioritized prompt`() {
+    val longSummary = "Plan summary ".repeat(30)
     val plan =
       GraphRelationshipPlan(
         objective = "Objective",
-        summary = "Plan summary",
+        summary = longSummary,
         prioritizedPrompts = listOf("Prompt 1", "Prompt 2"),
       )
     val outcome =
@@ -40,7 +41,13 @@ class AutoResearchFollowupActivitiesImplTest {
       assertEquals("Objective", request.metadata["objective"])
       assertEquals("ecosystem", request.metadata["streamId"])
       assertTrue(request.metadata["plan.summary"]!!.startsWith("Plan summary"))
+      assertEquals(200, request.metadata["plan.summary"]!!.length)
       assertTrue(request.metadata["autoResearch.promptHash"]!!.isNotBlank())
+      assertEquals("graf-codex-research-wf-123-$index", request.metadata["codex.workflowId"])
+    }
+    result.researchLaunches.forEachIndexed { index, launch ->
+      assertEquals("graf-codex-research-wf-123-$index", launch.codexWorkflowId)
+      assertTrue(launch.argoWorkflowName.startsWith("codex-research-wf-123-$index"))
     }
   }
 
@@ -66,6 +73,22 @@ class AutoResearchFollowupActivitiesImplTest {
     assertEquals("Valid Prompt", result.researchLaunches.first().prompt)
   }
 
+  @Test
+  fun `handlePlanOutcome returns empty launches when no prompts`() {
+    val outcome =
+      AutoResearchPlanOutcome(
+        workflowId = "wf-empty",
+        runId = "run-empty",
+        intent = AutoResearchPlanIntent(objective = "Objective"),
+        plan = GraphRelationshipPlan(objective = "Objective", summary = "none", prioritizedPrompts = emptyList()),
+      )
+
+    val result = activities.handlePlanOutcome(outcome)
+
+    assertEquals(0, result.researchLaunches.size)
+    assertTrue(launcher.requests.isEmpty())
+  }
+
   private class RecordingLauncher : CodexResearchLauncher {
     data class Request(
       val prompt: String,
@@ -80,7 +103,8 @@ class AutoResearchFollowupActivitiesImplTest {
       artifactKey: String,
     ): CodexResearchLaunchResult {
       requests += Request(prompt = request.prompt, metadata = request.metadata)
-      return CodexResearchLaunchResult("codex-${requests.size}", "run-${requests.size}", "2025-11-10T00:00:00Z")
+      val workflowId = request.metadata["codex.workflowId"] ?: "codex-${requests.size}"
+      return CodexResearchLaunchResult(workflowId, "run-${requests.size}", "2025-11-10T00:00:00Z")
     }
   }
 }

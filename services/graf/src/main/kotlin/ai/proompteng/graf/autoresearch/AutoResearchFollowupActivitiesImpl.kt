@@ -4,7 +4,6 @@ import ai.proompteng.graf.codex.CodexResearchLaunchResult
 import ai.proompteng.graf.codex.CodexResearchLauncher
 import ai.proompteng.graf.model.CodexResearchRequest
 import mu.KotlinLogging
-import java.util.UUID
 
 class AutoResearchFollowupActivitiesImpl(
   private val codexResearchLauncher: CodexResearchLauncher,
@@ -25,9 +24,11 @@ class AutoResearchFollowupActivitiesImpl(
           }
           null
         } else {
-          val metadata = buildMetadata(outcome, index, prompt)
-          val argoWorkflowName = "codex-research-" + UUID.randomUUID().toString()
+          val suffix = deterministicSuffix(outcome.workflowId, index)
+          val codexWorkflowId = "graf-codex-research-$suffix"
+          val argoWorkflowName = "codex-research-$suffix"
           val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
+          val metadata = buildMetadata(outcome, index, prompt, codexWorkflowId)
           val launch = codexResearchLauncher.startResearch(
             CodexResearchRequest(prompt = prompt, metadata = metadata),
             argoWorkflowName,
@@ -53,6 +54,7 @@ class AutoResearchFollowupActivitiesImpl(
     outcome: AutoResearchPlanOutcome,
     promptIndex: Int,
     prompt: String,
+    codexWorkflowId: String,
   ): Map<String, String> =
     buildMap {
       putAll(outcome.intent.metadata)
@@ -63,6 +65,7 @@ class AutoResearchFollowupActivitiesImpl(
       put("objective", outcome.intent.objective)
       outcome.intent.streamId?.let { put("streamId", it) }
       put("plan.summary", outcome.plan.summary.take(200))
+      put("codex.workflowId", codexWorkflowId)
     }
 
   private fun logLaunch(
@@ -77,5 +80,11 @@ class AutoResearchFollowupActivitiesImpl(
       "Launched Codex research promptIndex=$promptIndex workflowId=${outcome.workflowId} " +
         "codexWorkflowId=${launch.workflowId} argoWorkflow=$argoWorkflowName artifactKey=$artifactKey prompt='${prompt.take(120)}'"
     }
+  }
+
+  private fun deterministicSuffix(workflowId: String, promptIndex: Int): String {
+    val normalized = workflowId.lowercase().replace("[^a-z0-9-]".toRegex(), "-").replace("-+".toRegex(), "-").trim('-')
+    val safe = if (normalized.isBlank()) "auto-research" else normalized
+    return "$safe-$promptIndex"
   }
 }
