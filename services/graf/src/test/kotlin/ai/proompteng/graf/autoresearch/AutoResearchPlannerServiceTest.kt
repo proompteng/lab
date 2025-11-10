@@ -42,4 +42,25 @@ class AutoResearchPlannerServiceTest {
     assertEquals(expectedResult.workflowId, response.workflowId)
     assertEquals(expectedResult.runId, response.runId)
   }
+
+  @Test
+  fun `startPlan reuses provided workflow id and default limit`() {
+    val request =
+      AutoResearchPlanRequest(
+        objective = "Map Tier-2 partners",
+        metadata = mapOf("temporal.workflowId" to "custom-id"),
+      )
+    val expected = WorkflowStartResult(workflowId = "custom-id", runId = "run", startedAt = "now")
+    every { workflowClient.newWorkflowStub(AutoResearchWorkflow::class.java, any<WorkflowOptions>()) } returns workflowStub
+
+    val service =
+      AutoResearchPlannerService(workflowClient, "queue", defaultSampleLimit = 7) { _, input ->
+        assertEquals(7, input.intent.sampleLimit)
+        expected
+      }
+
+    val launch = service.startPlan(request)
+    assertEquals("custom-id", launch.workflowId)
+    assertEquals(expected.runId, launch.runId)
+  }
 }

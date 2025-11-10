@@ -25,7 +25,7 @@ class AutoResearchFollowupActivitiesImplTest {
       AutoResearchPlanOutcome(
         workflowId = "wf-123",
         runId = "run-123",
-        intent = AutoResearchPlanIntent(objective = "Objective", metadata = mapOf("key" to "value")),
+        intent = AutoResearchPlanIntent(objective = "Objective", metadata = mapOf("key" to "value"), streamId = "ecosystem"),
         plan = plan,
       )
     val result = activities.handlePlanOutcome(outcome)
@@ -33,7 +33,37 @@ class AutoResearchFollowupActivitiesImplTest {
     assertEquals(2, result.researchLaunches.size)
     assertEquals(setOf("Prompt 1", "Prompt 2"), result.researchLaunches.map { it.prompt }.toSet())
     assertEquals(2, launcher.requests.size)
-    assertTrue(launcher.requests.all { it.metadata["autoResearch.workflowId"] == "wf-123" })
+    launcher.requests.forEachIndexed { index, request ->
+      assertEquals("wf-123", request.metadata["autoResearch.workflowId"])
+      assertEquals("run-123", request.metadata["autoResearch.runId"])
+      assertEquals(index.toString(), request.metadata["autoResearch.promptIndex"])
+      assertEquals("Objective", request.metadata["objective"])
+      assertEquals("ecosystem", request.metadata["streamId"])
+      assertTrue(request.metadata["plan.summary"]!!.startsWith("Plan summary"))
+      assertTrue(request.metadata["autoResearch.promptHash"]!!.isNotBlank())
+    }
+  }
+
+  @Test
+  fun `handlePlanOutcome skips blank prompts`() {
+    val plan =
+      GraphRelationshipPlan(
+        objective = "Objective",
+        summary = "Plan summary",
+        prioritizedPrompts = listOf("   ", "Valid Prompt"),
+      )
+    val outcome =
+      AutoResearchPlanOutcome(
+        workflowId = "wf-123",
+        runId = "run-123",
+        intent = AutoResearchPlanIntent(objective = "Objective"),
+        plan = plan,
+      )
+
+    val result = activities.handlePlanOutcome(outcome)
+
+    assertEquals(1, result.researchLaunches.size)
+    assertEquals("Valid Prompt", result.researchLaunches.first().prompt)
   }
 
   private class RecordingLauncher : CodexResearchLauncher {
