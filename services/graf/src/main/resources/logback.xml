@@ -9,7 +9,11 @@
         <logLevel/>
         <threadName/>
         <loggerName/>
-        <message/>
+        <pattern>
+          <pattern>
+            {"message":"%replace(%message){'\u001B\[[;\d]*m',''}"}
+          </pattern>
+        </pattern>
         <mdc>
           <includeMdcKeyName>trace_id</includeMdcKeyName>
           <includeMdcKeyName>span_id</includeMdcKeyName>
