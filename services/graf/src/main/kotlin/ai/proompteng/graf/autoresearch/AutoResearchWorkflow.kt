@@ -37,6 +37,12 @@ class AutoResearchWorkflowImpl : AutoResearchWorkflow {
         .newBuilder()
         .setScheduleToCloseTimeout(Duration.ofHours(1))
         .setStartToCloseTimeout(Duration.ofHours(1))
+        .setRetryOptions(
+          RetryOptions
+            .newBuilder()
+            .setMaximumAttempts(3)
+            .build(),
+        )
         .build(),
     )
   private val followupActivities =
