@@ -1,6 +1,7 @@
 package ai.proompteng.graf.config
 
 import java.lang.IllegalStateException
+import java.net.URI
 
 data class MinioConfig(
   val endpoint: String,
@@ -10,6 +11,8 @@ data class MinioConfig(
   val secure: Boolean,
   val region: String?,
 ) {
+  val artifactEndpoint: String = sanitizeEndpointForArtifacts(endpoint, secure)
+
   companion object {
     fun fromEnvironment(): MinioConfig {
       val env = System.getenv()
@@ -28,6 +31,25 @@ data class MinioConfig(
       val secure = env["MINIO_SECURE"]?.equals("true", ignoreCase = true) ?: true
       val region = env["MINIO_REGION"]?.takeIf { it.isNotBlank() }
       return MinioConfig(endpoint, bucket, accessKey, secretKey, secure, region)
+    }
+
+    private fun sanitizeEndpointForArtifacts(endpoint: String, defaultSecure: Boolean): String {
+      val normalized =
+        if (endpoint.contains("://")) {
+          endpoint
+        } else {
+          "${if (defaultSecure) "https" else "http"}://$endpoint"
+        }
+      val uri = URI.create(normalized)
+      val host = uri.host ?: throw IllegalArgumentException("MINIO_ENDPOINT must include a host")
+      val port =
+        when {
+          uri.port != -1 -> uri.port
+          uri.scheme.equals("https", ignoreCase = true) -> 443
+          defaultSecure -> 443
+          else -> 80
+        }
+      return "$host:$port"
     }
   }
 }

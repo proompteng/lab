@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import process from 'node:process'
 import { runCli } from './lib/cli'
 
-const DEFAULT_GRAF_BASE_URL = 'http://graf.graf.svc.cluster.local:8080'
+const DEFAULT_GRAF_BASE_URL = 'http://graf.graf.svc.cluster.local'
 
 interface Options {
   endpoint?: string
