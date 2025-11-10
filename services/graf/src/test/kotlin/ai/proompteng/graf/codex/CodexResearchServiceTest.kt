@@ -81,7 +81,12 @@ class CodexResearchServiceTest {
 
   @Test
   fun `startResearch handles WorkflowExecutionAlreadyStarted`() {
-    val execution = WorkflowExecution.newBuilder().setWorkflowId("wf-existing").setRunId("run-existing").build()
+    val execution =
+      WorkflowExecution
+        .newBuilder()
+        .setWorkflowId("wf-existing")
+        .setRunId("run-existing")
+        .build()
     val exception = WorkflowExecutionAlreadyStarted(execution, "already started", null)
     every { workflowClient.newWorkflowStub(CodexResearchWorkflow::class.java, any<WorkflowOptions>()) } returns workflowStub
     val service =

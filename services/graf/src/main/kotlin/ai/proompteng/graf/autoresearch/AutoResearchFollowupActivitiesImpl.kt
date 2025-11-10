@@ -29,11 +29,12 @@ class AutoResearchFollowupActivitiesImpl(
           val argoWorkflowName = "codex-research-$suffix"
           val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
           val metadata = buildMetadata(outcome, index, prompt, codexWorkflowId)
-          val launch = codexResearchLauncher.startResearch(
-            CodexResearchRequest(prompt = prompt, metadata = metadata),
-            argoWorkflowName,
-            artifactKey,
-          )
+          val launch =
+            codexResearchLauncher.startResearch(
+              CodexResearchRequest(prompt = prompt, metadata = metadata),
+              argoWorkflowName,
+              artifactKey,
+            )
           logLaunch(outcome, prompt, index, launch, argoWorkflowName, artifactKey)
           AutoResearchFollowupResult.ResearchLaunch(
             prompt = prompt,
@@ -82,8 +83,16 @@ class AutoResearchFollowupActivitiesImpl(
     }
   }
 
-  private fun deterministicSuffix(workflowId: String, promptIndex: Int): String {
-    val normalized = workflowId.lowercase().replace("[^a-z0-9-]".toRegex(), "-").replace("-+".toRegex(), "-").trim('-')
+  private fun deterministicSuffix(
+    workflowId: String,
+    promptIndex: Int,
+  ): String {
+    val normalized =
+      workflowId
+        .lowercase()
+        .replace("[^a-z0-9-]".toRegex(), "-")
+        .replace("-+".toRegex(), "-")
+        .trim('-')
     val safe = if (normalized.isBlank()) "auto-research" else normalized
     return "$safe-$promptIndex"
   }

@@ -6,8 +6,8 @@ import ai.proompteng.graf.model.AutoResearchPlanRequest
 import ai.proompteng.graf.model.toIntent
 import io.temporal.client.WorkflowClient
 import io.temporal.client.WorkflowOptions
-import java.util.UUID
 import mu.KotlinLogging
+import java.util.UUID
 
 class AutoResearchPlannerService(
   private val workflowClient: WorkflowClient,
@@ -37,12 +37,11 @@ class AutoResearchPlannerService(
         .build()
     val workflow = workflowClient.newWorkflowStub(AutoResearchWorkflow::class.java, options)
     val intent = buildIntent(request)
-    val result =
-      runCatching { workflowStarter(workflow, AutoResearchWorkflowInput(intent)) }
-        .onFailure { error ->
-          logger.error(error) { "Failed to start AutoResearch workflow workflowId=$workflowId" }
-        }
-        .getOrThrow()
+    val workflowStartAttempt = runCatching { workflowStarter(workflow, AutoResearchWorkflowInput(intent)) }
+    workflowStartAttempt.onFailure { error ->
+      logger.error(error) { "Failed to start AutoResearch workflow workflowId=$workflowId" }
+    }
+    val result = workflowStartAttempt.getOrThrow()
     logger.info {
       "AutoResearch workflow started workflowId=${result.workflowId} runId=${result.runId} startedAt=${result.startedAt}"
     }
