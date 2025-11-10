@@ -1,6 +1,10 @@
 package ai.proompteng.graf.codex
 
 import ai.proompteng.graf.model.CodexResearchRequest
+import ai.proompteng.graf.telemetry.GrafTelemetry
+import io.opentelemetry.api.common.AttributeKey
+import io.opentelemetry.api.common.Attributes
+import io.opentelemetry.api.trace.StatusCode
 import io.temporal.client.WorkflowClient
 import io.temporal.client.WorkflowExecutionAlreadyStarted
 import io.temporal.client.WorkflowOptions
@@ -14,42 +18,70 @@ class CodexResearchService(
   private val workflowStarter: (CodexResearchWorkflow, CodexResearchWorkflowInput) -> WorkflowStartResult = { workflow, input ->
     val execution = WorkflowClient.start(workflow::run, input)
     WorkflowStartResult(workflowId = execution.workflowId, runId = execution.runId)
-    },
+  },
 ) : CodexResearchLauncher {
   override fun startResearch(
     request: CodexResearchRequest,
     argoWorkflowName: String,
     artifactKey: String,
   ): CodexResearchLaunchResult {
-    val workflowId =
-      request.metadata["codex.workflow"]?.takeIf { it.isNotBlank() }
-        ?: "graf-codex-research-" + UUID.randomUUID().toString()
-    val options =
-      WorkflowOptions
-        .newBuilder()
-        .setTaskQueue(taskQueue)
-        .setWorkflowId(workflowId)
-        .build()
-    val workflow = workflowClient.newWorkflowStub(CodexResearchWorkflow::class.java, options)
-    val input =
-      CodexResearchWorkflowInput(
-        prompt = request.prompt,
-        metadata = request.metadata,
-        argoWorkflowName = argoWorkflowName,
-        artifactKey = artifactKey,
-        argoPollTimeoutSeconds = argoPollTimeoutSeconds,
+    val attributes =
+      Attributes
+        .builder()
+        .put(AttributeKey.stringKey("graf.codex.argo_workflow"), argoWorkflowName)
+        .put(AttributeKey.stringKey("graf.codex.artifact_key"), artifactKey)
+        .apply {
+          request.metadata["codex.workflow"]?.let {
+            put(AttributeKey.stringKey("graf.codex.metadata.workflow"), it)
+          }
+        }.build()
+    val span =
+      GrafTelemetry
+        .tracer
+        .spanBuilder("graf.codex.startResearch")
+        .setAllAttributes(attributes)
+        .startSpan()
+    val scope = span.makeCurrent()
+    try {
+      val workflowId =
+        request.metadata["codex.workflow"]?.takeIf { it.isNotBlank() }
+          ?: "graf-codex-research-" + UUID.randomUUID().toString()
+      val options =
+        WorkflowOptions
+          .newBuilder()
+          .setTaskQueue(taskQueue)
+          .setWorkflowId(workflowId)
+          .build()
+      val workflow = workflowClient.newWorkflowStub(CodexResearchWorkflow::class.java, options)
+      val input =
+        CodexResearchWorkflowInput(
+          prompt = request.prompt,
+          metadata = request.metadata,
+          argoWorkflowName = argoWorkflowName,
+          artifactKey = artifactKey,
+          argoPollTimeoutSeconds = argoPollTimeoutSeconds,
+        )
+      val execution =
+        try {
+          workflowStarter(workflow, input).also {
+            GrafTelemetry.recordWorkflowLaunch(artifactKey, argoWorkflowName, request.metadata)
+          }
+        } catch (ex: WorkflowExecutionAlreadyStarted) {
+          WorkflowStartResult(workflowId = workflowId, runId = ex.execution.runId)
+        }
+      return CodexResearchLaunchResult(
+        workflowId = workflowId,
+        runId = execution.runId,
+        startedAt = Instant.now().toString(),
       )
-    val execution =
-      try {
-        workflowStarter(workflow, input)
-      } catch (ex: WorkflowExecutionAlreadyStarted) {
-        WorkflowStartResult(workflowId = workflowId, runId = ex.execution.runId)
-      }
-    return CodexResearchLaunchResult(
-      workflowId = workflowId,
-      runId = execution.runId,
-      startedAt = Instant.now().toString(),
-    )
+    } catch (error: Throwable) {
+      span.recordException(error)
+      span.setStatus(StatusCode.ERROR)
+      throw error
+    } finally {
+      scope.close()
+      span.end()
+    }
   }
 }
 

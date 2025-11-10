@@ -1,7 +1,29 @@
 <configuration>
   <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
-    <encoder>
-      <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger - %msg%n</pattern>
+    <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+      <customFields>{"service":"graf"}</customFields>
+      <providers>
+        <timestamp>
+          <timeZone>UTC</timeZone>
+        </timestamp>
+        <logLevel/>
+        <threadName/>
+        <loggerName/>
+        <message>
+          <pattern>%replace(%message){'\u001B\[[;\d]*m',''}</pattern>
+        </message>
+        <mdc>
+          <includeMdcKeyName>trace_id</includeMdcKeyName>
+          <includeMdcKeyName>span_id</includeMdcKeyName>
+          <includeMdcKeyName>request_id</includeMdcKeyName>
+        </mdc>
+        <arguments/>
+        <stackTrace>
+          <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+            <maxDepthPerThrowable>5</maxDepthPerThrowable>
+          </throwableConverter>
+        </stackTrace>
+      </providers>
     </encoder>
   </appender>
 

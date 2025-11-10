@@ -22,13 +22,13 @@ import ai.koog.prompt.params.LLMParams
 import ai.proompteng.graf.config.AutoResearchConfig
 import ai.proompteng.graf.model.AutoResearchPlanIntent
 import ai.proompteng.graf.model.GraphRelationshipPlan
-import io.github.oshai.kotlinlogging.KotlinLogging as OshaiKotlinLogging
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import mu.KotlinLogging
 import java.io.Closeable
 import java.lang.AutoCloseable
+import io.github.oshai.kotlinlogging.KotlinLogging as OshaiKotlinLogging
 
 class AutoResearchAgentService(
   private val config: AutoResearchConfig,

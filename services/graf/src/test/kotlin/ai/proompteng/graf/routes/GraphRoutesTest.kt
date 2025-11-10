@@ -99,5 +99,4 @@ class GraphRoutesTest {
         }
       assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
     }
-
 }

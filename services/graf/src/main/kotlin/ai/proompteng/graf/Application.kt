@@ -20,6 +20,9 @@ import ai.proompteng.graf.neo4j.Neo4jClient
 import ai.proompteng.graf.routes.graphRoutes
 import ai.proompteng.graf.security.ApiBearerTokenConfig
 import ai.proompteng.graf.services.GraphService
+import ai.proompteng.graf.telemetry.GrafTelemetry
+import ai.proompteng.graf.telemetry.currentRouteTemplate
+import ai.proompteng.graf.telemetry.setRouteTemplate
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.ktor.client.HttpClient
@@ -27,10 +30,12 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.application.log
@@ -40,15 +45,21 @@ import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.bearer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import io.ktor.server.plugins.callid.CallId
+import io.ktor.server.plugins.callid.callId
 import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.statuspages.StatusPages
+import io.ktor.server.request.httpMethod
+import io.ktor.server.request.path
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.minio.MinioClient
+import io.opentelemetry.instrumentation.ktor.v3_0.KtorClientTelemetry
+import io.opentelemetry.instrumentation.ktor.v3_0.KtorServerTelemetry
 import io.temporal.authorization.AuthorizationGrpcMetadataProvider
 import io.temporal.authorization.AuthorizationTokenSupplier
 import io.temporal.client.WorkflowClient
@@ -61,18 +72,22 @@ import io.temporal.worker.WorkerFactory
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import org.neo4j.driver.AuthTokens
+import io.ktor.util.AttributeKey
 import org.neo4j.driver.GraphDatabase
 import org.slf4j.event.Level
 import java.io.FileInputStream
 import java.net.URI
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
+import java.util.UUID
 import javax.net.ssl.TrustManagerFactory
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation as ServerContentNegotiation
 
 private val buildVersion = System.getenv("GRAF_VERSION") ?: "dev"
 private val buildCommit = System.getenv("GRAF_COMMIT") ?: "unknown"
 private const val GRAF_BEARER_AUTH_NAME = "graf-bearer"
+private val callDurationAttribute = AttributeKey<Long>("graf.call.duration")
+private val ansiRegex = Regex("\\u001B\\[[;\\d]*m")
 
 private data class AutoResearchRuntime(
   val agentService: AutoResearchAgentService,
@@ -141,6 +156,7 @@ fun main() {
         .setNamespace(temporalConfig.namespace)
         .setIdentity(temporalConfig.identity)
         .setDataConverter(temporalDataConverter)
+        .setContextPropagators(listOf(GrafTelemetry.openTelemetryContextPropagator()))
         .build(),
     )
   val codexResearchService = CodexResearchService(workflowClient, temporalConfig.taskQueue, argoConfig.pollTimeoutSeconds)
@@ -190,6 +206,7 @@ fun main() {
       openAiHttpClient?.close()
       minioClient.close()
       autoResearchRuntime?.agentService?.close()
+      GrafTelemetry.shutdown()
     },
   )
   server.start(wait = true)
@@ -206,8 +223,43 @@ fun Application.module(
   install(ServerContentNegotiation) {
     json(jsonConfig)
   }
+  install(KtorServerTelemetry) {
+    setOpenTelemetry(GrafTelemetry.openTelemetry)
+  }
+  install(CallId) {
+    header(HttpHeaders.XRequestId)
+    generate { UUID.randomUUID().toString() }
+  }
   install(CallLogging) {
     level = Level.INFO
+    mdc("request_id") { call -> call.callId ?: "" }
+    mdc("trace_id") { GrafTelemetry.currentTraceId() ?: "" }
+    mdc("span_id") { GrafTelemetry.currentSpanId() ?: "" }
+    format { call ->
+      val duration = if (call.attributes.contains(callDurationAttribute)) {
+        call.attributes[callDurationAttribute]
+      } else {
+        null
+      }
+      formatAccessLog(
+        call.request.httpMethod.value,
+        call.request.path(),
+        call.response.status()?.value,
+        duration,
+      )
+    }
+  }
+  intercept(ApplicationCallPipeline.Monitoring) {
+    val start = System.nanoTime()
+    try {
+      proceed()
+    } finally {
+      val statusCode = call.response.status()?.value ?: 0
+      val durationMs = (System.nanoTime() - start) / 1_000_000
+      call.attributes.put(callDurationAttribute, durationMs)
+      val routeTemplate = call.currentRouteTemplate() ?: "${call.request.httpMethod.value} ${call.request.path()}"
+      GrafTelemetry.recordHttpRequest(call.request.httpMethod.value, statusCode, durationMs, routeTemplate)
+    }
   }
   install(CORS) {
     anyHost()
@@ -244,6 +296,7 @@ fun Application.module(
   }
   routing {
     get("/") {
+      call.setRouteTemplate("GET /")
       call.respond(
         mapOf(
           "service" to "graf",
@@ -259,6 +312,7 @@ fun Application.module(
       }
     }
     get("/healthz") {
+      call.setRouteTemplate("GET /healthz")
       call.respond(mapOf("status" to "ok", "port" to System.getenv("PORT")))
     }
   }
@@ -273,6 +327,9 @@ private fun buildKubernetesHttpClient(
   return HttpClient(CIO) {
     install(ContentNegotiation) {
       json(jsonConfig)
+    }
+    install(KtorClientTelemetry) {
+      setOpenTelemetry(GrafTelemetry.openTelemetry)
     }
     defaultRequest {
       header("Authorization", "Bearer $token")
@@ -335,3 +392,16 @@ private fun loadTrustManager(caPath: String) =
       }
     factory.trustManagers.firstOrNull()
   }
+
+internal fun formatAccessLog(
+  method: String,
+  path: String,
+  statusCode: Int?,
+  durationMs: Long?,
+): String {
+  val statusText = statusCode?.toString() ?: "unknown"
+  val durationText = durationMs?.let { " in ${it}ms" } ?: ""
+  return "$statusText $method - $path$durationText"
+}
+
+internal fun String.stripAnsi(): String = ansiRegex.replace(this, "")

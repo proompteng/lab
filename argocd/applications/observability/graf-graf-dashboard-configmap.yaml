@@ -1,0 +1,177 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: graf-graf-dashboard
+  namespace: observability
+data:
+  graf-graf-dashboard.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 0,
+      "id": null,
+      "iteration": 1,
+      "links": [],
+      "panels": [
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(graf_http_server_requests_count[5m]))",
+              "legendFormat": "requests",
+              "refId": "A"
+            }
+          ],
+          "title": "Graf Request Rate",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          },
+          "id": 2,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(graf_neo4j_write_duration_ms_bucket[5m])) by (le))",
+              "legendFormat": "95th percentile",
+              "refId": "A"
+            }
+          ],
+          "title": "Neo4j Write Latency (95th)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 6,
+            "x": 0,
+            "y": 8
+          },
+          "id": 3,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(graf_codex_workflows_started[5m]))",
+              "legendFormat": "workflows/min",
+              "refId": "A"
+            }
+          ],
+          "title": "Codex Workflows Started",
+          "type": "stat"
+        },
+        {
+          "datasource": "loki",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 12,
+            "x": 6,
+            "y": 8
+          },
+          "id": 4,
+          "options": {},
+          "targets": [
+            {
+              "expr": "sum(count_over_time({job=\"graf\"} |= \"ERROR\"[5m]))",
+              "refId": "A"
+            }
+          ],
+          "title": "Graf Error Logs (Loki)",
+          "type": "logs"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 36,
+      "style": "dark",
+      "tags": [
+        "graf"
+      ],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Graf Observability",
+      "uid": "graf-observability",
+      "version": 1
+    }

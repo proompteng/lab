@@ -19,6 +19,43 @@ This Kotlin/Ktor microservice implements the persistence layer described in [doc
 | `NEO4J_DATABASE` | Database name (defaults to `neo4j`). |
 | `PORT` | HTTP port (default `8080`). |
 
+## Observability
+
+Graf now boots an OpenTelemetry SDK that exports traces, metrics, and structured logs to the shared Tempo/Mimir/Loki stack managed under `argocd/applications/observability`. The service honors the following environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `OTEL_SERVICE_NAME` | Service name attached to every telemetry signal (defaults to `graf`). |
+| `OTEL_SERVICE_NAMESPACE` | Service namespace (defaults to `graf`). |
+| `OTEL_RESOURCE_ATTRIBUTES` | Extra resource tags such as `deployment.environment=prod`. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | Protocol used when talking to the Tempo/Mimir/Loki gateways (`http/protobuf`). |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Tempo OTLP traces endpoint. |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | Mimir OTLP metrics endpoint. |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | Loki ingestion endpoint. |
+| `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | Sampler strategy (default `parentbased_traceidratio` with argument `0.2`). |
+| `OTEL_METRIC_EXPORT_INTERVAL` | Metric export interval in milliseconds (default `10000`). |
+
+Custom metrics exported by Graf include:
+
+| Metric | Description |
+| --- | --- |
+| `graf_http_server_requests_count` | Request rate with labels for method, status, and route. |
+| `graf_http_server_request_duration_ms` | Request latency histogram. |
+| `graf_neo4j_write_duration_ms` | Neo4j write latency. |
+| `graf_codex_workflows_started` | Codex workflow launches. |
+| `graf_artifact_fetch_duration_ms` | MinIO artifact fetch latency. |
+
+Logs are written in JSON via `net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder` with `trace_id`, `span_id`, and `request_id` MDC fields emitted by the `CallId` + OpenTelemetry wiring, so Loki queries can correlate traces and logs. Grafana Alloy (deployed in the `graf` namespace) is responsible for shipping these JSON logs to Loki.
+
+Want to validate things locally? Point the OTLP env vars at a local collector/Tempo/Mimir/Loki stack before running the service:
+
+```bash
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces \
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4318/v1/metrics \
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://localhost:4318/v1/logs \
+./gradlew run
+```
+
 ## Local development
 ```bash
 cd services/graf

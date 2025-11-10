@@ -80,4 +80,11 @@ The template ships the prompt into the Codex container, unlocks `codex exec`, an
 ## Testing / Validation
 
 - `./gradlew test` (Graf module) runs the new unit tests for the MinIO fetcher and artifact parser.
-- `curl -X POST http://localhost:8080/v1/codex-research -H Content-Type:
+- `curl -X POST http://localhost:8080/v1/codex-research -H Content-Type: application/json -d '{"prompt":"validate","metadata":{"source":"inspect"}}'` should return a JSON payload with `workflowId`.
+- Confirm the Graf metrics panels (request rate, Neo4j latency, Codex workflows) render after syncing `argocd/applications/observability/graf-graf-dashboard-configmap.yaml`.
+
+## Telemetry
+
+- Graf now emits scoped OpenTelemetry signals that reach the Tempo/Mimir/Loki gateways described under `argocd/applications/observability`. Logs include `trace_id`, `span_id`, and `request_id` so Grafana Alloy can correlate them in Loki.
+- `GrafTelemetry` instruments the HTTP APIs, Neo4j client, Codex workflows, and MinIO artifact fetcher, exposing metrics such as `graf_http_server_requests_count`, `graf_neo4j_write_duration_ms`, `graf_codex_workflows_started`, and `graf_artifact_fetch_duration_ms`.
+- Alerts defined in `graf-mimir-rules.yaml` fire on elevated 5xx ratios (`GrafHigh5xxRate`), lack of requests (`GrafNoRequests`), or service downtime (`GrafServiceDown`). Verify the deployment and dashboards stay healthy before promoting the release.

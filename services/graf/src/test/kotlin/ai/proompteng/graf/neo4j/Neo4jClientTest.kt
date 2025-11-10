@@ -28,7 +28,7 @@ class Neo4jClientTest {
       every { session.close() } just Runs
 
       val client = Neo4jClient(driver, "neo4j")
-      val result = client.executeWrite { "ok-${it.hashCode()}" }
+      val result = client.executeWrite("test-operation") { "ok-${it.hashCode()}" }
       assertEquals("ok-${txContext.hashCode()}", result)
       verify { session.executeWrite(any()) }
       verify { session.close() }

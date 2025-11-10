@@ -51,14 +51,19 @@ class AutoResearchWorkflowImpl : AutoResearchWorkflow {
             .newBuilder()
             .setMaximumAttempts(3)
             .build(),
-        )
-        .build(),
+        ).build(),
     )
   private val logger: Logger = Workflow.getLogger(AutoResearchWorkflowImpl::class.java)
 
   override fun run(input: AutoResearchWorkflowInput): AutoResearchWorkflowResult {
     val info = Workflow.getInfo()
-    val metadataKeys = if (input.intent.metadata.isEmpty()) "none" else input.intent.metadata.keys.joinToString()
+    val metadataKeys =
+      if (input.intent.metadata.isEmpty()) {
+        "none"
+      } else {
+        input.intent.metadata.keys
+          .joinToString()
+      }
     logger.info(
       "Starting AutoResearch workflowId={} runId={} objective='{}' streamId={} sampleLimit={} metadataKeys={}",
       info.workflowId,
