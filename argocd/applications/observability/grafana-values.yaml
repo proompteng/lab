@@ -1,5 +1,8 @@
 adminUser: admin
 adminPassword: changeme
+replicas: 1
+deploymentStrategy:
+  type: Recreate
 service:
   type: LoadBalancer
   annotations:
