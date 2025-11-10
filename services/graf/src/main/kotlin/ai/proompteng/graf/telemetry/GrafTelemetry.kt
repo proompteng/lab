@@ -194,47 +194,34 @@ object GrafTelemetry {
 
   fun recordBatchSize(
     batchSize: Int,
-    artifactId: String?,
+    _artifactId: String?,
     researchSource: String?,
   ) {
-    val attributes =
+    val builder =
       Attributes
         .builder()
         .put(AttributeKey.longKey("graf.batch.size"), batchSize.toLong())
-        .apply {
-          artifactId?.let { put(AttributeKey.stringKey("artifact.id"), it) }
-          researchSource?.let { put(AttributeKey.stringKey("research.source"), it) }
-        }.build()
+    researchSource?.let { builder.put(AttributeKey.stringKey("research.source"), it) }
+    val attributes = builder.build()
     batchSizeHistogram.record(batchSize.toDouble(), attributes)
   }
 
   fun recordWorkflowLaunch(
-    artifactKey: String,
-    codexWorkflow: String,
-    metadata: Map<String, String>,
+    _artifactKey: String,
+    _codexWorkflow: String,
+    _metadata: Map<String, String>,
   ) {
-    val attrs =
-      Attributes
-        .builder()
-        .put(AttributeKey.stringKey("graf.codex.workflow"), codexWorkflow)
-        .put(AttributeKey.stringKey("graf.codex.artifact_key"), artifactKey)
-        .apply {
-          metadata.toString().takeIf { it.isNotBlank() }?.let {
-            put(AttributeKey.stringKey("graf.codex.metadata"), it)
-          }
-        }.build()
-    workflowCounter.add(1, attrs)
+    workflowCounter.add(1)
   }
 
   fun recordArtifactFetch(
     durationMs: Long,
-    reference: String,
+    _reference: String,
     bucket: String,
   ) {
     val attrs =
       Attributes
         .builder()
-        .put(AttributeKey.stringKey("artifact.reference"), reference)
         .put(AttributeKey.stringKey("artifact.bucket"), bucket)
         .build()
     artifactFetchLatency.record(durationMs.toDouble(), attrs)
