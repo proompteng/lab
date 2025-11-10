@@ -1,35 +1,36 @@
-apiVersion: monitoring.coreos.com/v1
-kind: PrometheusRule
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: graf-telemetry-rules
+  name: graf-mimir-rules
   namespace: observability
-spec:
-  groups:
-    - name: graf-telemetry.rules
-      rules:
-        - alert: GrafHigh5xxRate
-          expr: |
-            sum(rate(graf_http_server_requests_count{http_status_code=~"5.."}[5m])) /
-            clamp_min(sum(rate(graf_http_server_requests_count[5m])), 1) > 0.05
-          for: 5m
-          labels:
-            severity: warning
-          annotations:
-            summary: Graf API is returning >5% 5xx responses
-            description: "Graf is emitting more than 5% 5xx errors over the last 5 minutes."
-        - alert: GrafServiceDown
-          expr: up{job="graf"} == 0
-          for: 5m
-          labels:
-            severity: critical
-          annotations:
-            summary: Graf service is unreachable
-            description: "The graf job is not reporting metrics (up metric is 0) for 5 minutes."
-        - alert: GrafNoRequests
-          expr: sum(rate(graf_http_server_requests_count[5m])) < 0.01
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: Graf has not processed any requests
-            description: "The Graf HTTP counter has not incremented in the last 10 minutes."
+data:
+  graf-rules.yaml: |
+    groups:
+      - name: graf-telemetry.rules
+        rules:
+          - alert: GrafHigh5xxRate
+            expr: |
+              sum(rate(graf_http_server_requests_count{http_status_code=~"5.."}[5m])) /
+              clamp_min(sum(rate(graf_http_server_requests_count[5m])), 1) > 0.05
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Graf API is returning >5% 5xx responses
+              description: Graf is emitting more than 5% 5xx errors over the last 5 minutes.
+          - alert: GrafServiceDown
+            expr: up{job="graf"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Graf service is unreachable
+              description: The graf job is not reporting metrics (up metric is 0) for 5 minutes.
+          - alert: GrafNoRequests
+            expr: sum(rate(graf_http_server_requests_count[5m])) < 0.01
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Graf has not processed any requests
+              description: The Graf HTTP counter has not incremented in the last 10 minutes.
