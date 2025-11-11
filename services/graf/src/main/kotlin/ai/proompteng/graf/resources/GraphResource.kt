@@ -21,6 +21,7 @@ import ai.proompteng.graf.model.RelationshipBatchRequest
 import ai.proompteng.graf.model.RelationshipPatchRequest
 import ai.proompteng.graf.services.GraphService
 import ai.proompteng.graf.telemetry.GrafRouteTemplate
+import io.smallrye.common.annotation.Blocking
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import jakarta.ws.rs.Consumes
@@ -32,6 +33,8 @@ import jakarta.ws.rs.PathParam
 import jakarta.ws.rs.Produces
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 @Path("/v1")
@@ -99,6 +102,7 @@ class GraphResource
     suspend fun clean(payload: CleanRequest): CleanResponse = graphService.clean(payload)
 
     @POST
+    @Blocking
     @Path("/codex-research")
     @GrafRouteTemplate("POST /v1/codex-research")
     suspend fun startCodexResearch(payload: CodexResearchRequest): Response {
@@ -129,7 +133,10 @@ class GraphResource
     suspend fun startAutoResearch(payload: AutoResearchRequest): Response {
       val argoWorkflowName = "auto-research-${UUID.randomUUID()}"
       val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
-      val launch = autoResearchLauncher.startResearch(payload, argoWorkflowName, artifactKey)
+      val launch =
+        withContext(Dispatchers.IO) {
+          autoResearchLauncher.startResearch(payload, argoWorkflowName, artifactKey)
+        }
       val artifactReference =
         ArtifactReference(
           bucket = minioConfig.bucket,
