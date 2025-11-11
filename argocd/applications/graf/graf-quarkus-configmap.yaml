@@ -8,11 +8,11 @@ metadata:
     app.kubernetes.io/component: persistence
     app.kubernetes.io/part-of: lab
 data:
-  quarkus.http.cors: "true"
-  quarkus.http.cors.origins: "*"
-  quarkus.http.cors.methods: "GET,POST,PATCH,DELETE,OPTIONS"
-  quarkus.http.cors.headers: "Authorization,Content-Type"
-  quarkus.http.cors.access-control-allow-credentials: "true"
-  quarkus.http.cors.exposed-headers: "Authorization,Content-Type"
-  quarkus.http.host: "0.0.0.0"
-  quarkus.http.port: "8080"
+  QUARKUS_HTTP_CORS: "true"
+  QUARKUS_HTTP_CORS_ORIGINS: "*"
+  QUARKUS_HTTP_CORS_METHODS: "GET,POST,PATCH,DELETE,OPTIONS"
+  QUARKUS_HTTP_CORS_HEADERS: "Authorization,Content-Type"
+  QUARKUS_HTTP_CORS_ACCESS_CONTROL_ALLOW_CREDENTIALS: "true"
+  QUARKUS_HTTP_CORS_EXPOSED_HEADERS: "Authorization,Content-Type"
+  QUARKUS_HTTP_HOST: "0.0.0.0"
+  QUARKUS_HTTP_PORT: "8080"
