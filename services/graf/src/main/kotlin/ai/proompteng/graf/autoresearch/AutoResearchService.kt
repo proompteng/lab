@@ -64,14 +64,14 @@ class AutoResearchPromptBuilder(
 
       ### TOOLS & ACTIONS
       - When you confirm a new entity or relationship, emit a single-line JSON ingest object (see OUTPUT FORMAT) and POST it using `/usr/local/bin/codex-graf --endpoint <path>`.
-      - Do NOT change the Graf base URL; pass only the endpoint path. Always include `artifactId`, `researchSource`, and `streamId` = "$AUTO_RESEARCH_STREAM_ID".
+      - Do NOT change the Graf base URL; pass only the endpoint path. Ensure each entity or relationship object includes `artifactId`, `researchSource`, and `streamId` = "$AUTO_RESEARCH_STREAM_ID".
       - Limit exploratory tool calls: prefer breadth-first, and stop after a small fixed budget (e.g., 3 web searches) unless additional search is necessary to validate a fact.
 
       ### OUTPUT FORMAT (machine-readable — REQUIRED)
       The model MUST emit two kinds of outputs as JSON objects printed alone on their own line (no surrounding commentary):
       1) Ingest objects (emit immediately when ready to persist):
         - A single JSON object containing either an `entities` array or a `relationships` array matching Graf's API. Example (single-line):
-        {"entities":[{"id":"company:hypothetical-fab","label":"Company","properties":{"name":"Hypothetical Fab","description":"New OSAT partner expanding HBM4 capacity","country":"TW","sourceUrl":"https://example.com/hbm4"}}],"artifactId":"$AUTO_RESEARCH_STREAM_ID","researchSource":"https://example.com/hbm4","streamId":"$AUTO_RESEARCH_STREAM_ID"}
+        {"entities":[{"id":"company:hypothetical-fab","label":"Company","properties":{"name":"Hypothetical Fab","description":"New OSAT partner expanding HBM4 capacity","country":"TW","sourceUrl":"https://example.com/hbm4"},"artifactId":"$AUTO_RESEARCH_STREAM_ID","researchSource":"https://example.com/hbm4","streamId":"$AUTO_RESEARCH_STREAM_ID"}]}
       2) Final summary object (emit once at run end):
         - JSON object with keys: `persisted` (array of ids), `evidence` (map id -> [evidence URLs]), `followUpGaps` (array), `errors` (array), `finalArtifactFile":"codex-artifact.json".
 
@@ -79,10 +79,10 @@ class AutoResearchPromptBuilder(
 
       ### EXAMPLES (few-shot)
       Entity ingest example (single-line JSON):
-      {"entities":[{"id":"company:hypothetical-fab","label":"Company","properties":{"name":"Hypothetical Fab","description":"New OSAT partner expanding HBM4 capacity","country":"TW","sourceUrl":"https://example.com/hbm4"}}],"artifactId":"$AUTO_RESEARCH_STREAM_ID","researchSource":"https://example.com/hbm4","streamId":"$AUTO_RESEARCH_STREAM_ID"}
+      {"entities":[{"id":"company:hypothetical-fab","label":"Company","properties":{"name":"Hypothetical Fab","description":"New OSAT partner expanding HBM4 capacity","country":"TW","sourceUrl":"https://example.com/hbm4"},"artifactId":"$AUTO_RESEARCH_STREAM_ID","researchSource":"https://example.com/hbm4","streamId":"$AUTO_RESEARCH_STREAM_ID"}]}
 
       Relationship ingest example:
-      {"relationships":[{"type":"SUPPLIES","fromId":"company:hypothetical-fab","toId":"company:nvidia","properties":{"product":"HBM4","confidence":"high","sourceUrl":"https://example.com/hbm4","effectiveQuarter":"2025Q2"}}],"artifactId":"$AUTO_RESEARCH_STREAM_ID","researchSource":"https://example.com/hbm4","streamId":"$AUTO_RESEARCH_STREAM_ID"}
+      {"relationships":[{"type":"SUPPLIES","fromId":"company:hypothetical-fab","toId":"company:nvidia","properties":{"product":"HBM4","confidence":"high","sourceUrl":"https://example.com/hbm4","effectiveQuarter":"2025Q2"},"artifactId":"$AUTO_RESEARCH_STREAM_ID","researchSource":"https://example.com/hbm4","streamId":"$AUTO_RESEARCH_STREAM_ID"}]}
 
       Shell ingestion pattern for integrators (human-run):
           cat <<'JSON' | codex-graf --endpoint /v1/entities
