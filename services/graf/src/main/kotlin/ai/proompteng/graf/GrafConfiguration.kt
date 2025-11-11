@@ -157,12 +157,17 @@ private fun buildKubernetesHttpClient(config: ArgoConfig): HttpClient {
 }
 
 private fun buildMinioClient(config: MinioConfig): MinioClient {
-  val (host, port) = parseMinioEndpoint(config.endpoint, config.secure)
   val builder =
     MinioClient
       .builder()
-      .endpoint(host, port, config.secure)
       .credentials(config.accessKey, config.secretKey)
+
+  if (config.endpoint.contains("://")) {
+    builder.endpoint(config.endpoint)
+  } else {
+    val (host, port) = parseMinioEndpoint(config.endpoint, config.secure)
+    builder.endpoint(host, port, config.secure)
+  }
   config.region?.let { builder.region(it) }
   return builder.build()
 }
