@@ -1,6 +1,6 @@
 # Graf (Neo4j persistence service)
 
-This Kotlin/Ktor microservice implements the persistence layer described in [docs/nvidia-supply-chain-graph-design.md](../../docs/nvidia-supply-chain-graph-design.md). It exposes CRUD/complement/clean endpoints, validates payload shapes, and writes changes to Neo4j using the official Java driver.
+This Kotlin/Ktor microservice implements the persistence layer described in [docs/nvidia-company-research.md](../../docs/nvidia-company-research.md). It exposes CRUD/complement/clean endpoints, validates payload shapes, and writes changes to Neo4j using the official Java driver.
 
 ## Features
 - `POST /v1/entities` / `POST /v1/relationships` for upserts with artifact provenance metadata.

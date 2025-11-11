@@ -5,7 +5,7 @@
 - Automate discovery/enrichment through Temporal → Argo → Codex research artifacts, persist those findings via a Knative-hosted Kotlin service, and make the graph operable through a Tailscale-accessible Neo4j Browser.
 
 ## Key Objectives
-1. **Graph fidelity**: Model multi-tier supply, partnerships, logistics, contracts, risks, certifications, and strategic collaborations; keep provenance for every insight.
+1. **Graph fidelity**: Model multi-tier partnerships, logistics, contracts, risks, certifications, and strategic collaborations; keep provenance for every insight.
 2. **Automated research loop**: Temporal orchestrates Argo Workflows that run Codex jobs, produce structured artifacts, and feed the graph service.
 3. **Operational service**: Kotlin Knative API handles insert/update/delete/complement/clean flows, exposed for Temporal activities and manual tooling.
 4. **Secure access**: Neo4j Browser only reachable through a Tailscale sidecar; the service authenticates via short-lived tokens.
@@ -60,7 +60,7 @@ graph LR
 - **Composite modeling**: `CompositeTier` or `CompositeStack` nodes aggregate tiers (Tier 1, Tier 2...) and combine logistic/partner clusters for visualizations.
 
 ## Temporal → Argo → Codex → Service Flow for Concurrent Streams
-1. **Trigger**: Temporal workflow (namespace `nvidia-supply-chain`) schedules research pulses per stream (e.g., foundries, ODMs, logistics). Backlogs, low confidence, or conflicting data escalate through review steps.
+1. **Trigger**: Temporal workflow (namespace `nvidia-company-research`) schedules research pulses per stream (e.g., foundries, ODMs, hyperscale partners, logistics). Backlogs, low confidence, or conflicting data escalate through review steps.
 2. **Argo workflow execution**:
    - Pull research prompt templates associated with the stream.
    - Launch multiple Codex executors to cover different data sources or geographies for that stream; each executor emits artifacts tagged with `streamId`/`instanceId`.
@@ -110,7 +110,7 @@ graph LR
   - `POST /clean` – trigger dedupe logic, TTL purging, and referential integrity scans; ideally call Neo4j `apoc` procedures for fuzzy matching.
 - **Integration hooks**: Temporal activities call these endpoints; each request includes workflow ID, artifact reference, and optional Codex citations.
 - **Technology stack**: Kotlin + Ktor or Spring Boot, Neo4j Java driver, Knative service definitions (autoscale zero, concurrency), containerized via existing CI/CD pipeline.
-- **Security**: Authenticate request via workload identity token or service account, limit to `supply-chain` namespace.
+- **Security**: Authenticate request via workload identity token or service account, limit to `company-research` namespace.
 
 ### Kotlin service component diagram
 This view shows how each endpoint connects to Neo4j, enrichment hooks, cleaning routines, and observability.
