@@ -10,8 +10,8 @@ import jakarta.ws.rs.core.MediaType
 @Path("/")
 @ApplicationScoped
 class ServiceResource {
-  private val buildVersion = System.getenv("GRAF_VERSION") ?: "dev"
-  private val buildCommit = System.getenv("GRAF_COMMIT") ?: "unknown"
+  private val buildVersion = ServiceEnvironment.get("GRAF_VERSION") ?: "dev"
+  private val buildCommit = ServiceEnvironment.get("GRAF_COMMIT") ?: "unknown"
 
   @GET
   @GrafRouteTemplate("GET /")
@@ -31,6 +31,10 @@ class ServiceResource {
   fun healthz(): Map<String, String?> =
     mapOf(
       "status" to "ok",
-      "port" to System.getenv("PORT"),
+      "port" to ServiceEnvironment.get("PORT"),
     )
+}
+
+internal object ServiceEnvironment {
+  fun get(name: String): String? = System.getenv(name)
 }
