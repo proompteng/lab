@@ -28,6 +28,7 @@ import io.temporal.common.converter.JacksonJsonPayloadConverter
 import io.temporal.serviceclient.WorkflowServiceStubs
 import io.temporal.serviceclient.WorkflowServiceStubsOptions
 import io.temporal.worker.WorkerFactory
+import io.quarkus.runtime.Startup
 import jakarta.annotation.PostConstruct
 import jakarta.annotation.PreDestroy
 import jakarta.enterprise.inject.Produces
@@ -45,6 +46,7 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.TrustManagerFactory
 
 @Singleton
+@Startup
 class GrafConfiguration {
   private val neo4jConfig = Neo4jConfig.fromEnvironment()
   private val neo4jDriver =
