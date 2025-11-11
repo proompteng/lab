@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knative-local-gateway
+  namespace: istio-system
+  labels:
+    app.kubernetes.io/component: net-istio
+    app.kubernetes.io/name: knative-local-gateway
+    app.kubernetes.io/part-of: knative-serving
+    app.kubernetes.io/version: 1.20.0
+    networking.knative.dev/ingress-provider: istio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: knative-local-gateway
+      istio: ingressgateway
+  template:
+    metadata:
+      annotations:
+        inject.istio.io/templates: gateway
+        sidecar.istio.io/inject: "true"
+      labels:
+        app: knative-local-gateway
+        app.kubernetes.io/component: net-istio
+        app.kubernetes.io/name: knative-local-gateway
+        app.kubernetes.io/part-of: knative-serving
+        app.kubernetes.io/version: 1.20.0
+        networking.knative.dev/ingress-provider: istio
+        istio: ingressgateway
+        istio.io/dataplane-mode: none
+    spec:
+      serviceAccountName: knative-local-gateway
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: istio-proxy
+          image: auto
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 15090
+              name: http-envoy-prom
+              protocol: TCP
+          resources:
+            limits:
+              cpu: "2"
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsGroup: 1337
+            runAsNonRoot: true
+            runAsUser: 1337
+      securityContext:
+        sysctls:
+          - name: net.ipv4.ip_unprivileged_port_start
+            value: "0"
