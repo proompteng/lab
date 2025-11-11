@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/component: net-istio
     app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: 1.19.5
+    app.kubernetes.io/version: 1.20.0
     networking.knative.dev/ingress-provider: istio
 spec:
   selector:
@@ -18,3 +18,29 @@ spec:
         name: http
         number: 8081
         protocol: HTTP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: knative-local-gateway
+  namespace: istio-system
+  annotations:
+    experimental.istio.io/disable-gateway-port-translation: "true"
+  labels:
+    app.kubernetes.io/component: net-istio
+    app.kubernetes.io/name: knative-local-gateway
+    app.kubernetes.io/part-of: knative-serving
+    app.kubernetes.io/version: 1.20.0
+    networking.knative.dev/ingress-provider: istio
+spec:
+  type: ClusterIP
+  selector:
+    app: knative-local-gateway
+    istio: ingressgateway
+  ports:
+    - name: http2
+      port: 80
+      targetPort: 8081
+    - name: https
+      port: 443
+      targetPort: 8444

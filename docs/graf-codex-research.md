@@ -60,7 +60,7 @@ The Codex runtime now ships `codex-graf`, a Bun helper that can POST JSON payloa
 ```bash
 cat payload.json \
   | codex-graf --endpoint /v1/entities \
-    --graf-url http://graf.graf.svc.cluster.local:8080 \
+    --graf-url http://graf.graf.svc.cluster.local \
     --token-file /var/run/secrets/codex/graf-token
 ```
 
