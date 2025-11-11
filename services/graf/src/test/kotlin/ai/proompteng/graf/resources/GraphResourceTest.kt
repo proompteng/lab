@@ -11,6 +11,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import jakarta.ws.rs.core.Response
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -43,7 +44,8 @@ class GraphResourceTest {
         startedAt = "2025-11-10T00:00:00Z",
       )
 
-    val response = resource.startAutoResearch(AutoResearchRequest(userPrompt = "Map new HBM supply"))
+    val response =
+      runBlocking { resource.startAutoResearch(AutoResearchRequest(userPrompt = "Map new HBM supply")) }
     assertEquals(Response.Status.ACCEPTED.statusCode, response.status)
     val body = response.entity as AutoResearchLaunchResponse
     assertEquals("wf-123", body.workflowId)
@@ -66,7 +68,7 @@ class GraphResourceTest {
         startedAt = "2025-11-10T00:10:00Z",
       )
 
-    val response = resource.startAutoResearch(AutoResearchRequest())
+    val response = runBlocking { resource.startAutoResearch(AutoResearchRequest()) }
     assertEquals(Response.Status.ACCEPTED.statusCode, response.status)
     val body = response.entity as AutoResearchLaunchResponse
     assertEquals("wf-999", body.workflowId)

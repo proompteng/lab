@@ -29,13 +29,15 @@ class GrafBearerTokenFilter : ContainerRequestFilter {
   }
 
   private fun extractBearerToken(requestContext: ContainerRequestContext): String {
-    val authorization = requestContext.headers.getFirst("Authorization")?.trim()
-      ?: throw NotAuthorizedException("missing Authorization header")
-    val token = if (authorization.startsWith("Bearer ", ignoreCase = true)) {
-      authorization.substringAfter(" ").trim()
-    } else {
-      authorization
-    }
+    val authorization =
+      requestContext.headers.getFirst("Authorization")?.trim()
+        ?: throw NotAuthorizedException("missing Authorization header")
+    val token =
+      if (authorization.startsWith("Bearer ", ignoreCase = true)) {
+        authorization.substringAfter(" ").trim()
+      } else {
+        authorization
+      }
     return token.takeIf(String::isNotBlank) ?: throw NotAuthorizedException("missing bearer token")
   }
 }

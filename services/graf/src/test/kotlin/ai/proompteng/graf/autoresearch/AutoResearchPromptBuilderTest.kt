@@ -1,11 +1,11 @@
 package ai.proompteng.graf.autoresearch
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class AutoResearchPromptBuilderTest {
   private val fixedClock: Clock = Clock.fixed(Instant.parse("2025-11-10T05:00:00Z"), ZoneOffset.UTC)

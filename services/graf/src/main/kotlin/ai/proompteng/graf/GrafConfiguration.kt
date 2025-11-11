@@ -146,9 +146,10 @@ class GrafConfiguration {
 
 private fun buildKubernetesHttpClient(config: ArgoConfig): HttpClient {
   val trustManager = loadTrustManager(config.caCertPath)
-  val sslContext = SSLContext.getInstance("TLS").apply {
-    init(null, arrayOf(trustManager), null)
-  }
+  val sslContext =
+    SSLContext.getInstance("TLS").apply {
+      init(null, arrayOf(trustManager), null)
+    }
   return HttpClient
     .newBuilder()
     .sslContext(sslContext)
@@ -166,7 +167,10 @@ private fun buildMinioClient(config: MinioConfig): MinioClient {
   return builder.build()
 }
 
-private fun parseMinioEndpoint(endpoint: String, defaultSecure: Boolean): Pair<String, Int> {
+private fun parseMinioEndpoint(
+  endpoint: String,
+  defaultSecure: Boolean,
+): Pair<String, Int> {
   val normalized =
     if (endpoint.contains("://")) {
       endpoint
@@ -185,11 +189,10 @@ private fun parseMinioEndpoint(endpoint: String, defaultSecure: Boolean): Pair<S
   return host to port
 }
 
-private fun loadServiceAccountToken(path: String): String =
-  FileInputStream(path).use { it.bufferedReader().readText().trim() }
+private fun loadServiceAccountToken(path: String): String = FileInputStream(path).use { it.bufferedReader().readText().trim() }
 
-private fun loadTrustManager(caPath: String): TrustManager {
-  return FileInputStream(caPath).use { caStream ->
+private fun loadTrustManager(caPath: String): TrustManager =
+  FileInputStream(caPath).use { caStream ->
     val certificateFactory = CertificateFactory.getInstance("X.509")
     val certificate = certificateFactory.generateCertificate(caStream)
     val keyStore =
@@ -197,9 +200,9 @@ private fun loadTrustManager(caPath: String): TrustManager {
         load(null, null)
         setCertificateEntry("k8s-ca", certificate)
       }
-    val factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
-      init(keyStore)
-    }
+    val factory =
+      TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
+        init(keyStore)
+      }
     factory.trustManagers.firstOrNull() ?: throw IllegalStateException("No trust manager available")
   }
-}

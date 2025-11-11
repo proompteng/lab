@@ -2,19 +2,24 @@ package ai.proompteng.graf.codex
 
 import ai.proompteng.graf.config.ArgoConfig
 import ai.proompteng.graf.config.MinioConfig
-import java.net.http.HttpClient
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import java.net.http.HttpClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class ArgoWorkflowClientTest {
-  private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true; explicitNulls = false }
+  private val json =
+    Json {
+      encodeDefaults = true
+      ignoreUnknownKeys = true
+      explicitNulls = false
+    }
   private val minioConfig =
     MinioConfig(
       endpoint = "http://minio:9000",
@@ -89,14 +94,15 @@ class ArgoWorkflowClientTest {
       server.enqueue(response)
       val client = baseClient(server.url("/").toString().removeSuffix("/"))
       runBlocking {
-        val result = client.submitWorkflow(
-          SubmitArgoWorkflowRequest(
-            workflowName = "codex-test",
-            prompt = "hello",
-            metadata = emptyMap(),
-            artifactKey = "codex-test/artifact.json",
-          ),
-        )
+        val result =
+          client.submitWorkflow(
+            SubmitArgoWorkflowRequest(
+              workflowName = "codex-test",
+              prompt = "hello",
+              metadata = emptyMap(),
+              artifactKey = "codex-test/artifact.json",
+            ),
+          )
         assertEquals("codex-test", result.workflowName)
       }
       val recorded = server.takeRequest()

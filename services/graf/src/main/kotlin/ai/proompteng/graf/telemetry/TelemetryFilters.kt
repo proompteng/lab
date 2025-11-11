@@ -35,7 +35,10 @@ class GrafTelemetryRequestFilter : ContainerRequestFilter {
 @Provider
 @Priority(Priorities.USER)
 class GrafTelemetryResponseFilter : ContainerResponseFilter {
-  override fun filter(requestContext: ContainerRequestContext, responseContext: ContainerResponseContext) {
+  override fun filter(
+    requestContext: ContainerRequestContext,
+    responseContext: ContainerResponseContext,
+  ) {
     val start = requestContext.getProperty(START_TIME_PROPERTY) as? Long ?: return
     val durationMs = (System.nanoTime() - start) / 1_000_000
     val method = requestContext.method

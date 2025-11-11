@@ -3,10 +3,6 @@ package ai.proompteng.graf.codex
 import ai.proompteng.graf.config.ArgoConfig
 import ai.proompteng.graf.config.MinioConfig
 import ai.proompteng.graf.model.ArtifactReference
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
 import kotlinx.serialization.Serializable
@@ -14,6 +10,10 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToJsonElement
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 
 class ArgoWorkflowClient(
   private val config: ArgoConfig,
@@ -83,7 +83,10 @@ class ArgoWorkflowClient(
     return SubmitArgoWorkflowResult(request.workflowName)
   }
 
-  suspend fun waitForCompletion(workflowName: String, timeoutSeconds: Long): CompletedArgoWorkflow {
+  suspend fun waitForCompletion(
+    workflowName: String,
+    timeoutSeconds: Long,
+  ): CompletedArgoWorkflow {
     val deadline = System.currentTimeMillis() + timeoutSeconds * 1000
     while (true) {
       val resource = fetchWorkflow(workflowName)
@@ -161,13 +164,20 @@ internal data class ArgoWorkflowSpec(
 )
 
 @Serializable
-internal data class WorkflowTemplateRef(val name: String)
+internal data class WorkflowTemplateRef(
+  val name: String,
+)
 
 @Serializable
-internal data class ArgoArguments(val parameters: List<ArgoParameter>)
+internal data class ArgoArguments(
+  val parameters: List<ArgoParameter>,
+)
 
 @Serializable
-internal data class ArgoParameter(val name: String, val value: String)
+internal data class ArgoParameter(
+  val name: String,
+  val value: String,
+)
 
 @Serializable
 internal data class ArgoWorkflowResource(
@@ -183,13 +193,20 @@ internal data class ArgoWorkflowStatus(
 )
 
 @Serializable
-internal data class ArgoWorkflowNode(val outputs: ArgoWorkflowOutputs? = null)
+internal data class ArgoWorkflowNode(
+  val outputs: ArgoWorkflowOutputs? = null,
+)
 
 @Serializable
-internal data class ArgoWorkflowOutputs(val artifacts: List<ArgoWorkflowArtifact>? = null)
+internal data class ArgoWorkflowOutputs(
+  val artifacts: List<ArgoWorkflowArtifact>? = null,
+)
 
 @Serializable
-internal data class ArgoWorkflowArtifact(val name: String, val s3: ArgoS3Artifact? = null)
+internal data class ArgoWorkflowArtifact(
+  val name: String,
+  val s3: ArgoS3Artifact? = null,
+)
 
 @Serializable
 internal data class ArgoS3Artifact(
