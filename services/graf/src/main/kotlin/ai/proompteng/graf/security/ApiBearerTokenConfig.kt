@@ -7,6 +7,10 @@ object ApiBearerTokenConfig {
   @Volatile
   private var parsedTokens: Set<String>? = null
 
+  init {
+    ensureTokens()
+  }
+
   val tokens: Set<String>
     get() = ensureTokens()
 
