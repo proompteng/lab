@@ -17,14 +17,14 @@ spec:
       annotations:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/target: "60"
-        client.knative.dev/updateTimestamp: 2025-11-11T07:57:51.342Z
+        client.knative.dev/updateTimestamp: 2025-11-11T08:10:04.978Z
     spec:
       timeoutSeconds: 60
       containerConcurrency: 0
       serviceAccountName: graf
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/proompteng/graf@sha256:2674953b27f61f4a9045947b905df3782370d2fde92a877bf5be5248a23eb6bf
+          image: registry.ide-newton.ts.net/proompteng/graf@sha256:e9ab748b062ec114dbb1cd9ee55967fdc620037d30680f416a878758df5b9968
           imagePullPolicy: Always
           ports:
             - name: http1
@@ -51,9 +51,9 @@ spec:
                   name: graf-api
                   key: bearer-tokens
             - name: GRAF_VERSION
-              value: v0.305.1-10-gce2bb0aa
+              value: v0.305.1-13-g54fafb9f
             - name: GRAF_COMMIT
-              value: ce2bb0aafe1f13bcbd3bb10844a37b05f609995d
+              value: 54fafb9fca73d32dd5035ae86d919e4cb93c7df2
             - name: MINIO_ENDPOINT
               value: http://observability-minio.minio.svc.cluster.local:9000
             - name: MINIO_BUCKET
