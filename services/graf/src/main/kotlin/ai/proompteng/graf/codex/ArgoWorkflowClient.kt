@@ -3,34 +3,36 @@ package ai.proompteng.graf.codex
 import ai.proompteng.graf.config.ArgoConfig
 import ai.proompteng.graf.config.MinioConfig
 import ai.proompteng.graf.model.ArtifactReference
-import io.ktor.client.HttpClient
-import io.ktor.client.call.body
-import io.ktor.client.request.get
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
-import io.ktor.http.isSuccess
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.future.await
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToJsonElement
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 
 class ArgoWorkflowClient(
   private val config: ArgoConfig,
   private val httpClient: HttpClient,
   private val minioConfig: MinioConfig,
   private val json: Json,
+  private val serviceAccountToken: String,
 ) {
   private val baseUrl = "${config.apiServer}/apis/argoproj.io/v1alpha1/namespaces/${config.namespace}"
+  private val authorizationHeader =
+    if (serviceAccountToken.startsWith("Bearer ", ignoreCase = true)) {
+      serviceAccountToken
+    } else {
+      "Bearer $serviceAccountToken"
+    }
 
   suspend fun submitWorkflow(request: SubmitArgoWorkflowRequest): SubmitArgoWorkflowResult {
     val metadataJson =
-      request.metadata
-        .takeIf { it.isNotEmpty() }
-        ?.let { json.encodeToJsonElement(it) }
+      request.metadata.takeIf { it.isNotEmpty() }?.let { json.encodeToJsonElement(it) }
     val payload =
       ArgoWorkflowCreatePayload(
         apiVersion = "argoproj.io/v1alpha1",
@@ -60,25 +62,25 @@ class ArgoWorkflowClient(
               ),
           ),
       )
-    val httpResponse =
-      httpClient.post("$baseUrl/workflows") {
-        contentType(ContentType.Application.Json)
-        setBody(payload)
-      }
-    val responseBody = httpResponse.bodyAsText()
-    if (!httpResponse.status.isSuccess()) {
-      throw IllegalStateException(
-        "Argo workflow submission failed status=${httpResponse.status} body=$responseBody",
-      )
+
+    val requestBody = json.encodeToString(payload)
+    val httpRequest =
+      HttpRequest
+        .newBuilder()
+        .uri(URI.create("$baseUrl/workflows"))
+        .header("Content-Type", "application/json")
+        .header("Authorization", authorizationHeader)
+        .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+        .build()
+    val response = httpClient.sendAsync(httpRequest, HttpResponse.BodyHandlers.ofString()).await()
+    val responseBody = response.body()
+    if (response.statusCode() !in 200..299) {
+      throw IllegalStateException("Argo workflow submission failed status=${response.statusCode()} body=$responseBody")
     }
     if (responseBody.contains("\"status\":\"Failure\"")) {
-      throw IllegalStateException(
-        "Argo workflow submission failed body=$responseBody",
-      )
+      throw IllegalStateException("Argo workflow submission failed body=$responseBody")
     }
-    val response = json.decodeFromString(ArgoWorkflowResource.serializer(), responseBody)
-    val workflowName = response.metadata.name ?: request.workflowName
-    return SubmitArgoWorkflowResult(workflowName)
+    return SubmitArgoWorkflowResult(request.workflowName)
   }
 
   suspend fun waitForCompletion(
@@ -90,12 +92,14 @@ class ArgoWorkflowClient(
       val resource = fetchWorkflow(workflowName)
       val phase = resource.status?.phase
       when (phase) {
-        "Succeeded" -> return CompletedArgoWorkflow(
-          phase = phase,
-          finishedAt = resource.status.finishedAt,
-          artifactReferences = resolveArtifactReferences(resource.status),
-        )
-        "Failed", "Error" -> throw IllegalStateException("Argo workflow $workflowName failed with phase $phase")
+        "Succeeded" ->
+          return CompletedArgoWorkflow(
+            phase = phase,
+            finishedAt = resource.status?.finishedAt,
+            artifactReferences = resolveArtifactReferences(resource.status),
+          )
+        "Failed", "Error" ->
+          throw IllegalStateException("Argo workflow $workflowName failed with phase $phase")
       }
       if (System.currentTimeMillis() > deadline) {
         throw IllegalStateException("Timed out waiting for Argo workflow $workflowName to complete")
@@ -104,7 +108,21 @@ class ArgoWorkflowClient(
     }
   }
 
-  private suspend fun fetchWorkflow(name: String): ArgoWorkflowResource = httpClient.get("$baseUrl/workflows/$name").body()
+  private suspend fun fetchWorkflow(name: String): ArgoWorkflowResource {
+    val httpRequest =
+      HttpRequest
+        .newBuilder()
+        .uri(URI.create("$baseUrl/workflows/$name"))
+        .header("Authorization", authorizationHeader)
+        .GET()
+        .build()
+    val response = httpClient.sendAsync(httpRequest, HttpResponse.BodyHandlers.ofString()).await()
+    val body = response.body()
+    if (response.statusCode() !in 200..299) {
+      throw IllegalStateException("Failed to fetch workflow $name status=${response.statusCode()} body=$body")
+    }
+    return json.decodeFromString(ArgoWorkflowResource.serializer(), body)
+  }
 
   internal fun resolveArtifactReferences(status: ArgoWorkflowStatus?): List<ArtifactReference> {
     if (status == null) {
@@ -125,7 +143,7 @@ class ArgoWorkflowClient(
 }
 
 @Serializable
-data class ArgoWorkflowCreatePayload(
+internal data class ArgoWorkflowCreatePayload(
   val apiVersion: String,
   val kind: String,
   val metadata: ArgoMetadata,
@@ -133,65 +151,65 @@ data class ArgoWorkflowCreatePayload(
 )
 
 @Serializable
-data class ArgoMetadata(
+internal data class ArgoMetadata(
   val name: String? = null,
   val labels: Map<String, String>? = null,
 )
 
 @Serializable
-data class ArgoWorkflowSpec(
+internal data class ArgoWorkflowSpec(
   val serviceAccountName: String,
   val workflowTemplateRef: WorkflowTemplateRef,
   val arguments: ArgoArguments,
 )
 
 @Serializable
-data class WorkflowTemplateRef(
+internal data class WorkflowTemplateRef(
   val name: String,
 )
 
 @Serializable
-data class ArgoArguments(
+internal data class ArgoArguments(
   val parameters: List<ArgoParameter>,
 )
 
 @Serializable
-data class ArgoParameter(
+internal data class ArgoParameter(
   val name: String,
   val value: String,
 )
 
 @Serializable
-data class ArgoWorkflowResource(
+internal data class ArgoWorkflowResource(
   val metadata: ArgoMetadata = ArgoMetadata(),
   val status: ArgoWorkflowStatus? = null,
 )
 
 @Serializable
-data class ArgoWorkflowStatus(
+internal data class ArgoWorkflowStatus(
   val phase: String,
   val nodes: Map<String, ArgoWorkflowNode>? = null,
   val finishedAt: String? = null,
 )
 
 @Serializable
-data class ArgoWorkflowNode(
+internal data class ArgoWorkflowNode(
   val outputs: ArgoWorkflowOutputs? = null,
 )
 
 @Serializable
-data class ArgoWorkflowOutputs(
+internal data class ArgoWorkflowOutputs(
   val artifacts: List<ArgoWorkflowArtifact>? = null,
 )
 
 @Serializable
-data class ArgoWorkflowArtifact(
+internal data class ArgoWorkflowArtifact(
   val name: String,
   val s3: ArgoS3Artifact? = null,
 )
 
 @Serializable
-data class ArgoS3Artifact(
+internal data class ArgoS3Artifact(
   val bucket: String? = null,
   val key: String? = null,
   val endpoint: String? = null,

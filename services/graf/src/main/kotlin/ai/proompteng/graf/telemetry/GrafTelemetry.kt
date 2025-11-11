@@ -28,7 +28,6 @@ import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader
 import io.opentelemetry.sdk.resources.Resource
 import io.opentelemetry.sdk.trace.SdkTracerProvider
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor
-import io.opentelemetry.semconv.resource.attributes.ResourceAttributes
 import io.temporal.api.common.v1.Payload
 import io.temporal.common.context.ContextPropagator
 import java.time.Duration
@@ -280,9 +279,9 @@ object GrafTelemetry {
 
   private fun buildResourceAttributes(): Attributes {
     val builder = Attributes.builder()
-    builder.put(ResourceAttributes.SERVICE_NAME, serviceName)
-    builder.put(ResourceAttributes.SERVICE_NAMESPACE, serviceNamespace)
-    builder.put(ResourceAttributes.SERVICE_VERSION, serviceVersion)
+    builder.put(AttributeKey.stringKey("service.name"), serviceName)
+    builder.put(AttributeKey.stringKey("service.namespace"), serviceNamespace)
+    builder.put(AttributeKey.stringKey("service.version"), serviceVersion)
     parseResourceAttributes().forEach { (key, value) -> builder.put(AttributeKey.stringKey(key), value) }
     return builder.build()
   }

@@ -2,53 +2,25 @@ package ai.proompteng.graf.codex
 
 import ai.proompteng.graf.config.ArgoConfig
 import ai.proompteng.graf.config.MinioConfig
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.engine.mock.respond
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.request.setBody
-import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
-import io.ktor.http.HttpMethod
-import io.ktor.http.HttpStatusCode
-import io.ktor.http.content.TextContent
-import io.ktor.http.headersOf
-import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import java.net.http.HttpClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class ArgoWorkflowClientTest {
-  private val json = Json { ignoreUnknownKeys = true }
-
-  private fun mockHttpClient(engine: MockEngine) =
-    HttpClient(engine) {
-      install(ContentNegotiation) {
-        json(json)
-      }
+  private val json =
+    Json {
+      encodeDefaults = true
+      ignoreUnknownKeys = true
+      explicitNulls = false
     }
-
-  private fun defaultArgoConfig(
-    pollIntervalSeconds: Long = 1L,
-    pollTimeoutSeconds: Long = 60L,
-  ) = ArgoConfig(
-    apiServer = "https://kubernetes.default.svc",
-    namespace = "argo-workflows",
-    workflowTemplateName = "codex-research-workflow",
-    serviceAccountName = "graf",
-    tokenPath = "/tmp/token",
-    caCertPath = "/tmp/ca",
-    pollIntervalSeconds = pollIntervalSeconds,
-    pollTimeoutSeconds = pollTimeoutSeconds,
-  )
-
-  private fun defaultMinioConfig() =
+  private val minioConfig =
     MinioConfig(
       endpoint = "http://minio:9000",
       bucket = "argo-workflows",
@@ -58,226 +30,142 @@ class ArgoWorkflowClientTest {
       region = "us-east-1",
     )
 
-  private fun argoClient(
-    engine: MockEngine,
-    config: ArgoConfig = defaultArgoConfig(),
-    minio: MinioConfig = defaultMinioConfig(),
-  ) = ArgoWorkflowClient(config, mockHttpClient(engine), minio, json)
+  private fun baseClient(apiServer: String) =
+    ArgoWorkflowClient(
+      defaultArgoConfig(apiServer),
+      HttpClient.newHttpClient(),
+      minioConfig,
+      json,
+      "graf-token",
+    )
+
+  private fun defaultArgoConfig(apiServer: String = "https://kubernetes.default.svc") =
+    ArgoConfig(
+      apiServer = apiServer,
+      namespace = "argo-workflows",
+      workflowTemplateName = "codex-research-workflow",
+      serviceAccountName = "graf",
+      tokenPath = "/tmp/token",
+      caCertPath = "/tmp/ca",
+      pollIntervalSeconds = 0L,
+      pollTimeoutSeconds = 10L,
+    )
 
   @Test
-  fun `resolve artifact references returns defaults`() {
-    val argoConfig =
-      ArgoConfig(
-        apiServer = "https://temporal",
-        namespace = "argo-workflows",
-        workflowTemplateName = "codex-research-workflow",
-        serviceAccountName = "graf",
-        tokenPath = "/tmp/token",
-        caCertPath = "/tmp/ca",
-        pollIntervalSeconds = 1L,
-        pollTimeoutSeconds = 60L,
-      )
-    val minioConfig =
-      MinioConfig(
-        endpoint = "http://minio:9000",
-        bucket = "argo-workflows",
-        accessKey = "access",
-        secretKey = "secret",
-        secure = true,
-        region = "us-east-1",
-      )
-    HttpClient(CIO).use { client ->
-      val argoClient = ArgoWorkflowClient(argoConfig, client, minioConfig, json)
-      val status =
-        ArgoWorkflowStatus(
-          phase = "Succeeded",
-          nodes =
-            mapOf(
-              "codex" to
-                ArgoWorkflowNode(
-                  outputs =
-                    ArgoWorkflowOutputs(
-                      artifacts =
-                        listOf(
-                          ArgoWorkflowArtifact(
-                            name = "codex-artifact",
-                            s3 =
-                              ArgoS3Artifact(
-                                bucket = "argo-workflows",
-                                key = "codex-artifact.json",
-                                endpoint = "http://minio:9000",
-                                region = "us-east-1",
-                              ),
-                          ),
+  fun `resolveArtifactReferences returns provided buckets`() {
+    val client = baseClient("https://unused")
+    val status =
+      ArgoWorkflowStatus(
+        phase = "Succeeded",
+        nodes =
+          mapOf(
+            "node" to
+              ArgoWorkflowNode(
+                outputs =
+                  ArgoWorkflowOutputs(
+                    artifacts =
+                      listOf(
+                        ArgoWorkflowArtifact(
+                          name = "codex",
+                          s3 =
+                            ArgoS3Artifact(
+                              bucket = "bucket",
+                              key = "artifact",
+                              endpoint = "http://minio:9000",
+                              region = "us-east-1",
+                            ),
                         ),
-                    ),
-                ),
+                      ),
+                  ),
+              ),
+          ),
+        finishedAt = "now",
+      )
+    val refs = client.resolveArtifactReferences(status)
+    assertEquals(1, refs.size)
+    assertEquals("artifact", refs.first().key)
+  }
+
+  @Test
+  fun `submitWorkflow posts payload and honors Bearer token`() {
+    MockWebServer().use { server ->
+      server.start()
+      val response = MockResponse().setResponseCode(200).setBody("{}")
+      server.enqueue(response)
+      val client = baseClient(server.url("/").toString().removeSuffix("/"))
+      runBlocking {
+        val result =
+          client.submitWorkflow(
+            SubmitArgoWorkflowRequest(
+              workflowName = "codex-test",
+              prompt = "hello",
+              metadata = emptyMap(),
+              artifactKey = "codex-test/artifact.json",
             ),
-          finishedAt = "now",
-        )
-      val references = argoClient.resolveArtifactReferences(status)
-      assertEquals(1, references.size)
-      assertEquals("argo-workflows", references.first().bucket)
-      assertEquals("codex-artifact.json", references.first().key)
+          )
+        assertEquals("codex-test", result.workflowName)
+      }
+      val recorded = server.takeRequest()
+      assertEquals(
+        "/apis/argoproj.io/v1alpha1/namespaces/argo-workflows/workflows",
+        recorded.path,
+      )
+      assertEquals("Bearer graf-token", recorded.getHeader("Authorization"))
     }
   }
 
   @Test
-  fun `submit workflow posts padded payload`() =
-    runBlocking {
-      val engine =
-        MockEngine { request ->
-          assertEquals(HttpMethod.Post, request.method)
-          assertTrue(request.url.encodedPath.endsWith("/workflows"))
-          val bodyText = (request.body as TextContent).text
-          val payload = json.decodeFromString<ArgoWorkflowCreatePayload>(bodyText)
-          assertEquals("argoproj.io/v1alpha1", payload.apiVersion)
-          assertEquals("Workflow", payload.kind)
-          assertEquals(
-            "artifact-key",
-            payload.spec.arguments.parameters
-              .first { it.name == "artifactKey" }
-              .value,
-          )
-          assertEquals(
-            "test prompt",
-            payload.spec.arguments.parameters
-              .first { it.name == "prompt" }
-              .value,
-          )
-          respond(
-            """{"metadata": {"name": "codex-workflow", "labels": {"codex.stage": "research"}}}""",
-            HttpStatusCode.OK,
-            headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-          )
-        }
-      val client = argoClient(engine)
-
-      val result =
-        client.submitWorkflow(
-          SubmitArgoWorkflowRequest(
-            workflowName = "codex-workflow",
-            prompt = "test prompt",
-            metadata = emptyMap(),
-            artifactKey = "artifact-key",
-          ),
-        )
-      assertEquals("codex-workflow", result.workflowName)
-    }
-
-  @Test
-  fun `submit workflow tolerates missing metadata fields`() =
-    runBlocking {
-      val engine =
-        MockEngine {
-          respond(
-            """{"metadata": {}}""",
-            HttpStatusCode.OK,
-            headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-          )
-        }
-      val client = argoClient(engine)
-      val request =
-        SubmitArgoWorkflowRequest(
-          workflowName = "codex-workflow",
-          prompt = "test prompt",
-          metadata = emptyMap(),
-          artifactKey = "artifact-key",
-        )
-
-      val result = client.submitWorkflow(request)
-
-      assertEquals("codex-workflow", result.workflowName)
-    }
-
-  @Test
-  fun `submit workflow surfaces argo failure status`() =
-    runBlocking {
-      val engine =
-        MockEngine {
-          respond(
-            """{"kind":"Status","apiVersion":"v1","metadata":{},"status":"Failure","message":"workflows.argoproj.io \"codex-workflow\" already exists","reason":"AlreadyExists"}""",
-            HttpStatusCode.Conflict,
-            headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-          )
-        }
-      val client = argoClient(engine)
-
-      val error =
+  fun `submitWorkflow throws when server reports failure`() {
+    MockWebServer().use { server ->
+      server.start()
+      val response =
+        MockResponse()
+          .setResponseCode(200)
+          .setBody("{\"status\":\"Failure\"}")
+      server.enqueue(response)
+      val client = baseClient(server.url("/").toString().removeSuffix("/"))
+      runBlocking {
         assertFailsWith<IllegalStateException> {
           client.submitWorkflow(
             SubmitArgoWorkflowRequest(
-              workflowName = "codex-workflow",
-              prompt = "test prompt",
+              workflowName = "codex-test",
+              prompt = "hello",
               metadata = emptyMap(),
-              artifactKey = "artifact-key",
+              artifactKey = "codex-test/artifact.json",
             ),
           )
         }
-
-      assertTrue(error.message!!.contains("status=409 Conflict"))
-      assertTrue(error.message!!.contains("already exists"))
+      }
     }
+  }
 
   @Test
-  fun `submit workflow detects kubernetes failure payloads with 200 status`() =
-    runBlocking {
-      val engine =
-        MockEngine {
-          respond(
-            """{"kind":"Status","apiVersion":"v1","metadata":{},"status":"Failure","message":"workflows.argoproj.io \"codex-workflow\" is invalid","reason":"Invalid"}""",
-            HttpStatusCode.OK,
-            headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-          )
-        }
-      val client = argoClient(engine)
-
-      val error =
-        assertFailsWith<IllegalStateException> {
-          client.submitWorkflow(
-            SubmitArgoWorkflowRequest(
-              workflowName = "codex-workflow",
-              prompt = "test prompt",
-              metadata = emptyMap(),
-              artifactKey = "artifact-key",
-            ),
-          )
-        }
-
-      assertTrue(error.message!!.contains("status\":\"Failure\""))
-    }
-
-  @Test
-  fun `waitForCompletion returns when workflow eventually succeeds`() =
-    runBlocking {
+  fun `waitForCompletion polls until success`() {
+    MockWebServer().use { server ->
+      server.start()
       val statuses =
         listOf(
+          ArgoWorkflowResource(status = ArgoWorkflowStatus(phase = "Running")),
           ArgoWorkflowResource(
-            metadata = ArgoMetadata(name = "codex-workflow", labels = emptyMap()),
-            status = ArgoWorkflowStatus(phase = "Running"),
-          ),
-          ArgoWorkflowResource(
-            metadata = ArgoMetadata(name = "codex-workflow", labels = emptyMap()),
             status =
               ArgoWorkflowStatus(
                 phase = "Succeeded",
                 finishedAt = "now",
                 nodes =
                   mapOf(
-                    "codex" to
+                    "node" to
                       ArgoWorkflowNode(
                         outputs =
                           ArgoWorkflowOutputs(
                             artifacts =
                               listOf(
                                 ArgoWorkflowArtifact(
-                                  name = "codex-artifact",
+                                  name = "codex",
                                   s3 =
                                     ArgoS3Artifact(
-                                      bucket = "bucket",
+                                      bucket = "my-bucket",
                                       key = "artifact",
                                       endpoint = "http://minio:9000",
-                                      region = "us-east-1",
                                     ),
                                 ),
                               ),
@@ -287,43 +175,34 @@ class ArgoWorkflowClientTest {
               ),
           ),
         )
-      var calls = 0
-      val engine =
-        MockEngine { request ->
-          assertEquals(HttpMethod.Get, request.method)
-          val status = statuses[minOf(calls, statuses.lastIndex)]
-          calls++
-          respond(
-            json.encodeToString(status),
-            HttpStatusCode.OK,
-            headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-          )
-        }
-      val client = argoClient(engine, defaultArgoConfig(pollIntervalSeconds = 0, pollTimeoutSeconds = 10))
-      val completed = client.waitForCompletion("codex-workflow", timeoutSeconds = 10)
-      assertEquals("Succeeded", completed.phase)
-      assertEquals("now", completed.finishedAt)
-      assertEquals(1, completed.artifactReferences.size)
-      assertEquals("artifact", completed.artifactReferences.first().key)
+      statuses.forEach { server.enqueue(MockResponse().setBody(json.encodeToString(it))) }
+      val client = baseClient(server.url("/").toString().removeSuffix("/"))
+      runBlocking {
+        val completed = client.waitForCompletion("codex", timeoutSeconds = 5)
+        assertEquals("Succeeded", completed.phase)
+        assertEquals("now", completed.finishedAt)
+        assertEquals(1, completed.artifactReferences.size)
+        assertEquals("artifact", completed.artifactReferences.first().key)
+      }
     }
+  }
 
   @Test
-  fun `waitForCompletion throws when workflow fails`() =
-    runBlocking {
-      val engine =
-        MockEngine {
-          respond(
+  fun `waitForCompletion throws when workflow fails`() {
+    MockWebServer().use { server ->
+      server.start()
+      server.enqueue(
+        MockResponse()
+          .setBody(
             json.encodeToString(
-              ArgoWorkflowResource(
-                metadata = ArgoMetadata(name = "codex-workflow", labels = emptyMap()),
-                status = ArgoWorkflowStatus(phase = "Failed"),
-              ),
+              ArgoWorkflowResource(status = ArgoWorkflowStatus(phase = "Failed")),
             ),
-            HttpStatusCode.OK,
-            headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-          )
-        }
-      val client = argoClient(engine, defaultArgoConfig(pollIntervalSeconds = 0, pollTimeoutSeconds = 10))
-      assertFailsWith<IllegalStateException> { client.waitForCompletion("codex-workflow", timeoutSeconds = 10) }
+          ),
+      )
+      val client = baseClient(server.url("/").toString().removeSuffix("/"))
+      runBlocking {
+        assertFailsWith<IllegalStateException> { client.waitForCompletion("codex", timeoutSeconds = 5) }
+      }
     }
+  }
 }

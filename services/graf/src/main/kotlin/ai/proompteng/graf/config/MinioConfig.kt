@@ -33,7 +33,10 @@ data class MinioConfig(
       return MinioConfig(endpoint, bucket, accessKey, secretKey, secure, region)
     }
 
-    private fun sanitizeEndpointForArtifacts(endpoint: String, defaultSecure: Boolean): String {
+    private fun sanitizeEndpointForArtifacts(
+      endpoint: String,
+      defaultSecure: Boolean,
+    ): String {
       val normalized =
         if (endpoint.contains("://")) {
           endpoint

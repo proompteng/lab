@@ -17,20 +17,24 @@ spec:
       annotations:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/target: "60"
-        client.knative.dev/updateTimestamp: 2025-11-11T02:30:15.700Z
+        client.knative.dev/updateTimestamp: 2025-11-11T08:25:44.551Z
     spec:
       timeoutSeconds: 60
       containerConcurrency: 0
       serviceAccountName: graf
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/proompteng/graf@sha256:905fb072f91ba9549133c7f82ba0cc88ac5f95b12a95d2ad206edfc4d2ae8f6d
+          image: registry.ide-newton.ts.net/proompteng/graf@sha256:08626d1f20d234cd3f3a0ff99ed3bba178ad94e34ac0e1664043c487ccea98e7
           imagePullPolicy: Always
           ports:
             - name: http1
               containerPort: 8080
           env:
             - name: ADDRESS
+              value: 0.0.0.0
+            - name: QUARKUS_HTTP_PORT
+              value: "8080"
+            - name: QUARKUS_HTTP_HOST
               value: 0.0.0.0
             - name: NEO4J_URI
               value: bolt://graf-db.graf.svc.cluster.local:7687
@@ -47,9 +51,9 @@ spec:
                   name: graf-api
                   key: bearer-tokens
             - name: GRAF_VERSION
-              value: v0.305.1-4-gf99a2f98
+              value: v0.305.1-19-gf757dc10
             - name: GRAF_COMMIT
-              value: f99a2f980aed4ce2eb02606810d060846df5f913
+              value: f757dc100d5b2acbcf09ee77012aa4afc174651d
             - name: MINIO_ENDPOINT
               value: http://observability-minio.minio.svc.cluster.local:9000
             - name: MINIO_BUCKET
@@ -83,6 +87,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: graf-otel-config
+            - configMapRef:
+                name: graf-quarkus-config
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false

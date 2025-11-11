@@ -5,20 +5,29 @@ object ApiBearerTokenConfig {
   private const val LEGACY_TOKEN_ENV = "GRAF_API_BEARER_TOKEN"
 
   @Volatile
-  private var parsedTokens: Set<String> =
-    loadTokens().also {
-      require(it.isNotEmpty()) {
-        "At least one bearer token must be provided via $TOKENS_ENV or $LEGACY_TOKEN_ENV"
-      }
-    }
+  private var parsedTokens: Set<String>? = null
+
+  init {
+    ensureTokens()
+  }
 
   val tokens: Set<String>
-    get() = parsedTokens
+    get() = ensureTokens()
 
-  fun isValid(token: String?): Boolean = token?.trim()?.let(parsedTokens::contains) == true
+  fun isValid(token: String?): Boolean = token?.trim()?.let(ensureTokens()::contains) == true
 
   internal fun overrideTokensForTests(tokens: Set<String>) {
     parsedTokens = tokens
+  }
+
+  private fun ensureTokens(): Set<String> {
+    parsedTokens?.let { return it }
+    val loaded = loadTokens()
+    require(loaded.isNotEmpty()) {
+      "At least one bearer token must be provided via $TOKENS_ENV or $LEGACY_TOKEN_ENV"
+    }
+    parsedTokens = loaded
+    return loaded
   }
 
   private fun loadTokens(): Set<String> {

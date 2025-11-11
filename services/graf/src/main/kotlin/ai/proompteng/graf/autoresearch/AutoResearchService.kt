@@ -108,10 +108,13 @@ class AutoResearchPromptBuilder(
       - [ ] Highlighted follow-up gaps for the next AutoResearch run if you ran out of time.
       - [ ] Avoided duplicating existing nodes/edges; reuse IDs whenever possible.
       - [ ] Ensured all shell commands completed successfully (non-zero exit codes require investigation).
-    """.trimIndent()
+      """.trimIndent()
   }
 
-  fun buildMetadata(userPrompt: String?, argoWorkflowName: String): Map<String, String> {
+  fun buildMetadata(
+    userPrompt: String?,
+    argoWorkflowName: String,
+  ): Map<String, String> {
     val timestamp = Instant.now(clock).toString()
     val trimmed = userPrompt?.trim()?.takeIf { it.isNotEmpty() }
     return buildMap {
