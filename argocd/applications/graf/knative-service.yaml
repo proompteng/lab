@@ -24,13 +24,17 @@ spec:
       serviceAccountName: graf
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/proompteng/graf@sha256:905fb072f91ba9549133c7f82ba0cc88ac5f95b12a95d2ad206edfc4d2ae8f6d
+          image: registry.ide-newton.ts.net/proompteng/graf:quarkus
           imagePullPolicy: Always
           ports:
             - name: http1
               containerPort: 8080
           env:
             - name: ADDRESS
+              value: 0.0.0.0
+            - name: QUARKUS_HTTP_PORT
+              value: "8080"
+            - name: QUARKUS_HTTP_HOST
               value: 0.0.0.0
             - name: NEO4J_URI
               value: bolt://graf-db.graf.svc.cluster.local:7687
@@ -83,6 +87,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: graf-otel-config
+            - configMapRef:
+                name: graf-quarkus-config
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
