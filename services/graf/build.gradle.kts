@@ -73,13 +73,6 @@ tasks {
   }
 }
 
-val nativeBuildEnabled = providers.gradleProperty("quarkus.native.enabled").map(String::toBoolean).orElse(false)
-
-listOf("quarkusAppPartsBuild", "quarkusDependenciesBuild").forEach { taskName ->
-  tasks.named(taskName).configure {
-    onlyIf { nativeBuildEnabled.get() }
-  }
-}
 
 ktlint {
   version.set("1.7.1")

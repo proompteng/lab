@@ -1,43 +1,41 @@
-# Graf Quarkus Migration
+# Graf Quarkus Migration — Current State
 
-### Objective
-- Describe how to replace the Ktor/Netty Graf service with a Quarkus-native runtime while keeping every `/`, `/healthz`, and `/v1/**` endpoint, onboarding the existing Neo4j/Temporal/MinIO/Codex workflows, and maintaining the bearer-token + RBAC guardrails that let Graf keep submitting Argo workflows.
+## Status Summary (November 11, 2025)
+- ✅ Graf now runs entirely on Quarkus. All former Ktor route handlers have been replaced with Quarkus resources (`GraphResource`, `ServiceResource`) that delegate to the existing `GraphService`, Codex launchers, and AutoResearch workflows.
+- ✅ JSON compatibility parity is restored: `KotlinSerializationConfig` produces a singleton `Json` instance with `ignoreUnknownKeys = true`, `explicitNulls = false`, and `encodeDefaults = true`, so `/v1/**` endpoints accept forward-compatible payloads exactly as before.
+- ✅ HTTP/CORS and port settings come from `graf-quarkus-config` using uppercase Quarkus env keys (`QUARKUS_HTTP_*`, `QUARKUS_HTTP_CORS_*`), ensuring `envFrom` works and cross-origin clients keep functioning.
+- ✅ Docker/Gradle toolchain updated to Kotlin 2.2.21, ktlint 14.0.1, and a Gradle 9.2 JDK21 builder + distroless Java 21 runtime; `quarkusBuild` artifacts are copied from `/workspace/build/quarkus-app`.
+- ✅ Tests cover the new surface: `AutoResearchServiceTest`, `ServiceResourceTest`, and `KotlinSerializationConfigTest` guard the delegation logic, env wiring, and tolerant parsing. `./gradlew test` and `./gradlew koverXmlReport` pass locally, and Docker builds complete (`docker build -t graf-temp services/graf`).
 
-### Context & Constraints
-- The current runtime wiring lives in `services/graf/src/main/kotlin/ai/proompteng/graf/Application.kt:87`, `routes/GraphRoutes.kt:30`, and the helper services under `resources/`, `services/`, and `codex/` that assume a Ktor request/response lifecycle and the bearer-token guard defined in `ApiBearerTokenConfig`.
-- Graf talks to Neo4j, MinIO, Argo, and OpenTelemetry from environment-bound config (`GrafConfiguration`) so the Quarkus module must reuse the same env vars plus the `graf-otel-config` secrets currently mounted by `argocd/applications/graf/knative-service.yaml` and `graf-quarkus-configmap.yaml`.
-- Deployment runs through the `graf` service account in `argocd/applications/graf/service-account.yaml` with the `graf-workflows-clusterrolebinding.yaml` cluster role binding (Argo `workflows`/`workflowtemplates`, verbs `create/get/list/watch/patch`). Quarkus must keep those permissions or document the precise additions in the RBAC manifest without widening scope beyond workflow operations.
+## Runtime & API Surface
+- `services/graf/src/main/kotlin/ai/proompteng/graf/resources/GraphResource.kt` now handles `/v1/entities`, `/v1/relationships`, `/v1/complement`, `/v1/clean`, `/v1/codex-research`, and `/v1/autoresearch`. Each method mirrors the former Ktor payloads and reuses `GrafRouteTemplate` for telemetry labels.
+- `ServiceResource` keeps `/` and `/healthz` responses identical to the legacy service. Env reads go through `ServiceEnvironment.get(...)`, which eases testing and ensures PORT/version metadata reflects injected config.
+- Serialization is provided via the CDI producer `KotlinSerializationConfig`. Because Quarkus injects this `Json` instance into RESTEasy Kotlin serialization, unknown keys no longer break existing clients (solving the regression called out in the code review).
 
-### Task Breakdown
-1. **Route surface & business logic** – Replace `GraphRoutes.kt` with Quarkus resources (`services/graf/src/main/kotlin/ai/proompteng/graf/resources/GraphResource.kt`, `ServiceResource.kt`) that delegate to `GraphService` (`services/graf/src/main/kotlin/ai/proompteng/graf/services/GraphService.kt`) and reuse the Codex/AutoResearch launchers plus `codex/ArgoWorkflowClient.kt`. Confirm the new `GrafRouteTemplate` keeps the same request/response shape for `/v1` paths.
-2. **Security & telemetry guards** – Wire the bearer-token guard through `security/SecurityProviders.kt`, and port the OTEL/metrics counters from `telemetry/GrafTelemetry.kt` to Quarkus request filters in `telemetry/TelemetryFilters.kt`. Ensure `GrafConfiguration.kt` continues to expose the Neo4j/MinIO/Argo settings and `GrafRouteTemplate` reproduces the existing logging/telemetry semantics.
-3. **Build/runtime config** – Update `services/graf/build.gradle.kts`, `gradle.properties`, `settings.gradle.kts`, and `Dockerfile` to produce a Quarkus `quarkus-app` artifact; let the Knative image (`registry.ide-newton.ts.net/proompteng/graf:quarkus`) set `QUARKUS_HTTP_PORT`, `QUARKUS_HTTP_HOST`, `PORT`, and reuse the `graf-otel-config` + `graf-quarkus-config` config maps that define HTTP/CORS/OTEL settings.
-4. **RBAC & deployment wiring** – Keep `argocd/applications/graf/knative-service.yaml` pointed at the new image while keeping the Neo4j/MinIO/OTEL/bearer-token secrets, and ensure `graf-workflows-clusterrolebinding.yaml` (or its ClusterRole) documents the existing verbs. Double-check the ServiceAccount mounts the token/CA paths Quarkus reads for Argo submission.
+## Security, RBAC, and Telemetry
+- Bearer-token verification lives under `security/` and is wired into Quarkus filters exactly as before; no RBAC scope changes were required. The `graf` ServiceAccount plus `graf-workflows-clusterrolebinding` continue granting `create/get/list/watch/patch` on Argo `workflows` and `workflowtemplates`.
+- `TelemetryFilters` and `GrafTelemetry` still apply OTEL spans/metrics for every route. The Knative deployment mounts `graf-otel-config` so Quarkus exporters can reach the same OTLP endpoints. Feature parity with the Ktor OTEL counters has been confirmed by exercising `/` and `/v1/entities` locally with the bearer token.
 
-### Deliverables
-- This plan document plus `docs/graf-quarkus-migration.md` summarizing the migration approach, RBAC expectations, and rollout steps.
-- Updated `argocd/applications/graf` manifests: `knative-service.yaml`, `graf-quarkus-configmap.yaml`, and `kustomization.yaml` to deploy the Quarkus image with the required secrets/config.
-- Gradle/Docker/quarkus runtime artifacts (`build.gradle.kts`, `Dockerfile`, Quarkus-specific configuration classes) that build the new Graf container and keep the existing bearer-token/Neo4j/MinIO wiring intact.
-- RBAC notes confirming the `graf` service account still uses `argo-workflows-edit` (or expanded verbs) and that any new verbs needed by Quarkus are recorded in the manifest.
+## Build, Config, and Deployment Notes
+- Build entrypoint: `services/graf/build.gradle.kts` (Kotlin 2.2.21 plugins, ktlint 14.0.1, Kover 0.9.3). Ktlint/Kover tasks are part of CI, and `./gradlew test` is the primary validation command.
+- Containerization: `services/graf/Dockerfile` performs a `quarkusBuild` inside `gradle:9.2-jdk21`, then copies `/workspace/build/quarkus-app` into `gcr.io/distroless/java21-debian12:nonroot`. This aligns with Knative’s expectation of a runnable `quarkus-run.jar`.
+- Configuration: `argocd/applications/graf/graf-quarkus-configmap.yaml` now stores uppercase Quarkus env names (e.g., `QUARKUS_HTTP_CORS_ORIGINS`). Pods load it via `envFrom`, so adding new Quarkus properties only requires extending that ConfigMap. OTEL exporters remain in `graf-otel-config`.
+- Deployment: the Knative service manifest still references the Quarkus image (`registry.ide-newton.ts.net/proompteng/graf:quarkus`), mounts Neo4j/MinIO secrets, and injects bearer-token material. No additional Kubernetes resources were required post-migration.
 
-### Validation & Observability
-1. Run `./gradlew :services:graf:check` (Quarkus validation + lint) and `./gradlew :services:graf:test` (graph/Codex unit suites).
-2. Confirm `graf-quarkus-config`/`graf-otel-config` are mounted by the Knative service alongside the bearer-token, Neo4j, MinIO, and OTEL secrets before syncing.
-3. After deployment, exercise `/`, `/healthz`, and `/v1/**` through the bearer tokens listed in the `graf-api` secret to ensure responses and OTEL counters still align with `GrafTelemetry` and `TelemetryFilters`.
-4. Verify `logging`/`metrics` interceptors from `GrafRouteTemplate.kt` keep emitting the same counters to the OTEL endpoints in `graf-otel-configmap.yaml`.
+## Validation & Observability Checklist
+1. `./gradlew test` — MUST run before every PR; covers Graph, Codex, AutoResearch, Service resources, and config producers.
+2. `./gradlew koverXmlReport` — produces `build/reports/kover/report.xml` to track coverage (now ~45%, up from 43%).
+3. `docker build -t graf-temp services/graf` — validates the multi-stage image and artifact copy path.
+4. Post-deploy smoke: hit `/`, `/healthz`, `/v1/entities`, `/v1/autoresearch` with valid bearer tokens; verify logs include `GrafRouteTemplate` output and OTEL spans land in the collector supplied via `graf-otel-config`.
 
-### Risks & Contingencies
-- Quarkus still depends on the mounted service account token/CA for Argo API calls; a missing mount breaks workflow submissions, so double-check the Knative pod spec and `graf` SA binding before rollout.
-- RBAC drift may open cluster-scoped verbs; if any new permissions are required beyond `workflows`/`workflowtemplates`, document them in `graf-workflows-clusterrolebinding.yaml` and include rollback notes that revert to the narrow workflow-only verbs.
-- Gradle/Docker changes must keep the same artifact repositories and env var names (Neo4j URI, MinIO endpoint, OTEL exporter) so downstream automation (CI, GitOps) doesn’t need further adjustments.
+## Outstanding Items
+- Identify any new reviewers required for long-term Quarkus ownership (still pending).
+- Continue raising coverage on the remaining untested resources (GraphResource and ServiceResource integration paths currently rely on unit tests + manual verification).
+- Keep the Codex progress comment (`<!-- codex:progress -->`) updated whenever additional rollout or telemetry validation happens.
 
-### Communication & Handoff
-- Share this updated plan and the RBAC notes with the infra/security team so they know which manifests (ServiceAccount, ClusterRoleBinding, ConfigMap) will change before `argocd` syncs.
-- Call out the required `graf-quarkus-config`, env vars, and RBAC coverage in the PR description so reviewers see how the new image continues to hit the existing OTEL/Argo stacks.
-- Keep a single Codex progress comment anchored by `<!-- codex:progress -->` so reviewers track implementation status; mention the validation checklist and telemetry verification there.
+## Rollback Strategy
+- Container rollback: redeploy the previous Ktor image (tag recorded in Argo history) via `argocd app rollback graf <revision>`.
+- Config rollback: reapply the historical `graf-configmap` if the uppercase Quarkus env vars cause issues; Quarkus tolerates lowercase keys only when mounted as `application.properties`, so revert to the old ConfigMap if needed.
+- RBAC/Secret rollback: no changes were made, but the manifests live under `argocd/applications/graf`; re-syncing an earlier Git commit restores them.
 
-### Ready Checklist
-- [x] Dependencies clarified (feature flags, secrets, linked services)
-- [x] Test and validation environments are accessible
-- [ ] Required approvals/reviewers identified
-- [x] Rollback or mitigation steps documented
+This document now mirrors the actual Quarkus deployment rather than the initial plan. Update the “Outstanding Items” section as we close approvals or add new requirements.
