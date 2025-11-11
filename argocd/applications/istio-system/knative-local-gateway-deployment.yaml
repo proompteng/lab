@@ -34,7 +34,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: istio-proxy
-          image: auto
+          image: docker.io/istio/proxyv2:1.28.0
           imagePullPolicy: Always
           ports:
             - containerPort: 15090
