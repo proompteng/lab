@@ -9,8 +9,10 @@ import ai.proompteng.graf.codex.CodexResearchWorkflowImpl
 import ai.proompteng.graf.codex.MinioArtifactFetcherImpl
 import ai.proompteng.graf.config.ArgoConfig
 import ai.proompteng.graf.config.MinioConfig
+import ai.proompteng.graf.config.MinioEndpointTarget
 import ai.proompteng.graf.config.Neo4jConfig
 import ai.proompteng.graf.config.TemporalConfig
+import ai.proompteng.graf.config.resolveMinioEndpoint
 import ai.proompteng.graf.neo4j.Neo4jClient
 import ai.proompteng.graf.services.GraphService
 import ai.proompteng.graf.telemetry.GrafTelemetry
@@ -162,36 +164,12 @@ private fun buildMinioClient(config: MinioConfig): MinioClient {
       .builder()
       .credentials(config.accessKey, config.secretKey)
 
-  if (config.endpoint.contains("://")) {
-    builder.endpoint(config.endpoint)
-  } else {
-    val (host, port) = parseMinioEndpoint(config.endpoint, config.secure)
-    builder.endpoint(host, port, config.secure)
+  when (val target = resolveMinioEndpoint(config)) {
+    is MinioEndpointTarget.Url -> builder.endpoint(target.value)
+    is MinioEndpointTarget.HostPort -> builder.endpoint(target.host, target.port, target.secure)
   }
   config.region?.let { builder.region(it) }
   return builder.build()
-}
-
-private fun parseMinioEndpoint(
-  endpoint: String,
-  defaultSecure: Boolean,
-): Pair<String, Int> {
-  val normalized =
-    if (endpoint.contains("://")) {
-      endpoint
-    } else {
-      "${if (defaultSecure) "https" else "http"}://$endpoint"
-    }
-  val uri = URI.create(normalized)
-  val host = uri.host ?: throw IllegalArgumentException("MINIO_ENDPOINT must include a host")
-  val port =
-    when {
-      uri.port != -1 -> uri.port
-      uri.scheme.equals("https", ignoreCase = true) -> 443
-      defaultSecure -> 443
-      else -> 80
-    }
-  return host to port
 }
 
 private fun loadServiceAccountToken(path: String): String = FileInputStream(path).use { it.bufferedReader().readText().trim() }
