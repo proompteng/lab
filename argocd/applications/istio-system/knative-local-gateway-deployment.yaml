@@ -73,6 +73,26 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+          volumeMounts:
+            - name: workload-socket
+              mountPath: /var/run/secrets/workload-spiffe-uds
+            - name: credential-socket
+              mountPath: /var/run/secrets/credential-uds
+            - name: workload-certs
+              mountPath: /var/run/secrets/workload-spiffe-credentials
+            - name: istio-envoy
+              mountPath: /etc/istio/proxy
+            - name: config-volume
+              mountPath: /etc/istio/config
+            - name: istiod-ca-cert
+              mountPath: /var/run/secrets/istio
+            - name: istio-token
+              mountPath: /var/run/secrets/tokens
+              readOnly: true
+            - name: istio-data
+              mountPath: /var/lib/istio/data
+            - name: podinfo
+              mountPath: /etc/istio/pod
           resources:
             limits:
               cpu: "2"
@@ -94,3 +114,38 @@ spec:
         sysctls:
           - name: net.ipv4.ip_unprivileged_port_start
             value: "0"
+      volumes:
+        - name: workload-socket
+          emptyDir: {}
+        - name: credential-socket
+          emptyDir: {}
+        - name: workload-certs
+          emptyDir: {}
+        - name: istio-envoy
+          emptyDir: {}
+        - name: istio-data
+          emptyDir: {}
+        - name: config-volume
+          configMap:
+            name: istio
+            optional: true
+        - name: podinfo
+          downwardAPI:
+            items:
+              - path: "labels"
+                fieldRef:
+                  fieldPath: metadata.labels
+              - path: "annotations"
+                fieldRef:
+                  fieldPath: metadata.annotations
+        - name: istiod-ca-cert
+          configMap:
+            name: istio-ca-root-cert
+            optional: true
+        - name: istio-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: istio-token
+                  expirationSeconds: 43200
+                  audience: istio-ca
