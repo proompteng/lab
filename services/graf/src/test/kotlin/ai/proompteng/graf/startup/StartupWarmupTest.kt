@@ -32,6 +32,7 @@ class StartupWarmupTest {
 
   init {
     every { serviceStubs.blockingStub() } returns blockingStub
+    every { blockingStub.withDeadlineAfter(any(), any()) } returns blockingStub
   }
 
   @Test
@@ -43,6 +44,7 @@ class StartupWarmupTest {
 
     warmup.run()
 
+    verify(exactly = 1) { blockingStub.withDeadlineAfter(any(), any()) }
     verify(exactly = 1) { blockingStub.getSystemInfo(any<GetSystemInfoRequest>()) }
     verify(exactly = 1) { neo4jDriver.verifyConnectivity() }
     verify(exactly = 1) { minioClient.bucketExists(any<BucketExistsArgs>()) }
@@ -51,6 +53,7 @@ class StartupWarmupTest {
   @Test
   fun `run swallows failures`() {
     every { blockingStub.getSystemInfo(any<GetSystemInfoRequest>()) } throws IllegalStateException("temporal down")
+
     every { neo4jDriver.verifyConnectivity() } throws IllegalStateException("neo4j down")
     every { minioClient.bucketExists(any<BucketExistsArgs>()) } throws IllegalStateException("minio down")
 
