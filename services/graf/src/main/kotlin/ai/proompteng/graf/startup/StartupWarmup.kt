@@ -7,6 +7,7 @@ import io.temporal.api.workflowservice.v1.GetSystemInfoRequest
 import io.temporal.serviceclient.WorkflowServiceStubs
 import mu.KLogger
 import org.neo4j.driver.Driver
+import java.util.concurrent.TimeUnit
 
 class StartupWarmup(
   private val serviceStubs: WorkflowServiceStubs,
@@ -25,6 +26,7 @@ class StartupWarmup(
     runCatching {
       serviceStubs
         .blockingStub()
+        .withDeadlineAfter(TEMPORAL_WARMUP_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .getSystemInfo(GetSystemInfoRequest.getDefaultInstance())
       logger.info { "Temporal connection warm-up completed" }
     }.onFailure { error ->
@@ -51,3 +53,5 @@ class StartupWarmup(
     }
   }
 }
+
+private const val TEMPORAL_WARMUP_TIMEOUT_SECONDS = 5L
