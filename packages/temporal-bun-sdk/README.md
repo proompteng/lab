@@ -203,3 +203,97 @@ Pass your converter to both the worker and client factories to keep payload hand
 
 ## License
 MIT © Proompt Engineering
+
+## Worker versioning and build IDs
+
+Workers derive their build ID from , , or the configured identity. When the runtime runs in , it registers the build ID with Temporal via  before starting any pollers. Fatal RPC failures (, ) abort startup, transient errors (, , , ) are retried, and success is logged via  so you can trace the registration.
+
+The Temporal CLI dev server packaged into  does **not** support . The helper treats / as “feature unavailable”, logs a warning, and keeps the worker running. Because the script shells out to the The Temporal CLI manages, monitors, and debugs Temporal apps. It lets you run
+a local Temporal Service, start Workflow Executions, pass messages to running
+Workflows, inspect state, and more.
+
+* Start a local development service:
+      `temporal server start-dev`
+* View help: pass `--help` to any command:
+      `temporal activity complete --help`
+
+Usage:
+  temporal [command]
+
+Available Commands:
+  activity    Complete, update, pause, unpause, reset or fail an Activity
+  batch       Manage running batch jobs
+  completion  Generate the autocompletion script for the specified shell
+  config      Manage config files (EXPERIMENTAL)
+  env         Manage environments
+  help        Help about any command
+  operator    Manage Temporal deployments
+  schedule    Perform operations on Schedules
+  server      Run Temporal Server
+  task-queue  Manage Task Queues
+  worker      Read or update Worker state
+  workflow    Start, list, and operate on Workflows
+
+Flags:
+      --client-connect-timeout duration                   The client connection timeout. 0s means no timeout. (default 0s)
+      --color string                                      Output coloring. Accepted values: always, never, auto. (default "auto")
+      --command-timeout duration                          The command execution timeout. 0s means no timeout. (default 0s)
+      --config-file $CONFIG_PATH/temporal/temporal.toml   File path to read TOML config from, defaults to $CONFIG_PATH/temporal/temporal.toml where `$CONFIG_PATH` is defined as `$HOME/.config` on Unix, "$HOME/Library/Application Support" on macOS, and %AppData% on Windows. EXPERIMENTAL.
+      --disable-config-env                                If set, disables loading environment config from environment variables. EXPERIMENTAL.
+      --disable-config-file                               If set, disables loading environment config from config file. EXPERIMENTAL.
+      --env ENV                                           Active environment name (ENV). (default "default")
+      --env-file $HOME/.config/temporalio/temporal.yaml   Path to environment settings file. Defaults to $HOME/.config/temporalio/temporal.yaml.
+  -h, --help                                              help for temporal
+      --log-format string                                 Log format. Accepted values: text, json. (default "text")
+      --log-level server start-dev                        Log level. Default is "info" for most commands and "warn" for server start-dev. Accepted values: debug, info, warn, error, never. (default "info")
+      --no-json-shorthand-payloads                        Raw payload output, even if the JSON option was used.
+  -o, --output string                                     Non-logging data output format. Accepted values: text, json, jsonl, none. (default "text")
+      --profile string                                    Profile to use for config file. EXPERIMENTAL.
+      --time-format string                                Time format. Accepted values: relative, iso, raw. (default "relative")
+  -v, --version                                           version for temporal
+
+Use "temporal [command] --help" for more information about a command. binary, ensure The Temporal CLI manages, monitors, and debugs Temporal apps. It lets you run
+a local Temporal Service, start Workflow Executions, pass messages to running
+Workflows, inspect state, and more.
+
+* Start a local development service:
+      `temporal server start-dev`
+* View help: pass `--help` to any command:
+      `temporal activity complete --help`
+
+Usage:
+  temporal [command]
+
+Available Commands:
+  activity    Complete, update, pause, unpause, reset or fail an Activity
+  batch       Manage running batch jobs
+  completion  Generate the autocompletion script for the specified shell
+  config      Manage config files (EXPERIMENTAL)
+  env         Manage environments
+  help        Help about any command
+  operator    Manage Temporal deployments
+  schedule    Perform operations on Schedules
+  server      Run Temporal Server
+  task-queue  Manage Task Queues
+  worker      Read or update Worker state
+  workflow    Start, list, and operate on Workflows
+
+Flags:
+      --client-connect-timeout duration                   The client connection timeout. 0s means no timeout. (default 0s)
+      --color string                                      Output coloring. Accepted values: always, never, auto. (default "auto")
+      --command-timeout duration                          The command execution timeout. 0s means no timeout. (default 0s)
+      --config-file $CONFIG_PATH/temporal/temporal.toml   File path to read TOML config from, defaults to $CONFIG_PATH/temporal/temporal.toml where `$CONFIG_PATH` is defined as `$HOME/.config` on Unix, "$HOME/Library/Application Support" on macOS, and %AppData% on Windows. EXPERIMENTAL.
+      --disable-config-env                                If set, disables loading environment config from environment variables. EXPERIMENTAL.
+      --disable-config-file                               If set, disables loading environment config from config file. EXPERIMENTAL.
+      --env ENV                                           Active environment name (ENV). (default "default")
+      --env-file $HOME/.config/temporalio/temporal.yaml   Path to environment settings file. Defaults to $HOME/.config/temporalio/temporal.yaml.
+  -h, --help                                              help for temporal
+      --log-format string                                 Log format. Accepted values: text, json. (default "text")
+      --log-level server start-dev                        Log level. Default is "info" for most commands and "warn" for server start-dev. Accepted values: debug, info, warn, error, never. (default "info")
+      --no-json-shorthand-payloads                        Raw payload output, even if the JSON option was used.
+  -o, --output string                                     Non-logging data output format. Accepted values: text, json, jsonl, none. (default "text")
+      --profile string                                    Profile to use for config file. EXPERIMENTAL.
+      --time-format string                                Time format. Accepted values: relative, iso, raw. (default "relative")
+  -v, --version                                           version for temporal
+
+Use "temporal [command] --help" for more information about a command. is on your  before running  so you can surface that warning in local validation runs.

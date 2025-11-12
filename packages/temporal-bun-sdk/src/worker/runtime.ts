@@ -79,6 +79,7 @@ import {
   resolveHistoryLastEventId,
 } from '../workflow/replay'
 import { type ActivityContext, type ActivityInfo, runWithActivityContext } from './activity-context'
+import { registerWorkerBuildIdCompatibility } from './build-id'
 import {
   type ActivityTaskEnvelope,
   makeWorkerScheduler,
@@ -234,6 +235,10 @@ export class WorkerRuntime {
       buildId,
       workerVersioningMode,
     })
+
+    if (workerVersioningMode === WorkerVersioningMode.VERSIONED) {
+      await registerWorkerBuildIdCompatibility(workflowService, namespace, taskQueue, buildId)
+    }
 
     const activityLifecycle = await Effect.runPromise(
       makeActivityLifecycle({
