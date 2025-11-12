@@ -86,6 +86,7 @@ class ArgoWorkflowClient(
   suspend fun waitForCompletion(
     workflowName: String,
     timeoutSeconds: Long,
+    onPoll: () -> Unit = {},
   ): CompletedArgoWorkflow {
     val deadline = System.currentTimeMillis() + timeoutSeconds * 1000
     while (true) {
@@ -104,6 +105,7 @@ class ArgoWorkflowClient(
       if (System.currentTimeMillis() > deadline) {
         throw IllegalStateException("Timed out waiting for Argo workflow $workflowName to complete")
       }
+      onPoll()
       delay(config.pollIntervalSeconds * 1000)
     }
   }

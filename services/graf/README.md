@@ -1,6 +1,6 @@
 # Graf (Neo4j persistence service)
 
-This Kotlin/Ktor microservice implements the persistence layer described in [docs/nvidia-company-research.md](../../docs/nvidia-company-research.md). It exposes CRUD/complement/clean endpoints, validates payload shapes, and writes changes to Neo4j using the official Java driver.
+This Quarkus/Kotlin microservice implements the persistence layer described in [docs/nvidia-company-research.md](../../docs/nvidia-company-research.md). It exposes CRUD/complement/clean endpoints via RESTEasy Reactive, validates payload shapes, and writes changes to Neo4j using the official Java driver.
 
 ## Features
 - `POST /v1/entities` / `POST /v1/relationships` for upserts with artifact provenance metadata.
@@ -17,7 +17,10 @@ This Kotlin/Ktor microservice implements the persistence layer described in [doc
 | `NEO4J_PASSWORD` | Password (required unless `NEO4J_AUTH` is supplied). |
 | `NEO4J_AUTH` | Combined credentials (`neo4j/<password>`) emitted by the Helm chart Secret; overrides `NEO4J_USER`/`NEO4J_PASSWORD`. |
 | `NEO4J_DATABASE` | Database name (defaults to `neo4j`). |
-| `PORT` | HTTP port (default `8080`). |
+| `QUARKUS_HTTP_PORT` / `PORT` | HTTP port (defaults to `8080`; Quarkus reads both). |
+| `QUARKUS_HTTP_CORS_*` | CORS toggles injected via `graf-quarkus-config`. |
+| `GRAF_API_BEARER_TOKENS` | Comma/space-delimited bearer tokens for `/v1/**`. |
+| `TEMPORAL_*`, `ARGO_*`, `MINIO_*` | See [docs/graf-codex-research.md](../../docs/graf-codex-research.md) for workflow + artifact requirements. |
 
 ## Observability
 
@@ -47,22 +50,22 @@ Custom metrics exported by Graf include:
 
 Logs are written in JSON via `net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder` with `trace_id`, `span_id`, and `request_id` MDC fields emitted by the `CallId` + OpenTelemetry wiring, so Loki queries can correlate traces and logs. Grafana Alloy (deployed in the `graf` namespace) is responsible for shipping these JSON logs to Loki.
 
-Want to validate things locally? Point the OTLP env vars at a local collector/Tempo/Mimir/Loki stack before running the service:
+Want to validate things locally? Point the OTLP env vars at a local collector/Tempo/Mimir/Loki stack before running `quarkusDev`:
 
 ```bash
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces \
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4318/v1/metrics \
 OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://localhost:4318/v1/logs \
-./gradlew run
+./gradlew quarkusDev
 ```
 
 ## Local development
 ```bash
 cd services/graf
-gradle wrapper --gradle-version 8.5 # already committed; only needed if you regenerate
-./gradlew clean build
-tail -n +1 build/logs/*
-./gradlew run
+# generate/update wrapper only if needed
+./gradlew test
+./gradlew quarkusDev          # hot-reload dev server on :8080
+./gradlew clean quarkusBuild  # produces build/quarkus-app for container packaging
 ```
 
 ## Code coverage
@@ -83,7 +86,11 @@ Run `./gradlew ktlintCheck` (the same plugin also supports `./gradlew ktlintForm
    ```bash
    bun packages/scripts/src/graf/deploy-service.ts
    ```
-The entrypoint is `bin/graf` from Gradle's `installDist`, and the runtime image is a distroless Java 21 runtime.
+The runtime image copies `build/quarkus-app` into `gcr.io/distroless/java21-debian12:nonroot` and starts `quarkus-run.jar`.
+
+## Startup behavior
+
+- `GrafConfiguration` observes Quarkus' `StartupEvent` and pings Temporal, Neo4j, and MinIO during boot, eliminating the first-request cold start before readiness probes mark the pod healthy.
 
 ## AutoResearch Codex workflow
 

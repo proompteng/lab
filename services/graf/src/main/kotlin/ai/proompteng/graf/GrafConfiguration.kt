@@ -19,6 +19,8 @@ import ai.proompteng.graf.telemetry.GrafTelemetry
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.minio.MinioClient
+import io.quarkus.runtime.Startup
+import io.quarkus.runtime.StartupEvent
 import io.temporal.authorization.AuthorizationGrpcMetadataProvider
 import io.temporal.authorization.AuthorizationTokenSupplier
 import io.temporal.client.WorkflowClient
@@ -28,12 +30,13 @@ import io.temporal.common.converter.JacksonJsonPayloadConverter
 import io.temporal.serviceclient.WorkflowServiceStubs
 import io.temporal.serviceclient.WorkflowServiceStubsOptions
 import io.temporal.worker.WorkerFactory
-import io.quarkus.runtime.Startup
 import jakarta.annotation.PostConstruct
 import jakarta.annotation.PreDestroy
+import jakarta.enterprise.event.Observes
 import jakarta.enterprise.inject.Produces
 import jakarta.inject.Singleton
 import kotlinx.serialization.json.Json
+import mu.KotlinLogging
 import org.neo4j.driver.AuthTokens
 import org.neo4j.driver.GraphDatabase
 import java.io.FileInputStream
@@ -44,10 +47,12 @@ import java.security.cert.CertificateFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.TrustManagerFactory
+import ai.proompteng.graf.startup.StartupWarmup
 
 @Singleton
 @Startup
 class GrafConfiguration {
+  private val logger = KotlinLogging.logger {}
   private val neo4jConfig = Neo4jConfig.fromEnvironment()
   private val neo4jDriver =
     GraphDatabase.driver(
@@ -105,6 +110,12 @@ class GrafConfiguration {
 
   private val workerFactory = WorkerFactory.newInstance(workflowClient)
   private val worker = workerFactory.newWorker(temporalConfig.taskQueue)
+  private val startupWarmup = StartupWarmup(serviceStubs, neo4jDriver, minioClient, minioConfig, logger)
+
+  @Suppress("unused")
+  fun onStart(@Observes event: StartupEvent) {
+    startupWarmup.run()
+  }
 
   @PostConstruct
   fun startWorker() {
@@ -146,6 +157,7 @@ class GrafConfiguration {
     }
     return WorkflowServiceStubs.newServiceStubs(builder.build())
   }
+
 }
 
 private fun buildKubernetesHttpClient(config: ArgoConfig): HttpClient {

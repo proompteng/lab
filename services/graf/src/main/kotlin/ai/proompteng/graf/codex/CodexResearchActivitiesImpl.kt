@@ -4,6 +4,7 @@ import ai.proompteng.graf.model.ArtifactReference
 import ai.proompteng.graf.model.EntityBatchRequest
 import ai.proompteng.graf.model.RelationshipBatchRequest
 import ai.proompteng.graf.services.GraphPersistence
+import io.temporal.activity.Activity
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -22,7 +23,10 @@ class CodexResearchActivitiesImpl(
     timeoutSeconds: Long,
   ): CompletedArgoWorkflow =
     runBlocking {
-      argoClient.waitForCompletion(workflowName, timeoutSeconds)
+      val context = Activity.getExecutionContext()
+      argoClient.waitForCompletion(workflowName, timeoutSeconds) {
+        context.heartbeat("waiting for argo workflow $workflowName")
+      }
     }
 
   override fun downloadArtifact(reference: ArtifactReference): String =

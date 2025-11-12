@@ -2,7 +2,7 @@
 
 - Temporal: Graf starts a worker on `graf-codex-research`, connects to the in-cluster namespace (default `default`), and uses the Kubernetes service account token to push Argo workflows.
 - Argo: the new `codex-research-workflow` template (see `argocd/applications/argo-workflows/codex-research-workflow.yaml`) accepts prompts, runs the Codex runner container, and writes a structured JSON artifact to `MinIO`.
-- MinIO: Graf downloads the artifact from the shared bucket (`argo-workflows` by default) using the same ServiceAccount credentials that power the Argo template.
+- MinIO: Graf downloads the artifact from the configured bucket (production uses `argo-workflows`) using the same ServiceAccount credentials that power the Argo template.
 
 ## Configuration
 
@@ -18,8 +18,10 @@ Set the following secrets/configmaps for the Knative Graf service:
 | `ARGO_NAMESPACE` | Namespace where the Argo workflow lives. | `argo-workflows` |
 | `ARGO_WORKFLOW_TEMPLATE_NAME` | Template Graf submits. | `codex-research-workflow` |
 | `MINIO_ENDPOINT` | MinIO URL (e.g., `http://observability-minio.minio.svc.cluster.local:9000`). | required |
-| `MINIO_BUCKET` | Archive bucket where Argo stores the artifact. | `argo-workflows` |
+| `MINIO_BUCKET` | Archive bucket where Argo stores the artifact. | required |
 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | Credentials for Graf to talk to MinIO. | required |
+| `MINIO_REGION` | Optional region hint passed to both Graf and the Argo template. | _unset_ |
+| `MINIO_SECURE` | `true/false` toggle when `MINIO_ENDPOINT` omits the scheme. | `true` |
 
 Graf now bundles the Knative service account with a `Role`/`RoleBinding` in `argocd/applications/argo-workflows/codex-research-rbac.yaml` so it can create and poll workflows in `argo-workflows`.
 

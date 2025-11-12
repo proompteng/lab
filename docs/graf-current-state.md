@@ -4,12 +4,12 @@ This document captures the current architecture of the Graf Neo4j persistence se
 
 ## Key Components
 
-- **Ktor HTTP API (`Application.module`)**
-  - Exposes `/v1` routes wrapped in bearer auth.
-  - Provides CRUD operations for entities and relationships, plus complement/clean routines.
-  - Hosts two automation entry points:
-    - `POST /v1/codex-research` to trigger Argo-driven Codex workflows.
-    - `POST /v1/autoresearch` to build the AutoResearch Codex prompt (with optional `user_prompt`) and dispatch the same Temporal workflow.
+- **Quarkus HTTP API (GraphResource + ServiceResource)**
+  - RESTEasy Reactive resources serve `/v1` routes behind the `GrafBearerTokenFilter`.
+  - CRUD operations for entities/relationships plus complement/clean map 1:1 with the original Ktor handlers.
+  - Automation entry points:
+    - `POST /v1/codex-research` launches Argo-driven Codex workflows.
+    - `POST /v1/autoresearch` injects the AutoResearch prompt (optional `user_prompt`) before dispatching the same workflow.
 - **Temporal / Codex runtime**
   - Shared Temporal connection (`WorkflowClient`) with task queue `graf-codex-research`.
   - `CodexResearchWorkflowImpl` submits the `codex-research-workflow` template, polls Argo until completion, downloads the MinIO artifact, and asks `GraphService` to persist the resulting entities/relationships.
@@ -24,18 +24,19 @@ This document captures the current architecture of the Graf Neo4j persistence se
 
 | Concern | Current State |
 | --- | --- |
-| Runtime | Java 21, Kotlin 2.2, Ktor 3.3.2 |
+| Runtime | Quarkus 3.29.2 on Java 21 / Kotlin 2.2 (`GraphResource`, `ServiceResource`, CDI producers). |
 | Persistence | Neo4j via Bolt (configurable URI/db/user). |
 | Temporal | Address defaults to `temporal-frontend.temporal.svc.cluster.local:7233`; task queue `graf-codex-research`. |
 | AutoResearch prompt | Always enabled. `AutoResearchService` synthesizes a codified prompt (v2025-11-10) that instructs the Codex runner to keep growing the graph, call `/usr/local/bin/codex-graf` for every entity/relationship, and tag payloads with `streamId = "auto-research"`. Clients may pass `{"user_prompt": "optional guidance"}` to steer the run; no Koog/OpenAI credentials are required. |
 | Security | `/v1/**` protected by bearer tokens from `GRAF_API_BEARER_TOKENS`. |
+| Config | Quarkus HTTP/CORS tuned via `graf-quarkus-config` (uppercase `QUARKUS_HTTP_*`). |
 
 ## High-Level Architecture
 
 ```mermaid
 flowchart LR
-    subgraph API["Ktor HTTP API"]
-        Routes["/v1 routes (CRUD + automation)"]
+    subgraph API["Quarkus HTTP API"]
+        Routes["GraphResource (/v1 CRUD + automation)"]
         AutoPrompt["AutoResearchService\n(prompt builder)"]
     end
     subgraph Persistence["Neo4j"]
@@ -99,7 +100,7 @@ sequenceDiagram
 ## Operational Notes
 
 - **Enablement**: AutoResearch is always on because it no longer depends on Koog/OpenAI credentials. `/v1/autoresearch` simply wraps `CodexResearchService` with an enriched prompt.
-- **Shutdown**: Neo4j driver, Temporal workers, Ktor client, and MinIO client are closed in the JVM shutdown hook.
-- **Testing**: `./gradlew test` covers the Ktor routes, Codex workflow glue, and prompt builder metadata serialization.
+- **Startup/Shutdown**: `GrafConfiguration` observes `StartupEvent` to warm Temporal, Neo4j, and MinIO connections before probes flip ready, and closes the same dependencies via its `@PreDestroy` hook.
+- **Testing**: `./gradlew test` covers the Quarkus resources, Codex workflow glue, and prompt builder metadata serialization; `./gradlew koverXmlReport` tracks coverage.
 
 This document should be updated whenever we add new automation routes, change Temporal task queues, or expand the AutoResearch tooling surface (e.g., adding mutation tools or MCP adapters).

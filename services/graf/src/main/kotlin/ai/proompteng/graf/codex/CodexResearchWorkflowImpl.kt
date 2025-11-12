@@ -21,8 +21,9 @@ class CodexResearchWorkflowImpl : CodexResearchWorkflow {
       CodexResearchActivities::class.java,
       ActivityOptions
         .newBuilder()
-        .setScheduleToCloseTimeout(Duration.ofHours(2))
-        .setStartToCloseTimeout(Duration.ofHours(2))
+        // Must be >= argoConfig.pollTimeoutSeconds (default 2h) otherwise long Codex runs time out early.
+        .setScheduleToCloseTimeout(Duration.ofHours(3))
+        .setStartToCloseTimeout(Duration.ofHours(3))
         .setRetryOptions(RetryOptions.newBuilder().setMaximumAttempts(3).build())
         .build(),
     )
