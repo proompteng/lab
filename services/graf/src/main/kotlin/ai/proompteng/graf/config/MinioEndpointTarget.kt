@@ -3,8 +3,15 @@ package ai.proompteng.graf.config
 import java.net.URI
 
 internal sealed interface MinioEndpointTarget {
-  data class Url(val value: String) : MinioEndpointTarget
-  data class HostPort(val host: String, val port: Int, val secure: Boolean) : MinioEndpointTarget
+  data class Url(
+    val value: String,
+  ) : MinioEndpointTarget
+
+  data class HostPort(
+    val host: String,
+    val port: Int,
+    val secure: Boolean,
+  ) : MinioEndpointTarget
 }
 
 internal fun resolveMinioEndpoint(config: MinioConfig): MinioEndpointTarget {

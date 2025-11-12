@@ -24,5 +24,7 @@ class KotlinSerializationConfigTest {
   }
 
   @Serializable
-  private data class Sample(val value: String)
+  private data class Sample(
+    val value: String,
+  )
 }

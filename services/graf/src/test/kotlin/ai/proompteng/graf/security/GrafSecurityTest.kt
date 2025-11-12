@@ -42,9 +42,10 @@ class GrafSecurityTest {
   @Test
   fun `filter accepts valid bearer token`() {
     ApiBearerTokenConfig.overrideTokensForTests(setOf("token-ok"))
-    val headers = MultivaluedHashMap<String, String>().apply {
-      add("Authorization", "Bearer token-ok")
-    }
+    val headers =
+      MultivaluedHashMap<String, String>().apply {
+        add("Authorization", "Bearer token-ok")
+      }
     val context = mockk<ContainerRequestContext>()
     val uriInfo = mockk<UriInfo>()
     every { context.uriInfo } returns uriInfo
@@ -57,7 +58,8 @@ class GrafSecurityTest {
   @Test
   fun `filter throws when token missing`() {
     ApiBearerTokenConfig.overrideTokensForTests(setOf("token-ok"))
-    val headers = MultivaluedHashMap<String, String>()
+    val headers =
+      MultivaluedHashMap<String, String>()
     val context = mockk<ContainerRequestContext>()
     val uriInfo = mockk<UriInfo>()
     every { context.uriInfo } returns uriInfo

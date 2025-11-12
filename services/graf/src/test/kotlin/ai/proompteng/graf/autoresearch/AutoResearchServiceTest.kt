@@ -22,11 +22,12 @@ class AutoResearchServiceTest {
   fun `startResearch builds prompt and metadata before delegating`() {
     val request = AutoResearchRequest(userPrompt = "Focus on HBM supply chain")
     val metadata = mapOf("autoResearch.promptVersion" to "2025-11-10")
-    val launchResult = CodexResearchLaunchResult(
-      workflowId = "wf-123",
-      runId = "run-456",
-      startedAt = "2025-11-11T00:00:00Z",
-    )
+    val launchResult =
+      CodexResearchLaunchResult(
+        workflowId = "wf-123",
+        runId = "run-456",
+        startedAt = "2025-11-11T00:00:00Z",
+      )
     val capturedRequest: CapturingSlot<CodexResearchRequest> = slot()
 
     every { promptBuilder.buildPrompt("Focus on HBM supply chain") } returns "FINAL PROMPT"
