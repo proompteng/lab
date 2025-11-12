@@ -1,6 +1,8 @@
 package ai.proompteng.graf
 
+import ai.proompteng.graf.autoresearch.AutoResearchConfig
 import ai.proompteng.graf.autoresearch.AutoResearchLauncher
+import ai.proompteng.graf.autoresearch.AutoResearchPromptBuilder
 import ai.proompteng.graf.autoresearch.AutoResearchService
 import ai.proompteng.graf.codex.ArgoWorkflowClient
 import ai.proompteng.graf.codex.CodexResearchActivitiesImpl
@@ -66,6 +68,7 @@ class GrafConfiguration {
   private val temporalConfig = TemporalConfig.fromEnvironment()
   private val argoConfig = ArgoConfig.fromEnvironment()
   private val minioConfig = MinioConfig.fromEnvironment()
+  private val autoResearchConfig = AutoResearchConfig.fromEnvironment()
 
   private val minioClient = buildMinioClient(minioConfig)
   private val artifactFetcher = MinioArtifactFetcherImpl(minioClient)
@@ -106,7 +109,8 @@ class GrafConfiguration {
     )
   private val codexResearchService =
     CodexResearchService(workflowClient, temporalConfig.taskQueue, argoConfig.pollTimeoutSeconds)
-  private val autoResearchService = AutoResearchService(codexResearchService)
+  private val autoResearchPromptBuilder = AutoResearchPromptBuilder(autoResearchConfig)
+  private val autoResearchService = AutoResearchService(codexResearchService, autoResearchPromptBuilder)
 
   private val workerFactory = WorkerFactory.newInstance(workflowClient)
   private val worker = workerFactory.newWorker(temporalConfig.taskQueue)
@@ -129,6 +133,9 @@ class GrafConfiguration {
 
   @Produces
   fun codexResearchService(): CodexResearchService = codexResearchService
+
+  @Produces
+  fun autoResearchConfig(): AutoResearchConfig = autoResearchConfig
 
   @Produces
   fun autoResearchLauncher(): AutoResearchLauncher = autoResearchService

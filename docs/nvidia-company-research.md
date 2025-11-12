@@ -1,7 +1,9 @@
-# NVIDIA Relationship Graph Design
+# Graf Knowledge Base Research Graph Design
+
+> This file (`docs/nvidia-company-research.md`) replaces the legacy `docs/nvidia-supply-chain-graph-design.md` and now serves as the general knowledge-base reference; the NVIDIA story is preserved in the appendix below.
 
 ## Purpose
-- Capture the full NVIDIA ecosystem—the foundries, ODMs, logistics providers, strategic partners, software vendors, investors, and research alliances—inside a living Neo4j knowledge graph.
+- Capture multi-tier partnerships, logistics, contracts, and strategic relationships for any domain inside a living Neo4j knowledge graph.
 - Automate discovery/enrichment through Temporal → Argo → Codex research artifacts, persist those findings via a Knative-hosted Kotlin service, and make the graph operable through a Tailscale-accessible Neo4j Browser.
 
 ## Key Objectives
@@ -9,6 +11,18 @@
 2. **Automated research loop**: Temporal orchestrates Argo Workflows that run Codex jobs, produce structured artifacts, and feed the graph service.
 3. **Operational service**: Kotlin Knative API handles insert/update/delete/complement/clean flows, exposed for Temporal activities and manual tooling.
 4. **Secure access**: Neo4j Browser only reachable through a Tailscale sidecar; the service authenticates via short-lived tokens.
+
+## AutoResearch prompt configuration
+
+AutoResearch prompts and metadata are now driven by environment variables so you can retarget the experience without touching Kotlin. These defaults keep the previous NVIDIA narrative until you flip them:
+
+- `AUTO_RESEARCH_KB_NAME` – Knowledge-base name shown in the prompt header and ROLE statement.
+- `AUTO_RESEARCH_STAGE` – Stage label that becomes `codex.stage`, prefixes AutoResearch workflow names, and feeds downstream telemetry (default `auto-research`).
+- `AUTO_RESEARCH_STREAM_ID` – Stream value embedded in the prompt text, codex-graf payloads, and metadata map (default `auto-research`).
+- `AUTO_RESEARCH_OPERATOR_GUIDANCE` – Fallback guidance appended when the caller omits `user_prompt`.
+- `AUTO_RESEARCH_DEFAULT_GOALS` – Newline-separated numbered goals inserted below the GOALS heading.
+
+Update the Graf Knative service (for example via `bun packages/scripts/src/graf/deploy-service.ts`) anytime these values change so the running service picks them up. Coordinate with Graf deploy owners before switching stage/stream labels that instrumentation or dashboards depend on.
 
 ## Architecture Overview
 
@@ -182,7 +196,8 @@ graph TB
 - Integration smoke test: deploy Neo4j + service + Temporal worker in cluster, run Argo Codex emulator, verify artifact ingestion and query return.
 - Document manual QA steps (graph query validations, Tailscale access test).
 
-## Next Steps
+## Appendix: NVIDIA relationship graph example
+The NVIDIA supply-chain effort used the following playbook, which is preserved here for reference as an example of how to seed a domain-specific graph:
 1. Capture Codex artifact schema (entities, relationships, metadata, confidence) and share with Argo/Temporal teams.
 2. Scaffold Kotlin Knative service and Neo4j driver modules.
 3. Define Temporal workflow templates and integrate Argo artifact retrieval logic.
