@@ -80,9 +80,6 @@ const bootstrapWorkspace = async () => {
 
   console.log('Installing workspace dependencies via pnpm...')
   await runWithNvm(`"${pnpmExecutable}" install --frozen-lockfile`)
-
-  console.log('Building Temporal Bun Zig native bridge...')
-  await runWithNvm(`"${pnpmExecutable}" --filter @proompteng/temporal-bun-sdk run build:native:zig`)
 }
 
 export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) => {
