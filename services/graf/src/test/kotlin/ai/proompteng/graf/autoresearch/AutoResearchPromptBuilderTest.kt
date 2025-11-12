@@ -15,7 +15,7 @@ class AutoResearchPromptBuilderTest {
   fun `buildPrompt injects timestamp and operator guidance`() {
     val prompt = builder.buildPrompt("Focus on HBM capacity and ASE contracts")
 
-    assertTrue(prompt.contains("UTC timestamp: 2025-11-10T05:00:00Z"))
+    assertTrue(prompt.contains("UTC 2025-11-10T05:00:00Z"))
     assertTrue(prompt.contains("/usr/local/bin/codex-graf"))
     assertTrue(prompt.contains("`streamId` = \"auto-research\""))
     assertTrue(prompt.contains("Operator guidance:"))
