@@ -73,7 +73,6 @@ tasks {
   }
 }
 
-
 ktlint {
   version.set("1.7.1")
   debug.set(false)

@@ -17,6 +17,7 @@ import ai.proompteng.graf.neo4j.Neo4jClient
 import ai.proompteng.graf.telemetry.GrafTelemetry
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
+import io.opentelemetry.api.trace.Span
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -52,8 +53,17 @@ class GraphService(
         request.entities.firstOrNull()?.artifactId,
         request.entities.firstOrNull()?.researchSource,
       )
-      val results = request.entities.map { upsertEntity(it) }
-      BatchResponse(results)
+      val batchStart = System.nanoTime()
+      val response = upsertEntitiesBatch(request.entities)
+      val durationMs = (System.nanoTime() - batchStart) / 1_000_000
+      recordBatchTelemetry(
+        durationMs,
+        request.entities.size,
+        "entities",
+        request.entities.firstOrNull()?.artifactId,
+        request.entities.firstOrNull()?.researchSource,
+      )
+      response
     }
 
   override suspend fun upsertRelationships(request: RelationshipBatchRequest): BatchResponse =
@@ -70,8 +80,17 @@ class GraphService(
         request.relationships.firstOrNull()?.artifactId,
         request.relationships.firstOrNull()?.researchSource,
       )
-      val results = request.relationships.map { upsertRelationship(it) }
-      BatchResponse(results)
+      val batchStart = System.nanoTime()
+      val response = upsertRelationshipsBatch(request.relationships)
+      val durationMs = (System.nanoTime() - batchStart) / 1_000_000
+      recordBatchTelemetry(
+        durationMs,
+        request.relationships.size,
+        "relationships",
+        request.relationships.firstOrNull()?.artifactId,
+        request.relationships.firstOrNull()?.researchSource,
+      )
+      response
     }
 
   suspend fun patchEntity(
@@ -305,60 +324,122 @@ class GraphService(
       }
     }
 
-  private suspend fun upsertEntity(entity: EntityRequest): GraphResponse =
-    neo4j.executeWrite("upsertEntity") { tx ->
-      val label = entity.label.ensureIdentifier("label")
-      val entityId = entity.id.takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString()
-      val props = entity.properties.toValueMap().toMutableMap()
-      props["artifactId"] = entity.artifactId
-      props["researchSource"] = entity.researchSource
-      props["streamId"] = entity.streamId
-      props["updatedAt"] = Instant.now().toString()
-      props["id"] = entityId
-      val query =
-        buildString {
-          appendLine("MERGE (n:$label { id: ${'$'}id })")
-          appendLine("SET n += ${'$'}props")
-          append("RETURN n.id AS id")
+  private suspend fun upsertEntitiesBatch(entities: List<EntityRequest>): BatchResponse =
+    neo4j.executeWrite("upsertEntitiesBatch") { tx ->
+      val rows = entities.map { entity ->
+        val label = entity.label.ensureIdentifier("label")
+        val entityId = entity.id.takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString()
+        val props = entity.properties.toValueMap().toMutableMap().apply {
+          this["artifactId"] = entity.artifactId
+          this["researchSource"] = entity.researchSource
+          this["streamId"] = entity.streamId
+          this["updatedAt"] = Instant.now().toString()
+          this["id"] = entityId
         }
-      val params = mapOf("id" to entityId, "props" to props.filterValues { it != null })
-      val record = tx.run(query, params).single()
-      GraphResponse(record["id"].asString(), "entity upserted", entity.artifactId)
+        EntityBatchRow(entityId, label, props.filterValues { it != null }, entity.artifactId)
+      }
+      rows.groupBy { it.label }.forEach { (label, batchRows) ->
+        val params =
+          mapOf(
+            "rows" to batchRows.map { row ->
+              mapOf(
+                "id" to row.id,
+                "props" to row.props,
+              )
+            },
+          )
+        val query =
+          buildString {
+            appendLine("UNWIND ${'$'}rows AS row")
+            appendLine("MERGE (n:$label { id: row.id })")
+            appendLine("SET n += row.props")
+            append("RETURN row.id AS id")
+          }
+        val records = tx.run(query, params).list()
+        if (records.size != batchRows.size) {
+          throw IllegalStateException("entity batch for label $label returned ${records.size} of ${batchRows.size} rows")
+        }
+      }
+      BatchResponse(rows.map { GraphResponse(it.id, "entity upserted", it.artifactId) })
     }
 
-  private suspend fun upsertRelationship(request: RelationshipRequest): GraphResponse =
-    neo4j.executeWrite("upsertRelationship") { tx ->
-      val relType = request.type.ensureIdentifier("relationship type")
-      val fromId = request.fromId.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("fromId must be provided")
-      val toId = request.toId.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("toId must be provided")
-      val relId = request.id.takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString()
-      val props = request.properties.toValueMap().toMutableMap()
-      props["artifactId"] = request.artifactId
-      props["researchSource"] = request.researchSource
-      props["streamId"] = request.streamId
-      props["updatedAt"] = Instant.now().toString()
-      props["id"] = relId
-      val query =
-        buildString {
-          appendLine("MATCH (a { id: ${'$'}fromId }), (b { id: ${'$'}toId })")
-          appendLine("MERGE (a)-[r:$relType { id: ${'$'}relId }]->(b)")
-          appendLine("SET r += ${'$'}props")
-          append("RETURN r.id AS id")
+  private suspend fun upsertRelationshipsBatch(relationships: List<RelationshipRequest>): BatchResponse =
+    neo4j.executeWrite("upsertRelationshipsBatch") { tx ->
+      val rows = relationships.map { request ->
+        val relType = request.type.ensureIdentifier("relationship type")
+        val fromId = request.fromId.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("fromId must be provided")
+        val toId = request.toId.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("toId must be provided")
+        val relId = request.id.takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString()
+        val props = request.properties.toValueMap().toMutableMap().apply {
+          this["artifactId"] = request.artifactId
+          this["researchSource"] = request.researchSource
+          this["streamId"] = request.streamId
+          this["updatedAt"] = Instant.now().toString()
+          this["id"] = relId
         }
-      val params =
-        mapOf(
-          "fromId" to fromId,
-          "toId" to toId,
-          "relId" to relId,
-          "props" to props.filterValues { it != null },
-        )
-      val records = tx.run(query, params).list()
-      if (records.isEmpty()) {
-        throw IllegalArgumentException("source or target node not found for relationship $relId")
+        RelationshipBatchRow(relId, relType, fromId, toId, props.filterValues { it != null }, request.artifactId)
       }
-      val record = records.first()
-      GraphResponse(record["id"].asString(), "relationship upserted", request.artifactId)
+      rows.groupBy { it.type }.forEach { (type, batchRows) ->
+        val params =
+          mapOf(
+            "rows" to batchRows.map { row ->
+              mapOf(
+                "id" to row.id,
+                "fromId" to row.fromId,
+                "toId" to row.toId,
+                "props" to row.props,
+              )
+            },
+          )
+        val query =
+          buildString {
+            appendLine("UNWIND ${'$'}rows AS row")
+            appendLine("MATCH (a { id: row.fromId }), (b { id: row.toId })")
+            appendLine("MERGE (a)-[r:$type { id: row.id }]->(b)")
+            appendLine("SET r += row.props")
+            append("RETURN row.id AS id")
+          }
+        val records = tx.run(query, params).list()
+        val returnedIds = records.map { it["id"].asString() }
+        if (returnedIds.size != batchRows.size) {
+          val missingId = batchRows.map { it.id }.firstOrNull { it !in returnedIds } ?: batchRows.first().id
+          throw IllegalArgumentException("source or target node not found for relationship $missingId")
+        }
+      }
+      BatchResponse(rows.map { GraphResponse(it.id, "relationship upserted", it.artifactId) })
     }
+
+  private fun recordBatchTelemetry(
+    durationMs: Long,
+    recordCount: Int,
+    operation: String,
+    artifactId: String?,
+    researchSource: String?,
+  ) {
+    val span = Span.current()
+    span.setAttribute(AttributeKey.longKey("graf.batch.duration_ms"), durationMs)
+    span.setAttribute(AttributeKey.longKey("graf.batch.record.count"), recordCount.toLong())
+    span.setAttribute(AttributeKey.stringKey("graf.batch.operation"), operation)
+    artifactId?.let { span.setAttribute(AttributeKey.stringKey("graf.batch.artifact.id"), it) }
+    researchSource?.let { span.setAttribute(AttributeKey.stringKey("graf.batch.research.source"), it) }
+    GrafTelemetry.recordGraphBatch(durationMs, recordCount, operation, artifactId, researchSource)
+  }
+
+  private data class EntityBatchRow(
+    val id: String,
+    val label: String,
+    val props: Map<String, Any?>,
+    val artifactId: String?,
+  )
+
+  private data class RelationshipBatchRow(
+    val id: String,
+    val type: String,
+    val fromId: String,
+    val toId: String,
+    val props: Map<String, Any?>,
+    val artifactId: String?,
+  )
 }
 
 private fun Map<String, JsonElement>.toValueMap(): Map<String, Any?> = mapValues { it.value.toNodeValue() }.filterValues { it != null }

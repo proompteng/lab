@@ -16,6 +16,8 @@ This document captures the current architecture of the Graf Neo4j persistence se
   - AutoResearch now reuses this exact workflow; the Kotlin service simply injects additional instructions before the run starts.
 - **Neo4j client**
   - `Neo4jClient` encapsulates write/read transactions for every REST mutation.
+  - `/v1/entities` and `/v1/relationships` now build label/type-specific `UNWIND` statements so every batch runs inside one Bolt transaction instead of routing each record through its own `MERGE`.
+  - Span attributes such as `graf.batch.duration_ms`/`graf.batch.record.count` and new metrics (`graf_graph_batch_duration_ms`, `graf_graph_batch_records_total`) surface the full-batch latency and record counts so AutoResearch bursts can prove the lower overhead.
 - **MinIO + Argo tooling**
   - `ArgoWorkflowClient` submits workflow templates and tracks completion.
   - `MinioArtifactFetcher` streams artifacts to Temporal activities.
