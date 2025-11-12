@@ -88,6 +88,10 @@ Run `./gradlew ktlintCheck` (the same plugin also supports `./gradlew ktlintForm
    ```
 The runtime image copies `build/quarkus-app` into `gcr.io/distroless/java21-debian12:nonroot` and starts `quarkus-run.jar`.
 
+## Startup behavior
+
+- `GrafConfiguration` observes Quarkus' `StartupEvent` and pings Temporal, Neo4j, and MinIO during boot, eliminating the first-request cold start before readiness probes mark the pod healthy.
+
 ## AutoResearch Codex workflow
 
 - `POST /v1/autoresearch` launches the same Temporal/Argo Codex workflow that powers `/v1/codex-research`, but it injects a curated prompt that tells Codex to keep expanding the Graf knowledge graph and to persist findings directly via the bundled `/usr/local/bin/codex-graf` CLI.

@@ -100,7 +100,7 @@ sequenceDiagram
 ## Operational Notes
 
 - **Enablement**: AutoResearch is always on because it no longer depends on Koog/OpenAI credentials. `/v1/autoresearch` simply wraps `CodexResearchService` with an enriched prompt.
-- **Shutdown**: Neo4j driver, Temporal workers, Quarkus-managed HTTP server, and MinIO client are closed via `GrafConfiguration`'s `@PreDestroy` hook.
+- **Startup/Shutdown**: `GrafConfiguration` observes `StartupEvent` to warm Temporal, Neo4j, and MinIO connections before probes flip ready, and closes the same dependencies via its `@PreDestroy` hook.
 - **Testing**: `./gradlew test` covers the Quarkus resources, Codex workflow glue, and prompt builder metadata serialization; `./gradlew koverXmlReport` tracks coverage.
 
 This document should be updated whenever we add new automation routes, change Temporal task queues, or expand the AutoResearch tooling surface (e.g., adding mutation tools or MCP adapters).
