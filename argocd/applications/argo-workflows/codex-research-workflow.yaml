@@ -81,3 +81,10 @@ spec:
               bucket: "{{inputs.parameters.artifactBucket}}"
               key: "{{inputs.parameters.artifactKey}}"
               region: "{{inputs.parameters.artifactRegion}}"
+              insecure: true
+              accessKeySecret:
+                name: argo-workflows-minio
+                key: accesskey
+              secretKeySecret:
+                name: argo-workflows-minio
+                key: secretkey
