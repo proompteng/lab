@@ -11,6 +11,8 @@ import io.mockk.verify
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.util.zip.GZIPOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -32,6 +34,28 @@ class CodexResearchActivitiesImplTest {
       val payload = """{"data":"value"}"""
       val stream = ByteArrayInputStream(payload.toByteArray())
       every { artifactFetcher.open(reference) } returns stream
+
+      val result = activities.downloadArtifact(reference)
+
+      assertEquals(payload, result)
+      verify {
+        artifactFetcher.open(reference)
+      }
+    }
+
+  @Test
+  fun `downloadArtifact inflates gzip payload`() =
+    runBlocking {
+      val reference = ArtifactReference("bucket", "key", "https://minio", null)
+      val payload = """{"data":"value"}"""
+      val zipped =
+        ByteArrayOutputStream().use { baos ->
+          GZIPOutputStream(baos).use { gzip ->
+            gzip.write(payload.toByteArray())
+          }
+          baos.toByteArray()
+        }
+      every { artifactFetcher.open(reference) } returns ByteArrayInputStream(zipped)
 
       val result = activities.downloadArtifact(reference)
 
