@@ -12,6 +12,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import java.util.concurrent.atomic.AtomicInteger
 
 class ArgoWorkflowClientTest {
   private val json =
@@ -184,6 +185,26 @@ class ArgoWorkflowClientTest {
         assertEquals(1, completed.artifactReferences.size)
         assertEquals("artifact", completed.artifactReferences.first().key)
       }
+    }
+  }
+
+  @Test
+  fun `waitForCompletion invokes onPoll callback`() {
+    MockWebServer().use { server ->
+      server.start()
+      val statuses =
+        listOf(
+          ArgoWorkflowResource(status = ArgoWorkflowStatus(phase = "Running")),
+          ArgoWorkflowResource(status = ArgoWorkflowStatus(phase = "Running")),
+          ArgoWorkflowResource(status = ArgoWorkflowStatus(phase = "Succeeded")),
+        )
+      statuses.forEach { server.enqueue(MockResponse().setBody(json.encodeToString(it))) }
+      val client = baseClient(server.url("/").toString().removeSuffix("/"))
+      val polls = AtomicInteger(0)
+      runBlocking {
+        client.waitForCompletion("codex", timeoutSeconds = 5) { polls.incrementAndGet() }
+      }
+      assertEquals(2, polls.get())
     }
   }
 
