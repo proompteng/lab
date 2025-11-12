@@ -8,6 +8,9 @@ import io.temporal.activity.Activity
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import java.io.BufferedInputStream
+import java.io.InputStream
+import java.util.zip.GZIPInputStream
 
 class CodexResearchActivitiesImpl(
   private val argoClient: ArgoWorkflowClient,
@@ -32,7 +35,7 @@ class CodexResearchActivitiesImpl(
   override fun downloadArtifact(reference: ArtifactReference): String =
     runBlocking {
       artifactFetcher.open(reference).use { stream ->
-        stream.readBytes().decodeToString()
+        stream.readArtifactPayload()
       }
     }
 
@@ -49,5 +52,31 @@ class CodexResearchActivitiesImpl(
         graphPersistence.upsertRelationships(RelationshipBatchRequest(artifact.relationships))
       }
     }
+  }
+
+  private fun InputStream.readArtifactPayload(): String {
+    val buffered = BufferedInputStream(this)
+    buffered.mark(GZIP_HEADER_BYTES)
+    val first = buffered.read()
+    val second = buffered.read()
+    buffered.reset()
+    val payloadStream =
+      if (isGzip(first, second)) {
+        GZIPInputStream(buffered)
+      } else {
+        buffered
+      }
+    return payloadStream.bufferedReader().use { it.readText() }
+  }
+
+  private fun isGzip(firstByte: Int, secondByte: Int): Boolean {
+    if (firstByte == -1 || secondByte == -1) return false
+    val firstMarker = GZIPInputStream.GZIP_MAGIC and 0xFF
+    val secondMarker = (GZIPInputStream.GZIP_MAGIC shr 8) and 0xFF
+    return firstByte == firstMarker && secondByte == secondMarker
+  }
+
+  private companion object {
+    private const val GZIP_HEADER_BYTES = 2
   }
 }
