@@ -53,6 +53,7 @@ helmCharts:
         serviceAccount:
           create: true
           name: argo-workflows-workflow
+      useStaticCredentials: true
       artifactRepository:
         archiveLogs: true
         s3:

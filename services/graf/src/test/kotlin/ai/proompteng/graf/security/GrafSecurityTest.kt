@@ -16,6 +16,12 @@ import kotlin.test.assertTrue
 class GrafSecurityTest {
   private val filter = GrafBearerTokenFilter()
 
+  companion object {
+    init {
+      System.setProperty("GRAF_API_BEARER_TOKENS", "test-token")
+    }
+  }
+
   @AfterTest
   fun resetTokens() {
     ApiBearerTokenConfig.overrideTokensForTests(setOf())

@@ -19,6 +19,7 @@ import ai.proompteng.graf.telemetry.GrafTelemetry
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.minio.MinioClient
+import io.temporal.api.workflowservice.v1.GetSystemInfoRequest
 import io.temporal.authorization.AuthorizationGrpcMetadataProvider
 import io.temporal.authorization.AuthorizationTokenSupplier
 import io.temporal.client.WorkflowClient
@@ -34,6 +35,7 @@ import jakarta.annotation.PreDestroy
 import jakarta.enterprise.inject.Produces
 import jakarta.inject.Singleton
 import kotlinx.serialization.json.Json
+import mu.KotlinLogging
 import org.neo4j.driver.AuthTokens
 import org.neo4j.driver.GraphDatabase
 import java.io.FileInputStream
@@ -48,6 +50,7 @@ import javax.net.ssl.TrustManagerFactory
 @Singleton
 @Startup
 class GrafConfiguration {
+  private val logger = KotlinLogging.logger {}
   private val neo4jConfig = Neo4jConfig.fromEnvironment()
   private val neo4jDriver =
     GraphDatabase.driver(
@@ -111,6 +114,7 @@ class GrafConfiguration {
     worker.registerWorkflowImplementationTypes(CodexResearchWorkflowImpl::class.java)
     worker.registerActivitiesImplementations(codexActivities)
     workerFactory.start()
+    warmTemporalConnection()
   }
 
   @Produces
@@ -145,6 +149,17 @@ class GrafConfiguration {
       )
     }
     return WorkflowServiceStubs.newServiceStubs(builder.build())
+  }
+
+  private fun warmTemporalConnection() {
+    runCatching {
+      serviceStubs
+        .blockingStub()
+        .getSystemInfo(GetSystemInfoRequest.getDefaultInstance())
+      logger.info { "Temporal connection warm-up completed" }
+    }.onFailure { error ->
+      logger.warn(error) { "Temporal warm-up ping failed; workflow start latency may spike on first request" }
+    }
   }
 }
 
