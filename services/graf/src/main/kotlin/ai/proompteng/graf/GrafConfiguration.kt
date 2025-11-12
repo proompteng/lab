@@ -18,11 +18,9 @@ import ai.proompteng.graf.services.GraphService
 import ai.proompteng.graf.telemetry.GrafTelemetry
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import io.minio.BucketExistsArgs
 import io.minio.MinioClient
 import io.quarkus.runtime.Startup
 import io.quarkus.runtime.StartupEvent
-import io.temporal.api.workflowservice.v1.GetSystemInfoRequest
 import io.temporal.authorization.AuthorizationGrpcMetadataProvider
 import io.temporal.authorization.AuthorizationTokenSupplier
 import io.temporal.client.WorkflowClient
@@ -49,6 +47,7 @@ import java.security.cert.CertificateFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.TrustManagerFactory
+import ai.proompteng.graf.startup.StartupWarmup
 
 @Singleton
 @Startup
@@ -111,12 +110,11 @@ class GrafConfiguration {
 
   private val workerFactory = WorkerFactory.newInstance(workflowClient)
   private val worker = workerFactory.newWorker(temporalConfig.taskQueue)
+  private val startupWarmup = StartupWarmup(serviceStubs, neo4jDriver, minioClient, minioConfig, logger)
 
   @Suppress("unused")
   fun onStart(@Observes event: StartupEvent) {
-    warmTemporalConnection()
-    warmNeo4jConnectivity()
-    warmMinioClient()
+    startupWarmup.run()
   }
 
   @PostConstruct
@@ -160,35 +158,6 @@ class GrafConfiguration {
     return WorkflowServiceStubs.newServiceStubs(builder.build())
   }
 
-  private fun warmTemporalConnection() {
-    runCatching {
-      serviceStubs
-        .blockingStub()
-        .getSystemInfo(GetSystemInfoRequest.getDefaultInstance())
-      logger.info { "Temporal connection warm-up completed" }
-    }.onFailure { error ->
-      logger.warn(error) { "Temporal warm-up ping failed; workflow start latency may spike on first request" }
-    }
-  }
-
-  private fun warmNeo4jConnectivity() {
-    runCatching {
-      neo4jDriver.verifyConnectivity()
-      logger.info { "Neo4j connectivity verified during startup" }
-    }.onFailure { error ->
-      logger.warn(error) { "Neo4j warm-up failed; first request may incur driver initialization" }
-    }
-  }
-
-  private fun warmMinioClient() {
-    runCatching {
-      val args = BucketExistsArgs.builder().bucket(minioConfig.bucket).build()
-      minioClient.bucketExists(args)
-      logger.info { "MinIO client warmed by checking bucket ${minioConfig.bucket}" }
-    }.onFailure { error ->
-      logger.warn(error) { "MinIO warm-up failed; first artifact download may be slower" }
-    }
-  }
 }
 
 private fun buildKubernetesHttpClient(config: ArgoConfig): HttpClient {
