@@ -4,12 +4,16 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
+import { Effect } from 'effect'
+import { createObservabilityServices } from '../observability'
+import { loadTemporalConfig } from '../config'
 
 type CommandHandler = (args: string[], flags: Record<string, string | boolean>) => Promise<void>
 
 const commands: Record<string, CommandHandler> = {
   init: handleInit,
   'docker-build': handleDockerBuild,
+  doctor: handleDoctor,
   help: async () => {
     printHelp()
   },
@@ -67,6 +71,7 @@ function printHelp() {
 Commands:
   init [directory]        Scaffold a new Temporal worker project
   docker-build            Build a Docker image for the current project
+  doctor                  Validate configuration + observability sinks
   help                    Show this help message
 
 Options:
@@ -74,6 +79,13 @@ Options:
   --tag <name>            Image tag for docker-build (default: temporal-worker:latest)
   --context <path>        Build context for docker-build (default: .)
   --file <path>           Dockerfile path for docker-build (default: ./Dockerfile)
+  --log-format <format>   Set TEMPORAL_LOG_FORMAT for doctor (json|pretty)
+  --log-level <level>     Set TEMPORAL_LOG_LEVEL for doctor (debug|info|warn|error)
+  --metrics <spec>        Set metrics exporter spec for doctor (e.g., file:/tmp/metrics.json)
+  --metrics-exporter <name>
+                          Alternate way to set TEMPORAL_METRICS_EXPORTER
+  --metrics-endpoint <url>
+                          Endpoint path/URL for the selected metrics exporter
 `)
 }
 
@@ -126,6 +138,84 @@ async function handleDockerBuild(_args: string[], flags: Record<string, string |
   const exitCode = await process.exited
   if (exitCode !== 0) {
     throw new Error(`docker build exited with code ${exitCode}`)
+  }
+}
+
+function normalizeStringFlag(value: string | boolean | undefined): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+function parseMetricsSpec(value?: string): { exporter?: string; endpoint?: string } {
+  if (!value) {
+    return {}
+  }
+  const colon = value.indexOf(':')
+  if (colon === -1) {
+    return { exporter: value }
+  }
+  const exporter = value.slice(0, colon)
+  const endpoint = value.slice(colon + 1)
+  return { exporter, endpoint: endpoint.length > 0 ? endpoint : undefined }
+}
+
+function buildDoctorOverrides(flags: Record<string, string | boolean>): Record<string, string> {
+  const overrides: Record<string, string> = {}
+  const setEnv = (key: string, flag: string | boolean | undefined) => {
+    const value = normalizeStringFlag(flag)
+    if (value) {
+      overrides[key] = value
+    }
+  }
+  setEnv('TEMPORAL_LOG_FORMAT', flags['log-format'])
+  setEnv('TEMPORAL_LOG_LEVEL', flags['log-level'])
+
+  const metricsSpec = parseMetricsSpec(normalizeStringFlag(flags.metrics))
+  const exporter = normalizeStringFlag(flags['metrics-exporter']) ?? metricsSpec.exporter
+  const endpoint = normalizeStringFlag(flags['metrics-endpoint']) ?? metricsSpec.endpoint
+  if (exporter) {
+    overrides.TEMPORAL_METRICS_EXPORTER = exporter
+  }
+  if (endpoint) {
+    overrides.TEMPORAL_METRICS_ENDPOINT = endpoint
+  }
+
+  return overrides
+}
+
+async function handleDoctor(_args: string[], flags: Record<string, string | boolean>) {
+  const overrides = buildDoctorOverrides(flags)
+  const config = await loadTemporalConfig({ env: { ...process.env, ...overrides } })
+
+  const observability = await Effect.runPromise(
+    createObservabilityServices({
+      logLevel: config.logLevel,
+      logFormat: config.logFormat,
+      metrics: config.metricsExporter,
+    }),
+  )
+  const { logger, metricsRegistry, metricsExporter } = observability
+
+  const doctorCounter = await Effect.runPromise(
+    metricsRegistry.counter('temporal_bun_doctor_runs_total', 'Temporal CLI doctor command executions'),
+  )
+  await Effect.runPromise(doctorCounter.inc())
+  await Effect.runPromise(
+    logger.log('info', 'temporal-bun doctor validation succeeded', {
+      namespace: config.namespace,
+      taskQueue: config.taskQueue,
+      logFormat: config.logFormat,
+      metricsExporter: config.metricsExporter.type,
+    }),
+  )
+  await Effect.runPromise(metricsExporter.flush())
+
+  console.log('temporal-bun doctor complete — configuration validated and metrics sink flushed.')
+  if (config.metricsExporter.type !== 'in-memory') {
+    console.log(`  metrics sink: ${config.metricsExporter.type} ${config.metricsExporter.endpoint ?? ''}`)
   }
 }
 

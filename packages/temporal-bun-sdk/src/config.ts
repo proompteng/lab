@@ -1,5 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
+import type { LogFormat, LogLevel } from './observability/logger'
+import type { MetricsExporterSpec } from './observability/metrics'
+import { defaultMetricsExporterSpec, resolveMetricsExporterSpec } from './observability/metrics'
 
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 7233
@@ -12,6 +15,8 @@ const DEFAULT_STICKY_CACHE_SIZE = 128
 const DEFAULT_STICKY_CACHE_TTL_MS = 5 * 60_000
 const DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS = 5_000
 const DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS = 5_000
+const DEFAULT_LOG_LEVEL: LogLevel = 'info'
+const DEFAULT_LOG_FORMAT: LogFormat = 'pretty'
 
 interface TemporalEnvironment {
   TEMPORAL_ADDRESS?: string
@@ -26,6 +31,10 @@ interface TemporalEnvironment {
   TEMPORAL_TLS_SERVER_NAME?: string
   TEMPORAL_ALLOW_INSECURE?: string
   ALLOW_INSECURE_TLS?: string
+  TEMPORAL_LOG_FORMAT?: string
+  TEMPORAL_LOG_LEVEL?: string
+  TEMPORAL_METRICS_EXPORTER?: string
+  TEMPORAL_METRICS_ENDPOINT?: string
   TEMPORAL_WORKER_IDENTITY_PREFIX?: string
   TEMPORAL_SHOW_STACK_SOURCES?: string
   TEMPORAL_WORKFLOW_CONCURRENCY?: string
@@ -41,6 +50,36 @@ interface TemporalEnvironment {
 
 const truthyValues = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
 const falsyValues = new Set(['0', 'false', 'f', 'no', 'n', 'off'])
+const logLevelOptions = new Set<LogLevel>(['debug', 'info', 'warn', 'error'])
+const logFormatOptions = new Set<LogFormat>(['json', 'pretty'])
+
+const parseLogLevel = (value: string | undefined): LogLevel | undefined => {
+  if (!value) {
+    return undefined
+  }
+  const normalized = value.trim().toLowerCase()
+  if (normalized.length === 0) {
+    return undefined
+  }
+  if (logLevelOptions.has(normalized as LogLevel)) {
+    return normalized as LogLevel
+  }
+  throw new Error(`Invalid TEMPORAL_LOG_LEVEL: ${value}`)
+}
+
+const parseLogFormat = (value: string | undefined): LogFormat | undefined => {
+  if (!value) {
+    return undefined
+  }
+  const normalized = value.trim().toLowerCase()
+  if (normalized.length === 0) {
+    return undefined
+  }
+  if (logFormatOptions.has(normalized as LogFormat)) {
+    return normalized as LogFormat
+  }
+  throw new Error(`Invalid TEMPORAL_LOG_FORMAT: ${value}`)
+}
 
 const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
   const read = (key: string) => {
@@ -65,6 +104,10 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     TEMPORAL_TLS_SERVER_NAME: read('TEMPORAL_TLS_SERVER_NAME'),
     TEMPORAL_ALLOW_INSECURE: read('TEMPORAL_ALLOW_INSECURE'),
     ALLOW_INSECURE_TLS: read('ALLOW_INSECURE_TLS'),
+    TEMPORAL_LOG_FORMAT: read('TEMPORAL_LOG_FORMAT'),
+    TEMPORAL_LOG_LEVEL: read('TEMPORAL_LOG_LEVEL'),
+    TEMPORAL_METRICS_EXPORTER: read('TEMPORAL_METRICS_EXPORTER'),
+    TEMPORAL_METRICS_ENDPOINT: read('TEMPORAL_METRICS_ENDPOINT'),
     TEMPORAL_WORKER_IDENTITY_PREFIX: read('TEMPORAL_WORKER_IDENTITY_PREFIX'),
     TEMPORAL_SHOW_STACK_SOURCES: read('TEMPORAL_SHOW_STACK_SOURCES'),
     TEMPORAL_WORKFLOW_CONCURRENCY: read('TEMPORAL_WORKFLOW_CONCURRENCY'),
@@ -147,6 +190,9 @@ export interface TemporalConfig {
   activityHeartbeatRpcTimeoutMs: number
   workerDeploymentName?: string
   workerBuildId?: string
+  logLevel: LogLevel
+  logFormat: LogFormat
+  metricsExporter: MetricsExporterSpec
 }
 
 export interface TLSCertPair {
@@ -257,6 +303,12 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
   const tls = await buildTlsConfig(env, options)
   const showStackTraceSources =
     coerceBoolean(env.TEMPORAL_SHOW_STACK_SOURCES) ?? options.defaults?.showStackTraceSources ?? false
+  const logLevel = parseLogLevel(env.TEMPORAL_LOG_LEVEL) ?? options.defaults?.logLevel ?? DEFAULT_LOG_LEVEL
+  const logFormat = parseLogFormat(env.TEMPORAL_LOG_FORMAT) ?? options.defaults?.logFormat ?? DEFAULT_LOG_FORMAT
+  const metricsExporter = resolveMetricsExporterSpec(
+    env.TEMPORAL_METRICS_EXPORTER ?? options.defaults?.metricsExporter?.type,
+    env.TEMPORAL_METRICS_ENDPOINT ?? options.defaults?.metricsExporter?.endpoint,
+  )
 
   return {
     host,
@@ -279,6 +331,9 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     activityHeartbeatRpcTimeoutMs,
     workerDeploymentName,
     workerBuildId,
+    logLevel,
+    logFormat,
+    metricsExporter,
   }
 }
 
@@ -297,6 +352,9 @@ export const temporalDefaults = {
   activityHeartbeatRpcTimeoutMs: DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS,
   workerDeploymentName: undefined,
   workerBuildId: undefined,
+  logLevel: DEFAULT_LOG_LEVEL,
+  logFormat: DEFAULT_LOG_FORMAT,
+  metricsExporter: defaultMetricsExporterSpec,
 } satisfies Pick<
   TemporalConfig,
   | 'host'
@@ -313,4 +371,7 @@ export const temporalDefaults = {
   | 'activityHeartbeatRpcTimeoutMs'
   | 'workerDeploymentName'
   | 'workerBuildId'
+  | 'logLevel'
+  | 'logFormat'
+  | 'metricsExporter'
 >

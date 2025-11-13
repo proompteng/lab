@@ -1,6 +1,8 @@
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { Effect } from 'effect'
+import type { LogFields, LogLevel, Logger } from '../observability/logger'
+import type { Counter } from '../observability/metrics'
 
 import type { DataConverter } from '../common/payloads'
 import { encodeValuesToPayloads } from '../common/payloads/converter'
@@ -40,6 +42,13 @@ export interface ActivityLifecycleConfig {
     readonly maxAttempts: number
     readonly jitterRatio?: number
   }
+  readonly observability?: ActivityLifecycleObservability
+}
+
+export interface ActivityLifecycleObservability {
+  readonly logger: Logger
+  readonly heartbeatRetryCounter: Counter
+  readonly heartbeatFailureCounter: Counter
 }
 
 export interface ActivityHeartbeatRegistrationOptions {
@@ -73,7 +82,7 @@ export const makeActivityLifecycle = (
   Effect.sync(() => {
     const registerHeartbeat: ActivityLifecycle['registerHeartbeat'] = (options) =>
       Effect.try(() => {
-        const driver = new ActivityHeartbeatDriver(config, options)
+        const driver = new ActivityHeartbeatDriver(config, options, config.observability)
         return {
           heartbeat: (details) => Effect.tryPromise(async () => await driver.enqueue(details)),
           shutdown: Effect.tryPromise(async () => {
@@ -126,6 +135,7 @@ type PendingHeartbeat = {
 class ActivityHeartbeatDriver {
   readonly #config: ActivityLifecycleConfig
   readonly #options: ActivityHeartbeatRegistrationOptions
+  readonly #observability?: ActivityLifecycleObservability
   readonly #intervalMs: number
   readonly #retryJitterRatio: number
   #pending: PendingHeartbeat | undefined
@@ -134,9 +144,14 @@ class ActivityHeartbeatDriver {
   #stopped = false
   #lastSentAt = 0
 
-  constructor(config: ActivityLifecycleConfig, options: ActivityHeartbeatRegistrationOptions) {
+  constructor(
+    config: ActivityLifecycleConfig,
+    options: ActivityHeartbeatRegistrationOptions,
+    observability?: ActivityLifecycleObservability,
+  ) {
     this.#config = config
     this.#options = options
+    this.#observability = observability
     this.#retryJitterRatio = config.heartbeatRetry.jitterRatio ?? DEFAULT_HEARTBEAT_JITTER_RATIO
     this.#intervalMs = this.#computeInterval(options.context.info.heartbeatTimeoutMs)
     const onAbort = () => {
@@ -207,7 +222,7 @@ class ActivityHeartbeatDriver {
     this.#sending = pendingFlush
     void pendingFlush
       .catch((error) => {
-        console.warn('[temporal-bun-sdk] activity heartbeat flush failed', error)
+        this.#recordHeartbeatFailure(error)
       })
       .finally(() => {
         if (this.#sending === pendingFlush) {
@@ -283,10 +298,12 @@ class ActivityHeartbeatDriver {
         }
         attempt += 1
         if (attempt >= this.#config.heartbeatRetry.maxAttempts) {
+          this.#recordHeartbeatFailure(error)
           throw error
         }
         const capped = Math.min(delayMs, this.#config.heartbeatRetry.maxIntervalMs)
         const jittered = applyJitter(capped, this.#retryJitterRatio)
+        this.#trackHeartbeatRetry()
         await sleep(jittered)
         delayMs = Math.min(
           delayMs * this.#config.heartbeatRetry.backoffCoefficient,

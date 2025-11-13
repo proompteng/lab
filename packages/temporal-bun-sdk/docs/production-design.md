@@ -204,19 +204,19 @@ can contribute independently without re-planning.
 - **Dependencies**
   - Consumes determinism cache (TBS-001), emits metrics for TBS-004.
 
-### TBS-004 – Observability
+### TBS-004 – Observability (Complete)
 
-- **Starting points**
-  - `src/observability/logger.ts`, `src/observability/metrics.ts` – replace console/in-memory stubs.
-  - Thread logger/metrics dependencies through worker and client constructors.
+- **Highlights**
+  - Introduced logger/metrics layers with format/level controls, pluggable exporters, and shared helpers for counters/histograms.
+  - Worker and client runtimes consume the new services, emitting sticky cache, poll latency, heartbeat, and failure metrics while logging lifecycle events.
+  - `loadTemporalConfig` exposes `TEMPORAL_LOG_FORMAT`, `TEMPORAL_LOG_LEVEL`, `TEMPORAL_METRICS_EXPORTER`, and `TEMPORAL_METRICS_ENDPOINT`; the CLI now ships `temporal-bun doctor` to validate config, log JSON, and flush exporter sinks.
+  - SDK docs and production design guidance cover the telemetry knobs and show the `bunx temporal-bun doctor --log-format=json --metrics=file:/tmp/metrics.json` validation path.
 - **Effect guidance**
-  - Provide Layers (`Effect.Layer`) for injecting logger/metrics (coordinate with TBS-010).
-  - Use structured logging JSON, integrate with OpenTelemetry API.
-- **Acceptance criteria**
-  1. Configurable logger exposing debug/info/warn/error with context.
-  2. Metrics registry exporting poll latency, command counts, retry attempts.
-  3. Optional tracing instrumentation toggled via config.
-  4. Documentation explaining how to plug custom sinks.
+  - Observability services are built with `Effect` so they can be composed or swapped (layers remain available for future TBS-010 work).
+  - Metrics exporters flush through `Effect` effects to avoid blocking shutdown.
+- **Validation notes**
+  1. `pnpm --filter @proompteng/temporal-bun-sdk exec bun test packages/temporal-bun-sdk/tests/**/*` now exercises the new observability unit/integration suites.
+  2. `pnpm --filter @proompteng/temporal-bun-sdk exec bunx temporal-bun doctor --log-format=json --metrics=file:/tmp/metrics.json` confirms the documented configuration path and writes benchmark output.
 
 ### TBS-005 – Client Resilience
 

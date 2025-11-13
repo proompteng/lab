@@ -76,10 +76,39 @@ Environment variables supported by the config loader:
 | `TEMPORAL_TLS_SERVER_NAME` | _unset_ | Overrides TLS server name verification. |
 | `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS` | `false` | Accepts `1/true/on` to skip certificate verification. |
 | `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (host and PID are appended automatically). |
+| `TEMPORAL_LOG_FORMAT` | `pretty` | Select `json` or `pretty` logging output for worker/client runs. |
+| `TEMPORAL_LOG_LEVEL` | `info` | Minimum log severity (`debug`, `info`, `warn`, `error`). |
+| `TEMPORAL_METRICS_EXPORTER` | `in-memory` | Choose metrics sink: `in-memory`, `file`, `prometheus`, or `otlp`. |
+| `TEMPORAL_METRICS_ENDPOINT` | _unset_ | Path or URL consumed by file/Prometheus/OTLP exporters. |
 
 `loadTemporalConfig()` returns typed values that the client and worker factories
 consume directly, so you never have to stitch addresses or TLS buffers together
 by hand.
+
+## Observability
+
+The Temporal Bun SDK ships with structured logging and metrics layers so you can
+treat Bun workers/clients like any other service in your stack. Configure the
+behavior with the same environment variables listed above:
+
+- `TEMPORAL_LOG_FORMAT` – controls the log formatter (`pretty` or `json`).
+- `TEMPORAL_LOG_LEVEL` – sets the minimum log severity that makes it into the
+  sink.
+- `TEMPORAL_METRICS_EXPORTER` / `TEMPORAL_METRICS_ENDPOINT` – select a sink
+  (`in-memory`, `file`, `prometheus`, or `otlp`) and its path/URL (e.g.
+  `/tmp/metrics.json`).
+
+Want to verify your configuration without running a worker? `temporal-bun`
+includes a new `doctor` command that loads the shared config, spins up the
+observability services, emits a log, increments a counter, and flushes the
+selected exporter:
+
+```bash
+bunx temporal-bun doctor --log-format=json --metrics=file:/tmp/metrics.json
+```
+
+The command prints a success summary once the JSON log is emitted and the
+metrics file is written, so you can script it into CI or pre-deployment checks.
 
 ## Author activities
 
@@ -200,8 +229,8 @@ the package is installed.
 
 - `init [directory] [--force]` – scaffold a Bun worker project with example
   workflows, activities, Dockerfile, and scripts.
-- `check [namespace] [--namespace <value>]` – verify TLS/API connectivity to your
-  Temporal cluster using the TypeScript runtime.
+- `doctor` – validate the SDK config, emit a JSON log, and flush the selected
+  metrics exporter.
 - `docker-build [--tag <name>]` – package the current directory into a worker
   image using the provided Docker helper.
 - `help` – print the command reference.
