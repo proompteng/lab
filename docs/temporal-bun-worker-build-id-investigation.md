@@ -6,16 +6,16 @@
 > is no longer selectable at runtime. This document remains for archival
 > reference while the TypeScript runtime is the supported path.
 
-**Scope:** `packages/temporal-bun-sdk` Zig bridge (Bun runtime)  
+**Scope:** `packages/temporal-bun-sdk` TypeScript worker runtime (Bun)  
 
 ---
 
 ## Executive Summary
 
-- The Bun-native Temporal worker consistently hangs when `TEMPORAL_BUN_SDK_USE_ZIG=1` and a build ID is provided (explicitly or via defaults).
-- Long-poll workflows never deliver activations because the server rejects the worker’s build ID; from the client side this manifests as an endless `PollWorkflowTask` timeout loop.
-- The TypeScript SDK automatically registers build IDs via `TaskQueueClient.updateBuildIdCompatibility`, but the Bun bridge never issued the analogous RPC.
-- A new Zig helper (`packages/temporal-bun-sdk/bruke/src/client/build_id.zig`) now calls `UpdateWorkerBuildIdCompatibility` before worker creation; native rebuild succeeds. Further validation against a live Temporal CLI server is pending because integration tests still hang in CI/local runs.
+- The Bun-native Temporal worker consistently hung whenever a build ID was provided (explicitly or via defaults) because the server never saw a compatibility registration.
+- Long-poll workflows never delivered activations because the server rejected the worker’s build ID; from the client side this manifested as an endless `PollWorkflowTask` timeout loop.
+- The TypeScript SDK automatically registers build IDs via `TaskQueueClient.updateBuildIdCompatibility`, but the Bun runtime never issued the analogous RPC.
+- `WorkerRuntime.create()` now probes worker-versioning support with `GetWorkerBuildIdCompatibility` and, when available, registers the build ID through the `registerWorkerBuildIdCompatibility` helper before pollers start. When the probe fails with `Unimplemented`/`FailedPrecondition` (Temporal CLI dev server), the runtime logs a warning and keeps running so CI/local workflows stay green.
 
 ---
 
@@ -46,9 +46,9 @@
 
 | Finding | Evidence |
 | --- | --- |
-| Build ID never registered with server | Zig bridge did **not** call any worker-versioning RPC; server treats the worker as incompatible. |
+| Build ID never registered with server | The Bun worker did **not** call any worker-versioning RPC; the server treated the process as incompatible. |
 | TS SDK handles registration automatically | `packages/client/src/task-queue-client.ts` issues `UpdateWorkerBuildIdCompatibility`. |
-| Bun bridge relies solely on core worker creation | `worker.zig` passes build ID to `worker_new`, but core refuses to deliver tasks without compatibility metadata. |
+| Bun bridge relies solely on core worker creation | The worker runtime passed the build ID through deployment options but never issued `UpdateWorkerBuildIdCompatibility`, so matching refused to deliver tasks. |
 
 **Conclusion:** Without registering the build ID, the matching service declines to hand out activations, causing the poll loop to starve.
 
@@ -56,18 +56,17 @@
 
 ## Implemented Changes
 
-1. **Zig helper (`client/build_id.zig`)**
-   - Constructs JSON payload and invokes `core.api.client_rpc_call` with `UpdateWorkerBuildIdCompatibility`.
-   - Handles success + `already_exists` (idempotent) as OK.
-   - Propagates structured errors to the Bun layer if registration fails.
-   - Emits trace events for diagnostics.
+1. **TypeScript helper (`src/worker/build-id.ts`)**
+   - Builds `UpdateWorkerBuildIdCompatibility` requests using the protobuf schema and retries transient `Unavailable`, `DeadlineExceeded`, `Aborted`, and `Internal` errors with incremental backoff.
+   - Treats `Unimplemented`/`FailedPrecondition` as “worker versioning unavailable” so local dev servers can continue without fatal errors.
 
-2. **Worker bootstrap (`worker.zig`)**
-   - Before `worker_new`, ensures build ID registration succeeds.
-   - Aborts worker creation on RPC failure to avoid silent hangs.
+2. **Worker bootstrap (`src/worker/runtime.ts`)**
+   - `WorkerRuntime.create()` now calls `GetWorkerBuildIdCompatibility` before starting pollers whenever `WorkerVersioningMode.VERSIONED` is configured.
+   - Successful probes trigger build ID registration; failures propagate so deployments fail fast.
+   - The CLI dev server lit up via `bun scripts/start-temporal-cli.ts` falls into the fallback path and emits a warning instead of crashing.
 
-3. **Native rebuild**
-   - `pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig` now completes after wiring the client handle and JSON encoding.
+3. **Unit coverage**
+   - `tests/worker.build-id-registration.test.ts` asserts both runtime paths: registration success and CLI fallback logging.
 
 ---
 
@@ -180,7 +179,7 @@ Documenting these steps reduced round-trips when verifying the build ID registra
 
 - Temporal TypeScript SDK worker implementation: `/Users/gregkonush/github.com/sdk-typescript/packages/worker/src/worker.ts`
 - Build ID client API: `/Users/gregkonush/github.com/sdk-typescript/packages/client/src/task-queue-client.ts`
-- Zig bridge source: `packages/temporal-bun-sdk/bruke/src`
+- Bun worker runtime + registration helper: `packages/temporal-bun-sdk/src/worker/runtime.ts`, `packages/temporal-bun-sdk/src/worker/build-id.ts`
 - Temporal CLI helper script: `packages/temporal-bun-sdk/scripts/start-temporal-cli.ts`
 
 ---
@@ -190,48 +189,8 @@ Documenting these steps reduced round-trips when verifying the build ID registra
 - After confirming integration tests pass and documenting the retry/backoff strategy, migrate this note into long-form developer docs or the issue tracker.
 ## Build ID registration update
 
-The Bun worker now calls  ahead of polling when versioning is enabled. It creates  requests (using ), retries on transient codes, surfaces fatal codes, and logs success or the CLI fallback. The Temporal CLI launched by  still reports /, so keep the The Temporal CLI manages, monitors, and debugs Temporal apps. It lets you run
-a local Temporal Service, start Workflow Executions, pass messages to running
-Workflows, inspect state, and more.
+The Bun worker now performs a capability probe (via `GetWorkerBuildIdCompatibility`) during `WorkerRuntime.create()` whenever `WorkerVersioningMode.VERSIONED` is enabled. If the WorkflowService supports worker versioning, the runtime registers the build ID with `UpdateWorkerBuildIdCompatibility` before starting pollers and logs the success.
 
-* Start a local development service:
-      `temporal server start-dev`
-* View help: pass `--help` to any command:
-      `temporal activity complete --help`
+When the probe fails with `Unimplemented` or `FailedPrecondition`—the Temporal CLI dev server started by `bun scripts/start-temporal-cli.ts` still behaves this way—the runtime logs a warning, skips registration, and continues unversioned so local/CI runs do not flake. Any other failure aborts startup because versioned task queues will continue to starve without a registered build ID.
 
-Usage:
-  temporal [command]
-
-Available Commands:
-  activity    Complete, update, pause, unpause, reset or fail an Activity
-  batch       Manage running batch jobs
-  completion  Generate the autocompletion script for the specified shell
-  config      Manage config files (EXPERIMENTAL)
-  env         Manage environments
-  help        Help about any command
-  operator    Manage Temporal deployments
-  schedule    Perform operations on Schedules
-  server      Run Temporal Server
-  task-queue  Manage Task Queues
-  worker      Read or update Worker state
-  workflow    Start, list, and operate on Workflows
-
-Flags:
-      --client-connect-timeout duration                   The client connection timeout. 0s means no timeout. (default 0s)
-      --color string                                      Output coloring. Accepted values: always, never, auto. (default "auto")
-      --command-timeout duration                          The command execution timeout. 0s means no timeout. (default 0s)
-      --config-file $CONFIG_PATH/temporal/temporal.toml   File path to read TOML config from, defaults to $CONFIG_PATH/temporal/temporal.toml where `$CONFIG_PATH` is defined as `$HOME/.config` on Unix, "$HOME/Library/Application Support" on macOS, and %AppData% on Windows. EXPERIMENTAL.
-      --disable-config-env                                If set, disables loading environment config from environment variables. EXPERIMENTAL.
-      --disable-config-file                               If set, disables loading environment config from config file. EXPERIMENTAL.
-      --env ENV                                           Active environment name (ENV). (default "default")
-      --env-file $HOME/.config/temporalio/temporal.yaml   Path to environment settings file. Defaults to $HOME/.config/temporalio/temporal.yaml.
-  -h, --help                                              help for temporal
-      --log-format string                                 Log format. Accepted values: text, json. (default "text")
-      --log-level server start-dev                        Log level. Default is "info" for most commands and "warn" for server start-dev. Accepted values: debug, info, warn, error, never. (default "info")
-      --no-json-shorthand-payloads                        Raw payload output, even if the JSON option was used.
-  -o, --output string                                     Non-logging data output format. Accepted values: text, json, jsonl, none. (default "text")
-      --profile string                                    Profile to use for config file. EXPERIMENTAL.
-      --time-format string                                Time format. Accepted values: relative, iso, raw. (default "relative")
-  -v, --version                                           version for temporal
-
-Use "temporal [command] --help" for more information about a command. binary on your  before running  to observe the warning that the CLI dev server lacks the API.
+Unit tests cover both paths today; integration coverage will land once the CLI surface exposes worker versioning APIs.

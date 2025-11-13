@@ -3,21 +3,32 @@ import { Code, ConnectError } from '@connectrpc/connect'
 
 import { sleep } from '../common/sleep'
 import type {
+  GetWorkerBuildIdCompatibilityRequest,
   UpdateWorkerBuildIdCompatibilityRequest,
   UpdateWorkerBuildIdCompatibilityResponse,
 } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
-import { UpdateWorkerBuildIdCompatibilityRequestSchema } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
+import {
+  GetWorkerBuildIdCompatibilityRequestSchema,
+  UpdateWorkerBuildIdCompatibilityRequestSchema,
+} from '../proto/temporal/api/workflowservice/v1/request_response_pb'
 
 const MAX_ATTEMPTS = 3
 const BACKOFF_BASE_MS = 250
 const TRANSIENT_CODES = new Set([Code.Unavailable, Code.DeadlineExceeded, Code.Aborted, Code.Internal])
 const FEATURE_UNAVAILABLE_CODES = new Set([Code.Unimplemented, Code.FailedPrecondition])
 
+interface WorkerVersioningCapabilityResult {
+  supported: boolean
+  reason?: string
+  code?: Code
+}
+
 export interface RegisterWorkerBuildIdCompatibilityOptions {
   sleep?(millis: number): Promise<void>
 }
 
 interface WorkflowServiceClientLike {
+  getWorkerBuildIdCompatibility(request: GetWorkerBuildIdCompatibilityRequest): Promise<unknown>
   updateWorkerBuildIdCompatibility(
     request: UpdateWorkerBuildIdCompatibilityRequest,
   ): Promise<UpdateWorkerBuildIdCompatibilityResponse>
@@ -73,5 +84,37 @@ export async function registerWorkerBuildIdCompatibility(
 
       throw error
     }
+  }
+}
+
+export async function checkWorkerVersioningCapability(
+  workflowService: WorkflowServiceClientLike,
+  namespace: string,
+  taskQueue: string,
+): Promise<WorkerVersioningCapabilityResult> {
+  const request = create(GetWorkerBuildIdCompatibilityRequestSchema, {
+    namespace,
+    taskQueue,
+    maxSets: 1,
+  })
+
+  try {
+    await workflowService.getWorkerBuildIdCompatibility(request)
+    return { supported: true }
+  } catch (error) {
+    if (!(error instanceof ConnectError)) {
+      throw error
+    }
+
+    const code = error.code ?? Code.Unknown
+    if (FEATURE_UNAVAILABLE_CODES.has(code)) {
+      return {
+        supported: false,
+        code,
+        reason: `worker versioning API unavailable (${describeCode(code)})`,
+      }
+    }
+
+    throw error
   }
 }

@@ -447,48 +447,8 @@ Every GA-critical item requires passing integration tests and updated documentat
 before the release train can proceed.
 ## Worker versioning note
 
-The Bun worker now registers its build ID with  before pollers start whenever  is configured. The helper retries transient codes, surfaces fatal ones, and logs when the CLI dev server (run via ) does not implement the RPC; avail the The Temporal CLI manages, monitors, and debugs Temporal apps. It lets you run
-a local Temporal Service, start Workflow Executions, pass messages to running
-Workflows, inspect state, and more.
+When `WorkerVersioningMode.VERSIONED` is enabled, `WorkerRuntime.create()` probes worker-versioning support via `GetWorkerBuildIdCompatibility` and registers the build ID with `UpdateWorkerBuildIdCompatibility` before the scheduler starts. Transient codes (`Unavailable`, `DeadlineExceeded`, `Aborted`, `Internal`) are retried with backoff; any other failure aborts startup so deployments fail fast.
 
-* Start a local development service:
-      `temporal server start-dev`
-* View help: pass `--help` to any command:
-      `temporal activity complete --help`
+If the capability probe returns `Unimplemented` or `FailedPrecondition`, the runtime logs a warning and skips registration. This is expected when running against the Temporal CLI dev server launched via `bun scripts/start-temporal-cli.ts`, which does not expose worker versioning yet. Production clusters must not rely on this fallback—missing registrations will still starve versioned task queues.
 
-Usage:
-  temporal [command]
-
-Available Commands:
-  activity    Complete, update, pause, unpause, reset or fail an Activity
-  batch       Manage running batch jobs
-  completion  Generate the autocompletion script for the specified shell
-  config      Manage config files (EXPERIMENTAL)
-  env         Manage environments
-  help        Help about any command
-  operator    Manage Temporal deployments
-  schedule    Perform operations on Schedules
-  server      Run Temporal Server
-  task-queue  Manage Task Queues
-  worker      Read or update Worker state
-  workflow    Start, list, and operate on Workflows
-
-Flags:
-      --client-connect-timeout duration                   The client connection timeout. 0s means no timeout. (default 0s)
-      --color string                                      Output coloring. Accepted values: always, never, auto. (default "auto")
-      --command-timeout duration                          The command execution timeout. 0s means no timeout. (default 0s)
-      --config-file $CONFIG_PATH/temporal/temporal.toml   File path to read TOML config from, defaults to $CONFIG_PATH/temporal/temporal.toml where `$CONFIG_PATH` is defined as `$HOME/.config` on Unix, "$HOME/Library/Application Support" on macOS, and %AppData% on Windows. EXPERIMENTAL.
-      --disable-config-env                                If set, disables loading environment config from environment variables. EXPERIMENTAL.
-      --disable-config-file                               If set, disables loading environment config from config file. EXPERIMENTAL.
-      --env ENV                                           Active environment name (ENV). (default "default")
-      --env-file $HOME/.config/temporalio/temporal.yaml   Path to environment settings file. Defaults to $HOME/.config/temporalio/temporal.yaml.
-  -h, --help                                              help for temporal
-      --log-format string                                 Log format. Accepted values: text, json. (default "text")
-      --log-level server start-dev                        Log level. Default is "info" for most commands and "warn" for server start-dev. Accepted values: debug, info, warn, error, never. (default "info")
-      --no-json-shorthand-payloads                        Raw payload output, even if the JSON option was used.
-  -o, --output string                                     Non-logging data output format. Accepted values: text, json, jsonl, none. (default "text")
-      --profile string                                    Profile to use for config file. EXPERIMENTAL.
-      --time-format string                                Time format. Accepted values: relative, iso, raw. (default "relative")
-  -v, --version                                           version for temporal
-
-Use "temporal [command] --help" for more information about a command. binary on your  before running  so the warning shows up during validation.
+Unit tests in `tests/worker.build-id-registration.test.ts` now cover both the successful registration path and the CLI fallback while we wire up end-to-end coverage in the integration harness.
