@@ -321,7 +321,7 @@ const sortHistoryEvents = (events: HistoryEvent[]): HistoryEvent[] =>
   })
 
 const resolveEventIdForSort = (event: HistoryEvent): bigint => {
-  const { eventId } = event
+  const eventId: unknown = event.eventId
   if (typeof eventId === 'bigint') {
     return eventId
   }

@@ -46,6 +46,11 @@ export interface StickyCacheHooks {
   readonly onEvict?: (entry: StickyCacheEntry, reason: StickyCacheEvictionReason) => Effect.Effect<void, never, never>
 }
 
+type StickyCacheLookupResult =
+  | { readonly kind: 'miss' }
+  | { readonly kind: 'expired'; readonly entry: StickyCacheEntry }
+  | { readonly kind: 'hit'; readonly entry: StickyCacheEntry }
+
 const serializeKey = (key: StickyCacheKey): string => `${key.namespace}::${key.workflowId}::${key.runId}`
 
 const recordCounter = (counter?: Counter, value = 1) => (counter ? counter.inc(value) : Effect.void)
@@ -114,22 +119,25 @@ export const makeStickyCache = (config: StickyCacheConfig): Effect.Effect<Sticky
     const get: StickyCache['get'] = (key) =>
       Effect.gen(function* () {
         const now = Date.now()
-        const result = yield* Ref.modify(state, (map) => {
-          const next = new Map(map)
-          const id = serializeKey(key)
-          const existing = next.get(id)
-          if (!existing) {
-            return [{ kind: 'miss' as const }, map] as const
-          }
-          if (ttlMs > 0 && now - existing.lastAccessed > ttlMs) {
+        const result = yield* Ref.modify(
+          state,
+          (map): readonly [StickyCacheLookupResult, Map<string, StickyCacheEntry>] => {
+            const next = new Map(map)
+            const id = serializeKey(key)
+            const existing = next.get(id)
+            if (!existing) {
+              return [{ kind: 'miss' }, map]
+            }
+            if (ttlMs > 0 && now - existing.lastAccessed > ttlMs) {
+              next.delete(id)
+              return [{ kind: 'expired', entry: existing }, next]
+            }
+            const updated = { ...existing, lastAccessed: now }
             next.delete(id)
-            return [{ kind: 'expired' as const, entry: existing }, next] as const
-          }
-          const updated = { ...existing, lastAccessed: now }
-          next.delete(id)
-          next.set(id, updated)
-          return [{ kind: 'hit' as const, entry: updated }, next] as const
-        })
+            next.set(id, updated)
+            return [{ kind: 'hit', entry: updated }, next]
+          },
+        )
 
         if (result.kind === 'hit') {
           yield* recordHit()
