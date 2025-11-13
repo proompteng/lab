@@ -66,7 +66,7 @@ export async function registerWorkerBuildIdCompatibility(
         throw error
       }
 
-      const code = error.code ?? Code.UNKNOWN
+      const code = error.code ?? Code.Unknown
       if (FEATURE_UNAVAILABLE_CODES.has(code)) {
         console.warn(
           `[temporal-bun-sdk] worker versioning API unavailable for ${namespace}/${taskQueue} (${describeCode(code)}); continuing without build ID registration. scripts/start-temporal-cli.ts uses the Temporal CLI, which does not yet expose UpdateWorkerBuildIdCompatibility, so this warning is expected when you run TEMPORAL_INTEGRATION_TESTS=1 against the bundled CLI.`,
