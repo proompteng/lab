@@ -1,5 +1,6 @@
 package ai.proompteng.graf.resources
 
+import ai.proompteng.graf.autoresearch.AutoResearchConfig
 import ai.proompteng.graf.autoresearch.AutoResearchLauncher
 import ai.proompteng.graf.codex.CodexResearchService
 import ai.proompteng.graf.config.MinioConfig
@@ -46,6 +47,7 @@ class GraphResource
     private val graphService: GraphService,
     private val codexResearchService: CodexResearchService,
     private val minioConfig: MinioConfig,
+    private val autoResearchConfig: AutoResearchConfig,
     private val autoResearchLauncher: AutoResearchLauncher,
   ) {
     @POST
@@ -132,7 +134,8 @@ class GraphResource
     @Path("/autoresearch")
     @GrafRouteTemplate("POST /v1/autoresearch")
     suspend fun startAutoResearch(payload: AutoResearchRequest): Response {
-      val argoWorkflowName = "auto-research-${UUID.randomUUID()}"
+      val workflowPrefix = autoResearchConfig.workflowNamePrefix
+      val argoWorkflowName = "$workflowPrefix-${UUID.randomUUID()}"
       val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
       val launch =
         withContext(Dispatchers.IO) {

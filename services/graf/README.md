@@ -22,6 +22,18 @@ This Quarkus/Kotlin microservice implements the persistence layer described in [
 | `GRAF_API_BEARER_TOKENS` | Comma/space-delimited bearer tokens for `/v1/**`. |
 | `TEMPORAL_*`, `ARGO_*`, `MINIO_*` | See [docs/graf-codex-research.md](../../docs/graf-codex-research.md) for workflow + artifact requirements. |
 
+## AutoResearch configuration
+
+The AutoResearch prompt builder now sources every prompt label and metadata tag from environment variables. The baked-in defaults are vendor-agnostic (`Graf AutoResearch Knowledge Base` and `auto-research` for the stage/stream), so you can ship a neutral experience even before overriding the env vars.
+
+- `AUTO_RESEARCH_KB_NAME` – Knowledge-base name shown in the prompt header and ROLE description (default `Graf AutoResearch Knowledge Base`).
+- `AUTO_RESEARCH_STAGE` – Used for the `codex.stage` label and (after DNS-1123 sanitization) as the prefix on AutoResearch Argo workflows and metadata (defaults to `auto-research`).
+- `AUTO_RESEARCH_STREAM_ID` – Stream value injected into the prompt text and every `codex-graf` payload (defaults to `auto-research`).
+- `AUTO_RESEARCH_OPERATOR_GUIDANCE` – Fallback guidance added when the caller leaves `user_prompt` blank.
+- `AUTO_RESEARCH_DEFAULT_GOALS` – Newline-separated numbered goals that replace the GOALS block inside the prompt.
+
+After updating any of these values, redeploy Graf (for example, via `bun packages/scripts/src/graf/deploy-service.ts`) so the new configuration reaches the Knative service. Coordinate with the Graf deploy owners before flipping the stage/stream names that automation dashboards expect. See `docs/nvidia-company-research.md` for the general knowledge-base story (the old docs/nvidia-supply-chain-graph-design.md detail now lives in an NVIDIA appendix) and how to retarget the experience to another domain.
+
 ## Observability
 
 Graf now boots an OpenTelemetry SDK that exports traces, metrics, and structured logs to the shared Tempo/Mimir/Loki stack managed under `argocd/applications/observability`. The service honors the following environment variables:
@@ -118,4 +130,4 @@ The runtime image copies `build/quarkus-app` into `gcr.io/distroless/java21-debi
     "message": "AutoResearch Codex workflow started"
   }
   ```
-- The injected prompt (see `AutoResearchPromptBuilder`) reminds Codex to log every POST with `streamId = "auto-research"`, set `artifactId` and `researchSource`, and to summarize the published entities/relationships in the final `codex-artifact.json`.
+  - The injected prompt (see `AutoResearchPromptBuilder`) now reads branding from `AUTO_RESEARCH_KB_NAME`, uses `AUTO_RESEARCH_STAGE` for the `codex.stage` label and Argo workflow prefix, embeds whatever `AUTO_RESEARCH_STREAM_ID` you configure, and falls back to `AUTO_RESEARCH_OPERATOR_GUIDANCE` plus `AUTO_RESEARCH_DEFAULT_GOALS` when the caller omits `user_prompt`. It still asks Codex to log every POST with `artifactId`, `researchSource`, and the configured stream metadata, then summarize the persisted entities in `codex-artifact.json`. See `docs/nvidia-company-research.md` (the updated home for the previous docs/nvidia-supply-chain-graph-design.md narrative) for the broader knowledge-base story and the NVIDIA appendix.

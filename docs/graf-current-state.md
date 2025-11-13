@@ -27,7 +27,7 @@ This document captures the current architecture of the Graf Neo4j persistence se
 | Runtime | Quarkus 3.29.2 on Java 21 / Kotlin 2.2 (`GraphResource`, `ServiceResource`, CDI producers). |
 | Persistence | Neo4j via Bolt (configurable URI/db/user). |
 | Temporal | Address defaults to `temporal-frontend.temporal.svc.cluster.local:7233`; task queue `graf-codex-research`. |
-| AutoResearch prompt | Always enabled. `AutoResearchService` synthesizes a codified prompt (v2025-11-10) that instructs the Codex runner to keep growing the graph, call `/usr/local/bin/codex-graf` for every entity/relationship, and tag payloads with `streamId = "auto-research"`. Clients may pass `{"user_prompt": "optional guidance"}` to steer the run; no Koog/OpenAI credentials are required. |
+| AutoResearch prompt | Always enabled. `AutoResearchService` synthesizes a codified prompt (v2025-11-10) that draws its branding from `AUTO_RESEARCH_KB_NAME`, labels `codex.stage`/workflow names with `AUTO_RESEARCH_STAGE`, and embeds the configured `AUTO_RESEARCH_STREAM_ID`. It still reminds the Codex runner to use `/usr/local/bin/codex-graf` for every entity/relationship and accepts `{"user_prompt": "optional guidance"}` without requiring Koog/OpenAI credentials. The AutoResearch prompt falls back to `AUTO_RESEARCH_OPERATOR_GUIDANCE`/`AUTO_RESEARCH_DEFAULT_GOALS` when the caller skip the extra guidance; see `docs/nvidia-company-research.md` for the generic knowledge-base story plus the NVIDIA appendix. |
 | Security | `/v1/**` protected by bearer tokens from `GRAF_API_BEARER_TOKENS`. |
 | Config | Quarkus HTTP/CORS tuned via `graf-quarkus-config` (uppercase `QUARKUS_HTTP_*`). |
 
@@ -92,8 +92,8 @@ sequenceDiagram
 
 ### Execution notes
 
-1. **Prompt synthesis** – `AutoResearchService` stamps the prompt version (`v2025-11-10`), UTC timestamp, and optional operator guidance. It also reminds Codex to post JSON directly to Graf using `/usr/local/bin/codex-graf` and to include `artifactId`, `researchSource`, and `streamId = "auto-research"` on every payload.
-2. **Temporal launch** – `/v1/autoresearch` generates a unique Argo workflow name (e.g., `auto-research-<uuid>`), computes the MinIO artifact key, and calls `CodexResearchService.startResearch`. The HTTP caller still receives `202 Accepted` immediately with the Temporal + Argo identifiers.
+1. **Prompt synthesis** – `AutoResearchService` stamps the prompt version (`v2025-11-10`), UTC timestamp, and optional operator guidance while sourcing the knowledge base name from `AUTO_RESEARCH_KB_NAME`, the stage from `AUTO_RESEARCH_STAGE`, and the stream from `AUTO_RESEARCH_STREAM_ID`. It falls back to `AUTO_RESEARCH_OPERATOR_GUIDANCE`/`AUTO_RESEARCH_DEFAULT_GOALS` when the caller omits a `user_prompt` and still reminds Codex to post JSON via `/usr/local/bin/codex-graf`, capturing `artifactId`, `researchSource`, and the configured stream metadata on every payload.
+2. **Temporal launch** – `/v1/autoresearch` generates a unique Argo workflow name prefixed with the stage (e.g., `auto-research-<uuid>` when `AUTO_RESEARCH_STAGE=auto-research`), computes the MinIO artifact key, and calls `CodexResearchService.startResearch`. The HTTP caller still receives `202 Accepted` immediately with the Temporal + Argo identifiers.
 3. **Argo execution** – the workflow template mounts the Graf bearer token as `CODEX_GRAF_BEARER_TOKEN` and runs `codex exec` with the synthesized instructions. Because the prompt explicitly calls for `codex-graf`, findings are streamed back to Graf while the research is in flight instead of waiting for a post-processing step.
 4. **Artifact + persistence** – once Argo finishes, Graf downloads the JSON artifact (still `codex-artifact.json`) and replays any entity/relationship batches it contains. This keeps the run auditable even though the Codex CLI already POSTed individual mutations during the investigation.
 

@@ -1,5 +1,6 @@
 package ai.proompteng.graf.resources
 
+import ai.proompteng.graf.autoresearch.AutoResearchConfig
 import ai.proompteng.graf.autoresearch.AutoResearchLauncher
 import ai.proompteng.graf.codex.CodexResearchLaunchResult
 import ai.proompteng.graf.codex.CodexResearchService
@@ -29,8 +30,16 @@ class GraphResourceTest {
       secure = false,
       region = "us-east-1",
     )
+  private val autoResearchConfig =
+    AutoResearchConfig(
+      knowledgeBaseName = "Test knowledge base",
+      stage = "Auto Research_stage",
+      streamId = AutoResearchConfig.DEFAULT_STREAM_ID,
+      defaultOperatorGuidance = AutoResearchConfig.DEFAULT_OPERATOR_GUIDANCE,
+      defaultGoalsText = AutoResearchConfig.DEFAULT_GOALS_TEXT,
+    )
   private val resource =
-    GraphResource(graphService, codexResearchService, minioConfig, autoResearchService)
+    GraphResource(graphService, codexResearchService, minioConfig, autoResearchConfig, autoResearchService)
 
   @Test
   fun `POST autoresearch with user prompt returns accepted`() {
@@ -50,7 +59,7 @@ class GraphResourceTest {
     val body = response.entity as AutoResearchLaunchResponse
     assertEquals("wf-123", body.workflowId)
     assertEquals("run-123", body.runId)
-    assertTrue(body.argoWorkflowName.startsWith("auto-research-"))
+    assertTrue(body.argoWorkflowName.startsWith("${autoResearchConfig.workflowNamePrefix}-"))
     assertEquals("bucket", body.artifactReferences.first().bucket)
     assertEquals("codex-research/${body.argoWorkflowName}/codex-artifact.json", body.artifactReferences.first().key)
     assertEquals("Map new HBM supply", requestSlot.captured.userPrompt)
@@ -72,7 +81,7 @@ class GraphResourceTest {
     assertEquals(Response.Status.ACCEPTED.statusCode, response.status)
     val body = response.entity as AutoResearchLaunchResponse
     assertEquals("wf-999", body.workflowId)
-    assertTrue(body.argoWorkflowName.startsWith("auto-research-"))
+    assertTrue(body.argoWorkflowName.startsWith("${autoResearchConfig.workflowNamePrefix}-"))
     assertTrue(requestSlot.captured.userPrompt.isNullOrBlank())
   }
 }
