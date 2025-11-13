@@ -38,6 +38,25 @@ const ensureDirectory = async (path: string): Promise<void> => {
   }
 }
 
+const describeMetricsError = (error: unknown): string => {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`
+  }
+  return String(error)
+}
+
+const swallowMetricsFailure = <E, R>(
+  effect: Effect.Effect<void, E, R>,
+  operation: string,
+): Effect.Effect<void, never, R> =>
+  effect.pipe(
+    Effect.catchAll((error) =>
+      Effect.sync(() => {
+        console.warn(`[temporal-bun-sdk] metrics ${operation} failed: ${describeMetricsError(error)}`)
+      }),
+    ),
+  )
+
 class InMemoryMetricsExporter implements MetricsExporter {
   readonly #counters = new Map<string, number>()
   readonly #histograms = new Map<string, number[]>()
@@ -77,10 +96,13 @@ class FileMetricsExporter implements MetricsExporter {
       value,
       description,
     })
-    return Effect.tryPromise(async () => {
-      await ensureDirectory(this.#file)
-      await appendFile(this.#file, `${entry}\n`, 'utf8')
-    })
+    return swallowMetricsFailure(
+      Effect.tryPromise(async () => {
+        await ensureDirectory(this.#file)
+        await appendFile(this.#file, `${entry}\n`, 'utf8')
+      }),
+      `append counter '${name}' to ${this.#file}`,
+    )
   }
 
   recordHistogram(name: string, value: number, description?: string): Effect.Effect<void, never, never> {
@@ -91,10 +113,13 @@ class FileMetricsExporter implements MetricsExporter {
       value,
       description,
     })
-    return Effect.tryPromise(async () => {
-      await ensureDirectory(this.#file)
-      await appendFile(this.#file, `${entry}\n`, 'utf8')
-    })
+    return swallowMetricsFailure(
+      Effect.tryPromise(async () => {
+        await ensureDirectory(this.#file)
+        await appendFile(this.#file, `${entry}\n`, 'utf8')
+      }),
+      `append histogram '${name}' to ${this.#file}`,
+    )
   }
 
   flush(): Effect.Effect<void, never, never> {
@@ -110,23 +135,26 @@ class OtlpMetricsExporter implements MetricsExporter {
   }
 
   #postPayload(payload: Record<string, unknown>): Effect.Effect<void, never, never> {
-    return Effect.tryPromise(async () => {
-      const fetchFn = globalThis.fetch
-      if (typeof fetchFn !== 'function') {
-        throw new Error('fetch is not available in this runtime')
-      }
-      const response = await fetchFn(this.#endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      })
-      if (!response.ok) {
-        const text = await response.text()
-        throw new Error(`OTLP metric push failed: ${response.status} ${response.statusText} - ${text}`)
-      }
-    })
+    return swallowMetricsFailure(
+      Effect.tryPromise(async () => {
+        const fetchFn = globalThis.fetch
+        if (typeof fetchFn !== 'function') {
+          throw new Error('fetch is not available in this runtime')
+        }
+        const response = await fetchFn(this.#endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        })
+        if (!response.ok) {
+          const text = await response.text()
+          throw new Error(`OTLP metric push failed: ${response.status} ${response.statusText} - ${text}`)
+        }
+      }),
+      `push OTLP metrics to ${this.#endpoint}`,
+    )
   }
 
   recordCounter(name: string, value: number, description?: string): Effect.Effect<void, never, never> {
@@ -183,30 +211,33 @@ class PrometheusMetricsExporter implements MetricsExporter {
   }
 
   flush(): Effect.Effect<void, never, never> {
-    return Effect.tryPromise(async () => {
-      await ensureDirectory(this.#file)
-      const lines: string[] = []
-      for (const [name, counter] of this.#counters) {
-        lines.push(`# HELP ${name} ${counter.description ?? 'counter metric'}`)
-        lines.push(`# TYPE ${name} counter`)
-        lines.push(`${name} ${counter.value}`)
-      }
-      for (const [name, bucket] of this.#histograms) {
-        const values = bucket.values
-        const count = values.length
-        const sum = values.reduce((acc, value) => acc + value, 0)
-        const min = count > 0 ? Math.min(...values) : 0
-        const max = count > 0 ? Math.max(...values) : 0
-        lines.push(`# HELP ${name} ${bucket.description ?? 'histogram metric'}`)
-        lines.push(`# TYPE ${name} histogram`)
-        lines.push(`${name}_count ${count}`)
-        lines.push(`${name}_sum ${sum}`)
-        lines.push(`${name}_min ${Number.isFinite(min) ? min : 0}`)
-        lines.push(`${name}_max ${Number.isFinite(max) ? max : 0}`)
-      }
-      const payload = lines.join('\n')
-      await writeFile(this.#file, payload, 'utf8')
-    })
+    return swallowMetricsFailure(
+      Effect.tryPromise(async () => {
+        await ensureDirectory(this.#file)
+        const lines: string[] = []
+        for (const [name, counter] of this.#counters) {
+          lines.push(`# HELP ${name} ${counter.description ?? 'counter metric'}`)
+          lines.push(`# TYPE ${name} counter`)
+          lines.push(`${name} ${counter.value}`)
+        }
+        for (const [name, bucket] of this.#histograms) {
+          const values = bucket.values
+          const count = values.length
+          const sum = values.reduce((acc, value) => acc + value, 0)
+          const min = count > 0 ? Math.min(...values) : 0
+          const max = count > 0 ? Math.max(...values) : 0
+          lines.push(`# HELP ${name} ${bucket.description ?? 'histogram metric'}`)
+          lines.push(`# TYPE ${name} histogram`)
+          lines.push(`${name}_count ${count}`)
+          lines.push(`${name}_sum ${sum}`)
+          lines.push(`${name}_min ${Number.isFinite(min) ? min : 0}`)
+          lines.push(`${name}_max ${Number.isFinite(max) ? max : 0}`)
+        }
+        const payload = lines.join('\n')
+        await writeFile(this.#file, payload, 'utf8')
+      }),
+      `write Prometheus metrics to ${this.#file}`,
+    )
   }
 }
 
@@ -230,13 +261,19 @@ export const createMetricsExporter = (spec: MetricsExporterSpec): Effect.Effect<
         if (!spec.endpoint) {
           throw new Error('File metrics exporter requires an endpoint (file path)')
         }
-        yield* Effect.tryPromise(() => ensureDirectory(spec.endpoint))
+        yield* swallowMetricsFailure(
+          Effect.tryPromise(() => ensureDirectory(spec.endpoint)),
+          `prepare file metrics output ${spec.endpoint}`,
+        )
         return new FileMetricsExporter(spec.endpoint)
       case 'prometheus':
         if (!spec.endpoint) {
           throw new Error('Prometheus exporter requires a target endpoint to write to')
         }
-        yield* Effect.tryPromise(() => ensureDirectory(spec.endpoint))
+        yield* swallowMetricsFailure(
+          Effect.tryPromise(() => ensureDirectory(spec.endpoint)),
+          `prepare Prometheus metrics output ${spec.endpoint}`,
+        )
         return new PrometheusMetricsExporter(spec.endpoint)
       case 'otlp':
         if (!spec.endpoint) {
@@ -250,10 +287,8 @@ export const createMetricsExporter = (spec: MetricsExporterSpec): Effect.Effect<
 
 export const createMetricsRegistry = (exporter: MetricsExporter): MetricsRegistry => buildMetricsRegistry(exporter)
 
-export const makeInMemoryMetrics = (): Effect.Effect<MetricsRegistry, never, never> => {
-  const exporter = new InMemoryMetricsExporter()
-  return buildMetricsRegistry(exporter)
-}
+export const makeInMemoryMetrics = (): Effect.Effect<MetricsRegistry, never, never> =>
+  Effect.sync(() => buildMetricsRegistry(new InMemoryMetricsExporter()))
 
 const splitScheme = (value: string | undefined): { scheme?: string; target?: string } => {
   if (!value) {

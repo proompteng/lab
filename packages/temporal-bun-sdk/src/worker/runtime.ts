@@ -24,8 +24,8 @@ import { encodeErrorToFailure, encodeFailurePayloads, failureToError } from '../
 import { sleep } from '../common/sleep'
 import { loadTemporalConfig, type TemporalConfig } from '../config'
 import { createObservabilityServices } from '../observability'
-import { type LogFields, type Logger, type LogLevel } from '../observability/logger'
-import { type Counter, type Histogram, type MetricsExporter, type MetricsRegistry } from '../observability/metrics'
+import type { LogFields, Logger, LogLevel } from '../observability/logger'
+import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from '../observability/metrics'
 import {
   type Command,
   CommandSchema,
@@ -410,6 +410,7 @@ export class WorkerRuntime {
     logger: Logger
     metricsRegistry: MetricsRegistry
     metrics: WorkerRuntimeMetrics
+    metricsExporter: MetricsExporter
     namespace: string
     taskQueue: string
     identity: string
@@ -432,6 +433,7 @@ export class WorkerRuntime {
     this.#logger = params.logger
     this.#metricsRegistry = params.metricsRegistry
     this.#metrics = params.metrics
+    this.#metricsExporter = params.metricsExporter
     this.#namespace = params.namespace
     this.#taskQueue = params.taskQueue
     this.#identity = params.identity

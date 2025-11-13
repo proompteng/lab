@@ -1,12 +1,11 @@
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { Effect } from 'effect'
-import type { LogFields, LogLevel, Logger } from '../observability/logger'
-import type { Counter } from '../observability/metrics'
-
 import type { DataConverter } from '../common/payloads'
 import { encodeValuesToPayloads } from '../common/payloads/converter'
 import { sleep } from '../common/sleep'
+import type { LogFields, Logger } from '../observability/logger'
+import type { Counter } from '../observability/metrics'
 import { PayloadsSchema } from '../proto/temporal/api/common/v1/message_pb'
 import { RecordActivityTaskHeartbeatRequestSchema } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
 import type { ActivityContext } from '../worker/activity-context'
@@ -339,6 +338,37 @@ class ActivityHeartbeatDriver {
     for (const waiter of pending.waiters) {
       waiter.reject(error)
     }
+  }
+
+  #recordHeartbeatFailure(error: unknown): void {
+    const observability = this.#observability
+    if (!observability) {
+      return
+    }
+
+    const info = this.#options.context.info
+    const fields: LogFields = {
+      namespace: this.#options.namespace,
+      taskQueue: info.taskQueue,
+      workflowId: info.workflowId,
+      runId: info.runId,
+      activityId: info.activityId,
+      attempt: info.attempt,
+      errorName: error instanceof Error ? error.name : undefined,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    }
+
+    void Effect.runPromise(observability.logger.log('warn', 'activity heartbeat failure', fields))
+    void Effect.runPromise(observability.heartbeatFailureCounter.inc())
+  }
+
+  #trackHeartbeatRetry(): void {
+    const observability = this.#observability
+    if (!observability) {
+      return
+    }
+
+    void Effect.runPromise(observability.heartbeatRetryCounter.inc())
   }
 }
 
