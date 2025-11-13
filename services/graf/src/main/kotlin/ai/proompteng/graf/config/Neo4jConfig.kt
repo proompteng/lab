@@ -12,8 +12,7 @@ data class Neo4jConfig(
   fun toDriverConfig(): Config = Config.builder().build()
 
   companion object {
-    fun fromEnvironment(): Neo4jConfig {
-      val env = System.getenv()
+    fun fromEnvironment(env: Map<String, String> = System.getenv()): Neo4jConfig {
       val uri = env["NEO4J_URI"] ?: throw IllegalStateException("NEO4J_URI must be set")
       val authFromEnv = env["NEO4J_AUTH"]?.takeIf { it.isNotBlank() }
       val (authUser, authPassword) =

@@ -13,8 +13,7 @@ data class ArgoConfig(
   companion object {
     const val DEFAULT_POLL_TIMEOUT_SECONDS = 7200L
 
-    fun fromEnvironment(): ArgoConfig {
-      val env = System.getenv()
+    fun fromEnvironment(env: Map<String, String> = System.getenv()): ArgoConfig {
       val apiServer =
         env["ARGO_API_SERVER"]?.takeIf { it.isNotBlank() }
           ?: "https://kubernetes.default.svc"
