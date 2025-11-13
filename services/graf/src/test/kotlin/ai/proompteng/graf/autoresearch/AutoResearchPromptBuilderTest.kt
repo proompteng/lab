@@ -21,6 +21,19 @@ class AutoResearchPromptBuilderTest {
   private val builder = AutoResearchPromptBuilder(defaultConfig, clock = fixedClock)
 
   @Test
+  fun `workflow prefix sanitizes invalid characters`() {
+    val funkyStage = AutoResearchConfig(
+      knowledgeBaseName = AutoResearchConfig.DEFAULT_KNOWLEDGE_BASE_NAME,
+      stage = "Auto Research_stage.v2",
+      streamId = AutoResearchConfig.DEFAULT_STREAM_ID,
+      defaultOperatorGuidance = AutoResearchConfig.DEFAULT_OPERATOR_GUIDANCE,
+      defaultGoalsText = AutoResearchConfig.DEFAULT_GOALS_TEXT,
+    )
+
+    assertEquals("auto-research-stage-v2", funkyStage.workflowNamePrefix)
+  }
+
+  @Test
   fun `buildPrompt injects timestamp and operator guidance`() {
     val prompt = builder.buildPrompt("Focus on HBM capacity and ASE contracts")
 

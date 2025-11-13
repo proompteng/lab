@@ -33,7 +33,7 @@ class GraphResourceTest {
   private val autoResearchConfig =
     AutoResearchConfig(
       knowledgeBaseName = "Test knowledge base",
-      stage = AutoResearchConfig.DEFAULT_STAGE,
+      stage = "Auto Research_stage",
       streamId = AutoResearchConfig.DEFAULT_STREAM_ID,
       defaultOperatorGuidance = AutoResearchConfig.DEFAULT_OPERATOR_GUIDANCE,
       defaultGoalsText = AutoResearchConfig.DEFAULT_GOALS_TEXT,

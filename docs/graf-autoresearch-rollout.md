@@ -6,7 +6,7 @@
 
 ## Environment variables you can override
 - `AUTO_RESEARCH_KB_NAME` (default `Graf AutoResearch Knowledge Base`) — label plucked into the prompt header/role statement.
-- `AUTO_RESEARCH_STAGE` (default `auto-research`) — stage label applied to `codex.stage`, the workflow prefix, and telemetry dashboards; GraphResource now prefixes every `Argo` workflow with this value.
+- `AUTO_RESEARCH_STAGE` (default `auto-research`) — stage label applied to `codex.stage`, the workflow prefix (sanitized to DNS-1123 before hitting Argo), and telemetry dashboards; GraphResource now prefixes every `Argo` workflow with this value.
 - `AUTO_RESEARCH_STREAM_ID` (default `auto-research`) — inserted into every prompt instruction and `codex-graf` payload for consistent stream tagging.
 - `AUTO_RESEARCH_OPERATOR_GUIDANCE` — fallback guidance appended when callers omit `user_prompt`.
 - `AUTO_RESEARCH_DEFAULT_GOALS` — newline-separated numbered goals that replace the `GOALS` section inside the prompt.

@@ -8,7 +8,7 @@ data class AutoResearchConfig(
   val defaultGoalsText: String,
 ) {
   val workflowNamePrefix: String
-    get() = stage.takeIf(String::isNotBlank) ?: DEFAULT_STAGE
+    get() = sanitizeWorkflowPrefix(stage)
 
   companion object {
     const val DEFAULT_KNOWLEDGE_BASE_NAME = "Graf AutoResearch Knowledge Base"
@@ -34,5 +34,18 @@ data class AutoResearchConfig(
         env["AUTO_RESEARCH_DEFAULT_GOALS"]?.trim()?.takeIf(String::isNotEmpty) ?: DEFAULT_GOALS_TEXT
       return AutoResearchConfig(knowledgeBaseName, stage, streamId, operatorGuidance, defaultGoals)
     }
+
+    private fun sanitizeWorkflowPrefix(rawStage: String): String {
+      val normalized = rawStage.trim().lowercase()
+      val cleaned =
+        normalized
+          .replace(Regex("[^a-z0-9-]"), "-")
+          .replace(Regex("-+"), "-")
+          .trim('-')
+      val truncated = cleaned.take(DNS_SUBDOMAIN_MAX_LENGTH).trim('-')
+      return truncated.takeIf(String::isNotBlank) ?: DEFAULT_STAGE
+    }
+
+    private const val DNS_SUBDOMAIN_MAX_LENGTH = 63
   }
 }

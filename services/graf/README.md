@@ -27,7 +27,7 @@ This Quarkus/Kotlin microservice implements the persistence layer described in [
 The AutoResearch prompt builder now sources every prompt label and metadata tag from environment variables. The baked-in defaults are vendor-agnostic (`Graf AutoResearch Knowledge Base` and `auto-research` for the stage/stream), so you can ship a neutral experience even before overriding the env vars.
 
 - `AUTO_RESEARCH_KB_NAME` – Knowledge-base name shown in the prompt header and ROLE description (default `Graf AutoResearch Knowledge Base`).
-- `AUTO_RESEARCH_STAGE` – Used for the `codex.stage` label and as the prefix on AutoResearch Argo workflows and metadata (defaults to `auto-research`).
+- `AUTO_RESEARCH_STAGE` – Used for the `codex.stage` label and (after DNS-1123 sanitization) as the prefix on AutoResearch Argo workflows and metadata (defaults to `auto-research`).
 - `AUTO_RESEARCH_STREAM_ID` – Stream value injected into the prompt text and every `codex-graf` payload (defaults to `auto-research`).
 - `AUTO_RESEARCH_OPERATOR_GUIDANCE` – Fallback guidance added when the caller leaves `user_prompt` blank.
 - `AUTO_RESEARCH_DEFAULT_GOALS` – Newline-separated numbered goals that replace the GOALS block inside the prompt.
