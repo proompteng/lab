@@ -9,6 +9,14 @@ to a generally available release on npm that can be trusted by millions of
 Temporal developers. It records what already ships in `main`, what gaps remain,
 and the quality bars we must meet before GA.
 
+## Bun-First Architecture Advantages
+
+- **Single runtime, single language.** Workflows, activities, worker runtime, and tooling all execute inside Bun with Effect layers, so we avoid C-ABI bridges, reference-counted native handles, or “core” background threads. Scheduling, sticky cache eviction, and heartbeat aggregation share the same event loop, which keeps failure handling and telemetry consistent.
+- **Zero workflow bundler constraints.** Because workflows run in the same runtime, we don’t need webpack-only bundles, module blacklists, or VM cache hacks. The CLI can still emit bundles for deployment, but local dev can import workflows/activities directly without rewriting entrypoints or duplicating payload converter wiring.
+- **Direct telemetry plumbing.** Loggers, metrics, and tracing consumers plug into Effect services rather than going through gRPC proxies or shared heartbeat workers. This lets us emit structured observability data per task without extra polling loops and keeps configuration (logger sinks, OTLP exporters) co-located with the worker config.
+- **Simpler lifecycle management.** Worker run/drain/shutdown flows are just Effect scopes with managed resources, so we don’t need special singleton installers, `NativeWorker` mirrors, or asynchronous “activation processor” threads. Graceful shutdown (drain → cancel → fail) is encoded once and reused in both CLI and embedding scenarios.
+- **Determinism-friendly developer experience.** With workflows, activities, and data converters sharing the same dependency graph, we can enforce deterministic imports and snapshotting at build time, but developers still get Bun’s tooling (watch mode, test runner) without cross-language debugging.
+
 ## Current State Snapshot
 
 | Area | Status | Notes |
@@ -453,6 +461,14 @@ can contribute independently without re-planning.
 Progress through this checklist gates each release milestone (Alpha → Beta → RC → GA).
 Every GA-critical item requires passing integration tests and updated documentation
 before the release train can proceed.
+
+## Post-GA Enhancements
+
+1. **Unified observability surface.** After GA, ship optional Effect-based logger/metrics/tracing layers that can target OTLP, Prometheus remote write, or Bun-native sinks without introducing bridge processes. This includes turning the current console/in-memory stubs into documented extension points.
+2. **Advanced scheduling experiments.** Explore adaptive concurrency and resource-based tuning (e.g., CPU/memory-aware queue depth, workflow/activities priority lanes) built directly on top of our Effect scheduler—no external “tuner” components required.
+3. **Workflow packaging ergonomics.** Provide first-class support for both source-based workflows (ideal for Bun) and ahead-of-time bundles (for Docker/serverless), with deterministic dependency analysis and optional linting to catch non-deterministic imports.
+4. **Client ecosystem integration.** Layer in retries/interceptors/TLS hardening plus ergonomic helpers (memo/search attribute schemas, schedule builders) so Bun clients reach feature parity with worker capabilities and promote end-to-end TypeScript-only deployments.
+5. **Operational tooling.** Extend the CLI with “doctor”, “replay”, and “profile” commands that leverage the single-runtime architecture to run deterministic replays, capture telemetry snapshots, and surface build-id/namespace health without relying on external binaries.
 ## Worker versioning note
 
 When `WorkerVersioningMode.VERSIONED` is enabled, `WorkerRuntime.create()` probes worker-versioning support via `GetWorkerBuildIdCompatibility` and registers the build ID with `UpdateWorkerBuildIdCompatibility` before the scheduler starts. Transient codes (`Unavailable`, `DeadlineExceeded`, `Aborted`, `Internal`) are retried with backoff; any other failure aborts startup so deployments fail fast.
