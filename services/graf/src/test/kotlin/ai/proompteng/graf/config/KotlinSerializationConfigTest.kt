@@ -1,5 +1,6 @@
 package ai.proompteng.graf.config
 
+import ai.proompteng.graf.runtime.grafJson
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlin.test.Test
@@ -8,12 +9,10 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class KotlinSerializationConfigTest {
-  private val config = KotlinSerializationConfig()
+  private val json = grafJson()
 
   @Test
   fun `json parser tolerates unknown keys and omits explicit nulls`() {
-    val json = config.json()
-
     assertTrue(json.configuration.ignoreUnknownKeys)
     assertFalse(json.configuration.explicitNulls)
 

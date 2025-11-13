@@ -1,9 +1,7 @@
-package ai.proompteng.graf.di
+package ai.proompteng.graf.runtime
 
-import jakarta.enterprise.context.RequestScoped
 import java.util.UUID
 
-@RequestScoped
 class GrafRequestContext {
   var requestId: String = UUID.randomUUID().toString()
   var bearerPrincipal: String? = null
