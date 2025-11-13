@@ -11,7 +11,7 @@ Graf bootstraps a dedicated Koin container that owns configuration objects, long
 `GrafApplication` now performs three explicit steps before handing control to Quarkus:
 
 1. `GrafKoin.start()` loads all Koin modules so definitions are available immediately.
-2. `GrafWarmup.prime()` fetches the heavy singletons (`GraphService`, `WorkflowClient`, `ArgoWorkflowClient`, `MinioClient`, `AutoResearchLauncher`) concurrently, then triggers best-effort warmups for `GraphService` (Neo4j ping) and `CodexResearchService` (Temporal workflow stub + `GetSystemInfo`). Doing this up front avoids work on the first REST request and shifts the cost into process startup.
+2. `GrafWarmup.prime()` fetches the heavy singletons (`GraphService`, `WorkflowClient`, `ArgoWorkflowClient`, `MinioClient`, `AutoResearchLauncher`) concurrently, then triggers best-effort warmups for `GraphService` (Neo4j ping) and `CodexResearchService` (Temporal `GetSystemInfo`). Doing this up front avoids work on the first REST request and shifts the cost into process startup.
 3. `GrafTemporalBootstrap.start()` provisions the Temporal worker, registers activities, and records shutdown hooks for the worker factory, service stubs, and telemetry exporter.
 
 If you add a new expensive singleton that should be ready before the first request, update `GrafWarmup` to touch it.

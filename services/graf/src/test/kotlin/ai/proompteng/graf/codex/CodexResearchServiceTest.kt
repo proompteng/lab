@@ -6,7 +6,6 @@ import io.mockk.verify
 import io.temporal.api.workflowservice.v1.GetSystemInfoResponse
 import io.temporal.api.workflowservice.v1.WorkflowServiceGrpc
 import io.temporal.client.WorkflowClient
-import io.temporal.client.WorkflowOptions
 import io.temporal.serviceclient.WorkflowServiceStubs
 import org.junit.jupiter.api.Test
 
@@ -17,8 +16,6 @@ class CodexResearchServiceTest {
 
   @Test
   fun `prewarm primes workflow stub and temporal channel`() {
-    val workflowStub = mockk<CodexResearchWorkflow>(relaxed = true)
-    every { workflowClient.newWorkflowStub(CodexResearchWorkflow::class.java, any<WorkflowOptions>()) } returns workflowStub
     every { workflowServiceStubs.blockingStub() } returns blockingStub
     every { blockingStub.getSystemInfo(any()) } returns GetSystemInfoResponse.getDefaultInstance()
 
@@ -26,7 +23,6 @@ class CodexResearchServiceTest {
 
     service.prewarm()
 
-    verify { workflowClient.newWorkflowStub(CodexResearchWorkflow::class.java, any<WorkflowOptions>()) }
     verify { blockingStub.getSystemInfo(any()) }
   }
 }

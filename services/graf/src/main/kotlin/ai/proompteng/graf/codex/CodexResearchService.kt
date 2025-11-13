@@ -28,13 +28,6 @@ class CodexResearchService(
 
   fun prewarm() {
     runCatching {
-      workflowClient.newWorkflowStub(
-        CodexResearchWorkflow::class.java,
-        WorkflowOptions
-          .newBuilder()
-          .setTaskQueue(taskQueue)
-          .build(),
-      )
       workflowServiceStubs
         .blockingStub()
         .getSystemInfo(GetSystemInfoRequest.getDefaultInstance())
