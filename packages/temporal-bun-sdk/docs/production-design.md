@@ -445,3 +445,10 @@ can contribute independently without re-planning.
 Progress through this checklist gates each release milestone (Alpha → Beta → RC → GA).
 Every GA-critical item requires passing integration tests and updated documentation
 before the release train can proceed.
+## Worker versioning note
+
+When `WorkerVersioningMode.VERSIONED` is enabled, `WorkerRuntime.create()` probes worker-versioning support via `GetWorkerBuildIdCompatibility` and registers the build ID with `UpdateWorkerBuildIdCompatibility` before the scheduler starts. Transient codes (`Unavailable`, `DeadlineExceeded`, `Aborted`, `Internal`) are retried with backoff; any other failure aborts startup so deployments fail fast.
+
+If the capability probe returns `Unimplemented` or `FailedPrecondition`, the runtime logs a warning and skips registration. This is expected when running against the Temporal CLI dev server launched via `bun scripts/start-temporal-cli.ts`, which does not expose worker versioning yet. Production clusters must not rely on this fallback—missing registrations will still starve versioned task queues.
+
+Unit tests in `tests/worker.build-id-registration.test.ts` now cover both the successful registration path and the CLI fallback while we wire up end-to-end coverage in the integration harness.

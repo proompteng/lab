@@ -79,6 +79,7 @@ import {
   resolveHistoryLastEventId,
 } from '../workflow/replay'
 import { type ActivityContext, type ActivityInfo, runWithActivityContext } from './activity-context'
+import { checkWorkerVersioningCapability, registerWorkerBuildIdCompatibility } from './build-id'
 import {
   type ActivityTaskEnvelope,
   makeWorkerScheduler,
@@ -234,6 +235,19 @@ export class WorkerRuntime {
       buildId,
       workerVersioningMode,
     })
+
+    if (workerVersioningMode === WorkerVersioningMode.VERSIONED) {
+      const capability = await checkWorkerVersioningCapability(workflowService, namespace, taskQueue)
+      if (capability.supported) {
+        await registerWorkerBuildIdCompatibility(workflowService, namespace, taskQueue, buildId)
+      } else {
+        console.warn(
+          `[temporal-bun-sdk] skipping worker build ID registration for ${namespace}/${taskQueue}: ${
+            capability.reason ?? 'unknown capability error'
+          }. If you are running against the Temporal CLI dev server via bun scripts/start-temporal-cli.ts this warning is expected because that server does not implement worker versioning APIs yet.`,
+        )
+      }
+    }
 
     const activityLifecycle = await Effect.runPromise(
       makeActivityLifecycle({
