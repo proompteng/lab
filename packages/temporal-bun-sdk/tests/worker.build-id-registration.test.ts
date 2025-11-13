@@ -2,6 +2,9 @@ import { expect, test } from 'bun:test'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { Effect } from 'effect'
 
+import { defaultMetricsExporterSpec } from '../src/observability/metrics'
+import type { Logger } from '../src/observability/logger'
+
 import type { TemporalConfig } from '../src/config'
 import { registerWorkerBuildIdCompatibility } from '../src/worker/build-id'
 import type {
@@ -110,8 +113,10 @@ const createTestConfig = (overrides: Partial<TemporalConfig> = {}): TemporalConf
   namespace: 'default',
   taskQueue: 'test-task-queue',
   allowInsecureTls: true,
+  stickySchedulingEnabled: false,
   workerIdentity: 'test-worker',
   workerIdentityPrefix: 'test',
+  showStackTraceSources: false,
   workerWorkflowConcurrency: 1,
   workerActivityConcurrency: 1,
   workerStickyCacheSize: 0,
@@ -120,6 +125,9 @@ const createTestConfig = (overrides: Partial<TemporalConfig> = {}): TemporalConf
   activityHeartbeatRpcTimeoutMs: 1_000,
   workerDeploymentName: 'test-deployment',
   workerBuildId: 'test-build-id',
+  logLevel: 'info',
+  logFormat: 'pretty',
+  metricsExporter: defaultMetricsExporterSpec,
   ...overrides,
 })
 
@@ -177,8 +185,15 @@ test('WorkerRuntime logs a warning and skips registration when worker versioning
   })
 
   const warnings: string[] = []
-  const originalWarn = console.warn
-  console.warn = (...args: unknown[]) => warnings.push(args.join(' '))
+  const logger: Logger = {
+    log(level, message, fields) {
+      if (level === 'warn') {
+        const serializedFields = fields ? JSON.stringify(fields) : ''
+        warnings.push(serializedFields ? `${message} ${serializedFields}` : message)
+      }
+      return Effect.void
+    },
+  }
 
   const config = createTestConfig({ taskQueue: 'versioned-queue-2' })
   let runtime: WorkerRuntime | null = null
@@ -187,6 +202,7 @@ test('WorkerRuntime logs a warning and skips registration when worker versioning
       config,
       workflows: noopWorkflows,
       workflowService,
+      logger,
       deployment: {
         name: config.workerDeploymentName,
         buildId: config.workerBuildId,
@@ -199,7 +215,6 @@ test('WorkerRuntime logs a warning and skips registration when worker versioning
     expect(updateCalled).toBeFalse()
     expect(warnings.some((line) => line.includes('skipping worker build ID registration'))).toBeTrue()
   } finally {
-    console.warn = originalWarn
     await runtime?.shutdown()
   }
 })

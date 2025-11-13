@@ -5,8 +5,8 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
 import { Effect } from 'effect'
-import { createObservabilityServices } from '../observability'
 import { loadTemporalConfig } from '../config'
+import { createObservabilityServices } from '../observability'
 
 type CommandHandler = (args: string[], flags: Record<string, string | boolean>) => Promise<void>
 
