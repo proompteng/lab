@@ -126,6 +126,20 @@ object GrafTelemetry {
       .setUnit("1")
       .build()
 
+  private val graphBatchDuration: DoubleHistogram =
+    meter
+      .histogramBuilder("graf_graph_batch_duration_ms")
+      .setDescription("Full batch execution latency")
+      .setUnit("ms")
+      .build()
+
+  private val graphBatchRecords: LongCounter =
+    meter
+      .counterBuilder("graf_graph_batch_records_total")
+      .setDescription("Records processed per graph batch")
+      .setUnit("1")
+      .build()
+
   private val workflowCounter: LongCounter =
     meter
       .counterBuilder("graf_codex_workflows_started")
@@ -204,6 +218,27 @@ object GrafTelemetry {
     researchSource?.let { builder.put(AttributeKey.stringKey("research.source"), it) }
     val attributes = builder.build()
     batchSizeHistogram.record(batchSize.toDouble(), attributes)
+  }
+
+  fun recordGraphBatch(
+    durationMs: Long,
+    recordCount: Int,
+    operation: String,
+    artifactId: String?,
+    researchSource: String?,
+  ) {
+    val attributes =
+      Attributes
+        .builder()
+        .put(AttributeKey.stringKey("graf.batch.operation"), operation)
+        .put(AttributeKey.longKey("graf.batch.record.count"), recordCount.toLong())
+        .apply {
+          artifactId?.let { put(AttributeKey.stringKey("artifact.id"), it) }
+          researchSource?.let { put(AttributeKey.stringKey("research.source"), it) }
+        }
+        .build()
+    graphBatchDuration.record(durationMs.toDouble(), attributes)
+    graphBatchRecords.add(recordCount.toLong(), attributes)
   }
 
   fun recordWorkflowLaunch(

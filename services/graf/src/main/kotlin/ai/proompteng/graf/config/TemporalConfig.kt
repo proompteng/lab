@@ -8,8 +8,7 @@ data class TemporalConfig(
   val authToken: String?,
 ) {
   companion object {
-    fun fromEnvironment(): TemporalConfig {
-      val env = System.getenv()
+    fun fromEnvironment(env: Map<String, String> = System.getenv()): TemporalConfig {
       val address =
         env["TEMPORAL_ADDRESS"]?.takeIf { it.isNotBlank() }
           ?: "temporal-frontend.temporal.svc.cluster.local:7233"

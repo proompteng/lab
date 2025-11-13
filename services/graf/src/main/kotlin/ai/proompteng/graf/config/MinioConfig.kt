@@ -14,8 +14,7 @@ data class MinioConfig(
   val artifactEndpoint: String = sanitizeEndpointForArtifacts(endpoint, secure)
 
   companion object {
-    fun fromEnvironment(): MinioConfig {
-      val env = System.getenv()
+    fun fromEnvironment(env: Map<String, String> = System.getenv()): MinioConfig {
       val endpoint =
         env["MINIO_ENDPOINT"]?.takeIf { it.isNotBlank() }
           ?: throw IllegalStateException("MINIO_ENDPOINT must be set")
