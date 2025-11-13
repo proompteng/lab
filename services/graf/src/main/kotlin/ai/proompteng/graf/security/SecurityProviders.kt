@@ -1,5 +1,6 @@
 package ai.proompteng.graf.security
 
+import ai.proompteng.graf.security.requireBearerToken
 import ai.proompteng.graf.telemetry.GrafTelemetry
 import jakarta.annotation.Priority
 import jakarta.ws.rs.NotAuthorizedException
@@ -22,7 +23,7 @@ class GrafBearerTokenFilter : ContainerRequestFilter {
     if (!path.startsWith("v1")) {
       return
     }
-    val token = extractBearerToken(requestContext)
+    val token = requireBearerToken(requestContext)
     if (!ApiBearerTokenConfig.isValid(token)) {
       throw NotAuthorizedException("invalid bearer token")
     }

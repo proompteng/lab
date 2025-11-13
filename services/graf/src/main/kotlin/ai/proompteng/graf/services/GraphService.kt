@@ -23,6 +23,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import mu.KotlinLogging
 import java.lang.IllegalArgumentException
 import java.time.Duration
 import java.time.Instant
@@ -39,6 +40,18 @@ interface GraphPersistence {
 class GraphService(
   private val neo4j: Neo4jClient,
 ) : GraphPersistence {
+  private val logger = KotlinLogging.logger {}
+
+  suspend fun warmup() {
+    runCatching {
+      neo4j.executeRead { tx ->
+        tx.run("RETURN 1 AS ok").consume()
+      }
+    }.onFailure { error ->
+      logger.warn(error) { "Graf Neo4j warmup query failed; continuing with lazy initialization" }
+    }
+  }
+
   override suspend fun upsertEntities(request: EntityBatchRequest): BatchResponse =
     GrafTelemetry.withSpan(
       "graf.graph.upsertEntities",
