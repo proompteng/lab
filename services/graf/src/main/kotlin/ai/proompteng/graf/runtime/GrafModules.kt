@@ -121,6 +121,7 @@ fun grafServiceModule() = module {
   single {
     CodexResearchService(
       workflowClient = get(),
+      workflowServiceStubs = get(),
       taskQueue = get<TemporalConfig>().taskQueue,
       argoPollTimeoutSeconds = get<ArgoConfig>().pollTimeoutSeconds,
     )

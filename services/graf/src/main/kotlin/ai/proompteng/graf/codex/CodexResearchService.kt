@@ -5,14 +5,18 @@ import ai.proompteng.graf.telemetry.GrafTelemetry
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.api.trace.StatusCode
+import io.temporal.api.workflowservice.v1.GetSystemInfoRequest
 import io.temporal.client.WorkflowClient
 import io.temporal.client.WorkflowExecutionAlreadyStarted
 import io.temporal.client.WorkflowOptions
+import io.temporal.serviceclient.WorkflowServiceStubs
+import mu.KotlinLogging
 import java.time.Instant
 import java.util.UUID
 
 class CodexResearchService(
   private val workflowClient: WorkflowClient,
+  private val workflowServiceStubs: WorkflowServiceStubs,
   private val taskQueue: String,
   private val argoPollTimeoutSeconds: Long,
   private val workflowStarter: (CodexResearchWorkflow, CodexResearchWorkflowInput) -> WorkflowStartResult = { workflow, input ->
@@ -20,6 +24,25 @@ class CodexResearchService(
     WorkflowStartResult(workflowId = execution.workflowId, runId = execution.runId)
   },
 ) : CodexResearchLauncher {
+  private val logger = KotlinLogging.logger {}
+
+  fun prewarm() {
+    runCatching {
+      workflowClient.newWorkflowStub(
+        CodexResearchWorkflow::class.java,
+        WorkflowOptions
+          .newBuilder()
+          .setTaskQueue(taskQueue)
+          .build(),
+      )
+      workflowServiceStubs
+        .blockingStub()
+        .getSystemInfo(GetSystemInfoRequest.getDefaultInstance())
+    }.onFailure { error ->
+      logger.warn(error) { "Codex Temporal prewarm failed" }
+    }
+  }
+
   override fun startResearch(
     request: CodexResearchRequest,
     argoWorkflowName: String,

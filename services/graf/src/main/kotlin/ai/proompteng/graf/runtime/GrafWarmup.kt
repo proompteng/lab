@@ -37,6 +37,12 @@ object GrafWarmup {
       }
 
       runCatching {
+        koin.get<CodexResearchService>().prewarm()
+      }.onFailure { error ->
+        logger.warn(error) { "CodexResearchService warmup failed; first autoresearch request may be slower" }
+      }
+
+      runCatching {
         val scope = GrafKoin.openRequestScope()
         scope.get<GrafRequestContext>()
         GrafKoin.close(scope)
