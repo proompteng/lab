@@ -117,4 +117,27 @@ describe('runCodexBootstrap', () => {
     )
     expect(exitCode).toBe(7)
   })
+
+  it('configures non-interactive env defaults without overriding explicit values', async () => {
+    await mkdir(join(workdir, '.git'), { recursive: true })
+    delete process.env.PAGER
+    delete process.env.GIT_PAGER
+    delete process.env.GIT_TERMINAL_PROMPT
+    process.env.LESS = '-R'
+    process.env.MANPAGER = 'more'
+
+    await runCodexBootstrap()
+
+    expect(process.env.PAGER).toBe('cat')
+    expect(process.env.GIT_PAGER).toBe('cat')
+    expect(process.env.GIT_TERMINAL_PROMPT).toBe('0')
+    expect(process.env.KUBECTL_PAGER).toBe('cat')
+    expect(process.env.SYSTEMD_PAGER).toBe('cat')
+    expect(process.env.BAT_PAGER).toBe('cat')
+    expect(process.env.MANPAGER).toBe('more')
+    expect(process.env.LESS).toContain('R')
+    expect(process.env.LESS).toContain('F')
+    expect(process.env.LESS).toContain('S')
+    expect(process.env.LESS).toContain('X')
+  })
 })

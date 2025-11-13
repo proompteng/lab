@@ -21,6 +21,49 @@ const ensureParentDir = async (path: string) => {
   await mkdir(dirname(path), { recursive: true })
 }
 
+const setDefaultEnv = (key: string, value: string) => {
+  const current = process.env[key]
+  if (!current || current.trim() === '') {
+    process.env[key] = value
+  }
+}
+
+const ensureLessFlags = () => {
+  const requiredFlags = new Set(['F', 'R', 'S', 'X'])
+  const current = process.env.LESS ?? ''
+  if (!current) {
+    process.env.LESS = 'FRSX'
+    return
+  }
+
+  const prefix = current.startsWith('-') ? '-' : ''
+  const existingFlags = new Set(current.replace(/^-/, '').split(''))
+  let updated = current.replace(/^-/, '')
+  let changed = false
+
+  for (const flag of requiredFlags) {
+    if (!existingFlags.has(flag)) {
+      updated += flag
+      changed = true
+    }
+  }
+
+  if (changed) {
+    process.env.LESS = `${prefix}${updated}`
+  }
+}
+
+const configureNonInteractiveEnvironment = () => {
+  setDefaultEnv('GIT_TERMINAL_PROMPT', '0')
+  setDefaultEnv('PAGER', 'cat')
+  setDefaultEnv('GIT_PAGER', 'cat')
+  setDefaultEnv('MANPAGER', 'cat')
+  setDefaultEnv('SYSTEMD_PAGER', 'cat')
+  setDefaultEnv('KUBECTL_PAGER', 'cat')
+  setDefaultEnv('BAT_PAGER', 'cat')
+  ensureLessFlags()
+}
+
 const resolveNvmDir = () => {
   const home = process.env.HOME ?? '/root'
   return process.env.NVM_DIR ?? join(home, '.nvm')
@@ -88,6 +131,8 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   const targetDir = process.env.TARGET_DIR ?? worktreeDefault
   const baseBranch = process.env.BASE_BRANCH ?? 'main'
   const headBranch = process.env.HEAD_BRANCH ?? ''
+
+  configureNonInteractiveEnvironment()
 
   process.env.WORKTREE = worktreeDefault
   process.env.TARGET_DIR = targetDir
