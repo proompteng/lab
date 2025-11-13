@@ -4,6 +4,7 @@ import ai.proompteng.graf.autoresearch.AutoResearchConfig
 import ai.proompteng.graf.autoresearch.AutoResearchLauncher
 import ai.proompteng.graf.codex.CodexResearchService
 import ai.proompteng.graf.config.MinioConfig
+import ai.proompteng.graf.runtime.GrafKoin
 import ai.proompteng.graf.model.ArtifactReference
 import ai.proompteng.graf.model.AutoResearchLaunchResponse
 import ai.proompteng.graf.model.AutoResearchRequest
@@ -23,7 +24,6 @@ import ai.proompteng.graf.model.RelationshipPatchRequest
 import ai.proompteng.graf.services.GraphService
 import ai.proompteng.graf.telemetry.GrafRouteTemplate
 import jakarta.enterprise.context.ApplicationScoped
-import jakarta.inject.Inject
 import jakarta.ws.rs.Consumes
 import jakarta.ws.rs.DELETE
 import jakarta.ws.rs.PATCH
@@ -35,21 +35,31 @@ import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.koin.core.component.get
 import java.util.UUID
 
 @Path("/v1")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
-class GraphResource
-  @Inject
-  constructor(
-    private val graphService: GraphService,
-    private val codexResearchService: CodexResearchService,
-    private val minioConfig: MinioConfig,
-    private val autoResearchConfig: AutoResearchConfig,
-    private val autoResearchLauncher: AutoResearchLauncher,
-  ) {
+class GraphResource(
+  private val providedGraphService: GraphService? = null,
+  private val providedCodexResearchService: CodexResearchService? = null,
+  private val providedMinioConfig: MinioConfig? = null,
+  private val providedAutoResearchConfig: AutoResearchConfig? = null,
+  private val providedAutoResearchLauncher: AutoResearchLauncher? = null,
+) {
+  private val graphService: GraphService by lazy { providedGraphService ?: GrafKoin.koin().get<GraphService>() }
+  private val codexResearchService: CodexResearchService by lazy {
+    providedCodexResearchService ?: GrafKoin.koin().get<CodexResearchService>()
+  }
+  private val minioConfig: MinioConfig by lazy { providedMinioConfig ?: GrafKoin.koin().get<MinioConfig>() }
+  private val autoResearchConfig: AutoResearchConfig by lazy {
+    providedAutoResearchConfig ?: GrafKoin.koin().get<AutoResearchConfig>()
+  }
+  private val autoResearchLauncher: AutoResearchLauncher by lazy {
+    providedAutoResearchLauncher ?: GrafKoin.koin().get<AutoResearchLauncher>()
+  }
     @POST
     @Path("/entities")
     @GrafRouteTemplate("POST /v1/entities")

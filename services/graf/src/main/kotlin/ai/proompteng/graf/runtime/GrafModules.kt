@@ -1,6 +1,8 @@
 package ai.proompteng.graf.runtime
 
+import ai.proompteng.graf.autoresearch.AutoResearchConfig
 import ai.proompteng.graf.autoresearch.AutoResearchLauncher
+import ai.proompteng.graf.autoresearch.AutoResearchPromptBuilder
 import ai.proompteng.graf.autoresearch.AutoResearchService
 import ai.proompteng.graf.codex.ArgoWorkflowClient
 import ai.proompteng.graf.codex.CodexResearchActivities
@@ -65,6 +67,7 @@ fun grafConfigModule() = module {
   single { TemporalConfig.fromEnvironment() }
   single { ArgoConfig.fromEnvironment() }
   single { MinioConfig.fromEnvironment() }
+  single { AutoResearchConfig.fromEnvironment() }
   single(qualifier = GrafQualifiers.Json) { grafJson() }
 }
 
@@ -126,7 +129,8 @@ fun grafServiceModule() = module {
       argoPollTimeoutSeconds = get<ArgoConfig>().pollTimeoutSeconds,
     )
   }
-  single<AutoResearchLauncher> { AutoResearchService(get()) }
+  single { AutoResearchPromptBuilder(get()) }
+  single<AutoResearchLauncher> { AutoResearchService(get(), get()) }
 }
 
 fun grafRequestScopeModule() = module {
