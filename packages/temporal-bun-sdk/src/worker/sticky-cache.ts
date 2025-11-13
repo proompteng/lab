@@ -51,7 +51,7 @@ type StickyCacheLookupResult =
   | { readonly kind: 'expired'; readonly entry: StickyCacheEntry }
   | { readonly kind: 'hit'; readonly entry: StickyCacheEntry }
 
-const serializeKey = (key: StickyCacheKey): string => `${key.namespace}::${key.workflowId}::${key.runId}`
+const serializeKey = (key: StickyCacheKey): string => JSON.stringify([key.namespace, key.workflowId, key.runId])
 
 const recordCounter = (counter?: Counter, value = 1) => (counter ? counter.inc(value) : Effect.void)
 
