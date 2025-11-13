@@ -1,6 +1,6 @@
 # Temporal Bun SDK – Production-Ready Design
 
-_Last updated: November 6, 2025_
+_Last updated: November 13, 2025_
 
 ## Purpose
 
@@ -14,11 +14,11 @@ and the quality bars we must meet before GA.
 | Area | Status | Notes |
 | --- | --- | --- |
 | Workflow execution | **Alpha** | Deterministic command context, activity/timer/child/signal/continue-as-new intents, deterministic guard. |
-| Worker runtime | **Beta-** | Effect-based scheduler with configurable concurrency, sticky cache routing, and build-id metadata. Heartbeats and observability still pending. |
+| Worker runtime | **Beta** | Sticky cache routing now performs drift detection + healing; Effect-based scheduler with configurable concurrency; heartbeats and observability still pending. |
 | Client | **Alpha** | Start/signal/query/cancel/update/describe namespace with Connect transport; interceptors and retries pending. |
 | Activities | **Beta-** | Handler registry, cancellation signals. Heartbeats, retries, and failure categorisation remain. |
-| Tooling & docs | **Pre-Alpha** | CLI scaffolds projects and Docker image. Developer docs partially updated for deterministic context. |
-| Testing | **Pre-Alpha** | Unit coverage for executor intents. No Temporal dev-server integration suite or determinism regression harness. |
+| Tooling & docs | **Beta-** | Replay runbook + history capture automation documented; CLI scaffolds projects and Docker image. Remaining doc gaps outside TBS-001. |
+| Testing | **Beta** | Determinism regression harness (`tests/replay/**`) plus Temporal CLI integration suite (`tests/integration/history-replay.test.ts`); load/perf smoke tests still pending. |
 
 > **Release target:** GA requires all sections below marked as **Critical for GA**
 to be complete, with supporting validation and documentation.
@@ -47,12 +47,12 @@ to be complete, with supporting validation and documentation.
 | Capability | Status | Acceptance Criteria | GA Critical? |
 | --- | --- | --- | --- |
 | Command coverage | ✅ context + intents | Activities, timers, child workflows, signals, continue-as-new emit correct commands with metadata and retries. | Yes |
-| History replay | 🚧 in design | Worker hydrates history into determinism state, verifies commands, tolerates sticky cache eviction, exposes replay API. | Yes |
+| History replay | ✅ ingestion + sticky cache | Worker hydrates history into determinism state, verifies commands, tolerates sticky cache eviction, exposes replay API. | Yes |
 | Activity lifecycle | 🚧 partial | Heartbeats, retries, cancellation reasons, eager activities. | Yes |
 | Worker concurrency | ✅ scheduler + sticky queues | Configurable parallelism, sticky queues, build-id routing, per-namespace/task queue isolation. | Yes |
 | Client resilience | 🚧 partial | Retry policies, interceptors, TLS/mTLS test matrix, structured errors. | Yes |
 | Diagnostics | 🚧 not started | Structured logs, OpenTelemetry metrics/traces, hookable logger. | Yes |
-| Testing & QA | 🚧 partial | Deterministic regression suite, integration tests with Temporal dev server, load/perf smoke tests. | Yes |
+| Testing & QA | ✅ replay + integration | Deterministic regression suite, integration tests with Temporal dev server; load/perf smoke tests still pending. | Yes |
 | Tooling | 🚧 partial | CLI connectivity check, replay CLI, proto regeneration script, API docs generator. | No (Beta) |
 | Documentation | 🚧 partial | Architecture guide, workflow/activities best practices, migration guide, troubleshooting, accessibility for CLI. | Yes |
 | Release operations | 🚧 not started | Semantic versioning, changelog automation, npm publish pipeline, support SLAs. | Yes |
@@ -125,6 +125,7 @@ can contribute independently without re-planning.
 
 ### TBS-001 – History Replay & Sticky Cache
 
+- **Status**: ✅ Completed (November 2025) — determinism replay ingestion, sticky cache eviction/metrics, and the integration + replay harnesses now live on `main`.
 - **Starting points**
   - `src/workflow/replay.ts` – implement `ingestWorkflowHistory` and
     `diffDeterminismState`.
@@ -140,13 +141,18 @@ can contribute independently without re-planning.
   2. Sticky cache persists state across multiple workflow tasks + evicts per policy.
   3. Replay mismatch yields `WorkflowNondeterminismError` that includes event IDs
      and mismatched command signatures.
-  4. Unit tests and dev-server scenario verifying behaviour.
+  4. Unit tests and dev-server scenario verifying behaviour. (Covered by `tests/workflow/replay.test.ts`, `tests/replay/fixtures.test.ts`, and `tests/integration/history-replay.test.ts`.)
 - **Implementation notes**
   - Determinism snapshots are persisted as `temporal-bun-sdk/determinism` record markers (schema v1) that bundle command history, random/time streams, and the last processed event id. The marker payload is stored via the configured `DataConverter`.
   - `TEMPORAL_STICKY_CACHE_SIZE` and `TEMPORAL_STICKY_TTL_MS` control cache capacity and eviction; the sticky worker queue schedule-to-start timeout inherits from the TTL so increasing it lengthens deterministic affinity.
   - `tests/integration/harness.ts` provides a Temporal CLI-backed harness that starts the dev server, executes workflows (`temporal workflow execute`), fetches JSON history (`temporal workflow show --output json`), and feeds the ingestion pipeline. Tests log a skip when the CLI is unavailable instead of failing hard.
   - Sticky cache decisions are now instrumented with counters (`hits`, `misses`, `evictions`, `heal`) and structured logs so nondeterminism causes can be traced via `WorkflowNondeterminismError.details`.
-  - Replay fixtures live under `tests/replay/fixtures/*.json` with a dedicated harness (`tests/replay/fixtures.test.ts`) that locks determinism outputs to real histories.
+  - Replay fixtures live under `tests/replay/fixtures/*.json` with a dedicated harness (`tests/replay/fixtures.test.ts`) that locks determinism outputs to real histories. The capture/runbook lives in `docs/replay-runbook.md`.
+- **Validation commands**
+  - `pnpm --filter @proompteng/temporal-bun-sdk exec bun test tests/workflow/replay.test.ts`
+  - `pnpm --filter @proompteng/temporal-bun-sdk exec bun test tests/replay/fixtures.test.ts`
+  - `pnpm --filter @proompteng/temporal-bun-sdk exec bun test tests/integration/history-replay.test.ts`
+
 - **Dependencies**
   - Optional integration with TBS-004 for logging metrics.
   - Provides determinism snapshot for TBS-003 scheduler.

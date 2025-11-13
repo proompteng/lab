@@ -27,6 +27,11 @@ harness, and tune sticky cache + determinism diagnostics for
    and run `pnpm --filter @proompteng/temporal-bun-sdk exec bun test tests/replay/fixtures.test.ts`.
    Use `TEMPORAL_REPLAY_FIXTURE=<name-fragment>` to run a subset.
 
+### Replay Diagnostics Environment
+
+- `TEMPORAL_TEST_SERVER=1` — reuse an already running Temporal dev server instead of spawning the CLI helper (tests log a skip if the CLI is missing).
+- `TEMPORAL_BUN_SDK_TRACE_PATH=/tmp/temporal-bun-trace.jsonl` — emit structured trace lines for every workflow task, replay diff, and sticky cache decision. Tail this file while running the harness to correlate mismatches with the history events reported in `WorkflowNondeterminismError.details`.
+
 ## Sticky Cache Tuning & Debugging
 
 - `TEMPORAL_STICKY_CACHE_SIZE`: maximum number of cached determinism snapshots
