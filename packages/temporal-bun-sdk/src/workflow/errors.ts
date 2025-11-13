@@ -12,6 +12,18 @@ export interface WorkflowNondeterminismDetails {
   readonly received?: unknown
   readonly hint?: string
   readonly mismatches?: DeterminismMismatch[]
+  readonly workflow?: {
+    readonly namespace: string
+    readonly taskQueue: string
+    readonly workflowId: string
+    readonly runId: string
+    readonly workflowType?: string
+  }
+  readonly workflowTaskAttempt?: number
+  readonly stickyCache?: {
+    readonly cachedEventId?: string | null
+    readonly historyLastEventId?: string | null
+  }
 }
 
 export class WorkflowNondeterminismError extends WorkflowError {

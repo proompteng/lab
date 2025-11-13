@@ -36,6 +36,7 @@ interface TemporalEnvironment {
   TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS?: string
   TEMPORAL_WORKER_DEPLOYMENT_NAME?: string
   TEMPORAL_WORKER_BUILD_ID?: string
+  TEMPORAL_STICKY_SCHEDULING_ENABLED?: string
 }
 
 const truthyValues = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
@@ -74,6 +75,7 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS: read('TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS'),
     TEMPORAL_WORKER_DEPLOYMENT_NAME: read('TEMPORAL_WORKER_DEPLOYMENT_NAME'),
     TEMPORAL_WORKER_BUILD_ID: read('TEMPORAL_WORKER_BUILD_ID'),
+    TEMPORAL_STICKY_SCHEDULING_ENABLED: read('TEMPORAL_STICKY_SCHEDULING_ENABLED'),
   }
 }
 
@@ -140,6 +142,7 @@ export interface TemporalConfig {
   workerActivityConcurrency: number
   workerStickyCacheSize: number
   workerStickyTtlMs: number
+  stickySchedulingEnabled: boolean
   activityHeartbeatIntervalMs: number
   activityHeartbeatRpcTimeoutMs: number
   workerDeploymentName?: string
@@ -223,6 +226,10 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     'TEMPORAL_STICKY_CACHE_SIZE',
   )
   const workerStickyTtlMs = parseNonNegativeInt(env.TEMPORAL_STICKY_TTL_MS, fallbackStickyTtl, 'TEMPORAL_STICKY_TTL_MS')
+  const stickySchedulingEnabled =
+    coerceBoolean(env.TEMPORAL_STICKY_SCHEDULING_ENABLED) ??
+    options.defaults?.stickySchedulingEnabled ??
+    workerStickyCacheSize > 0
   const fallbackHeartbeatInterval =
     options.defaults?.activityHeartbeatIntervalMs ?? DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS
   const fallbackHeartbeatRpcTimeout =
@@ -267,6 +274,7 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     workerActivityConcurrency,
     workerStickyCacheSize,
     workerStickyTtlMs,
+    stickySchedulingEnabled,
     activityHeartbeatIntervalMs,
     activityHeartbeatRpcTimeoutMs,
     workerDeploymentName,
@@ -284,6 +292,7 @@ export const temporalDefaults = {
   workerActivityConcurrency: DEFAULT_ACTIVITY_CONCURRENCY,
   workerStickyCacheSize: DEFAULT_STICKY_CACHE_SIZE,
   workerStickyTtlMs: DEFAULT_STICKY_CACHE_TTL_MS,
+  stickySchedulingEnabled: true,
   activityHeartbeatIntervalMs: DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS,
   activityHeartbeatRpcTimeoutMs: DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS,
   workerDeploymentName: undefined,
@@ -299,6 +308,7 @@ export const temporalDefaults = {
   | 'workerActivityConcurrency'
   | 'workerStickyCacheSize'
   | 'workerStickyTtlMs'
+  | 'stickySchedulingEnabled'
   | 'activityHeartbeatIntervalMs'
   | 'activityHeartbeatRpcTimeoutMs'
   | 'workerDeploymentName'

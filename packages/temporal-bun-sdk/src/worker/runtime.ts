@@ -23,6 +23,8 @@ import {
 import { encodeErrorToFailure, encodeFailurePayloads, failureToError } from '../common/payloads/failure'
 import { sleep } from '../common/sleep'
 import { loadTemporalConfig, type TemporalConfig } from '../config'
+import { type LogFields, type Logger, type LogLevel, makeConsoleLogger } from '../observability/logger'
+import { type Counter, type MetricsRegistry, makeInMemoryMetrics } from '../observability/metrics'
 import {
   type Command,
   CommandSchema,
@@ -65,7 +67,12 @@ import { WorkflowService } from '../proto/temporal/api/workflowservice/v1/servic
 import type { WorkflowCommandIntent } from '../workflow/commands'
 import type { ActivityResolution, WorkflowInfo } from '../workflow/context'
 import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
-import type { WorkflowDeterminismState, WorkflowRetryPolicyInput } from '../workflow/determinism'
+import type {
+  WorkflowCommandHistoryEntry,
+  WorkflowDeterminismFailureMetadata,
+  WorkflowDeterminismState,
+  WorkflowRetryPolicyInput,
+} from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import { WorkflowExecutor } from '../workflow/executor'
 import { WorkflowRegistry } from '../workflow/registry'
@@ -87,9 +94,31 @@ import {
   type WorkerSchedulerHooks,
   type WorkflowTaskEnvelope,
 } from './concurrency'
-import { makeStickyCache, type StickyCache, type StickyCacheEntry, type StickyCacheKey } from './sticky-cache'
+import {
+  makeStickyCache,
+  type StickyCache,
+  type StickyCacheEntry,
+  type StickyCacheHooks,
+  type StickyCacheKey,
+} from './sticky-cache'
 
 type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
+
+type WorkerRuntimeMetrics = {
+  readonly stickyCacheHit: Counter
+  readonly stickyCacheMiss: Counter
+  readonly stickyCacheEviction: Counter
+  readonly stickyCacheHeal: Counter
+  readonly nondeterminism: Counter
+}
+
+type NondeterminismContext = {
+  readonly execution: { workflowId: string; runId: string }
+  readonly workflowType: string
+  readonly stickyLastEventId?: string | null
+  readonly historyLastEventId?: string | null
+  readonly workflowTaskAttempt?: number
+}
 
 const POLL_TIMEOUT_MS = 60_000
 const RESPOND_TIMEOUT_MS = 15_000
@@ -141,6 +170,8 @@ export interface WorkerRuntimeOptions {
   identity?: string
   config?: TemporalConfig
   workflowService?: WorkflowServiceClient
+  logger?: Logger
+  metrics?: MetricsRegistry
   concurrency?: WorkerConcurrencyOptions
   pollers?: WorkerPollerOptions
   stickyCache?: WorkerStickyCacheOptions | StickyCache
@@ -180,6 +211,9 @@ export class WorkerRuntime {
     })
 
     const activities = options.activities ?? {}
+    const logger = options.logger ?? makeConsoleLogger()
+    const metricsRegistry = options.metrics ?? (await Effect.runPromise(makeInMemoryMetrics()))
+    const runtimeMetrics = await WorkerRuntime.#initMetrics(metricsRegistry)
     let workflowService: WorkflowServiceClient
     if (options.workflowService) {
       workflowService = options.workflowService
@@ -208,19 +242,38 @@ export class WorkerRuntime {
     const stickyCacheOptions = hasStickyCacheInstance ? undefined : stickyCacheCandidate
     const stickyCacheSize = stickyCacheOptions?.size ?? config.workerStickyCacheSize
     const stickyCacheTtlMs = stickyCacheOptions?.ttlMs ?? config.workerStickyTtlMs
+    const stickyCacheHooks: StickyCacheHooks = {
+      onEvict: (entry, reason) =>
+        logger.log('debug', 'sticky cache eviction', {
+          namespace: entry.key.namespace,
+          taskQueue,
+          workflowId: entry.key.workflowId,
+          runId: entry.key.runId,
+          workflowType: entry.workflowType,
+          reason,
+        }),
+    }
     const stickyCache = hasStickyCacheInstance
       ? (stickyCacheCandidate as StickyCache)
       : await Effect.runPromise(
           makeStickyCache({
             maxEntries: stickyCacheSize,
             ttlMs: stickyCacheTtlMs,
+            metrics: {
+              hits: runtimeMetrics.stickyCacheHit,
+              misses: runtimeMetrics.stickyCacheMiss,
+              evictions: runtimeMetrics.stickyCacheEviction,
+            },
+            hooks: stickyCacheHooks,
           }),
         )
 
     const stickyQueue = WorkerRuntime.#buildStickyQueueName(taskQueue, identity)
     const stickyScheduleToStartTimeoutMs = stickyCacheTtlMs
     const stickySchedulingEnabled =
-      options.stickyScheduling ?? (hasStickyCacheInstance ? config.workerStickyCacheSize > 0 : stickyCacheSize > 0)
+      options.stickyScheduling ??
+      (config.stickySchedulingEnabled &&
+        (hasStickyCacheInstance ? config.workerStickyCacheSize > 0 : stickyCacheSize > 0))
 
     const deploymentName =
       options.deployment?.name ?? config.workerDeploymentName ?? WorkerRuntime.#defaultDeploymentName(taskQueue)
@@ -270,6 +323,9 @@ export class WorkerRuntime {
       registry,
       executor,
       activities,
+      logger,
+      metricsRegistry,
+      metrics: runtimeMetrics,
       namespace,
       taskQueue,
       identity,
@@ -291,6 +347,9 @@ export class WorkerRuntime {
   readonly #registry: WorkflowRegistry
   readonly #executor: WorkflowExecutor
   readonly #activities: Record<string, ActivityHandler>
+  readonly #logger: Logger
+  readonly #metricsRegistry: MetricsRegistry
+  readonly #metrics: WorkerRuntimeMetrics
   readonly #namespace: string
   readonly #taskQueue: string
   readonly #identity: string
@@ -316,6 +375,9 @@ export class WorkerRuntime {
     registry: WorkflowRegistry
     executor: WorkflowExecutor
     activities: Record<string, ActivityHandler>
+    logger: Logger
+    metricsRegistry: MetricsRegistry
+    metrics: WorkerRuntimeMetrics
     namespace: string
     taskQueue: string
     identity: string
@@ -335,6 +397,9 @@ export class WorkerRuntime {
     this.#registry = params.registry
     this.#executor = params.executor
     this.#activities = params.activities
+    this.#logger = params.logger
+    this.#metricsRegistry = params.metricsRegistry
+    this.#metrics = params.metrics
     this.#namespace = params.namespace
     this.#taskQueue = params.taskQueue
     this.#identity = params.identity
@@ -396,6 +461,27 @@ export class WorkerRuntime {
   static #defaultDeploymentName(taskQueue: string): string {
     const component = WorkerRuntime.#sanitizeTaskQueueComponent(taskQueue) || 'default'
     return `${component}-deployment`
+  }
+
+  static async #initMetrics(registry: MetricsRegistry): Promise<WorkerRuntimeMetrics> {
+    const makeCounter = (name: string, description: string) => Effect.runPromise(registry.counter(name, description))
+
+    return {
+      stickyCacheHit: await makeCounter('temporal_worker_sticky_cache_hits_total', 'Sticky cache reuse events'),
+      stickyCacheMiss: await makeCounter('temporal_worker_sticky_cache_misses_total', 'Sticky cache rebuild events'),
+      stickyCacheEviction: await makeCounter(
+        'temporal_worker_sticky_cache_evictions_total',
+        'Sticky cache evictions due to TTL/LRU',
+      ),
+      stickyCacheHeal: await makeCounter(
+        'temporal_worker_sticky_cache_heal_total',
+        'Sticky cache entries removed after determinism divergence',
+      ),
+      nondeterminism: await makeCounter(
+        'temporal_worker_nondeterminism_total',
+        'Workflow tasks failed because of nondeterminism mismatches',
+      ),
+    }
   }
 
   async run(): Promise<void> {
@@ -511,7 +597,7 @@ export class WorkerRuntime {
       taskToken,
       execute: () =>
         Effect.promise(async () => {
-          await this.#handleWorkflowTask(response)
+          await this.#handleWorkflowTask(response, 0)
         }),
     }
     await Effect.runPromise(this.#scheduler.enqueueWorkflow(envelope))
@@ -559,8 +645,9 @@ export class WorkerRuntime {
     await Effect.runPromise(this.#scheduler.enqueueActivity(envelope))
   }
 
-  async #handleWorkflowTask(response: PollWorkflowTaskQueueResponse): Promise<void> {
+  async #handleWorkflowTask(response: PollWorkflowTaskQueueResponse, nondeterminismRetry = 0): Promise<void> {
     const execution = this.#resolveWorkflowExecution(response)
+    const workflowTaskAttempt = Number(response.attempt ?? 1)
     const historyEvents = await this.#collectWorkflowHistory(execution, response)
     const workflowType = this.#resolveWorkflowType(response, historyEvents)
     const args = await this.#decodeWorkflowArgs(historyEvents)
@@ -569,6 +656,11 @@ export class WorkerRuntime {
     const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
     const historyReplay = await this.#ingestDeterminismState(workflowInfo, historyEvents)
     const hasHistorySnapshot = this.#isValidDeterminismSnapshot(historyReplay?.determinismState)
+    const baseLogFields = this.#workflowLogFields(execution, workflowType, {
+      workflowTaskAttempt,
+      stickyScheduling: this.#stickySchedulingEnabled,
+      nondeterminismRetry,
+    })
     let previousState: WorkflowDeterminismState | undefined
 
     if (stickyEntry && this.#isValidDeterminismSnapshot(stickyEntry.determinismState)) {
@@ -577,18 +669,40 @@ export class WorkerRuntime {
 
       if (cacheMatchesHistory) {
         previousState = stickyEntry.determinismState
+        this.#log('debug', 'sticky cache hit', {
+          ...baseLogFields,
+          cacheLastEventId: stickyEntry.lastEventId ?? null,
+          historyBaselineEventId,
+        })
       } else if (hasHistorySnapshot && historyReplay) {
         const diff = await Effect.runPromise(
           diffDeterminismState(stickyEntry.determinismState, historyReplay.determinismState),
         )
-        if (diff.mismatches.length > 0) {
-          console.warn('[temporal-bun-sdk] sticky cache determinism snapshot drift detected', diff.mismatches)
-        }
+        const logLevel: LogLevel = diff.mismatches.length > 0 ? 'warn' : 'info'
+        this.#log(logLevel, 'sticky cache drift detected', {
+          ...baseLogFields,
+          cacheLastEventId: stickyEntry.lastEventId ?? null,
+          historyBaselineEventId,
+          mismatches: diff.mismatches,
+        })
         previousState = historyReplay.determinismState
       }
+    } else if (stickyEntry && this.#stickySchedulingEnabled) {
+      this.#log('info', 'sticky cache entry invalid; rebuilding snapshot', {
+        ...baseLogFields,
+        cacheLastEventId: stickyEntry.lastEventId ?? null,
+      })
+    } else if (!stickyEntry && this.#stickySchedulingEnabled) {
+      this.#log('debug', 'sticky cache miss (no entry)', baseLogFields)
     }
 
     if (!previousState && hasHistorySnapshot && historyReplay) {
+      if (this.#stickySchedulingEnabled) {
+        this.#log('debug', 'sticky cache snapshot rebuilt from history', {
+          ...baseLogFields,
+          historyBaselineEventId: historyReplay.lastEventId ?? null,
+        })
+      }
       previousState = historyReplay.determinismState
     }
 
@@ -608,34 +722,43 @@ export class WorkerRuntime {
         activityResults,
       })
 
-      const lastEventId =
-        historyReplay?.lastEventId ??
-        this.#resolveWorkflowHistoryLastEventId(response) ??
-        stickyEntry?.lastEventId ??
-        null
-      const markerDetails = await Effect.runPromise(
-        encodeDeterminismMarkerDetails(this.#dataConverter, {
-          info: workflowInfo,
-          determinismState: output.determinismState,
-          lastEventId,
-        }),
-      )
-      const markerCommand = this.#buildDeterminismMarkerCommand(markerDetails)
-      const commandsWithMarker = this.#injectDeterminismMarker(output.commands, markerCommand)
-
       const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? historyReplay?.lastEventId ?? null
+      const shouldRecordMarker = output.completion === 'pending'
+      let commandsForResponse = output.commands
 
       if (stickyKey) {
         if (output.completion === 'pending') {
-          await this.#upsertStickyEntry(stickyKey, output.determinismState, cacheBaselineEventId)
+          await this.#upsertStickyEntry(stickyKey, output.determinismState, cacheBaselineEventId, workflowType)
+          this.#log('debug', 'sticky cache snapshot persisted', {
+            ...baseLogFields,
+            cacheBaselineEventId,
+          })
         } else {
           await this.#removeStickyEntry(stickyKey)
+          this.#log('debug', 'sticky cache entry cleared (workflow completed)', baseLogFields)
         }
+      }
+
+      if (shouldRecordMarker) {
+        const lastEventId =
+          historyReplay?.lastEventId ??
+          this.#resolveWorkflowHistoryLastEventId(response) ??
+          stickyEntry?.lastEventId ??
+          null
+        const markerDetails = await Effect.runPromise(
+          encodeDeterminismMarkerDetails(this.#dataConverter, {
+            info: workflowInfo,
+            determinismState: output.determinismState,
+            lastEventId,
+          }),
+        )
+        const markerCommand = this.#buildDeterminismMarkerCommand(markerDetails)
+        commandsForResponse = this.#injectDeterminismMarker(commandsForResponse, markerCommand)
       }
 
       const completion = create(RespondWorkflowTaskCompletedRequestSchema, {
         taskToken: response.taskToken,
-        commands: commandsWithMarker,
+        commands: commandsForResponse,
         identity: this.#identity,
         namespace: this.#namespace,
         deploymentOptions: this.#deploymentOptions,
@@ -652,8 +775,10 @@ export class WorkerRuntime {
         throw rpcError
       }
     } catch (error) {
+      let stickyEntryCleared = false
       if (stickyKey) {
         await this.#removeStickyEntry(stickyKey)
+        stickyEntryCleared = true
       }
       if (this.#isTaskNotFoundError(error)) {
         this.#logWorkflowTaskNotFound('respondWorkflowTaskCompleted', execution)
@@ -661,9 +786,39 @@ export class WorkerRuntime {
       }
       if (error instanceof WorkflowNondeterminismError) {
         const mismatches = await this.#computeNondeterminismMismatches(error, expectedDeterminismState)
-        const enriched = this.#augmentNondeterminismError(error, mismatches)
+        if (stickyKey && stickyEntryCleared) {
+          this.#incrementCounter(this.#metrics.stickyCacheHeal)
+          this.#log('warn', 'sticky cache entry cleared after nondeterminism', {
+            ...baseLogFields,
+            cacheLastEventId: stickyEntry?.lastEventId ?? null,
+          })
+        }
+        if (nondeterminismRetry === 0) {
+          this.#log('info', 'retrying workflow task after nondeterminism', {
+            ...baseLogFields,
+            mismatches,
+            retryReason: 'history-refresh',
+          })
+          await this.#handleWorkflowTask(response, nondeterminismRetry + 1)
+          return
+        }
+        this.#incrementCounter(this.#metrics.nondeterminism)
+        this.#log('error', 'workflow nondeterminism detected', {
+          ...baseLogFields,
+          mismatches,
+        })
+        const enriched = this.#augmentNondeterminismError(error, mismatches, {
+          execution,
+          workflowType,
+          stickyLastEventId: stickyEntry?.lastEventId ?? null,
+          historyLastEventId: historyReplay?.lastEventId ?? null,
+          workflowTaskAttempt,
+        })
         await this.#failWorkflowTask(response, execution, enriched, WorkflowTaskFailedCause.NON_DETERMINISTIC_ERROR)
         return
+      }
+      if (stickyEntryCleared && this.#stickySchedulingEnabled) {
+        this.#log('debug', 'sticky cache entry cleared after workflow failure', baseLogFields)
       }
       await this.#failWorkflowTask(response, execution, error)
     }
@@ -878,12 +1033,14 @@ export class WorkerRuntime {
     key: StickyCacheKey,
     state: WorkflowDeterminismState,
     lastEventId: string | null,
+    workflowType: string,
   ): Promise<void> {
     const entry: StickyCacheEntry = {
       key,
       determinismState: state,
       lastEventId,
       lastAccessed: Date.now(),
+      workflowType,
     }
     await Effect.runPromise(this.#stickyCache.upsert(entry))
   }
@@ -910,11 +1067,10 @@ export class WorkerRuntime {
   }
 
   #injectDeterminismMarker(commands: Command[], marker: Command): Command[] {
-    const next = [...commands]
-    const existingIndex = next.findIndex((command) => this.#isDeterminismMarkerCommand(command))
-    if (existingIndex !== -1) {
-      next.splice(existingIndex, 1)
+    if (commands.some((command) => this.#isDeterminismMarkerCommand(command))) {
+      return commands
     }
+    const next = [...commands]
     const completionIndex = next.findIndex((command) => COMPLETION_COMMAND_TYPES.has(command.commandType))
     if (completionIndex === -1) {
       next.push(marker)
@@ -934,6 +1090,29 @@ export class WorkerRuntime {
     return command.attributes.value.markerName === DETERMINISM_MARKER_NAME
   }
 
+  #log(level: LogLevel, message: string, fields?: LogFields): void {
+    void Effect.runPromise(this.#logger.log(level, message, fields))
+  }
+
+  #incrementCounter(counter: Counter, value = 1): void {
+    void Effect.runPromise(counter.inc(value))
+  }
+
+  #workflowLogFields(
+    execution: { workflowId: string; runId: string },
+    workflowType: string,
+    extra?: LogFields,
+  ): LogFields {
+    return {
+      namespace: this.#namespace,
+      taskQueue: this.#taskQueue,
+      workflowId: execution.workflowId,
+      runId: execution.runId,
+      workflowType,
+      ...(extra ?? {}),
+    }
+  }
+
   async #computeNondeterminismMismatches(
     error: WorkflowNondeterminismError,
     expectedState: WorkflowDeterminismState | undefined,
@@ -942,6 +1121,7 @@ export class WorkerRuntime {
       commandHistory: [],
       randomValues: [],
       timeValues: [],
+      failureMetadata: undefined,
     }
     const hint = error.details?.hint
     if (!hint) {
@@ -953,13 +1133,18 @@ export class WorkerRuntime {
     const timeIndex = this.#parseIndexFromHint(hint, 'timeIndex')
 
     const mutableActual: {
-      commandHistory: { intent: WorkflowCommandIntent }[]
+      commandHistory: WorkflowCommandHistoryEntry[]
       randomValues: number[]
       timeValues: number[]
+      failureMetadata?: WorkflowDeterminismFailureMetadata
     } = {
-      commandHistory: baseline.commandHistory.map((entry) => ({ intent: entry.intent })),
+      commandHistory: baseline.commandHistory.map((entry) => ({
+        intent: entry.intent,
+        metadata: entry.metadata ? { ...entry.metadata } : undefined,
+      })),
       randomValues: [...baseline.randomValues],
       timeValues: [...baseline.timeValues],
+      failureMetadata: baseline.failureMetadata ? { ...baseline.failureMetadata } : undefined,
     }
     let mutated = false
 
@@ -968,7 +1153,7 @@ export class WorkerRuntime {
       if (received) {
         if (commandIndex < mutableActual.commandHistory.length) {
           mutableActual.commandHistory = mutableActual.commandHistory.map((entry, idx) =>
-            idx === commandIndex ? { intent: received } : entry,
+            idx === commandIndex ? { intent: received, metadata: entry.metadata } : entry,
           )
         } else {
           mutableActual.commandHistory = [...mutableActual.commandHistory, { intent: received }]
@@ -1000,6 +1185,7 @@ export class WorkerRuntime {
       commandHistory: mutableActual.commandHistory,
       randomValues: mutableActual.randomValues,
       timeValues: mutableActual.timeValues,
+      failureMetadata: mutableActual.failureMetadata,
     }
 
     const diff = await Effect.runPromise(diffDeterminismState(baseline, actualState))
@@ -1009,6 +1195,7 @@ export class WorkerRuntime {
   #augmentNondeterminismError(
     error: WorkflowNondeterminismError,
     mismatches: DeterminismMismatch[],
+    context: NondeterminismContext,
   ): WorkflowNondeterminismError {
     if (mismatches.length === 0) {
       return error
@@ -1016,6 +1203,18 @@ export class WorkerRuntime {
     const details = {
       ...(error.details ?? {}),
       mismatches,
+      workflow: {
+        namespace: this.#namespace,
+        taskQueue: this.#taskQueue,
+        workflowId: context.execution.workflowId,
+        runId: context.execution.runId,
+        workflowType: context.workflowType,
+      },
+      workflowTaskAttempt: context.workflowTaskAttempt,
+      stickyCache: {
+        cachedEventId: context.stickyLastEventId ?? undefined,
+        historyLastEventId: context.historyLastEventId ?? undefined,
+      },
     }
     const enriched = new WorkflowNondeterminismError(error.message, details)
     enriched.stack = error.stack

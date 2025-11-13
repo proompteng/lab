@@ -1,0 +1,113 @@
+{
+  "name": "child-continue-workflow",
+  "info": {
+    "workflowType": "parentWorkflow",
+    "namespace": "default",
+    "taskQueue": "prix",
+    "workflowId": "fixture-parent",
+    "runId": "fixture-parent-run",
+    "temporalVersion": "dev-fixture"
+  },
+  "history": [
+    {
+      "eventId": "21",
+      "eventType": "EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED",
+      "version": "0",
+      "taskId": "0",
+      "workerMayIgnore": false,
+      "startChildWorkflowExecutionInitiatedEventAttributes": {
+        "namespace": "",
+        "namespaceId": "",
+        "workflowId": "fixture-child",
+        "parentClosePolicy": 1,
+        "control": "",
+        "workflowTaskCompletedEventId": "20",
+        "workflowIdReusePolicy": 0,
+        "cronSchedule": "",
+        "inheritBuildId": false,
+        "workflowType": {
+          "name": "childWorkflow"
+        },
+        "taskQueue": {
+          "name": "prix-child",
+          "kind": 0,
+          "normalName": ""
+        },
+        "workflowExecutionTimeout": "20s",
+        "workflowRunTimeout": "10s",
+        "workflowTaskTimeout": "5s"
+      }
+    },
+    {
+      "eventId": "22",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW",
+      "version": "0",
+      "taskId": "0",
+      "workerMayIgnore": false,
+      "workflowExecutionContinuedAsNewEventAttributes": {
+        "newExecutionRunId": "fixture-parent-run-2",
+        "workflowTaskCompletedEventId": "21",
+        "initiator": 0,
+        "inheritBuildId": false,
+        "workflowType": {
+          "name": "parentWorkflow"
+        },
+        "taskQueue": {
+          "name": "prix",
+          "kind": 0,
+          "normalName": ""
+        },
+        "workflowRunTimeout": "30s",
+        "workflowTaskTimeout": "10s"
+      }
+    }
+  ],
+  "expectedDeterminismState": {
+    "commandHistory": [
+      {
+        "intent": {
+          "id": "start-child-workflow-0",
+          "kind": "start-child-workflow",
+          "sequence": 0,
+          "workflowType": "childWorkflow",
+          "workflowId": "fixture-child",
+          "namespace": "default",
+          "taskQueue": "prix-child",
+          "input": [],
+          "timeouts": {
+            "workflowExecutionTimeoutMs": 20000,
+            "workflowRunTimeoutMs": 10000,
+            "workflowTaskTimeoutMs": 5000
+          },
+          "parentClosePolicy": 1
+        },
+        "metadata": {
+          "eventId": "21",
+          "eventType": 29,
+          "workflowTaskCompletedEventId": "20"
+        }
+      },
+      {
+        "intent": {
+          "id": "continue-as-new-1",
+          "kind": "continue-as-new",
+          "sequence": 1,
+          "workflowType": "parentWorkflow",
+          "taskQueue": "prix",
+          "input": [],
+          "timeouts": {
+            "workflowRunTimeoutMs": 30000,
+            "workflowTaskTimeoutMs": 10000
+          }
+        },
+        "metadata": {
+          "eventId": "22",
+          "eventType": 28,
+          "workflowTaskCompletedEventId": "21"
+        }
+      }
+    ],
+    "randomValues": [],
+    "timeValues": []
+  }
+}

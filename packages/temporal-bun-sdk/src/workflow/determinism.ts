@@ -1,3 +1,5 @@
+import type { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
+
 import type { WorkflowCommandIntent } from './commands'
 import { WorkflowNondeterminismError } from './errors'
 
@@ -9,14 +11,31 @@ export interface WorkflowRetryPolicyInput {
   readonly nonRetryableErrorTypes?: string[]
 }
 
+export interface WorkflowCommandHistoryEntryMetadata {
+  readonly eventId?: string | null
+  readonly eventType?: EventType
+  readonly workflowTaskCompletedEventId?: string | null
+  readonly attempt?: number
+}
+
 export interface WorkflowCommandHistoryEntry {
   readonly intent: WorkflowCommandIntent
+  readonly metadata?: WorkflowCommandHistoryEntryMetadata
+}
+
+export interface WorkflowDeterminismFailureMetadata {
+  readonly eventId?: string | null
+  readonly eventType?: EventType
+  readonly failureType?: string
+  readonly failureMessage?: string
+  readonly retryState?: number
 }
 
 export interface WorkflowDeterminismState {
   readonly commandHistory: readonly WorkflowCommandHistoryEntry[]
   readonly randomValues: readonly number[]
   readonly timeValues: readonly number[]
+  readonly failureMetadata?: WorkflowDeterminismFailureMetadata
 }
 
 export interface DeterminismGuardOptions {
@@ -28,12 +47,17 @@ export type DeterminismGuardSnapshot = {
   commandHistory: WorkflowCommandHistoryEntry[]
   randomValues: number[]
   timeValues: number[]
+  failureMetadata?: WorkflowDeterminismFailureMetadata
 }
 
 export const snapshotToDeterminismState = (snapshot: DeterminismGuardSnapshot): WorkflowDeterminismState => ({
-  commandHistory: snapshot.commandHistory.map((entry) => ({ intent: entry.intent })),
+  commandHistory: snapshot.commandHistory.map((entry) => ({
+    intent: entry.intent,
+    metadata: entry.metadata ? { ...entry.metadata } : undefined,
+  })),
   randomValues: [...snapshot.randomValues],
   timeValues: [...snapshot.timeValues],
+  failureMetadata: snapshot.failureMetadata ? { ...snapshot.failureMetadata } : undefined,
 })
 
 export type RecordedCommandKind = 'new' | 'replay'

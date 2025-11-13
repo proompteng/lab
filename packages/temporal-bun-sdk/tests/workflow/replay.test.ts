@@ -12,6 +12,7 @@ import {
   ingestWorkflowHistory,
   resolveHistoryLastEventId,
 } from '../../src/workflow/replay'
+import type { DeterminismMismatchCommand } from '../../src/workflow/replay'
 import {
   ActivityTaskScheduledEventAttributesSchema,
   HistoryEventSchema,
@@ -20,10 +21,12 @@ import {
   StartChildWorkflowExecutionInitiatedEventAttributesSchema,
   TimerStartedEventAttributesSchema,
   WorkflowExecutionContinuedAsNewEventAttributesSchema,
+  WorkflowExecutionFailedEventAttributesSchema,
 } from '../../src/proto/temporal/api/history/v1/message_pb'
 import { EventType } from '../../src/proto/temporal/api/enums/v1/event_type_pb'
 import { TaskQueueSchema } from '../../src/proto/temporal/api/taskqueue/v1/message_pb'
 import { PayloadsSchema, WorkflowExecutionSchema } from '../../src/proto/temporal/api/common/v1/message_pb'
+import { FailureSchema } from '../../src/proto/temporal/api/failure/v1/message_pb'
 import type { WorkflowCommandIntent } from '../../src/workflow/commands'
 
 test('encodes and decodes determinism marker envelopes', async () => {
@@ -267,12 +270,15 @@ test('ingestWorkflowHistory reconstructs command history from legacy events when
     expect(activity.activityType).toBe('sendEmail')
     expect(activity.taskQueue).toBe('worker-q')
     expect(activity.input).toEqual(['payload'])
+    expect(replay.determinismState.commandHistory[0]?.metadata?.eventId).toBe('1')
+    expect(replay.determinismState.commandHistory[0]?.metadata?.workflowTaskCompletedEventId).toBe('0')
   }
 
   expect(timer.kind).toBe('start-timer')
   if (timer.kind === 'start-timer') {
     expect(timer.timerId).toBe('timeout-timer')
     expect(timer.timeoutMs).toBe(3000)
+    expect(replay.determinismState.commandHistory[1]?.metadata?.eventId).toBe('2')
   }
 
   expect(signal.kind).toBe('signal-external-workflow')
@@ -280,6 +286,7 @@ test('ingestWorkflowHistory reconstructs command history from legacy events when
     expect(signal.namespace).toBe('default')
     expect(signal.workflowId).toBe('target-wf')
     expect(signal.input).toEqual(['ping'])
+    expect(replay.determinismState.commandHistory[2]?.metadata?.eventId).toBe('3')
   }
 
   expect(child.kind).toBe('start-child-workflow')
@@ -296,7 +303,61 @@ test('ingestWorkflowHistory reconstructs command history from legacy events when
     expect(cont.workflowType).toBe('legacyWorkflow')
     expect(cont.input).toEqual([['state']])
     expect(cont.backoffStartIntervalMs).toBe(1000)
+    expect(replay.determinismState.commandHistory[4]?.metadata?.eventId).toBe('5')
   }
+})
+
+test('ingestWorkflowHistory captures failure metadata from workflow events', async () => {
+  const converter = createDefaultDataConverter()
+  const info: WorkflowInfo = {
+    namespace: 'default',
+    taskQueue: 'prix',
+    workflowId: 'wf-failure',
+    runId: 'run-failure',
+    workflowType: 'failingWorkflow',
+  }
+
+  const failure = create(FailureSchema, {
+    message: 'boom',
+    source: 'workflow-test',
+    failureInfo: {
+      case: 'applicationFailureInfo',
+      value: {
+        type: 'ExampleFailure',
+        nonRetryable: false,
+      },
+    },
+  })
+
+  const failureEvent = create(HistoryEventSchema, {
+    eventId: 9n,
+    eventType: EventType.WORKFLOW_EXECUTION_FAILED,
+    attributes: {
+      case: 'workflowExecutionFailedEventAttributes',
+      value: create(WorkflowExecutionFailedEventAttributesSchema, {
+        failure,
+        retryState: 3,
+        workflowTaskCompletedEventId: 8n,
+        newExecutionRunId: 'run-new',
+      }),
+    },
+  })
+
+  const replay = await Effect.runPromise(
+    ingestWorkflowHistory({
+      info,
+      history: [failureEvent],
+      dataConverter: converter,
+    }),
+  )
+
+  expect(replay.determinismState.failureMetadata).toEqual({
+    eventId: '9',
+    eventType: EventType.WORKFLOW_EXECUTION_FAILED,
+    failureType: 'ExampleFailure',
+    failureMessage: 'boom',
+    retryState: 3,
+  })
 })
 
 test('diffDeterminismState surfaces mismatched intents and scalar values', async () => {
@@ -309,6 +370,11 @@ test('diffDeterminismState surfaces mismatched intents and scalar values', async
           sequence: 0,
           timerId: 'timer-0',
           timeoutMs: 1000,
+        },
+        metadata: {
+          eventId: '10',
+          eventType: EventType.TIMER_STARTED,
+          workflowTaskCompletedEventId: '9',
         },
       },
       {
@@ -323,6 +389,11 @@ test('diffDeterminismState surfaces mismatched intents and scalar values', async
           timeouts: {},
           retry: undefined,
           requestEagerExecution: undefined,
+        },
+        metadata: {
+          eventId: '11',
+          eventType: EventType.ACTIVITY_TASK_SCHEDULED,
+          workflowTaskCompletedEventId: '10',
         },
       },
     ],
@@ -346,6 +417,11 @@ test('diffDeterminismState surfaces mismatched intents and scalar values', async
           retry: undefined,
           requestEagerExecution: undefined,
         },
+        metadata: {
+          eventId: '11',
+          eventType: EventType.ACTIVITY_TASK_SCHEDULED,
+          workflowTaskCompletedEventId: '10',
+        },
       },
       {
         intent: {
@@ -357,6 +433,11 @@ test('diffDeterminismState surfaces mismatched intents and scalar values', async
           signalName: 'ping',
           input: [],
           childWorkflowOnly: false,
+        },
+        metadata: {
+          eventId: '12',
+          eventType: EventType.SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED,
+          workflowTaskCompletedEventId: '11',
         },
       },
     ],
@@ -374,6 +455,12 @@ test('diffDeterminismState surfaces mismatched intents and scalar values', async
       expect.objectContaining({ kind: 'time', index: 0 }),
     ]),
   )
+
+  const commandMismatch = diff.mismatches.find(
+    (mismatch) => mismatch.kind === 'command' && mismatch.index === 1,
+  ) as DeterminismMismatchCommand | undefined
+  expect(commandMismatch?.expectedEventId).toBe('11')
+  expect(commandMismatch?.workflowTaskCompletedEventId).toBe('10')
 })
 
 test('resolveHistoryLastEventId normalizes bigint identifiers', () => {
