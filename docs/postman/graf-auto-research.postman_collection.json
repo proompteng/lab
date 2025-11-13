@@ -302,7 +302,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"prompt\": \"Summarize the February release notes for the NVIDIA partner graph\",\n  \"metadata\": {\n    \"source\": \"ops-dashboard\"\n  }\n}",
+          "raw": "{\n  \"prompt\": \"Summarize the February release notes for the renewable energy partner graph\",\n  \"metadata\": {\n    \"source\": \"ops-dashboard\"\n  }\n}",
           "options": {
             "raw": {
               "language": "json"

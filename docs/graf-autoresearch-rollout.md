@@ -1,11 +1,11 @@
 # Graf AutoResearch rollout notes
 
 ## Summary
-- Graf's AutoResearch prompt builder is now driven by `AUTO_RESEARCH_*` environment variables so the same endpoint can target any knowledge base while keeping the default NVIDIA wording until those values change.
+- Graf's AutoResearch prompt builder is now driven by `AUTO_RESEARCH_*` environment variables so the same endpoint can target any knowledge base, and the baked-in defaults are vendor-neutral out of the box.
 - This rollout generalizes the stream/stage metadata, neutralizes the sample payloads, and adds documentation that explains how to retarget Graf without touching Kotlin.
 
 ## Environment variables you can override
-- `AUTO_RESEARCH_KB_NAME` (default `NVIDIA Graf AutoResearch`) — label plucked into the prompt header/role statement.
+- `AUTO_RESEARCH_KB_NAME` (default `Graf AutoResearch Knowledge Base`) — label plucked into the prompt header/role statement.
 - `AUTO_RESEARCH_STAGE` (default `auto-research`) — stage label applied to `codex.stage`, the workflow prefix, and telemetry dashboards; GraphResource now prefixes every `Argo` workflow with this value.
 - `AUTO_RESEARCH_STREAM_ID` (default `auto-research`) — inserted into every prompt instruction and `codex-graf` payload for consistent stream tagging.
 - `AUTO_RESEARCH_OPERATOR_GUIDANCE` — fallback guidance appended when callers omit `user_prompt`.

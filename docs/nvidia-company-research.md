@@ -14,9 +14,9 @@
 
 ## AutoResearch prompt configuration
 
-AutoResearch prompts and metadata are now driven by environment variables so you can retarget the experience without touching Kotlin. These defaults keep the previous NVIDIA narrative until you flip them:
+AutoResearch prompts and metadata are now driven by environment variables so you can retarget the experience without touching Kotlin. The stock defaults are vendor-neutral, but you can still point them at a domain (see the NVIDIA appendix for an example):
 
-- `AUTO_RESEARCH_KB_NAME` – Knowledge-base name shown in the prompt header and ROLE statement.
+- `AUTO_RESEARCH_KB_NAME` – Knowledge-base name shown in the prompt header and ROLE statement (default `Graf AutoResearch Knowledge Base`).
 - `AUTO_RESEARCH_STAGE` – Stage label that becomes `codex.stage`, prefixes AutoResearch workflow names, and feeds downstream telemetry (default `auto-research`).
 - `AUTO_RESEARCH_STREAM_ID` – Stream value embedded in the prompt text, codex-graf payloads, and metadata map (default `auto-research`).
 - `AUTO_RESEARCH_OPERATOR_GUIDANCE` – Fallback guidance appended when the caller omits `user_prompt`.
