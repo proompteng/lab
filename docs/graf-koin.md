@@ -1,6 +1,6 @@
 # Graf Koin wiring
 
-Graf no longer uses Quarkus CDI for dependency injection. Instead, the service bootstraps a dedicated Koin container that owns configuration objects, long-lived infrastructure clients, service classes, and the per-request context scope. The layout keeps modules focused and lets us reason about cold-start performance explicitly.
+Graf bootstraps a dedicated Koin container that owns configuration objects, long-lived infrastructure clients, service classes, and the per-request context scope. The layout keeps modules focused and lets us reason about cold-start performance explicitly.
 
 - `grafConfigModule()` registers all environment-driven configs (`Neo4jConfig`, `TemporalConfig`, `ArgoConfig`, `MinioConfig`) plus the shared Kotlinx `Json` serializer under the `GrafQualifiers.Json` qualifier.
 - `grafClientModule()` constructs the external clients (Neo4j driver/client, MinIO client, Kubernetes `HttpClient`, Temporal service stubs/client, worker factory) and registers shutdown hooks with `GrafLifecycleRegistry` so resources close cleanly when `GrafKoin.stop()` runs.
@@ -23,4 +23,4 @@ If you add a new expensive singleton that should be ready before the first reque
 4. **Request-scoped data**: prefer using `GrafRequestContextHolder.get()` inside request-handling code. If you need extra per-request state, add fields to `GrafRequestContext` and populate them inside the filter, or create another scope alongside `GrafScopes.Request`.
 
 ### Temporal worker lifecycle
-`GrafTemporalBootstrap` replaces the old CDI `GrafConfiguration`. It uses the Koin container to obtain the worker factory, activities, and configs, starts the worker exactly once, and registers shutdown hooks so Temporal resources are closed before `GrafKoin.stop()` tears down the container.
+`GrafTemporalBootstrap` replaces the earlier `GrafConfiguration` class. It uses the Koin container to obtain the worker factory, activities, and configs, starts the worker exactly once, and registers shutdown hooks so Temporal resources are closed before `GrafKoin.stop()` tears down the container.
