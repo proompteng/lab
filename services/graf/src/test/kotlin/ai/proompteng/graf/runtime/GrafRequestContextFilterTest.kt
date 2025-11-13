@@ -33,10 +33,11 @@ class GrafRequestContextFilterTest {
   @Test
   fun `request scope captures headers and detaches`() {
     val filter = GrafRequestContextFilter()
-    val headers = MultivaluedHashMap<String, String>().apply {
-      add("X-Request-Id", "req-123")
-      add("Authorization", "Bearer fast-token")
-    }
+    val headers =
+      MultivaluedHashMap<String, String>().apply {
+        add("X-Request-Id", "req-123")
+        add("Authorization", "Bearer fast-token")
+      }
     val requestContext = mockk<ContainerRequestContext>(relaxed = true)
     val responseContext = mockk<ContainerResponseContext>(relaxed = true)
     val uriInfo = mockk<UriInfo>(relaxed = true)

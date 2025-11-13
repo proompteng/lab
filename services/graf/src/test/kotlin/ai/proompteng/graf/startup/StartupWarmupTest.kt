@@ -3,6 +3,9 @@ package ai.proompteng.graf.startup
 import ai.proompteng.graf.config.MinioConfig
 import io.minio.BucketExistsArgs
 import io.minio.MinioClient
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import io.temporal.api.workflowservice.v1.GetSystemInfoRequest
 import io.temporal.api.workflowservice.v1.WorkflowServiceGrpc
 import io.temporal.serviceclient.WorkflowServiceStubs
@@ -10,9 +13,6 @@ import mu.KLogger
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertDoesNotThrow
 import org.neo4j.driver.Driver
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.verify
 
 class StartupWarmupTest {
   private val blockingStub = mockk<WorkflowServiceGrpc.WorkflowServiceBlockingStub>(relaxed = true)

@@ -10,6 +10,9 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonPrimitive
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.zip.GZIPOutputStream
@@ -66,6 +69,78 @@ class CodexResearchActivitiesImplTest {
     }
 
   @Test
+  fun `downloadArtifact extracts codex artifact from gzipped tar`() =
+    runBlocking {
+      val reference = ArtifactReference("bucket", "key", "https://minio", null)
+      val payload = """{"data":"from-tar"}"""
+      val tarBytes = tarArchive("codex-artifact.json" to payload)
+      val gzipped = gzip(tarBytes)
+      every { artifactFetcher.open(reference) } returns ByteArrayInputStream(gzipped)
+
+      val result = activities.downloadArtifact(reference)
+
+      assertEquals(payload, result)
+      verify {
+        artifactFetcher.open(reference)
+      }
+    }
+
+  @Test
+  fun `downloadArtifact extracts first json file from tar archive`() =
+    runBlocking {
+      val reference = ArtifactReference("bucket", "key", "https://minio", null)
+      val payload = """{"data":"fallback"}"""
+      val tarBytes =
+        tarArchive(
+          "notes.txt" to "skip",
+          "nested/results.json" to payload,
+        )
+      every { artifactFetcher.open(reference) } returns ByteArrayInputStream(tarBytes)
+
+      val result = activities.downloadArtifact(reference)
+
+      assertEquals(payload, result)
+      verify {
+        artifactFetcher.open(reference)
+      }
+    }
+
+  @Test
+  fun `persistCodexArtifact succeeds when artifact comes from tarball`() =
+    runBlocking {
+      val reference = ArtifactReference("bucket", "key", "https://minio", null)
+      val payload = """{"entities":[{"label":"Node","properties":{"id":"node:tar"}}]}"""
+      val tarBytes = tarArchive("codex-artifact.json" to payload)
+      val gzipped = gzip(tarBytes)
+      every { artifactFetcher.open(reference) } returns ByteArrayInputStream(gzipped)
+      coEvery { graphPersistence.upsertEntities(any()) } returns BatchResponse(emptyList())
+
+      val artifactJson = activities.downloadArtifact(reference)
+      activities.persistCodexArtifact(
+        artifactJson,
+        CodexResearchWorkflowInput(
+          prompt = "prompt",
+          metadata = emptyMap(),
+          argoWorkflowName = "name",
+          artifactKey = "key",
+          argoPollTimeoutSeconds = 7200,
+        ),
+      )
+
+      coVerify {
+        graphPersistence.upsertEntities(
+          match { request ->
+            request.entities
+              .single()
+              .properties["id"]
+              ?.jsonPrimitive
+              ?.content == "node:tar"
+          },
+        )
+      }
+    }
+
+  @Test
   fun `persistCodexArtifact writes entities and relationships`() =
     runBlocking {
       val payload = """{
@@ -93,4 +168,28 @@ class CodexResearchActivitiesImplTest {
       coVerify { graphPersistence.upsertEntities(match { it.entities.size == 1 }) }
       coVerify { graphPersistence.upsertRelationships(match { it.relationships.size == 1 }) }
     }
+
+  private fun tarArchive(vararg files: Pair<String, String>): ByteArray {
+    val tarBytes = ByteArrayOutputStream()
+    TarArchiveOutputStream(tarBytes).use { tar ->
+      files.forEach { (name, content) ->
+        val bytes = content.toByteArray()
+        val entry = TarArchiveEntry(name)
+        entry.size = bytes.size.toLong()
+        tar.putArchiveEntry(entry)
+        tar.write(bytes)
+        tar.closeArchiveEntry()
+      }
+      tar.finish()
+    }
+    return tarBytes.toByteArray()
+  }
+
+  private fun gzip(data: ByteArray): ByteArray {
+    val zipped = ByteArrayOutputStream()
+    GZIPOutputStream(zipped).use { gzip ->
+      gzip.write(data)
+    }
+    return zipped.toByteArray()
+  }
 }

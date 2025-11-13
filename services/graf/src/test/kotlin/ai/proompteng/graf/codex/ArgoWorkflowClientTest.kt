@@ -8,11 +8,11 @@ import kotlinx.serialization.json.Json
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import java.net.http.HttpClient
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
-import java.util.concurrent.atomic.AtomicInteger
 
 class ArgoWorkflowClientTest {
   private val json =

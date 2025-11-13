@@ -8,9 +8,15 @@ import io.temporal.activity.Activity
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
-import java.io.BufferedInputStream
+import org.apache.commons.compress.archivers.ArchiveEntry
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.util.zip.GZIPInputStream
+import kotlin.io.copyTo
+import kotlin.io.readBytes
+import kotlin.text.Charsets
 
 class CodexResearchActivitiesImpl(
   private val argoClient: ArgoWorkflowClient,
@@ -55,28 +61,53 @@ class CodexResearchActivitiesImpl(
   }
 
   private fun InputStream.readArtifactPayload(): String {
-    val buffered = BufferedInputStream(this)
-    buffered.mark(GZIP_HEADER_BYTES)
-    val first = buffered.read()
-    val second = buffered.read()
-    buffered.reset()
-    val payloadStream =
-      if (isGzip(first, second)) {
-        GZIPInputStream(buffered)
-      } else {
-        buffered
-      }
-    return payloadStream.bufferedReader().use { it.readText() }
+    val rawBytes = this.readBytes()
+    val uncompressed = rawBytes.decompressIfNeeded()
+    val payload = uncompressed.extractTarPayload() ?: uncompressed
+    return payload.toString(Charsets.UTF_8)
   }
 
-  private fun isGzip(firstByte: Int, secondByte: Int): Boolean {
-    if (firstByte == -1 || secondByte == -1) return false
+  private fun ByteArray.decompressIfNeeded(): ByteArray {
+    if (!isGzip(this)) return this
+    return GZIPInputStream(ByteArrayInputStream(this)).use { it.readBytes() }
+  }
+
+  private fun ByteArray.extractTarPayload(): ByteArray? =
+    try {
+      TarArchiveInputStream(ByteArrayInputStream(this)).use { tar ->
+        var firstJsonEntry: ByteArray? = null
+        var entry: ArchiveEntry? = tar.nextEntry
+        while (entry != null) {
+          if (!entry.isDirectory) {
+            val entryBytes = tar.readCurrentEntryBytes()
+            val entryName = entry.name.substringAfterLast('/')
+            when {
+              entryName == CODEX_ARTIFACT_FILENAME -> return entryBytes
+              entryName.endsWith(".json") && firstJsonEntry == null -> firstJsonEntry = entryBytes
+            }
+          }
+          entry = tar.nextEntry
+        }
+        firstJsonEntry
+      }
+    } catch (ex: Exception) {
+      null
+    }
+
+  private fun isGzip(bytes: ByteArray): Boolean {
+    if (bytes.size < 2) return false
     val firstMarker = GZIPInputStream.GZIP_MAGIC and 0xFF
     val secondMarker = (GZIPInputStream.GZIP_MAGIC shr 8) and 0xFF
-    return firstByte == firstMarker && secondByte == secondMarker
+    return (bytes[0].toInt() and 0xFF) == firstMarker && (bytes[1].toInt() and 0xFF) == secondMarker
+  }
+
+  private fun TarArchiveInputStream.readCurrentEntryBytes(): ByteArray {
+    val buffer = ByteArrayOutputStream()
+    this.copyTo(buffer)
+    return buffer.toByteArray()
   }
 
   private companion object {
-    private const val GZIP_HEADER_BYTES = 2
+    private const val CODEX_ARTIFACT_FILENAME = "codex-artifact.json"
   }
 }
