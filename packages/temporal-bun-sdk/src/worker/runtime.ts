@@ -709,7 +709,7 @@ export class WorkerRuntime {
       })
 
       const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? historyReplay?.lastEventId ?? null
-      const shouldRecordMarker = output.completion === 'pending' && !(historyReplay?.hasDeterminismMarker ?? false)
+      const shouldRecordMarker = output.completion === 'pending'
       let commandsForResponse = output.commands
 
       if (stickyKey) {
