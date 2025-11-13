@@ -74,7 +74,7 @@ class GrafSecurityTest {
   @Test
   fun `illegal argument mapper builds 400 response`() {
     val mapper = IllegalArgumentExceptionMapper()
-    val response = mapper.toResponse(IllegalArgumentException("bad input"))
+    val response = mapper.toResponse(java.lang.IllegalArgumentException("bad input"))
 
     assertEquals(400, response.status)
     val payload = response.entity as Map<*, *>

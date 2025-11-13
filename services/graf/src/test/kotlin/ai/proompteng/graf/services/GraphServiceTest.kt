@@ -78,59 +78,62 @@ class GraphServiceTest {
   }
 
   @Test
-  fun `upsertEntities batches a single query per label`() = runBlocking {
-    configureSession()
-    val querySlot = slot<String>()
-    stubTxRun(querySlot) { resultWithIds(listOf("entity-1", "entity-2")) }
-    val response =
-      service.upsertEntities(
-        EntityBatchRequest(
-          listOf(
-            EntityRequest(label = "Person", properties = mapOf("name" to JsonPrimitive("Alice")), artifactId = "artifact-1"),
-            EntityRequest(label = "Person", properties = mapOf("name" to JsonPrimitive("Bob"))),
+  fun `upsertEntities batches a single query per label`() =
+    runBlocking {
+      configureSession()
+      val querySlot = slot<String>()
+      stubTxRun(querySlot) { resultWithIds(listOf("entity-1", "entity-2")) }
+      val response =
+        service.upsertEntities(
+          EntityBatchRequest(
+            listOf(
+              EntityRequest(label = "Person", properties = mapOf("name" to JsonPrimitive("Alice")), artifactId = "artifact-1"),
+              EntityRequest(label = "Person", properties = mapOf("name" to JsonPrimitive("Bob"))),
+            ),
           ),
-        ),
-      )
-    assertEquals(2, response.results.size)
-    assertEquals(listOf("artifact-1", null), response.results.map { it.artifactId })
-    assertTrue(querySlot.captured.contains("UNWIND ${'$'}rows AS row"))
-    verify(exactly = 1) { txContext.run(any<String>(), any<Map<String, Any?>>()) }
-  }
+        )
+      assertEquals(2, response.results.size)
+      assertEquals(listOf("artifact-1", null), response.results.map { it.artifactId })
+      assertTrue(querySlot.captured.contains("UNWIND ${'$'}rows AS row"))
+      verify(exactly = 1) { txContext.run(any<String>(), any<Map<String, Any?>>()) }
+    }
 
   @Test
-  fun `upsertRelationships batches a single query per type`() = runBlocking {
-    configureSession()
-    val querySlot = slot<String>()
-    stubTxRun(querySlot) { resultWithIds(listOf("rel-1", "rel-2")) }
-    val response =
-      service.upsertRelationships(
+  fun `upsertRelationships batches a single query per type`() =
+    runBlocking {
+      configureSession()
+      val querySlot = slot<String>()
+      stubTxRun(querySlot) { resultWithIds(listOf("rel-1", "rel-2")) }
+      val response =
+        service.upsertRelationships(
+          RelationshipBatchRequest(
+            listOf(
+              RelationshipRequest(type = "KNOWS", fromId = "entity-a", toId = "entity-b", artifactId = "artifact-rel"),
+              RelationshipRequest(type = "KNOWS", fromId = "entity-b", toId = "entity-c"),
+            ),
+          ),
+        )
+      assertEquals(2, response.results.size)
+      assertEquals("relationship upserted", response.results.first().message)
+      assertTrue(querySlot.captured.contains("MATCH (a { id: row.fromId }), (b { id: row.toId })"))
+      verify(exactly = 1) { txContext.run(any<String>(), any<Map<String, Any?>>()) }
+    }
+
+  @Test
+  fun `upsertRelationships reports missing nodes`() =
+    runBlocking {
+      configureSession()
+      stubTxRun(response = { resultWithIds(listOf("rel-2")) })
+      val request =
         RelationshipBatchRequest(
           listOf(
-            RelationshipRequest(type = "KNOWS", fromId = "entity-a", toId = "entity-b", artifactId = "artifact-rel"),
-            RelationshipRequest(type = "KNOWS", fromId = "entity-b", toId = "entity-c"),
+            RelationshipRequest(id = "rel-1", type = "LIKES", fromId = "entity-x", toId = "entity-y"),
+            RelationshipRequest(id = "rel-2", type = "LIKES", fromId = "entity-y", toId = "entity-z"),
           ),
-        ),
-      )
-    assertEquals(2, response.results.size)
-    assertEquals("relationship upserted", response.results.first().message)
-    assertTrue(querySlot.captured.contains("MATCH (a { id: row.fromId }), (b { id: row.toId })"))
-    verify(exactly = 1) { txContext.run(any<String>(), any<Map<String, Any?>>()) }
-  }
-
-  @Test
-  fun `upsertRelationships reports missing nodes`() = runBlocking {
-    configureSession()
-    stubTxRun(response = { resultWithIds(listOf("rel-2")) })
-    val request =
-      RelationshipBatchRequest(
-        listOf(
-          RelationshipRequest(id = "rel-1", type = "LIKES", fromId = "entity-x", toId = "entity-y"),
-          RelationshipRequest(id = "rel-2", type = "LIKES", fromId = "entity-y", toId = "entity-z"),
-        ),
-      )
-    val error = assertFailsWith<IllegalArgumentException> { service.upsertRelationships(request) }
-    assertEquals("source or target node not found for relationship rel-1", error.message)
-  }
+        )
+      val error = assertFailsWith<IllegalArgumentException> { service.upsertRelationships(request) }
+      assertEquals("source or target node not found for relationship rel-1", error.message)
+    }
 
   @Test
   fun `patchEntity updates node and returns GraphResponse`() =

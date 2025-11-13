@@ -36,6 +36,7 @@ dependencies {
 
   implementation("org.neo4j.driver:neo4j-java-driver:$neo4jJavaDriverVersion")
   implementation("io.minio:minio:$minioVersion")
+  implementation("org.apache.commons:commons-compress:1.27.1")
   implementation("io.temporal:temporal-sdk:$temporalVersion")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutinesVersion")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:$coroutinesVersion")
