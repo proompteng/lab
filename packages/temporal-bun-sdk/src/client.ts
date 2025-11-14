@@ -102,26 +102,26 @@ export class TemporalTlsHandshakeError extends Error {
 }
 
 export interface TemporalWorkflowClient {
-  start(options: StartWorkflowOptions, callOptions?: TemporalClientCallOptions): Promise<StartWorkflowResult>
+  start(options: StartWorkflowOptions, callOptions?: BrandedTemporalClientCallOptions): Promise<StartWorkflowResult>
   signal(
     handle: WorkflowHandle,
     signalName: string,
-    ...args: [...unknown[], TemporalClientCallOptions | undefined]
+    ...args: [...unknown[], BrandedTemporalClientCallOptions | undefined]
   ): Promise<void>
   query(
     handle: WorkflowHandle,
     queryName: string,
-    ...args: [...unknown[], TemporalClientCallOptions | undefined]
+    ...args: [...unknown[], BrandedTemporalClientCallOptions | undefined]
   ): Promise<unknown>
   terminate(
     handle: WorkflowHandle,
     options?: TerminateWorkflowOptions,
-    callOptions?: TemporalClientCallOptions,
+    callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<void>
-  cancel(handle: WorkflowHandle, callOptions?: TemporalClientCallOptions): Promise<void>
+  cancel(handle: WorkflowHandle, callOptions?: BrandedTemporalClientCallOptions): Promise<void>
   signalWithStart(
     options: SignalWithStartOptions,
-    callOptions?: TemporalClientCallOptions,
+    callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<StartWorkflowResult>
 }
 
@@ -132,28 +132,31 @@ export interface TemporalClient {
   readonly workflow: TemporalWorkflowClient
   readonly memo: TemporalMemoHelpers
   readonly searchAttributes: TemporalSearchAttributeHelpers
-  startWorkflow(options: StartWorkflowOptions, callOptions?: TemporalClientCallOptions): Promise<StartWorkflowResult>
+  startWorkflow(
+    options: StartWorkflowOptions,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<StartWorkflowResult>
   signalWorkflow(
     handle: WorkflowHandle,
     signalName: string,
-    ...args: [...unknown[], TemporalClientCallOptions | undefined]
+    ...args: [...unknown[], BrandedTemporalClientCallOptions | undefined]
   ): Promise<void>
   queryWorkflow(
     handle: WorkflowHandle,
     queryName: string,
-    ...args: [...unknown[], TemporalClientCallOptions | undefined]
+    ...args: [...unknown[], BrandedTemporalClientCallOptions | undefined]
   ): Promise<unknown>
   terminateWorkflow(
     handle: WorkflowHandle,
     options?: TerminateWorkflowOptions,
-    callOptions?: TemporalClientCallOptions,
+    callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<void>
-  cancelWorkflow(handle: WorkflowHandle, callOptions?: TemporalClientCallOptions): Promise<void>
+  cancelWorkflow(handle: WorkflowHandle, callOptions?: BrandedTemporalClientCallOptions): Promise<void>
   signalWithStart(
     options: SignalWithStartOptions,
-    callOptions?: TemporalClientCallOptions,
+    callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<StartWorkflowResult>
-  describeNamespace(namespace?: string, callOptions?: TemporalClientCallOptions): Promise<Uint8Array>
+  describeNamespace(namespace?: string, callOptions?: BrandedTemporalClientCallOptions): Promise<Uint8Array>
   updateHeaders(headers: Record<string, string | ArrayBuffer | ArrayBufferView>): Promise<void>
   shutdown(): Promise<void>
 }
@@ -180,7 +183,7 @@ const describeError = (error: unknown): string => {
 const TLS_ERROR_CODE_PREFIXES = ['ERR_TLS_', 'ERR_SSL_']
 const TLS_ERROR_MESSAGE_HINTS = [/handshake/i, /certificate/i, /secure tls/i, /ssl/i]
 
-const isCallOptionsCandidate = (value: unknown): value is TemporalClientCallOptions => {
+const isCallOptionsCandidate = (value: unknown): value is BrandedTemporalClientCallOptions => {
   if (!value || typeof value !== 'object') {
     return false
   }
@@ -371,7 +374,7 @@ class TemporalClientImpl implements TemporalClient {
 
   async startWorkflow(
     options: StartWorkflowOptions,
-    callOptions?: TemporalClientCallOptions,
+    callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<StartWorkflowResult> {
     return this.#instrumentOperation('startWorkflow', async () => {
       this.ensureOpen()
@@ -464,7 +467,7 @@ class TemporalClientImpl implements TemporalClient {
   async terminateWorkflow(
     handle: WorkflowHandle,
     options: TerminateWorkflowOptions = {},
-    callOptions?: TemporalClientCallOptions,
+    callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<void> {
     return this.#instrumentOperation('terminateWorkflow', async () => {
       this.ensureOpen()
@@ -485,7 +488,7 @@ class TemporalClientImpl implements TemporalClient {
     })
   }
 
-  async cancelWorkflow(handle: WorkflowHandle, callOptions?: TemporalClientCallOptions): Promise<void> {
+  async cancelWorkflow(handle: WorkflowHandle, callOptions?: BrandedTemporalClientCallOptions): Promise<void> {
     return this.#instrumentOperation('cancelWorkflow', async () => {
       this.ensureOpen()
       const resolvedHandle = resolveHandle(this.namespace, handle)
@@ -501,7 +504,7 @@ class TemporalClientImpl implements TemporalClient {
 
   async signalWithStart(
     options: SignalWithStartOptions,
-    callOptions?: TemporalClientCallOptions,
+    callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<StartWorkflowResult> {
     return this.#instrumentOperation('signalWithStart', async () => {
       this.ensureOpen()
@@ -541,7 +544,10 @@ class TemporalClientImpl implements TemporalClient {
     })
   }
 
-  async describeNamespace(targetNamespace?: string, callOptions?: TemporalClientCallOptions): Promise<Uint8Array> {
+  async describeNamespace(
+    targetNamespace?: string,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<Uint8Array> {
     return this.#instrumentOperation('describeNamespace', async () => {
       this.ensureOpen()
       const request: DescribeNamespaceRequest = create(DescribeNamespaceRequestSchema, {
@@ -632,7 +638,7 @@ class TemporalClientImpl implements TemporalClient {
     }
   }
 
-  #splitArgsAndOptions(args: unknown[]): { values: unknown[]; callOptions?: TemporalClientCallOptions } {
+  #splitArgsAndOptions(args: unknown[]): { values: unknown[]; callOptions?: BrandedTemporalClientCallOptions } {
     if (!args.length) {
       return { values: [] }
     }
