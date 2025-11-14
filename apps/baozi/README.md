@@ -46,28 +46,27 @@ Create a _usage_ script that will print out instructions on how to use the image
 
 Make sure that all of the scripts are executable by running \*chmod +x s2i/bin/\*\*
 
-#### Create the builder image
+#### Create and push the builder image
 
-The following command will create a builder image named baozi based on the Dockerfile that was created previously.
+Use the provided Makefile targets to build and publish the S2I builder:
 
 ```bash
-docker build -t baozi .
+cd apps/baozi
+make push IMAGE_TAG=latest
 ```
 
-The builder image can also be created by using the _make_ command since a _Makefile_ is included.
+This runs `docker build`, tags the result as `registry.ide-newton.ts.net/lab/baozi:<tag>`, and pushes it to the internal registry. After pushing a new tag (or `latest`), update references (for example in `apps/froussard/func.yaml`) if a specific tag is required.
 
-Once the image has finished building, the command _s2i usage baozi_ will print out the help info that was defined in the _usage_ script.
+To verify the build locally:
+
+```bash
+make test        # builds a sample app via s2i using the baozi image
+make verify      # runs the sample app and curls http://localhost:3000
+```
 
 #### Testing the builder image
 
-The builder image can be tested using the following commands:
-
-```bash
-docker build -t baozi-candidate .
-IMAGE_NAME=baozi-candidate test/run
-```
-
-The builder image can also be tested by using the _make test_ command since a _Makefile_ is included.
+Running `make test` executes the `test/run` script (which wraps `s2i build`); `make run` and `make verify` exercise the resulting image. These commands are thin wrappers around the scripts in `apps/baozi/s2i/bin` and provide a quick sanity check before pushing new versions.
 
 #### Creating the application image
 
