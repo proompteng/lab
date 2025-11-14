@@ -130,7 +130,7 @@ describe('codex-runner', () => {
     const promptSink: string[] = []
     const sessionLog = [
       '2025-11-01T19:29:14.313728Z  INFO codex_exec: Codex initialized with event: SessionConfiguredEvent { ',
-      'session_id: ConversationId { uuid: 019a40e5-341a-7501-ad84-5ccdb240e7ff }, model: "gpt-5-codex", ',
+      'session_id: ConversationId { uuid: 019a40e5-341a-7501-ad84-5ccdb240e7ff }, model: "gpt-5.1-codex", ',
       'reasoning_effort: Some(High), history_log_id: 0, history_entry_count: 0, initial_messages: None, ',
       'rollout_path: "/root/.codex/sessions/2025/11/01/rollout-2025-11-01T19-29-14-019a40e5-341a-7501-ad84-5ccdb240e7ff.jsonl" }',
     ].join('')
