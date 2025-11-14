@@ -74,6 +74,13 @@ type TemporalClientMetrics = {
   readonly operationErrors: Counter
 }
 
+const describeError = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
+}
+
 export interface CreateTemporalClientOptions {
   config?: TemporalConfig
   namespace?: string
@@ -373,7 +380,7 @@ class TemporalClientImpl implements TemporalClient {
       await Effect.runPromise(this.#metricsExporter.flush())
     } catch (error) {
       this.#log('warn', 'failed to flush client metrics exporter', {
-        error: error instanceof Error ? error.message : String(error),
+        error: describeError(error),
       })
     }
   }
@@ -399,7 +406,7 @@ class TemporalClientImpl implements TemporalClient {
     } catch (error) {
       this.#log('error', `temporal client ${operation} failed`, {
         operation,
-        error: error instanceof Error ? error.message : String(error),
+        error: describeError(error),
       })
       this.#recordMetrics(Date.now() - start, true)
       throw error
@@ -411,8 +418,7 @@ class TemporalClientImpl implements TemporalClient {
       this.#logger.log(level, message, fields).pipe(
         Effect.catchAll((error) =>
           Effect.sync(() => {
-            const reason = error instanceof Error ? error.message : String(error)
-            console.warn(`[temporal-bun-sdk] client logger failure: ${reason}`)
+            console.warn(`[temporal-bun-sdk] client logger failure: ${describeError(error)}`)
           }),
         ),
       ),
