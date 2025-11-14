@@ -1,5 +1,8 @@
+import { createPrivateKey, createPublicKey, X509Certificate } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
+import { Code } from '@connectrpc/connect'
+import { defaultRetryPolicy, type TemporalRpcRetryPolicy } from './client/retries'
 import type { LogFormat, LogLevel } from './observability/logger'
 import type { MetricsExporterSpec } from './observability/metrics'
 import {
@@ -21,6 +24,32 @@ const DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS = 5_000
 const DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS = 5_000
 const DEFAULT_LOG_LEVEL: LogLevel = 'info'
 const DEFAULT_LOG_FORMAT: LogFormat = 'pretty'
+const DEFAULT_CLIENT_RETRY_MAX_ATTEMPTS = defaultRetryPolicy.maxAttempts
+const DEFAULT_CLIENT_RETRY_INITIAL_MS = defaultRetryPolicy.initialDelayMs
+const DEFAULT_CLIENT_RETRY_MAX_MS = defaultRetryPolicy.maxDelayMs
+const DEFAULT_CLIENT_RETRY_BACKOFF = defaultRetryPolicy.backoffCoefficient
+const DEFAULT_CLIENT_RETRY_JITTER_FACTOR = defaultRetryPolicy.jitterFactor
+
+const CONNECT_CODE_LOOKUP = (() => {
+  const byName = new Map<string, number>()
+  const byValue = new Set<number>()
+  for (const [key, value] of Object.entries(Code)) {
+    if (typeof value === 'number') {
+      byName.set(key.toUpperCase(), value)
+      byValue.add(value)
+    }
+  }
+  return { byName, byValue }
+})()
+
+const cloneRetryPolicy = (policy: TemporalRpcRetryPolicy): TemporalRpcRetryPolicy => ({
+  maxAttempts: policy.maxAttempts,
+  initialDelayMs: policy.initialDelayMs,
+  maxDelayMs: policy.maxDelayMs,
+  backoffCoefficient: policy.backoffCoefficient,
+  jitterFactor: policy.jitterFactor,
+  retryableStatusCodes: [...policy.retryableStatusCodes],
+})
 
 interface TemporalEnvironment {
   TEMPORAL_ADDRESS?: string
@@ -50,6 +79,12 @@ interface TemporalEnvironment {
   TEMPORAL_WORKER_DEPLOYMENT_NAME?: string
   TEMPORAL_WORKER_BUILD_ID?: string
   TEMPORAL_STICKY_SCHEDULING_ENABLED?: string
+  TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS?: string
+  TEMPORAL_CLIENT_RETRY_INITIAL_MS?: string
+  TEMPORAL_CLIENT_RETRY_MAX_MS?: string
+  TEMPORAL_CLIENT_RETRY_BACKOFF?: string
+  TEMPORAL_CLIENT_RETRY_JITTER_FACTOR?: string
+  TEMPORAL_CLIENT_RETRY_STATUS_CODES?: string
 }
 
 const truthyValues = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
@@ -123,6 +158,12 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     TEMPORAL_WORKER_DEPLOYMENT_NAME: read('TEMPORAL_WORKER_DEPLOYMENT_NAME'),
     TEMPORAL_WORKER_BUILD_ID: read('TEMPORAL_WORKER_BUILD_ID'),
     TEMPORAL_STICKY_SCHEDULING_ENABLED: read('TEMPORAL_STICKY_SCHEDULING_ENABLED'),
+    TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS: read('TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS'),
+    TEMPORAL_CLIENT_RETRY_INITIAL_MS: read('TEMPORAL_CLIENT_RETRY_INITIAL_MS'),
+    TEMPORAL_CLIENT_RETRY_MAX_MS: read('TEMPORAL_CLIENT_RETRY_MAX_MS'),
+    TEMPORAL_CLIENT_RETRY_BACKOFF: read('TEMPORAL_CLIENT_RETRY_BACKOFF'),
+    TEMPORAL_CLIENT_RETRY_JITTER_FACTOR: read('TEMPORAL_CLIENT_RETRY_JITTER_FACTOR'),
+    TEMPORAL_CLIENT_RETRY_STATUS_CODES: read('TEMPORAL_CLIENT_RETRY_STATUS_CODES'),
   }
 }
 
@@ -165,6 +206,76 @@ const parseNonNegativeInt = (raw: string | undefined, fallback: number, context:
   return parsed
 }
 
+const parsePositiveNumber = (raw: string | undefined, fallback: number, context: string): number => {
+  if (raw === undefined) {
+    return fallback
+  }
+  const parsed = Number.parseFloat(raw)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${context}: ${raw}`)
+  }
+  return parsed
+}
+
+const parseNonNegativeNumber = (raw: string | undefined, fallback: number, context: string): number => {
+  if (raw === undefined) {
+    return fallback
+  }
+  const parsed = Number.parseFloat(raw)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`Invalid ${context}: ${raw}`)
+  }
+  return parsed
+}
+
+const clampJitterFactor = (value: number): number => {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0
+  }
+  if (value >= 1) {
+    return 1
+  }
+  return value
+}
+
+const parseRetryStatusCodes = (raw: string | undefined, fallback: number[]): number[] => {
+  if (raw === undefined) {
+    return fallback
+  }
+  const tokens = raw
+    .split(/[,\s]+/g)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+
+  if (tokens.length === 0) {
+    throw new Error('TEMPORAL_CLIENT_RETRY_STATUS_CODES must include at least one status code')
+  }
+
+  const resolved = new Set<number>()
+
+  for (const token of tokens) {
+    const numeric = Number.parseInt(token, 10)
+    if (Number.isInteger(numeric)) {
+      if (!CONNECT_CODE_LOOKUP.byValue.has(numeric)) {
+        throw new Error(`Unknown retry status code: ${token}`)
+      }
+      resolved.add(numeric)
+      continue
+    }
+    const value = CONNECT_CODE_LOOKUP.byName.get(token.toUpperCase())
+    if (value === undefined) {
+      throw new Error(`Unknown retry status code: ${token}`)
+    }
+    resolved.add(value)
+  }
+
+  if (resolved.size === 0) {
+    throw new Error('TEMPORAL_CLIENT_RETRY_STATUS_CODES must include at least one status code')
+  }
+
+  return [...resolved]
+}
+
 export interface LoadTemporalConfigOptions {
   env?: NodeJS.ProcessEnv
   fs?: {
@@ -197,6 +308,7 @@ export interface TemporalConfig {
   logLevel: LogLevel
   logFormat: LogFormat
   metricsExporter: MetricsExporterSpec
+  rpcRetryPolicy: TemporalRpcRetryPolicy
 }
 
 export interface TLSCertPair {
@@ -208,6 +320,76 @@ export interface TLSConfig {
   serverRootCACertificate?: Buffer
   serverNameOverride?: string
   clientCertPair?: TLSCertPair
+}
+
+const describeFsError = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
+}
+
+export class TemporalTlsConfigurationError extends Error {
+  constructor(
+    message: string,
+    readonly details?: Record<string, unknown>,
+  ) {
+    super(message)
+    this.name = 'TemporalTlsConfigurationError'
+  }
+}
+
+const readTlsFile = async (path: string, context: string, reader: typeof readFile): Promise<Buffer> => {
+  try {
+    const contents = await reader(path)
+    const buffer = Buffer.isBuffer(contents) ? contents : Buffer.from(contents)
+    if (buffer.byteLength === 0) {
+      throw new TemporalTlsConfigurationError(`${context} at ${path} is empty`)
+    }
+    return buffer
+  } catch (error) {
+    if (error instanceof TemporalTlsConfigurationError) {
+      throw error
+    }
+    throw new TemporalTlsConfigurationError(`Failed to read ${context} at ${path}`, {
+      reason: describeFsError(error),
+    })
+  }
+}
+
+const ensureCertificateBuffer = (buffer: Buffer, context: string): void => {
+  if (!buffer.toString('utf8').includes('BEGIN CERTIFICATE')) {
+    throw new TemporalTlsConfigurationError(`${context} must be a PEM-encoded certificate`)
+  }
+}
+
+const ensurePrivateKeyBuffer = (buffer: Buffer, context: string): void => {
+  try {
+    createPrivateKey({ key: buffer })
+  } catch (error) {
+    throw new TemporalTlsConfigurationError(`${context} must be a PEM-encoded private key`, {
+      reason: describeFsError(error),
+    })
+  }
+}
+
+const ensureMatchingCertificateAndKey = (certificate: Buffer, key: Buffer): void => {
+  try {
+    const parsed = new X509Certificate(certificate)
+    const keyObject = createPrivateKey({ key })
+    const certPublicKey = parsed.publicKey.export({ type: 'spki', format: 'pem' })
+    const keyPublic = createPublicKey(keyObject).export({ type: 'spki', format: 'pem' })
+    if (!Buffer.from(certPublicKey).equals(Buffer.from(keyPublic))) {
+      throw new TemporalTlsConfigurationError('TLS certificate and key do not match')
+    }
+  } catch (error) {
+    if (error instanceof TemporalTlsConfigurationError) {
+      throw error
+    }
+    throw new TemporalTlsConfigurationError('TLS certificate and key do not match', {
+      reason: describeFsError(error),
+    })
+  }
 }
 
 const buildTlsConfig = async (
@@ -224,28 +406,88 @@ const buildTlsConfig = async (
   }
 
   if ((certPath && !keyPath) || (!certPath && keyPath)) {
-    throw new Error('Both TEMPORAL_TLS_CERT_PATH and TEMPORAL_TLS_KEY_PATH must be provided for mTLS')
+    throw new TemporalTlsConfigurationError(
+      'Both TEMPORAL_TLS_CERT_PATH and TEMPORAL_TLS_KEY_PATH must be provided for mTLS',
+    )
   }
 
   const reader = options.fs?.readFile ?? readFile
   const tls: TLSConfig = { ...(options.defaults?.tls ?? {}) }
 
   if (caPath) {
-    tls.serverRootCACertificate = await reader(caPath)
+    const caBuffer = await readTlsFile(caPath, 'TEMPORAL_TLS_CA_PATH', reader)
+    ensureCertificateBuffer(caBuffer, 'TEMPORAL_TLS_CA_PATH')
+    tls.serverRootCACertificate = caBuffer
   }
 
   if (certPath && keyPath) {
-    tls.clientCertPair = {
-      crt: await reader(certPath),
-      key: await reader(keyPath),
-    }
+    const crt = await readTlsFile(certPath, 'TEMPORAL_TLS_CERT_PATH', reader)
+    const key = await readTlsFile(keyPath, 'TEMPORAL_TLS_KEY_PATH', reader)
+    ensureCertificateBuffer(crt, 'TEMPORAL_TLS_CERT_PATH')
+    ensurePrivateKeyBuffer(key, 'TEMPORAL_TLS_KEY_PATH')
+    ensureMatchingCertificateAndKey(crt, key)
+    tls.clientCertPair = { crt, key }
   }
 
   if (serverName) {
-    tls.serverNameOverride = serverName
+    const trimmed = serverName.trim()
+    if (!trimmed) {
+      throw new TemporalTlsConfigurationError('TEMPORAL_TLS_SERVER_NAME must be a non-empty string')
+    }
+    tls.serverNameOverride = trimmed
   }
 
   return tls
+}
+
+const resolveClientRetryPolicy = (
+  env: TemporalEnvironment,
+  defaults?: TemporalRpcRetryPolicy,
+): TemporalRpcRetryPolicy => {
+  const fallback = cloneRetryPolicy(defaults ?? defaultRetryPolicy)
+  const maxAttempts = parsePositiveInt(
+    env.TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS,
+    fallback.maxAttempts ?? DEFAULT_CLIENT_RETRY_MAX_ATTEMPTS,
+    'TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS',
+  )
+  const initialDelayMs = parsePositiveInt(
+    env.TEMPORAL_CLIENT_RETRY_INITIAL_MS,
+    fallback.initialDelayMs ?? DEFAULT_CLIENT_RETRY_INITIAL_MS,
+    'TEMPORAL_CLIENT_RETRY_INITIAL_MS',
+  )
+  const maxDelayMs = parsePositiveInt(
+    env.TEMPORAL_CLIENT_RETRY_MAX_MS,
+    fallback.maxDelayMs ?? DEFAULT_CLIENT_RETRY_MAX_MS,
+    'TEMPORAL_CLIENT_RETRY_MAX_MS',
+  )
+  if (maxDelayMs < initialDelayMs) {
+    throw new Error('TEMPORAL_CLIENT_RETRY_MAX_MS must be greater than or equal to TEMPORAL_CLIENT_RETRY_INITIAL_MS')
+  }
+  const backoffCoefficient = parsePositiveNumber(
+    env.TEMPORAL_CLIENT_RETRY_BACKOFF,
+    fallback.backoffCoefficient ?? DEFAULT_CLIENT_RETRY_BACKOFF,
+    'TEMPORAL_CLIENT_RETRY_BACKOFF',
+  )
+  const jitterFactor = clampJitterFactor(
+    parseNonNegativeNumber(
+      env.TEMPORAL_CLIENT_RETRY_JITTER_FACTOR,
+      fallback.jitterFactor ?? DEFAULT_CLIENT_RETRY_JITTER_FACTOR,
+      'TEMPORAL_CLIENT_RETRY_JITTER_FACTOR',
+    ),
+  )
+  const retryableStatusCodes = parseRetryStatusCodes(
+    env.TEMPORAL_CLIENT_RETRY_STATUS_CODES,
+    fallback.retryableStatusCodes.length > 0 ? fallback.retryableStatusCodes : defaultRetryPolicy.retryableStatusCodes,
+  )
+
+  return {
+    maxAttempts,
+    initialDelayMs,
+    maxDelayMs,
+    backoffCoefficient,
+    jitterFactor,
+    retryableStatusCodes,
+  }
 }
 
 export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}): Promise<TemporalConfig> => {
@@ -313,6 +555,7 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     env.TEMPORAL_METRICS_EXPORTER ?? options.defaults?.metricsExporter?.type,
     env.TEMPORAL_METRICS_ENDPOINT ?? options.defaults?.metricsExporter?.endpoint,
   )
+  const rpcRetryPolicy = resolveClientRetryPolicy(env, options.defaults?.rpcRetryPolicy)
 
   return {
     host,
@@ -338,6 +581,7 @@ export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}
     logLevel,
     logFormat,
     metricsExporter,
+    rpcRetryPolicy,
   }
 }
 
@@ -359,6 +603,7 @@ export const temporalDefaults = {
   logLevel: DEFAULT_LOG_LEVEL,
   logFormat: DEFAULT_LOG_FORMAT,
   metricsExporter: cloneMetricsExporterSpec(defaultMetricsExporterSpec),
+  rpcRetryPolicy: cloneRetryPolicy(defaultRetryPolicy),
 } satisfies Pick<
   TemporalConfig,
   | 'host'
@@ -378,4 +623,5 @@ export const temporalDefaults = {
   | 'logLevel'
   | 'logFormat'
   | 'metricsExporter'
+  | 'rpcRetryPolicy'
 >

@@ -74,6 +74,12 @@ Environment variables supported by the config loader:
 | `TEMPORAL_TLS_CA_PATH` | _unset_ | Path to trusted CA bundle. |
 | `TEMPORAL_TLS_CERT_PATH` / `TEMPORAL_TLS_KEY_PATH` | _unset_ | mTLS client certificate & key (require both). |
 | `TEMPORAL_TLS_SERVER_NAME` | _unset_ | Overrides TLS server name verification. |
+| `TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS` | `5` | Default WorkflowService RPC attempt budget. |
+| `TEMPORAL_CLIENT_RETRY_INITIAL_MS` | `200` | Initial retry delay (milliseconds). |
+| `TEMPORAL_CLIENT_RETRY_MAX_MS` | `5000` | Maximum retry delay (milliseconds). |
+| `TEMPORAL_CLIENT_RETRY_BACKOFF` | `2` | Exponential backoff multiplier applied per attempt. |
+| `TEMPORAL_CLIENT_RETRY_JITTER_FACTOR` | `0.2` | Decorrelated jitter factor between 0 and 1. |
+| `TEMPORAL_CLIENT_RETRY_STATUS_CODES` | `UNAVAILABLE,DEADLINE_EXCEEDED` | Comma-separated Connect codes that should be retried. |
 | `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS` | `false` | Accepts `1/true/on` to skip certificate verification. |
 | `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (host and PID are appended automatically). |
 | `TEMPORAL_LOG_FORMAT` | `pretty` | Select `json` or `pretty` logging output for worker/client runs. |
@@ -84,6 +90,16 @@ Environment variables supported by the config loader:
 `loadTemporalConfig()` returns typed values that the client and worker factories
 consume directly, so you never have to stitch addresses or TLS buffers together
 by hand.
+
+## WorkflowService client resilience
+
+`createTemporalClient()` automatically wraps WorkflowService RPCs with our retry helper and telemetry interceptors:
+
+- **Configurable retries** – `config.rpcRetryPolicy` is populated from the `TEMPORAL_CLIENT_RETRY_*` env vars (or overrides passed to `loadTemporalConfig`). All client methods use the resulting jittered exponential backoff policy, and you can override per-call values via `TemporalClientCallOptions.retryPolicy`.
+- **Optional call options** – `startWorkflow`, `signalWorkflow`, `queryWorkflow`, `signalWithStart`, `terminateWorkflow`, and `describeNamespace` accept an optional trailing `callOptions` argument (headers, timeout, abort signal, retry policy).
+- **Default interceptors** – namespace/identity headers are added automatically, structured logs are emitted for every RPC, and latency/error metrics flow through the configured registry/exporter. Pass `interceptors` to `createTemporalClient` to append tracing or auth middleware.
+- **Memo/search helpers** – `client.memo` and `client.searchAttributes` expose `encode`/`decode` helpers that reuse the client’s `DataConverter`, making it easy to prepare payloads for raw WorkflowService requests.
+- **TLS validation** – TLS buffers are checked up front (missing files, invalid PEMs, and mismatched cert/key pairs throw `TemporalTlsConfigurationError`) and transport failures surface as `TemporalTlsHandshakeError` with remediation hints.
 
 ## Observability
 

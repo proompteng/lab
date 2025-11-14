@@ -1,8 +1,12 @@
 export type {
   TemporalClient,
+  TemporalClientCallOptions,
+  TemporalMemoHelpers,
+  TemporalSearchAttributeHelpers,
   TemporalWorkflowClient,
 } from './client'
-export { createTemporalClient } from './client'
+export { createTemporalClient, TemporalTlsHandshakeError } from './client'
+export type { TemporalRpcRetryPolicy } from './client/retries'
 export type {
   SignalWithStartOptions,
   StartWorkflowOptions,
@@ -11,4 +15,4 @@ export type {
   WorkflowHandle,
 } from './client/types'
 export type { TemporalConfig, TLSConfig } from './config'
-export { loadTemporalConfig } from './config'
+export { loadTemporalConfig, TemporalTlsConfigurationError } from './config'

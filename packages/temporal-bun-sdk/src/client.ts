@@ -4,6 +4,8 @@ import { type CallOptions, Code, ConnectError, createClient, type Transport } fr
 import { createGrpcTransport, type GrpcTransportOptions } from '@connectrpc/connect-node'
 import { Effect } from 'effect'
 import { createDefaultHeaders, mergeHeaders, normalizeMetadataHeaders } from './client/headers'
+import { type InterceptorBuilder, makeDefaultInterceptorBuilder, type TemporalInterceptor } from './client/interceptors'
+import { type TemporalRpcRetryPolicy, withTemporalRetry } from './client/retries'
 import {
   buildCancelRequest,
   buildQueryRequest,
@@ -13,6 +15,10 @@ import {
   buildTerminateRequest,
   computeSignalRequestId,
   createSignalRequestEntropy,
+  decodeMemoAttributes,
+  decodeSearchAttributes,
+  encodeMemoAttributes,
+  encodeSearchAttributes,
 } from './client/serialization'
 import {
   createWorkflowHandle,
@@ -29,7 +35,7 @@ import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './confi
 import { createObservabilityServices } from './observability'
 import type { LogFields, Logger, LogLevel } from './observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from './observability/metrics'
-import type { Payload } from './proto/temporal/api/common/v1/message_pb'
+import type { Memo, Payload, SearchAttributes } from './proto/temporal/api/common/v1/message_pb'
 import {
   type DescribeNamespaceRequest,
   DescribeNamespaceRequestSchema,
@@ -43,13 +49,59 @@ import { WorkflowService } from './proto/temporal/api/workflowservice/v1/service
 type ClosableTransport = Transport & { close?: () => void | Promise<void> }
 type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
 
+export interface TemporalClientCallOptions {
+  readonly headers?: Record<string, string | ArrayBuffer | ArrayBufferView>
+  readonly signal?: AbortSignal
+  readonly timeoutMs?: number
+  readonly retryPolicy?: Partial<TemporalRpcRetryPolicy>
+}
+
+export interface TemporalMemoHelpers {
+  encode(input?: Record<string, unknown>): Promise<Memo | undefined>
+  decode(memo?: Memo | null): Promise<Record<string, unknown> | undefined>
+}
+
+export interface TemporalSearchAttributeHelpers {
+  encode(input?: Record<string, unknown>): Promise<SearchAttributes | undefined>
+  decode(attributes?: SearchAttributes | null): Promise<Record<string, unknown> | undefined>
+}
+
+const DEFAULT_TLS_SUGGESTIONS = [
+  'Verify TEMPORAL_TLS_CA_PATH, CERT_PATH, and KEY_PATH point to valid PEM files',
+  'Ensure TEMPORAL_TLS_SERVER_NAME matches the certificate Subject Alternative Name',
+  'Set TEMPORAL_ALLOW_INSECURE=1 only for trusted development clusters',
+] as const
+
+export class TemporalTlsHandshakeError extends Error {
+  override readonly cause?: unknown
+  readonly suggestions: readonly string[]
+
+  constructor(message: string, options: { cause?: unknown; suggestions?: readonly string[] } = {}) {
+    super(message)
+    this.name = 'TemporalTlsHandshakeError'
+    this.cause = options.cause
+    this.suggestions = options.suggestions ?? DEFAULT_TLS_SUGGESTIONS
+  }
+}
+
 export interface TemporalWorkflowClient {
-  start(options: StartWorkflowOptions): Promise<StartWorkflowResult>
-  signal(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void>
-  query(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown>
-  terminate(handle: WorkflowHandle, options?: TerminateWorkflowOptions): Promise<void>
-  cancel(handle: WorkflowHandle): Promise<void>
-  signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult>
+  start(options: StartWorkflowOptions, callOptions?: TemporalClientCallOptions): Promise<StartWorkflowResult>
+  signal(handle: WorkflowHandle, signalName: string, ...args: [...unknown[], TemporalClientCallOptions?]): Promise<void>
+  query(
+    handle: WorkflowHandle,
+    queryName: string,
+    ...args: [...unknown[], TemporalClientCallOptions?]
+  ): Promise<unknown>
+  terminate(
+    handle: WorkflowHandle,
+    options?: TerminateWorkflowOptions,
+    callOptions?: TemporalClientCallOptions,
+  ): Promise<void>
+  cancel(handle: WorkflowHandle, callOptions?: TemporalClientCallOptions): Promise<void>
+  signalWithStart(
+    options: SignalWithStartOptions,
+    callOptions?: TemporalClientCallOptions,
+  ): Promise<StartWorkflowResult>
 }
 
 export interface TemporalClient {
@@ -57,13 +109,30 @@ export interface TemporalClient {
   readonly config: TemporalConfig
   readonly dataConverter: DataConverter
   readonly workflow: TemporalWorkflowClient
-  startWorkflow(options: StartWorkflowOptions): Promise<StartWorkflowResult>
-  signalWorkflow(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void>
-  queryWorkflow(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown>
-  terminateWorkflow(handle: WorkflowHandle, options?: TerminateWorkflowOptions): Promise<void>
-  cancelWorkflow(handle: WorkflowHandle): Promise<void>
-  signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult>
-  describeNamespace(namespace?: string): Promise<Uint8Array>
+  readonly memo: TemporalMemoHelpers
+  readonly searchAttributes: TemporalSearchAttributeHelpers
+  startWorkflow(options: StartWorkflowOptions, callOptions?: TemporalClientCallOptions): Promise<StartWorkflowResult>
+  signalWorkflow(
+    handle: WorkflowHandle,
+    signalName: string,
+    ...args: [...unknown[], TemporalClientCallOptions?]
+  ): Promise<void>
+  queryWorkflow(
+    handle: WorkflowHandle,
+    queryName: string,
+    ...args: [...unknown[], TemporalClientCallOptions?]
+  ): Promise<unknown>
+  terminateWorkflow(
+    handle: WorkflowHandle,
+    options?: TerminateWorkflowOptions,
+    callOptions?: TemporalClientCallOptions,
+  ): Promise<void>
+  cancelWorkflow(handle: WorkflowHandle, callOptions?: TemporalClientCallOptions): Promise<void>
+  signalWithStart(
+    options: SignalWithStartOptions,
+    callOptions?: TemporalClientCallOptions,
+  ): Promise<StartWorkflowResult>
+  describeNamespace(namespace?: string, callOptions?: TemporalClientCallOptions): Promise<Uint8Array>
   updateHeaders(headers: Record<string, string | ArrayBuffer | ArrayBufferView>): Promise<void>
   shutdown(): Promise<void>
 }
@@ -81,6 +150,52 @@ const describeError = (error: unknown): string => {
   return String(error)
 }
 
+const CALL_OPTION_KEYS = new Set(['headers', 'signal', 'timeoutMs', 'retryPolicy'])
+const TLS_ERROR_CODE_PREFIXES = ['ERR_TLS_', 'ERR_SSL_']
+const TLS_ERROR_MESSAGE_HINTS = [/handshake/i, /certificate/i, /secure tls/i, /ssl/i]
+
+const isCallOptionsCandidate = (value: unknown): value is TemporalClientCallOptions => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const keys = Object.keys(value as Record<string, unknown>)
+  if (keys.length === 0) {
+    return false
+  }
+  return keys.every((key) => CALL_OPTION_KEYS.has(key))
+}
+
+const unwrapTlsCause = (error: unknown): Error | undefined => {
+  if (error instanceof TemporalTlsHandshakeError && error.cause instanceof Error) {
+    return error.cause
+  }
+  if (error instanceof ConnectError && error.cause instanceof Error) {
+    return error.cause
+  }
+  if (error instanceof Error) {
+    return error
+  }
+  return undefined
+}
+
+const wrapRpcError = (error: unknown): unknown => {
+  const cause = unwrapTlsCause(error)
+  if (!cause) {
+    return error
+  }
+  const code = (cause as NodeJS.ErrnoException).code
+  if (typeof code === 'string' && TLS_ERROR_CODE_PREFIXES.some((prefix) => code.startsWith(prefix))) {
+    return new TemporalTlsHandshakeError(`Temporal TLS handshake failed (${code})`, { cause })
+  }
+  if (cause.message?.toLowerCase().includes('h2 is not supported')) {
+    return new TemporalTlsHandshakeError('Temporal endpoint rejected TLS/HTTP2 handshakes', { cause })
+  }
+  if (TLS_ERROR_MESSAGE_HINTS.some((pattern) => pattern.test(cause.message))) {
+    return new TemporalTlsHandshakeError('Temporal TLS handshake failed', { cause })
+  }
+  return error
+}
+
 export interface CreateTemporalClientOptions {
   config?: TemporalConfig
   namespace?: string
@@ -90,6 +205,8 @@ export interface CreateTemporalClientOptions {
   logger?: Logger
   metrics?: MetricsRegistry
   metricsExporter?: MetricsExporter
+  interceptors?: TemporalInterceptor[]
+  interceptorBuilder?: InterceptorBuilder
 }
 
 export const createTemporalClient = async (
@@ -101,13 +218,6 @@ export const createTemporalClient = async (
   const identity = options.identity ?? config.workerIdentity
   const taskQueue = options.taskQueue ?? config.taskQueue
   const dataConverter = options.dataConverter ?? createDefaultDataConverter()
-  const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
-
-  const baseUrl = normalizeTemporalAddress(config.address, shouldUseTls)
-  const transportOptions = buildTransportOptions(baseUrl, config)
-  const transport = createGrpcTransport(transportOptions)
-  const workflowService = createClient(WorkflowService, transport)
-
   const initialHeaders = createDefaultHeaders(config.apiKey)
   const observability = await Effect.runPromise(
     createObservabilityServices(
@@ -124,6 +234,22 @@ export const createTemporalClient = async (
     ),
   )
   const { logger, metricsRegistry, metricsExporter } = observability
+  const interceptorBuilder = options.interceptorBuilder ?? makeDefaultInterceptorBuilder()
+  const defaultInterceptors = await Effect.runPromise(
+    interceptorBuilder.build({
+      namespace,
+      identity,
+      logger,
+      metricsRegistry,
+      metricsExporter,
+    }),
+  )
+  const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
+  const baseUrl = normalizeTemporalAddress(config.address, shouldUseTls)
+  const allInterceptors = [...defaultInterceptors, ...(options.interceptors ?? [])]
+  const transportOptions = buildTransportOptions(baseUrl, config, allInterceptors)
+  const transport = createGrpcTransport(transportOptions)
+  const workflowService = createClient(WorkflowService, transport)
   const clientMetrics = await TemporalClientImpl.initMetrics(metricsRegistry)
 
   const client = new TemporalClientImpl({
@@ -148,6 +274,8 @@ class TemporalClientImpl implements TemporalClient {
   readonly config: TemporalConfig
   readonly dataConverter: DataConverter
   readonly workflow: TemporalWorkflowClient
+  readonly memo: TemporalMemoHelpers
+  readonly searchAttributes: TemporalSearchAttributeHelpers
 
   private readonly transport: ClosableTransport
   private readonly workflowService: WorkflowServiceClient
@@ -197,18 +325,29 @@ class TemporalClientImpl implements TemporalClient {
     this.#logger = handles.logger
     this.#clientMetrics = handles.metrics
     this.#metricsExporter = handles.metricsExporter
+    this.memo = {
+      encode: (input) => encodeMemoAttributes(this.dataConverter, input),
+      decode: (memo) => decodeMemoAttributes(this.dataConverter, memo),
+    }
+    this.searchAttributes = {
+      encode: (input) => encodeSearchAttributes(this.dataConverter, input),
+      decode: (attributes) => decodeSearchAttributes(this.dataConverter, attributes),
+    }
 
     this.workflow = {
-      start: (options) => this.startWorkflow(options),
+      start: (options, callOptions) => this.startWorkflow(options, callOptions),
       signal: (handle, signalName, ...args) => this.signalWorkflow(handle, signalName, ...args),
       query: (handle, queryName, ...args) => this.queryWorkflow(handle, queryName, ...args),
-      terminate: (handle, options) => this.terminateWorkflow(handle, options),
-      cancel: (handle) => this.cancelWorkflow(handle),
-      signalWithStart: (options) => this.signalWithStart(options),
+      terminate: (handle, options, callOptions) => this.terminateWorkflow(handle, options, callOptions),
+      cancel: (handle, callOptions) => this.cancelWorkflow(handle, callOptions),
+      signalWithStart: (options, callOptions) => this.signalWithStart(options, callOptions),
     }
   }
 
-  async startWorkflow(options: StartWorkflowOptions): Promise<StartWorkflowResult> {
+  async startWorkflow(
+    options: StartWorkflowOptions,
+    callOptions?: TemporalClientCallOptions,
+  ): Promise<StartWorkflowResult> {
     return this.#instrumentOperation('startWorkflow', async () => {
       this.ensureOpen()
       const parsedOptions = sanitizeStartWorkflowOptions(options)
@@ -225,7 +364,11 @@ class TemporalClientImpl implements TemporalClient {
         this.dataConverter,
       )
 
-      const response = await this.workflowService.startWorkflowExecution(request, this.callOptions())
+      const response = await this.executeRpc(
+        'startWorkflow',
+        (rpcOptions) => this.workflowService.startWorkflowExecution(request, rpcOptions),
+        callOptions,
+      )
       return this.toStartWorkflowResult(response, {
         workflowId: request.workflowId,
         namespace: request.namespace,
@@ -234,11 +377,12 @@ class TemporalClientImpl implements TemporalClient {
     })
   }
 
-  async signalWorkflow(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void> {
+  async signalWorkflow(handle: WorkflowHandle, signalName: string, ...rawArgs: unknown[]): Promise<void> {
     return this.#instrumentOperation('signalWorkflow', async () => {
       this.ensureOpen()
       const resolvedHandle = resolveHandle(this.namespace, handle)
       const normalizedSignalName = ensureNonEmptyString(signalName, 'signalName')
+      const { values, callOptions } = this.#splitArgsAndOptions(rawArgs)
 
       const identity = this.defaultIdentity
       const entropy = createSignalRequestEntropy()
@@ -250,7 +394,7 @@ class TemporalClientImpl implements TemporalClient {
           firstExecutionRunId: resolvedHandle.firstExecutionRunId,
           signalName: normalizedSignalName,
           identity,
-          args,
+          args: values,
         },
         this.dataConverter,
         { entropy },
@@ -260,30 +404,43 @@ class TemporalClientImpl implements TemporalClient {
         {
           handle: resolvedHandle,
           signalName: normalizedSignalName,
-          args,
+          args: values,
           identity,
           requestId,
         },
         this.dataConverter,
       )
 
-      await this.workflowService.signalWorkflowExecution(request, this.callOptions())
+      await this.executeRpc(
+        'signalWorkflow',
+        (rpcOptions) => this.workflowService.signalWorkflowExecution(request, rpcOptions),
+        callOptions,
+      )
     })
   }
 
-  async queryWorkflow(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown> {
+  async queryWorkflow(handle: WorkflowHandle, queryName: string, ...rawArgs: unknown[]): Promise<unknown> {
     return this.#instrumentOperation('queryWorkflow', async () => {
       this.ensureOpen()
       const resolvedHandle = resolveHandle(this.namespace, handle)
+      const { values, callOptions } = this.#splitArgsAndOptions(rawArgs)
 
-      const request = await buildQueryRequest(resolvedHandle, queryName, args, this.dataConverter)
-      const response = await this.workflowService.queryWorkflow(request, this.callOptions())
+      const request = await buildQueryRequest(resolvedHandle, queryName, values, this.dataConverter)
+      const response = await this.executeRpc(
+        'queryWorkflow',
+        (rpcOptions) => this.workflowService.queryWorkflow(request, rpcOptions),
+        callOptions,
+      )
 
       return this.parseQueryResult(response)
     })
   }
 
-  async terminateWorkflow(handle: WorkflowHandle, options: TerminateWorkflowOptions = {}): Promise<void> {
+  async terminateWorkflow(
+    handle: WorkflowHandle,
+    options: TerminateWorkflowOptions = {},
+    callOptions?: TemporalClientCallOptions,
+  ): Promise<void> {
     return this.#instrumentOperation('terminateWorkflow', async () => {
       this.ensureOpen()
       const resolvedHandle = resolveHandle(this.namespace, handle)
@@ -295,21 +452,32 @@ class TemporalClientImpl implements TemporalClient {
         this.dataConverter,
         this.defaultIdentity,
       )
-      await this.workflowService.terminateWorkflowExecution(request, this.callOptions())
+      await this.executeRpc(
+        'terminateWorkflow',
+        (rpcOptions) => this.workflowService.terminateWorkflowExecution(request, rpcOptions),
+        callOptions,
+      )
     })
   }
 
-  async cancelWorkflow(handle: WorkflowHandle): Promise<void> {
+  async cancelWorkflow(handle: WorkflowHandle, callOptions?: TemporalClientCallOptions): Promise<void> {
     return this.#instrumentOperation('cancelWorkflow', async () => {
       this.ensureOpen()
       const resolvedHandle = resolveHandle(this.namespace, handle)
 
       const request = buildCancelRequest(resolvedHandle, this.defaultIdentity)
-      await this.workflowService.requestCancelWorkflowExecution(request, this.callOptions())
+      await this.executeRpc(
+        'cancelWorkflow',
+        (rpcOptions) => this.workflowService.requestCancelWorkflowExecution(request, rpcOptions),
+        callOptions,
+      )
     })
   }
 
-  async signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult> {
+  async signalWithStart(
+    options: SignalWithStartOptions,
+    callOptions?: TemporalClientCallOptions,
+  ): Promise<StartWorkflowResult> {
     return this.#instrumentOperation('signalWithStart', async () => {
       this.ensureOpen()
       const startOptions = sanitizeStartWorkflowOptions(options)
@@ -335,7 +503,11 @@ class TemporalClientImpl implements TemporalClient {
         this.dataConverter,
       )
 
-      const response = await this.workflowService.signalWithStartWorkflowExecution(request, this.callOptions())
+      const response = await this.executeRpc(
+        'signalWithStartWorkflow',
+        (rpcOptions) => this.workflowService.signalWithStartWorkflowExecution(request, rpcOptions),
+        callOptions,
+      )
       return this.toStartWorkflowResult(response, {
         workflowId: request.workflowId,
         namespace: request.namespace,
@@ -344,14 +516,18 @@ class TemporalClientImpl implements TemporalClient {
     })
   }
 
-  async describeNamespace(targetNamespace?: string): Promise<Uint8Array> {
+  async describeNamespace(targetNamespace?: string, callOptions?: TemporalClientCallOptions): Promise<Uint8Array> {
     return this.#instrumentOperation('describeNamespace', async () => {
       this.ensureOpen()
       const request: DescribeNamespaceRequest = create(DescribeNamespaceRequestSchema, {
         namespace: targetNamespace ?? this.namespace,
       })
 
-      const response = await this.workflowService.describeNamespace(request, this.callOptions())
+      const response = await this.executeRpc(
+        'describeNamespace',
+        (rpcOptions) => this.workflowService.describeNamespace(request, rpcOptions),
+        callOptions,
+      )
       return toBinary(DescribeNamespaceResponseSchema, response)
     })
   }
@@ -431,10 +607,114 @@ class TemporalClientImpl implements TemporalClient {
     }
   }
 
-  private callOptions(): CallOptions {
-    return {
-      headers: { ...this.headers },
+  #splitArgsAndOptions(args: unknown[]): { values: unknown[]; callOptions?: TemporalClientCallOptions } {
+    if (!args.length) {
+      return { values: [] }
     }
+    const last = args[args.length - 1]
+    if (isCallOptionsCandidate(last)) {
+      return {
+        values: args.slice(0, -1),
+        callOptions: last,
+      }
+    }
+    return { values: args }
+  }
+
+  #mergeRetryPolicy(overrides?: Partial<TemporalRpcRetryPolicy>): TemporalRpcRetryPolicy {
+    const base = this.config.rpcRetryPolicy
+    if (!overrides) {
+      return {
+        ...base,
+        retryableStatusCodes: [...base.retryableStatusCodes],
+      }
+    }
+    const maxAttempts = overrides.maxAttempts ?? base.maxAttempts
+    const initialDelayMs = overrides.initialDelayMs ?? base.initialDelayMs
+    const maxDelayMs = overrides.maxDelayMs ?? base.maxDelayMs
+    const backoffCoefficient = overrides.backoffCoefficient ?? base.backoffCoefficient
+    const jitterFactor = overrides.jitterFactor ?? base.jitterFactor
+    if (!Number.isInteger(maxAttempts) || maxAttempts <= 0) {
+      throw new Error('retryPolicy.maxAttempts must be a positive integer')
+    }
+    if (!Number.isInteger(initialDelayMs) || initialDelayMs <= 0) {
+      throw new Error('retryPolicy.initialDelayMs must be a positive integer')
+    }
+    if (!Number.isInteger(maxDelayMs) || maxDelayMs <= 0) {
+      throw new Error('retryPolicy.maxDelayMs must be a positive integer')
+    }
+    if (maxDelayMs < initialDelayMs) {
+      throw new Error('retryPolicy.maxDelayMs must be greater than or equal to retryPolicy.initialDelayMs')
+    }
+    if (typeof backoffCoefficient !== 'number' || !Number.isFinite(backoffCoefficient) || backoffCoefficient <= 0) {
+      throw new Error('retryPolicy.backoffCoefficient must be a positive number')
+    }
+    if (typeof jitterFactor !== 'number' || jitterFactor < 0 || jitterFactor > 1) {
+      throw new Error('retryPolicy.jitterFactor must be between 0 and 1')
+    }
+    const retryableStatusCodes = overrides.retryableStatusCodes
+      ? [...overrides.retryableStatusCodes]
+      : [...base.retryableStatusCodes]
+    return {
+      maxAttempts,
+      initialDelayMs,
+      maxDelayMs,
+      backoffCoefficient,
+      jitterFactor,
+      retryableStatusCodes,
+    }
+  }
+
+  #buildCallContext(overrides?: TemporalClientCallOptions): {
+    create: () => CallOptions
+    retryPolicy: TemporalRpcRetryPolicy
+  } {
+    const userHeaders = overrides?.headers ? normalizeMetadataHeaders(overrides.headers) : undefined
+    const mergedHeaders = userHeaders ? mergeHeaders(this.headers, userHeaders) : { ...this.headers }
+    const timeout = overrides?.timeoutMs
+    const signal = overrides?.signal
+    return {
+      create: () => ({
+        headers: { ...mergedHeaders },
+        timeoutMs: timeout,
+        signal,
+      }),
+      retryPolicy: this.#mergeRetryPolicy(overrides?.retryPolicy),
+    }
+  }
+
+  private async executeRpc<T>(
+    operation: string,
+    rpc: (options: CallOptions) => Promise<T>,
+    overrides?: TemporalClientCallOptions,
+  ): Promise<T> {
+    const { create, retryPolicy } = this.#buildCallContext(overrides)
+    let attempt = 0
+    const effect = Effect.tryPromise({
+      try: () => {
+        attempt += 1
+        return rpc(create())
+      },
+      catch: (error) => wrapRpcError(error),
+    }).pipe(
+      Effect.tapError((error) =>
+        Effect.sync(() => {
+          this.#log('warn', `temporal rpc ${operation} attempt failed`, {
+            operation,
+            attempt,
+            error: describeError(error),
+          })
+        }),
+      ),
+    )
+    const result = await Effect.runPromise(withTemporalRetry(effect, retryPolicy))
+    if (attempt > 1) {
+      this.#log('info', `temporal rpc ${operation} succeeded after ${attempt} attempts`, {
+        operation,
+        attempts: attempt,
+      })
+    }
+    return result
   }
 
   private toStartWorkflowResult(
@@ -489,7 +769,11 @@ export const normalizeTemporalAddress = (address: string, useTls: boolean): stri
   return `${useTls ? 'https' : 'http'}://${address}`
 }
 
-export const buildTransportOptions = (baseUrl: string, config: TemporalConfig): GrpcTransportOptions => {
+export const buildTransportOptions = (
+  baseUrl: string,
+  config: TemporalConfig,
+  interceptors: TemporalInterceptor[] = [],
+): GrpcTransportOptions => {
   const nodeOptions: ClientSessionOptions | SecureClientSessionOptions = {}
 
   if (config.tls) {
@@ -504,6 +788,7 @@ export const buildTransportOptions = (baseUrl: string, config: TemporalConfig): 
     baseUrl,
     nodeOptions,
     defaultTimeoutMs: 60_000,
+    interceptors,
   }
 }
 
