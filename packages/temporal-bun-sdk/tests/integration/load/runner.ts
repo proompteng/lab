@@ -5,7 +5,7 @@ import { Effect } from 'effect'
 import { createTemporalClient, type TemporalClient } from '../../../src/client'
 import { loadTemporalConfig } from '../../../src/config'
 import { WorkerRuntime } from '../../../src/worker/runtime'
-import type { IntegrationHarness } from '../harness'
+import type { IntegrationHarness, WorkflowExecutionHandle } from '../harness'
 import { readWorkerLoadConfig, type WorkerLoadConfig } from './config'
 import { readMetricsFromFile, summarizeLoadMetrics, type WorkerLoadMetricsSummary } from './metrics'
 import {
@@ -14,6 +14,7 @@ import {
   type WorkerLoadActivityWorkflowInput,
   type WorkerLoadCpuWorkflowInput,
 } from './workflows'
+import { EventType } from '../../../src/proto/temporal/api/enums/v1/event_type_pb'
 
 export interface WorkerLoadRunnerOptions {
   readonly harness: IntegrationHarness
@@ -47,8 +48,7 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
   })
 
   const plans = buildWorkflowPlans(loadConfig)
-  const expectedWorkflowTasks = calculateExpectedWorkflowTasks(plans)
-  const stats = createRuntimeStats(plans.length, expectedWorkflowTasks)
+  const stats = createRuntimeStats(plans.length)
   const runtime = await WorkerRuntime.create({
     config,
     workflows: workerLoadWorkflows,
@@ -71,8 +71,13 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
   try {
     const { client: temporalClient } = await createTemporalClient({ config, taskQueue })
     try {
-      await submitWorkflows(temporalClient, plans, taskQueue, loadConfig)
-      await waitForCompletion(stats, loadConfig.workflowDurationBudgetMs)
+      const handles = await submitWorkflows(temporalClient, plans, taskQueue, loadConfig)
+      await waitForCompletion({
+        stats,
+        workflows: handles,
+        harness: options.harness,
+        timeoutMs: loadConfig.workflowDurationBudgetMs,
+      })
     } finally {
       await temporalClient.shutdown()
     }
@@ -128,29 +133,59 @@ const submitWorkflows = async (
   plans: WorkflowPlan[],
   taskQueue: string,
   config: WorkerLoadConfig,
-) => {
+): Promise<WorkflowExecutionHandle[]> => {
+  const handles: WorkflowExecutionHandle[] = []
   for (const plan of plans) {
-    await client.startWorkflow({
+    const result = await client.startWorkflow({
       workflowId: plan.id,
       workflowType: plan.workflowType,
       taskQueue,
       args: [plan.input],
       workflowTaskTimeoutMs: config.workflowDurationBudgetMs,
     })
+    handles.push({ workflowId: result.workflowId, runId: result.runId })
   }
+  return handles
 }
 
-const waitForCompletion = async (stats: RuntimeStats, timeoutMs: number) => {
+const waitForCompletion = async ({
+  stats,
+  workflows,
+  harness,
+  timeoutMs,
+}: {
+  stats: RuntimeStats
+  workflows: WorkflowExecutionHandle[]
+  harness: IntegrationHarness
+  timeoutMs: number
+}) => {
   const deadline = Date.now() + timeoutMs
-  while (stats.processedTasks < stats.expectedWorkflowTasks) {
+  const pending = new Map(workflows.map((handle) => [handle.workflowId, handle]))
+
+  while (pending.size > 0) {
     if (Date.now() > deadline) {
-      throw new Error(
-        `Processed ${stats.processedTasks}/${stats.expectedWorkflowTasks} workflow tasks before timeout`,
-      )
+      throw new Error(`Timed out waiting for ${pending.size} workflows to complete`)
     }
-    await sleep(250)
+
+    for (const [workflowId, handle] of pending) {
+      try {
+        const history = await Effect.runPromise(harness.fetchWorkflowHistory(handle))
+        const lastEvent = history.at(-1)
+        if (lastEvent && WORKFLOW_CLOSED_EVENTS.has(lastEvent.eventType)) {
+          pending.delete(workflowId)
+          stats.completed += 1
+        }
+      } catch (error) {
+        // Ignore transient CLI failures; retry until timeout.
+        void error
+      }
+    }
+
+    if (pending.size > 0) {
+      await sleep(1_000)
+    }
   }
-  stats.completed = stats.submitted
+
   stats.completedAt = Date.now()
 }
 
@@ -189,11 +224,9 @@ const buildWorkflowPlans = (config: WorkerLoadConfig): WorkflowPlan[] => {
   return plans
 }
 
-const createRuntimeStats = (submitted: number, expectedWorkflowTasks: number): RuntimeStats => ({
+const createRuntimeStats = (submitted: number): RuntimeStats => ({
   submitted,
   completed: 0,
-  processedTasks: 0,
-  expectedWorkflowTasks,
   active: 0,
   peakConcurrent: 0,
   startedAt: Date.now(),
@@ -210,10 +243,6 @@ const createSchedulerHooks = (stats: RuntimeStats) => ({
   onWorkflowComplete: () =>
     Effect.sync(() => {
       stats.active = Math.max(0, stats.active - 1)
-      stats.processedTasks += 1
-      if (!stats.completedAt && stats.processedTasks >= stats.expectedWorkflowTasks) {
-        stats.completedAt = Date.now()
-      }
     }),
 })
 
@@ -227,15 +256,14 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms)
   })
 
-const calculateExpectedWorkflowTasks = (plans: WorkflowPlan[]): number =>
-  plans.reduce((total, plan) => {
-    if (plan.workflowType === 'workerLoadActivityWorkflow') {
-      const { bursts } = plan.input as WorkerLoadActivityWorkflowInput
-      const normalizedBursts = Number.isFinite(bursts) ? Math.max(1, Math.trunc(bursts)) : 1
-      return total + normalizedBursts + 1
-    }
-    return total + 1
-  }, 0)
+const WORKFLOW_CLOSED_EVENTS = new Set<EventType>([
+  EventType.WORKFLOW_EXECUTION_COMPLETED,
+  EventType.WORKFLOW_EXECUTION_FAILED,
+  EventType.WORKFLOW_EXECUTION_TIMED_OUT,
+  EventType.WORKFLOW_EXECUTION_TERMINATED,
+  EventType.WORKFLOW_EXECUTION_CANCELED,
+  EventType.WORKFLOW_EXECUTION_CONTINUED_AS_NEW,
+])
 
 export type WorkflowPlan =
   | {
@@ -252,8 +280,6 @@ export type WorkflowPlan =
 export interface RuntimeStats {
   submitted: number
   completed: number
-  processedTasks: number
-  expectedWorkflowTasks: number
   active: number
   peakConcurrent: number
   startedAt: number
