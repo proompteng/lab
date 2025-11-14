@@ -84,7 +84,7 @@ const inspectLocalImageDigest = (image: string): string | undefined => {
 
 const inspectRemoteImageDigest = (image: string): string | undefined => {
   const inspect = spawnSyncImpl(
-    ['docker', 'buildx', 'imagetools', 'inspect', '--format', '{{json .manifest}}', image],
+    ['docker', 'buildx', 'imagetools', 'inspect', '--format', '{{json .Manifest}}', image],
     { cwd: repoRoot },
   )
 
