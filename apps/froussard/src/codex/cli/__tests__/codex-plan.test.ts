@@ -16,7 +16,7 @@ const utilMocks = vi.hoisted(() => ({
   randomRunId: vi.fn(() => 'random123'),
   timestampUtc: vi.fn(() => '2025-10-11T00:00:00Z'),
   copyAgentLogIfNeeded: vi.fn(async () => undefined),
-  buildDiscordRelayCommand: vi.fn(async () => ['bun', 'run', 'relay.ts']),
+  buildDiscordChannelCommand: vi.fn(async () => ['bun', 'run', 'channel.ts']),
 }))
 
 vi.mock('../lib/codex-utils', () => utilMocks)
@@ -42,7 +42,7 @@ vi.mock('../lib/codex-runner', () => runnerMocks)
 
 const runCodexSessionMock = runnerMocks.runCodexSession
 const pushCodexEventsToLokiMock = runnerMocks.pushCodexEventsToLoki
-const buildDiscordRelayCommandMock = utilMocks.buildDiscordRelayCommand
+const buildDiscordChannelCommandMock = utilMocks.buildDiscordChannelCommand
 
 const ORIGINAL_ENV = { ...process.env }
 
@@ -74,7 +74,7 @@ describe('runCodexPlan', () => {
     bunUtils.spawn.mockReset()
     runCodexSessionMock.mockClear()
     pushCodexEventsToLokiMock.mockClear()
-    buildDiscordRelayCommandMock.mockClear()
+    buildDiscordChannelCommandMock.mockClear()
     utilMocks.pathExists.mockResolvedValue(false)
     runCodexSessionMock.mockImplementation(async (options) => {
       await writeFile(options.outputPath, '# Plan\n\n- step', 'utf8')
@@ -166,19 +166,19 @@ describe('runCodexPlan', () => {
     )
   })
 
-  it('configures discord relay when a script and credentials are present', async () => {
+  it('configures discord channel streaming when a script and credentials are present', async () => {
     process.env.DISCORD_BOT_TOKEN = 'token'
     process.env.DISCORD_GUILD_ID = 'guild'
-    process.env.RELAY_SCRIPT = 'apps/froussard/scripts/discord-relay.ts'
-    utilMocks.pathExists.mockImplementation(async (path: string) => path.includes('discord-relay.ts'))
+    process.env.CHANNEL_SCRIPT = 'apps/froussard/scripts/discord-channel.ts'
+    utilMocks.pathExists.mockImplementation(async (path: string) => path.includes('discord-channel.ts'))
 
     await runCodexPlan()
 
-    expect(buildDiscordRelayCommandMock).toHaveBeenCalledWith(
-      'apps/froussard/scripts/discord-relay.ts',
+    expect(buildDiscordChannelCommandMock).toHaveBeenCalledWith(
+      'apps/froussard/scripts/discord-channel.ts',
       expect.any(Array),
     )
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
-    expect(invocation?.discordRelay?.command).toEqual(['bun', 'run', 'relay.ts'])
+    expect(invocation?.discordChannel?.command).toEqual(['bun', 'run', 'channel.ts'])
   })
 })

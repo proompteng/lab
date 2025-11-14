@@ -16,7 +16,7 @@ const utilMocks = vi.hoisted(() => ({
   randomRunId: vi.fn(() => 'random123'),
   timestampUtc: vi.fn(() => '2025-10-11T00:00:00Z'),
   copyAgentLogIfNeeded: vi.fn(async () => undefined),
-  buildDiscordRelayCommand: vi.fn(async () => ['bun', 'run', 'relay.ts']),
+  buildDiscordChannelCommand: vi.fn(async () => ['bun', 'run', 'channel.ts']),
 }))
 
 vi.mock('../lib/codex-utils', () => utilMocks)
@@ -36,7 +36,7 @@ vi.mock('../lib/codex-runner', () => runnerMocks)
 
 const runCodexSessionMock = runnerMocks.runCodexSession
 const pushCodexEventsToLokiMock = runnerMocks.pushCodexEventsToLoki
-const buildDiscordRelayCommandMock = utilMocks.buildDiscordRelayCommand
+const buildDiscordChannelCommandMock = utilMocks.buildDiscordChannelCommand
 
 const ORIGINAL_ENV = { ...process.env }
 
@@ -67,7 +67,7 @@ describe('runCodexImplementation', () => {
     delete process.env.CODEX_RUNTIME_LOG_PATH
     process.env.WORKTREE = workdir
     process.env.LGTM_LOKI_ENDPOINT = 'http://localhost/loki'
-    process.env.RELAY_SCRIPT = ''
+    process.env.CHANNEL_SCRIPT = ''
     process.env.CODEX_SKIP_PR_CHECK = '1'
 
     const payload = {
@@ -111,7 +111,7 @@ describe('runCodexImplementation', () => {
     runCodexSessionMock.mockImplementation(async () => ({ agentMessages: [], sessionId: 'session-xyz' }))
     pushCodexEventsToLokiMock.mockReset()
     pushCodexEventsToLokiMock.mockImplementation(async () => {})
-    buildDiscordRelayCommandMock.mockClear()
+    buildDiscordChannelCommandMock.mockClear()
     utilMocks.pathExists.mockImplementation(async (path: string) => !path.includes('missing'))
   })
 
@@ -153,20 +153,20 @@ describe('runCodexImplementation', () => {
     await expect(runCodexImplementation(join(workdir, 'missing.json'))).rejects.toThrow(/Event payload file not found/)
   })
 
-  it('configures a Discord relay when credentials are provided', async () => {
+  it('configures Discord channel streaming when credentials are provided', async () => {
     process.env.DISCORD_BOT_TOKEN = 'token'
     process.env.DISCORD_GUILD_ID = 'guild'
-    process.env.RELAY_SCRIPT = 'apps/froussard/scripts/discord-relay.ts'
+    process.env.CHANNEL_SCRIPT = 'apps/froussard/scripts/discord-channel.ts'
     utilMocks.pathExists.mockResolvedValue(true)
 
     await runCodexImplementation(eventPath)
 
-    expect(buildDiscordRelayCommandMock).toHaveBeenCalledWith(
-      'apps/froussard/scripts/discord-relay.ts',
+    expect(buildDiscordChannelCommandMock).toHaveBeenCalledWith(
+      'apps/froussard/scripts/discord-channel.ts',
       expect.any(Array),
     )
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
-    expect(invocation?.discordRelay?.command).toEqual(['bun', 'run', 'relay.ts'])
+    expect(invocation?.discordChannel?.command).toEqual(['bun', 'run', 'channel.ts'])
   })
 
   it('throws when repository is missing in the payload', async () => {

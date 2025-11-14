@@ -1,7 +1,7 @@
 import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import * as discord from './discord'
+import * as discord from './channel'
 
 const { buildChannelName, chunkContent, consumeChunks, DISCORD_MESSAGE_LIMIT } = discord
 
@@ -13,11 +13,11 @@ describe('buildChannelName', () => {
       repository: 'proompteng/lab',
       issueNumber: 1243,
       stage: 'planning',
-      runId: 'relay-xyz123',
+      runId: 'channel-xyz123',
       createdAt: new Date('2025-10-07T12:34:56Z'),
     })
 
-    expect(channel).toBe('lab-issue-1243-planning-20251007t1234-relay-xyz123')
+    expect(channel).toBe('lab-issue-1243-planning-20251007t1234-channel-xyz123')
   })
 
   it('trims long channel names without breaking semantics', () => {
@@ -57,7 +57,7 @@ describe('chunkContent', () => {
   })
 })
 
-describe('createRelayChannel', () => {
+describe('createChannel', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     if (originalFetch) {
@@ -72,7 +72,7 @@ describe('createRelayChannel', () => {
     fetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify([
-          { id: 'category-1', type: 4, name: 'Codex Relay - Radiant Horizon' },
+          { id: 'category-1', type: 4, name: 'Codex Channel - Radiant Horizon' },
           { id: 'channel-a', type: 0, parent_id: 'category-1' },
         ]),
         {
@@ -92,7 +92,7 @@ describe('createRelayChannel', () => {
     const config = { botToken: 'token', guildId: 'guild', categoryId: 'category-1' }
     const metadata = { repository: 'owner/repo', createdAt: new Date('2025-10-01T00:00:00Z') }
 
-    const result = await discord.createRelayChannel(config, metadata)
+    const result = await discord.createChannel(config, metadata)
 
     expect(result.categoryId).toBe('category-1')
     expect(result.createdCategory).toBeFalsy()
@@ -148,18 +148,18 @@ describe('createRelayChannel', () => {
       const config = { botToken: 'token', guildId: 'guild', categoryId: 'category-1' }
       const metadata = { repository: 'owner/repo', createdAt: new Date('2025-10-01T00:00:00Z') }
 
-      const result = await discord.createRelayChannel(config, metadata)
+      const result = await discord.createChannel(config, metadata)
 
       expect(result.categoryId).toBe('category-2')
       expect(result.createdCategory).toBe(true)
-      expect(result.categoryName).toBe('Codex Relay - Sereine Salon')
+      expect(result.categoryName).toBe('Codex Channel - Sereine Salon')
       expect(fetchMock).toHaveBeenCalledTimes(3)
 
       const createCategoryCall = fetchMock.mock.calls[1]
       expect(createCategoryCall?.[0]).toBe('https://discord.com/api/v10/guilds/guild/channels')
       const createCategoryBody = JSON.parse(((createCategoryCall?.[1] as RequestInit)?.body ?? '{}') as string)
       expect(createCategoryBody.type).toBe(4)
-      expect(createCategoryBody.name).toBe('Codex Relay - Sereine Salon')
+      expect(createCategoryBody.name).toBe('Codex Channel - Sereine Salon')
 
       const createChannelCall = fetchMock.mock.calls[2]
       const createChannelBody = JSON.parse(((createChannelCall?.[1] as RequestInit)?.body ?? '{}') as string)
@@ -170,7 +170,7 @@ describe('createRelayChannel', () => {
   })
 })
 
-describe('bootstrapRelay', () => {
+describe('bootstrapChannel', () => {
   afterEach(() => {
     if (originalFetch) {
       global.fetch = originalFetch
@@ -190,14 +190,14 @@ describe('bootstrapRelay', () => {
       title: 'Sprint Planning',
     }
 
-    const result = await discord.bootstrapRelay(config, metadata, {
+    const result = await discord.bootstrapChannel(config, metadata, {
       dryRun: true,
       echo: (line) => logs.push(line),
     })
 
     expect(result.channelId).toBe('dry-run')
     expect(logs[0]).toContain('[dry-run] Would create channel')
-    expect(logs[1]).toContain('**Codex Relay Started**')
+    expect(logs[1]).toContain('**Codex Channel Started**')
     expect(logs[1]).toContain('[owner/repo](https://github.com/owner/repo)')
     expect(logs[1]).toContain('[#17](https://github.com/owner/repo/issues/17)')
   })
@@ -233,7 +233,7 @@ describe('bootstrapRelay', () => {
       createdAt: new Date('2025-10-01T00:00:00Z'),
     }
 
-    const result = await discord.bootstrapRelay(config, metadata)
+    const result = await discord.bootstrapChannel(config, metadata)
 
     expect(result.channelId).toBe('channel-123')
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -306,9 +306,9 @@ describe('bootstrapRelay', () => {
       const metadata = { repository: 'owner/repo', createdAt: new Date('2025-10-01T00:00:00Z') }
       const echoes: string[] = []
 
-      await discord.bootstrapRelay(config, metadata, { echo: (line) => echoes.push(line) })
+      await discord.bootstrapChannel(config, metadata, { echo: (line) => echoes.push(line) })
 
-      expect(echoes[0]).toBe("Created Discord category 'Codex Relay - Sereine Salon' for Codex relay channels.")
+      expect(echoes[0]).toBe("Created Discord category 'Codex Channel - Sereine Salon' for Codex channel streams.")
       expect(fetchMock).toHaveBeenCalledTimes(4)
     } finally {
       randomSpy.mockRestore()
@@ -316,7 +316,7 @@ describe('bootstrapRelay', () => {
   })
 })
 
-describe('relayStream', () => {
+describe('streamChannel', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     if (originalFetch) {
@@ -335,14 +335,14 @@ describe('relayStream', () => {
     global.fetch = fetchMock as unknown as typeof global.fetch
 
     const config = { botToken: 'token', guildId: 'guild' }
-    const relay = { channelId: 'channel-xyz', channelName: 'name', guildId: 'guild' }
+    const channelContext = { channelId: 'channel-xyz', channelName: 'name', guildId: 'guild' }
 
     const longMessage = 'x'.repeat(DISCORD_MESSAGE_LIMIT + 50)
     async function* generator() {
       yield longMessage
     }
 
-    await discord.relayStream(config, relay, generator())
+    await discord.streamChannel(config, channelContext, generator())
 
     const payloads = fetchMock.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string))
     expect(payloads).toHaveLength(2)
@@ -352,7 +352,7 @@ describe('relayStream', () => {
 
   it('echoes output in dry-run mode without posting', async () => {
     const config = { botToken: 'token', guildId: 'guild' }
-    const relay = { channelId: 'channel-xyz', channelName: 'name', guildId: 'guild' }
+    const channelContext = { channelId: 'channel-xyz', channelName: 'name', guildId: 'guild' }
     const echoes: string[] = []
 
     async function* generator() {
@@ -360,7 +360,7 @@ describe('relayStream', () => {
       yield 'line-two'
     }
 
-    await discord.relayStream(config, relay, generator(), {
+    await discord.streamChannel(config, channelContext, generator(), {
       dryRun: true,
       echo: (line) => echoes.push(line),
     })

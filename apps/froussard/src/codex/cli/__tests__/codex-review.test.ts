@@ -8,7 +8,7 @@ const {
   copyAgentLogIfNeededMock,
   randomRunIdMock,
   timestampUtcMock,
-  buildDiscordRelayCommandMock,
+  buildDiscordChannelCommandMock,
   runCodexSessionMock,
   pushCodexEventsToLokiMock,
   buildCodexPromptMock,
@@ -17,7 +17,7 @@ const {
   copyAgentLogIfNeededMock: vi.fn(async () => undefined),
   randomRunIdMock: vi.fn(() => 'random456'),
   timestampUtcMock: vi.fn(() => '2025-10-18T00:00:00Z'),
-  buildDiscordRelayCommandMock: vi.fn(async () => ['bun', 'run', 'relay.ts']),
+  buildDiscordChannelCommandMock: vi.fn(async () => ['bun', 'run', 'channel.ts']),
   runCodexSessionMock: vi.fn(async () => ({ agentMessages: [] })),
   pushCodexEventsToLokiMock: vi.fn(async () => {}),
   buildCodexPromptMock: vi.fn(() => 'REVIEW PROMPT'),
@@ -28,7 +28,7 @@ vi.mock('../lib/codex-utils', () => ({
   copyAgentLogIfNeeded: copyAgentLogIfNeededMock,
   randomRunId: randomRunIdMock,
   timestampUtc: timestampUtcMock,
-  buildDiscordRelayCommand: buildDiscordRelayCommandMock,
+  buildDiscordChannelCommand: buildDiscordChannelCommandMock,
 }))
 
 vi.mock('../lib/codex-runner', () => ({
@@ -67,7 +67,7 @@ describe('runCodexReview', () => {
     delete process.env.AGENT_OUTPUT_PATH
     process.env.WORKTREE = workdir
     process.env.LGTM_LOKI_ENDPOINT = 'http://localhost/loki'
-    process.env.RELAY_SCRIPT = ''
+    process.env.CHANNEL_SCRIPT = ''
 
     const payload = {
       repository: 'owner/repo',
@@ -106,8 +106,8 @@ describe('runCodexReview', () => {
     pushCodexEventsToLokiMock.mockResolvedValue(undefined)
     buildCodexPromptMock.mockReset()
     buildCodexPromptMock.mockReturnValue('REVIEW PROMPT')
-    buildDiscordRelayCommandMock.mockReset()
-    buildDiscordRelayCommandMock.mockResolvedValue(['bun', 'run', 'relay.ts'])
+    buildDiscordChannelCommandMock.mockReset()
+    buildDiscordChannelCommandMock.mockResolvedValue(['bun', 'run', 'channel.ts'])
     pathExistsMock.mockReset()
     pathExistsMock.mockImplementation(async (path: string) => !path.includes('missing'))
     copyAgentLogIfNeededMock.mockReset()
@@ -168,16 +168,16 @@ describe('runCodexReview', () => {
     await expect(runCodexReview(eventPath)).rejects.toThrow('Missing Codex branch metadata in event payload')
   })
 
-  it('configures a Discord relay when credentials are set', async () => {
+  it('configures Discord channel streaming when credentials are set', async () => {
     process.env.DISCORD_BOT_TOKEN = 'token'
     process.env.DISCORD_GUILD_ID = 'guild'
-    process.env.RELAY_SCRIPT = 'apps/froussard/scripts/discord-relay.ts'
+    process.env.CHANNEL_SCRIPT = 'apps/froussard/scripts/discord-channel.ts'
     pathExistsMock.mockResolvedValue(true)
 
     await runCodexReview(eventPath)
 
-    expect(buildDiscordRelayCommandMock).toHaveBeenCalledWith(
-      'apps/froussard/scripts/discord-relay.ts',
+    expect(buildDiscordChannelCommandMock).toHaveBeenCalledWith(
+      'apps/froussard/scripts/discord-channel.ts',
       expect.arrayContaining([
         '--stage',
         'review',
@@ -194,6 +194,6 @@ describe('runCodexReview', () => {
       ]),
     )
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
-    expect(invocation?.discordRelay?.command).toEqual(['bun', 'run', 'relay.ts'])
+    expect(invocation?.discordChannel?.command).toEqual(['bun', 'run', 'channel.ts'])
   })
 })

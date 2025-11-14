@@ -41,8 +41,8 @@ const createCodexProcess = (messages: string[], promptSink: string[]) => {
   }
 }
 
-const createDiscordProcess = (relaySink: string[]) => ({
-  stdin: createWritable(relaySink),
+const createDiscordProcess = (channelSink: string[]) => ({
+  stdin: createWritable(channelSink),
   stdout: null,
   stderr: null,
   exited: Promise.resolve(0),
@@ -155,14 +155,14 @@ describe('codex-runner', () => {
     expect(result.sessionId).toBe('019a40e5-341a-7501-ad84-5ccdb240e7ff')
   })
 
-  it('streams agent messages and tool calls to a Discord relay when configured', async () => {
-    const relaySink: string[] = []
+  it('streams agent messages and tool calls to a Discord channel when configured', async () => {
+    const channelSink: string[] = []
     const promptSink: string[] = []
-    const discordProcess = createDiscordProcess(relaySink)
+    const discordProcess = createDiscordProcess(channelSink)
     const toolCallLine =
       '2025-11-01T19:29:20.903182Z  INFO codex_core::codex: ToolCall: shell {"command":["bash","-lc","echo hello"]}'
     const codexProcess = createCodexProcess(
-      [toolCallLine, JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'relay copy' } })],
+      [toolCallLine, JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'channel copy' } })],
       promptSink,
     )
 
@@ -178,13 +178,13 @@ describe('codex-runner', () => {
       outputPath,
       jsonOutputPath,
       agentOutputPath,
-      discordRelay: {
-        command: ['bun', 'run', 'discord-relay.ts'],
+      discordChannel: {
+        command: ['bun', 'run', 'discord-channel.ts'],
       },
     })
 
-    expect(relaySink.some((chunk) => chunk.includes('relay copy'))).toBe(true)
-    expect(relaySink.some((chunk) => chunk.includes('ToolCall → shell {"command"'))).toBe(true)
+    expect(channelSink.some((chunk) => chunk.includes('channel copy'))).toBe(true)
+    expect(channelSink.some((chunk) => chunk.includes('ToolCall → shell {"command"'))).toBe(true)
   })
 
   it('pushes Loki payloads when events exist', async () => {
@@ -284,11 +284,11 @@ describe('codex-runner', () => {
     ).rejects.toThrow('Codex exited with status 2')
   })
 
-  it('invokes the relay error handler when the Discord relay fails to start', async () => {
-    const relaySink: string[] = []
+  it('invokes the channel error handler when the Discord channel fails to start', async () => {
+    const channelSink: string[] = []
     const promptSink: string[] = []
     const discordProcess = {
-      stdin: createWritable(relaySink),
+      stdin: createWritable(channelSink),
       stdout: null,
       stderr: null,
       exited: Promise.resolve(1),
@@ -302,12 +302,12 @@ describe('codex-runner', () => {
 
     await runCodexSession({
       stage: 'planning',
-      prompt: 'relay',
+      prompt: 'channel',
       outputPath: join(workspace, 'output.log'),
       jsonOutputPath: join(workspace, 'events.jsonl'),
       agentOutputPath: join(workspace, 'agent.log'),
-      discordRelay: {
-        command: ['bun', 'run', 'relay.ts'],
+      discordChannel: {
+        command: ['bun', 'run', 'channel.ts'],
         onError: errorSpy,
       },
     })

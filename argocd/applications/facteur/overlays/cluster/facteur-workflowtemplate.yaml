@@ -87,7 +87,7 @@ spec:
             if [[ "$RUN_ID" == "null" ]]; then
               RUN_ID=""
             fi
-            export CODEX_RELAY_RUN_ID="$RUN_ID"
+            export CODEX_CHANNEL_RUN_ID="$RUN_ID"
 
             STAGE=$(jq -r '.stage // "planning"' "$PAYLOAD_FILE")
             if [[ "$STAGE" == "null" || -z "$STAGE" ]]; then
@@ -95,11 +95,11 @@ spec:
             fi
             export CODEX_STAGE="$STAGE"
 
-            RELAY_DRY_RUN=$(jq -r '.discordRelayDryRun // "0"' "$PAYLOAD_FILE")
-            if [[ "$RELAY_DRY_RUN" == "null" ]]; then
-              RELAY_DRY_RUN="0"
+            CHANNEL_DRY_RUN=$(jq -r '.discordChannelDryRun // "0"' "$PAYLOAD_FILE")
+            if [[ "$CHANNEL_DRY_RUN" == "null" ]]; then
+              CHANNEL_DRY_RUN="0"
             fi
-            export DISCORD_RELAY_DRY_RUN="$RELAY_DRY_RUN"
+            export DISCORD_CHANNEL_DRY_RUN="$CHANNEL_DRY_RUN"
 
             POST_TO_GITHUB=$(jq -r '.postToGithub // "false"' "$PAYLOAD_FILE" | tr '[:upper:]' '[:lower:]')
             if [[ "$POST_TO_GITHUB" == "true" || "$POST_TO_GITHUB" == "1" || "$POST_TO_GITHUB" == "yes" ]]; then
