@@ -318,12 +318,14 @@ export class WorkerRuntime {
       if (capability.supported) {
         await registerWorkerBuildIdCompatibility(workflowService, namespace, taskQueue, buildId)
       } else {
-        logger.log('warn', 'skipping worker build ID registration', {
-          namespace,
-          taskQueue,
-          reason: capability.reason ?? 'unknown capability error',
-          note: 'Temporal CLI dev server (scripts/start-temporal-cli.ts) does not implement worker versioning yet',
-        })
+        await Effect.runPromise(
+          logger.log('warn', 'skipping worker build ID registration', {
+            namespace,
+            taskQueue,
+            reason: capability.reason ?? 'unknown capability error',
+            note: 'Temporal CLI dev server (scripts/start-temporal-cli.ts) does not implement worker versioning yet',
+          }),
+        )
       }
     }
 
