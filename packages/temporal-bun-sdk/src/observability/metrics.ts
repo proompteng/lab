@@ -43,6 +43,8 @@ const ensureDirectory = async (path: string): Promise<void> => {
   }
 }
 
+const toUnixNanoString = (milliseconds: number): string => (BigInt(milliseconds) * 1_000_000n).toString()
+
 const describeMetricsError = (error: unknown): string => {
   if (error instanceof Error) {
     return `${error.name}: ${error.message}`
@@ -134,14 +136,56 @@ class FileMetricsExporter implements MetricsExporter {
 
 class OtlpMetricsExporter implements MetricsExporter {
   readonly #endpoint: string
+  readonly #counters = new Map<string, { value: number; description?: string }>()
+  readonly #histograms = new Map<
+    string,
+    { count: number; sum: number; min: number; max: number; description?: string }
+  >()
+  readonly #startTimeUnixNano: string
 
   constructor(endpoint: string) {
     this.#endpoint = endpoint
+    this.#startTimeUnixNano = toUnixNanoString(Date.now())
   }
 
-  #postPayload(payload: Record<string, unknown>): Effect.Effect<void, never, never> {
+  recordCounter(name: string, value: number, description?: string): Effect.Effect<void, never, never> {
+    return Effect.sync(() => {
+      const current = this.#counters.get(name) ?? { value: 0, description }
+      const next = { value: current.value + value, description: current.description ?? description }
+      this.#counters.set(name, next)
+    })
+  }
+
+  recordHistogram(name: string, value: number, description?: string): Effect.Effect<void, never, never> {
+    return Effect.sync(() => {
+      const current = this.#histograms.get(name)
+      if (current) {
+        current.count += 1
+        current.sum += value
+        current.min = Math.min(current.min, value)
+        current.max = Math.max(current.max, value)
+        if (!current.description && description) {
+          current.description = description
+        }
+      } else {
+        this.#histograms.set(name, {
+          count: 1,
+          sum: value,
+          min: value,
+          max: value,
+          description,
+        })
+      }
+    })
+  }
+
+  flush(): Effect.Effect<void, never, never> {
     return swallowMetricsFailure(
       Effect.tryPromise(async () => {
+        if (this.#counters.size === 0 && this.#histograms.size === 0) {
+          return
+        }
+        const payload = this.#buildPayload()
         const fetchFn = globalThis.fetch
         if (typeof fetchFn !== 'function') {
           throw new Error('fetch is not available in this runtime')
@@ -162,35 +206,84 @@ class OtlpMetricsExporter implements MetricsExporter {
     )
   }
 
-  recordCounter(name: string, value: number, description?: string): Effect.Effect<void, never, never> {
-    return this.#postPayload({
-      type: 'counter',
-      name,
-      value,
-      description,
-      timestamp: new Date().toISOString(),
-    })
-  }
+  #buildPayload(): Record<string, unknown> {
+    const timeUnixNano = toUnixNanoString(Date.now())
+    const metrics: Record<string, unknown>[] = []
 
-  recordHistogram(name: string, value: number, description?: string): Effect.Effect<void, never, never> {
-    return this.#postPayload({
-      type: 'histogram',
-      name,
-      value,
-      description,
-      timestamp: new Date().toISOString(),
-    })
-  }
+    for (const [name, counter] of this.#counters) {
+      metrics.push({
+        name,
+        description: counter.description,
+        sum: {
+          aggregationTemporality: 'AGGREGATION_TEMPORALITY_CUMULATIVE',
+          isMonotonic: true,
+          dataPoints: [
+            {
+              attributes: [],
+              startTimeUnixNano: this.#startTimeUnixNano,
+              timeUnixNano,
+              asDouble: counter.value,
+            },
+          ],
+        },
+      })
+    }
 
-  flush(): Effect.Effect<void, never, never> {
-    return Effect.void
+    for (const [name, histogram] of this.#histograms) {
+      metrics.push({
+        name,
+        description: histogram.description,
+        histogram: {
+          aggregationTemporality: 'AGGREGATION_TEMPORALITY_CUMULATIVE',
+          dataPoints: [
+            {
+              attributes: [],
+              startTimeUnixNano: this.#startTimeUnixNano,
+              timeUnixNano,
+              count: `${histogram.count}`,
+              sum: histogram.sum,
+              min: histogram.count > 0 ? histogram.min : undefined,
+              max: histogram.count > 0 ? histogram.max : undefined,
+              bucketCounts: [`${histogram.count}`],
+              explicitBounds: [],
+            },
+          ],
+        },
+      })
+    }
+
+    return {
+      resourceMetrics: [
+        {
+          resource: {
+            attributes: [
+              {
+                key: 'service.name',
+                value: { stringValue: 'temporal-bun-sdk' },
+              },
+            ],
+          },
+          scopeMetrics: [
+            {
+              scope: {
+                name: 'temporal-bun-sdk',
+              },
+              metrics,
+            },
+          ],
+        },
+      ],
+    }
   }
 }
 
 class PrometheusMetricsExporter implements MetricsExporter {
   readonly #file: string
   readonly #counters = new Map<string, { value: number; description?: string }>()
-  readonly #histograms = new Map<string, { values: number[]; description?: string }>()
+  readonly #histograms = new Map<
+    string,
+    { count: number; sum: number; min: number; max: number; description?: string }
+  >()
 
   constructor(file: string) {
     this.#file = file
@@ -208,9 +301,21 @@ class PrometheusMetricsExporter implements MetricsExporter {
     return Effect.sync(() => {
       const current = this.#histograms.get(name)
       if (current) {
-        current.values.push(value)
+        current.count += 1
+        current.sum += value
+        current.min = Math.min(current.min, value)
+        current.max = Math.max(current.max, value)
+        if (!current.description && description) {
+          current.description = description
+        }
       } else {
-        this.#histograms.set(name, { values: [value], description })
+        this.#histograms.set(name, {
+          count: 1,
+          sum: value,
+          min: value,
+          max: value,
+          description,
+        })
       }
     })
   }
@@ -226,11 +331,10 @@ class PrometheusMetricsExporter implements MetricsExporter {
           lines.push(`${name} ${counter.value}`)
         }
         for (const [name, bucket] of this.#histograms) {
-          const values = bucket.values
-          const count = values.length
-          const sum = values.reduce((acc, value) => acc + value, 0)
-          const min = count > 0 ? Math.min(...values) : 0
-          const max = count > 0 ? Math.max(...values) : 0
+          const count = bucket.count
+          const sum = bucket.sum
+          const min = count > 0 ? bucket.min : 0
+          const max = count > 0 ? bucket.max : 0
           lines.push(`# HELP ${name} ${bucket.description ?? 'histogram metric'}`)
           lines.push(`# TYPE ${name} histogram`)
           lines.push(`${name}_count ${count}`)
