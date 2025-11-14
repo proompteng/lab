@@ -28,6 +28,6 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY apps/froussard/package.json ./package.json
 COPY --from=build /workspace/apps/froussard/dist ./dist
-COPY --from=deps /workspace/node_modules ./node_modules
+COPY --from=deps /workspace/apps/froussard/node_modules ./node_modules
 EXPOSE 8080
 CMD ["bun", "dist/index.mjs"]
