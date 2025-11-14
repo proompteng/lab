@@ -5,31 +5,26 @@ metadata:
   name: froussard
   namespace: froussard
   annotations:
-    serving.knative.dev/creator: system:admin
-    serving.knative.dev/lastModifier: system:admin
     serving.knative.dev/revision-history-limit: "3"
     argocd.argoproj.io/tracking-id: froussard:serving.knative.dev/Service:froussard/froussard
     argocd.argoproj.io/compare-options: IgnoreExtraneous
-  labels:
-    function.knative.dev/name: froussard
-    function.knative.dev/runtime: typescript
 spec:
   template:
     metadata:
       annotations:
         autoscaling.knative.dev/min-scale: "1"
-        serving.knative.dev/creator: system:admin
         serving.knative.dev/revision-history-limit: "3"
-      labels:
-        function.knative.dev/name: froussard
-        function.knative.dev/runtime: typescript
     spec:
       containerConcurrency: 0
       timeoutSeconds: 300
       enableServiceLinks: false
       containers:
-        - name: user-container
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:8d7b55cdb81f0e520b70380335b2ea4c10114beaaaaba4e21f05a9c4c5126ed1
+        - name: app
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:e105b131b1555af35351055e0765829ee2e7e5fb43c30b1cb2e9c09ff9f8648c
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http1
           env:
             - name: GITHUB_WEBHOOK_SECRET
               valueFrom:
@@ -70,9 +65,9 @@ spec:
             - name: OTEL_SERVICE_NAMESPACE
               value: froussard
             - name: FROUSSARD_VERSION
-              value: v0.299.0-1-gdc187340
+              value: v0.311.0
             - name: FROUSSARD_COMMIT
-              value: dc187340f3e3c8c6f95ad10fd57bd8ddedec0525
+              value: 6ea4e36f7d7728dd86e5d01f2fe06047ce7989c7
             - name: LGTM_TEMPO_TRACES_ENDPOINT
               value: http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces
             - name: LGTM_MIMIR_METRICS_ENDPOINT
@@ -81,15 +76,12 @@ spec:
               value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: http/protobuf
-            - name: ADDRESS
-              value: 0.0.0.0
           readinessProbe:
             httpGet:
               path: /health/readiness
-              port: 0
+              port: http1
             successThreshold: 1
           livenessProbe:
             httpGet:
               path: /health/liveness
-              port: 0
-          resources: {}
+              port: http1

@@ -2,15 +2,16 @@
 
 import { relative, resolve } from 'node:path'
 import process from 'node:process'
-import { $ } from 'bun'
 
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
+import { buildAndPushDockerImage, inspectImageDigest } from '../shared/docker'
 
-const ignoredAnnotations = new Set(['client.knative.dev/nonce', 'kubectl.kubernetes.io/last-applied-configuration'])
-
-const defaultNamespace = 'froussard'
-const defaultService = 'froussard'
 const defaultManifestPath = 'argocd/applications/froussard/knative-service.yaml'
+const defaultRegistry = 'registry.ide-newton.ts.net'
+const defaultRepository = 'lab/froussard'
+const defaultDockerfile = 'apps/froussard/Dockerfile'
+const defaultContext = '.'
+const defaultPlatforms = ['linux/arm64']
 
 const execGit = (args: string[]): string => {
   const result = Bun.spawnSync(['git', ...args], { cwd: repoRoot })
@@ -18,6 +19,15 @@ const execGit = (args: string[]): string => {
     throw new Error(`git ${args.join(' ')} failed`)
   }
   return result.stdout.toString().trim()
+}
+
+type CliArguments = {
+  dryRun: boolean
+}
+
+const parseArguments = (): CliArguments => {
+  const dryRun = process.argv.includes('--dry-run')
+  return { dryRun }
 }
 
 const ensureVersions = () => {
@@ -41,184 +51,166 @@ const ensureVersions = () => {
   return { version, commit }
 }
 
-const sanitizeObject = (value: Record<string, unknown> | undefined) => {
-  if (!value) {
-    return undefined
-  }
-
-  const entries = Object.entries(value).filter(
-    ([key, entry]) =>
-      !ignoredAnnotations.has(key) &&
-      entry !== undefined &&
-      entry !== null &&
-      !(typeof entry === 'string' && entry.trim().length === 0),
-  )
-
-  if (entries.length === 0) {
-    return undefined
-  }
-
-  return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)))
+const sanitizeTag = (value: string) => {
+  const normalized = value
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+  return normalized.length > 0 ? normalized : 'latest'
 }
 
-const sanitizeResources = (value: unknown): unknown => {
-  if (value === undefined || value === null) {
-    return undefined
-  }
+type VersionMetadata = ReturnType<typeof ensureVersions>
 
-  if (Array.isArray(value)) {
-    const sanitizedArray = value
-      .map((entry) => sanitizeResources(entry))
-      .filter((entry) => entry !== undefined) as unknown[]
-    return sanitizedArray.length > 0 ? sanitizedArray : []
-  }
-
-  if (typeof value !== 'object') {
-    if (typeof value === 'string' && value.trim().length === 0) {
-      return undefined
-    }
-    return value
-  }
-
-  const result: Record<string, unknown> = {}
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    const sanitized = sanitizeResources(entry)
-    if (sanitized === undefined) {
-      continue
-    }
-
-    if (Array.isArray(sanitized)) {
-      result[key] = sanitized
-      continue
-    }
-
-    if (typeof sanitized === 'object' && sanitized !== null && Object.keys(sanitized).length === 0) {
-      result[key] = sanitized
-      continue
-    }
-
-    result[key] = sanitized
-  }
-
-  return Object.keys(result).length > 0 ? result : {}
+type BuildResult = {
+  image: string
+  digest: string
 }
 
-const exportKnativeManifest = async ({
-  manifestPath,
-  namespace,
-  service,
-}: {
-  manifestPath: string
-  namespace: string
-  service: string
-}) => {
-  const manifestJson = await $`kubectl get ksvc ${service} --namespace ${namespace} -o json`.text()
-  const parsed = JSON.parse(manifestJson)
-
-  const container = parsed?.spec?.template?.spec?.containers?.[0]
-  if (!container || typeof container !== 'object') {
-    throw new Error(`Unable to resolve container spec for service ${service}`)
-  }
-
-  const env = Array.isArray(container.env)
-    ? container.env
-        .filter((entry: unknown): entry is { name: string; value?: string; valueFrom?: unknown } => {
-          return (
-            !!entry &&
-            typeof entry === 'object' &&
-            typeof (entry as { name?: unknown }).name === 'string' &&
-            (('value' in (entry as object) && typeof (entry as { value?: unknown }).value === 'string') ||
-              'valueFrom' in (entry as object))
-          )
-        })
-        .filter((entry) => entry.name !== 'BUILT')
-        .map((entry) => {
-          if ('valueFrom' in entry && entry.valueFrom) {
-            return { name: entry.name, valueFrom: entry.valueFrom }
-          }
-          return { name: entry.name, value: entry.value ?? '' }
-        })
-    : []
-
-  const annotations = sanitizeObject(parsed?.metadata?.annotations) ?? {}
-  const templateAnnotations = sanitizeObject(parsed?.spec?.template?.metadata?.annotations) ?? {}
-  annotations['argocd.argoproj.io/tracking-id'] =
-    `${namespace}:serving.knative.dev/Service:${namespace}/${parsed?.metadata?.name ?? service}`
-  annotations['argocd.argoproj.io/compare-options'] = 'IgnoreExtraneous'
-
-  const sanitizedManifest = {
-    apiVersion: 'serving.knative.dev/v1',
-    kind: 'Service',
-    metadata: {
-      name: parsed?.metadata?.name ?? service,
-      namespace: parsed?.metadata?.namespace ?? namespace,
-      annotations,
-      labels: sanitizeObject(parsed?.metadata?.labels),
-    },
-    spec: {
-      template: {
-        metadata: {
-          annotations: templateAnnotations,
-          labels: sanitizeObject(parsed?.spec?.template?.metadata?.labels),
-        },
-        spec: {
-          containerConcurrency: parsed?.spec?.template?.spec?.containerConcurrency ?? 0,
-          timeoutSeconds: parsed?.spec?.template?.spec?.timeoutSeconds ?? 300,
-          enableServiceLinks: parsed?.spec?.template?.spec?.enableServiceLinks ?? false,
-          containers: [
-            {
-              name: container.name ?? 'user-container',
-              image: container.image,
-              env,
-              readinessProbe: container.readinessProbe,
-              livenessProbe: container.livenessProbe,
-              resources: sanitizeResources(container.resources),
-              securityContext:
-                container.securityContext && Object.keys(container.securityContext).length > 0
-                  ? container.securityContext
-                  : undefined,
-            },
-          ],
-        },
-      },
-    },
-  }
-
-  const manifestAbsolutePath = resolve(repoRoot, manifestPath)
-  const YAML = await import('yaml')
-  const manifestYaml = `---\n${YAML.stringify(sanitizedManifest, { lineWidth: 120 })}`
-  await Bun.write(manifestAbsolutePath, manifestYaml)
-
-  console.log(
-    `Exported Knative service manifest to ${relative(repoRoot, manifestAbsolutePath)}. Please commit the updated file.`,
-  )
+type ImageBuildConfig = {
+  registry: string
+  repository: string
+  tag: string
+  dockerfile: string
+  context: string
+  platforms: string[]
 }
 
-export const main = async () => {
-  ensureCli('kubectl')
-  ensureCli('pnpm')
+const resolveImageBuildConfig = ({ version }: VersionMetadata): ImageBuildConfig => {
+  const registry = process.env.FROUSSARD_IMAGE_REGISTRY?.trim() || defaultRegistry
+  const repository = process.env.FROUSSARD_IMAGE_REPOSITORY?.trim() || defaultRepository
+  const tag = process.env.FROUSSARD_IMAGE_TAG?.trim() || sanitizeTag(version)
+  const dockerfile = resolve(repoRoot, process.env.FROUSSARD_DOCKERFILE?.trim() || defaultDockerfile)
+  const context = resolve(repoRoot, process.env.FROUSSARD_BUILD_CONTEXT?.trim() || defaultContext)
+  const platforms = (process.env.FROUSSARD_PLATFORMS ?? defaultPlatforms.join(','))
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
 
-  const namespace = process.env.FROUSSARD_NAMESPACE?.trim() || defaultNamespace
-  const service = process.env.FROUSSARD_SERVICE?.trim() || defaultService
-  const manifestPath = process.env.FROUSSARD_KNATIVE_MANIFEST?.trim() || defaultManifestPath
+  return {
+    registry,
+    repository,
+    tag,
+    dockerfile,
+    context,
+    platforms: platforms.length > 0 ? platforms : defaultPlatforms,
+  }
+}
 
-  const { version, commit } = await ensureVersions()
+const buildFroussardImage = async (
+  config: ImageBuildConfig,
+  { version, commit }: VersionMetadata,
+): Promise<BuildResult> => {
+  console.log(`Building image ${config.registry}/${config.repository}:${config.tag}`)
 
-  console.log(`Deploying froussard version ${version} (${commit})`)
-
-  const args = process.argv.slice(2)
-  const passThrough = args.length > 0 ? ['--', ...args] : []
-
-  await run('pnpm', ['--filter', 'froussard', 'run', 'deploy', ...passThrough], {
-    env: {
-      ...process.env,
+  const result = await buildAndPushDockerImage({
+    registry: config.registry,
+    repository: config.repository,
+    tag: config.tag,
+    dockerfile: config.dockerfile,
+    context: config.context,
+    platforms: config.platforms,
+    buildArgs: {
       FROUSSARD_VERSION: version,
       FROUSSARD_COMMIT: commit,
     },
-    cwd: repoRoot,
   })
 
-  await exportKnativeManifest({ manifestPath, namespace, service })
+  const digest = inspectImageDigest(result.image)
+  console.log(`Published ${result.image} (${digest})`)
+
+  return { image: result.image, digest }
+}
+
+type ManifestUpdateOptions = {
+  manifestPath: string
+  imageDigest: string
+  version: string
+  commit: string
+}
+
+const updateKnativeServiceManifest = async (options: ManifestUpdateOptions) => {
+  const manifestAbsolutePath = resolve(repoRoot, options.manifestPath)
+  const manifestRelativePath = relative(repoRoot, manifestAbsolutePath)
+  const YAML = await import('yaml')
+  const current = await Bun.file(manifestAbsolutePath).text()
+  const document = YAML.parse(current)
+
+  const container = document?.spec?.template?.spec?.containers?.[0]
+  if (!container || typeof container !== 'object') {
+    throw new Error('Unable to locate primary container spec in Knative manifest')
+  }
+
+  container.image = options.imageDigest
+
+  const env: Array<{ name: string; value?: string; valueFrom?: unknown }> = Array.isArray(container.env)
+    ? container.env
+    : []
+  setEnvValue(env, 'FROUSSARD_VERSION', options.version)
+  setEnvValue(env, 'FROUSSARD_COMMIT', options.commit)
+  container.env = env
+
+  const manifestYaml = `---\n${YAML.stringify(document, { lineWidth: 120 })}`
+  await Bun.write(manifestAbsolutePath, manifestYaml)
+
+  console.log(`Updated ${manifestRelativePath} with image ${options.imageDigest}`)
+  return manifestAbsolutePath
+}
+
+const setEnvValue = (
+  env: Array<{ name: string; value?: string; valueFrom?: unknown }>,
+  name: string,
+  value: string,
+) => {
+  const existing = env.find((entry) => entry && typeof entry === 'object' && entry.name === name)
+  if (existing) {
+    existing.value = value
+    if ('valueFrom' in existing) {
+      delete (existing as { valueFrom?: unknown }).valueFrom
+    }
+    return
+  }
+
+  env.push({ name, value })
+}
+
+export const main = async () => {
+  const { dryRun } = parseArguments()
+
+  if (dryRun) {
+    console.log('Running in dry-run mode; skipping Docker push and kubectl apply.')
+  } else {
+    ensureCli('docker')
+    ensureCli('kubectl')
+  }
+
+  const manifestPath = process.env.FROUSSARD_KNATIVE_MANIFEST?.trim() || defaultManifestPath
+
+  const { version, commit } = ensureVersions()
+  const imageConfig = resolveImageBuildConfig({ version, commit })
+  console.log(`Deploying froussard version ${version} (${commit})`)
+
+  let digest: string
+  if (dryRun) {
+    const imageReference = `${imageConfig.registry}/${imageConfig.repository}:${imageConfig.tag}`
+    console.log(`[dry-run] Would build and push ${imageReference}`)
+    digest = `${imageConfig.registry}/${imageConfig.repository}@sha256:dry-run`
+  } else {
+    ;({ digest } = await buildFroussardImage(imageConfig, { version, commit }))
+  }
+
+  const manifestAbsolutePath = await updateKnativeServiceManifest({
+    manifestPath,
+    imageDigest: digest,
+    version,
+    commit,
+  })
+
+  if (dryRun) {
+    console.log(`[dry-run] Would apply ${manifestAbsolutePath} via kubectl`)
+  } else {
+    await run('kubectl', ['apply', '-f', manifestAbsolutePath], { cwd: repoRoot })
+    console.log('Deployment applied via kubectl. Remember to commit the manifest update.')
+  }
 }
 
 if (import.meta.main) {
@@ -226,6 +218,9 @@ if (import.meta.main) {
 }
 
 export const __private = {
+  parseArguments,
   ensureVersions,
-  exportKnativeManifest,
+  resolveImageBuildConfig,
+  buildFroussardImage,
+  updateKnativeServiceManifest,
 }

@@ -8,6 +8,7 @@ export type DockerBuildOptions = {
   dockerfile: string
   buildArgs?: Record<string, string>
   cwd?: string
+  platforms?: string[]
 }
 
 export type DockerBuildResult = DockerBuildOptions & {
@@ -24,30 +25,93 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     image,
     context: options.context,
     dockerfile: options.dockerfile,
+    platforms: options.platforms && options.platforms.length > 0 ? options.platforms : undefined,
     buildArgs: Object.keys(options.buildArgs ?? {}).length ? options.buildArgs : undefined,
   })
 
-  const args = ['build', '-f', options.dockerfile, '-t', image]
-  for (const [key, value] of Object.entries(options.buildArgs ?? {})) {
-    args.push('--build-arg', `${key}=${value}`)
+  if (options.platforms && options.platforms.length > 0) {
+    const args = ['buildx', 'build', '--push', '-f', options.dockerfile, '-t', image]
+    args.push('--platform', options.platforms.join(','))
+    for (const [key, value] of Object.entries(options.buildArgs ?? {})) {
+      args.push('--build-arg', `${key}=${value}`)
+    }
+    args.push(options.context)
+    await run('docker', args, { cwd })
+  } else {
+    const args = ['build', '-f', options.dockerfile, '-t', image]
+    for (const [key, value] of Object.entries(options.buildArgs ?? {})) {
+      args.push('--build-arg', `${key}=${value}`)
+    }
+    args.push(options.context)
+    await run('docker', args, { cwd })
+    await run('docker', ['push', image], { cwd })
   }
-  args.push(options.context)
-
-  await run('docker', args, { cwd })
-  await run('docker', ['push', image], { cwd })
 
   return { ...options, image }
 }
 
 export const inspectImageDigest = (image: string): string => {
   ensureCli('docker')
+  const repoDigest = inspectLocalImageDigest(image)
+  if (repoDigest) {
+    return repoDigest
+  }
+
+  const remoteDigest = inspectRemoteImageDigest(image)
+  if (remoteDigest) {
+    return remoteDigest
+  }
+
+  throw new Error(`Unable to determine digest for image ${image}`)
+}
+
+const inspectLocalImageDigest = (image: string): string | undefined => {
   const inspect = Bun.spawnSync(['docker', 'image', 'inspect', '--format', '{{index .RepoDigests 0}}', image], {
     cwd: repoRoot,
   })
 
   if (inspect.exitCode !== 0) {
-    throw new Error(`docker image inspect ${image} failed: ${inspect.stderr.toString()}`)
+    return undefined
   }
 
-  return inspect.stdout.toString().trim()
+  const digest = inspect.stdout.toString().trim()
+  return digest.length > 0 ? digest : undefined
+}
+
+const inspectRemoteImageDigest = (image: string): string | undefined => {
+  const inspect = Bun.spawnSync(
+    ['docker', 'buildx', 'imagetools', 'inspect', '--format', '{{json .manifest}}', image],
+    { cwd: repoRoot },
+  )
+
+  if (inspect.exitCode !== 0) {
+    return undefined
+  }
+
+  try {
+    const parsed = JSON.parse(inspect.stdout.toString()) as { digest?: string } | undefined
+    const digest = parsed?.digest?.trim()
+    if (!digest) {
+      return undefined
+    }
+    const repository = getRepositoryFromReference(image)
+    return `${repository}@${digest}`
+  } catch (error) {
+    console.error('Failed to parse docker imagetools inspect output', error)
+    return undefined
+  }
+}
+
+const getRepositoryFromReference = (reference: string): string => {
+  const digestIndex = reference.indexOf('@')
+  const withoutDigest = digestIndex >= 0 ? reference.slice(0, digestIndex) : reference
+
+  const lastSlash = withoutDigest.lastIndexOf('/')
+  const lastColon = withoutDigest.lastIndexOf(':')
+
+  if (lastColon > lastSlash) {
+    return withoutDigest.slice(0, lastColon)
+  }
+
+  return withoutDigest
 }
