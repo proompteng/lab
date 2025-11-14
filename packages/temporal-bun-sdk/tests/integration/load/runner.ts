@@ -1,8 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { Effect } from 'effect'
+import { create } from '@bufbuild/protobuf'
+import { createClient } from '@connectrpc/connect'
+import { createGrpcTransport } from '@connectrpc/connect-node'
 
-import { createTemporalClient, type TemporalClient } from '../../../src/client'
+import {
+  buildTransportOptions,
+  createTemporalClient,
+  normalizeTemporalAddress,
+  type TemporalClient,
+} from '../../../src/client'
 import { loadTemporalConfig } from '../../../src/config'
 import { WorkerRuntime } from '../../../src/worker/runtime'
 import type { IntegrationHarness, WorkflowExecutionHandle } from '../harness'
@@ -15,6 +23,9 @@ import {
   type WorkerLoadCpuWorkflowInput,
 } from './workflows'
 import { EventType } from '../../../src/proto/temporal/api/enums/v1/event_type_pb'
+import { WorkflowService } from '../../../src/proto/temporal/api/workflowservice/v1/service_pb'
+import { GetWorkflowExecutionHistoryRequestSchema } from '../../../src/proto/temporal/api/workflowservice/v1/request_response_pb'
+import { WorkflowExecutionSchema } from '../../../src/proto/temporal/api/common/v1/message_pb'
 
 export interface WorkerLoadRunnerOptions {
   readonly harness: IntegrationHarness
@@ -68,18 +79,23 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
     throw error
   })
 
+  let workflowService: WorkflowServiceHandle | undefined
+
   try {
-    const { client: temporalClient } = await createTemporalClient({ config, taskQueue })
+    const { client: temporalClient, config: resolvedConfig } = await createTemporalClient({ config, taskQueue })
+    workflowService = createWorkflowServiceClient(resolvedConfig)
     try {
       const handles = await submitWorkflows(temporalClient, plans, taskQueue, loadConfig)
       await waitForWorkflowCompletions({
-        harness: options.harness,
         handles,
         stats,
+        workflowService: workflowService.client,
+        namespace: resolvedConfig.namespace,
         timeoutMs: loadConfig.workflowDurationBudgetMs,
       })
     } finally {
       await temporalClient.shutdown()
+      await workflowService?.close()
     }
   } finally {
     await runtime.shutdown()
@@ -149,14 +165,16 @@ const submitWorkflows = async (
 }
 
 const waitForWorkflowCompletions = async ({
-  harness,
+  workflowService,
   handles,
   stats,
+  namespace,
   timeoutMs,
 }: {
-  harness: IntegrationHarness
+  workflowService: ReturnType<typeof createClient<typeof WorkflowService>>
   handles: WorkflowExecutionHandle[]
   stats: RuntimeStats
+  namespace: string
   timeoutMs: number
 }) => {
   const pending = new Map(handles.map((handle) => [handle.workflowId, handle]))
@@ -169,14 +187,23 @@ const waitForWorkflowCompletions = async ({
 
     for (const [workflowId, handle] of pending) {
       try {
-        const history = await Effect.runPromise(harness.fetchWorkflowHistory(handle))
+        const request = create(GetWorkflowExecutionHistoryRequestSchema, {
+          namespace,
+          execution: create(WorkflowExecutionSchema, {
+            workflowId: handle.workflowId,
+            runId: handle.runId,
+          }),
+          maximumPageSize: 1_000,
+        })
+        const response = await workflowService.getWorkflowExecutionHistory(request, {})
+        const history = response.history?.events ?? []
         const lastEvent = history.at(-1)
-        if (lastEvent && WORKFLOW_CLOSED_EVENTS.has(lastEvent.eventType)) {
+        if (lastEvent && WORKFLOW_CLOSED_EVENTS.has(lastEvent.eventType ?? EventType.EVENT_TYPE_UNSPECIFIED)) {
           pending.delete(workflowId)
           stats.completed += 1
         }
       } catch (error) {
-        console.warn('[temporal-bun-sdk:load] failed to fetch workflow history', {
+        console.warn('[temporal-bun-sdk:load] getWorkflowExecutionHistory failed', {
           workflowId: handle.workflowId,
           runId: handle.runId,
           error,
@@ -266,6 +293,25 @@ const WORKFLOW_CLOSED_EVENTS = new Set<EventType>([
   EventType.WORKFLOW_EXECUTION_CANCELED,
   EventType.WORKFLOW_EXECUTION_CONTINUED_AS_NEW,
 ])
+
+type WorkflowServiceHandle = {
+  client: ReturnType<typeof createClient<typeof WorkflowService>>
+  close: () => Promise<void>
+}
+
+const createWorkflowServiceClient = (config: Awaited<ReturnType<typeof loadTemporalConfig>>): WorkflowServiceHandle => {
+  const useTls = Boolean(config.tls || config.allowInsecureTls)
+  const baseUrl = normalizeTemporalAddress(config.address, useTls)
+  const transportOptions = buildTransportOptions(baseUrl, config)
+  const transport = createGrpcTransport(transportOptions)
+  const client = createClient(WorkflowService, transport)
+  const close = async () => {
+    if (typeof transport.close === 'function') {
+      await transport.close()
+    }
+  }
+  return { client, close }
+}
 
 export type WorkflowPlan =
   | {
