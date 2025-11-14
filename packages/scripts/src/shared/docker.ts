@@ -15,6 +15,10 @@ export type DockerBuildResult = DockerBuildOptions & {
   image: string
 }
 
+type SpawnSync = typeof Bun.spawnSync
+
+let spawnSyncImpl: SpawnSync = (...args) => Bun.spawnSync(...args)
+
 export const buildAndPushDockerImage = async (options: DockerBuildOptions): Promise<DockerBuildResult> => {
   ensureCli('docker')
 
@@ -66,7 +70,7 @@ export const inspectImageDigest = (image: string): string => {
 }
 
 const inspectLocalImageDigest = (image: string): string | undefined => {
-  const inspect = Bun.spawnSync(['docker', 'image', 'inspect', '--format', '{{index .RepoDigests 0}}', image], {
+  const inspect = spawnSyncImpl(['docker', 'image', 'inspect', '--format', '{{index .RepoDigests 0}}', image], {
     cwd: repoRoot,
   })
 
@@ -79,7 +83,7 @@ const inspectLocalImageDigest = (image: string): string | undefined => {
 }
 
 const inspectRemoteImageDigest = (image: string): string | undefined => {
-  const inspect = Bun.spawnSync(
+  const inspect = spawnSyncImpl(
     ['docker', 'buildx', 'imagetools', 'inspect', '--format', '{{json .manifest}}', image],
     { cwd: repoRoot },
   )
@@ -114,4 +118,15 @@ const getRepositoryFromReference = (reference: string): string => {
   }
 
   return withoutDigest
+}
+
+const setSpawnSync = (fn?: SpawnSync) => {
+  spawnSyncImpl = fn ?? ((...args) => Bun.spawnSync(...args))
+}
+
+export const __private = {
+  inspectLocalImageDigest,
+  inspectRemoteImageDigest,
+  getRepositoryFromReference,
+  setSpawnSync,
 }
