@@ -59,7 +59,8 @@ const makeRetrySchedule = (policy: TemporalRpcRetryPolicy): Schedule.Schedule<Du
   const jittered = jitter === 0 ? capped : Schedule.jitteredWith({ min: 1 - jitter, max: 1 + jitter })(capped)
   const attempts = Math.max(0, Math.trunc(policy.maxAttempts) - 1)
   const limited = Schedule.intersect(Schedule.recurs(attempts))(jittered)
-  return Schedule.whileInput<unknown>(shouldRetryError(policy))(limited)
+  const normalized = Schedule.map(limited, ([delay]) => delay)
+  return Schedule.whileInput<unknown>(shouldRetryError(policy))(normalized)
 }
 
 export const withTemporalRetry = <A, E>(

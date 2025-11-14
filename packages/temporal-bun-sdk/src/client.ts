@@ -86,11 +86,15 @@ export class TemporalTlsHandshakeError extends Error {
 
 export interface TemporalWorkflowClient {
   start(options: StartWorkflowOptions, callOptions?: TemporalClientCallOptions): Promise<StartWorkflowResult>
-  signal(handle: WorkflowHandle, signalName: string, ...args: [...unknown[], TemporalClientCallOptions?]): Promise<void>
+  signal(
+    handle: WorkflowHandle,
+    signalName: string,
+    ...args: [...unknown[], TemporalClientCallOptions | undefined]
+  ): Promise<void>
   query(
     handle: WorkflowHandle,
     queryName: string,
-    ...args: [...unknown[], TemporalClientCallOptions?]
+    ...args: [...unknown[], TemporalClientCallOptions | undefined]
   ): Promise<unknown>
   terminate(
     handle: WorkflowHandle,
@@ -115,12 +119,12 @@ export interface TemporalClient {
   signalWorkflow(
     handle: WorkflowHandle,
     signalName: string,
-    ...args: [...unknown[], TemporalClientCallOptions?]
+    ...args: [...unknown[], TemporalClientCallOptions | undefined]
   ): Promise<void>
   queryWorkflow(
     handle: WorkflowHandle,
     queryName: string,
-    ...args: [...unknown[], TemporalClientCallOptions?]
+    ...args: [...unknown[], TemporalClientCallOptions | undefined]
   ): Promise<unknown>
   terminateWorkflow(
     handle: WorkflowHandle,
