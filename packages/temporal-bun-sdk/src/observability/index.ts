@@ -2,7 +2,12 @@ import { Effect } from 'effect'
 import type { LogFormat, Logger, LogLevel } from './logger'
 import { makeLogger } from './logger'
 import type { MetricsExporter, MetricsExporterSpec, MetricsRegistry } from './metrics'
-import { createMetricsExporter, createMetricsRegistry, defaultMetricsExporterSpec } from './metrics'
+import {
+  cloneMetricsExporterSpec,
+  createMetricsExporter,
+  createMetricsRegistry,
+  defaultMetricsExporterSpec,
+} from './metrics'
 
 export interface ObservabilityConfig {
   readonly logLevel: LogLevel
@@ -40,5 +45,5 @@ export const createObservabilityServices = (
 export const defaultObservabilityConfig: ObservabilityConfig = {
   logLevel: 'info',
   logFormat: 'pretty',
-  metrics: defaultMetricsExporterSpec,
+  metrics: cloneMetricsExporterSpec(defaultMetricsExporterSpec),
 }

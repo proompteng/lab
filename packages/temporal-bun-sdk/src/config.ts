@@ -2,7 +2,11 @@ import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import type { LogFormat, LogLevel } from './observability/logger'
 import type { MetricsExporterSpec } from './observability/metrics'
-import { defaultMetricsExporterSpec, resolveMetricsExporterSpec } from './observability/metrics'
+import {
+  cloneMetricsExporterSpec,
+  defaultMetricsExporterSpec,
+  resolveMetricsExporterSpec,
+} from './observability/metrics'
 
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 7233
@@ -354,7 +358,7 @@ export const temporalDefaults = {
   workerBuildId: undefined,
   logLevel: DEFAULT_LOG_LEVEL,
   logFormat: DEFAULT_LOG_FORMAT,
-  metricsExporter: defaultMetricsExporterSpec,
+  metricsExporter: cloneMetricsExporterSpec(defaultMetricsExporterSpec),
 } satisfies Pick<
   TemporalConfig,
   | 'host'

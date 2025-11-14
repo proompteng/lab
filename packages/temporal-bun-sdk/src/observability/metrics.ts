@@ -24,6 +24,11 @@ export interface MetricsExporterSpec {
 
 export const defaultMetricsExporterSpec: MetricsExporterSpec = { type: 'in-memory' }
 
+export const cloneMetricsExporterSpec = (spec: MetricsExporterSpec): MetricsExporterSpec => ({
+  type: spec.type,
+  endpoint: spec.endpoint,
+})
+
 export interface MetricsExporter {
   readonly recordCounter: (name: string, value: number, description?: string) => Effect.Effect<void, never, never>
   readonly recordHistogram: (name: string, value: number, description?: string) => Effect.Effect<void, never, never>
@@ -333,7 +338,7 @@ export const resolveMetricsExporterSpec = (exporter?: string, endpoint?: string)
     case 'inmemory':
     case 'memory':
     case undefined:
-      return defaultMetricsExporterSpec
+      return cloneMetricsExporterSpec(defaultMetricsExporterSpec)
     default:
       throw new Error(
         `Unknown metrics exporter '${normalizedScheme ?? exporter ?? ''}'; supported values are file, prometheus, otlp, in-memory`,

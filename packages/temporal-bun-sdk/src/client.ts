@@ -27,7 +27,7 @@ import {
 import { createDefaultDataConverter, type DataConverter, decodePayloadsToValues } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
 import { createObservabilityServices } from './observability'
-import type { Logger } from './observability/logger'
+import type { LogFields, Logger, LogLevel } from './observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from './observability/metrics'
 import type { Payload } from './proto/temporal/api/common/v1/message_pb'
 import {
@@ -372,11 +372,9 @@ class TemporalClientImpl implements TemporalClient {
     try {
       await Effect.runPromise(this.#metricsExporter.flush())
     } catch (error) {
-      await Effect.runPromise(
-        this.#logger.log('warn', 'failed to flush client metrics exporter', {
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      )
+      this.#log('warn', 'failed to flush client metrics exporter', {
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 
@@ -392,24 +390,33 @@ class TemporalClientImpl implements TemporalClient {
     const start = Date.now()
     try {
       const result = await action()
-      await Effect.runPromise(
-        this.#logger.log('debug', `temporal client ${operation} succeeded`, {
-          operation,
-          namespace: this.namespace,
-        }),
-      )
+      this.#log('debug', `temporal client ${operation} succeeded`, {
+        operation,
+        namespace: this.namespace,
+      })
       this.#recordMetrics(Date.now() - start, false)
       return result
     } catch (error) {
-      await Effect.runPromise(
-        this.#logger.log('error', `temporal client ${operation} failed`, {
-          operation,
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      )
+      this.#log('error', `temporal client ${operation} failed`, {
+        operation,
+        error: error instanceof Error ? error.message : String(error),
+      })
       this.#recordMetrics(Date.now() - start, true)
       throw error
     }
+  }
+
+  #log(level: LogLevel, message: string, fields?: LogFields): void {
+    void Effect.runPromise(
+      this.#logger.log(level, message, fields).pipe(
+        Effect.catchAll((error) =>
+          Effect.sync(() => {
+            const reason = error instanceof Error ? error.message : String(error)
+            console.warn(`[temporal-bun-sdk] client logger failure: ${reason}`)
+          }),
+        ),
+      ),
+    )
   }
 
   private ensureOpen(): void {

@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { Effect } from 'effect'
 
-import { defaultMetricsExporterSpec } from '../src/observability/metrics'
+import { cloneMetricsExporterSpec, defaultMetricsExporterSpec } from '../src/observability/metrics'
 import type { Logger } from '../src/observability/logger'
 
 import type { TemporalConfig } from '../src/config'
@@ -127,7 +127,7 @@ const createTestConfig = (overrides: Partial<TemporalConfig> = {}): TemporalConf
   workerBuildId: 'test-build-id',
   logLevel: 'info',
   logFormat: 'pretty',
-  metricsExporter: defaultMetricsExporterSpec,
+  metricsExporter: cloneMetricsExporterSpec(defaultMetricsExporterSpec),
   ...overrides,
 })
 
