@@ -29,6 +29,7 @@
     "dev:docs": "pnpm --filter docs dev",
     "build:docs": "pnpm --filter docs build",
     "start:docs": "pnpm --filter docs start",
+    "test:discord": "pnpm --filter @proompteng/discord test",
     "build:facteur": "bun run packages/scripts/src/facteur/build-image.ts",
     "facteur:reseal": "bun run packages/scripts/src/facteur/reseal-secrets.ts",
     "froussard:reseal": "bun run packages/scripts/src/froussard/reseal-secrets.ts",

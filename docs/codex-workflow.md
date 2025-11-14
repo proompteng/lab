@@ -54,7 +54,7 @@ WorkflowTemplate, persist intake data, emit structured logs (`workflow submitted
 
 ## Manual End-to-End Test
 
-### Discord Relay Integration
+### Discord Channel Integration
 
 Codex now mirrors planning and implementation output into a per-run Discord channel when the bot credentials are present.
 
@@ -62,12 +62,12 @@ Codex now mirrors planning and implementation output into a per-run Discord chan
    - Run `pnpm run froussard:reseal` (requires `op`, `kubectl`, and `kubeseal`) to refresh `argocd/applications/froussard/discord-secrets.yaml` with sealed values for `bot-token`, `guild-id`, and optionally `category-id`.
    - Argo CD reconciles the sealed secret into an opaque secret named `discord-codex-bot` in `argo-workflows`.
 2. **Verify workflow envs**
-   - The `facteur-dispatch` (planning), `github-codex-implementation`, and `github-codex-review` templates inject `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, and `DISCORD_CATEGORY_ID` into the Codex container. The relay only activates when the token and guild id are present.
+   - The `facteur-dispatch` (planning), `github-codex-implementation`, and `github-codex-review` templates inject `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, and `DISCORD_CATEGORY_ID` into the Codex container. Streaming only activates when the token and guild id are present.
 3. **Dry-run locally**
-   - Exercise the relay without touching Discord by piping sample output:
+   - Exercise the channel flow without touching Discord by piping sample output:
      ```bash
      printf 'hello discord\nthis is a dry run\n' | \
-       bunx tsx apps/froussard/scripts/discord-relay.ts \
+       bunx tsx apps/froussard/scripts/discord-channel.ts \
          --stage planning \
          --repo proompteng/lab \
          --issue 999 \

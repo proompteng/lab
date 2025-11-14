@@ -80,7 +80,7 @@ This runbook sequences the handoff of planning workflow dispatch from Argo Event
   - `workflow submitted: stage=PLANNING repo=… issue=… workflow=codex-planning-…`
 - `argo get codex-planning-<suffix> -n argo-workflows` shows success and references the correct payload parameters.
 - OTEL / Loki dashboards chart `codex.stage=planning` without error spikes during the transition window.
-- Discord relay posts planning output to the expected channel when credentials are configured.
+- Discord channel streaming posts planning output to the expected channel when credentials are configured.
 
 ## Rollback
 

@@ -7,7 +7,7 @@ import process from 'node:process'
 import { runCli } from './lib/cli'
 import { pushCodexEventsToLoki, runCodexSession } from './lib/codex-runner'
 import {
-  buildDiscordRelayCommand,
+  buildDiscordChannelCommand,
   copyAgentLogIfNeeded,
   pathExists,
   randomRunId,
@@ -752,11 +752,11 @@ export const runCodexImplementation = async (eventPath: string) => {
   process.env.RUST_LOG = process.env.RUST_LOG ?? 'codex_core=info,codex_exec=info'
   process.env.RUST_BACKTRACE = process.env.RUST_BACKTRACE ?? '1'
 
-  const relayScript = process.env.RELAY_SCRIPT ?? 'apps/froussard/scripts/discord-relay.ts'
-  const relayTimestamp = timestampUtc()
-  const relayRunIdSource =
-    process.env.CODEX_RELAY_RUN_ID ?? process.env.ARGO_WORKFLOW_NAME ?? process.env.ARGO_WORKFLOW_UID ?? randomRunId()
-  const relayRunId = relayRunIdSource.slice(0, 24).toLowerCase()
+  const channelScript = process.env.CHANNEL_SCRIPT ?? 'apps/froussard/scripts/discord-channel.ts'
+  const channelTimestamp = timestampUtc()
+  const channelRunIdSource =
+    process.env.CODEX_CHANNEL_RUN_ID ?? process.env.ARGO_WORKFLOW_NAME ?? process.env.ARGO_WORKFLOW_UID ?? randomRunId()
+  const channelRunId = channelRunIdSource.slice(0, 24).toLowerCase()
 
   const logger = await createCodexLogger({
     logPath: runtimeLogPath,
@@ -766,7 +766,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       issue: issueNumber,
       workflow: process.env.ARGO_WORKFLOW_NAME ?? undefined,
       namespace: process.env.ARGO_WORKFLOW_NAMESPACE ?? undefined,
-      run_id: relayRunId || undefined,
+      run_id: channelRunId || undefined,
     },
   })
 
@@ -804,10 +804,10 @@ export const runCodexImplementation = async (eventPath: string) => {
 
     capturedSessionId = resumeSessionId
 
-    let discordRelayCommand: string[] | undefined
+    let discordChannelCommand: string[] | undefined
     const discordToken = process.env.DISCORD_BOT_TOKEN ?? ''
     const discordGuild = process.env.DISCORD_GUILD_ID ?? ''
-    const discordScriptExists = await pathExists(relayScript)
+    const discordScriptExists = await pathExists(channelScript)
 
     if (discordToken && discordGuild && discordScriptExists) {
       const args = [
@@ -818,25 +818,25 @@ export const runCodexImplementation = async (eventPath: string) => {
         '--issue',
         issueNumber,
         '--timestamp',
-        relayTimestamp,
+        channelTimestamp,
       ]
-      if (relayRunId) {
-        args.push('--run-id', relayRunId)
+      if (channelRunId) {
+        args.push('--run-id', channelRunId)
       }
       if (issueTitle) {
         args.push('--title', issueTitle)
       }
-      if (process.env.DISCORD_RELAY_DRY_RUN === '1') {
+      if (process.env.DISCORD_CHANNEL_DRY_RUN === '1') {
         args.push('--dry-run')
       }
       try {
-        discordRelayCommand = await buildDiscordRelayCommand(relayScript, args)
+        discordChannelCommand = await buildDiscordChannelCommand(channelScript, args)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        logger.warn(`Discord relay disabled: ${message}`)
+        logger.warn(`Discord channel disabled: ${message}`)
       }
     } else {
-      logger.warn('Discord relay disabled: missing credentials or relay script')
+      logger.warn('Discord channel disabled: missing credentials or channel script')
     }
 
     if (resumeSessionId) {
@@ -853,10 +853,10 @@ export const runCodexImplementation = async (eventPath: string) => {
       agentOutputPath,
       resumeSessionId,
       logger,
-      discordRelay: discordRelayCommand
+      discordChannel: discordChannelCommand
         ? {
-            command: discordRelayCommand,
-            onError: (error) => logger.error(`Discord relay failed: ${error.message}`),
+            command: discordChannelCommand,
+            onError: (error) => logger.error(`Discord channel failed: ${error.message}`),
           }
         : undefined,
     })
@@ -878,7 +878,7 @@ export const runCodexImplementation = async (eventPath: string) => {
         issue: issueNumber,
         workflow: process.env.ARGO_WORKFLOW_NAME ?? undefined,
         namespace: process.env.ARGO_WORKFLOW_NAMESPACE ?? undefined,
-        run_id: relayRunId || undefined,
+        run_id: channelRunId || undefined,
       },
       tenant: lokiTenant,
       basicAuth: lokiBasicAuth,

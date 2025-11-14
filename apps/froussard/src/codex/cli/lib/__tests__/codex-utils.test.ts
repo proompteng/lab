@@ -10,7 +10,7 @@ vi.mock('bun', () => ({
 }))
 
 import {
-  buildDiscordRelayCommand,
+  buildDiscordChannelCommand,
   copyAgentLogIfNeeded,
   parseBoolean,
   pathExists,
@@ -68,13 +68,13 @@ describe('codex-utils', () => {
     expect(copied).toBe('agent contents')
   })
 
-  it('builds a bun relay command using the resolved binary', async () => {
-    const command = await buildDiscordRelayCommand('relay.ts', ['--stage', 'plan'])
-    expect(command).toEqual(['/usr/local/bin/bun', 'run', 'relay.ts', '--stage', 'plan'])
+  it('builds a bun channel command using the resolved binary', async () => {
+    const command = await buildDiscordChannelCommand('channel.ts', ['--stage', 'plan'])
+    expect(command).toEqual(['/usr/local/bin/bun', 'run', 'channel.ts', '--stage', 'plan'])
   })
 
   it('throws when bun cannot be resolved', async () => {
     whichMock.mockResolvedValueOnce('')
-    await expect(buildDiscordRelayCommand('relay.ts', [])).rejects.toThrow('bun not available in PATH')
+    await expect(buildDiscordChannelCommand('channel.ts', [])).rejects.toThrow('bun not available in PATH')
   })
 })

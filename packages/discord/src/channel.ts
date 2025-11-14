@@ -7,7 +7,7 @@ const CHANNEL_NAME_MAX_LENGTH = 95
 const DEFAULT_BACKOFF_MS = 500
 const MAX_BACKOFF_MS = 5_000
 const CATEGORY_CHANNEL_LIMIT = 50
-const CATEGORY_NAME_PREFIX = 'Codex Relay - '
+const CATEGORY_NAME_PREFIX = 'Codex Channel - '
 
 const CATEGORY_ADJECTIVES = [
   'Lumineuse',
@@ -41,7 +41,7 @@ export interface DiscordConfig {
   categoryId?: string
 }
 
-export interface RelayMetadata {
+export interface ChannelMetadata {
   repository?: string
   issueNumber?: string | number
   issueUrl?: string
@@ -52,7 +52,7 @@ export interface RelayMetadata {
   summary?: string
 }
 
-export interface RelayBootstrapResult {
+export interface ChannelBootstrapResult {
   channelId: string
   channelName: string
   guildId: string
@@ -81,18 +81,18 @@ interface CategoryResolution {
   createdCategory?: boolean
 }
 
-export class DiscordRelayError extends Error {
+export class DiscordChannelError extends Error {
   constructor(
     message: string,
     readonly response?: Response,
     readonly payload?: DiscordErrorPayload,
   ) {
     super(message)
-    this.name = 'DiscordRelayError'
+    this.name = 'DiscordChannelError'
   }
 }
 
-class DiscordRetryableError extends DiscordRelayError {
+class DiscordRetryableError extends DiscordChannelError {
   constructor(
     message: string,
     response: Response | undefined,
@@ -152,7 +152,7 @@ const sanitizeSegment = (value: string) =>
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
 
-export const buildChannelName = (metadata: RelayMetadata): string => {
+export const buildChannelName = (metadata: ChannelMetadata): string => {
   const createdAt = metadata.createdAt ?? new Date()
   const parts: string[] = []
 
@@ -201,8 +201,8 @@ export const buildChannelName = (metadata: RelayMetadata): string => {
   return channelName
 }
 
-const buildInitialMessage = (metadata: RelayMetadata, relay: RelayBootstrapResult) => {
-  const lines: string[] = [`**Codex Relay Started**`]
+const buildInitialMessage = (metadata: ChannelMetadata, channel: ChannelBootstrapResult) => {
+  const lines: string[] = [`**Codex Channel Started**`]
 
   if (metadata.title) {
     lines.push(`**Title:** ${metadata.title}`)
@@ -244,9 +244,9 @@ const buildInitialMessage = (metadata: RelayMetadata, relay: RelayBootstrapResul
     lines.push(`**Stage:** ${stageLabel}`)
   }
 
-  const channelLine = relay.url
-    ? `**Channel:** [#${relay.channelName}](${relay.url})`
-    : `**Channel:** #${relay.channelName}`
+  const channelLine = channel.url
+    ? `**Channel:** [#${channel.channelName}](${channel.url})`
+    : `**Channel:** #${channel.channelName}`
   lines.push(channelLine)
 
   const startedAtSource =
@@ -287,7 +287,7 @@ const nextBackoff = (attempt: number) => Math.min(MAX_BACKOFF_MS, DEFAULT_BACKOF
 const discordFetch = async (config: DiscordConfig, path: string, init: RequestInit): Promise<Response> => {
   const url = `${DISCORD_API_BASE}${path}`
 
-  const request = (attempt: number): Effect.Effect<Response, DiscordRelayError> =>
+  const request = (attempt: number): Effect.Effect<Response, DiscordChannelError> =>
     Effect.gen(function* () {
       const response = yield* Effect.tryPromise(() =>
         fetch(url, { ...init, headers: { ...buildHeaders(config), ...(init.headers ?? {}) } }),
@@ -317,7 +317,7 @@ const discordFetch = async (config: DiscordConfig, path: string, init: RequestIn
       if (!response.ok) {
         const payload = yield* Effect.tryPromise(() => parseError(response))
         yield* Effect.fail(
-          new DiscordRelayError(`Discord request failed with status ${response.status}`, response, payload),
+          new DiscordChannelError(`Discord request failed with status ${response.status}`, response, payload),
         )
       }
 
@@ -327,7 +327,7 @@ const discordFetch = async (config: DiscordConfig, path: string, init: RequestIn
         if (error instanceof DiscordRetryableError) {
           const hasRetryBudget = error.rateLimited || attempt < 5
           if (!hasRetryBudget) {
-            return Effect.fail(new DiscordRelayError(error.message, error.response, error.payload))
+            return Effect.fail(new DiscordChannelError(error.message, error.response, error.payload))
           }
           const delayMs = error.retryAfterMs ?? nextBackoff(attempt)
           return Effect.sleep(Duration.millis(delayMs)).pipe(Effect.flatMap(() => request(attempt + 1)))
@@ -387,7 +387,7 @@ const createCategory = async (config: DiscordConfig, takenNames: Set<string>): P
   })
   const payload = await requestJson<{ id?: string }>(response)
   if (!payload.id) {
-    throw new DiscordRelayError(
+    throw new DiscordChannelError(
       'Discord category creation response missing id',
       response,
       payload as DiscordErrorPayload,
@@ -449,10 +449,10 @@ const resolveCategory = async (config: DiscordConfig): Promise<CategoryResolutio
   return createCategory(config, takenNames)
 }
 
-export const createRelayChannel = async (
+export const createChannel = async (
   config: DiscordConfig,
-  metadata: RelayMetadata,
-): Promise<RelayBootstrapResult> => {
+  metadata: ChannelMetadata,
+): Promise<ChannelBootstrapResult> => {
   const channelName = buildChannelName(metadata)
   const categoryResolution = await resolveCategory(config)
   const parentId = categoryResolution.categoryId ?? config.categoryId ?? undefined
@@ -469,7 +469,7 @@ export const createRelayChannel = async (
 
   const json = await requestJson<{ id?: string }>(response)
   if (!json.id) {
-    throw new DiscordRelayError('Discord channel creation response missing id', response, json as DiscordErrorPayload)
+    throw new DiscordChannelError('Discord channel creation response missing id', response, json as DiscordErrorPayload)
   }
 
   return {
@@ -494,43 +494,43 @@ export const postMessage = async (config: DiscordConfig, channelId: string, cont
   })
 }
 
-export interface RelayOptions {
+export interface ChannelOptions {
   dryRun?: boolean
   echo?: (line: string) => void
 }
 
-export const bootstrapRelay = async (
+export const bootstrapChannel = async (
   config: DiscordConfig,
-  metadata: RelayMetadata,
-  options: RelayOptions = {},
-): Promise<RelayBootstrapResult> => {
+  metadata: ChannelMetadata,
+  options: ChannelOptions = {},
+): Promise<ChannelBootstrapResult> => {
   if (options.dryRun) {
-    const relayResult: RelayBootstrapResult = {
+    const channelResult: ChannelBootstrapResult = {
       channelId: 'dry-run',
       channelName: buildChannelName(metadata),
       guildId: config.guildId,
       url: `https://discord.com/channels/${config.guildId}/dry-run`,
     }
-    options.echo?.(`[dry-run] Would create channel ${relayResult.channelName} in guild ${relayResult.guildId}`)
-    options.echo?.(buildInitialMessage(metadata, relayResult))
-    return relayResult
+    options.echo?.(`[dry-run] Would create channel ${channelResult.channelName} in guild ${channelResult.guildId}`)
+    options.echo?.(buildInitialMessage(metadata, channelResult))
+    return channelResult
   }
 
-  const relayResult = await createRelayChannel(config, metadata)
-  if (options.echo && relayResult.createdCategory && relayResult.categoryName) {
-    options.echo?.(`Created Discord category '${relayResult.categoryName}' for Codex relay channels.`)
+  const channelResult = await createChannel(config, metadata)
+  if (options.echo && channelResult.createdCategory && channelResult.categoryName) {
+    options.echo?.(`Created Discord category '${channelResult.categoryName}' for Codex channel streams.`)
   }
-  await postMessage(config, relayResult.channelId, buildInitialMessage(metadata, relayResult))
-  return relayResult
+  await postMessage(config, channelResult.channelId, buildInitialMessage(metadata, channelResult))
+  return channelResult
 }
 
 const FLUSH_THRESHOLD = 900
 
-export const relayStream = async (
+export const streamChannel = async (
   config: DiscordConfig,
-  relay: RelayBootstrapResult,
+  channel: ChannelBootstrapResult,
   stream: AsyncIterable<string>,
-  options: RelayOptions = {},
+  options: ChannelOptions = {},
 ) => {
   if (options.dryRun) {
     for await (const chunk of stream) {
@@ -559,7 +559,7 @@ export const relayStream = async (
     const parts = chunkContent(normalized)
     for (const part of parts) {
       if (part) {
-        await postMessage(config, relay.channelId, part)
+        await postMessage(config, channel.channelId, part)
       }
     }
     if (force) {
@@ -588,7 +588,7 @@ export const relayStream = async (
       const { chunks, remainder } = consumeChunks(pending)
       for (const part of chunks) {
         if (part) {
-          await postMessage(config, relay.channelId, part)
+          await postMessage(config, channel.channelId, part)
         }
       }
       pending = remainder

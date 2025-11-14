@@ -68,7 +68,7 @@ export const copyAgentLogIfNeeded = async (outputPath: string, agentPath: string
   }
 }
 
-export const buildDiscordRelayCommand = async (scriptPath: string, args: string[]): Promise<string[]> => {
+export const buildDiscordChannelCommand = async (scriptPath: string, args: string[]): Promise<string[]> => {
   const bunPath = await which('bun')
   if (!bunPath) {
     throw new Error('bun not available in PATH')

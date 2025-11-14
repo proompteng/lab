@@ -20,6 +20,7 @@ jobs:
       reviseur: ${{ steps.filter.outputs.reviseur }}
       bonjour: ${{ steps.filter.outputs.bonjour }}
       codex: ${{ steps.filter.outputs.codex }}
+      discord: ${{ steps.filter.outputs.discord }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -38,6 +39,8 @@ jobs:
               - 'apps/reviseur/**'
             codex:
               - 'packages/codex/**'
+            discord:
+              - 'packages/discord/**'
             packages:
               - 'packages/**'
 
@@ -130,6 +133,26 @@ jobs:
       - run: pnpm --filter @proompteng/codex test
 
       - run: pnpm --filter @proompteng/codex build
+
+  discord:
+    needs: check_changed_files
+    if: ${{ needs.check_changed_files.outputs.discord == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @proompteng/discord test
+
+      - run: pnpm --filter @proompteng/discord build
 
   kitty-krew:
     needs: check_changed_files

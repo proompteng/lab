@@ -4,7 +4,7 @@ import process from 'node:process'
 import { ensureFileDirectory } from './fs'
 import { type CodexLogger, consoleLogger } from './logger'
 
-export interface DiscordRelayOptions {
+export interface DiscordChannelOptions {
   command: string[]
   onError?: (error: Error) => void
 }
@@ -15,7 +15,7 @@ export interface RunCodexSessionOptions {
   outputPath: string
   jsonOutputPath: string
   agentOutputPath: string
-  discordRelay?: DiscordRelayOptions
+  discordChannel?: DiscordChannelOptions
   resumeSessionId?: string
   logger?: CodexLogger
 }
@@ -173,7 +173,7 @@ export const runCodexSession = async ({
   outputPath,
   jsonOutputPath,
   agentOutputPath,
-  discordRelay,
+  discordChannel,
   resumeSessionId,
   logger,
 }: RunCodexSessionOptions): Promise<RunCodexSessionResult> => {
@@ -192,10 +192,10 @@ export const runCodexSession = async ({
   let discordWriter: WritableHandle | undefined
   let discordClosed = false
 
-  if (discordRelay) {
+  if (discordChannel) {
     try {
       discordProcess = Bun.spawn({
-        cmd: discordRelay.command,
+        cmd: discordChannel.command,
         stdin: 'pipe',
         stdout: 'inherit',
         stderr: 'inherit',
@@ -204,16 +204,16 @@ export const runCodexSession = async ({
       if (handle) {
         discordWriter = handle
       } else {
-        log.warn('Discord relay process did not expose stdin; disabling relay')
+        log.warn('Discord channel process did not expose stdin; disabling channel streaming')
         discordProcess.kill()
         discordProcess = undefined
         discordWriter = undefined
       }
     } catch (error) {
-      if (discordRelay.onError && error instanceof Error) {
-        discordRelay.onError(error)
+      if (discordChannel.onError && error instanceof Error) {
+        discordChannel.onError(error)
       } else {
-        log.error('Failed to start Discord relay:', error)
+        log.error('Failed to start Discord channel:', error)
       }
     }
   }
@@ -287,10 +287,10 @@ export const runCodexSession = async ({
       } catch (error) {
         discordClosed = true
         await discordWriter.close().catch(() => {})
-        if (discordRelay?.onError && error instanceof Error) {
-          discordRelay.onError(error)
+        if (discordChannel?.onError && error instanceof Error) {
+          discordChannel.onError(error)
         } else {
-          log.error('Failed to write tool call to Discord relay:', error)
+          log.error('Failed to write tool call to Discord channel:', error)
         }
       }
     }
@@ -314,10 +314,10 @@ export const runCodexSession = async ({
           } catch (error) {
             discordClosed = true
             await discordWriter.close().catch(() => {})
-            if (discordRelay?.onError && error instanceof Error) {
-              discordRelay.onError(error)
+            if (discordChannel?.onError && error instanceof Error) {
+              discordChannel.onError(error)
             } else {
-              log.error('Failed to write to Discord relay stream:', error)
+              log.error('Failed to write to Discord channel stream:', error)
             }
           }
         }
@@ -365,8 +365,8 @@ export const runCodexSession = async ({
 
   if (discordProcess) {
     const discordExit = await discordProcess.exited
-    if (discordExit !== 0 && discordRelay?.onError) {
-      discordRelay.onError(new Error(`Discord relay exited with status ${discordExit}`))
+    if (discordExit !== 0 && discordChannel?.onError) {
+      discordChannel.onError(new Error(`Discord channel exited with status ${discordExit}`))
     }
   }
 
