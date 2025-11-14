@@ -17,17 +17,19 @@ WORKDIR /workspace
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY .npmrc* ./
 COPY apps/froussard/package.json apps/froussard/tsconfig.json apps/froussard/tsdown.config.ts ./apps/froussard/
-RUN pnpm install --filter froussard --frozen-lockfile --ignore-scripts
+WORKDIR /workspace/apps/froussard
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 FROM deps AS build
+WORKDIR /workspace
 COPY apps/froussard ./apps/froussard
 RUN pnpm --filter froussard run build
 
 FROM oven/bun:${BUN_VERSION}-slim AS runtime
 ENV NODE_ENV=production
-WORKDIR /app
+WORKDIR /workspace/apps/froussard
 COPY apps/froussard/package.json ./package.json
 COPY --from=build /workspace/apps/froussard/dist ./dist
-COPY --from=deps /workspace/apps/froussard/node_modules ./node_modules
+COPY --from=deps /workspace/node_modules /workspace/node_modules
 EXPOSE 8080
 CMD ["bun", "dist/index.mjs"]
