@@ -51,7 +51,20 @@ export function parseArgs(argv: string[]) {
       continue
     }
 
-    const key = value.replace(/^-+/, '')
+    const trimmed = value.replace(/^-+/, '')
+    if (trimmed.length === 0) {
+      continue
+    }
+
+    const equalsIndex = trimmed.indexOf('=')
+    if (equalsIndex !== -1) {
+      const key = trimmed.slice(0, equalsIndex)
+      const flagValue = trimmed.slice(equalsIndex + 1)
+      flags[key] = flagValue
+      continue
+    }
+
+    const key = trimmed
     const next = argv[index + 1]
     if (next && !next.startsWith('-')) {
       flags[key] = next
