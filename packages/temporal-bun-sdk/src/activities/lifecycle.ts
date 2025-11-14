@@ -137,6 +137,7 @@ class ActivityHeartbeatDriver {
   readonly #observability?: ActivityLifecycleObservability
   readonly #intervalMs: number
   readonly #retryJitterRatio: number
+  readonly #recordedHeartbeatErrors = new WeakSet<object>()
   #pending: PendingHeartbeat | undefined
   #timer: NodeJS.Timeout | undefined
   #sending: Promise<void> | undefined
@@ -341,6 +342,13 @@ class ActivityHeartbeatDriver {
   }
 
   #recordHeartbeatFailure(error: unknown): void {
+    if (typeof error === 'object' && error !== null) {
+      if (this.#recordedHeartbeatErrors.has(error)) {
+        return
+      }
+      this.#recordedHeartbeatErrors.add(error)
+    }
+
     const observability = this.#observability
     if (!observability) {
       return

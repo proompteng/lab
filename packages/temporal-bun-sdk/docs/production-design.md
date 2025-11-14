@@ -22,7 +22,7 @@ and the quality bars we must meet before GA.
 | Area | Status | Notes |
 | --- | --- | --- |
 | Workflow execution | **Alpha** | Deterministic command context, activity/timer/child/signal/continue-as-new intents, deterministic guard. |
-| Worker runtime | **Beta** | Sticky cache routing now performs drift detection + healing; Effect-based scheduler with configurable concurrency; heartbeats and observability still pending. |
+| Worker runtime | **Beta** | Sticky cache routing performs drift detection + healing; Effect-based scheduler with configurable concurrency; observability/logging/heartbeat telemetry wired via TBS-004. |
 | Client | **Alpha** | Start/signal/query/cancel/update/describe namespace with Connect transport; interceptors and retries pending. |
 | Activities | **Beta-** | Handler registry, cancellation signals. Heartbeats, retries, and failure categorisation remain. |
 | Tooling & docs | **Beta-** | Replay runbook + history capture automation documented; CLI scaffolds projects and Docker image. Remaining doc gaps outside TBS-001. |
@@ -59,7 +59,7 @@ to be complete, with supporting validation and documentation.
 | Activity lifecycle | 🚧 partial | Heartbeats, retries, cancellation reasons, eager activities. | Yes |
 | Worker concurrency | ✅ scheduler + sticky queues | Configurable parallelism, sticky queues, build-id routing, per-namespace/task queue isolation. | Yes |
 | Client resilience | 🚧 partial | Retry policies, interceptors, TLS/mTLS test matrix, structured errors. | Yes |
-| Diagnostics | 🚧 not started | Structured logs, OpenTelemetry metrics/traces, hookable logger. | Yes |
+| Diagnostics | ✅ logs + metrics (tracing next) | Effect-based logger + metrics exporters ship with worker/client runtimes; tracing hooks scheduled separately. | Yes |
 | Testing & QA | ✅ replay + integration | Deterministic regression suite, integration tests with Temporal dev server; load/perf smoke tests still pending. | Yes |
 | Tooling | 🚧 partial | CLI connectivity check, replay CLI, proto regeneration script, API docs generator. | No (Beta) |
 | Documentation | 🚧 partial | Architecture guide, workflow/activities best practices, migration guide, troubleshooting, accessibility for CLI. | Yes |
@@ -199,7 +199,7 @@ can contribute independently without re-planning.
   1. ✅ Configurable concurrency levels (workflow/activity) via config/env (`TEMPORAL_WORKFLOW_CONCURRENCY`, `TEMPORAL_ACTIVITY_CONCURRENCY`).
   2. ✅ Sticky task affinity using cache (TBS-001) with eviction metrics and tunable size/TTL (`TEMPORAL_STICKY_CACHE_SIZE`, `TEMPORAL_STICKY_TTL_MS`).
   3. ✅ Build-id routing respected when scheduling tasks (`TEMPORAL_WORKER_DEPLOYMENT_NAME`, `TEMPORAL_WORKER_BUILD_ID`).
-  4. ✅ Graceful shutdown drains tasks; metrics/log hooks tracked under TBS-004.
+  4. ✅ Graceful shutdown drains tasks; observability hooks from TBS-004 now emit lifecycle logs + metrics during drain.
   5. 🚧 Load tests demonstrate throughput improvements.
 - **Dependencies**
   - Consumes determinism cache (TBS-001), emits metrics for TBS-004.
@@ -380,8 +380,7 @@ can contribute independently without re-planning.
   host applications.
 - Plan for OpenTelemetry metrics (`temporal.worker.poll_time`, `workflow.task.latency`)
   and tracing instrumentation.
-- TODO(TBS-004): Wire `observability/logger.ts` and `observability/metrics.ts`
-  into worker/client pipelines with hooks for custom sinks.
+- Observability layers now back the worker/client runtimes; tracing hooks will piggyback on the same logger/metrics surfaces when ready.
 
 ## Configuration & Deployment
 

@@ -1,8 +1,10 @@
+import { Code, ConnectError } from '@connectrpc/connect'
 import { describe, expect, test } from 'bun:test'
 import { Effect } from 'effect'
 
 import { makeActivityLifecycle } from '../../src/activities/lifecycle'
 import { createDefaultDataConverter } from '../../src/common/payloads'
+import type { Logger } from '../../src/observability/logger'
 import type { ActivityContext } from '../../src/worker/activity-context'
 
 const converter = createDefaultDataConverter()
@@ -107,6 +109,63 @@ describe('activity lifecycle helpers', () => {
     expect(stub.calls.length).toBe(1)
     expect(stub.calls[0]?.details).toBeUndefined()
   })
+
+  test('records heartbeat failures once when retries are exhausted', async () => {
+    const failureCounter = createTestCounter()
+
+    const lifecycle = await Effect.runPromise(
+      makeActivityLifecycle({
+        heartbeatIntervalMs: 10,
+        heartbeatRpcTimeoutMs: 50,
+        heartbeatRetry: {
+          initialIntervalMs: 1,
+          maxIntervalMs: 1,
+          backoffCoefficient: 1,
+          maxAttempts: 1,
+        },
+        observability: {
+          logger: makeNoopLogger(),
+          heartbeatRetryCounter: createTestCounter().counter,
+          heartbeatFailureCounter: failureCounter.counter,
+        },
+      }),
+    )
+
+    const controller = new AbortController()
+    const context = createTestContext(controller)
+    const stub = new AlwaysFailingWorkflowService()
+
+    const registration = await Effect.runPromise(
+      lifecycle.registerHeartbeat({
+        context,
+        workflowService: stub,
+        taskToken: new Uint8Array([7, 8, 9]),
+        identity: 'test-worker',
+        namespace: 'default',
+        dataConverter: converter,
+        abortController: controller,
+      }),
+    )
+
+    let caught = false
+    await Effect.runPromise(
+      registration
+        .heartbeat(['boom'])
+        .pipe(
+          Effect.catchAll((error) =>
+            Effect.sync(() => {
+              caught = true
+              const root = typeof error === 'object' && error && 'cause' in error ? (error as { cause?: unknown }).cause : error
+              expect(root).toBeInstanceOf(ConnectError)
+            }),
+          ),
+        ),
+    )
+    expect(caught).toBe(true)
+    await Effect.runPromise(registration.shutdown)
+
+    expect(failureCounter.getCount()).toBe(1)
+  })
 })
 
 const createTestContext = (abortController: AbortController): ActivityContext => ({
@@ -142,3 +201,26 @@ class StubWorkflowService {
     return { cancelRequested: false }
   }
 }
+
+class AlwaysFailingWorkflowService extends StubWorkflowService {
+  async recordActivityTaskHeartbeat(): Promise<never> {
+    throw new ConnectError('test failure', Code.Unavailable)
+  }
+}
+
+const createTestCounter = () => {
+  let count = 0
+  return {
+    counter: {
+      inc: (value?: number) =>
+        Effect.sync(() => {
+          count += value ?? 1
+        }),
+    },
+    getCount: () => count,
+  }
+}
+
+const makeNoopLogger = (): Logger => ({
+  log: () => Effect.void,
+})

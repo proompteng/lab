@@ -27,19 +27,19 @@ test('registers a build ID when the RPC succeeds', async () => {
     },
   }
 
-  const info: string[] = []
-  const originalInfo = console.info
-  console.info = (...args: unknown[]) => info.push(args.join(' '))
-  try {
-    await registerWorkerBuildIdCompatibility(service, 'namespace', 'task-queue', 'build-id')
-    expect(requests).toHaveLength(1)
-    expect(requests[0].namespace).toBe('namespace')
-    expect(requests[0].taskQueue).toBe('task-queue')
-    expect(requests[0].operation.case).toBe('addNewBuildIdInNewDefaultSet')
-    expect(info.some((value) => value.includes('build ID build-id'))).toBeTrue()
-  } finally {
-    console.info = originalInfo
-  }
+  const recording = createRecordingLogger()
+  await registerWorkerBuildIdCompatibility(service, 'namespace', 'task-queue', 'build-id', {
+    logger: recording.logger,
+  })
+  expect(requests).toHaveLength(1)
+  expect(requests[0].namespace).toBe('namespace')
+  expect(requests[0].taskQueue).toBe('task-queue')
+  expect(requests[0].operation.case).toBe('addNewBuildIdInNewDefaultSet')
+  expect(
+    recording.entries.some(
+      (entry) => entry.level === 'info' && entry.message === 'registered worker build ID',
+    ),
+  ).toBeTrue()
 })
 
 test('retries transient failures before succeeding', async () => {
@@ -76,16 +76,15 @@ test('warns and continues when the API is not implemented', async () => {
     },
   }
 
-  const warnings: string[] = []
-  const originalWarn = console.warn
-  console.warn = (...args: unknown[]) => warnings.push(args.join(' '))
-  try {
-    await registerWorkerBuildIdCompatibility(service, 'namespace', 'task-queue', 'build-id')
-    expect(warnings).toHaveLength(1)
-    expect(warnings[0]).toContain('worker versioning API unavailable')
-  } finally {
-    console.warn = originalWarn
-  }
+  const recording = createRecordingLogger()
+  await registerWorkerBuildIdCompatibility(service, 'namespace', 'task-queue', 'build-id', {
+    logger: recording.logger,
+  })
+  expect(
+    recording.entries.some(
+      (entry) => entry.level === 'warn' && entry.message.includes('worker versioning API unavailable'),
+    ),
+  ).toBeTrue()
 })
 
 test('propagates fatal errors', async () => {
@@ -133,6 +132,17 @@ const createTestConfig = (overrides: Partial<TemporalConfig> = {}): TemporalConf
 
 const withWorkflowService = (service: Partial<WorkflowServiceClient>): WorkflowServiceClient =>
   service as WorkflowServiceClient
+
+const createRecordingLogger = () => {
+  const entries: { level: string; message: string; fields?: unknown }[] = []
+  const logger: Logger = {
+    log(level, message, fields) {
+      entries.push({ level, message, fields })
+      return Effect.void
+    },
+  }
+  return { entries, logger }
+}
 
 test('WorkerRuntime registers build IDs before pollers start when worker versioning is supported', async () => {
   const capabilityRequests: unknown[] = []

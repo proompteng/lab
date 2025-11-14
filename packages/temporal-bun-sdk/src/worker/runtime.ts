@@ -268,14 +268,16 @@ export class WorkerRuntime {
     const stickyCacheTtlMs = stickyCacheOptions?.ttlMs ?? config.workerStickyTtlMs
     const stickyCacheHooks: StickyCacheHooks = {
       onEvict: (entry, reason) =>
-        logger.log('debug', 'sticky cache eviction', {
-          namespace: entry.key.namespace,
-          taskQueue,
-          workflowId: entry.key.workflowId,
-          runId: entry.key.runId,
-          workflowType: entry.workflowType,
-          reason,
-        }),
+        void Effect.runPromise(
+          logger.log('debug', 'sticky cache eviction', {
+            namespace: entry.key.namespace,
+            taskQueue,
+            workflowId: entry.key.workflowId,
+            runId: entry.key.runId,
+            workflowType: entry.workflowType,
+            reason,
+          }),
+        ),
     }
     const stickyCache = hasStickyCacheInstance
       ? (stickyCacheCandidate as StickyCache)
@@ -316,7 +318,7 @@ export class WorkerRuntime {
     if (workerVersioningMode === WorkerVersioningMode.VERSIONED) {
       const capability = await checkWorkerVersioningCapability(workflowService, namespace, taskQueue)
       if (capability.supported) {
-        await registerWorkerBuildIdCompatibility(workflowService, namespace, taskQueue, buildId)
+        await registerWorkerBuildIdCompatibility(workflowService, namespace, taskQueue, buildId, { logger })
       } else {
         await Effect.runPromise(
           logger.log('warn', 'skipping worker build ID registration', {
@@ -345,6 +347,22 @@ export class WorkerRuntime {
           heartbeatRetryCounter: runtimeMetrics.heartbeatRetries,
           heartbeatFailureCounter: runtimeMetrics.heartbeatFailures,
         },
+      }),
+    )
+
+    await Effect.runPromise(
+      logger.log('info', 'temporal worker runtime configured', {
+        namespace,
+        taskQueue,
+        identity,
+        workflowConcurrency,
+        activityConcurrency,
+        stickySchedulingEnabled,
+        deploymentName,
+        buildId,
+        logLevel: config.logLevel,
+        logFormat: config.logFormat,
+        metricsExporter: config.metricsExporter.type,
       }),
     )
 
@@ -549,6 +567,14 @@ export class WorkerRuntime {
 
     try {
       await this.#startScheduler()
+      this.#log(
+        'info',
+        'temporal worker runtime started',
+        this.#runtimeLogFields({
+          workflowPollers: this.#workflowPollerCount,
+          stickySchedulingEnabled: this.#stickySchedulingEnabled,
+        }),
+      )
     } catch (error) {
       this.#running = false
       this.#abortController = null
@@ -573,13 +599,16 @@ export class WorkerRuntime {
       await this.#runPromise
     } finally {
       await this.#flushMetrics()
+      this.#log('info', 'temporal worker runtime stopped', this.#runtimeLogFields())
     }
   }
 
   async shutdown(): Promise<void> {
+    this.#log('info', 'temporal worker shutdown requested', this.#runtimeLogFields({ running: this.#running }))
     if (!this.#running) {
       await this.#stopScheduler()
       await this.#flushMetrics()
+      this.#log('info', 'temporal worker shutdown complete', this.#runtimeLogFields({ drained: false }))
       return
     }
     this.#abortController?.abort()
@@ -593,6 +622,7 @@ export class WorkerRuntime {
       await this.#stopScheduler()
     }
     await this.#flushMetrics()
+    this.#log('info', 'temporal worker shutdown complete', this.#runtimeLogFields({ drained: true }))
   }
 
   async #startScheduler(): Promise<void> {
@@ -601,6 +631,11 @@ export class WorkerRuntime {
     }
     await Effect.runPromise(this.#scheduler.start)
     this.#schedulerStarted = true
+    this.#log(
+      'info',
+      'worker scheduler started',
+      this.#runtimeLogFields({ stickySchedulingEnabled: this.#stickySchedulingEnabled }),
+    )
   }
 
   async #stopScheduler(): Promise<void> {
@@ -611,6 +646,7 @@ export class WorkerRuntime {
       this.#schedulerStopPromise = Effect.runPromise(this.#scheduler.stop).finally(() => {
         this.#schedulerStarted = false
         this.#schedulerStopPromise = null
+        this.#log('info', 'worker scheduler stopped', this.#runtimeLogFields())
       })
     }
     await this.#schedulerStopPromise
@@ -1190,6 +1226,15 @@ export class WorkerRuntime {
       workflowId: execution.workflowId,
       runId: execution.runId,
       workflowType,
+      ...(extra ?? {}),
+    }
+  }
+
+  #runtimeLogFields(extra?: LogFields): LogFields {
+    return {
+      namespace: this.#namespace,
+      taskQueue: this.#taskQueue,
+      identity: this.#identity,
       ...(extra ?? {}),
     }
   }
