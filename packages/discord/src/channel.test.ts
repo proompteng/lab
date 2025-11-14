@@ -344,7 +344,9 @@ describe('streamChannel', () => {
 
     await discord.streamChannel(config, channelContext, generator())
 
-    const payloads = fetchMock.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string))
+    const payloads = (fetchMock.mock.calls as unknown as Array<[unknown, RequestInit]>).map(([, init]) =>
+      JSON.parse((init.body as string) ?? '{}'),
+    )
     expect(payloads).toHaveLength(2)
     expect(payloads[0]?.content.length).toBeLessThanOrEqual(DISCORD_MESSAGE_LIMIT)
     expect(payloads[1]?.content).toContain('x')
