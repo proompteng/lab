@@ -20,6 +20,16 @@ const CATEGORY_ADJECTIVES = [
   'Azur',
   'Verdoyante',
   'Charmante',
+  'Argentee',
+  'Florissante',
+  'Opaline',
+  'Veloutee',
+  'Lumineuse',
+  'Irisee',
+  'Ambrée',
+  'Etoilee',
+  'Brise',
+  'Ondee',
 ]
 
 const CATEGORY_NOUNS = [
@@ -33,6 +43,16 @@ const CATEGORY_NOUNS = [
   'Reverie',
   'Chateau',
   'Balcon',
+  'Observatoire',
+  'Terrasse',
+  'Pavillon',
+  'Moulin',
+  'Belvedere',
+  'Passerelle',
+  'Serre',
+  'Fontaine',
+  'Orangerie',
+  'Cloitre',
 ]
 
 export interface DiscordConfig {

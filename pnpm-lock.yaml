@@ -115,6 +115,9 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: ^1.28.0
         version: 1.30.0
+      '@proompteng/discord':
+        specifier: workspace:*
+        version: link:../../packages/discord
       discord-interactions:
         specifier: ^4.3.0
         version: 4.3.0

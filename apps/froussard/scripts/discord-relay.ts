@@ -1,12 +1,6 @@
 import process from 'node:process'
-import type { DiscordConfig } from '../src/discord'
-import {
-  bootstrapRelay,
-  DISCORD_MESSAGE_LIMIT,
-  iterableFromStream,
-  type RelayMetadata,
-  relayStream,
-} from '../src/discord'
+import type { ChannelMetadata, DiscordConfig } from '@proompteng/discord'
+import { bootstrapChannel, DISCORD_MESSAGE_LIMIT, iterableFromStream, streamChannel } from '@proompteng/discord'
 
 interface ParsedArgs {
   stage?: string
@@ -138,7 +132,7 @@ const main = async () => {
     process.exit(1)
   }
 
-  const metadata: RelayMetadata = {
+  const metadata: ChannelMetadata = {
     repository: options.repository,
     issueNumber: options.issue,
     stage: options.stage ?? 'run',
@@ -152,10 +146,10 @@ const main = async () => {
   const echo = (line: string) => console.error(line)
 
   try {
-    const relay = await bootstrapRelay(config, metadata, { dryRun, echo })
-    echo(`Relay channel ready: #${relay.channelName} (${relay.url ?? 'no-url'})`)
+    const channel = await bootstrapChannel(config, metadata, { dryRun, echo })
+    echo(`Channel ready: #${channel.channelName} (${channel.url ?? 'no-url'})`)
     echo(`Message chunk limit: ${DISCORD_MESSAGE_LIMIT} characters`)
-    await relayStream(config, relay, iterableFromStream(process.stdin), { dryRun, echo })
+    await streamChannel(config, channel, iterableFromStream(process.stdin), { dryRun, echo })
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Unknown error')
     if (error instanceof Error && 'stack' in error && error.stack) {
