@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { Code, ConnectError } from '@connectrpc/connect'
-import { Effect } from 'effect'
+import { Cause, Effect, Exit, Option } from 'effect'
 import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -102,7 +102,21 @@ test('activity lifecycle wiring emits logger + metric telemetry', async () => {
     }),
   )
 
-  await expect(Effect.runPromise(registration.heartbeat(['telemetry']))).rejects.toBeInstanceOf(ConnectError)
+  const heartbeatExit = await Effect.runPromiseExit(registration.heartbeat(['telemetry']))
+  expect(Exit.isFailure(heartbeatExit)).toBeTrue()
+  if (Exit.isFailure(heartbeatExit)) {
+    const failure = Cause.failureOption(heartbeatExit.cause)
+    expect(Option.isSome(failure)).toBeTrue()
+    if (Option.isSome(failure)) {
+      const rootCause =
+        failure.value instanceof ConnectError
+          ? failure.value
+          : typeof failure.value === 'object' && failure.value !== null && 'cause' in failure.value
+            ? (failure.value as { cause?: unknown }).cause ?? failure.value
+            : failure.value
+      expect(rootCause).toBeInstanceOf(ConnectError)
+    }
+  }
   await Effect.runPromise(registration.shutdown)
 
   expect(exporter.getCounterValue('integration_heartbeat_retries_total')).toBeGreaterThanOrEqual(1)
