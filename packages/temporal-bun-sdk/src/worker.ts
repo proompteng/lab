@@ -13,7 +13,6 @@ const DEFAULT_WORKFLOWS_PATH = fileURLToPath(new URL('./workflows/index.js', imp
 const PACKAGE_NAME = '@proompteng/temporal-bun-sdk'
 
 let cachedBuildId: string | null = null
-let buildIdLogged = false
 
 const deriveBuildId = (): string => {
   if (cachedBuildId) {
@@ -99,11 +98,6 @@ export const createWorker = async (options: CreateWorkerOptions = {}): Promise<B
   const resolvedBuildId = config.workerBuildId ?? derivedBuildId
   if (!config.workerBuildId) {
     config.workerBuildId = resolvedBuildId
-  }
-
-  if (!buildIdLogged) {
-    buildIdLogged = true
-    console.info('[temporal-bun-sdk] worker buildId: %s', resolvedBuildId)
   }
 
   const runtime = await WorkerRuntime.create({

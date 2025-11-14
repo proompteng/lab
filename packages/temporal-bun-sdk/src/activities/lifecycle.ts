@@ -1,10 +1,11 @@
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { Effect } from 'effect'
-
 import type { DataConverter } from '../common/payloads'
 import { encodeValuesToPayloads } from '../common/payloads/converter'
 import { sleep } from '../common/sleep'
+import type { LogFields, Logger } from '../observability/logger'
+import type { Counter } from '../observability/metrics'
 import { PayloadsSchema } from '../proto/temporal/api/common/v1/message_pb'
 import { RecordActivityTaskHeartbeatRequestSchema } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
 import type { ActivityContext } from '../worker/activity-context'
@@ -40,6 +41,13 @@ export interface ActivityLifecycleConfig {
     readonly maxAttempts: number
     readonly jitterRatio?: number
   }
+  readonly observability?: ActivityLifecycleObservability
+}
+
+export interface ActivityLifecycleObservability {
+  readonly logger: Logger
+  readonly heartbeatRetryCounter: Counter
+  readonly heartbeatFailureCounter: Counter
 }
 
 export interface ActivityHeartbeatRegistrationOptions {
@@ -73,7 +81,7 @@ export const makeActivityLifecycle = (
   Effect.sync(() => {
     const registerHeartbeat: ActivityLifecycle['registerHeartbeat'] = (options) =>
       Effect.try(() => {
-        const driver = new ActivityHeartbeatDriver(config, options)
+        const driver = new ActivityHeartbeatDriver(config, options, config.observability)
         return {
           heartbeat: (details) => Effect.tryPromise(async () => await driver.enqueue(details)),
           shutdown: Effect.tryPromise(async () => {
@@ -126,17 +134,24 @@ type PendingHeartbeat = {
 class ActivityHeartbeatDriver {
   readonly #config: ActivityLifecycleConfig
   readonly #options: ActivityHeartbeatRegistrationOptions
+  readonly #observability?: ActivityLifecycleObservability
   readonly #intervalMs: number
   readonly #retryJitterRatio: number
+  readonly #recordedHeartbeatErrors = new WeakSet<object>()
   #pending: PendingHeartbeat | undefined
   #timer: NodeJS.Timeout | undefined
   #sending: Promise<void> | undefined
   #stopped = false
   #lastSentAt = 0
 
-  constructor(config: ActivityLifecycleConfig, options: ActivityHeartbeatRegistrationOptions) {
+  constructor(
+    config: ActivityLifecycleConfig,
+    options: ActivityHeartbeatRegistrationOptions,
+    observability?: ActivityLifecycleObservability,
+  ) {
     this.#config = config
     this.#options = options
+    this.#observability = observability
     this.#retryJitterRatio = config.heartbeatRetry.jitterRatio ?? DEFAULT_HEARTBEAT_JITTER_RATIO
     this.#intervalMs = this.#computeInterval(options.context.info.heartbeatTimeoutMs)
     const onAbort = () => {
@@ -207,7 +222,7 @@ class ActivityHeartbeatDriver {
     this.#sending = pendingFlush
     void pendingFlush
       .catch((error) => {
-        console.warn('[temporal-bun-sdk] activity heartbeat flush failed', error)
+        this.#recordHeartbeatFailure(error)
       })
       .finally(() => {
         if (this.#sending === pendingFlush) {
@@ -283,10 +298,12 @@ class ActivityHeartbeatDriver {
         }
         attempt += 1
         if (attempt >= this.#config.heartbeatRetry.maxAttempts) {
+          this.#recordHeartbeatFailure(error)
           throw error
         }
         const capped = Math.min(delayMs, this.#config.heartbeatRetry.maxIntervalMs)
         const jittered = applyJitter(capped, this.#retryJitterRatio)
+        this.#trackHeartbeatRetry()
         await sleep(jittered)
         delayMs = Math.min(
           delayMs * this.#config.heartbeatRetry.backoffCoefficient,
@@ -322,6 +339,44 @@ class ActivityHeartbeatDriver {
     for (const waiter of pending.waiters) {
       waiter.reject(error)
     }
+  }
+
+  #recordHeartbeatFailure(error: unknown): void {
+    if (typeof error === 'object' && error !== null) {
+      if (this.#recordedHeartbeatErrors.has(error)) {
+        return
+      }
+      this.#recordedHeartbeatErrors.add(error)
+    }
+
+    const observability = this.#observability
+    if (!observability) {
+      return
+    }
+
+    const info = this.#options.context.info
+    const fields: LogFields = {
+      namespace: this.#options.namespace,
+      taskQueue: info.taskQueue,
+      workflowId: info.workflowId,
+      runId: info.runId,
+      activityId: info.activityId,
+      attempt: info.attempt,
+      errorName: error instanceof Error ? error.name : undefined,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    }
+
+    void Effect.runPromise(observability.logger.log('warn', 'activity heartbeat failure', fields))
+    void Effect.runPromise(observability.heartbeatFailureCounter.inc())
+  }
+
+  #trackHeartbeatRetry(): void {
+    const observability = this.#observability
+    if (!observability) {
+      return
+    }
+
+    void Effect.runPromise(observability.heartbeatRetryCounter.inc())
   }
 }
 

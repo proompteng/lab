@@ -23,8 +23,9 @@ import {
 import { encodeErrorToFailure, encodeFailurePayloads, failureToError } from '../common/payloads/failure'
 import { sleep } from '../common/sleep'
 import { loadTemporalConfig, type TemporalConfig } from '../config'
-import { type LogFields, type Logger, type LogLevel, makeConsoleLogger } from '../observability/logger'
-import { type Counter, type MetricsRegistry, makeInMemoryMetrics } from '../observability/metrics'
+import { createObservabilityServices } from '../observability'
+import type { LogFields, Logger, LogLevel } from '../observability/logger'
+import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from '../observability/metrics'
 import {
   type Command,
   CommandSchema,
@@ -110,6 +111,14 @@ type WorkerRuntimeMetrics = {
   readonly stickyCacheEviction: Counter
   readonly stickyCacheHeal: Counter
   readonly nondeterminism: Counter
+  readonly workflowPollLatency: Histogram
+  readonly activityPollLatency: Histogram
+  readonly workflowPollErrors: Counter
+  readonly activityPollErrors: Counter
+  readonly heartbeatRetries: Counter
+  readonly heartbeatFailures: Counter
+  readonly activityFailures: Counter
+  readonly workflowFailures: Counter
 }
 
 type NondeterminismContext = {
@@ -172,6 +181,7 @@ export interface WorkerRuntimeOptions {
   workflowService?: WorkflowServiceClient
   logger?: Logger
   metrics?: MetricsRegistry
+  metricsExporter?: MetricsExporter
   concurrency?: WorkerConcurrencyOptions
   pollers?: WorkerPollerOptions
   stickyCache?: WorkerStickyCacheOptions | StickyCache
@@ -211,8 +221,21 @@ export class WorkerRuntime {
     })
 
     const activities = options.activities ?? {}
-    const logger = options.logger ?? makeConsoleLogger()
-    const metricsRegistry = options.metrics ?? (await Effect.runPromise(makeInMemoryMetrics()))
+    const observability = await Effect.runPromise(
+      createObservabilityServices(
+        {
+          logLevel: config.logLevel,
+          logFormat: config.logFormat,
+          metrics: config.metricsExporter,
+        },
+        {
+          logger: options.logger,
+          metricsRegistry: options.metrics,
+          metricsExporter: options.metricsExporter,
+        },
+      ),
+    )
+    const { logger, metricsRegistry, metricsExporter } = observability
     const runtimeMetrics = await WorkerRuntime.#initMetrics(metricsRegistry)
     let workflowService: WorkflowServiceClient
     if (options.workflowService) {
@@ -234,6 +257,7 @@ export class WorkerRuntime {
         workflowConcurrency,
         activityConcurrency,
         hooks: options.schedulerHooks,
+        logger,
       }),
     )
 
@@ -244,14 +268,16 @@ export class WorkerRuntime {
     const stickyCacheTtlMs = stickyCacheOptions?.ttlMs ?? config.workerStickyTtlMs
     const stickyCacheHooks: StickyCacheHooks = {
       onEvict: (entry, reason) =>
-        logger.log('debug', 'sticky cache eviction', {
-          namespace: entry.key.namespace,
-          taskQueue,
-          workflowId: entry.key.workflowId,
-          runId: entry.key.runId,
-          workflowType: entry.workflowType,
-          reason,
-        }),
+        void Effect.runPromise(
+          logger.log('debug', 'sticky cache eviction', {
+            namespace: entry.key.namespace,
+            taskQueue,
+            workflowId: entry.key.workflowId,
+            runId: entry.key.runId,
+            workflowType: entry.workflowType,
+            reason,
+          }),
+        ),
     }
     const stickyCache = hasStickyCacheInstance
       ? (stickyCacheCandidate as StickyCache)
@@ -292,12 +318,15 @@ export class WorkerRuntime {
     if (workerVersioningMode === WorkerVersioningMode.VERSIONED) {
       const capability = await checkWorkerVersioningCapability(workflowService, namespace, taskQueue)
       if (capability.supported) {
-        await registerWorkerBuildIdCompatibility(workflowService, namespace, taskQueue, buildId)
+        await registerWorkerBuildIdCompatibility(workflowService, namespace, taskQueue, buildId, { logger })
       } else {
-        console.warn(
-          `[temporal-bun-sdk] skipping worker build ID registration for ${namespace}/${taskQueue}: ${
-            capability.reason ?? 'unknown capability error'
-          }. If you are running against the Temporal CLI dev server via bun scripts/start-temporal-cli.ts this warning is expected because that server does not implement worker versioning APIs yet.`,
+        await Effect.runPromise(
+          logger.log('warn', 'skipping worker build ID registration', {
+            namespace,
+            taskQueue,
+            reason: capability.reason ?? 'unknown capability error',
+            note: 'Temporal CLI dev server (scripts/start-temporal-cli.ts) does not implement worker versioning yet',
+          }),
         )
       }
     }
@@ -313,6 +342,27 @@ export class WorkerRuntime {
           maxAttempts: HEARTBEAT_RETRY_MAX_ATTEMPTS,
           jitterRatio: HEARTBEAT_RETRY_JITTER,
         },
+        observability: {
+          logger,
+          heartbeatRetryCounter: runtimeMetrics.heartbeatRetries,
+          heartbeatFailureCounter: runtimeMetrics.heartbeatFailures,
+        },
+      }),
+    )
+
+    await Effect.runPromise(
+      logger.log('info', 'temporal worker runtime configured', {
+        namespace,
+        taskQueue,
+        identity,
+        workflowConcurrency,
+        activityConcurrency,
+        stickySchedulingEnabled,
+        deploymentName,
+        buildId,
+        logLevel: config.logLevel,
+        logFormat: config.logFormat,
+        metricsExporter: config.metricsExporter.type,
       }),
     )
 
@@ -325,6 +375,7 @@ export class WorkerRuntime {
       activities,
       logger,
       metricsRegistry,
+      metricsExporter,
       metrics: runtimeMetrics,
       namespace,
       taskQueue,
@@ -350,6 +401,7 @@ export class WorkerRuntime {
   readonly #logger: Logger
   readonly #metricsRegistry: MetricsRegistry
   readonly #metrics: WorkerRuntimeMetrics
+  readonly #metricsExporter: MetricsExporter
   readonly #namespace: string
   readonly #taskQueue: string
   readonly #identity: string
@@ -378,6 +430,7 @@ export class WorkerRuntime {
     logger: Logger
     metricsRegistry: MetricsRegistry
     metrics: WorkerRuntimeMetrics
+    metricsExporter: MetricsExporter
     namespace: string
     taskQueue: string
     identity: string
@@ -400,6 +453,7 @@ export class WorkerRuntime {
     this.#logger = params.logger
     this.#metricsRegistry = params.metricsRegistry
     this.#metrics = params.metrics
+    this.#metricsExporter = params.metricsExporter
     this.#namespace = params.namespace
     this.#taskQueue = params.taskQueue
     this.#identity = params.identity
@@ -465,6 +519,8 @@ export class WorkerRuntime {
 
   static async #initMetrics(registry: MetricsRegistry): Promise<WorkerRuntimeMetrics> {
     const makeCounter = (name: string, description: string) => Effect.runPromise(registry.counter(name, description))
+    const makeHistogram = (name: string, description: string) =>
+      Effect.runPromise(registry.histogram(name, description))
 
     return {
       stickyCacheHit: await makeCounter('temporal_worker_sticky_cache_hits_total', 'Sticky cache reuse events'),
@@ -481,6 +537,23 @@ export class WorkerRuntime {
         'temporal_worker_nondeterminism_total',
         'Workflow tasks failed because of nondeterminism mismatches',
       ),
+      workflowPollLatency: await makeHistogram('temporal_worker_poll_latency_ms', 'Workflow task poll latency'),
+      activityPollLatency: await makeHistogram(
+        'temporal_worker_activity_poll_latency_ms',
+        'Activity task poll latency',
+      ),
+      workflowPollErrors: await makeCounter('temporal_worker_poll_errors_total', 'Workflow polling errors'),
+      activityPollErrors: await makeCounter('temporal_worker_activity_poll_errors_total', 'Activity polling errors'),
+      heartbeatRetries: await makeCounter('temporal_worker_heartbeat_retries_total', 'Activity heartbeat retries'),
+      heartbeatFailures: await makeCounter('temporal_worker_heartbeat_failures_total', 'Activity heartbeat failures'),
+      activityFailures: await makeCounter(
+        'temporal_worker_activity_failures_total',
+        'Activity failures delivered to Temporal',
+      ),
+      workflowFailures: await makeCounter(
+        'temporal_worker_workflow_failures_total',
+        'Workflow failure responses sent to Temporal',
+      ),
     }
   }
 
@@ -494,6 +567,14 @@ export class WorkerRuntime {
 
     try {
       await this.#startScheduler()
+      this.#log(
+        'info',
+        'temporal worker runtime started',
+        this.#runtimeLogFields({
+          workflowPollers: this.#workflowPollerCount,
+          stickySchedulingEnabled: this.#stickySchedulingEnabled,
+        }),
+      )
     } catch (error) {
       this.#running = false
       this.#abortController = null
@@ -514,12 +595,20 @@ export class WorkerRuntime {
 
     this.#runPromise = execution
 
-    await this.#runPromise
+    try {
+      await this.#runPromise
+    } finally {
+      await this.#flushMetrics()
+      this.#log('info', 'temporal worker runtime stopped', this.#runtimeLogFields())
+    }
   }
 
   async shutdown(): Promise<void> {
+    this.#log('info', 'temporal worker shutdown requested', this.#runtimeLogFields({ running: this.#running }))
     if (!this.#running) {
       await this.#stopScheduler()
+      await this.#flushMetrics()
+      this.#log('info', 'temporal worker shutdown complete', this.#runtimeLogFields({ drained: false }))
       return
     }
     this.#abortController?.abort()
@@ -532,6 +621,8 @@ export class WorkerRuntime {
     } else {
       await this.#stopScheduler()
     }
+    await this.#flushMetrics()
+    this.#log('info', 'temporal worker shutdown complete', this.#runtimeLogFields({ drained: true }))
   }
 
   async #startScheduler(): Promise<void> {
@@ -540,6 +631,11 @@ export class WorkerRuntime {
     }
     await Effect.runPromise(this.#scheduler.start)
     this.#schedulerStarted = true
+    this.#log(
+      'info',
+      'worker scheduler started',
+      this.#runtimeLogFields({ stickySchedulingEnabled: this.#stickySchedulingEnabled }),
+    )
   }
 
   async #stopScheduler(): Promise<void> {
@@ -550,6 +646,7 @@ export class WorkerRuntime {
       this.#schedulerStopPromise = Effect.runPromise(this.#scheduler.stop).finally(() => {
         this.#schedulerStarted = false
         this.#schedulerStopPromise = null
+        this.#log('info', 'worker scheduler stopped', this.#runtimeLogFields())
       })
     }
     await this.#schedulerStopPromise
@@ -572,11 +669,13 @@ export class WorkerRuntime {
     })
 
     while (!signal.aborted) {
+      const start = Date.now()
       try {
         const response = await this.#workflowService.pollWorkflowTaskQueue(request, {
           timeoutMs: POLL_TIMEOUT_MS,
           signal,
         })
+        this.#observeHistogram(this.#metrics.workflowPollLatency, Date.now() - start)
         if (!response.taskToken || response.taskToken.length === 0) {
           continue
         }
@@ -585,7 +684,12 @@ export class WorkerRuntime {
         if (signal.aborted) {
           break
         }
-        console.error(`[temporal-bun-sdk] workflow polling failed for ${queueName}`, error)
+        this.#incrementCounter(this.#metrics.workflowPollErrors)
+        this.#log('warn', 'workflow polling failed', {
+          queueName,
+          namespace: this.#namespace,
+          error: error instanceof Error ? error.message : String(error),
+        })
         await sleep(250)
       }
     }
@@ -616,11 +720,13 @@ export class WorkerRuntime {
     })
 
     while (!signal.aborted) {
+      const start = Date.now()
       try {
         const response = await this.#workflowService.pollActivityTaskQueue(request, {
           timeoutMs: POLL_TIMEOUT_MS,
           signal,
         })
+        this.#observeHistogram(this.#metrics.activityPollLatency, Date.now() - start)
         if (!response.taskToken || response.taskToken.length === 0) {
           continue
         }
@@ -629,7 +735,12 @@ export class WorkerRuntime {
         if (signal.aborted) {
           break
         }
-        console.error('[temporal-bun-sdk] activity polling failed', error)
+        this.#incrementCounter(this.#metrics.activityPollErrors)
+        this.#log('warn', 'activity polling failed', {
+          namespace: this.#namespace,
+          taskQueue: this.#taskQueue,
+          error: error instanceof Error ? error.message : String(error),
+        })
         await sleep(250)
       }
     }
@@ -674,6 +785,7 @@ export class WorkerRuntime {
           cacheLastEventId: stickyEntry.lastEventId ?? null,
           historyBaselineEventId,
         })
+        this.#incrementCounter(this.#metrics.stickyCacheHit)
       } else if (hasHistorySnapshot && historyReplay) {
         const diff = await Effect.runPromise(
           diffDeterminismState(stickyEntry.determinismState, historyReplay.determinismState),
@@ -694,6 +806,7 @@ export class WorkerRuntime {
       })
     } else if (!stickyEntry && this.#stickySchedulingEnabled) {
       this.#log('debug', 'sticky cache miss (no entry)', baseLogFields)
+      this.#incrementCounter(this.#metrics.stickyCacheMiss)
     }
 
     if (!previousState && hasHistorySnapshot && historyReplay) {
@@ -1098,6 +1211,10 @@ export class WorkerRuntime {
     void Effect.runPromise(counter.inc(value))
   }
 
+  #observeHistogram(histogram: Histogram, value: number): void {
+    void Effect.runPromise(histogram.observe(value))
+  }
+
   #workflowLogFields(
     execution: { workflowId: string; runId: string },
     workflowType: string,
@@ -1109,6 +1226,15 @@ export class WorkerRuntime {
       workflowId: execution.workflowId,
       runId: execution.runId,
       workflowType,
+      ...(extra ?? {}),
+    }
+  }
+
+  #runtimeLogFields(extra?: LogFields): LogFields {
+    return {
+      namespace: this.#namespace,
+      taskQueue: this.#taskQueue,
+      identity: this.#identity,
       ...(extra ?? {}),
     }
   }
@@ -1273,6 +1399,7 @@ export class WorkerRuntime {
 
     try {
       await this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS })
+      this.#incrementCounter(this.#metrics.workflowFailures)
     } catch (rpcError) {
       if (this.#isTaskNotFoundError(rpcError)) {
         this.#logWorkflowTaskNotFound('respondWorkflowTaskFailed', execution)
@@ -1337,11 +1464,11 @@ export class WorkerRuntime {
         await Effect.runPromise(registration.heartbeat(details))
       }
     } catch (registrationError) {
-      console.warn('[temporal-bun-sdk] failed to register heartbeat handler', {
+      this.#log('warn', 'failed to register heartbeat handler', {
         activityType,
         workflowId: context.info.workflowId,
         runId: context.info.runId,
-        error: registrationError,
+        error: registrationError instanceof Error ? registrationError.message : String(registrationError),
       })
       context.heartbeat = async (...details) => {
         context.info.lastHeartbeatDetails = details
@@ -1401,7 +1528,10 @@ export class WorkerRuntime {
         try {
           await Effect.runPromise(heartbeatRegistration.shutdown)
         } catch (shutdownError) {
-          console.warn('[temporal-bun-sdk] heartbeat shutdown failed', shutdownError)
+          this.#log('warn', 'heartbeat shutdown failed', {
+            activityType,
+            error: shutdownError instanceof Error ? shutdownError.message : String(shutdownError),
+          })
         }
       }
     }
@@ -1429,6 +1559,7 @@ export class WorkerRuntime {
     })
 
     await this.#workflowService.respondActivityTaskFailed(request, { timeoutMs: RESPOND_TIMEOUT_MS })
+    this.#incrementCounter(this.#metrics.activityFailures)
   }
 
   async #cancelActivityTask(response: PollActivityTaskQueueResponse, context?: ActivityContext): Promise<void> {
@@ -1576,6 +1707,16 @@ export class WorkerRuntime {
     return scheduleDeadline ?? startDeadline ?? undefined
   }
 
+  async #flushMetrics(): Promise<void> {
+    try {
+      await Effect.runPromise(this.#metricsExporter.flush())
+    } catch (error) {
+      this.#log('warn', 'failed to flush metrics exporter', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
   async #decodeWorkflowArgs(events: HistoryEvent[]): Promise<unknown[]> {
     const startEvent = this.#findWorkflowStartedEvent(events)
     if (!startEvent) {
@@ -1625,7 +1766,7 @@ export class WorkerRuntime {
   }
 
   #logWorkflowTaskNotFound(context: string, execution: { workflowId: string; runId: string }): void {
-    console.warn('[temporal-bun-sdk] workflow task already resolved', {
+    this.#log('warn', 'workflow task already resolved', {
       context,
       workflowId: execution.workflowId,
       runId: execution.runId,

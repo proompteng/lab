@@ -1,7 +1,9 @@
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
+import { Effect } from 'effect'
 
 import { sleep } from '../common/sleep'
+import type { LogFields, Logger } from '../observability/logger'
 import type {
   GetWorkerBuildIdCompatibilityRequest,
   UpdateWorkerBuildIdCompatibilityRequest,
@@ -25,6 +27,7 @@ interface WorkerVersioningCapabilityResult {
 
 export interface RegisterWorkerBuildIdCompatibilityOptions {
   sleep?(millis: number): Promise<void>
+  logger?: Logger
 }
 
 interface WorkflowServiceClientLike {
@@ -55,11 +58,29 @@ export async function registerWorkerBuildIdCompatibility(
     },
   })
   const backoff = options.sleep ?? sleep
+  const logger = options.logger
+
+  const logWithFallback = async (level: 'info' | 'warn', message: string, fields?: LogFields): Promise<void> => {
+    if (logger) {
+      await Effect.runPromise(logger.log(level, message, fields))
+      return
+    }
+    const payload = fields ? `${message} ${JSON.stringify(fields)}` : message
+    if (level === 'warn') {
+      console.warn(`[temporal-bun-sdk] ${payload}`)
+    } else {
+      console.info(`[temporal-bun-sdk] ${payload}`)
+    }
+  }
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     try {
       await workflowService.updateWorkerBuildIdCompatibility(request)
-      console.info(`[temporal-bun-sdk] registered worker build ID ${buildId} for ${namespace}/${taskQueue}`)
+      await logWithFallback('info', 'registered worker build ID', {
+        namespace,
+        taskQueue,
+        buildId,
+      })
       return
     } catch (error) {
       if (!(error instanceof ConnectError)) {
@@ -68,9 +89,12 @@ export async function registerWorkerBuildIdCompatibility(
 
       const code = error.code ?? Code.Unknown
       if (FEATURE_UNAVAILABLE_CODES.has(code)) {
-        console.warn(
-          `[temporal-bun-sdk] worker versioning API unavailable for ${namespace}/${taskQueue} (${describeCode(code)}); continuing without build ID registration. scripts/start-temporal-cli.ts uses the Temporal CLI, which does not yet expose UpdateWorkerBuildIdCompatibility, so this warning is expected when you run TEMPORAL_INTEGRATION_TESTS=1 against the bundled CLI.`,
-        )
+        await logWithFallback('warn', 'worker versioning API unavailable; continuing without build ID registration', {
+          namespace,
+          taskQueue,
+          buildId,
+          code: describeCode(code),
+        })
         return
       }
 

@@ -2,6 +2,9 @@ import { expect, test } from 'bun:test'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { Effect } from 'effect'
 
+import { cloneMetricsExporterSpec, defaultMetricsExporterSpec } from '../src/observability/metrics'
+import type { Logger } from '../src/observability/logger'
+
 import type { TemporalConfig } from '../src/config'
 import { registerWorkerBuildIdCompatibility } from '../src/worker/build-id'
 import type {
@@ -24,19 +27,19 @@ test('registers a build ID when the RPC succeeds', async () => {
     },
   }
 
-  const info: string[] = []
-  const originalInfo = console.info
-  console.info = (...args: unknown[]) => info.push(args.join(' '))
-  try {
-    await registerWorkerBuildIdCompatibility(service, 'namespace', 'task-queue', 'build-id')
-    expect(requests).toHaveLength(1)
-    expect(requests[0].namespace).toBe('namespace')
-    expect(requests[0].taskQueue).toBe('task-queue')
-    expect(requests[0].operation.case).toBe('addNewBuildIdInNewDefaultSet')
-    expect(info.some((value) => value.includes('build ID build-id'))).toBeTrue()
-  } finally {
-    console.info = originalInfo
-  }
+  const recording = createRecordingLogger()
+  await registerWorkerBuildIdCompatibility(service, 'namespace', 'task-queue', 'build-id', {
+    logger: recording.logger,
+  })
+  expect(requests).toHaveLength(1)
+  expect(requests[0].namespace).toBe('namespace')
+  expect(requests[0].taskQueue).toBe('task-queue')
+  expect(requests[0].operation.case).toBe('addNewBuildIdInNewDefaultSet')
+  expect(
+    recording.entries.some(
+      (entry) => entry.level === 'info' && entry.message === 'registered worker build ID',
+    ),
+  ).toBeTrue()
 })
 
 test('retries transient failures before succeeding', async () => {
@@ -73,16 +76,15 @@ test('warns and continues when the API is not implemented', async () => {
     },
   }
 
-  const warnings: string[] = []
-  const originalWarn = console.warn
-  console.warn = (...args: unknown[]) => warnings.push(args.join(' '))
-  try {
-    await registerWorkerBuildIdCompatibility(service, 'namespace', 'task-queue', 'build-id')
-    expect(warnings).toHaveLength(1)
-    expect(warnings[0]).toContain('worker versioning API unavailable')
-  } finally {
-    console.warn = originalWarn
-  }
+  const recording = createRecordingLogger()
+  await registerWorkerBuildIdCompatibility(service, 'namespace', 'task-queue', 'build-id', {
+    logger: recording.logger,
+  })
+  expect(
+    recording.entries.some(
+      (entry) => entry.level === 'warn' && entry.message.includes('worker versioning API unavailable'),
+    ),
+  ).toBeTrue()
 })
 
 test('propagates fatal errors', async () => {
@@ -110,8 +112,10 @@ const createTestConfig = (overrides: Partial<TemporalConfig> = {}): TemporalConf
   namespace: 'default',
   taskQueue: 'test-task-queue',
   allowInsecureTls: true,
+  stickySchedulingEnabled: false,
   workerIdentity: 'test-worker',
   workerIdentityPrefix: 'test',
+  showStackTraceSources: false,
   workerWorkflowConcurrency: 1,
   workerActivityConcurrency: 1,
   workerStickyCacheSize: 0,
@@ -120,11 +124,25 @@ const createTestConfig = (overrides: Partial<TemporalConfig> = {}): TemporalConf
   activityHeartbeatRpcTimeoutMs: 1_000,
   workerDeploymentName: 'test-deployment',
   workerBuildId: 'test-build-id',
+  logLevel: 'info',
+  logFormat: 'pretty',
+  metricsExporter: cloneMetricsExporterSpec(defaultMetricsExporterSpec),
   ...overrides,
 })
 
 const withWorkflowService = (service: Partial<WorkflowServiceClient>): WorkflowServiceClient =>
   service as WorkflowServiceClient
+
+const createRecordingLogger = () => {
+  const entries: { level: string; message: string; fields?: unknown }[] = []
+  const logger: Logger = {
+    log(level, message, fields) {
+      entries.push({ level, message, fields })
+      return Effect.void
+    },
+  }
+  return { entries, logger }
+}
 
 test('WorkerRuntime registers build IDs before pollers start when worker versioning is supported', async () => {
   const capabilityRequests: unknown[] = []
@@ -177,8 +195,15 @@ test('WorkerRuntime logs a warning and skips registration when worker versioning
   })
 
   const warnings: string[] = []
-  const originalWarn = console.warn
-  console.warn = (...args: unknown[]) => warnings.push(args.join(' '))
+  const logger: Logger = {
+    log(level, message, fields) {
+      if (level === 'warn') {
+        const serializedFields = fields ? JSON.stringify(fields) : ''
+        warnings.push(serializedFields ? `${message} ${serializedFields}` : message)
+      }
+      return Effect.void
+    },
+  }
 
   const config = createTestConfig({ taskQueue: 'versioned-queue-2' })
   let runtime: WorkerRuntime | null = null
@@ -187,6 +212,7 @@ test('WorkerRuntime logs a warning and skips registration when worker versioning
       config,
       workflows: noopWorkflows,
       workflowService,
+      logger,
       deployment: {
         name: config.workerDeploymentName,
         buildId: config.workerBuildId,
@@ -199,7 +225,6 @@ test('WorkerRuntime logs a warning and skips registration when worker versioning
     expect(updateCalled).toBeFalse()
     expect(warnings.some((line) => line.includes('skipping worker build ID registration'))).toBeTrue()
   } finally {
-    console.warn = originalWarn
     await runtime?.shutdown()
   }
 })

@@ -1,11 +1,13 @@
 import { Cause, Effect, Exit, Fiber, Ref } from 'effect'
 import * as Queue from 'effect/Queue'
 import * as TSemaphore from 'effect/TSemaphore'
+import type { Logger } from '../observability/logger'
 
 export interface WorkerSchedulerOptions {
   readonly workflowConcurrency: number
   readonly activityConcurrency: number
   readonly hooks?: WorkerSchedulerHooks
+  readonly logger?: Logger
 }
 
 export interface WorkerSchedulerHooks {
@@ -40,10 +42,18 @@ const sanitizeConcurrency = (value: number): number => (value > 0 ? Math.floor(v
 const computeCapacity = (concurrency: number): number =>
   Math.max(DEFAULT_CAPACITY_MULTIPLIER * concurrency, concurrency, 1)
 
-const logTaskFailure = (label: string, cause: Cause.Cause<unknown>): Effect.Effect<void> =>
-  Effect.sync(() => {
-    console.error(`[temporal-bun-sdk] ${label} task failed`, Cause.pretty(cause))
+const logTaskFailure = (
+  label: string,
+  cause: Cause.Cause<unknown>,
+  logger?: Logger,
+): Effect.Effect<void, never, never> => {
+  if (!logger) {
+    return Effect.void
+  }
+  return logger.log('error', `${label} task failed`, {
+    cause: Cause.pretty(cause),
   })
+}
 
 const metricsPlaceholder = (label: string, stage: 'start' | 'complete'): Effect.Effect<void> =>
   Effect.sync(() => {
@@ -117,7 +127,7 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
             ),
           )
           yield* Effect.catchAllCause(execute, (cause) =>
-            Cause.isInterruptedOnly(cause) ? Effect.void : logTaskFailure(label, cause),
+            Cause.isInterruptedOnly(cause) ? Effect.void : logTaskFailure(label, cause, options.logger),
           )
         }
       }).pipe(Effect.catchAllCause((cause) => (Cause.isInterruptedOnly(cause) ? Effect.void : Effect.failCause(cause))))
@@ -183,7 +193,9 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
             Effect.flatMap(
               Exit.matchEffect({
                 onFailure: (cause) =>
-                  Cause.isInterruptedOnly(cause) ? Effect.void : logTaskFailure('scheduler shutdown', cause),
+                  Cause.isInterruptedOnly(cause)
+                    ? Effect.void
+                    : logTaskFailure('scheduler shutdown', cause, options.logger),
                 onSuccess: () => Effect.void,
               }),
             ),

@@ -2,6 +2,7 @@ import type { ClientSessionOptions, SecureClientSessionOptions } from 'node:http
 import { create, toBinary } from '@bufbuild/protobuf'
 import { type CallOptions, Code, ConnectError, createClient, type Transport } from '@connectrpc/connect'
 import { createGrpcTransport, type GrpcTransportOptions } from '@connectrpc/connect-node'
+import { Effect } from 'effect'
 import { createDefaultHeaders, mergeHeaders, normalizeMetadataHeaders } from './client/headers'
 import {
   buildCancelRequest,
@@ -25,6 +26,9 @@ import {
 } from './client/types'
 import { createDefaultDataConverter, type DataConverter, decodePayloadsToValues } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
+import { createObservabilityServices } from './observability'
+import type { LogFields, Logger, LogLevel } from './observability/logger'
+import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from './observability/metrics'
 import type { Payload } from './proto/temporal/api/common/v1/message_pb'
 import {
   type DescribeNamespaceRequest,
@@ -64,12 +68,28 @@ export interface TemporalClient {
   shutdown(): Promise<void>
 }
 
+type TemporalClientMetrics = {
+  readonly operationCount: Counter
+  readonly operationLatency: Histogram
+  readonly operationErrors: Counter
+}
+
+const describeError = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
+}
+
 export interface CreateTemporalClientOptions {
   config?: TemporalConfig
   namespace?: string
   identity?: string
   taskQueue?: string
   dataConverter?: DataConverter
+  logger?: Logger
+  metrics?: MetricsRegistry
+  metricsExporter?: MetricsExporter
 }
 
 export const createTemporalClient = async (
@@ -89,6 +109,22 @@ export const createTemporalClient = async (
   const workflowService = createClient(WorkflowService, transport)
 
   const initialHeaders = createDefaultHeaders(config.apiKey)
+  const observability = await Effect.runPromise(
+    createObservabilityServices(
+      {
+        logLevel: config.logLevel,
+        logFormat: config.logFormat,
+        metrics: config.metricsExporter,
+      },
+      {
+        logger: options.logger,
+        metricsRegistry: options.metrics,
+        metricsExporter: options.metricsExporter,
+      },
+    ),
+  )
+  const { logger, metricsRegistry, metricsExporter } = observability
+  const clientMetrics = await TemporalClientImpl.initMetrics(metricsRegistry)
 
   const client = new TemporalClientImpl({
     transport,
@@ -99,6 +135,9 @@ export const createTemporalClient = async (
     taskQueue,
     dataConverter,
     headers: initialHeaders,
+    logger,
+    metrics: clientMetrics,
+    metricsExporter,
   })
 
   return { client, config }
@@ -114,8 +153,25 @@ class TemporalClientImpl implements TemporalClient {
   private readonly workflowService: WorkflowServiceClient
   private readonly defaultIdentity: string
   private readonly defaultTaskQueue: string
+  #logger: Logger
+  #clientMetrics: TemporalClientMetrics
+  #metricsExporter: MetricsExporter
   private closed = false
   private headers: Record<string, string>
+
+  static async initMetrics(registry: MetricsRegistry): Promise<TemporalClientMetrics> {
+    const makeCounter = (name: string, description: string) => Effect.runPromise(registry.counter(name, description))
+    const makeHistogram = (name: string, description: string) =>
+      Effect.runPromise(registry.histogram(name, description))
+    return {
+      operationCount: await makeCounter('temporal_client_operations_total', 'Temporal client operation calls'),
+      operationLatency: await makeHistogram(
+        'temporal_client_operation_latency_ms',
+        'Latency for Temporal client operations',
+      ),
+      operationErrors: await makeCounter('temporal_client_operation_errors_total', 'Temporal client operation errors'),
+    }
+  }
 
   constructor(handles: {
     transport: ClosableTransport
@@ -126,6 +182,9 @@ class TemporalClientImpl implements TemporalClient {
     taskQueue: string
     dataConverter: DataConverter
     headers: Record<string, string>
+    logger: Logger
+    metrics: TemporalClientMetrics
+    metricsExporter: MetricsExporter
   }) {
     this.transport = handles.transport
     this.workflowService = handles.workflowService
@@ -135,6 +194,9 @@ class TemporalClientImpl implements TemporalClient {
     this.defaultTaskQueue = handles.taskQueue
     this.dataConverter = handles.dataConverter
     this.headers = { ...handles.headers }
+    this.#logger = handles.logger
+    this.#clientMetrics = handles.metrics
+    this.#metricsExporter = handles.metricsExporter
 
     this.workflow = {
       start: (options) => this.startWorkflow(options),
@@ -147,132 +209,151 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async startWorkflow(options: StartWorkflowOptions): Promise<StartWorkflowResult> {
-    this.ensureOpen()
-    const parsedOptions = sanitizeStartWorkflowOptions(options)
+    return this.#instrumentOperation('startWorkflow', async () => {
+      this.ensureOpen()
+      const parsedOptions = sanitizeStartWorkflowOptions(options)
 
-    const request = await buildStartWorkflowRequest(
-      {
-        options: parsedOptions,
-        defaults: {
-          namespace: this.namespace,
-          identity: this.defaultIdentity,
-          taskQueue: this.defaultTaskQueue,
+      const request = await buildStartWorkflowRequest(
+        {
+          options: parsedOptions,
+          defaults: {
+            namespace: this.namespace,
+            identity: this.defaultIdentity,
+            taskQueue: this.defaultTaskQueue,
+          },
         },
-      },
-      this.dataConverter,
-    )
+        this.dataConverter,
+      )
 
-    const response = await this.workflowService.startWorkflowExecution(request, this.callOptions())
-    return this.toStartWorkflowResult(response, {
-      workflowId: request.workflowId,
-      namespace: request.namespace,
-      firstExecutionRunId: response.started ? response.runId : undefined,
+      const response = await this.workflowService.startWorkflowExecution(request, this.callOptions())
+      return this.toStartWorkflowResult(response, {
+        workflowId: request.workflowId,
+        namespace: request.namespace,
+        firstExecutionRunId: response.started ? response.runId : undefined,
+      })
     })
   }
 
   async signalWorkflow(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void> {
-    this.ensureOpen()
-    const resolvedHandle = resolveHandle(this.namespace, handle)
-    const normalizedSignalName = ensureNonEmptyString(signalName, 'signalName')
+    return this.#instrumentOperation('signalWorkflow', async () => {
+      this.ensureOpen()
+      const resolvedHandle = resolveHandle(this.namespace, handle)
+      const normalizedSignalName = ensureNonEmptyString(signalName, 'signalName')
 
-    const identity = this.defaultIdentity
-    const entropy = createSignalRequestEntropy()
-    const requestId = await computeSignalRequestId(
-      {
-        namespace: resolvedHandle.namespace,
-        workflowId: resolvedHandle.workflowId,
-        runId: resolvedHandle.runId,
-        firstExecutionRunId: resolvedHandle.firstExecutionRunId,
-        signalName: normalizedSignalName,
-        identity,
-        args,
-      },
-      this.dataConverter,
-      { entropy },
-    )
+      const identity = this.defaultIdentity
+      const entropy = createSignalRequestEntropy()
+      const requestId = await computeSignalRequestId(
+        {
+          namespace: resolvedHandle.namespace,
+          workflowId: resolvedHandle.workflowId,
+          runId: resolvedHandle.runId,
+          firstExecutionRunId: resolvedHandle.firstExecutionRunId,
+          signalName: normalizedSignalName,
+          identity,
+          args,
+        },
+        this.dataConverter,
+        { entropy },
+      )
 
-    const request = await buildSignalRequest(
-      {
-        handle: resolvedHandle,
-        signalName: normalizedSignalName,
-        args,
-        identity,
-        requestId,
-      },
-      this.dataConverter,
-    )
+      const request = await buildSignalRequest(
+        {
+          handle: resolvedHandle,
+          signalName: normalizedSignalName,
+          args,
+          identity,
+          requestId,
+        },
+        this.dataConverter,
+      )
 
-    await this.workflowService.signalWorkflowExecution(request, this.callOptions())
+      await this.workflowService.signalWorkflowExecution(request, this.callOptions())
+    })
   }
 
   async queryWorkflow(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown> {
-    this.ensureOpen()
-    const resolvedHandle = resolveHandle(this.namespace, handle)
+    return this.#instrumentOperation('queryWorkflow', async () => {
+      this.ensureOpen()
+      const resolvedHandle = resolveHandle(this.namespace, handle)
 
-    const request = await buildQueryRequest(resolvedHandle, queryName, args, this.dataConverter)
-    const response = await this.workflowService.queryWorkflow(request, this.callOptions())
+      const request = await buildQueryRequest(resolvedHandle, queryName, args, this.dataConverter)
+      const response = await this.workflowService.queryWorkflow(request, this.callOptions())
 
-    return this.parseQueryResult(response)
+      return this.parseQueryResult(response)
+    })
   }
 
   async terminateWorkflow(handle: WorkflowHandle, options: TerminateWorkflowOptions = {}): Promise<void> {
-    this.ensureOpen()
-    const resolvedHandle = resolveHandle(this.namespace, handle)
-    const parsedOptions = sanitizeTerminateWorkflowOptions(options)
+    return this.#instrumentOperation('terminateWorkflow', async () => {
+      this.ensureOpen()
+      const resolvedHandle = resolveHandle(this.namespace, handle)
+      const parsedOptions = sanitizeTerminateWorkflowOptions(options)
 
-    const request = await buildTerminateRequest(resolvedHandle, parsedOptions, this.dataConverter, this.defaultIdentity)
-    await this.workflowService.terminateWorkflowExecution(request, this.callOptions())
+      const request = await buildTerminateRequest(
+        resolvedHandle,
+        parsedOptions,
+        this.dataConverter,
+        this.defaultIdentity,
+      )
+      await this.workflowService.terminateWorkflowExecution(request, this.callOptions())
+    })
   }
 
   async cancelWorkflow(handle: WorkflowHandle): Promise<void> {
-    this.ensureOpen()
-    const resolvedHandle = resolveHandle(this.namespace, handle)
+    return this.#instrumentOperation('cancelWorkflow', async () => {
+      this.ensureOpen()
+      const resolvedHandle = resolveHandle(this.namespace, handle)
 
-    const request = buildCancelRequest(resolvedHandle, this.defaultIdentity)
-    await this.workflowService.requestCancelWorkflowExecution(request, this.callOptions())
+      const request = buildCancelRequest(resolvedHandle, this.defaultIdentity)
+      await this.workflowService.requestCancelWorkflowExecution(request, this.callOptions())
+    })
   }
 
   async signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult> {
-    this.ensureOpen()
-    const startOptions = sanitizeStartWorkflowOptions(options)
-    const signalName = ensureNonEmptyString(options.signalName, 'signalName')
-    const signalArgs = options.signalArgs ?? []
-    if (!Array.isArray(signalArgs)) {
-      throw new Error('signalArgs must be an array when provided')
-    }
+    return this.#instrumentOperation('signalWithStart', async () => {
+      this.ensureOpen()
+      const startOptions = sanitizeStartWorkflowOptions(options)
+      const signalName = ensureNonEmptyString(options.signalName, 'signalName')
+      const signalArgs = options.signalArgs ?? []
+      if (!Array.isArray(signalArgs)) {
+        throw new Error('signalArgs must be an array when provided')
+      }
 
-    const request = await buildSignalWithStartRequest(
-      {
-        options: {
-          ...startOptions,
-          signalName,
-          signalArgs,
+      const request = await buildSignalWithStartRequest(
+        {
+          options: {
+            ...startOptions,
+            signalName,
+            signalArgs,
+          },
+          defaults: {
+            namespace: this.namespace,
+            identity: this.defaultIdentity,
+            taskQueue: this.defaultTaskQueue,
+          },
         },
-        defaults: {
-          namespace: this.namespace,
-          identity: this.defaultIdentity,
-          taskQueue: this.defaultTaskQueue,
-        },
-      },
-      this.dataConverter,
-    )
+        this.dataConverter,
+      )
 
-    const response = await this.workflowService.signalWithStartWorkflowExecution(request, this.callOptions())
-    return this.toStartWorkflowResult(response, {
-      workflowId: request.workflowId,
-      namespace: request.namespace,
-      firstExecutionRunId: response.started ? response.runId : undefined,
+      const response = await this.workflowService.signalWithStartWorkflowExecution(request, this.callOptions())
+      return this.toStartWorkflowResult(response, {
+        workflowId: request.workflowId,
+        namespace: request.namespace,
+        firstExecutionRunId: response.started ? response.runId : undefined,
+      })
     })
   }
 
   async describeNamespace(targetNamespace?: string): Promise<Uint8Array> {
-    this.ensureOpen()
-    const request: DescribeNamespaceRequest = create(DescribeNamespaceRequestSchema, {
-      namespace: targetNamespace ?? this.namespace,
-    })
+    return this.#instrumentOperation('describeNamespace', async () => {
+      this.ensureOpen()
+      const request: DescribeNamespaceRequest = create(DescribeNamespaceRequestSchema, {
+        namespace: targetNamespace ?? this.namespace,
+      })
 
-    const response = await this.workflowService.describeNamespace(request, this.callOptions())
-    return toBinary(DescribeNamespaceResponseSchema, response)
+      const response = await this.workflowService.describeNamespace(request, this.callOptions())
+      return toBinary(DescribeNamespaceResponseSchema, response)
+    })
   }
 
   async updateHeaders(headers: Record<string, string | ArrayBuffer | ArrayBufferView>): Promise<void> {
@@ -291,6 +372,57 @@ class TemporalClientImpl implements TemporalClient {
     if (typeof maybeClose === 'function') {
       await maybeClose.call(this.transport)
     }
+    await this.#flushMetrics()
+  }
+
+  async #flushMetrics(): Promise<void> {
+    try {
+      await Effect.runPromise(this.#metricsExporter.flush())
+    } catch (error) {
+      this.#log('warn', 'failed to flush client metrics exporter', {
+        error: describeError(error),
+      })
+    }
+  }
+
+  #recordMetrics(durationMs: number, failed: boolean): void {
+    void Effect.runPromise(this.#clientMetrics.operationCount.inc())
+    void Effect.runPromise(this.#clientMetrics.operationLatency.observe(durationMs))
+    if (failed) {
+      void Effect.runPromise(this.#clientMetrics.operationErrors.inc())
+    }
+  }
+
+  async #instrumentOperation<T>(operation: string, action: () => Promise<T>): Promise<T> {
+    const start = Date.now()
+    try {
+      const result = await action()
+      this.#log('debug', `temporal client ${operation} succeeded`, {
+        operation,
+        namespace: this.namespace,
+      })
+      this.#recordMetrics(Date.now() - start, false)
+      return result
+    } catch (error) {
+      this.#log('error', `temporal client ${operation} failed`, {
+        operation,
+        error: describeError(error),
+      })
+      this.#recordMetrics(Date.now() - start, true)
+      throw error
+    }
+  }
+
+  #log(level: LogLevel, message: string, fields?: LogFields): void {
+    void Effect.runPromise(
+      this.#logger.log(level, message, fields).pipe(
+        Effect.catchAll((error) =>
+          Effect.sync(() => {
+            console.warn(`[temporal-bun-sdk] client logger failure: ${describeError(error)}`)
+          }),
+        ),
+      ),
+    )
   }
 
   private ensureOpen(): void {
