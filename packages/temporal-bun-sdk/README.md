@@ -73,12 +73,19 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
 `createTemporalClient()` now includes built-in resilience features:
 
 - **Configurable retries** – `loadTemporalConfig()` populates `config.rpcRetryPolicy` from the `TEMPORAL_CLIENT_RETRY_*` env vars (or from defaults). Every WorkflowService RPC is wrapped in `withTemporalRetry()` (decorrelated jitter + exponential backoff). Override per-call values with the new `TemporalClientCallOptions.retryPolicy` field when you need a bespoke attempt budget.
-- **Optional call options on every method** – `startWorkflow`, `signalWorkflow`, `queryWorkflow`, `signalWithStart`, `terminateWorkflow`, and `describeNamespace` accept an optional trailing `callOptions` argument. You can attach ad-hoc headers, timeouts, `AbortSignal`s, or retry tweaks without mutating the client:
+- **Optional call options on every method** – `startWorkflow`, `signalWorkflow`, `queryWorkflow`, `signalWithStart`, `terminateWorkflow`, and `describeNamespace` accept an optional trailing `callOptions` argument. Wrap them with `temporalCallOptions()` so payload objects are never mistaken for options:
   ```ts
-  await client.queryWorkflow(handle, 'currentState', { kind: 'snapshot' }, {
-    timeoutMs: 15_000,
-    headers: { 'x-trace-id': traceId },
-  })
+  import { temporalCallOptions } from '@proompteng/temporal-bun-sdk'
+
+  await client.queryWorkflow(
+    handle,
+    'currentState',
+    { kind: 'snapshot' },
+    temporalCallOptions({
+      timeoutMs: 15_000,
+      headers: { 'x-trace-id': traceId },
+    }),
+  )
   ```
 - **Telemetry-friendly interceptors** – the default interceptor builder injects namespace/identity headers, logs RPC attempts, and records latency/error counters with your configured metrics registry/exporter. Provide `interceptors` when creating a client to append custom tracing or auth middleware.
 - **Memo & search attribute helpers** – `client.memo.encode/decode` and `client.searchAttributes.encode/decode` reuse the client’s `DataConverter`, making it trivial to prepare `Memo`/`SearchAttributes` payloads for raw WorkflowService requests.

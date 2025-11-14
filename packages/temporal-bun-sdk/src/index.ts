@@ -1,11 +1,12 @@
 export type {
+  BrandedTemporalClientCallOptions,
   TemporalClient,
   TemporalClientCallOptions,
   TemporalMemoHelpers,
   TemporalSearchAttributeHelpers,
   TemporalWorkflowClient,
 } from './client'
-export { createTemporalClient, TemporalTlsHandshakeError } from './client'
+export { createTemporalClient, TemporalTlsHandshakeError, temporalCallOptions } from './client'
 export type { TemporalRpcRetryPolicy } from './client/retries'
 export type {
   SignalWithStartOptions,

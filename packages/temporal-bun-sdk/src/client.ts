@@ -56,6 +56,23 @@ export interface TemporalClientCallOptions {
   readonly retryPolicy?: Partial<TemporalRpcRetryPolicy>
 }
 
+export type BrandedTemporalClientCallOptions = TemporalClientCallOptions & CallOptionsMarker
+
+export const temporalCallOptions = (options: TemporalClientCallOptions): BrandedTemporalClientCallOptions => {
+  const copy = { ...options } as BrandedTemporalClientCallOptions & { __temporalCallOptions?: true }
+  Object.defineProperty(copy, CALL_OPTIONS_MARKER, {
+    value: true,
+    enumerable: false,
+    configurable: false,
+  })
+  Object.defineProperty(copy, '__temporalCallOptions', {
+    value: true,
+    enumerable: false,
+    configurable: false,
+  })
+  return copy
+}
+
 export interface TemporalMemoHelpers {
   encode(input?: Record<string, unknown>): Promise<Memo | undefined>
   decode(memo?: Memo | null): Promise<Record<string, unknown> | undefined>
@@ -147,6 +164,12 @@ type TemporalClientMetrics = {
   readonly operationErrors: Counter
 }
 
+const CALL_OPTIONS_MARKER = Symbol.for('temporal.bun.callOptions')
+
+type CallOptionsMarker = {
+  readonly [CALL_OPTIONS_MARKER]: true
+}
+
 const describeError = (error: unknown): string => {
   if (error instanceof Error) {
     return error.message
@@ -154,7 +177,6 @@ const describeError = (error: unknown): string => {
   return String(error)
 }
 
-const CALL_OPTION_KEYS = new Set(['headers', 'signal', 'timeoutMs', 'retryPolicy'])
 const TLS_ERROR_CODE_PREFIXES = ['ERR_TLS_', 'ERR_SSL_']
 const TLS_ERROR_MESSAGE_HINTS = [/handshake/i, /certificate/i, /secure tls/i, /ssl/i]
 
@@ -162,11 +184,10 @@ const isCallOptionsCandidate = (value: unknown): value is TemporalClientCallOpti
   if (!value || typeof value !== 'object') {
     return false
   }
-  const keys = Object.keys(value as Record<string, unknown>)
-  if (keys.length === 0) {
-    return false
+  if (CALL_OPTIONS_MARKER in (value as Record<string | symbol, unknown>)) {
+    return true
   }
-  return keys.every((key) => CALL_OPTION_KEYS.has(key))
+  return (value as Record<string, unknown>).__temporalCallOptions === true
 }
 
 const unwrapTlsCause = (error: unknown): Error | undefined => {
