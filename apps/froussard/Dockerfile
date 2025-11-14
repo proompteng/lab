@@ -27,8 +27,7 @@ FROM oven/bun:${BUN_VERSION}-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY apps/froussard/package.json ./package.json
-COPY bun.lock ./bun.lock
 COPY --from=build /workspace/apps/froussard/dist ./dist
-RUN bun install --production --frozen-lockfile
+COPY --from=deps /workspace/node_modules ./node_modules
 EXPOSE 8080
 CMD ["bun", "dist/index.mjs"]
