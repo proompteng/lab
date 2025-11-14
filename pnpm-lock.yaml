@@ -116,7 +116,7 @@ importers:
         specifier: ^1.28.0
         version: 1.30.0
       '@proompteng/discord':
-        specifier: workspace:*
+        specifier: link:../../packages/discord
         version: link:../../packages/discord
       discord-interactions:
         specifier: ^4.3.0
