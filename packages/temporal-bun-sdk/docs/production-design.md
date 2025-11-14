@@ -200,9 +200,14 @@ can contribute independently without re-planning.
   2. ✅ Sticky task affinity using cache (TBS-001) with eviction metrics and tunable size/TTL (`TEMPORAL_STICKY_CACHE_SIZE`, `TEMPORAL_STICKY_TTL_MS`).
   3. ✅ Build-id routing respected when scheduling tasks (`TEMPORAL_WORKER_DEPLOYMENT_NAME`, `TEMPORAL_WORKER_BUILD_ID`).
   4. ✅ Graceful shutdown drains tasks; observability hooks from TBS-004 now emit lifecycle logs + metrics during drain.
-  5. 🚧 Load tests demonstrate throughput improvements.
+  5. ✅ Load/perf harness (`tests/integration/worker-load.test.ts` and `scripts/run-worker-load.ts`) saturates workflow + activity pollers, enforces throughput/poll-latency/sticky-cache thresholds, and emits `.artifacts/worker-load/{metrics.jsonl,report.json}` for CI review.
 - **Dependencies**
   - Consumes determinism cache (TBS-001), emits metrics for TBS-004.
+
+- **Load/perf harness**
+  - CPU-heavy + I/O-heavy workflows live under `tests/integration/load/**` alongside the JSONL metrics aggregator. The harness starts the Temporal CLI dev server, creates `.artifacts/worker-load` per run, and collects sticky cache, poll latency, and throughput metrics via the worker runtime's file exporter.
+  - Local runs: `TEMPORAL_INTEGRATION_TESTS=1 pnpm --filter @proompteng/temporal-bun-sdk exec bun test tests/integration/worker-load.test.ts` (Bun test runner) or `pnpm --filter @proompteng/temporal-bun-sdk run test:load` (Bun CLI script).
+  - CI: `.github/workflows/temporal-bun-sdk.yml` now executes `pnpm --filter @proompteng/temporal-bun-sdk run test:load` after the main suite and uploads the `.artifacts/worker-load/{metrics.jsonl,report.json,temporal-cli.log}` bundle for reviewers.
 
 ### TBS-004 – Observability (Complete)
 

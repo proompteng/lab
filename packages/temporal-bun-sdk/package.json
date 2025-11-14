@@ -49,6 +49,7 @@
     "build": "tsc --project tsconfig.json --pretty false",
     "prepare": "tsc --project tsconfig.json --pretty false",
     "test": "bun test",
+    "test:load": "bun scripts/run-worker-load.ts",
     "test:coverage": "bun test --coverage",
     "start:worker": "bun run dist/bin/start-worker.js",
     "temporal:start": "bun scripts/start-temporal-cli.ts",

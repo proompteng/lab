@@ -136,6 +136,38 @@ The SDK ships an integration harness that wraps the Temporal CLI dev server scri
 
 If the CLI is missing the tests log a skip and continue so the rest of the suite still passes. The harness lives in `tests/integration/harness.ts` and exposes helpers for bespoke scenarios if you need to extend coverage.
 
+## Worker load & performance tests
+
+The TBS-003 load harness lives under `tests/integration/load/**` and uses CPU-heavy workflows, I/O-heavy activities, and the worker runtime's file metrics exporter to guard throughput, poll latency, and sticky cache hit ratios. There are two supported entry points:
+
+1. **Bun test suite** (reuses the Temporal CLI harness):
+   ```bash
+   TEMPORAL_INTEGRATION_TESTS=1 pnpm --filter @proompteng/temporal-bun-sdk exec bun test tests/integration/worker-load.test.ts
+   ```
+2. **Developer-friendly CLI runner** (wraps the same scenario without `bun test`):
+   ```bash
+   pnpm --filter @proompteng/temporal-bun-sdk run test:load
+   ```
+
+Both commands start the Temporal CLI dev server (unless `TEMPORAL_TEST_SERVER=1` is set), run the worker load scenario, and write artefacts to `.artifacts/worker-load/`:
+
+- `metrics.jsonl` – raw JSONL stream from the file metrics exporter.
+- `report.json` – human-readable summary (config, peak concurrency, throughput, latency percentiles, sticky cache hit ratio).
+- `temporal-cli.log` – CLI stdout/stderr captured during the run.
+
+### Tuning the load harness
+
+The harness is driven by env vars (also exposed as CLI flags via `--workflows`, `--workflow-concurrency`, `--activity-concurrency`, and `--timeout` when calling `pnpm run test:load`). Key overrides:
+
+- `TEMPORAL_LOAD_TEST_WORKFLOWS` – total workflows to submit.
+- `TEMPORAL_LOAD_TEST_WORKFLOW_CONCURRENCY` / `TEMPORAL_LOAD_TEST_ACTIVITY_CONCURRENCY` – poller counts / concurrency targets.
+- `TEMPORAL_LOAD_TEST_WORKFLOW_POLL_P95_MS` / `TEMPORAL_LOAD_TEST_ACTIVITY_POLL_P95_MS` – max allowed P95 poll latency.
+- `TEMPORAL_LOAD_TEST_STICKY_MIN_RATIO` – minimum sticky cache hit ratio before the suite fails.
+- `TEMPORAL_LOAD_TEST_TIMEOUT_MS` – overall completion timeout per batch.
+- `TEMPORAL_LOAD_TEST_ACTIVITY_BURSTS`, `TEMPORAL_LOAD_TEST_COMPUTE_ITERATIONS`, `TEMPORAL_LOAD_TEST_ACTIVITY_DELAY_MS`, `TEMPORAL_LOAD_TEST_ACTIVITY_PAYLOAD_BYTES` – fine-tune CPU/IO stress.
+
+CI runs `pnpm --filter @proompteng/temporal-bun-sdk run test:load` inside `.github/workflows/temporal-bun-sdk.yml` and uploads `.artifacts/worker-load/{metrics.jsonl,report.json,temporal-cli.log}` so reviewers can inspect regressions. When running locally on slower hardware, lower the concurrency knobs or bump the latency thresholds to avoid spurious failures.
+
 ## Effect service integration
 
 ```ts
