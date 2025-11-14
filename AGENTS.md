@@ -17,7 +17,7 @@
 - Infra flow: `pnpm run tf:plan` (review), `pnpm run tf:apply` (approved), and `pnpm run ansible` for playbooks. Use the deployment helper scripts when touching automation services:
   - `bun apps/froussard/src/codex/cli/build-codex-image.ts` to rebuild/push the Codex runner image.
     - Script defaults to the `tuslagch` GitHub CLI account; override with `GH_TOKEN_USER=<other>` if needed. Container git commits use `tuslagch@proompteng.ai`.
-  - `bun packages/scripts/src/froussard/deploy-service.ts` to build and roll the Froussard Knative service (sets `FROUSSARD_VERSION/FROUSSARD_COMMIT` automatically).
+  - `bun packages/scripts/src/froussard/deploy-service.ts` to build/push the Froussard Docker image (via `apps/froussard/Dockerfile`), stamp the Knative manifest with the new digest + `FROUSSARD_VERSION/FROUSSARD_COMMIT`, and `kubectl apply` the update.
   - `bun packages/scripts/src/facteur/deploy-service.ts` to build, push, and redeploy Facteur (applies the kustomize overlay and `kn service apply`).
 - Whenever you change any TypeScript/JavaScript files, run the relevant Biome check command (e.g. `pnpm exec biome check <paths>`) and resolve every diagnostic before pushing or opening a PR; mention the run in your PR description if manual fixes were required.
 

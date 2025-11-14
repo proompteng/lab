@@ -1,8 +1,9 @@
 # Froussard Webhook Bridge
 
-Froussard is a TypeScript function that receives webhook deliveries (GitHub issues/comments
-and Discord slash commands), verifies signatures, and forwards structured payloads into Kafka
-for downstream automation such as Argo Workflows and the Facteur service.
+Froussard is a TypeScript service running on Bun (Elysia HTTP runtime) that receives webhook
+deliveries (GitHub issues/comments and Discord slash commands), verifies signatures, and forwards
+structured payloads into Kafka for downstream automation such as Argo Workflows and the Facteur
+service.
 
 ## End-to-end Data Flow
 
@@ -41,8 +42,10 @@ The Argo CD application also provisions the `discord.commands.incoming` Kafka to
 ```bash
 pnpm install
 pnpm run build
-pnpm run local
+pnpm run start
 ```
+
+> Bun ≥ 1.1 must be available on your PATH—the build step uses `tsdown` to emit ESM bundles and the runtime executes them via `bun dist/index.mjs`.
 
 The local runtime exposes:
 
@@ -67,8 +70,12 @@ The local runtime exposes:
 
 ### Local Deploy Script
 
-- Run `bun packages/scripts/src/froussard/deploy-service.ts` to build, push, and deploy. The helper derives `FROUSSARD_VERSION` and `FROUSSARD_COMMIT` from `git describe --tags --always` / `git rev-parse HEAD` and injects them before shelling out to `pnpm --filter froussard run deploy`. If you invoke the pnpm script directly, make sure those two environment variables are set first—otherwise the rollout will fail.
-- The script uses Bun Shell’s `$` tagged template literal to execute commands, which safely escapes interpolated values, and `$.env()` to scope the derived environment variables to the deploy invocation.
+- Run `bun packages/scripts/src/froussard/deploy-service.ts` to build/push the Docker image defined in `apps/froussard/Dockerfile`, stamp `argocd/applications/froussard/knative-service.yaml` with the new image digest plus the derived `FROUSSARD_VERSION/FROUSSARD_COMMIT`, and `kubectl apply` the manifest for an immediate rollout. The helper reads version/commit from `git describe --tags --always` / `git rev-parse HEAD` unless you override them via env vars.
+- Useful overrides:
+  - `FROUSSARD_IMAGE_REGISTRY`, `FROUSSARD_IMAGE_REPOSITORY`, `FROUSSARD_IMAGE_TAG`, `FROUSSARD_PLATFORMS` (defaults to `linux/arm64`), `FROUSSARD_DOCKERFILE`, and `FROUSSARD_BUILD_CONTEXT` control the Docker build.
+  - `FROUSSARD_KNATIVE_MANIFEST` points to the manifest to rewrite/apply (defaults to `argocd/applications/froussard/knative-service.yaml`).
+  - `FROUSSARD_VERSION` / `FROUSSARD_COMMIT` let you pin the metadata injected into the deployment env without touching git state.
+  - Append `--dry-run` (and optionally point `FROUSSARD_KNATIVE_MANIFEST` at a scratch copy) to preview the manifest edits without building/pushing or calling `kubectl`.
 
 ## Verification Checklist
 
