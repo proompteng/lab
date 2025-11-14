@@ -72,10 +72,10 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
     const { client: temporalClient } = await createTemporalClient({ config, taskQueue })
     try {
       const handles = await submitWorkflows(temporalClient, plans, taskQueue, loadConfig)
-      await waitForCompletion({
-        stats,
-        workflows: handles,
+      await waitForWorkflowCompletions({
         harness: options.harness,
+        handles,
+        stats,
         timeoutMs: loadConfig.workflowDurationBudgetMs,
       })
     } finally {
@@ -148,19 +148,19 @@ const submitWorkflows = async (
   return handles
 }
 
-const waitForCompletion = async ({
-  stats,
-  workflows,
+const waitForWorkflowCompletions = async ({
   harness,
+  handles,
+  stats,
   timeoutMs,
 }: {
-  stats: RuntimeStats
-  workflows: WorkflowExecutionHandle[]
   harness: IntegrationHarness
+  handles: WorkflowExecutionHandle[]
+  stats: RuntimeStats
   timeoutMs: number
 }) => {
+  const pending = new Map(handles.map((handle) => [handle.workflowId, handle]))
   const deadline = Date.now() + timeoutMs
-  const pending = new Map(workflows.map((handle) => [handle.workflowId, handle]))
 
   while (pending.size > 0) {
     if (Date.now() > deadline) {
@@ -176,8 +176,11 @@ const waitForCompletion = async ({
           stats.completed += 1
         }
       } catch (error) {
-        // Ignore transient CLI failures; retry until timeout.
-        void error
+        console.warn('[temporal-bun-sdk:load] failed to fetch workflow history', {
+          workflowId: handle.workflowId,
+          runId: handle.runId,
+          error,
+        })
       }
     }
 
@@ -185,7 +188,6 @@ const waitForCompletion = async ({
       await sleep(1_000)
     }
   }
-
   stats.completedAt = Date.now()
 }
 
