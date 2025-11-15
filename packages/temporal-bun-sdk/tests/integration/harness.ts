@@ -369,7 +369,7 @@ const readStream = async (stream: ReadableStream<Uint8Array> | null): Promise<st
   return textDecoder.decode(merged)
 }
 
-const resolveTemporalCliExecutable = (
+export const resolveTemporalCliExecutable = (
   override?: string,
 ): Effect.Effect<string, TemporalCliUnavailableError, never> =>
   Effect.try({
