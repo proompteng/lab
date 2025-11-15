@@ -27,6 +27,41 @@ harness, and tune sticky cache + determinism diagnostics for
    and run `pnpm --filter @proompteng/temporal-bun-sdk exec bun test tests/replay/fixtures.test.ts`.
    Use `TEMPORAL_REPLAY_FIXTURE=<name-fragment>` to run a subset.
 
+## Use the CLI replay command
+
+The new `temporal-bun replay` CLI wraps the determinism ingestion pipeline so
+you no longer need ad-hoc scripts or Bun tests to diff histories:
+
+1. Set the same environment variables that power workers/clients
+   (`TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, TLS/API keys, etc.).
+2. For JSON fixtures, run:
+   ```bash
+   bunx temporal-bun replay \
+     --history-file packages/temporal-bun-sdk/tests/replay/fixtures/timer-workflow.json \
+     --workflow-type timerWorkflow \
+     --json
+   ```
+3. For live executions, target either the Temporal CLI (`--source cli`) or the
+   WorkflowService RPC API (`--source service`). `--source auto` (default) tries
+   the CLI first and then falls back to RPCs when the binary is missing.
+   ```bash
+   TEMPORAL_ADDRESS=127.0.0.1:7233 TEMPORAL_NAMESPACE=temporal-bun-integration \
+     bunx temporal-bun replay \
+     --execution workflow-id/run-id \
+     --workflow-type integrationWorkflow \
+     --namespace temporal-bun-integration \
+     --source cli \
+     --json
+   ```
+4. Override the Temporal CLI location with `--temporal-cli` or
+   `TEMPORAL_CLI_PATH` when it is not on `PATH`, and pass `--source service` to
+   talk to WorkflowService directly in CI environments.
+
+Exit codes follow Temporal standards (`0` success, `2` nondeterminism, `1`
+failures). The CLI logs history provenance, event counts, mismatch metadata, and
+emits a compact JSON summary when `--json` is supplied so you can attach the
+output to incident threads or feed it into scripts.
+
 ### Replay Diagnostics Environment
 
 - `TEMPORAL_TEST_SERVER=1` — reuse an already running Temporal dev server instead of spawning the CLI helper (tests log a skip if the CLI is missing).

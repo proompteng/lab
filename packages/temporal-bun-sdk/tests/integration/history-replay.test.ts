@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import crypto from 'node:crypto'
+import { join } from 'node:path'
 
 import { Effect, Exit } from 'effect'
 
@@ -205,6 +206,20 @@ describe('Temporal CLI history ingestion', () => {
     })
   })
 
+  test('temporal-bun replay CLI fetches history via Temporal CLI', async () => {
+    await runOrSkip('temporal-bun replay cli command', async () => {
+      const execution = await runTimerWorkflow('replay-cli')
+      const result = await runReplayCliCommand(execution)
+      expect(result.exitCode).toBe(0)
+      const summaryLine = extractJsonSummary(result.stdout)
+      expect(summaryLine).toBeDefined()
+      const summary = summaryLine ? JSON.parse(summaryLine) : null
+      expect(summary?.workflow.workflowId).toBe(execution.workflowId)
+      expect(summary?.determinism.mismatchCount).toBe(0)
+      expect(result.stderr.trim()).toBe('')
+    })
+  })
+
   test('sticky cache evicts entries beyond capacity', async () => {
     await runOrSkip('sticky cache eviction', async () => {
       if (!stickyCacheSizeEffect) {
@@ -240,17 +255,82 @@ describe('Temporal CLI history ingestion', () => {
     })
   })
 
-  test('sticky cache remains empty after workflow completion', async () => {
-    await runOrSkip('sticky cache cleanup', async () => {
-      if (!stickyCacheSizeEffect) {
-        throw new Error('Sticky cache not initialised')
-      }
-      await runTimerWorkflow()
-      const size = await Effect.runPromise(stickyCacheSizeEffect)
-      expect(size).toBe(0)
-    })
+test('sticky cache remains empty after workflow completion', async () => {
+  await runOrSkip('sticky cache cleanup', async () => {
+    if (!stickyCacheSizeEffect) {
+      throw new Error('Sticky cache not initialised')
+    }
+    await runTimerWorkflow()
+    const size = await Effect.runPromise(stickyCacheSizeEffect)
+    expect(size).toBe(0)
   })
 })
+})
+
+const runReplayCliCommand = async (
+  execution: WorkflowExecutionHandle,
+): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+  const cliEntrypoint = join(import.meta.dir, '../../src/bin/temporal-bun.ts')
+  const command = [
+    'bun',
+    cliEntrypoint,
+    'replay',
+    '--execution',
+    `${execution.workflowId}/${execution.runId}`,
+    '--workflow-type',
+    timerWorkflow.name,
+    '--namespace',
+    CLI_CONFIG.namespace,
+    '--source',
+    'cli',
+    '--json',
+  ] as const
+
+  const child = Bun.spawn(command, {
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: {
+      ...process.env,
+      TEMPORAL_ADDRESS: CLI_CONFIG.address,
+      TEMPORAL_NAMESPACE: CLI_CONFIG.namespace,
+      TEMPORAL_TASK_QUEUE: CLI_CONFIG.taskQueue,
+      TEMPORAL_LOG_FORMAT: 'json',
+    },
+  })
+
+  const exitCode = await child.exited
+  const stdout = await readCliStream(child.stdout)
+  const stderr = await readCliStream(child.stderr)
+  return { exitCode, stdout, stderr }
+}
+
+const readCliStream = async (stream: ReadableStream<Uint8Array> | null): Promise<string> => {
+  if (!stream) {
+    return ''
+  }
+  const decoder = new TextDecoder()
+  const reader = stream.getReader()
+  const chunks: string[] = []
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) {
+      break
+    }
+    if (value) {
+      chunks.push(decoder.decode(value, { stream: true }))
+    }
+  }
+  chunks.push(decoder.decode())
+  return chunks.join('')
+}
+
+const extractJsonSummary = (stdout: string): string | undefined => {
+  const lines = stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('{') && line.endsWith('}'))
+  return lines[lines.length - 1]
+}
 
 const runTimerWorkflow = async (): Promise<WorkflowExecutionHandle> => {
   try {

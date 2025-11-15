@@ -251,8 +251,59 @@ await worker.run()
 ```
 temporal-bun init [directory]        Scaffold a new worker project
 temporal-bun docker-build            Build a Docker image for the current project
+temporal-bun doctor                  Validate config + observability sinks
+temporal-bun replay                  Replay workflow histories and diff determinism
 temporal-bun help                    Show available commands
 ```
+
+### Replay workflow histories
+
+`temporal-bun replay` ingests workflow histories from JSON files or live
+executions, reuses the existing determinism ingestion pipeline, and exits with a
+non-zero status when mismatches surface (`0` success, `2` nondeterminism, `1`
+configuration or IO failures).
+
+- **History files** – accept either raw `temporal workflow show --history --output
+  json` output or fixture-style envelopes containing `history` + `info`.
+- **Live executions** – pass `--execution <workflowId/runId>` and the command
+  shells out to the Temporal CLI (`--source cli`) or the WorkflowService RPC API
+  (`--source service`). `--source auto` (default) tries the CLI first and falls
+  back to WorkflowService when the binary is missing.
+- **Observability** – the command loads config via `loadTemporalConfig`, reuses
+  `createObservabilityServices`, emits structured logs, and increments
+  `temporal_bun_replay_runs_total` / `temporal_bun_replay_mismatches_total`.
+- **Troubleshooting** – surface the mismatching command index, event ids, and
+  workflow-task metadata on stdout plus a JSON summary when `--json` is set.
+
+Examples:
+
+```bash
+# Replay a captured history file
+bunx temporal-bun replay \
+  --history-file packages/temporal-bun-sdk/tests/replay/fixtures/timer-workflow.json \
+  --workflow-type timerWorkflow \
+  --json
+
+# Diff a live execution using the Temporal CLI harness
+TEMPORAL_ADDRESS=127.0.0.1:7233 TEMPORAL_NAMESPACE=temporal-bun-integration \
+  bunx temporal-bun replay \
+  --execution workflow-id/run-id \
+  --workflow-type integrationWorkflow \
+  --namespace temporal-bun-integration \
+  --source cli
+
+# Force WorkflowService RPCs (no CLI installed)
+bunx temporal-bun replay \
+  --execution workflow-id/run-id \
+  --workflow-type integrationWorkflow \
+  --namespace temporal-bun-integration \
+  --source service
+```
+
+Set `TEMPORAL_CLI_PATH` or `--temporal-cli` if the Temporal CLI binary is not on
+your `PATH`. TLS, API key, and namespace overrides rely on the same environment
+variables consumed by worker/client code (`TEMPORAL_ADDRESS`,
+`TEMPORAL_NAMESPACE`, `TEMPORAL_TLS_*`, etc.).
 
 ## Data conversion
 `createDefaultDataConverter()` encodes payloads as JSON. Implement `DataConverter` if you need a custom codec or encryption layer:

@@ -56,6 +56,9 @@ export const workerLoadActivityWorkflow = defineWorkflow(
       let checksum = 0
       for (let burst = 0; burst < bursts; burst += 1) {
         checksum = busyLoop(computeIterations + burst * 13, checksum ^ burst)
+        const heartbeatTimeoutMs = Math.max(2_000, activityDelayMs * 2)
+        const startToCloseTimeoutMs = Math.max(5_000, activityDelayMs * 6)
+        const scheduleToCloseTimeoutMs = Math.max(startToCloseTimeoutMs * 2, activityDelayMs * 12)
         yield* activities.schedule(
           'workerLoad.ioBurstActivity',
           [
@@ -66,8 +69,9 @@ export const workerLoadActivityWorkflow = defineWorkflow(
             },
           ],
           {
-            heartbeatTimeoutMs: Math.max(1_000, activityDelayMs * 2),
-            startToCloseTimeoutMs: Math.max(2_000, activityDelayMs * 4),
+            heartbeatTimeoutMs,
+            startToCloseTimeoutMs,
+            scheduleToCloseTimeoutMs,
           },
         )
       }
