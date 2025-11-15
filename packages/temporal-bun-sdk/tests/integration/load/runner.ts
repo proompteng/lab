@@ -22,10 +22,8 @@ import {
   type WorkerLoadActivityWorkflowInput,
   type WorkerLoadCpuWorkflowInput,
 } from './workflows'
-import { EventType } from '../../../src/proto/temporal/api/enums/v1/event_type_pb'
 import { WorkflowService } from '../../../src/proto/temporal/api/workflowservice/v1/service_pb'
-import { GetWorkflowExecutionHistoryRequestSchema } from '../../../src/proto/temporal/api/workflowservice/v1/request_response_pb'
-import { WorkflowExecutionSchema } from '../../../src/proto/temporal/api/common/v1/message_pb'
+import { ListWorkflowExecutionsRequestSchema } from '../../../src/proto/temporal/api/workflowservice/v1/request_response_pb'
 
 export interface WorkerLoadRunnerOptions {
   readonly harness: IntegrationHarness
@@ -92,6 +90,7 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
         workflowService: workflowService.client,
         namespace: resolvedConfig.namespace,
         timeoutMs: loadConfig.workflowDurationBudgetMs,
+        taskQueue,
       })
     } finally {
       await temporalClient.shutdown()
@@ -164,57 +163,61 @@ const submitWorkflows = async (
   return handles
 }
 
+const MIN_HISTORY_POLL_INTERVAL_MS = 250
+const MAX_HISTORY_POLL_INTERVAL_MS = 1_000
+
 const waitForWorkflowCompletions = async ({
   workflowService,
   handles,
   stats,
   namespace,
   timeoutMs,
+  taskQueue,
 }: {
   workflowService: ReturnType<typeof createClient<typeof WorkflowService>>
   handles: WorkflowExecutionHandle[]
   stats: RuntimeStats
   namespace: string
   timeoutMs: number
+  taskQueue: string
 }) => {
-  const pending = new Map(handles.map((handle) => [handle.workflowId, handle]))
   const deadline = Date.now() + timeoutMs
+  const pollIntervalMs = Math.min(
+    MAX_HISTORY_POLL_INTERVAL_MS,
+    Math.max(MIN_HISTORY_POLL_INTERVAL_MS, Math.trunc(timeoutMs / 40)),
+  )
+  const pageSize = Math.max(50, handles.length * 2)
+  const query = `TaskQueue = '${taskQueue}' AND ExecutionStatus = "Running"`
 
-  while (pending.size > 0) {
+  const countRunningExecutions = async (): Promise<number> => {
+    let running = 0
+    let nextPageToken = new Uint8Array(0)
+    do {
+      const request = create(ListWorkflowExecutionsRequestSchema, {
+        namespace,
+        pageSize,
+        nextPageToken,
+        query,
+      })
+      const response = await workflowService.listWorkflowExecutions(request, {})
+      running += response.executions.length
+      nextPageToken = response.nextPageToken ?? new Uint8Array(0)
+    } while (nextPageToken.length > 0)
+    return running
+  }
+
+  let running = handles.length
+  while (running > 0) {
     if (Date.now() > deadline) {
-      throw new Error(`Timed out waiting for ${pending.size} workflows to complete`)
+      throw new Error(`Timed out waiting for ${running} workflows to complete`)
     }
-
-    for (const [workflowId, handle] of pending) {
-      try {
-        const request = create(GetWorkflowExecutionHistoryRequestSchema, {
-          namespace,
-          execution: create(WorkflowExecutionSchema, {
-            workflowId: handle.workflowId,
-            runId: handle.runId,
-          }),
-          maximumPageSize: 1_000,
-        })
-        const response = await workflowService.getWorkflowExecutionHistory(request, {})
-        const history = response.history?.events ?? []
-        const lastEvent = history.at(-1)
-        if (lastEvent && WORKFLOW_CLOSED_EVENTS.has(lastEvent.eventType ?? EventType.EVENT_TYPE_UNSPECIFIED)) {
-          pending.delete(workflowId)
-          stats.completed += 1
-        }
-      } catch (error) {
-        console.warn('[temporal-bun-sdk:load] getWorkflowExecutionHistory failed', {
-          workflowId: handle.workflowId,
-          runId: handle.runId,
-          error,
-        })
-      }
-    }
-
-    if (pending.size > 0) {
-      await sleep(1_000)
+    running = await countRunningExecutions()
+    stats.completed = Math.max(stats.submitted - running, stats.completed)
+    if (running > 0) {
+      await sleep(pollIntervalMs)
     }
   }
+
   stats.completedAt = Date.now()
 }
 
@@ -284,15 +287,6 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
-
-const WORKFLOW_CLOSED_EVENTS = new Set<EventType>([
-  EventType.WORKFLOW_EXECUTION_COMPLETED,
-  EventType.WORKFLOW_EXECUTION_FAILED,
-  EventType.WORKFLOW_EXECUTION_TIMED_OUT,
-  EventType.WORKFLOW_EXECUTION_TERMINATED,
-  EventType.WORKFLOW_EXECUTION_CANCELED,
-  EventType.WORKFLOW_EXECUTION_CONTINUED_AS_NEW,
-])
 
 type WorkflowServiceHandle = {
   client: ReturnType<typeof createClient<typeof WorkflowService>>
