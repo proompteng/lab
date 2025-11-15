@@ -168,6 +168,13 @@ type WorkflowHandle = {
   readonly runId: string
 }
 
+class WorkflowCompletionError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'WorkflowCompletionError'
+  }
+}
+
 const runWithTimeout = async <T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(message)), timeoutMs)
@@ -243,20 +250,29 @@ const waitForWorkflowCompletionsCli = async ({
       }
       try {
         const parsed = JSON.parse(stdout)
-        const status = parsed?.workflowExecutionInfo?.status
-        if (typeof status === 'string' && status.startsWith('WORKFLOW_EXECUTION_STATUS_')) {
-          if (status !== 'WORKFLOW_EXECUTION_STATUS_RUNNING') {
-            return
-          }
+        const statusField = parsed?.workflowExecutionInfo?.status ?? parsed?.status
+        const normalizedStatus = normalizeWorkflowStatus(statusField)
+        if (normalizedStatus === 'RUNNING') {
+          await sleep(500)
+          continue
         }
+        if (normalizedStatus === 'COMPLETED') {
+          return
+        }
+        throw new WorkflowCompletionError(
+          `Workflow ${handle.workflowId} finished with status ${normalizedStatus ?? 'UNKNOWN'}`,
+        )
       } catch (error) {
-        console.warn('[temporal-bun-sdk:load] failed to parse workflow describe output', {
+        if (error instanceof WorkflowCompletionError) {
+          throw error
+        }
+        console.warn('[temporal-bun-sdk:load] workflow describe processing failed', {
           workflowId: handle.workflowId,
           runId: handle.runId,
           error,
         })
+        await sleep(500)
       }
-      await sleep(500)
     }
   }
 
@@ -339,6 +355,16 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+
+const normalizeWorkflowStatus = (status: unknown): string | undefined => {
+  if (typeof status !== 'string') {
+    return undefined
+  }
+  if (status.startsWith('WORKFLOW_EXECUTION_STATUS_')) {
+    return status.replace('WORKFLOW_EXECUTION_STATUS_', '')
+  }
+  return status.toUpperCase()
+}
 
 const readStream = async (stream: ReadableStream<Uint8Array> | null): Promise<string> => {
   if (!stream) {
