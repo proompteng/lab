@@ -88,14 +88,20 @@ jobs:
           cd packages/temporal-bun-sdk
           bun scripts/stop-temporal-cli.ts || true
 
+      - name: Collect Temporal CLI log
+        if: always()
+        run: |
+          cd packages/temporal-bun-sdk
+          mkdir -p .artifacts/worker-load
+          if [ -f .temporal-cli.log ]; then cp .temporal-cli.log .artifacts/worker-load/temporal-cli.log; fi
+
       - name: Upload Temporal CLI logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: temporal-cli-logs
-          path: |
-            packages/temporal-bun-sdk/.temporal-cli.log
-            packages/temporal-bun-sdk/.artifacts/worker-load/temporal-cli.log
+          path: packages/temporal-bun-sdk/.artifacts/worker-load/temporal-cli.log
+          if-no-files-found: ignore
 
       - name: Upload worker load artifacts
         if: always()
