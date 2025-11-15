@@ -155,7 +155,7 @@ Both commands start the Temporal CLI dev server (unless `TEMPORAL_TEST_SERVER=1`
 - `report.json` – human-readable summary (config, peak concurrency, throughput, latency percentiles, sticky cache hit ratio).
 - `temporal-cli.log` – CLI stdout/stderr captured during the run.
 
-The default profile submits 18 workflows (mix of CPU and IO heavy types) with a 100-second workflow deadline, which keeps the CI run comfortably under two minutes while still saturating the pollers. The Bun test wrapper adds a 15-second safety buffer on top of `TEMPORAL_LOAD_TEST_TIMEOUT_MS + TEMPORAL_LOAD_TEST_METRICS_FLUSH_MS`, so keep that env var in sync with any threshold tweaks.
+The default profile now submits 36 workflows (roughly a 2:1 mix of CPU-heavy to IO-heavy types) with worker poller concurrency of 10/14 (workflow/activity) and a 100-second workflow deadline. That keeps the CI run comfortably under two minutes while actually saturating the scheduler. The Bun test wrapper adds a 15-second safety buffer on top of `TEMPORAL_LOAD_TEST_TIMEOUT_MS + TEMPORAL_LOAD_TEST_METRICS_FLUSH_MS`, so keep that env var in sync with any threshold tweaks.
 
 ### Tuning the load harness
 

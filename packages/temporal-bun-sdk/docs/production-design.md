@@ -208,7 +208,7 @@ can contribute independently without re-planning.
   - CPU-heavy + I/O-heavy workflows live under `tests/integration/load/**` alongside the JSONL metrics aggregator. The harness starts the Temporal CLI dev server, creates `.artifacts/worker-load` per run, and collects sticky cache, poll latency, and throughput metrics via the worker runtime's file exporter.
   - Local runs: `TEMPORAL_INTEGRATION_TESTS=1 pnpm --filter @proompteng/temporal-bun-sdk exec bun test tests/integration/worker-load.test.ts` (Bun test runner) or `pnpm --filter @proompteng/temporal-bun-sdk run test:load` (Bun CLI script).
   - CI: `.github/workflows/temporal-bun-sdk.yml` now executes `pnpm --filter @proompteng/temporal-bun-sdk run test:load` after the main suite and uploads the `.artifacts/worker-load/{metrics.jsonl,report.json,temporal-cli.log}` bundle for reviewers.
-  - Default knobs submit 18 workflows with a 100s completion budget; the Bun test adds a ~15s cushion over `TEMPORAL_LOAD_TEST_TIMEOUT_MS + TEMPORAL_LOAD_TEST_METRICS_FLUSH_MS` so that healthy runs finish well before the CI hard timeout while still exercising the concurrency limits.
+  - Default knobs submit 36 workflows with a 100s completion budget and workflow/activity concurrency of 10/14; the Bun test adds a ~15s cushion over `TEMPORAL_LOAD_TEST_TIMEOUT_MS + TEMPORAL_LOAD_TEST_METRICS_FLUSH_MS` so that healthy runs finish well before the CI hard timeout while still exercising the scheduler.
 
 ### TBS-004 – Observability (Complete)
 
