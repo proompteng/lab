@@ -24,9 +24,9 @@ import {
 } from './workflows'
 
 const CLI_CONFIG = {
-  address: '127.0.0.1:7233',
-  namespace: 'default',
-  taskQueue: 'temporal-bun-integration',
+  address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
+  namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
+  taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? 'temporal-bun-integration',
 }
 
 let harness: IntegrationHarness | null = null
