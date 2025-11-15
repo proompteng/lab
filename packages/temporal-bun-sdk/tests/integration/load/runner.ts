@@ -253,15 +253,6 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms)
   })
 
-const WORKFLOW_CLOSED_EVENTS = new Set<EventType>([
-  EventType.WORKFLOW_EXECUTION_COMPLETED,
-  EventType.WORKFLOW_EXECUTION_FAILED,
-  EventType.WORKFLOW_EXECUTION_TIMED_OUT,
-  EventType.WORKFLOW_EXECUTION_TERMINATED,
-  EventType.WORKFLOW_EXECUTION_CANCELED,
-  EventType.WORKFLOW_EXECUTION_CONTINUED_AS_NEW,
-])
-
 export type WorkflowPlan =
   | {
       readonly id: string
