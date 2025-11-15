@@ -92,13 +92,13 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
         `Worker load suite exceeded ${completionBudgetMs}ms without completing`,
       )
       stats.completed = stats.submitted
-      stats.completedAt = Date.now()
     } finally {
       await temporalClient.shutdown()
     }
   } finally {
     await runtime.shutdown()
     await runPromise
+    stats.completedAt = stats.completedAt ?? Date.now()
   }
 
   const durationMs = Math.max(1, (stats.completedAt ?? Date.now()) - stats.startedAt)
@@ -343,6 +343,10 @@ const createSchedulerHooks = (stats: RuntimeStats) => ({
   onWorkflowComplete: () =>
     Effect.sync(() => {
       stats.active = Math.max(0, stats.active - 1)
+      stats.completed = Math.min(stats.submitted, stats.completed + 1)
+      if (stats.completed === stats.submitted) {
+        stats.completedAt = stats.completedAt ?? Date.now()
+      }
     }),
 })
 
