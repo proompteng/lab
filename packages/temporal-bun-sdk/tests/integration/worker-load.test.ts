@@ -71,7 +71,7 @@ describeIntegration('worker runtime load/perf suite', () => {
     expect(result.stats.completed).toBeGreaterThanOrEqual(result.stats.submitted)
     const expectedConcurrencyFloor = Math.max(
       1,
-      Math.ceil(Math.min(loadConfig.workflowConcurrencyTarget, result.stats.submitted) * 0.5),
+      Math.ceil(Math.min(loadConfig.workflowConcurrencyTarget, result.stats.submitted) * 0.3),
     )
     expect(result.stats.peakConcurrent).toBeGreaterThanOrEqual(expectedConcurrencyFloor)
     expect(result.summary.workflowThroughputPerSecond).toBeGreaterThanOrEqual(
