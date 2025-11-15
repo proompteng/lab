@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { fromJson } from '@bufbuild/protobuf'
@@ -15,6 +15,9 @@ export interface TemporalDevServerConfig {
   readonly cliBinaryPath?: string
   readonly cliPort?: number
   readonly cliUiPort?: number
+  readonly cliLogPath?: string
+  readonly artifactsDir?: string
+  readonly workerLoadArtifactsDir?: string
   readonly tls?: {
     readonly caPath?: string
     readonly certPath?: string
@@ -33,6 +36,7 @@ export interface IntegrationHarness {
   readonly runScenario: <A>(
     name: string,
     scenario: () => Effect.Effect<A, TemporalCliError, never>,
+    options?: ScenarioRunOptions,
   ) => Effect.Effect<A, TemporalCliError, never>
   readonly executeWorkflow: (
     options: TemporalWorkflowExecuteOptions,
@@ -40,6 +44,18 @@ export interface IntegrationHarness {
   readonly fetchWorkflowHistory: (
     handle: WorkflowExecutionHandle,
   ) => Effect.Effect<HistoryEvent[], TemporalCliError, never>
+  readonly workerLoadArtifacts: WorkerLoadArtifactsHelper
+  readonly temporalCliLogPath: string
+}
+
+export interface ScenarioRunOptions {
+  readonly env?: Record<string, string | undefined>
+}
+
+export interface WorkerLoadArtifactsHelper {
+  readonly root: string
+  readonly resolve: (...segments: string[]) => string
+  readonly prepare: (options?: { readonly clean?: boolean }) => Effect.Effect<string, TemporalCliError, never>
 }
 
 export interface TemporalWorkflowExecuteOptions {
@@ -53,7 +69,10 @@ export interface TemporalWorkflowExecuteOptions {
   }
 }
 
-export type TemporalCliError = TemporalCliUnavailableError | TemporalCliCommandError
+export type TemporalCliError =
+  | TemporalCliUnavailableError
+  | TemporalCliCommandError
+  | TemporalCliArtifactError
 
 export class TemporalCliUnavailableError extends Error {
   readonly attempts: readonly { candidate: string; error: string }[]
@@ -81,19 +100,35 @@ export class TemporalCliCommandError extends Error {
   }
 }
 
+export class TemporalCliArtifactError extends Error {
+  constructor(message: string, readonly cause?: unknown) {
+    super(message)
+    this.name = 'TemporalCliArtifactError'
+  }
+}
+
 const textDecoder = new TextDecoder()
+const reuseExistingServer = process.env.TEMPORAL_TEST_SERVER === '1'
 
 export const createIntegrationHarness = (
   config: TemporalDevServerConfig,
 ): Effect.Effect<IntegrationHarness, TemporalCliError, never> =>
   Effect.gen(function* () {
     const projectRoot = join(import.meta.dir, '..', '..')
+    const artifactsRoot =
+      config.artifactsDir ?? process.env.TEMPORAL_ARTIFACTS_DIR ?? join(projectRoot, '.artifacts')
+    const workerLoadArtifactsDir =
+      config.workerLoadArtifactsDir ?? join(artifactsRoot, 'worker-load')
+    const temporalCliLogPath =
+      config.cliLogPath ?? process.env.TEMPORAL_CLI_LOG_PATH ?? join(projectRoot, '.temporal-cli.log')
     const startScript = join(projectRoot, 'scripts', 'start-temporal-cli.ts')
     const stopScript = join(projectRoot, 'scripts', 'stop-temporal-cli.ts')
 
     if (!existsSync(startScript) || !existsSync(stopScript)) {
       throw new TemporalCliUnavailableError('Temporal CLI management scripts are missing', [])
     }
+
+    const workerLoadArtifacts = createWorkerLoadArtifactsHelper(workerLoadArtifactsDir)
 
     const { hostname, port } = parseAddress(config.address)
     const cliPort = config.cliPort ?? port
@@ -109,6 +144,9 @@ export const createIntegrationHarness = (
       TEMPORAL_TLS_CA_PATH: config.tls?.caPath,
       TEMPORAL_TLS_CERT_PATH: config.tls?.certPath,
       TEMPORAL_TLS_KEY_PATH: config.tls?.keyPath,
+      TEMPORAL_ARTIFACTS_DIR: artifactsRoot,
+      TEMPORAL_WORKER_LOAD_ARTIFACTS_DIR: workerLoadArtifacts.root,
+      TEMPORAL_CLI_LOG_PATH: temporalCliLogPath,
     }
 
     const setup = Effect.tryPromise(async () => {
@@ -130,6 +168,9 @@ export const createIntegrationHarness = (
           TEMPORAL_CLI_PATH: cliExecutable,
           TEMPORAL_PORT: String(cliPort),
           TEMPORAL_UI_PORT: String(cliUiPort),
+          TEMPORAL_ARTIFACTS_DIR: artifactsRoot,
+          TEMPORAL_WORKER_LOAD_ARTIFACTS_DIR: workerLoadArtifacts.root,
+          TEMPORAL_CLI_LOG_PATH: temporalCliLogPath,
         },
       })
       const exitCode = await child.exited
@@ -281,9 +322,9 @@ export const createIntegrationHarness = (
       )
     }
 
-    const runScenario: IntegrationHarness['runScenario'] = (name, scenario) =>
+    const runScenario: IntegrationHarness['runScenario'] = (name, scenario, options) =>
       withEnvironment(
-        scenarioEnv,
+        { ...scenarioEnv, ...(options?.env ?? {}) },
         Effect.sync(() => {
           console.info(`[temporal-bun-sdk] scenario: ${name}`)
         }).pipe(Effect.zipRight(scenario())),
@@ -295,6 +336,8 @@ export const createIntegrationHarness = (
       runScenario,
       executeWorkflow,
       fetchWorkflowHistory,
+      workerLoadArtifacts,
+      temporalCliLogPath,
     }
   })
 
@@ -326,7 +369,7 @@ const readStream = async (stream: ReadableStream<Uint8Array> | null): Promise<st
   return textDecoder.decode(merged)
 }
 
-const resolveTemporalCliExecutable = (
+export const resolveTemporalCliExecutable = (
   override?: string,
 ): Effect.Effect<string, TemporalCliUnavailableError, never> =>
   Effect.try({
@@ -503,6 +546,30 @@ const normalizeEventTypeFlag = (event: HistoryEvent): HistoryEvent => {
   return event
 }
 
+const createWorkerLoadArtifactsHelper = (root: string): WorkerLoadArtifactsHelper => {
+  const prepare = (options?: { readonly clean?: boolean }) =>
+    Effect.try({
+      try: () => {
+        if (options?.clean && existsSync(root)) {
+          rmSync(root, { recursive: true, force: true })
+        }
+        mkdirSync(root, { recursive: true })
+        return root
+      },
+      catch: (error) =>
+        new TemporalCliArtifactError(
+          `Failed to prepare worker load artifacts directory at ${root}`,
+          error,
+        ),
+    })
+
+  return {
+    root,
+    resolve: (...segments: string[]) => join(root, ...segments),
+    prepare: (options) => prepare(options),
+  }
+}
+
 const parseAddress = (value: string): { hostname: string; port: number } => {
   try {
     const url = new URL(value.includes('://') ? value : `http://${value}`)
@@ -546,4 +613,3 @@ const withEnvironment = <A, E, R>(
         }
       }),
   )
-    const reuseExistingServer = process.env.TEMPORAL_TEST_SERVER === '1'

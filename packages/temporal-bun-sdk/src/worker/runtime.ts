@@ -268,16 +268,14 @@ export class WorkerRuntime {
     const stickyCacheTtlMs = stickyCacheOptions?.ttlMs ?? config.workerStickyTtlMs
     const stickyCacheHooks: StickyCacheHooks = {
       onEvict: (entry, reason) =>
-        void Effect.runPromise(
-          logger.log('debug', 'sticky cache eviction', {
-            namespace: entry.key.namespace,
-            taskQueue,
-            workflowId: entry.key.workflowId,
-            runId: entry.key.runId,
-            workflowType: entry.workflowType,
-            reason,
-          }),
-        ),
+        logger.log('debug', 'sticky cache eviction', {
+          namespace: entry.key.namespace,
+          taskQueue,
+          workflowId: entry.key.workflowId,
+          runId: entry.key.runId,
+          workflowType: entry.workflowType,
+          reason,
+        }),
     }
     const stickyCache = hasStickyCacheInstance
       ? (stickyCacheCandidate as StickyCache)

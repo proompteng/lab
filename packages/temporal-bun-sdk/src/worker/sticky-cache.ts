@@ -76,8 +76,9 @@ export const makeStickyCache = (config: StickyCacheConfig): Effect.Effect<Sticky
         if (reason === 'lru' || reason === 'ttl') {
           yield* recordCounter(metrics?.evictions)
         }
-        if (hooks?.onEvict) {
-          yield* hooks.onEvict(entry, reason)
+        const onEvictHook = hooks?.onEvict
+        if (onEvictHook) {
+          yield* onEvictHook(entry, reason)
         }
       })
 

@@ -3,12 +3,13 @@
 import { spawn } from 'node:child_process'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
-import { join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 
 const projectRoot = join(import.meta.dir, '..')
 const stateDir = join(projectRoot, '.temporal-cli')
 const pidFile = join(projectRoot, '.temporal-cli.pid')
-const logFile = join(projectRoot, '.temporal-cli.log')
+const logFile = resolvePath(process.env.TEMPORAL_CLI_LOG_PATH, join(projectRoot, '.temporal-cli.log'))
+const logDir = dirname(logFile)
 
 const temporalPort = Number(process.env.TEMPORAL_PORT ?? 7233)
 const temporalUiPort = Number(process.env.TEMPORAL_UI_PORT ?? 8233)
@@ -95,7 +96,8 @@ function writePid(pid: number) {
 
 function startTemporalCli(executable: string) {
   mkdirSync(stateDir, { recursive: true })
-  const logFd = openSync(logFile, 'a')
+  mkdirSync(logDir, { recursive: true })
+  const logFd = openSync(logFile, 'w')
   try {
     const child = spawn(
       executable,
@@ -153,6 +155,17 @@ async function main() {
     rmSync(pidFile, { force: true })
     process.exit(1)
   }
+}
+
+function resolvePath(override: string | undefined, fallback: string): string {
+  if (!override) {
+    return fallback
+  }
+  const trimmed = override.trim()
+  if (!trimmed) {
+    return fallback
+  }
+  return isAbsolute(trimmed) ? trimmed : join(projectRoot, trimmed)
 }
 
 await main()
