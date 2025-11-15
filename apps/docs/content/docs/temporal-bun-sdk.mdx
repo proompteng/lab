@@ -134,6 +134,45 @@ bunx temporal-bun doctor --log-format=json --metrics=file:/tmp/metrics.json
 The command prints a success summary once the JSON log is emitted and the
 metrics file is written, so you can script it into CI or pre-deployment checks.
 
+## Replay workflow histories
+
+`temporal-bun replay` lets you ingest workflow histories, diff the determinism
+state, and share diagnostics with incident responders without writing ad-hoc
+scripts. It reuses `loadTemporalConfig`, the observability sinks, and the same
+ingestion pipeline that powers the worker sticky cache.
+
+- `--history-file <path>` – replay a JSON capture (`temporal workflow show
+  --history --output json` or the fixture format described in the replay
+  runbook).
+- `--execution <workflowId/runId>` – fetch live history via the Temporal CLI or
+  WorkflowService RPC (`--source cli|service|auto`).
+- `--workflow-type`, `--namespace`, `--temporal-cli`, `--json` – supply workflow
+  metadata, namespace overrides, a custom CLI binary path, and machine-readable
+  summaries respectively.
+- Exit codes: `0` success, `2` nondeterminism, `1` IO/configuration failures.
+
+```bash
+# Replay a saved history fixture
+bunx temporal-bun replay \
+  --history-file packages/temporal-bun-sdk/tests/replay/fixtures/timer-workflow.json \
+  --workflow-type timerWorkflow \
+  --json
+
+# Diff a live execution using the Temporal CLI harness
+TEMPORAL_ADDRESS=127.0.0.1:7233 TEMPORAL_NAMESPACE=temporal-bun-integration \
+  bunx temporal-bun replay \
+  --execution workflow-id/run-id \
+  --workflow-type integrationWorkflow \
+  --namespace temporal-bun-integration \
+  --source cli
+```
+
+Set `TEMPORAL_CLI_PATH` or pass `--temporal-cli` when the CLI binary is not on
+`PATH`, and rely on `--source service` to route through WorkflowService when the
+CLI is unavailable (for example, in CI). The command logs history provenance,
+event counts, mismatch metadata, and writes a compact JSON summary when
+`--json` is supplied so you can feed the output into other tooling.
+
 ## Author activities
 
 Activities are plain Bun functions. Keep them deterministic from Temporal’s

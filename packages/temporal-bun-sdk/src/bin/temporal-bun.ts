@@ -7,15 +7,20 @@ import { cwd, exit } from 'node:process'
 import { Effect } from 'effect'
 import { loadTemporalConfig } from '../config'
 import { createObservabilityServices } from '../observability'
+import { handleReplay } from './replay-command'
 
-type CommandHandler = (args: string[], flags: Record<string, string | boolean>) => Promise<void>
+type CommandResult = { exitCode?: number }
+
+type CommandHandler = (args: string[], flags: Record<string, string | boolean>) => Promise<CommandResult | undefined>
 
 const commands: Record<string, CommandHandler> = {
   init: handleInit,
   'docker-build': handleDockerBuild,
   doctor: handleDoctor,
+  replay: handleReplay,
   help: async () => {
     printHelp()
+    return undefined
   },
 }
 
@@ -32,7 +37,11 @@ export const main = async () => {
   }
 
   try {
-    await handler(args, flags)
+    const result = await handler(args, flags)
+    if (result && typeof result.exitCode === 'number') {
+      exit(result.exitCode)
+      return
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error(message)
@@ -85,6 +94,7 @@ Commands:
   init [directory]        Scaffold a new Temporal worker project
   docker-build            Build a Docker image for the current project
   doctor                  Validate configuration + observability sinks
+  replay                  Replay workflow histories to diff determinism
   help                    Show this help message
 
 Options:
@@ -99,10 +109,19 @@ Options:
                           Alternate way to set TEMPORAL_METRICS_EXPORTER
   --metrics-endpoint <url>
                           Endpoint path/URL for the selected metrics exporter
+  --history-file <path>   Replay a workflow history JSON file
+  --execution <workflowId/runId>
+                          Fetch workflow history via Temporal CLI/Service
+  --workflow-type <name>  Workflow type for the replay diagnostics
+  --namespace <name>      Override namespace for replay or worker helpers
+  --temporal-cli <path>   Override the Temporal CLI binary for replay
+  --source <cli|service|auto>
+                          Force a history source when replaying live executions
+  --json                  Emit a JSON replay summary alongside console output
 `)
 }
 
-async function handleInit(args: string[], flags: Record<string, string | boolean>) {
+async function handleInit(args: string[], flags: Record<string, string | boolean>): Promise<CommandResult | undefined> {
   const target = args[0] ? resolve(cwd(), args[0]) : cwd()
   const projectName = inferPackageName(target)
   const force = Boolean(flags.force)
@@ -133,9 +152,14 @@ async function handleInit(args: string[], flags: Record<string, string | boolean
   console.log('  bun install')
   console.log('  bun run dev   # runs the worker locally')
   console.log('  bun run docker:build --tag my-worker:latest')
+
+  return undefined
 }
 
-async function handleDockerBuild(_args: string[], flags: Record<string, string | boolean>) {
+async function handleDockerBuild(
+  _args: string[],
+  flags: Record<string, string | boolean>,
+): Promise<CommandResult | undefined> {
   const tag = (flags.tag as string) ?? 'temporal-worker:latest'
   const context = resolve(cwd(), (flags.context as string) ?? '.')
   const dockerfile = resolve(cwd(), (flags.file as string) ?? 'Dockerfile')
@@ -152,6 +176,8 @@ async function handleDockerBuild(_args: string[], flags: Record<string, string |
   if (exitCode !== 0) {
     throw new Error(`docker build exited with code ${exitCode}`)
   }
+
+  return undefined
 }
 
 function normalizeStringFlag(value: string | boolean | undefined): string | undefined {
@@ -199,7 +225,10 @@ function buildDoctorOverrides(flags: Record<string, string | boolean>): Record<s
   return overrides
 }
 
-async function handleDoctor(_args: string[], flags: Record<string, string | boolean>) {
+async function handleDoctor(
+  _args: string[],
+  flags: Record<string, string | boolean>,
+): Promise<CommandResult | undefined> {
   const overrides = buildDoctorOverrides(flags)
   const config = await loadTemporalConfig({ env: { ...process.env, ...overrides } })
 
@@ -230,6 +259,8 @@ async function handleDoctor(_args: string[], flags: Record<string, string | bool
   if (config.metricsExporter.type !== 'in-memory') {
     console.log(`  metrics sink: ${config.metricsExporter.type} ${config.metricsExporter.endpoint ?? ''}`)
   }
+
+  return undefined
 }
 
 export function inferPackageName(dir: string): string {

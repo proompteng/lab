@@ -28,6 +28,8 @@ jobs:
       TEMPORAL_TEST_SERVER: '1'
       TEMPORAL_TEST_TIMEOUT: '5000'
       TEMPORAL_INTEGRATION_TESTS: '1'
+      TEMPORAL_ADDRESS: temporal-grpc:7233
+      TEMPORAL_NAMESPACE: default
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
@@ -69,11 +71,6 @@ jobs:
       - name: Run Biome check (temporal-bun-sdk)
         run: pnpm exec biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
 
-      - name: Start Temporal CLI dev server
-        run: |
-          cd packages/temporal-bun-sdk
-          bun scripts/start-temporal-cli.ts
-
       - name: Run Temporal Bun SDK tests
         run: |
           TEMPORAL_TEST_SERVER=1 pnpm --filter @proompteng/temporal-bun-sdk test
@@ -81,27 +78,6 @@ jobs:
       - name: Run worker load suite
         run: |
           TEMPORAL_TEST_SERVER=1 pnpm --filter @proompteng/temporal-bun-sdk run test:load
-
-      - name: Stop Temporal CLI dev server
-        if: always()
-        run: |
-          cd packages/temporal-bun-sdk
-          bun scripts/stop-temporal-cli.ts || true
-
-      - name: Collect Temporal CLI log
-        if: always()
-        run: |
-          cd packages/temporal-bun-sdk
-          mkdir -p .artifacts/worker-load
-          if [ -f .temporal-cli.log ]; then cp .temporal-cli.log .artifacts/worker-load/temporal-cli.log; fi
-
-      - name: Upload Temporal CLI logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: temporal-cli-logs
-          path: packages/temporal-bun-sdk/.artifacts/worker-load/temporal-cli.log
-          if-no-files-found: ignore
 
       - name: Upload worker load artifacts
         if: always()
@@ -111,4 +87,3 @@ jobs:
           path: |
             packages/temporal-bun-sdk/.artifacts/worker-load/metrics.jsonl
             packages/temporal-bun-sdk/.artifacts/worker-load/report.json
-            packages/temporal-bun-sdk/.artifacts/worker-load/temporal-cli.log

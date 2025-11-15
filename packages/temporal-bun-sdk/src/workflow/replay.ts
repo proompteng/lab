@@ -41,6 +41,7 @@ export interface ReplayIntake {
   readonly info: WorkflowInfo
   readonly history: HistoryEvent[]
   readonly dataConverter: DataConverter
+  readonly ignoreDeterminismMarker?: boolean
 }
 
 export interface ReplayResult {
@@ -167,32 +168,35 @@ export const decodeDeterminismMarkerEnvelope = (
 export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<ReplayResult, unknown, never> =>
   Effect.gen(function* () {
     const events = sortHistoryEvents(intake.history ?? [])
+    const shouldUseDeterminismMarker = intake.ignoreDeterminismMarker !== true
     let markerSnapshot: DeterminismMarkerEnvelope | undefined
 
-    for (const event of events) {
-      if (event.eventType !== EventType.MARKER_RECORDED) {
-        continue
-      }
-      if (event.attributes?.case !== 'markerRecordedEventAttributes') {
-        continue
-      }
+    if (shouldUseDeterminismMarker) {
+      for (const event of events) {
+        if (event.eventType !== EventType.MARKER_RECORDED) {
+          continue
+        }
+        if (event.attributes?.case !== 'markerRecordedEventAttributes') {
+          continue
+        }
 
-      const decoded = yield* Effect.catchAll(
-        decodeDeterminismMarkerEnvelope({
-          converter: intake.dataConverter,
-          details: event.attributes.value.details,
-        }),
-        () => Effect.succeed<DeterminismMarkerEnvelope | undefined>(undefined),
-      )
+        const decoded = yield* Effect.catchAll(
+          decodeDeterminismMarkerEnvelope({
+            converter: intake.dataConverter,
+            details: event.attributes.value.details,
+          }),
+          () => Effect.succeed<DeterminismMarkerEnvelope | undefined>(undefined),
+        )
 
-      if (decoded) {
-        markerSnapshot = decoded
+        if (decoded) {
+          markerSnapshot = decoded
+        }
       }
     }
 
     const extractedFailureMetadata = extractFailureMetadata(events)
 
-    if (markerSnapshot) {
+    if (shouldUseDeterminismMarker && markerSnapshot) {
       const determinismState: WorkflowDeterminismState = markerSnapshot.determinismState.failureMetadata
         ? markerSnapshot.determinismState
         : {

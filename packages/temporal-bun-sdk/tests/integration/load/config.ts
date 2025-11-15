@@ -25,7 +25,7 @@ export interface WorkerLoadConfig {
   readonly metricEnv: Record<string, string>
 }
 
-const DEFAULT_WORKFLOW_COUNT = 36
+const DEFAULT_WORKFLOW_COUNT = 64
 const DEFAULT_WORKFLOW_CONCURRENCY = 10
 const DEFAULT_ACTIVITY_CONCURRENCY = 14
 const DEFAULT_ACTIVITY_DELAY_MS = 175

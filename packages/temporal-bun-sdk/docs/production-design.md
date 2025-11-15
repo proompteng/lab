@@ -262,7 +262,7 @@ can contribute independently without re-planning.
   - Use `Effect` to orchestrate external processes (`Bun.spawn`, `Effect.tryPromise`).
 - **Acceptance criteria**
   1. `temporal-bun doctor` validates config connectivity and prints diagnostics.
-  2. `temporal-bun replay` replays a supplied history file via TBS-001 ingestion.
+  2. `temporal-bun replay` replays history files **and** live executions (Temporal CLI → WorkflowService fallback), reuses TBS-001 ingestion, emits metrics/logs/JSON summaries, and ships with unit + integration coverage.
   3. Proto update script takes version argument and regenerates stubs idempotently.
 
 ### TBS-008 – Documentation & DX
