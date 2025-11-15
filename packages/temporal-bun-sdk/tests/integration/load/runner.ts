@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { Effect } from 'effect'
 import { create } from '@bufbuild/protobuf'
-import { createClient } from '@connectrpc/connect'
+import { Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
 
 import {
@@ -84,14 +84,20 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
     workflowService = createWorkflowServiceClient(resolvedConfig)
     try {
       const handles = await submitWorkflows(temporalClient, plans, taskQueue, loadConfig)
-      await waitForWorkflowCompletions({
-        handles,
-        stats,
-        workflowService: workflowService.client,
-        namespace: resolvedConfig.namespace,
-        timeoutMs: loadConfig.workflowDurationBudgetMs,
-        taskQueue,
-      })
+      const completionBudgetMs =
+        loadConfig.workflowDurationBudgetMs + Math.max(loadConfig.metricsFlushTimeoutMs, 5_000)
+      await runWithTimeout(
+        waitForWorkflowCompletions({
+          handles,
+          stats,
+          workflowService: workflowService.client,
+          namespace: resolvedConfig.namespace,
+          timeoutMs: loadConfig.workflowDurationBudgetMs,
+          taskQueue,
+        }),
+        completionBudgetMs,
+        `Worker load suite exceeded ${completionBudgetMs}ms without completing`,
+      )
     } finally {
       await temporalClient.shutdown()
       await workflowService?.close()
@@ -165,6 +171,21 @@ const submitWorkflows = async (
 
 const MIN_HISTORY_POLL_INTERVAL_MS = 250
 const MAX_HISTORY_POLL_INTERVAL_MS = 1_000
+const MAX_HISTORY_BACKOFF_MS = 5_000
+
+const runWithTimeout = async <T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+    promise
+      .then((value) => {
+        clearTimeout(timer)
+        resolve(value)
+      })
+      .catch((error) => {
+        clearTimeout(timer)
+        reject(error)
+      })
+  })
 
 const waitForWorkflowCompletions = async ({
   workflowService,
@@ -186,8 +207,6 @@ const waitForWorkflowCompletions = async ({
     MAX_HISTORY_POLL_INTERVAL_MS,
     Math.max(MIN_HISTORY_POLL_INTERVAL_MS, Math.trunc(timeoutMs / 40)),
   )
-  const pageSize = Math.max(50, handles.length * 2)
-  const query = `TaskQueue = '${taskQueue}' AND ExecutionStatus = "Running"`
 
   const countRunningExecutions = async (): Promise<number> => {
     let running = 0
@@ -195,9 +214,9 @@ const waitForWorkflowCompletions = async ({
     do {
       const request = create(ListWorkflowExecutionsRequestSchema, {
         namespace,
-        pageSize,
+        pageSize: 50,
         nextPageToken,
-        query,
+        query: `TaskQueue = '${taskQueue}' AND ExecutionStatus = "Running"`,
       })
       const response = await workflowService.listWorkflowExecutions(request, {})
       running += response.executions.length
@@ -211,10 +230,23 @@ const waitForWorkflowCompletions = async ({
     if (Date.now() > deadline) {
       throw new Error(`Timed out waiting for ${running} workflows to complete`)
     }
-    running = await countRunningExecutions()
+
+    let rateLimited = false
+    try {
+      running = await countRunningExecutions()
+    } catch (error) {
+      if (error instanceof ConnectError && error.code === Code.ResourceExhausted) {
+        rateLimited = true
+      }
+      console.warn('[temporal-bun-sdk:load] listWorkflowExecutions failed', { error })
+      running = handles.length - stats.completed
+    }
+
     stats.completed = Math.max(stats.submitted - running, stats.completed)
+
     if (running > 0) {
-      await sleep(pollIntervalMs)
+      const delay = rateLimited ? Math.min(MAX_HISTORY_BACKOFF_MS, pollIntervalMs * 4) : pollIntervalMs
+      await sleep(delay)
     }
   }
 
