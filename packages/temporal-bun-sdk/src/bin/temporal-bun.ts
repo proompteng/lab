@@ -7,13 +7,17 @@ import { cwd, exit } from 'node:process'
 import { Effect } from 'effect'
 import { loadTemporalConfig } from '../config'
 import { createObservabilityServices } from '../observability'
+import { handleReplay } from './replay-command'
 
-type CommandHandler = (args: string[], flags: Record<string, string | boolean>) => Promise<void>
+type CommandResult = { exitCode?: number }
+
+type CommandHandler = (args: string[], flags: Record<string, string | boolean>) => Promise<CommandResult | undefined>
 
 const commands: Record<string, CommandHandler> = {
   init: handleInit,
   'docker-build': handleDockerBuild,
   doctor: handleDoctor,
+  replay: handleReplay,
   help: async () => {
     printHelp()
   },
@@ -32,7 +36,11 @@ export const main = async () => {
   }
 
   try {
-    await handler(args, flags)
+    const result = await handler(args, flags)
+    if (result && typeof result.exitCode === 'number') {
+      exit(result.exitCode)
+      return
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error(message)
@@ -85,6 +93,7 @@ Commands:
   init [directory]        Scaffold a new Temporal worker project
   docker-build            Build a Docker image for the current project
   doctor                  Validate configuration + observability sinks
+  replay                  Replay workflow histories to diff determinism
   help                    Show this help message
 
 Options:
@@ -99,6 +108,15 @@ Options:
                           Alternate way to set TEMPORAL_METRICS_EXPORTER
   --metrics-endpoint <url>
                           Endpoint path/URL for the selected metrics exporter
+  --history-file <path>   Replay a workflow history JSON file
+  --execution <workflowId/runId>
+                          Fetch workflow history via Temporal CLI/Service
+  --workflow-type <name>  Workflow type for the replay diagnostics
+  --namespace <name>      Override namespace for replay or worker helpers
+  --temporal-cli <path>   Override the Temporal CLI binary for replay
+  --source <cli|service|auto>
+                          Force a history source when replaying live executions
+  --json                  Emit a JSON replay summary alongside console output
 `)
 }
 
