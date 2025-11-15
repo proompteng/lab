@@ -22,8 +22,11 @@ import {
   type WorkerLoadActivityWorkflowInput,
   type WorkerLoadCpuWorkflowInput,
 } from './workflows'
+import { EventType } from '../../../src/proto/temporal/api/enums/v1/event_type_pb'
+import { HistoryEventFilterType, WorkflowExecutionStatus } from '../../../src/proto/temporal/api/enums/v1/workflow_pb'
 import { WorkflowService } from '../../../src/proto/temporal/api/workflowservice/v1/service_pb'
-import { ListWorkflowExecutionsRequestSchema } from '../../../src/proto/temporal/api/workflowservice/v1/request_response_pb'
+import { DescribeWorkflowExecutionRequestSchema } from '../../../src/proto/temporal/api/workflowservice/v1/request_response_pb'
+import { WorkflowExecutionSchema } from '../../../src/proto/temporal/api/common/v1/message_pb'
 
 export interface WorkerLoadRunnerOptions {
   readonly harness: IntegrationHarness
@@ -172,6 +175,7 @@ const submitWorkflows = async (
 const MIN_HISTORY_POLL_INTERVAL_MS = 250
 const MAX_HISTORY_POLL_INTERVAL_MS = 1_000
 const MAX_HISTORY_BACKOFF_MS = 5_000
+const MAX_STATUS_POLLERS = 12
 
 const runWithTimeout = async <T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> =>
   new Promise((resolve, reject) => {
@@ -193,62 +197,72 @@ const waitForWorkflowCompletions = async ({
   stats,
   namespace,
   timeoutMs,
-  taskQueue,
 }: {
   workflowService: ReturnType<typeof createClient<typeof WorkflowService>>
   handles: WorkflowExecutionHandle[]
   stats: RuntimeStats
   namespace: string
   timeoutMs: number
-  taskQueue: string
 }) => {
+  const pending = new Map(handles.map((handle) => [handle.workflowId, handle]))
   const deadline = Date.now() + timeoutMs
   const pollIntervalMs = Math.min(
     MAX_HISTORY_POLL_INTERVAL_MS,
     Math.max(MIN_HISTORY_POLL_INTERVAL_MS, Math.trunc(timeoutMs / 40)),
   )
 
-  const countRunningExecutions = async (): Promise<number> => {
-    let running = 0
-    let nextPageToken = new Uint8Array(0)
-    do {
-      const request = create(ListWorkflowExecutionsRequestSchema, {
-        namespace,
-        pageSize: 50,
-        nextPageToken,
-        query: `TaskQueue = '${taskQueue}' AND ExecutionStatus = "Running"`,
-      })
-      const response = await workflowService.listWorkflowExecutions(request, {})
-      running += response.executions.length
-      nextPageToken = response.nextPageToken ?? new Uint8Array(0)
-    } while (nextPageToken.length > 0)
-    return running
-  }
-
-  let running = handles.length
-  while (running > 0) {
-    if (Date.now() > deadline) {
-      throw new Error(`Timed out waiting for ${running} workflows to complete`)
-    }
-
-    let rateLimited = false
-    try {
-      running = await countRunningExecutions()
-    } catch (error) {
-      if (error instanceof ConnectError && error.code === Code.ResourceExhausted) {
-        rateLimited = true
+  const describeUntilClosed = async (handle: WorkflowExecutionHandle): Promise<void> => {
+    let backoffMs = pollIntervalMs
+    while (true) {
+      if (Date.now() > deadline) {
+        throw new Error(`Timed out waiting for workflow ${handle.workflowId} to complete`)
       }
-      console.warn('[temporal-bun-sdk:load] listWorkflowExecutions failed', { error })
-      running = handles.length - stats.completed
-    }
-
-    stats.completed = Math.max(stats.submitted - running, stats.completed)
-
-    if (running > 0) {
-      const delay = rateLimited ? Math.min(MAX_HISTORY_BACKOFF_MS, pollIntervalMs * 4) : pollIntervalMs
-      await sleep(delay)
+      try {
+        const request = create(DescribeWorkflowExecutionRequestSchema, {
+          namespace,
+          execution: create(WorkflowExecutionSchema, {
+            workflowId: handle.workflowId,
+            runId: handle.runId,
+          }),
+        })
+        const response = await workflowService.describeWorkflowExecution(request, {})
+        const status = response.workflowExecutionInfo?.status
+        if (status !== undefined && TERMINAL_WORKFLOW_STATUSES.has(status)) {
+          if (pending.delete(handle.workflowId)) {
+            stats.completed += 1
+          }
+          return
+        }
+        backoffMs = pollIntervalMs
+      } catch (error) {
+        if (error instanceof ConnectError && error.code === Code.ResourceExhausted) {
+          backoffMs = Math.min(backoffMs * 2, MAX_HISTORY_BACKOFF_MS)
+        } else {
+          backoffMs = pollIntervalMs
+        }
+        console.warn('[temporal-bun-sdk:load] describeWorkflowExecution failed', {
+          workflowId: handle.workflowId,
+          runId: handle.runId,
+          error,
+        })
+      }
+      await sleep(backoffMs)
     }
   }
+
+  const queue = [...handles]
+  const workerCount = Math.min(MAX_STATUS_POLLERS, queue.length)
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (queue.length > 0) {
+        const handle = queue.shift()
+        if (!handle) {
+          return
+        }
+        await describeUntilClosed(handle)
+      }
+    }),
+  )
 
   stats.completedAt = Date.now()
 }
@@ -319,6 +333,24 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+
+const TERMINAL_WORKFLOW_STATUSES = new Set<WorkflowExecutionStatus>([
+  WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_COMPLETED,
+  WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_FAILED,
+  WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_CANCELED,
+  WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TERMINATED,
+  WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW,
+  WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TIMED_OUT,
+])
+
+const WORKFLOW_CLOSED_EVENTS = new Set<EventType>([
+  EventType.WORKFLOW_EXECUTION_COMPLETED,
+  EventType.WORKFLOW_EXECUTION_FAILED,
+  EventType.WORKFLOW_EXECUTION_TIMED_OUT,
+  EventType.WORKFLOW_EXECUTION_TERMINATED,
+  EventType.WORKFLOW_EXECUTION_CANCELED,
+  EventType.WORKFLOW_EXECUTION_CONTINUED_AS_NEW,
+])
 
 type WorkflowServiceHandle = {
   client: ReturnType<typeof createClient<typeof WorkflowService>>
