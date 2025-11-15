@@ -2,7 +2,12 @@ import { createHash, randomBytes } from 'node:crypto'
 
 import { create } from '@bufbuild/protobuf'
 import { durationFromMs } from '@bufbuild/protobuf/wkt'
-import { type DataConverter, encodeMapValuesToPayloads, encodeValuesToPayloads } from '../common/payloads'
+import {
+  type DataConverter,
+  decodePayloadMapToValues,
+  encodeMapValuesToPayloads,
+  encodeValuesToPayloads,
+} from '../common/payloads'
 import {
   type Header,
   HeaderSchema,
@@ -173,9 +178,9 @@ export const buildStartWorkflowRequest = async (
   const identity = ensureIdentity(options.identity, defaults.identity)
 
   const input = await serializeValues(dataConverter, options.args ?? [])
-  const memo = await serializeMemo(dataConverter, options.memo)
+  const memo = await encodeMemoAttributes(dataConverter, options.memo)
   const headers = await serializeHeader(dataConverter, options.headers)
-  const searchAttributes = await serializeSearchAttributes(dataConverter, options.searchAttributes)
+  const searchAttributes = await encodeSearchAttributes(dataConverter, options.searchAttributes)
   const retryPolicy = serializeRetryPolicy(options.retryPolicy)
 
   return create(StartWorkflowExecutionRequestSchema, {
@@ -324,7 +329,7 @@ const serializeValues = async (converter: DataConverter, values: unknown[]): Pro
   return serializePayloads(payloads as RawPayload[])
 }
 
-const serializeMemo = async (
+export const encodeMemoAttributes = async (
   converter: DataConverter,
   map: Record<string, unknown> | undefined,
 ): Promise<Memo | undefined> => {
@@ -350,7 +355,7 @@ const serializeHeader = async (
   })
 }
 
-const serializeSearchAttributes = async (
+export const encodeSearchAttributes = async (
   converter: DataConverter,
   map: Record<string, unknown> | undefined,
 ): Promise<SearchAttributes | undefined> => {
@@ -361,6 +366,40 @@ const serializeSearchAttributes = async (
   return create(SearchAttributesSchema, {
     indexedFields: serializePayloadMap(payloadMap as Record<string, RawPayload>),
   })
+}
+
+const materializePayloadMap = (
+  map?: Map<string, Payload> | Record<string, Payload>,
+): Record<string, Payload> | undefined => {
+  if (!map) {
+    return undefined
+  }
+  if (map instanceof Map) {
+    return Object.fromEntries(map.entries())
+  }
+  return { ...map }
+}
+
+export const decodeMemoAttributes = async (
+  converter: DataConverter,
+  memo: Memo | null | undefined,
+): Promise<Record<string, unknown> | undefined> => {
+  const map = materializePayloadMap(memo?.fields)
+  if (!map) {
+    return undefined
+  }
+  return decodePayloadMapToValues(converter, map)
+}
+
+export const decodeSearchAttributes = async (
+  converter: DataConverter,
+  attributes: SearchAttributes | null | undefined,
+): Promise<Record<string, unknown> | undefined> => {
+  const map = materializePayloadMap(attributes?.indexedFields)
+  if (!map) {
+    return undefined
+  }
+  return decodePayloadMapToValues(converter, map)
 }
 
 type RawPayload = {

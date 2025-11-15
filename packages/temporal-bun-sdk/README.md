@@ -29,6 +29,12 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    TEMPORAL_TLS_CERT_PATH=certs/worker.crt          # optional – only for mTLS
    TEMPORAL_TLS_KEY_PATH=certs/worker.key           # optional – only for mTLS
    TEMPORAL_TLS_SERVER_NAME=temporal.example.com    # optional – SNI override
+   TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS=5             # optional – WorkflowService RPC attempts
+   TEMPORAL_CLIENT_RETRY_INITIAL_MS=200             # optional – first retry delay in ms
+   TEMPORAL_CLIENT_RETRY_MAX_MS=5000                # optional – max retry delay in ms
+   TEMPORAL_CLIENT_RETRY_BACKOFF=2                  # optional – exponential backoff coefficient
+   TEMPORAL_CLIENT_RETRY_JITTER_FACTOR=0.2          # optional – decorrelated jitter (0-1)
+   TEMPORAL_CLIENT_RETRY_STATUS_CODES=UNAVAILABLE,DEADLINE_EXCEEDED  # optional – retryable gRPC codes
    TEMPORAL_TASK_QUEUE=prix
    TEMPORAL_WORKFLOW_CONCURRENCY=4                  # optional – workflow pollers
    TEMPORAL_ACTIVITY_CONCURRENCY=4                  # optional – activity pollers
@@ -61,6 +67,29 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    ```bash
    temporal-bun init hello-worker
    ```
+
+## WorkflowService client resilience
+
+`createTemporalClient()` now includes built-in resilience features:
+
+- **Configurable retries** – `loadTemporalConfig()` populates `config.rpcRetryPolicy` from the `TEMPORAL_CLIENT_RETRY_*` env vars (or from defaults). Every WorkflowService RPC is wrapped in `withTemporalRetry()` (decorrelated jitter + exponential backoff). Override per-call values with the new `TemporalClientCallOptions.retryPolicy` field when you need a bespoke attempt budget.
+- **Optional call options on every method** – `startWorkflow`, `signalWorkflow`, `queryWorkflow`, `signalWithStart`, `terminateWorkflow`, and `describeNamespace` accept an optional trailing `callOptions` argument. Wrap them with `temporalCallOptions()` so payload objects are never mistaken for options:
+  ```ts
+  import { temporalCallOptions } from '@proompteng/temporal-bun-sdk'
+
+  await client.queryWorkflow(
+    handle,
+    'currentState',
+    { kind: 'snapshot' },
+    temporalCallOptions({
+      timeoutMs: 15_000,
+      headers: { 'x-trace-id': traceId },
+    }),
+  )
+  ```
+- **Telemetry-friendly interceptors** – the default interceptor builder injects namespace/identity headers, logs RPC attempts, and records latency/error counters with your configured metrics registry/exporter. Provide `interceptors` when creating a client to append custom tracing or auth middleware.
+- **Memo & search attribute helpers** – `client.memo.encode/decode` and `client.searchAttributes.encode/decode` reuse the client’s `DataConverter`, making it trivial to prepare `Memo`/`SearchAttributes` payloads for raw WorkflowService requests.
+- **TLS validation & handshake errors** – TLS buffers are validated up front (missing files, invalid PEMs, and mismatched cert/key pairs throw `TemporalTlsConfigurationError`). Runtime handshake failures raise `TemporalTlsHandshakeError` with remediation hints (verify CA bundles, check `TEMPORAL_TLS_SERVER_NAME`, or use `TEMPORAL_ALLOW_INSECURE=1` in trusted dev clusters).
 
 ## Workflow surface
 
