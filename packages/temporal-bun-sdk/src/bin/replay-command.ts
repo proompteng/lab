@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { cwd } from 'node:process'
-import { create, fromJson } from '@bufbuild/protobuf'
+import { create, fromJson, type JsonValue } from '@bufbuild/protobuf'
 import { createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
 import { Effect } from 'effect'
@@ -27,6 +27,12 @@ import {
 
 type ReplayHistorySourceKind = 'file' | 'cli' | 'service'
 export type ReplayHistorySourcePreference = 'auto' | 'cli' | 'service'
+
+type BunReadableStream = ReadableStream<Uint8Array<ArrayBufferLike>> | number | null
+
+type Mutable<T> = {
+  -readonly [K in keyof T]: T[K]
+}
 
 interface WorkflowExecutionRef {
   readonly workflowId: string
@@ -74,10 +80,18 @@ type HistoryLoaders = {
   readonly service: typeof loadHistoryViaService
 }
 
+type HistoryPageToken = Uint8Array<ArrayBufferLike>
+
+type ClosableGrpcTransport = ReturnType<typeof createGrpcTransport> & {
+  readonly close?: () => Promise<void> | void
+}
+
 const defaultHistoryLoaders: HistoryLoaders = {
   cli: loadHistoryViaCli,
   service: loadHistoryViaService,
 }
+
+const EVENT_TYPE_LOOKUP = EventType as unknown as Record<string, number>
 
 interface ReplayRunResult {
   readonly exitCode: number
@@ -168,18 +182,34 @@ const executeReplay = (options: ReplayCommandOptions): Effect.Effect<ReplayRunRe
       historyDescription: historyOutcome.record.description,
     })
 
-    const baselineReplay = yield* ingestWorkflowHistory({
-      info: workflowInfo,
-      history: historyOutcome.record.events,
-      dataConverter,
-    })
+    const baselineReplay = yield* Effect.catchAll(
+      ingestWorkflowHistory({
+        info: workflowInfo,
+        history: historyOutcome.record.events,
+        dataConverter,
+      }),
+      (error) =>
+        Effect.fail(
+          new ReplayCommandError('Failed to ingest workflow history', {
+            cause: error,
+          }),
+        ),
+    )
     const actualReplay = baselineReplay.hasDeterminismMarker
-      ? yield* ingestWorkflowHistory({
-          info: workflowInfo,
-          history: historyOutcome.record.events,
-          dataConverter,
-          ignoreDeterminismMarker: true,
-        })
+      ? yield* Effect.catchAll(
+          ingestWorkflowHistory({
+            info: workflowInfo,
+            history: historyOutcome.record.events,
+            dataConverter,
+            ignoreDeterminismMarker: true,
+          }),
+          (error) =>
+            Effect.fail(
+              new ReplayCommandError('Failed to ingest workflow history', {
+                cause: error,
+              }),
+            ),
+        )
       : baselineReplay
 
     const diffResult = baselineReplay.hasDeterminismMarker
@@ -505,10 +535,10 @@ async function loadHistoryViaService({
 
   const useTls = Boolean(config.tls) && !config.allowInsecureTls
   const baseUrl = normalizeTemporalAddress(config.address, useTls)
-  const transport = createGrpcTransport(buildTransportOptions(baseUrl, config))
+  const transport = createGrpcTransport(buildTransportOptions(baseUrl, config)) as ClosableGrpcTransport
   const workflowService = createClient(WorkflowService, transport)
   const events: HistoryEvent[] = []
-  let nextPageToken = new Uint8Array()
+  let nextPageToken: HistoryPageToken = new Uint8Array()
 
   try {
     do {
@@ -557,7 +587,7 @@ async function loadHistoryViaService({
 }
 
 const decodeHistoryJson = (document: unknown): HistoryEvent[] => {
-  const normalized = normalizeHistoryJson(stripTypeAnnotations(document))
+  const normalized = normalizeHistoryJson(stripTypeAnnotations(document)) as JsonValue
   const history = fromJson(HistorySchema, normalized)
   if (!history.events || history.events.length === 0) {
     return []
@@ -594,7 +624,7 @@ const normalizeEventTypeFlag = (event: HistoryEvent): HistoryEvent => {
   if (event.eventType && typeof event.eventType !== 'number') {
     const raw = String(event.eventType)
     const key = raw.startsWith('EVENT_TYPE_') ? raw.replace('EVENT_TYPE_', '') : raw
-    const numeric = (EventType as Record<string, number>)[key]
+    const numeric = EVENT_TYPE_LOOKUP[key]
     if (typeof numeric === 'number') {
       event.eventType = numeric as typeof event.eventType
     }
@@ -603,7 +633,7 @@ const normalizeEventTypeFlag = (event: HistoryEvent): HistoryEvent => {
 }
 
 const extractHistoryMetadata = (document: unknown): HistoryMetadata => {
-  const metadata: HistoryMetadata = {}
+  const metadata: Mutable<HistoryMetadata> = {}
   if (document && typeof document === 'object') {
     const record = document as Record<string, unknown>
     if (isRecord(record.info)) {
@@ -692,8 +722,8 @@ const describeHistoryLoaderError = (error: unknown): string => {
   return String(error)
 }
 
-const readStream = async (stream: ReadableStream<Uint8Array> | null): Promise<string> => {
-  if (!stream) {
+const readStream = async (stream: BunReadableStream): Promise<string> => {
+  if (!stream || typeof stream === 'number') {
     return ''
   }
   const decoder = new TextDecoder()
