@@ -457,9 +457,11 @@ async function loadHistoryViaCli({
     throw new ReplayCommandError(`Temporal CLI binary not found at ${binary}`, { cause: error })
   }
 
-  const exitCode = await child.exited
-  const stdout = await readStream(child.stdout)
-  const stderr = await readStream(child.stderr)
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    readStream(child.stdout),
+    readStream(child.stderr),
+  ])
 
   if (exitCode !== 0) {
     throw new ReplayCommandError('Temporal CLI returned a non-zero exit code', {
