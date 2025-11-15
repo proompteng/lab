@@ -3,7 +3,12 @@ import { writeFile } from 'node:fs/promises'
 import { Effect } from 'effect'
 import { create } from '@bufbuild/protobuf'
 
-import { createTemporalClient, type TemporalClient } from '../../../src/client'
+import {
+  buildTransportOptions,
+  createTemporalClient,
+  normalizeTemporalAddress,
+  type TemporalClient,
+} from '../../../src/client'
 import { loadTemporalConfig } from '../../../src/config'
 import { WorkerRuntime } from '../../../src/worker/runtime'
 import type { IntegrationHarness, WorkflowExecutionHandle } from '../harness'
@@ -15,6 +20,13 @@ import {
   type WorkerLoadActivityWorkflowInput,
   type WorkerLoadCpuWorkflowInput,
 } from './workflows'
+import { WorkflowExecutionStatus } from '../../../src/proto/temporal/api/enums/v1/workflow_pb'
+import { WorkflowService } from '../../../src/proto/temporal/api/workflowservice/v1/service_pb'
+import { DescribeWorkflowExecutionRequestSchema } from '../../../src/proto/temporal/api/workflowservice/v1/request_response_pb'
+import { WorkflowExecutionSchema } from '../../../src/proto/temporal/api/common/v1/message_pb'
+import { createClient } from '@connectrpc/connect'
+import { createGrpcTransport } from '@connectrpc/connect-node'
+import { Code, ConnectError } from '@connectrpc/connect'
 
 export interface WorkerLoadRunnerOptions {
   readonly harness: IntegrationHarness
@@ -68,15 +80,21 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
     throw error
   })
 
+  let workflowService: WorkflowServiceHandle | undefined
+
   try {
-    const { client: temporalClient } = await createTemporalClient({ config, taskQueue })
+    const { client: temporalClient, config: resolvedConfig } = await createTemporalClient({ config, taskQueue })
+    workflowService = createWorkflowServiceClient(resolvedConfig)
     try {
       const handles = await submitWorkflows(temporalClient, plans, taskQueue, loadConfig)
       const completionBudgetMs =
         loadConfig.workflowDurationBudgetMs + Math.max(loadConfig.metricsFlushTimeoutMs, 5_000)
       await runWithTimeout(
         waitForWorkflowCompletions({
+          workflowService: workflowService.client,
+          handles,
           stats,
+          namespace: resolvedConfig.namespace,
           timeoutMs: loadConfig.workflowDurationBudgetMs,
         }),
         completionBudgetMs,
@@ -84,6 +102,7 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
       )
     } finally {
       await temporalClient.shutdown()
+      await workflowService?.close()
     }
   } finally {
     await runtime.shutdown()
@@ -153,6 +172,8 @@ const submitWorkflows = async (
 }
 
 const COMPLETION_POLL_INTERVAL_MS = 500
+const MAX_HISTORY_BACKOFF_MS = 5_000
+const MAX_STATUS_POLLERS = 8
 
 const runWithTimeout = async <T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> =>
   new Promise((resolve, reject) => {
@@ -169,19 +190,76 @@ const runWithTimeout = async <T>(promise: Promise<T>, timeoutMs: number, message
   })
 
 const waitForWorkflowCompletions = async ({
+  workflowService,
+  handles,
   stats,
+  namespace,
   timeoutMs,
 }: {
+  workflowService: ReturnType<typeof createClient<typeof WorkflowService>>
+  handles: WorkflowExecutionHandle[]
   stats: RuntimeStats
+  namespace: string
   timeoutMs: number
 }) => {
+  const pending = new Map(handles.map((handle) => [handle.workflowId, handle]))
   const deadline = Date.now() + timeoutMs
-  while (stats.completed < stats.submitted) {
-    if (Date.now() > deadline) {
-      throw new Error(`Timed out waiting for ${stats.submitted - stats.completed} workflows to complete`)
+
+  const describeUntilClosed = async (handle: WorkflowExecutionHandle): Promise<void> => {
+    let backoffMs = COMPLETION_POLL_INTERVAL_MS
+    while (true) {
+      if (Date.now() > deadline) {
+        throw new Error(`Timed out waiting for workflow ${handle.workflowId} to complete`)
+      }
+      try {
+        const request = create(DescribeWorkflowExecutionRequestSchema, {
+          namespace,
+          execution: create(WorkflowExecutionSchema, {
+            workflowId: handle.workflowId,
+            runId: handle.runId,
+          }),
+        })
+        const response = await workflowService.describeWorkflowExecution(request, {})
+        const status =
+          response.workflowExecutionInfo?.status ??
+          WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_UNSPECIFIED
+        if (TERMINAL_WORKFLOW_STATUSES.has(status)) {
+          if (pending.delete(handle.workflowId)) {
+            stats.completed += 1
+          }
+          return
+        }
+        backoffMs = COMPLETION_POLL_INTERVAL_MS
+      } catch (error) {
+        if (error instanceof ConnectError && (error.code === Code.ResourceExhausted || error.code === Code.Unavailable)) {
+          backoffMs = Math.min(backoffMs * 2, MAX_HISTORY_BACKOFF_MS)
+        } else {
+          backoffMs = COMPLETION_POLL_INTERVAL_MS
+        }
+        console.warn('[temporal-bun-sdk:load] describeWorkflowExecution failed', {
+          workflowId: handle.workflowId,
+          runId: handle.runId,
+          error,
+        })
+      }
+      await sleep(backoffMs)
     }
-    await sleep(COMPLETION_POLL_INTERVAL_MS)
   }
+
+  const queue = [...handles]
+  const workerCount = Math.min(MAX_STATUS_POLLERS, queue.length)
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (queue.length > 0) {
+        const handle = queue.shift()
+        if (!handle) {
+          return
+        }
+        await describeUntilClosed(handle)
+      }
+    }),
+  )
+
   stats.completedAt = Date.now()
 }
 
@@ -239,7 +317,6 @@ const createSchedulerHooks = (stats: RuntimeStats) => ({
   onWorkflowComplete: () =>
     Effect.sync(() => {
       stats.active = Math.max(0, stats.active - 1)
-      stats.completed += 1
     }),
 })
 
@@ -252,6 +329,15 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+
+const TERMINAL_WORKFLOW_STATUSES = new Set<WorkflowExecutionStatus>([
+  WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_COMPLETED,
+  WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_FAILED,
+  WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_CANCELED,
+  WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TERMINATED,
+  WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW,
+  WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TIMED_OUT,
+])
 
 export type WorkflowPlan =
   | {
@@ -273,4 +359,23 @@ export interface RuntimeStats {
   startedAt: number
   completedAt?: number
   durationMs: number
+}
+
+type WorkflowServiceHandle = {
+  client: ReturnType<typeof createClient<typeof WorkflowService>>
+  close: () => Promise<void>
+}
+
+const createWorkflowServiceClient = (config: Awaited<ReturnType<typeof loadTemporalConfig>>): WorkflowServiceHandle => {
+  const useTls = Boolean(config.tls || config.allowInsecureTls)
+  const baseUrl = normalizeTemporalAddress(config.address, useTls)
+  const transportOptions = buildTransportOptions(baseUrl, config)
+  const transport = createGrpcTransport(transportOptions)
+  const client = createClient(WorkflowService, transport)
+  const close = async () => {
+    if (typeof transport.close === 'function') {
+      await transport.close()
+    }
+  }
+  return { client, close }
 }
