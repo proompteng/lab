@@ -16,12 +16,12 @@ jobs:
       TEMPORAL_NAMESPACE: default
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Set up Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22.20.0'
 
@@ -58,7 +58,7 @@ jobs:
 
       - name: Open proto update pull request
         if: steps.proto_changes.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v7
         with:
           branch: chore/temporal-bun-sdk-proto-regen
           title: chore: refresh temporal-bun-sdk protos
