@@ -277,6 +277,22 @@ can contribute independently without re-planning.
   4. CLI docs reflect new commands and accessibility considerations.
   5. Example project README documents runtime prerequisites, configuration requirements,
      and Effect usage expectations so consumers can adopt the SDK confidently.
+- **Implementation notes (Nov 15, 2025)**
+  - `apps/docs/content/docs/temporal-bun-sdk.mdx` now anchors the docs hierarchy:
+    architecture overview, configuration, tutorials/recipes, CLI/tooling, and
+    troubleshooting/GA roadmap sections live on that page until navigation gains
+    discrete entries.
+  - CLI reference, proto regeneration notes, and replay/TLS troubleshooting
+    guidance were added so engineers no longer have to mine the README for
+    operational context.
+  - GA blockers called out in the public docs must stay in sync with this design
+    file; any time a TBS item ships, update both locations.
+- **Open documentation work**
+  - Break the long-form MDX file into sub-pages once the docs nav supports it
+    (Overview, Tutorials, Configuration, CLI & Tooling, Troubleshooting, Release
+    Notes).
+  - Add diagrams/screenshots, cookbook snippets, and migration guidance per the
+    acceptance criteria above.
 
 ### TBS-009 – Release Automation
 
@@ -422,11 +438,24 @@ can contribute independently without re-planning.
 
 ## Documentation Plan
 
-- Update developer docs with deterministic context primitives and migration guides.
-- Provide cookbook recipes (cron workflows, signal-with-start, updates, activity
-  heartbeat best practices).
-- Accessibility review for CLI output (color contrast, terminal semantics).
-- Generate versioned docs site; keep changelog linked per release.
+- **Docs map** – Maintain a single-source MDX page (`apps/docs/content/docs/temporal-bun-sdk.mdx`) until
+  the docs nav exposes child routes. That page must always include: overview,
+  architecture, configuration & operations, tutorials/recipes, CLI/tooling, and
+  troubleshooting/GA roadmap sections. When nav support lands, split those
+  sections into dedicated pages and link them from the overview.
+- **Determinism & architecture deep dives** – Document determinism markers,
+  sticky cache strategy, and Effect-based worker lifecycle (diagram + prose).
+- **Cookbooks** – Provide runnable recipes for cron schedules, signal-with-start,
+  updates, heartbeats, local activities, and replay debugging. Reference the
+  example app for each recipe.
+- **Migration guidance** – Call out differences between the historical Zig/Rust
+  bridge and the Bun/Effect runtime, including how to port payload converters
+  and TLS configuration.
+- **CLI accessibility** – Audit output colors/ARIA hints for `temporal-bun`
+  commands; ensure `doctor`/`replay` support `--json` for screen-reader/CI use.
+- **Release notes & changelog hooks** – Once TBS-009 lands, mirror each release
+  entry on the docs site with verification steps, compatibility matrix, and
+  upgrade notes.
 
 ## Release & Support Plan
 

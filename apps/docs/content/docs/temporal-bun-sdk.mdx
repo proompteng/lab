@@ -12,8 +12,29 @@ description: Learn how to build and operate Temporal workers with the Bun runtim
 - A `temporal-bun` CLI that scaffolds projects, checks connectivity, and builds
   Docker images.
 - A `temporal-bun-worker` binary that boots a worker with sensible defaults.
-- Optional Zig-native bridge binaries that ship alongside the TypeScript output
-  for instant startup on macOS and Linux.
+- Pure TypeScript/Effect runtimes so deployments never depend on the retired Zig
+  bridge path; older binaries remain archived under `packages/temporal-bun-sdk/bruke`
+  for reference only.
+
+## Documentation map
+
+This page is the top-level overview. The SDK now documents its feature-set in
+five logical sections so teams can deep-dive without wading through a single
+monolith:
+
+- **Architecture overview** – explains how workflows, workers, clients, and the
+  CLI compose via Effect services and Bun runtime primitives.
+- **Configuration & operations** – covers `loadTemporalConfig`, observability
+  knobs, deployment defaults, and advanced TLS/retry tuning.
+- **Tutorials & recipes** – workflow/activity examples, proxy helpers, and
+  determinism guardrails.
+- **CLI & tooling** – usage for `temporal-bun init|doctor|docker-build|replay`
+  plus proto regeneration and CI guidance.
+- **Troubleshooting & GA roadmap** – outlines known limitations, replay workflow
+  tips, and blockers that must land before general availability.
+
+As new sub-pages come online they will be linked from this section; until then,
+the corresponding deep dives live below on this page.
 
 ## Prerequisites
 
@@ -320,3 +341,67 @@ explicit configuration rather than relying on the retired flag.
 
 With `@proompteng/temporal-bun-sdk`, you can reuse existing Temporal workflows
 while adopting Bun’s fast startup times and fully typed client/worker helpers.
+
+## Architecture overview
+
+- **Workflow runtime** – executes deterministic workflows entirely inside Bun
+  with Effect fibers. Command intents (`schedule-activity`, timers, child
+  workflows, signals, continue-as-new) emit Temporal protobufs directly and are
+  guarded by a determinism snapshot that captures command order, random values,
+  and logical timestamps.
+- **Worker runtime** – wraps pollers, sticky cache routing, activity execution,
+  and build-id registration. It consumes the same `loadTemporalConfig`
+  environment contract as our Go worker and exposes concurrency knobs via
+  `TEMPORAL_WORKFLOW_CONCURRENCY`, `TEMPORAL_ACTIVITY_CONCURRENCY`, and
+  sticky-cache variables.
+- **Client** – a Connect transport with branded call options, memo/search helpers,
+  TLS diagnostics, and retry policies derived from environment variables. All
+  WorkflowService RPCs run through logging/metrics interceptors so Bun services
+  get observability parity with the worker runtime.
+- **CLI & tooling** – `temporal-bun` provides scaffolding, connectivity checks,
+  Docker packaging, and deterministic replay. The CLI shares the same config and
+  observability layers, ensuring every command fails fast with actionable logs.
+
+## Tutorials & recipes
+
+Follow the quickstart above to scaffold workflows/activities, then explore the
+example app in `packages/temporal-bun-sdk-example` for:
+
+- Activity heartbeats and cancellation propagation via
+  `activityContext.heartbeat()` and `activityContext.signal.aborted`.
+- Timer, signal, and child workflow orchestration patterns using
+  `proxyActivities` plus `defineWorkflow`.
+- Deterministic helpers (`determinism.now`, `determinism.random`) that make
+  replay diagnostics trivial.
+
+We are actively porting these recipes into standalone guides (heartbeats,
+signals, updates, schedules). Each guide links back to runnable snippets so
+teams can copy/paste into new Bun workers.
+
+## CLI & tooling reference
+
+| Command | Purpose | Notes |
+| --- | --- | --- |
+| `temporal-bun init` | Scaffold a worker + Docker assets | Honors `--force` to overwrite existing files. |
+| `temporal-bun doctor` | Load config, emit log + metrics, verify TLS | Accepts `--log-format`, `--metrics`, `--metrics-exporter`, `--metrics-endpoint`. |
+| `temporal-bun docker-build` | Build worker image | Mirrors `docker build -t <tag> -f <file> <context>`. |
+| `temporal-bun replay` | Diff workflow determinism from JSON or live histories | Supports `--history-file`, `--execution`, `--source cli|service|auto`, `--json`. |
+
+Proto regeneration now lives under `packages/temporal-bun-sdk/scripts/update-temporal-protos.ts`.
+Pass `--temporal-version <x.y.z>` (once implemented) to align with upstream
+Temporal drops, and run it before publishing a new SDK version.
+
+## Troubleshooting & GA roadmap
+
+- **Replay mismatches** – capture histories via `temporal workflow show --history --output json` and run
+  `bunx temporal-bun replay --history-file <file> --workflow-type <type>`.
+  Exit code `2` denotes nondeterminism; review the mismatch summary for event
+  IDs, command diffs, and determinism markers.
+- **TLS issues** – `TemporalTlsHandshakeError` surfaces common remediation steps
+  (server name mismatch, missing CA bundle). Set `TEMPORAL_ALLOW_INSECURE=1`
+  only in trusted development environments.
+- **Current GA blockers** – the Effect layer refactor (TBS-010), release
+  automation (TBS-009), documentation split (TBS-008), and automated proto
+  updates (TBS-007) remain in progress. Until those land, the SDK stays in
+  Beta; double-check the production design doc (`packages/temporal-bun-sdk/docs/production-design.md`)
+  before planning external launches.
