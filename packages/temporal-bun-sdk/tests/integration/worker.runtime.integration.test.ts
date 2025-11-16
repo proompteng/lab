@@ -285,21 +285,26 @@ describeIntegration('Temporal worker runtime integration', () => {
             }),
           )
 
-          const runtime = await WorkerRuntime.create({
-            config,
-            workflows: [workflowDefinition],
-            taskQueue,
-            namespace: config.namespace,
-            stickyScheduling: true,
-            workflowService,
-            identity,
-            deployment: {
-              name: deploymentName,
-              buildId,
-              versioningMode: WorkerVersioningMode.UNVERSIONED,
-              versioningBehavior: VersioningBehavior.UNSPECIFIED,
-            },
-          })
+          const workerLayer = buildTemporalLayer(config)
+          const runtime = await Effect.runPromise(
+            Effect.provide(
+              makeWorkerRuntimeEffect({
+                workflows: [workflowDefinition],
+                taskQueue,
+                namespace: config.namespace,
+                stickyScheduling: true,
+                workflowService,
+                identity,
+                deployment: {
+                  name: deploymentName,
+                  buildId,
+                  versioningMode: WorkerVersioningMode.UNVERSIONED,
+                  versioningBehavior: VersioningBehavior.UNSPECIFIED,
+                },
+              }),
+              workerLayer,
+            ),
+          )
 
           const runPromise = runtime.run().catch((error) => {
             console.error('[temporal-bun-sdk:test] worker runtime exited with error', error)

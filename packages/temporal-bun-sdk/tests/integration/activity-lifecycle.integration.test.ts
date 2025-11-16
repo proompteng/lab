@@ -4,11 +4,13 @@ import crypto from 'node:crypto'
 import { Effect, Exit } from 'effect'
 
 import { loadTemporalConfig } from '../../src/config'
+import { makeWorkerRuntimeEffect } from '../../src/worker/layer'
 import { WorkerRuntime } from '../../src/worker/runtime'
 import { EventType } from '../../src/proto/temporal/api/enums/v1/event_type_pb'
 import { TemporalCliCommandError, TemporalCliUnavailableError, createIntegrationHarness } from './harness'
 import type { IntegrationHarness, WorkflowExecutionHandle } from './harness'
 import { heartbeatWorkflow, heartbeatTimeoutWorkflow, integrationActivities, integrationWorkflows, retryProbeWorkflow } from './workflows'
+import { buildTemporalLayer } from '../helpers/temporal-layer'
 
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
@@ -46,15 +48,19 @@ describeIntegration('Activity lifecycle integration', () => {
       },
     })
 
-    runtime = await WorkerRuntime.create({
-      config: runtimeConfig,
-      workflows: integrationWorkflows,
-      activities: integrationActivities,
-      taskQueue: CLI_CONFIG.taskQueue,
-      namespace: CLI_CONFIG.namespace,
-      stickyScheduling: true,
-    })
-
+    const temporalLayer = buildTemporalLayer(runtimeConfig)
+    runtime = await Effect.runPromise(
+      Effect.provide(
+        makeWorkerRuntimeEffect({
+          workflows: integrationWorkflows,
+          activities: integrationActivities,
+          taskQueue: CLI_CONFIG.taskQueue,
+          namespace: CLI_CONFIG.namespace,
+          stickyScheduling: true,
+        }),
+        temporalLayer,
+      ),
+    )
     runtimePromise = runtime.run()
   })
 

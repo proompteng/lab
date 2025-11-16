@@ -10,6 +10,7 @@ import { ingestWorkflowHistory, diffDeterminismState } from '../../src/workflow/
 import type { HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
 import { WorkerVersioningMode } from '../../src/proto/temporal/api/enums/v1/deployment_pb'
 import { VersioningBehavior } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
+import { makeWorkerRuntimeEffect } from '../../src/worker/layer'
 import { WorkerRuntime } from '../../src/worker/runtime'
 import { makeStickyCache } from '../../src/worker/sticky-cache'
 import type { IntegrationHarness, WorkflowExecutionHandle } from './harness'
@@ -22,6 +23,7 @@ import {
   activityWorkflow,
   timerWorkflow,
 } from './workflows'
+import { buildTemporalLayer } from '../helpers/temporal-layer'
 
 const CLI_CONFIG = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
@@ -64,16 +66,21 @@ beforeAll(async () => {
     workerStickyTtlMs: 60_000,
   }
 
-  runtime = await WorkerRuntime.create({
-    config: runtimeConfig,
-    workflows: integrationWorkflows,
-    activities: integrationActivities,
-    stickyCache,
-    deployment: {
-      versioningMode: WorkerVersioningMode.UNVERSIONED,
-      versioningBehavior: VersioningBehavior.UNSPECIFIED,
-    },
-  })
+  const temporalLayer = buildTemporalLayer(runtimeConfig)
+  runtime = await Effect.runPromise(
+    Effect.provide(
+      makeWorkerRuntimeEffect({
+        workflows: integrationWorkflows,
+        activities: integrationActivities,
+        stickyCache,
+        deployment: {
+          versioningMode: WorkerVersioningMode.UNVERSIONED,
+          versioningBehavior: VersioningBehavior.UNSPECIFIED,
+        },
+      }),
+      temporalLayer,
+    ),
+  )
 
   runtimePromise = runtime.run()
 })
