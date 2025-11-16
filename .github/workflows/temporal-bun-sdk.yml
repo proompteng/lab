@@ -163,28 +163,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Node.js 22
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22.20.0'
-          registry-url: https://registry.npmjs.org
-
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Prepare pnpm
-        run: |
-          PACKAGE_MANAGER=$(node -p "require('./package.json').packageManager")
-          corepack prepare "$PACKAGE_MANAGER" --activate
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
       - name: Derive release metadata
         id: release_meta
         run: |
