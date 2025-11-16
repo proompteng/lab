@@ -4,7 +4,7 @@ import { create } from '@bufbuild/protobuf'
 import type { Timestamp } from '@bufbuild/protobuf/wkt'
 import { Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
-import { Cause, Effect, Fiber } from 'effect'
+import { Effect } from 'effect'
 
 import {
   type ActivityHeartbeatRegistration,
@@ -412,8 +412,9 @@ export class WorkerRuntime {
   readonly #deploymentOptions: WorkerDeploymentOptions
   readonly #versioningBehavior: VersioningBehavior | null
   readonly #workflowPollerCount: number
-  #runFiber: Fiber.RuntimeFiber<void, unknown> | null = null
-  #runCompletion: Promise<void> | null = null
+  #running = false
+  #abortController: AbortController | null = null
+  #runPromise: Promise<void> | null = null
   #schedulerStarted = false
   #schedulerStopPromise: Promise<void> | null = null
 
@@ -555,207 +556,71 @@ export class WorkerRuntime {
   }
 
   async run(): Promise<void> {
-    if (this.#runCompletion) {
-      return this.#runCompletion
+    if (this.#running) {
+      return this.#runPromise ?? Promise.resolve()
     }
-    const program = this.#runtimeProgram().pipe(
-      Effect.tapError((error) =>
-        this.#logEffect('error', 'temporal worker runtime failed', {
-          namespace: this.#namespace,
-          taskQueue: this.#taskQueue,
-          error: error instanceof Error ? error.message : String(error),
+    this.#running = true
+    this.#abortController = new AbortController()
+    const signal = this.#abortController.signal
+
+    try {
+      await this.#startScheduler()
+      this.#log(
+        'info',
+        'temporal worker runtime started',
+        this.#runtimeLogFields({
+          workflowPollers: this.#workflowPollerCount,
+          stickySchedulingEnabled: this.#stickySchedulingEnabled,
         }),
-      ),
-    )
-    const fiber = Effect.runFork(program)
-    this.#runFiber = fiber
-    const completion = Effect.runPromise(Fiber.join(fiber))
-    this.#runCompletion = completion.finally(() => {
-      this.#runFiber = null
-      this.#runCompletion = null
-    })
-    return this.#runCompletion
+      )
+    } catch (error) {
+      this.#running = false
+      this.#abortController = null
+      throw error
+    }
+
+    const execution = (async () => {
+      try {
+        const workflowLoops = Array.from({ length: this.#workflowPollerCount }, () => this.#workflowLoop(signal))
+        const activityLoops = this.#hasActivities() ? [this.#activityLoop(signal)] : []
+        await Promise.all([...workflowLoops, ...activityLoops])
+      } finally {
+        await this.#stopScheduler()
+        this.#abortController = null
+        this.#running = false
+      }
+    })()
+
+    this.#runPromise = execution
+
+    try {
+      await this.#runPromise
+    } finally {
+      await this.#flushMetrics()
+      this.#log('info', 'temporal worker runtime stopped', this.#runtimeLogFields())
+    }
   }
 
   async shutdown(): Promise<void> {
-    this.#log(
-      'info',
-      'temporal worker shutdown requested',
-      this.#runtimeLogFields({ running: Boolean(this.#runFiber) }),
-    )
-    if (!this.#runFiber || !this.#runCompletion) {
+    this.#log('info', 'temporal worker shutdown requested', this.#runtimeLogFields({ running: this.#running }))
+    if (!this.#running) {
       await this.#stopScheduler()
       await this.#flushMetrics()
       this.#log('info', 'temporal worker shutdown complete', this.#runtimeLogFields({ drained: false }))
       return
     }
-    await Effect.runPromise(Fiber.interrupt(this.#runFiber))
-    try {
-      await this.#runCompletion
-    } finally {
-      this.#log('info', 'temporal worker shutdown complete', this.#runtimeLogFields({ drained: true }))
+    this.#abortController?.abort()
+    if (this.#runPromise) {
+      try {
+        await this.#runPromise
+      } catch {
+        // ignore failures during shutdown; polling loops log errors before exiting
+      }
+    } else {
+      await this.#stopScheduler()
     }
-  }
-
-  #runtimeProgram(): Effect.Effect<void> {
-    const workflowQueues = [this.#taskQueue]
-    if (this.#stickySchedulingEnabled) {
-      workflowQueues.push(this.#stickyQueue)
-    }
-    const workflowLoops: Effect.Effect<void>[] = []
-    for (const queueName of workflowQueues) {
-      for (let index = 0; index < this.#workflowPollerCount; index += 1) {
-        workflowLoops.push(this.#workflowPollerLoopEffect(queueName))
-      }
-    }
-    const loops = this.#hasActivities() ? [...workflowLoops, this.#activityPollerLoopEffect()] : workflowLoops
-
-    const acquire = this.#startSchedulerEffect().pipe(
-      Effect.zipRight(
-        this.#logEffect(
-          'info',
-          'temporal worker runtime started',
-          this.#runtimeLogFields({
-            workflowPollers: this.#workflowPollerCount,
-            stickySchedulingEnabled: this.#stickySchedulingEnabled,
-          }),
-        ),
-      ),
-    )
-
-    const waitForShutdown = this.#awaitInterruptEffect()
-    const runLoops = () =>
-      Effect.interruptible(
-        Effect.gen(function* () {
-          for (const loop of loops) {
-            yield* Effect.forkScoped(loop)
-          }
-          yield* waitForShutdown
-        }),
-      )
-
-    return Effect.scoped(Effect.acquireRelease(acquire, runLoops, () => this.#stopSchedulerEffect())).pipe(
-      Effect.ensuring(this.#flushMetricsEffect()),
-      Effect.ensuring(this.#logEffect('info', 'temporal worker runtime stopped', this.#runtimeLogFields())),
-    )
-  }
-
-  #workflowPollerLoopEffect(queueName: string): Effect.Effect<void> {
-    const runtime = this
-    const request = create(PollWorkflowTaskQueueRequestSchema, {
-      namespace: runtime.#namespace,
-      taskQueue: create(TaskQueueSchema, { name: queueName }),
-      identity: runtime.#identity,
-      deploymentOptions: runtime.#deploymentOptions,
-    })
-
-    const poll = () =>
-      Effect.async<PollWorkflowTaskQueueResponse>((resume) => {
-        const controller = new AbortController()
-        runtime.#workflowService
-          .pollWorkflowTaskQueue(request, {
-            timeoutMs: POLL_TIMEOUT_MS,
-            signal: controller.signal,
-          })
-          .then((response) => resume(Effect.succeed(response)))
-          .catch((error) => {
-            if (error instanceof Error && error.name === 'AbortError') {
-              resume(Effect.interrupt)
-              return
-            }
-            resume(Effect.fail(error as Error))
-          })
-        return Effect.sync(() => controller.abort())
-      })
-
-    const step = Effect.gen(function* () {
-      const start = Date.now()
-      const response = yield* poll()
-      yield* runtime.#observeHistogramEffect(runtime.#metrics.workflowPollLatency, Date.now() - start)
-      if (!response.taskToken || response.taskToken.length === 0) {
-        return
-      }
-      yield* Effect.promise(() => runtime.#enqueueWorkflowTask(response))
-    })
-
-    return Effect.gen(function* () {
-      while (true) {
-        yield* step.pipe(
-          Effect.catchAllCause((cause) =>
-            Cause.isInterruptedOnly(cause)
-              ? Effect.failCause(cause)
-              : Effect.gen(function* () {
-                  yield* runtime.#incrementCounterEffect(runtime.#metrics.workflowPollErrors)
-                  yield* runtime.#logEffect('warn', 'workflow polling failed', {
-                    queueName,
-                    namespace: runtime.#namespace,
-                    error: Cause.pretty(cause),
-                  })
-                  yield* Effect.promise(() => sleep(250))
-                }),
-          ),
-        )
-      }
-    })
-  }
-
-  #activityPollerLoopEffect(): Effect.Effect<void> {
-    const runtime = this
-    const request = create(PollActivityTaskQueueRequestSchema, {
-      namespace: runtime.#namespace,
-      taskQueue: create(TaskQueueSchema, { name: runtime.#taskQueue }),
-      identity: runtime.#identity,
-      deploymentOptions: runtime.#deploymentOptions,
-    })
-
-    const poll = () =>
-      Effect.async<PollActivityTaskQueueResponse>((resume) => {
-        const controller = new AbortController()
-        runtime.#workflowService
-          .pollActivityTaskQueue(request, {
-            timeoutMs: POLL_TIMEOUT_MS,
-            signal: controller.signal,
-          })
-          .then((response) => resume(Effect.succeed(response)))
-          .catch((error) => {
-            if (error instanceof Error && error.name === 'AbortError') {
-              resume(Effect.interrupt)
-              return
-            }
-            resume(Effect.fail(error as Error))
-          })
-        return Effect.sync(() => controller.abort())
-      })
-
-    const step = Effect.gen(function* () {
-      const start = Date.now()
-      const response = yield* poll()
-      yield* runtime.#observeHistogramEffect(runtime.#metrics.activityPollLatency, Date.now() - start)
-      if (!response.taskToken || response.taskToken.length === 0) {
-        return
-      }
-      yield* Effect.promise(() => runtime.#enqueueActivityTask(response))
-    })
-
-    return Effect.gen(function* () {
-      while (true) {
-        yield* step.pipe(
-          Effect.catchAllCause((cause) =>
-            Cause.isInterruptedOnly(cause)
-              ? Effect.failCause(cause)
-              : Effect.gen(function* () {
-                  yield* runtime.#incrementCounterEffect(runtime.#metrics.activityPollErrors)
-                  yield* runtime.#logEffect('warn', 'activity polling failed', {
-                    namespace: runtime.#namespace,
-                    taskQueue: runtime.#taskQueue,
-                    error: Cause.pretty(cause),
-                  })
-                  yield* Effect.promise(() => sleep(250))
-                }),
-          ),
-        )
-      }
-    })
+    await this.#flushMetrics()
+    this.#log('info', 'temporal worker shutdown complete', this.#runtimeLogFields({ drained: true }))
   }
 
   async #startScheduler(): Promise<void> {
@@ -785,16 +650,47 @@ export class WorkerRuntime {
     await this.#schedulerStopPromise
   }
 
-  #startSchedulerEffect(): Effect.Effect<void> {
-    return Effect.tryPromise(async () => {
-      await this.#startScheduler()
-    })
+  async #workflowLoop(signal: AbortSignal): Promise<void> {
+    const pollers = [this.#pollWorkflowTaskQueue(this.#taskQueue, signal)]
+    if (this.#stickySchedulingEnabled) {
+      pollers.push(this.#pollWorkflowTaskQueue(this.#stickyQueue, signal))
+    }
+    await Promise.all(pollers)
   }
 
-  #stopSchedulerEffect(): Effect.Effect<void> {
-    return Effect.tryPromise(async () => {
-      await this.#stopScheduler()
+  async #pollWorkflowTaskQueue(queueName: string, signal: AbortSignal): Promise<void> {
+    const request = create(PollWorkflowTaskQueueRequestSchema, {
+      namespace: this.#namespace,
+      taskQueue: create(TaskQueueSchema, { name: queueName }),
+      identity: this.#identity,
+      deploymentOptions: this.#deploymentOptions,
     })
+
+    while (!signal.aborted) {
+      const start = Date.now()
+      try {
+        const response = await this.#workflowService.pollWorkflowTaskQueue(request, {
+          timeoutMs: POLL_TIMEOUT_MS,
+          signal,
+        })
+        this.#observeHistogram(this.#metrics.workflowPollLatency, Date.now() - start)
+        if (!response.taskToken || response.taskToken.length === 0) {
+          continue
+        }
+        await this.#enqueueWorkflowTask(response)
+      } catch (error) {
+        if (signal.aborted) {
+          break
+        }
+        this.#incrementCounter(this.#metrics.workflowPollErrors)
+        this.#log('warn', 'workflow polling failed', {
+          queueName,
+          namespace: this.#namespace,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        await sleep(250)
+      }
+    }
   }
 
   async #enqueueWorkflowTask(response: PollWorkflowTaskQueueResponse): Promise<void> {
@@ -807,6 +703,45 @@ export class WorkerRuntime {
         }),
     }
     await Effect.runPromise(this.#scheduler.enqueueWorkflow(envelope))
+  }
+
+  async #activityLoop(signal: AbortSignal): Promise<void> {
+    if (!this.#hasActivities()) {
+      return
+    }
+
+    const request = create(PollActivityTaskQueueRequestSchema, {
+      namespace: this.#namespace,
+      taskQueue: create(TaskQueueSchema, { name: this.#taskQueue }),
+      identity: this.#identity,
+      deploymentOptions: this.#deploymentOptions,
+    })
+
+    while (!signal.aborted) {
+      const start = Date.now()
+      try {
+        const response = await this.#workflowService.pollActivityTaskQueue(request, {
+          timeoutMs: POLL_TIMEOUT_MS,
+          signal,
+        })
+        this.#observeHistogram(this.#metrics.activityPollLatency, Date.now() - start)
+        if (!response.taskToken || response.taskToken.length === 0) {
+          continue
+        }
+        await this.#enqueueActivityTask(response)
+      } catch (error) {
+        if (signal.aborted) {
+          break
+        }
+        this.#incrementCounter(this.#metrics.activityPollErrors)
+        this.#log('warn', 'activity polling failed', {
+          namespace: this.#namespace,
+          taskQueue: this.#taskQueue,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        await sleep(250)
+      }
+    }
   }
 
   async #enqueueActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
@@ -1266,24 +1201,16 @@ export class WorkerRuntime {
     return command.attributes.value.markerName === DETERMINISM_MARKER_NAME
   }
 
-  #logEffect(level: LogLevel, message: string, fields?: LogFields): Effect.Effect<void> {
-    return this.#logger.log(level, message, fields)
-  }
-
   #log(level: LogLevel, message: string, fields?: LogFields): void {
-    void Effect.runPromise(this.#logEffect(level, message, fields))
-  }
-
-  #incrementCounterEffect(counter: Counter, value = 1): Effect.Effect<void> {
-    return counter.inc(value)
+    void Effect.runPromise(this.#logger.log(level, message, fields))
   }
 
   #incrementCounter(counter: Counter, value = 1): void {
-    void Effect.runPromise(this.#incrementCounterEffect(counter, value))
+    void Effect.runPromise(counter.inc(value))
   }
 
-  #observeHistogramEffect(histogram: Histogram, value: number): Effect.Effect<void> {
-    return histogram.observe(value)
+  #observeHistogram(histogram: Histogram, value: number): void {
+    void Effect.runPromise(histogram.observe(value))
   }
 
   #workflowLogFields(
@@ -1786,19 +1713,6 @@ export class WorkerRuntime {
         error: error instanceof Error ? error.message : String(error),
       })
     }
-  }
-
-  #flushMetricsEffect(): Effect.Effect<void> {
-    return Effect.tryPromise(async () => {
-      await this.#flushMetrics()
-    })
-  }
-
-  #awaitInterruptEffect(): Effect.Effect<void> {
-    return Effect.async<void>((resume, signal) => {
-      const abort = () => resume(Effect.void)
-      signal.addEventListener('abort', abort, { once: true })
-    })
   }
 
   async #decodeWorkflowArgs(events: HistoryEvent[]): Promise<unknown[]> {

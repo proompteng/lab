@@ -17,7 +17,6 @@ export {
   TemporalClientLayer,
   TemporalClientService,
 } from './client/layer'
-export { buildTransportOptions, normalizeTemporalAddress } from './client/transport'
 export type { TemporalRpcRetryPolicy } from './client/retries'
 export type {
   SignalWithStartOptions,
@@ -34,7 +33,6 @@ export {
   TemporalConfigError,
   TemporalTlsConfigurationError,
 } from './config'
-export { createCliLayer } from './runtime/cli-layer'
 export {
   createWorkerRuntimeLayer,
   makeWorkerRuntimeEffect,

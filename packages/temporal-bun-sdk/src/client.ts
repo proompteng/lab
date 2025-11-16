@@ -1,7 +1,7 @@
 import { create, toBinary } from '@bufbuild/protobuf'
 import { type CallOptions, Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
-import { Context, Effect, Option } from 'effect'
+import { Effect } from 'effect'
 
 import { createDefaultHeaders, mergeHeaders, normalizeMetadataHeaders } from './client/headers'
 import { type InterceptorBuilder, makeDefaultInterceptorBuilder, type TemporalInterceptor } from './client/interceptors'
@@ -309,18 +309,16 @@ export const makeTemporalClientEffect = (
   TemporalConfigService | LoggerService | MetricsService | MetricsExporterService | WorkflowServiceClientService
 > =>
   Effect.gen(function* () {
-    const config = options.config ?? (yield* TemporalConfigService)
+    const config = options.config ?? (yield* Effect.service(TemporalConfigService))
     const namespace = options.namespace ?? config.namespace
     const identity = options.identity ?? config.workerIdentity
     const taskQueue = options.taskQueue ?? config.taskQueue
     const dataConverter = options.dataConverter ?? createDefaultDataConverter()
     const initialHeaders = createDefaultHeaders(config.apiKey)
-    const logger = options.logger ?? (yield* LoggerService)
-    const metricsRegistry = options.metrics ?? (yield* MetricsService)
-    const metricsExporter = options.metricsExporter ?? (yield* MetricsExporterService)
-    const workflowServiceFromContext = yield* Effect.contextWith((context) =>
-      Context.getOption(context, WorkflowServiceClientService),
-    )
+    const logger = options.logger ?? (yield* Effect.service(LoggerService))
+    const metricsRegistry = options.metrics ?? (yield* Effect.service(MetricsService))
+    const metricsExporter = options.metricsExporter ?? (yield* Effect.service(MetricsExporterService))
+    const workflowServiceFromContext = yield* Effect.serviceOption(WorkflowServiceClientService)
     let workflowService = options.workflowService ?? Option.getOrUndefined(workflowServiceFromContext)
     let transport: ClosableTransport | undefined
 
@@ -995,8 +993,6 @@ const resolveHandle = (defaultNamespace: string, handle: WorkflowHandle): Workfl
     firstExecutionRunId,
   }
 }
-
-export { buildTransportOptions, normalizeTemporalAddress } from './client/transport'
 
 export type {
   SignalWithStartOptions,
