@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -189,13 +190,18 @@ func TestPlanner_Success(t *testing.T) {
 
 	eventBody := input.Parameters["eventBody"]
 	require.NotEmpty(t, eventBody)
+	decodedEventBody, err := base64.StdEncoding.DecodeString(eventBody)
+	require.NoError(t, err)
 	var eventPayload map[string]any
-	require.NoError(t, json.Unmarshal([]byte(eventBody), &eventPayload))
+	require.NoError(t, json.Unmarshal(decodedEventBody, &eventPayload))
 	require.Equal(t, "planning", eventPayload["stage"])
 	require.Equal(t, "1636", eventPayload["issueNumber"])
 
 	rawEvent := input.Parameters["rawEvent"]
 	require.Equal(t, eventBody, rawEvent)
+	decodedRawEvent, err := base64.StdEncoding.DecodeString(rawEvent)
+	require.NoError(t, err)
+	require.Equal(t, decodedEventBody, decodedRawEvent)
 }
 
 func TestPlanner_DuplicateDelivery(t *testing.T) {

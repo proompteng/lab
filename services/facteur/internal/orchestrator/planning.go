@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -316,8 +317,8 @@ func (p *planner) execute(ctx context.Context, span trace.Span, deliveryID strin
 	}
 
 	parameters := cloneParameters(p.cfg.Parameters)
-	parameters["rawEvent"] = string(rawEvent)
-	parameters["eventBody"] = string(eventBody)
+	parameters["rawEvent"] = base64.StdEncoding.EncodeToString(rawEvent)
+	parameters["eventBody"] = base64.StdEncoding.EncodeToString(eventBody)
 
 	span.SetAttributes(attribute.String(attributeArgoParameters, strings.Join(sortedKeys(parameters), ",")))
 

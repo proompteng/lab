@@ -68,9 +68,12 @@ spec:
             set -euo pipefail
 
             EVENT_FILE=$(mktemp)
-            cat <<'JSON' > "$EVENT_FILE"
-            {{inputs.parameters.eventBody}}
-            JSON
+            EVENT_BODY_B64='{{inputs.parameters.eventBody}}'
+            if [[ -z "$EVENT_BODY_B64" ]]; then
+              echo "Missing Codex event payload" >&2
+              exit 1
+            fi
+            printf '%s' "$EVENT_BODY_B64" | base64 --decode > "$EVENT_FILE"
 
             STAGE=$(jq -r '.stage // ""' "$EVENT_FILE")
             if [[ "$STAGE" != "review" ]]; then

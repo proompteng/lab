@@ -160,20 +160,30 @@ argo submit --from workflowtemplate/facteur-dispatch -n argo-workflows \
   -p payload='{"stage":"planning","prompt":"Dry run","repository":"proompteng/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/proompteng/lab/issues/999","title":"Codex dry run","body":"Testing orchestration"}'
 ```
 
-Trigger the implementation flow directly when you have an approved plan payload handy:
+Trigger the implementation flow directly when you have an approved plan payload handy. Encode both parameters as base64 before submitting so Argo treats the JSON as opaque text:
 
 ```bash
+RAW_EVENT=$(printf '{}' | base64 | tr -d '\n')
+EVENT_BODY=$(cat <<'JSON' | base64 | tr -d '\n'
+{"stage":"implementation","prompt":"<codex prompt>","repository":"proompteng/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/proompteng/lab/issues/999","issueTitle":"Codex dry run","issueBody":"Testing orchestration","planCommentBody":"<!-- codex:plan -->\n..."}
+JSON
+)
 argo submit --from workflowtemplate/github-codex-implementation -n argo-workflows \
-  -p rawEvent='{}' \
-  -p eventBody='{"stage":"implementation","prompt":"<codex prompt>","repository":"proompteng/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/proompteng/lab/issues/999","issueTitle":"Codex dry run","issueBody":"Testing orchestration","planCommentBody":"<!-- codex:plan -->\n..."}'
+  -p rawEvent="$RAW_EVENT" \
+  -p eventBody="$EVENT_BODY"
 ```
 
-Exercise the review workflow by posting an authorized `@tuslagch review` comment (OWNER/MEMBER/COLLABORATOR) on the pull request. Froussard will fetch the latest threads and check failures, emit a single `stage:"review"` payload, and Argo will launch the `github-codex-review` workflow. If you need to bypass the webhook layer for isolated testing, you can still seed the workflow template directly:
+Exercise the review workflow by posting an authorized `@tuslagch review` comment (OWNER/MEMBER/COLLABORATOR) on the pull request. Froussard will fetch the latest threads and check failures, emit a single `stage:"review"` payload, and Argo will launch the `github-codex-review` workflow. If you need to bypass the webhook layer for isolated testing, base64-encode the manual payload the same way:
 
 ```bash
+RAW_EVENT=$(printf '{}' | base64 | tr -d '\n')
+EVENT_BODY=$(cat <<'JSON' | base64 | tr -d '\n'
+{"stage":"review","repository":"proompteng/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/proompteng/lab/pull/999","issueTitle":"Codex dry run","issueBody":"Testing review workflows","reviewContext":{"summary":"Two review threads open","reviewThreads":[{"summary":"Add unit test for webhook","url":"https://github.com/proompteng/lab/pull/999#discussion-1","author":"octocat"}],"failingChecks":[{"name":"ci / test","conclusion":"failure","url":"https://ci.example.test"}]}}
+JSON
+)
 argo submit --from workflowtemplate/github-codex-review -n argo-workflows \
-  -p rawEvent='{}' \
-  -p eventBody='{"stage":"review","repository":"proompteng/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/proompteng/lab/pull/999","issueTitle":"Codex dry run","issueBody":"Testing review workflows","reviewContext":{"summary":"Two review threads open","reviewThreads":[{"summary":"Add unit test for webhook","url":"https://github.com/proompteng/lab/pull/999#discussion-1","author":"octocat"}],"failingChecks":[{"name":"ci / test","conclusion":"failure","url":"https://ci.example.test"}]}}'
+  -p rawEvent="$RAW_EVENT" \
+  -p eventBody="$EVENT_BODY"
 ```
 
 The implementation and review workflows write verbose output to `/workspace/lab/.codex-implementation.log` and `/workspace/lab/.codex-review.log`; inspect the artifacts in Argo if you need the full Codex transcripts.

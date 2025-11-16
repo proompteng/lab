@@ -8,11 +8,13 @@ import kotlinx.serialization.json.Json
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import java.net.http.HttpClient
+import java.util.Base64
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.text.Charsets
 
 class ArgoWorkflowClientTest {
   private val json =
@@ -99,8 +101,8 @@ class ArgoWorkflowClientTest {
           client.submitWorkflow(
             SubmitArgoWorkflowRequest(
               workflowName = "codex-test",
-              prompt = "hello",
-              metadata = emptyMap(),
+              prompt = "hello {{ world }}",
+              metadata = mapOf("note" to "{{ inputs.proto_ref }}"),
               artifactKey = "codex-test/artifact.json",
             ),
           )
@@ -112,6 +114,14 @@ class ArgoWorkflowClientTest {
         recorded.path,
       )
       assertEquals("Bearer graf-token", recorded.getHeader("Authorization"))
+      val payload =
+        json.decodeFromString(ArgoWorkflowCreatePayload.serializer(), recorded.body.readUtf8())
+      val promptParam = payload.spec.arguments.parameters.first { it.name == "prompt" }
+      val decodedPrompt = String(Base64.getDecoder().decode(promptParam.value), Charsets.UTF_8)
+      assertEquals("hello {{ world }}", decodedPrompt)
+      val metadataParam = payload.spec.arguments.parameters.first { it.name == "metadata" }
+      val decodedMetadata = String(Base64.getDecoder().decode(metadataParam.value), Charsets.UTF_8)
+      assertTrue(decodedMetadata.contains("\"note\":\"{{ inputs.proto_ref }}\""))
     }
   }
 

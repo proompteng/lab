@@ -94,10 +94,12 @@ Key components evolve from the current codebase:
          deploy: github-codex-deploy
        default_parameters:
          planning:
-           rawEvent: '{}'
+           rawEvent: 'e30=' # base64('{}')
          implementation:
-           rawEvent: '{}'
+           rawEvent: 'e30=' # base64('{}')
      ```
+
+     `facteur` overwrites these with the real payload at runtime and encodes every JSON blob as base64 so Argo never tries to interpret `{{ ... }}` sequences embedded in user-provided prompts.
 
 2. **Database Migration at Startup**
    - Adopt `pressly/goose` in `services/facteur` (per issue #1626) with migrations under `services/facteur/migrations`.

@@ -14,6 +14,7 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.util.Base64
 
 class ArgoWorkflowClient(
   private val config: ArgoConfig,
@@ -31,8 +32,9 @@ class ArgoWorkflowClient(
     }
 
   suspend fun submitWorkflow(request: SubmitArgoWorkflowRequest): SubmitArgoWorkflowResult {
-    val metadataJson =
-      request.metadata.takeIf { it.isNotEmpty() }?.let { json.encodeToJsonElement(it) }
+    val promptPayload = request.prompt.toByteArray(Charsets.UTF_8)
+    val metadataPayload = json.encodeToString(request.metadata).toByteArray(Charsets.UTF_8)
+    val encoder = Base64.getEncoder()
     val payload =
       ArgoWorkflowCreatePayload(
         apiVersion = "argoproj.io/v1alpha1",
@@ -50,14 +52,14 @@ class ArgoWorkflowClient(
               ArgoArguments(
                 parameters =
                   listOfNotNull(
-                    ArgoParameter(name = "prompt", value = request.prompt),
+                    ArgoParameter(name = "prompt", value = encoder.encodeToString(promptPayload)),
                     ArgoParameter(name = "artifactKey", value = request.artifactKey),
                     ArgoParameter(name = "artifactBucket", value = minioConfig.bucket),
                     ArgoParameter(name = "artifactEndpoint", value = minioConfig.artifactEndpoint),
                     minioConfig.region
                       ?.takeUnless(String::isBlank)
                       ?.let { ArgoParameter(name = "artifactRegion", value = it) },
-                    metadataJson?.let { ArgoParameter(name = "metadata", value = json.encodeToString(it)) },
+                    ArgoParameter(name = "metadata", value = encoder.encodeToString(metadataPayload)),
                   ),
               ),
           ),
