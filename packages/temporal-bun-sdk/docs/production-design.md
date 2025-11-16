@@ -310,9 +310,11 @@ can contribute independently without re-planning.
   so every future GA release is blocked on reproducible automation.
 - **Starting points**
   - `.github/workflows/temporal-bun-sdk.yml` – dual-mode workflow: `prepare`
-    triggers release-please to open/update the release PR, runs proto regen, and
-    commits artifacts to the release branch; `publish` runs npm publish with
-    provenance.
+    triggers release-please to open/update the release PR and run validation
+    suites; `publish` runs npm publish with provenance directly from `main`.
+  - `.github/workflows/temporal-bun-sdk-protos.yml` – standalone proto
+    regeneration job that creates a `chore/temporal-bun-sdk-proto-regen` PR when
+    upstream APIs change.
   - `release-please-config.json` + `.release-please-manifest.json` – configure
     release-please (`node` release type) for `packages/temporal-bun-sdk`.
   - `packages/temporal-bun-sdk/CHANGELOG.md` – canonical changelog kept current
@@ -321,17 +323,17 @@ can contribute independently without re-planning.
   1. The release workflow installs Node 22 + Bun, runs `pnpm install
      --frozen-lockfile`, executes `pnpm exec biome check
      packages/temporal-bun-sdk`, `pnpm --filter @proompteng/temporal-bun-sdk
-     test`, `pnpm --filter @proompteng/temporal-bun-sdk run test:load`,
-     `bun packages/temporal-bun-sdk/scripts/update-temporal-protos.ts`, and
-     `pnpm --filter @proompteng/temporal-bun-sdk build`, then uploads the build &
-     load artifacts. Any failure aborts the publish.
+     test`, `pnpm --filter @proompteng/temporal-bun-sdk run test:load`, and
+     `pnpm --filter @proompteng/temporal-bun-sdk build`. Any failure aborts the
+     publish.
   2. release-please derives the semver bump from Conventional Commits, updates
      `package.json`, and rewrites `CHANGELOG.md` inside the automated release PR.
   3. Publishing uses GitHub OIDC + `npm publish --provenance --access public`
      with a scoped automation token, and emits an attestation/SBOM artifact.
-  4. Prepare mode automatically regenerates protos, runs build/test/load suites,
-     and pushes the resulting artifacts to the release-please branch
-     (`release-please--branches--main--components--packages_temporal-bun-sdk`).
+  4. Prepare mode runs build/test/load suites against the release-please branch
+     (`release-please--branches--main--components--temporal-bun-sdk`) so the PR
+     contains validated artifacts, while the dedicated proto workflow keeps
+     generated sources in sync.
   5. Publish mode exposes a `workflow_dispatch` dry-run path, references
      `security@proompteng.ai` for disclosures, and requires maintainers to link
      execution logs/artifacts before requesting review.

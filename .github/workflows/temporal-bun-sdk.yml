@@ -177,9 +177,6 @@ jobs:
           git checkout "$branch"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
 
-      - name: Regenerate Temporal protos
-        run: bun packages/temporal-bun-sdk/scripts/update-temporal-protos.ts
-
       - name: Build Temporal Bun SDK
         run: pnpm --filter @proompteng/temporal-bun-sdk build
 
@@ -191,21 +188,6 @@ jobs:
 
       - name: Run worker load suite
         run: pnpm --filter @proompteng/temporal-bun-sdk run test:load
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Commit regen artifacts
-        run: |
-          if git status --short | grep -q .; then
-            git add packages/temporal-bun-sdk
-            git commit -m "chore: regenerate temporal-bun-sdk protos"
-            git push origin "${{ steps.release_branch.outputs.branch }}"
-          else
-            echo 'No proto changes to commit'
-          fi
 
       - name: Summarize release PR
         run: |

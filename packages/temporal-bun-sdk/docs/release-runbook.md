@@ -16,9 +16,9 @@ this runbook as a quick reference for triggering and validating releases.
    - Trigger the workflow with `release_mode=prepare` (optionally set
      `npm_tag`). This runs release-please to open/update the automated release
      PR (`release-please--branches--main--components--temporal-bun-sdk`).
-   - The job regenerates Temporal protos, runs Biome + build + unit + load
-     suites, commits the artifacts to the release-please branch, and leaves PR
-     # in the logs. Review the PR and merge after CI is green.
+   - The job runs Biome + build + unit + load suites against the release PR
+     branch so we can verify artifacts before merging. Review the PR and merge
+     after CI is green.
 2. **Publish mode**
    - Re-run the workflow with `release_mode=publish` (set `dry_run=true` for a
      rehearsal) **from the `main` branch only**; the workflow refuses to run on
@@ -38,3 +38,6 @@ this runbook as a quick reference for triggering and validating releases.
   workflow output.
 - Close the tracking issue (e.g., #1788) and note the publish link.
 - Schedule any follow-up docs/DevRel announcements if required.
+- If upstream Temporal protos changed, trigger the "Temporal Bun SDK Proto
+  Regen" workflow (or confirm the scheduled run already merged) so generated
+  sources stay current.
