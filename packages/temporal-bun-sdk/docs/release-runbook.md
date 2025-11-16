@@ -5,10 +5,10 @@ this runbook as a quick reference for triggering and validating releases.
 
 ## Prerequisites
 
-- `NPM_TOKEN` secret scoped to publish `@proompteng/temporal-bun-sdk` via GitHub
-  OIDC (`npm publish --provenance`).
+- npm trust publishing is enabled for `proompteng/lab → temporal-bun-sdk.yml`
+  (Trusted Publisher entry in the npm org). No automation token is required.
 - Maintainer access to run the Temporal Bun SDK workflow manually on `main`.
-- Release version (SemVer) and desired npm dist-tag (`latest`, `beta`, etc.).
+- Desired npm dist-tag (`latest`, `beta`, etc.) for the publish run.
 - Buf CLI installed (`buf` on `PATH`) if you plan to run the proto regeneration
   script locally.
 
