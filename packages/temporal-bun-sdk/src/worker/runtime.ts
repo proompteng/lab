@@ -674,22 +674,18 @@ export class WorkerRuntime {
       deploymentOptions: this.#deploymentOptions,
     })
 
-    const pollOnce = Effect.interruptible(
-      Effect.tryPromise({
-        try: async () => {
-          const start = Date.now()
-          const response = await this.#workflowService.pollWorkflowTaskQueue(request, {
-            timeoutMs: POLL_TIMEOUT_MS,
-          })
-          this.#observeHistogram(this.#metrics.workflowPollLatency, Date.now() - start)
-          if (!response.taskToken || response.taskToken.length === 0) {
-            return
-          }
-          await this.#enqueueWorkflowTask(response)
-        },
-        catch: (error) => error,
-      }),
-    ).pipe(Effect.catchAll((error) => this.#handleWorkflowPollerError(queueName, error)))
+    const pollOnce = this.#withRpcAbort(async (signal) => {
+      const start = Date.now()
+      const response = await this.#workflowService.pollWorkflowTaskQueue(request, {
+        timeoutMs: POLL_TIMEOUT_MS,
+        signal,
+      })
+      this.#observeHistogram(this.#metrics.workflowPollLatency, Date.now() - start)
+      if (!response.taskToken || response.taskToken.length === 0) {
+        return
+      }
+      await this.#enqueueWorkflowTask(response)
+    }).pipe(Effect.catchAll((error) => this.#handleWorkflowPollerError(queueName, error)))
 
     return Effect.forever(pollOnce)
   }
@@ -717,24 +713,35 @@ export class WorkerRuntime {
       deploymentOptions: this.#deploymentOptions,
     })
 
-    const pollOnce = Effect.interruptible(
-      Effect.tryPromise({
-        try: async () => {
-          const start = Date.now()
-          const response = await this.#workflowService.pollActivityTaskQueue(request, {
-            timeoutMs: POLL_TIMEOUT_MS,
-          })
-          this.#observeHistogram(this.#metrics.activityPollLatency, Date.now() - start)
-          if (!response.taskToken || response.taskToken.length === 0) {
-            return
-          }
-          await this.#enqueueActivityTask(response)
-        },
-        catch: (error) => error,
-      }),
-    ).pipe(Effect.catchAll((error) => this.#handleActivityPollerError(error)))
+    const pollOnce = this.#withRpcAbort(async (signal) => {
+      const start = Date.now()
+      const response = await this.#workflowService.pollActivityTaskQueue(request, {
+        timeoutMs: POLL_TIMEOUT_MS,
+        signal,
+      })
+      this.#observeHistogram(this.#metrics.activityPollLatency, Date.now() - start)
+      if (!response.taskToken || response.taskToken.length === 0) {
+        return
+      }
+      await this.#enqueueActivityTask(response)
+    }).pipe(Effect.catchAll((error) => this.#handleActivityPollerError(error)))
 
     return Effect.forever(pollOnce)
+  }
+
+  #withRpcAbort<A>(run: (signal: AbortSignal) => Promise<A>): Effect.Effect<A, unknown, never> {
+    return Effect.acquireUseRelease(
+      Effect.sync(() => new AbortController()),
+      (controller) =>
+        Effect.tryPromise({
+          try: () => run(controller.signal),
+          catch: (error) => error,
+        }),
+      (controller) =>
+        Effect.sync(() => {
+          controller.abort()
+        }),
+    )
   }
 
   async #enqueueActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
