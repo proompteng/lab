@@ -6,7 +6,17 @@ export type {
   TemporalSearchAttributeHelpers,
   TemporalWorkflowClient,
 } from './client'
-export { createTemporalClient, TemporalTlsHandshakeError, temporalCallOptions } from './client'
+export {
+  createTemporalClient,
+  makeTemporalClientEffect,
+  TemporalTlsHandshakeError,
+  temporalCallOptions,
+} from './client'
+export {
+  createTemporalClientLayer,
+  TemporalClientLayer,
+  TemporalClientService,
+} from './client/layer'
 export type { TemporalRpcRetryPolicy } from './client/retries'
 export type {
   SignalWithStartOptions,
@@ -16,4 +26,17 @@ export type {
   WorkflowHandle,
 } from './client/types'
 export type { TemporalConfig, TLSConfig } from './config'
-export { loadTemporalConfig, TemporalTlsConfigurationError } from './config'
+export {
+  applyTemporalConfigOverrides,
+  loadTemporalConfig,
+  loadTemporalConfigEffect,
+  TemporalConfigError,
+  TemporalTlsConfigurationError,
+} from './config'
+export {
+  createWorkerRuntimeLayer,
+  makeWorkerRuntimeEffect,
+  runWorkerEffect,
+  WorkerRuntimeLayer,
+  WorkerRuntimeService,
+} from './worker/layer'

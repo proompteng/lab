@@ -650,6 +650,9 @@ importers:
       '@connectrpc/connect-node':
         specifier: ^2.1.0
         version: 2.1.0(@bufbuild/protobuf@2.10.0)(@connectrpc/connect@2.1.0(@bufbuild/protobuf@2.10.0))
+      '@effect/schema':
+        specifier: ^0.75.5
+        version: 0.75.5(effect@3.18.4)
       effect:
         specifier: ^3.2.0
         version: 3.18.4
@@ -1378,6 +1381,12 @@ packages:
 
   '@date-fns/tz@1.4.1':
     resolution: {integrity: sha512-P5LUNhtbj6YfI3iJjw5EL9eUAG6OitD0W3fWQcpQjDRc/QIsL0tRNuO1PcDvPccWL1fSTXXdE1ds+l95DV/OFA==}
+
+  '@effect/schema@0.75.5':
+    resolution: {integrity: sha512-TQInulTVCuF+9EIbJpyLP6dvxbQJMphrnRqgexm/Ze39rSjfhJuufF7XvU3SxTgg3HnL7B/kpORTJbHhlE6thw==}
+    deprecated: this package has been merged into the main effect package
+    peerDependencies:
+      effect: ^3.9.2
 
   '@elysiajs/eden@1.4.1':
     resolution: {integrity: sha512-9VXMau/cvafuBa1r19ucKi+l9eesCmeuvD6uYSeq5MFO/URc233JaxZmUlWQ8gztu+pp6L7auTZdkzOQz26O+A==}
@@ -10015,8 +10024,8 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
-  typescript@6.0.0-dev.20251114:
-    resolution: {integrity: sha512-1LMVVuqUh6uIQ4gMX8tN5GS9UXAtEeAZGWwgp3vxwXAwWSDECeDJWATreBVG2uxqbq62xAzma6aqJG6lbFA2Vw==}
+  typescript@6.0.0-dev.20251115:
+    resolution: {integrity: sha512-sn9cmQKx8OvPSQTCyYQsfLNmaziAEPqS7rRh5VMKJdOIYkXiFWVXa5nOZuhB5v0c9OQlYMxhgdYRMXtT61xF/Q==}
     engines: {node: '>=14.17'}
     hasBin: true
 
@@ -11770,6 +11779,11 @@ snapshots:
   '@dagrejs/graphlib@2.2.4': {}
 
   '@date-fns/tz@1.4.1': {}
+
+  '@effect/schema@0.75.5(effect@3.18.4)':
+    dependencies:
+      effect: 3.18.4
+      fast-check: 3.23.2
 
   '@elysiajs/eden@1.4.1(elysia@1.4.9(@sinclair/typebox@0.34.41)(exact-mirror@0.2.2(@sinclair/typebox@0.34.41))(openapi-types@12.1.3)(typescript@5.9.3))':
     dependencies:
@@ -17766,7 +17780,7 @@ snapshots:
     dependencies:
       semver: 7.7.2
       shelljs: 0.8.5
-      typescript: 6.0.0-dev.20251114
+      typescript: 6.0.0-dev.20251115
 
   dts-resolver@2.1.3: {}
 
@@ -22133,7 +22147,7 @@ snapshots:
 
   typescript@5.9.3: {}
 
-  typescript@6.0.0-dev.20251114: {}
+  typescript@6.0.0-dev.20251115: {}
 
   ufo@1.5.4: {}
 

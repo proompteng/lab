@@ -1,8 +1,8 @@
-import type { ClientSessionOptions, SecureClientSessionOptions } from 'node:http2'
 import { create, toBinary } from '@bufbuild/protobuf'
-import { type CallOptions, Code, ConnectError, createClient, type Transport } from '@connectrpc/connect'
-import { createGrpcTransport, type GrpcTransportOptions } from '@connectrpc/connect-node'
+import { type CallOptions, Code, ConnectError, createClient } from '@connectrpc/connect'
+import { createGrpcTransport } from '@connectrpc/connect-node'
 import { Effect } from 'effect'
+
 import { createDefaultHeaders, mergeHeaders, normalizeMetadataHeaders } from './client/headers'
 import { type InterceptorBuilder, makeDefaultInterceptorBuilder, type TemporalInterceptor } from './client/interceptors'
 import { type TemporalRpcRetryPolicy, withTemporalRetry } from './client/retries'
@@ -20,6 +20,7 @@ import {
   encodeMemoAttributes,
   encodeSearchAttributes,
 } from './client/serialization'
+import { buildTransportOptions, type ClosableTransport, normalizeTemporalAddress } from './client/transport'
 import {
   createWorkflowHandle,
   type RetryPolicyOptions,
@@ -31,7 +32,7 @@ import {
   type WorkflowHandleMetadata,
 } from './client/types'
 import { createDefaultDataConverter, type DataConverter, decodePayloadsToValues } from './common/payloads'
-import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
+import { loadTemporalConfig, type TemporalConfig } from './config'
 import { createObservabilityServices } from './observability'
 import type { LogFields, Logger, LogLevel } from './observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from './observability/metrics'
@@ -45,8 +46,14 @@ import {
   type StartWorkflowExecutionResponse,
 } from './proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from './proto/temporal/api/workflowservice/v1/service_pb'
+import {
+  LoggerService,
+  MetricsExporterService,
+  MetricsService,
+  TemporalConfigService,
+  WorkflowServiceClientService,
+} from './runtime/effect-layers'
 
-type ClosableTransport = Transport & { close?: () => void | Promise<void> }
 type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
 
 export interface TemporalClientCallOptions {
@@ -235,18 +242,13 @@ export interface CreateTemporalClientOptions {
   metricsExporter?: MetricsExporter
   interceptors?: TemporalInterceptor[]
   interceptorBuilder?: InterceptorBuilder
+  workflowService?: WorkflowServiceClient
 }
 
 export const createTemporalClient = async (
   options: CreateTemporalClientOptions = {},
 ): Promise<{ client: TemporalClient; config: TemporalConfig }> => {
   const config = options.config ?? (await loadTemporalConfig())
-
-  const namespace = options.namespace ?? config.namespace
-  const identity = options.identity ?? config.workerIdentity
-  const taskQueue = options.taskQueue ?? config.taskQueue
-  const dataConverter = options.dataConverter ?? createDefaultDataConverter()
-  const initialHeaders = createDefaultHeaders(config.apiKey)
   const observability = await Effect.runPromise(
     createObservabilityServices(
       {
@@ -265,8 +267,8 @@ export const createTemporalClient = async (
   const interceptorBuilder = options.interceptorBuilder ?? makeDefaultInterceptorBuilder()
   const defaultInterceptors = await Effect.runPromise(
     interceptorBuilder.build({
-      namespace,
-      identity,
+      namespace: options.namespace ?? config.namespace,
+      identity: options.identity ?? config.workerIdentity,
       logger,
       metricsRegistry,
       metricsExporter,
@@ -276,26 +278,88 @@ export const createTemporalClient = async (
   const baseUrl = normalizeTemporalAddress(config.address, shouldUseTls)
   const allInterceptors = [...defaultInterceptors, ...(options.interceptors ?? [])]
   const transportOptions = buildTransportOptions(baseUrl, config, allInterceptors)
-  const transport = createGrpcTransport(transportOptions)
+  const transport = createGrpcTransport(transportOptions) as ClosableTransport
   const workflowService = createClient(WorkflowService, transport)
-  const clientMetrics = await TemporalClientImpl.initMetrics(metricsRegistry)
 
-  const client = new TemporalClientImpl({
-    transport,
-    workflowService,
+  const effect = makeTemporalClientEffect({
+    ...options,
     config,
-    namespace,
-    identity,
-    taskQueue,
-    dataConverter,
-    headers: initialHeaders,
     logger,
-    metrics: clientMetrics,
+    metrics: metricsRegistry,
     metricsExporter,
+    workflowService,
   })
 
-  return { client, config }
+  return Effect.runPromise(
+    effect.pipe(
+      Effect.provideService(TemporalConfigService, config),
+      Effect.provideService(LoggerService, logger),
+      Effect.provideService(MetricsService, metricsRegistry),
+      Effect.provideService(MetricsExporterService, metricsExporter),
+      Effect.provideService(WorkflowServiceClientService, workflowService),
+    ),
+  )
 }
+
+export const makeTemporalClientEffect = (
+  options: CreateTemporalClientOptions = {},
+): Effect.Effect<
+  { client: TemporalClient; config: TemporalConfig },
+  unknown,
+  TemporalConfigService | LoggerService | MetricsService | MetricsExporterService | WorkflowServiceClientService
+> =>
+  Effect.gen(function* () {
+    const config = options.config ?? (yield* Effect.service(TemporalConfigService))
+    const namespace = options.namespace ?? config.namespace
+    const identity = options.identity ?? config.workerIdentity
+    const taskQueue = options.taskQueue ?? config.taskQueue
+    const dataConverter = options.dataConverter ?? createDefaultDataConverter()
+    const initialHeaders = createDefaultHeaders(config.apiKey)
+    const logger = options.logger ?? (yield* Effect.service(LoggerService))
+    const metricsRegistry = options.metrics ?? (yield* Effect.service(MetricsService))
+    const metricsExporter = options.metricsExporter ?? (yield* Effect.service(MetricsExporterService))
+    const workflowServiceFromContext = yield* Effect.serviceOption(WorkflowServiceClientService)
+    let workflowService = options.workflowService ?? Option.getOrUndefined(workflowServiceFromContext)
+    let transport: ClosableTransport | undefined
+
+    if (!workflowService) {
+      const interceptorBuilder = options.interceptorBuilder ?? makeDefaultInterceptorBuilder()
+      const defaultInterceptors = yield* interceptorBuilder.build({
+        namespace,
+        identity,
+        logger,
+        metricsRegistry,
+        metricsExporter,
+      })
+      const allInterceptors = [...defaultInterceptors, ...(options.interceptors ?? [])]
+      const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
+      const baseUrl = normalizeTemporalAddress(config.address, shouldUseTls)
+      const transportOptions = buildTransportOptions(baseUrl, config, allInterceptors)
+      transport = createGrpcTransport(transportOptions) as ClosableTransport
+      workflowService = createClient(WorkflowService, transport)
+    }
+
+    const clientMetrics = yield* Effect.promise(() => TemporalClientImpl.initMetrics(metricsRegistry))
+    if (!workflowService) {
+      throw new Error('Temporal workflow service is not available')
+    }
+
+    const client = new TemporalClientImpl({
+      transport,
+      workflowService,
+      config,
+      namespace,
+      identity,
+      taskQueue,
+      dataConverter,
+      headers: initialHeaders,
+      logger,
+      metrics: clientMetrics,
+      metricsExporter,
+    })
+
+    return { client, config }
+  })
 
 class TemporalClientImpl implements TemporalClient {
   readonly namespace: string
@@ -305,7 +369,7 @@ class TemporalClientImpl implements TemporalClient {
   readonly memo: TemporalMemoHelpers
   readonly searchAttributes: TemporalSearchAttributeHelpers
 
-  private readonly transport: ClosableTransport
+  private readonly transport?: ClosableTransport
   private readonly workflowService: WorkflowServiceClient
   private readonly defaultIdentity: string
   private readonly defaultTaskQueue: string
@@ -330,7 +394,7 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   constructor(handles: {
-    transport: ClosableTransport
+    transport?: ClosableTransport
     workflowService: WorkflowServiceClient
     config: TemporalConfig
     namespace: string
@@ -575,9 +639,11 @@ class TemporalClientImpl implements TemporalClient {
     if (this.closed) return
     this.closed = true
 
-    const maybeClose = this.transport.close
-    if (typeof maybeClose === 'function') {
-      await maybeClose.call(this.transport)
+    if (this.transport) {
+      const maybeClose = this.transport.close
+      if (typeof maybeClose === 'function') {
+        await maybeClose.call(this.transport)
+      }
     }
     await this.#flushMetrics()
   }
@@ -790,50 +856,6 @@ class TemporalClientImpl implements TemporalClient {
 
     const [value] = await decodePayloadsToValues(this.dataConverter, payloads as unknown as Payload[])
     return value ?? null
-  }
-}
-
-export const normalizeTemporalAddress = (address: string, useTls: boolean): string => {
-  if (/^http(s)?:\/\//i.test(address)) {
-    return address
-  }
-  return `${useTls ? 'https' : 'http'}://${address}`
-}
-
-export const buildTransportOptions = (
-  baseUrl: string,
-  config: TemporalConfig,
-  interceptors: TemporalInterceptor[] = [],
-): GrpcTransportOptions => {
-  const nodeOptions: ClientSessionOptions | SecureClientSessionOptions = {}
-
-  if (config.tls) {
-    applyTlsConfig(nodeOptions, config.tls)
-  }
-
-  if (config.allowInsecureTls) {
-    ;(nodeOptions as SecureClientSessionOptions).rejectUnauthorized = false
-  }
-
-  return {
-    baseUrl,
-    nodeOptions,
-    defaultTimeoutMs: 60_000,
-    interceptors,
-  }
-}
-
-export const applyTlsConfig = (options: ClientSessionOptions | SecureClientSessionOptions, tls: TLSConfig): void => {
-  const secure = options as SecureClientSessionOptions
-  if (tls.serverRootCACertificate) {
-    secure.ca = tls.serverRootCACertificate
-  }
-  if (tls.clientCertPair) {
-    secure.cert = tls.clientCertPair.crt
-    secure.key = tls.clientCertPair.key
-  }
-  if (tls.serverNameOverride) {
-    secure.servername = tls.serverNameOverride
   }
 }
 

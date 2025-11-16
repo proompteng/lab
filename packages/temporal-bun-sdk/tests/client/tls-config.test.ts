@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
+import { Effect } from 'effect'
 
-import { loadTemporalConfig, TemporalTlsConfigurationError } from '../../src/config'
+import {
+  loadTemporalConfig,
+  loadTemporalConfigEffect,
+  TemporalConfigError,
+  TemporalTlsConfigurationError,
+} from '../../src/config'
 
 const fixtures = (file: string) => join(import.meta.dir, '..', 'fixtures', 'tls', file)
 
@@ -65,5 +71,17 @@ describe('TLS config validation', () => {
         },
       }),
     ).rejects.toThrow(TemporalTlsConfigurationError)
+  })
+
+  test('effect loader rejects invalid env', async () => {
+    await expect(
+      Effect.runPromise(
+        loadTemporalConfigEffect({
+          env: {
+            TEMPORAL_LOG_LEVEL: 'nope',
+          },
+        }),
+      ),
+    ).rejects.toThrow(TemporalConfigError)
   })
 })
