@@ -21,7 +21,8 @@ this runbook as a quick reference for triggering and validating releases.
      # in the logs. Review the PR and merge after CI is green.
 2. **Publish mode**
    - Re-run the workflow with `release_mode=publish` (set `dry_run=true` for a
-     rehearsal). The job reads the merged `package.json` version on `main`, reruns
+     rehearsal) **from the `main` branch only**; the workflow refuses to run on
+     other refs. The job reads the merged `package.json` version on `main`, reruns
      the validations, then executes `npm publish --provenance --access public
      --tag <dist>`.
    - Keep the workflow logs + artifacts linked to the tracking issue/PR as proof
