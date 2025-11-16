@@ -1,5 +1,6 @@
 import { Effect, Layer } from 'effect'
 
+import { resolveTemporalEnvironment } from '../config'
 import { deriveWorkerBuildId } from '../worker/defaults'
 import { createWorkerRuntimeLayer, resolveWorkerLayerOptions, WorkerRuntimeFailureSignal } from '../worker/layer'
 import type { WorkerRuntimeOptions } from '../worker/runtime'
@@ -48,12 +49,21 @@ export const runWorkerApp = (options: WorkerAppLayerOptions = {}): Effect.Effect
   ) as Effect.Effect<never, never, never>
 
 const withDerivedWorkerBuildId = (options?: TemporalConfigLayerOptions): TemporalConfigLayerOptions | undefined => {
-  const derivedBuildId = options?.overrides?.workerBuildId ?? deriveWorkerBuildId()
+  const env = resolveTemporalEnvironment(options?.env)
+  const hasEnvBuildId = Boolean(env.TEMPORAL_WORKER_BUILD_ID)
+  const hasDefaultBuildId = Boolean(options?.defaults?.workerBuildId)
+  const hasOverrideBuildId = Boolean(options?.overrides?.workerBuildId)
+
+  if (hasEnvBuildId || hasDefaultBuildId || hasOverrideBuildId) {
+    return options
+  }
+
+  const derivedBuildId = deriveWorkerBuildId()
   return {
     ...options,
-    overrides: {
+    defaults: {
+      ...options?.defaults,
       workerBuildId: derivedBuildId,
-      ...options?.overrides,
     },
   }
 }
