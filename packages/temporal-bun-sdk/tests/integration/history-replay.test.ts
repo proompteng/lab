@@ -10,7 +10,6 @@ import { ingestWorkflowHistory, diffDeterminismState } from '../../src/workflow/
 import type { HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
 import { WorkerVersioningMode } from '../../src/proto/temporal/api/enums/v1/deployment_pb'
 import { VersioningBehavior } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
-import { makeWorkerRuntimeEffect } from '../../src/worker/layer'
 import { WorkerRuntime } from '../../src/worker/runtime'
 import { makeStickyCache } from '../../src/worker/sticky-cache'
 import type { IntegrationHarness, WorkflowExecutionHandle } from './harness'
@@ -23,13 +22,14 @@ import {
   activityWorkflow,
   timerWorkflow,
 } from './workflows'
-import { buildTemporalLayer } from '../helpers/temporal-layer'
 
 const CLI_CONFIG = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
   namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
   taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? 'temporal-bun-integration',
 }
+
+const replayTimeoutMs = 60_000
 
 let harness: IntegrationHarness | null = null
 let cliUnavailable = false
@@ -66,21 +66,16 @@ beforeAll(async () => {
     workerStickyTtlMs: 60_000,
   }
 
-  const temporalLayer = buildTemporalLayer(runtimeConfig)
-  runtime = await Effect.runPromise(
-    Effect.provide(
-      makeWorkerRuntimeEffect({
-        workflows: integrationWorkflows,
-        activities: integrationActivities,
-        stickyCache,
-        deployment: {
-          versioningMode: WorkerVersioningMode.UNVERSIONED,
-          versioningBehavior: VersioningBehavior.UNSPECIFIED,
-        },
-      }),
-      temporalLayer,
-    ),
-  )
+  runtime = await WorkerRuntime.create({
+    config: runtimeConfig,
+    workflows: integrationWorkflows,
+    activities: integrationActivities,
+    stickyCache,
+    deployment: {
+      versioningMode: WorkerVersioningMode.UNVERSIONED,
+      versioningBehavior: VersioningBehavior.UNSPECIFIED,
+    },
+  })
 
   runtimePromise = runtime.run()
 })
@@ -124,7 +119,7 @@ const runOrSkip = async <A>(name: string, scenario: () => Promise<A>): Promise<A
 }
 
 describe('Temporal CLI history ingestion', () => {
-  test('timer workflow history produces timer determinism snapshot', async () => {
+  test('timer workflow history produces timer determinism snapshot', { timeout: replayTimeoutMs }, async () => {
     await runOrSkip('timer workflow', async () => {
       const execution = await runTimerWorkflow()
       const history = await fetchHistory(execution)
@@ -141,7 +136,7 @@ describe('Temporal CLI history ingestion', () => {
     })
   })
 
-  test('activity workflow history includes activity command intent', async () => {
+  test('activity workflow history includes activity command intent', { timeout: replayTimeoutMs }, async () => {
     await runOrSkip('activity workflow', async () => {
       const execution = await runActivityWorkflow('workflow-activity')
       const history = await fetchHistory(execution)
@@ -157,7 +152,7 @@ describe('Temporal CLI history ingestion', () => {
     })
   })
 
-  test('child workflow history captures child command', async () => {
+  test('child workflow history captures child command', { timeout: replayTimeoutMs }, async () => {
     await runOrSkip('child workflow', async () => {
       const execution = await runParentWorkflow('workflow-child')
       const history = await fetchHistory(execution)
@@ -173,7 +168,7 @@ describe('Temporal CLI history ingestion', () => {
     })
   })
 
-  test('continue-as-new workflow produces determinism marker chain', async () => {
+  test('continue-as-new workflow produces determinism marker chain', { timeout: replayTimeoutMs }, async () => {
     await runOrSkip('continue-as-new workflow', async () => {
       const execution = await runContinueWorkflow(3)
       const history = await fetchHistory(execution)
@@ -189,7 +184,7 @@ describe('Temporal CLI history ingestion', () => {
     })
   })
 
-  test('diffDeterminismState surfaces command mismatches', async () => {
+  test('diffDeterminismState surfaces command mismatches', { timeout: replayTimeoutMs }, async () => {
     await runOrSkip('determinism diff', async () => {
       const execution = await runActivityWorkflow('workflow-diff')
       const history = await fetchHistory(execution)
@@ -213,7 +208,7 @@ describe('Temporal CLI history ingestion', () => {
     })
   })
 
-  test('temporal-bun replay CLI fetches history via Temporal CLI', async () => {
+  test('temporal-bun replay CLI fetches history via Temporal CLI', { timeout: replayTimeoutMs }, async () => {
     await runOrSkip('temporal-bun replay cli command', async () => {
       const execution = await runTimerWorkflow('replay-cli')
       const result = await runReplayCliCommand(execution)
@@ -227,7 +222,7 @@ describe('Temporal CLI history ingestion', () => {
     })
   })
 
-  test('sticky cache evicts entries beyond capacity', async () => {
+  test('sticky cache evicts entries beyond capacity', { timeout: replayTimeoutMs }, async () => {
     await runOrSkip('sticky cache eviction', async () => {
       if (!stickyCacheSizeEffect) {
         throw new Error('Sticky cache not initialised')
@@ -262,7 +257,7 @@ describe('Temporal CLI history ingestion', () => {
     })
   })
 
-test('sticky cache remains empty after workflow completion', async () => {
+test('sticky cache remains empty after workflow completion', { timeout: replayTimeoutMs }, async () => {
   await runOrSkip('sticky cache cleanup', async () => {
     if (!stickyCacheSizeEffect) {
       throw new Error('Sticky cache not initialised')

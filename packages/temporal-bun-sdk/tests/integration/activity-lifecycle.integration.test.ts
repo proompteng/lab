@@ -4,16 +4,15 @@ import crypto from 'node:crypto'
 import { Effect, Exit } from 'effect'
 
 import { loadTemporalConfig } from '../../src/config'
-import { makeWorkerRuntimeEffect } from '../../src/worker/layer'
 import { WorkerRuntime } from '../../src/worker/runtime'
 import { EventType } from '../../src/proto/temporal/api/enums/v1/event_type_pb'
 import { TemporalCliCommandError, TemporalCliUnavailableError, createIntegrationHarness } from './harness'
 import type { IntegrationHarness, WorkflowExecutionHandle } from './harness'
 import { heartbeatWorkflow, heartbeatTimeoutWorkflow, integrationActivities, integrationWorkflows, retryProbeWorkflow } from './workflows'
-import { buildTemporalLayer } from '../helpers/temporal-layer'
 
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
+const scenarioTimeoutMs = 60_000
 
 const CLI_CONFIG = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
@@ -48,19 +47,14 @@ describeIntegration('Activity lifecycle integration', () => {
       },
     })
 
-    const temporalLayer = buildTemporalLayer(runtimeConfig)
-    runtime = await Effect.runPromise(
-      Effect.provide(
-        makeWorkerRuntimeEffect({
-          workflows: integrationWorkflows,
-          activities: integrationActivities,
-          taskQueue: CLI_CONFIG.taskQueue,
-          namespace: CLI_CONFIG.namespace,
-          stickyScheduling: true,
-        }),
-        temporalLayer,
-      ),
-    )
+    runtime = await WorkerRuntime.create({
+      config: runtimeConfig,
+      workflows: integrationWorkflows,
+      activities: integrationActivities,
+      taskQueue: CLI_CONFIG.taskQueue,
+      namespace: CLI_CONFIG.namespace,
+      stickyScheduling: true,
+    })
     runtimePromise = runtime.run()
   })
 
@@ -98,7 +92,7 @@ describeIntegration('Activity lifecycle integration', () => {
     }
   }
 
-  test('long-running heartbeat keeps activity alive', async () => {
+  test('long-running heartbeat keeps activity alive', { timeout: scenarioTimeoutMs }, async () => {
     await runOrSkip('heartbeat-success', async () => {
       const handle = await executeWorkflow(heartbeatWorkflow.name, {
         durationMs: 600,
@@ -112,7 +106,7 @@ describeIntegration('Activity lifecycle integration', () => {
     })
   })
 
-  test('heartbeat timeout triggers cancellation', async () => {
+  test('heartbeat timeout triggers cancellation', { timeout: scenarioTimeoutMs }, async () => {
     await runOrSkip('heartbeat-timeout', async () => {
       const handle = await executeWorkflow(heartbeatTimeoutWorkflow.name, {
         initialBeats: 2,
@@ -125,7 +119,7 @@ describeIntegration('Activity lifecycle integration', () => {
     })
   })
 
-  test('retry exhaustion halts after non-retryable error', async () => {
+  test('retry exhaustion halts after non-retryable error', { timeout: scenarioTimeoutMs }, async () => {
     await runOrSkip('retry-exhaustion', async () => {
       const handle = await executeWorkflow(retryProbeWorkflow.name, {
         failUntil: 2,

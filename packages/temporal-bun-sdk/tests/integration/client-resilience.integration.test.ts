@@ -6,12 +6,10 @@ import { Effect, Exit } from 'effect'
 
 import { createTemporalClient, type TemporalClient, TemporalTlsHandshakeError } from '../../src/client'
 import { loadTemporalConfig } from '../../src/config'
-import { makeWorkerRuntimeEffect } from '../../src/worker/layer'
 import { WorkerRuntime } from '../../src/worker/runtime'
 import type { TemporalInterceptor } from '../../src/client/interceptors'
 import { TemporalCliUnavailableError, createIntegrationHarness, type IntegrationHarness } from './harness'
 import { integrationActivities, integrationWorkflows } from './workflows'
-import { buildTemporalLayer } from '../helpers/temporal-layer'
 
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
@@ -70,19 +68,14 @@ describeIntegration('Temporal client resilience', () => {
       throw new Error('failed to load Temporal config for integration test')
     }
 
-    const temporalLayer = buildTemporalLayer(baseConfig)
-    runtime = await Effect.runPromise(
-      Effect.provide(
-        makeWorkerRuntimeEffect({
-          workflows: integrationWorkflows,
-          activities: integrationActivities,
-          taskQueue: CLI_CONFIG.taskQueue,
-          namespace: CLI_CONFIG.namespace,
-          stickyScheduling: true,
-        }),
-        temporalLayer,
-      ),
-    )
+    runtime = await WorkerRuntime.create({
+      config: baseConfig,
+      workflows: integrationWorkflows,
+      activities: integrationActivities,
+      taskQueue: CLI_CONFIG.taskQueue,
+      namespace: CLI_CONFIG.namespace,
+      stickyScheduling: true,
+    })
     runtimePromise = runtime.run()
 
     const clientHandles = await createTemporalClient({
