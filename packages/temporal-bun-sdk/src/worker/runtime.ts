@@ -685,7 +685,11 @@ export class WorkerRuntime {
         return
       }
       await this.#enqueueWorkflowTask(response)
-    }).pipe(Effect.catchAll((error) => this.#handleWorkflowPollerError(queueName, error)))
+    }).pipe(
+      Effect.catchAll((error) =>
+        this.#isRpcAbortError(error) ? Effect.void : this.#handleWorkflowPollerError(queueName, error),
+      ),
+    )
 
     return Effect.forever(pollOnce)
   }
@@ -724,7 +728,9 @@ export class WorkerRuntime {
         return
       }
       await this.#enqueueActivityTask(response)
-    }).pipe(Effect.catchAll((error) => this.#handleActivityPollerError(error)))
+    }).pipe(
+      Effect.catchAll((error) => (this.#isRpcAbortError(error) ? Effect.void : this.#handleActivityPollerError(error))),
+    )
 
     return Effect.forever(pollOnce)
   }
@@ -742,6 +748,10 @@ export class WorkerRuntime {
           controller.abort()
         }),
     )
+  }
+
+  #isRpcAbortError(error: unknown): boolean {
+    return isAbortError(error) || (error instanceof ConnectError && error.code === Code.Canceled)
   }
 
   async #enqueueActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {

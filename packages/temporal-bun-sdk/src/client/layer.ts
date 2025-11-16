@@ -9,6 +9,11 @@ export class TemporalClientService extends Context.Tag('@proompteng/temporal-bun
 >() {}
 
 export const createTemporalClientLayer = (options: CreateTemporalClientOptions = {}) =>
-  Layer.effect(TemporalClientService, makeTemporalClientEffect(options).pipe(Effect.map((result) => result.client)))
+  Layer.scoped(
+    TemporalClientService,
+    Effect.acquireRelease(makeTemporalClientEffect(options).pipe(Effect.map((result) => result.client)), (client) =>
+      Effect.promise(() => client.shutdown()),
+    ),
+  )
 
 export const TemporalClientLayer = createTemporalClientLayer()
