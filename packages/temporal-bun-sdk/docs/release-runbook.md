@@ -9,6 +9,8 @@ this runbook as a quick reference for triggering and validating releases.
   OIDC (`npm publish --provenance`).
 - Maintainer access to run the Temporal Bun SDK workflow manually on `main`.
 - Release version (SemVer) and desired npm dist-tag (`latest`, `beta`, etc.).
+- Buf CLI installed (`buf` on `PATH`) if you plan to run the proto regeneration
+  script locally.
 
 ## Release Steps
 

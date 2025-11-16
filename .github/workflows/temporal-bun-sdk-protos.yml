@@ -38,6 +38,9 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install Buf CLI
+        uses: bufbuild/buf-setup-action@v1
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
