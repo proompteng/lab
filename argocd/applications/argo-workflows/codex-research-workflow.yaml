@@ -52,14 +52,20 @@ spec:
             set -euo pipefail
 
             PROMPT_FILE=$(mktemp)
-            cat <<'PROMPT' > "$PROMPT_FILE"
-            {{inputs.parameters.prompt}}
-            PROMPT
+            PROMPT_B64='{{inputs.parameters.prompt}}'
+            if [[ -z "$PROMPT_B64" ]]; then
+              echo "Missing Codex prompt payload" >&2
+              exit 1
+            fi
+            printf '%s' "$PROMPT_B64" | base64 --decode > "$PROMPT_FILE"
 
             METADATA_FILE=$(mktemp)
-            cat <<'JSON' > "$METADATA_FILE"
-            {{inputs.parameters.metadata}}
-            JSON
+            METADATA_B64='{{inputs.parameters.metadata}}'
+            if [[ -z "$METADATA_B64" ]]; then
+              echo "Missing Codex metadata payload" >&2
+              exit 1
+            fi
+            printf '%s' "$METADATA_B64" | base64 --decode > "$METADATA_FILE"
 
             export AUTO_RESEARCH_METADATA_PATH="$METADATA_FILE"
             export AUTO_RESEARCH_ARTIFACT_PATH="${AUTO_RESEARCH_ARTIFACT_PATH:-/workspace/lab/codex-artifact.json}"

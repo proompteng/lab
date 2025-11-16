@@ -96,6 +96,8 @@ export interface ReviewContextSummary {
 
 const textDecoder = new TextDecoder()
 
+const encodeBase64 = (value: string) => Buffer.from(value, 'utf8').toString('base64')
+
 const execJson = (command: string, args: string[]) => {
   const result = Bun.spawnSync([command, ...args], { stdout: 'pipe', stderr: 'pipe' })
   if (result.exitCode !== 0) {
@@ -383,6 +385,8 @@ const main = async () => {
 
   const eventBody = buildEventBody(options.repo, pr, context)
   const eventBodyJson = JSON.stringify(eventBody)
+  const eventBodyBase64 = encodeBase64(eventBodyJson)
+  const rawEventBase64 = encodeBase64('{}')
 
   console.log(`Submitting review workflow for ${options.repo}#${prNumber}`)
   if (options.dryRun) {
@@ -397,9 +401,9 @@ const main = async () => {
     '-n',
     options.namespace,
     '-p',
-    'rawEvent={}',
+    `rawEvent=${rawEventBase64}`,
     '-p',
-    `eventBody=${eventBodyJson}`,
+    `eventBody=${eventBodyBase64}`,
   ])
 }
 
