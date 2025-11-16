@@ -1,7 +1,6 @@
 import { Effect, Layer } from 'effect'
 
-import { resolveWorkerActivities, resolveWorkerWorkflowsPath } from '../worker/defaults'
-import { createWorkerRuntimeLayer } from '../worker/layer'
+import { createWorkerRuntimeLayer, resolveWorkerLayerOptions, WorkerRuntimeFailureSignal } from '../worker/layer'
 import type { WorkerRuntimeOptions } from '../worker/runtime'
 import type { TemporalConfigLayerOptions } from './config-layer'
 import {
@@ -37,10 +36,12 @@ export const createWorkerAppLayer = (options: WorkerAppLayerOptions = {}) =>
 export const WorkerAppLayer = createWorkerAppLayer()
 
 export const runWorkerApp = (options: WorkerAppLayerOptions = {}): Effect.Effect<never, never, never> =>
-  Effect.provide(Effect.scoped(Effect.never), createWorkerAppLayer(options)) as Effect.Effect<never, never, never>
-
-const resolveWorkerLayerOptions = (worker?: WorkerRuntimeOptions): WorkerRuntimeOptions => ({
-  ...worker,
-  activities: worker?.activities ?? resolveWorkerActivities(undefined),
-  workflowsPath: worker?.workflowsPath ?? resolveWorkerWorkflowsPath(undefined),
-})
+  Effect.provide(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const failureSignal = yield* WorkerRuntimeFailureSignal
+        return yield* failureSignal
+      }),
+    ),
+    createWorkerAppLayer(options),
+  ) as Effect.Effect<never, never, never>

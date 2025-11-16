@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { Effect, Layer } from 'effect'
+import { Cause, Effect, Exit, Layer } from 'effect'
 
 import { createObservabilityStub, createTestTemporalConfig } from './helpers/observability'
 import type { TemporalConfig } from '../src/config'
@@ -11,7 +11,13 @@ import {
   WorkflowServiceClientService,
 } from '../src/runtime/effect-layers'
 import type { WorkflowServiceClient } from '../src/runtime/effect-layers'
-import { makeWorkerRuntimeEffect, runWorkerEffect } from '../src/worker/layer'
+import {
+  createWorkerRuntimeLayer,
+  makeWorkerRuntimeEffect,
+  runWorkerEffect,
+  WorkerRuntimeFailureSignal,
+  WorkerRuntimeLayer,
+} from '../src/worker/layer'
 import { WorkerRuntime } from '../src/worker/runtime'
 
 const stubWorkflowService = {} as WorkflowServiceClient
@@ -73,6 +79,58 @@ describe('worker layers', () => {
 
     expect(runCalls).toBe(1)
     expect(shutdownCalls).toBe(1)
+  })
+
+  test('runWorkerEffect propagates runtime failures', async () => {
+    const config = createTestTemporalConfig()
+    let shutdownCalls = 0
+    WorkerRuntime.create = (async () => ({
+      run: async () => {
+        throw new Error('worker runtime crash')
+      },
+      shutdown: async () => {
+        shutdownCalls += 1
+      },
+    })) as typeof WorkerRuntime.create
+
+    const workerLayer = createWorkerRuntimeLayer({ taskQueue: config.taskQueue, namespace: config.namespace }).pipe(
+      Layer.provide(baseWorkerLayer(config)),
+    )
+
+    const exit = await Effect.runPromiseExit(
+      Effect.scoped(
+        Effect.provide(
+          Effect.gen(function* () {
+            const failureSignal = yield* WorkerRuntimeFailureSignal
+            return yield* failureSignal
+          }),
+          workerLayer,
+        ),
+      ),
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    expect(Cause.pretty(exit.cause)).toContain('worker runtime crash')
+    expect(shutdownCalls).toBe(1)
+  })
+
+  test('WorkerRuntimeLayer provides default workflowsPath', async () => {
+    const config = createTestTemporalConfig()
+    let receivedOptions: Record<string, unknown> | undefined
+    WorkerRuntime.create = (async (options) => {
+      receivedOptions = options
+      return {
+        run: async () => undefined,
+        shutdown: async () => undefined,
+      } as unknown as WorkerRuntime
+    }) as typeof WorkerRuntime.create
+
+    const layer = WorkerRuntimeLayer.pipe(Layer.provide(baseWorkerLayer(config)))
+
+    await Effect.runPromise(Effect.scoped(Effect.provide(Effect.succeed(undefined), layer)))
+
+    expect(receivedOptions?.workflowsPath).toBeDefined()
+    expect(typeof receivedOptions?.workflowsPath).toBe('string')
   })
 })
 
