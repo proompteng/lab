@@ -333,19 +333,24 @@ export const makeTemporalClientEffect = (
     let transport: ClosableTransport | undefined = options.transport
 
     if (!workflowService) {
-      const interceptorBuilder = options.interceptorBuilder ?? makeDefaultInterceptorBuilder()
-      const defaultInterceptors = yield* interceptorBuilder.build({
-        namespace,
-        identity,
-        logger,
-        metricsRegistry,
-        metricsExporter,
-      })
-      const allInterceptors = [...defaultInterceptors, ...(options.interceptors ?? [])]
-      const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
-      const baseUrl = normalizeTemporalAddress(config.address, shouldUseTls)
-      const transportOptions = buildTransportOptions(baseUrl, config, allInterceptors)
-      transport = createGrpcTransport(transportOptions) as ClosableTransport
+      if (!transport) {
+        const interceptorBuilder = options.interceptorBuilder ?? makeDefaultInterceptorBuilder()
+        const defaultInterceptors = yield* interceptorBuilder.build({
+          namespace,
+          identity,
+          logger,
+          metricsRegistry,
+          metricsExporter,
+        })
+        const allInterceptors = [...defaultInterceptors, ...(options.interceptors ?? [])]
+        const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
+        const baseUrl = normalizeTemporalAddress(config.address, shouldUseTls)
+        const transportOptions = buildTransportOptions(baseUrl, config, allInterceptors)
+        transport = createGrpcTransport(transportOptions) as ClosableTransport
+      }
+      if (!transport) {
+        throw new Error('Temporal transport is not available')
+      }
       workflowService = createClient(WorkflowService, transport)
     }
 
