@@ -10,7 +10,7 @@ export interface TemporalRpcRetryPolicy {
   readonly maxDelayMs: number
   readonly backoffCoefficient: number
   readonly jitterFactor: number
-  readonly retryableStatusCodes: number[]
+  readonly retryableStatusCodes: ReadonlyArray<number>
 }
 
 export type RetryPolicy = TemporalRpcRetryPolicy

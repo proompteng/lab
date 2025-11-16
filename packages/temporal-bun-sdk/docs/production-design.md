@@ -111,6 +111,16 @@ can contribute independently without re-planning.
 - Manual loops should leverage `Effect.repeat`, `Stream`, or `Queue` primitives
   to gain back-pressure and cancellation.
 
+#### Layered bootstrap modules
+
+- `src/runtime/cli-layer.ts` merges the config, observability, and WorkflowService
+  layers for CLI tooling. `runTemporalCliEffect` executes arbitrary Effect
+  programs with Temporal env vars (doctor, replay, smoke tests) without
+  hand-wiring `loadTemporalConfig`.
+- `src/runtime/worker-app.ts` composes config + observability + WorkflowService +
+  worker runtime layers and exposes `runWorkerApp`. Host apps can now start the
+  worker purely through `Effect.scoped` (no manual `createWorker` + `AbortController`).
+
 ### TBS-010 – Effect Architecture
 
 - **Starting points**
@@ -215,7 +225,7 @@ can contribute independently without re-planning.
 - **Highlights**
   - Introduced logger/metrics layers with format/level controls, pluggable exporters, and shared helpers for counters/histograms.
   - Worker and client runtimes consume the new services, emitting sticky cache, poll latency, heartbeat, and failure metrics while logging lifecycle events.
-  - `loadTemporalConfig` exposes `TEMPORAL_LOG_FORMAT`, `TEMPORAL_LOG_LEVEL`, `TEMPORAL_METRICS_EXPORTER`, and `TEMPORAL_METRICS_ENDPOINT`; the CLI now ships `temporal-bun doctor` to validate config, log JSON, and flush exporter sinks.
+  - `runTemporalCliEffect` wires config + observability layers so `temporal-bun doctor` validates env overrides, emits structured logs, and flushes exporter sinks without bespoke bootstrap.
   - SDK docs and production design guidance cover the telemetry knobs and show the `bunx temporal-bun doctor --log-format=json --metrics=file:/tmp/metrics.json` validation path.
 - **Effect guidance**
   - Observability services are built with `Effect` so they can be composed or swapped (layers remain available for future TBS-010 work).
@@ -406,7 +416,7 @@ can contribute independently without re-planning.
 
 ## Configuration & Deployment
 
-- `loadTemporalConfig` already handles TLS, auth, task queue defaults, and worker identity configuration.
+- `loadTemporalConfigEffect` (and the `TemporalConfigLayer`) already handle TLS, auth, task queue defaults, and worker identity configuration.
 - GA tasks:
   - Support external config files (JSON/TOML) with schema validation.
   - Document environment variables for multi-namespace deployments.

@@ -12,12 +12,16 @@ const ConfigTestLayer = createConfigLayer({
   },
 })
 
-const ClientTestLayer = Layer.mergeAll(ConfigTestLayer, createObservabilityLayer(), createWorkflowServiceLayer())
+const ObservabilityLayer = createObservabilityLayer().pipe(Layer.provide(ConfigTestLayer))
+const WorkflowLayer = createWorkflowServiceLayer()
+  .pipe(Layer.provide(ConfigTestLayer))
+  .pipe(Layer.provide(ObservabilityLayer))
+const ClientTestLayer = Layer.mergeAll(ConfigTestLayer, ObservabilityLayer, WorkflowLayer)
 
 describe('makeTemporalClientEffect', () => {
   test('builds a client when layers are provided', async () => {
     const effect = makeTemporalClientEffect()
-    const result = await Effect.runPromise(effect.pipe(Effect.provideLayer(ClientTestLayer)))
+    const result = await Effect.runPromise(Effect.provide(effect, ClientTestLayer))
 
     expect(result.config.namespace).toBe('default')
     await result.client.shutdown()

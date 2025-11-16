@@ -2,20 +2,21 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { cwd } from 'node:process'
 import { create, fromJson, type JsonValue } from '@bufbuild/protobuf'
-import { createClient } from '@connectrpc/connect'
-import { createGrpcTransport } from '@connectrpc/connect-node'
 import { Effect } from 'effect'
 
-import { buildTransportOptions, normalizeTemporalAddress } from '../client'
 import { createDefaultDataConverter } from '../common/payloads'
-import { loadTemporalConfig, type TemporalConfig } from '../config'
-import { createObservabilityServices } from '../observability'
+import type { TemporalConfig } from '../config'
 import { WorkflowExecutionSchema } from '../proto/temporal/api/common/v1/message_pb'
 import { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
 import { HistoryEventFilterType } from '../proto/temporal/api/enums/v1/workflow_pb'
 import { type HistoryEvent, HistorySchema } from '../proto/temporal/api/history/v1/message_pb'
 import { GetWorkflowExecutionHistoryRequestSchema } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
-import { WorkflowService } from '../proto/temporal/api/workflowservice/v1/service_pb'
+import {
+  ObservabilityService,
+  TemporalConfigService,
+  type WorkflowServiceClient,
+  WorkflowServiceClientService,
+} from '../runtime/effect-layers'
 import type { WorkflowInfo } from '../workflow/context'
 import type { WorkflowDeterminismFailureMetadata } from '../workflow/determinism'
 import {
@@ -48,6 +49,13 @@ interface ReplayCommandOptions {
   readonly source: ReplayHistorySourcePreference
   readonly jsonOutput: boolean
 }
+
+const isReplayOptions = (value: unknown): value is ReplayCommandOptions =>
+  Boolean(
+    value &&
+      typeof value === 'object' &&
+      ('historyFile' in (value as Record<string, unknown>) || 'execution' in (value as Record<string, unknown>)),
+  )
 
 interface HistoryMetadata {
   readonly workflowId?: string
@@ -82,10 +90,6 @@ type HistoryLoaders = {
 
 type HistoryPageToken = Uint8Array<ArrayBufferLike>
 
-type ClosableGrpcTransport = ReturnType<typeof createGrpcTransport> & {
-  readonly close?: () => Promise<void> | void
-}
-
 const defaultHistoryLoaders: HistoryLoaders = {
   cli: loadHistoryViaCli,
   service: loadHistoryViaService,
@@ -93,7 +97,7 @@ const defaultHistoryLoaders: HistoryLoaders = {
 
 const EVENT_TYPE_LOOKUP = EventType as unknown as Record<string, number>
 
-interface ReplayRunResult {
+export interface ReplayRunResult {
   readonly exitCode: number
   readonly summary: ReplaySummary
 }
@@ -130,35 +134,20 @@ class ReplayCommandError extends Error {
   }
 }
 
-export const handleReplay = async (
-  _args: string[],
-  flags: Record<string, string | boolean>,
-): Promise<{ exitCode?: number } | undefined> => {
-  const options = parseReplayOptions(flags)
-  const result = await Effect.runPromise(executeReplay(options))
-  printReplaySummary(result.summary, options.jsonOutput)
-  if (result.exitCode !== 0) {
-    return { exitCode: result.exitCode }
-  }
-  return undefined
-}
-
-const executeReplay = (options: ReplayCommandOptions): Effect.Effect<ReplayRunResult, ReplayCommandError, never> =>
+const executeReplayInternal = (
+  options: ReplayCommandOptions,
+): Effect.Effect<
+  ReplayRunResult,
+  ReplayCommandError,
+  TemporalConfigService | ObservabilityService | WorkflowServiceClientService
+> =>
   Effect.gen(function* () {
     const startTime = Date.now()
-    const config = yield* Effect.tryPromise({
-      try: () => loadTemporalConfig(),
-      catch: (error) => new ReplayCommandError('Failed to load Temporal configuration', { cause: error }),
-    })
-
-    const observability = yield* createObservabilityServices({
-      logLevel: config.logLevel,
-      logFormat: config.logFormat,
-      metrics: config.metricsExporter,
-    })
-    const { logger, metricsRegistry, metricsExporter } = observability
+    const config = yield* TemporalConfigService
+    const { logger, metricsRegistry, metricsExporter } = yield* ObservabilityService
+    const workflowService = yield* WorkflowServiceClientService
     const historyOutcome = yield* Effect.tryPromise({
-      try: () => loadReplayHistory(options, config),
+      try: () => loadReplayHistory(options, config, workflowService),
       catch: (error) =>
         error instanceof ReplayCommandError
           ? error
@@ -277,7 +266,20 @@ const executeReplay = (options: ReplayCommandOptions): Effect.Effect<ReplayRunRe
     return { exitCode, summary }
   })
 
-const parseReplayOptions = (flags: Record<string, string | boolean>): ReplayCommandOptions => {
+export const executeReplay = (
+  flagsOrOptions: Record<string, string | boolean> | ReplayCommandOptions,
+): Effect.Effect<
+  ReplayRunResult,
+  ReplayCommandError,
+  TemporalConfigService | ObservabilityService | WorkflowServiceClientService
+> => {
+  const options = isReplayOptions(flagsOrOptions)
+    ? flagsOrOptions
+    : parseReplayOptions(flagsOrOptions as Record<string, string | boolean>)
+  return executeReplayInternal(options)
+}
+
+export const parseReplayOptions = (flags: Record<string, string | boolean>): ReplayCommandOptions => {
   const historyFile = readStringFlag(flags['history-file'])
   const executionFlag = readStringFlag(flags.execution)
   const workflowType = readStringFlag(flags['workflow-type'])
@@ -326,6 +328,7 @@ export const parseExecutionFlag = (value: string): WorkflowExecutionRef => {
 const loadReplayHistory = async (
   options: ReplayCommandOptions,
   config: TemporalConfig,
+  workflowService: WorkflowServiceClient,
 ): Promise<HistoryLoadOutcome> => {
   if (options.historyFile) {
     return {
@@ -341,6 +344,7 @@ const loadReplayHistory = async (
   return loadExecutionHistory({
     options,
     config,
+    workflowService,
     loaders: defaultHistoryLoaders,
   })
 }
@@ -374,10 +378,12 @@ const loadExecutionHistory = async ({
   options,
   config,
   loaders,
+  workflowService,
 }: {
   readonly options: ReplayCommandOptions
   readonly config: TemporalConfig
   readonly loaders: HistoryLoaders
+  readonly workflowService: WorkflowServiceClient
 }): Promise<HistoryLoadOutcome> => {
   const attempts: HistoryLoaderAttempt[] = []
   const namespace = options.namespaceOverride ?? config.namespace
@@ -408,6 +414,7 @@ const loadExecutionHistory = async ({
         options,
         config,
         namespace,
+        workflowService,
       })
       return { record, attempts }
     } catch (error) {
@@ -526,19 +533,16 @@ async function loadHistoryViaService({
   options,
   config,
   namespace,
+  workflowService,
 }: {
   readonly options: ReplayCommandOptions
   readonly config: TemporalConfig
   readonly namespace: string
+  readonly workflowService: WorkflowServiceClient
 }): Promise<HistorySourceRecord> {
   if (!options.execution) {
     throw new ReplayCommandError('Execution metadata missing for WorkflowService history fetch')
   }
-
-  const useTls = Boolean(config.tls) && !config.allowInsecureTls
-  const baseUrl = normalizeTemporalAddress(config.address, useTls)
-  const transport = createGrpcTransport(buildTransportOptions(baseUrl, config)) as ClosableGrpcTransport
-  const workflowService = createClient(WorkflowService, transport)
   const events: HistoryEvent[] = []
   let nextPageToken: HistoryPageToken = new Uint8Array()
 
@@ -568,8 +572,6 @@ async function loadHistoryViaService({
     } while (nextPageToken.length > 0)
   } catch (error) {
     throw new ReplayCommandError('WorkflowService GetWorkflowExecutionHistory failed', { cause: error })
-  } finally {
-    await transport.close?.()
   }
 
   if (events.length === 0) {
@@ -744,7 +746,7 @@ const readStream = async (stream: BunReadableStream): Promise<string> => {
   return chunks.join('')
 }
 
-const printReplaySummary = (summary: ReplaySummary, jsonOutput: boolean): void => {
+export const printReplaySummary = (summary: ReplaySummary, jsonOutput: boolean): void => {
   const lines = [
     `temporal-bun replay (${summary.history.source})`,
     `  workflow: ${summary.workflow.workflowType} ${summary.workflow.workflowId}/${summary.workflow.runId}`,
@@ -808,4 +810,5 @@ const stripTypeAnnotations = (value: unknown): unknown => {
 export const replayCommandTestHooks = {
   loadHistoryFromFile,
   loadExecutionHistory,
+  executeReplay,
 }

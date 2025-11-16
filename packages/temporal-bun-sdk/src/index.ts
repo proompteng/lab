@@ -34,6 +34,12 @@ export {
   TemporalTlsConfigurationError,
 } from './config'
 export {
+  createTemporalCliLayer,
+  runTemporalCliEffect,
+  TemporalCliLayer,
+} from './runtime/cli-layer'
+export { createWorkerAppLayer, runWorkerApp, WorkerAppLayer } from './runtime/worker-app'
+export {
   createWorkerRuntimeLayer,
   makeWorkerRuntimeEffect,
   runWorkerEffect,

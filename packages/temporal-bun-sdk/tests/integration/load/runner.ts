@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
-import { Effect } from 'effect'
+import { Effect, Layer } from 'effect'
 
-import { createTemporalClient, type TemporalClient } from '../../../src/client'
-import { loadTemporalConfig } from '../../../src/config'
+import { makeTemporalClientEffect, type TemporalClient } from '../../../src/client'
+import { loadTemporalConfig, type TemporalConfig } from '../../../src/config'
+import { createObservabilityLayer, createWorkflowServiceLayer, TemporalConfigService } from '../../../src/runtime/effect-layers'
 import { WorkerRuntime } from '../../../src/worker/runtime'
+import { makeWorkerRuntimeEffect } from '../../../src/worker/layer'
 import type { IntegrationHarness } from '../harness'
 import { resolveTemporalCliExecutable } from '../harness'
 import { readWorkerLoadConfig, type WorkerLoadConfig } from './config'
@@ -49,19 +51,24 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
 
   const plans = buildWorkflowPlans(loadConfig)
   const stats = createRuntimeStats(plans.length)
-  const runtime = await WorkerRuntime.create({
-    config,
-    workflows: workerLoadWorkflows,
-    activities: workerLoadActivities,
-    taskQueue,
-    namespace: config.namespace,
-    concurrency: {
-      workflow: loadConfig.workflowConcurrencyTarget,
-      activity: loadConfig.activityConcurrencyTarget,
-    },
-    stickyScheduling: true,
-    schedulerHooks: createSchedulerHooks(stats),
-  })
+  const temporalLayer = buildTemporalLayer(config)
+  const runtime = await Effect.runPromise(
+    Effect.provide(
+      makeWorkerRuntimeEffect({
+        workflows: workerLoadWorkflows,
+        activities: workerLoadActivities,
+        taskQueue,
+        namespace: config.namespace,
+        concurrency: {
+          workflow: loadConfig.workflowConcurrencyTarget,
+          activity: loadConfig.activityConcurrencyTarget,
+        },
+        stickyScheduling: true,
+        schedulerHooks: createSchedulerHooks(stats),
+      }),
+      temporalLayer,
+    ),
+  )
 
   const runPromise = runtime.run().catch((error) => {
     console.error('[temporal-bun-sdk:load] worker runtime exited with error', error)
@@ -70,7 +77,9 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
 
   try {
     const cliPath = await Effect.runPromise(resolveTemporalCliExecutable())
-    const { client: temporalClient, config: resolvedConfig } = await createTemporalClient({ config, taskQueue })
+    const { client: temporalClient, config: resolvedConfig } = await Effect.runPromise(
+      Effect.provide(makeTemporalClientEffect({ taskQueue }), temporalLayer),
+    )
     try {
       const handles = await submitWorkflows(temporalClient, plans, taskQueue, loadConfig)
       const completionBudgetMs =
@@ -272,8 +281,17 @@ const waitForWorkflowCompletionsCli = async ({
           error,
         })
         await sleep(500)
-      }
-    }
+  }
+}
+
+const buildTemporalLayer = (config: TemporalConfig) => {
+  const configLayer = Layer.succeed(TemporalConfigService, config)
+  const observabilityLayer = createObservabilityLayer().pipe(Layer.provide(configLayer))
+  const workflowLayer = createWorkflowServiceLayer()
+    .pipe(Layer.provide(configLayer))
+    .pipe(Layer.provide(observabilityLayer))
+  return Layer.mergeAll(configLayer, observabilityLayer, workflowLayer)
+}
   }
 
   await Promise.all(

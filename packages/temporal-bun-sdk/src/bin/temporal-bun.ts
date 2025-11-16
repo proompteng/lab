@@ -4,48 +4,103 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
-import { Effect } from 'effect'
-import { loadTemporalConfig } from '../config'
-import { createObservabilityServices } from '../observability'
-import { handleReplay } from './replay-command'
+import { Cause, Effect, Exit } from 'effect'
+import { runTemporalCliEffect } from '../runtime/cli-layer'
+import { ObservabilityService, TemporalConfigService } from '../runtime/effect-layers'
+import { executeReplay, parseReplayOptions, printReplaySummary } from './replay-command'
 
 type CommandResult = { exitCode?: number }
 
-type CommandHandler = (args: string[], flags: Record<string, string | boolean>) => Promise<CommandResult | undefined>
+type CommandHandler = (
+  args: string[],
+  flags: Record<string, string | boolean>,
+) => Effect.Effect<CommandResult | undefined, unknown, never>
+
+const handleHelp: CommandHandler = () =>
+  Effect.sync(() => {
+    printHelp()
+    return undefined
+  })
+
+const handleInit: CommandHandler = (args, flags) => Effect.tryPromise(() => runInitCommand(args, flags))
+
+const handleDockerBuild: CommandHandler = (args, flags) => Effect.tryPromise(() => runDockerBuildCommand(args, flags))
+
+const doctorCommandProgram = Effect.gen(function* () {
+  const config = yield* TemporalConfigService
+  const { logger, metricsRegistry, metricsExporter } = yield* ObservabilityService
+  const doctorCounter = yield* metricsRegistry.counter(
+    'temporal_bun_doctor_runs_total',
+    'Temporal CLI doctor command executions',
+  )
+  yield* doctorCounter.inc()
+  yield* logger.log('info', 'temporal-bun doctor validation succeeded', {
+    namespace: config.namespace,
+    taskQueue: config.taskQueue,
+    logFormat: config.logFormat,
+    metricsExporter: config.metricsExporter.type,
+  })
+  yield* metricsExporter.flush()
+  yield* Effect.sync(() => {
+    console.log('temporal-bun doctor complete — configuration validated and metrics sink flushed.')
+    if (config.metricsExporter.type !== 'in-memory') {
+      console.log(`  metrics sink: ${config.metricsExporter.type} ${config.metricsExporter.endpoint ?? ''}`)
+    }
+  })
+  return undefined
+})
+
+const handleDoctor: CommandHandler = (_args, flags) =>
+  Effect.promise(() =>
+    runTemporalCliEffect(doctorCommandProgram, {
+      config: { env: { ...process.env, ...buildDoctorOverrides(flags) } as NodeJS.ProcessEnv },
+    }),
+  )
+
+const buildReplayProgram = (flagsOrOptions: Parameters<typeof executeReplay>[0]) => executeReplay(flagsOrOptions)
+
+const handleReplay: CommandHandler = (_args, flags) => {
+  const options = parseReplayOptions(flags)
+  const commandEffect = buildReplayProgram(options).pipe(
+    Effect.tap((result) => Effect.sync(() => printReplaySummary(result.summary, options.jsonOutput))),
+    Effect.map((result) => (result.exitCode && result.exitCode !== 0 ? { exitCode: result.exitCode } : undefined)),
+  )
+  return Effect.promise(() => runTemporalCliEffect(commandEffect, { config: { env: process.env } }))
+}
 
 const commands: Record<string, CommandHandler> = {
   init: handleInit,
   'docker-build': handleDockerBuild,
   doctor: handleDoctor,
   replay: handleReplay,
-  help: async () => {
-    printHelp()
-    return undefined
-  },
+  help: handleHelp,
+}
+
+export const temporalCliTestHooks = {
+  handleDoctor: (_args: string[], _flags: Record<string, string | boolean>) => doctorCommandProgram,
+  handleReplay: (_args: string[], flags: Record<string, string | boolean>) => buildReplayProgram(flags),
 }
 
 export const main = async () => {
   const [command = 'help', ...rest] = process.argv.slice(2)
   const { args, flags } = parseArgs(rest)
-  const handler = commands[command]
-
-  if (!handler) {
-    console.error(`Unknown command "${command}".`)
-    printHelp()
+  const handler =
+    commands[command] ??
+    (() =>
+      Effect.sync(() => {
+        console.error(`Unknown command "${command}".`)
+        printHelp()
+        return { exitCode: 1 }
+      }))
+  const exitResult = await Effect.runPromiseExit(handler(args, flags))
+  if (Exit.isFailure(exitResult)) {
+    console.error(Cause.pretty(exitResult.cause))
     exit(1)
     return
   }
-
-  try {
-    const result = await handler(args, flags)
-    if (result && typeof result.exitCode === 'number') {
-      exit(result.exitCode)
-      return
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.error(message)
-    exit(1)
+  const result = exitResult.value
+  if (result && typeof result.exitCode === 'number') {
+    exit(result.exitCode)
   }
 }
 
@@ -121,7 +176,10 @@ Options:
 `)
 }
 
-async function handleInit(args: string[], flags: Record<string, string | boolean>): Promise<CommandResult | undefined> {
+async function runInitCommand(
+  args: string[],
+  flags: Record<string, string | boolean>,
+): Promise<CommandResult | undefined> {
   const target = args[0] ? resolve(cwd(), args[0]) : cwd()
   const projectName = inferPackageName(target)
   const force = Boolean(flags.force)
@@ -156,7 +214,7 @@ async function handleInit(args: string[], flags: Record<string, string | boolean
   return undefined
 }
 
-async function handleDockerBuild(
+async function runDockerBuildCommand(
   _args: string[],
   flags: Record<string, string | boolean>,
 ): Promise<CommandResult | undefined> {
@@ -223,44 +281,6 @@ function buildDoctorOverrides(flags: Record<string, string | boolean>): Record<s
   }
 
   return overrides
-}
-
-async function handleDoctor(
-  _args: string[],
-  flags: Record<string, string | boolean>,
-): Promise<CommandResult | undefined> {
-  const overrides = buildDoctorOverrides(flags)
-  const config = await loadTemporalConfig({ env: { ...process.env, ...overrides } })
-
-  const observability = await Effect.runPromise(
-    createObservabilityServices({
-      logLevel: config.logLevel,
-      logFormat: config.logFormat,
-      metrics: config.metricsExporter,
-    }),
-  )
-  const { logger, metricsRegistry, metricsExporter } = observability
-
-  const doctorCounter = await Effect.runPromise(
-    metricsRegistry.counter('temporal_bun_doctor_runs_total', 'Temporal CLI doctor command executions'),
-  )
-  await Effect.runPromise(doctorCounter.inc())
-  await Effect.runPromise(
-    logger.log('info', 'temporal-bun doctor validation succeeded', {
-      namespace: config.namespace,
-      taskQueue: config.taskQueue,
-      logFormat: config.logFormat,
-      metricsExporter: config.metricsExporter.type,
-    }),
-  )
-  await Effect.runPromise(metricsExporter.flush())
-
-  console.log('temporal-bun doctor complete — configuration validated and metrics sink flushed.')
-  if (config.metricsExporter.type !== 'in-memory') {
-    console.log(`  metrics sink: ${config.metricsExporter.type} ${config.metricsExporter.endpoint ?? ''}`)
-  }
-
-  return undefined
 }
 
 export function inferPackageName(dir: string): string {

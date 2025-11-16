@@ -29,7 +29,7 @@ export const buildTemporalConfigEffect = (
   const envSnapshot = resolveTemporalEnvironment(options.env)
   const warnKeys = options.warnOnMissingEnv ?? DEFAULT_WARN_ENV_KEYS
   const missing = missingEnvKeys(envSnapshot, warnKeys)
-  const warnMissing = missing.length
+  const warnMissing: Effect.Effect<void, never, never> = missing.length
     ? Effect.logWarning('temporal config missing recommended env vars', { keys: missing })
     : Effect.void
 

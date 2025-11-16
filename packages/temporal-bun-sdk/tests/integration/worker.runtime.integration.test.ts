@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
-import { Effect } from 'effect'
+import { Effect, Layer } from 'effect'
 
-import { buildTransportOptions, createTemporalClient, normalizeTemporalAddress } from '../../src/client'
-import { loadTemporalConfig } from '../../src/config'
+import { buildTransportOptions, makeTemporalClientEffect, normalizeTemporalAddress } from '../../src/client'
+import { loadTemporalConfig, type TemporalConfig } from '../../src/config'
 import { WorkerVersioningMode } from '../../src/proto/temporal/api/enums/v1/deployment_pb'
 import { VersioningBehavior } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
 import {
@@ -12,6 +12,8 @@ import {
   type RespondWorkflowTaskCompletedRequest,
 } from '../../src/proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from '../../src/proto/temporal/api/workflowservice/v1/service_pb'
+import { createObservabilityLayer, createWorkflowServiceLayer, TemporalConfigService } from '../../src/runtime/effect-layers'
+import { makeWorkerRuntimeEffect } from '../../src/worker/layer'
 import { WorkerRuntime } from '../../src/worker/runtime'
 import { defineWorkflow } from '../../src/workflow/definition'
 import type { IntegrationHarness } from './harness'
@@ -36,6 +38,15 @@ const runTemporalCli = async (...args: string[]): Promise<{ stdout: string; stde
     throw new Error(`temporal ${args.join(' ')} failed: ${stderr || stdout}`)
   }
   return { stdout, stderr }
+}
+
+const buildTemporalLayer = (config: TemporalConfig) => {
+  const configLayer = Layer.succeed(TemporalConfigService, config)
+  const observabilityLayer = createObservabilityLayer().pipe(Layer.provide(configLayer))
+  const workflowLayer = createWorkflowServiceLayer()
+    .pipe(Layer.provide(configLayer))
+    .pipe(Layer.provide(observabilityLayer))
+  return Layer.mergeAll(configLayer, observabilityLayer, workflowLayer)
 }
 
 describeIntegration('Temporal worker runtime integration', () => {
@@ -92,38 +103,45 @@ describeIntegration('Temporal worker runtime integration', () => {
               workerActivityConcurrency: 1,
             },
           })
-          const runtime = await WorkerRuntime.create({
-            config,
-            workflows: [workflowDefinition],
-            taskQueue,
-            namespace: config.namespace,
-            concurrency: { workflow: 2 },
-            stickyScheduling: false,
-            deployment: {
-              versioningMode: WorkerVersioningMode.UNVERSIONED,
-              versioningBehavior: VersioningBehavior.UNSPECIFIED,
-            },
-            schedulerHooks: {
-              onWorkflowStart: () =>
-                Effect.sync(() => {
-                  concurrencyMetrics.active += 1
-                  concurrencyMetrics.total += 1
-                  if (concurrencyMetrics.active > concurrencyMetrics.peak) {
-                    concurrencyMetrics.peak = concurrencyMetrics.active
-                  }
-                }),
-              onWorkflowComplete: () =>
-                Effect.sync(() => {
-                  concurrencyMetrics.active = Math.max(0, concurrencyMetrics.active - 1)
-                  concurrencyMetrics.completed += 1
-                }),
-            },
-          })
+          const workerLayer = buildTemporalLayer(config)
+          const runtime = await Effect.runPromise(
+            Effect.provide(
+              makeWorkerRuntimeEffect({
+                workflows: [workflowDefinition],
+                taskQueue,
+                namespace: config.namespace,
+              concurrency: { workflow: 2 },
+              stickyScheduling: false,
+              deployment: {
+                versioningMode: WorkerVersioningMode.UNVERSIONED,
+                versioningBehavior: VersioningBehavior.UNSPECIFIED,
+              },
+              schedulerHooks: {
+                onWorkflowStart: () =>
+                  Effect.sync(() => {
+                    concurrencyMetrics.active += 1
+                    concurrencyMetrics.total += 1
+                    if (concurrencyMetrics.active > concurrencyMetrics.peak) {
+                      concurrencyMetrics.peak = concurrencyMetrics.active
+                    }
+                  }),
+                onWorkflowComplete: () =>
+                  Effect.sync(() => {
+                    concurrencyMetrics.active = Math.max(0, concurrencyMetrics.active - 1)
+                    concurrencyMetrics.completed += 1
+                  }),
+              },
+              }),
+              workerLayer,
+            ),
+          )
 
           let runPromise: Promise<void> | null = null
 
           try {
-            const { client: temporalClient } = await createTemporalClient({ config, taskQueue })
+            const { client: temporalClient } = await Effect.runPromise(
+              Effect.provide(makeTemporalClientEffect({ taskQueue }), workerLayer),
+            )
             const workflowCount = 4
             const executions: Array<{ workflowId: string; runId: string }> = []
 

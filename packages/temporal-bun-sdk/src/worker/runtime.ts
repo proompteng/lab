@@ -4,7 +4,7 @@ import { create } from '@bufbuild/protobuf'
 import type { Timestamp } from '@bufbuild/protobuf/wkt'
 import { Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
-import { Effect } from 'effect'
+import { Cause, Effect, Exit, Fiber } from 'effect'
 
 import {
   type ActivityHeartbeatRegistration,
@@ -189,10 +189,7 @@ export interface WorkerRuntimeOptions {
   deployment?: WorkerDeploymentConfig
   schedulerHooks?: WorkerSchedulerHooks
 }
-
 export class WorkerRuntime {
-  // TODO(TBS-010): Refactor WorkerRuntime to consume Effect Layers (Config, Logger, Metrics,
-  // WorkflowService, StickyCache, Scheduler) instead of manual promise orchestration.
   static async create(options: WorkerRuntimeOptions = {}): Promise<WorkerRuntime> {
     const config = options.config ?? (await loadTemporalConfig())
     const dataConverter = options.dataConverter ?? createDefaultDataConverter()
@@ -413,8 +410,7 @@ export class WorkerRuntime {
   readonly #versioningBehavior: VersioningBehavior | null
   readonly #workflowPollerCount: number
   #running = false
-  #abortController: AbortController | null = null
-  #runPromise: Promise<void> | null = null
+  #runFiber: Fiber.RuntimeFiber<void, unknown> | null = null
   #schedulerStarted = false
   #schedulerStopPromise: Promise<void> | null = null
 
@@ -556,71 +552,113 @@ export class WorkerRuntime {
   }
 
   async run(): Promise<void> {
-    if (this.#running) {
-      return this.#runPromise ?? Promise.resolve()
+    if (this.#runFiber) {
+      await this.#awaitRuntimeFiber(this.#runFiber)
+      return
     }
+
     this.#running = true
-    this.#abortController = new AbortController()
-    const signal = this.#abortController.signal
+    const runtimeFiber = Effect.runFork(this.#buildRuntimeEffect())
+    this.#runFiber = runtimeFiber
 
     try {
-      await this.#startScheduler()
-      this.#log(
-        'info',
-        'temporal worker runtime started',
-        this.#runtimeLogFields({
-          workflowPollers: this.#workflowPollerCount,
-          stickySchedulingEnabled: this.#stickySchedulingEnabled,
-        }),
-      )
-    } catch (error) {
-      this.#running = false
-      this.#abortController = null
-      throw error
-    }
-
-    const execution = (async () => {
-      try {
-        const workflowLoops = Array.from({ length: this.#workflowPollerCount }, () => this.#workflowLoop(signal))
-        const activityLoops = this.#hasActivities() ? [this.#activityLoop(signal)] : []
-        await Promise.all([...workflowLoops, ...activityLoops])
-      } finally {
-        await this.#stopScheduler()
-        this.#abortController = null
-        this.#running = false
-      }
-    })()
-
-    this.#runPromise = execution
-
-    try {
-      await this.#runPromise
+      await this.#awaitRuntimeFiber(runtimeFiber)
     } finally {
-      await this.#flushMetrics()
-      this.#log('info', 'temporal worker runtime stopped', this.#runtimeLogFields())
+      this.#runFiber = null
+      this.#running = false
     }
   }
 
   async shutdown(): Promise<void> {
     this.#log('info', 'temporal worker shutdown requested', this.#runtimeLogFields({ running: this.#running }))
-    if (!this.#running) {
+    const runtimeFiber = this.#runFiber
+    if (!runtimeFiber) {
       await this.#stopScheduler()
       await this.#flushMetrics()
+      this.#running = false
       this.#log('info', 'temporal worker shutdown complete', this.#runtimeLogFields({ drained: false }))
       return
     }
-    this.#abortController?.abort()
-    if (this.#runPromise) {
-      try {
-        await this.#runPromise
-      } catch {
-        // ignore failures during shutdown; polling loops log errors before exiting
-      }
-    } else {
-      await this.#stopScheduler()
+    await Effect.runPromise(Fiber.interrupt(runtimeFiber))
+    try {
+      await this.#awaitRuntimeFiber(runtimeFiber)
+    } catch {
+      // ignore failures during shutdown; polling loops log errors before exiting
+    } finally {
+      this.#runFiber = null
+      this.#running = false
     }
-    await this.#flushMetrics()
     this.#log('info', 'temporal worker shutdown complete', this.#runtimeLogFields({ drained: true }))
+  }
+
+  #buildRuntimeEffect(): Effect.Effect<void> {
+    const runtime = this
+    const workflowLoops = Array.from({ length: runtime.#workflowPollerCount }, () =>
+      runtime.#loopEffect(runtime.#workflowLoop),
+    )
+    const pollerLoops = runtime.#hasActivities()
+      ? [...workflowLoops, runtime.#loopEffect(runtime.#activityLoop)]
+      : workflowLoops
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* Effect.promise(() => runtime.#startScheduler())
+        runtime.#log(
+          'info',
+          'temporal worker runtime started',
+          runtime.#runtimeLogFields({
+            workflowPollers: runtime.#workflowPollerCount,
+            stickySchedulingEnabled: runtime.#stickySchedulingEnabled,
+          }),
+        )
+        if (pollerLoops.length > 0) {
+          yield* Effect.forEach(pollerLoops, (loop) => Effect.forkScoped(loop), { concurrency: 'unbounded' })
+        }
+        yield* Effect.never
+      }),
+    ).pipe(
+      Effect.ensuring(
+        Effect.promise(async () => {
+          await runtime.#stopScheduler()
+          await runtime.#flushMetrics()
+          runtime.#log('info', 'temporal worker runtime stopped', runtime.#runtimeLogFields())
+        }),
+      ),
+    )
+  }
+
+  #loopEffect(loop: (signal: AbortSignal) => Promise<void>): Effect.Effect<void, unknown, never> {
+    return Effect.async<void, unknown, never>((resume) => {
+      const controller = new AbortController()
+      const runLoop = () => {
+        loop
+          .call(this, controller.signal)
+          .then(() => resume(Effect.void))
+          .catch((error) => {
+            const failure = error instanceof Error ? error : new Error(String(error))
+            resume(Effect.fail(failure))
+          })
+      }
+      try {
+        runLoop()
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error))
+        resume(Effect.fail(failure))
+      }
+      return Effect.sync(() => {
+        controller.abort()
+      })
+    })
+  }
+
+  async #awaitRuntimeFiber(fiber: Fiber.RuntimeFiber<void, unknown>): Promise<void> {
+    const exit = await Effect.runPromiseExit(Fiber.join(fiber))
+    if (Exit.isFailure(exit)) {
+      if (Cause.isInterrupted(exit.cause)) {
+        return
+      }
+      throw Cause.squash(exit.cause)
+    }
   }
 
   async #startScheduler(): Promise<void> {

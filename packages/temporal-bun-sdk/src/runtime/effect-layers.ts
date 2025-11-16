@@ -56,24 +56,24 @@ const closeTransport = (transport: ClosableTransport | undefined) =>
   transport?.close
     ? Effect.tryPromise(async () => {
         await transport.close?.()
-      })
+      }).pipe(Effect.catchAll(() => Effect.void))
     : Effect.void
 
 export const createWorkflowServiceLayer = (
   options: WorkflowServiceLayerOptions = {},
 ): Layer.Layer<
-  TemporalConfigService | LoggerService | MetricsService | MetricsExporterService,
+  WorkflowServiceClientService,
   unknown,
-  WorkflowServiceClientService
+  TemporalConfigService | LoggerService | MetricsService | MetricsExporterService
 > =>
   Layer.scoped(
     WorkflowServiceClientService,
     Effect.acquireRelease(
       Effect.gen(function* () {
-        const config = yield* Effect.service(TemporalConfigService)
-        const logger = yield* Effect.service(LoggerService)
-        const metricsRegistry = yield* Effect.service(MetricsService)
-        const metricsExporter = yield* Effect.service(MetricsExporterService)
+        const config = yield* TemporalConfigService
+        const logger = yield* LoggerService
+        const metricsRegistry = yield* MetricsService
+        const metricsExporter = yield* MetricsExporterService
         const interceptorBuilder = options.interceptorBuilder ?? makeDefaultInterceptorBuilder()
         const defaultInterceptors = yield* interceptorBuilder.build({
           namespace: options.namespace ?? config.namespace,
@@ -106,7 +106,7 @@ export interface ObservabilityLayerOptions extends ObservabilityOverrides {}
 const buildObservabilityContext = (options: ObservabilityLayerOptions = {}) =>
   Layer.scopedContext(
     Effect.gen(function* () {
-      const config = yield* Effect.service(TemporalConfigService)
+      const config = yield* TemporalConfigService
       const services = yield* createObservabilityServices(
         {
           logLevel: config.logLevel,
@@ -132,3 +132,5 @@ export const MetricsLayer = ObservabilityLayer
 export const MetricsExporterLayer = ObservabilityLayer
 
 export const WorkflowServiceLayer = createWorkflowServiceLayer()
+
+export type { WorkflowServiceClient }

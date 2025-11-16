@@ -1,45 +1,25 @@
 import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
+import { Effect, Layer } from 'effect'
 
+import { temporalCliTestHooks } from '../../src/bin/temporal-bun'
 import type { TemporalConfig } from '../../src/config'
 import { parseExecutionFlag, replayCommandTestHooks } from '../../src/bin/replay-command'
 import type { HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
+import {
+  ObservabilityService,
+  TemporalConfigService,
+  WorkflowServiceClientService,
+} from '../../src/runtime/effect-layers'
+import type { WorkflowServiceClient } from '../../src/runtime/effect-layers'
+import { createObservabilityStub, createTestTemporalConfig } from '../helpers/observability'
 
 const fixturePath = join(import.meta.dir, '../replay/fixtures/timer-workflow.json')
 
-const baseConfig: TemporalConfig = {
-  host: '127.0.0.1',
-  port: 7233,
-  address: '127.0.0.1:7233',
-  namespace: 'default',
-  taskQueue: 'prix',
-  apiKey: undefined,
-  tls: undefined,
-  allowInsecureTls: true,
+const baseConfig: TemporalConfig = createTestTemporalConfig({
   workerIdentity: 'replay-test-worker',
   workerIdentityPrefix: 'replay-test',
-  showStackTraceSources: false,
-  workerWorkflowConcurrency: 1,
-  workerActivityConcurrency: 1,
-  workerStickyCacheSize: 1,
-  workerStickyTtlMs: 1,
-  stickySchedulingEnabled: true,
-  activityHeartbeatIntervalMs: 1,
-  activityHeartbeatRpcTimeoutMs: 1,
-  workerDeploymentName: undefined,
-  workerBuildId: undefined,
-  logLevel: 'info',
-  logFormat: 'pretty',
-  metricsExporter: { type: 'in-memory' },
-  rpcRetryPolicy: {
-    maxAttempts: 1,
-    initialDelayMs: 1,
-    maxDelayMs: 1,
-    backoffCoefficient: 1,
-    jitterFactor: 0,
-    retryableStatusCodes: [],
-  },
-}
+})
 
 describe('parseExecutionFlag', () => {
   test('parses workflowId/runId values', () => {
@@ -90,10 +70,29 @@ test('loadExecutionHistory falls back from CLI to service loaders', async () => 
         },
       }),
     },
+    workflowService: {} as WorkflowServiceClient,
   })
 
   expect(outcome.record.source).toBe('service')
   expect(outcome.record.events).toHaveLength(1)
   expect(outcome.attempts).toHaveLength(1)
   expect(outcome.attempts[0]?.source).toBe('cli')
+})
+
+test('handleReplay logs through injected observability services', async () => {
+  const observability = createObservabilityStub()
+  const layer = Layer.mergeAll(
+    Layer.succeed(TemporalConfigService, baseConfig),
+    Layer.succeed(ObservabilityService, observability.services),
+    Layer.succeed(WorkflowServiceClientService, {} as WorkflowServiceClient),
+  )
+
+  await Effect.runPromise(
+    Effect.provide(
+      temporalCliTestHooks.handleReplay([], { 'history-file': fixturePath }),
+      layer,
+    ),
+  )
+
+  expect(observability.logs.some((entry) => entry.message === 'temporal-bun replay started')).toBeTrue()
 })

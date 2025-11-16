@@ -247,6 +247,54 @@ const { worker } = await createWorker({
 await worker.run()
 ```
 
+### Layer-based worker bootstrap
+
+```ts
+import { runWorkerApp } from '@proompteng/temporal-bun-sdk/runtime/worker-app'
+import * as activities from './activities'
+
+await runWorkerApp({
+  config: {
+    defaults: {
+      address: '127.0.0.1:7233',
+      namespace: 'staging',
+      taskQueue: 'staging-worker',
+    },
+  },
+  worker: {
+    activities,
+    workflowsPath: new URL('./workflows/index.ts', import.meta.url).pathname,
+  },
+})
+```
+
+### CLI layer helpers
+
+Use `runTemporalCliEffect` to run ad-hoc Effect programs (doctor checks, replay helpers,
+tests) against the same layered config/logging/workflow stack without hand-loading env vars:
+
+```ts
+import { Effect } from 'effect'
+import { runTemporalCliEffect } from '@proompteng/temporal-bun-sdk/runtime/cli-layer'
+import { TemporalConfigService } from '@proompteng/temporal-bun-sdk/runtime/effect-layers'
+
+await runTemporalCliEffect(
+  Effect.gen(function* () {
+    const config = yield* TemporalConfigService
+    console.log('Active namespace:', config.namespace)
+  }),
+  {
+    config: {
+      defaults: {
+        address: '127.0.0.1:7233',
+        namespace: 'cli-layer',
+        taskQueue: 'cli-layer',
+      },
+    },
+  },
+)
+```
+
 ## CLI commands
 ```
 temporal-bun init [directory]        Scaffold a new worker project
@@ -269,8 +317,8 @@ configuration or IO failures).
   shells out to the Temporal CLI (`--source cli`) or the WorkflowService RPC API
   (`--source service`). `--source auto` (default) tries the CLI first and falls
   back to WorkflowService when the binary is missing.
-- **Observability** – the command loads config via `loadTemporalConfig`, reuses
-  `createObservabilityServices`, emits structured logs, and increments
+- **Observability** – the command composes `runTemporalCliEffect` layers (config,
+  observability, WorkflowService) before running and increments
   `temporal_bun_replay_runs_total` / `temporal_bun_replay_mismatches_total`.
 - **Troubleshooting** – surface the mismatching command index, event ids, and
   workflow-task metadata on stdout plus a JSON summary when `--json` is set.

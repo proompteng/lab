@@ -5,7 +5,7 @@ import { Code } from '@connectrpc/connect'
 import type * as ParseResult from '@effect/schema/ParseResult'
 import * as Schema from '@effect/schema/Schema'
 import * as TreeFormatter from '@effect/schema/TreeFormatter'
-import { Effect } from 'effect'
+import { Cause, Effect, Exit } from 'effect'
 import { defaultRetryPolicy, type TemporalRpcRetryPolicy } from './client/retries'
 import type { LogFormat, LogLevel } from './observability/logger'
 import type { MetricsExporterSpec } from './observability/metrics'
@@ -111,7 +111,9 @@ const decodeTemporalConfig = Schema.decodeUnknown(TemporalConfigSchema)
 const decodeTemporalConfigOverrides = Schema.decodeUnknown(TemporalConfigOverridesSchema)
 
 const formatSchemaError = (error: ParseResult.ParseError): string => TreeFormatter.formatErrorSync(error)
-const mapSchemaError = <A>(effect: Effect.Effect<A, ParseResult.ParseError, never>) =>
+const mapSchemaError = <A>(
+  effect: Effect.Effect<A, ParseResult.ParseError, never>,
+): Effect.Effect<A, TemporalConfigError, never> =>
   effect.pipe(Effect.mapError((error) => new TemporalConfigError(formatSchemaError(error))))
 
 export interface TemporalEnvironment {
@@ -304,9 +306,9 @@ const clampJitterFactor = (value: number): number => {
   return value
 }
 
-const parseRetryStatusCodes = (raw: string | undefined, fallback: number[]): number[] => {
+const parseRetryStatusCodes = (raw: string | undefined, fallback: ReadonlyArray<number>): number[] => {
   if (raw === undefined) {
-    return fallback
+    return [...fallback]
   }
   const tokens = raw
     .split(/[,\s]+/g)
@@ -673,10 +675,15 @@ export const loadTemporalConfigEffect = (
     }
 
     return yield* mapSchemaError(decodeTemporalConfig(config))
-  })
+  }) as Effect.Effect<TemporalConfig, TemporalConfigError | TemporalTlsConfigurationError, never>
 
-export const loadTemporalConfig = (options: LoadTemporalConfigOptions = {}): Promise<TemporalConfig> =>
-  Effect.runPromise(loadTemporalConfigEffect(options))
+export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}): Promise<TemporalConfig> => {
+  const exit = await Effect.runPromiseExit(loadTemporalConfigEffect(options))
+  if (Exit.isSuccess(exit)) {
+    return exit.value
+  }
+  throw Cause.squash(exit.cause)
+}
 
 export const applyTemporalConfigOverrides = (
   config: TemporalConfig,
