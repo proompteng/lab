@@ -195,7 +195,7 @@ jobs:
 
   publish-release:
     name: Publish Temporal Bun SDK
-    runs-on: arc-arm64
+    runs-on: ubuntu-latest
     needs: test
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'publish' && github.ref == 'refs/heads/main'
     permissions:
@@ -260,17 +260,10 @@ jobs:
       - name: Publish package to npm
         working-directory: packages/temporal-bun-sdk
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          RELEASE_VERSION: ${{ steps.release_meta.outputs.version }}
           NPM_DIST_TAG: ${{ steps.release_meta.outputs.npm_tag }}
           DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
         run: |
           set -euo pipefail
-          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
-            echo 'NPM_TOKEN secret is not configured' >&2
-            exit 1
-          fi
-
           if [[ "${DRY_RUN}" == "true" ]]; then
             echo 'Running npm publish in dry-run mode'
             npm publish --tag "$NPM_DIST_TAG" --access public --provenance --dry-run
