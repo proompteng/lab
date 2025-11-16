@@ -364,8 +364,6 @@ const dataConverter = createDefaultDataConverter()
 
 Pass your converter to both the worker and client factories to keep payload handling consistent.
 
-## License
-MIT © Proompt Engineering
 
 ## Worker versioning and build IDs
 
@@ -385,3 +383,6 @@ Example logs:
 ```
 
 Production clusters should enable worker versioning, watch for the registration log during deploys, and alert on failures so versioned queues stay healthy.
+
+## License
+MIT © ProomptEng AI

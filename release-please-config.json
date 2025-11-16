@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "packages": {
+    "packages/temporal-bun-sdk": {
+      "component": "temporal-bun-sdk",
+      "package-name": "@proompteng/temporal-bun-sdk",
+      "changelog-path": "packages/temporal-bun-sdk/CHANGELOG.md",
+      "extra-files": [
+        "packages/temporal-bun-sdk/package.json"
+      ],
+      "include-component-in-tag": false,
+      "versioning": "default"
+    }
+  }
+}

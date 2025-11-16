@@ -25,10 +25,10 @@ jobs:
       KARAPACE_PASSWORD: ${{ secrets.KARAPACE_PASSWORD }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
 
       - name: Set up Buf
         uses: bufbuild/buf-setup-action@v1

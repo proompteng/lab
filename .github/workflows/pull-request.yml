@@ -22,7 +22,7 @@ jobs:
       codex: ${{ steps.filter.outputs.codex }}
       discord: ${{ steps.filter.outputs.discord }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -49,7 +49,7 @@ jobs:
     if: ${{ needs.check_changed_files.outputs.docs == 'true' }}
     runs-on: arc-arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/cache@v4
         with:
@@ -61,7 +61,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22.20.0
           cache: "pnpm"
@@ -75,7 +75,7 @@ jobs:
     if: ${{ needs.check_changed_files.outputs.proompteng == 'true' }}
     runs-on: arc-arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/cache@v4
         with:
@@ -87,7 +87,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22.20.0
           cache: "pnpm"
@@ -101,11 +101,11 @@ jobs:
     if: ${{ needs.check_changed_files.outputs.bonjour == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22.20.0
           cache: "pnpm"
@@ -119,11 +119,11 @@ jobs:
     if: ${{ needs.check_changed_files.outputs.codex == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22.20.0
           cache: "pnpm"
@@ -139,11 +139,11 @@ jobs:
     if: ${{ needs.check_changed_files.outputs.discord == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22.20.0
           cache: "pnpm"
@@ -159,7 +159,7 @@ jobs:
     if: ${{ needs.check_changed_files.outputs.kitty-krew == 'true' }}
     runs-on: arc-arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -190,11 +190,11 @@ jobs:
     if: ${{ needs.check_changed_files.outputs.reviseur == 'true' }}
     runs-on: arc-arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22.20.0
           cache: "pnpm"

@@ -30,8 +30,6 @@ monolith:
   determinism guardrails.
 - **CLI & tooling** – usage for `temporal-bun init|doctor|docker-build|replay`
   plus proto regeneration and CI guidance.
-- **Troubleshooting & GA roadmap** – outlines known limitations, replay workflow
-  tips, and blockers that must land before general availability.
 
 As new sub-pages come online they will be linked from this section; until then,
 the corresponding deep dives live below on this page.
@@ -456,18 +454,3 @@ teams can copy/paste into new Bun workers.
 Proto regeneration now lives under `packages/temporal-bun-sdk/scripts/update-temporal-protos.ts`.
 Pass `--temporal-version <x.y.z>` (once implemented) to align with upstream
 Temporal drops, and run it before publishing a new SDK version.
-
-## Troubleshooting & GA roadmap
-
-- **Replay mismatches** – capture histories via `temporal workflow show --history --output json` and run
-  `bunx temporal-bun replay --history-file <file> --workflow-type <type>`.
-  Exit code `2` denotes nondeterminism; review the mismatch summary for event
-  IDs, command diffs, and determinism markers.
-- **TLS issues** – `TemporalTlsHandshakeError` surfaces common remediation steps
-  (server name mismatch, missing CA bundle). Set `TEMPORAL_ALLOW_INSECURE=1`
-  only in trusted development environments.
-- **Current GA blockers** – the Effect layer refactor (TBS-010), release
-  automation (TBS-009), documentation split (TBS-008), and automated proto
-  updates (TBS-007) remain in progress. Until those land, the SDK stays in
-  Beta; double-check the production design doc (`packages/temporal-bun-sdk/docs/production-design.md`)
-  before planning external launches.

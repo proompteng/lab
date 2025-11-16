@@ -1,0 +1,71 @@
+name: Temporal Bun SDK Proto Regen
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * 1'
+
+jobs:
+  regenerate:
+    runs-on: arc-arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.20.0'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Prepare pnpm
+        run: |
+          PACKAGE_MANAGER=$(node -p "require('./package.json').packageManager")
+          corepack prepare "$PACKAGE_MANAGER" --activate
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Buf CLI
+        uses: bufbuild/buf-setup-action@v1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Temporal proto regeneration
+        run: bun packages/temporal-bun-sdk/scripts/update-temporal-protos.ts
+
+      - name: Check for proto changes
+        id: proto_changes
+        run: |
+          if git status --short packages/temporal-bun-sdk/src/proto | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open proto update pull request
+        if: steps.proto_changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/temporal-bun-sdk-proto-regen
+          title: chore: refresh temporal-bun-sdk protos
+          commit-message: chore: refresh temporal-bun-sdk protos
+          body: |
+            ## Summary
+            Automated Temporal proto regeneration for `@proompteng/temporal-bun-sdk`.
+
+            - Ran `bun packages/temporal-bun-sdk/scripts/update-temporal-protos.ts`
+            - Rebuilt SDK and executed Biome + test + load suites
+
+            Merge after verifying CI to keep generated protos aligned with upstream Temporal APIs.
+
+      - name: No changes detected
+        if: steps.proto_changes.outputs.changed != 'true'
+        run: echo 'Temporal proto sources already up to date'
