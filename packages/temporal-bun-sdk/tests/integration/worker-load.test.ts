@@ -1,11 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { Effect } from 'effect'
 
-import {
-  createIntegrationHarness,
-  type IntegrationHarness,
-  type TemporalDevServerConfig,
-} from './harness'
 import { readWorkerLoadConfig } from './load/config'
 import { runWorkerLoad } from './load/runner'
 
@@ -23,23 +18,7 @@ const testTimeoutBudgetMs =
   Math.max(loadSuiteDefaults.metricsFlushTimeoutMs, 5_000) +
   15_000
 
-const harnessConfig: TemporalDevServerConfig = {
-  ...devServerDefaults,
-  cliLogPath: loadSuiteDefaults.cliLogPath,
-}
-
 describeIntegration('worker runtime load/perf suite', () => {
-  let harness: IntegrationHarness
-
-  beforeAll(async () => {
-    harness = await Effect.runPromise(createIntegrationHarness(harnessConfig))
-    await Effect.runPromise(harness.setup)
-  })
-
-  afterAll(async () => {
-    await Effect.runPromise(harness.teardown)
-  })
-
   test(
     'meets throughput, latency, and sticky cache thresholds',
     { timeout: testTimeoutBudgetMs },
@@ -53,18 +32,14 @@ describeIntegration('worker runtime load/perf suite', () => {
       }
 
     const result = await Effect.runPromise(
-      harness.runScenario(
-        'worker load/perf',
-        () =>
-          Effect.tryPromise(() =>
-            runWorkerLoad({
-              harness,
-              address: harnessConfig.address,
-              namespace: harnessConfig.namespace,
-              loadConfig,
-            }),
-          ),
-        { env: envOverrides },
+      Effect.tryPromise(() =>
+        withEnvironment(envOverrides, () =>
+          runWorkerLoad({
+            address: devServerDefaults.address,
+            namespace: devServerDefaults.namespace,
+            loadConfig,
+          }),
+        ),
       ),
     )
 
@@ -87,3 +62,26 @@ describeIntegration('worker runtime load/perf suite', () => {
     },
   )
 })
+
+const withEnvironment = async <A>(env: Record<string, string | undefined>, action: () => Promise<A>): Promise<A> => {
+  const snapshot = new Map<string, string | undefined>()
+  for (const [key, value] of Object.entries(env)) {
+    snapshot.set(key, process.env[key])
+    if (value === undefined) {
+      delete process.env[key]
+    } else {
+      process.env[key] = value
+    }
+  }
+  try {
+    return await action()
+  } finally {
+    for (const [key, value] of snapshot.entries()) {
+      if (value === undefined) {
+        delete process.env[key]
+      } else {
+        process.env[key] = value
+      }
+    }
+  }
+}
