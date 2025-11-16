@@ -1,25 +1,39 @@
 # Temporal Bun SDK Release Runbook
 
-This runbook tracks **TBS-009** deliverables. Each section will be fleshed out as
-automation and policy work lands.
+Automation now drives every step via `.github/workflows/temporal-bun-sdk.yml`. Use
+this runbook as a quick reference for triggering and validating releases.
 
 ## Prerequisites
 
-- TODO(TBS-009): Document required GitHub permissions, npm tokens, and OIDC
-  configuration.
+- `NPM_TOKEN` secret scoped to publish `@proompteng/temporal-bun-sdk` via GitHub
+  OIDC (`npm publish --provenance`).
+- Maintainer access to run the Temporal Bun SDK workflow manually on `main`.
+- Release version (SemVer) and desired npm dist-tag (`latest`, `beta`, etc.).
 
 ## Release Steps
 
-1. TODO(TBS-009): Run CI pipeline (`lint`, `typecheck`, `test`, `integration`).
-2. TODO(TBS-009): Trigger version bump workflow and capture changelog.
-3. TODO(TBS-009): Publish package with provenance attestations.
-4. TODO(TBS-009): Announce release (blog, docs site, Slack).
+1. **Prepare mode**
+   - Trigger the workflow with `release_mode=prepare` (optionally set
+     `npm_tag`). This runs release-please to open/update the automated release
+     PR (`release-please--branches--main--components--temporal-bun-sdk`).
+   - The job regenerates Temporal protos, runs Biome + build + unit + load
+     suites, commits the artifacts to the release-please branch, and leaves PR
+     # in the logs. Review the PR and merge after CI is green.
+2. **Publish mode**
+   - Re-run the workflow with `release_mode=publish` (set `dry_run=true` for a
+     rehearsal). The job reads the merged `package.json` version on `main`, reruns
+     the validations, then executes `npm publish --provenance --access public
+     --tag <dist>`.
+   - Keep the workflow logs + artifacts linked to the tracking issue/PR as proof
+     of the dry-run and the final publish.
 
 ## Support & Incident Response
 
-- TODO(TBS-009): Define supported Bun/Node versions, Temporal compatibility
-  matrix, and escalation contacts.
+- Direct any security or incident reports to `security@proompteng.ai`.
 
 ## Post-Release Checklist
 
-- TODO(TBS-009): Verify docs deployment, update issue trackers, schedule retro.
+- Confirm the npm release metadata (version, dist-tag, provenance) matches the
+  workflow output.
+- Close the tracking issue (e.g., #1788) and note the publish link.
+- Schedule any follow-up docs/DevRel announcements if required.

@@ -19,6 +19,25 @@ on:
       - 'packages/temporal-bun-sdk-example/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/temporal-bun-sdk.yml'
+  workflow_dispatch:
+    inputs:
+      npm_tag:
+        description: 'npm dist-tag (latest, beta, next, etc.)'
+        type: string
+        required: false
+        default: latest
+      dry_run:
+        description: 'Run npm publish in dry-run mode instead of releasing'
+        type: boolean
+        required: false
+        default: false
+      release_mode:
+        description: 'prepare → open release PR, publish → release to npm'
+        type: choice
+        default: prepare
+        options:
+          - prepare
+          - publish
 
 jobs:
   test:
@@ -87,3 +106,192 @@ jobs:
           path: |
             packages/temporal-bun-sdk/.artifacts/worker-load/metrics.jsonl
             packages/temporal-bun-sdk/.artifacts/worker-load/report.json
+
+  prepare-release:
+    name: Prepare Temporal Bun SDK Release
+    runs-on: arc-arm64
+    needs: test
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'prepare'
+    env:
+      TEMPORAL_TEST_SERVER: '1'
+      TEMPORAL_TEST_TIMEOUT: '5000'
+      TEMPORAL_INTEGRATION_TESTS: '1'
+      TEMPORAL_ADDRESS: temporal-grpc:7233
+      TEMPORAL_NAMESPACE: default
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Prepare pnpm
+        run: |
+          PACKAGE_MANAGER=$(node -p "require('./package.json').packageManager")
+          corepack prepare "$PACKAGE_MANAGER" --activate
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Temporal CLI
+        run: |
+          curl -sSfL https://temporal.download/cli.sh | bash -s -- -b "${HOME}/.temporalio/bin"
+          echo "${HOME}/.temporalio/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Temporal CLI
+        run: temporal --version
+
+      - name: Run release-please (manifest)
+        id: release_please
+        uses: google-github-actions/release-please-action@v4
+        with:
+          command: manifest
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Ensure release PR exists
+        if: steps.release_please.outputs.pr == ''
+        run: |
+          echo 'No release PR created. Ensure there are Conventional Commit entries since the last release.'
+          exit 1
+
+      - name: Fetch release branch
+        id: release_branch
+        run: |
+          branch="release-please--branches--main--components--temporal-bun-sdk"
+          git fetch origin "$branch":"$branch"
+          git checkout "$branch"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Regenerate Temporal protos
+        run: bun packages/temporal-bun-sdk/scripts/update-temporal-protos.ts
+
+      - name: Build Temporal Bun SDK
+        run: pnpm --filter @proompteng/temporal-bun-sdk build
+
+      - name: Run Biome check (temporal-bun-sdk)
+        run: pnpm exec biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
+
+      - name: Run Temporal Bun SDK tests
+        run: pnpm --filter @proompteng/temporal-bun-sdk test
+
+      - name: Run worker load suite
+        run: pnpm --filter @proompteng/temporal-bun-sdk run test:load
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit regen artifacts
+        run: |
+          if git status --short | grep -q .; then
+            git add packages/temporal-bun-sdk
+            git commit -m "chore: regenerate temporal-bun-sdk protos"
+            git push origin "${{ steps.release_branch.outputs.branch }}"
+          else
+            echo 'No proto changes to commit'
+          fi
+
+      - name: Summarize release PR
+        run: |
+          echo "Updated release PR #${{ steps.release_please.outputs.pr }}"
+
+  publish-release:
+    name: Publish Temporal Bun SDK
+    runs-on: arc-arm64
+    needs: test
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'publish'
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+          registry-url: https://registry.npmjs.org
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Prepare pnpm
+        run: |
+          PACKAGE_MANAGER=$(node -p "require('./package.json').packageManager")
+          corepack prepare "$PACKAGE_MANAGER" --activate
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Derive release metadata
+        id: release_meta
+        run: |
+          set -euo pipefail
+          version_value=$(node -p "require('./packages/temporal-bun-sdk/package.json').version")
+          npm_tag_input="${{ github.event.inputs.npm_tag || 'latest' }}"
+          dry_run_input="${{ github.event.inputs.dry_run || 'false' }}"
+
+          case "$dry_run_input" in
+            true|True|TRUE) dry_run_value=true ;;
+            false|False|FALSE|"" ) dry_run_value=false ;;
+            *)
+              echo 'dry_run input must be true or false' >&2
+              exit 1
+              ;;
+          esac
+
+          echo "version=$version_value" >> "$GITHUB_OUTPUT"
+          echo "npm_tag=$npm_tag_input" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry_run_value" >> "$GITHUB_OUTPUT"
+
+      - name: Confirm package version
+        run: |
+          node -e "const fs=require('node:fs');const pkg=JSON.parse(fs.readFileSync('packages/temporal-bun-sdk/package.json','utf8'));console.log(\`Publishing @proompteng/temporal-bun-sdk v${pkg.version}\`);"
+
+      - name: Build Temporal Bun SDK
+        run: pnpm --filter @proompteng/temporal-bun-sdk build
+
+      - name: Publish package to npm
+        working-directory: packages/temporal-bun-sdk
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_VERSION: ${{ steps.release_meta.outputs.version }}
+          NPM_DIST_TAG: ${{ steps.release_meta.outputs.npm_tag }}
+          DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo 'NPM_TOKEN secret is not configured' >&2
+            exit 1
+          fi
+
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo 'Running npm publish in dry-run mode'
+            npm publish --tag "$NPM_DIST_TAG" --access public --provenance --dry-run
+          else
+            npm publish --tag "$NPM_DIST_TAG" --access public --provenance
+          fi
