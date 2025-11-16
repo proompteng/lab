@@ -1,5 +1,6 @@
 import { Effect, Layer } from 'effect'
 
+import { deriveWorkerBuildId } from '../worker/defaults'
 import { createWorkerRuntimeLayer, resolveWorkerLayerOptions, WorkerRuntimeFailureSignal } from '../worker/layer'
 import type { WorkerRuntimeOptions } from '../worker/runtime'
 import type { TemporalConfigLayerOptions } from './config-layer'
@@ -20,7 +21,7 @@ export interface WorkerAppLayerOptions {
 
 export const createWorkerAppLayer = (options: WorkerAppLayerOptions = {}) =>
   Layer.suspend(() => {
-    const configLayer = createConfigLayer(options.config)
+    const configLayer = createConfigLayer(withDerivedWorkerBuildId(options.config))
     const observabilityLayer = createObservabilityLayer(options.observability).pipe(Layer.provide(configLayer))
     const workflowLayer = createWorkflowServiceLayer(options.workflow)
       .pipe(Layer.provide(configLayer))
@@ -45,3 +46,14 @@ export const runWorkerApp = (options: WorkerAppLayerOptions = {}): Effect.Effect
     ),
     createWorkerAppLayer(options),
   ) as Effect.Effect<never, never, never>
+
+const withDerivedWorkerBuildId = (options?: TemporalConfigLayerOptions): TemporalConfigLayerOptions | undefined => {
+  const derivedBuildId = options?.overrides?.workerBuildId ?? deriveWorkerBuildId()
+  return {
+    ...options,
+    overrides: {
+      workerBuildId: derivedBuildId,
+      ...options?.overrides,
+    },
+  }
+}

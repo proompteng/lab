@@ -10,7 +10,7 @@ import {
   TemporalConfigService,
   WorkflowServiceClientService,
 } from '../runtime/effect-layers'
-import { resolveWorkerActivities, resolveWorkerWorkflowsPath } from './defaults'
+import { deriveWorkerBuildId, resolveWorkerActivities, resolveWorkerWorkflowsPath } from './defaults'
 import type { WorkerRuntimeOptions } from './runtime'
 import { WorkerRuntime } from './runtime'
 
@@ -104,4 +104,8 @@ export const resolveWorkerLayerOptions = (worker?: WorkerRuntimeOptions): Worker
   ...worker,
   activities: worker?.activities ?? resolveWorkerActivities(undefined),
   workflowsPath: worker?.workflowsPath ?? resolveWorkerWorkflowsPath(undefined),
+  deployment: {
+    ...worker?.deployment,
+    buildId: worker?.deployment?.buildId ?? deriveWorkerBuildId(),
+  },
 })
