@@ -2,6 +2,10 @@ import { createPrivateKey, createPublicKey, X509Certificate } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { Code } from '@connectrpc/connect'
+import type * as ParseResult from '@effect/schema/ParseResult'
+import * as Schema from '@effect/schema/Schema'
+import * as TreeFormatter from '@effect/schema/TreeFormatter'
+import { Cause, Effect, Exit } from 'effect'
 import { defaultRetryPolicy, type TemporalRpcRetryPolicy } from './client/retries'
 import type { LogFormat, LogLevel } from './observability/logger'
 import type { MetricsExporterSpec } from './observability/metrics'
@@ -51,7 +55,68 @@ const cloneRetryPolicy = (policy: TemporalRpcRetryPolicy): TemporalRpcRetryPolic
   retryableStatusCodes: [...policy.retryableStatusCodes],
 })
 
-interface TemporalEnvironment {
+const BufferSchema = Schema.instanceOf(Buffer)
+const TLSCertPairSchema = Schema.Struct({
+  crt: BufferSchema,
+  key: BufferSchema,
+})
+const TLSConfigSchema = Schema.Struct({
+  serverRootCACertificate: Schema.optional(BufferSchema),
+  serverNameOverride: Schema.optional(Schema.String),
+  clientCertPair: Schema.optional(TLSCertPairSchema),
+})
+const LogLevelSchema = Schema.Literal('debug', 'info', 'warn', 'error')
+const LogFormatSchema = Schema.Literal('json', 'pretty')
+const MetricsExporterTypeSchema = Schema.Literal('in-memory', 'file', 'otlp', 'prometheus')
+const MetricsExporterSpecSchema = Schema.Struct({
+  type: MetricsExporterTypeSchema,
+  endpoint: Schema.optional(Schema.String),
+})
+const TemporalRpcRetryPolicySchema = Schema.Struct({
+  maxAttempts: Schema.Number,
+  initialDelayMs: Schema.Number,
+  maxDelayMs: Schema.Number,
+  backoffCoefficient: Schema.Number,
+  jitterFactor: Schema.Number,
+  retryableStatusCodes: Schema.Array(Schema.Number),
+})
+const TemporalConfigSchema = Schema.Struct({
+  host: Schema.String,
+  port: Schema.Number,
+  address: Schema.String,
+  namespace: Schema.String,
+  taskQueue: Schema.String,
+  apiKey: Schema.optional(Schema.String),
+  tls: Schema.optional(TLSConfigSchema),
+  allowInsecureTls: Schema.Boolean,
+  workerIdentity: Schema.String,
+  workerIdentityPrefix: Schema.String,
+  showStackTraceSources: Schema.optional(Schema.Boolean),
+  workerWorkflowConcurrency: Schema.Number,
+  workerActivityConcurrency: Schema.Number,
+  workerStickyCacheSize: Schema.Number,
+  workerStickyTtlMs: Schema.Number,
+  stickySchedulingEnabled: Schema.Boolean,
+  activityHeartbeatIntervalMs: Schema.Number,
+  activityHeartbeatRpcTimeoutMs: Schema.Number,
+  workerDeploymentName: Schema.optional(Schema.String),
+  workerBuildId: Schema.optional(Schema.String),
+  logLevel: LogLevelSchema,
+  logFormat: LogFormatSchema,
+  metricsExporter: MetricsExporterSpecSchema,
+  rpcRetryPolicy: TemporalRpcRetryPolicySchema,
+})
+const TemporalConfigOverridesSchema = Schema.partial(TemporalConfigSchema)
+const decodeTemporalConfig = Schema.decodeUnknown(TemporalConfigSchema)
+const decodeTemporalConfigOverrides = Schema.decodeUnknown(TemporalConfigOverridesSchema)
+
+const formatSchemaError = (error: ParseResult.ParseError): string => TreeFormatter.formatErrorSync(error)
+const mapSchemaError = <A>(
+  effect: Effect.Effect<A, ParseResult.ParseError, never>,
+): Effect.Effect<A, TemporalConfigError, never> =>
+  effect.pipe(Effect.mapError((error) => new TemporalConfigError(formatSchemaError(error))))
+
+export interface TemporalEnvironment {
   TEMPORAL_ADDRESS?: string
   TEMPORAL_HOST?: string
   TEMPORAL_GRPC_PORT?: string
@@ -103,7 +168,7 @@ const parseLogLevel = (value: string | undefined): LogLevel | undefined => {
   if (logLevelOptions.has(normalized as LogLevel)) {
     return normalized as LogLevel
   }
-  throw new Error(`Invalid TEMPORAL_LOG_LEVEL: ${value}`)
+  throw new TemporalConfigError(`Invalid TEMPORAL_LOG_LEVEL: ${value}`)
 }
 
 const parseLogFormat = (value: string | undefined): LogFormat | undefined => {
@@ -117,7 +182,7 @@ const parseLogFormat = (value: string | undefined): LogFormat | undefined => {
   if (logFormatOptions.has(normalized as LogFormat)) {
     return normalized as LogFormat
   }
-  throw new Error(`Invalid TEMPORAL_LOG_FORMAT: ${value}`)
+  throw new TemporalConfigError(`Invalid TEMPORAL_LOG_FORMAT: ${value}`)
 }
 
 const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
@@ -167,6 +232,9 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
   }
 }
 
+export const resolveTemporalEnvironment = (env?: NodeJS.ProcessEnv): TemporalEnvironment =>
+  sanitizeEnvironment(env ?? process.env)
+
 const coerceBoolean = (raw: string | undefined): boolean | undefined => {
   if (!raw) return undefined
   const normalized = raw.trim().toLowerCase()
@@ -179,7 +247,7 @@ const parsePort = (raw: string | undefined): number => {
   if (!raw) return DEFAULT_PORT
   const parsed = Number.parseInt(raw, 10)
   if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 65_535) {
-    throw new Error(`Invalid Temporal gRPC port: ${raw}`)
+    throw new TemporalConfigError(`Invalid Temporal gRPC port: ${raw}`)
   }
   return parsed
 }
@@ -190,7 +258,7 @@ const parsePositiveInt = (raw: string | undefined, fallback: number, context: st
   }
   const parsed = Number.parseInt(raw, 10)
   if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`Invalid ${context}: ${raw}`)
+    throw new TemporalConfigError(`Invalid ${context}: ${raw}`)
   }
   return parsed
 }
@@ -201,7 +269,7 @@ const parseNonNegativeInt = (raw: string | undefined, fallback: number, context:
   }
   const parsed = Number.parseInt(raw, 10)
   if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new Error(`Invalid ${context}: ${raw}`)
+    throw new TemporalConfigError(`Invalid ${context}: ${raw}`)
   }
   return parsed
 }
@@ -212,7 +280,7 @@ const parsePositiveNumber = (raw: string | undefined, fallback: number, context:
   }
   const parsed = Number.parseFloat(raw)
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`Invalid ${context}: ${raw}`)
+    throw new TemporalConfigError(`Invalid ${context}: ${raw}`)
   }
   return parsed
 }
@@ -223,7 +291,7 @@ const parseNonNegativeNumber = (raw: string | undefined, fallback: number, conte
   }
   const parsed = Number.parseFloat(raw)
   if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`Invalid ${context}: ${raw}`)
+    throw new TemporalConfigError(`Invalid ${context}: ${raw}`)
   }
   return parsed
 }
@@ -238,9 +306,9 @@ const clampJitterFactor = (value: number): number => {
   return value
 }
 
-const parseRetryStatusCodes = (raw: string | undefined, fallback: number[]): number[] => {
+const parseRetryStatusCodes = (raw: string | undefined, fallback: ReadonlyArray<number>): number[] => {
   if (raw === undefined) {
-    return fallback
+    return [...fallback]
   }
   const tokens = raw
     .split(/[,\s]+/g)
@@ -248,7 +316,7 @@ const parseRetryStatusCodes = (raw: string | undefined, fallback: number[]): num
     .filter((token) => token.length > 0)
 
   if (tokens.length === 0) {
-    throw new Error('TEMPORAL_CLIENT_RETRY_STATUS_CODES must include at least one status code')
+    throw new TemporalConfigError('TEMPORAL_CLIENT_RETRY_STATUS_CODES must include at least one status code')
   }
 
   const resolved = new Set<number>()
@@ -257,20 +325,20 @@ const parseRetryStatusCodes = (raw: string | undefined, fallback: number[]): num
     const numeric = Number.parseInt(token, 10)
     if (Number.isInteger(numeric)) {
       if (!CONNECT_CODE_LOOKUP.byValue.has(numeric)) {
-        throw new Error(`Unknown retry status code: ${token}`)
+        throw new TemporalConfigError(`Unknown retry status code: ${token}`)
       }
       resolved.add(numeric)
       continue
     }
     const value = CONNECT_CODE_LOOKUP.byName.get(token.toUpperCase())
     if (value === undefined) {
-      throw new Error(`Unknown retry status code: ${token}`)
+      throw new TemporalConfigError(`Unknown retry status code: ${token}`)
     }
     resolved.add(value)
   }
 
   if (resolved.size === 0) {
-    throw new Error('TEMPORAL_CLIENT_RETRY_STATUS_CODES must include at least one status code')
+    throw new TemporalConfigError('TEMPORAL_CLIENT_RETRY_STATUS_CODES must include at least one status code')
   }
 
   return [...resolved]
@@ -320,6 +388,16 @@ export interface TLSConfig {
   serverRootCACertificate?: Buffer
   serverNameOverride?: string
   clientCertPair?: TLSCertPair
+}
+
+export class TemporalConfigError extends Error {
+  constructor(
+    message: string,
+    readonly cause?: unknown,
+  ) {
+    super(message)
+    this.name = 'TemporalConfigError'
+  }
 }
 
 const describeFsError = (error: unknown): string => {
@@ -461,7 +539,9 @@ const resolveClientRetryPolicy = (
     'TEMPORAL_CLIENT_RETRY_MAX_MS',
   )
   if (maxDelayMs < initialDelayMs) {
-    throw new Error('TEMPORAL_CLIENT_RETRY_MAX_MS must be greater than or equal to TEMPORAL_CLIENT_RETRY_INITIAL_MS')
+    throw new TemporalConfigError(
+      'TEMPORAL_CLIENT_RETRY_MAX_MS must be greater than or equal to TEMPORAL_CLIENT_RETRY_INITIAL_MS',
+    )
   }
   const backoffCoefficient = parsePositiveNumber(
     env.TEMPORAL_CLIENT_RETRY_BACKOFF,
@@ -490,100 +570,129 @@ const resolveClientRetryPolicy = (
   }
 }
 
-export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}): Promise<TemporalConfig> => {
-  // TODO(TBS-010): Convert to Effect + Schema validation, exposing as Config Layer.
-  const env = sanitizeEnvironment(options.env ?? process.env)
-  const port = parsePort(env.TEMPORAL_GRPC_PORT)
-  const host = env.TEMPORAL_HOST ?? options.defaults?.host ?? DEFAULT_HOST
-  const address = env.TEMPORAL_ADDRESS ?? options.defaults?.address ?? `${host}:${port}`
-  const namespace = env.TEMPORAL_NAMESPACE ?? options.defaults?.namespace ?? DEFAULT_NAMESPACE
-  const taskQueue = env.TEMPORAL_TASK_QUEUE ?? options.defaults?.taskQueue ?? DEFAULT_TASK_QUEUE
-  const fallbackWorkflowConcurrency = options.defaults?.workerWorkflowConcurrency ?? DEFAULT_WORKFLOW_CONCURRENCY
-  const fallbackActivityConcurrency = options.defaults?.workerActivityConcurrency ?? DEFAULT_ACTIVITY_CONCURRENCY
-  const fallbackStickyCacheSize = options.defaults?.workerStickyCacheSize ?? DEFAULT_STICKY_CACHE_SIZE
-  const fallbackStickyTtl = options.defaults?.workerStickyTtlMs ?? DEFAULT_STICKY_CACHE_TTL_MS
-  const workerWorkflowConcurrency = parsePositiveInt(
-    env.TEMPORAL_WORKFLOW_CONCURRENCY,
-    fallbackWorkflowConcurrency,
-    'TEMPORAL_WORKFLOW_CONCURRENCY',
-  )
-  const workerActivityConcurrency = parsePositiveInt(
-    env.TEMPORAL_ACTIVITY_CONCURRENCY,
-    fallbackActivityConcurrency,
-    'TEMPORAL_ACTIVITY_CONCURRENCY',
-  )
-  const workerStickyCacheSize = parseNonNegativeInt(
-    env.TEMPORAL_STICKY_CACHE_SIZE,
-    fallbackStickyCacheSize,
-    'TEMPORAL_STICKY_CACHE_SIZE',
-  )
-  const workerStickyTtlMs = parseNonNegativeInt(env.TEMPORAL_STICKY_TTL_MS, fallbackStickyTtl, 'TEMPORAL_STICKY_TTL_MS')
-  const stickySchedulingEnabled =
-    coerceBoolean(env.TEMPORAL_STICKY_SCHEDULING_ENABLED) ??
-    options.defaults?.stickySchedulingEnabled ??
-    workerStickyCacheSize > 0
-  const fallbackHeartbeatInterval =
-    options.defaults?.activityHeartbeatIntervalMs ?? DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS
-  const fallbackHeartbeatRpcTimeout =
-    options.defaults?.activityHeartbeatRpcTimeoutMs ?? DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS
-  const activityHeartbeatIntervalMs = parsePositiveInt(
-    env.TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS,
-    fallbackHeartbeatInterval,
-    'TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS',
-  )
-  const activityHeartbeatRpcTimeoutMs = parsePositiveInt(
-    env.TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS,
-    fallbackHeartbeatRpcTimeout,
-    'TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS',
-  )
-  const workerDeploymentName = env.TEMPORAL_WORKER_DEPLOYMENT_NAME ?? options.defaults?.workerDeploymentName
-  const workerBuildId = env.TEMPORAL_WORKER_BUILD_ID ?? options.defaults?.workerBuildId
-  const allowInsecure =
-    coerceBoolean(env.TEMPORAL_ALLOW_INSECURE) ??
-    coerceBoolean(env.ALLOW_INSECURE_TLS) ??
-    options.defaults?.allowInsecureTls ??
-    false
-  const workerIdentityPrefix =
-    env.TEMPORAL_WORKER_IDENTITY_PREFIX ?? options.defaults?.workerIdentityPrefix ?? DEFAULT_IDENTITY_PREFIX
-  const workerIdentity = `${workerIdentityPrefix}-${hostname()}-${process.pid}`
-  const tls = await buildTlsConfig(env, options)
-  const showStackTraceSources =
-    coerceBoolean(env.TEMPORAL_SHOW_STACK_SOURCES) ?? options.defaults?.showStackTraceSources ?? false
-  const logLevel = parseLogLevel(env.TEMPORAL_LOG_LEVEL) ?? options.defaults?.logLevel ?? DEFAULT_LOG_LEVEL
-  const logFormat = parseLogFormat(env.TEMPORAL_LOG_FORMAT) ?? options.defaults?.logFormat ?? DEFAULT_LOG_FORMAT
-  const metricsExporter = resolveMetricsExporterSpec(
-    env.TEMPORAL_METRICS_EXPORTER ?? options.defaults?.metricsExporter?.type,
-    env.TEMPORAL_METRICS_ENDPOINT ?? options.defaults?.metricsExporter?.endpoint,
-  )
-  const rpcRetryPolicy = resolveClientRetryPolicy(env, options.defaults?.rpcRetryPolicy)
+export const loadTemporalConfigEffect = (
+  options: LoadTemporalConfigOptions = {},
+): Effect.Effect<TemporalConfig, TemporalConfigError | TemporalTlsConfigurationError> =>
+  Effect.gen(function* () {
+    const defaults = yield* mapSchemaError(decodeTemporalConfigOverrides(options.defaults ?? {}))
+    const env = resolveTemporalEnvironment(options.env)
+    const normalizedOptions: LoadTemporalConfigOptions = { ...options, defaults }
+    const port = parsePort(env.TEMPORAL_GRPC_PORT ?? (defaults.port ? `${defaults.port}` : undefined))
+    const host = env.TEMPORAL_HOST ?? defaults.host ?? DEFAULT_HOST
+    const address = env.TEMPORAL_ADDRESS ?? defaults.address ?? `${host}:${port}`
+    const namespace = env.TEMPORAL_NAMESPACE ?? defaults.namespace ?? DEFAULT_NAMESPACE
+    const taskQueue = env.TEMPORAL_TASK_QUEUE ?? defaults.taskQueue ?? DEFAULT_TASK_QUEUE
+    const fallbackWorkflowConcurrency = defaults.workerWorkflowConcurrency ?? DEFAULT_WORKFLOW_CONCURRENCY
+    const fallbackActivityConcurrency = defaults.workerActivityConcurrency ?? DEFAULT_ACTIVITY_CONCURRENCY
+    const fallbackStickyCacheSize = defaults.workerStickyCacheSize ?? DEFAULT_STICKY_CACHE_SIZE
+    const fallbackStickyTtl = defaults.workerStickyTtlMs ?? DEFAULT_STICKY_CACHE_TTL_MS
+    const workerWorkflowConcurrency = parsePositiveInt(
+      env.TEMPORAL_WORKFLOW_CONCURRENCY,
+      fallbackWorkflowConcurrency,
+      'TEMPORAL_WORKFLOW_CONCURRENCY',
+    )
+    const workerActivityConcurrency = parsePositiveInt(
+      env.TEMPORAL_ACTIVITY_CONCURRENCY,
+      fallbackActivityConcurrency,
+      'TEMPORAL_ACTIVITY_CONCURRENCY',
+    )
+    const workerStickyCacheSize = parseNonNegativeInt(
+      env.TEMPORAL_STICKY_CACHE_SIZE,
+      fallbackStickyCacheSize,
+      'TEMPORAL_STICKY_CACHE_SIZE',
+    )
+    const workerStickyTtlMs = parseNonNegativeInt(
+      env.TEMPORAL_STICKY_TTL_MS,
+      fallbackStickyTtl,
+      'TEMPORAL_STICKY_TTL_MS',
+    )
+    const stickySchedulingEnabled =
+      coerceBoolean(env.TEMPORAL_STICKY_SCHEDULING_ENABLED) ??
+      defaults.stickySchedulingEnabled ??
+      workerStickyCacheSize > 0
+    const fallbackHeartbeatInterval = defaults.activityHeartbeatIntervalMs ?? DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS
+    const fallbackHeartbeatRpcTimeout =
+      defaults.activityHeartbeatRpcTimeoutMs ?? DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS
+    const activityHeartbeatIntervalMs = parsePositiveInt(
+      env.TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS,
+      fallbackHeartbeatInterval,
+      'TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS',
+    )
+    const activityHeartbeatRpcTimeoutMs = parsePositiveInt(
+      env.TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS,
+      fallbackHeartbeatRpcTimeout,
+      'TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS',
+    )
+    const workerDeploymentName = env.TEMPORAL_WORKER_DEPLOYMENT_NAME ?? defaults.workerDeploymentName
+    const workerBuildId = env.TEMPORAL_WORKER_BUILD_ID ?? defaults.workerBuildId
+    const allowInsecureTls =
+      coerceBoolean(env.TEMPORAL_ALLOW_INSECURE) ??
+      coerceBoolean(env.ALLOW_INSECURE_TLS) ??
+      defaults.allowInsecureTls ??
+      false
+    const workerIdentityPrefix =
+      env.TEMPORAL_WORKER_IDENTITY_PREFIX ?? defaults.workerIdentityPrefix ?? DEFAULT_IDENTITY_PREFIX
+    const workerIdentity = defaults.workerIdentity ?? `${workerIdentityPrefix}-${hostname()}-${process.pid}`
+    const tls = yield* Effect.tryPromise({
+      try: () => buildTlsConfig(env, normalizedOptions),
+      catch: (error) => error,
+    })
+    const showStackTraceSources =
+      coerceBoolean(env.TEMPORAL_SHOW_STACK_SOURCES) ?? defaults.showStackTraceSources ?? false
+    const logLevel = parseLogLevel(env.TEMPORAL_LOG_LEVEL) ?? defaults.logLevel ?? DEFAULT_LOG_LEVEL
+    const logFormat = parseLogFormat(env.TEMPORAL_LOG_FORMAT) ?? defaults.logFormat ?? DEFAULT_LOG_FORMAT
+    const metricsExporter = resolveMetricsExporterSpec(
+      env.TEMPORAL_METRICS_EXPORTER ?? defaults.metricsExporter?.type,
+      env.TEMPORAL_METRICS_ENDPOINT ?? defaults.metricsExporter?.endpoint,
+    )
+    const rpcRetryPolicy = resolveClientRetryPolicy(env, defaults.rpcRetryPolicy)
 
-  return {
-    host,
-    port,
-    address,
-    namespace,
-    taskQueue,
-    apiKey: env.TEMPORAL_API_KEY ?? options.defaults?.apiKey,
-    tls,
-    allowInsecureTls: allowInsecure,
-    workerIdentity,
-    workerIdentityPrefix,
-    showStackTraceSources,
-    workerWorkflowConcurrency,
-    workerActivityConcurrency,
-    workerStickyCacheSize,
-    workerStickyTtlMs,
-    stickySchedulingEnabled,
-    activityHeartbeatIntervalMs,
-    activityHeartbeatRpcTimeoutMs,
-    workerDeploymentName,
-    workerBuildId,
-    logLevel,
-    logFormat,
-    metricsExporter,
-    rpcRetryPolicy,
+    const config: TemporalConfig = {
+      host,
+      port,
+      address,
+      namespace,
+      taskQueue,
+      apiKey: env.TEMPORAL_API_KEY ?? defaults.apiKey,
+      tls,
+      allowInsecureTls,
+      workerIdentity,
+      workerIdentityPrefix,
+      showStackTraceSources,
+      workerWorkflowConcurrency,
+      workerActivityConcurrency,
+      workerStickyCacheSize,
+      workerStickyTtlMs,
+      stickySchedulingEnabled,
+      activityHeartbeatIntervalMs,
+      activityHeartbeatRpcTimeoutMs,
+      workerDeploymentName,
+      workerBuildId,
+      logLevel,
+      logFormat,
+      metricsExporter,
+      rpcRetryPolicy,
+    }
+
+    return yield* mapSchemaError(decodeTemporalConfig(config))
+  }) as Effect.Effect<TemporalConfig, TemporalConfigError | TemporalTlsConfigurationError, never>
+
+export const loadTemporalConfig = async (options: LoadTemporalConfigOptions = {}): Promise<TemporalConfig> => {
+  const exit = await Effect.runPromiseExit(loadTemporalConfigEffect(options))
+  if (Exit.isSuccess(exit)) {
+    return exit.value
   }
+  throw Cause.squash(exit.cause)
 }
+
+export const applyTemporalConfigOverrides = (
+  config: TemporalConfig,
+  overrides?: Partial<TemporalConfig>,
+): Effect.Effect<TemporalConfig, TemporalConfigError> =>
+  mapSchemaError(decodeTemporalConfigOverrides(overrides ?? {})).pipe(
+    Effect.map((validated) => ({ ...config, ...validated })),
+    Effect.flatMap((merged) => mapSchemaError(decodeTemporalConfig(merged))),
+  )
 
 export const temporalDefaults = {
   host: DEFAULT_HOST,

@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { Effect } from 'effect'
 
 import { createTemporalClient, type TemporalClient } from '../../../src/client'
-import { loadTemporalConfig } from '../../../src/config'
+import { loadTemporalConfig, type TemporalConfig } from '../../../src/config'
 import { WorkerRuntime } from '../../../src/worker/runtime'
-import type { IntegrationHarness } from '../harness'
 import { resolveTemporalCliExecutable } from '../harness'
 import { readWorkerLoadConfig, type WorkerLoadConfig } from './config'
 import { readMetricsFromFile, summarizeLoadMetrics, type WorkerLoadMetricsSummary } from './metrics'
@@ -17,7 +16,6 @@ import {
 } from './workflows'
 
 export interface WorkerLoadRunnerOptions {
-  readonly harness: IntegrationHarness
   readonly address: string
   readonly namespace: string
   readonly loadConfig?: WorkerLoadConfig
@@ -31,9 +29,15 @@ export interface WorkerLoadRunResult {
   readonly loadConfig: WorkerLoadConfig
 }
 
+const prepareArtifactsDir = async (root: string): Promise<string> => {
+  await rm(root, { recursive: true, force: true })
+  await mkdir(root, { recursive: true })
+  return root
+}
+
 export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<WorkerLoadRunResult> => {
   const loadConfig = options.loadConfig ?? readWorkerLoadConfig()
-  const artifactsDir = await Effect.runPromise(options.harness.workerLoadArtifacts.prepare({ clean: true }))
+  const artifactsDir = await prepareArtifactsDir(loadConfig.artifactsDir)
   const taskQueue = buildTaskQueue(options.taskQueuePrefix ?? loadConfig.workflowTaskQueuePrefix)
   const config = await loadTemporalConfig({
     defaults: {
@@ -272,8 +276,10 @@ const waitForWorkflowCompletionsCli = async ({
           error,
         })
         await sleep(500)
-      }
-    }
+  }
+}
+
+
   }
 
   await Promise.all(

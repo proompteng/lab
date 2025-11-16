@@ -155,6 +155,72 @@ bunx temporal-bun doctor --log-format=json --metrics=file:/tmp/metrics.json
 The command prints a success summary once the JSON log is emitted and the
 metrics file is written, so you can script it into CI or pre-deployment checks.
 
+## Layered bootstrap helpers
+
+Temporal Bun now exposes first-class Effect `Layer`s so workers, clients, CLI
+tools, and tests can share the same managed dependencies without hand-wiring
+config or observability plumbing:
+
+- `createConfigLayer()` resolves `TemporalConfigService` via
+  `loadTemporalConfigEffect` and accepts overrides/defaults for task queue,
+  namespace, TLS, and worker identity.
+- `createObservabilityLayer()` wires logger + metrics registries/exporters and
+  `createWorkflowServiceLayer()` constructs the gRPC transport + WorkflowService
+  client with automatic interceptor wiring.
+- `createWorkerRuntimeLayer()`/`runWorkerApp()` compose those services with the
+  worker runtime so Bun apps can start/stop workers via `Effect.scoped` without
+  `AbortController` plumbing.
+
+Example worker bootstrap with custom overrides:
+
+```ts
+import { Effect, Layer } from 'effect'
+import {
+  createConfigLayer,
+  createObservabilityLayer,
+  createWorkflowServiceLayer,
+} from '@proompteng/temporal-bun-sdk/runtime/effect-layers'
+import { runWorkerEffect } from '@proompteng/temporal-bun-sdk/worker/layer'
+
+const configLayer = createConfigLayer({
+  defaults: { address: '10.0.0.5:7233', namespace: 'staging', taskQueue: 'staging-worker' },
+})
+const observabilityLayer = createObservabilityLayer().pipe(Layer.provide(configLayer))
+const workflowLayer = createWorkflowServiceLayer()
+  .pipe(Layer.provide(configLayer))
+  .pipe(Layer.provide(observabilityLayer))
+
+await Effect.runPromise(
+  Effect.scoped(
+    runWorkerEffect({ workflowsPath: new URL('./workflows/index.ts', import.meta.url).pathname })
+      .pipe(Layer.provide(configLayer))
+      .pipe(Layer.provide(observabilityLayer))
+      .pipe(Layer.provide(workflowLayer)),
+  ),
+)
+```
+
+Prefer zero-boilerplate? `createWorker()` and `runWorkerApp()` wrap the same
+layers, discover workflows/activities from the default template, and derive
+worker build IDs automatically. For CLI tooling and smoke tests, use
+`runTemporalCliEffect(effect, options)` to execute an `Effect` program (doctor
+checks, replay helpers, diagnostics) against the shared config/observability
+stack:
+
+```ts
+import { Effect } from 'effect'
+import { runTemporalCliEffect } from '@proompteng/temporal-bun-sdk/runtime/cli-layer'
+import { TemporalConfigService } from '@proompteng/temporal-bun-sdk/runtime/effect-layers'
+
+await runTemporalCliEffect(
+  Effect.gen(function* () {
+    const config = yield* TemporalConfigService
+    console.log('Active namespace:', config.namespace)
+  }),
+  { config: { defaults: { namespace: 'qa' } } },
+)
+```
+
 ## Replay workflow histories
 
 `temporal-bun replay` lets you ingest workflow histories, diff the determinism

@@ -12,6 +12,7 @@ import { heartbeatWorkflow, heartbeatTimeoutWorkflow, integrationActivities, int
 
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
+const scenarioTimeoutMs = 60_000
 
 const CLI_CONFIG = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
@@ -54,7 +55,6 @@ describeIntegration('Activity lifecycle integration', () => {
       namespace: CLI_CONFIG.namespace,
       stickyScheduling: true,
     })
-
     runtimePromise = runtime.run()
   })
 
@@ -92,7 +92,7 @@ describeIntegration('Activity lifecycle integration', () => {
     }
   }
 
-  test('long-running heartbeat keeps activity alive', async () => {
+  test('long-running heartbeat keeps activity alive', { timeout: scenarioTimeoutMs }, async () => {
     await runOrSkip('heartbeat-success', async () => {
       const handle = await executeWorkflow(heartbeatWorkflow.name, {
         durationMs: 600,
@@ -106,7 +106,7 @@ describeIntegration('Activity lifecycle integration', () => {
     })
   })
 
-  test('heartbeat timeout triggers cancellation', async () => {
+  test('heartbeat timeout triggers cancellation', { timeout: scenarioTimeoutMs }, async () => {
     await runOrSkip('heartbeat-timeout', async () => {
       const handle = await executeWorkflow(heartbeatTimeoutWorkflow.name, {
         initialBeats: 2,
@@ -119,7 +119,7 @@ describeIntegration('Activity lifecycle integration', () => {
     })
   })
 
-  test('retry exhaustion halts after non-retryable error', async () => {
+  test('retry exhaustion halts after non-retryable error', { timeout: scenarioTimeoutMs }, async () => {
     await runOrSkip('retry-exhaustion', async () => {
       const handle = await executeWorkflow(retryProbeWorkflow.name, {
         failUntil: 2,

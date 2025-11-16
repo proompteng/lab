@@ -4,7 +4,7 @@ import { createGrpcTransport } from '@connectrpc/connect-node'
 import { Effect } from 'effect'
 
 import { buildTransportOptions, createTemporalClient, normalizeTemporalAddress } from '../../src/client'
-import { loadTemporalConfig } from '../../src/config'
+import { loadTemporalConfig, type TemporalConfig } from '../../src/config'
 import { WorkerVersioningMode } from '../../src/proto/temporal/api/enums/v1/deployment_pb'
 import { VersioningBehavior } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
 import {

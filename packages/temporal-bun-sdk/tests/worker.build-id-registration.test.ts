@@ -12,8 +12,9 @@ import type {
 } from '../src/proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkerVersioningMode } from '../src/proto/temporal/api/enums/v1/deployment_pb'
 import { VersioningBehavior } from '../src/proto/temporal/api/enums/v1/workflow_pb'
-import { WorkerRuntime, type WorkflowServiceClient } from '../src/worker/runtime'
+import type { WorkflowServiceClient } from '../src/worker/runtime'
 import { defineWorkflow } from '../src/workflow/definition'
+import { createTestWorkerRuntime } from './helpers/worker-runtime'
 
 test('registers a build ID when the RPC succeeds', async () => {
   const requests: UpdateWorkerBuildIdCompatibilityRequest[] = []
@@ -159,25 +160,21 @@ test('WorkerRuntime registers build IDs before pollers start when worker version
   })
 
   const config = createTestConfig({ taskQueue: 'versioned-queue-1' })
-  let runtime: WorkerRuntime | null = null
-  try {
-    runtime = await WorkerRuntime.create({
-      config,
-      workflows: noopWorkflows,
-      workflowService,
-      deployment: {
-        name: config.workerDeploymentName,
-        buildId: config.workerBuildId,
-        versioningMode: WorkerVersioningMode.VERSIONED,
-        versioningBehavior: VersioningBehavior.PINNED,
-      },
-    })
+  const runtime = await createTestWorkerRuntime({
+    config,
+    workflows: noopWorkflows,
+    workflowService,
+    deployment: {
+      name: config.workerDeploymentName,
+      buildId: config.workerBuildId,
+      versioningMode: WorkerVersioningMode.VERSIONED,
+      versioningBehavior: VersioningBehavior.PINNED,
+    },
+  })
 
-    expect(capabilityRequests).toHaveLength(1)
-    expect(registrationRequests).toHaveLength(1)
-  } finally {
-    await runtime?.shutdown()
-  }
+  expect(capabilityRequests).toHaveLength(1)
+  expect(registrationRequests).toHaveLength(1)
+  await runtime.shutdown()
 })
 
 test('WorkerRuntime logs a warning and skips registration when worker versioning APIs are missing', async () => {
@@ -206,25 +203,21 @@ test('WorkerRuntime logs a warning and skips registration when worker versioning
   }
 
   const config = createTestConfig({ taskQueue: 'versioned-queue-2' })
-  let runtime: WorkerRuntime | null = null
-  try {
-    runtime = await WorkerRuntime.create({
-      config,
-      workflows: noopWorkflows,
-      workflowService,
-      logger,
-      deployment: {
-        name: config.workerDeploymentName,
-        buildId: config.workerBuildId,
-        versioningMode: WorkerVersioningMode.VERSIONED,
-        versioningBehavior: VersioningBehavior.PINNED,
-      },
-    })
+  const runtime = await createTestWorkerRuntime({
+    config,
+    workflows: noopWorkflows,
+    workflowService,
+    logger,
+    deployment: {
+      name: config.workerDeploymentName,
+      buildId: config.workerBuildId,
+      versioningMode: WorkerVersioningMode.VERSIONED,
+      versioningBehavior: VersioningBehavior.PINNED,
+    },
+  })
 
-    expect(capabilityRequests).toHaveLength(1)
-    expect(updateCalled).toBeFalse()
-    expect(warnings.some((line) => line.includes('skipping worker build ID registration'))).toBeTrue()
-  } finally {
-    await runtime?.shutdown()
-  }
+  expect(capabilityRequests).toHaveLength(1)
+  expect(updateCalled).toBeFalse()
+  expect(warnings.some((line) => line.includes('skipping worker build ID registration'))).toBeTrue()
+  await runtime.shutdown()
 })
