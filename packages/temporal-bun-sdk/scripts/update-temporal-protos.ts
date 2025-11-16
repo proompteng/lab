@@ -143,7 +143,7 @@ const fetchWithError = async (url: string, accept: string) => {
 
 const generateTypeScript = async () => {
   console.log('[temporal-bun-sdk] Generating TypeScript stubs via buf...')
-  await $({ cwd: REPO_ROOT })`buf generate --template buf.temporal.gen.yaml --path proto/temporal`
+  await $`cd ${REPO_ROOT} && buf generate --template buf.temporal.gen.yaml --path proto/temporal`
 }
 
 await main()
