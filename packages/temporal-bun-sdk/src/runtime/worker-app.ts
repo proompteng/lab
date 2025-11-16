@@ -1,6 +1,6 @@
 import { Effect, Layer } from 'effect'
 
-import { resolveTemporalEnvironment } from '../config'
+import { resolveTemporalEnvironment, type TemporalConfig } from '../config'
 import { deriveWorkerBuildId } from '../worker/defaults'
 import { createWorkerRuntimeLayer, resolveWorkerLayerOptions, WorkerRuntimeFailureSignal } from '../worker/layer'
 import type { WorkerRuntimeOptions } from '../worker/runtime'
@@ -10,6 +10,7 @@ import {
   createObservabilityLayer,
   createWorkflowServiceLayer,
   type ObservabilityLayerOptions,
+  TemporalConfigService,
   type WorkflowServiceLayerOptions,
 } from './effect-layers'
 
@@ -22,12 +23,18 @@ export interface WorkerAppLayerOptions {
 
 export const createWorkerAppLayer = (options: WorkerAppLayerOptions = {}) =>
   Layer.suspend(() => {
-    const configLayer = createConfigLayer(withDerivedWorkerBuildId(options.config))
+    const workerConfig = normalizeWorkerConfig(options.worker?.config)
+    const configLayer = workerConfig
+      ? Layer.succeed(TemporalConfigService, workerConfig)
+      : createConfigLayer(withDerivedWorkerBuildId(options.config))
     const observabilityLayer = createObservabilityLayer(options.observability).pipe(Layer.provide(configLayer))
     const workflowLayer = createWorkflowServiceLayer(options.workflow)
       .pipe(Layer.provide(configLayer))
       .pipe(Layer.provide(observabilityLayer))
-    const workerLayer = createWorkerRuntimeLayer(resolveWorkerLayerOptions(options.worker))
+    const resolvedWorkerOptions = workerConfig
+      ? ({ ...(options.worker ?? {}), config: workerConfig } satisfies WorkerRuntimeOptions)
+      : options.worker
+    const workerLayer = createWorkerRuntimeLayer(resolveWorkerLayerOptions(resolvedWorkerOptions))
       .pipe(Layer.provide(configLayer))
       .pipe(Layer.provide(observabilityLayer))
       .pipe(Layer.provide(workflowLayer))
@@ -65,5 +72,18 @@ const withDerivedWorkerBuildId = (options?: TemporalConfigLayerOptions): Tempora
       ...options?.defaults,
       workerBuildId: derivedBuildId,
     },
+  }
+}
+
+const normalizeWorkerConfig = (config?: TemporalConfig): TemporalConfig | undefined => {
+  if (!config) {
+    return undefined
+  }
+  if (config.workerBuildId) {
+    return config
+  }
+  return {
+    ...config,
+    workerBuildId: deriveWorkerBuildId(),
   }
 }
