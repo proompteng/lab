@@ -20,12 +20,19 @@ export interface WorkerAppLayerOptions {
 }
 
 export const createWorkerAppLayer = (options: WorkerAppLayerOptions = {}) =>
-  Layer.mergeAll(
-    createConfigLayer(options.config),
-    createObservabilityLayer(options.observability),
-    createWorkflowServiceLayer(options.workflow),
-    createWorkerRuntimeLayer(resolveWorkerLayerOptions(options.worker)),
-  )
+  Layer.suspend(() => {
+    const configLayer = createConfigLayer(options.config)
+    const observabilityLayer = createObservabilityLayer(options.observability).pipe(Layer.provide(configLayer))
+    const workflowLayer = createWorkflowServiceLayer(options.workflow)
+      .pipe(Layer.provide(configLayer))
+      .pipe(Layer.provide(observabilityLayer))
+    const workerLayer = createWorkerRuntimeLayer(resolveWorkerLayerOptions(options.worker))
+      .pipe(Layer.provide(configLayer))
+      .pipe(Layer.provide(observabilityLayer))
+      .pipe(Layer.provide(workflowLayer))
+
+    return Layer.mergeAll(configLayer, observabilityLayer, workflowLayer, workerLayer)
+  })
 
 export const WorkerAppLayer = createWorkerAppLayer()
 
