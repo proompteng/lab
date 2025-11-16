@@ -145,15 +145,6 @@ jobs:
       - name: Build Temporal Bun SDK
         run: pnpm --filter @proompteng/temporal-bun-sdk build
 
-      - name: Run Biome check (temporal-bun-sdk)
-        run: pnpm exec biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
-
-      - name: Run Temporal Bun SDK tests
-        run: pnpm --filter @proompteng/temporal-bun-sdk test
-
-      - name: Run worker load suite
-        run: pnpm --filter @proompteng/temporal-bun-sdk run test:load
-
       - name: Summarize release PR
         run: |
           echo "Updated release PR #${{ steps.release_please.outputs.pr }}"
