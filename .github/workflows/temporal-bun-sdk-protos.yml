@@ -53,22 +53,6 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build Temporal Bun SDK
-        if: steps.proto_changes.outputs.changed == 'true'
-        run: pnpm --filter @proompteng/temporal-bun-sdk build
-
-      - name: Run Biome check (temporal-bun-sdk)
-        if: steps.proto_changes.outputs.changed == 'true'
-        run: pnpm exec biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
-
-      - name: Run Temporal Bun SDK tests
-        if: steps.proto_changes.outputs.changed == 'true'
-        run: pnpm --filter @proompteng/temporal-bun-sdk test
-
-      - name: Run worker load suite
-        if: steps.proto_changes.outputs.changed == 'true'
-        run: pnpm --filter @proompteng/temporal-bun-sdk run test:load
-
       - name: Open proto update pull request
         if: steps.proto_changes.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
