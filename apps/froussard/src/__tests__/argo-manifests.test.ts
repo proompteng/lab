@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import YAML from 'yaml'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
-const repoRoot = resolve(__dirname, '../../../../..')
+const repoRoot = resolve(__dirname, '../../../..')
 
 const loadYaml = async <T = unknown>(relativePath: string): Promise<T> => {
   const absolutePath = resolve(repoRoot, relativePath)
