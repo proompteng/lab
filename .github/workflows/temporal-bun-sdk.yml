@@ -195,7 +195,7 @@ jobs:
 
   publish-release:
     name: Publish Temporal Bun SDK
-    runs-on: arc-arm64
+    runs-on: ubuntu-latest
     needs: test
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'publish' && github.ref == 'refs/heads/main'
     permissions:
