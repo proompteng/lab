@@ -244,6 +244,7 @@ export interface CreateTemporalClientOptions {
   interceptors?: TemporalInterceptor[]
   interceptorBuilder?: InterceptorBuilder
   workflowService?: WorkflowServiceClient
+  transport?: ClosableTransport
 }
 
 export const createTemporalClient = async (
@@ -289,17 +290,23 @@ export const createTemporalClient = async (
     metrics: metricsRegistry,
     metricsExporter,
     workflowService,
+    transport,
   })
 
-  return Effect.runPromise(
-    effect.pipe(
-      Effect.provideService(TemporalConfigService, config),
-      Effect.provideService(LoggerService, logger),
-      Effect.provideService(MetricsService, metricsRegistry),
-      Effect.provideService(MetricsExporterService, metricsExporter),
-      Effect.provideService(WorkflowServiceClientService, workflowService),
-    ),
-  )
+  try {
+    return await Effect.runPromise(
+      effect.pipe(
+        Effect.provideService(TemporalConfigService, config),
+        Effect.provideService(LoggerService, logger),
+        Effect.provideService(MetricsService, metricsRegistry),
+        Effect.provideService(MetricsExporterService, metricsExporter),
+        Effect.provideService(WorkflowServiceClientService, workflowService),
+      ),
+    )
+  } catch (error) {
+    await transport.close?.()
+    throw error
+  }
 }
 
 export const makeTemporalClientEffect = (
@@ -323,7 +330,7 @@ export const makeTemporalClientEffect = (
       Context.getOption(context, WorkflowServiceClientService),
     )
     let workflowService = options.workflowService ?? Option.getOrUndefined(workflowServiceFromContext)
-    let transport: ClosableTransport | undefined
+    let transport: ClosableTransport | undefined = options.transport
 
     if (!workflowService) {
       const interceptorBuilder = options.interceptorBuilder ?? makeDefaultInterceptorBuilder()
