@@ -20,6 +20,7 @@ describe('runTemporalCliEffect', () => {
             namespace: 'cli-layer-test',
             taskQueue: 'cli-layer-queue',
           },
+          env: {},
         },
       },
     )

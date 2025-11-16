@@ -3,7 +3,12 @@ import { createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
 import { Effect, Layer } from 'effect'
 
-import { buildTransportOptions, makeTemporalClientEffect, normalizeTemporalAddress } from '../../src/client'
+import {
+  buildTransportOptions,
+  createTemporalClient,
+  makeTemporalClientEffect,
+  normalizeTemporalAddress,
+} from '../../src/client'
 import { loadTemporalConfig, type TemporalConfig } from '../../src/config'
 import { WorkerVersioningMode } from '../../src/proto/temporal/api/enums/v1/deployment_pb'
 import { VersioningBehavior } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
