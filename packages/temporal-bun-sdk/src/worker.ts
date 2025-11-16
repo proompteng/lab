@@ -1,7 +1,8 @@
 import type { DataConverter } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig } from './config'
 import { deriveWorkerBuildId, resolveWorkerActivities, resolveWorkerWorkflowsPath } from './worker/defaults'
-import type { ActivityHandler, WorkerDeploymentConfig, WorkerRuntime } from './worker/runtime'
+import type { ActivityHandler, WorkerDeploymentConfig } from './worker/runtime'
+import { WorkerRuntime } from './worker/runtime'
 import type { WorkflowDefinitions } from './workflow/definition'
 
 export interface CreateWorkerOptions {

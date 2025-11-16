@@ -1,5 +1,4 @@
-import { Context, Effect, Exit, Fiber, Layer } from 'effect'
-import { Scope } from 'effect/Scope'
+import { Cause, Context, Effect, Exit, Fiber, Layer } from 'effect'
 
 import {
   LoggerService,
@@ -49,21 +48,25 @@ export const makeWorkerRuntimeEffect = (options: WorkerRuntimeOptions = {}) =>
 export const runWorkerEffect = (options: WorkerRuntimeOptions = {}) =>
   Effect.acquireRelease(
     Effect.gen(function* () {
-      const scope = yield* Effect.scope
+      const parentFiber = (yield* Effect.withFiberRuntime((fiber) => Effect.succeed(fiber))) as Fiber.RuntimeFiber<
+        unknown,
+        unknown
+      >
       const runtime = yield* makeWorkerRuntimeEffect(options)
       const runFiber = yield* Effect.forkDaemon(Effect.promise(() => runtime.run()))
       yield* Effect.addFinalizer(() => Fiber.interruptFork(runFiber))
-      yield* Effect.sync(() =>
+      yield* Effect.sync(() => {
         runFiber.addObserver((exit) => {
           if (Exit.isFailure(exit)) {
+            const error = Cause.pretty(exit.cause)
             Effect.runFork(
-              Effect.logError('temporal worker runtime failed', Exit.squash(exit)).pipe(
-                Effect.zipRight(Scope.close(scope, exit)),
+              Effect.logError('temporal worker runtime failed', error).pipe(
+                Effect.zipRight(parentFiber.interruptAsFork(runFiber.id())),
               ),
             )
           }
-        }),
-      )
+        })
+      })
       return runtime
     }),
     (runtime) => Effect.promise(() => runtime.shutdown()),
