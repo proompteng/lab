@@ -266,22 +266,40 @@ export const createTemporalClient = async (
     ),
   )
   const { logger, metricsRegistry, metricsExporter } = observability
-  const interceptorBuilder = options.interceptorBuilder ?? makeDefaultInterceptorBuilder()
-  const defaultInterceptors = await Effect.runPromise(
-    interceptorBuilder.build({
-      namespace: options.namespace ?? config.namespace,
-      identity: options.identity ?? config.workerIdentity,
-      logger,
-      metricsRegistry,
-      metricsExporter,
-    }),
-  )
-  const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
-  const baseUrl = normalizeTemporalAddress(config.address, shouldUseTls)
-  const allInterceptors = [...defaultInterceptors, ...(options.interceptors ?? [])]
-  const transportOptions = buildTransportOptions(baseUrl, config, allInterceptors)
-  const transport = createGrpcTransport(transportOptions) as ClosableTransport
-  const workflowService = createClient(WorkflowService, transport)
+  let transport = options.transport
+  let workflowService = options.workflowService
+  let createdTransport: ClosableTransport | undefined
+
+  if (!workflowService) {
+    if (!transport) {
+      const interceptorBuilder = options.interceptorBuilder ?? makeDefaultInterceptorBuilder()
+      const defaultInterceptors = await Effect.runPromise(
+        interceptorBuilder.build({
+          namespace: options.namespace ?? config.namespace,
+          identity: options.identity ?? config.workerIdentity,
+          logger,
+          metricsRegistry,
+          metricsExporter,
+        }),
+      )
+      const shouldUseTls = Boolean(config.tls || config.allowInsecureTls)
+      const baseUrl = normalizeTemporalAddress(config.address, shouldUseTls)
+      const allInterceptors = [...defaultInterceptors, ...(options.interceptors ?? [])]
+      const transportOptions = buildTransportOptions(baseUrl, config, allInterceptors)
+      transport = createGrpcTransport(transportOptions) as ClosableTransport
+      createdTransport = transport
+    }
+
+    if (!transport) {
+      throw new Error('Temporal transport is not available')
+    }
+
+    workflowService = createClient(WorkflowService, transport)
+  }
+
+  if (!workflowService) {
+    throw new Error('Temporal workflow service is not available')
+  }
 
   const effect = makeTemporalClientEffect({
     ...options,
@@ -304,7 +322,7 @@ export const createTemporalClient = async (
       ),
     )
   } catch (error) {
-    await transport.close?.()
+    await createdTransport?.close?.()
     throw error
   }
 }
