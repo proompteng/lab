@@ -55,22 +55,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
       - name: Set up Node.js 22
         uses: actions/setup-node@v6
         with:
           node-version: '22.20.0'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
 
-      - uses: pnpm/action-setup@v4
-        with:
-          run_install: true
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --recursive
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: Build Temporal Bun SDK
         run: pnpm --filter @proompteng/temporal-bun-sdk build
@@ -117,19 +120,25 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
       - name: Set up Node.js 22
         uses: actions/setup-node@v6
         with:
           node-version: '22.20.0'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --recursive
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-
-      - uses: pnpm/action-setup@v4
-        with:
-          run_install: true
 
       - name: Run release-please (manifest)
         id: release_please
@@ -167,15 +176,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.1
+          run_install: false
+
       - name: Set up Node.js 22
         uses: actions/setup-node@v6
         with:
           node-version: '22.20.0'
           registry-url: https://registry.npmjs.org
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
 
-      - uses: pnpm/action-setup@v4
-        with:
-          run_install: true
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --recursive
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
