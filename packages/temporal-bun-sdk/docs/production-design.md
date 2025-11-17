@@ -63,7 +63,7 @@ to be complete, with supporting validation and documentation.
 | Testing & QA | ✅ replay + integration | Deterministic regression suite, integration tests with Temporal dev server; load/perf smoke tests still pending. | Yes |
 | Tooling | 🚧 partial | CLI connectivity check, replay CLI, proto regeneration script, API docs generator. | No (Beta) |
 | Documentation | 🚧 partial | Architecture guide, workflow/activities best practices, migration guide, troubleshooting, accessibility for CLI. | Yes |
-| Release operations | 🚧 not started | Semantic versioning, changelog automation, npm publish pipeline, support SLAs. | Yes |
+| Release operations | ✅ automated | Trusted release workflows (prepare/publish), release-please changelog automation, npm provenance publishing, support SLAs. | Yes |
 
 Legend: ✅ complete, 🚧 in progress/planned.
 
@@ -306,8 +306,19 @@ can contribute independently without re-planning.
 
 ### TBS-009 – Release Automation
 
-- **Status**: 🚧 Not started. Version `0.1.0` was published manually on 2025-11-16,
-  so every future GA release is blocked on reproducible automation.
+- **Status**: ✅ Completed on 2025-11-17. `temporal-bun-sdk.yml` now gates every
+  release via release-please, Biome/unit/load suites, and npm trusted publishing
+  with provenance so `main` publishes are reproducible (v0.2.0 shipped through
+  the pipeline the same day).
+- **Highlights**
+  - release-please prepare job opens the automated release PR, runs validation
+    suites against `release-please--branches--main--components--temporal-bun-sdk`,
+    and updates `CHANGELOG.md`/`package.json`.
+  - Publish job upgrades npm to ≥11.5, relies on GitHub OIDC trusted publishing
+    (no automation token), reenforces all tests/builds, and runs `npm publish
+    --provenance --tag <dist>`.
+  - `packages/temporal-bun-sdk/docs/release-runbook.md` documents the flow, while
+    the proto regeneration workflow keeps generated sources aligned with upstream.
 - **Starting points**
   - `.github/workflows/temporal-bun-sdk.yml` – dual-mode workflow: `prepare`
     triggers release-please to open/update the release PR and run validation
@@ -319,7 +330,7 @@ can contribute independently without re-planning.
     release-please (`node` release type) for `packages/temporal-bun-sdk`.
   - `packages/temporal-bun-sdk/CHANGELOG.md` – canonical changelog kept current
     by release-please.
-- **Acceptance criteria**
+- **Acceptance criteria (met)**
   1. The release workflow installs Node 22 + Bun, runs `pnpm install
      --frozen-lockfile`, executes `pnpm exec biome check
      packages/temporal-bun-sdk`, `pnpm --filter @proompteng/temporal-bun-sdk
@@ -486,19 +497,20 @@ can contribute independently without re-planning.
   and TLS configuration.
 - **CLI accessibility** – Audit output colors/ARIA hints for `temporal-bun`
   commands; ensure `doctor`/`replay` support `--json` for screen-reader/CI use.
-- **Release notes & changelog hooks** – Once TBS-009 lands, mirror each release
-  entry on the docs site with verification steps and upgrade notes.
+- **Release notes & changelog hooks** – Mirror each release entry on the docs
+  site (fed by release-please) with verification steps and upgrade notes now that
+  TBS-009 is live.
 
 ## Release & Support Plan
 
-1. **Versioning (TBS-009)**
-   - Semantic versioning, release candidates before GA.
-2. **Changelog**
-   - Automated changelog (Conventional Commits).
-3. **Publishing**
-   - Signed npm publishes with provenance (GitHub OIDC + npm token scoping).
+1. **Versioning (TBS-009) – ✅ shipped**
+   - Semantic versioning + release-please manifest drive RC/GA cadence.
+2. **Changelog – ✅ automated**
+   - release-please rewrites `CHANGELOG.md` from Conventional Commits.
+3. **Publishing – ✅ trusted**
+   - Signed npm publishes with provenance (GitHub OIDC trusted publishing).
 4. **Support policy**
-  - Document security disclosure process, escalation contacts, and SLA for bug fixes.
+   - Document security disclosure process, escalation contacts, and SLA for bug fixes.
 
 ## Risks & Mitigations
 
@@ -520,7 +532,7 @@ can contribute independently without re-planning.
 6. 🚧 Observability: logs, metrics, tracing hooks.
 7. 🚧 Temporal dev-server integration suite + replay regression harness.
 8. 🚧 Documentation overhaul (architecture, tutorials, troubleshooting).
-9. 🚧 Release automation: lint/test/build, versioning, changelog, npm publish pipeline.
+9. ✅ Release automation: lint/test/build, versioning, changelog, npm publish pipeline.
 10. 🚧 Support & maintenance guide (issue triage and security policy).
 
 Progress through this checklist gates each release milestone (Alpha → Beta → RC → GA).
