@@ -1,13 +1,21 @@
 # `@proompteng/temporal-bun-sdk`
 
-A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over HTTP/2 using [Connect](https://connectrpc.com/) and executes workflows with the [Effect](https://effect.website/) runtime so you can run Temporal workers without shipping Node.js or any native bridge.
+A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over HTTP/2 using [Connect](https://connectrpc.com/) and executes workflows with the [Effect](https://effect.website/) runtime so you can run Temporal workers without shipping Node.js or any native bridge. For an architecture deep dive see [`docs/production-design.md`](./docs/production-design.md); the release workflow referenced in #1818 lives in [`docs/release-runbook.md`](./docs/release-runbook.md).
 
 ## Highlights
-- **TypeScript-only runtime** – workflow polling, activity execution, and command generation run in Bun using generated Temporal protobuf stubs.
-- **Effect-based workflows** – define deterministic workflows with `Effect` and let the runtime translate results/failures into Temporal commands.
-- **Connect-powered client** – `createTemporalClient` gives you a fully typed Temporal WorkflowService client backed by @bufbuild/protobuf.
+- **GA-ready deterministic runtime** – workflow polling, sticky cache orchestration, and release artifacts run entirely in Bun so you can deploy workers without Node.js or native bridges.
+- **Effect-based workflows** – define deterministic workflows with `Effect`, keep logical time/replay metadata in sync, and fail fast with `WorkflowNondeterminismError` when histories diverge.
+- **Connect-powered client** – `createTemporalClient` plus `temporalCallOptions()` wraps every WorkflowService RPC with retries, TLS validation, and memo/search-attribute helpers. Workflow Update helpers will build on the same surface in #1814.
 - **Simple data conversion** – JSON payload conversion out of the box with hooks for custom codecs.
-- **Bun CLI** – `temporal-bun` scaffolds workers and ships lightweight Docker helpers (no Zig build steps required).
+- **Bun CLI & worker orchestration** – `temporal-bun` + `temporal-bun-worker` scaffold workers, bootstrap projects, and wire concurrency/metrics knobs without Zig build steps.
+- **Signals, updates, queries roadmap** – Outbound commands ship today and the inbound/update servicing milestones live in the Post-GA roadmap (#1814–#1816).
+
+## GA support & versioning
+- **Version:** `1.0.0` (November 17, 2025) is the first generally available release. Future tags follow semantic versioning: patch releases contain backwards-compatible fixes, minors add features, and majors capture breaking API shifts.
+- **Supported runtimes:** Validated with Bun ≥ 1.1.20 plus Temporal Cloud and the Temporal CLI dev server (CLI ≥ 1.4). Self-hosted clusters should match the Temporal Server feature set shipped in Cloud as of November 2025.
+- **Release workflow:** Release automation lives in [`.github/workflows/temporal-bun-sdk.yml`](../../.github/workflows/temporal-bun-sdk.yml); follow [`docs/release-runbook.md`](./docs/release-runbook.md) before publishing to npm to keep release-please, provenance, and build artifacts in sync.
+- **Support policy:** Track issues in this repo with the package version and namespace/build information. For operational context (worker topology, metrics, rollback steps) use [`docs/production-design.md`](./docs/production-design.md).
+- **Post-GA limitations:** Workflow Updates, inbound signal/query handlers, query-only task responses, and the expanded workflow command surface remain in progress (issues #1814–#1817). See “Post-GA roadmap” below for timelines and mitigation ideas.
 
 ## Prerequisites
 - **Bun ≥ 1.1.20** – required for the runtime and CLI.
@@ -91,6 +99,8 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
 - **Memo & search attribute helpers** – `client.memo.encode/decode` and `client.searchAttributes.encode/decode` reuse the client’s `DataConverter`, making it trivial to prepare `Memo`/`SearchAttributes` payloads for raw WorkflowService requests.
 - **TLS validation & handshake errors** – TLS buffers are validated up front (missing files, invalid PEMs, and mismatched cert/key pairs throw `TemporalTlsConfigurationError`). Runtime handshake failures raise `TemporalTlsHandshakeError` with remediation hints (verify CA bundles, check `TEMPORAL_TLS_SERVER_NAME`, or use `TEMPORAL_ALLOW_INSECURE=1` in trusted dev clusters).
 
+> **Workflow Updates & query-only tasks:** Client helpers for workflow updates and dedicated `RespondQueryTaskCompleted` flows are tracked in issues #1814 and #1816. Continue to rely on signals and read-only workflow-task queries until those roadmap items land.
+
 ## Workflow surface
 
 Workflow handlers receive a rich context that captures command intents deterministically. Alongside `input` you now get:
@@ -101,6 +111,8 @@ Workflow handlers receive a rich context that captures command intents determini
 - `signals.signal(name, args, options)` – queues `SIGNAL_EXTERNAL_WORKFLOW_EXECUTION` for another run or child.
 - `continueAsNew(options)` – records a `CONTINUE_AS_NEW_WORKFLOW_EXECUTION` command and short-circuits the current run.
 - `determinism.now()` / `determinism.random()` – shims for wall clock time and randomness that log values into the replay ledger so replays must produce identical sequences.
+
+> **Post-GA guardrails:** Inbound signal/query handler registration and the expanded workflow command surface (cancellations, search attribute upserts, local activities, `SideEffect`, `GetVersion`, etc.) are actively tracked in issues #1815 and #1817. These APIs will plug into the same context helpers once those roadmap items merge.
 
 Example:
 
@@ -383,6 +395,12 @@ Example logs:
 ```
 
 Production clusters should enable worker versioning, watch for the registration log during deploys, and alert on failures so versioned queues stay healthy.
+
+## Post-GA roadmap
+- **Workflow Updates (#1814)** – exposes `client.workflow.update()` helpers, deterministic update handlers, and replay-aware scheduler plumbing. Until it lands, prefer workflow restarts/signals for incremental mutations.
+- **Inbound workflow signals & queries (#1815)** – adds typed handler registration, deterministic ingestion, and replay/state snapshots for inbound signals/queries so workflows can respond without polling tricks.
+- **Query-only tasks (#1816)** – implements `RespondQueryTaskCompleted` in the worker runtime, making `client.queryWorkflow()` resolve even when no workflow tasks are pending.
+- **Expanded workflow commands (#1817)** – rounds out cancellations, search attribute upserts, `SideEffect`, `GetVersion`, local activities, and patch markers to match the TypeScript SDK surface.
 
 ## License
 MIT © ProomptEng AI
