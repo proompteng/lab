@@ -100,7 +100,7 @@ spec:
             "${WORKTREE_DIR}/apps/froussard/src/codex/cli/codex-implement.ts" "$EVENT_FILE"
         volumeMounts:
           - name: workdir
-            mountPath: /workspace/lab
+            mountPath: /workspace
         resources:
           requests:
             cpu: "4"
