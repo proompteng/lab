@@ -158,10 +158,6 @@ jobs:
       - name: Build Temporal Bun SDK
         run: pnpm --filter @proompteng/temporal-bun-sdk build
 
-      - name: Summarize release PR
-        run: |
-          echo "Updated release PR #${{ steps.release_please.outputs.pr }}"
-
   publish-release:
     name: Publish Temporal Bun SDK
     runs-on: ubuntu-latest
