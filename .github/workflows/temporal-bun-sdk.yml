@@ -185,6 +185,11 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: pnpm-lock.yaml
 
+      - name: Upgrade npm for trusted publishing
+        run: |
+          npm install -g npm@11.5.1
+          npm --version
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --recursive
 
@@ -232,7 +237,6 @@ jobs:
         env:
           NPM_DIST_TAG: ${{ steps.release_meta.outputs.npm_tag }}
           DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           if [[ "${DRY_RUN}" == "true" ]]; then
