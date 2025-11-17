@@ -1,19 +1,19 @@
 #!/usr/bin/env bun
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { create } from '@bufbuild/protobuf'
 
+import { create } from '@bufbuild/protobuf'
+import { PayloadsSchema } from '../packages/temporal-bun-sdk/src/proto/temporal/api/common/v1/message_pb'
+import { EventType } from '../packages/temporal-bun-sdk/src/proto/temporal/api/enums/v1/event_type_pb'
 import type { HistoryEvent } from '../packages/temporal-bun-sdk/src/proto/temporal/api/history/v1/message_pb'
 import {
-  HistoryEventSchema,
-  TimerStartedEventAttributesSchema,
   ActivityTaskScheduledEventAttributesSchema,
+  HistoryEventSchema,
   StartChildWorkflowExecutionInitiatedEventAttributesSchema,
+  TimerStartedEventAttributesSchema,
   WorkflowExecutionContinuedAsNewEventAttributesSchema,
 } from '../packages/temporal-bun-sdk/src/proto/temporal/api/history/v1/message_pb'
 import { TaskQueueSchema } from '../packages/temporal-bun-sdk/src/proto/temporal/api/taskqueue/v1/message_pb'
-import { PayloadsSchema } from '../packages/temporal-bun-sdk/src/proto/temporal/api/common/v1/message_pb'
-import { EventType } from '../packages/temporal-bun-sdk/src/proto/temporal/api/enums/v1/event_type_pb'
 
 type Fixture = {
   name: string

@@ -1,4 +1,4 @@
-import { CodexExec, type CodexExecArgs } from './codex-exec'
+import type { CodexExec, CodexExecArgs } from './codex-exec'
 import type { CodexOptions, ThreadOptions, TurnOptions } from './options'
 import type { ThreadEvent, ThreadItem, Usage } from './types'
 

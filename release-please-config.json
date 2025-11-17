@@ -6,9 +6,7 @@
       "component": "temporal-bun-sdk",
       "package-name": "@proompteng/temporal-bun-sdk",
       "changelog-path": "packages/temporal-bun-sdk/CHANGELOG.md",
-      "extra-files": [
-        "packages/temporal-bun-sdk/package.json"
-      ],
+      "extra-files": ["packages/temporal-bun-sdk/package.json"],
       "include-component-in-tag": false,
       "versioning": "default"
     }
