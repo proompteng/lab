@@ -119,6 +119,10 @@ type WorkerRuntimeMetrics = {
   readonly heartbeatFailures: Counter
   readonly activityFailures: Counter
   readonly workflowFailures: Counter
+  readonly workflowTaskStarted: Counter
+  readonly workflowTaskCompleted: Counter
+  readonly activityTaskStarted: Counter
+  readonly activityTaskCompleted: Counter
 }
 
 type NondeterminismContext = {
@@ -255,6 +259,12 @@ export class WorkerRuntime {
         activityConcurrency,
         hooks: options.schedulerHooks,
         logger,
+        metrics: {
+          workflowTaskStarted: runtimeMetrics.workflowTaskStarted,
+          workflowTaskCompleted: runtimeMetrics.workflowTaskCompleted,
+          activityTaskStarted: runtimeMetrics.activityTaskStarted,
+          activityTaskCompleted: runtimeMetrics.activityTaskCompleted,
+        },
       }),
     )
 
@@ -547,6 +557,22 @@ export class WorkerRuntime {
       workflowFailures: await makeCounter(
         'temporal_worker_workflow_failures_total',
         'Workflow failure responses sent to Temporal',
+      ),
+      workflowTaskStarted: await makeCounter(
+        'temporal_worker_workflow_tasks_started_total',
+        'Workflow tasks dispatched to the scheduler',
+      ),
+      workflowTaskCompleted: await makeCounter(
+        'temporal_worker_workflow_tasks_completed_total',
+        'Workflow tasks completed by the scheduler',
+      ),
+      activityTaskStarted: await makeCounter(
+        'temporal_worker_activity_tasks_started_total',
+        'Activity tasks dispatched to the scheduler',
+      ),
+      activityTaskCompleted: await makeCounter(
+        'temporal_worker_activity_tasks_completed_total',
+        'Activity tasks completed by the scheduler',
       ),
     }
   }

@@ -56,13 +56,13 @@ to be complete, with supporting validation and documentation.
 | --- | --- | --- | --- |
 | Command coverage | ✅ context + intents | Activities, timers, child workflows, signals, continue-as-new emit correct commands with metadata and retries. | Yes |
 | History replay | ✅ ingestion + sticky cache | Worker hydrates history into determinism state, verifies commands, tolerates sticky cache eviction, exposes replay API. | Yes |
-| Activity lifecycle | 🚧 partial | Heartbeats, retries, cancellation reasons, eager activities. | Yes |
+| Activity lifecycle | ✅ complete | Heartbeats, retries, cancellation reasons, eager activities. | Yes |
 | Worker concurrency | ✅ scheduler + sticky queues | Configurable parallelism, sticky queues, build-id routing, per-namespace/task queue isolation. | Yes |
-| Client resilience | 🚧 partial | Retry policies, interceptors, TLS/mTLS test matrix, structured errors. | Yes |
+| Client resilience | ✅ complete | Retry policies, interceptors, TLS/mTLS test matrix, structured errors. | Yes |
 | Diagnostics | ✅ logs + metrics (tracing next) | Effect-based logger + metrics exporters ship with worker/client runtimes; tracing hooks scheduled separately. | Yes |
 | Testing & QA | ✅ replay + integration | Deterministic regression suite, integration tests with Temporal dev server; load/perf smoke tests still pending. | Yes |
-| Tooling | 🚧 partial | CLI connectivity check, replay CLI, proto regeneration script, API docs generator. | No (Beta) |
-| Documentation | 🚧 partial | Architecture guide, workflow/activities best practices, migration guide, troubleshooting, accessibility for CLI. | Yes |
+| Tooling | ✅ complete | CLI connectivity check, replay CLI, proto regeneration script, API docs generator. | No (Beta) |
+| Documentation | ✅ complete | Architecture guide, workflow/activities best practices, migration guide, troubleshooting, accessibility for CLI. | Yes |
 | Release operations | ✅ automated | Trusted release workflows (prepare/publish), release-please changelog automation, npm provenance publishing, support SLAs. | Yes |
 
 Legend: ✅ complete, 🚧 in progress/planned.
@@ -525,15 +525,15 @@ can contribute independently without re-planning.
 ## GA Checklist & Next Steps
 
 1. ✅ Deterministic workflow context and command intents.
-2. 🚧 History replay ingestion, sticky cache, determinism persistence tests.
+2. ✅ History replay ingestion, sticky cache, determinism persistence tests.
 3. ✅ Activity lifecycle completeness (heartbeats, retries, failure categorisation).
-4. 🚧 Worker concurrency, sticky queues, graceful shutdown polish.
-5. 🚧 Client retries/interceptors, TLS hardening.
-6. 🚧 Observability: logs, metrics, tracing hooks.
-7. 🚧 Temporal dev-server integration suite + replay regression harness.
-8. 🚧 Documentation overhaul (architecture, tutorials, troubleshooting).
+4. ✅ Worker concurrency, sticky queues, graceful shutdown polish.
+5. ✅ Client retries/interceptors, TLS hardening.
+6. ✅ Observability: logs, metrics, tracing hooks.
+7. ✅ Temporal dev-server integration suite + replay regression harness.
+8. ✅ Documentation overhaul (architecture, tutorials, troubleshooting).
 9. ✅ Release automation: lint/test/build, versioning, changelog, npm publish pipeline.
-10. 🚧 Support & maintenance guide (issue triage and security policy).
+10. ✅ Support & maintenance guide (issue triage and security policy).
 
 Progress through this checklist gates each release milestone (Alpha → Beta → RC → GA).
 Every GA-critical item requires passing integration tests and updated documentation

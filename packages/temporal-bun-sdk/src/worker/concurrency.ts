@@ -2,12 +2,14 @@ import { Cause, Effect, Exit, Fiber, Ref } from 'effect'
 import * as Queue from 'effect/Queue'
 import * as TSemaphore from 'effect/TSemaphore'
 import type { Logger } from '../observability/logger'
+import type { Counter } from '../observability/metrics'
 
 export interface WorkerSchedulerOptions {
   readonly workflowConcurrency: number
   readonly activityConcurrency: number
   readonly hooks?: WorkerSchedulerHooks
   readonly logger?: Logger
+  readonly metrics?: WorkerSchedulerMetrics
 }
 
 export interface WorkerSchedulerHooks {
@@ -26,6 +28,13 @@ export interface ActivityTaskEnvelope {
   readonly taskToken: Uint8Array
   readonly handler: (...args: unknown[]) => unknown | Promise<unknown>
   readonly args: unknown[]
+}
+
+export interface WorkerSchedulerMetrics {
+  readonly workflowTaskStarted?: Counter
+  readonly workflowTaskCompleted?: Counter
+  readonly activityTaskStarted?: Counter
+  readonly activityTaskCompleted?: Counter
 }
 
 export interface WorkerScheduler {
@@ -55,12 +64,7 @@ const logTaskFailure = (
   })
 }
 
-const metricsPlaceholder = (label: string, stage: 'start' | 'complete'): Effect.Effect<void> =>
-  Effect.sync(() => {
-    // TODO(TBS-004): Integrate metrics emission once observability layer lands.
-    void label
-    void stage
-  })
+const recordMetric = (counter?: Counter): Effect.Effect<void, never, never> => (counter ? counter.inc() : Effect.void)
 
 export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Effect<WorkerScheduler, unknown, never> =>
   Effect.gen(function* () {
@@ -87,9 +91,9 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
           if (hooks.onWorkflowStart) {
             yield* hooks.onWorkflowStart(task)
           }
-          yield* metricsPlaceholder('workflow', 'start')
+          yield* recordMetric(options.metrics?.workflowTaskStarted)
           yield* task.execute()
-          yield* metricsPlaceholder('workflow', 'complete')
+          yield* recordMetric(options.metrics?.workflowTaskCompleted)
         }),
         finalizer,
       )
@@ -102,9 +106,9 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
           if (hooks.onActivityStart) {
             yield* hooks.onActivityStart(task)
           }
-          yield* metricsPlaceholder('activity', 'start')
+          yield* recordMetric(options.metrics?.activityTaskStarted)
           yield* Effect.tryPromise(async () => await task.handler(...task.args))
-          yield* metricsPlaceholder('activity', 'complete')
+          yield* recordMetric(options.metrics?.activityTaskCompleted)
         }),
         finalizer,
       )

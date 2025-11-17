@@ -98,3 +98,72 @@ test('stop waits for in-flight workflow tasks to finish', async () => {
     }),
   )
 })
+
+test('records scheduler metrics for workflow and activity tasks', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const workflowStarted = makeMetricCounter()
+      const workflowCompleted = makeMetricCounter()
+      const activityStarted = makeMetricCounter()
+      const activityCompleted = makeMetricCounter()
+
+      const scheduler = yield* makeWorkerScheduler({
+        workflowConcurrency: 1,
+        activityConcurrency: 1,
+        metrics: {
+          workflowTaskStarted: workflowStarted.counter,
+          workflowTaskCompleted: workflowCompleted.counter,
+          activityTaskStarted: activityStarted.counter,
+          activityTaskCompleted: activityCompleted.counter,
+        },
+      })
+
+      yield* scheduler.start
+
+      let workflowRuns = 0
+      let activityRuns = 0
+
+      yield* scheduler.enqueueWorkflow({
+        taskToken: new Uint8Array([1]),
+        execute: () =>
+          Effect.gen(function* () {
+            yield* Effect.sleep('5 millis')
+            workflowRuns += 1
+          }),
+      })
+
+      yield* scheduler.enqueueActivity({
+        taskToken: new Uint8Array([2]),
+        handler: async () => {
+          activityRuns += 1
+        },
+        args: [],
+      })
+
+      yield* Effect.sleep('20 millis')
+      yield* scheduler.stop
+
+      yield* Effect.sync(() => {
+        expect(workflowRuns).toBe(1)
+        expect(activityRuns).toBe(1)
+        expect(workflowStarted.read()).toBe(1)
+        expect(workflowCompleted.read()).toBe(1)
+        expect(activityStarted.read()).toBe(1)
+        expect(activityCompleted.read()).toBe(1)
+      })
+    }),
+  )
+})
+
+const makeMetricCounter = () => {
+  let count = 0
+  return {
+    counter: {
+      inc: (value = 1) =>
+        Effect.sync(() => {
+          count += value
+        }),
+    },
+    read: () => count,
+  }
+}
