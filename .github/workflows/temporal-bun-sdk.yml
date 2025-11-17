@@ -232,6 +232,7 @@ jobs:
         env:
           NPM_DIST_TAG: ${{ steps.release_meta.outputs.npm_tag }}
           DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           if [[ "${DRY_RUN}" == "true" ]]; then
