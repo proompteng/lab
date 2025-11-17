@@ -216,7 +216,13 @@ jobs:
 
       - name: Confirm package version
         run: |
-          node -e "const fs=require('node:fs');const pkg=JSON.parse(fs.readFileSync('packages/temporal-bun-sdk/package.json','utf8'));console.log(\`Publishing @proompteng/temporal-bun-sdk v${pkg.version}\`);"
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const pkg = JSON.parse(
+            fs.readFileSync('packages/temporal-bun-sdk/package.json', 'utf8'),
+          )
+          console.log(`Publishing @proompteng/temporal-bun-sdk v${pkg.version}`)
+          NODE
 
       - name: Build Temporal Bun SDK
         run: pnpm --filter @proompteng/temporal-bun-sdk build
