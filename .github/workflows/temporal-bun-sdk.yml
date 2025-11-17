@@ -158,35 +158,6 @@ jobs:
       - name: Build Temporal Bun SDK
         run: pnpm --filter @proompteng/temporal-bun-sdk build
 
-      - name: Summarize release PR
-        env:
-          RELEASE_PR_JSON: ${{ steps.release_please.outputs.pr }}
-        run: |
-          node - <<'NODE'
-          const raw = process.env.RELEASE_PR_JSON;
-          if (!raw) {
-            console.log('release-please did not create or update a PR.');
-            process.exit(0);
-          }
-          let pr;
-          try {
-            pr = JSON.parse(raw);
-          } catch (error) {
-            console.log('release-please output is not valid JSON:', raw);
-            process.exit(0);
-          }
-          const number = pr.number ?? 'unknown';
-          const title = pr.title ?? '';
-          const url = pr.url ?? '';
-          console.log(`Updated release PR #${number}`);
-          if (title) {
-            console.log(title);
-          }
-          if (url) {
-            console.log(url);
-          }
-          NODE
-
   publish-release:
     name: Publish Temporal Bun SDK
     runs-on: ubuntu-latest
