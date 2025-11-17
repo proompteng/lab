@@ -66,16 +66,13 @@ jobs:
         with:
           run_install: false
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --recursive
-
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --recursive
 
       - name: Build Temporal Bun SDK
         run: pnpm --filter @proompteng/temporal-bun-sdk build
