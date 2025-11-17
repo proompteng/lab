@@ -3,6 +3,9 @@
 Automation now drives every step via `.github/workflows/temporal-bun-sdk.yml`. Use
 this runbook as a quick reference for triggering and validating releases.
 
+> **Status:** TBS-009 (Release Automation) closed on 2025-11-17 via the trusted
+> publishing workflow; this document captures the final process.
+
 ## Prerequisites
 
 - npm trust publishing is enabled for `proompteng/lab → temporal-bun-sdk.yml`
