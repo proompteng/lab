@@ -117,6 +117,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.20.0'
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: true
+
       - name: Run release-please (manifest)
         id: release_please
         uses: google-github-actions/release-please-action@v4
@@ -161,15 +175,12 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 10.18.1
+          run_install: true
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: Derive release metadata
         id: release_meta
