@@ -117,6 +117,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.20.0'
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - uses: pnpm/action-setup@v4
         with:
           run_install: true
