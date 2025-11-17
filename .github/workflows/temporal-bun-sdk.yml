@@ -124,12 +124,6 @@ jobs:
           command: manifest
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Ensure release PR exists
-        if: steps.release_please.outputs.pr == ''
-        run: |
-          echo 'No release PR created. Ensure there are Conventional Commit entries since the last release.'
-          exit 1
-
       - name: Fetch release branch
         id: release_branch
         run: |
