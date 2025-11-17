@@ -14,6 +14,16 @@ spec:
         value: '{}'
       - name: eventBody
         value: '{}'
+  volumeClaimTemplates:
+    - metadata:
+        name: workdir
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 30Gi
+        storageClassName: longhorn
   templates:
     - name: implement
       inputs:
@@ -88,6 +98,9 @@ spec:
 
             echo "Executing implementation workflow" >&2
             "${WORKTREE_DIR}/apps/froussard/src/codex/cli/codex-implement.ts" "$EVENT_FILE"
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace/lab
         resources:
           requests:
             cpu: "4"
