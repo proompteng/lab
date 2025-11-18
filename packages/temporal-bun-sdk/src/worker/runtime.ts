@@ -86,6 +86,7 @@ import { WorkflowNondeterminismError } from '../workflow/errors'
 import type { WorkflowQueryEvaluationResult } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
 import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from '../workflow/inbound'
+import { buildUpdateProtocolMessages, collectWorkflowUpdates } from './update-protocol'
 import { WorkflowRegistry } from '../workflow/registry'
 import {
   DETERMINISM_MARKER_NAME,
@@ -835,6 +836,13 @@ export class WorkerRuntime {
     const workflowTaskAttempt = Number(response.attempt ?? 1)
     const historyEvents = await this.#collectWorkflowHistory(execution, response)
     const workflowType = this.#resolveWorkflowType(response, historyEvents)
+    const args = await this.#decodeWorkflowArgs(historyEvents)
+    const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
+    const collectedUpdates = await collectWorkflowUpdates({
+      messages: response.messages ?? [],
+      dataConverter: this.#dataConverter,
+      log: (level, message, fields) => this.#log(level, message, fields),
+    })
     const baseLogFields = this.#workflowLogFields(execution, workflowType, {
       workflowTaskAttempt,
       stickyScheduling: this.#stickySchedulingEnabled,
@@ -863,8 +871,6 @@ export class WorkerRuntime {
       queryCount: queryRequests.length,
       historyEventCount: response.history?.events?.length ?? 0,
     })
-    const args = await this.#decodeWorkflowArgs(historyEvents)
-    const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
     const stickyKey = this.#buildStickyKey(execution.workflowId, execution.runId)
     const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
     const historyReplay = await this.#ingestDeterminismState(workflowInfo, historyEvents, {
@@ -934,6 +940,7 @@ export class WorkerRuntime {
         activityResults,
         signalDeliveries,
         queryRequests,
+        updates: collectedUpdates.invocations,
       })
       this.#log('debug', 'workflow query evaluation summary', {
         ...baseLogFields,
@@ -966,6 +973,13 @@ export class WorkerRuntime {
       const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? historyReplay?.lastEventId ?? null
       const shouldRecordMarker = output.completion === 'pending'
       let commandsForResponse = output.commands
+      const updateProtocolMessages = await buildUpdateProtocolMessages({
+        dispatches: output.updateDispatches ?? [],
+        collected: collectedUpdates,
+        dataConverter: this.#dataConverter,
+        defaultIdentity: this.#identity,
+        log: (level, message, fields) => this.#log(level, message, fields),
+      })
 
       if (stickyKey) {
         if (output.completion === 'pending') {
@@ -1008,6 +1022,7 @@ export class WorkerRuntime {
           queryResults: multiQueryResults,
           ...(this.#stickySchedulingEnabled && !hasLegacyQueries ? { stickyAttributes: this.#stickyAttributes } : {}),
           ...(this.#versioningBehavior !== null ? { versioningBehavior: this.#versioningBehavior } : {}),
+          ...(updateProtocolMessages.length > 0 ? { messages: updateProtocolMessages } : {}),
         })
         try {
           await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
