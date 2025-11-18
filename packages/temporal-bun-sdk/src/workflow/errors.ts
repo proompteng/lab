@@ -59,3 +59,10 @@ export class ContinueAsNewWorkflowError extends WorkflowError {
     this.name = 'ContinueAsNewWorkflowError'
   }
 }
+
+export class WorkflowQueryHandlerMissingError extends WorkflowError {
+  constructor(queryName: string) {
+    super(`Workflow query handler not registered for "${queryName}"`)
+    this.name = 'WorkflowQueryHandlerMissingError'
+  }
+}

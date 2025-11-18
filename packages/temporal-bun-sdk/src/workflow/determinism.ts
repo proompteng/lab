@@ -31,11 +31,32 @@ export interface WorkflowDeterminismFailureMetadata {
   readonly retryState?: number
 }
 
+export interface WorkflowDeterminismSignalRecord {
+  readonly signalName: string
+  readonly handlerName?: string
+  readonly payloadHash: string
+  readonly eventId?: string | null
+  readonly workflowTaskCompletedEventId?: string | null
+  readonly identity?: string | null
+}
+
+export interface WorkflowDeterminismQueryRecord {
+  readonly queryName: string
+  readonly handlerName?: string
+  readonly requestHash: string
+  readonly identity?: string | null
+  readonly queryId?: string
+  readonly resultHash?: string
+  readonly failureHash?: string
+}
+
 export interface WorkflowDeterminismState {
   readonly commandHistory: readonly WorkflowCommandHistoryEntry[]
   readonly randomValues: readonly number[]
   readonly timeValues: readonly number[]
   readonly failureMetadata?: WorkflowDeterminismFailureMetadata
+  readonly signals: readonly WorkflowDeterminismSignalRecord[]
+  readonly queries: readonly WorkflowDeterminismQueryRecord[]
 }
 
 export interface DeterminismGuardOptions {
@@ -48,6 +69,8 @@ export type DeterminismGuardSnapshot = {
   randomValues: number[]
   timeValues: number[]
   failureMetadata?: WorkflowDeterminismFailureMetadata
+  signals: WorkflowDeterminismSignalRecord[]
+  queries: WorkflowDeterminismQueryRecord[]
 }
 
 export const snapshotToDeterminismState = (snapshot: DeterminismGuardSnapshot): WorkflowDeterminismState => ({
@@ -58,6 +81,8 @@ export const snapshotToDeterminismState = (snapshot: DeterminismGuardSnapshot): 
   randomValues: [...snapshot.randomValues],
   timeValues: [...snapshot.timeValues],
   failureMetadata: snapshot.failureMetadata ? { ...snapshot.failureMetadata } : undefined,
+  signals: snapshot.signals.map((record) => ({ ...record })),
+  queries: snapshot.queries.map((record) => ({ ...record })),
 })
 
 export type RecordedCommandKind = 'new' | 'replay'
@@ -69,6 +94,8 @@ export class DeterminismGuard {
   #commandIndex = 0
   #randomIndex = 0
   #timeIndex = 0
+  #signalIndex = 0
+  #queryIndex = 0
 
   constructor(options: DeterminismGuardOptions = {}) {
     this.#allowBypass = options.allowBypass ?? false
@@ -77,6 +104,8 @@ export class DeterminismGuard {
       commandHistory: [],
       randomValues: [],
       timeValues: [],
+      signals: [],
+      queries: [],
     }
   }
 
@@ -152,6 +181,57 @@ export class DeterminismGuard {
     this.#timeIndex += 1
     return value
   }
+
+  recordSignalDelivery(entry: RecordSignalDeliveryInput): void {
+    const payloadHash = stableStringify(entry.payload)
+    const record: WorkflowDeterminismSignalRecord = {
+      signalName: entry.signalName,
+      handlerName: entry.handlerName,
+      payloadHash,
+      eventId: entry.eventId ?? null,
+      workflowTaskCompletedEventId: entry.workflowTaskCompletedEventId ?? null,
+      identity: entry.identity ?? null,
+    }
+    if (!this.#allowBypass && this.#previous) {
+      const expected = this.#previous.signals?.[this.#signalIndex]
+      if (expected && expected.handlerName !== undefined && !signalsEqual(expected, record)) {
+        throw new WorkflowNondeterminismError('Workflow received unexpected signal delivery during replay', {
+          expected,
+          received: record,
+          hint: `signalIndex=${this.#signalIndex}`,
+        })
+      }
+    }
+    this.snapshot.signals.push(record)
+    this.#signalIndex += 1
+  }
+
+  recordQueryEvaluation(entry: RecordQueryEvaluationInput): void {
+    const requestHash = stableStringify(entry.request)
+    const resultHash = entry.result !== undefined ? stableStringify(entry.result) : undefined
+    const failureHash = entry.error !== undefined ? stableStringify(entry.error) : undefined
+    const record: WorkflowDeterminismQueryRecord = {
+      queryName: entry.queryName,
+      handlerName: entry.handlerName,
+      requestHash,
+      identity: entry.identity ?? null,
+      queryId: entry.queryId,
+      ...(resultHash ? { resultHash } : {}),
+      ...(failureHash ? { failureHash } : {}),
+    }
+    if (!this.#allowBypass && this.#previous) {
+      const expected = this.#previous.queries?.[this.#queryIndex]
+      if (expected && expected.handlerName !== undefined && !queriesEqual(expected, record)) {
+        throw new WorkflowNondeterminismError('Workflow evaluated query with unexpected result during replay', {
+          expected,
+          received: record,
+          hint: `queryIndex=${this.#queryIndex}`,
+        })
+      }
+    }
+    this.snapshot.queries.push(record)
+    this.#queryIndex += 1
+  }
 }
 
 export const intentsEqual = (a: WorkflowCommandIntent | undefined, b: WorkflowCommandIntent | undefined): boolean => {
@@ -185,7 +265,7 @@ const stableIntentSignature = (intent: WorkflowCommandIntent): string =>
 
 type JsonReplacer = (this: unknown, key: string, value: unknown) => unknown
 
-const stableStringify = (value: unknown, replacer?: JsonReplacer): string => {
+export const stableStringify = (value: unknown, replacer?: JsonReplacer): string => {
   const seen = new WeakSet<object>()
   const stable = (key: string, input: unknown): unknown => {
     if (replacer) {
@@ -208,3 +288,45 @@ const stableStringify = (value: unknown, replacer?: JsonReplacer): string => {
   }
   return JSON.stringify(stable('', value))
 }
+
+export interface RecordSignalDeliveryInput {
+  readonly signalName: string
+  readonly handlerName?: string
+  readonly payload: unknown
+  readonly eventId?: string | null
+  readonly workflowTaskCompletedEventId?: string | null
+  readonly identity?: string | null
+}
+
+export interface RecordQueryEvaluationInput {
+  readonly queryName: string
+  readonly handlerName?: string
+  readonly request: unknown
+  readonly identity?: string | null
+  readonly queryId?: string
+  readonly result?: unknown
+  readonly error?: unknown
+}
+
+const normalizeNullableString = (value: string | null | undefined): string | null =>
+  value === undefined ? null : value
+
+const stringsEqual = (left: string | null | undefined, right: string | null | undefined): boolean =>
+  normalizeNullableString(left) === normalizeNullableString(right)
+
+const signalsEqual = (expected: WorkflowDeterminismSignalRecord, actual: WorkflowDeterminismSignalRecord): boolean =>
+  expected.signalName === actual.signalName &&
+  expected.handlerName === actual.handlerName &&
+  expected.payloadHash === actual.payloadHash &&
+  stringsEqual(expected.eventId, actual.eventId) &&
+  stringsEqual(expected.workflowTaskCompletedEventId, actual.workflowTaskCompletedEventId) &&
+  stringsEqual(expected.identity, actual.identity)
+
+const queriesEqual = (expected: WorkflowDeterminismQueryRecord, actual: WorkflowDeterminismQueryRecord): boolean =>
+  expected.queryName === actual.queryName &&
+  expected.handlerName === actual.handlerName &&
+  expected.requestHash === actual.requestHash &&
+  stringsEqual(expected.identity, actual.identity) &&
+  stringsEqual(expected.queryId, actual.queryId) &&
+  expected.resultHash === actual.resultHash &&
+  expected.failureHash === actual.failureHash

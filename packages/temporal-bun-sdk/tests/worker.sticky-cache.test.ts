@@ -8,6 +8,8 @@ const EMPTY_STATE: WorkflowDeterminismState = {
   commandHistory: [],
   randomValues: [],
   timeValues: [],
+  signals: [],
+  queries: [],
 }
 
 const makeFakeCounter = () => {

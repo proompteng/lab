@@ -231,7 +231,7 @@ describe('Temporal CLI history ingestion', () => {
       await Effect.runPromise(
         stickyCache.upsert({
           key: { namespace: CLI_CONFIG.namespace, workflowId: 'wf-1', runId: 'run-1' },
-          determinismState: { commandHistory: [], randomValues: [], timeValues: [] },
+          determinismState: { commandHistory: [], randomValues: [], timeValues: [], signals: [], queries: [] },
           lastEventId: '1',
           lastAccessed: Date.now(),
         }),
@@ -239,7 +239,7 @@ describe('Temporal CLI history ingestion', () => {
       await Effect.runPromise(
         stickyCache.upsert({
           key: { namespace: CLI_CONFIG.namespace, workflowId: 'wf-2', runId: 'run-2' },
-          determinismState: { commandHistory: [], randomValues: [], timeValues: [] },
+          determinismState: { commandHistory: [], randomValues: [], timeValues: [], signals: [], queries: [] },
           lastEventId: '2',
           lastAccessed: Date.now(),
         }),
@@ -247,7 +247,7 @@ describe('Temporal CLI history ingestion', () => {
       await Effect.runPromise(
         stickyCache.upsert({
           key: { namespace: CLI_CONFIG.namespace, workflowId: 'wf-3', runId: 'run-3' },
-          determinismState: { commandHistory: [], randomValues: [], timeValues: [] },
+          determinismState: { commandHistory: [], randomValues: [], timeValues: [], signals: [], queries: [] },
           lastEventId: '3',
           lastAccessed: Date.now(),
         }),

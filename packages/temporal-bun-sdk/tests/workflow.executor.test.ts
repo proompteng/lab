@@ -11,6 +11,8 @@ import { WorkflowRegistry } from '../src/workflow/registry'
 import { WorkflowNondeterminismError } from '../src/workflow/errors'
 import type { WorkflowDeterminismState } from '../src/workflow/determinism'
 import { CommandType } from '../src/proto/temporal/api/enums/v1/command_type_pb'
+import { defineWorkflowQueries } from '../src/workflow/inbound'
+import type { WorkflowQueryRequest } from '../src/workflow/inbound'
 
 const makeExecutor = () => {
   const registry = new WorkflowRegistry()
@@ -32,6 +34,8 @@ const execute = async (
     taskQueue: overrides.taskQueue ?? 'test-task-queue',
     determinismState: overrides.determinismState,
     activityResults: overrides.activityResults,
+    signalDeliveries: overrides.signalDeliveries,
+    queryRequests: overrides.queryRequests,
   })
 
 test('schedules an activity command and completes after result', async () => {
@@ -210,6 +214,44 @@ test('replay with matching determinism state succeeds', async () => {
   expect(second.completion).toBe('completed')
 })
 
+test('evaluates registered workflow queries with encoded results', async () => {
+  const { registry, executor, dataConverter } = makeExecutor()
+  const queries = defineWorkflowQueries({
+    state: {
+      input: Schema.Struct({}),
+      output: Schema.Struct({ status: Schema.String }),
+    },
+  })
+  registry.register(
+    defineWorkflow({
+      name: 'queryWorkflow',
+      queries,
+      handler: ({ queries: registryQueries }) =>
+        Effect.gen(function* () {
+          let status = 'starting'
+          yield* registryQueries.register(queries.state, () => Effect.sync(() => ({ status })))
+          status = 'ready'
+          return status
+        }),
+    }),
+  )
+
+  const queryRequests: WorkflowQueryRequest[] = [
+    { id: 'q-1', name: 'state', args: [{}], metadata: undefined, source: 'multi' },
+  ]
+  const output = await execute(executor, {
+    workflowType: 'queryWorkflow',
+    arguments: [],
+    queryRequests,
+  })
+
+  expect(output.queryResults).toHaveLength(1)
+  const [entry] = output.queryResults
+  expect(entry?.request.id).toBe('q-1')
+  const answerValues = await decodePayloadsToValues(dataConverter, entry?.result.answer?.payloads ?? [])
+  expect(answerValues[0]).toEqual({ status: 'ready' })
+})
+
 test('tampered determinism state throws WorkflowNondeterminismError', async () => {
   const { registry, executor } = makeExecutor()
   registry.register(
@@ -245,4 +287,6 @@ const cloneState = (state: WorkflowDeterminismState): WorkflowDeterminismState =
   randomValues: [...state.randomValues],
   timeValues: [...state.timeValues],
   failureMetadata: state.failureMetadata ? { ...state.failureMetadata } : undefined,
+  signals: state.signals ? state.signals.map((record) => ({ ...record })) : [],
+  queries: state.queries ? state.queries.map((record) => ({ ...record })) : [],
 })

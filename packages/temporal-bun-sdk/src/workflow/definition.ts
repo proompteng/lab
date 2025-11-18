@@ -2,6 +2,7 @@ import type { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import type { WorkflowContext } from './context'
+import type { WorkflowQueryHandle, WorkflowSignalHandle } from './inbound'
 
 export type WorkflowSchema<I> = Schema.Schema<I>
 
@@ -9,11 +10,13 @@ const defaultWorkflowSchema = Schema.Array(Schema.Unknown) as Schema.Schema<read
 
 export type WorkflowHandler<I, O> = (context: WorkflowContext<I>) => Effect.Effect<O, unknown, never>
 
-export interface WorkflowDefinition<I, O> {
+export interface WorkflowDefinition<I, O, S = undefined, Q = undefined> {
   readonly name: string
   readonly schema: WorkflowSchema<I>
   readonly handler: WorkflowHandler<I, O>
   readonly decodeArgumentsAsArray: boolean
+  readonly signals?: S
+  readonly queries?: Q
 }
 
 export function defineWorkflow<I, O>(name: string, handler: WorkflowHandler<I, O>): WorkflowDefinition<I, O>
@@ -22,21 +25,64 @@ export function defineWorkflow<I, O>(
   schema: WorkflowSchema<I>,
   handler: WorkflowHandler<I, O>,
 ): WorkflowDefinition<I, O>
+export interface DefineWorkflowConfig<
+  I,
+  O,
+  S extends Record<string, WorkflowSignalHandle<unknown>> | undefined = undefined,
+  Q extends Record<string, WorkflowQueryHandle<unknown, unknown>> | undefined = undefined,
+> {
+  readonly name: string
+  readonly schema?: WorkflowSchema<I>
+  readonly signals?: S
+  readonly queries?: Q
+  readonly handler: WorkflowHandler<I, O>
+}
+export function defineWorkflow<
+  I,
+  O,
+  S extends Record<string, WorkflowSignalHandle<unknown>> | undefined,
+  Q extends Record<string, WorkflowQueryHandle<unknown, unknown>> | undefined,
+>(config: DefineWorkflowConfig<I, O, S, Q>): WorkflowDefinition<I, O, S, Q>
 export function defineWorkflow<I, O>(
-  name: string,
-  schemaOrHandler: WorkflowSchema<I> | WorkflowHandler<I, O>,
+  nameOrConfig:
+    | string
+    | DefineWorkflowConfig<
+        I,
+        O,
+        Record<string, WorkflowSignalHandle<unknown>> | undefined,
+        Record<string, WorkflowQueryHandle<unknown, unknown>> | undefined
+      >,
+  schemaOrHandler?: WorkflowSchema<I> | WorkflowHandler<I, O>,
   maybeHandler?: WorkflowHandler<I, O>,
 ): WorkflowDefinition<I, O> {
+  if (typeof nameOrConfig === 'object') {
+    const config = nameOrConfig
+    const schema = config.schema ?? (defaultWorkflowSchema as unknown as WorkflowSchema<I>)
+    const decodeArgumentsAsArray = config.schema
+      ? config.schema.ast._tag === 'TupleType'
+      : schema.ast._tag === 'TupleType'
+    if (typeof config.handler !== 'function') {
+      throw new Error(`Workflow "${config.name}" must provide a handler`)
+    }
+    return {
+      name: config.name,
+      schema,
+      handler: config.handler,
+      decodeArgumentsAsArray,
+      ...(config.signals ? { signals: config.signals } : {}),
+      ...(config.queries ? { queries: config.queries } : {}),
+    }
+  }
   const schema = Schema.isSchema(schemaOrHandler)
     ? (schemaOrHandler as WorkflowSchema<I>)
     : (defaultWorkflowSchema as unknown as WorkflowSchema<I>)
   const handler = Schema.isSchema(schemaOrHandler) ? maybeHandler : (schemaOrHandler as WorkflowHandler<I, O>)
   const decodeArgumentsAsArray = Schema.isSchema(schemaOrHandler) ? schema.ast._tag === 'TupleType' : true
   if (typeof handler !== 'function') {
-    throw new Error(`Workflow "${name}" must provide a handler`)
+    throw new Error(`Workflow "${nameOrConfig}" must provide a handler`)
   }
   return {
-    name,
+    name: nameOrConfig,
     schema,
     handler,
     decodeArgumentsAsArray,

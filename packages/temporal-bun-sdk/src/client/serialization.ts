@@ -161,7 +161,21 @@ export const computeSignalRequestId = async (
     hash.update(HASH_SEPARATOR)
   }
 
-  return hash.digest('hex')
+  const digest = hash.digest('hex')
+  return formatDigestAsUuid(digest)
+}
+
+const formatDigestAsUuid = (hex: string): string => {
+  const cleaned = hex.replace(/[^a-f0-9]/gi, '').padEnd(32, '0')
+  const normalized = cleaned.slice(0, 32).toLowerCase()
+  const segments = [
+    normalized.slice(0, 8),
+    normalized.slice(8, 12),
+    normalized.slice(12, 16),
+    normalized.slice(16, 20),
+    normalized.slice(20, 32),
+  ]
+  return segments.join('-')
 }
 
 export const buildStartWorkflowRequest = async (

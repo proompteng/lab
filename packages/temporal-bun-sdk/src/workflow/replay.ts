@@ -15,6 +15,7 @@ import type {
   TimerStartedEventAttributes,
   WorkflowExecutionContinuedAsNewEventAttributes,
   WorkflowExecutionFailedEventAttributes,
+  WorkflowExecutionSignaledEventAttributes,
   WorkflowExecutionTimedOutEventAttributes,
   WorkflowTaskFailedEventAttributes,
   WorkflowTaskTimedOutEventAttributes,
@@ -32,16 +33,20 @@ import type {
   WorkflowCommandHistoryEntry,
   WorkflowCommandHistoryEntryMetadata,
   WorkflowDeterminismFailureMetadata,
+  WorkflowDeterminismQueryRecord,
+  WorkflowDeterminismSignalRecord,
   WorkflowDeterminismState,
   WorkflowRetryPolicyInput,
 } from './determinism'
-import { intentsEqual } from './determinism'
+import { intentsEqual, stableStringify } from './determinism'
+import type { WorkflowQueryRequest } from './inbound'
 
 export interface ReplayIntake {
   readonly info: WorkflowInfo
   readonly history: HistoryEvent[]
   readonly dataConverter: DataConverter
   readonly ignoreDeterminismMarker?: boolean
+  readonly queries?: readonly WorkflowQueryRequest[]
 }
 
 export interface ReplayResult {
@@ -94,7 +99,26 @@ export interface DeterminismMismatchTime {
   readonly actual?: number
 }
 
-export type DeterminismMismatch = DeterminismMismatchCommand | DeterminismMismatchRandom | DeterminismMismatchTime
+export interface DeterminismMismatchSignal {
+  readonly kind: 'signal'
+  readonly index: number
+  readonly expected?: WorkflowDeterminismSignalRecord
+  readonly actual?: WorkflowDeterminismSignalRecord
+}
+
+export interface DeterminismMismatchQuery {
+  readonly kind: 'query'
+  readonly index: number
+  readonly expected?: WorkflowDeterminismQueryRecord
+  readonly actual?: WorkflowDeterminismQueryRecord
+}
+
+export type DeterminismMismatch =
+  | DeterminismMismatchCommand
+  | DeterminismMismatchRandom
+  | DeterminismMismatchTime
+  | DeterminismMismatchSignal
+  | DeterminismMismatchQuery
 
 export const DETERMINISM_MARKER_NAME = 'temporal-bun-sdk/determinism'
 
@@ -197,12 +221,14 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
     const extractedFailureMetadata = extractFailureMetadata(events)
 
     if (shouldUseDeterminismMarker && markerSnapshot) {
-      const determinismState: WorkflowDeterminismState = markerSnapshot.determinismState.failureMetadata
-        ? markerSnapshot.determinismState
-        : {
-            ...markerSnapshot.determinismState,
-            ...(extractedFailureMetadata ? { failureMetadata: extractedFailureMetadata } : {}),
-          }
+      let determinismState = cloneDeterminismState(markerSnapshot.determinismState)
+      if (extractedFailureMetadata) {
+        determinismState = {
+          ...determinismState,
+          failureMetadata: extractedFailureMetadata,
+        }
+      }
+      determinismState = mergePendingQueryRequests(determinismState, intake.queries)
       const latestEventId = resolveHistoryLastEventId(events) ?? markerSnapshot.lastEventId ?? null
       return {
         determinismState,
@@ -283,6 +309,28 @@ export const diffDeterminismState = (
       }
     }
 
+    const expectedSignals = expected.signals ?? []
+    const actualSignals = actual.signals ?? []
+    const maxSignals = Math.max(expectedSignals.length, actualSignals.length)
+    for (let index = 0; index < maxSignals; index += 1) {
+      const expectedSignal = expectedSignals[index]
+      const actualSignal = actualSignals[index]
+      if (!recordsMatch(expectedSignal, actualSignal)) {
+        mismatches.push({ kind: 'signal', index, expected: expectedSignal, actual: actualSignal })
+      }
+    }
+
+    const expectedQueries = expected.queries ?? []
+    const actualQueries = actual.queries ?? []
+    const maxQueries = Math.max(expectedQueries.length, actualQueries.length)
+    for (let index = 0; index < maxQueries; index += 1) {
+      const expectedQuery = expectedQueries[index]
+      const actualQuery = actualQueries[index]
+      if (!recordsMatch(expectedQuery, actualQuery)) {
+        mismatches.push({ kind: 'query', index, expected: expectedQuery, actual: actualQuery })
+      }
+    }
+
     return { mismatches }
   })
 
@@ -312,6 +360,8 @@ export const cloneDeterminismState = (state: WorkflowDeterminismState): Workflow
   randomValues: [...state.randomValues],
   timeValues: [...state.timeValues],
   failureMetadata: state.failureMetadata ? { ...state.failureMetadata } : undefined,
+  signals: state.signals ? state.signals.map((record) => ({ ...record })) : [],
+  queries: state.queries ? state.queries.map((record) => ({ ...record })) : [],
 })
 
 const sortHistoryEvents = (events: HistoryEvent[]): HistoryEvent[] =>
@@ -498,6 +548,8 @@ const reconstructDeterminismState = (
   Effect.gen(function* () {
     let sequence = 0
     const commandHistory: WorkflowCommandHistoryEntry[] = []
+    const signalRecords: WorkflowDeterminismSignalRecord[] = []
+    const queryRecords: WorkflowDeterminismQueryRecord[] = []
 
     for (const event of events) {
       switch (event.eventType) {
@@ -557,6 +609,21 @@ const reconstructDeterminismState = (
           }
           break
         }
+        case EventType.WORKFLOW_EXECUTION_SIGNALED: {
+          if (event.attributes?.case !== 'workflowExecutionSignaledEventAttributes') {
+            break
+          }
+          const attributes = event.attributes.value as WorkflowExecutionSignaledEventAttributes
+          const payloads = yield* decodePayloadArray(intake.dataConverter, attributes.input)
+          signalRecords.push({
+            signalName: attributes.signalName ?? 'unknown',
+            payloadHash: stableStringify(payloads),
+            eventId: normalizeEventId(event.eventId),
+            workflowTaskCompletedEventId: normalizeEventId(attributes.workflowTaskCompletedEventId),
+            identity: attributes.identity ?? null,
+          })
+          break
+        }
         case EventType.WORKFLOW_EXECUTION_CONTINUED_AS_NEW: {
           if (event.attributes?.case !== 'workflowExecutionContinuedAsNewEventAttributes') {
             break
@@ -576,13 +643,18 @@ const reconstructDeterminismState = (
       }
     }
 
+    let determinismState: WorkflowDeterminismState = {
+      commandHistory,
+      randomValues: [],
+      timeValues: [],
+      ...(failureMetadata ? { failureMetadata } : {}),
+      signals: signalRecords,
+      queries: queryRecords,
+    }
+    determinismState = mergePendingQueryRequests(determinismState, intake.queries)
+
     return {
-      determinismState: {
-        commandHistory,
-        randomValues: [],
-        timeValues: [],
-        ...(failureMetadata ? { failureMetadata } : {}),
-      },
+      determinismState,
       lastEventId: resolveHistoryLastEventId(events),
       hasDeterminismMarker: false,
     }
@@ -827,6 +899,8 @@ const sanitizeDeterminismState = (value: unknown): WorkflowDeterminismState => {
   const commandHistoryRaw = value.commandHistory
   const randomValuesRaw = value.randomValues
   const timeValuesRaw = value.timeValues
+  const signalsRaw = Array.isArray(value.signals) ? value.signals : []
+  const queriesRaw = Array.isArray(value.queries) ? value.queries : []
 
   if (!Array.isArray(commandHistoryRaw) || !Array.isArray(randomValuesRaw) || !Array.isArray(timeValuesRaw)) {
     throw new Error('Determinism marker contained invalid determinism state shape')
@@ -846,12 +920,16 @@ const sanitizeDeterminismState = (value: unknown): WorkflowDeterminismState => {
   const randomValues = randomValuesRaw.map((val, index) => coerceNumber(val, `determinism.randomValues[${index}]`))
   const timeValues = timeValuesRaw.map((val, index) => coerceNumber(val, `determinism.timeValues[${index}]`))
   const failureMetadata = sanitizeFailureMetadata(value.failureMetadata)
+  const signals = signalsRaw.map((record, index) => sanitizeSignalRecord(record, index))
+  const queries = queriesRaw.map((record, index) => sanitizeQueryRecord(record, index))
 
   return {
     commandHistory,
     randomValues,
     timeValues,
     ...(failureMetadata ? { failureMetadata } : {}),
+    signals,
+    queries,
   }
 }
 
@@ -903,6 +981,51 @@ const sanitizeFailureMetadata = (value: unknown): WorkflowDeterminismFailureMeta
     ...(failureType ? { failureType } : {}),
     ...(failureMessage ? { failureMessage } : {}),
     ...(retryState !== undefined ? { retryState } : {}),
+  }
+}
+
+const sanitizeSignalRecord = (value: unknown, index: number): WorkflowDeterminismSignalRecord => {
+  if (!isRecord(value)) {
+    throw new Error(`Determinism marker contained invalid signal entry at index ${index}`)
+  }
+  const signalName = coerceString(value.signalName, `determinism.signals[${index}].signalName`)
+  const payloadHash = coerceString(value.payloadHash, `determinism.signals[${index}].payloadHash`)
+  const handlerName = coerceOptionalString(value.handlerName, `determinism.signals[${index}].handlerName`)
+  const eventId = normalizeOptionalEventId(value.eventId, `determinism.signals[${index}].eventId`)
+  const workflowTaskCompletedEventId = normalizeOptionalEventId(
+    value.workflowTaskCompletedEventId,
+    `determinism.signals[${index}].workflowTaskCompletedEventId`,
+  )
+  const identity = coerceOptionalString(value.identity, `determinism.signals[${index}].identity`)
+  return {
+    signalName,
+    payloadHash,
+    ...(handlerName ? { handlerName } : {}),
+    ...(eventId ? { eventId } : {}),
+    ...(workflowTaskCompletedEventId ? { workflowTaskCompletedEventId } : {}),
+    ...(identity ? { identity } : {}),
+  }
+}
+
+const sanitizeQueryRecord = (value: unknown, index: number): WorkflowDeterminismQueryRecord => {
+  if (!isRecord(value)) {
+    throw new Error(`Determinism marker contained invalid query entry at index ${index}`)
+  }
+  const queryName = coerceString(value.queryName, `determinism.queries[${index}].queryName`)
+  const requestHash = coerceString(value.requestHash, `determinism.queries[${index}].requestHash`)
+  const handlerName = coerceOptionalString(value.handlerName, `determinism.queries[${index}].handlerName`)
+  const identity = coerceOptionalString(value.identity, `determinism.queries[${index}].identity`)
+  const queryId = coerceOptionalString(value.queryId, `determinism.queries[${index}].queryId`)
+  const resultHash = coerceOptionalString(value.resultHash, `determinism.queries[${index}].resultHash`)
+  const failureHash = coerceOptionalString(value.failureHash, `determinism.queries[${index}].failureHash`)
+  return {
+    queryName,
+    requestHash,
+    ...(handlerName ? { handlerName } : {}),
+    ...(identity ? { identity } : {}),
+    ...(queryId ? { queryId } : {}),
+    ...(resultHash ? { resultHash } : {}),
+    ...(failureHash ? { failureHash } : {}),
   }
 }
 
@@ -988,6 +1111,38 @@ const valuesEqual = (expected: number | undefined, actual: number | undefined): 
     return false
   }
   return Object.is(expected, actual)
+}
+
+const recordsMatch = <T>(expected: T | undefined, actual: T | undefined): boolean => {
+  if (expected === undefined && actual === undefined) {
+    return true
+  }
+  if (expected === undefined || actual === undefined) {
+    return false
+  }
+  return stableStringify(expected) === stableStringify(actual)
+}
+
+const mergePendingQueryRequests = (
+  state: WorkflowDeterminismState,
+  requests: readonly WorkflowQueryRequest[] | undefined,
+): WorkflowDeterminismState => {
+  if (!requests || requests.length === 0) {
+    return state
+  }
+  const nextQueries = state.queries ? [...state.queries] : []
+  for (const request of requests) {
+    nextQueries.push({
+      queryName: request.name,
+      requestHash: stableStringify(request.args ?? []),
+      ...(request.metadata?.identity ? { identity: request.metadata.identity } : {}),
+      ...(request.id ? { queryId: request.id } : {}),
+    })
+  }
+  return {
+    ...state,
+    queries: nextQueries,
+  }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null

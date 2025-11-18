@@ -101,9 +101,16 @@ Attach your own registry via `WorkerRuntimeOptions.metrics` or call
    - `workflowTaskAttempt`
    - `stickyCache`: cached & history event ids used for comparison
    - `mismatches`: command index, history event id, workflow task completed id,
-     and event type
+     and event type. The diff also records `signal` entries (name + payload
+     hash + originating history metadata) and `query` entries (name + request
+     hash + handler name + result hash) so you can see when inbound workflows
+     tried to consume different signals/queries between runs.
 4. Inspect sticky cache metrics to determine whether mismatches are caused by
    stale snapshots (misses + evictions climbing) or fresh history (hits > 0).
+5. `ingestWorkflowHistory` captures `WORKFLOW_EXECUTION_SIGNALED` events and
+   query evaluations inside determinism snapshots so sticky cache entries and
+   replay diagnostics contain the same inbound metadata that the workflow saw
+   during live execution.
 
 ## Running the Replay Harness
 

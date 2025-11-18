@@ -65,6 +65,8 @@
       }
     ],
     "randomValues": [],
-    "timeValues": []
+    "timeValues": [],
+    "signals": [],
+    "queries": []
   }
 }
