@@ -143,6 +143,8 @@ export class WorkflowExecutor {
 
     let lastCommandContext: WorkflowCommandContext | undefined
     let lastQueryRegistry: WorkflowQueryRegistry | undefined
+    let lastWorkflowContext: WorkflowContext<unknown> | undefined
+    let lastUpdateRegistry: WorkflowUpdateRegistry | undefined
 
     const workflowEffect = Effect.flatMap(decodedEffect, (parsed) => {
       const created = createWorkflowContext({
@@ -155,6 +157,8 @@ export class WorkflowExecutor {
       })
       lastCommandContext = created.commandContext
       lastQueryRegistry = created.queryRegistry
+      lastWorkflowContext = created.context
+      lastUpdateRegistry = created.updateRegistry
       return Effect.flatMap(definition.handler(created.context), (result) =>
         Effect.sync(() => ({
           result,
@@ -167,14 +171,24 @@ export class WorkflowExecutor {
 
     const exit = await Effect.runPromiseExit(workflowEffect)
     const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
+    const updatesToProcess = input.updates ?? []
+    let updateDispatches: WorkflowUpdateDispatch[] = []
 
-    if (Exit.isSuccess(exit)) {
-      const updateDispatches = await this.#processWorkflowUpdates({
-        context: exit.value.context,
-        registry: exit.value.updateRegistry,
-        updates: input.updates ?? [],
+    if (updatesToProcess.length > 0) {
+      const contextForUpdates = Exit.isSuccess(exit) ? exit.value.context : lastWorkflowContext
+      const registryForUpdates = Exit.isSuccess(exit) ? exit.value.updateRegistry : lastUpdateRegistry
+      if (!contextForUpdates || !registryForUpdates) {
+        throw new Error('Workflow update context unavailable after execution')
+      }
+      updateDispatches = await this.#processWorkflowUpdates({
+        context: contextForUpdates,
+        registry: registryForUpdates,
+        updates: updatesToProcess,
         guard,
       })
+    }
+
+    if (Exit.isSuccess(exit)) {
       const determinismState = snapshotToDeterminismState(guard.snapshot)
       const commands = await this.#buildSuccessCommands(exit.value.commandContext, exit.value.result)
       return {
@@ -201,6 +215,7 @@ export class WorkflowExecutor {
         determinismState: snapshotToDeterminismState(rawSnapshot),
         completion: 'continued-as-new',
         queryResults,
+        ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
       }
     }
 
@@ -225,6 +240,7 @@ export class WorkflowExecutor {
         determinismState: snapshotToDeterminismState(guard.snapshot),
         completion: 'pending',
         queryResults,
+        ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
       }
     }
 
@@ -236,6 +252,7 @@ export class WorkflowExecutor {
       completion: 'failed',
       failure: error,
       queryResults,
+      ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
     }
   }
 

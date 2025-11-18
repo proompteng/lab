@@ -365,6 +365,93 @@ test('workflow executor processes update invocations', async () => {
   ])
 })
 
+test('workflow executor processes update invocations even when workflow pending', async () => {
+  const { registry, executor } = makeExecutor()
+  const updateDefs = defineWorkflowUpdates([
+    {
+      name: 'setMessage',
+      input: Schema.String,
+      handler: (_ctx, value: string) => Effect.sync(() => value.toUpperCase()),
+    },
+  ])
+
+  registry.register(
+    defineWorkflow(
+      'pendingUpdateWorkflow',
+      Schema.Array(Schema.Unknown),
+      ({ activities }) =>
+        Effect.flatMap(
+          activities.schedule('sendEmail', ['hello']),
+          () => Effect.sync(() => 'done'),
+        ),
+      { updates: updateDefs },
+    ),
+  )
+
+  const output = await execute(executor, {
+    workflowType: 'pendingUpdateWorkflow',
+    arguments: [],
+    updates: [
+      {
+        protocolInstanceId: 'proto-3',
+        requestMessageId: 'msg-3',
+        updateId: 'upd-pending',
+        name: 'setMessage',
+        payload: 'pending',
+        identity: 'client',
+      } satisfies WorkflowUpdateInvocation,
+    ],
+  })
+
+  expect(output.completion).toBe('pending')
+  expect(output.updateDispatches).toEqual([
+    {
+      type: 'acceptance',
+      protocolInstanceId: 'proto-3',
+      requestMessageId: 'msg-3',
+      updateId: 'upd-pending',
+      handlerName: 'setMessage',
+      identity: 'client',
+      sequencingEventId: undefined,
+    },
+    {
+      type: 'completion',
+      protocolInstanceId: 'proto-3',
+      updateId: 'upd-pending',
+      status: 'success',
+      result: 'PENDING',
+      handlerName: 'setMessage',
+      identity: 'client',
+    },
+  ])
+
+  expect(output.determinismState.updates).toEqual([
+    {
+      updateId: 'upd-pending',
+      stage: 'admitted',
+      handlerName: 'setMessage',
+      identity: 'client',
+      messageId: 'msg-3',
+    },
+    {
+      updateId: 'upd-pending',
+      stage: 'accepted',
+      handlerName: 'setMessage',
+      identity: 'client',
+      sequencingEventId: undefined,
+      messageId: 'msg-3',
+    },
+    {
+      updateId: 'upd-pending',
+      stage: 'completed',
+      handlerName: 'setMessage',
+      identity: 'client',
+      outcome: 'success',
+      messageId: 'msg-3',
+    },
+  ])
+})
+
 test('workflow executor rejects unknown update handlers', async () => {
   const { registry, executor } = makeExecutor()
   registry.register(
