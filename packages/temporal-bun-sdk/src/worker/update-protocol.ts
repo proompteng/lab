@@ -1,26 +1,25 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
-import { AnySchema } from '@bufbuild/protobuf/wkt'
 import type { Any } from '@bufbuild/protobuf/wkt'
-
-import type { LogFields, LogLevel } from '../observability/logger'
+import { AnySchema } from '@bufbuild/protobuf/wkt'
 import type { DataConverter } from '../common/payloads/converter'
 import { decodePayloadsToValues, encodeValuesToPayloads } from '../common/payloads/converter'
 import { encodeErrorToFailure } from '../common/payloads/failure'
-import {
-  AcceptanceSchema,
-  OutcomeSchema,
-  type Request,
-  RequestSchema,
-  RejectionSchema,
-  ResponseSchema,
-} from '../proto/temporal/api/update/v1/message_pb'
+import type { LogFields, LogLevel } from '../observability/logger'
 import { PayloadsSchema } from '../proto/temporal/api/common/v1/message_pb'
 import {
   type Message as ProtocolMessage,
   MessageSchema as ProtocolMessageSchema,
 } from '../proto/temporal/api/protocol/v1/message_pb'
+import {
+  AcceptanceSchema,
+  OutcomeSchema,
+  RejectionSchema,
+  type Request,
+  RequestSchema,
+  ResponseSchema,
+} from '../proto/temporal/api/update/v1/message_pb'
 import type { WorkflowUpdateDispatch, WorkflowUpdateInvocation } from '../workflow/executor'
 
 const UPDATE_REQUEST_TYPE_URL = 'type.googleapis.com/temporal.api.update.v1.Request'

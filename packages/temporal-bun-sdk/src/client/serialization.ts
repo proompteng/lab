@@ -29,10 +29,13 @@ import {
   WorkflowTypeSchema,
 } from '../proto/temporal/api/common/v1/message_pb'
 import { QueryRejectCondition } from '../proto/temporal/api/enums/v1/query_pb'
-import { UpdateWorkflowExecutionLifecycleStage } from '../proto/temporal/api/enums/v1/update_pb'
 import { TaskQueueKind } from '../proto/temporal/api/enums/v1/task_queue_pb'
+import type { UpdateWorkflowExecutionLifecycleStage } from '../proto/temporal/api/enums/v1/update_pb'
 import { type TaskQueue, TaskQueueSchema } from '../proto/temporal/api/taskqueue/v1/message_pb'
+import { type Outcome, WaitPolicySchema } from '../proto/temporal/api/update/v1/message_pb'
 import {
+  type PollWorkflowExecutionUpdateRequest,
+  PollWorkflowExecutionUpdateRequestSchema,
   type QueryWorkflowRequest,
   QueryWorkflowRequestSchema,
   type RequestCancelWorkflowExecutionRequest,
@@ -47,10 +50,7 @@ import {
   TerminateWorkflowExecutionRequestSchema,
   type UpdateWorkflowExecutionRequest,
   UpdateWorkflowExecutionRequestSchema,
-  type PollWorkflowExecutionUpdateRequest,
-  PollWorkflowExecutionUpdateRequestSchema,
 } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
-import { WaitPolicySchema, type Outcome } from '../proto/temporal/api/update/v1/message_pb'
 import type {
   RetryPolicyOptions,
   SignalWithStartOptions,

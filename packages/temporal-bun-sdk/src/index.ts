@@ -26,8 +26,8 @@ export type {
   WorkflowHandle,
   WorkflowUpdateAwaitOptions,
   WorkflowUpdateHandle,
-  WorkflowUpdateOutcome,
   WorkflowUpdateOptions,
+  WorkflowUpdateOutcome,
   WorkflowUpdateResult,
   WorkflowUpdateStage,
 } from './client/types'
