@@ -344,6 +344,7 @@ test('workflow executor processes update invocations', async () => {
       stage: 'admitted',
       handlerName: 'setMessage',
       identity: 'client',
+      messageId: 'msg-1',
     },
     {
       updateId: 'upd-1',
@@ -351,6 +352,7 @@ test('workflow executor processes update invocations', async () => {
       handlerName: 'setMessage',
       identity: 'client',
       sequencingEventId: '5',
+      messageId: 'msg-1',
     },
     {
       updateId: 'upd-1',
@@ -358,6 +360,7 @@ test('workflow executor processes update invocations', async () => {
       handlerName: 'setMessage',
       identity: 'client',
       outcome: 'success',
+      messageId: 'msg-1',
     },
   ])
 })
@@ -399,12 +402,14 @@ test('workflow executor rejects unknown update handlers', async () => {
       updateId: 'upd-404',
       stage: 'admitted',
       handlerName: 'unknownUpdate',
+      messageId: 'msg-2',
     },
     {
       updateId: 'upd-404',
       stage: 'rejected',
       handlerName: 'unknownUpdate',
       failureMessage: 'Workflow update handler "unknownUpdate" was not found',
+      messageId: 'msg-2',
     },
   ])
 })
