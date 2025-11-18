@@ -257,11 +257,13 @@ export class WorkflowExecutor {
     const dispatches: WorkflowUpdateDispatch[] = []
 
     for (const invocation of updates) {
+      const messageId = invocation.requestMessageId
       guard.recordUpdate({
         updateId: invocation.updateId,
         stage: 'admitted',
         handlerName: invocation.name,
         identity: invocation.identity,
+        messageId,
       })
 
       const registered = registry.get(invocation.name) ?? registry.getDefault()
@@ -282,6 +284,7 @@ export class WorkflowExecutor {
           handlerName: invocation.name,
           identity: invocation.identity,
           failureMessage: failure.message,
+          messageId,
         })
         continue
       }
@@ -306,6 +309,7 @@ export class WorkflowExecutor {
           handlerName: registered.name,
           identity: invocation.identity,
           failureMessage: failure.message,
+          messageId,
         })
         continue
       }
@@ -330,6 +334,7 @@ export class WorkflowExecutor {
             handlerName: registered.name,
             identity: invocation.identity,
             failureMessage: failure.message,
+            messageId,
           })
           continue
         }
@@ -350,6 +355,7 @@ export class WorkflowExecutor {
         handlerName: registered.name,
         identity: invocation.identity,
         sequencingEventId: invocation.sequencingEventId,
+        messageId,
       })
 
       const executionExit = await Effect.runPromiseExit(registered.handler(context as never, decodedInput as never))
@@ -369,6 +375,7 @@ export class WorkflowExecutor {
           handlerName: registered.name,
           identity: invocation.identity,
           outcome: 'success',
+          messageId,
         })
       } else {
         const failure = this.#resolveError(executionExit.cause)
@@ -388,6 +395,7 @@ export class WorkflowExecutor {
           identity: invocation.identity,
           outcome: 'failure',
           failureMessage: failure instanceof Error ? failure.message : String(failure),
+          messageId,
         })
       }
     }

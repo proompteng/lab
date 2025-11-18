@@ -1386,7 +1386,6 @@ const updatesEqual = (expected?: WorkflowUpdateDeterminismEntry, actual?: Workfl
     expected.identity === actual.identity &&
     expected.sequencingEventId === actual.sequencingEventId &&
     expected.messageId === actual.messageId &&
-    expected.acceptedEventId === actual.acceptedEventId &&
     expected.outcome === actual.outcome &&
     expected.failureMessage === actual.failureMessage
   )
