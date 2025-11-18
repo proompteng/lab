@@ -45,8 +45,13 @@ import { CommandType } from '../proto/temporal/api/enums/v1/command_type_pb'
 import { WorkerVersioningMode } from '../proto/temporal/api/enums/v1/deployment_pb'
 import { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
 import { WorkflowTaskFailedCause } from '../proto/temporal/api/enums/v1/failed_cause_pb'
+import { QueryResultType } from '../proto/temporal/api/enums/v1/query_pb'
 import { HistoryEventFilterType, TimeoutType, VersioningBehavior } from '../proto/temporal/api/enums/v1/workflow_pb'
-import type { HistoryEvent } from '../proto/temporal/api/history/v1/message_pb'
+import type {
+  HistoryEvent,
+  WorkflowExecutionSignaledEventAttributes,
+} from '../proto/temporal/api/history/v1/message_pb'
+import type { WorkflowQuery, WorkflowQueryResult } from '../proto/temporal/api/query/v1/message_pb'
 import {
   type StickyExecutionAttributes,
   StickyExecutionAttributesSchema,
@@ -61,6 +66,7 @@ import {
   RespondActivityTaskCanceledRequestSchema,
   RespondActivityTaskCompletedRequestSchema,
   RespondActivityTaskFailedRequestSchema,
+  RespondQueryTaskCompletedRequestSchema,
   RespondWorkflowTaskCompletedRequestSchema,
   RespondWorkflowTaskFailedRequestSchema,
 } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
@@ -71,11 +77,15 @@ import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/defini
 import type {
   WorkflowCommandHistoryEntry,
   WorkflowDeterminismFailureMetadata,
+  WorkflowDeterminismQueryRecord,
+  WorkflowDeterminismSignalRecord,
   WorkflowDeterminismState,
   WorkflowRetryPolicyInput,
 } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
+import type { WorkflowQueryEvaluationResult } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
+import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from '../workflow/inbound'
 import { WorkflowRegistry } from '../workflow/registry'
 import {
   DETERMINISM_MARKER_NAME,
@@ -479,7 +489,13 @@ export class WorkerRuntime {
     if (!state) {
       return false
     }
-    return state.commandHistory.length > 0 || state.randomValues.length > 0 || state.timeValues.length > 0
+    return (
+      state.commandHistory.length > 0 ||
+      state.randomValues.length > 0 ||
+      state.timeValues.length > 0 ||
+      (state.signals?.length ?? 0) > 0 ||
+      (state.queries?.length ?? 0) > 0
+    )
   }
 
   #resolvePreviousHistoryEventId(response: PollWorkflowTaskQueueResponse): string | null {
@@ -819,17 +835,42 @@ export class WorkerRuntime {
     const workflowTaskAttempt = Number(response.attempt ?? 1)
     const historyEvents = await this.#collectWorkflowHistory(execution, response)
     const workflowType = this.#resolveWorkflowType(response, historyEvents)
-    const args = await this.#decodeWorkflowArgs(historyEvents)
-    const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
-    const stickyKey = this.#buildStickyKey(execution.workflowId, execution.runId)
-    const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
-    const historyReplay = await this.#ingestDeterminismState(workflowInfo, historyEvents)
-    const hasHistorySnapshot = this.#isValidDeterminismSnapshot(historyReplay?.determinismState)
     const baseLogFields = this.#workflowLogFields(execution, workflowType, {
       workflowTaskAttempt,
       stickyScheduling: this.#stickySchedulingEnabled,
       nondeterminismRetry,
     })
+    const signalDeliveries = await this.#extractSignalDeliveries(historyEvents)
+    if (signalDeliveries.length > 0) {
+      this.#log('debug', 'workflow signal deliveries buffered', {
+        ...baseLogFields,
+        signalCount: signalDeliveries.length,
+      })
+    }
+    const queryRequests = await this.#extractWorkflowQueryRequests(response)
+    const hasQueryRequests = queryRequests.length > 0
+    const hasMultiQueries = queryRequests.some((request) => request.source === 'multi')
+    const hasLegacyQueries = queryRequests.some((request) => request.source === 'legacy')
+    if (hasQueryRequests) {
+      this.#log('debug', 'workflow queries pending evaluation', {
+        ...baseLogFields,
+        queryCount: queryRequests.length,
+      })
+    }
+    this.#log('info', 'debug: workflow task metadata', {
+      ...baseLogFields,
+      taskTokenBytes: response.taskToken?.length ?? 0,
+      queryCount: queryRequests.length,
+      historyEventCount: response.history?.events?.length ?? 0,
+    })
+    const args = await this.#decodeWorkflowArgs(historyEvents)
+    const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
+    const stickyKey = this.#buildStickyKey(execution.workflowId, execution.runId)
+    const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
+    const historyReplay = await this.#ingestDeterminismState(workflowInfo, historyEvents, {
+      queryRequests,
+    })
+    const hasHistorySnapshot = this.#isValidDeterminismSnapshot(historyReplay?.determinismState)
     let previousState: WorkflowDeterminismState | undefined
 
     if (stickyEntry && this.#isValidDeterminismSnapshot(stickyEntry.determinismState)) {
@@ -891,7 +932,36 @@ export class WorkerRuntime {
         arguments: args,
         determinismState: previousState,
         activityResults,
+        signalDeliveries,
+        queryRequests,
       })
+      this.#log('debug', 'workflow query evaluation summary', {
+        ...baseLogFields,
+        queryResultCount: output.queryResults.length,
+      })
+      this.#log('debug', 'workflow query results raw', {
+        ...baseLogFields,
+        queryResults: output.queryResults.map((entry) => ({
+          name: entry.request.name,
+          source: entry.request.source,
+          id: entry.request.id ?? null,
+        })),
+      })
+      const multiQueryResults: Record<string, WorkflowQueryResult> = {}
+      let legacyQueryResult: WorkflowQueryEvaluationResult | undefined
+      for (const entry of output.queryResults) {
+        this.#log('debug', 'workflow query evaluation completed', {
+          ...baseLogFields,
+          querySource: entry.request.source,
+          queryName: entry.request.name,
+          queryId: entry.request.id ?? null,
+        })
+        if (entry.request.source === 'multi' && entry.request.id) {
+          multiQueryResults[entry.request.id] = entry.result
+        } else if (entry.request.source === 'legacy') {
+          legacyQueryResult = entry
+        }
+      }
 
       const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? historyReplay?.lastEventId ?? null
       const shouldRecordMarker = output.completion === 'pending'
@@ -927,23 +997,34 @@ export class WorkerRuntime {
         commandsForResponse = this.#injectDeterminismMarker(commandsForResponse, markerCommand)
       }
 
-      const completion = create(RespondWorkflowTaskCompletedRequestSchema, {
-        taskToken: response.taskToken,
-        commands: commandsForResponse,
-        identity: this.#identity,
-        namespace: this.#namespace,
-        deploymentOptions: this.#deploymentOptions,
-        ...(this.#stickySchedulingEnabled ? { stickyAttributes: this.#stickyAttributes } : {}),
-        ...(this.#versioningBehavior !== null ? { versioningBehavior: this.#versioningBehavior } : {}),
-      })
-      try {
-        await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
-      } catch (rpcError) {
-        if (this.#isTaskNotFoundError(rpcError)) {
-          this.#logWorkflowTaskNotFound('respondWorkflowTaskCompleted', execution)
-          return
+      const shouldRespondWorkflowTask = hasMultiQueries || !hasLegacyQueries
+      if (shouldRespondWorkflowTask) {
+        const completion = create(RespondWorkflowTaskCompletedRequestSchema, {
+          taskToken: response.taskToken,
+          commands: commandsForResponse,
+          identity: this.#identity,
+          namespace: this.#namespace,
+          deploymentOptions: this.#deploymentOptions,
+          queryResults: multiQueryResults,
+          ...(this.#stickySchedulingEnabled && !hasLegacyQueries ? { stickyAttributes: this.#stickyAttributes } : {}),
+          ...(this.#versioningBehavior !== null ? { versioningBehavior: this.#versioningBehavior } : {}),
+        })
+        try {
+          await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
+        } catch (rpcError) {
+          this.#log('error', 'debug: respondWorkflowTaskCompleted failed', {
+            ...baseLogFields,
+            error: rpcError instanceof Error ? rpcError.message : String(rpcError),
+          })
+          if (this.#isTaskNotFoundError(rpcError)) {
+            this.#logWorkflowTaskNotFound('respondWorkflowTaskCompleted', execution)
+            return
+          }
+          throw rpcError
         }
-        throw rpcError
+      }
+      if (legacyQueryResult) {
+        await this.#respondLegacyQueryTask(response, legacyQueryResult)
       }
     } catch (error) {
       let stickyEntryCleared = false
@@ -1009,6 +1090,7 @@ export class WorkerRuntime {
   async #ingestDeterminismState(
     workflowInfo: WorkflowInfo,
     historyEvents: HistoryEvent[],
+    options?: { queryRequests?: readonly WorkflowQueryRequest[] },
   ): Promise<ReplayResult | undefined> {
     if (historyEvents.length === 0) {
       return undefined
@@ -1018,6 +1100,7 @@ export class WorkerRuntime {
         info: workflowInfo,
         history: historyEvents,
         dataConverter: this.#dataConverter,
+        queries: options?.queryRequests,
       }),
     )
   }
@@ -1153,6 +1236,120 @@ export class WorkerRuntime {
       }
     }
     return resolutions
+  }
+
+  async #extractSignalDeliveries(events: HistoryEvent[]): Promise<WorkflowSignalDeliveryInput[]> {
+    const deliveries: WorkflowSignalDeliveryInput[] = []
+
+    const normalizeEventId = (value: bigint | number | string | undefined | null): string | null => {
+      if (value === undefined || value === null) {
+        return null
+      }
+      if (typeof value === 'string') {
+        return value
+      }
+      return value.toString()
+    }
+
+    for (const event of events) {
+      if (event.eventType !== EventType.WORKFLOW_EXECUTION_SIGNALED) {
+        continue
+      }
+      if (event.attributes?.case !== 'workflowExecutionSignaledEventAttributes') {
+        continue
+      }
+      const attrs = event.attributes.value as WorkflowExecutionSignaledEventAttributes
+      const args = await decodePayloadsToValues(this.#dataConverter, attrs.input?.payloads ?? [])
+      const workflowTaskCompletedEventId =
+        'workflowTaskCompletedEventId' in attrs
+          ? normalizeEventId(
+              (attrs as { workflowTaskCompletedEventId?: bigint | number | string | null })
+                .workflowTaskCompletedEventId,
+            )
+          : null
+      deliveries.push({
+        name: attrs.signalName ?? 'unknown',
+        args,
+        metadata: {
+          eventId: normalizeEventId(event.eventId),
+          workflowTaskCompletedEventId,
+          identity: attrs.identity ?? null,
+        },
+      })
+    }
+
+    return deliveries
+  }
+
+  async #extractWorkflowQueryRequests(response: PollWorkflowTaskQueueResponse): Promise<WorkflowQueryRequest[]> {
+    const requests: WorkflowQueryRequest[] = []
+    const map = response.queries ?? {}
+    this.#log('info', 'debug: workflow query payloads detected', {
+      namespace: this.#namespace,
+      taskQueue: this.#taskQueue,
+      workflowId: response.workflowExecution?.workflowId,
+      runId: response.workflowExecution?.runId,
+      queryMapSize: Object.keys(map).length,
+      hasLegacyQuery: Boolean(response.query),
+    })
+    for (const [id, query] of Object.entries(map)) {
+      const args = await decodePayloadsToValues(this.#dataConverter, query.queryArgs?.payloads ?? [])
+      const header = await this.#decodeQueryHeader(query)
+      requests.push({
+        id,
+        name: query.queryType ?? 'query',
+        args,
+        metadata: header ? { header } : undefined,
+        source: 'multi',
+      })
+    }
+    if (response.query) {
+      const args = await decodePayloadsToValues(this.#dataConverter, response.query.queryArgs?.payloads ?? [])
+      const header = await this.#decodeQueryHeader(response.query)
+      requests.push({
+        name: response.query.queryType ?? 'query',
+        args,
+        metadata: header ? { header } : undefined,
+        source: 'legacy',
+      })
+    }
+    return requests
+  }
+
+  async #decodeQueryHeader(query: WorkflowQuery | undefined): Promise<Record<string, unknown> | undefined> {
+    const fields = query?.header?.fields
+    if (!fields || Object.keys(fields).length === 0) {
+      return undefined
+    }
+    const decoded: Record<string, unknown> = {}
+    for (const [key, payload] of Object.entries(fields)) {
+      const values = await decodePayloadsToValues(this.#dataConverter, payload ? [payload] : [])
+      decoded[key] = values.length === 0 ? undefined : values.length === 1 ? values[0] : Object.freeze([...values])
+    }
+    return Object.keys(decoded).length > 0 ? decoded : undefined
+  }
+
+  async #respondLegacyQueryTask(
+    response: PollWorkflowTaskQueueResponse,
+    entry: WorkflowQueryEvaluationResult,
+  ): Promise<void> {
+    const queryResult = entry.result
+    this.#log('debug', 'responding to legacy workflow query', {
+      namespace: this.#namespace,
+      workflowId: response.workflowExecution?.workflowId,
+      runId: response.workflowExecution?.runId,
+      queryName: entry.request.name,
+    })
+    const request = create(RespondQueryTaskCompletedRequestSchema, {
+      taskToken: response.taskToken ?? new Uint8Array(),
+      completedType: queryResult.resultType ?? QueryResultType.ANSWERED,
+      queryResult: queryResult.answer,
+      errorMessage: queryResult.errorMessage ?? '',
+      namespace: this.#namespace,
+      failure: queryResult.failure,
+      cause: WorkflowTaskFailedCause.UNSPECIFIED,
+    })
+    await this.#workflowService.respondQueryTaskCompleted(request, { timeoutMs: RESPOND_TIMEOUT_MS })
   }
 
   async #fetchWorkflowHistoryPage(
@@ -1301,11 +1498,13 @@ export class WorkerRuntime {
     error: WorkflowNondeterminismError,
     expectedState: WorkflowDeterminismState | undefined,
   ): Promise<DeterminismMismatch[]> {
-    const baseline: WorkflowDeterminismState = expectedState ?? {
-      commandHistory: [],
-      randomValues: [],
-      timeValues: [],
-      failureMetadata: undefined,
+    const baseline: WorkflowDeterminismState = {
+      commandHistory: expectedState?.commandHistory ?? [],
+      randomValues: expectedState?.randomValues ?? [],
+      timeValues: expectedState?.timeValues ?? [],
+      failureMetadata: expectedState?.failureMetadata,
+      signals: expectedState?.signals ?? [],
+      queries: expectedState?.queries ?? [],
     }
     const hint = error.details?.hint
     if (!hint) {
@@ -1315,12 +1514,16 @@ export class WorkerRuntime {
     const commandIndex = this.#parseIndexFromHint(hint, 'commandIndex')
     const randomIndex = this.#parseIndexFromHint(hint, 'randomIndex')
     const timeIndex = this.#parseIndexFromHint(hint, 'timeIndex')
+    const signalIndex = this.#parseIndexFromHint(hint, 'signalIndex')
+    const queryIndex = this.#parseIndexFromHint(hint, 'queryIndex')
 
     const mutableActual: {
       commandHistory: WorkflowCommandHistoryEntry[]
       randomValues: number[]
       timeValues: number[]
       failureMetadata?: WorkflowDeterminismFailureMetadata
+      signals: WorkflowDeterminismSignalRecord[]
+      queries: WorkflowDeterminismQueryRecord[]
     } = {
       commandHistory: baseline.commandHistory.map((entry) => ({
         intent: entry.intent,
@@ -1329,6 +1532,8 @@ export class WorkerRuntime {
       randomValues: [...baseline.randomValues],
       timeValues: [...baseline.timeValues],
       failureMetadata: baseline.failureMetadata ? { ...baseline.failureMetadata } : undefined,
+      signals: baseline.signals.map((record) => ({ ...record })),
+      queries: baseline.queries.map((record) => ({ ...record })),
     }
     let mutated = false
 
@@ -1361,6 +1566,38 @@ export class WorkerRuntime {
       mutated = true
     }
 
+    if (signalIndex !== null) {
+      const receivedSignal = this.#asSignalRecord(error.details?.received)
+      if (receivedSignal) {
+        if (signalIndex < mutableActual.signals.length) {
+          mutableActual.signals = mutableActual.signals.map((record, idx) =>
+            idx === signalIndex ? receivedSignal : record,
+          )
+        } else {
+          mutableActual.signals = [...mutableActual.signals, receivedSignal]
+        }
+      } else if (signalIndex < mutableActual.signals.length) {
+        mutableActual.signals = mutableActual.signals.filter((_, idx) => idx !== signalIndex)
+      }
+      mutated = true
+    }
+
+    if (queryIndex !== null) {
+      const receivedQuery = this.#asQueryRecord(error.details?.received)
+      if (receivedQuery) {
+        if (queryIndex < mutableActual.queries.length) {
+          mutableActual.queries = mutableActual.queries.map((record, idx) =>
+            idx === queryIndex ? receivedQuery : record,
+          )
+        } else {
+          mutableActual.queries = [...mutableActual.queries, receivedQuery]
+        }
+      } else if (queryIndex < mutableActual.queries.length) {
+        mutableActual.queries = mutableActual.queries.filter((_, idx) => idx !== queryIndex)
+      }
+      mutated = true
+    }
+
     if (!mutated) {
       return []
     }
@@ -1370,6 +1607,8 @@ export class WorkerRuntime {
       randomValues: mutableActual.randomValues,
       timeValues: mutableActual.timeValues,
       failureMetadata: mutableActual.failureMetadata,
+      signals: mutableActual.signals,
+      queries: mutableActual.queries,
     }
 
     const diff = await Effect.runPromise(diffDeterminismState(baseline, actualState))
@@ -1419,6 +1658,26 @@ export class WorkerRuntime {
     while (array.length <= index) {
       array.push(Number.NaN)
     }
+  }
+
+  #asSignalRecord(value: unknown): WorkflowDeterminismSignalRecord | undefined {
+    if (!value || typeof value !== 'object') {
+      return undefined
+    }
+    if ('signalName' in value && 'payloadHash' in value) {
+      return value as WorkflowDeterminismSignalRecord
+    }
+    return undefined
+  }
+
+  #asQueryRecord(value: unknown): WorkflowDeterminismQueryRecord | undefined {
+    if (!value || typeof value !== 'object') {
+      return undefined
+    }
+    if ('queryName' in value && 'requestHash' in value) {
+      return value as WorkflowDeterminismQueryRecord
+    }
+    return undefined
   }
 
   static #isStickyCacheInstance(value: unknown): value is StickyCache {

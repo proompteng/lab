@@ -30,6 +30,8 @@ type Fixture = {
     commandHistory: unknown[]
     randomValues: number[]
     timeValues: number[]
+    signals: unknown[]
+    queries: unknown[]
   }
 }
 
@@ -77,6 +79,8 @@ const fixtures: Fixture[] = [
       ],
       randomValues: [],
       timeValues: [],
+      signals: [],
+      queries: [],
     },
   },
   {
@@ -137,6 +141,8 @@ const fixtures: Fixture[] = [
       ],
       randomValues: [],
       timeValues: [],
+      signals: [],
+      queries: [],
     },
   },
   {
@@ -230,6 +236,8 @@ const fixtures: Fixture[] = [
       ],
       randomValues: [],
       timeValues: [],
+      signals: [],
+      queries: [],
     },
   },
 ]

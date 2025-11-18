@@ -99,8 +99,42 @@ Workflow handlers receive a rich context that captures command intents determini
 - `timers.start({ timeoutMs })` – emits a `START_TIMER` command and returns a handle for bookkeeping.
 - `childWorkflows.start(type, args, options)` – records `START_CHILD_WORKFLOW_EXECUTION` with optional `workflowId`, retry policy, and task queue overrides.
 - `signals.signal(name, args, options)` – queues `SIGNAL_EXTERNAL_WORKFLOW_EXECUTION` for another run or child.
+- `signals.on(handle, handler)` – consumes the next delivery for `handle` and runs `handler` with the decoded payload + metadata (throws `WorkflowBlockedError` when history hasn’t delivered the signal yet).
+- `signals.waitFor(handle)` / `signals.drain(handle)` – await a single or all buffered deliveries for a handle and return the decoded payload plus the originating history metadata (event id, workflow task completion id, and identity).
 - `continueAsNew(options)` – records a `CONTINUE_AS_NEW_WORKFLOW_EXECUTION` command and short-circuits the current run.
 - `determinism.now()` / `determinism.random()` – shims for wall clock time and randomness that log values into the replay ledger so replays must produce identical sequences.
+- `queries.register(handle, resolver)` – exposes a deterministic query handler that the worker will invoke whenever Temporal issues a query task; handlers run under the determinism guard and must not mutate workflow state.
+- `queries.resolve(handle, input)` – synchronously evaluate a registered query inside the workflow (useful for composing queries from smaller resolvers or for unit tests).
+
+Signals and queries declare their schema via helper builders so handlers operate on typed payloads. The object form of `defineWorkflow` accepts the handle sets and surfaces them from the workflow definition for reuse:
+
+```ts
+const signals = defineWorkflowSignals({
+  unblock: Schema.String,
+  finish: Schema.Struct({}),
+})
+const queries = defineWorkflowQueries({
+  state: {
+    input: Schema.Struct({}),
+    output: Schema.Struct({ message: Schema.String }),
+  },
+})
+
+export const signalDrivenWorkflow = defineWorkflow({
+  name: 'signalDrivenWorkflow',
+  signals,
+  queries,
+  handler: ({ signals, queries }) =>
+    Effect.gen(function* () {
+      let current = 'waiting'
+      yield* queries.register(queries.state, () => Effect.sync(() => ({ message: current })))
+      const delivery = yield* signals.waitFor(signals.unblock)
+      current = delivery.payload
+      yield* signals.waitFor(signals.finish)
+      return current
+    }),
+})
+```
 
 Example:
 

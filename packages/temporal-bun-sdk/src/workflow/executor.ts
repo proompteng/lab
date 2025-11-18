@@ -16,15 +16,19 @@ import {
 } from '../proto/temporal/api/command/v1/message_pb'
 import { PayloadsSchema } from '../proto/temporal/api/common/v1/message_pb'
 import { CommandType } from '../proto/temporal/api/enums/v1/command_type_pb'
+import { QueryResultType } from '../proto/temporal/api/enums/v1/query_pb'
+import { type WorkflowQueryResult, WorkflowQueryResultSchema } from '../proto/temporal/api/query/v1/message_pb'
 import { materializeCommands, type WorkflowCommandIntent } from './commands'
 import {
   type ActivityResolution,
   createWorkflowContext,
   type WorkflowCommandContext,
   type WorkflowInfo,
+  type WorkflowQueryRegistry,
 } from './context'
 import { DeterminismGuard, snapshotToDeterminismState, type WorkflowDeterminismState } from './determinism'
 import { ContinueAsNewWorkflowError, WorkflowBlockedError, WorkflowNondeterminismError } from './errors'
+import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from './inbound'
 import type { WorkflowRegistry } from './registry'
 
 export interface ExecuteWorkflowInput {
@@ -36,6 +40,8 @@ export interface ExecuteWorkflowInput {
   readonly arguments: unknown
   readonly determinismState?: WorkflowDeterminismState
   readonly activityResults?: Map<string, ActivityResolution>
+  readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
+  readonly queryRequests?: readonly WorkflowQueryRequest[]
 }
 
 export type WorkflowCompletionStatus = 'completed' | 'failed' | 'continued-as-new' | 'pending'
@@ -47,6 +53,12 @@ export interface WorkflowExecutionOutput {
   readonly completion: WorkflowCompletionStatus
   readonly result?: unknown
   readonly failure?: unknown
+  readonly queryResults: readonly WorkflowQueryEvaluationResult[]
+}
+
+export interface WorkflowQueryEvaluationResult {
+  readonly request: WorkflowQueryRequest
+  readonly result: WorkflowQueryResult
 }
 
 export interface WorkflowExecutorOptions {
@@ -78,6 +90,7 @@ export class WorkflowExecutor {
     const guard = new DeterminismGuard({ previousState: input.determinismState })
 
     let lastCommandContext: WorkflowCommandContext | undefined
+    let lastQueryRegistry: WorkflowQueryRegistry | undefined
 
     const workflowEffect = Effect.flatMap(decodedEffect, (parsed) => {
       const created = createWorkflowContext({
@@ -85,14 +98,17 @@ export class WorkflowExecutor {
         info,
         determinismGuard: guard,
         activityResults: input.activityResults,
+        signalDeliveries: input.signalDeliveries,
       })
       lastCommandContext = created.commandContext
+      lastQueryRegistry = created.queryRegistry
       return Effect.flatMap(definition.handler(created.context), (result) =>
         Effect.sync(() => ({ result, commandContext: created.commandContext })),
       )
     })
 
     const exit = await Effect.runPromiseExit(workflowEffect)
+    const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
     const rawSnapshot = guard.snapshot
     const determinismState = snapshotToDeterminismState(rawSnapshot)
 
@@ -104,6 +120,7 @@ export class WorkflowExecutor {
         determinismState,
         completion: 'completed',
         result: exit.value.result,
+        queryResults,
       }
     }
 
@@ -118,6 +135,7 @@ export class WorkflowExecutor {
         intents,
         determinismState,
         completion: 'continued-as-new',
+        queryResults,
       }
     }
 
@@ -141,6 +159,7 @@ export class WorkflowExecutor {
         intents: contextForPending.intents,
         determinismState,
         completion: 'pending',
+        queryResults,
       }
     }
 
@@ -151,6 +170,7 @@ export class WorkflowExecutor {
       determinismState,
       completion: 'failed',
       failure: error,
+      queryResults,
     }
   }
 
@@ -213,6 +233,56 @@ export class WorkflowExecutor {
         },
       }),
     ]
+  }
+
+  async #evaluateQueryRequests(
+    registry: WorkflowQueryRegistry | undefined,
+    requests: readonly WorkflowQueryRequest[] | undefined,
+  ): Promise<WorkflowQueryEvaluationResult[]> {
+    if (!requests || requests.length === 0) {
+      return []
+    }
+    if (!registry) {
+      throw new Error('Workflow query registry unavailable')
+    }
+    const results: WorkflowQueryEvaluationResult[] = []
+    for (const request of requests) {
+      // eslint-disable-next-line no-console
+      console.info('[workflow-executor] evaluating query', request.name)
+      const evaluation = await Effect.runPromise(registry.evaluate(request))
+      const encoded =
+        evaluation.status === 'success'
+          ? await this.#encodeSuccessfulQueryResult(evaluation.result)
+          : await this.#encodeFailedQueryResult(evaluation.error)
+      results.push({ request: evaluation.request, result: encoded })
+      // eslint-disable-next-line no-console
+      console.info('[workflow-executor] query evaluation complete', {
+        name: evaluation.request.name,
+        source: evaluation.request.source,
+        id: evaluation.request.id ?? null,
+      })
+    }
+    return results
+  }
+
+  async #encodeSuccessfulQueryResult(value: unknown): Promise<WorkflowQueryResult> {
+    const payloads = await encodeValuesToPayloads(this.#dataConverter, value === undefined ? [] : [value])
+    const answer = payloads && payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined
+    return create(WorkflowQueryResultSchema, {
+      resultType: QueryResultType.ANSWERED,
+      answer,
+      errorMessage: '',
+    })
+  }
+
+  async #encodeFailedQueryResult(error: unknown): Promise<WorkflowQueryResult> {
+    const normalized = error instanceof Error ? error : new Error(String(error ?? 'Workflow query failed'))
+    const failure = await encodeErrorToFailure(this.#dataConverter, normalized)
+    return create(WorkflowQueryResultSchema, {
+      resultType: QueryResultType.FAILED,
+      errorMessage: normalized.message ?? 'Workflow query failed',
+      failure,
+    })
   }
 
   #normalizeArguments(raw: unknown, expectArray: boolean): unknown {

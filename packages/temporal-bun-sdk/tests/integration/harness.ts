@@ -67,6 +67,7 @@ export interface TemporalWorkflowExecuteOptions {
     readonly name: string
     readonly payload?: unknown[]
   }
+  readonly startOnly?: boolean
 }
 
 export type TemporalCliError =
@@ -251,16 +252,17 @@ export const createIntegrationHarness = (
       const taskQueue = options.taskQueue ?? config.taskQueue
       if (!taskQueue) {
         throw new TemporalCliCommandError(
-          ['temporal', 'workflow', 'execute'],
+          ['temporal', 'workflow', options.startOnly ? 'start' : 'execute'],
           -1,
           '',
           'Task queue missing for Temporal CLI workflow execution',
         )
       }
       const args = buildInputArgs(options.args)
+      const cliOperation = options.startOnly ? 'start' : 'execute'
       const command = [
         'workflow',
-        'execute',
+        cliOperation,
         '--workflow-id',
         workflowId,
         '--task-queue',

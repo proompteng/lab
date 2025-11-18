@@ -303,7 +303,7 @@
     },
     "packages/temporal-bun-sdk": {
       "name": "@proompteng/temporal-bun-sdk",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "bin": {
         "temporal-bun-worker": "./dist/bin/start-worker.js",
         "temporal-bun": "./dist/bin/temporal-bun.js",

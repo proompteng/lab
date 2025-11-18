@@ -52,6 +52,8 @@ test('encodes and decodes determinism marker envelopes', async () => {
     ],
     randomValues: [0.42],
     timeValues: [1728000000],
+    signals: [],
+    queries: [],
   }
 
   const details = await Effect.runPromise(
@@ -105,6 +107,8 @@ test('ingestWorkflowHistory returns determinism marker snapshot when available',
     ],
     randomValues: [0.99],
     timeValues: [1730000000000],
+    signals: [],
+    queries: [],
   }
 
   const details = await Effect.runPromise(
@@ -443,6 +447,8 @@ test('diffDeterminismState surfaces mismatched intents and scalar values', async
     ],
     randomValues: [0.2],
     timeValues: [],
+    signals: [],
+    queries: [],
   }
 
   const diff = await Effect.runPromise(diffDeterminismState(expected, actual))

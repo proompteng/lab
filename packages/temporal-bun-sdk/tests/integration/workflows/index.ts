@@ -2,6 +2,7 @@ import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import { defineWorkflow } from '../../../src/workflow/definition'
+import { defineWorkflowQueries, defineWorkflowSignals } from '../../../src/workflow/inbound'
 import { currentActivityContext } from '../../../src/worker/activity-context'
 
 const timerInputSchema = Schema.Struct({
@@ -149,6 +150,33 @@ export const retryProbeWorkflow = defineWorkflow(
     ),
 )
 
+const signalHandles = defineWorkflowSignals({
+  unblock: Schema.String,
+  finish: Schema.Struct({}),
+})
+
+const queryHandles = defineWorkflowQueries({
+  state: {
+    input: Schema.Struct({}),
+    output: Schema.Struct({ message: Schema.String }),
+  },
+})
+
+export const signalQueryWorkflow = defineWorkflow({
+  name: 'integrationSignalQueryWorkflow',
+  signals: signalHandles,
+  queries: queryHandles,
+  handler: ({ signals, queries }) =>
+    Effect.gen(function* () {
+      let current = 'waiting'
+      yield* queries.register(queryHandles.state, () => Effect.sync(() => ({ message: current })))
+      const unblock = yield* signals.waitFor(signalHandles.unblock)
+      current = unblock.payload
+      yield* signals.waitFor(signalHandles.finish)
+      return current
+    }),
+})
+
 export const integrationWorkflows = [
   timerWorkflow,
   activityWorkflow,
@@ -158,6 +186,7 @@ export const integrationWorkflows = [
   heartbeatWorkflow,
   heartbeatTimeoutWorkflow,
   retryProbeWorkflow,
+  signalQueryWorkflow,
 ]
 
 const integrationHeartbeatActivity = async (durationMs: number): Promise<string> => {
