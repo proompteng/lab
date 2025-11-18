@@ -124,15 +124,15 @@ export interface WorkflowSignalClient {
     handle: WorkflowSignalHandle<I>,
     handler: WorkflowSignalHandler<I, void>,
     options?: WorkflowSignalHandlerOptions,
-  ): Effect.Effect<void, WorkflowBlockedError, never>
+  ): Effect.Effect<void, WorkflowBlockedError | unknown, never>
   waitFor<I>(
     handle: WorkflowSignalHandle<I>,
     options?: WorkflowSignalHandlerOptions,
-  ): Effect.Effect<WorkflowSignalDelivery<I>, WorkflowBlockedError, never>
+  ): Effect.Effect<WorkflowSignalDelivery<I>, WorkflowBlockedError | unknown, never>
   drain<I>(
     handle: WorkflowSignalHandle<I>,
     options?: WorkflowSignalHandlerOptions,
-  ): Effect.Effect<readonly WorkflowSignalDelivery<I>[], WorkflowBlockedError, never>
+  ): Effect.Effect<readonly WorkflowSignalDelivery<I>[], WorkflowBlockedError | unknown, never>
 }
 
 export interface WorkflowQueries {
@@ -145,7 +145,7 @@ export interface WorkflowQueries {
     handle: WorkflowQueryHandle<I, O>,
     input?: I,
     metadata?: WorkflowQueryMetadata,
-  ): Effect.Effect<O, WorkflowQueryHandlerMissingError, never>
+  ): Effect.Effect<O, WorkflowQueryHandlerMissingError | unknown, never>
 }
 
 export interface WorkflowDeterminismHelpers {
@@ -466,45 +466,45 @@ class WorkflowInboundSignals {
     handle: WorkflowSignalHandle<I>,
     handler: WorkflowSignalHandler<I, void>,
     options?: WorkflowSignalHandlerOptions,
-  ) {
-    return Effect.suspend(() => {
-      const entry = this.#shift(handle.name)
-      if (!entry) {
-        return Effect.fail(new WorkflowBlockedError(`Signal "${handle.name}" not yet delivered`))
-      }
-      const handlerName = resolveHandlerName(options?.name, handler, handle.name)
-      return this.#decode(handle, entry)
-        .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
-        .pipe(Effect.flatMap((payload) => handler(payload, entry.metadata)))
-    })
+  ): Effect.Effect<void, WorkflowBlockedError | unknown, never> {
+    const entry = this.#shift(handle.name)
+    if (!entry) {
+      return Effect.fail(new WorkflowBlockedError(`Signal "${handle.name}" not yet delivered`))
+    }
+    const handlerName = resolveHandlerName(options?.name, handler, handle.name)
+    return this.#decode(handle, entry)
+      .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
+      .pipe(Effect.flatMap((payload) => handler(payload, entry.metadata)))
   }
 
-  waitFor<I>(handle: WorkflowSignalHandle<I>, options?: WorkflowSignalHandlerOptions) {
-    return Effect.suspend(() => {
-      const entry = this.#shift(handle.name)
-      if (!entry) {
-        return Effect.fail(new WorkflowBlockedError(`Signal "${handle.name}" not yet delivered`))
-      }
-      const handlerName = options?.name ?? 'waitFor'
-      return this.#decode(handle, entry)
-        .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
-        .pipe(Effect.map((payload) => ({ payload, metadata: entry.metadata }) as WorkflowSignalDelivery<I>))
-    })
+  waitFor<I>(
+    handle: WorkflowSignalHandle<I>,
+    options?: WorkflowSignalHandlerOptions,
+  ): Effect.Effect<WorkflowSignalDelivery<I>, WorkflowBlockedError | unknown, never> {
+    const entry = this.#shift(handle.name)
+    if (!entry) {
+      return Effect.fail(new WorkflowBlockedError(`Signal "${handle.name}" not yet delivered`))
+    }
+    const handlerName = options?.name ?? 'waitFor'
+    return this.#decode(handle, entry)
+      .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
+      .pipe(Effect.map((payload) => ({ payload, metadata: entry.metadata }) as WorkflowSignalDelivery<I>))
   }
 
-  drain<I>(handle: WorkflowSignalHandle<I>, options?: WorkflowSignalHandlerOptions) {
-    return Effect.suspend(() => {
-      const entries = this.#drain(handle.name)
-      if (entries.length === 0) {
-        return Effect.fail(new WorkflowBlockedError(`Signal "${handle.name}" not yet delivered`))
-      }
-      const handlerName = options?.name ?? 'drain'
-      return runSequential(entries, (entry) =>
-        this.#decode(handle, entry)
-          .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
-          .pipe(Effect.map((payload) => ({ payload, metadata: entry.metadata }) as WorkflowSignalDelivery<I>)),
-      )
-    })
+  drain<I>(
+    handle: WorkflowSignalHandle<I>,
+    options?: WorkflowSignalHandlerOptions,
+  ): Effect.Effect<readonly WorkflowSignalDelivery<I>[], WorkflowBlockedError | unknown, never> {
+    const entries = this.#drain(handle.name)
+    if (entries.length === 0) {
+      return Effect.fail(new WorkflowBlockedError(`Signal "${handle.name}" not yet delivered`))
+    }
+    const handlerName = options?.name ?? 'drain'
+    return runSequential(entries, (entry) =>
+      this.#decode(handle, entry)
+        .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
+        .pipe(Effect.map((payload) => ({ payload, metadata: entry.metadata }) as WorkflowSignalDelivery<I>)),
+    )
   }
 
   #shift(name: string): SignalQueueEntry | undefined {
@@ -582,7 +582,7 @@ export class WorkflowQueryRegistry {
     handle: WorkflowQueryHandle<I, O>,
     input?: I,
     metadata?: WorkflowQueryMetadata,
-  ): Effect.Effect<O, WorkflowQueryHandlerMissingError, never> {
+  ): Effect.Effect<O, WorkflowQueryHandlerMissingError | unknown, never> {
     const entry = this.#handlers.get(handle.name)
     if (!entry) {
       return Effect.fail(new WorkflowQueryHandlerMissingError(handle.name))
@@ -672,8 +672,8 @@ const resolveHandlerName = (
 
 const runSequential = <A>(
   entries: readonly SignalQueueEntry[],
-  factory: (entry: SignalQueueEntry) => Effect.Effect<A, WorkflowBlockedError, never>,
-): Effect.Effect<readonly A[], WorkflowBlockedError, never> =>
+  factory: (entry: SignalQueueEntry) => Effect.Effect<A, WorkflowBlockedError | unknown, never>,
+): Effect.Effect<readonly A[], WorkflowBlockedError | unknown, never> =>
   entries.reduce(
     (effect, entry) =>
       effect.pipe(

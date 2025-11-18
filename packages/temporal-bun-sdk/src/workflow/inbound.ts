@@ -1,9 +1,9 @@
 import type { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
-const defaultSignalSchema = Schema.Array(Schema.Unknown) as Schema.Schema<readonly unknown[]>
-const defaultQueryInputSchema = Schema.Array(Schema.Unknown) as Schema.Schema<readonly unknown[]>
-const defaultQueryOutputSchema = Schema.Unknown as Schema.Schema<unknown>
+const defaultSignalSchema: Schema.Schema<unknown> = Schema.Unknown
+const defaultQueryInputSchema: Schema.Schema<unknown> = Schema.Unknown
+const defaultQueryOutputSchema: Schema.Schema<unknown> = Schema.Unknown
 
 const shouldDecodeAsArray = (schema: Schema.Schema<unknown>): boolean => schema.ast._tag === 'TupleType'
 
@@ -35,11 +35,12 @@ export const defineWorkflowSignals = <T extends Record<string, RecordValue<unkno
   for (const [name, value] of Object.entries(definitions)) {
     const schema = Schema.isSchema(value) ? value : (value.schema ?? defaultSignalSchema)
     const description = Schema.isSchema(value) ? undefined : value.description
+    const decodeArgumentsAsArray = Schema.isSchema(value) || value.schema ? shouldDecodeAsArray(schema) : true
     handles[name] = {
       kind: 'workflow-signal',
       name,
       schema,
-      decodeArgumentsAsArray: shouldDecodeAsArray(schema),
+      decodeArgumentsAsArray,
       ...(description ? { description } : {}),
     }
   }
@@ -126,12 +127,13 @@ export const defineWorkflowQueries = <T extends Record<string, QueryRecordValue<
     }
     const inputSchema = value.input ?? defaultQueryInputSchema
     const outputSchema = value.output ?? defaultQueryOutputSchema
+    const decodeInputAsArray = value.input ? shouldDecodeAsArray(inputSchema) : true
     handles[name] = {
       kind: 'workflow-query',
       name,
       inputSchema,
       outputSchema,
-      decodeInputAsArray: shouldDecodeAsArray(inputSchema),
+      decodeInputAsArray,
       ...(value.description ? { description: value.description } : {}),
     }
   }

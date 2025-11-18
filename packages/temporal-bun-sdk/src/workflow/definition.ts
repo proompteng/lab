@@ -19,12 +19,6 @@ export interface WorkflowDefinition<I, O, S = undefined, Q = undefined> {
   readonly queries?: Q
 }
 
-export function defineWorkflow<I, O>(name: string, handler: WorkflowHandler<I, O>): WorkflowDefinition<I, O>
-export function defineWorkflow<I, O>(
-  name: string,
-  schema: WorkflowSchema<I>,
-  handler: WorkflowHandler<I, O>,
-): WorkflowDefinition<I, O>
 export interface DefineWorkflowConfig<
   I,
   O,
@@ -44,17 +38,24 @@ export function defineWorkflow<
   Q extends Record<string, WorkflowQueryHandle<unknown, unknown>> | undefined,
 >(config: DefineWorkflowConfig<I, O, S, Q>): WorkflowDefinition<I, O, S, Q>
 export function defineWorkflow<I, O>(
-  nameOrConfig:
-    | string
-    | DefineWorkflowConfig<
-        I,
-        O,
-        Record<string, WorkflowSignalHandle<unknown>> | undefined,
-        Record<string, WorkflowQueryHandle<unknown, unknown>> | undefined
-      >,
+  name: string,
+  handler: WorkflowHandler<I, O>,
+): WorkflowDefinition<I, O, undefined, undefined>
+export function defineWorkflow<I, O>(
+  name: string,
+  schema: WorkflowSchema<I>,
+  handler: WorkflowHandler<I, O>,
+): WorkflowDefinition<I, O, undefined, undefined>
+export function defineWorkflow<
+  I,
+  O,
+  S extends Record<string, WorkflowSignalHandle<unknown>> | undefined = undefined,
+  Q extends Record<string, WorkflowQueryHandle<unknown, unknown>> | undefined = undefined,
+>(
+  nameOrConfig: string | DefineWorkflowConfig<I, O, S, Q>,
   schemaOrHandler?: WorkflowSchema<I> | WorkflowHandler<I, O>,
   maybeHandler?: WorkflowHandler<I, O>,
-): WorkflowDefinition<I, O> {
+): WorkflowDefinition<I, O, S, Q> {
   if (typeof nameOrConfig === 'object') {
     const config = nameOrConfig
     const schema = config.schema ?? (defaultWorkflowSchema as unknown as WorkflowSchema<I>)
@@ -71,7 +72,7 @@ export function defineWorkflow<I, O>(
       decodeArgumentsAsArray,
       ...(config.signals ? { signals: config.signals } : {}),
       ...(config.queries ? { queries: config.queries } : {}),
-    }
+    } as WorkflowDefinition<I, O, S, Q>
   }
   const schema = Schema.isSchema(schemaOrHandler)
     ? (schemaOrHandler as WorkflowSchema<I>)
@@ -86,7 +87,7 @@ export function defineWorkflow<I, O>(
     schema,
     handler,
     decodeArgumentsAsArray,
-  }
+  } as WorkflowDefinition<I, O, undefined, undefined>
 }
 
 export type WorkflowDefinitions = ReadonlyArray<WorkflowDefinition<unknown, unknown>>

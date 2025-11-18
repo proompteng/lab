@@ -615,11 +615,18 @@ const reconstructDeterminismState = (
           }
           const attributes = event.attributes.value as WorkflowExecutionSignaledEventAttributes
           const payloads = yield* decodePayloadArray(intake.dataConverter, attributes.input)
+          const workflowTaskCompletedEventId =
+            'workflowTaskCompletedEventId' in attributes
+              ? normalizeEventId(
+                  (attributes as { workflowTaskCompletedEventId?: bigint | number | string | null })
+                    .workflowTaskCompletedEventId,
+                )
+              : null
           signalRecords.push({
             signalName: attributes.signalName ?? 'unknown',
             payloadHash: stableStringify(payloads),
             eventId: normalizeEventId(event.eventId),
-            workflowTaskCompletedEventId: normalizeEventId(attributes.workflowTaskCompletedEventId),
+            workflowTaskCompletedEventId,
             identity: attributes.identity ?? null,
           })
           break

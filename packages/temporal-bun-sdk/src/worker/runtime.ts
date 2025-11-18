@@ -1260,12 +1260,19 @@ export class WorkerRuntime {
       }
       const attrs = event.attributes.value as WorkflowExecutionSignaledEventAttributes
       const args = await decodePayloadsToValues(this.#dataConverter, attrs.input?.payloads ?? [])
+      const workflowTaskCompletedEventId =
+        'workflowTaskCompletedEventId' in attrs
+          ? normalizeEventId(
+              (attrs as { workflowTaskCompletedEventId?: bigint | number | string | null })
+                .workflowTaskCompletedEventId,
+            )
+          : null
       deliveries.push({
         name: attrs.signalName ?? 'unknown',
         args,
         metadata: {
           eventId: normalizeEventId(event.eventId),
-          workflowTaskCompletedEventId: normalizeEventId(attrs.workflowTaskCompletedEventId),
+          workflowTaskCompletedEventId,
           identity: attrs.identity ?? null,
         },
       })
@@ -1315,8 +1322,8 @@ export class WorkerRuntime {
       return undefined
     }
     const decoded: Record<string, unknown> = {}
-    for (const [key, payloads] of Object.entries(fields)) {
-      const values = await decodePayloadsToValues(this.#dataConverter, payloads.payloads ?? [])
+    for (const [key, payload] of Object.entries(fields)) {
+      const values = await decodePayloadsToValues(this.#dataConverter, payload ? [payload] : [])
       decoded[key] = values.length === 0 ? undefined : values.length === 1 ? values[0] : Object.freeze([...values])
     }
     return Object.keys(decoded).length > 0 ? decoded : undefined
@@ -1340,7 +1347,7 @@ export class WorkerRuntime {
       errorMessage: queryResult.errorMessage ?? '',
       namespace: this.#namespace,
       failure: queryResult.failure,
-      cause: WorkflowTaskFailedCause.WORKFLOW_TASK_FAILED_CAUSE_UNSPECIFIED,
+      cause: WorkflowTaskFailedCause.UNSPECIFIED,
     })
     await this.#workflowService.respondQueryTaskCompleted(request, { timeoutMs: RESPOND_TIMEOUT_MS })
   }
