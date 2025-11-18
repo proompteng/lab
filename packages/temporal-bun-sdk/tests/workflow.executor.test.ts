@@ -250,6 +250,7 @@ test('evaluates registered workflow queries with encoded results', async () => {
   expect(entry?.request.id).toBe('q-1')
   const answerValues = await decodePayloadsToValues(dataConverter, entry?.result.answer?.payloads ?? [])
   expect(answerValues[0]).toEqual({ status: 'ready' })
+  expect(output.determinismState.queries.length).toBeGreaterThan(0)
 })
 
 test('tampered determinism state throws WorkflowNondeterminismError', async () => {

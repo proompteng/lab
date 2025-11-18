@@ -108,9 +108,9 @@ export class WorkflowExecutor {
     })
 
     const exit = await Effect.runPromiseExit(workflowEffect)
+    const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
     const rawSnapshot = guard.snapshot
     const determinismState = snapshotToDeterminismState(rawSnapshot)
-    const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
 
     if (Exit.isSuccess(exit)) {
       const commands = await this.#buildSuccessCommands(exit.value.commandContext, exit.value.result)
