@@ -5,9 +5,11 @@ import { durationFromMs } from '@bufbuild/protobuf/wkt'
 import {
   type DataConverter,
   decodePayloadMapToValues,
+  decodePayloadsToValues,
   encodeMapValuesToPayloads,
   encodeValuesToPayloads,
 } from '../common/payloads'
+import { failureToError } from '../common/payloads/failure'
 import {
   type Header,
   HeaderSchema,
@@ -27,6 +29,7 @@ import {
   WorkflowTypeSchema,
 } from '../proto/temporal/api/common/v1/message_pb'
 import { QueryRejectCondition } from '../proto/temporal/api/enums/v1/query_pb'
+import { UpdateWorkflowExecutionLifecycleStage } from '../proto/temporal/api/enums/v1/update_pb'
 import { TaskQueueKind } from '../proto/temporal/api/enums/v1/task_queue_pb'
 import { type TaskQueue, TaskQueueSchema } from '../proto/temporal/api/taskqueue/v1/message_pb'
 import {
@@ -42,7 +45,12 @@ import {
   StartWorkflowExecutionRequestSchema,
   type TerminateWorkflowExecutionRequest,
   TerminateWorkflowExecutionRequestSchema,
+  type UpdateWorkflowExecutionRequest,
+  UpdateWorkflowExecutionRequestSchema,
+  type PollWorkflowExecutionUpdateRequest,
+  PollWorkflowExecutionUpdateRequestSchema,
 } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
+import { WaitPolicySchema, type Outcome } from '../proto/temporal/api/update/v1/message_pb'
 import type {
   RetryPolicyOptions,
   SignalWithStartOptions,
@@ -71,6 +79,8 @@ const nextRequestEntropy = (): string => {
 let entropyGenerator: () => string = nextRequestEntropy
 
 export const createSignalRequestEntropy = (): string => entropyGenerator()
+
+export const createUpdateRequestId = (): string => entropyGenerator()
 
 export const __setSignalRequestEntropyGeneratorForTests = (generator?: () => string): void => {
   entropyGenerator = generator ?? nextRequestEntropy
@@ -313,6 +323,96 @@ export const buildCancelRequest = (handle: WorkflowHandle, identity: string): Re
     firstExecutionRunId: handle.firstExecutionRunId ?? '',
     reason: '',
   })
+}
+
+interface BuildUpdateWorkflowRequestParams {
+  handle: WorkflowHandle
+  namespace: string
+  identity: string
+  updateId: string
+  updateName: string
+  args: unknown[]
+  headers?: Record<string, unknown>
+  waitStage: UpdateWorkflowExecutionLifecycleStage
+  firstExecutionRunId?: string
+}
+
+export const buildUpdateWorkflowRequest = async (
+  params: BuildUpdateWorkflowRequestParams,
+  dataConverter: DataConverter,
+): Promise<UpdateWorkflowExecutionRequest> => {
+  const namespace = ensureNamespace(params.handle.namespace, params.namespace)
+  const execution = serializeWorkflowExecution(params.handle)
+  const header = await serializeHeader(dataConverter, params.headers)
+  const args = await serializeValues(dataConverter, params.args ?? [])
+
+  return create(UpdateWorkflowExecutionRequestSchema, {
+    namespace,
+    workflowExecution: execution,
+    firstExecutionRunId: params.firstExecutionRunId ?? params.handle.firstExecutionRunId ?? '',
+    waitPolicy: create(WaitPolicySchema, { lifecycleStage: params.waitStage }),
+    request: {
+      meta: {
+        updateId: params.updateId,
+        identity: params.identity,
+      },
+      input: {
+        name: params.updateName,
+        args,
+        header,
+      },
+    },
+  })
+}
+
+interface BuildPollWorkflowUpdateRequestParams {
+  handle: WorkflowHandle
+  namespace: string
+  identity: string
+  updateId: string
+  waitStage: UpdateWorkflowExecutionLifecycleStage
+}
+
+export const buildPollWorkflowUpdateRequest = (
+  params: BuildPollWorkflowUpdateRequestParams,
+): PollWorkflowExecutionUpdateRequest => {
+  const namespace = ensureNamespace(params.handle.namespace, params.namespace)
+  const execution = serializeWorkflowExecution(params.handle)
+
+  return create(PollWorkflowExecutionUpdateRequestSchema, {
+    namespace,
+    updateRef: {
+      workflowExecution: execution,
+      updateId: params.updateId,
+    },
+    identity: params.identity,
+    waitPolicy: create(WaitPolicySchema, { lifecycleStage: params.waitStage }),
+  })
+}
+
+export const decodeUpdateOutcome = async (
+  dataConverter: DataConverter,
+  outcome?: Outcome | null,
+): Promise<{ status: 'success' | 'failure'; result?: unknown; error?: Error } | undefined> => {
+  if (!outcome || !outcome.value || outcome.value.case === undefined) {
+    return undefined
+  }
+  if (outcome.value.case === 'success') {
+    const payloads = outcome.value.value?.payloads ?? []
+    const values = (await decodePayloadsToValues(dataConverter, payloads)) ?? []
+    return {
+      status: 'success',
+      result: values.length > 0 ? values[0] : undefined,
+    }
+  }
+  if (outcome.value.case === 'failure') {
+    const error = (await failureToError(dataConverter, outcome.value.value)) ?? new Error('Workflow update failed')
+    return {
+      status: 'failure',
+      error,
+    }
+  }
+  return undefined
 }
 
 const serializeRetryPolicy = (policy?: RetryPolicyOptions): RetryPolicy | undefined => {

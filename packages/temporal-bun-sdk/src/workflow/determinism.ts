@@ -50,6 +50,21 @@ export interface WorkflowDeterminismQueryRecord {
   readonly failureHash?: string
 }
 
+export type WorkflowUpdateDeterminismStage = 'admitted' | 'accepted' | 'rejected' | 'completed'
+
+export interface WorkflowUpdateDeterminismEntry {
+  readonly updateId: string
+  readonly stage: WorkflowUpdateDeterminismStage
+  readonly handlerName?: string
+  readonly identity?: string
+  readonly sequencingEventId?: string
+  readonly messageId?: string
+  readonly acceptedEventId?: string
+  readonly outcome?: 'success' | 'failure'
+  readonly failureMessage?: string
+  readonly historyEventId?: string
+}
+
 export interface WorkflowDeterminismState {
   readonly commandHistory: readonly WorkflowCommandHistoryEntry[]
   readonly randomValues: readonly number[]
@@ -57,6 +72,7 @@ export interface WorkflowDeterminismState {
   readonly failureMetadata?: WorkflowDeterminismFailureMetadata
   readonly signals: readonly WorkflowDeterminismSignalRecord[]
   readonly queries: readonly WorkflowDeterminismQueryRecord[]
+  readonly updates?: readonly WorkflowUpdateDeterminismEntry[]
 }
 
 export interface DeterminismGuardOptions {
@@ -71,6 +87,7 @@ export type DeterminismGuardSnapshot = {
   failureMetadata?: WorkflowDeterminismFailureMetadata
   signals: WorkflowDeterminismSignalRecord[]
   queries: WorkflowDeterminismQueryRecord[]
+  updates: WorkflowUpdateDeterminismEntry[]
 }
 
 export const snapshotToDeterminismState = (snapshot: DeterminismGuardSnapshot): WorkflowDeterminismState => ({
@@ -83,6 +100,7 @@ export const snapshotToDeterminismState = (snapshot: DeterminismGuardSnapshot): 
   failureMetadata: snapshot.failureMetadata ? { ...snapshot.failureMetadata } : undefined,
   signals: snapshot.signals.map((record) => ({ ...record })),
   queries: snapshot.queries.map((record) => ({ ...record })),
+  ...(snapshot.updates.length > 0 ? { updates: snapshot.updates.map((entry) => ({ ...entry })) } : {}),
 })
 
 export type RecordedCommandKind = 'new' | 'replay'
@@ -106,6 +124,7 @@ export class DeterminismGuard {
       timeValues: [],
       signals: [],
       queries: [],
+      updates: [],
     }
   }
 
@@ -231,6 +250,10 @@ export class DeterminismGuard {
     }
     this.snapshot.queries.push(record)
     this.#queryIndex += 1
+  }
+
+  recordUpdate(entry: WorkflowUpdateDeterminismEntry): void {
+    this.snapshot.updates.push(entry)
   }
 }
 

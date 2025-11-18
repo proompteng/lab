@@ -23,13 +23,63 @@ import {
   type ActivityResolution,
   createWorkflowContext,
   type WorkflowCommandContext,
+  type WorkflowContext,
   type WorkflowInfo,
   type WorkflowQueryRegistry,
+  WorkflowUpdateRegistry,
 } from './context'
 import { DeterminismGuard, snapshotToDeterminismState, type WorkflowDeterminismState } from './determinism'
 import { ContinueAsNewWorkflowError, WorkflowBlockedError, WorkflowNondeterminismError } from './errors'
-import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from './inbound'
 import type { WorkflowRegistry } from './registry'
+import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from './inbound'
+
+export interface WorkflowUpdateInvocation {
+  readonly protocolInstanceId: string
+  readonly requestMessageId: string
+  readonly updateId: string
+  readonly name: string
+  readonly payload: unknown
+  readonly identity?: string
+  readonly sequencingEventId?: string
+}
+
+export type WorkflowUpdateDispatch =
+  | {
+      readonly type: 'acceptance'
+      readonly protocolInstanceId: string
+      readonly requestMessageId: string
+      readonly updateId: string
+      readonly handlerName: string
+      readonly identity?: string
+      readonly sequencingEventId?: string
+    }
+  | {
+      readonly type: 'rejection'
+      readonly protocolInstanceId: string
+      readonly requestMessageId: string
+      readonly updateId: string
+      readonly reason: string
+      readonly failure?: unknown
+      readonly sequencingEventId?: string
+    }
+  | {
+      readonly type: 'completion'
+      readonly protocolInstanceId: string
+      readonly updateId: string
+      readonly status: 'success'
+      readonly result?: unknown
+      readonly handlerName: string
+      readonly identity?: string
+    }
+  | {
+      readonly type: 'completion'
+      readonly protocolInstanceId: string
+      readonly updateId: string
+      readonly status: 'failure'
+      readonly failure: unknown
+      readonly handlerName: string
+      readonly identity?: string
+    }
 
 export interface ExecuteWorkflowInput {
   readonly workflowType: string
@@ -42,6 +92,7 @@ export interface ExecuteWorkflowInput {
   readonly activityResults?: Map<string, ActivityResolution>
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
   readonly queryRequests?: readonly WorkflowQueryRequest[]
+  readonly updates?: readonly WorkflowUpdateInvocation[]
 }
 
 export type WorkflowCompletionStatus = 'completed' | 'failed' | 'continued-as-new' | 'pending'
@@ -54,6 +105,7 @@ export interface WorkflowExecutionOutput {
   readonly result?: unknown
   readonly failure?: unknown
   readonly queryResults: readonly WorkflowQueryEvaluationResult[]
+  readonly updateDispatches?: readonly WorkflowUpdateDispatch[]
 }
 
 export interface WorkflowQueryEvaluationResult {
@@ -99,20 +151,31 @@ export class WorkflowExecutor {
         determinismGuard: guard,
         activityResults: input.activityResults,
         signalDeliveries: input.signalDeliveries,
+        updates: definition.updates,
       })
       lastCommandContext = created.commandContext
       lastQueryRegistry = created.queryRegistry
       return Effect.flatMap(definition.handler(created.context), (result) =>
-        Effect.sync(() => ({ result, commandContext: created.commandContext })),
+        Effect.sync(() => ({
+          result,
+          context: created.context,
+          commandContext: created.commandContext,
+          updateRegistry: created.updateRegistry,
+        })),
       )
     })
 
     const exit = await Effect.runPromiseExit(workflowEffect)
     const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
-    const rawSnapshot = guard.snapshot
-    const determinismState = snapshotToDeterminismState(rawSnapshot)
 
     if (Exit.isSuccess(exit)) {
+      const updateDispatches = await this.#processWorkflowUpdates({
+        context: exit.value.context,
+        registry: exit.value.updateRegistry,
+        updates: input.updates ?? [],
+        guard,
+      })
+      const determinismState = snapshotToDeterminismState(guard.snapshot)
       const commands = await this.#buildSuccessCommands(exit.value.commandContext, exit.value.result)
       return {
         commands,
@@ -121,6 +184,7 @@ export class WorkflowExecutor {
         completion: 'completed',
         result: exit.value.result,
         queryResults,
+        ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
       }
     }
 
@@ -128,12 +192,13 @@ export class WorkflowExecutor {
 
     const continueAsNewError = unwrapWorkflowError(error, ContinueAsNewWorkflowError)
     if (continueAsNewError) {
+      const rawSnapshot = guard.snapshot
       const intents = rawSnapshot.commandHistory.map((entry) => entry.intent)
       const commands = await materializeCommands(intents, { dataConverter: this.#dataConverter })
       return {
         commands,
         intents,
-        determinismState,
+        determinismState: snapshotToDeterminismState(rawSnapshot),
         completion: 'continued-as-new',
         queryResults,
       }
@@ -157,7 +222,7 @@ export class WorkflowExecutor {
       return {
         commands: pendingCommands,
         intents: contextForPending.intents,
-        determinismState,
+        determinismState: snapshotToDeterminismState(guard.snapshot),
         completion: 'pending',
         queryResults,
       }
@@ -167,11 +232,170 @@ export class WorkflowExecutor {
     return {
       commands: failureCommands,
       intents: [],
-      determinismState,
+      determinismState: snapshotToDeterminismState(guard.snapshot),
       completion: 'failed',
       failure: error,
       queryResults,
     }
+  }
+
+  async #processWorkflowUpdates({
+    context,
+    registry,
+    updates,
+    guard,
+  }: {
+    context: WorkflowContext<unknown>
+    registry: WorkflowUpdateRegistry
+    updates: readonly WorkflowUpdateInvocation[]
+    guard: DeterminismGuard
+  }): Promise<WorkflowUpdateDispatch[]> {
+    if (!updates.length) {
+      return []
+    }
+
+    const dispatches: WorkflowUpdateDispatch[] = []
+
+    for (const invocation of updates) {
+      const registered = registry.get(invocation.name) ?? registry.getDefault()
+      if (!registered) {
+        const failure = new Error(`Workflow update handler "${invocation.name}" was not found`)
+        dispatches.push({
+          type: 'rejection',
+          protocolInstanceId: invocation.protocolInstanceId,
+          requestMessageId: invocation.requestMessageId,
+          updateId: invocation.updateId,
+          reason: 'handler-not-found',
+          failure,
+          sequencingEventId: invocation.sequencingEventId,
+        })
+        guard.recordUpdate({
+          updateId: invocation.updateId,
+          stage: 'rejected',
+          handlerName: invocation.name,
+          identity: invocation.identity,
+          failureMessage: failure.message,
+        })
+        continue
+      }
+
+      let decodedInput: unknown
+      try {
+        decodedInput = await Effect.runPromise(Schema.decodeUnknown(registered.input)(invocation.payload))
+      } catch (error) {
+        const failure = this.#normalizeUpdateError(error)
+        dispatches.push({
+          type: 'rejection',
+          protocolInstanceId: invocation.protocolInstanceId,
+          requestMessageId: invocation.requestMessageId,
+          updateId: invocation.updateId,
+          reason: 'invalid-input',
+          failure,
+          sequencingEventId: invocation.sequencingEventId,
+        })
+        guard.recordUpdate({
+          updateId: invocation.updateId,
+          stage: 'rejected',
+          handlerName: registered.name,
+          identity: invocation.identity,
+          failureMessage: failure.message,
+        })
+        continue
+      }
+
+      if (registered.validator) {
+        try {
+          registered.validator(decodedInput as never)
+        } catch (error) {
+          const failure = this.#normalizeUpdateError(error)
+          dispatches.push({
+            type: 'rejection',
+            protocolInstanceId: invocation.protocolInstanceId,
+            requestMessageId: invocation.requestMessageId,
+            updateId: invocation.updateId,
+            reason: 'validation-failed',
+            failure,
+            sequencingEventId: invocation.sequencingEventId,
+          })
+          guard.recordUpdate({
+            updateId: invocation.updateId,
+            stage: 'rejected',
+            handlerName: registered.name,
+            identity: invocation.identity,
+            failureMessage: failure.message,
+          })
+          continue
+        }
+      }
+
+      dispatches.push({
+        type: 'acceptance',
+        protocolInstanceId: invocation.protocolInstanceId,
+        requestMessageId: invocation.requestMessageId,
+        updateId: invocation.updateId,
+        handlerName: registered.name,
+        identity: invocation.identity,
+        sequencingEventId: invocation.sequencingEventId,
+      })
+      guard.recordUpdate({
+        updateId: invocation.updateId,
+        stage: 'accepted',
+        handlerName: registered.name,
+        identity: invocation.identity,
+        sequencingEventId: invocation.sequencingEventId,
+      })
+
+      const executionExit = await Effect.runPromiseExit(registered.handler(context as never, decodedInput as never))
+      if (Exit.isSuccess(executionExit)) {
+        dispatches.push({
+          type: 'completion',
+          protocolInstanceId: invocation.protocolInstanceId,
+          updateId: invocation.updateId,
+          status: 'success',
+          result: executionExit.value,
+          handlerName: registered.name,
+          identity: invocation.identity,
+        })
+        guard.recordUpdate({
+          updateId: invocation.updateId,
+          stage: 'completed',
+          handlerName: registered.name,
+          identity: invocation.identity,
+          outcome: 'success',
+        })
+      } else {
+        const failure = this.#resolveError(executionExit.cause)
+        dispatches.push({
+          type: 'completion',
+          protocolInstanceId: invocation.protocolInstanceId,
+          updateId: invocation.updateId,
+          status: 'failure',
+          failure,
+          handlerName: registered.name,
+          identity: invocation.identity,
+        })
+        guard.recordUpdate({
+          updateId: invocation.updateId,
+          stage: 'completed',
+          handlerName: registered.name,
+          identity: invocation.identity,
+          outcome: 'failure',
+          failureMessage: failure instanceof Error ? failure.message : String(failure),
+        })
+      }
+    }
+
+    return dispatches
+  }
+
+  #normalizeUpdateError(error: unknown): Error {
+    if (error instanceof Error) {
+      return error
+    }
+    if (typeof error === 'string') {
+      return new Error(error)
+    }
+    return new Error('Workflow update failed validation')
   }
 
   #resolveError(cause: Cause.Cause<unknown> | undefined): unknown {
@@ -247,20 +471,12 @@ export class WorkflowExecutor {
     }
     const results: WorkflowQueryEvaluationResult[] = []
     for (const request of requests) {
-      // eslint-disable-next-line no-console
-      console.info('[workflow-executor] evaluating query', request.name)
       const evaluation = await Effect.runPromise(registry.evaluate(request))
       const encoded =
         evaluation.status === 'success'
           ? await this.#encodeSuccessfulQueryResult(evaluation.result)
           : await this.#encodeFailedQueryResult(evaluation.error)
       results.push({ request: evaluation.request, result: encoded })
-      // eslint-disable-next-line no-console
-      console.info('[workflow-executor] query evaluation complete', {
-        name: evaluation.request.name,
-        source: evaluation.request.source,
-        id: evaluation.request.id ?? null,
-      })
     }
     return results
   }

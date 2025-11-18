@@ -6,13 +6,14 @@ import { createDefaultDataConverter, decodePayloadsToValues } from '../src/commo
 import type { ExecuteWorkflowInput, WorkflowExecutionOutput } from '../src/workflow/executor'
 import type { ActivityResolution } from '../src/workflow/context'
 import { WorkflowExecutor } from '../src/workflow/executor'
-import { defineWorkflow } from '../src/workflow/definition'
+import { defineWorkflow, defineWorkflowUpdates } from '../src/workflow/definition'
 import { WorkflowRegistry } from '../src/workflow/registry'
 import { WorkflowNondeterminismError } from '../src/workflow/errors'
 import type { WorkflowDeterminismState } from '../src/workflow/determinism'
 import { CommandType } from '../src/proto/temporal/api/enums/v1/command_type_pb'
 import { defineWorkflowQueries } from '../src/workflow/inbound'
 import type { WorkflowQueryRequest } from '../src/workflow/inbound'
+import type { WorkflowUpdateInvocation } from '../src/workflow/executor'
 
 const makeExecutor = () => {
   const registry = new WorkflowRegistry()
@@ -36,6 +37,7 @@ const execute = async (
     activityResults: overrides.activityResults,
     signalDeliveries: overrides.signalDeliveries,
     queryRequests: overrides.queryRequests,
+    updates: overrides.updates,
   })
 
 test('schedules an activity command and completes after result', async () => {
@@ -278,6 +280,122 @@ test('tampered determinism state throws WorkflowNondeterminismError', async () =
       determinismState: tampered,
     }),
   ).rejects.toBeInstanceOf(WorkflowNondeterminismError)
+})
+
+test('workflow executor processes update invocations', async () => {
+  const { registry, executor } = makeExecutor()
+  const updateDefs = defineWorkflowUpdates([
+    {
+      name: 'setMessage',
+      input: Schema.String,
+      handler: (_ctx, value: string) => Effect.sync(() => value.toUpperCase()),
+    },
+  ])
+
+  registry.register(
+    defineWorkflow(
+      'updateWorkflow',
+      Schema.Array(Schema.Unknown),
+      () => Effect.sync(() => 'ok'),
+      { updates: updateDefs },
+    ),
+  )
+
+  const output = await execute(executor, {
+    workflowType: 'updateWorkflow',
+    arguments: [],
+    updates: [
+      {
+        protocolInstanceId: 'proto-1',
+        requestMessageId: 'msg-1',
+        updateId: 'upd-1',
+        name: 'setMessage',
+        payload: 'hello',
+        identity: 'client',
+        sequencingEventId: '5',
+      } satisfies WorkflowUpdateInvocation,
+    ],
+  })
+
+  expect(output.updateDispatches).toEqual([
+    {
+      type: 'acceptance',
+      protocolInstanceId: 'proto-1',
+      requestMessageId: 'msg-1',
+      updateId: 'upd-1',
+      handlerName: 'setMessage',
+      identity: 'client',
+      sequencingEventId: '5',
+    },
+    {
+      type: 'completion',
+      protocolInstanceId: 'proto-1',
+      updateId: 'upd-1',
+      status: 'success',
+      result: 'HELLO',
+      handlerName: 'setMessage',
+      identity: 'client',
+    },
+  ])
+
+  expect(output.determinismState.updates).toEqual([
+    {
+      updateId: 'upd-1',
+      stage: 'accepted',
+      handlerName: 'setMessage',
+      identity: 'client',
+      sequencingEventId: '5',
+    },
+    {
+      updateId: 'upd-1',
+      stage: 'completed',
+      handlerName: 'setMessage',
+      identity: 'client',
+      outcome: 'success',
+    },
+  ])
+})
+
+test('workflow executor rejects unknown update handlers', async () => {
+  const { registry, executor } = makeExecutor()
+  registry.register(
+    defineWorkflow('noUpdates', Schema.Array(Schema.Unknown), () => Effect.sync(() => 'ok')),
+  )
+
+  const output = await execute(executor, {
+    workflowType: 'noUpdates',
+    arguments: [],
+    updates: [
+      {
+        protocolInstanceId: 'proto-2',
+        requestMessageId: 'msg-2',
+        updateId: 'upd-404',
+        name: 'unknownUpdate',
+        payload: {},
+      } satisfies WorkflowUpdateInvocation,
+    ],
+  })
+
+  expect(output.updateDispatches).toEqual([
+    {
+      type: 'rejection',
+      protocolInstanceId: 'proto-2',
+      requestMessageId: 'msg-2',
+      updateId: 'upd-404',
+      reason: 'handler-not-found',
+      failure: expect.any(Error),
+      sequencingEventId: undefined,
+    },
+  ])
+
+  expect(output.determinismState.updates).toEqual([
+    {
+      updateId: 'upd-404',
+      stage: 'rejected',
+      handlerName: 'unknownUpdate',
+      failureMessage: 'Workflow update handler "unknownUpdate" was not found',
+    },
+  ])
 })
 
 const cloneState = (state: WorkflowDeterminismState): WorkflowDeterminismState => ({

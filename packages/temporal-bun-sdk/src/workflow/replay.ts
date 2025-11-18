@@ -16,6 +16,10 @@ import type {
   WorkflowExecutionContinuedAsNewEventAttributes,
   WorkflowExecutionFailedEventAttributes,
   WorkflowExecutionSignaledEventAttributes,
+  WorkflowExecutionUpdateAcceptedEventAttributes,
+  WorkflowExecutionUpdateAdmittedEventAttributes,
+  WorkflowExecutionUpdateCompletedEventAttributes,
+  WorkflowExecutionUpdateRejectedEventAttributes,
   WorkflowExecutionTimedOutEventAttributes,
   WorkflowTaskFailedEventAttributes,
   WorkflowTaskTimedOutEventAttributes,
@@ -37,9 +41,12 @@ import type {
   WorkflowDeterminismSignalRecord,
   WorkflowDeterminismState,
   WorkflowRetryPolicyInput,
+  WorkflowUpdateDeterminismEntry,
+  WorkflowUpdateDeterminismStage,
 } from './determinism'
 import { intentsEqual, stableStringify } from './determinism'
 import type { WorkflowQueryRequest } from './inbound'
+import type { Outcome } from '../proto/temporal/api/update/v1/message_pb'
 
 export interface ReplayIntake {
   readonly info: WorkflowInfo
@@ -113,12 +120,20 @@ export interface DeterminismMismatchQuery {
   readonly actual?: WorkflowDeterminismQueryRecord
 }
 
+export interface DeterminismMismatchUpdate {
+  readonly kind: 'update'
+  readonly index: number
+  readonly expected?: WorkflowUpdateDeterminismEntry
+  readonly actual?: WorkflowUpdateDeterminismEntry
+}
+
 export type DeterminismMismatch =
   | DeterminismMismatchCommand
   | DeterminismMismatchRandom
   | DeterminismMismatchTime
   | DeterminismMismatchSignal
   | DeterminismMismatchQuery
+  | DeterminismMismatchUpdate
 
 export const DETERMINISM_MARKER_NAME = 'temporal-bun-sdk/determinism'
 
@@ -194,6 +209,7 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
     const events = sortHistoryEvents(intake.history ?? [])
     const shouldUseDeterminismMarker = intake.ignoreDeterminismMarker !== true
     let markerSnapshot: DeterminismMarkerEnvelope | undefined
+    const updateEntries = collectWorkflowUpdateEntries(events)
 
     if (shouldUseDeterminismMarker) {
       for (const event of events) {
@@ -222,10 +238,16 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
 
     if (shouldUseDeterminismMarker && markerSnapshot) {
       let determinismState = cloneDeterminismState(markerSnapshot.determinismState)
-      if (extractedFailureMetadata) {
+      if (!determinismState.failureMetadata && extractedFailureMetadata) {
         determinismState = {
           ...determinismState,
           failureMetadata: extractedFailureMetadata,
+        }
+      }
+      if ((!determinismState.updates || determinismState.updates.length === 0) && updateEntries.length > 0) {
+        determinismState = {
+          ...determinismState,
+          updates: updateEntries,
         }
       }
       determinismState = mergePendingQueryRequests(determinismState, intake.queries)
@@ -237,7 +259,7 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
       }
     }
 
-    return yield* reconstructDeterminismState(events, intake, extractedFailureMetadata)
+    return yield* reconstructDeterminismState(events, intake, extractedFailureMetadata, updateEntries)
   })
 
 /**
@@ -331,6 +353,17 @@ export const diffDeterminismState = (
       }
     }
 
+    const expectedUpdates = expected.updates ?? []
+    const actualUpdates = actual.updates ?? []
+    const maxUpdates = Math.max(expectedUpdates.length, actualUpdates.length)
+    for (let index = 0; index < maxUpdates; index += 1) {
+      const expectedEntry = expectedUpdates[index]
+      const actualEntry = actualUpdates[index]
+      if (!updatesEqual(expectedEntry, actualEntry)) {
+        mismatches.push({ kind: 'update', index, expected: expectedEntry, actual: actualEntry })
+      }
+    }
+
     return { mismatches }
   })
 
@@ -362,6 +395,7 @@ export const cloneDeterminismState = (state: WorkflowDeterminismState): Workflow
   failureMetadata: state.failureMetadata ? { ...state.failureMetadata } : undefined,
   signals: state.signals ? state.signals.map((record) => ({ ...record })) : [],
   queries: state.queries ? state.queries.map((record) => ({ ...record })) : [],
+  updates: state.updates ? state.updates.map((entry) => ({ ...entry })) : undefined,
 })
 
 const sortHistoryEvents = (events: HistoryEvent[]): HistoryEvent[] =>
@@ -544,12 +578,14 @@ const reconstructDeterminismState = (
   events: HistoryEvent[],
   intake: ReplayIntake,
   failureMetadata?: WorkflowDeterminismFailureMetadata,
+  precomputedUpdates?: WorkflowUpdateDeterminismEntry[],
 ): Effect.Effect<ReplayResult, unknown, never> =>
   Effect.gen(function* () {
     let sequence = 0
     const commandHistory: WorkflowCommandHistoryEntry[] = []
     const signalRecords: WorkflowDeterminismSignalRecord[] = []
     const queryRecords: WorkflowDeterminismQueryRecord[] = []
+    const updates = precomputedUpdates ?? collectWorkflowUpdateEntries(events)
 
     for (const event of events) {
       switch (event.eventType) {
@@ -657,6 +693,7 @@ const reconstructDeterminismState = (
       ...(failureMetadata ? { failureMetadata } : {}),
       signals: signalRecords,
       queries: queryRecords,
+      ...(updates.length > 0 ? { updates } : {}),
     }
     determinismState = mergePendingQueryRequests(determinismState, intake.queries)
 
@@ -828,6 +865,102 @@ const fromContinueAsNew = (
     return intent
   })
 
+const collectWorkflowUpdateEntries = (events: HistoryEvent[]): WorkflowUpdateDeterminismEntry[] => {
+  const updates: WorkflowUpdateDeterminismEntry[] = []
+
+  for (const event of events) {
+    if (!event.attributes) {
+      continue
+    }
+    const historyEventId = normalizeEventId(event.eventId) ?? undefined
+
+    switch (event.eventType) {
+      case EventType.WORKFLOW_EXECUTION_UPDATE_ADMITTED: {
+        if (event.attributes.case !== 'workflowExecutionUpdateAdmittedEventAttributes') {
+          break
+        }
+        const attrs = event.attributes.value as WorkflowExecutionUpdateAdmittedEventAttributes
+        const updateId = normalizeUpdateId(attrs.request?.meta?.updateId)
+        if (!updateId) {
+          break
+        }
+        updates.push({
+          updateId,
+          stage: 'admitted',
+          handlerName: normalizeOptionalNonEmptyString(attrs.request?.input?.name),
+          identity: normalizeOptionalNonEmptyString(attrs.request?.meta?.identity),
+          historyEventId,
+        })
+        break
+      }
+      case EventType.WORKFLOW_EXECUTION_UPDATE_ACCEPTED: {
+        if (event.attributes.case !== 'workflowExecutionUpdateAcceptedEventAttributes') {
+          break
+        }
+        const attrs = event.attributes.value as WorkflowExecutionUpdateAcceptedEventAttributes
+        const updateId = normalizeUpdateId(attrs.acceptedRequest?.meta?.updateId)
+        if (!updateId) {
+          break
+        }
+        updates.push({
+          updateId,
+          stage: 'accepted',
+          handlerName: normalizeOptionalNonEmptyString(attrs.acceptedRequest?.input?.name),
+          identity: normalizeOptionalNonEmptyString(attrs.acceptedRequest?.meta?.identity),
+          messageId: normalizeOptionalNonEmptyString(attrs.acceptedRequestMessageId),
+          sequencingEventId: normalizeBigintIdentifier(attrs.acceptedRequestSequencingEventId),
+          historyEventId,
+        })
+        break
+      }
+      case EventType.WORKFLOW_EXECUTION_UPDATE_REJECTED: {
+        if (event.attributes.case !== 'workflowExecutionUpdateRejectedEventAttributes') {
+          break
+        }
+        const attrs = event.attributes.value as WorkflowExecutionUpdateRejectedEventAttributes
+        const updateId = normalizeUpdateId(attrs.rejectedRequest?.meta?.updateId)
+        if (!updateId) {
+          break
+        }
+        updates.push({
+          updateId,
+          stage: 'rejected',
+          handlerName: normalizeOptionalNonEmptyString(attrs.rejectedRequest?.input?.name),
+          identity: normalizeOptionalNonEmptyString(attrs.rejectedRequest?.meta?.identity),
+          messageId: normalizeOptionalNonEmptyString(attrs.rejectedRequestMessageId),
+          sequencingEventId: normalizeBigintIdentifier(attrs.rejectedRequestSequencingEventId),
+          failureMessage: normalizeOptionalNonEmptyString(attrs.failure?.message),
+          historyEventId,
+        })
+        break
+      }
+      case EventType.WORKFLOW_EXECUTION_UPDATE_COMPLETED: {
+        if (event.attributes.case !== 'workflowExecutionUpdateCompletedEventAttributes') {
+          break
+        }
+        const attrs = event.attributes.value as WorkflowExecutionUpdateCompletedEventAttributes
+        const updateId = normalizeUpdateId(attrs.meta?.updateId)
+        if (!updateId) {
+          break
+        }
+        updates.push({
+          updateId,
+          stage: 'completed',
+          identity: normalizeOptionalNonEmptyString(attrs.meta?.identity),
+          acceptedEventId: normalizeBigintIdentifier(attrs.acceptedEventId),
+          outcome: resolveOutcomeStatus(attrs.outcome),
+          historyEventId,
+        })
+        break
+      }
+      default:
+        break
+    }
+  }
+
+  return updates
+}
+
 const decodePayloadArray = (
   converter: DataConverter,
   payloads: Payloads | undefined,
@@ -862,6 +995,49 @@ const convertRetryPolicy = (policy: RetryPolicy | undefined): WorkflowRetryPolic
     ...(maximumAttempts !== undefined ? { maximumAttempts } : {}),
     ...(nonRetryable !== undefined ? { nonRetryableErrorTypes: nonRetryable } : {}),
   }
+}
+
+const normalizeUpdateId = (value: string | undefined | null): string | undefined => {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+const normalizeOptionalNonEmptyString = (value: string | undefined | null): string | undefined => {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+const normalizeBigintIdentifier = (value: bigint | number | string | undefined | null): string | undefined => {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  if (typeof value === 'string') {
+    return value.length > 0 ? value : undefined
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value.toString()
+  }
+  if (typeof value === 'bigint') {
+    return value.toString()
+  }
+  return undefined
+}
+
+const resolveOutcomeStatus = (outcome?: Outcome | null): 'success' | 'failure' | undefined => {
+  const caseName = outcome?.value?.case
+  if (caseName === 'success') {
+    return 'success'
+  }
+  if (caseName === 'failure') {
+    return 'failure'
+  }
+  return undefined
 }
 
 const sanitizeDeterminismMarkerEnvelope = (input: Record<string, unknown>): DeterminismMarkerEnvelope => {
@@ -908,6 +1084,7 @@ const sanitizeDeterminismState = (value: unknown): WorkflowDeterminismState => {
   const timeValuesRaw = value.timeValues
   const signalsRaw = Array.isArray(value.signals) ? value.signals : []
   const queriesRaw = Array.isArray(value.queries) ? value.queries : []
+  const updatesRaw = value.updates
 
   if (!Array.isArray(commandHistoryRaw) || !Array.isArray(randomValuesRaw) || !Array.isArray(timeValuesRaw)) {
     throw new Error('Determinism marker contained invalid determinism state shape')
@@ -929,6 +1106,7 @@ const sanitizeDeterminismState = (value: unknown): WorkflowDeterminismState => {
   const failureMetadata = sanitizeFailureMetadata(value.failureMetadata)
   const signals = signalsRaw.map((record, index) => sanitizeSignalRecord(record, index))
   const queries = queriesRaw.map((record, index) => sanitizeQueryRecord(record, index))
+  const updates = sanitizeDeterminismUpdates(updatesRaw)
 
   return {
     commandHistory,
@@ -937,6 +1115,7 @@ const sanitizeDeterminismState = (value: unknown): WorkflowDeterminismState => {
     ...(failureMetadata ? { failureMetadata } : {}),
     signals,
     queries,
+    ...(updates ? { updates } : {}),
   }
 }
 
@@ -989,6 +1168,53 @@ const sanitizeFailureMetadata = (value: unknown): WorkflowDeterminismFailureMeta
     ...(failureMessage ? { failureMessage } : {}),
     ...(retryState !== undefined ? { retryState } : {}),
   }
+}
+
+const sanitizeDeterminismUpdates = (value: unknown): WorkflowUpdateDeterminismEntry[] | undefined => {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  if (!Array.isArray(value)) {
+    throw new Error('Determinism marker contained invalid updates list')
+  }
+
+  return value.map((entry, index) => {
+    if (!isRecord(entry)) {
+      throw new Error(`Determinism marker update entry ${index} is invalid`)
+    }
+    const updateId = coerceString(entry.updateId, `determinism.updates[${index}].updateId`)
+    const stage = sanitizeUpdateStage(entry.stage, index)
+    const handlerName = coerceOptionalTrimmedString(entry.handlerName, `determinism.updates[${index}].handlerName`)
+    const identity = coerceOptionalTrimmedString(entry.identity, `determinism.updates[${index}].identity`)
+    const sequencingEventId = coerceOptionalTrimmedString(
+      entry.sequencingEventId,
+      `determinism.updates[${index}].sequencingEventId`,
+    )
+    const messageId = coerceOptionalTrimmedString(entry.messageId, `determinism.updates[${index}].messageId`)
+    const acceptedEventId = coerceOptionalTrimmedString(
+      entry.acceptedEventId,
+      `determinism.updates[${index}].acceptedEventId`,
+    )
+    const outcome = sanitizeUpdateOutcome(entry.outcome, index)
+    const failureMessage = coerceOptionalTrimmedString(
+      entry.failureMessage,
+      `determinism.updates[${index}].failureMessage`,
+    )
+    const historyEventId = coerceOptionalTrimmedString(entry.historyEventId, `determinism.updates[${index}].historyEventId`)
+
+    return {
+      updateId,
+      stage,
+      ...(handlerName ? { handlerName } : {}),
+      ...(identity ? { identity } : {}),
+      ...(sequencingEventId ? { sequencingEventId } : {}),
+      ...(messageId ? { messageId } : {}),
+      ...(acceptedEventId ? { acceptedEventId } : {}),
+      ...(outcome ? { outcome } : {}),
+      ...(failureMessage ? { failureMessage } : {}),
+      ...(historyEventId ? { historyEventId } : {}),
+    }
+  })
 }
 
 const sanitizeSignalRecord = (value: unknown, index: number): WorkflowDeterminismSignalRecord => {
@@ -1079,6 +1305,15 @@ const coerceOptionalString = (value: unknown, label: string): string | undefined
   return value.length > 0 ? value : undefined
 }
 
+const coerceOptionalTrimmedString = (value: unknown, label: string): string | undefined => {
+  const raw = coerceOptionalString(value, label)
+  if (raw === undefined) {
+    return undefined
+  }
+  const trimmed = raw.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
 const coerceNumber = (value: unknown, label: string): number => {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value
@@ -1110,6 +1345,23 @@ const normalizeOptionalEventId = (value: unknown, label: string): string | undef
   }
 }
 
+const sanitizeUpdateStage = (value: unknown, index: number): WorkflowUpdateDeterminismStage => {
+  if (value === 'admitted' || value === 'accepted' || value === 'rejected' || value === 'completed') {
+    return value
+  }
+  throw new Error(`Determinism marker update entry ${index} contained invalid stage`)
+}
+
+const sanitizeUpdateOutcome = (value: unknown, index: number): 'success' | 'failure' | undefined => {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  if (value === 'success' || value === 'failure') {
+    return value
+  }
+  throw new Error(`Determinism marker update entry ${index} contained invalid outcome`)
+}
+
 const valuesEqual = (expected: number | undefined, actual: number | undefined): boolean => {
   if (expected === undefined && actual === undefined) {
     return true
@@ -1118,6 +1370,26 @@ const valuesEqual = (expected: number | undefined, actual: number | undefined): 
     return false
   }
   return Object.is(expected, actual)
+}
+
+const updatesEqual = (expected?: WorkflowUpdateDeterminismEntry, actual?: WorkflowUpdateDeterminismEntry): boolean => {
+  if (!expected && !actual) {
+    return true
+  }
+  if (!expected || !actual) {
+    return false
+  }
+  return (
+    expected.updateId === actual.updateId &&
+    expected.stage === actual.stage &&
+    expected.handlerName === actual.handlerName &&
+    expected.identity === actual.identity &&
+    expected.sequencingEventId === actual.sequencingEventId &&
+    expected.messageId === actual.messageId &&
+    expected.acceptedEventId === actual.acceptedEventId &&
+    expected.outcome === actual.outcome &&
+    expected.failureMessage === actual.failureMessage
+  )
 }
 
 const recordsMatch = <T>(expected: T | undefined, actual: T | undefined): boolean => {
