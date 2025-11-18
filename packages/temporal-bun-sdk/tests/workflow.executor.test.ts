@@ -341,6 +341,12 @@ test('workflow executor processes update invocations', async () => {
   expect(output.determinismState.updates).toEqual([
     {
       updateId: 'upd-1',
+      stage: 'admitted',
+      handlerName: 'setMessage',
+      identity: 'client',
+    },
+    {
+      updateId: 'upd-1',
       stage: 'accepted',
       handlerName: 'setMessage',
       identity: 'client',
@@ -389,6 +395,11 @@ test('workflow executor rejects unknown update handlers', async () => {
   ])
 
   expect(output.determinismState.updates).toEqual([
+    {
+      updateId: 'upd-404',
+      stage: 'admitted',
+      handlerName: 'unknownUpdate',
+    },
     {
       updateId: 'upd-404',
       stage: 'rejected',

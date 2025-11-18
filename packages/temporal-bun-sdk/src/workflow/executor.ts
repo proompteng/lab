@@ -257,6 +257,13 @@ export class WorkflowExecutor {
     const dispatches: WorkflowUpdateDispatch[] = []
 
     for (const invocation of updates) {
+      guard.recordUpdate({
+        updateId: invocation.updateId,
+        stage: 'admitted',
+        handlerName: invocation.name,
+        identity: invocation.identity,
+      })
+
       const registered = registry.get(invocation.name) ?? registry.getDefault()
       if (!registered) {
         const failure = new Error(`Workflow update handler "${invocation.name}" was not found`)
