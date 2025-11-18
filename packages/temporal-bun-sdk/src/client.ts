@@ -696,7 +696,7 @@ class TemporalClientImpl implements TemporalClient {
       const resolvedHandle = resolveHandle(this.namespace, handle)
       const parsedOptions = sanitizeWorkflowUpdateOptions(options)
       const updateId = parsedOptions.updateId ?? createUpdateRequestId()
-      const waitStage = this.#stageToProto(parsedOptions.waitForStage, UpdateWorkflowExecutionLifecycleStage.ACCEPTED)
+      const waitStage = this.#stageToProto(parsedOptions.waitForStage)
       const updateKey = this.#makeUpdateKey(resolvedHandle, updateId)
       const { options: mergedCallOptions, controller, cleanup } = this.#prepareUpdateCallOptions(updateKey, callOptions)
 
@@ -722,10 +722,7 @@ class TemporalClientImpl implements TemporalClient {
           mergedCallOptions,
         )
 
-        while (
-          (response.stage ?? UpdateWorkflowExecutionLifecycleStage.UNSPECIFIED) <
-          UpdateWorkflowExecutionLifecycleStage.ACCEPTED
-        ) {
+        while ((response.stage ?? UpdateWorkflowExecutionLifecycleStage.UNSPECIFIED) < waitStage) {
           response = await this.executeRpc(
             'updateWorkflowExecution',
             (rpcOptions) => this.workflowService.updateWorkflowExecution(request, rpcOptions),
