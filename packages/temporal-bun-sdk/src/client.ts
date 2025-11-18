@@ -696,10 +696,7 @@ class TemporalClientImpl implements TemporalClient {
       const resolvedHandle = resolveHandle(this.namespace, handle)
       const parsedOptions = sanitizeWorkflowUpdateOptions(options)
       const updateId = parsedOptions.updateId ?? createUpdateRequestId()
-      const waitStage = this.#stageToProto(
-        parsedOptions.waitForStage,
-        UpdateWorkflowExecutionLifecycleStage.UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ACCEPTED,
-      )
+      const waitStage = this.#stageToProto(parsedOptions.waitForStage, UpdateWorkflowExecutionLifecycleStage.ACCEPTED)
       const updateKey = this.#makeUpdateKey(resolvedHandle, updateId)
       const { options: mergedCallOptions, controller, cleanup } = this.#prepareUpdateCallOptions(updateKey, callOptions)
 
@@ -726,9 +723,8 @@ class TemporalClientImpl implements TemporalClient {
         )
 
         while (
-          (response.stage ??
-            UpdateWorkflowExecutionLifecycleStage.UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_UNSPECIFIED) <
-          UpdateWorkflowExecutionLifecycleStage.UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ACCEPTED
+          (response.stage ?? UpdateWorkflowExecutionLifecycleStage.UNSPECIFIED) <
+          UpdateWorkflowExecutionLifecycleStage.ACCEPTED
         ) {
           response = await this.executeRpc(
             'updateWorkflowExecution',
@@ -970,8 +966,10 @@ class TemporalClientImpl implements TemporalClient {
       }
     }
     this.#registerUpdateController(key, controller)
-    const overrides: TemporalClientCallOptions = callOptions ? { ...callOptions } : {}
-    overrides.signal = controller.signal
+    const overrides: TemporalClientCallOptions = {
+      ...(callOptions ? { ...callOptions } : {}),
+      signal: controller.signal,
+    }
     return { options: overrides, controller, cleanup }
   }
 
@@ -1028,7 +1026,7 @@ class TemporalClientImpl implements TemporalClient {
 
   #stageToProto(
     stage: WorkflowUpdateStage | undefined,
-    minimum: UpdateWorkflowExecutionLifecycleStage = UpdateWorkflowExecutionLifecycleStage.UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ADMITTED,
+    minimum: UpdateWorkflowExecutionLifecycleStage = UpdateWorkflowExecutionLifecycleStage.ADMITTED,
   ): UpdateWorkflowExecutionLifecycleStage {
     const normalized = ensureWorkflowUpdateStage(stage)
     const protoStage = WORKFLOW_UPDATE_STAGE_TO_PROTO[normalized]
@@ -1036,13 +1034,13 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   #stageFromProto(stage?: UpdateWorkflowExecutionLifecycleStage): WorkflowUpdateStage {
-    if (stage === UpdateWorkflowExecutionLifecycleStage.UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ADMITTED) {
+    if (stage === UpdateWorkflowExecutionLifecycleStage.ADMITTED) {
       return 'admitted'
     }
-    if (stage === UpdateWorkflowExecutionLifecycleStage.UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ACCEPTED) {
+    if (stage === UpdateWorkflowExecutionLifecycleStage.ACCEPTED) {
       return 'accepted'
     }
-    if (stage === UpdateWorkflowExecutionLifecycleStage.UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED) {
+    if (stage === UpdateWorkflowExecutionLifecycleStage.COMPLETED) {
       return 'completed'
     }
     return 'unspecified'
@@ -1351,10 +1349,10 @@ const WORKFLOW_UPDATE_STAGE_VALUES: ReadonlySet<WorkflowUpdateStage> = new Set([
 const DEFAULT_WORKFLOW_UPDATE_STAGE: WorkflowUpdateStage = 'accepted'
 
 const WORKFLOW_UPDATE_STAGE_TO_PROTO: Record<WorkflowUpdateStage, UpdateWorkflowExecutionLifecycleStage> = {
-  unspecified: UpdateWorkflowExecutionLifecycleStage.UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_UNSPECIFIED,
-  admitted: UpdateWorkflowExecutionLifecycleStage.UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ADMITTED,
-  accepted: UpdateWorkflowExecutionLifecycleStage.UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ACCEPTED,
-  completed: UpdateWorkflowExecutionLifecycleStage.UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED,
+  unspecified: UpdateWorkflowExecutionLifecycleStage.UNSPECIFIED,
+  admitted: UpdateWorkflowExecutionLifecycleStage.ADMITTED,
+  accepted: UpdateWorkflowExecutionLifecycleStage.ACCEPTED,
+  completed: UpdateWorkflowExecutionLifecycleStage.COMPLETED,
 }
 
 const ensureWorkflowUpdateStage = (stage?: WorkflowUpdateStage): WorkflowUpdateStage => {

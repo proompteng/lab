@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
+import { AnySchema } from '@bufbuild/protobuf/wkt'
 import type { Any } from '@bufbuild/protobuf/wkt'
 
 import type { LogFields, LogLevel } from '../observability/logger'
@@ -156,10 +157,10 @@ export const buildUpdateProtocolMessages = async (
         messages.push(
           createProtocolMessage({
             protocolInstanceId: dispatch.protocolInstanceId,
-            body: {
+            body: create(AnySchema, {
               typeUrl: UPDATE_ACCEPTANCE_TYPE_URL,
               value: toBinary(AcceptanceSchema, acceptance),
-            },
+            }),
             sequencingEventId: sequencingValue,
             generateId,
           }),
@@ -185,10 +186,10 @@ export const buildUpdateProtocolMessages = async (
         messages.push(
           createProtocolMessage({
             protocolInstanceId: dispatch.protocolInstanceId,
-            body: {
+            body: create(AnySchema, {
               typeUrl: UPDATE_REJECTION_TYPE_URL,
               value: toBinary(RejectionSchema, rejection),
-            },
+            }),
             sequencingEventId: sequencingValue,
             generateId,
           }),
@@ -216,10 +217,10 @@ export const buildUpdateProtocolMessages = async (
           messages.push(
             createProtocolMessage({
               protocolInstanceId: dispatch.protocolInstanceId,
-              body: {
+              body: create(AnySchema, {
                 typeUrl: UPDATE_RESPONSE_TYPE_URL,
                 value: toBinary(ResponseSchema, response),
-              },
+              }),
               generateId,
             }),
           )
@@ -237,10 +238,10 @@ export const buildUpdateProtocolMessages = async (
           messages.push(
             createProtocolMessage({
               protocolInstanceId: dispatch.protocolInstanceId,
-              body: {
+              body: create(AnySchema, {
                 typeUrl: UPDATE_RESPONSE_TYPE_URL,
                 value: toBinary(ResponseSchema, response),
-              },
+              }),
               generateId,
             }),
           )

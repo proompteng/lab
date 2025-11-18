@@ -608,7 +608,7 @@ export class WorkflowUpdateRegistry {
   registerDefault(handler: WorkflowUpdateHandler<unknown, unknown>): void {
     this.#defaultHandler = {
       name: '__default__',
-      input: Schema.unknown,
+      input: Schema.Unknown,
       handler,
     }
   }
