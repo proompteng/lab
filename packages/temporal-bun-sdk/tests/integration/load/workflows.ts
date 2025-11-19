@@ -1,7 +1,7 @@
 import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
-import { defineWorkflow } from '../../../src/workflow/definition'
+import { defineWorkflow, defineWorkflowUpdates } from '../../../src/workflow/definition'
 import { currentActivityContext } from '../../../src/worker/activity-context'
 
 const cpuWorkflowInputSchema = Schema.Struct({
@@ -17,12 +17,19 @@ const activityWorkflowInputSchema = Schema.Struct({
   payloadBytes: Schema.Number,
 })
 
+const updateWorkflowInputSchema = Schema.Struct({
+  cycles: Schema.Number,
+  holdMs: Schema.Number,
+  delayMs: Schema.Number,
+})
+
 const MIN_TIMER_DELAY_MS = 25
 const MIN_ACTIVITY_DELAY_MS = 50
 const MIN_ACTIVITY_PAYLOAD_BYTES = 256
 
 export type WorkerLoadCpuWorkflowInput = Schema.Schema.Type<typeof cpuWorkflowInputSchema>
 export type WorkerLoadActivityWorkflowInput = Schema.Schema.Type<typeof activityWorkflowInputSchema>
+export type WorkerLoadUpdateWorkflowInput = Schema.Schema.Type<typeof updateWorkflowInputSchema>
 
 export const workerLoadCpuWorkflow = defineWorkflow(
   'workerLoadCpuWorkflow',
@@ -82,6 +89,81 @@ export const workerLoadActivityWorkflow = defineWorkflow(
     }),
 )
 
+const updatePlaceholder = () => Effect.fail(new Error('worker load update handler not bound'))
+
+const workerLoadUpdateDefinitions = defineWorkflowUpdates([
+  {
+    name: 'workerLoad.setStatus',
+    input: Schema.Struct({ status: Schema.String }),
+    handler: () => updatePlaceholder(),
+  },
+  {
+    name: 'workerLoad.delayedSetStatus',
+    input: Schema.Struct({ status: Schema.String, delayMs: Schema.optional(Schema.Number) }),
+    handler: () => updatePlaceholder(),
+  },
+  {
+    name: 'workerLoad.guardStatus',
+    input: Schema.Struct({ level: Schema.Number }),
+    handler: () => updatePlaceholder(),
+  },
+])
+
+export const workerLoadUpdateWorkflow = defineWorkflow(
+  'workerLoadUpdateWorkflow',
+  updateWorkflowInputSchema,
+  ({ input, timers, updates }) =>
+    Effect.gen(function* () {
+      let status = 'booting'
+      const [setStatusDef, delayedStatusDef, guardStatusDef] = workerLoadUpdateDefinitions
+
+      updates.register(setStatusDef, (_ctx, payload: { status: string }) =>
+        Effect.sync(() => {
+          status = payload.status
+          return status
+        }),
+      )
+
+      updates.register(
+        delayedStatusDef,
+        ({ timers: timerContext }, payload: { status: string; delayMs?: number }) =>
+          timerContext
+            .start({ timeoutMs: Math.max(50, Math.trunc(payload.delayMs ?? input.delayMs)) })
+            .pipe(
+              Effect.map(() => {
+                status = payload.status
+                return status
+              }),
+            ),
+      )
+
+      updates.register(
+        guardStatusDef,
+        (_ctx, payload: { level: number }) =>
+          Effect.sync(() => {
+            status = `level-${payload.level}`
+            return status
+          }),
+        {
+          validator: (payload) => {
+            if (!Number.isFinite(payload.level) || payload.level < 0) {
+              throw new Error('status-level-invalid')
+            }
+          },
+        },
+      )
+
+      const cycles = Math.max(1, Math.trunc(input.cycles))
+      const holdMs = Math.max(100, Math.trunc(input.holdMs))
+      for (let index = 0; index < cycles; index += 1) {
+        yield* timers.start({ timeoutMs: holdMs })
+      }
+
+      return status
+    }),
+  { updates: workerLoadUpdateDefinitions },
+)
+
 type IoBurstActivityInput = {
   burst: number
   payloadBytes: number
@@ -135,7 +217,7 @@ const busyLoop = (iterations: number, seed: number): number => {
   return state >>> 0
 }
 
-export const workerLoadWorkflows = [workerLoadCpuWorkflow, workerLoadActivityWorkflow]
+export const workerLoadWorkflows = [workerLoadCpuWorkflow, workerLoadActivityWorkflow, workerLoadUpdateWorkflow]
 
 export const workerLoadActivities = {
   'workerLoad.ioBurstActivity': ioBurstActivity,

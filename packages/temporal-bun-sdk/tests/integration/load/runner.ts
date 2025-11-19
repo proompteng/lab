@@ -13,6 +13,7 @@ import {
   workerLoadWorkflows,
   type WorkerLoadActivityWorkflowInput,
   type WorkerLoadCpuWorkflowInput,
+  type WorkerLoadUpdateWorkflowInput,
 } from './workflows'
 
 export interface WorkerLoadRunnerOptions {
@@ -76,7 +77,14 @@ export const runWorkerLoad = async (options: WorkerLoadRunnerOptions): Promise<W
     const cliPath = await Effect.runPromise(resolveTemporalCliExecutable())
     const { client: temporalClient, config: resolvedConfig } = await createTemporalClient({ config, taskQueue })
     try {
-      const handles = await submitWorkflows(temporalClient, plans, taskQueue, loadConfig)
+      const submissions = await submitWorkflows(temporalClient, plans, taskQueue, loadConfig)
+      const handles = submissions.map((submission) => submission.handle)
+      const updateSubmissions = submissions.filter(
+        (submission) => submission.plan.workflowType === 'workerLoadUpdateWorkflow',
+      )
+      if (updateSubmissions.length > 0) {
+        await driveWorkflowUpdates(temporalClient, updateSubmissions, loadConfig)
+      }
       const completionBudgetMs =
         loadConfig.workflowDurationBudgetMs + Math.max(loadConfig.metricsFlushTimeoutMs, 5_000)
       await runWithTimeout(
@@ -152,8 +160,8 @@ const submitWorkflows = async (
   plans: WorkflowPlan[],
   taskQueue: string,
   config: WorkerLoadConfig,
-): Promise<WorkflowHandle[]> => {
-  const handles: WorkflowHandle[] = []
+): Promise<SubmittedWorkflow[]> => {
+  const submissions: SubmittedWorkflow[] = []
   for (const plan of plans) {
     const result = await client.startWorkflow({
       workflowId: plan.id,
@@ -162,9 +170,50 @@ const submitWorkflows = async (
       args: [plan.input],
       workflowTaskTimeoutMs: config.workflowDurationBudgetMs,
     })
-    handles.push({ workflowId: result.workflowId, runId: result.runId })
+    submissions.push({ plan, handle: { workflowId: result.workflowId, runId: result.runId } })
   }
-  return handles
+  return submissions
+}
+
+const driveWorkflowUpdates = async (
+  client: TemporalClient,
+  submissions: SubmittedWorkflow[],
+  config: WorkerLoadConfig,
+): Promise<void> => {
+  if (submissions.length === 0 || config.updatesPerWorkflow <= 0) {
+    return
+  }
+  await Promise.all(
+    submissions.map(async ({ handle }) => {
+      const workflowHandle = { workflowId: handle.workflowId, runId: handle.runId }
+      for (let index = 0; index < config.updatesPerWorkflow; index += 1) {
+        await client.workflow.update(workflowHandle, {
+          updateName: 'workerLoad.setStatus',
+          args: [{ status: `phase-${index}` }],
+          waitForStage: 'completed',
+        })
+      }
+      await client.workflow.update(workflowHandle, {
+        updateName: 'workerLoad.delayedSetStatus',
+        args: [{ status: 'delayed', delayMs: config.updateDelayMs }],
+        waitForStage: 'completed',
+      })
+      try {
+        await client.workflow.update(workflowHandle, {
+          updateName: 'workerLoad.guardStatus',
+          args: [{ level: -1 }],
+          waitForStage: 'completed',
+        })
+      } catch {
+        // Intentionally provoke a validation failure to exercise rejection paths.
+      }
+      await client.workflow.update(workflowHandle, {
+        updateName: 'workerLoad.guardStatus',
+        args: [{ level: 1 }],
+        waitForStage: 'completed',
+      })
+    }),
+  )
 }
 
 type WorkflowHandle = {
@@ -295,13 +344,31 @@ const waitForWorkflowCompletionsCli = async ({
   )
 }
 
+type SubmittedWorkflow = {
+  readonly plan: WorkflowPlan
+  readonly handle: WorkflowHandle
+}
+
 const buildWorkflowPlans = (config: WorkerLoadConfig): WorkflowPlan[] => {
   const total = Math.max(1, config.workflowCount)
-  let cpuCount = Math.max(1, Math.floor(total * 0.65))
-  let activityCount = total - cpuCount
-  if (activityCount <= 0) {
+  let updateCount = Math.floor(total * config.updateWorkflowRatio)
+  if (config.updateWorkflowRatio > 0 && updateCount === 0 && total > 0) {
+    updateCount = 1
+  }
+  if (updateCount >= total) {
+    updateCount = Math.max(0, total - 1)
+  }
+  updateCount = Math.max(0, updateCount)
+
+  const remaining = Math.max(0, total - updateCount)
+  let cpuCount = Math.floor(remaining * 0.65)
+  let activityCount = remaining - cpuCount
+  if (activityCount <= 0 && remaining > 0) {
     activityCount = 1
-    cpuCount = Math.max(0, total - activityCount)
+    cpuCount = Math.max(0, remaining - activityCount)
+  }
+  if (remaining === 0 && total > 0 && updateCount === 0) {
+    cpuCount = Math.max(1, total)
   }
   const plans: WorkflowPlan[] = []
   for (let index = 0; index < cpuCount; index += 1) {
@@ -324,6 +391,17 @@ const buildWorkflowPlans = (config: WorkerLoadConfig): WorkflowPlan[] => {
         computeIterations: Math.max(10_000, Math.floor(config.computeIterations / 4)),
         activityDelayMs: config.activityDelayMs,
         payloadBytes: config.activityPayloadBytes,
+      },
+    })
+  }
+  for (let index = 0; index < updateCount; index += 1) {
+    plans.push({
+      id: `worker-load-update-${index}-${randomUUID()}`,
+      workflowType: 'workerLoadUpdateWorkflow',
+      input: {
+        cycles: Math.max(2, config.cpuRounds),
+        holdMs: Math.max(250, config.timerDelayMs * 2),
+        delayMs: Math.max(50, config.updateDelayMs),
       },
     })
   }
@@ -414,6 +492,11 @@ export type WorkflowPlan =
       readonly id: string
       readonly workflowType: 'workerLoadActivityWorkflow'
       readonly input: WorkerLoadActivityWorkflowInput
+    }
+  | {
+      readonly id: string
+      readonly workflowType: 'workerLoadUpdateWorkflow'
+      readonly input: WorkerLoadUpdateWorkflowInput
     }
 
 export interface RuntimeStats {
