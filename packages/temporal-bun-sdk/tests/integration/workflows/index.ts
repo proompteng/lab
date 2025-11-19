@@ -2,6 +2,7 @@ import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import { defineWorkflow, defineWorkflowUpdates } from '../../../src/workflow/definition'
+import { WorkflowBlockedError } from '../../../src/workflow/errors'
 import { defineWorkflowQueries, defineWorkflowSignals } from '../../../src/workflow/inbound'
 import { currentActivityContext } from '../../../src/worker/activity-context'
 
@@ -37,6 +38,25 @@ const retryProbeInputSchema = Schema.Struct({
   failUntil: Schema.Number,
   permanentOn: Schema.Number,
   maxAttempts: Schema.Number,
+})
+
+const updateWorkflowInputSchema = Schema.Struct({
+  initialMessage: Schema.optional(Schema.String),
+  cycles: Schema.optional(Schema.Number),
+  holdMs: Schema.optional(Schema.Number),
+})
+
+const setMessageInputSchema = Schema.Struct({
+  value: Schema.String,
+})
+
+const delayedMessageInputSchema = Schema.Struct({
+  value: Schema.String,
+  delayMs: Schema.optional(Schema.Number),
+})
+
+const guardedMessageInputSchema = Schema.Struct({
+  value: Schema.String,
 })
 
 const sleep = (ms: number): Promise<void> =>
@@ -248,7 +268,7 @@ export const updateWorkflow = defineWorkflow(
         yield* timers.start({ timeoutMs: holdMs })
       }
 
-      return message
+      yield* Effect.fail(new WorkflowBlockedError('waiting-for-updates'))
     }),
   { updates: integrationUpdateDefinitions },
 )

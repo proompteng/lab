@@ -41,6 +41,7 @@ const startUpdateWorkflow = async (label: string): Promise<WorkflowExecutionHand
       workflowType: UPDATE_WORKFLOW_TYPE,
       workflowId: `integration-update-${label}-${randomUUID()}`,
       taskQueue: CLI_CONFIG.taskQueue,
+      startOnly: true,
       args: [
         {
           initialMessage: 'booting',
@@ -75,7 +76,11 @@ const terminateWorkflow = async (client: TemporalClient, handle: WorkflowHandle)
     await client.workflow.terminate(handle, { reason: 'integration-test-cleanup' })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (!/terminated|not found|completed/i.test(message)) {
+    const code = typeof error === 'object' && error && 'code' in error ? (error as { code?: unknown }).code : undefined
+    if (code === 'not_found') {
+      return
+    }
+    if (!/terminated|not[_\s-]?found|completed/i.test(message)) {
       throw error
     }
   }

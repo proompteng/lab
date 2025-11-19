@@ -16,14 +16,15 @@ import type {
   WorkflowExecutionContinuedAsNewEventAttributes,
   WorkflowExecutionFailedEventAttributes,
   WorkflowExecutionSignaledEventAttributes,
+  WorkflowExecutionTimedOutEventAttributes,
   WorkflowExecutionUpdateAcceptedEventAttributes,
   WorkflowExecutionUpdateAdmittedEventAttributes,
   WorkflowExecutionUpdateCompletedEventAttributes,
   WorkflowExecutionUpdateRejectedEventAttributes,
-  WorkflowExecutionTimedOutEventAttributes,
   WorkflowTaskFailedEventAttributes,
   WorkflowTaskTimedOutEventAttributes,
 } from '../proto/temporal/api/history/v1/message_pb'
+import type { Outcome } from '../proto/temporal/api/update/v1/message_pb'
 import type {
   ContinueAsNewWorkflowCommandIntent,
   ScheduleActivityCommandIntent,
@@ -46,7 +47,6 @@ import type {
 } from './determinism'
 import { intentsEqual, stableStringify } from './determinism'
 import type { WorkflowQueryRequest } from './inbound'
-import type { Outcome } from '../proto/temporal/api/update/v1/message_pb'
 
 export interface ReplayIntake {
   readonly info: WorkflowInfo
@@ -1200,7 +1200,10 @@ const sanitizeDeterminismUpdates = (value: unknown): WorkflowUpdateDeterminismEn
       entry.failureMessage,
       `determinism.updates[${index}].failureMessage`,
     )
-    const historyEventId = coerceOptionalTrimmedString(entry.historyEventId, `determinism.updates[${index}].historyEventId`)
+    const historyEventId = coerceOptionalTrimmedString(
+      entry.historyEventId,
+      `determinism.updates[${index}].historyEventId`,
+    )
 
     return {
       updateId,

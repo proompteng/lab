@@ -86,7 +86,6 @@ import { WorkflowNondeterminismError } from '../workflow/errors'
 import type { WorkflowQueryEvaluationResult } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
 import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from '../workflow/inbound'
-import { buildUpdateProtocolMessages, collectWorkflowUpdates } from './update-protocol'
 import { WorkflowRegistry } from '../workflow/registry'
 import {
   DETERMINISM_MARKER_NAME,
@@ -113,6 +112,7 @@ import {
   type StickyCacheHooks,
   type StickyCacheKey,
 } from './sticky-cache'
+import { buildUpdateProtocolMessages, collectWorkflowUpdates } from './update-protocol'
 
 type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
 

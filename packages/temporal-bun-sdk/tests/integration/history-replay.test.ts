@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { Effect } from 'effect'
 
 import { createDefaultDataConverter } from '../../src/common/payloads'
+import { makeStickyCache } from '../../src/worker/sticky-cache'
 import { ingestWorkflowHistory, diffDeterminismState } from '../../src/workflow/replay'
 import type { HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
 import type { IntegrationHarness, WorkflowExecutionHandle } from './harness'

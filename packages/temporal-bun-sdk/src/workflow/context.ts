@@ -9,13 +9,13 @@ import type {
   StartTimerCommandIntent,
   WorkflowCommandIntent,
 } from './commands'
-import type { DeterminismGuard, RecordedCommandKind, WorkflowRetryPolicyInput } from './determinism'
 import type {
   WorkflowUpdateDefinition,
   WorkflowUpdateDefinitions,
   WorkflowUpdateHandler,
   WorkflowUpdateValidator,
 } from './definition'
+import type { DeterminismGuard, RecordedCommandKind, WorkflowRetryPolicyInput } from './determinism'
 import { ContinueAsNewWorkflowError, WorkflowBlockedError, WorkflowQueryHandlerMissingError } from './errors'
 import {
   normalizeInboundArguments,

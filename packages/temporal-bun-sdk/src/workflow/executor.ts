@@ -26,12 +26,12 @@ import {
   type WorkflowContext,
   type WorkflowInfo,
   type WorkflowQueryRegistry,
-  WorkflowUpdateRegistry,
+  type WorkflowUpdateRegistry,
 } from './context'
 import { DeterminismGuard, snapshotToDeterminismState, type WorkflowDeterminismState } from './determinism'
 import { ContinueAsNewWorkflowError, WorkflowBlockedError, WorkflowNondeterminismError } from './errors'
-import type { WorkflowRegistry } from './registry'
 import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from './inbound'
+import type { WorkflowRegistry } from './registry'
 
 export interface WorkflowUpdateInvocation {
   readonly protocolInstanceId: string

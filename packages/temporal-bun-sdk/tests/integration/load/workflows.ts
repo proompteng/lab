@@ -2,6 +2,7 @@ import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import { defineWorkflow, defineWorkflowUpdates } from '../../../src/workflow/definition'
+import { WorkflowBlockedError } from '../../../src/workflow/errors'
 import { currentActivityContext } from '../../../src/worker/activity-context'
 
 const cpuWorkflowInputSchema = Schema.Struct({
@@ -159,7 +160,7 @@ export const workerLoadUpdateWorkflow = defineWorkflow(
         yield* timers.start({ timeoutMs: holdMs })
       }
 
-      return status
+      yield* Effect.fail(new WorkflowBlockedError('worker-load-updates'))
     }),
   { updates: workerLoadUpdateDefinitions },
 )
