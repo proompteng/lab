@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.2.0...temporal-bun-sdk-v0.3.0) (2025-11-20)
+
+
+### Features
+
+* add inbound workflow signal and query support ([#1825](https://github.com/proompteng/lab/issues/1825)) ([a093aff](https://github.com/proompteng/lab/commit/a093aff67536df42d2ece3dffc28d17d70991cae))
+* add workflow update executor plumbing ([#1824](https://github.com/proompteng/lab/issues/1824)) ([335c6e8](https://github.com/proompteng/lab/commit/335c6e8a265aa952305fb787cdf90c842662c281))
+
+
+### Bug Fixes
+
+* finalize temporal bun sdk ga readiness ([#1813](https://github.com/proompteng/lab/issues/1813)) ([0429122](https://github.com/proompteng/lab/commit/0429122c9fad087944a30322a250c83f12ed9436))
+
 ## [0.2.0](https://github.com/proompteng/lab/compare/v0.1.0...v0.2.0) (2025-11-17)
 
 
