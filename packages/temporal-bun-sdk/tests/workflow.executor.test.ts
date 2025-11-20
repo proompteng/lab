@@ -38,6 +38,7 @@ const execute = async (
     signalDeliveries: overrides.signalDeliveries,
     queryRequests: overrides.queryRequests,
     updates: overrides.updates,
+    mode: overrides.mode,
   })
 
 test('schedules an activity command and completes after result', async () => {
@@ -253,6 +254,66 @@ test('evaluates registered workflow queries with encoded results', async () => {
   const answerValues = await decodePayloadsToValues(dataConverter, entry?.result.answer?.payloads ?? [])
   expect(answerValues[0]).toEqual({ status: 'ready' })
   expect(output.determinismState.queries.length).toBeGreaterThan(0)
+})
+
+test('query execution mode returns answers without emitting commands', async () => {
+  const { registry, executor, dataConverter } = makeExecutor()
+  const queries = defineWorkflowQueries({
+    status: {
+      input: Schema.Struct({}),
+      output: Schema.String,
+    },
+  })
+
+  registry.register(
+    defineWorkflow({
+      name: 'queryOnlyWorkflow',
+      queries,
+      handler: ({ queries: registryQueries }) =>
+        Effect.gen(function* () {
+          let current = 'booting'
+          yield* registryQueries.register(queries.status, () => Effect.sync(() => current))
+          current = 'ready'
+          return current
+        }),
+    }),
+  )
+
+  const output = await execute(executor, {
+    workflowType: 'queryOnlyWorkflow',
+    arguments: [],
+    queryRequests: [{ name: 'status', args: [{}], source: 'legacy' }],
+    mode: 'query',
+  })
+
+  expect(output.commands).toHaveLength(0)
+  expect(output.completion).toBe('completed')
+  expect(output.queryResults).toHaveLength(1)
+  const [entry] = output.queryResults
+  const values = await decodePayloadsToValues(dataConverter, entry?.result.answer?.payloads ?? [])
+  expect(values[0]).toBe('ready')
+})
+
+test('query execution mode rejects new workflow commands', async () => {
+  const { registry, executor } = makeExecutor()
+
+  registry.register(
+    defineWorkflow(
+      'querySchedulingWorkflow',
+      Schema.Array(Schema.Unknown),
+      ({ activities }) => activities.schedule('performSideEffect', []),
+    ),
+  )
+
+  const output = await execute(executor, {
+    workflowType: 'querySchedulingWorkflow',
+    arguments: [],
+    mode: 'query',
+  })
+
+  expect(output.completion).toBe('failed')
+  expect(output.failure).toBeInstanceOf(Error)
+  expect((output.failure as Error).message).toMatch(/Workflow query cannot emit new command/)
 })
 
 test('tampered determinism state throws WorkflowNondeterminismError', async () => {

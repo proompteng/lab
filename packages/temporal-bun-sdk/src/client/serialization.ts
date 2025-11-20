@@ -274,6 +274,7 @@ export const buildQueryRequest = async (
   queryName: string,
   args: unknown[],
   dataConverter: DataConverter,
+  options?: { rejectCondition?: QueryRejectCondition },
 ): Promise<QueryWorkflowRequest> => {
   const namespace = ensureNamespace(handle.namespace, '')
   const execution = serializeWorkflowExecution(handle)
@@ -287,7 +288,7 @@ export const buildQueryRequest = async (
       queryArgs,
       header: undefined,
     },
-    queryRejectCondition: QueryRejectCondition.NONE,
+    queryRejectCondition: options?.rejectCondition ?? QueryRejectCondition.NONE,
   })
 }
 

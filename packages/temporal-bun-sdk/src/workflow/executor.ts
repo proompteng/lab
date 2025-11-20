@@ -29,7 +29,12 @@ import {
   type WorkflowUpdateRegistry,
 } from './context'
 import { DeterminismGuard, snapshotToDeterminismState, type WorkflowDeterminismState } from './determinism'
-import { ContinueAsNewWorkflowError, WorkflowBlockedError, WorkflowNondeterminismError } from './errors'
+import {
+  ContinueAsNewWorkflowError,
+  WorkflowBlockedError,
+  WorkflowNondeterminismError,
+  WorkflowQueryViolationError,
+} from './errors'
 import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from './inbound'
 import type { WorkflowRegistry } from './registry'
 
@@ -93,6 +98,7 @@ export interface ExecuteWorkflowInput {
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
   readonly queryRequests?: readonly WorkflowQueryRequest[]
   readonly updates?: readonly WorkflowUpdateInvocation[]
+  readonly mode?: 'workflow' | 'query'
 }
 
 export type WorkflowCompletionStatus = 'completed' | 'failed' | 'continued-as-new' | 'pending'
@@ -136,10 +142,12 @@ export class WorkflowExecutor {
       workflowType: input.workflowType,
     }
 
+    const executionMode = input.mode ?? 'workflow'
+
     const definition = this.#registry.get(input.workflowType)
     const normalizedArguments = this.#normalizeArguments(input.arguments, definition.decodeArgumentsAsArray)
     const decodedEffect = Schema.decodeUnknown(definition.schema)(normalizedArguments)
-    const guard = new DeterminismGuard({ previousState: input.determinismState })
+    const guard = new DeterminismGuard({ previousState: input.determinismState, mode: executionMode })
 
     let lastCommandContext: WorkflowCommandContext | undefined
     let lastQueryRegistry: WorkflowQueryRegistry | undefined
@@ -171,7 +179,7 @@ export class WorkflowExecutor {
 
     const exit = await Effect.runPromiseExit(workflowEffect)
     const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
-    const updatesToProcess = input.updates ?? []
+    const updatesToProcess = executionMode === 'query' ? [] : (input.updates ?? [])
     let updateDispatches: WorkflowUpdateDispatch[] = []
 
     if (updatesToProcess.length > 0) {
@@ -190,6 +198,17 @@ export class WorkflowExecutor {
 
     if (Exit.isSuccess(exit)) {
       const determinismState = snapshotToDeterminismState(guard.snapshot)
+      if (executionMode === 'query') {
+        return {
+          commands: [],
+          intents: [],
+          determinismState,
+          completion: 'completed',
+          result: exit.value.result,
+          queryResults,
+        }
+      }
+
       const commands = await this.#buildSuccessCommands(exit.value.commandContext, exit.value.result)
       return {
         commands,
@@ -206,6 +225,9 @@ export class WorkflowExecutor {
 
     const continueAsNewError = unwrapWorkflowError(error, ContinueAsNewWorkflowError)
     if (continueAsNewError) {
+      if (executionMode === 'query') {
+        throw new WorkflowQueryViolationError('Workflow query cannot request continue-as-new')
+      }
       const rawSnapshot = guard.snapshot
       const intents = rawSnapshot.commandHistory.map((entry) => entry.intent)
       const commands = await materializeCommands(intents, { dataConverter: this.#dataConverter })
@@ -234,6 +256,16 @@ export class WorkflowExecutor {
       const pendingCommands = await materializeCommands(contextForPending.intents, {
         dataConverter: this.#dataConverter,
       })
+      if (executionMode === 'query') {
+        return {
+          commands: [],
+          intents: contextForPending.intents,
+          determinismState: snapshotToDeterminismState(guard.snapshot),
+          completion: 'pending',
+          queryResults,
+          ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
+        }
+      }
       return {
         commands: pendingCommands,
         intents: contextForPending.intents,
@@ -241,6 +273,17 @@ export class WorkflowExecutor {
         completion: 'pending',
         queryResults,
         ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
+      }
+    }
+
+    if (executionMode === 'query') {
+      return {
+        commands: [],
+        intents: [],
+        determinismState: snapshotToDeterminismState(guard.snapshot),
+        completion: 'failed',
+        failure: error,
+        queryResults,
       }
     }
 

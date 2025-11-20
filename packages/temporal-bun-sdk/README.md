@@ -106,6 +106,42 @@ export const counterWorkflow = defineWorkflow(
 
 The workflow runtime automatically polls `PollWorkflowTaskQueueResponse.messages`, routes update requests through the scheduler, and records lifecycle events (admitted/accepted/completed) in determinism snapshots so sticky caches stay healthy on replay.
 
+## Workflow queries
+
+- Register query handlers with `defineWorkflowQueries` and wire them inside the workflow handler. The worker runtime now detects legacy query-only tasks (`response.query`) and answers them via `RespondQueryTaskCompleted`, so CLI/SDK queries return immediately even when workflow tasks are blocked.
+- Query evaluation runs in a **read-only** mode: no new commands, timers, randomness, or continue-as-new requests are allowed. Violations surface as `WorkflowQueryViolationError` and are returned to the caller.
+- The client supports `QueryRejectCondition` through `temporalCallOptions({ queryRejectCondition: QueryRejectCondition.NOT_OPEN })`; query results are decoded with the configured data converter.
+- Metrics: `temporal_worker_query_started_total`, `temporal_worker_query_completed_total`, `temporal_worker_query_failed_total`, and latency histogram `temporal_worker_query_latency_ms`.
+
+```ts
+import { defineWorkflow, defineWorkflowQueries } from '@proompteng/temporal-bun-sdk/workflow'
+import { QueryRejectCondition, temporalCallOptions } from '@proompteng/temporal-bun-sdk/client'
+
+const queries = defineWorkflowQueries({
+  status: {
+    input: Schema.Struct({}),
+    output: Schema.String,
+  },
+})
+
+export const statusWorkflow = defineWorkflow({
+  name: 'statusWorkflow',
+  queries,
+  handler: ({ queries: registry }) =>
+    Effect.gen(function* () {
+      let current = 'booting'
+      yield* registry.register(queries.status, () => Effect.sync(() => current))
+      current = 'ready'
+      return current
+    }),
+})
+
+// client side
+const value = await client.queryWorkflow(handle, 'status', temporalCallOptions({
+  queryRejectCondition: QueryRejectCondition.NONE,
+}))
+```
+
 ### Invoking workflow updates
 
 The client surface exposes `workflow.update`, `workflow.awaitUpdate`, `workflow.cancelUpdate`, and `workflow.getUpdateHandle` helpers on the `TemporalWorkflowClient`:
