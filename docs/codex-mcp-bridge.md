@@ -18,7 +18,7 @@ install -d ~/.codex
 cp ~/github.com/lab/apps/froussard/scripts/codex-config-container.toml ~/.codex/config.toml
 ```
 
-The template pins `gpt-5.1-codex`, disables approvals, and trusts `/home/kalmyk/github.com/lab`.
+The template pins `gpt-5.1-codex-max`, disables approvals, and trusts `/home/kalmyk/github.com/lab`.
 
 ## Systemd service
 

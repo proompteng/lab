@@ -1,4 +1,4 @@
-model = "gpt-5.1-codex"
+model = "gpt-5.1-codex-max"
 model_reasoning_summary = "detailed"
 model_reasoning_effort = "high"
 approval_policy = "never"
