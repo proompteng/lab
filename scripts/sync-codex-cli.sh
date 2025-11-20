@@ -169,7 +169,7 @@ ssh "${ssh_opts[@]}" "$coder_host" "chmod 600 $(shell_escape "$remote_config")"
 ssh "${ssh_opts[@]}" "$coder_host" bash -s <<'REMOTE'
 set -euo pipefail
 codex_marker="# Managed by sync-codex-cli codex wrapper"
-codex_function=$'codex() {\n  command codex --full-auto --dangerously-bypass-approvals-and-sandbox --search --model gpt-5.1-codex "$@"\n}'
+codex_function=$'codex() {\n  command codex --full-auto --dangerously-bypass-approvals-and-sandbox --search --model gpt-5.1-codex-max "$@"\n}'
 for rc in ~/.profile ~/.bashrc ~/.zshrc; do
   touch "${rc}"
   tmp="$(mktemp)"
