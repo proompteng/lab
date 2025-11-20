@@ -46,8 +46,8 @@ import type {
   WorkflowUpdateDeterminismStage,
 } from './determinism'
 import { intentsEqual, stableStringify } from './determinism'
-import type { WorkflowQueryRequest } from './inbound'
 import type { WorkflowUpdateInvocation } from './executor'
+import type { WorkflowQueryRequest } from './inbound'
 
 export interface ReplayIntake {
   readonly info: WorkflowInfo
