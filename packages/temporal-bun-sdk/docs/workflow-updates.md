@@ -11,6 +11,7 @@ Temporal Workflow Updates let callers send strongly typed, low-latency mutations
 - Helper APIs (`getUpdateHandle`, `awaitUpdate`, `cancelUpdate`) let services resume or cancel pending updates.
 - Update calls inherit the standard call options (`retryPolicy`, `timeoutMs`, `headers`, `signal`).
 - `workflow.update` assigns an idempotent `updateId` (callers can override it) and defaults to waiting until the update is **accepted**; `waitForStage` can be set to `'admitted' | 'accepted' | 'completed'`.
+- `workflow.awaitUpdate` defaults to waiting until the update is **completed** when no `waitForStage` is provided, matching Temporal's server-side default.
 - The client records per-update AbortControllers so cancelling an update (or aborting a request) cleans up pending polls appropriately.
 
 ### Workflow runtime

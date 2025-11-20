@@ -123,7 +123,8 @@ if (updateResult.outcome?.status === 'success') {
 
 // await a handle later, perhaps from another service
 const handle = client.workflow.getUpdateHandle(handle, updateResult.handle.updateId)
-await client.workflow.awaitUpdate(handle, { waitForStage: 'completed' })
+// defaults to waiting for completion when waitForStage is omitted
+await client.workflow.awaitUpdate(handle)
 ```
 
 Each update call is idempotent (via `updateId`) and accepts the same `temporalCallOptions` as other Workflow APIs so you can override headers, retries, or timeouts per request.

@@ -130,6 +130,30 @@ describe('workflow updates', () => {
     })
   })
 
+  test('awaiting a workflow update defaults to waiting for completion', async () => {
+    await execScenario('workflow update await default', async () => {
+      const execution = await startUpdateWorkflow('await-default')
+      const handle = toWorkflowHandle(execution)
+      const client = await createClient()
+      try {
+        const accepted = await client.workflow.update(handle, {
+          updateName: 'integrationUpdate.delayedSetMessage',
+          args: [{ value: 'default-wait', delayMs: 500 }],
+          waitForStage: 'accepted',
+        })
+
+        const resolution = await client.workflow.awaitUpdate(accepted.handle)
+
+        expect(resolution.stage).toBe('completed')
+        expect(resolution.outcome?.status).toBe('success')
+        expect(resolution.outcome?.result).toBe('default-wait')
+      } finally {
+        await terminateWorkflow(client, handle)
+        await client.shutdown()
+      }
+    })
+  })
+
   test('awaiting a workflow update can be cancelled and retried', async () => {
     await execScenario('workflow update cancellation', async () => {
       const execution = await startUpdateWorkflow('cancel')

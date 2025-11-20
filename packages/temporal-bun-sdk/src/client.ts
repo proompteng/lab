@@ -759,7 +759,7 @@ class TemporalClientImpl implements TemporalClient {
       this.ensureOpen()
       const resolvedHandle = resolveHandle(this.namespace, handle)
       const updateId = ensureNonEmptyString(handle.updateId, 'updateId')
-      const waitStage = this.#stageToProto(options.waitForStage)
+      const waitStage = this.#stageToProto(options.waitForStage ?? 'completed')
       const firstExecutionRunIdOverride = ensureOptionalTrimmedString(
         options.firstExecutionRunId,
         'firstExecutionRunId',
