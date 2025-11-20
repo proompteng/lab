@@ -47,6 +47,7 @@ import type {
 } from './determinism'
 import { intentsEqual, stableStringify } from './determinism'
 import type { WorkflowQueryRequest } from './inbound'
+import type { WorkflowUpdateInvocation } from './executor'
 
 export interface ReplayIntake {
   readonly info: WorkflowInfo
@@ -60,6 +61,7 @@ export interface ReplayResult {
   readonly determinismState: WorkflowDeterminismState
   readonly lastEventId: string | null
   readonly hasDeterminismMarker: boolean
+  readonly updates?: readonly WorkflowUpdateInvocation[]
 }
 
 export interface DeterminismMarkerInput {
@@ -235,6 +237,9 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
     }
 
     const extractedFailureMetadata = extractFailureMetadata(events)
+    const replayUpdateInvocations = yield* Effect.tryPromise(async () =>
+      collectWorkflowUpdateInvocations(events, intake.dataConverter),
+    )
 
     if (shouldUseDeterminismMarker && markerSnapshot) {
       let determinismState = cloneDeterminismState(markerSnapshot.determinismState)
@@ -256,10 +261,17 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
         determinismState,
         lastEventId: latestEventId,
         hasDeterminismMarker: true,
+        ...(replayUpdateInvocations.length > 0 ? { updates: replayUpdateInvocations } : {}),
       }
     }
 
-    return yield* reconstructDeterminismState(events, intake, extractedFailureMetadata, updateEntries)
+    return yield* reconstructDeterminismState(
+      events,
+      intake,
+      extractedFailureMetadata,
+      updateEntries,
+      replayUpdateInvocations,
+    )
   })
 
 /**
@@ -579,6 +591,7 @@ const reconstructDeterminismState = (
   intake: ReplayIntake,
   failureMetadata?: WorkflowDeterminismFailureMetadata,
   precomputedUpdates?: WorkflowUpdateDeterminismEntry[],
+  replayUpdateInvocations: WorkflowUpdateInvocation[] = [],
 ): Effect.Effect<ReplayResult, unknown, never> =>
   Effect.gen(function* () {
     let sequence = 0
@@ -701,6 +714,7 @@ const reconstructDeterminismState = (
       determinismState,
       lastEventId: resolveHistoryLastEventId(events),
       hasDeterminismMarker: false,
+      ...(replayUpdateInvocations.length > 0 ? { updates: replayUpdateInvocations } : {}),
     }
   })
 
@@ -959,6 +973,120 @@ const collectWorkflowUpdateEntries = (events: HistoryEvent[]): WorkflowUpdateDet
   }
 
   return updates
+}
+
+const collectWorkflowUpdateInvocations = async (
+  events: HistoryEvent[],
+  dataConverter: DataConverter,
+): Promise<WorkflowUpdateInvocation[]> => {
+  const invocations: WorkflowUpdateInvocation[] = []
+
+  for (const event of events) {
+    if (event.eventType === EventType.WORKFLOW_EXECUTION_UPDATE_ACCEPTED) {
+      if (event.attributes.case !== 'workflowExecutionUpdateAcceptedEventAttributes') {
+        continue
+      }
+      const attrs = event.attributes.value as WorkflowExecutionUpdateAcceptedEventAttributes
+      const invocation = await buildUpdateInvocationFromRequest({
+        request: attrs.acceptedRequest,
+        protocolInstanceId: attrs.protocolInstanceId,
+        requestMessageId: attrs.acceptedRequestMessageId,
+        sequencingEventId: attrs.acceptedRequestSequencingEventId,
+        fallbackEventId: event.eventId,
+        dataConverter,
+      })
+      if (invocation) {
+        invocations.push(invocation)
+      }
+      continue
+    }
+
+    if (event.eventType === EventType.WORKFLOW_EXECUTION_UPDATE_REJECTED) {
+      if (event.attributes.case !== 'workflowExecutionUpdateRejectedEventAttributes') {
+        continue
+      }
+      const attrs = event.attributes.value as WorkflowExecutionUpdateRejectedEventAttributes
+      const invocation = await buildUpdateInvocationFromRequest({
+        request: attrs.rejectedRequest,
+        protocolInstanceId: attrs.protocolInstanceId,
+        requestMessageId: attrs.rejectedRequestMessageId,
+        sequencingEventId: attrs.rejectedRequestSequencingEventId,
+        fallbackEventId: event.eventId,
+        dataConverter,
+      })
+      if (invocation) {
+        invocations.push(invocation)
+      }
+      continue
+    }
+
+    if (event.eventType === EventType.WORKFLOW_EXECUTION_UPDATE_ADMITTED) {
+      if (event.attributes.case !== 'workflowExecutionUpdateAdmittedEventAttributes') {
+        continue
+      }
+      const attrs = event.attributes.value as WorkflowExecutionUpdateAdmittedEventAttributes
+      const invocation = await buildUpdateInvocationFromRequest({
+        request: attrs.request,
+        protocolInstanceId: 'history-admitted',
+        requestMessageId: `history-${event.eventId ?? 'update-admitted'}`,
+        sequencingEventId: event.eventId ? BigInt(event.eventId) : undefined,
+        fallbackEventId: event.eventId,
+        dataConverter,
+      })
+      if (invocation) {
+        invocations.push(invocation)
+      }
+    }
+  }
+
+  return invocations
+}
+
+const buildUpdateInvocationFromRequest = async (input: {
+  request:
+    | WorkflowExecutionUpdateAdmittedEventAttributes['request']
+    | WorkflowExecutionUpdateAcceptedEventAttributes['acceptedRequest']
+  protocolInstanceId?: string
+  requestMessageId?: string
+  sequencingEventId?: bigint
+  fallbackEventId?: string | number | bigint | null
+  dataConverter: DataConverter
+}): Promise<WorkflowUpdateInvocation | undefined> => {
+  const req = input.request
+  const updateId = normalizeUpdateId(req?.meta?.updateId)
+  const updateName = req?.input?.name?.trim()
+  if (!updateId || !updateName) {
+    return undefined
+  }
+  const values =
+    (await decodePayloadsToValues(input.dataConverter, req?.input?.args?.payloads ?? []))?.map((value) => value) ?? []
+  const payload = normalizeUpdateInvocationPayload(values)
+  const sequencing =
+    input.sequencingEventId !== undefined
+      ? input.sequencingEventId.toString()
+      : input.fallbackEventId !== undefined && input.fallbackEventId !== null
+        ? String(input.fallbackEventId)
+        : undefined
+
+  return {
+    protocolInstanceId: input.protocolInstanceId ?? 'history-replay',
+    requestMessageId: input.requestMessageId ?? updateId,
+    updateId,
+    name: updateName,
+    payload,
+    identity: req?.meta?.identity,
+    sequencingEventId: sequencing,
+  }
+}
+
+const normalizeUpdateInvocationPayload = (values: unknown[]): unknown => {
+  if (!values || values.length === 0) {
+    return undefined
+  }
+  if (values.length === 1) {
+    return values[0]
+  }
+  return values
 }
 
 const decodePayloadArray = (

@@ -136,6 +136,30 @@ type WorkerRuntimeMetrics = {
   readonly activityTaskCompleted: Counter
 }
 
+const mergeUpdateInvocations = (
+  historyInvocations: readonly WorkflowUpdateInvocation[],
+  messageInvocations: readonly WorkflowUpdateInvocation[],
+): WorkflowUpdateInvocation[] => {
+  const merged: WorkflowUpdateInvocation[] = []
+  const seen = new Set<string>()
+
+  for (const invocation of historyInvocations ?? []) {
+    if (!seen.has(invocation.updateId)) {
+      merged.push(invocation)
+      seen.add(invocation.updateId)
+    }
+  }
+
+  for (const invocation of messageInvocations ?? []) {
+    if (!seen.has(invocation.updateId)) {
+      merged.push(invocation)
+      seen.add(invocation.updateId)
+    }
+  }
+
+  return merged
+}
+
 type NondeterminismContext = {
   readonly execution: { workflowId: string; runId: string }
   readonly workflowType: string
@@ -929,6 +953,8 @@ export class WorkerRuntime {
     try {
       const activityResults = await this.#extractActivityResolutions(historyEvents)
 
+      const replayUpdates = historyReplay?.updates ?? []
+      const mergedUpdates = mergeUpdateInvocations(replayUpdates, collectedUpdates.invocations)
       const output = await this.#executor.execute({
         workflowType,
         workflowId: execution.workflowId,
@@ -940,7 +966,7 @@ export class WorkerRuntime {
         activityResults,
         signalDeliveries,
         queryRequests,
-        updates: collectedUpdates.invocations,
+        updates: mergedUpdates,
       })
       this.#log('debug', 'workflow query evaluation summary', {
         ...baseLogFields,
@@ -973,8 +999,11 @@ export class WorkerRuntime {
       const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? historyReplay?.lastEventId ?? null
       const shouldRecordMarker = output.completion === 'pending'
       let commandsForResponse = output.commands
+      const dispatchesForNewMessages = (output.updateDispatches ?? []).filter((dispatch) =>
+        collectedUpdates.requestsByUpdateId.has(dispatch.updateId),
+      )
       const updateProtocolMessages = await buildUpdateProtocolMessages({
-        dispatches: output.updateDispatches ?? [],
+        dispatches: dispatchesForNewMessages,
         collected: collectedUpdates,
         dataConverter: this.#dataConverter,
         defaultIdentity: this.#identity,
