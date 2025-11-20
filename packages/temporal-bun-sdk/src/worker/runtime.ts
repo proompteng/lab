@@ -976,7 +976,8 @@ export class WorkerRuntime {
     const expectedDeterminismState = previousState
 
     try {
-      const activityResults = await this.#extractActivityResolutions(historyEvents)
+      const { results: activityResults, scheduledEventIds: activityScheduleEventIds } =
+        await this.#extractActivityResolutions(historyEvents)
 
       const replayUpdates = historyReplay?.updates ?? []
       const mergedUpdates = mergeUpdateInvocations(replayUpdates, collectedUpdates.invocations)
@@ -989,6 +990,7 @@ export class WorkerRuntime {
         arguments: args,
         determinismState: previousState,
         activityResults,
+        activityScheduleEventIds,
         signalDeliveries,
         queryRequests,
         updates: mergedUpdates,
@@ -1223,9 +1225,13 @@ export class WorkerRuntime {
     return events
   }
 
-  async #extractActivityResolutions(events: HistoryEvent[]): Promise<Map<string, ActivityResolution>> {
+  async #extractActivityResolutions(events: HistoryEvent[]): Promise<{
+    results: Map<string, ActivityResolution>
+    scheduledEventIds: Map<string, string>
+  }> {
     const resolutions = new Map<string, ActivityResolution>()
     const scheduledActivityIds = new Map<string, string>()
+    const activityScheduleById = new Map<string, string>()
 
     const normalizeEventId = (value: bigint | number | string | undefined | null): string | undefined => {
       if (value === undefined || value === null) {
@@ -1262,6 +1268,7 @@ export class WorkerRuntime {
           const scheduledKey = normalizeEventId(event.eventId)
           if (activityId && scheduledKey) {
             scheduledActivityIds.set(scheduledKey, activityId)
+            activityScheduleById.set(activityId, scheduledKey)
           }
           break
         }
@@ -1334,7 +1341,7 @@ export class WorkerRuntime {
           break
       }
     }
-    return resolutions
+    return { results: resolutions, scheduledEventIds: activityScheduleById }
   }
 
   async #extractSignalDeliveries(events: HistoryEvent[]): Promise<WorkflowSignalDeliveryInput[]> {

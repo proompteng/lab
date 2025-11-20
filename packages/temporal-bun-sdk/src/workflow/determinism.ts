@@ -169,6 +169,13 @@ export class DeterminismGuard {
     return kind
   }
 
+  getPreviousIntent(index: number): WorkflowCommandIntent | undefined {
+    if (!this.#previous) {
+      return undefined
+    }
+    return this.#previous.commandHistory[index]?.intent
+  }
+
   nextRandom(generate: () => number): number {
     if (this.#mode === 'query') {
       const expected = this.#previous?.randomValues[this.#randomIndex]

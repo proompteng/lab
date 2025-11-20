@@ -2,11 +2,17 @@ import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import type {
+  CancelTimerCommandIntent,
   ContinueAsNewWorkflowCommandIntent,
+  ModifyWorkflowPropertiesCommandIntent,
+  RecordMarkerCommandIntent,
+  RequestCancelActivityCommandIntent,
+  RequestCancelExternalWorkflowCommandIntent,
   ScheduleActivityCommandIntent,
   SignalExternalWorkflowCommandIntent,
   StartChildWorkflowCommandIntent,
   StartTimerCommandIntent,
+  UpsertSearchAttributesCommandIntent,
   WorkflowCommandIntent,
 } from './commands'
 import type {
@@ -35,6 +41,10 @@ import {
 export type WorkflowCommandIntentId = string
 
 const DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT_MS = 10_000
+const MARKER_SIDE_EFFECT = 'temporal-bun-sdk/side-effect'
+const MARKER_VERSION = 'temporal-bun-sdk/get-version'
+const MARKER_PATCH = 'temporal-bun-sdk/patch'
+const MARKER_LOCAL_ACTIVITY = 'temporal-bun-sdk/local-activity'
 
 export interface WorkflowInfo {
   readonly namespace: string
@@ -60,6 +70,14 @@ export interface StartTimerOptions {
   readonly timeoutMs: number
 }
 
+export interface CancelActivityOptions {
+  readonly scheduledEventId?: string | number | bigint
+}
+
+export interface CancelTimerOptions {
+  readonly startedEventId?: string | number | bigint
+}
+
 export interface StartChildWorkflowOptions {
   readonly workflowId?: string
   readonly namespace?: string
@@ -78,6 +96,7 @@ export interface SignalExternalWorkflowOptions {
   readonly workflowId?: string
   readonly runId?: string
   readonly childWorkflowOnly?: boolean
+  readonly reason?: string
 }
 
 export interface ContinueAsNewOptions {
@@ -89,6 +108,36 @@ export interface ContinueAsNewOptions {
   readonly backoffStartIntervalMs?: number
   readonly retry?: WorkflowRetryPolicyInput
   readonly cronSchedule?: string
+}
+
+export interface UpsertSearchAttributesOptions {
+  readonly attributes: Record<string, unknown>
+}
+
+export interface UpsertMemoOptions {
+  readonly memo: Record<string, unknown>
+}
+
+export interface RecordMarkerOptions {
+  readonly markerName: string
+  readonly details?: Record<string, unknown>
+}
+
+export interface SideEffectOptions<T> {
+  readonly reuseOnReplay?: boolean
+  readonly identifier?: string
+  readonly compute: () => T
+}
+
+export interface GetVersionOptions {
+  readonly changeId: string
+  readonly minSupported: number
+  readonly maxSupported: number
+}
+
+export interface LocalActivityOptions {
+  readonly activityId?: string
+  readonly handler?: (...args: unknown[]) => unknown | Promise<unknown>
 }
 
 export interface WorkflowScheduledCommandRef {
@@ -106,10 +155,17 @@ export interface WorkflowActivities {
     args?: unknown[],
     options?: ScheduleActivityOptions,
   ): Effect.Effect<WorkflowScheduledCommandRef, never, never>
+
+  cancel(
+    activityId: string,
+    options?: CancelActivityOptions,
+  ): Effect.Effect<WorkflowScheduledCommandRef, WorkflowBlockedError | Error, never>
 }
 
 export interface WorkflowTimers {
   start(options: StartTimerOptions): Effect.Effect<WorkflowScheduledCommandRef, never, never>
+
+  cancel(timerId: string, options?: CancelTimerOptions): Effect.Effect<WorkflowScheduledCommandRef, never, never>
 }
 
 export interface WorkflowChildWorkflows {
@@ -139,6 +195,11 @@ export interface WorkflowSignalClient {
     handle: WorkflowSignalHandle<I>,
     options?: WorkflowSignalHandlerOptions,
   ): Effect.Effect<readonly WorkflowSignalDelivery<I>[], WorkflowBlockedError | unknown, never>
+
+  requestCancel(
+    workflowId: string,
+    options?: SignalExternalWorkflowOptions,
+  ): Effect.Effect<WorkflowScheduledCommandRef, never, never>
 }
 
 export interface WorkflowQueries {
@@ -157,6 +218,12 @@ export interface WorkflowQueries {
 export interface WorkflowDeterminismHelpers {
   now(): number
   random(): number
+  sideEffect<T>(options: SideEffectOptions<T>): T
+  getVersion(options: GetVersionOptions): number
+  patched(patchId: string): boolean
+  deprecatePatch(patchId: string): void
+  recordMarker(options: RecordMarkerOptions): void
+  localActivity<T>(activityType: string, args?: unknown[], options?: LocalActivityOptions): T
 }
 
 export interface WorkflowRuntimeServices {
@@ -167,6 +234,9 @@ export interface WorkflowRuntimeServices {
   readonly queries: WorkflowQueries
   readonly determinism: WorkflowDeterminismHelpers
   readonly updates: WorkflowUpdates
+  readonly upsertSearchAttributes: (attributes: Record<string, unknown>) => void
+  readonly upsertMemo: (memo: Record<string, unknown>) => void
+  readonly cancelWorkflow: (details?: unknown[]) => void
   continueAsNew(options?: ContinueAsNewOptions): Effect.Effect<never, ContinueAsNewWorkflowError, never>
 }
 
@@ -180,6 +250,7 @@ export interface CreateWorkflowContextParams<I> {
   readonly info: WorkflowInfo
   readonly determinismGuard: DeterminismGuard
   readonly activityResults?: Map<string, ActivityResolution>
+  readonly activityScheduleEventIds?: Map<string, string>
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
   readonly updates?: WorkflowUpdateDefinitions
 }
@@ -190,11 +261,13 @@ export class WorkflowCommandContext {
   readonly #info: WorkflowInfo
   readonly #guard: DeterminismGuard
   readonly #intents: WorkflowCommandIntent[] = []
+  readonly #activityScheduleEventIds?: Map<string, string>
   #sequence = 0
 
-  constructor(params: { info: WorkflowInfo; guard: DeterminismGuard }) {
+  constructor(params: { info: WorkflowInfo; guard: DeterminismGuard; activityScheduleEventIds?: Map<string, string> }) {
     this.#info = params.info
     this.#guard = params.guard
+    this.#activityScheduleEventIds = params.activityScheduleEventIds
   }
 
   get intents(): readonly WorkflowCommandIntent[] {
@@ -215,6 +288,14 @@ export class WorkflowCommandContext {
     return seq
   }
 
+  resolveScheduledActivityEventId(activityId: string): string | undefined {
+    return this.#activityScheduleEventIds?.get(activityId)
+  }
+
+  previousIntent(sequence: number): WorkflowCommandIntent | undefined {
+    return this.#guard.getPreviousIntent(sequence)
+  }
+
   get info(): WorkflowInfo {
     return this.#info
   }
@@ -228,7 +309,11 @@ export const createWorkflowContext = <I>(
   queryRegistry: WorkflowQueryRegistry
   updateRegistry: WorkflowUpdateRegistry
 } => {
-  const commandContext = new WorkflowCommandContext({ info: params.info, guard: params.determinismGuard })
+  const commandContext = new WorkflowCommandContext({
+    info: params.info,
+    guard: params.determinismGuard,
+    activityScheduleEventIds: params.activityScheduleEventIds,
+  })
   const updateRegistry = new WorkflowUpdateRegistry()
 
   const activityResults = params.activityResults ?? new Map<string, ActivityResolution>()
@@ -253,6 +338,13 @@ export const createWorkflowContext = <I>(
         return createCommandRef(intent, { activityId: intent.activityId, result: resolution.value })
       })
     },
+    cancel(activityId, options = {}) {
+      return Effect.sync(() => {
+        const intent = buildRequestCancelActivityIntent(commandContext, activityId, options)
+        commandContext.addIntent(intent)
+        return createCommandRef(intent, { activityId })
+      })
+    },
   }
 
   const timers: WorkflowTimers = {
@@ -264,6 +356,13 @@ export const createWorkflowContext = <I>(
         const intent = buildStartTimerIntent(commandContext, options)
         commandContext.addIntent(intent)
         return createCommandRef(intent, { timerId: intent.timerId })
+      })
+    },
+    cancel(timerId, options = {}) {
+      return Effect.sync(() => {
+        const intent = buildCancelTimerIntent(commandContext, timerId, options)
+        commandContext.addIntent(intent)
+        return createCommandRef(intent, { timerId })
       })
     },
   }
@@ -295,6 +394,13 @@ export const createWorkflowContext = <I>(
     drain(handle, options) {
       return inboundSignals.drain(handle, options)
     },
+    requestCancel(workflowId, options = {}) {
+      return Effect.sync(() => {
+        const intent = buildRequestCancelExternalWorkflowIntent(commandContext, workflowId, options)
+        commandContext.addIntent(intent)
+        return createCommandRef(intent)
+      })
+    },
   }
 
   const queries: WorkflowQueries = {
@@ -309,6 +415,46 @@ export const createWorkflowContext = <I>(
   const determinism: WorkflowDeterminismHelpers = {
     now: () => params.determinismGuard.nextTime(() => Date.now()),
     random: () => params.determinismGuard.nextRandom(() => Math.random()),
+    sideEffect: <T>({ compute, identifier }: SideEffectOptions<T>) =>
+      runSideEffect<T>({
+        commandContext,
+        markerName: MARKER_SIDE_EFFECT,
+        identifier,
+        compute,
+      }),
+    getVersion: ({ changeId, minSupported, maxSupported }) =>
+      runGetVersion({ commandContext, changeId, minSupported, maxSupported }),
+    patched: (patchId) => runPatchMarker({ commandContext, patchId, deprecated: false }),
+    deprecatePatch: (patchId) => {
+      runPatchMarker({ commandContext, patchId, deprecated: true })
+    },
+    recordMarker: (options) => {
+      const intent = buildRecordMarkerIntent(commandContext, options.markerName, options.details)
+      commandContext.addIntent(intent)
+    },
+    localActivity: (activityType, args = [], options) =>
+      runLocalActivity({
+        commandContext,
+        activityType,
+        args,
+        handler: options?.handler,
+        activityId: options?.activityId,
+      }),
+  }
+
+  const upsertSearchAttributes = (attributes: Record<string, unknown>) => {
+    const intent = buildUpsertSearchAttributesIntent(commandContext, attributes)
+    commandContext.addIntent(intent)
+  }
+
+  const upsertMemo = (memo: Record<string, unknown>) => {
+    const intent = buildModifyWorkflowPropertiesIntent(commandContext, memo)
+    commandContext.addIntent(intent)
+  }
+
+  const cancelWorkflow = (details?: unknown[]) => {
+    const intent = buildCancelWorkflowIntent(commandContext, details)
+    commandContext.addIntent(intent)
   }
 
   const updates: WorkflowUpdates = {
@@ -336,6 +482,9 @@ export const createWorkflowContext = <I>(
     queries,
     determinism,
     updates,
+    upsertSearchAttributes,
+    upsertMemo,
+    cancelWorkflow,
     continueAsNew(options) {
       return Effect.sync(() => {
         const intent = buildContinueAsNewIntent(commandContext, options)
@@ -400,6 +549,37 @@ const buildStartTimerIntent = (ctx: WorkflowCommandContext, options: StartTimerO
   }
 }
 
+const buildCancelTimerIntent = (
+  ctx: WorkflowCommandContext,
+  timerId: string,
+  options: CancelTimerOptions,
+): CancelTimerCommandIntent => {
+  const sequence = ctx.nextSequence()
+  return {
+    id: `cancel-timer-${sequence}`,
+    kind: 'cancel-timer',
+    sequence,
+    timerId,
+    startedEventId: options.startedEventId ? String(options.startedEventId) : undefined,
+  }
+}
+
+const buildRequestCancelActivityIntent = (
+  ctx: WorkflowCommandContext,
+  activityId: string,
+  options: CancelActivityOptions,
+): RequestCancelActivityCommandIntent => {
+  const sequence = ctx.nextSequence()
+  const scheduledEventId = options.scheduledEventId ?? ctx.resolveScheduledActivityEventId(activityId)
+  return {
+    id: `cancel-activity-${sequence}`,
+    kind: 'request-cancel-activity',
+    sequence,
+    activityId,
+    scheduledEventId: scheduledEventId !== undefined ? String(scheduledEventId) : undefined,
+  }
+}
+
 const buildStartChildWorkflowIntent = (
   ctx: WorkflowCommandContext,
   workflowType: string,
@@ -425,6 +605,239 @@ const buildStartChildWorkflowIntent = (
     workflowIdReusePolicy: options.workflowIdReusePolicy,
     retry: options.retry,
     cronSchedule: options.cronSchedule,
+  }
+}
+
+const buildRequestCancelExternalWorkflowIntent = (
+  ctx: WorkflowCommandContext,
+  workflowId: string,
+  options: SignalExternalWorkflowOptions,
+): RequestCancelExternalWorkflowCommandIntent => {
+  const sequence = ctx.nextSequence()
+  return {
+    id: `cancel-external-${sequence}`,
+    kind: 'request-cancel-external-workflow',
+    sequence,
+    namespace: options.namespace ?? ctx.info.namespace,
+    workflowId,
+    runId: options.runId,
+    childWorkflowOnly: options.childWorkflowOnly ?? false,
+    reason: options.reason,
+  }
+}
+
+const buildCancelWorkflowIntent = (ctx: WorkflowCommandContext, details?: unknown[]): CancelWorkflowCommandIntent => {
+  const sequence = ctx.nextSequence()
+  return {
+    id: `cancel-workflow-${sequence}`,
+    kind: 'cancel-workflow',
+    sequence,
+    details,
+  }
+}
+
+const buildRecordMarkerIntent = (
+  ctx: WorkflowCommandContext,
+  markerName: string,
+  details?: Record<string, unknown>,
+): RecordMarkerCommandIntent => {
+  const sequence = ctx.nextSequence()
+  return {
+    id: `record-marker-${sequence}`,
+    kind: 'record-marker',
+    sequence,
+    markerName,
+    details,
+  }
+}
+
+const buildUpsertSearchAttributesIntent = (
+  ctx: WorkflowCommandContext,
+  attributes: Record<string, unknown>,
+): UpsertSearchAttributesCommandIntent => {
+  const sequence = ctx.nextSequence()
+  return {
+    id: `upsert-search-attributes-${sequence}`,
+    kind: 'upsert-search-attributes',
+    sequence,
+    searchAttributes: attributes,
+  }
+}
+
+const buildModifyWorkflowPropertiesIntent = (
+  ctx: WorkflowCommandContext,
+  memo: Record<string, unknown>,
+): ModifyWorkflowPropertiesCommandIntent => {
+  const sequence = ctx.nextSequence()
+  return {
+    id: `modify-workflow-properties-${sequence}`,
+    kind: 'modify-workflow-properties',
+    sequence,
+    memo,
+  }
+}
+
+const runSideEffect = <T>(params: {
+  commandContext: WorkflowCommandContext
+  markerName: string
+  identifier?: string
+  compute: () => T
+}): T => {
+  const sequence = params.commandContext.nextSequence()
+  const previous = params.commandContext.previousIntent(sequence)
+  if (previous && previous.kind === 'record-marker' && previous.markerName === params.markerName) {
+    const intent: RecordMarkerCommandIntent = {
+      ...previous,
+      sequence,
+    }
+    params.commandContext.addIntent(intent)
+    const details = intent.details ?? {}
+    if ('result' in details) {
+      return details.result as T
+    }
+    return details as T
+  }
+
+  const value = params.compute()
+  const intent: RecordMarkerCommandIntent = {
+    id: `record-marker-${sequence}`,
+    kind: 'record-marker',
+    sequence,
+    markerName: params.markerName,
+    details: {
+      ...(params.identifier ? { id: params.identifier } : {}),
+      result: value,
+    },
+  }
+  params.commandContext.addIntent(intent)
+  return value
+}
+
+const runGetVersion = (params: {
+  commandContext: WorkflowCommandContext
+  changeId: string
+  minSupported: number
+  maxSupported: number
+}): number => {
+  const sequence = params.commandContext.nextSequence()
+  const previous = params.commandContext.previousIntent(sequence)
+  if (previous && previous.kind === 'record-marker' && previous.markerName === MARKER_VERSION) {
+    const intent: RecordMarkerCommandIntent = { ...previous, sequence }
+    params.commandContext.addIntent(intent)
+    const details = intent.details ?? {}
+    const version = typeof details.version === 'number' ? details.version : undefined
+    if (version === undefined) {
+      throw new WorkflowBlockedError('Version marker missing version payload')
+    }
+    return version
+  }
+
+  if (params.maxSupported < params.minSupported) {
+    throw new WorkflowBlockedError('maxSupported version must be >= minSupported version')
+  }
+  const version = params.maxSupported
+  const intent: RecordMarkerCommandIntent = {
+    id: `version-${sequence}`,
+    kind: 'record-marker',
+    sequence,
+    markerName: MARKER_VERSION,
+    details: {
+      changeId: params.changeId,
+      version,
+    },
+  }
+  params.commandContext.addIntent(intent)
+  return version
+}
+
+const runPatchMarker = (params: {
+  commandContext: WorkflowCommandContext
+  patchId: string
+  deprecated: boolean
+}): boolean => {
+  const sequence = params.commandContext.nextSequence()
+  const previous = params.commandContext.previousIntent(sequence)
+  if (previous && previous.kind === 'record-marker' && previous.markerName === MARKER_PATCH) {
+    const intent: RecordMarkerCommandIntent = { ...previous, sequence }
+    params.commandContext.addIntent(intent)
+    return true
+  }
+  const intent: RecordMarkerCommandIntent = {
+    id: `patch-${sequence}`,
+    kind: 'record-marker',
+    sequence,
+    markerName: MARKER_PATCH,
+    details: {
+      patchId: params.patchId,
+      deprecated: params.deprecated,
+    },
+  }
+  params.commandContext.addIntent(intent)
+  return true
+}
+
+const runLocalActivity = <T>(params: {
+  commandContext: WorkflowCommandContext
+  activityType: string
+  args: unknown[]
+  handler?: (...args: unknown[]) => unknown
+  activityId?: string
+}): T => {
+  const sequence = params.commandContext.nextSequence()
+  const activityId = params.activityId ?? `local-activity-${sequence}`
+  const previous = params.commandContext.previousIntent(sequence)
+
+  const readPreviousResult = (intent: RecordMarkerCommandIntent): T => {
+    const details = intent.details ?? {}
+    if ('status' in details && details.status === 'failed') {
+      const message = typeof details.errorMessage === 'string' ? details.errorMessage : 'Local activity failed'
+      throw new Error(message)
+    }
+    return (details.result as T) ?? (details.payload as T)
+  }
+
+  if (previous && previous.kind === 'record-marker' && previous.markerName === MARKER_LOCAL_ACTIVITY) {
+    const intent: RecordMarkerCommandIntent = { ...previous, sequence }
+    params.commandContext.addIntent(intent)
+    return readPreviousResult(intent)
+  }
+
+  if (!params.handler) {
+    throw new WorkflowBlockedError('Local activity handler is required during initial execution')
+  }
+
+  try {
+    const value = params.handler(...params.args) as T
+    const intent: RecordMarkerCommandIntent = {
+      id: `local-activity-${sequence}`,
+      kind: 'record-marker',
+      sequence,
+      markerName: MARKER_LOCAL_ACTIVITY,
+      details: {
+        activityId,
+        activityType: params.activityType,
+        status: 'completed',
+        result: value,
+      },
+    }
+    params.commandContext.addIntent(intent)
+    return value
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const intent: RecordMarkerCommandIntent = {
+      id: `local-activity-${sequence}`,
+      kind: 'record-marker',
+      sequence,
+      markerName: MARKER_LOCAL_ACTIVITY,
+      details: {
+        activityId,
+        activityType: params.activityType,
+        status: 'failed',
+        errorMessage: message,
+      },
+    }
+    params.commandContext.addIntent(intent)
+    throw error
   }
 }
 
