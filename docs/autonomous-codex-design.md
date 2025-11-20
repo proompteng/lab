@@ -270,3 +270,11 @@ For each phase:
 7. Prepare runbooks/dashboards for Phase 0 rollout.
 
 This design builds directly on the current codebase, evolving Froussard and Facteur into a cohesive autonomous platform while maintaining incremental rollout safety.
+
+## 16. Docker-Enabled Codex Workflows
+
+- **Image tooling:** `apps/froussard/Dockerfile.codex` now bakes Docker CLI, Buildx, and Compose with defaults `DOCKER_HOST=tcp://localhost:2375`, `DOCKER_TLS_VERIFY=0`, and `DOCKER_ENABLED=1` so Codex containers talk to the in-pod daemon out of the box.
+- **Rootless sidecar:** Every GitHub Codex WorkflowTemplate attaches a `docker:25.0-dind-rootless` sidecar listening on 2375, backed by an `emptyDir` at `/var/lib/docker` that is mounted read-only into the main Codex container to make image layers visible across steps without exposing write access.
+- **Bootstrap changes:** `codex-bootstrap` skips redundant `pnpm install` when `DOCKER_ENABLED=1` and cached modules exist, and it waits for `docker info` before running stage commands to fail fast if the sidecar is unhealthy.
+- **Policy guardrails:** A dedicated RBAC binding (`codex-docker-privileged` role in `argocd/applications/argo-workflows/codex-docker-policy.yaml`) scopes privileged pod usage to the Codex workflow service account; review namespace pod-security posture before promotion.
+- **Runbooks:** `docs/runbooks/codex-docker.md` documents validation (`docker info`, `docker run hello-world`, sample `docker build`), sidecar restart, and log collection. Roll staging first, monitor node pressure, then promote after Argo sync.

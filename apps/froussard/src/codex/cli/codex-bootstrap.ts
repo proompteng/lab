@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-import { mkdir, rm, stat } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { $, spawn, which } from 'bun'
@@ -19,6 +20,20 @@ const pathExists = async (path: string) => {
 
 const ensureParentDir = async (path: string) => {
   await mkdir(dirname(path), { recursive: true })
+}
+
+const computeFileHash = async (path: string): Promise<string | null> => {
+  try {
+    const data = await readFile(path)
+    const hash = createHash('sha256')
+    hash.update(data)
+    return hash.digest('hex')
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null
+    }
+    throw error
+  }
 }
 
 const setDefaultEnv = (key: string, value: string) => {
@@ -114,15 +129,90 @@ const ensurePnpmAvailable = async (): Promise<string> => {
   return pnpmPath
 }
 
-const bootstrapWorkspace = async () => {
+const shouldSkipPnpmInstall = async (targetDir: string): Promise<boolean> => {
+  if (process.env.DOCKER_ENABLED !== '1') {
+    return false
+  }
+
+  const gitDir = join(targetDir, '.git')
+  const pnpmStoreDir = join(targetDir, 'node_modules/.pnpm')
+
+  if (!(await pathExists(gitDir)) || !(await pathExists(pnpmStoreDir))) {
+    return false
+  }
+
+  const lockfilePath = join(targetDir, 'pnpm-lock.yaml')
+  const recordedHashPath = join(targetDir, 'node_modules/.codex-pnpm-lock.sha256')
+  const lockfileHash = await computeFileHash(lockfilePath)
+  const recordedHash = await computeFileHash(recordedHashPath)
+
+  if (lockfileHash && recordedHash && lockfileHash === recordedHash) {
+    console.log('Skipping pnpm install: existing workspace and lockfile unchanged (DOCKER_ENABLED=1).')
+    return true
+  }
+
+  return false
+}
+
+const recordLockfileHash = async (targetDir: string) => {
+  const lockfilePath = join(targetDir, 'pnpm-lock.yaml')
+  const lockfileHash = await computeFileHash(lockfilePath)
+  if (!lockfileHash) {
+    return
+  }
+
+  const recordedHashPath = join(targetDir, 'node_modules/.codex-pnpm-lock.sha256')
+  await ensureParentDir(recordedHashPath)
+  await writeFile(recordedHashPath, lockfileHash, 'utf8')
+}
+
+const bootstrapWorkspace = async (targetDir: string) => {
   if (process.env.CODEX_SKIP_BOOTSTRAP === '1') {
     return
   }
 
   const pnpmExecutable = await ensurePnpmAvailable()
 
+  if (await shouldSkipPnpmInstall(targetDir)) {
+    return
+  }
+
   console.log('Installing workspace dependencies via pnpm...')
   await runWithNvm(`"${pnpmExecutable}" install --frozen-lockfile`)
+  await recordLockfileHash(targetDir)
+}
+
+const waitForDocker = async () => {
+  const dockerHost = process.env.DOCKER_HOST
+  if (!dockerHost) {
+    return
+  }
+
+  const maxAttempts = 6
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await $`docker info --format '{{json .ServerVersion}}'`
+      return
+    } catch (error) {
+      lastError = error
+      const delayMs = 1000 * attempt
+      console.warn(`Waiting for Docker daemon at ${dockerHost} (attempt ${attempt}/${maxAttempts})...`)
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
+  }
+
+  const message =
+    `Docker is not reachable via ${dockerHost}. Ensure the sidecar is healthy and port 2375 is exposed.\n` +
+    'Hint: check sidecar logs and confirm DOCKER_TLS_VERIFY=0 when using the in-pod daemon.'
+
+  if (lastError instanceof Error) {
+    lastError.message = `${message}\nLast error: ${lastError.message}`
+    throw lastError
+  }
+
+  throw new Error(message)
 }
 
 export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) => {
@@ -154,7 +244,8 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
 
   process.chdir(targetDir)
 
-  await bootstrapWorkspace()
+  await bootstrapWorkspace(targetDir)
+  await waitForDocker()
 
   const [command, ...commandArgs] = argv
   if (!command) {

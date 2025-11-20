@@ -13,14 +13,23 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PLAN_OUTPUT_PATH=/workspace/lab/.codex-plan-output.md \
     IMPLEMENTATION_OUTPUT_PATH=/workspace/lab/.codex-implementation.log \
     GIT_TERMINAL_PROMPT=0 \
-    BUN_INSTALL=/usr/local
+    BUN_INSTALL=/usr/local \
+    DOCKER_HOST=tcp://localhost:2375 \
+    DOCKER_TLS_VERIFY=0 \
+    DOCKER_ENABLED=1
 
 ENV CODEX_ENV_NODE_VERSION=22 \
     CODEX_ENV_GO_VERSION=1.25.4 \
     BUN_VERSION=1.3.2
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git gh jq python3 curl xz-utils protobuf-compiler libprotobuf-dev \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg git gh jq python3 xz-utils protobuf-compiler libprotobuf-dev \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release; echo \"$VERSION_CODENAME\") stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
 RUN CODEX_ENV_NODE_VERSION="$CODEX_ENV_NODE_VERSION" CODEX_ENV_GO_VERSION="$CODEX_ENV_GO_VERSION" /opt/codex/setup_universal.sh
