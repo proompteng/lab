@@ -255,3 +255,18 @@ jobs:
           else
             npm publish --tag "$NPM_DIST_TAG" --access public --provenance
           fi
+
+      - name: Update release PR label
+        if: ${{ github.event.inputs.release_mode == 'publish' && github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          branch="release-please--branches--main--components--temporal-bun-sdk"
+          pr_number=$(gh pr list --search "$branch" --state merged --limit 1 --json number --jq '.[0].number')
+          if [[ -n "$pr_number" ]]; then
+            gh pr edit "$pr_number" --remove-label "autorelease: pending" --add-label "autorelease: tagged"
+            echo "Updated labels on release PR #$pr_number"
+          else
+            echo "No merged release PR found for $branch; skipping label update"
+          fi
