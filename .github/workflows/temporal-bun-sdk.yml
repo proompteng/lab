@@ -144,7 +144,9 @@ jobs:
         id: release_please
         uses: googleapis/release-please-action@v4
         with:
-          command: manifest
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-release: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Fetch release branch
