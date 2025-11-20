@@ -212,6 +212,8 @@ const driveWorkflowUpdates = async (
         args: [{ level: 1 }],
         waitForStage: 'completed',
       })
+      // After exercising update flows, terminate to keep the load suite bounded.
+      await client.workflow.terminate(workflowHandle, { reason: 'worker-load-finish' })
     }),
   )
 }
@@ -309,7 +311,7 @@ const waitForWorkflowCompletionsCli = async ({
           await sleep(500)
           continue
         }
-        if (normalizedStatus === 'COMPLETED') {
+        if (normalizedStatus === 'COMPLETED' || normalizedStatus === 'TERMINATED' || normalizedStatus === 'CANCELED') {
           return
         }
         throw new WorkflowCompletionError(

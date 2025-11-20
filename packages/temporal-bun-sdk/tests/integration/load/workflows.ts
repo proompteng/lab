@@ -108,6 +108,11 @@ const workerLoadUpdateDefinitions = defineWorkflowUpdates([
     input: Schema.Struct({ level: Schema.Number }),
     handler: () => updatePlaceholder(),
   },
+  {
+    name: 'workerLoad.finish',
+    input: Schema.Struct({ status: Schema.String }),
+    handler: () => updatePlaceholder(),
+  },
 ])
 
 export const workerLoadUpdateWorkflow = defineWorkflow(
@@ -116,7 +121,7 @@ export const workerLoadUpdateWorkflow = defineWorkflow(
   ({ input, timers, updates }) =>
     Effect.gen(function* () {
       let status = 'booting'
-      const [setStatusDef, delayedStatusDef, guardStatusDef] = workerLoadUpdateDefinitions
+      const [setStatusDef, delayedStatusDef, guardStatusDef, finishDef] = workerLoadUpdateDefinitions
 
       updates.register(setStatusDef, (_ctx, payload: { status: string }) =>
         Effect.sync(() => {
@@ -154,12 +159,21 @@ export const workerLoadUpdateWorkflow = defineWorkflow(
         },
       )
 
+      updates.register(
+        finishDef,
+        (_ctx, payload: { status: string }) =>
+          Effect.sync(() => {
+            status = payload.status
+            return status
+          }),
+      )
+
       const cycles = Math.max(1, Math.trunc(input.cycles))
       const holdMs = Math.max(100, Math.trunc(input.holdMs))
       for (let index = 0; index < cycles; index += 1) {
         yield* timers.start({ timeoutMs: holdMs })
       }
-
+      // Leave the workflow pending so update handlers can mutate state; the load runner will terminate it.
       yield* Effect.fail(new WorkflowBlockedError('worker-load-updates'))
     }),
   { updates: workerLoadUpdateDefinitions },
