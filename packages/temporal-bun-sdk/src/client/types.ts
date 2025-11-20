@@ -60,3 +60,35 @@ export interface SignalWithStartOptions extends StartWorkflowOptions {
   signalName: string
   signalArgs?: unknown[]
 }
+
+export type WorkflowUpdateStage = 'unspecified' | 'admitted' | 'accepted' | 'completed'
+
+export interface WorkflowUpdateOptions {
+  updateName: string
+  args?: unknown[]
+  headers?: Record<string, unknown>
+  updateId?: string
+  waitForStage?: WorkflowUpdateStage
+  firstExecutionRunId?: string
+}
+
+export interface WorkflowUpdateHandle extends WorkflowHandle {
+  updateId: string
+}
+
+export interface WorkflowUpdateOutcome<T = unknown> {
+  status: 'success' | 'failure'
+  result?: T
+  error?: Error
+}
+
+export interface WorkflowUpdateResult<T = unknown> {
+  handle: WorkflowUpdateHandle
+  stage: WorkflowUpdateStage
+  outcome?: WorkflowUpdateOutcome<T>
+}
+
+export interface WorkflowUpdateAwaitOptions {
+  waitForStage?: WorkflowUpdateStage
+  firstExecutionRunId?: string
+}

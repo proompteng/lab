@@ -469,6 +469,91 @@ test('diffDeterminismState surfaces mismatched intents and scalar values', async
   expect(commandMismatch?.workflowTaskCompletedEventId).toBe('10')
 })
 
+test('diffDeterminismState ignores acceptedEventId mismatches for workflow updates', async () => {
+  const baseState = {
+    commandHistory: [],
+    randomValues: [],
+    timeValues: [],
+  }
+
+  const expected: WorkflowDeterminismState = {
+    ...baseState,
+    updates: [
+      {
+        updateId: 'upd-accepted',
+        stage: 'accepted',
+        handlerName: 'setTitle',
+        identity: 'client-sdk',
+        messageId: 'message-1',
+        sequencingEventId: '1',
+      },
+      {
+        updateId: 'upd-completed',
+        stage: 'completed',
+        identity: 'client-sdk',
+        messageId: 'message-2',
+        outcome: 'success',
+        acceptedEventId: '42',
+      },
+    ],
+  }
+
+  const actual: WorkflowDeterminismState = {
+    ...baseState,
+    updates: [
+      {
+        updateId: 'upd-accepted',
+        stage: 'accepted',
+        handlerName: 'setTitle',
+        identity: 'client-sdk',
+        messageId: 'message-1',
+        sequencingEventId: '1',
+      },
+      {
+        updateId: 'upd-completed',
+        stage: 'completed',
+        identity: 'client-sdk',
+        messageId: 'message-2',
+        outcome: 'success',
+      },
+    ],
+  }
+
+  const diff = await Effect.runPromise(diffDeterminismState(expected, actual))
+  expect(diff.mismatches).toEqual([])
+
+  const expectedCompletionOnly: WorkflowDeterminismState = {
+    ...baseState,
+    updates: [
+      {
+        updateId: 'upd-completed',
+        stage: 'completed',
+        identity: 'client-sdk',
+        messageId: 'message-keep',
+        outcome: 'success',
+      },
+    ],
+  }
+  const mismatchedMessage: WorkflowDeterminismState = {
+    ...baseState,
+    updates: [
+      {
+        updateId: 'upd-completed',
+        stage: 'completed',
+        identity: 'client-sdk',
+        messageId: 'message-mismatch',
+        outcome: 'success',
+      },
+    ],
+  }
+  const diffWithMessageMismatch = await Effect.runPromise(
+    diffDeterminismState(expectedCompletionOnly, mismatchedMessage),
+  )
+  expect(diffWithMessageMismatch.mismatches).toEqual([
+    expect.objectContaining({ kind: 'update', index: 0 }),
+  ])
+})
+
 test('resolveHistoryLastEventId normalizes bigint identifiers', () => {
   const event = create(HistoryEventSchema, { eventId: 123n })
   expect(resolveHistoryLastEventId([event])).toBe('123')

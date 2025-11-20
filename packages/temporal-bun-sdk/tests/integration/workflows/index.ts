@@ -1,7 +1,8 @@
 import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
-import { defineWorkflow } from '../../../src/workflow/definition'
+import { defineWorkflow, defineWorkflowUpdates } from '../../../src/workflow/definition'
+import { WorkflowBlockedError } from '../../../src/workflow/errors'
 import { defineWorkflowQueries, defineWorkflowSignals } from '../../../src/workflow/inbound'
 import { currentActivityContext } from '../../../src/worker/activity-context'
 
@@ -37,6 +38,25 @@ const retryProbeInputSchema = Schema.Struct({
   failUntil: Schema.Number,
   permanentOn: Schema.Number,
   maxAttempts: Schema.Number,
+})
+
+const updateWorkflowInputSchema = Schema.Struct({
+  initialMessage: Schema.optional(Schema.String),
+  cycles: Schema.optional(Schema.Number),
+  holdMs: Schema.optional(Schema.Number),
+})
+
+const setMessageInputSchema = Schema.Struct({
+  value: Schema.String,
+})
+
+const delayedMessageInputSchema = Schema.Struct({
+  value: Schema.String,
+  delayMs: Schema.optional(Schema.Number),
+})
+
+const guardedMessageInputSchema = Schema.Struct({
+  value: Schema.String,
 })
 
 const sleep = (ms: number): Promise<void> =>
@@ -177,6 +197,82 @@ export const signalQueryWorkflow = defineWorkflow({
     }),
 })
 
+const placeholderUpdateHandler = () => Effect.fail(new Error('workflow update handler not bound'))
+
+const integrationUpdateDefinitions = defineWorkflowUpdates([
+  {
+    name: 'integrationUpdate.setMessage',
+    input: setMessageInputSchema,
+    handler: () => placeholderUpdateHandler(),
+  },
+  {
+    name: 'integrationUpdate.delayedSetMessage',
+    input: delayedMessageInputSchema,
+    handler: () => placeholderUpdateHandler(),
+  },
+  {
+    name: 'integrationUpdate.guardMessage',
+    input: guardedMessageInputSchema,
+    handler: () => placeholderUpdateHandler(),
+  },
+])
+
+export const updateWorkflow = defineWorkflow(
+  'integrationUpdateWorkflow',
+  updateWorkflowInputSchema,
+  ({ input, timers, updates }) =>
+    Effect.gen(function* () {
+      let message = input.initialMessage ?? 'booting'
+      const cycles = Math.max(1, Math.trunc(input.cycles ?? 3))
+      const holdMs = Math.max(250, Math.trunc(input.holdMs ?? 5_000))
+
+      const [setMessageDef, delayedSetMessageDef, guardedMessageDef] = integrationUpdateDefinitions
+
+      updates.register(setMessageDef, (_ctx, payload: Schema.Schema.Type<typeof setMessageInputSchema>) =>
+        Effect.sync(() => {
+          message = payload.value
+          return message
+        }),
+      )
+
+      updates.register(
+        delayedSetMessageDef,
+        ({ timers: timerContext }, payload: Schema.Schema.Type<typeof delayedMessageInputSchema>) =>
+          timerContext
+            .start({ timeoutMs: Math.max(100, Math.trunc(payload.delayMs ?? 1_000)) })
+            .pipe(
+              Effect.map(() => {
+                message = payload.value
+                return message
+              }),
+            ),
+      )
+
+      updates.register(
+        guardedMessageDef,
+        (_ctx, payload: Schema.Schema.Type<typeof guardedMessageInputSchema>) =>
+          Effect.sync(() => {
+            message = payload.value
+            return message
+          }),
+        {
+          validator: (payload) => {
+            if (!payload.value || payload.value.trim().length < 3) {
+              throw new Error('message-too-short')
+            }
+          },
+        },
+      )
+
+      for (let index = 0; index < cycles; index += 1) {
+        yield* timers.start({ timeoutMs: holdMs })
+      }
+
+      yield* Effect.fail(new WorkflowBlockedError('waiting-for-updates'))
+    }),
+  { updates: integrationUpdateDefinitions },
+)
+
 export const integrationWorkflows = [
   timerWorkflow,
   activityWorkflow,
@@ -187,6 +283,7 @@ export const integrationWorkflows = [
   heartbeatTimeoutWorkflow,
   retryProbeWorkflow,
   signalQueryWorkflow,
+  updateWorkflow,
 ]
 
 const integrationHeartbeatActivity = async (durationMs: number): Promise<string> => {

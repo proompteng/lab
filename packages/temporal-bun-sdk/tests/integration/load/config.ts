@@ -5,6 +5,9 @@ export interface WorkerLoadConfig {
   readonly workflowBatchSize: number
   readonly workflowConcurrencyTarget: number
   readonly activityConcurrencyTarget: number
+  readonly updateWorkflowRatio: number
+  readonly updatesPerWorkflow: number
+  readonly updateDelayMs: number
   readonly throughputFloorPerSecond: number
   readonly stickyHitRatioTarget: number
   readonly workflowPollP95TargetMs: number
@@ -34,6 +37,9 @@ const DEFAULT_ACTIVITY_PAYLOAD_BYTES = 2_048
 const DEFAULT_COMPUTE_ITERATIONS = 160_000
 const DEFAULT_CPU_ROUNDS = 5
 const DEFAULT_TIMER_DELAY_MS = 60
+const DEFAULT_UPDATE_WORKFLOW_RATIO = 0.2
+const DEFAULT_UPDATES_PER_WORKFLOW = 3
+const DEFAULT_UPDATE_DELAY_MS = 500
 const DEFAULT_THROUGHPUT_FLOOR = 2
 const DEFAULT_STICKY_RATIO = 0.5
 const DEFAULT_WORKFLOW_POLL_P95_MS = 5_000
@@ -101,6 +107,17 @@ export const readWorkerLoadConfig = (): WorkerLoadConfig => {
     DEFAULT_ACTIVITY_PAYLOAD_BYTES,
     { min: 256 },
   )
+  const updateWorkflowRatio = readFloat(
+    'TEMPORAL_LOAD_TEST_UPDATE_RATIO',
+    DEFAULT_UPDATE_WORKFLOW_RATIO,
+    { min: 0, max: 1 },
+  )
+  const updatesPerWorkflow = readInt(
+    'TEMPORAL_LOAD_TEST_UPDATES_PER_WORKFLOW',
+    DEFAULT_UPDATES_PER_WORKFLOW,
+    { min: 1 },
+  )
+  const updateDelayMs = readInt('TEMPORAL_LOAD_TEST_UPDATE_DELAY_MS', DEFAULT_UPDATE_DELAY_MS, { min: 25 })
 
   const artifactsDir = resolvePath(
     process.env.TEMPORAL_WORKER_LOAD_ARTIFACTS_DIR ?? process.env.TEMPORAL_ARTIFACTS_DIR,
@@ -126,6 +143,9 @@ export const readWorkerLoadConfig = (): WorkerLoadConfig => {
     workflowBatchSize: Math.max(workflowConcurrencyTarget, Math.min(workflowCount, workflowConcurrencyTarget * 2)),
     workflowConcurrencyTarget,
     activityConcurrencyTarget,
+    updateWorkflowRatio,
+    updatesPerWorkflow,
+    updateDelayMs,
     throughputFloorPerSecond,
     stickyHitRatioTarget,
     workflowPollP95TargetMs,

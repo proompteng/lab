@@ -83,7 +83,7 @@ import type {
   WorkflowRetryPolicyInput,
 } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
-import type { WorkflowQueryEvaluationResult } from '../workflow/executor'
+import type { WorkflowQueryEvaluationResult, WorkflowUpdateInvocation } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
 import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from '../workflow/inbound'
 import { WorkflowRegistry } from '../workflow/registry'
@@ -112,6 +112,7 @@ import {
   type StickyCacheHooks,
   type StickyCacheKey,
 } from './sticky-cache'
+import { buildUpdateProtocolMessages, collectWorkflowUpdates } from './update-protocol'
 
 type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
 
@@ -133,6 +134,30 @@ type WorkerRuntimeMetrics = {
   readonly workflowTaskCompleted: Counter
   readonly activityTaskStarted: Counter
   readonly activityTaskCompleted: Counter
+}
+
+const mergeUpdateInvocations = (
+  historyInvocations: readonly WorkflowUpdateInvocation[],
+  messageInvocations: readonly WorkflowUpdateInvocation[],
+): WorkflowUpdateInvocation[] => {
+  const merged: WorkflowUpdateInvocation[] = []
+  const seen = new Set<string>()
+
+  for (const invocation of historyInvocations ?? []) {
+    if (!seen.has(invocation.updateId)) {
+      merged.push(invocation)
+      seen.add(invocation.updateId)
+    }
+  }
+
+  for (const invocation of messageInvocations ?? []) {
+    if (!seen.has(invocation.updateId)) {
+      merged.push(invocation)
+      seen.add(invocation.updateId)
+    }
+  }
+
+  return merged
 }
 
 type NondeterminismContext = {
@@ -835,6 +860,13 @@ export class WorkerRuntime {
     const workflowTaskAttempt = Number(response.attempt ?? 1)
     const historyEvents = await this.#collectWorkflowHistory(execution, response)
     const workflowType = this.#resolveWorkflowType(response, historyEvents)
+    const args = await this.#decodeWorkflowArgs(historyEvents)
+    const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
+    const collectedUpdates = await collectWorkflowUpdates({
+      messages: response.messages ?? [],
+      dataConverter: this.#dataConverter,
+      log: (level, message, fields) => this.#log(level, message, fields),
+    })
     const baseLogFields = this.#workflowLogFields(execution, workflowType, {
       workflowTaskAttempt,
       stickyScheduling: this.#stickySchedulingEnabled,
@@ -863,8 +895,6 @@ export class WorkerRuntime {
       queryCount: queryRequests.length,
       historyEventCount: response.history?.events?.length ?? 0,
     })
-    const args = await this.#decodeWorkflowArgs(historyEvents)
-    const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
     const stickyKey = this.#buildStickyKey(execution.workflowId, execution.runId)
     const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
     const historyReplay = await this.#ingestDeterminismState(workflowInfo, historyEvents, {
@@ -923,6 +953,8 @@ export class WorkerRuntime {
     try {
       const activityResults = await this.#extractActivityResolutions(historyEvents)
 
+      const replayUpdates = historyReplay?.updates ?? []
+      const mergedUpdates = mergeUpdateInvocations(replayUpdates, collectedUpdates.invocations)
       const output = await this.#executor.execute({
         workflowType,
         workflowId: execution.workflowId,
@@ -934,6 +966,7 @@ export class WorkerRuntime {
         activityResults,
         signalDeliveries,
         queryRequests,
+        updates: mergedUpdates,
       })
       this.#log('debug', 'workflow query evaluation summary', {
         ...baseLogFields,
@@ -966,6 +999,16 @@ export class WorkerRuntime {
       const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? historyReplay?.lastEventId ?? null
       const shouldRecordMarker = output.completion === 'pending'
       let commandsForResponse = output.commands
+      const dispatchesForNewMessages = (output.updateDispatches ?? []).filter((dispatch) =>
+        collectedUpdates.requestsByUpdateId.has(dispatch.updateId),
+      )
+      const updateProtocolMessages = await buildUpdateProtocolMessages({
+        dispatches: dispatchesForNewMessages,
+        collected: collectedUpdates,
+        dataConverter: this.#dataConverter,
+        defaultIdentity: this.#identity,
+        log: (level, message, fields) => this.#log(level, message, fields),
+      })
 
       if (stickyKey) {
         if (output.completion === 'pending') {
@@ -1008,6 +1051,7 @@ export class WorkerRuntime {
           queryResults: multiQueryResults,
           ...(this.#stickySchedulingEnabled && !hasLegacyQueries ? { stickyAttributes: this.#stickyAttributes } : {}),
           ...(this.#versioningBehavior !== null ? { versioningBehavior: this.#versioningBehavior } : {}),
+          ...(updateProtocolMessages.length > 0 ? { messages: updateProtocolMessages } : {}),
         })
         try {
           await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })

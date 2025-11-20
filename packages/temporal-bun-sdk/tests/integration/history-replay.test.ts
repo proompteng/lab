@@ -2,125 +2,51 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import crypto from 'node:crypto'
 import { join } from 'node:path'
 
-import { Effect, Exit } from 'effect'
+import { Effect } from 'effect'
 
 import { createDefaultDataConverter } from '../../src/common/payloads'
-import { loadTemporalConfig } from '../../src/config'
+import { makeStickyCache } from '../../src/worker/sticky-cache'
 import { ingestWorkflowHistory, diffDeterminismState } from '../../src/workflow/replay'
 import type { HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
-import { WorkerVersioningMode } from '../../src/proto/temporal/api/enums/v1/deployment_pb'
-import { VersioningBehavior } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
-import { WorkerRuntime } from '../../src/worker/runtime'
-import { makeStickyCache } from '../../src/worker/sticky-cache'
 import type { IntegrationHarness, WorkflowExecutionHandle } from './harness'
-import { createIntegrationHarness, TemporalCliCommandError, TemporalCliUnavailableError } from './harness'
+import { acquireIntegrationTestEnv, releaseIntegrationTestEnv, CLI_CONFIG, type IntegrationTestEnv } from './test-env'
 import {
   continueAsNewWorkflow,
-  integrationActivities,
-  integrationWorkflows,
   parentWorkflow,
   activityWorkflow,
   timerWorkflow,
 } from './workflows'
 
-const CLI_CONFIG = {
-  address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
-  namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
-  taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? 'temporal-bun-integration',
-}
-
 const replayTimeoutMs = 60_000
 
 let harness: IntegrationHarness | null = null
-let cliUnavailable = false
-let runtime: WorkerRuntime | null = null
-let runtimePromise: Promise<void> | null = null
 let stickyCacheSizeEffect: Effect.Effect<number, never, never> | null = null
+let runOrSkip: (<A>(name: string, scenario: () => Promise<A>) => Promise<A | undefined>) | null = null
+let integrationEnv: IntegrationTestEnv | null = null
 
 const dataConverter = createDefaultDataConverter()
 
 beforeAll(async () => {
-  const harnessExit = await Effect.runPromiseExit(createIntegrationHarness(CLI_CONFIG))
-  if (Exit.isFailure(harnessExit)) {
-    if (harnessExit.cause instanceof TemporalCliUnavailableError) {
-      cliUnavailable = true
-      console.warn(`[temporal-bun-sdk] skipping integration tests: ${harnessExit.cause.message}`)
-      harness = null
-      return
-    }
-    throw harnessExit.cause
-  }
-  harness = harnessExit.value
-  await Effect.runPromise(harness.setup)
-
-  const baseConfig = await loadTemporalConfig()
-  const stickyCache = await Effect.runPromise(makeStickyCache({ maxEntries: 2, ttlMs: 60_000 }))
-  stickyCacheSizeEffect = stickyCache.size
-
-  const runtimeConfig = {
-    ...baseConfig,
-    address: CLI_CONFIG.address,
-    namespace: CLI_CONFIG.namespace,
-    taskQueue: CLI_CONFIG.taskQueue,
-    workerStickyCacheSize: 2,
-    workerStickyTtlMs: 60_000,
-  }
-
-  runtime = await WorkerRuntime.create({
-    config: runtimeConfig,
-    workflows: integrationWorkflows,
-    activities: integrationActivities,
-    stickyCache,
-    deployment: {
-      versioningMode: WorkerVersioningMode.UNVERSIONED,
-      versioningBehavior: VersioningBehavior.UNSPECIFIED,
-    },
-  })
-
-  runtimePromise = runtime.run()
+  integrationEnv = await acquireIntegrationTestEnv()
+  harness = integrationEnv.harness
+  stickyCacheSizeEffect = integrationEnv.stickyCacheSizeEffect
+  runOrSkip = integrationEnv.runOrSkip
 })
 
 afterAll(async () => {
-  if (runtime) {
-    await runtime.shutdown()
-  }
-  if (runtimePromise) {
-    await runtimePromise
-  }
-  if (harness && !cliUnavailable) {
-    await Effect.runPromise(harness.teardown)
-  }
+  await releaseIntegrationTestEnv()
 })
 
-const runOrSkip = async <A>(name: string, scenario: () => Promise<A>): Promise<A | undefined> => {
-  if (cliUnavailable) {
-    console.warn(`[temporal-bun-sdk] skipped integration scenario: ${name}`)
-    return undefined
+const execScenario = async <A>(name: string, scenario: () => Promise<A>): Promise<A | undefined> => {
+  if (!runOrSkip) {
+    throw new Error('Integration environment not initialised')
   }
-  if (!harness) {
-    throw new Error('Integration harness not initialised')
-  }
-  try {
-    return await Effect.runPromise(
-      harness.runScenario(name, () => Effect.tryPromise(scenario)),
-    )
-  } catch (error) {
-    if (error instanceof TemporalCliUnavailableError) {
-      cliUnavailable = true
-      console.warn(`[temporal-bun-sdk] skipped integration scenario ${name}: ${error.message}`)
-      return undefined
-    }
-    console.error(
-      `[temporal-bun-sdk] integration scenario ${name} failed`,
-      error instanceof Error ? error.stack ?? error.message : error,
-    )
-    throw error
-  }
+  return runOrSkip(name, scenario)
 }
 
 describe('Temporal CLI history ingestion', () => {
   test('timer workflow history produces timer determinism snapshot', { timeout: replayTimeoutMs }, async () => {
-    await runOrSkip('timer workflow', async () => {
+    await execScenario('timer workflow', async () => {
       const execution = await runTimerWorkflow()
       const history = await fetchHistory(execution)
       const replay = await Effect.runPromise(
@@ -137,7 +63,7 @@ describe('Temporal CLI history ingestion', () => {
   })
 
   test('activity workflow history includes activity command intent', { timeout: replayTimeoutMs }, async () => {
-    await runOrSkip('activity workflow', async () => {
+    await execScenario('activity workflow', async () => {
       const execution = await runActivityWorkflow('workflow-activity')
       const history = await fetchHistory(execution)
       const replay = await Effect.runPromise(
@@ -153,7 +79,7 @@ describe('Temporal CLI history ingestion', () => {
   })
 
   test('child workflow history captures child command', { timeout: replayTimeoutMs }, async () => {
-    await runOrSkip('child workflow', async () => {
+    await execScenario('child workflow', async () => {
       const execution = await runParentWorkflow('workflow-child')
       const history = await fetchHistory(execution)
       const replay = await Effect.runPromise(
@@ -169,7 +95,7 @@ describe('Temporal CLI history ingestion', () => {
   })
 
   test('continue-as-new workflow produces determinism marker chain', { timeout: replayTimeoutMs }, async () => {
-    await runOrSkip('continue-as-new workflow', async () => {
+    await execScenario('continue-as-new workflow', async () => {
       const execution = await runContinueWorkflow(3)
       const history = await fetchHistory(execution)
       const replay = await Effect.runPromise(
@@ -185,7 +111,7 @@ describe('Temporal CLI history ingestion', () => {
   })
 
   test('diffDeterminismState surfaces command mismatches', { timeout: replayTimeoutMs }, async () => {
-    await runOrSkip('determinism diff', async () => {
+    await execScenario('determinism diff', async () => {
       const execution = await runActivityWorkflow('workflow-diff')
       const history = await fetchHistory(execution)
       const replay = await Effect.runPromise(
@@ -209,7 +135,7 @@ describe('Temporal CLI history ingestion', () => {
   })
 
   test('temporal-bun replay CLI fetches history via Temporal CLI', { timeout: replayTimeoutMs }, async () => {
-    await runOrSkip('temporal-bun replay cli command', async () => {
+    await execScenario('temporal-bun replay cli command', async () => {
       const execution = await runTimerWorkflow('replay-cli')
       const result = await runReplayCliCommand(execution)
       expect(result.exitCode).toBe(0)
@@ -223,7 +149,7 @@ describe('Temporal CLI history ingestion', () => {
   })
 
   test('sticky cache evicts entries beyond capacity', { timeout: replayTimeoutMs }, async () => {
-    await runOrSkip('sticky cache eviction', async () => {
+    await execScenario('sticky cache eviction', async () => {
       if (!stickyCacheSizeEffect) {
         throw new Error('Sticky cache not initialised')
       }
@@ -258,7 +184,7 @@ describe('Temporal CLI history ingestion', () => {
   })
 
 test('sticky cache remains empty after workflow completion', { timeout: replayTimeoutMs }, async () => {
-  await runOrSkip('sticky cache cleanup', async () => {
+  await execScenario('sticky cache cleanup', async () => {
     if (!stickyCacheSizeEffect) {
       throw new Error('Sticky cache not initialised')
     }

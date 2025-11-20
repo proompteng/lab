@@ -24,6 +24,12 @@ export type {
   StartWorkflowResult,
   TerminateWorkflowOptions,
   WorkflowHandle,
+  WorkflowUpdateAwaitOptions,
+  WorkflowUpdateHandle,
+  WorkflowUpdateOptions,
+  WorkflowUpdateOutcome,
+  WorkflowUpdateResult,
+  WorkflowUpdateStage,
 } from './client/types'
 export type { TemporalConfig, TLSConfig } from './config'
 export {

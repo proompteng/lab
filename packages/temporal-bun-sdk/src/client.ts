@@ -9,15 +9,19 @@ import { type InterceptorBuilder, makeDefaultInterceptorBuilder, type TemporalIn
 import { type TemporalRpcRetryPolicy, withTemporalRetry } from './client/retries'
 import {
   buildCancelRequest,
+  buildPollWorkflowUpdateRequest,
   buildQueryRequest,
   buildSignalRequest,
   buildSignalWithStartRequest,
   buildStartWorkflowRequest,
   buildTerminateRequest,
+  buildUpdateWorkflowRequest,
   computeSignalRequestId,
   createSignalRequestEntropy,
+  createUpdateRequestId,
   decodeMemoAttributes,
   decodeSearchAttributes,
+  decodeUpdateOutcome,
   encodeMemoAttributes,
   encodeSearchAttributes,
 } from './client/serialization'
@@ -31,6 +35,11 @@ import {
   type TerminateWorkflowOptions,
   type WorkflowHandle,
   type WorkflowHandleMetadata,
+  type WorkflowUpdateAwaitOptions,
+  type WorkflowUpdateHandle,
+  type WorkflowUpdateOptions,
+  type WorkflowUpdateResult,
+  type WorkflowUpdateStage,
 } from './client/types'
 import { createDefaultDataConverter, type DataConverter, decodePayloadsToValues } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig } from './config'
@@ -38,6 +47,7 @@ import { createObservabilityServices } from './observability'
 import type { LogFields, Logger, LogLevel } from './observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from './observability/metrics'
 import type { Memo, Payload, SearchAttributes } from './proto/temporal/api/common/v1/message_pb'
+import { UpdateWorkflowExecutionLifecycleStage } from './proto/temporal/api/enums/v1/update_pb'
 import {
   type DescribeNamespaceRequest,
   DescribeNamespaceRequestSchema,
@@ -131,6 +141,18 @@ export interface TemporalWorkflowClient {
     options: SignalWithStartOptions,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<StartWorkflowResult>
+  update(
+    handle: WorkflowHandle,
+    options: WorkflowUpdateOptions,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<WorkflowUpdateResult>
+  awaitUpdate(
+    handle: WorkflowUpdateHandle,
+    options?: WorkflowUpdateAwaitOptions,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<WorkflowUpdateResult>
+  cancelUpdate(handle: WorkflowUpdateHandle): Promise<void>
+  getUpdateHandle(handle: WorkflowHandle, updateId: string, firstExecutionRunId?: string): WorkflowUpdateHandle
 }
 
 export interface TemporalClient {
@@ -164,6 +186,18 @@ export interface TemporalClient {
     options: SignalWithStartOptions,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<StartWorkflowResult>
+  updateWorkflow(
+    handle: WorkflowHandle,
+    options: WorkflowUpdateOptions,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<WorkflowUpdateResult>
+  awaitWorkflowUpdate(
+    handle: WorkflowUpdateHandle,
+    options?: WorkflowUpdateAwaitOptions,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<WorkflowUpdateResult>
+  cancelWorkflowUpdate(handle: WorkflowUpdateHandle): Promise<void>
+  getWorkflowUpdateHandle(handle: WorkflowHandle, updateId: string, firstExecutionRunId?: string): WorkflowUpdateHandle
   describeNamespace(namespace?: string, callOptions?: BrandedTemporalClientCallOptions): Promise<Uint8Array>
   updateHeaders(headers: Record<string, string | ArrayBuffer | ArrayBufferView>): Promise<void>
   shutdown(): Promise<void>
@@ -413,6 +447,7 @@ class TemporalClientImpl implements TemporalClient {
   #logger: Logger
   #clientMetrics: TemporalClientMetrics
   #metricsExporter: MetricsExporter
+  #pendingUpdateControllers = new Map<string, Set<AbortController>>()
   private closed = false
   private headers: Record<string, string>
 
@@ -470,6 +505,12 @@ class TemporalClientImpl implements TemporalClient {
       terminate: (handle, options, callOptions) => this.terminateWorkflow(handle, options, callOptions),
       cancel: (handle, callOptions) => this.cancelWorkflow(handle, callOptions),
       signalWithStart: (options, callOptions) => this.signalWithStart(options, callOptions),
+      update: (workflowHandle, updateOptions, callOptions) =>
+        this.updateWorkflow(workflowHandle, updateOptions, callOptions),
+      awaitUpdate: (updateHandle, options, callOptions) => this.awaitWorkflowUpdate(updateHandle, options, callOptions),
+      cancelUpdate: (updateHandle) => this.cancelWorkflowUpdate(updateHandle),
+      getUpdateHandle: (workflowHandle, updateId, firstExecutionRunId) =>
+        this.getWorkflowUpdateHandle(workflowHandle, updateId, firstExecutionRunId),
     }
   }
 
@@ -645,6 +686,157 @@ class TemporalClientImpl implements TemporalClient {
     })
   }
 
+  async updateWorkflow(
+    handle: WorkflowHandle,
+    options: WorkflowUpdateOptions,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<WorkflowUpdateResult> {
+    return this.#instrumentOperation('updateWorkflow', async () => {
+      this.ensureOpen()
+      const resolvedHandle = resolveHandle(this.namespace, handle)
+      const parsedOptions = sanitizeWorkflowUpdateOptions(options)
+      const updateId = parsedOptions.updateId ?? createUpdateRequestId()
+      const waitStage = this.#stageToProto(parsedOptions.waitForStage)
+      const updateKey = this.#makeUpdateKey(resolvedHandle, updateId)
+      const { options: mergedCallOptions, controller, cleanup } = this.#prepareUpdateCallOptions(updateKey, callOptions)
+
+      try {
+        const request = await buildUpdateWorkflowRequest(
+          {
+            handle: resolvedHandle,
+            namespace: this.namespace,
+            identity: this.defaultIdentity,
+            updateId,
+            updateName: parsedOptions.updateName,
+            args: parsedOptions.args,
+            headers: parsedOptions.headers,
+            waitStage,
+            firstExecutionRunId: parsedOptions.firstExecutionRunId,
+          },
+          this.dataConverter,
+        )
+
+        let response = await this.executeRpc(
+          'updateWorkflowExecution',
+          (rpcOptions) => this.workflowService.updateWorkflowExecution(request, rpcOptions),
+          mergedCallOptions,
+        )
+
+        while ((response.stage ?? UpdateWorkflowExecutionLifecycleStage.UNSPECIFIED) < waitStage) {
+          response = await this.executeRpc(
+            'updateWorkflowExecution',
+            (rpcOptions) => this.workflowService.updateWorkflowExecution(request, rpcOptions),
+            mergedCallOptions,
+          )
+        }
+
+        const runId = response.updateRef?.workflowExecution?.runId || resolvedHandle.runId
+        const updateHandle = this.#createWorkflowUpdateHandle(resolvedHandle, {
+          updateId,
+          runId,
+          firstExecutionRunId: parsedOptions.firstExecutionRunId,
+        })
+        const stage = this.#stageFromProto(response.stage)
+        const outcome = await decodeUpdateOutcome(this.dataConverter, response.outcome)
+        return {
+          handle: updateHandle,
+          stage,
+          outcome,
+        }
+      } finally {
+        this.#releaseUpdateController(updateKey, controller)
+        cleanup?.()
+      }
+    })
+  }
+
+  async awaitWorkflowUpdate(
+    handle: WorkflowUpdateHandle,
+    options: WorkflowUpdateAwaitOptions = {},
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<WorkflowUpdateResult> {
+    return this.#instrumentOperation('awaitWorkflowUpdate', async () => {
+      this.ensureOpen()
+      const resolvedHandle = resolveHandle(this.namespace, handle)
+      const updateId = ensureNonEmptyString(handle.updateId, 'updateId')
+      const waitStage = this.#stageToProto(options.waitForStage ?? 'completed')
+      const firstExecutionRunIdOverride = ensureOptionalTrimmedString(
+        options.firstExecutionRunId,
+        'firstExecutionRunId',
+        1,
+      )
+      const pollHandle: WorkflowHandle = {
+        workflowId: resolvedHandle.workflowId,
+        namespace: resolvedHandle.namespace,
+        runId: resolvedHandle.runId,
+        firstExecutionRunId: firstExecutionRunIdOverride ?? resolvedHandle.firstExecutionRunId,
+      }
+      const request = buildPollWorkflowUpdateRequest({
+        handle: pollHandle,
+        namespace: this.namespace,
+        identity: this.defaultIdentity,
+        updateId,
+        waitStage,
+      })
+      const updateKey = this.#makeUpdateKey(resolvedHandle, updateId)
+      const { options: mergedCallOptions, controller, cleanup } = this.#prepareUpdateCallOptions(updateKey, callOptions)
+
+      try {
+        const response = await this.executeRpc(
+          'pollWorkflowExecutionUpdate',
+          (rpcOptions) => this.workflowService.pollWorkflowExecutionUpdate(request, rpcOptions),
+          mergedCallOptions,
+        )
+        const stage = this.#stageFromProto(response.stage)
+        const runId = response.updateRef?.workflowExecution?.runId || resolvedHandle.runId
+        const updateHandle = this.#createWorkflowUpdateHandle(resolvedHandle, {
+          updateId,
+          runId,
+          firstExecutionRunId: pollHandle.firstExecutionRunId,
+        })
+        const outcome = await decodeUpdateOutcome(this.dataConverter, response.outcome)
+        return {
+          handle: updateHandle,
+          stage,
+          outcome,
+        }
+      } finally {
+        this.#releaseUpdateController(updateKey, controller)
+        cleanup?.()
+      }
+    })
+  }
+
+  getWorkflowUpdateHandle(
+    handle: WorkflowHandle,
+    updateId: string,
+    firstExecutionRunId?: string,
+  ): WorkflowUpdateHandle {
+    const resolvedHandle = resolveHandle(this.namespace, handle)
+    const normalizedUpdateId = ensureNonEmptyString(updateId, 'updateId')
+    const normalizedFirstExecution = ensureOptionalTrimmedString(firstExecutionRunId, 'firstExecutionRunId', 1)
+    return this.#createWorkflowUpdateHandle(resolvedHandle, {
+      updateId: normalizedUpdateId,
+      firstExecutionRunId: normalizedFirstExecution,
+    })
+  }
+
+  async cancelWorkflowUpdate(handle: WorkflowUpdateHandle): Promise<void> {
+    return this.#instrumentOperation('cancelWorkflowUpdate', async () => {
+      this.ensureOpen()
+      const resolvedHandle = resolveHandle(this.namespace, handle)
+      const updateId = ensureNonEmptyString(handle.updateId, 'updateId')
+      const updateKey = this.#makeUpdateKey(resolvedHandle, updateId)
+      const aborted = this.#abortUpdateControllers(updateKey)
+      if (!aborted) {
+        this.#log('debug', 'no pending workflow update operation to cancel', {
+          workflowId: resolvedHandle.workflowId,
+          updateId,
+        })
+      }
+    })
+  }
+
   async describeNamespace(
     targetNamespace?: string,
     callOptions?: BrandedTemporalClientCallOptions,
@@ -753,6 +945,102 @@ class TemporalClientImpl implements TemporalClient {
       }
     }
     return { values: args }
+  }
+
+  #prepareUpdateCallOptions(
+    key: string,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): { options: TemporalClientCallOptions; controller: AbortController; cleanup?: () => void } {
+    const controller = new AbortController()
+    let cleanup: (() => void) | undefined
+    if (callOptions?.signal) {
+      if (callOptions.signal.aborted) {
+        controller.abort()
+      } else {
+        const onAbort = () => controller.abort()
+        callOptions.signal.addEventListener('abort', onAbort, { once: true })
+        cleanup = () => callOptions.signal?.removeEventListener('abort', onAbort)
+      }
+    }
+    this.#registerUpdateController(key, controller)
+    const overrides: TemporalClientCallOptions = {
+      ...(callOptions ? { ...callOptions } : {}),
+      signal: controller.signal,
+    }
+    return { options: overrides, controller, cleanup }
+  }
+
+  #registerUpdateController(key: string, controller: AbortController): void {
+    const current = this.#pendingUpdateControllers.get(key)
+    if (current) {
+      current.add(controller)
+      return
+    }
+    this.#pendingUpdateControllers.set(key, new Set([controller]))
+  }
+
+  #releaseUpdateController(key: string, controller: AbortController): void {
+    const current = this.#pendingUpdateControllers.get(key)
+    if (!current) {
+      return
+    }
+    current.delete(controller)
+    if (current.size === 0) {
+      this.#pendingUpdateControllers.delete(key)
+    }
+  }
+
+  #abortUpdateControllers(key: string): boolean {
+    const current = this.#pendingUpdateControllers.get(key)
+    if (!current || current.size === 0) {
+      return false
+    }
+    for (const controller of current) {
+      controller.abort()
+    }
+    this.#pendingUpdateControllers.delete(key)
+    return true
+  }
+
+  #makeUpdateKey(handle: WorkflowHandle, updateId: string): string {
+    const namespace = handle.namespace ?? this.namespace
+    const runId = handle.runId ?? ''
+    return `${namespace}::${handle.workflowId}::${runId}::${updateId}`
+  }
+
+  #createWorkflowUpdateHandle(
+    handle: WorkflowHandle,
+    overrides: { updateId: string; runId?: string | null; firstExecutionRunId?: string | null },
+  ): WorkflowUpdateHandle {
+    return {
+      workflowId: handle.workflowId,
+      namespace: handle.namespace,
+      runId: overrides.runId ?? handle.runId,
+      firstExecutionRunId: overrides.firstExecutionRunId ?? handle.firstExecutionRunId,
+      updateId: overrides.updateId,
+    }
+  }
+
+  #stageToProto(
+    stage: WorkflowUpdateStage | undefined,
+    minimum: UpdateWorkflowExecutionLifecycleStage = UpdateWorkflowExecutionLifecycleStage.ADMITTED,
+  ): UpdateWorkflowExecutionLifecycleStage {
+    const normalized = ensureWorkflowUpdateStage(stage)
+    const protoStage = WORKFLOW_UPDATE_STAGE_TO_PROTO[normalized]
+    return protoStage >= minimum ? protoStage : minimum
+  }
+
+  #stageFromProto(stage?: UpdateWorkflowExecutionLifecycleStage): WorkflowUpdateStage {
+    if (stage === UpdateWorkflowExecutionLifecycleStage.ADMITTED) {
+      return 'admitted'
+    }
+    if (stage === UpdateWorkflowExecutionLifecycleStage.ACCEPTED) {
+      return 'accepted'
+    }
+    if (stage === UpdateWorkflowExecutionLifecycleStage.COMPLETED) {
+      return 'completed'
+    }
+    return 'unspecified'
   }
 
   #mergeRetryPolicy(overrides?: Partial<TemporalRpcRetryPolicy>): TemporalRpcRetryPolicy {
@@ -1017,6 +1305,63 @@ const sanitizeTerminateWorkflowOptions = (options: TerminateWorkflowOptions = {}
   }
 }
 
+type NormalizedWorkflowUpdateOptions = {
+  updateName: string
+  args: unknown[]
+  headers?: Record<string, unknown>
+  updateId?: string
+  waitForStage: WorkflowUpdateStage
+  firstExecutionRunId?: string
+}
+
+const sanitizeWorkflowUpdateOptions = (options: WorkflowUpdateOptions): NormalizedWorkflowUpdateOptions => {
+  if (!options || typeof options !== 'object') {
+    throw new Error('Workflow update options must be provided')
+  }
+  const updateName = ensureNonEmptyString(options.updateName, 'updateName')
+  const args = options.args ?? []
+  if (!Array.isArray(args)) {
+    throw new Error('update args must be an array when provided')
+  }
+  const waitForStage = ensureWorkflowUpdateStage(options.waitForStage)
+  const updateId = ensureOptionalTrimmedString(options.updateId, 'updateId', 1)
+  const firstExecutionRunId = ensureOptionalTrimmedString(options.firstExecutionRunId, 'firstExecutionRunId', 1)
+  return {
+    updateName,
+    args,
+    headers: options.headers,
+    updateId,
+    waitForStage,
+    firstExecutionRunId,
+  }
+}
+
+const WORKFLOW_UPDATE_STAGE_VALUES: ReadonlySet<WorkflowUpdateStage> = new Set([
+  'unspecified',
+  'admitted',
+  'accepted',
+  'completed',
+])
+
+const DEFAULT_WORKFLOW_UPDATE_STAGE: WorkflowUpdateStage = 'accepted'
+
+const WORKFLOW_UPDATE_STAGE_TO_PROTO: Record<WorkflowUpdateStage, UpdateWorkflowExecutionLifecycleStage> = {
+  unspecified: UpdateWorkflowExecutionLifecycleStage.UNSPECIFIED,
+  admitted: UpdateWorkflowExecutionLifecycleStage.ADMITTED,
+  accepted: UpdateWorkflowExecutionLifecycleStage.ACCEPTED,
+  completed: UpdateWorkflowExecutionLifecycleStage.COMPLETED,
+}
+
+const ensureWorkflowUpdateStage = (stage?: WorkflowUpdateStage): WorkflowUpdateStage => {
+  if (!stage) {
+    return DEFAULT_WORKFLOW_UPDATE_STAGE
+  }
+  if (!WORKFLOW_UPDATE_STAGE_VALUES.has(stage)) {
+    throw new Error('waitForStage must be one of unspecified, admitted, accepted, or completed')
+  }
+  return stage
+}
+
 const resolveHandle = (defaultNamespace: string, handle: WorkflowHandle): WorkflowHandle => {
   const workflowId = ensureNonEmptyString(handle.workflowId, 'workflowId')
   const namespace = ensureOptionalTrimmedString(handle.namespace, 'namespace', 1) ?? defaultNamespace
@@ -1039,4 +1384,10 @@ export type {
   StartWorkflowResult,
   TerminateWorkflowOptions,
   WorkflowHandle,
+  WorkflowUpdateAwaitOptions,
+  WorkflowUpdateHandle,
+  WorkflowUpdateOptions,
+  WorkflowUpdateOutcome,
+  WorkflowUpdateResult,
+  WorkflowUpdateStage,
 } from './client/types'

@@ -9,6 +9,12 @@ import type {
   StartTimerCommandIntent,
   WorkflowCommandIntent,
 } from './commands'
+import type {
+  WorkflowUpdateDefinition,
+  WorkflowUpdateDefinitions,
+  WorkflowUpdateHandler,
+  WorkflowUpdateValidator,
+} from './definition'
 import type { DeterminismGuard, RecordedCommandKind, WorkflowRetryPolicyInput } from './determinism'
 import { ContinueAsNewWorkflowError, WorkflowBlockedError, WorkflowQueryHandlerMissingError } from './errors'
 import {
@@ -160,6 +166,7 @@ export interface WorkflowRuntimeServices {
   readonly signals: WorkflowSignalClient
   readonly queries: WorkflowQueries
   readonly determinism: WorkflowDeterminismHelpers
+  readonly updates: WorkflowUpdates
   continueAsNew(options?: ContinueAsNewOptions): Effect.Effect<never, ContinueAsNewWorkflowError, never>
 }
 
@@ -174,6 +181,7 @@ export interface CreateWorkflowContextParams<I> {
   readonly determinismGuard: DeterminismGuard
   readonly activityResults?: Map<string, ActivityResolution>
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
+  readonly updates?: WorkflowUpdateDefinitions
 }
 
 export type ActivityResolution = { status: 'completed'; value: unknown } | { status: 'failed'; error: Error }
@@ -218,8 +226,10 @@ export const createWorkflowContext = <I>(
   context: WorkflowContext<I>
   commandContext: WorkflowCommandContext
   queryRegistry: WorkflowQueryRegistry
+  updateRegistry: WorkflowUpdateRegistry
 } => {
   const commandContext = new WorkflowCommandContext({ info: params.info, guard: params.determinismGuard })
+  const updateRegistry = new WorkflowUpdateRegistry()
 
   const activityResults = params.activityResults ?? new Map<string, ActivityResolution>()
   const inboundSignals = new WorkflowInboundSignals({
@@ -301,6 +311,21 @@ export const createWorkflowContext = <I>(
     random: () => params.determinismGuard.nextRandom(() => Math.random()),
   }
 
+  const updates: WorkflowUpdates = {
+    register(definition, handler, options) {
+      updateRegistry.register(definition, handler, options?.validator)
+    },
+    registerDefault(handler) {
+      updateRegistry.registerDefault(handler)
+    },
+  }
+
+  if (params.updates) {
+    for (const definition of params.updates) {
+      updateRegistry.register(definition, definition.handler, definition.validator)
+    }
+  }
+
   const context: WorkflowContext<I> = {
     input: params.input,
     info: params.info,
@@ -310,6 +335,7 @@ export const createWorkflowContext = <I>(
     signals,
     queries,
     determinism,
+    updates,
     continueAsNew(options) {
       return Effect.sync(() => {
         const intent = buildContinueAsNewIntent(commandContext, options)
@@ -319,7 +345,7 @@ export const createWorkflowContext = <I>(
     },
   }
 
-  return { context, commandContext, queryRegistry }
+  return { context, commandContext, queryRegistry, updateRegistry }
 }
 
 const createCommandRef = (
@@ -540,6 +566,63 @@ class WorkflowInboundSignals {
         identity: metadata.identity ?? null,
       }),
     )
+  }
+}
+
+export interface WorkflowUpdates {
+  register<I, O>(
+    definition: WorkflowUpdateDefinition<I, O>,
+    handler: WorkflowUpdateHandler<I, O>,
+    options?: { validator?: WorkflowUpdateValidator<I> },
+  ): void
+  registerDefault(handler: WorkflowUpdateHandler<unknown, unknown>): void
+}
+
+export interface RegisteredWorkflowUpdate {
+  readonly name: string
+  readonly input: Schema.Schema<unknown>
+  readonly handler: WorkflowUpdateHandler<unknown, unknown>
+  readonly validator?: WorkflowUpdateValidator<unknown>
+}
+
+export class WorkflowUpdateRegistry {
+  #handlers = new Map<string, RegisteredWorkflowUpdate>()
+  #defaultHandler: RegisteredWorkflowUpdate | undefined
+
+  register<I, O>(
+    definition: WorkflowUpdateDefinition<I, O>,
+    handler: WorkflowUpdateHandler<I, O>,
+    validator?: WorkflowUpdateValidator<I>,
+  ): void {
+    if (typeof handler !== 'function') {
+      throw new Error(`Workflow update "${definition.name}" must provide a handler`)
+    }
+    this.#handlers.set(definition.name, {
+      name: definition.name,
+      input: definition.input as Schema.Schema<unknown>,
+      handler: handler as WorkflowUpdateHandler<unknown, unknown>,
+      validator: validator as WorkflowUpdateValidator<unknown> | undefined,
+    })
+  }
+
+  registerDefault(handler: WorkflowUpdateHandler<unknown, unknown>): void {
+    this.#defaultHandler = {
+      name: '__default__',
+      input: Schema.Unknown,
+      handler,
+    }
+  }
+
+  get(name: string): RegisteredWorkflowUpdate | undefined {
+    return this.#handlers.get(name)
+  }
+
+  getDefault(): RegisteredWorkflowUpdate | undefined {
+    return this.#defaultHandler
+  }
+
+  list(): RegisteredWorkflowUpdate[] {
+    return Array.from(this.#handlers.values())
   }
 }
 

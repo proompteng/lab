@@ -5,6 +5,7 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
 ## Highlights
 - **TypeScript-only runtime** – workflow polling, activity execution, and command generation run in Bun using generated Temporal protobuf stubs.
 - **Effect-based workflows** – define deterministic workflows with `Effect` and let the runtime translate results/failures into Temporal commands.
+- **First-class Workflow Updates** – call `client.workflow.update` from Bun services and register update handlers alongside workflows with `defineWorkflowUpdates`.
 - **Connect-powered client** – `createTemporalClient` gives you a fully typed Temporal WorkflowService client backed by @bufbuild/protobuf.
 - **Simple data conversion** – JSON payload conversion out of the box with hooks for custom codecs.
 - **Bun CLI** – `temporal-bun` scaffolds workers and ships lightweight Docker helpers (no Zig build steps required).
@@ -67,6 +68,66 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    ```bash
    temporal-bun init hello-worker
    ```
+
+## Workflow updates
+
+### Registering update handlers
+
+Workflows can now declare strongly typed update handlers with the new `defineWorkflowUpdates` helper and register them inside the workflow definition. Update handlers run inside the normal determinism guard and support optional Effect Schema validators:
+
+```ts
+import { defineWorkflow, defineWorkflowUpdates } from '@proompteng/temporal-bun-sdk/workflow'
+import * as Schema from 'effect/Schema'
+
+const counterUpdates = defineWorkflowUpdates([
+  {
+    name: 'setCounter',
+    input: Schema.Number,
+    handler: async ({ updates }, value: number) => updates.registerDefault(async () => value),
+  },
+])
+
+export const counterWorkflow = defineWorkflow(
+  'counterWorkflow',
+  Schema.Number,
+  ({ input, updates }) => {
+    let count = input
+
+    updates.register(counterUpdates[0], async (_ctx, value) => {
+      count = value
+      return count
+    })
+
+    return Effect.sync(() => count)
+  },
+  { updates: counterUpdates },
+)
+```
+
+The workflow runtime automatically polls `PollWorkflowTaskQueueResponse.messages`, routes update requests through the scheduler, and records lifecycle events (admitted/accepted/completed) in determinism snapshots so sticky caches stay healthy on replay.
+
+### Invoking workflow updates
+
+The client surface exposes `workflow.update`, `workflow.awaitUpdate`, `workflow.cancelUpdate`, and `workflow.getUpdateHandle` helpers on the `TemporalWorkflowClient`:
+
+```ts
+const updateResult = await client.workflow.update(handle, {
+  updateName: 'setCounter',
+  args: [42],
+  waitForStage: 'completed', // 'admitted' | 'accepted' | 'completed'
+})
+
+if (updateResult.outcome?.status === 'success') {
+  console.log('Counter set to', updateResult.outcome.result)
+}
+
+// await a handle later, perhaps from another service
+const handle = client.workflow.getUpdateHandle(handle, updateResult.handle.updateId)
+// defaults to waiting for completion when waitForStage is omitted
+await client.workflow.awaitUpdate(handle)
+```
+
+Each update call is idempotent (via `updateId`) and accepts the same `temporalCallOptions` as other Workflow APIs so you can override headers, retries, or timeouts per request.
 
 ## WorkflowService client resilience
 
