@@ -83,7 +83,7 @@ import type {
   WorkflowRetryPolicyInput,
 } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
-import type { WorkflowQueryEvaluationResult } from '../workflow/executor'
+import type { WorkflowQueryEvaluationResult, WorkflowUpdateInvocation } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
 import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from '../workflow/inbound'
 import { WorkflowRegistry } from '../workflow/registry'
