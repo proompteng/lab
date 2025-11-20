@@ -153,11 +153,18 @@ jobs:
         id: release_branch
         run: |
           branch="release-please--branches--main--components--temporal-bun-sdk"
-          git fetch origin "$branch":"$branch"
-          git checkout "$branch"
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "$branch":"$branch"
+            git checkout "$branch"
+            echo "branch=$branch" >> "$GITHUB_OUTPUT"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release-please branch $branch not found; nothing to build yet"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build Temporal Bun SDK
+        if: steps.release_branch.outputs.found == 'true'
         run: pnpm --filter @proompteng/temporal-bun-sdk build
 
   publish-release:
