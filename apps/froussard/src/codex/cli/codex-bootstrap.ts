@@ -190,12 +190,29 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   process.chdir(targetDir)
 
   if (headBranch && headBranch !== baseBranch) {
-    // Prefer the head branch if provided; create local tracking branch when missing.
+    const remoteHead = await $`git -C ${targetDir} rev-parse --verify --quiet origin/${headBranch}`.nothrow()
+    const hasRemoteHead = remoteHead.exitCode === 0
+
     const checkoutResult = await $`git -C ${targetDir} checkout ${headBranch}`.nothrow()
     if (checkoutResult.exitCode !== 0) {
-      await $`git -C ${targetDir} checkout -B ${headBranch} origin/${headBranch}`
+      const fromRef = hasRemoteHead ? `origin/${headBranch}` : `origin/${baseBranch}`
+      await $`git -C ${targetDir} checkout -B ${headBranch} ${fromRef}`.nothrow()
     }
-    await $`git -C ${targetDir} reset --hard origin/${headBranch}`
+
+    const resetRefs = hasRemoteHead ? [`origin/${headBranch}`, `origin/${baseBranch}`] : [`origin/${baseBranch}`]
+
+    let resetSucceeded = false
+    for (const ref of resetRefs) {
+      const resetResult = await $`git -C ${targetDir} reset --hard ${ref}`.nothrow()
+      if (resetResult.exitCode === 0) {
+        resetSucceeded = true
+        break
+      }
+    }
+
+    if (!resetSucceeded) {
+      throw new Error(`Failed to reset worktree to ${resetRefs.join(' then ')}`)
+    }
   }
 
   await bootstrapWorkspace()

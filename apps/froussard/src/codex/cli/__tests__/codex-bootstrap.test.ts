@@ -9,13 +9,28 @@ const bunMocks = vi.hoisted(() => {
   const execMock = vi.fn(async () => ({ text: async () => '' }))
   const spawnMock = vi.fn(() => ({ exited: Promise.resolve(0) }))
   const whichMock = vi.fn(async (command: string) => command)
+  const exitCodeOverrides = new Map<string, number>()
+
+  const resolveExitCode = (command: string): number => {
+    for (const [needle, code] of exitCodeOverrides.entries()) {
+      if (command.includes(needle)) {
+        return code
+      }
+    }
+    return 0
+  }
 
   const makeTagged =
     (cwd?: string) =>
     (strings: TemplateStringsArray, ...exprs: unknown[]) => {
       const command = strings.reduce((acc, part, index) => acc + part + (exprs[index] ?? ''), '').trim()
       execMock({ command, cwd })
-      return { text: async () => '' }
+      const result = {
+        exitCode: resolveExitCode(command),
+        text: async () => '',
+        nothrow: async () => result,
+      }
+      return result
     }
 
   const dollar = (...args: unknown[]) => {
@@ -30,7 +45,7 @@ const bunMocks = vi.hoisted(() => {
     throw new Error('Invalid invocation of $ stub')
   }
 
-  return { execMock, spawnMock, whichMock, dollar }
+  return { execMock, spawnMock, whichMock, dollar, exitCodeOverrides }
 })
 
 vi.mock('bun', () => ({
@@ -42,6 +57,7 @@ vi.mock('bun', () => ({
 const execMock = bunMocks.execMock
 const spawnMock = bunMocks.spawnMock
 const whichMock = bunMocks.whichMock
+const exitCodeOverrides = bunMocks.exitCodeOverrides
 
 const ORIGINAL_ENV = { ...process.env }
 
@@ -68,6 +84,7 @@ describe('runCodexBootstrap', () => {
     execMock.mockClear()
     spawnMock.mockClear()
     whichMock.mockClear()
+    exitCodeOverrides.clear()
     chdirSpy = vi.spyOn(process, 'chdir').mockImplementation(() => undefined)
   })
 
@@ -139,5 +156,47 @@ describe('runCodexBootstrap', () => {
     expect(process.env.LESS).toContain('F')
     expect(process.env.LESS).toContain('S')
     expect(process.env.LESS).toContain('X')
+  })
+
+  it('falls back to base when the head branch does not exist remotely', async () => {
+    await mkdir(join(workdir, '.git'), { recursive: true })
+    process.env.HEAD_BRANCH = 'codex/issue-9999-temp'
+    exitCodeOverrides.set(`git -C ${workdir} checkout ${process.env.HEAD_BRANCH}`, 1)
+    exitCodeOverrides.set(`rev-parse --verify --quiet origin/${process.env.HEAD_BRANCH}`, 1)
+
+    const exitCode = await runCodexBootstrap()
+
+    expect(exitCode).toBe(0)
+    const commands = execMock.mock.calls.map((call) => call[0]?.command)
+    expect(commands).toContain(`git -C ${workdir} checkout -B ${process.env.HEAD_BRANCH} origin/main`)
+    expect(commands).toContain(`git -C ${workdir} reset --hard origin/main`)
+  })
+
+  it('resets to base when remote tracking ref is missing even if checkout succeeds', async () => {
+    await mkdir(join(workdir, '.git'), { recursive: true })
+    process.env.HEAD_BRANCH = 'codex/issue-1234'
+    // Simulate remote ref missing; checkout succeeds (default exit 0).
+    exitCodeOverrides.set(`rev-parse --verify --quiet origin/${process.env.HEAD_BRANCH}`, 1)
+
+    const exitCode = await runCodexBootstrap()
+
+    expect(exitCode).toBe(0)
+    const commands = execMock.mock.calls.map((call) => call[0]?.command)
+    // Ensure we don't reset against a non-existent origin/head.
+    expect(commands).toContain(`git -C ${workdir} reset --hard origin/main`)
+  })
+
+  it('falls back to base reset if resetting against head fails', async () => {
+    await mkdir(join(workdir, '.git'), { recursive: true })
+    process.env.HEAD_BRANCH = 'codex/issue-5555'
+    // Pretend remote head exists so we try it, but make reset fail.
+    exitCodeOverrides.set(`git -C ${workdir} reset --hard origin/${process.env.HEAD_BRANCH}`, 128)
+
+    const exitCode = await runCodexBootstrap()
+
+    expect(exitCode).toBe(0)
+    const commands = execMock.mock.calls.map((call) => call[0]?.command)
+    expect(commands).toContain(`git -C ${workdir} reset --hard origin/${process.env.HEAD_BRANCH}`)
+    expect(commands).toContain(`git -C ${workdir} reset --hard origin/main`)
   })
 })

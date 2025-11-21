@@ -195,6 +195,31 @@ describe('runCodexImplementation', () => {
     await expect(runCodexImplementation(eventPath)).rejects.toThrow('Missing issue number metadata in event payload')
   })
 
+  it('falls back to base when the head branch does not exist on the remote', async () => {
+    // Remove head from remote and local to simulate new branches that are not yet pushed.
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn('git', ['push', 'origin', '--delete', 'codex/issue-42'], { cwd: workdir })
+      proc.on('close', (code) => (code === 0 ? resolve() : resolve())) // ignore failure if branch already missing
+      proc.on('error', reject)
+    })
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn('git', ['branch', '-D', 'codex/issue-42'], { cwd: workdir })
+      proc.on('close', () => resolve())
+      proc.on('error', reject)
+    })
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn('git', ['remote', 'prune', 'origin'], { cwd: workdir })
+      proc.on('close', () => resolve())
+      proc.on('error', reject)
+    })
+
+    await expect(runCodexImplementation(eventPath)).resolves.not.toThrow()
+
+    // Verify the worktree ended up on the head branch created from base.
+    const currentBranch = await readFile(join(workdir, '.git', 'HEAD'), 'utf8')
+    expect(currentBranch.trim()).toContain('codex/issue-42')
+  })
+
   it('resumes a previous implementation session when resume metadata is present', async () => {
     const resumeSourceDir = await mkdtemp(join(tmpdir(), 'codex-impl-resume-src-'))
     const manifest = {

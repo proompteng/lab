@@ -737,20 +737,41 @@ export const runCodexImplementation = async (eventPath: string) => {
   // Ensure worktree tracks the requested head branch (not just base).
   assertCommandSuccess(await runCommand('git', ['fetch', '--all', '--prune'], { cwd: worktree }), 'git fetch')
 
-  const checkoutResult = await runCommand('git', ['checkout', headBranch], { cwd: worktree })
-  if (checkoutResult.exitCode !== 0) {
-    assertCommandSuccess(
-      await runCommand('git', ['checkout', '-B', headBranch, `origin/${headBranch}`], { cwd: worktree }),
-      'git checkout -B head',
-    )
-  } else {
-    assertCommandSuccess(checkoutResult, 'git checkout head')
+  const syncWorktreeToHead = async () => {
+    const remoteHeadExists =
+      (
+        await runCommand('git', ['rev-parse', '--verify', '--quiet', `origin/${headBranch}`], {
+          cwd: worktree,
+        })
+      ).exitCode === 0
+
+    const checkoutResult = await runCommand('git', ['checkout', headBranch], { cwd: worktree })
+    if (checkoutResult.exitCode !== 0) {
+      const fromRef = remoteHeadExists ? `origin/${headBranch}` : `origin/${baseBranch}`
+      assertCommandSuccess(
+        await runCommand('git', ['checkout', '-B', headBranch, fromRef], { cwd: worktree }),
+        'git checkout -B head',
+      )
+    } else {
+      assertCommandSuccess(checkoutResult, 'git checkout head')
+    }
+
+    const candidateRefs = remoteHeadExists ? [`origin/${headBranch}`, `origin/${baseBranch}`] : [`origin/${baseBranch}`]
+
+    const resetErrors: string[] = []
+    for (const ref of candidateRefs) {
+      const resetResult = await runCommand('git', ['reset', '--hard', ref], { cwd: worktree })
+      if (resetResult.exitCode === 0) {
+        assertCommandSuccess(resetResult, `git reset --hard ${ref}`)
+        return
+      }
+      resetErrors.push(`reset ${ref} failed (exit ${resetResult.exitCode}) ${resetResult.stderr || resetResult.stdout}`)
+    }
+
+    throw new Error(`git reset --hard failed; attempts: ${resetErrors.join('; ')}`)
   }
 
-  assertCommandSuccess(
-    await runCommand('git', ['reset', '--hard', `origin/${headBranch}`], { cwd: worktree }),
-    'git reset --hard',
-  )
+  await syncWorktreeToHead()
 
   const planCommentId =
     event.planCommentId !== undefined && event.planCommentId !== null ? String(event.planCommentId) : ''
