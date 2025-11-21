@@ -26,8 +26,9 @@ spec:
           - ReadWriteOnce
         resources:
           requests:
-            storage: 30Gi
+            storage: 10Gi
         storageClassName: longhorn
+        volumeAttributesClassName: codex-implementation-longhorn-2replicas
   volumes:
     - name: docker-lib
       emptyDir: {}
@@ -116,7 +117,7 @@ spec:
             export POST_TO_GITHUB=true
 
             echo "Executing implementation workflow" >&2
-            "${WORKTREE_DIR}/apps/froussard/src/codex/cli/codex-implement.ts" "$EVENT_FILE"
+            /usr/local/bin/codex-implement "$EVENT_FILE"
         volumeMounts:
           - name: workdir
             mountPath: /workspace

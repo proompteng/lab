@@ -737,20 +737,44 @@ export const runCodexImplementation = async (eventPath: string) => {
   // Ensure worktree tracks the requested head branch (not just base).
   assertCommandSuccess(await runCommand('git', ['fetch', '--all', '--prune'], { cwd: worktree }), 'git fetch')
 
-  const checkoutResult = await runCommand('git', ['checkout', headBranch], { cwd: worktree })
-  if (checkoutResult.exitCode !== 0) {
-    assertCommandSuccess(
-      await runCommand('git', ['checkout', '-B', headBranch, `origin/${headBranch}`], { cwd: worktree }),
-      'git checkout -B head',
-    )
-  } else {
-    assertCommandSuccess(checkoutResult, 'git checkout head')
+  const syncWorktreeToHead = async () => {
+    const remoteHeadExists =
+      (
+        await runCommand('git', ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${headBranch}`], {
+          cwd: worktree,
+        })
+      ).exitCode === 0
+
+    const checkoutResult = await runCommand('git', ['checkout', headBranch], { cwd: worktree })
+    if (checkoutResult.exitCode !== 0) {
+      const fromRef = remoteHeadExists ? `origin/${headBranch}` : `origin/${baseBranch}`
+      assertCommandSuccess(
+        await runCommand('git', ['checkout', '-B', headBranch, fromRef], { cwd: worktree }),
+        'git checkout -B head',
+      )
+    } else {
+      assertCommandSuccess(checkoutResult, 'git checkout head')
+    }
+
+    const primaryResetRef = remoteHeadExists ? `origin/${headBranch}` : `origin/${baseBranch}`
+    const primaryReset = await runCommand('git', ['reset', '--hard', primaryResetRef], { cwd: worktree })
+
+    if (primaryReset.exitCode === 0) {
+      assertCommandSuccess(primaryReset, 'git reset --hard')
+      return
+    }
+
+    if (remoteHeadExists) {
+      const fallbackReset = await runCommand('git', ['reset', '--hard', `origin/${baseBranch}`], { cwd: worktree })
+      assertCommandSuccess(fallbackReset, 'git reset --hard (base fallback)')
+      return
+    }
+
+    // If we got here, we already tried base-only and failed.
+    assertCommandSuccess(primaryReset, 'git reset --hard')
   }
 
-  assertCommandSuccess(
-    await runCommand('git', ['reset', '--hard', `origin/${headBranch}`], { cwd: worktree }),
-    'git reset --hard',
-  )
+  await syncWorktreeToHead()
 
   const planCommentId =
     event.planCommentId !== undefined && event.planCommentId !== null ? String(event.planCommentId) : ''

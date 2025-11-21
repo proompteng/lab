@@ -190,12 +190,24 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   process.chdir(targetDir)
 
   if (headBranch && headBranch !== baseBranch) {
-    // Prefer the head branch if provided; create local tracking branch when missing.
+    const remoteHead =
+      await $`git -C ${targetDir} show-ref --verify --quiet refs/remotes/origin/${headBranch}`.nothrow()
+    const hasRemoteHead = remoteHead.exitCode === 0
+
     const checkoutResult = await $`git -C ${targetDir} checkout ${headBranch}`.nothrow()
     if (checkoutResult.exitCode !== 0) {
-      await $`git -C ${targetDir} checkout -B ${headBranch} origin/${headBranch}`
+      const fromRef = hasRemoteHead ? `origin/${headBranch}` : `origin/${baseBranch}`
+      await $`git -C ${targetDir} checkout -B ${headBranch} ${fromRef}`.nothrow()
     }
-    await $`git -C ${targetDir} reset --hard origin/${headBranch}`
+
+    if (hasRemoteHead) {
+      const resetHead = await $`git -C ${targetDir} reset --hard origin/${headBranch}`.nothrow()
+      if (resetHead.exitCode !== 0) {
+        await $`git -C ${targetDir} reset --hard origin/${baseBranch}`.nothrow()
+      }
+    } else {
+      await $`git -C ${targetDir} reset --hard origin/${baseBranch}`.nothrow()
+    }
   }
 
   await bootstrapWorkspace()
