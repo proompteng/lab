@@ -352,10 +352,21 @@ export const runCodexSession = async ({
   while (true) {
     const timeoutMs = sawTurnCompleted ? completedGraceMs : idleTimeoutMs
 
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
     const readResult = await Promise.race([
       reader.read(),
-      new Promise<{ timeout: true }>((resolve) => setTimeout(() => resolve({ timeout: true }), timeoutMs)),
+      new Promise<{ timeout: true }>((resolve) => {
+        timeoutHandle = setTimeout(() => resolve({ timeout: true }), timeoutMs)
+        // Avoid keeping the event loop alive after a successful read.
+        if (typeof (timeoutHandle as unknown as { unref?: () => void }).unref === 'function') {
+          ;(timeoutHandle as unknown as { unref: () => void }).unref()
+        }
+      }),
     ])
+
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle)
+    }
 
     if ((readResult as { timeout?: boolean }).timeout) {
       const idleFor = Date.now() - lastActivity
