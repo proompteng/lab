@@ -909,12 +909,12 @@ export class WorkerRuntime {
 
   async #handleWorkflowTask(response: PollWorkflowTaskQueueResponse, nondeterminismRetry = 0): Promise<void> {
     const execution = this.#resolveWorkflowExecution(response)
-    const isQueryOnly = Boolean(response.query)
+    const hasQueryRequests = Boolean(response.query) || (response.queries?.length ?? 0) > 0
     const hasUpdateMessages = (response.messages?.length ?? 0) > 0
-    const kind: InterceptorKind = isQueryOnly
-      ? 'worker.queryTask'
-      : hasUpdateMessages
-        ? 'worker.updateTask'
+    const kind: InterceptorKind = hasUpdateMessages
+      ? 'worker.updateTask'
+      : hasQueryRequests
+        ? 'worker.queryTask'
         : 'worker.workflowTask'
     const context = {
       kind,

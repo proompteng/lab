@@ -193,6 +193,10 @@ const retryInterceptor = (fallbackPolicy: TemporalRpcRetryPolicy): TemporalInter
   order: -40,
   outbound(context, next) {
     const policy = (context.metadata?.retryPolicy as TemporalRpcRetryPolicy | undefined) ?? fallbackPolicy
+    if (policy.maxAttempts <= 1) {
+      context.attempt = 1
+      return next()
+    }
     let attempt = 0
     const runWithAttempt = () =>
       Effect.gen(function* () {

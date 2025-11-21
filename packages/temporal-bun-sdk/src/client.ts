@@ -238,16 +238,41 @@ const isAbortLikeError = (error: unknown): boolean =>
   (error instanceof ConnectError && error.code === Code.Canceled)
 
 const normalizeUnknownError = (error: unknown): unknown => {
-  if (error instanceof Error && error.message.toLowerCase().includes('unknown error occurred in effect.trypromise')) {
-    const candidate = error as { cause?: unknown; error?: unknown }
-    if (candidate.cause) {
-      return candidate.cause
+  const unwrap = (value: unknown): unknown => {
+    if (!value || typeof value !== 'object') {
+      return value
     }
-    if (candidate.error) {
-      return candidate.error
+
+    if (value instanceof TemporalTlsHandshakeError || value instanceof ConnectError) {
+      return value
     }
+
+    const candidate = value as { cause?: unknown; error?: unknown; _tag?: string }
+
+    if (candidate.cause !== undefined) {
+      return unwrap(candidate.cause)
+    }
+    if (candidate.error !== undefined) {
+      return unwrap(candidate.error)
+    }
+
+    if (candidate._tag === 'UnknownException') {
+      return unwrap(candidate.cause ?? candidate.error ?? value)
+    }
+
+    const symbols = Object.getOwnPropertySymbols(value)
+    for (const symbol of symbols) {
+      const inner = (value as Record<symbol, unknown>)[symbol]
+      const unwrapped = unwrap(inner)
+      if (unwrapped !== inner) {
+        return unwrapped
+      }
+    }
+
+    return value
   }
-  return error
+
+  return unwrap(error)
 }
 
 const isCallOptionsCandidate = (value: unknown): value is BrandedTemporalClientCallOptions => {
@@ -1038,7 +1063,14 @@ class TemporalClientImpl implements TemporalClient {
       return result
     } catch (error) {
       const normalized = normalizeUnknownError(error)
-      const message = normalized instanceof Error ? normalized.message.toLowerCase() : ''
+      const finalError =
+        normalized instanceof Error &&
+        normalized.message.toLowerCase().includes('unknown error occurred in effect.trypromise')
+          ? ((normalized as { cause?: unknown; error?: unknown }).cause ??
+            (normalized as { cause?: unknown; error?: unknown }).error ??
+            normalized)
+          : normalized
+      const message = finalError instanceof Error ? finalError.message.toLowerCase() : ''
       const isUnknownPollAbort =
         operation === 'workflow.awaitUpdate' && message.includes('unknown error occurred in effect.trypromise')
       if (isAbortLikeError(normalized)) {
@@ -1048,7 +1080,7 @@ class TemporalClientImpl implements TemporalClient {
           ...metadata,
         })
         this.#recordMetrics(Date.now() - start, true)
-        throw normalized
+        throw finalError
       }
       if (isUnknownPollAbort) {
         const abortError = new Error('Workflow update polling aborted')
@@ -1063,11 +1095,11 @@ class TemporalClientImpl implements TemporalClient {
       }
       this.#log('error', `temporal client ${operation} failed`, {
         operation,
-        error: describeError(normalized),
+        error: describeError(finalError),
         ...metadata,
       })
       this.#recordMetrics(Date.now() - start, true)
-      throw normalized
+      throw finalError
     }
   }
 
