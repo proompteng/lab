@@ -331,4 +331,93 @@ describe('codex-runner', () => {
 
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  it('kills the Codex process after idle timeout', async () => {
+    const promptSink: string[] = []
+
+    const hangingReader = {
+      read: vi.fn(() => new Promise<never>(() => {})),
+      cancel: vi.fn(async () => {}),
+    }
+
+    const codexProcess = {
+      stdin: createWritable(promptSink),
+      stdout: { getReader: () => hangingReader },
+      stderr: null,
+      exited: Promise.resolve(0),
+      kill: vi.fn(),
+    }
+
+    spawnMock.mockImplementation(() => codexProcess)
+
+    const outputPath = join(workspace, 'output.log')
+    const jsonOutputPath = join(workspace, 'events.jsonl')
+    const agentOutputPath = join(workspace, 'agent.log')
+
+    const originalEnv = { ...process.env }
+    process.env.CODEX_IDLE_TIMEOUT_MS = '5'
+
+    const sessionPromise = runCodexSession({
+      stage: 'planning',
+      prompt: 'hang',
+      outputPath,
+      jsonOutputPath,
+      agentOutputPath,
+    })
+
+    await sessionPromise
+
+    expect(codexProcess.kill).toHaveBeenCalled()
+    expect(hangingReader.cancel).toHaveBeenCalled()
+    process.env = originalEnv
+  })
+
+  it('uses the shorter grace timeout after turn.completed', async () => {
+    const promptSink: string[] = []
+
+    const readMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        value: encoder.encode(`${JSON.stringify({ type: 'turn.completed' })}\n`),
+        done: false,
+      })
+      .mockImplementation(() => new Promise<never>(() => {}))
+
+    const hangingReader = {
+      read: readMock,
+      cancel: vi.fn(async () => {}),
+    }
+
+    const codexProcess = {
+      stdin: createWritable(promptSink),
+      stdout: { getReader: () => hangingReader },
+      stderr: null,
+      exited: Promise.resolve(0),
+      kill: vi.fn(),
+    }
+
+    spawnMock.mockImplementation(() => codexProcess)
+
+    const outputPath = join(workspace, 'output.log')
+    const jsonOutputPath = join(workspace, 'events.jsonl')
+    const agentOutputPath = join(workspace, 'agent.log')
+
+    const originalEnv = { ...process.env }
+    process.env.CODEX_IDLE_TIMEOUT_MS = '1000'
+    process.env.CODEX_EXIT_GRACE_MS = '20'
+
+    const sessionPromise = runCodexSession({
+      stage: 'review',
+      prompt: 'turn-complete',
+      outputPath,
+      jsonOutputPath,
+      agentOutputPath,
+    })
+
+    await sessionPromise
+
+    expect(codexProcess.kill).toHaveBeenCalled()
+    expect(hangingReader.cancel).toHaveBeenCalled()
+    process.env = originalEnv
+  })
 })
