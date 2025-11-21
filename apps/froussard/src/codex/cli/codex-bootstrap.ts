@@ -125,6 +125,41 @@ const bootstrapWorkspace = async () => {
   await runWithNvm(`"${pnpmExecutable}" install --frozen-lockfile`)
 }
 
+const waitForDocker = async () => {
+  const dockerHost = process.env.DOCKER_HOST
+  const dockerEnabled = process.env.DOCKER_ENABLED === '1'
+
+  if (!dockerEnabled || !dockerHost) {
+    return
+  }
+
+  const maxAttempts = 6
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await $`docker info --format '{{json .ServerVersion}}'`
+      return
+    } catch (error) {
+      lastError = error
+      const delayMs = 1000 * attempt
+      console.warn(`Waiting for Docker daemon at ${dockerHost} (attempt ${attempt}/${maxAttempts})...`)
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
+  }
+
+  const message =
+    `Docker is not reachable via ${dockerHost}. Ensure the sidecar is healthy and port 2375 is exposed.\n` +
+    'Hint: check sidecar logs and confirm DOCKER_TLS_VERIFY=0 when using the in-pod daemon.'
+
+  if (lastError instanceof Error) {
+    lastError.message = `${message}\nLast error: ${lastError.message}`
+    throw lastError
+  }
+
+  throw new Error(message)
+}
+
 export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) => {
   const repoUrl = process.env.REPO_URL ?? 'https://github.com/proompteng/lab'
   const worktreeDefault = process.env.WORKTREE ?? '/workspace/lab'
@@ -155,6 +190,7 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   process.chdir(targetDir)
 
   await bootstrapWorkspace()
+  await waitForDocker()
 
   const [command, ...commandArgs] = argv
   if (!command) {

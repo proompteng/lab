@@ -14,6 +14,9 @@ spec:
         value: '{}'
       - name: eventBody
         value: '{}'
+  volumes:
+    - name: docker-lib
+      emptyDir: {}
   templates:
     - name: review
       inputs:
@@ -60,6 +63,12 @@ spec:
                 optional: true
           - name: LGTM_LOKI_ENDPOINT
             value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
+          - name: DOCKER_HOST
+            value: tcp://localhost:2375
+          - name: DOCKER_TLS_VERIFY
+            value: ""
+          - name: DOCKER_ENABLED
+            value: "1"
         command: ["/usr/local/bin/codex-bootstrap"]
         args:
           - "/bin/bash"
@@ -86,6 +95,10 @@ spec:
 
             echo "Executing review workflow" >&2
             "${WORKTREE_DIR}/apps/froussard/src/codex/cli/codex-review.ts" "$EVENT_FILE"
+        volumeMounts:
+          - name: docker-lib
+            mountPath: /var/lib/docker
+            readOnly: true
         resources:
           requests:
             cpu: "4"
@@ -93,3 +106,32 @@ spec:
           limits:
             cpu: "6"
             memory: 12Gi
+      sidecars:
+        - name: docker
+          image: docker:25.0-dind
+          command: ["dockerd-entrypoint.sh"]
+          args:
+            - "--host=tcp://0.0.0.0:2375"
+            - "--host=unix:///var/run/docker.sock"
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+            - name: XDG_RUNTIME_DIR
+              value: /tmp/docker-runtime
+            - name: DOCKER_HOST
+              value: tcp://0.0.0.0:2375
+          ports:
+            - containerPort: 2375
+              name: docker
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: docker-lib
+              mountPath: /var/lib/docker
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
