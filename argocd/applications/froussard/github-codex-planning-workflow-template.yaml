@@ -116,7 +116,7 @@ spec:
             fi
 
             echo "Generating plan for $ISSUE_REPO#$ISSUE_NUMBER"
-            codex-plan
+            /usr/local/bin/codex-plan
 
             echo "Codex plan output:" >&2
             cat "$OUTPUT_PATH" >&2

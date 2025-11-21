@@ -94,7 +94,7 @@ spec:
             export OUTPUT_PATH="${REVIEW_OUTPUT_PATH:-/workspace/lab/.codex-review.log}"
 
             echo "Executing review workflow" >&2
-            "${WORKTREE_DIR}/apps/froussard/src/codex/cli/codex-review.ts" "$EVENT_FILE"
+            /usr/local/bin/codex-review "$EVENT_FILE"
         volumeMounts:
           - name: docker-lib
             mountPath: /var/lib/docker
