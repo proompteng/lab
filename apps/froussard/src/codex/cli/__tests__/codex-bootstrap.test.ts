@@ -162,7 +162,7 @@ describe('runCodexBootstrap', () => {
     await mkdir(join(workdir, '.git'), { recursive: true })
     process.env.HEAD_BRANCH = 'codex/issue-9999-temp'
     exitCodeOverrides.set(`git -C ${workdir} checkout ${process.env.HEAD_BRANCH}`, 1)
-    exitCodeOverrides.set(`show-ref --verify --quiet refs/remotes/origin/${process.env.HEAD_BRANCH}`, 1)
+    exitCodeOverrides.set(`rev-parse --verify --quiet origin/${process.env.HEAD_BRANCH}`, 1)
 
     const exitCode = await runCodexBootstrap()
 
@@ -176,7 +176,7 @@ describe('runCodexBootstrap', () => {
     await mkdir(join(workdir, '.git'), { recursive: true })
     process.env.HEAD_BRANCH = 'codex/issue-1234'
     // Simulate remote ref missing; checkout succeeds (default exit 0).
-    exitCodeOverrides.set(`show-ref --verify --quiet refs/remotes/origin/${process.env.HEAD_BRANCH}`, 1)
+    exitCodeOverrides.set(`rev-parse --verify --quiet origin/${process.env.HEAD_BRANCH}`, 1)
 
     const exitCode = await runCodexBootstrap()
 

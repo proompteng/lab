@@ -740,7 +740,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   const syncWorktreeToHead = async () => {
     const remoteHeadExists =
       (
-        await runCommand('git', ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${headBranch}`], {
+        await runCommand('git', ['rev-parse', '--verify', '--quiet', `origin/${headBranch}`], {
           cwd: worktree,
         })
       ).exitCode === 0
@@ -756,22 +756,19 @@ export const runCodexImplementation = async (eventPath: string) => {
       assertCommandSuccess(checkoutResult, 'git checkout head')
     }
 
-    const primaryResetRef = remoteHeadExists ? `origin/${headBranch}` : `origin/${baseBranch}`
-    const primaryReset = await runCommand('git', ['reset', '--hard', primaryResetRef], { cwd: worktree })
+    const candidateRefs = remoteHeadExists ? [`origin/${headBranch}`, `origin/${baseBranch}`] : [`origin/${baseBranch}`]
 
-    if (primaryReset.exitCode === 0) {
-      assertCommandSuccess(primaryReset, 'git reset --hard')
-      return
+    const resetErrors: string[] = []
+    for (const ref of candidateRefs) {
+      const resetResult = await runCommand('git', ['reset', '--hard', ref], { cwd: worktree })
+      if (resetResult.exitCode === 0) {
+        assertCommandSuccess(resetResult, `git reset --hard ${ref}`)
+        return
+      }
+      resetErrors.push(`reset ${ref} failed (exit ${resetResult.exitCode}) ${resetResult.stderr || resetResult.stdout}`)
     }
 
-    if (remoteHeadExists) {
-      const fallbackReset = await runCommand('git', ['reset', '--hard', `origin/${baseBranch}`], { cwd: worktree })
-      assertCommandSuccess(fallbackReset, 'git reset --hard (base fallback)')
-      return
-    }
-
-    // If we got here, we already tried base-only and failed.
-    assertCommandSuccess(primaryReset, 'git reset --hard')
+    throw new Error(`git reset --hard failed; attempts: ${resetErrors.join('; ')}`)
   }
 
   await syncWorktreeToHead()
