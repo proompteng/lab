@@ -189,6 +189,7 @@ const tracingInterceptor = (logger: Logger): TemporalInterceptor => ({
 
 const retryInterceptor = (fallbackPolicy: TemporalRpcRetryPolicy): TemporalInterceptor => ({
   name: 'client-retry',
+  kinds: ['rpc'],
   order: -40,
   outbound(context, next) {
     const policy = (context.metadata?.retryPolicy as TemporalRpcRetryPolicy | undefined) ?? fallbackPolicy
