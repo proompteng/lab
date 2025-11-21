@@ -103,6 +103,7 @@ Environment variables supported by the config loader:
 | `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (host and PID are appended automatically). |
 | `TEMPORAL_LOG_FORMAT` | `pretty` | Select `json` or `pretty` logging output for worker/client runs. |
 | `TEMPORAL_LOG_LEVEL` | `info` | Minimum log severity (`debug`, `info`, `warn`, `error`). |
+| `TEMPORAL_TRACING_INTERCEPTORS_ENABLED` | `true` | Set to `false` to disable tracing/audit interceptors when environments forbid spans. |
 | `TEMPORAL_METRICS_EXPORTER` | `in-memory` | Choose metrics sink: `in-memory`, `file`, `prometheus`, or `otlp`. |
 | `TEMPORAL_METRICS_ENDPOINT` | _unset_ | Path or URL consumed by file/Prometheus/OTLP exporters. |
 
@@ -124,7 +125,7 @@ by hand.
     timeoutMs: 5_000,
   }))
   ```
-- **Default interceptors** – namespace/identity headers are added automatically, structured logs are emitted for every RPC, and latency/error metrics flow through the configured registry/exporter. Pass `interceptors` to `createTemporalClient` to append tracing or auth middleware.
+- **Default interceptors** – inbound/outbound hooks wrap every workflow RPC and operation: namespace/identity headers are injected, retries use jittered backoff, and latency/error metrics flow through the configured registry/exporter. Tracing spans are opt-in via `TEMPORAL_TRACING_INTERCEPTORS_ENABLED` (or `tracingEnabled` in code). Append custom middleware with `clientInterceptors` (client) or `interceptors` (worker) to add auth headers, audit logs, or bespoke telemetry.
 - **Memo/search helpers** – `client.memo` and `client.searchAttributes` expose `encode`/`decode` helpers that reuse the client’s `DataConverter`, making it easy to prepare payloads for raw WorkflowService requests.
 - **TLS validation** – TLS buffers are checked up front (missing files, invalid PEMs, and mismatched cert/key pairs throw `TemporalTlsConfigurationError`) and transport failures surface as `TemporalTlsHandshakeError` with remediation hints.
 
@@ -142,16 +143,17 @@ behavior with the same environment variables listed above:
   `/tmp/metrics.json`).
 
 Want to verify your configuration without running a worker? `temporal-bun`
-includes a new `doctor` command that loads the shared config, spins up the
-observability services, emits a log, increments a counter, and flushes the
-selected exporter:
+includes a `doctor` command that loads the shared config, builds the interceptor
+chain, validates the retry presets, spins up observability services, emits a
+log, increments a counter, and flushes the selected exporter:
 
 ```bash
 bunx temporal-bun doctor --log-format=json --metrics=file:/tmp/metrics.json
 ```
 
-The command prints a success summary once the JSON log is emitted and the
-metrics file is written, so you can script it into CI or pre-deployment checks.
+The command prints a success summary (including active interceptors and the
+resolved retry policy) once the JSON log is emitted and the metrics file is
+written, so you can script it into CI or pre-deployment checks.
 
 ## Layered bootstrap helpers
 

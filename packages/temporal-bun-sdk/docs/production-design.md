@@ -23,7 +23,7 @@ and the quality bars we must meet before GA.
 | --- | --- | --- |
 | Workflow execution | **Alpha** | Deterministic command context, activity/timer/child/signal/continue-as-new intents, deterministic guard. |
 | Worker runtime | **Beta** | Sticky cache routing performs drift detection + healing; Effect-based scheduler with configurable concurrency; observability/logging/heartbeat telemetry wired via TBS-004. |
-| Client | **Alpha** | Start/signal/query/cancel/update/describe namespace with Connect transport; interceptors and retries pending. |
+| Client | **Beta** | Start/signal/query/cancel/update/describe namespace with Connect transport; effect-layered interceptors, retries, and telemetry shipped. |
 | Activities | **Beta-** | Handler registry, cancellation signals. Heartbeats, retries, and failure categorisation remain. |
 | Tooling & docs | **Beta-** | Replay runbook + history capture automation documented; CLI scaffolds projects and Docker image. Remaining doc gaps outside TBS-001. |
 | Testing | **Beta** | Determinism regression harness (`tests/replay/**`) plus Temporal CLI integration suite (`tests/integration/history-replay.test.ts`); load/perf smoke tests still pending. |
@@ -40,8 +40,8 @@ to be complete, with supporting validation and documentation.
   - _Shipped:_ Single-threaded pollers, deterministic snapshot persistence per run.
   - _GA requirements:_ Configurable concurrency, sticky task queues, build-id routing, graceful shutdown with drain, heartbeat plumbing, metrics/logging hooks.
 - **Client (`src/client.ts`)**
-  - _Shipped:_ Connect WorkflowService client with payload conversion and header normalisation.
-  - _GA requirements:_ Retry/interceptor framework, TLS/auth hardening, memo/search attribute helpers, long-running operation ergonomics.
+  - _Shipped:_ Connect WorkflowService client with payload conversion, header normalisation, and effect-layered interceptors for retries/auth/metrics/tracing.
+  - _GA requirements:_ TLS/auth hardening, memo/search attribute helpers, long-running operation ergonomics.
 - **Activities (`src/activities/*`, `src/worker/activity-context.ts`)**
   - _Shipped:_ AsyncLocalStorage-based context, cancellation surface.
   - _GA requirements:_ Heartbeat API, retry policy adherence, progress payload encoding, failure classification.
