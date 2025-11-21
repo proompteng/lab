@@ -9,7 +9,7 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
 ## Quick Start
 
 1. **Prerequisites**
-   - Node.js 22.20.x and pnpm 10+
+   - Node.js 24.11.x and pnpm 10.22.x (via Corepack)
    - Go 1.24+
    - Bun (optional, see `bun.lock`)
    - Docker / Kubernetes tooling if you plan to run services or apply manifests locally

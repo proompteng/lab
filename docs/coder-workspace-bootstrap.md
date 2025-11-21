@@ -130,6 +130,6 @@ Following this loop keeps the template lineage clean and ensures future Codex ru
 ## Latest Findings (September 28, 2025)
 
 - Bootstrap script v1.0.17 now tolerates the node module’s nested `~/.nvm/nvm` layout, waits for Node 24, and re-installs nvm if the module lags.
-- Tooling validated inside `greg/proompteng` on template version `xenodochial_jackson9` (Node v24.11.1, pnpm 10.18.1, Convex 1.27.0, codex-cli 0.42.0, kubectl v1.34.1, Argo CD v3.1.7).
+- Tooling validated inside `greg/proompteng` on template version `xenodochial_jackson9` (Node v24.11.1, pnpm 10.22.0, Convex 1.27.0, codex-cli 0.42.0, kubectl v1.34.1, Argo CD v3.1.7).
 - Repository auto-detection fixes the previous `/home/coder/github.com/workspace` miss; `pnpm install --frozen-lockfile` now runs automatically when `pnpm-lock.yaml` is present.
 - `kubectl` and `argocd` binaries are symlinked into `/tmp/coder-script-data/bin`, so `coder ssh workspace -- <command>` works without shell init files.

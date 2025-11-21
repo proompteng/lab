@@ -24,6 +24,9 @@ ENV CODEX_ENV_NODE_VERSION=24.11.1 \
 # Preinstall requested Node version to avoid nvm cache misses during setup.
 RUN bash -lc 'source /root/.nvm/nvm.sh && nvm install ${CODEX_ENV_NODE_VERSION}'
 
+# Pin pnpm to the latest tested release for reproducible installs.
+RUN bash -lc 'source /root/.nvm/nvm.sh && corepack prepare pnpm@10.22.0 --activate'
+
 RUN set -eux; \
     apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Debug::Acquire::http=true \
     && apt-get install -y -V --no-install-recommends ca-certificates curl gnupg git gh jq python3 xz-utils protobuf-compiler libprotobuf-dev \
