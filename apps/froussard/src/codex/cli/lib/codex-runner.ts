@@ -179,6 +179,19 @@ export const runCodexSession = async ({
 }: RunCodexSessionOptions): Promise<RunCodexSessionResult> => {
   const log = logger ?? consoleLogger
 
+  const parsePositiveMs = (value: string | undefined, fallback: number) => {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed
+    }
+    return fallback
+  }
+
+  // Long-running tool calls may stay quiet; default to 30 minutes of silence before we force-exit.
+  const idleTimeoutMs = parsePositiveMs(process.env.CODEX_IDLE_TIMEOUT_MS, 30 * 60 * 1000)
+  // After the model reports turn completion, give a short grace period before forcing exit.
+  const completedGraceMs = parsePositiveMs(process.env.CODEX_EXIT_GRACE_MS, 2 * 60 * 1000)
+
   await Promise.all([
     ensureFileDirectory(outputPath),
     ensureFileDirectory(jsonOutputPath),
@@ -262,6 +275,9 @@ export const runCodexSession = async ({
   const reader = codexProcess.stdout?.getReader()
   let buffer = ''
   let sessionId: string | undefined
+  let sawTurnCompleted = false
+  let forcedTermination = false
+  let lastActivity = Date.now()
 
   if (!reader) {
     throw new Error('Codex subprocess is missing stdout')
@@ -273,6 +289,7 @@ export const runCodexSession = async ({
     }
 
     await writeLine(jsonStream, line)
+    lastActivity = Date.now()
 
     const toolCallPayload = extractToolCallPayload(line)
     const logLineSession = extractSessionIdFromLogLine(line)
@@ -304,6 +321,9 @@ export const runCodexSession = async ({
           sessionId = candidateSession
         }
       }
+      if (parsed?.type === 'turn.completed') {
+        sawTurnCompleted = true
+      }
       if (parsed?.type === 'item.completed' && item?.type === 'agent_message' && typeof item?.text === 'string') {
         const message = item.text
         agentMessages.push(message)
@@ -330,7 +350,36 @@ export const runCodexSession = async ({
   }
 
   while (true) {
-    const { value, done } = await reader.read()
+    const timeoutMs = sawTurnCompleted ? completedGraceMs : idleTimeoutMs
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+    const readResult = await Promise.race([
+      reader.read(),
+      new Promise<{ timeout: true }>((resolve) => {
+        timeoutHandle = setTimeout(() => resolve({ timeout: true }), timeoutMs)
+        // Avoid keeping the event loop alive after a successful read.
+        if (typeof (timeoutHandle as unknown as { unref?: () => void }).unref === 'function') {
+          ;(timeoutHandle as unknown as { unref: () => void }).unref()
+        }
+      }),
+    ])
+
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle)
+    }
+
+    if ((readResult as { timeout?: boolean }).timeout) {
+      const idleFor = Date.now() - lastActivity
+      log.warn(
+        `Codex stdout idle for ${idleFor}ms (stage=${stage}); terminating child process after timeout ${timeoutMs}ms`,
+      )
+      forcedTermination = true
+      await reader.cancel().catch(() => {})
+      codexProcess.kill()
+      break
+    }
+
+    const { value, done } = readResult as ReadableStreamDefaultReadResult<Uint8Array>
     if (done) {
       break
     }
@@ -359,7 +408,14 @@ export const runCodexSession = async ({
   }
 
   const codexExitCode = await codexProcess.exited
-  if (codexExitCode !== 0) {
+
+  if (forcedTermination) {
+    if (codexExitCode !== 0) {
+      log.warn(`Codex subprocess was terminated due to idle timeout (exit ${codexExitCode})`)
+    } else {
+      log.warn('Codex subprocess was terminated due to idle timeout')
+    }
+  } else if (codexExitCode !== 0) {
     throw new Error(`Codex exited with status ${codexExitCode}`)
   }
 
