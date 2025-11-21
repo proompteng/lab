@@ -26,7 +26,7 @@ RUN apt-get update \
 RUN CODEX_ENV_NODE_VERSION="$CODEX_ENV_NODE_VERSION" CODEX_ENV_GO_VERSION="$CODEX_ENV_GO_VERSION" /opt/codex/setup_universal.sh
 
 RUN mise use --global "bun@${BUN_VERSION}" \
-    && mise cache clear || true \
+    && (mise cache clear || true) \
     && rm -rf "$HOME/.cache/mise" "$HOME/.local/share/mise/downloads"
 
 RUN set -eux; \
