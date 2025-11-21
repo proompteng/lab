@@ -104,6 +104,8 @@ spec:
             fi
             printf '%s' "$EVENT_BODY_B64" | base64 --decode > "$EVENT_FILE"
 
+            WORKTREE_DIR="${WORKTREE:-/workspace/lab}"
+
             STAGE=$(jq -r '.stage // ""' "$EVENT_FILE")
             if [[ "$STAGE" != "implementation" ]]; then
               echo "Skipping unsupported stage: '$STAGE'"
