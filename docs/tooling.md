@@ -4,7 +4,7 @@ This guide consolidates the CLI and runtime tooling we keep standardised across 
 
 ## Node.js, pnpm, and Bun
 
-- **Node.js** – Target the Active LTS line (22.x) which receives security fixes through April 30 2027 (see the [Node.js release schedule](https://nodejs.org/en/about/previous-releases)).  
+- **Node.js** – Target the Active LTS line (24.x) which receives security fixes through April 30 2028 (see the [Node.js release schedule](https://nodejs.org/en/about/previous-releases)).  
   Workspaces ship with `nvm` preinstalled. To match production:
   ```bash
   nvm install 22

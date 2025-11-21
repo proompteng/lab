@@ -9,7 +9,7 @@
 
 ## Build, Test & Development Commands
 
-- Install dependencies with `pnpm install` (Node 22.20.0) and run `go mod tidy` inside each Go service.
+- Install dependencies with `pnpm install` (Node 24.11.1) and run `go mod tidy` inside each Go service.
 - Start UIs with `pnpm run dev:proompteng`; swap the suffix for sibling apps.
 - Build and smoke test via `pnpm run build:<app>` then `pnpm run start:<app>`.
 - Format and lint using `pnpm run format` and `pnpm run lint:<app>`.

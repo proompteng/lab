@@ -75,7 +75,7 @@ const runWithNvm = async (command: string, capture = false) => {
   if (!(await pathExists(nvmScript))) {
     throw new Error(`Unable to locate nvm shim at ${nvmScript}`)
   }
-  const commandWithEnv = `export NVM_DIR="${nvmDir}"; [ -s "${nvmScript}" ] && . "${nvmScript}"; nvm use --silent default >/dev/null || nvm use --silent ${process.env.NODE_VERSION ?? '22'} >/dev/null; ${command}`
+  const commandWithEnv = `export NVM_DIR="${nvmDir}"; [ -s "${nvmScript}" ] && . "${nvmScript}"; nvm use --silent default >/dev/null || nvm use --silent ${process.env.NODE_VERSION ?? '24.11.1'} >/dev/null; ${command}`
   const task = $`bash -lc ${commandWithEnv}`
   if (capture) {
     return (await task.text()).trim()

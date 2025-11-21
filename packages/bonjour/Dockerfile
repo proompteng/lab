@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22.20.0-bullseye-slim AS builder
+FROM node:24.11.1-bullseye-slim AS builder
 ENV PNPM_HOME=/root/.local/share/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 ENV HUSKY=0
@@ -21,7 +21,7 @@ RUN pnpm install --frozen-lockfile --filter @proompteng/bonjour...
 COPY packages/bonjour packages/bonjour
 RUN pnpm --filter @proompteng/bonjour build
 
-FROM node:22.20.0-bullseye-slim AS prod-deps
+FROM node:24.11.1-bullseye-slim AS prod-deps
 ENV PNPM_HOME=/root/.local/share/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 ENV HUSKY=0
@@ -34,7 +34,7 @@ COPY packages/bonjour/package.json packages/bonjour/package.json
 
 RUN pnpm install --prod --frozen-lockfile --filter @proompteng/bonjour...
 
-FROM node:22.20.0-bullseye-slim AS runtime
+FROM node:24.11.1-bullseye-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /opt/app
 

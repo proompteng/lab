@@ -30,7 +30,7 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
    go run ./services/prt
    ```
 
-> Prefer a hosted development experience? Click the **Open in Coder** button above to provision a workspace with Node 22, pnpm, and the repository pre-installed.
+> Prefer a hosted development experience? Click the **Open in Coder** button above to provision a workspace with Node 24, pnpm, and the repository pre-installed.
 
 ---
 
@@ -128,7 +128,7 @@ Supporting configuration:
 ## Coder Workspace
 
 - Template name: **k8s-arm64** (see `kubernetes/coder/template.yaml`).
-- Bootstrap script provisions code-server, Node 22, pnpm, Convex CLI, kubectl/argocd, and installs repo dependencies.
+- Bootstrap script provisions code-server, Node 24, pnpm, Convex CLI, kubectl/argocd, and installs repo dependencies.
 - Use `coder templates push` / `coder update` to maintain the template when infrastructure changes are made.
 
 ---
