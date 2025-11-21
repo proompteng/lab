@@ -53,10 +53,12 @@ const resetEnv = () => {
 
 describe('runCodexImplementation', () => {
   let workdir: string
+  let remoteDir: string
   let eventPath: string
 
   beforeEach(async () => {
     workdir = await mkdtemp(join(tmpdir(), 'codex-impl-test-'))
+    remoteDir = await mkdtemp(join(tmpdir(), 'codex-impl-remote-'))
     eventPath = join(workdir, 'event.json')
     delete process.env.OUTPUT_PATH
     delete process.env.JSON_OUTPUT_PATH
@@ -83,9 +85,9 @@ describe('runCodexImplementation', () => {
     }
     await writeFile(eventPath, JSON.stringify(payload))
 
-    const runGit = async (args: string[]) =>
+    const runGit = async (args: string[], cwd = workdir) =>
       await new Promise<void>((resolve, reject) => {
-        const proc = spawn('git', args, { cwd: workdir })
+        const proc = spawn('git', args, { cwd })
         let stderr = ''
         proc.stderr?.on('data', (chunk) => {
           stderr += chunk.toString()
@@ -107,6 +109,15 @@ describe('runCodexImplementation', () => {
     await runGit(['add', '.gitkeep'])
     await runGit(['commit', '-m', 'chore: initial'])
 
+    // Create bare remote and push both base and head branches so branch sync succeeds.
+    await runGit(['init', '--bare', remoteDir], remoteDir)
+    await runGit(['remote', 'add', 'origin', remoteDir])
+    await runGit(['checkout', '-B', 'main'])
+    await runGit(['push', '-u', 'origin', 'main'])
+    await runGit(['checkout', '-B', 'codex/issue-42'])
+    await runGit(['push', '-u', 'origin', 'codex/issue-42'])
+    await runGit(['checkout', 'main'])
+
     runCodexSessionMock.mockReset()
     runCodexSessionMock.mockImplementation(async () => ({ agentMessages: [], sessionId: 'session-xyz' }))
     pushCodexEventsToLokiMock.mockReset()
@@ -117,6 +128,9 @@ describe('runCodexImplementation', () => {
 
   afterEach(async () => {
     await rm(workdir, { recursive: true, force: true })
+    if (remoteDir) {
+      await rm(remoteDir, { recursive: true, force: true })
+    }
     resetEnv()
   })
 

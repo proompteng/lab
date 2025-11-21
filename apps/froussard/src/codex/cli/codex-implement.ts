@@ -727,13 +727,30 @@ export const runCodexImplementation = async (eventPath: string) => {
     throw new Error('Missing head branch metadata in event payload')
   }
 
+  const assertCommandSuccess = (result: CommandResult, description: string) => {
+    if (result.exitCode !== 0) {
+      const output = [result.stderr, result.stdout].filter(Boolean).join('\n').trim()
+      throw new Error(`${description} failed (exit ${result.exitCode})${output ? `: ${output}` : ''}`)
+    }
+  }
+
   // Ensure worktree tracks the requested head branch (not just base).
-  await runCommand('git', ['fetch', '--all', '--prune'], { cwd: worktree })
+  assertCommandSuccess(await runCommand('git', ['fetch', '--all', '--prune'], { cwd: worktree }), 'git fetch')
+
   const checkoutResult = await runCommand('git', ['checkout', headBranch], { cwd: worktree })
   if (checkoutResult.exitCode !== 0) {
-    await runCommand('git', ['checkout', '-B', headBranch, `origin/${headBranch}`], { cwd: worktree })
+    assertCommandSuccess(
+      await runCommand('git', ['checkout', '-B', headBranch, `origin/${headBranch}`], { cwd: worktree }),
+      'git checkout -B head',
+    )
+  } else {
+    assertCommandSuccess(checkoutResult, 'git checkout head')
   }
-  await runCommand('git', ['reset', '--hard', `origin/${headBranch}`], { cwd: worktree })
+
+  assertCommandSuccess(
+    await runCommand('git', ['reset', '--hard', `origin/${headBranch}`], { cwd: worktree }),
+    'git reset --hard',
+  )
 
   const planCommentId =
     event.planCommentId !== undefined && event.planCommentId !== null ? String(event.planCommentId) : ''
