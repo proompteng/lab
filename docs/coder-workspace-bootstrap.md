@@ -47,7 +47,7 @@ This document explains how to maintain the single `k8s-arm64` template in Coder,
 
 ## Bootstrap Script Overview
 
-- Waits up to three minutes for `module.nodejs` to finish publishing `~/.nvm/nvm.sh` and Node 22. If the module misses that window, the script installs `nvm` and Node 22 itself.
+- Waits up to three minutes for `module.nodejs` to finish publishing `~/.nvm/nvm.sh` and Node 24. If the module misses that window, the script installs `nvm` and Node 24 itself.
 - After `nvm use 22`, the script refreshes the shell hash table and blocks until `npm` is reachable to avoid race conditions that previously produced exit code 127.
 - Corepack is preferred for `pnpm` activation; if it never becomes available the script logs the fallback and installs `pnpm` with `npm install -g pnpm`.
 - Installs CLI dependencies in this order: `pnpm`, `convex@1.27.0`, `@openai/codex`, `kubectl`, `argocd`.
@@ -129,7 +129,7 @@ Following this loop keeps the template lineage clean and ensures future Codex ru
 
 ## Latest Findings (September 28, 2025)
 
-- Bootstrap script v1.0.17 now tolerates the node module’s nested `~/.nvm/nvm` layout, waits for Node 22, and re-installs nvm if the module lags.
-- Tooling validated inside `greg/proompteng` on template version `xenodochial_jackson9` (Node v22.20.0, pnpm 10.18.1, Convex 1.27.0, codex-cli 0.42.0, kubectl v1.34.1, Argo CD v3.1.7).
+- Bootstrap script v1.0.17 now tolerates the node module’s nested `~/.nvm/nvm` layout, waits for Node 24, and re-installs nvm if the module lags.
+- Tooling validated inside `greg/proompteng` on template version `xenodochial_jackson9` (Node v24.11.1, pnpm 10.23.0, Convex 1.27.0, codex-cli 0.42.0, kubectl v1.34.1, Argo CD v3.1.7).
 - Repository auto-detection fixes the previous `/home/coder/github.com/workspace` miss; `pnpm install --frozen-lockfile` now runs automatically when `pnpm-lock.yaml` is present.
 - `kubectl` and `argocd` binaries are symlinked into `/tmp/coder-script-data/bin`, so `coder ssh workspace -- <command>` works without shell init files.

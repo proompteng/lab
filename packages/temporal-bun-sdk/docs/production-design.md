@@ -331,7 +331,7 @@ can contribute independently without re-planning.
   - `packages/temporal-bun-sdk/CHANGELOG.md` – canonical changelog kept current
     by release-please.
 - **Acceptance criteria (met)**
-  1. The release workflow installs Node 22 + Bun, runs `pnpm install
+  1. The release workflow installs Node 24 + Bun, runs `pnpm install
      --frozen-lockfile`, executes `pnpm exec biome check
      packages/temporal-bun-sdk`, `pnpm --filter @proompteng/temporal-bun-sdk
      test`, `pnpm --filter @proompteng/temporal-bun-sdk run test:load`, and

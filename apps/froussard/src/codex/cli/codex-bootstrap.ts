@@ -75,7 +75,7 @@ const runWithNvm = async (command: string, capture = false) => {
   if (!(await pathExists(nvmScript))) {
     throw new Error(`Unable to locate nvm shim at ${nvmScript}`)
   }
-  const commandWithEnv = `export NVM_DIR="${nvmDir}"; [ -s "${nvmScript}" ] && . "${nvmScript}"; nvm use --silent default >/dev/null || nvm use --silent ${process.env.NODE_VERSION ?? '22'} >/dev/null; ${command}`
+  const commandWithEnv = `export NVM_DIR="${nvmDir}"; [ -s "${nvmScript}" ] && . "${nvmScript}"; nvm use --silent default >/dev/null || nvm use --silent ${process.env.NODE_VERSION ?? '24.11.1'} >/dev/null; ${command}`
   const task = $`bash -lc ${commandWithEnv}`
   if (capture) {
     return (await task.text()).trim()
@@ -188,6 +188,15 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   }
 
   process.chdir(targetDir)
+
+  if (headBranch && headBranch !== baseBranch) {
+    // Prefer the head branch if provided; create local tracking branch when missing.
+    const checkoutResult = await $`git -C ${targetDir} checkout ${headBranch}`.nothrow()
+    if (checkoutResult.exitCode !== 0) {
+      await $`git -C ${targetDir} checkout -B ${headBranch} origin/${headBranch}`
+    }
+    await $`git -C ${targetDir} reset --hard origin/${headBranch}`
+  }
 
   await bootstrapWorkspace()
   await waitForDocker()

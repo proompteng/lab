@@ -43,6 +43,14 @@ spec:
               src:
                 dependencyName: implementation-event
                 dataTemplate: '{{ b64enc (.Input.body | toJson) }}'
+            - dest: spec.arguments.parameters.2.value
+              src:
+                dependencyName: implementation-event
+                dataTemplate: '{{ .Input.body.head }}'
+            - dest: spec.arguments.parameters.3.value
+              src:
+                dependencyName: implementation-event
+                dataTemplate: '{{ default "main" .Input.body.base }}'
           resource: workflows
           source:
             resource:
@@ -58,6 +66,10 @@ spec:
                       value: '{}'
                     - name: eventBody
                       value: '{}'
+                    - name: head
+                      value: ''
+                    - name: base
+                      value: 'main'
                 workflowTemplateRef:
                   name: github-codex-implementation
     - template:

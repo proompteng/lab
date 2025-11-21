@@ -9,7 +9,7 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
 ## Quick Start
 
 1. **Prerequisites**
-   - Node.js 22.20.x and pnpm 10+
+   - Node.js 24.11.x and pnpm 10.23.x (via Corepack)
    - Go 1.24+
    - Bun (optional, see `bun.lock`)
    - Docker / Kubernetes tooling if you plan to run services or apply manifests locally
@@ -30,7 +30,7 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
    go run ./services/prt
    ```
 
-> Prefer a hosted development experience? Click the **Open in Coder** button above to provision a workspace with Node 22, pnpm, and the repository pre-installed.
+> Prefer a hosted development experience? Click the **Open in Coder** button above to provision a workspace with Node 24, pnpm, and the repository pre-installed.
 
 ---
 
@@ -128,7 +128,7 @@ Supporting configuration:
 ## Coder Workspace
 
 - Template name: **k8s-arm64** (see `kubernetes/coder/template.yaml`).
-- Bootstrap script provisions code-server, Node 22, pnpm, Convex CLI, kubectl/argocd, and installs repo dependencies.
+- Bootstrap script provisions code-server, Node 24, pnpm, Convex CLI, kubectl/argocd, and installs repo dependencies.
 - Use `coder templates push` / `coder update` to maintain the template when infrastructure changes are made.
 
 ---

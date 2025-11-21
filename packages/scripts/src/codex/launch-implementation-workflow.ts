@@ -107,6 +107,10 @@ const main = async () => {
     `rawEvent=${rawEvent}`,
     '-p',
     `eventBody=${eventBodyB64}`,
+    '-p',
+    `head=${params.head}`,
+    '-p',
+    `base=${params.base}`,
   ]
 
   if (params.dryRun) {
