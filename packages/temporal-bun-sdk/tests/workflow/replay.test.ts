@@ -20,12 +20,13 @@ import {
   SignalExternalWorkflowExecutionInitiatedEventAttributesSchema,
   StartChildWorkflowExecutionInitiatedEventAttributesSchema,
   TimerStartedEventAttributesSchema,
+  UpsertWorkflowSearchAttributesEventAttributesSchema,
   WorkflowExecutionContinuedAsNewEventAttributesSchema,
   WorkflowExecutionFailedEventAttributesSchema,
 } from '../../src/proto/temporal/api/history/v1/message_pb'
 import { EventType } from '../../src/proto/temporal/api/enums/v1/event_type_pb'
 import { TaskQueueSchema } from '../../src/proto/temporal/api/taskqueue/v1/message_pb'
-import { PayloadsSchema, WorkflowExecutionSchema } from '../../src/proto/temporal/api/common/v1/message_pb'
+import { PayloadSchema, PayloadsSchema, WorkflowExecutionSchema } from '../../src/proto/temporal/api/common/v1/message_pb'
 import { FailureSchema } from '../../src/proto/temporal/api/failure/v1/message_pb'
 import type { WorkflowCommandIntent } from '../../src/workflow/commands'
 
@@ -552,6 +553,72 @@ test('diffDeterminismState ignores acceptedEventId mismatches for workflow updat
   expect(diffWithMessageMismatch.mismatches).toEqual([
     expect.objectContaining({ kind: 'update', index: 0 }),
   ])
+})
+
+test('ingestWorkflowHistory ingests record markers and search attribute upserts', async () => {
+  const converter = createDefaultDataConverter()
+  const info: WorkflowInfo = {
+    namespace: 'default',
+    taskQueue: 'prix',
+    workflowId: 'wf-marker',
+    runId: 'run-marker',
+    workflowType: 'workflowWithMarkers',
+  }
+
+  const markerPayloads = await encodeValuesToPayloads(converter, ['cached-value'])
+  const markerEvent = create(HistoryEventSchema, {
+    eventId: 1n,
+    eventType: EventType.MARKER_RECORDED,
+    attributes: {
+      case: 'markerRecordedEventAttributes',
+      value: create(MarkerRecordedEventAttributesSchema, {
+        markerName: 'temporal-bun-sdk/side-effect',
+        details: {
+          result: create(PayloadsSchema, { payloads: markerPayloads ?? [] }),
+        },
+      }),
+    },
+  })
+
+  const searchAttributePayloads = await encodeValuesToPayloads(converter, ['v1'])
+  const searchAttributePayload = searchAttributePayloads?.[0]
+  const upsertEvent = create(HistoryEventSchema, {
+    eventId: 2n,
+    eventType: EventType.UPSERT_WORKFLOW_SEARCH_ATTRIBUTES,
+    attributes: {
+      case: 'upsertWorkflowSearchAttributesEventAttributes',
+      value: create(UpsertWorkflowSearchAttributesEventAttributesSchema, {
+        workflowTaskCompletedEventId: 2n,
+        searchAttributes: {
+          indexedFields: {
+            CustomKeywordField: searchAttributePayload ?? create(PayloadSchema, { metadata: {}, data: new Uint8Array() }),
+          },
+        },
+      }),
+    },
+  })
+
+  const replay = await Effect.runPromise(
+    ingestWorkflowHistory({
+      info,
+      history: [markerEvent, upsertEvent],
+      dataConverter: converter,
+    }),
+  )
+
+  expect(replay.determinismState.commandHistory).toHaveLength(2)
+  const [markerIntent, upsertIntent] = replay.determinismState.commandHistory.map((entry) => entry.intent)
+
+  expect(markerIntent.kind).toBe('record-marker')
+  if (markerIntent.kind === 'record-marker') {
+    expect(markerIntent.markerName).toBe('temporal-bun-sdk/side-effect')
+    expect(markerIntent.details?.result).toBe('cached-value')
+  }
+
+  expect(upsertIntent.kind).toBe('upsert-search-attributes')
+  if (upsertIntent.kind === 'upsert-search-attributes') {
+    expect(upsertIntent.searchAttributes).toEqual({ CustomKeywordField: 'v1' })
+  }
 })
 
 test('resolveHistoryLastEventId normalizes bigint identifiers', () => {

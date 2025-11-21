@@ -3,16 +3,27 @@ import { Effect } from 'effect'
 
 import { durationToMillis } from '../common/duration'
 import { type DataConverter, decodePayloadsToValues, encodeValuesToPayloads } from '../common/payloads'
-import { type Payloads, PayloadsSchema, type RetryPolicy } from '../proto/temporal/api/common/v1/message_pb'
+import {
+  type Memo,
+  type Payloads,
+  PayloadsSchema,
+  type RetryPolicy,
+  type SearchAttributes,
+} from '../proto/temporal/api/common/v1/message_pb'
 import { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
 import { ParentClosePolicy, TimeoutType, WorkflowIdReusePolicy } from '../proto/temporal/api/enums/v1/workflow_pb'
 import type { Failure } from '../proto/temporal/api/failure/v1/message_pb'
 import type {
+  ActivityTaskCancelRequestedEventAttributes,
   ActivityTaskScheduledEventAttributes,
   HistoryEvent,
+  MarkerRecordedEventAttributes,
+  RequestCancelExternalWorkflowExecutionInitiatedEventAttributes,
   SignalExternalWorkflowExecutionInitiatedEventAttributes,
   StartChildWorkflowExecutionInitiatedEventAttributes,
+  TimerCanceledEventAttributes,
   TimerStartedEventAttributes,
+  UpsertWorkflowSearchAttributesEventAttributes,
   WorkflowExecutionContinuedAsNewEventAttributes,
   WorkflowExecutionFailedEventAttributes,
   WorkflowExecutionSignaledEventAttributes,
@@ -21,16 +32,23 @@ import type {
   WorkflowExecutionUpdateAdmittedEventAttributes,
   WorkflowExecutionUpdateCompletedEventAttributes,
   WorkflowExecutionUpdateRejectedEventAttributes,
+  WorkflowPropertiesModifiedEventAttributes,
   WorkflowTaskFailedEventAttributes,
   WorkflowTaskTimedOutEventAttributes,
 } from '../proto/temporal/api/history/v1/message_pb'
 import type { Outcome } from '../proto/temporal/api/update/v1/message_pb'
 import type {
+  CancelTimerCommandIntent,
   ContinueAsNewWorkflowCommandIntent,
+  ModifyWorkflowPropertiesCommandIntent,
+  RecordMarkerCommandIntent,
+  RequestCancelActivityCommandIntent,
+  RequestCancelExternalWorkflowCommandIntent,
   ScheduleActivityCommandIntent,
   SignalExternalWorkflowCommandIntent,
   StartChildWorkflowCommandIntent,
   StartTimerCommandIntent,
+  UpsertSearchAttributesCommandIntent,
   WorkflowCommandIntent,
 } from './commands'
 import type { WorkflowInfo } from './context'
@@ -599,6 +617,8 @@ const reconstructDeterminismState = (
     const signalRecords: WorkflowDeterminismSignalRecord[] = []
     const queryRecords: WorkflowDeterminismQueryRecord[] = []
     const updates = precomputedUpdates ?? collectWorkflowUpdateEntries(events)
+    const scheduledActivities = new Map<string, string>()
+    const timersByStartEventId = new Map<string, string>()
 
     for (const event of events) {
       switch (event.eventType) {
@@ -612,6 +632,10 @@ const reconstructDeterminismState = (
               intent,
               metadata: buildCommandMetadata(event, event.attributes.value),
             })
+            const scheduledKey = normalizeEventId(event.eventId)
+            if (scheduledKey) {
+              scheduledActivities.set(scheduledKey, intent.activityId)
+            }
             sequence += 1
           }
           break
@@ -626,6 +650,10 @@ const reconstructDeterminismState = (
               intent,
               metadata: buildCommandMetadata(event, event.attributes.value),
             })
+            const startKey = normalizeEventId(event.eventId)
+            if (startKey) {
+              timersByStartEventId.set(startKey, intent.timerId)
+            }
             sequence += 1
           }
           break
@@ -644,11 +672,53 @@ const reconstructDeterminismState = (
           }
           break
         }
+        case EventType.ACTIVITY_TASK_CANCEL_REQUESTED: {
+          if (event.attributes?.case !== 'activityTaskCancelRequestedEventAttributes') {
+            break
+          }
+          const intent = fromActivityTaskCancelRequested(event.attributes.value, sequence, scheduledActivities)
+          if (intent) {
+            commandHistory.push({
+              intent,
+              metadata: buildCommandMetadata(event, event.attributes.value),
+            })
+            sequence += 1
+          }
+          break
+        }
+        case EventType.TIMER_CANCELED: {
+          if (event.attributes?.case !== 'timerCanceledEventAttributes') {
+            break
+          }
+          const intent = fromTimerCanceled(event.attributes.value, sequence, timersByStartEventId)
+          if (intent) {
+            commandHistory.push({
+              intent,
+              metadata: buildCommandMetadata(event, event.attributes.value),
+            })
+            sequence += 1
+          }
+          break
+        }
         case EventType.SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: {
           if (event.attributes?.case !== 'signalExternalWorkflowExecutionInitiatedEventAttributes') {
             break
           }
           const intent = yield* fromSignalExternalWorkflow(event.attributes.value, sequence, intake)
+          if (intent) {
+            commandHistory.push({
+              intent,
+              metadata: buildCommandMetadata(event, event.attributes.value),
+            })
+            sequence += 1
+          }
+          break
+        }
+        case EventType.REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: {
+          if (event.attributes?.case !== 'requestCancelExternalWorkflowExecutionInitiatedEventAttributes') {
+            break
+          }
+          const intent = fromRequestCancelExternalWorkflow(event.attributes.value, sequence, intake)
           if (intent) {
             commandHistory.push({
               intent,
@@ -685,6 +755,51 @@ const reconstructDeterminismState = (
             break
           }
           const intent = yield* fromContinueAsNew(event.attributes.value, sequence, intake)
+          if (intent) {
+            commandHistory.push({
+              intent,
+              metadata: buildCommandMetadata(event, event.attributes.value),
+            })
+            sequence += 1
+          }
+          break
+        }
+        case EventType.MARKER_RECORDED: {
+          if (event.attributes?.case !== 'markerRecordedEventAttributes') {
+            break
+          }
+          if (event.attributes.value.markerName === DETERMINISM_MARKER_NAME) {
+            break
+          }
+          const intent = yield* fromMarkerRecorded(event.attributes.value, sequence, intake)
+          if (intent) {
+            commandHistory.push({
+              intent,
+              metadata: buildCommandMetadata(event, event.attributes.value),
+            })
+            sequence += 1
+          }
+          break
+        }
+        case EventType.UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: {
+          if (event.attributes?.case !== 'upsertWorkflowSearchAttributesEventAttributes') {
+            break
+          }
+          const intent = yield* fromUpsertSearchAttributes(event.attributes.value, sequence, intake)
+          if (intent) {
+            commandHistory.push({
+              intent,
+              metadata: buildCommandMetadata(event, event.attributes.value),
+            })
+            sequence += 1
+          }
+          break
+        }
+        case EventType.WORKFLOW_PROPERTIES_MODIFIED: {
+          if (event.attributes?.case !== 'workflowPropertiesModifiedEventAttributes') {
+            break
+          }
+          const intent = yield* fromWorkflowPropertiesModified(event.attributes.value, sequence, intake)
           if (intent) {
             commandHistory.push({
               intent,
@@ -877,6 +992,118 @@ const fromContinueAsNew = (
     }
 
     return intent
+  })
+
+const fromActivityTaskCancelRequested = (
+  attributes: ActivityTaskCancelRequestedEventAttributes,
+  sequence: number,
+  scheduledActivities: Map<string, string>,
+): RequestCancelActivityCommandIntent | undefined => {
+  const scheduledEventId = normalizeBigintIdentifier(attributes.scheduledEventId)
+  if (!scheduledEventId) {
+    return undefined
+  }
+  const activityId = scheduledActivities.get(scheduledEventId)
+  if (!activityId) {
+    return undefined
+  }
+  return {
+    id: `cancel-activity-${sequence}`,
+    kind: 'request-cancel-activity',
+    sequence,
+    activityId,
+    scheduledEventId,
+  }
+}
+
+const fromTimerCanceled = (
+  attributes: TimerCanceledEventAttributes,
+  sequence: number,
+  timersByStartEventId: Map<string, string>,
+): CancelTimerCommandIntent | undefined => {
+  const startedEventId = normalizeBigintIdentifier(attributes.startedEventId)
+  const timerId = attributes.timerId || (startedEventId ? timersByStartEventId.get(startedEventId) : undefined)
+  if (!timerId) {
+    return undefined
+  }
+  return {
+    id: `cancel-timer-${sequence}`,
+    kind: 'cancel-timer',
+    sequence,
+    timerId,
+    startedEventId,
+  }
+}
+
+const fromRequestCancelExternalWorkflow = (
+  attributes: RequestCancelExternalWorkflowExecutionInitiatedEventAttributes,
+  sequence: number,
+  intake: ReplayIntake,
+): RequestCancelExternalWorkflowCommandIntent | undefined => {
+  const workflowId = attributes.workflowExecution?.workflowId ?? intake.info.workflowId
+  if (!workflowId) {
+    return undefined
+  }
+  return {
+    id: `cancel-external-${sequence}`,
+    kind: 'request-cancel-external-workflow',
+    sequence,
+    namespace: attributes.namespace || intake.info.namespace,
+    workflowId,
+    runId: attributes.workflowExecution?.runId || undefined,
+    childWorkflowOnly: attributes.childWorkflowOnly ?? false,
+    reason: attributes.reason || undefined,
+  }
+}
+
+const fromMarkerRecorded = (
+  attributes: MarkerRecordedEventAttributes,
+  sequence: number,
+  intake: ReplayIntake,
+): Effect.Effect<RecordMarkerCommandIntent | undefined, unknown, never> =>
+  Effect.gen(function* () {
+    const markerName = attributes.markerName || 'marker'
+    const details = yield* decodeMarkerDetails(intake.dataConverter, attributes.details)
+    return {
+      id: `record-marker-${sequence}`,
+      kind: 'record-marker',
+      sequence,
+      markerName,
+      details,
+    }
+  })
+
+const fromUpsertSearchAttributes = (
+  attributes: UpsertWorkflowSearchAttributesEventAttributes,
+  sequence: number,
+  intake: ReplayIntake,
+): Effect.Effect<UpsertSearchAttributesCommandIntent | undefined, unknown, never> =>
+  Effect.gen(function* () {
+    const searchAttributes = yield* decodeSearchAttributes(intake.dataConverter, attributes.searchAttributes)
+    if (!searchAttributes) {
+      return undefined
+    }
+    return {
+      id: `upsert-search-attributes-${sequence}`,
+      kind: 'upsert-search-attributes',
+      sequence,
+      searchAttributes,
+    }
+  })
+
+const fromWorkflowPropertiesModified = (
+  attributes: WorkflowPropertiesModifiedEventAttributes,
+  sequence: number,
+  intake: ReplayIntake,
+): Effect.Effect<ModifyWorkflowPropertiesCommandIntent | undefined, unknown, never> =>
+  Effect.gen(function* () {
+    const memo = yield* decodeMemo(intake.dataConverter, attributes.upsertedMemo)
+    return {
+      id: `modify-workflow-properties-${sequence}`,
+      kind: 'modify-workflow-properties',
+      sequence,
+      memo,
+    }
   })
 
 const collectWorkflowUpdateEntries = (events: HistoryEvent[]): WorkflowUpdateDeterminismEntry[] => {
@@ -1094,6 +1321,63 @@ const decodePayloadArray = (
   payloads: Payloads | undefined,
 ): Effect.Effect<unknown[], unknown, never> =>
   Effect.tryPromise(async () => await decodePayloadsToValues(converter, payloads?.payloads ?? []))
+
+const decodeMarkerDetails = (
+  converter: DataConverter,
+  details: Record<string, Payloads> | undefined,
+): Effect.Effect<Record<string, unknown> | undefined, unknown, never> =>
+  Effect.tryPromise(async () => {
+    if (!details || Object.keys(details).length === 0) {
+      return undefined
+    }
+    const decoded: Record<string, unknown> = {}
+    for (const [key, payloads] of Object.entries(details)) {
+      const values = await decodePayloadsToValues(converter, payloads?.payloads ?? [])
+      if (values.length === 0) {
+        continue
+      }
+      decoded[key] = values.length === 1 ? values[0] : values
+    }
+    return Object.keys(decoded).length > 0 ? decoded : undefined
+  })
+
+const decodeSearchAttributes = (
+  converter: DataConverter,
+  input: SearchAttributes | undefined,
+): Effect.Effect<Record<string, unknown> | undefined, unknown, never> =>
+  Effect.tryPromise(async () => {
+    const fields = input?.indexedFields
+    if (!fields || Object.keys(fields).length === 0) {
+      return undefined
+    }
+    const decoded: Record<string, unknown> = {}
+    for (const [key, payload] of Object.entries(fields)) {
+      const values = await decodePayloadsToValues(converter, payload ? [payload] : [])
+      if (values.length === 0) {
+        continue
+      }
+      decoded[key] = values.length === 1 ? values[0] : values
+    }
+    return decoded
+  })
+
+const decodeMemo = (
+  converter: DataConverter,
+  memo: Memo | undefined,
+): Effect.Effect<Record<string, unknown>, unknown, never> =>
+  Effect.tryPromise(async () => {
+    const decoded: Record<string, unknown> = {}
+    const fields = memo?.fields ?? {}
+    for (const [key, payload] of Object.entries(fields)) {
+      const values = await decodePayloadsToValues(converter, payload ? [payload] : [])
+      if (values.length === 0) {
+        decoded[key] = undefined
+      } else {
+        decoded[key] = values.length === 1 ? values[0] : values
+      }
+    }
+    return decoded
+  })
 
 const convertRetryPolicy = (policy: RetryPolicy | undefined): WorkflowRetryPolicyInput | undefined => {
   if (!policy) {

@@ -95,6 +95,7 @@ export interface ExecuteWorkflowInput {
   readonly arguments: unknown
   readonly determinismState?: WorkflowDeterminismState
   readonly activityResults?: Map<string, ActivityResolution>
+  readonly activityScheduleEventIds?: Map<string, string>
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
   readonly queryRequests?: readonly WorkflowQueryRequest[]
   readonly updates?: readonly WorkflowUpdateInvocation[]
@@ -160,6 +161,7 @@ export class WorkflowExecutor {
         info,
         determinismGuard: guard,
         activityResults: input.activityResults,
+        activityScheduleEventIds: input.activityScheduleEventIds,
         signalDeliveries: input.signalDeliveries,
         updates: definition.updates,
       })
