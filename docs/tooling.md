@@ -10,7 +10,7 @@ This guide consolidates the CLI and runtime tooling we keep standardised across 
   nvm install 22
   nvm alias default 22
   ```
-- **pnpm** – Corepack enables pnpm 10.22.x automatically inside new workspaces; if you need to pin or reinstall:  
+- **pnpm** – Corepack enables pnpm 10.23.x automatically inside new workspaces; if you need to pin or reinstall:  
   ```bash
   corepack enable pnpm
   corepack prepare pnpm@10 --activate
