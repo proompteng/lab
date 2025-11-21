@@ -191,7 +191,7 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
 
   if (headBranch && headBranch !== baseBranch) {
     // Prefer the head branch if provided; create local tracking branch when missing.
-    const checkoutResult = await spawn(['git', '-C', targetDir, 'checkout', headBranch]).quiet().nothrow()
+    const checkoutResult = await $`git -C ${targetDir} checkout ${headBranch}`.nothrow()
     if (checkoutResult.exitCode !== 0) {
       await $`git -C ${targetDir} checkout -B ${headBranch} origin/${headBranch}`
     }
