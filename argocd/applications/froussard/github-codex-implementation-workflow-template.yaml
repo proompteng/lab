@@ -94,6 +94,25 @@ spec:
             fi
             printf '%s' "$EVENT_BODY_B64" | base64 --decode > "$EVENT_FILE"
 
+            WORKTREE_DIR="${WORKTREE:-/workspace/lab}"
+            HEAD_BRANCH=$(jq -r '.head // ""' "$EVENT_FILE")
+            BASE_BRANCH=$(jq -r '.base // "main"' "$EVENT_FILE")
+
+            if [[ -n "$HEAD_BRANCH" ]]; then
+              echo "Checking out head branch $HEAD_BRANCH" >&2
+              git -C "$WORKTREE_DIR" fetch --all --prune
+              if ! git -C "$WORKTREE_DIR" checkout "$HEAD_BRANCH" 2>/dev/null; then
+                git -C "$WORKTREE_DIR" checkout -B "$HEAD_BRANCH" "origin/$HEAD_BRANCH"
+              fi
+              git -C "$WORKTREE_DIR" reset --hard "origin/$HEAD_BRANCH" || true
+            else
+              echo "HEAD branch not provided; staying on base $BASE_BRANCH" >&2
+            fi
+
+            # Re-run install after checkout to ensure dependencies match the head branch.
+            echo "Re-installing workspace dependencies via pnpm..." >&2
+            pnpm install --frozen-lockfile
+
             STAGE=$(jq -r '.stage // ""' "$EVENT_FILE")
             if [[ "$STAGE" != "implementation" ]]; then
               echo "Skipping unsupported stage: '$STAGE'"
@@ -102,8 +121,6 @@ spec:
 
             export OUTPUT_PATH="${IMPLEMENTATION_OUTPUT_PATH:-/workspace/lab/.codex-implementation.log}"
             export POST_TO_GITHUB=true
-
-            WORKTREE_DIR="${WORKTREE:-/workspace/lab}"
 
             echo "Executing implementation workflow" >&2
             "${WORKTREE_DIR}/apps/froussard/src/codex/cli/codex-implement.ts" "$EVENT_FILE"
