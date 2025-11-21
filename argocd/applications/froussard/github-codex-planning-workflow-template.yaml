@@ -133,13 +133,11 @@ spec:
             memory: 12Gi
       sidecars:
         - name: docker
-          image: docker:25.0-dind-rootless
-          command: ["/bin/sh", "-c"]
+          image: docker:25.0-dind
+          command: ["dockerd-entrypoint.sh"]
           args:
-            - |
-              set -euo pipefail
-              mkdir -p "${XDG_RUNTIME_DIR:-/tmp/docker-runtime}"
-              exec dockerd-rootless.sh --host tcp://0.0.0.0:2375
+            - "--host=tcp://0.0.0.0:2375"
+            - "--host=unix:///var/run/docker.sock"
           env:
             - name: DOCKER_TLS_CERTDIR
               value: ""
