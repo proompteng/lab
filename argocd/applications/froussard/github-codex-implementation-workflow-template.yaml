@@ -28,7 +28,6 @@ spec:
           requests:
             storage: 10Gi
         storageClassName: longhorn
-        volumeAttributesClassName: codex-implementation-longhorn-2replicas
   volumes:
     - name: docker-lib
       emptyDir: {}
