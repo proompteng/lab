@@ -15,7 +15,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     GIT_TERMINAL_PROMPT=0 \
     BUN_INSTALL=/usr/local \
     DOCKER_HOST=tcp://localhost:2375 \
-    DOCKER_TLS_VERIFY=0 \
     DOCKER_ENABLED=0
 
 ENV CODEX_ENV_NODE_VERSION=22 \
