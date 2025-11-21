@@ -416,7 +416,25 @@ export const runCodexSession = async ({
       log.warn('Codex subprocess was terminated due to idle timeout')
     }
   } else if (codexExitCode !== 0) {
-    throw new Error(`Codex exited with status ${codexExitCode}`)
+    let eventsLogMissing = false
+    try {
+      const stats = await stat(jsonOutputPath)
+      eventsLogMissing = stats.size === 0
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        eventsLogMissing = true
+      } else {
+        throw error
+      }
+    }
+
+    if (eventsLogMissing) {
+      log.warn(
+        `Codex exited with status ${codexExitCode} but event log is missing/empty; continuing to allow artifact capture`,
+      )
+    } else {
+      throw new Error(`Codex exited with status ${codexExitCode}`)
+    }
   }
 
   if (discordProcess) {

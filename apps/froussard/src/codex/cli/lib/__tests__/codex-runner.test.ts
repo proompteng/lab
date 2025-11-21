@@ -284,6 +284,34 @@ describe('codex-runner', () => {
     ).rejects.toThrow('Codex exited with status 2')
   })
 
+  it('allows artifact capture when Codex exits non-zero but events log is empty', async () => {
+    const promptSink: string[] = []
+
+    spawnMock.mockImplementation(() => ({
+      stdin: createWritable(promptSink),
+      stdout: new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
+      stderr: null,
+      exited: Promise.resolve(1),
+    }))
+
+    const outputPath = join(workspace, 'output.log')
+    const jsonOutputPath = join(workspace, 'events.jsonl')
+    const agentOutputPath = join(workspace, 'agent.log')
+
+    await expect(
+      runCodexSession({
+        stage: 'implementation',
+        prompt: 'empty-events',
+        outputPath,
+        jsonOutputPath,
+        agentOutputPath,
+      }),
+    ).resolves.not.toThrow()
+
+    const eventsContent = await readFile(jsonOutputPath, 'utf8')
+    expect(eventsContent.trim()).toBe('')
+  })
+
   it('invokes the channel error handler when the Discord channel fails to start', async () => {
     const channelSink: string[] = []
     const promptSink: string[] = []
