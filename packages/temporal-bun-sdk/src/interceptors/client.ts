@@ -221,9 +221,9 @@ export const makeDefaultClientInterceptors = (
   })
 
 export const runClientInterceptors = <A>(
-  interceptors: readonly TemporalInterceptor<A>[],
+  interceptors: readonly TemporalInterceptor[],
   context: Omit<Parameters<typeof runInterceptors<A>>[1], 'direction'>,
-  run: () => Effect.Effect<A>,
-) => runInterceptors(interceptors, context, run)
+  run: () => Effect.Effect<A, unknown, never>,
+) => runInterceptors(interceptors as readonly TemporalInterceptor<A>[], context, run)
 
 export const isWorkflowOperationKind = (kind: InterceptorKind): boolean => CLIENT_OPERATION_KINDS.includes(kind)

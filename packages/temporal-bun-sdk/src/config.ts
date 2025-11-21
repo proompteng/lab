@@ -379,6 +379,7 @@ export interface TemporalConfig {
   workerBuildId?: string
   logLevel: LogLevel
   logFormat: LogFormat
+  tracingInterceptorsEnabled: boolean
   metricsExporter: MetricsExporterSpec
   rpcRetryPolicy: TemporalRpcRetryPolicy
 }

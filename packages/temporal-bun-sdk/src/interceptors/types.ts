@@ -39,14 +39,14 @@ export interface InterceptorContext {
   error?: unknown
 }
 
-export type InterceptorNext<A> = () => Effect.Effect<A>
+export type InterceptorNext<A> = () => Effect.Effect<A, unknown, never>
 
 export interface TemporalInterceptor<A = unknown> {
   readonly name?: string
   readonly order?: number
   readonly kinds?: readonly InterceptorKind[]
-  readonly outbound?: (context: InterceptorContext, next: InterceptorNext<A>) => Effect.Effect<A>
-  readonly inbound?: (context: InterceptorContext, next: InterceptorNext<A>) => Effect.Effect<A>
+  readonly outbound?: (context: InterceptorContext, next: InterceptorNext<A>) => Effect.Effect<A, unknown, never>
+  readonly inbound?: (context: InterceptorContext, next: InterceptorNext<A>) => Effect.Effect<A, unknown, never>
 }
 
 const byOrder = (a: TemporalInterceptor, b: TemporalInterceptor) => (a.order ?? 0) - (b.order ?? 0)
@@ -62,7 +62,7 @@ export const runInterceptors = <A>(
   interceptors: readonly TemporalInterceptor<A>[],
   baseContext: Omit<InterceptorContext, 'direction'>,
   run: InterceptorNext<A>,
-): Effect.Effect<A> => {
+): Effect.Effect<A, unknown, never> => {
   const applicable = interceptors.filter((interceptor) => matchesKind(interceptor, baseContext.kind)).sort(byOrder)
   const start = baseContext.startedAt ?? Date.now()
   const outboundContext: InterceptorContext = Object.assign(baseContext, {
@@ -74,10 +74,10 @@ export const runInterceptors = <A>(
     if (!interceptor.outbound) {
       return next
     }
-    return () => interceptor.outbound?.(outboundContext, next) ?? next()
+    return () => interceptor.outbound(outboundContext, next)
   }, run)
 
-  const runInbound = (result: A | undefined, error: unknown): Effect.Effect<A> => {
+  const runInbound = (result: A | undefined, error: unknown): Effect.Effect<A, unknown, never> => {
     const inboundContext: InterceptorContext = {
       ...outboundContext,
       direction: 'inbound',
@@ -85,15 +85,15 @@ export const runInterceptors = <A>(
       result,
       error,
     }
-    const inboundPipeline = applicable.reduceRight<InterceptorNext<A>>(
-      (next, interceptor) => {
-        if (!interceptor.inbound) {
-          return next
-        }
-        return () => interceptor.inbound?.(inboundContext, next) ?? next()
-      },
-      () => (error ? Effect.fail(error) : Effect.succeed(result as A)),
-    )
+    const terminal: InterceptorNext<A> = () =>
+      (error ? Effect.fail(error) : Effect.succeed(result as A)) as Effect.Effect<A, unknown, never>
+
+    const inboundPipeline = applicable.reduceRight<InterceptorNext<A>>((next, interceptor) => {
+      if (!interceptor.inbound) {
+        return next
+      }
+      return () => interceptor.inbound(inboundContext, next)
+    }, terminal)
     return inboundPipeline()
   }
 

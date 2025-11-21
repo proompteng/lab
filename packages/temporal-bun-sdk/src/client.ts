@@ -48,7 +48,7 @@ import {
   makeDefaultClientInterceptors,
   runClientInterceptors,
 } from './interceptors/client'
-import type { TemporalInterceptor as ClientMiddleware, InterceptorKind } from './interceptors/types'
+import type { TemporalInterceptor as ClientMiddleware, InterceptorContext, InterceptorKind } from './interceptors/types'
 import { createObservabilityServices } from './observability'
 import type { LogFields, Logger, LogLevel } from './observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from './observability/metrics'
@@ -566,12 +566,11 @@ class TemporalClientImpl implements TemporalClient {
     options: StartWorkflowOptions,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<StartWorkflowResult> {
+    const parsedOptions = sanitizeStartWorkflowOptions(options)
     return this.#instrumentOperation(
       'workflow.start',
       async () => {
         this.ensureOpen()
-        const parsedOptions = sanitizeStartWorkflowOptions(options)
-
         const request = await buildStartWorkflowRequest(
           {
             options: parsedOptions,
@@ -596,18 +595,18 @@ class TemporalClientImpl implements TemporalClient {
         })
       },
       {
-        workflowId: options.workflowId ?? parsedOptions.workflowId,
+        workflowId: parsedOptions.workflowId,
         taskQueue: options.taskQueue ?? this.defaultTaskQueue,
       },
     )
   }
 
   async signalWorkflow(handle: WorkflowHandle, signalName: string, ...rawArgs: unknown[]): Promise<void> {
+    const resolvedHandle = resolveHandle(this.namespace, handle)
     return this.#instrumentOperation(
       'workflow.signal',
       async () => {
         this.ensureOpen()
-        const resolvedHandle = resolveHandle(this.namespace, handle)
         const normalizedSignalName = ensureNonEmptyString(signalName, 'signalName')
         const { values, callOptions } = this.#splitArgsAndOptions(rawArgs)
 
@@ -649,11 +648,11 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async queryWorkflow(handle: WorkflowHandle, queryName: string, ...rawArgs: unknown[]): Promise<unknown> {
+    const resolvedHandle = resolveHandle(this.namespace, handle)
     return this.#instrumentOperation(
       'workflow.query',
       async () => {
         this.ensureOpen()
-        const resolvedHandle = resolveHandle(this.namespace, handle)
         const { values, callOptions } = this.#splitArgsAndOptions(rawArgs)
 
         const request = await buildQueryRequest(resolvedHandle, queryName, values, this.dataConverter, {
@@ -700,11 +699,11 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async cancelWorkflow(handle: WorkflowHandle, callOptions?: BrandedTemporalClientCallOptions): Promise<void> {
+    const resolvedHandle = resolveHandle(this.namespace, handle)
     return this.#instrumentOperation(
       'workflow.cancel',
       async () => {
         this.ensureOpen()
-        const resolvedHandle = resolveHandle(this.namespace, handle)
 
         const request = buildCancelRequest(resolvedHandle, this.defaultIdentity)
         await this.executeRpc(
@@ -721,11 +720,11 @@ class TemporalClientImpl implements TemporalClient {
     options: SignalWithStartOptions,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<StartWorkflowResult> {
+    const startOptions = sanitizeStartWorkflowOptions(options)
     return this.#instrumentOperation(
       'workflow.signalWithStart',
       async () => {
         this.ensureOpen()
-        const startOptions = sanitizeStartWorkflowOptions(options)
         const signalName = ensureNonEmptyString(options.signalName, 'signalName')
         const signalArgs = options.signalArgs ?? []
         if (!Array.isArray(signalArgs)) {
@@ -759,7 +758,7 @@ class TemporalClientImpl implements TemporalClient {
           firstExecutionRunId: response.started ? response.runId : undefined,
         })
       },
-      { workflowId: options.workflowId ?? startOptions.workflowId },
+      { workflowId: startOptions.workflowId },
     )
   }
 
@@ -1027,7 +1026,7 @@ class TemporalClientImpl implements TemporalClient {
       metadata,
     }
     const start = Date.now()
-    const effect = runClientInterceptors(this.#clientInterceptors, context, () => Effect.tryPromise(action))
+    const effect = runClientInterceptors<T>(this.#clientInterceptors, context, () => Effect.tryPromise(action))
     try {
       const result = await Effect.runPromise(effect)
       this.#log('debug', `temporal client ${operation} succeeded`, {
@@ -1273,7 +1272,7 @@ class TemporalClientImpl implements TemporalClient {
     overrides?: TemporalClientCallOptions,
   ): Promise<T> {
     const { create, retryPolicy, headers } = this.#buildCallContext(overrides)
-    const interceptorContext = {
+    const interceptorContext: Omit<InterceptorContext, 'direction'> = {
       kind: 'rpc' as InterceptorKind,
       namespace: this.namespace,
       taskQueue: this.defaultTaskQueue,
@@ -1302,7 +1301,7 @@ class TemporalClientImpl implements TemporalClient {
       )
 
     const result = await Effect.runPromise(
-      runClientInterceptors(this.#clientInterceptors, interceptorContext, baseEffect),
+      runClientInterceptors<T>(this.#clientInterceptors, interceptorContext, baseEffect),
     )
     if ((interceptorContext.attempt ?? 1) > 1) {
       this.#log('info', `temporal rpc ${operation} succeeded after ${interceptorContext.attempt} attempts`, {

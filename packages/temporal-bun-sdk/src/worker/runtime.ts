@@ -23,7 +23,7 @@ import {
 import { encodeErrorToFailure, encodeFailurePayloads, failureToError } from '../common/payloads/failure'
 import { sleep } from '../common/sleep'
 import { loadTemporalConfig, type TemporalConfig } from '../config'
-import type { TemporalInterceptor as WorkerInterceptor } from '../interceptors/types'
+import type { InterceptorKind, TemporalInterceptor as WorkerInterceptor } from '../interceptors/types'
 import {
   makeDefaultWorkerInterceptors,
   runWorkerInterceptors,
@@ -911,12 +911,13 @@ export class WorkerRuntime {
     const execution = this.#resolveWorkflowExecution(response)
     const isQueryOnly = Boolean(response.query)
     const hasUpdateMessages = (response.messages?.length ?? 0) > 0
+    const kind: InterceptorKind = isQueryOnly
+      ? 'worker.queryTask'
+      : hasUpdateMessages
+        ? 'worker.updateTask'
+        : 'worker.workflowTask'
     const context = {
-      kind: (isQueryOnly
-        ? 'worker.queryTask'
-        : hasUpdateMessages
-          ? 'worker.updateTask'
-          : 'worker.workflowTask') as const,
+      kind,
       namespace: this.#namespace,
       taskQueue: this.#taskQueue,
       identity: this.#identity,
