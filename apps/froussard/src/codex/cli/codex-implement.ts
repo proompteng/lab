@@ -727,6 +727,14 @@ export const runCodexImplementation = async (eventPath: string) => {
     throw new Error('Missing head branch metadata in event payload')
   }
 
+  // Ensure worktree tracks the requested head branch (not just base).
+  await runCommand('git', ['fetch', '--all', '--prune'], { cwd: worktree })
+  const checkoutResult = await runCommand('git', ['checkout', headBranch], { cwd: worktree })
+  if (checkoutResult.exitCode !== 0) {
+    await runCommand('git', ['checkout', '-B', headBranch, `origin/${headBranch}`], { cwd: worktree })
+  }
+  await runCommand('git', ['reset', '--hard', `origin/${headBranch}`], { cwd: worktree })
+
   const planCommentId =
     event.planCommentId !== undefined && event.planCommentId !== null ? String(event.planCommentId) : ''
   const planCommentUrl = sanitizeNullableString(event.planCommentUrl)
