@@ -184,7 +184,9 @@ const bootstrapWorkspace = async (targetDir: string) => {
 
 const waitForDocker = async () => {
   const dockerHost = process.env.DOCKER_HOST
-  if (!dockerHost) {
+  const dockerEnabled = process.env.DOCKER_ENABLED === '1'
+
+  if (!dockerEnabled || !dockerHost) {
     return
   }
 
