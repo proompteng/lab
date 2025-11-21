@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BUN_INSTALL=/usr/local
 
 ENV CODEX_ENV_NODE_VERSION=22 \
-    CODEX_ENV_GO_VERSION=1.24.3 \
+    CODEX_ENV_GO_VERSION=1.25.4 \
     BUN_VERSION=1.3.2
 
 RUN apt-get update \
