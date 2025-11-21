@@ -189,6 +189,15 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
 
   process.chdir(targetDir)
 
+  if (headBranch && headBranch !== baseBranch) {
+    // Prefer the head branch if provided; create local tracking branch when missing.
+    const checkoutResult = await spawn(['git', '-C', targetDir, 'checkout', headBranch]).quiet().nothrow()
+    if (checkoutResult.exitCode !== 0) {
+      await $`git -C ${targetDir} checkout -B ${headBranch} origin/${headBranch}`
+    }
+    await $`git -C ${targetDir} reset --hard origin/${headBranch}`
+  }
+
   await bootstrapWorkspace()
   await waitForDocker()
 
