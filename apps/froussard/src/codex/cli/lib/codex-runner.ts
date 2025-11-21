@@ -408,12 +408,15 @@ export const runCodexSession = async ({
   }
 
   const codexExitCode = await codexProcess.exited
-  if (codexExitCode !== 0) {
-    throw new Error(`Codex exited with status ${codexExitCode}`)
-  }
 
   if (forcedTermination) {
-    log.warn('Codex subprocess was terminated due to idle timeout')
+    if (codexExitCode !== 0) {
+      log.warn(`Codex subprocess was terminated due to idle timeout (exit ${codexExitCode})`)
+    } else {
+      log.warn('Codex subprocess was terminated due to idle timeout')
+    }
+  } else if (codexExitCode !== 0) {
+    throw new Error(`Codex exited with status ${codexExitCode}`)
   }
 
   if (discordProcess) {

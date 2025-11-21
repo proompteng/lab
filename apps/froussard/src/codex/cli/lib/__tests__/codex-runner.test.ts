@@ -420,4 +420,43 @@ describe('codex-runner', () => {
     expect(hangingReader.cancel).toHaveBeenCalled()
     process.env = originalEnv
   })
+
+  it('does not throw when forced idle termination exits non-zero', async () => {
+    const promptSink: string[] = []
+
+    const hangingReader = {
+      read: vi.fn(() => new Promise<never>(() => {})),
+      cancel: vi.fn(async () => {}),
+    }
+
+    const codexProcess = {
+      stdin: createWritable(promptSink),
+      stdout: { getReader: () => hangingReader },
+      stderr: null,
+      exited: Promise.resolve(143),
+      kill: vi.fn(),
+    }
+
+    spawnMock.mockImplementation(() => codexProcess)
+
+    const outputPath = join(workspace, 'output.log')
+    const jsonOutputPath = join(workspace, 'events.jsonl')
+    const agentOutputPath = join(workspace, 'agent.log')
+
+    const originalEnv = { ...process.env }
+    process.env.CODEX_IDLE_TIMEOUT_MS = '5'
+
+    await expect(
+      runCodexSession({
+        stage: 'planning',
+        prompt: 'hang-and-kill',
+        outputPath,
+        jsonOutputPath,
+        agentOutputPath,
+      }),
+    ).resolves.not.toThrow()
+
+    expect(codexProcess.kill).toHaveBeenCalled()
+    process.env = originalEnv
+  })
 })
