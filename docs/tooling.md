@@ -7,8 +7,8 @@ This guide consolidates the CLI and runtime tooling we keep standardised across 
 - **Node.js** – Target the Active LTS line (24.x) which receives security fixes through April 30 2028 (see the [Node.js release schedule](https://nodejs.org/en/about/previous-releases)).  
   Workspaces ship with `nvm` preinstalled. To match production:
   ```bash
-  nvm install 22
-  nvm alias default 22
+  nvm install 24.11.1
+  nvm alias default 24.11.1
   ```
 - **pnpm** – Corepack enables pnpm 10.23.x automatically inside new workspaces; if you need to pin or reinstall:  
   ```bash
