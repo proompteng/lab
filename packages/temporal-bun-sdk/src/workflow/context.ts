@@ -3,6 +3,7 @@ import * as Schema from 'effect/Schema'
 
 import type {
   CancelTimerCommandIntent,
+  CancelWorkflowCommandIntent,
   ContinueAsNewWorkflowCommandIntent,
   ModifyWorkflowPropertiesCommandIntent,
   RecordMarkerCommandIntent,

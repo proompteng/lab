@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import { createDefaultDataConverter } from '../../src/common/payloads'
+import { createDefaultDataConverter, decodePayloadsToValues } from '../../src/common/payloads'
 import { materializeCommands, type WorkflowCommandIntent } from '../../src/workflow/commands'
 import type {
   CancelTimerCommandIntent,
@@ -34,7 +34,7 @@ test('materialize cancellation and search attribute commands', async () => {
     id: 'upsert-search-2',
     kind: 'upsert-search-attributes',
     sequence: 2,
-    searchAttributes: { CustomKeywordField: 'v1' },
+    searchAttributes: { CustomKeywordField: ['v1', 'v2'] },
   }
 
   const commands = await materializeCommands([cancelTimer, cancelExternal, upsertSearchAttributes] as WorkflowCommandIntent[], {
@@ -46,5 +46,11 @@ test('materialize cancellation and search attribute commands', async () => {
     (command) => command.commandType === CommandType.REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION,
   )
   expect(cancelExternalCommand?.commandType).toBe(CommandType.REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION)
-  expect(commands.find((command) => command.commandType === CommandType.UPSERT_WORKFLOW_SEARCH_ATTRIBUTES)).toBeTruthy()
+  const upsertCommand = commands.find((command) => command.commandType === CommandType.UPSERT_WORKFLOW_SEARCH_ATTRIBUTES)
+  expect(upsertCommand).toBeTruthy()
+  if (upsertCommand?.attributes?.case === 'upsertWorkflowSearchAttributesCommandAttributes') {
+    const payload = upsertCommand.attributes.value.searchAttributes?.indexedFields?.CustomKeywordField
+    const decoded = await decodePayloadsToValues(dataConverter, payload ? [payload] : undefined)
+    expect(decoded[0]).toEqual(['v1', 'v2'])
+  }
 })

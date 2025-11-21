@@ -394,11 +394,6 @@ const buildSignalExternalWorkflowCommand = async (
 }
 
 const buildRequestCancelExternalWorkflowCommand = (intent: RequestCancelExternalWorkflowCommandIntent): Command => {
-  const execution = create(WorkflowExecutionSchema, {
-    workflowId: intent.workflowId,
-    runId: intent.runId ?? '',
-  })
-
   const attributes = create(RequestCancelExternalWorkflowExecutionCommandAttributesSchema, {
     namespace: intent.namespace,
     workflowId: intent.workflowId,
@@ -406,7 +401,6 @@ const buildRequestCancelExternalWorkflowCommand = (intent: RequestCancelExternal
     control: '',
     childWorkflowOnly: intent.childWorkflowOnly,
     reason: intent.reason ?? '',
-    workflowExecution: execution,
   })
 
   return create(CommandSchema, {
@@ -506,12 +500,10 @@ const buildUpsertSearchAttributesCommand = async (
     if (raw === undefined) {
       continue
     }
-    const payloads = await encodeValuesToPayloads(
-      options.dataConverter,
-      Array.isArray(raw) ? (raw as unknown[]) : [raw],
-    )
-    if (payloads && payloads.length > 0 && payloads[0]) {
-      searchAttributes[key] = payloads[0]
+    const payloads = await encodeValuesToPayloads(options.dataConverter, [raw])
+    const payload = payloads?.[0]
+    if (payload) {
+      searchAttributes[key] = payload
     }
   }
 
