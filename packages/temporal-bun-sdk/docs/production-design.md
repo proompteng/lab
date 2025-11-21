@@ -401,6 +401,8 @@ can contribute independently without re-planning.
    - Drain in-flight work, respect `--graceful-shutdown-timeout`, expose `WorkerService` integrable with Effect layers.
 5. **Observability**
    - Structured logs (JSON), metrics (poll latency, task failures), optional tracing.
+6. **Query-only tasks (shipped)**
+   - Detect `PollWorkflowTaskQueueResponse.query` and respond with `RespondQueryTaskCompleted` in a read-only executor mode (no new commands/timers/randomness/continue-as-new). Emits `temporal_worker_query_{started,completed,failed}_total` and `temporal_worker_query_latency_ms` metrics.
 
 ### Client Library
 
@@ -413,6 +415,7 @@ can contribute independently without re-planning.
 3. **High-level APIs**
    - Convenience handles for workflow and activity results, typed search attributes,
      payload conversion hooks, streaming update support.
+   - Query helpers honour `QueryRejectCondition` and surface query failures when workers respond via `RespondQueryTaskCompleted`.
 
 ### Tooling & Automation
 

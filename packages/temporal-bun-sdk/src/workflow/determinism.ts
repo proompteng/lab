@@ -1,7 +1,7 @@
 import type { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
 
 import type { WorkflowCommandIntent } from './commands'
-import { WorkflowNondeterminismError } from './errors'
+import { WorkflowNondeterminismError, WorkflowQueryViolationError } from './errors'
 
 export interface WorkflowRetryPolicyInput {
   readonly initialIntervalMs?: number
@@ -78,6 +78,7 @@ export interface WorkflowDeterminismState {
 export interface DeterminismGuardOptions {
   readonly allowBypass?: boolean
   readonly previousState?: WorkflowDeterminismState
+  readonly mode?: 'workflow' | 'query'
 }
 
 export type DeterminismGuardSnapshot = {
@@ -108,6 +109,7 @@ export type RecordedCommandKind = 'new' | 'replay'
 export class DeterminismGuard {
   readonly #allowBypass: boolean
   readonly #previous: WorkflowDeterminismState | undefined
+  readonly #mode: 'workflow' | 'query'
   readonly snapshot: DeterminismGuardSnapshot
   #commandIndex = 0
   #randomIndex = 0
@@ -118,6 +120,7 @@ export class DeterminismGuard {
   constructor(options: DeterminismGuardOptions = {}) {
     this.#allowBypass = options.allowBypass ?? false
     this.#previous = options.previousState
+    this.#mode = options.mode ?? 'workflow'
     this.snapshot = {
       commandHistory: [],
       randomValues: [],
@@ -129,9 +132,16 @@ export class DeterminismGuard {
   }
 
   recordCommand(intent: WorkflowCommandIntent): RecordedCommandKind {
+    const previousEntry = this.#previous?.commandHistory[this.#commandIndex]
+
+    if (this.#mode === 'query' && !previousEntry) {
+      throw new WorkflowQueryViolationError(
+        `Workflow query cannot emit new command "${intent.kind}"; queries must be read-only`,
+      )
+    }
+
     let kind: RecordedCommandKind = 'new'
     if (!this.#allowBypass && this.#previous) {
-      const previousEntry = this.#previous.commandHistory[this.#commandIndex]
       if (previousEntry) {
         const expected = previousEntry.intent
         if (!expected) {
@@ -150,12 +160,26 @@ export class DeterminismGuard {
         kind = 'replay'
       }
     }
+
+    if (this.#mode === 'query') {
+      kind = 'replay'
+    }
     this.snapshot.commandHistory.push({ intent })
     this.#commandIndex += 1
     return kind
   }
 
   nextRandom(generate: () => number): number {
+    if (this.#mode === 'query') {
+      const expected = this.#previous?.randomValues[this.#randomIndex]
+      if (expected === undefined) {
+        throw new WorkflowQueryViolationError('Workflow query cannot generate new random values')
+      }
+      this.snapshot.randomValues.push(expected)
+      this.#randomIndex += 1
+      return expected
+    }
+
     if (!this.#allowBypass && this.#previous) {
       const expected = this.#previous.randomValues[this.#randomIndex]
       if (expected === undefined) {
@@ -179,6 +203,16 @@ export class DeterminismGuard {
   }
 
   nextTime(generate: () => number): number {
+    if (this.#mode === 'query') {
+      const expected = this.#previous?.timeValues[this.#timeIndex]
+      if (expected === undefined) {
+        throw new WorkflowQueryViolationError('Workflow query cannot advance workflow time')
+      }
+      this.snapshot.timeValues.push(expected)
+      this.#timeIndex += 1
+      return expected
+    }
+
     if (!this.#allowBypass && this.#previous) {
       const expected = this.#previous.timeValues[this.#timeIndex]
       if (expected === undefined) {
@@ -238,7 +272,7 @@ export class DeterminismGuard {
       ...(resultHash ? { resultHash } : {}),
       ...(failureHash ? { failureHash } : {}),
     }
-    if (!this.#allowBypass && this.#previous) {
+    if (!this.#allowBypass && this.#previous && this.#mode !== 'query') {
       const expected = this.#previous.queries?.[this.#queryIndex]
       if (expected && expected.handlerName !== undefined && !queriesEqual(expected, record)) {
         throw new WorkflowNondeterminismError('Workflow evaluated query with unexpected result during replay', {

@@ -134,6 +134,10 @@ type WorkerRuntimeMetrics = {
   readonly workflowTaskCompleted: Counter
   readonly activityTaskStarted: Counter
   readonly activityTaskCompleted: Counter
+  readonly queryTaskStarted: Counter
+  readonly queryTaskCompleted: Counter
+  readonly queryTaskFailed: Counter
+  readonly queryTaskLatency: Histogram
 }
 
 const mergeUpdateInvocations = (
@@ -615,6 +619,22 @@ export class WorkerRuntime {
         'temporal_worker_activity_tasks_completed_total',
         'Activity tasks completed by the scheduler',
       ),
+      queryTaskStarted: await makeCounter(
+        'temporal_worker_query_started_total',
+        'Query-only workflow tasks dispatched to the scheduler',
+      ),
+      queryTaskCompleted: await makeCounter(
+        'temporal_worker_query_completed_total',
+        'Query-only workflow tasks completed successfully',
+      ),
+      queryTaskFailed: await makeCounter(
+        'temporal_worker_query_failed_total',
+        'Query-only workflow tasks responded with failure',
+      ),
+      queryTaskLatency: await makeHistogram(
+        'temporal_worker_query_latency_ms',
+        'End-to-end workflow query latency (ms)',
+      ),
     }
   }
 
@@ -858,6 +878,11 @@ export class WorkerRuntime {
   async #handleWorkflowTask(response: PollWorkflowTaskQueueResponse, nondeterminismRetry = 0): Promise<void> {
     const execution = this.#resolveWorkflowExecution(response)
     const workflowTaskAttempt = Number(response.attempt ?? 1)
+    const isLegacyQueryTask = Boolean(response.query)
+    const queryStartTime = isLegacyQueryTask ? Date.now() : null
+    if (isLegacyQueryTask) {
+      this.#incrementCounter(this.#metrics.queryTaskStarted)
+    }
     const historyEvents = await this.#collectWorkflowHistory(execution, response)
     const workflowType = this.#resolveWorkflowType(response, historyEvents)
     const args = await this.#decodeWorkflowArgs(historyEvents)
@@ -967,6 +992,7 @@ export class WorkerRuntime {
         signalDeliveries,
         queryRequests,
         updates: mergedUpdates,
+        mode: isLegacyQueryTask ? 'query' : 'workflow',
       })
       this.#log('debug', 'workflow query evaluation summary', {
         ...baseLogFields,
@@ -994,6 +1020,19 @@ export class WorkerRuntime {
         } else if (entry.request.source === 'legacy') {
           legacyQueryResult = entry
         }
+      }
+
+      if (isLegacyQueryTask) {
+        const target = legacyQueryResult ?? output.queryResults.find((entry) => entry.request.source === 'legacy')
+        if (!target) {
+          throw new Error('Legacy query result missing from workflow execution')
+        }
+        await this.#respondLegacyQueryTask(response, target)
+        if (queryStartTime !== null) {
+          this.#observeHistogram(this.#metrics.queryTaskLatency, Date.now() - queryStartTime)
+        }
+        this.#incrementCounter(this.#metrics.queryTaskCompleted)
+        return
       }
 
       const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? historyReplay?.lastEventId ?? null
@@ -1078,6 +1117,22 @@ export class WorkerRuntime {
       }
       if (this.#isTaskNotFoundError(error)) {
         this.#logWorkflowTaskNotFound('respondWorkflowTaskCompleted', execution)
+        return
+      }
+      if (isLegacyQueryTask) {
+        this.#incrementCounter(this.#metrics.queryTaskFailed)
+        if (queryStartTime !== null) {
+          this.#observeHistogram(this.#metrics.queryTaskLatency, Date.now() - queryStartTime)
+        }
+        if (error instanceof WorkflowNondeterminismError) {
+          const mismatches = await this.#computeNondeterminismMismatches(error, expectedDeterminismState)
+          this.#incrementCounter(this.#metrics.nondeterminism)
+          this.#log('error', 'workflow query nondeterminism detected', {
+            ...baseLogFields,
+            mismatches,
+          })
+        }
+        await this.#respondLegacyQueryFailure(response, error)
         return
       }
       if (error instanceof WorkflowNondeterminismError) {
@@ -1394,6 +1449,34 @@ export class WorkerRuntime {
       cause: WorkflowTaskFailedCause.UNSPECIFIED,
     })
     await this.#workflowService.respondQueryTaskCompleted(request, { timeoutMs: RESPOND_TIMEOUT_MS })
+  }
+
+  async #respondLegacyQueryFailure(response: PollWorkflowTaskQueueResponse, cause: unknown): Promise<void> {
+    const failure = await encodeErrorToFailure(this.#dataConverter, cause)
+    const message = cause instanceof Error ? cause.message : 'Workflow query failed'
+    const request = create(RespondQueryTaskCompletedRequestSchema, {
+      taskToken: response.taskToken ?? new Uint8Array(),
+      completedType: QueryResultType.FAILED,
+      errorMessage: message,
+      namespace: this.#namespace,
+      failure,
+      cause: WorkflowTaskFailedCause.UNSPECIFIED,
+    })
+    try {
+      await this.#workflowService.respondQueryTaskCompleted(request, { timeoutMs: RESPOND_TIMEOUT_MS })
+    } catch (rpcError) {
+      this.#log('error', 'respondQueryTaskCompleted failed for legacy query', {
+        namespace: this.#namespace,
+        workflowId: response.workflowExecution?.workflowId,
+        runId: response.workflowExecution?.runId,
+        error: rpcError instanceof Error ? rpcError.message : String(rpcError),
+      })
+      if (this.#isTaskNotFoundError(rpcError)) {
+        this.#logWorkflowTaskNotFound('respondQueryTaskCompleted', this.#resolveWorkflowExecution(response))
+        return
+      }
+      throw rpcError
+    }
   }
 
   async #fetchWorkflowHistoryPage(

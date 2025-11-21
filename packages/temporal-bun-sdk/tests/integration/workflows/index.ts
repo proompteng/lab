@@ -182,6 +182,13 @@ const queryHandles = defineWorkflowQueries({
   },
 })
 
+const queryOnlyHandles = defineWorkflowQueries({
+  status: {
+    input: Schema.Struct({}),
+    output: Schema.String,
+  },
+})
+
 export const signalQueryWorkflow = defineWorkflow({
   name: 'integrationSignalQueryWorkflow',
   signals: signalHandles,
@@ -194,6 +201,19 @@ export const signalQueryWorkflow = defineWorkflow({
       current = unblock.payload
       yield* signals.waitFor(signalHandles.finish)
       return current
+    }),
+})
+
+export const queryOnlyWorkflow = defineWorkflow({
+  name: 'integrationQueryOnlyWorkflow',
+  queries: queryOnlyHandles,
+  handler: ({ timers, queries }) =>
+    Effect.gen(function* () {
+      let status = 'blocked-on-timer'
+      yield* queries.register(queryOnlyHandles.status, () => Effect.sync(() => status))
+      yield* timers.start({ timeoutMs: 30_000 })
+      yield* Effect.fail(new WorkflowBlockedError('waiting-for-timer'))
+      return status
     }),
 })
 
@@ -283,6 +303,7 @@ export const integrationWorkflows = [
   heartbeatTimeoutWorkflow,
   retryProbeWorkflow,
   signalQueryWorkflow,
+  queryOnlyWorkflow,
   updateWorkflow,
 ]
 

@@ -47,6 +47,7 @@ import { createObservabilityServices } from './observability'
 import type { LogFields, Logger, LogLevel } from './observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from './observability/metrics'
 import type { Memo, Payload, SearchAttributes } from './proto/temporal/api/common/v1/message_pb'
+import type { QueryRejectCondition } from './proto/temporal/api/enums/v1/query_pb'
 import { UpdateWorkflowExecutionLifecycleStage } from './proto/temporal/api/enums/v1/update_pb'
 import {
   type DescribeNamespaceRequest,
@@ -72,6 +73,7 @@ export interface TemporalClientCallOptions {
   readonly signal?: AbortSignal
   readonly timeoutMs?: number
   readonly retryPolicy?: Partial<TemporalRpcRetryPolicy>
+  readonly queryRejectCondition?: QueryRejectCondition
 }
 
 export type BrandedTemporalClientCallOptions = TemporalClientCallOptions & CallOptionsMarker
@@ -595,7 +597,9 @@ class TemporalClientImpl implements TemporalClient {
       const resolvedHandle = resolveHandle(this.namespace, handle)
       const { values, callOptions } = this.#splitArgsAndOptions(rawArgs)
 
-      const request = await buildQueryRequest(resolvedHandle, queryName, values, this.dataConverter)
+      const request = await buildQueryRequest(resolvedHandle, queryName, values, this.dataConverter, {
+        rejectCondition: callOptions?.queryRejectCondition,
+      })
       const response = await this.executeRpc(
         'queryWorkflow',
         (rpcOptions) => this.workflowService.queryWorkflow(request, rpcOptions),

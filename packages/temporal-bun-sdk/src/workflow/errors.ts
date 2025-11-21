@@ -66,3 +66,10 @@ export class WorkflowQueryHandlerMissingError extends WorkflowError {
     this.name = 'WorkflowQueryHandlerMissingError'
   }
 }
+
+export class WorkflowQueryViolationError extends WorkflowError {
+  constructor(message: string) {
+    super(message)
+    this.name = 'WorkflowQueryViolationError'
+  }
+}
