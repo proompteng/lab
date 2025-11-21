@@ -14,6 +14,10 @@ spec:
         value: '{}'
       - name: eventBody
         value: '{}'
+      - name: head
+        value: ''
+      - name: base
+        value: 'main'
   volumeClaimTemplates:
     - metadata:
         name: workdir
@@ -33,10 +37,16 @@ spec:
         parameters:
           - name: rawEvent
           - name: eventBody
+          - name: head
+          - name: base
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         imagePullPolicy: Always
         env:
+          - name: HEAD_BRANCH
+            value: '{{inputs.parameters.head}}'
+          - name: BASE_BRANCH
+            value: '{{inputs.parameters.base}}'
           - name: DISCORD_BOT_TOKEN
             valueFrom:
               secretKeyRef:
