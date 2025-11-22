@@ -10,7 +10,7 @@ const ConfigTestLayer = createConfigLayer({
   defaults: {
     address: '127.0.0.1:7233',
     namespace: 'default',
-    taskQueue: 'prix',
+    taskQueue: 'replay-fixtures',
   },
 })
 

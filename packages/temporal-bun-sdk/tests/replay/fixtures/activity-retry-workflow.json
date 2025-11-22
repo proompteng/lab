@@ -3,7 +3,7 @@
   "info": {
     "workflowType": "activityWorkflow",
     "namespace": "default",
-    "taskQueue": "prix",
+    "taskQueue": "replay-fixtures",
     "workflowId": "fixture-activity",
     "runId": "fixture-activity-run",
     "temporalVersion": "dev-fixture"
@@ -23,7 +23,7 @@
           "name": "recordMetric"
         },
         "taskQueue": {
-          "name": "prix",
+          "name": "replay-fixtures",
           "kind": 0,
           "normalName": ""
         },
@@ -48,7 +48,7 @@
           "sequence": 0,
           "activityType": "recordMetric",
           "activityId": "fixture-activity-1",
-          "taskQueue": "prix",
+          "taskQueue": "replay-fixtures",
           "input": [],
           "timeouts": {},
           "retry": {

@@ -3,8 +3,6 @@ module github.com/proompteng/lab
 go 1.24.1
 
 // Local development overrides
-replace github.com/proompteng/lab/services/prix => ./services/prix
-
 replace github.com/proompteng/lab/services/prt => ./services/prt
 
 replace github.com/proompteng/lab/services/facteur => ./services/facteur
