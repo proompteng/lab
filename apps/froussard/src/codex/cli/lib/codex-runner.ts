@@ -178,6 +178,7 @@ export const runCodexSession = async ({
   logger,
 }: RunCodexSessionOptions): Promise<RunCodexSessionResult> => {
   const log = logger ?? consoleLogger
+  const resumeArg = resumeSessionId?.trim()
 
   const parsePositiveMs = (value: string | undefined, fallback: number) => {
     const parsed = Number(value)
@@ -240,8 +241,7 @@ export const runCodexSession = async ({
     outputPath,
   ]
 
-  if (resumeSessionId && resumeSessionId.trim().length > 0) {
-    const resumeArg = resumeSessionId.trim()
+  if (resumeArg && resumeArg.length > 0) {
     codexCommand.push('resume')
     if (resumeArg === '--last') {
       codexCommand.push('--last')
@@ -250,7 +250,12 @@ export const runCodexSession = async ({
     }
   }
 
-  codexCommand.push('-')
+  // For --last we must not pass any positional (clap treats it as session_id and errors).
+  // For all other cases, pass '-' so Codex reads the prompt from stdin.
+  const useStdinDash = !(resumeArg === '--last')
+  if (useStdinDash) {
+    codexCommand.push('-')
+  }
 
   const codexProcess = Bun.spawn({
     cmd: codexCommand,

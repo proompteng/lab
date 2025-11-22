@@ -126,6 +126,35 @@ describe('codex-runner', () => {
     expect(result.sessionId).toBe('resume-42')
   })
 
+  it('uses --last resume without dash and still sends prompt on stdin', async () => {
+    const promptSink: string[] = []
+    const codexMessages = [
+      JSON.stringify({ type: 'session.rehydrated', session: { id: 'resume-99' } }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'resumed message' } }),
+    ]
+
+    spawnMock.mockImplementation(() => createCodexProcess(codexMessages, promptSink))
+
+    const outputPath = join(workspace, 'output.log')
+    const jsonOutputPath = join(workspace, 'events.jsonl')
+    const agentOutputPath = join(workspace, 'agent.log')
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'should-not-be-sent',
+      outputPath,
+      jsonOutputPath,
+      agentOutputPath,
+      resumeSessionId: '--last',
+    })
+
+    const spawnArgs = spawnMock.mock.calls[0]?.[0]
+    expect(spawnArgs?.cmd).toContain('resume')
+    expect(spawnArgs?.cmd).toContain('--last')
+    expect(spawnArgs?.cmd).not.toContain('-')
+    expect(promptSink).toEqual(['should-not-be-sent'])
+  })
+
   it('captures session ids from SessionConfiguredEvent log lines', async () => {
     const promptSink: string[] = []
     const sessionLog = [

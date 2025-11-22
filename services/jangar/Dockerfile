@@ -1,5 +1,5 @@
 # Bun-based image for jangar Temporal worker
-FROM oven/bun:1.2.23 AS base
+FROM oven/bun:1.3.3 AS base
 WORKDIR /app
 
 # Base tsconfig for workspace packages
@@ -17,7 +17,9 @@ RUN cd packages/codex \
 # Install jangar deps
 WORKDIR /app/services/jangar
 COPY services/jangar/package.json services/jangar/bun.lock ./
-RUN bun install --production --frozen-lockfile
+RUN bun install --production --frozen-lockfile \
+  && mkdir -p node_modules/@proompteng \
+  && ln -sf ../../packages/codex node_modules/@proompteng/codex
 
 # Copy source
 COPY services/jangar/tsconfig.json ./
