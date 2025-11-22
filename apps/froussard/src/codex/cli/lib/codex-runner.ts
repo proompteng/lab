@@ -250,7 +250,12 @@ export const runCodexSession = async ({
     }
   }
 
-  codexCommand.push('-')
+  // For --last we must not pass any positional (clap treats it as session_id and errors).
+  // For all other cases, pass '-' so Codex reads the prompt from stdin.
+  const useStdinDash = !(resumeArg === '--last')
+  if (useStdinDash) {
+    codexCommand.push('-')
+  }
 
   const codexProcess = Bun.spawn({
     cmd: codexCommand,

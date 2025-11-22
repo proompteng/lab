@@ -126,7 +126,7 @@ describe('codex-runner', () => {
     expect(result.sessionId).toBe('resume-42')
   })
 
-  it('uses --last resume, omits dash arg, still pipes prompt to stdin', async () => {
+  it('uses --last resume without dash and still sends prompt on stdin', async () => {
     const promptSink: string[] = []
     const codexMessages = [
       JSON.stringify({ type: 'session.rehydrated', session: { id: 'resume-99' } }),
@@ -151,7 +151,7 @@ describe('codex-runner', () => {
     const spawnArgs = spawnMock.mock.calls[0]?.[0]
     expect(spawnArgs?.cmd).toContain('resume')
     expect(spawnArgs?.cmd).toContain('--last')
-    expect(spawnArgs?.cmd).toContain('-')
+    expect(spawnArgs?.cmd).not.toContain('-')
     expect(promptSink).toEqual(['should-not-be-sent'])
   })
 
