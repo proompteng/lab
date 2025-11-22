@@ -1,0 +1,44 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: jangar
+  namespace: jangar
+  labels:
+    app.kubernetes.io/name: jangar
+    app.kubernetes.io/part-of: lab
+  annotations:
+    serving.knative.dev/rollout-duration: 10s
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/tracking-id: jangar:serving.knative.dev/Service:jangar/jangar
+    networking.knative.dev/visibility: cluster-local
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+    spec:
+      containerConcurrency: 0
+      containers:
+        - name: worker
+          image: registry.ide-newton.ts.net/lab/jangar:latest
+          imagePullPolicy: Always
+          env:
+            - name: PORT
+              value: "8080"
+            - name: TEMPORAL_ADDRESS
+              value: temporal-frontend.temporal.svc.cluster.local:7233
+            - name: TEMPORAL_NAMESPACE
+              value: default
+            - name: TEMPORAL_TASK_QUEUE
+              value: jangar
+          ports:
+            - name: http1
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

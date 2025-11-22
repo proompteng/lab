@@ -14,6 +14,8 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 | Script | Description | Required CLIs | Example |
 | --- | --- | --- | --- |
 | `src/codex/trigger-review-workflow.ts` | Collects unresolved review threads and failing checks for a pull request and submits the `github-codex-review` Argo workflow when action is needed. | `gh`, `argo` | `bun run packages/scripts/src/codex/trigger-review-workflow.ts --pr=1529` (also accepts full PR URLs) |
+| `src/codex/deploy-codex-image.ts` | Builds the `codex-universal` image via the Froussard CLI helper, rewrites manifest image references to the pushed digest, and optionally applies Argo CD manifests. | `docker`, `kubectl` | `bun run packages/scripts/src/codex/deploy-codex-image.ts --tag=$(git rev-parse --short HEAD)` |
+| `src/jangar/build-image.ts` | Builds and pushes the `lab/jangar` Bun worker image using the jangar Dockerfile. | `docker` | `bun run packages/scripts/src/jangar/build-image.ts` |
 | `src/froussard/deploy-service.ts` | Builds and pushes the Froussard Docker image, updates `knative-service.yaml` with the new digest + version metadata, and `kubectl apply`s the manifest (pass `--dry-run` to skip pushing/applying). | `docker`, `kubectl` | `bun run packages/scripts/src/froussard/deploy-service.ts` |
 | `src/froussard/reseal-secrets.ts` | Reseals the Froussard SealedSecrets using the cluster cert bundle. | `kubectl`, `openssl`, `kubeseal` | `bun run packages/scripts/src/froussard/reseal-secrets.ts` |
 | `src/facteur/build-image.ts` | Builds the Facteur container image and pushes to the configured registry. | `docker`/`podman` | `bun run packages/scripts/src/facteur/build-image.ts` |

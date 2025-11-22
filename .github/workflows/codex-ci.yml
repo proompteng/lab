@@ -1,0 +1,40 @@
+name: codex-ci
+
+on:
+  pull_request:
+    paths:
+      - 'packages/codex/**'
+      - '.github/workflows/codex-ci.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/codex/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.11.1
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint codex sources
+        run: pnpm exec biome check packages/codex
+
+      - name: Test codex package
+        run: pnpm --filter @proompteng/codex test
+
+      - name: Build codex package
+        run: pnpm --filter @proompteng/codex build

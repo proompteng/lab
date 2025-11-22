@@ -87,6 +87,13 @@ spec:
               argocd.argoproj.io/sync-wave: "6"
             automation: auto
             enabled: false
+          - name: jangar
+            path: argocd/applications/jangar
+            namespace: jangar
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+            enabled: true
           - name: galette
             path: argocd/applications/galette
             namespace: galette
