@@ -24,4 +24,3 @@ jobs:
       install-command: pnpm install --frozen-lockfile
       lint-command: pnpm exec biome check packages/codex
       test-command: pnpm --filter @proompteng/codex test
-      build-command: pnpm --filter @proompteng/codex build
