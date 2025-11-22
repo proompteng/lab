@@ -6,7 +6,7 @@ import { runEffect } from '../helpers/effect'
 const baseEnv = {
   TEMPORAL_ADDRESS: '127.0.0.1:7233',
   TEMPORAL_NAMESPACE: 'default',
-  TEMPORAL_TASK_QUEUE: 'prix',
+  TEMPORAL_TASK_QUEUE: 'replay-fixtures',
 }
 
 describe('config layer effect', () => {

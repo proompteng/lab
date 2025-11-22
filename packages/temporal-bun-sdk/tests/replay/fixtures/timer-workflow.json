@@ -3,7 +3,7 @@
   "info": {
     "workflowType": "timerWorkflow",
     "namespace": "default",
-    "taskQueue": "prix",
+    "taskQueue": "replay-fixtures",
     "workflowId": "fixture-timer",
     "runId": "fixture-timer-run",
     "temporalVersion": "dev-fixture"

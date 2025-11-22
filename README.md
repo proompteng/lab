@@ -41,7 +41,7 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
 | `apps/` | Next.js/Turbopack frontends (e.g. `proompteng`, `reviseur`, `alchimie`) with co-located fixtures and tests. |
 | `packages/backend` | Convex backend project (`convex dev`, codegen, model seeding). |
 | `packages/atelier`, `packages/cloutt` | Shared TypeScript utilities and infrastructure tooling. |
-| `services/` | Go microservices (`miel`, `prix`, `prt`, `eclair`) with adjacent tests and Dockerfiles. |
+| `services/` | Go microservices (`miel`, `prt`, `eclair`) with adjacent tests and Dockerfiles. |
 | `ansible/` | Playbooks and inventory for provisioning supporting hosts. |
 | `tofu/` | OpenTofu (Terraform) configurations for Harvester, Cloudflare, Rancher, and Tailscale. |
 | `kubernetes/` | Cluster bootstrap/maintenance tooling (install scripts, Coder template); no workload manifests. |

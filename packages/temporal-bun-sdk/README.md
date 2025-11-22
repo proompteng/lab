@@ -36,7 +36,7 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    TEMPORAL_CLIENT_RETRY_BACKOFF=2                  # optional – exponential backoff coefficient
    TEMPORAL_CLIENT_RETRY_JITTER_FACTOR=0.2          # optional – decorrelated jitter (0-1)
    TEMPORAL_CLIENT_RETRY_STATUS_CODES=UNAVAILABLE,DEADLINE_EXCEEDED  # optional – retryable gRPC codes
-   TEMPORAL_TASK_QUEUE=prix
+   TEMPORAL_TASK_QUEUE=replay-fixtures
    TEMPORAL_WORKFLOW_CONCURRENCY=4                  # optional – workflow pollers
    TEMPORAL_ACTIVITY_CONCURRENCY=4                  # optional – activity pollers
    TEMPORAL_STICKY_CACHE_SIZE=256                   # optional – determinism cache capacity
@@ -44,7 +44,7 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    TEMPORAL_STICKY_SCHEDULING_ENABLED=1             # optional – disable to bypass sticky scheduling
    TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS=4000     # optional – heartbeat throttle interval in ms
    TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS=5000  # optional – heartbeat RPC timeout in ms
-   TEMPORAL_WORKER_DEPLOYMENT_NAME=prix-deploy      # optional – worker deployment metadata
+   TEMPORAL_WORKER_DEPLOYMENT_NAME=replay-worker      # optional – worker deployment metadata
    TEMPORAL_WORKER_BUILD_ID=git-sha                 # optional – build-id for versioning
 ```
 
@@ -509,8 +509,8 @@ If the capability probe returns `Unimplemented` or `FailedPrecondition`, the run
 Example logs:
 
 ```
-[temporal-bun-sdk] registered worker build ID prix-worker@1.2.3 for default/prix
-[temporal-bun-sdk] skipping worker build ID registration for default/prix: worker versioning API unavailable (Unimplemented (12)). If you are running against the Temporal CLI dev server via bun scripts/start-temporal-cli.ts this warning is expected because that server does not implement worker versioning APIs yet.
+[temporal-bun-sdk] registered worker build ID replay-worker@1.2.3 for default/replay-fixtures
+[temporal-bun-sdk] skipping worker build ID registration for default/replay-fixtures: worker versioning API unavailable (Unimplemented (12)). If you are running against the Temporal CLI dev server via bun scripts/start-temporal-cli.ts this warning is expected because that server does not implement worker versioning APIs yet.
 ```
 
 Production clusters should enable worker versioning, watch for the registration log during deploys, and alert on failures so versioned queues stay healthy.

@@ -5,7 +5,7 @@ import { DeterminismGuard, type WorkflowDeterminismState } from '../../src/workf
 
 const baseInfo = {
   namespace: 'default',
-  taskQueue: 'prix',
+  taskQueue: 'replay-fixtures',
   workflowId: 'wf-primitive',
   runId: 'run-primitive',
   workflowType: 'primitiveWorkflow',

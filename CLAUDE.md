@@ -60,12 +60,6 @@ uv sync     # Install dependencies
 uv run dagster dev  # Start Dagster development server
 uv run pytest  # Run tests
 
-# For Go services (like prix)
-cd services/prix
-go run ./worker/main.go  # Run the worker
-go test ./... # Run tests
-make migrate-up  # Run database migrations
-
 # For Go services (like prt)
 cd services/prt
 go run main.go  # Run the service
@@ -117,7 +111,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 - **Next.js apps** (proompteng): Use App Router, TypeScript, Tailwind CSS, shadcn/ui components
 - **React apps** (kitty-krew): TanStack Start with TanStack Router and tRPC for type-safe APIs
 - **Python apps** (alchimie): Dagster for data pipelines, UV for dependency management
-- **Go services** (prix, prt): Temporal workflows, PostgreSQL integration, database migrations
+- **Go services** (prt): Temporal workflows, PostgreSQL integration, database migrations
 
 ### Infrastructure Patterns
 

@@ -34,7 +34,7 @@ test('encodes and decodes determinism marker envelopes', async () => {
   const converter = createDefaultDataConverter()
   const info: WorkflowInfo = {
     namespace: 'default',
-    taskQueue: 'prix',
+    taskQueue: 'replay-fixtures',
     workflowId: 'wf-123',
     runId: 'run-abc',
     workflowType: 'testWorkflow',
@@ -84,7 +84,7 @@ test('ingestWorkflowHistory returns determinism marker snapshot when available',
   const converter = createDefaultDataConverter()
   const info: WorkflowInfo = {
     namespace: 'default',
-    taskQueue: 'prix',
+    taskQueue: 'replay-fixtures',
     workflowId: 'wf-321',
     runId: 'run-marker',
     workflowType: 'exampleWorkflow',
@@ -98,7 +98,7 @@ test('ingestWorkflowHistory returns determinism marker snapshot when available',
           sequence: 0,
           activityType: 'sendEmail',
           activityId: 'send-0',
-          taskQueue: 'prix',
+          taskQueue: 'replay-fixtures',
           input: ['hello@acme.test'],
           timeouts: {},
           retry: undefined,
@@ -151,7 +151,7 @@ test('ingestWorkflowHistory reconstructs command history from legacy events when
   const converter = createDefaultDataConverter()
   const info: WorkflowInfo = {
     namespace: 'default',
-    taskQueue: 'prix',
+    taskQueue: 'replay-fixtures',
     workflowId: 'wf-legacy',
     runId: 'run-legacy',
     workflowType: 'legacyWorkflow',
@@ -246,7 +246,7 @@ test('ingestWorkflowHistory reconstructs command history from legacy events when
       value: create(WorkflowExecutionContinuedAsNewEventAttributesSchema, {
         newExecutionRunId: 'run-new',
         workflowType: { name: 'legacyWorkflow' },
-        taskQueue: create(TaskQueueSchema, { name: 'prix' }),
+        taskQueue: create(TaskQueueSchema, { name: 'replay-fixtures' }),
         input: create(PayloadsSchema, { payloads: continuePayloads }),
         workflowRunTimeout: { seconds: 30n, nanos: 0 },
         workflowTaskTimeout: { seconds: 5n, nanos: 0 },
@@ -316,7 +316,7 @@ test('ingestWorkflowHistory captures failure metadata from workflow events', asy
   const converter = createDefaultDataConverter()
   const info: WorkflowInfo = {
     namespace: 'default',
-    taskQueue: 'prix',
+    taskQueue: 'replay-fixtures',
     workflowId: 'wf-failure',
     runId: 'run-failure',
     workflowType: 'failingWorkflow',
@@ -559,7 +559,7 @@ test('ingestWorkflowHistory ingests record markers and search attribute upserts'
   const converter = createDefaultDataConverter()
   const info: WorkflowInfo = {
     namespace: 'default',
-    taskQueue: 'prix',
+    taskQueue: 'replay-fixtures',
     workflowId: 'wf-marker',
     runId: 'run-marker',
     workflowType: 'workflowWithMarkers',

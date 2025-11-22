@@ -3,7 +3,7 @@
   "info": {
     "workflowType": "parentWorkflow",
     "namespace": "default",
-    "taskQueue": "prix",
+    "taskQueue": "replay-fixtures",
     "workflowId": "fixture-parent",
     "runId": "fixture-parent-run",
     "temporalVersion": "dev-fixture"
@@ -29,7 +29,7 @@
           "name": "childWorkflow"
         },
         "taskQueue": {
-          "name": "prix-child",
+          "name": "replay-fixtures-child",
           "kind": 0,
           "normalName": ""
         },
@@ -53,7 +53,7 @@
           "name": "parentWorkflow"
         },
         "taskQueue": {
-          "name": "prix",
+          "name": "replay-fixtures",
           "kind": 0,
           "normalName": ""
         },
@@ -72,7 +72,7 @@
           "workflowType": "childWorkflow",
           "workflowId": "fixture-child",
           "namespace": "default",
-          "taskQueue": "prix-child",
+          "taskQueue": "replay-fixtures-child",
           "input": [],
           "timeouts": {
             "workflowExecutionTimeoutMs": 20000,
@@ -93,7 +93,7 @@
           "kind": "continue-as-new",
           "sequence": 1,
           "workflowType": "parentWorkflow",
-          "taskQueue": "prix",
+          "taskQueue": "replay-fixtures",
           "input": [],
           "timeouts": {
             "workflowRunTimeoutMs": 30000,

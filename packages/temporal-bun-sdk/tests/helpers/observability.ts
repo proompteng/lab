@@ -8,7 +8,7 @@ export const createTestTemporalConfig = (overrides: Partial<TemporalConfig> = {}
   port: 7233,
   address: '127.0.0.1:7233',
   namespace: 'default',
-  taskQueue: 'prix',
+  taskQueue: 'replay-fixtures',
   apiKey: undefined,
   tls: undefined,
   allowInsecureTls: true,

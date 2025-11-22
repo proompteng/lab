@@ -18,7 +18,7 @@ import {
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 7233
 const DEFAULT_NAMESPACE = 'default'
-const DEFAULT_TASK_QUEUE = 'prix'
+const DEFAULT_TASK_QUEUE = 'replay-fixtures'
 const DEFAULT_IDENTITY_PREFIX = 'temporal-bun-worker'
 const DEFAULT_WORKFLOW_CONCURRENCY = 4
 const DEFAULT_ACTIVITY_CONCURRENCY = 4

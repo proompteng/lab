@@ -41,7 +41,7 @@ const fixtures: Fixture[] = [
     info: {
       workflowType: 'timerWorkflow',
       namespace: 'default',
-      taskQueue: 'prix',
+      taskQueue: 'replay-fixtures',
       workflowId: 'fixture-timer',
       runId: 'fixture-timer-run',
       temporalVersion: 'dev-fixture',
@@ -102,7 +102,7 @@ const fixtures: Fixture[] = [
           value: create(ActivityTaskScheduledEventAttributesSchema, {
             activityId: 'fixture-activity-1',
             activityType: { name: 'recordMetric' },
-            taskQueue: create(TaskQueueSchema, { name: 'prix' }),
+            taskQueue: create(TaskQueueSchema, { name: 'replay-fixtures' }),
             input: create(PayloadsSchema, { payloads: [] }),
             retryPolicy: {
               initialInterval: { seconds: 1n, nanos: 0 },
@@ -123,7 +123,7 @@ const fixtures: Fixture[] = [
             sequence: 0,
             activityType: 'recordMetric',
             activityId: 'fixture-activity-1',
-            taskQueue: 'prix',
+            taskQueue: 'replay-fixtures',
             input: [],
             timeouts: {},
             retry: {
@@ -150,7 +150,7 @@ const fixtures: Fixture[] = [
     info: {
       workflowType: 'parentWorkflow',
       namespace: 'default',
-      taskQueue: 'prix',
+      taskQueue: 'replay-fixtures',
       workflowId: 'fixture-parent',
       runId: 'fixture-parent-run',
       temporalVersion: 'dev-fixture',
@@ -164,7 +164,7 @@ const fixtures: Fixture[] = [
           value: create(StartChildWorkflowExecutionInitiatedEventAttributesSchema, {
             workflowId: 'fixture-child',
             workflowType: { name: 'childWorkflow' },
-            taskQueue: create(TaskQueueSchema, { name: 'prix-child' }),
+            taskQueue: create(TaskQueueSchema, { name: 'replay-fixtures-child' }),
             workflowExecutionTimeout: { seconds: 20n, nanos: 0 },
             workflowRunTimeout: { seconds: 10n, nanos: 0 },
             workflowTaskTimeout: { seconds: 5n, nanos: 0 },
@@ -181,7 +181,7 @@ const fixtures: Fixture[] = [
           value: create(WorkflowExecutionContinuedAsNewEventAttributesSchema, {
             newExecutionRunId: 'fixture-parent-run-2',
             workflowType: { name: 'parentWorkflow' },
-            taskQueue: create(TaskQueueSchema, { name: 'prix' }),
+            taskQueue: create(TaskQueueSchema, { name: 'replay-fixtures' }),
             workflowRunTimeout: { seconds: 30n, nanos: 0 },
             workflowTaskTimeout: { seconds: 10n, nanos: 0 },
             workflowTaskCompletedEventId: 21n,
@@ -199,7 +199,7 @@ const fixtures: Fixture[] = [
             workflowType: 'childWorkflow',
             workflowId: 'fixture-child',
             namespace: 'default',
-            taskQueue: 'prix-child',
+            taskQueue: 'replay-fixtures-child',
             input: [],
             timeouts: {
               workflowExecutionTimeoutMs: 20000,
@@ -220,7 +220,7 @@ const fixtures: Fixture[] = [
             kind: 'continue-as-new',
             sequence: 1,
             workflowType: 'parentWorkflow',
-            taskQueue: 'prix',
+            taskQueue: 'replay-fixtures',
             input: [],
             timeouts: {
               workflowRunTimeoutMs: 30000,
