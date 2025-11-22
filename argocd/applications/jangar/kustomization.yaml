@@ -4,3 +4,7 @@ namespace: jangar
 resources:
   - kservice.yaml
   - tailscale-service.yaml
+
+images:
+  - name: registry.ide-newton.ts.net/lab/jangar
+    newTag: latest
