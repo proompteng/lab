@@ -31,7 +31,7 @@ const updateManifests = (kustomizePath: string, servicePath: string, tag: string
   }
 
   const service = readFileSync(servicePath, 'utf8')
-  const updatedService = service.replace(/(deploy\.knative\.dev\/rollout:\s*").+(" )?/, `$1${rolloutTimestamp}$2`)
+  const updatedService = service.replace(/(deploy\.knative\.dev\/rollout:\s*").+("?)/, `$1${rolloutTimestamp}$2`)
   if (service === updatedService) {
     console.warn('Warning: jangar service rollout annotation was not updated; pattern may have changed.')
   } else {
@@ -63,6 +63,7 @@ export const main = async (options: DeployOptions = {}) => {
     options.serviceManifest ?? process.env.JANGAR_SERVICE_MANIFEST ?? 'argocd/applications/jangar/kservice.yaml',
   )
 
+  // Persist image tag and rollout marker in Git before applying
   updateManifests(`${kustomizePath}/kustomization.yaml`, serviceManifest, tag, new Date().toISOString())
 
   await run('kubectl', ['apply', '-k', kustomizePath])
