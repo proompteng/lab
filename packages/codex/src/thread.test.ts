@@ -62,6 +62,6 @@ describe('Thread', () => {
 
     const thread = new Thread(exec as never, {}, { sandboxMode: 'workspace-write' })
 
-    await expect(() => thread.run('trigger failure')).rejects.toThrow('boom')
+    await expect(thread.run('trigger failure')).rejects.toThrow('boom')
   })
 })
