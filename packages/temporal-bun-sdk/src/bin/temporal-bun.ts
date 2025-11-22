@@ -5,6 +5,9 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
 import { Cause, Effect, Exit } from 'effect'
+import { createDefaultDataConverter } from '../common/payloads/converter'
+import { makeDefaultClientInterceptors } from '../interceptors/client'
+import { makeDefaultWorkerInterceptors } from '../interceptors/worker'
 import { runTemporalCliEffect } from '../runtime/cli-layer'
 import { ObservabilityService, TemporalConfigService } from '../runtime/effect-layers'
 import { executeReplay, parseReplayOptions, printReplaySummary } from './replay-command'
@@ -34,6 +37,59 @@ const doctorCommandProgram = Effect.gen(function* () {
     'Temporal CLI doctor command executions',
   )
   yield* doctorCounter.inc()
+  const clientInterceptors = yield* makeDefaultClientInterceptors({
+    namespace: config.namespace,
+    taskQueue: config.taskQueue,
+    identity: config.workerIdentity,
+    logger,
+    metricsRegistry,
+    metricsExporter,
+    retryPolicy: config.rpcRetryPolicy,
+    tracingEnabled: config.tracingInterceptorsEnabled,
+  })
+  const workerInterceptors = yield* makeDefaultWorkerInterceptors({
+    namespace: config.namespace,
+    taskQueue: config.taskQueue,
+    identity: config.workerIdentity,
+    buildId: config.workerBuildId ?? config.workerIdentity,
+    logger,
+    metricsRegistry,
+    metricsExporter,
+    dataConverter: createDefaultDataConverter(),
+    tracingEnabled: config.tracingInterceptorsEnabled,
+  })
+
+  const retryIssues: string[] = []
+  const retry = config.rpcRetryPolicy
+  if (!retry || retry.maxAttempts < 1) {
+    retryIssues.push('maxAttempts must be at least 1')
+  }
+  if (retry.initialDelayMs <= 0) {
+    retryIssues.push('initialDelayMs must be positive')
+  }
+  if (retry.maxDelayMs < retry.initialDelayMs) {
+    retryIssues.push('maxDelayMs must be >= initialDelayMs')
+  }
+  if (!Number.isFinite(retry.backoffCoefficient) || retry.backoffCoefficient <= 0) {
+    retryIssues.push('backoffCoefficient must be > 0')
+  }
+
+  if (retryIssues.length > 0) {
+    yield* logger.log('error', 'retry policy validation failed', {
+      issues: retryIssues,
+      retry,
+    })
+    throw new Error('temporal-bun doctor failed: retry policy invalid')
+  }
+
+  const interceptorSummary = {
+    client: clientInterceptors.map((interceptor) => interceptor.name ?? 'anonymous'),
+    worker: workerInterceptors.map((interceptor) => interceptor.name ?? 'anonymous'),
+    tracingEnabled: config.tracingInterceptorsEnabled,
+  }
+
+  yield* logger.log('info', 'interceptor chain resolved', interceptorSummary)
+  yield* logger.log('info', 'retry policy validated', { retry })
   yield* logger.log('info', 'temporal-bun doctor validation succeeded', {
     namespace: config.namespace,
     taskQueue: config.taskQueue,
@@ -46,6 +102,12 @@ const doctorCommandProgram = Effect.gen(function* () {
     if (config.metricsExporter.type !== 'in-memory') {
       console.log(`  metrics sink: ${config.metricsExporter.type} ${config.metricsExporter.endpoint ?? ''}`)
     }
+    console.log(`  client interceptors: ${interceptorSummary.client.join(', ')}`)
+    console.log(`  worker interceptors: ${interceptorSummary.worker.join(', ')}`)
+    console.log(`  tracing interceptors: ${interceptorSummary.tracingEnabled ? 'enabled' : 'disabled'}`)
+    console.log(
+      `  retry policy: attempts=${retry.maxAttempts} initial=${retry.initialDelayMs}ms max=${retry.maxDelayMs}ms backoff=${retry.backoffCoefficient} jitter=${retry.jitterFactor}`,
+    )
   })
   return undefined
 })

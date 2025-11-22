@@ -41,14 +41,39 @@ const clampJitter = (factor: number): number => {
   return factor
 }
 
+const unwrapRetryError = (error: unknown): unknown => {
+  if (error && typeof error === 'object') {
+    const candidate = error as { _tag?: string; cause?: unknown; error?: unknown }
+    // Effect.tryPromise failures arrive as UnknownException; surface the underlying cause when present.
+    if (candidate._tag === 'UnknownException') {
+      return candidate.cause ?? candidate.error ?? error
+    }
+    if ('cause' in candidate && candidate.cause) {
+      return candidate.cause as unknown
+    }
+  }
+  return error
+}
+
 const shouldRetryError = (policy: TemporalRpcRetryPolicy) => {
   const retryable = new Set(policy.retryableStatusCodes.length ? policy.retryableStatusCodes : DEFAULT_RETRYABLE_CODES)
 
   return (error: unknown): boolean => {
-    if (!(error instanceof ConnectError)) {
-      return false
+    const underlying = unwrapRetryError(error)
+    if (underlying instanceof ConnectError) {
+      if (underlying.code === Code.Canceled) {
+        return false
+      }
+      return retryable.has(underlying.code)
     }
-    return retryable.has(error.code)
+    // Treat generic errors as transient for interceptor-driven retries; bounded by maxAttempts.
+    if (underlying instanceof Error) {
+      if (underlying.name === 'AbortError') {
+        return false
+      }
+      return true
+    }
+    return false
   }
 }
 

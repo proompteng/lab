@@ -28,6 +28,7 @@ const DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS = 5_000
 const DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS = 5_000
 const DEFAULT_LOG_LEVEL: LogLevel = 'info'
 const DEFAULT_LOG_FORMAT: LogFormat = 'pretty'
+const DEFAULT_TRACING_INTERCEPTORS_ENABLED = true
 const DEFAULT_CLIENT_RETRY_MAX_ATTEMPTS = defaultRetryPolicy.maxAttempts
 const DEFAULT_CLIENT_RETRY_INITIAL_MS = defaultRetryPolicy.initialDelayMs
 const DEFAULT_CLIENT_RETRY_MAX_MS = defaultRetryPolicy.maxDelayMs
@@ -103,6 +104,7 @@ const TemporalConfigSchema = Schema.Struct({
   workerBuildId: Schema.optional(Schema.String),
   logLevel: LogLevelSchema,
   logFormat: LogFormatSchema,
+  tracingInterceptorsEnabled: Schema.Boolean,
   metricsExporter: MetricsExporterSpecSchema,
   rpcRetryPolicy: TemporalRpcRetryPolicySchema,
 })
@@ -131,6 +133,7 @@ export interface TemporalEnvironment {
   ALLOW_INSECURE_TLS?: string
   TEMPORAL_LOG_FORMAT?: string
   TEMPORAL_LOG_LEVEL?: string
+  TEMPORAL_TRACING_INTERCEPTORS_ENABLED?: string
   TEMPORAL_METRICS_EXPORTER?: string
   TEMPORAL_METRICS_ENDPOINT?: string
   TEMPORAL_WORKER_IDENTITY_PREFIX?: string
@@ -210,6 +213,7 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     ALLOW_INSECURE_TLS: read('ALLOW_INSECURE_TLS'),
     TEMPORAL_LOG_FORMAT: read('TEMPORAL_LOG_FORMAT'),
     TEMPORAL_LOG_LEVEL: read('TEMPORAL_LOG_LEVEL'),
+    TEMPORAL_TRACING_INTERCEPTORS_ENABLED: read('TEMPORAL_TRACING_INTERCEPTORS_ENABLED'),
     TEMPORAL_METRICS_EXPORTER: read('TEMPORAL_METRICS_EXPORTER'),
     TEMPORAL_METRICS_ENDPOINT: read('TEMPORAL_METRICS_ENDPOINT'),
     TEMPORAL_WORKER_IDENTITY_PREFIX: read('TEMPORAL_WORKER_IDENTITY_PREFIX'),
@@ -375,6 +379,7 @@ export interface TemporalConfig {
   workerBuildId?: string
   logLevel: LogLevel
   logFormat: LogFormat
+  tracingInterceptorsEnabled: boolean
   metricsExporter: MetricsExporterSpec
   rpcRetryPolicy: TemporalRpcRetryPolicy
 }
@@ -641,6 +646,10 @@ export const loadTemporalConfigEffect = (
       coerceBoolean(env.TEMPORAL_SHOW_STACK_SOURCES) ?? defaults.showStackTraceSources ?? false
     const logLevel = parseLogLevel(env.TEMPORAL_LOG_LEVEL) ?? defaults.logLevel ?? DEFAULT_LOG_LEVEL
     const logFormat = parseLogFormat(env.TEMPORAL_LOG_FORMAT) ?? defaults.logFormat ?? DEFAULT_LOG_FORMAT
+    const tracingInterceptorsEnabled =
+      coerceBoolean(env.TEMPORAL_TRACING_INTERCEPTORS_ENABLED) ??
+      defaults.tracingInterceptorsEnabled ??
+      DEFAULT_TRACING_INTERCEPTORS_ENABLED
     const metricsExporter = resolveMetricsExporterSpec(
       env.TEMPORAL_METRICS_EXPORTER ?? defaults.metricsExporter?.type,
       env.TEMPORAL_METRICS_ENDPOINT ?? defaults.metricsExporter?.endpoint,
@@ -670,6 +679,7 @@ export const loadTemporalConfigEffect = (
       workerBuildId,
       logLevel,
       logFormat,
+      tracingInterceptorsEnabled,
       metricsExporter,
       rpcRetryPolicy,
     }
@@ -711,6 +721,7 @@ export const temporalDefaults = {
   workerBuildId: undefined,
   logLevel: DEFAULT_LOG_LEVEL,
   logFormat: DEFAULT_LOG_FORMAT,
+  tracingInterceptorsEnabled: DEFAULT_TRACING_INTERCEPTORS_ENABLED,
   metricsExporter: cloneMetricsExporterSpec(defaultMetricsExporterSpec),
   rpcRetryPolicy: cloneRetryPolicy(defaultRetryPolicy),
 } satisfies Pick<
@@ -731,6 +742,7 @@ export const temporalDefaults = {
   | 'workerBuildId'
   | 'logLevel'
   | 'logFormat'
+  | 'tracingInterceptorsEnabled'
   | 'metricsExporter'
   | 'rpcRetryPolicy'
 >

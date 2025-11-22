@@ -6,7 +6,7 @@ import * as Option from 'effect/Option'
 
 import { createDefaultHeaders, mergeHeaders, normalizeMetadataHeaders } from './client/headers'
 import { type InterceptorBuilder, makeDefaultInterceptorBuilder, type TemporalInterceptor } from './client/interceptors'
-import { type TemporalRpcRetryPolicy, withTemporalRetry } from './client/retries'
+import type { TemporalRpcRetryPolicy } from './client/retries'
 import {
   buildCancelRequest,
   buildPollWorkflowUpdateRequest,
@@ -43,6 +43,12 @@ import {
 } from './client/types'
 import { createDefaultDataConverter, type DataConverter, decodePayloadsToValues } from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig } from './config'
+import {
+  type ClientInterceptorBuilder,
+  makeDefaultClientInterceptors,
+  runClientInterceptors,
+} from './interceptors/client'
+import type { TemporalInterceptor as ClientMiddleware, InterceptorContext, InterceptorKind } from './interceptors/types'
 import { createObservabilityServices } from './observability'
 import type { LogFields, Logger, LogLevel } from './observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from './observability/metrics'
@@ -227,6 +233,48 @@ const describeError = (error: unknown): string => {
 const TLS_ERROR_CODE_PREFIXES = ['ERR_TLS_', 'ERR_SSL_']
 const TLS_ERROR_MESSAGE_HINTS = [/handshake/i, /certificate/i, /secure tls/i, /ssl/i]
 
+const isAbortLikeError = (error: unknown): boolean =>
+  (error instanceof Error && error.name === 'AbortError') ||
+  (error instanceof ConnectError && error.code === Code.Canceled)
+
+const normalizeUnknownError = (error: unknown): unknown => {
+  const unwrap = (value: unknown): unknown => {
+    if (!value || typeof value !== 'object') {
+      return value
+    }
+
+    if (value instanceof TemporalTlsHandshakeError || value instanceof ConnectError) {
+      return value
+    }
+
+    const candidate = value as { cause?: unknown; error?: unknown; _tag?: string }
+
+    if (candidate.cause !== undefined) {
+      return unwrap(candidate.cause)
+    }
+    if (candidate.error !== undefined) {
+      return unwrap(candidate.error)
+    }
+
+    if (candidate._tag === 'UnknownException') {
+      return unwrap(candidate.cause ?? candidate.error ?? value)
+    }
+
+    const symbols = Object.getOwnPropertySymbols(value)
+    for (const symbol of symbols) {
+      const inner = (value as Record<symbol, unknown>)[symbol]
+      const unwrapped = unwrap(inner)
+      if (unwrapped !== inner) {
+        return unwrapped
+      }
+    }
+
+    return value
+  }
+
+  return unwrap(error)
+}
+
 const isCallOptionsCandidate = (value: unknown): value is BrandedTemporalClientCallOptions => {
   if (!value || typeof value !== 'object') {
     return false
@@ -279,6 +327,9 @@ export interface CreateTemporalClientOptions {
   metricsExporter?: MetricsExporter
   interceptors?: TemporalInterceptor[]
   interceptorBuilder?: InterceptorBuilder
+  clientInterceptors?: ClientMiddleware[]
+  clientInterceptorBuilder?: ClientInterceptorBuilder
+  tracingEnabled?: boolean
   workflowService?: WorkflowServiceClient
   transport?: ClosableTransport
 }
@@ -380,6 +431,21 @@ export const makeTemporalClientEffect = (
     const logger = options.logger ?? (yield* LoggerService)
     const metricsRegistry = options.metrics ?? (yield* MetricsService)
     const metricsExporter = options.metricsExporter ?? (yield* MetricsExporterService)
+    const tracingEnabled = options.tracingEnabled ?? config.tracingInterceptorsEnabled ?? false
+    const clientInterceptorBuilder: ClientInterceptorBuilder = options.clientInterceptorBuilder ?? {
+      build: (input) => makeDefaultClientInterceptors(input),
+    }
+    const defaultClientInterceptors = yield* clientInterceptorBuilder.build({
+      namespace,
+      taskQueue,
+      identity,
+      logger,
+      metricsRegistry,
+      metricsExporter,
+      retryPolicy: config.rpcRetryPolicy,
+      tracingEnabled,
+    })
+    const clientInterceptors = [...defaultClientInterceptors, ...(options.clientInterceptors ?? [])]
     const workflowServiceFromContext = yield* Effect.contextWith((context) =>
       Context.getOption(context, WorkflowServiceClientService),
     )
@@ -425,6 +491,7 @@ export const makeTemporalClientEffect = (
       logger,
       metrics: clientMetrics,
       metricsExporter,
+      clientInterceptors,
     })
 
     return { client, config }
@@ -449,7 +516,9 @@ class TemporalClientImpl implements TemporalClient {
   #logger: Logger
   #clientMetrics: TemporalClientMetrics
   #metricsExporter: MetricsExporter
+  #clientInterceptors: ClientMiddleware[]
   #pendingUpdateControllers = new Map<string, Set<AbortController>>()
+  #abortedUpdates = new Set<string>()
   private closed = false
   private headers: Record<string, string>
 
@@ -479,6 +548,7 @@ class TemporalClientImpl implements TemporalClient {
     logger: Logger
     metrics: TemporalClientMetrics
     metricsExporter: MetricsExporter
+    clientInterceptors: ClientMiddleware[]
   }) {
     this.transport = handles.transport
     this.workflowService = handles.workflowService
@@ -491,6 +561,7 @@ class TemporalClientImpl implements TemporalClient {
     this.#logger = handles.logger
     this.#clientMetrics = handles.metrics
     this.#metricsExporter = handles.metricsExporter
+    this.#clientInterceptors = handles.clientInterceptors
     this.memo = {
       encode: (input) => encodeMemoAttributes(this.dataConverter, input),
       decode: (memo) => decodeMemoAttributes(this.dataConverter, memo),
@@ -520,94 +591,108 @@ class TemporalClientImpl implements TemporalClient {
     options: StartWorkflowOptions,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<StartWorkflowResult> {
-    return this.#instrumentOperation('startWorkflow', async () => {
-      this.ensureOpen()
-      const parsedOptions = sanitizeStartWorkflowOptions(options)
-
-      const request = await buildStartWorkflowRequest(
-        {
-          options: parsedOptions,
-          defaults: {
-            namespace: this.namespace,
-            identity: this.defaultIdentity,
-            taskQueue: this.defaultTaskQueue,
+    const parsedOptions = sanitizeStartWorkflowOptions(options)
+    return this.#instrumentOperation(
+      'workflow.start',
+      async () => {
+        this.ensureOpen()
+        const request = await buildStartWorkflowRequest(
+          {
+            options: parsedOptions,
+            defaults: {
+              namespace: this.namespace,
+              identity: this.defaultIdentity,
+              taskQueue: this.defaultTaskQueue,
+            },
           },
-        },
-        this.dataConverter,
-      )
+          this.dataConverter,
+        )
 
-      const response = await this.executeRpc(
-        'startWorkflow',
-        (rpcOptions) => this.workflowService.startWorkflowExecution(request, rpcOptions),
-        callOptions,
-      )
-      return this.toStartWorkflowResult(response, {
-        workflowId: request.workflowId,
-        namespace: request.namespace,
-        firstExecutionRunId: response.started ? response.runId : undefined,
-      })
-    })
+        const response = await this.executeRpc(
+          'startWorkflow',
+          (rpcOptions) => this.workflowService.startWorkflowExecution(request, rpcOptions),
+          callOptions,
+        )
+        return this.toStartWorkflowResult(response, {
+          workflowId: request.workflowId,
+          namespace: request.namespace,
+          firstExecutionRunId: response.started ? response.runId : undefined,
+        })
+      },
+      {
+        workflowId: parsedOptions.workflowId,
+        taskQueue: options.taskQueue ?? this.defaultTaskQueue,
+      },
+    )
   }
 
   async signalWorkflow(handle: WorkflowHandle, signalName: string, ...rawArgs: unknown[]): Promise<void> {
-    return this.#instrumentOperation('signalWorkflow', async () => {
-      this.ensureOpen()
-      const resolvedHandle = resolveHandle(this.namespace, handle)
-      const normalizedSignalName = ensureNonEmptyString(signalName, 'signalName')
-      const { values, callOptions } = this.#splitArgsAndOptions(rawArgs)
+    const resolvedHandle = resolveHandle(this.namespace, handle)
+    return this.#instrumentOperation(
+      'workflow.signal',
+      async () => {
+        this.ensureOpen()
+        const normalizedSignalName = ensureNonEmptyString(signalName, 'signalName')
+        const { values, callOptions } = this.#splitArgsAndOptions(rawArgs)
 
-      const identity = this.defaultIdentity
-      const entropy = createSignalRequestEntropy()
-      const requestId = await computeSignalRequestId(
-        {
-          namespace: resolvedHandle.namespace,
-          workflowId: resolvedHandle.workflowId,
-          runId: resolvedHandle.runId,
-          firstExecutionRunId: resolvedHandle.firstExecutionRunId,
-          signalName: normalizedSignalName,
-          identity,
-          args: values,
-        },
-        this.dataConverter,
-        { entropy },
-      )
+        const identity = this.defaultIdentity
+        const entropy = createSignalRequestEntropy()
+        const requestId = await computeSignalRequestId(
+          {
+            namespace: resolvedHandle.namespace,
+            workflowId: resolvedHandle.workflowId,
+            runId: resolvedHandle.runId,
+            firstExecutionRunId: resolvedHandle.firstExecutionRunId,
+            signalName: normalizedSignalName,
+            identity,
+            args: values,
+          },
+          this.dataConverter,
+          { entropy },
+        )
 
-      const request = await buildSignalRequest(
-        {
-          handle: resolvedHandle,
-          signalName: normalizedSignalName,
-          args: values,
-          identity,
-          requestId,
-        },
-        this.dataConverter,
-      )
+        const request = await buildSignalRequest(
+          {
+            handle: resolvedHandle,
+            signalName: normalizedSignalName,
+            args: values,
+            identity,
+            requestId,
+          },
+          this.dataConverter,
+        )
 
-      await this.executeRpc(
-        'signalWorkflow',
-        (rpcOptions) => this.workflowService.signalWorkflowExecution(request, rpcOptions),
-        callOptions,
-      )
-    })
+        await this.executeRpc(
+          'signalWorkflow',
+          (rpcOptions) => this.workflowService.signalWorkflowExecution(request, rpcOptions),
+          callOptions,
+        )
+      },
+      { workflowId: resolvedHandle.workflowId, runId: resolvedHandle.runId, taskQueue: this.defaultTaskQueue },
+    )
   }
 
   async queryWorkflow(handle: WorkflowHandle, queryName: string, ...rawArgs: unknown[]): Promise<unknown> {
-    return this.#instrumentOperation('queryWorkflow', async () => {
-      this.ensureOpen()
-      const resolvedHandle = resolveHandle(this.namespace, handle)
-      const { values, callOptions } = this.#splitArgsAndOptions(rawArgs)
+    const resolvedHandle = resolveHandle(this.namespace, handle)
+    return this.#instrumentOperation(
+      'workflow.query',
+      async () => {
+        this.ensureOpen()
+        const { values, callOptions } = this.#splitArgsAndOptions(rawArgs)
 
-      const request = await buildQueryRequest(resolvedHandle, queryName, values, this.dataConverter, {
-        rejectCondition: callOptions?.queryRejectCondition,
-      })
-      const response = await this.executeRpc(
-        'queryWorkflow',
-        (rpcOptions) => this.workflowService.queryWorkflow(request, rpcOptions),
-        callOptions,
-      )
+        const request = await buildQueryRequest(resolvedHandle, queryName, values, this.dataConverter, {
+          rejectCondition: callOptions?.queryRejectCondition,
+        })
+        const response = await this.executeRpc(
+          'queryWorkflow',
+          (rpcOptions) => this.workflowService.queryWorkflow(request, rpcOptions),
+          callOptions,
+        )
 
-      return this.parseQueryResult(response)
-    })
+        return this.parseQueryResult(response)
+      },
+      { workflowId: resolvedHandle.workflowId, runId: resolvedHandle.runId },
+    )
   }
 
   async terminateWorkflow(
@@ -615,79 +700,91 @@ class TemporalClientImpl implements TemporalClient {
     options: TerminateWorkflowOptions = {},
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<void> {
-    return this.#instrumentOperation('terminateWorkflow', async () => {
-      this.ensureOpen()
-      const resolvedHandle = resolveHandle(this.namespace, handle)
-      const parsedOptions = sanitizeTerminateWorkflowOptions(options)
+    return this.#instrumentOperation(
+      'workflow.terminate',
+      async () => {
+        this.ensureOpen()
+        const resolvedHandle = resolveHandle(this.namespace, handle)
+        const parsedOptions = sanitizeTerminateWorkflowOptions(options)
 
-      const request = await buildTerminateRequest(
-        resolvedHandle,
-        parsedOptions,
-        this.dataConverter,
-        this.defaultIdentity,
-      )
-      await this.executeRpc(
-        'terminateWorkflow',
-        (rpcOptions) => this.workflowService.terminateWorkflowExecution(request, rpcOptions),
-        callOptions,
-      )
-    })
+        const request = await buildTerminateRequest(
+          resolvedHandle,
+          parsedOptions,
+          this.dataConverter,
+          this.defaultIdentity,
+        )
+        await this.executeRpc(
+          'terminateWorkflow',
+          (rpcOptions) => this.workflowService.terminateWorkflowExecution(request, rpcOptions),
+          callOptions,
+        )
+      },
+      { workflowId: handle.workflowId, runId: handle.runId },
+    )
   }
 
   async cancelWorkflow(handle: WorkflowHandle, callOptions?: BrandedTemporalClientCallOptions): Promise<void> {
-    return this.#instrumentOperation('cancelWorkflow', async () => {
-      this.ensureOpen()
-      const resolvedHandle = resolveHandle(this.namespace, handle)
+    const resolvedHandle = resolveHandle(this.namespace, handle)
+    return this.#instrumentOperation(
+      'workflow.cancel',
+      async () => {
+        this.ensureOpen()
 
-      const request = buildCancelRequest(resolvedHandle, this.defaultIdentity)
-      await this.executeRpc(
-        'cancelWorkflow',
-        (rpcOptions) => this.workflowService.requestCancelWorkflowExecution(request, rpcOptions),
-        callOptions,
-      )
-    })
+        const request = buildCancelRequest(resolvedHandle, this.defaultIdentity)
+        await this.executeRpc(
+          'cancelWorkflow',
+          (rpcOptions) => this.workflowService.requestCancelWorkflowExecution(request, rpcOptions),
+          callOptions,
+        )
+      },
+      { workflowId: resolvedHandle.workflowId, runId: resolvedHandle.runId },
+    )
   }
 
   async signalWithStart(
     options: SignalWithStartOptions,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<StartWorkflowResult> {
-    return this.#instrumentOperation('signalWithStart', async () => {
-      this.ensureOpen()
-      const startOptions = sanitizeStartWorkflowOptions(options)
-      const signalName = ensureNonEmptyString(options.signalName, 'signalName')
-      const signalArgs = options.signalArgs ?? []
-      if (!Array.isArray(signalArgs)) {
-        throw new Error('signalArgs must be an array when provided')
-      }
+    const startOptions = sanitizeStartWorkflowOptions(options)
+    return this.#instrumentOperation(
+      'workflow.signalWithStart',
+      async () => {
+        this.ensureOpen()
+        const signalName = ensureNonEmptyString(options.signalName, 'signalName')
+        const signalArgs = options.signalArgs ?? []
+        if (!Array.isArray(signalArgs)) {
+          throw new Error('signalArgs must be an array when provided')
+        }
 
-      const request = await buildSignalWithStartRequest(
-        {
-          options: {
-            ...startOptions,
-            signalName,
-            signalArgs,
+        const request = await buildSignalWithStartRequest(
+          {
+            options: {
+              ...startOptions,
+              signalName,
+              signalArgs,
+            },
+            defaults: {
+              namespace: this.namespace,
+              identity: this.defaultIdentity,
+              taskQueue: this.defaultTaskQueue,
+            },
           },
-          defaults: {
-            namespace: this.namespace,
-            identity: this.defaultIdentity,
-            taskQueue: this.defaultTaskQueue,
-          },
-        },
-        this.dataConverter,
-      )
+          this.dataConverter,
+        )
 
-      const response = await this.executeRpc(
-        'signalWithStartWorkflow',
-        (rpcOptions) => this.workflowService.signalWithStartWorkflowExecution(request, rpcOptions),
-        callOptions,
-      )
-      return this.toStartWorkflowResult(response, {
-        workflowId: request.workflowId,
-        namespace: request.namespace,
-        firstExecutionRunId: response.started ? response.runId : undefined,
-      })
-    })
+        const response = await this.executeRpc(
+          'signalWithStartWorkflow',
+          (rpcOptions) => this.workflowService.signalWithStartWorkflowExecution(request, rpcOptions),
+          callOptions,
+        )
+        return this.toStartWorkflowResult(response, {
+          workflowId: request.workflowId,
+          namespace: request.namespace,
+          firstExecutionRunId: response.started ? response.runId : undefined,
+        })
+      },
+      { workflowId: startOptions.workflowId },
+    )
   }
 
   async updateWorkflow(
@@ -695,63 +792,71 @@ class TemporalClientImpl implements TemporalClient {
     options: WorkflowUpdateOptions,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<WorkflowUpdateResult> {
-    return this.#instrumentOperation('updateWorkflow', async () => {
-      this.ensureOpen()
-      const resolvedHandle = resolveHandle(this.namespace, handle)
-      const parsedOptions = sanitizeWorkflowUpdateOptions(options)
-      const updateId = parsedOptions.updateId ?? createUpdateRequestId()
-      const waitStage = this.#stageToProto(parsedOptions.waitForStage)
-      const updateKey = this.#makeUpdateKey(resolvedHandle, updateId)
-      const { options: mergedCallOptions, controller, cleanup } = this.#prepareUpdateCallOptions(updateKey, callOptions)
+    this.ensureOpen()
+    const resolvedHandle = resolveHandle(this.namespace, handle)
+    const parsedOptions = sanitizeWorkflowUpdateOptions(options)
+    const updateId = parsedOptions.updateId ?? createUpdateRequestId()
+    const waitStage = this.#stageToProto(parsedOptions.waitForStage)
+    return this.#instrumentOperation(
+      'workflow.update',
+      async () => {
+        const updateKey = this.#makeUpdateKey(resolvedHandle, updateId)
+        const {
+          options: mergedCallOptions,
+          controller,
+          cleanup,
+        } = this.#prepareUpdateCallOptions(updateKey, callOptions)
 
-      try {
-        const request = await buildUpdateWorkflowRequest(
-          {
-            handle: resolvedHandle,
-            namespace: this.namespace,
-            identity: this.defaultIdentity,
-            updateId,
-            updateName: parsedOptions.updateName,
-            args: parsedOptions.args,
-            headers: parsedOptions.headers,
-            waitStage,
-            firstExecutionRunId: parsedOptions.firstExecutionRunId,
-          },
-          this.dataConverter,
-        )
+        try {
+          const request = await buildUpdateWorkflowRequest(
+            {
+              handle: resolvedHandle,
+              namespace: this.namespace,
+              identity: this.defaultIdentity,
+              updateId,
+              updateName: parsedOptions.updateName,
+              args: parsedOptions.args,
+              headers: parsedOptions.headers,
+              waitStage,
+              firstExecutionRunId: parsedOptions.firstExecutionRunId,
+            },
+            this.dataConverter,
+          )
 
-        let response = await this.executeRpc(
-          'updateWorkflowExecution',
-          (rpcOptions) => this.workflowService.updateWorkflowExecution(request, rpcOptions),
-          mergedCallOptions,
-        )
-
-        while ((response.stage ?? UpdateWorkflowExecutionLifecycleStage.UNSPECIFIED) < waitStage) {
-          response = await this.executeRpc(
+          let response = await this.executeRpc(
             'updateWorkflowExecution',
             (rpcOptions) => this.workflowService.updateWorkflowExecution(request, rpcOptions),
             mergedCallOptions,
           )
-        }
 
-        const runId = response.updateRef?.workflowExecution?.runId || resolvedHandle.runId
-        const updateHandle = this.#createWorkflowUpdateHandle(resolvedHandle, {
-          updateId,
-          runId,
-          firstExecutionRunId: parsedOptions.firstExecutionRunId,
-        })
-        const stage = this.#stageFromProto(response.stage)
-        const outcome = await decodeUpdateOutcome(this.dataConverter, response.outcome)
-        return {
-          handle: updateHandle,
-          stage,
-          outcome,
+          while ((response.stage ?? UpdateWorkflowExecutionLifecycleStage.UNSPECIFIED) < waitStage) {
+            response = await this.executeRpc(
+              'updateWorkflowExecution',
+              (rpcOptions) => this.workflowService.updateWorkflowExecution(request, rpcOptions),
+              mergedCallOptions,
+            )
+          }
+
+          const runId = response.updateRef?.workflowExecution?.runId || resolvedHandle.runId
+          const updateHandle = this.#createWorkflowUpdateHandle(resolvedHandle, {
+            updateId,
+            runId,
+            firstExecutionRunId: parsedOptions.firstExecutionRunId,
+          })
+          const stage = this.#stageFromProto(response.stage)
+          const outcome = await decodeUpdateOutcome(this.dataConverter, response.outcome)
+          return {
+            handle: updateHandle,
+            stage,
+            outcome,
+          }
+        } finally {
+          this.#releaseUpdateController(updateKey, controller)
+          cleanup?.()
         }
-      } finally {
-        this.#releaseUpdateController(updateKey, controller)
-        cleanup?.()
-      }
-    })
+      },
+      { workflowId: resolvedHandle.workflowId, runId: resolvedHandle.runId, updateId },
+    )
   }
 
   async awaitWorkflowUpdate(
@@ -759,56 +864,79 @@ class TemporalClientImpl implements TemporalClient {
     options: WorkflowUpdateAwaitOptions = {},
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<WorkflowUpdateResult> {
-    return this.#instrumentOperation('awaitWorkflowUpdate', async () => {
-      this.ensureOpen()
-      const resolvedHandle = resolveHandle(this.namespace, handle)
-      const updateId = ensureNonEmptyString(handle.updateId, 'updateId')
-      const waitStage = this.#stageToProto(options.waitForStage ?? 'completed')
-      const firstExecutionRunIdOverride = ensureOptionalTrimmedString(
-        options.firstExecutionRunId,
-        'firstExecutionRunId',
-        1,
-      )
-      const pollHandle: WorkflowHandle = {
-        workflowId: resolvedHandle.workflowId,
-        namespace: resolvedHandle.namespace,
-        runId: resolvedHandle.runId,
-        firstExecutionRunId: firstExecutionRunIdOverride ?? resolvedHandle.firstExecutionRunId,
-      }
-      const request = buildPollWorkflowUpdateRequest({
-        handle: pollHandle,
-        namespace: this.namespace,
-        identity: this.defaultIdentity,
-        updateId,
-        waitStage,
-      })
-      const updateKey = this.#makeUpdateKey(resolvedHandle, updateId)
-      const { options: mergedCallOptions, controller, cleanup } = this.#prepareUpdateCallOptions(updateKey, callOptions)
-
-      try {
-        const response = await this.executeRpc(
-          'pollWorkflowExecutionUpdate',
-          (rpcOptions) => this.workflowService.pollWorkflowExecutionUpdate(request, rpcOptions),
-          mergedCallOptions,
-        )
-        const stage = this.#stageFromProto(response.stage)
-        const runId = response.updateRef?.workflowExecution?.runId || resolvedHandle.runId
-        const updateHandle = this.#createWorkflowUpdateHandle(resolvedHandle, {
+    this.ensureOpen()
+    const resolvedHandle = resolveHandle(this.namespace, handle)
+    const updateId = ensureNonEmptyString(handle.updateId, 'updateId')
+    const waitStage = this.#stageToProto(options.waitForStage ?? 'completed')
+    const firstExecutionRunIdOverride = ensureOptionalTrimmedString(
+      options.firstExecutionRunId,
+      'firstExecutionRunId',
+      1,
+    )
+    const pollHandle: WorkflowHandle = {
+      workflowId: resolvedHandle.workflowId,
+      namespace: resolvedHandle.namespace,
+      runId: resolvedHandle.runId,
+      firstExecutionRunId: firstExecutionRunIdOverride ?? resolvedHandle.firstExecutionRunId,
+    }
+    return this.#instrumentOperation(
+      'workflow.awaitUpdate',
+      async () => {
+        const request = buildPollWorkflowUpdateRequest({
+          handle: pollHandle,
+          namespace: this.namespace,
+          identity: this.defaultIdentity,
           updateId,
-          runId,
-          firstExecutionRunId: pollHandle.firstExecutionRunId,
+          waitStage,
         })
-        const outcome = await decodeUpdateOutcome(this.dataConverter, response.outcome)
-        return {
-          handle: updateHandle,
-          stage,
-          outcome,
+        const updateKey = this.#makeUpdateKey(resolvedHandle, updateId)
+        const {
+          options: mergedCallOptions,
+          controller,
+          cleanup,
+        } = this.#prepareUpdateCallOptions(updateKey, callOptions)
+
+        const throwIfAborted = () => {
+          if (controller.signal.aborted || this.#abortedUpdates.has(updateKey)) {
+            this.#abortedUpdates.delete(updateKey)
+            const abortError = new Error('Workflow update polling aborted')
+            abortError.name = 'AbortError'
+            throw abortError
+          }
         }
-      } finally {
-        this.#releaseUpdateController(updateKey, controller)
-        cleanup?.()
-      }
-    })
+
+        throwIfAborted()
+
+        try {
+          const response = await this.executeRpc(
+            'pollWorkflowExecutionUpdate',
+            (rpcOptions) => this.workflowService.pollWorkflowExecutionUpdate(request, rpcOptions),
+            mergedCallOptions,
+          )
+          const stage = this.#stageFromProto(response.stage)
+          const runId = response.updateRef?.workflowExecution?.runId || resolvedHandle.runId
+          const updateHandle = this.#createWorkflowUpdateHandle(resolvedHandle, {
+            updateId,
+            runId,
+            firstExecutionRunId: pollHandle.firstExecutionRunId,
+          })
+          const outcome = await decodeUpdateOutcome(this.dataConverter, response.outcome)
+          return {
+            handle: updateHandle,
+            stage,
+            outcome,
+          }
+        } catch (error) {
+          throwIfAborted()
+          throw error
+        } finally {
+          this.#abortedUpdates.delete(updateKey)
+          this.#releaseUpdateController(updateKey, controller)
+          cleanup?.()
+        }
+      },
+      { workflowId: resolvedHandle.workflowId, runId: resolvedHandle.runId, updateId },
+    )
   }
 
   getWorkflowUpdateHandle(
@@ -826,38 +954,46 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async cancelWorkflowUpdate(handle: WorkflowUpdateHandle): Promise<void> {
-    return this.#instrumentOperation('cancelWorkflowUpdate', async () => {
-      this.ensureOpen()
-      const resolvedHandle = resolveHandle(this.namespace, handle)
-      const updateId = ensureNonEmptyString(handle.updateId, 'updateId')
-      const updateKey = this.#makeUpdateKey(resolvedHandle, updateId)
-      const aborted = this.#abortUpdateControllers(updateKey)
-      if (!aborted) {
-        this.#log('debug', 'no pending workflow update operation to cancel', {
-          workflowId: resolvedHandle.workflowId,
-          updateId,
-        })
-      }
-    })
+    return this.#instrumentOperation(
+      'workflow.update',
+      async () => {
+        this.ensureOpen()
+        const resolvedHandle = resolveHandle(this.namespace, handle)
+        const updateId = ensureNonEmptyString(handle.updateId, 'updateId')
+        const updateKey = this.#makeUpdateKey(resolvedHandle, updateId)
+        const aborted = this.#abortUpdateControllers(updateKey)
+        if (!aborted) {
+          this.#log('debug', 'no pending workflow update operation to cancel', {
+            workflowId: resolvedHandle.workflowId,
+            updateId,
+          })
+        }
+      },
+      { workflowId: handle.workflowId, runId: handle.runId, updateId: handle.updateId },
+    )
   }
 
   async describeNamespace(
     targetNamespace?: string,
     callOptions?: BrandedTemporalClientCallOptions,
   ): Promise<Uint8Array> {
-    return this.#instrumentOperation('describeNamespace', async () => {
-      this.ensureOpen()
-      const request: DescribeNamespaceRequest = create(DescribeNamespaceRequestSchema, {
-        namespace: targetNamespace ?? this.namespace,
-      })
+    return this.#instrumentOperation(
+      'workflow.describe',
+      async () => {
+        this.ensureOpen()
+        const request: DescribeNamespaceRequest = create(DescribeNamespaceRequestSchema, {
+          namespace: targetNamespace ?? this.namespace,
+        })
 
-      const response = await this.executeRpc(
-        'describeNamespace',
-        (rpcOptions) => this.workflowService.describeNamespace(request, rpcOptions),
-        callOptions,
-      )
-      return toBinary(DescribeNamespaceResponseSchema, response)
-    })
+        const response = await this.executeRpc(
+          'describeNamespace',
+          (rpcOptions) => this.workflowService.describeNamespace(request, rpcOptions),
+          callOptions,
+        )
+        return toBinary(DescribeNamespaceResponseSchema, response)
+      },
+      { namespace: targetNamespace ?? this.namespace },
+    )
   }
 
   async updateHeaders(headers: Record<string, string | ArrayBuffer | ArrayBufferView>): Promise<void> {
@@ -899,23 +1035,71 @@ class TemporalClientImpl implements TemporalClient {
     }
   }
 
-  async #instrumentOperation<T>(operation: string, action: () => Promise<T>): Promise<T> {
+  async #instrumentOperation<T>(
+    operation: InterceptorKind,
+    action: () => Promise<T>,
+    metadata: Record<string, unknown> = {},
+  ): Promise<T> {
+    const context = {
+      kind: operation,
+      namespace: this.namespace,
+      taskQueue: (metadata.taskQueue as string | undefined) ?? this.defaultTaskQueue,
+      identity: this.defaultIdentity,
+      workflowId: metadata.workflowId as string | undefined,
+      runId: metadata.runId as string | undefined,
+      updateId: metadata.updateId as string | undefined,
+      metadata,
+    }
     const start = Date.now()
+    const effect = runClientInterceptors<T>(this.#clientInterceptors, context, () => Effect.tryPromise(action))
     try {
-      const result = await action()
+      const result = await Effect.runPromise(effect)
       this.#log('debug', `temporal client ${operation} succeeded`, {
         operation,
         namespace: this.namespace,
+        ...metadata,
       })
       this.#recordMetrics(Date.now() - start, false)
       return result
     } catch (error) {
+      const normalized = normalizeUnknownError(error)
+      const finalError =
+        normalized instanceof Error &&
+        normalized.message.toLowerCase().includes('unknown error occurred in effect.trypromise')
+          ? ((normalized as { cause?: unknown; error?: unknown }).cause ??
+            (normalized as { cause?: unknown; error?: unknown }).error ??
+            normalized)
+          : normalized
+      const message = finalError instanceof Error ? finalError.message.toLowerCase() : ''
+      const isUnknownPollAbort =
+        operation === 'workflow.awaitUpdate' && message.includes('unknown error occurred in effect.trypromise')
+      if (isAbortLikeError(normalized)) {
+        this.#log('warn', `temporal client ${operation} aborted`, {
+          operation,
+          error: describeError(normalized),
+          ...metadata,
+        })
+        this.#recordMetrics(Date.now() - start, true)
+        throw finalError
+      }
+      if (isUnknownPollAbort) {
+        const abortError = new Error('Workflow update polling aborted')
+        abortError.name = 'AbortError'
+        this.#log('warn', `temporal client ${operation} aborted`, {
+          operation,
+          error: describeError(abortError),
+          ...metadata,
+        })
+        this.#recordMetrics(Date.now() - start, true)
+        throw abortError
+      }
       this.#log('error', `temporal client ${operation} failed`, {
         operation,
-        error: describeError(error),
+        error: describeError(finalError),
+        ...metadata,
       })
       this.#recordMetrics(Date.now() - start, true)
-      throw error
+      throw finalError
     }
   }
 
@@ -975,6 +1159,7 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   #registerUpdateController(key: string, controller: AbortController): void {
+    this.#abortedUpdates.delete(key)
     const current = this.#pendingUpdateControllers.get(key)
     if (current) {
       current.add(controller)
@@ -997,12 +1182,14 @@ class TemporalClientImpl implements TemporalClient {
   #abortUpdateControllers(key: string): boolean {
     const current = this.#pendingUpdateControllers.get(key)
     if (!current || current.size === 0) {
+      this.#abortedUpdates.add(key)
       return false
     }
     for (const controller of current) {
       controller.abort()
     }
     this.#pendingUpdateControllers.delete(key)
+    this.#abortedUpdates.add(key)
     return true
   }
 
@@ -1094,6 +1281,7 @@ class TemporalClientImpl implements TemporalClient {
   #buildCallContext(overrides?: TemporalClientCallOptions): {
     create: () => CallOptions
     retryPolicy: TemporalRpcRetryPolicy
+    headers: Record<string, string>
   } {
     const userHeaders = overrides?.headers ? normalizeMetadataHeaders(overrides.headers) : undefined
     const mergedHeaders = userHeaders ? mergeHeaders(this.headers, userHeaders) : { ...this.headers }
@@ -1106,6 +1294,7 @@ class TemporalClientImpl implements TemporalClient {
         signal,
       }),
       retryPolicy: this.#mergeRetryPolicy(overrides?.retryPolicy),
+      headers: mergedHeaders,
     }
   }
 
@@ -1114,30 +1303,42 @@ class TemporalClientImpl implements TemporalClient {
     rpc: (options: CallOptions) => Promise<T>,
     overrides?: TemporalClientCallOptions,
   ): Promise<T> {
-    const { create, retryPolicy } = this.#buildCallContext(overrides)
-    let attempt = 0
-    const effect = Effect.tryPromise({
-      try: () => {
-        attempt += 1
-        return rpc(create())
-      },
-      catch: (error) => wrapRpcError(error),
-    }).pipe(
-      Effect.tapError((error) =>
-        Effect.sync(() => {
-          this.#log('warn', `temporal rpc ${operation} attempt failed`, {
-            operation,
-            attempt,
-            error: describeError(error),
-          })
-        }),
-      ),
+    const { create, retryPolicy, headers } = this.#buildCallContext(overrides)
+    const interceptorContext: Omit<InterceptorContext, 'direction'> = {
+      kind: 'rpc' as InterceptorKind,
+      namespace: this.namespace,
+      taskQueue: this.defaultTaskQueue,
+      identity: this.defaultIdentity,
+      headers,
+      metadata: { retryPolicy },
+    }
+
+    const baseEffect = () =>
+      Effect.tryPromise({
+        try: () => {
+          interceptorContext.attempt = (interceptorContext.attempt ?? 0) + 1
+          return rpc(create())
+        },
+        catch: (error) => wrapRpcError(error),
+      }).pipe(
+        Effect.tapError((error) =>
+          Effect.sync(() => {
+            this.#log('warn', `temporal rpc ${operation} attempt failed`, {
+              operation,
+              attempt: interceptorContext.attempt,
+              error: describeError(error),
+            })
+          }),
+        ),
+      )
+
+    const result = await Effect.runPromise(
+      runClientInterceptors<T>(this.#clientInterceptors, interceptorContext, baseEffect),
     )
-    const result = await Effect.runPromise(withTemporalRetry(effect, retryPolicy))
-    if (attempt > 1) {
-      this.#log('info', `temporal rpc ${operation} succeeded after ${attempt} attempts`, {
+    if ((interceptorContext.attempt ?? 1) > 1) {
+      this.#log('info', `temporal rpc ${operation} succeeded after ${interceptorContext.attempt} attempts`, {
         operation,
-        attempts: attempt,
+        attempts: interceptorContext.attempt,
       })
     }
     return result

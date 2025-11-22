@@ -23,6 +23,12 @@ import {
 import { encodeErrorToFailure, encodeFailurePayloads, failureToError } from '../common/payloads/failure'
 import { sleep } from '../common/sleep'
 import { loadTemporalConfig, type TemporalConfig } from '../config'
+import type { InterceptorKind, TemporalInterceptor as WorkerInterceptor } from '../interceptors/types'
+import {
+  makeDefaultWorkerInterceptors,
+  runWorkerInterceptors,
+  type WorkerInterceptorBuilder,
+} from '../interceptors/worker'
 import { createObservabilityServices } from '../observability'
 import type { LogFields, Logger, LogLevel } from '../observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from '../observability/metrics'
@@ -225,6 +231,9 @@ export interface WorkerRuntimeOptions {
   logger?: Logger
   metrics?: MetricsRegistry
   metricsExporter?: MetricsExporter
+  interceptors?: WorkerInterceptor[]
+  interceptorBuilder?: WorkerInterceptorBuilder
+  tracingEnabled?: boolean
   concurrency?: WorkerConcurrencyOptions
   pollers?: WorkerPollerOptions
   stickyCache?: WorkerStickyCacheOptions | StickyCache
@@ -375,6 +384,25 @@ export class WorkerRuntime {
       }
     }
 
+    const tracingEnabled = options.tracingEnabled ?? config.tracingInterceptorsEnabled ?? false
+    const workerInterceptorBuilder: WorkerInterceptorBuilder = options.interceptorBuilder ?? {
+      build: (input) => makeDefaultWorkerInterceptors(input),
+    }
+    const defaultWorkerInterceptors = await Effect.runPromise(
+      workerInterceptorBuilder.build({
+        namespace,
+        taskQueue,
+        identity,
+        buildId,
+        logger,
+        metricsRegistry,
+        metricsExporter,
+        dataConverter,
+        tracingEnabled,
+      }),
+    )
+    const workerInterceptors: WorkerInterceptor[] = [...defaultWorkerInterceptors, ...(options.interceptors ?? [])]
+
     const activityLifecycle = await Effect.runPromise(
       makeActivityLifecycle({
         heartbeatIntervalMs: config.activityHeartbeatIntervalMs,
@@ -433,6 +461,7 @@ export class WorkerRuntime {
       versioningBehavior,
       stickySchedulingEnabled,
       workflowPollerCount,
+      interceptors: workerInterceptors,
     })
   }
 
@@ -449,6 +478,7 @@ export class WorkerRuntime {
   readonly #namespace: string
   readonly #taskQueue: string
   readonly #identity: string
+  readonly #interceptors: WorkerInterceptor[]
   readonly #activityLifecycle: ActivityLifecycle
   readonly #scheduler: WorkerScheduler
   readonly #stickyCache: StickyCache
@@ -477,6 +507,7 @@ export class WorkerRuntime {
     namespace: string
     taskQueue: string
     identity: string
+    interceptors: WorkerInterceptor[]
     activityLifecycle: ActivityLifecycle
     scheduler: WorkerScheduler
     stickyCache: StickyCache
@@ -500,6 +531,7 @@ export class WorkerRuntime {
     this.#namespace = params.namespace
     this.#taskQueue = params.taskQueue
     this.#identity = params.identity
+    this.#interceptors = params.interceptors
     this.#activityLifecycle = params.activityLifecycle
     this.#scheduler = params.scheduler
     this.#stickyCache = params.stickyCache
@@ -845,7 +877,7 @@ export class WorkerRuntime {
     const taskToken = response.taskToken ?? new Uint8Array()
     const envelope: ActivityTaskEnvelope = {
       taskToken,
-      handler: () => this.#processActivityTask(response),
+      handler: () => this.#runActivityTask(response),
       args: [],
     }
     await Effect.runPromise(this.#scheduler.enqueueActivity(envelope))
@@ -877,6 +909,42 @@ export class WorkerRuntime {
 
   async #handleWorkflowTask(response: PollWorkflowTaskQueueResponse, nondeterminismRetry = 0): Promise<void> {
     const execution = this.#resolveWorkflowExecution(response)
+    const queryCount =
+      response.queries && typeof response.queries === 'object' && !Array.isArray(response.queries)
+        ? Object.keys(response.queries).length
+        : Array.isArray(response.queries)
+          ? response.queries.length
+          : 0
+    const hasQueryRequests = Boolean(response.query) || queryCount > 0
+    const hasUpdateMessages = (response.messages?.length ?? 0) > 0
+    const kind: InterceptorKind = hasUpdateMessages
+      ? 'worker.updateTask'
+      : hasQueryRequests
+        ? 'worker.queryTask'
+        : 'worker.workflowTask'
+    const context = {
+      kind,
+      namespace: this.#namespace,
+      taskQueue: this.#taskQueue,
+      identity: this.#identity,
+      buildId: this.#deploymentOptions.buildId,
+      workflowId: execution.workflowId,
+      runId: execution.runId,
+      attempt: Number(response.attempt ?? 1),
+      metadata: { nondeterminismRetry },
+    }
+    const effect = runWorkerInterceptors(this.#interceptors, context, () =>
+      Effect.tryPromise(() => this.#processWorkflowTask(response, nondeterminismRetry, execution)),
+    )
+    await Effect.runPromise(effect)
+  }
+
+  async #processWorkflowTask(
+    response: PollWorkflowTaskQueueResponse,
+    nondeterminismRetry = 0,
+    executionOverride?: { workflowId: string; runId: string },
+  ): Promise<void> {
+    const execution = executionOverride ?? this.#resolveWorkflowExecution(response)
     const workflowTaskAttempt = Number(response.attempt ?? 1)
     const isLegacyQueryTask = Boolean(response.query)
     const queryStartTime = isLegacyQueryTask ? Date.now() : null
@@ -1858,6 +1926,23 @@ export class WorkerRuntime {
       }
       throw rpcError
     }
+  }
+
+  async #runActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
+    const context = {
+      kind: 'worker.activityTask' as const,
+      namespace: this.#namespace,
+      taskQueue: this.#taskQueue,
+      identity: this.#identity,
+      buildId: this.#deploymentOptions.buildId,
+      workflowId: response.workflowExecution?.workflowId ?? undefined,
+      runId: response.workflowExecution?.runId ?? undefined,
+      attempt: Number(response.attempt ?? 1),
+    }
+    const effect = runWorkerInterceptors(this.#interceptors, context, () =>
+      Effect.tryPromise(() => this.#processActivityTask(response)),
+    )
+    await Effect.runPromise(effect)
   }
 
   async #processActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
