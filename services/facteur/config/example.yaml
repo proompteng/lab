@@ -35,9 +35,6 @@ codex_listener:
     insecure_skip_verify: false
   sasl:
     enabled: false
-codex_dispatch:
-  planning_enabled: false
-  payload_overrides: {}
 argo:
   namespace: argo
   workflow_template: facteur-dispatch

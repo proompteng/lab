@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -14,7 +15,6 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/proompteng/lab/services/facteur/internal/codex"
 	"github.com/proompteng/lab/services/facteur/internal/config"
 	"github.com/proompteng/lab/services/facteur/internal/knowledge"
 	"github.com/proompteng/lab/services/facteur/internal/orchestrator"
@@ -54,6 +54,19 @@ func NewServeCommand() *cobra.Command {
 				return missingDSNError()
 			}
 			cfg.Postgres.DSN = dsn
+
+			cmd.Printf(
+				"config: argo ns=%s template=%s sa=%s planner_enabled=%t planner_ns=%s planner_template=%s redis=%s postgres=%s listen=%s\n",
+				cfg.Argo.Namespace,
+				cfg.Argo.WorkflowTemplate,
+				cfg.Argo.ServiceAccount,
+				cfg.Planner.Enabled,
+				firstNonEmpty(cfg.Planner.Namespace, cfg.Argo.Namespace),
+				firstNonEmpty(cfg.Planner.WorkflowTemplate, cfg.Argo.WorkflowTemplate),
+				redactURL(cfg.Redis.URL),
+				redactURL(cfg.Postgres.DSN),
+				cfg.Server.ListenAddress,
+			)
 
 			teleShutdown, err := telemetry.Setup(cmd.Context(), "facteur", "")
 			if err != nil {
@@ -149,10 +162,6 @@ func NewServeCommand() *cobra.Command {
 				Store:         sessionStore,
 				CodexStore:    knowledgeStore,
 				CodexPlanner:  plannerOpts,
-				CodexDispatch: codex.DispatchConfig{
-					PlanningEnabled:  cfg.CodexDispatch.PlanningEnabled,
-					PayloadOverrides: cloneStringMap(cfg.CodexDispatch.PayloadOverrides),
-				},
 			})
 			if err != nil {
 				return fmt.Errorf("init server: %w", err)
@@ -212,4 +221,34 @@ func cloneStringMap(input map[string]string) map[string]string {
 		cloned[k] = v
 	}
 	return cloned
+}
+
+func redactURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.User == nil {
+		return raw
+	}
+
+	user := parsed.User.Username()
+	passwordSet := parsed.User.String() != user
+	if passwordSet {
+		parsed.User = url.UserPassword(user, "***")
+	} else {
+		parsed.User = url.User(user)
+	}
+
+	return parsed.String()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }

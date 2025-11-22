@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/proompteng/lab/services/facteur/internal/bridge"
 	"github.com/proompteng/lab/services/facteur/internal/codex"
 	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 )
@@ -73,7 +72,7 @@ func TestListenerRun_LogsStructuredMessage(t *testing.T) {
 	var buf bytes.Buffer
 	logger := log.New(&buf, "", 0)
 
-	listener := codex.NewListener(reader, logger, nil, codex.DispatchConfig{})
+	listener := codex.NewListener(reader, logger)
 	err = listener.Run(context.Background())
 	require.NoError(t, err)
 
@@ -116,7 +115,7 @@ func TestListenerRun_LogsReviewStage(t *testing.T) {
 	var buf bytes.Buffer
 	logger := log.New(&buf, "", 0)
 
-	listener := codex.NewListener(reader, logger, nil, codex.DispatchConfig{})
+	listener := codex.NewListener(reader, logger)
 	err = listener.Run(context.Background())
 	require.NoError(t, err)
 
@@ -137,7 +136,7 @@ func TestListenerRun_IgnoresInvalidMessage(t *testing.T) {
 	var buf bytes.Buffer
 	logger := log.New(&buf, "", 0)
 
-	listener := codex.NewListener(reader, logger, nil, codex.DispatchConfig{})
+	listener := codex.NewListener(reader, logger)
 	err := listener.Run(context.Background())
 	require.NoError(t, err)
 
@@ -157,7 +156,7 @@ func TestListenerRun_BubblesCommitError(t *testing.T) {
 		commitErr: errors.New("commit failed"),
 	}
 
-	listener := codex.NewListener(reader, log.New(&bytes.Buffer{}, "", 0), nil, codex.DispatchConfig{})
+	listener := codex.NewListener(reader, log.New(&bytes.Buffer{}, "", 0))
 	err = listener.Run(context.Background())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "commit message")
@@ -168,7 +167,7 @@ func TestListenerRun_StopsOnContextError(t *testing.T) {
 		fetchErr: context.Canceled,
 	}
 
-	listener := codex.NewListener(reader, log.New(&bytes.Buffer{}, "", 0), nil, codex.DispatchConfig{})
+	listener := codex.NewListener(reader, log.New(&bytes.Buffer{}, "", 0))
 	err := listener.Run(context.Background())
 	require.NoError(t, err)
 }
@@ -189,52 +188,9 @@ func TestListenerRun_DispatchesPlanningWhenEnabled(t *testing.T) {
 		fetchErr: context.Canceled,
 	}
 
-	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "argo", WorkflowName: "facteur-dispatch"}}
-	listener := codex.NewListener(reader, log.New(&bytes.Buffer{}, "", 0), dispatcher, codex.DispatchConfig{PlanningEnabled: true})
+	listener := codex.NewListener(reader, log.New(&bytes.Buffer{}, "", 0))
 
 	err = listener.Run(context.Background())
 	require.NoError(t, err)
-	require.Len(t, dispatcher.requests, 1)
-	require.Equal(t, "codex-planning", dispatcher.requests[0].Command)
-	require.Contains(t, dispatcher.requests[0].Options["payload"], "\"stage\":\"planning\"")
 	require.Len(t, reader.committed, 1)
-}
-
-func TestListenerRun_ReturnsErrorWhenDispatchFails(t *testing.T) {
-	task := &froussardpb.CodexTask{
-		Stage:  froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
-		Prompt: "Generate rollout plan",
-	}
-	payload, err := proto.Marshal(task)
-	require.NoError(t, err)
-
-	reader := &stubReader{
-		messages: []kafka.Message{{Key: []byte("issue-err"), Value: payload}},
-	}
-
-	dispatcher := &stubDispatcher{err: errors.New("dispatch failed")}
-	listener := codex.NewListener(reader, log.New(&bytes.Buffer{}, "", 0), dispatcher, codex.DispatchConfig{PlanningEnabled: true})
-
-	err = listener.Run(context.Background())
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "dispatch planning task")
-	require.Empty(t, reader.committed)
-}
-
-type stubDispatcher struct {
-	requests []bridge.DispatchRequest
-	result   bridge.DispatchResult
-	err      error
-}
-
-func (s *stubDispatcher) Dispatch(_ context.Context, req bridge.DispatchRequest) (bridge.DispatchResult, error) {
-	s.requests = append(s.requests, req)
-	if s.err != nil {
-		return bridge.DispatchResult{}, s.err
-	}
-	return s.result, nil
-}
-
-func (s *stubDispatcher) Status(context.Context) (bridge.StatusReport, error) {
-	return bridge.StatusReport{}, nil
 }

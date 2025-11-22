@@ -19,7 +19,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/proompteng/lab/services/facteur/internal/bridge"
-	"github.com/proompteng/lab/services/facteur/internal/codex"
 	"github.com/proompteng/lab/services/facteur/internal/consumer"
 	"github.com/proompteng/lab/services/facteur/internal/facteurpb"
 	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
@@ -56,7 +55,6 @@ type Options struct {
 	SessionTTL    time.Duration
 	CodexStore    CodexStore
 	CodexPlanner  CodexPlannerOptions
-	CodexDispatch codex.DispatchConfig
 }
 
 // CodexStore defines the storage surface required for Codex task ingestion.
@@ -84,10 +82,6 @@ func New(opts Options) (*Server, error) {
 	if opts.SessionTTL <= 0 {
 		opts.SessionTTL = consumer.DefaultSessionTTL
 	}
-	if opts.CodexDispatch.PayloadOverrides == nil {
-		opts.CodexDispatch.PayloadOverrides = map[string]string{}
-	}
-
 	app := fiber.New(fiber.Config{
 		Prefork:               opts.Prefork,
 		DisableStartupMessage: true,
@@ -276,6 +270,13 @@ func registerRoutes(app *fiber.App, opts Options) {
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, "planning orchestrator failed")
+				log.Printf(
+					"codex planning orchestrator failed: repo=%s issue=%d delivery=%s err=%v",
+					task.GetRepository(),
+					task.GetIssueNumber(),
+					task.GetDeliveryId(),
+					err,
+				)
 				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 					"error":   "planning orchestrator failed",
 					"details": err.Error(),
@@ -289,6 +290,16 @@ func registerRoutes(app *fiber.App, opts Options) {
 			)
 			span.SetStatus(codes.Ok, "planning orchestrator dispatched")
 
+			log.Printf(
+				"codex planning orchestrated: repo=%s issue=%d delivery=%s workflow=%s namespace=%s duplicate=%t",
+				task.GetRepository(),
+				task.GetIssueNumber(),
+				task.GetDeliveryId(),
+				result.WorkflowName,
+				result.Namespace,
+				result.Duplicate,
+			)
+
 			return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
 				"stage":        "planning",
 				"namespace":    result.Namespace,
@@ -296,6 +307,16 @@ func registerRoutes(app *fiber.App, opts Options) {
 				"submittedAt":  result.SubmittedAt.UTC().Format(time.RFC3339),
 				"duplicate":    result.Duplicate,
 			})
+		}
+
+		if task.GetStage() == froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
+			log.Printf(
+				"codex planning orchestrator disabled: repo=%s issue=%d",
+				task.GetRepository(),
+				task.GetIssueNumber(),
+			)
+			span.SetStatus(codes.Error, "planning orchestrator disabled")
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "planning orchestrator disabled"})
 		}
 
 		span.SetStatus(codes.Ok, "planner bypassed")
@@ -336,67 +357,10 @@ func registerRoutes(app *fiber.App, opts Options) {
 		)
 		span.SetStatus(codes.Ok, "codex task ingested")
 
-		var dispatchResult *bridge.DispatchResult
-
-		if task.GetStage() == froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
-			if !opts.CodexDispatch.PlanningEnabled {
-				log.Printf(
-					"codex planning dispatch disabled: repo=%s issue=%d",
-					task.GetRepository(),
-					task.GetIssueNumber(),
-				)
-				span.SetAttributes(attribute.Bool("facteur.codex.dispatch_enabled", false))
-			} else if opts.Dispatcher == nil {
-				err := fmt.Errorf("dispatcher unavailable")
-				span.RecordError(err)
-				span.SetStatus(codes.Error, "dispatcher unavailable")
-				log.Printf(
-					"codex planning dispatch unavailable: repo=%s issue=%d",
-					task.GetRepository(),
-					task.GetIssueNumber(),
-				)
-				return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": err.Error()})
-			} else {
-				result, dispatchErr := codex.DispatchPlanning(ctx, opts.Dispatcher, &task, opts.CodexDispatch.PayloadOverrides)
-				if dispatchErr != nil {
-					span.RecordError(dispatchErr)
-					span.SetStatus(codes.Error, "planning dispatch failed")
-					log.Printf(
-						"codex planning dispatch error: repo=%s issue=%d err=%v",
-						task.GetRepository(),
-						task.GetIssueNumber(),
-						dispatchErr,
-					)
-					return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "planning dispatch failed"})
-				}
-				log.Printf(
-					"workflow submitted: stage=PLANNING repo=%s issue=%d workflow=%s namespace=%s correlation=%s",
-					task.GetRepository(),
-					task.GetIssueNumber(),
-					result.WorkflowName,
-					result.Namespace,
-					result.CorrelationID,
-				)
-				span.SetAttributes(
-					attribute.Bool("facteur.codex.dispatch_enabled", true),
-					attribute.String("facteur.codex.workflow", result.WorkflowName),
-					attribute.String("facteur.codex.namespace", result.Namespace),
-					attribute.String("facteur.codex.correlation_id", result.CorrelationID),
-				)
-				dispatchResult = &result
-			}
-		}
-
 		response := fiber.Map{
 			"ideaId":    ideaID,
 			"taskId":    taskID,
 			"taskRunId": runID,
-		}
-
-		if dispatchResult != nil {
-			response["workflowName"] = dispatchResult.WorkflowName
-			response["namespace"] = dispatchResult.Namespace
-			response["correlationId"] = dispatchResult.CorrelationID
 		}
 
 		return c.Status(fiber.StatusAccepted).JSON(response)

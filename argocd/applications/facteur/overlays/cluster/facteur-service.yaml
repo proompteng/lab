@@ -3,13 +3,16 @@ kind: Service
 metadata:
   name: facteur
   namespace: facteur
+  labels:
+    networking.knative.dev/visibility: cluster-local
 spec:
   template:
     metadata:
       annotations:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/target: "100"
-        deploy.knative.dev/rollout: "2025-11-16T01:21:08.604Z"
+        deploy.knative.dev/rollout: "2025-11-22T06:02:31.313Z"
+        networking.knative.dev/visibility: cluster-local
     spec:
       serviceAccountName: facteur
       containers:

@@ -9,6 +9,7 @@ resources:
   - facteur-config.yaml
   - facteur-kafka-sasl-secret.yaml
   - facteur-service.yaml
+  - facteur-tailscale-service.yaml
   - facteur-internal-service.yaml
   - facteur-redis.yaml
   - facteur-codex-kafkasource.yaml
@@ -20,4 +21,4 @@ resources:
   - alloy-deployment.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/facteur
-    newTag: 08b95180
+    newTag: c188eab0
