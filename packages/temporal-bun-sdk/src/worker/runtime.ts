@@ -909,7 +909,8 @@ export class WorkerRuntime {
 
   async #handleWorkflowTask(response: PollWorkflowTaskQueueResponse, nondeterminismRetry = 0): Promise<void> {
     const execution = this.#resolveWorkflowExecution(response)
-    const hasQueryRequests = Boolean(response.query) || (response.queries?.length ?? 0) > 0
+    const queryCount = Array.isArray(response.queries) ? response.queries.length : 0
+    const hasQueryRequests = Boolean(response.query) || queryCount > 0
     const hasUpdateMessages = (response.messages?.length ?? 0) > 0
     const kind: InterceptorKind = hasUpdateMessages
       ? 'worker.updateTask'
