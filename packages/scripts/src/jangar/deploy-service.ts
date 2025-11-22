@@ -98,7 +98,8 @@ export const main = async (options: DeployOptions = {}) => {
   )
 
   await run('kubectl', ['apply', '-k', kustomizePath])
-  await applyKnativeServiceImage('jangar', 'jangar', serviceManifest, image)
+  const imageRef = digest ? `${imageName}@${digest}` : image
+  await applyKnativeServiceImage('jangar', 'jangar', serviceManifest, imageRef)
 }
 
 if (import.meta.main) {
