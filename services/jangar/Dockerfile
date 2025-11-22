@@ -11,7 +11,7 @@ ENV NODE_ENV=production
 COPY packages/codex ./packages/codex
 RUN cd packages/codex \
   && bun add -d typescript@5.9.3 \
-  && bun install --production --frozen-lockfile \
+  && bun install --frozen-lockfile \
   && bun run build
 
 # Install jangar deps
