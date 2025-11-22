@@ -5,7 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
 import { Cause, Effect, Exit } from 'effect'
-import { createDefaultDataConverter } from '../common/payloads/converter'
+import { buildCodecsFromConfig, createDefaultDataConverter, type DataConverter } from '../common/payloads'
 import { makeDefaultClientInterceptors } from '../interceptors/client'
 import { makeDefaultWorkerInterceptors } from '../interceptors/worker'
 import { runTemporalCliEffect } from '../runtime/cli-layer'
@@ -37,6 +37,23 @@ const doctorCommandProgram = Effect.gen(function* () {
     'Temporal CLI doctor command executions',
   )
   yield* doctorCounter.inc()
+  const codecChain = buildCodecsFromConfig(config.payloadCodecs)
+  let dataConverter: DataConverter
+  try {
+    dataConverter = createDefaultDataConverter({
+      payloadCodecs: codecChain,
+      logger,
+      metricsRegistry,
+    })
+  } catch (error) {
+    yield* logger.log('error', 'payload codec configuration failed', {
+      error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+    })
+    throw error
+  }
+  yield* logger.log('info', 'payload codec chain resolved', {
+    codecs: codecChain.map((codec) => codec.name),
+  })
   const clientInterceptors = yield* makeDefaultClientInterceptors({
     namespace: config.namespace,
     taskQueue: config.taskQueue,
@@ -55,7 +72,7 @@ const doctorCommandProgram = Effect.gen(function* () {
     logger,
     metricsRegistry,
     metricsExporter,
-    dataConverter: createDefaultDataConverter(),
+    dataConverter,
     tracingEnabled: config.tracingInterceptorsEnabled,
   })
 

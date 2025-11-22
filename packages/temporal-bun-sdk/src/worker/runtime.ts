@@ -15,6 +15,7 @@ import {
 import { buildTransportOptions, normalizeTemporalAddress } from '../client'
 import { durationFromMillis, durationToMillis } from '../common/duration'
 import {
+  buildCodecsFromConfig,
   createDefaultDataConverter,
   type DataConverter,
   decodePayloadsToValues,
@@ -244,7 +245,6 @@ export interface WorkerRuntimeOptions {
 export class WorkerRuntime {
   static async create(options: WorkerRuntimeOptions = {}): Promise<WorkerRuntime> {
     const config = options.config ?? (await loadTemporalConfig())
-    const dataConverter = options.dataConverter ?? createDefaultDataConverter()
 
     const namespace = options.namespace ?? config.namespace
     if (!namespace) {
@@ -262,13 +262,6 @@ export class WorkerRuntime {
       throw new Error('No workflow definitions were registered; provide workflows or workflowsPath')
     }
 
-    const registry = new WorkflowRegistry()
-    registry.registerMany(workflows)
-    const executor = new WorkflowExecutor({
-      registry,
-      dataConverter,
-    })
-
     const activities = options.activities ?? {}
     const observability = await Effect.runPromise(
       createObservabilityServices(
@@ -285,6 +278,20 @@ export class WorkerRuntime {
       ),
     )
     const { logger, metricsRegistry, metricsExporter } = observability
+    const dataConverter =
+      options.dataConverter ??
+      createDefaultDataConverter({
+        payloadCodecs: buildCodecsFromConfig(config.payloadCodecs),
+        logger,
+        metricsRegistry,
+      })
+    const registry = new WorkflowRegistry()
+    registry.registerMany(workflows)
+    const executor = new WorkflowExecutor({
+      registry,
+      dataConverter,
+    })
+
     const runtimeMetrics = await WorkerRuntime.#initMetrics(metricsRegistry)
     let workflowService: WorkflowServiceClient
     if (options.workflowService) {

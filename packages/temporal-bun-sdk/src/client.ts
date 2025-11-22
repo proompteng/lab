@@ -41,7 +41,12 @@ import {
   type WorkflowUpdateResult,
   type WorkflowUpdateStage,
 } from './client/types'
-import { createDefaultDataConverter, type DataConverter, decodePayloadsToValues } from './common/payloads'
+import {
+  buildCodecsFromConfig,
+  createDefaultDataConverter,
+  type DataConverter,
+  decodePayloadsToValues,
+} from './common/payloads'
 import { loadTemporalConfig, type TemporalConfig } from './config'
 import {
   type ClientInterceptorBuilder,
@@ -65,6 +70,7 @@ import {
 } from './proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from './proto/temporal/api/workflowservice/v1/service_pb'
 import {
+  DataConverterService,
   LoggerService,
   MetricsExporterService,
   MetricsService,
@@ -388,6 +394,14 @@ export const createTemporalClient = async (
     throw new Error('Temporal workflow service is not available')
   }
 
+  const dataConverter =
+    options.dataConverter ??
+    createDefaultDataConverter({
+      payloadCodecs: buildCodecsFromConfig(config.payloadCodecs),
+      logger,
+      metricsRegistry,
+    })
+
   const effect = makeTemporalClientEffect({
     ...options,
     config,
@@ -396,6 +410,7 @@ export const createTemporalClient = async (
     metricsExporter,
     workflowService,
     transport,
+    dataConverter,
   })
 
   try {
@@ -406,6 +421,7 @@ export const createTemporalClient = async (
         Effect.provideService(MetricsService, metricsRegistry),
         Effect.provideService(MetricsExporterService, metricsExporter),
         Effect.provideService(WorkflowServiceClientService, workflowService),
+        Effect.provideService(DataConverterService, dataConverter),
       ),
     )
   } catch (error) {
@@ -419,18 +435,33 @@ export const makeTemporalClientEffect = (
 ): Effect.Effect<
   { client: TemporalClient; config: TemporalConfig },
   unknown,
-  TemporalConfigService | LoggerService | MetricsService | MetricsExporterService | WorkflowServiceClientService
+  | TemporalConfigService
+  | LoggerService
+  | MetricsService
+  | MetricsExporterService
+  | WorkflowServiceClientService
+  | DataConverterService
 > =>
   Effect.gen(function* () {
     const config = options.config ?? (yield* TemporalConfigService)
     const namespace = options.namespace ?? config.namespace
     const identity = options.identity ?? config.workerIdentity
     const taskQueue = options.taskQueue ?? config.taskQueue
-    const dataConverter = options.dataConverter ?? createDefaultDataConverter()
-    const initialHeaders = createDefaultHeaders(config.apiKey)
     const logger = options.logger ?? (yield* LoggerService)
     const metricsRegistry = options.metrics ?? (yield* MetricsService)
     const metricsExporter = options.metricsExporter ?? (yield* MetricsExporterService)
+    const contextualDataConverter = yield* Effect.contextWith((context) =>
+      Context.getOption(context, DataConverterService),
+    )
+    const dataConverter =
+      options.dataConverter ??
+      Option.getOrUndefined(contextualDataConverter) ??
+      createDefaultDataConverter({
+        payloadCodecs: buildCodecsFromConfig(config.payloadCodecs),
+        logger,
+        metricsRegistry,
+      })
+    const initialHeaders = createDefaultHeaders(config.apiKey)
     const tracingEnabled = options.tracingEnabled ?? config.tracingInterceptorsEnabled ?? false
     const clientInterceptorBuilder: ClientInterceptorBuilder = options.clientInterceptorBuilder ?? {
       build: (input) => makeDefaultClientInterceptors(input),

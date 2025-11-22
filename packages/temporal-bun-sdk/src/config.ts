@@ -7,6 +7,7 @@ import * as Schema from '@effect/schema/Schema'
 import * as TreeFormatter from '@effect/schema/TreeFormatter'
 import { Cause, Effect, Exit } from 'effect'
 import { defaultRetryPolicy, type TemporalRpcRetryPolicy } from './client/retries'
+import type { PayloadCodecConfig } from './common/payloads/codecs'
 import type { LogFormat, LogLevel } from './observability/logger'
 import type { MetricsExporterSpec } from './observability/metrics'
 import {
@@ -73,6 +74,20 @@ const MetricsExporterSpecSchema = Schema.Struct({
   type: MetricsExporterTypeSchema,
   endpoint: Schema.optional(Schema.String),
 })
+const PayloadCodecConfigSchema = Schema.Union(
+  Schema.Struct({
+    name: Schema.Literal('gzip'),
+    order: Schema.optional(Schema.Number),
+    enabled: Schema.optional(Schema.Boolean),
+  }),
+  Schema.Struct({
+    name: Schema.Literal('aes-gcm'),
+    key: Schema.String,
+    keyId: Schema.optional(Schema.String),
+    order: Schema.optional(Schema.Number),
+    enabled: Schema.optional(Schema.Boolean),
+  }),
+)
 const TemporalRpcRetryPolicySchema = Schema.Struct({
   maxAttempts: Schema.Number,
   initialDelayMs: Schema.Number,
@@ -107,6 +122,7 @@ const TemporalConfigSchema = Schema.Struct({
   tracingInterceptorsEnabled: Schema.Boolean,
   metricsExporter: MetricsExporterSpecSchema,
   rpcRetryPolicy: TemporalRpcRetryPolicySchema,
+  payloadCodecs: Schema.Array(PayloadCodecConfigSchema),
 })
 const TemporalConfigOverridesSchema = Schema.partial(TemporalConfigSchema)
 const decodeTemporalConfig = Schema.decodeUnknown(TemporalConfigSchema)
@@ -153,6 +169,9 @@ export interface TemporalEnvironment {
   TEMPORAL_CLIENT_RETRY_BACKOFF?: string
   TEMPORAL_CLIENT_RETRY_JITTER_FACTOR?: string
   TEMPORAL_CLIENT_RETRY_STATUS_CODES?: string
+  TEMPORAL_PAYLOAD_CODECS?: string
+  TEMPORAL_CODEC_AES_KEY?: string
+  TEMPORAL_CODEC_AES_KEY_ID?: string
 }
 
 const truthyValues = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
@@ -233,6 +252,9 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     TEMPORAL_CLIENT_RETRY_BACKOFF: read('TEMPORAL_CLIENT_RETRY_BACKOFF'),
     TEMPORAL_CLIENT_RETRY_JITTER_FACTOR: read('TEMPORAL_CLIENT_RETRY_JITTER_FACTOR'),
     TEMPORAL_CLIENT_RETRY_STATUS_CODES: read('TEMPORAL_CLIENT_RETRY_STATUS_CODES'),
+    TEMPORAL_PAYLOAD_CODECS: read('TEMPORAL_PAYLOAD_CODECS'),
+    TEMPORAL_CODEC_AES_KEY: read('TEMPORAL_CODEC_AES_KEY'),
+    TEMPORAL_CODEC_AES_KEY_ID: read('TEMPORAL_CODEC_AES_KEY_ID'),
   }
 }
 
@@ -348,6 +370,45 @@ const parseRetryStatusCodes = (raw: string | undefined, fallback: ReadonlyArray<
   return [...resolved]
 }
 
+const parsePayloadCodecs = (env: TemporalEnvironment, defaults?: PayloadCodecConfig[]): PayloadCodecConfig[] => {
+  const raw = env.TEMPORAL_PAYLOAD_CODECS
+  if (!raw) {
+    return defaults ?? []
+  }
+  const names = raw
+    .split(',')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+
+  if (names.length === 0) {
+    return []
+  }
+
+  const configs: PayloadCodecConfig[] = []
+  names.forEach((name, index) => {
+    if (name === 'gzip') {
+      configs.push({ name: 'gzip', order: index })
+      return
+    }
+    if (name === 'aes-gcm') {
+      const key = env.TEMPORAL_CODEC_AES_KEY ?? defaults?.find((c) => c.name === 'aes-gcm')?.key
+      if (!key) {
+        throw new TemporalConfigError('TEMPORAL_CODEC_AES_KEY is required when enabling aes-gcm payload codec')
+      }
+      configs.push({
+        name: 'aes-gcm',
+        key,
+        keyId: env.TEMPORAL_CODEC_AES_KEY_ID,
+        order: index,
+      })
+      return
+    }
+    throw new TemporalConfigError(`Unknown payload codec "${name}" in TEMPORAL_PAYLOAD_CODECS`)
+  })
+
+  return configs
+}
+
 export interface LoadTemporalConfigOptions {
   env?: NodeJS.ProcessEnv
   fs?: {
@@ -382,6 +443,7 @@ export interface TemporalConfig {
   tracingInterceptorsEnabled: boolean
   metricsExporter: MetricsExporterSpec
   rpcRetryPolicy: TemporalRpcRetryPolicy
+  payloadCodecs: PayloadCodecConfig[]
 }
 
 export interface TLSCertPair {
@@ -655,6 +717,7 @@ export const loadTemporalConfigEffect = (
       env.TEMPORAL_METRICS_ENDPOINT ?? defaults.metricsExporter?.endpoint,
     )
     const rpcRetryPolicy = resolveClientRetryPolicy(env, defaults.rpcRetryPolicy)
+    const payloadCodecs = parsePayloadCodecs(env, defaults.payloadCodecs)
 
     const config: TemporalConfig = {
       host,
@@ -682,6 +745,7 @@ export const loadTemporalConfigEffect = (
       tracingInterceptorsEnabled,
       metricsExporter,
       rpcRetryPolicy,
+      payloadCodecs,
     }
 
     return yield* mapSchemaError(decodeTemporalConfig(config))
@@ -724,6 +788,7 @@ export const temporalDefaults = {
   tracingInterceptorsEnabled: DEFAULT_TRACING_INTERCEPTORS_ENABLED,
   metricsExporter: cloneMetricsExporterSpec(defaultMetricsExporterSpec),
   rpcRetryPolicy: cloneRetryPolicy(defaultRetryPolicy),
+  payloadCodecs: [],
 } satisfies Pick<
   TemporalConfig,
   | 'host'
@@ -745,4 +810,5 @@ export const temporalDefaults = {
   | 'tracingInterceptorsEnabled'
   | 'metricsExporter'
   | 'rpcRetryPolicy'
+  | 'payloadCodecs'
 >
