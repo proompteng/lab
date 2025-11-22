@@ -17,27 +17,30 @@ type DeployOptions = {
   serviceManifest?: string
 }
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 const updateManifests = (
   kustomizePath: string,
   servicePath: string,
+  imageName: string,
   tag: string,
   digest: string | undefined,
   rolloutTimestamp: string,
 ) => {
   const kustomization = readFileSync(kustomizePath, 'utf8')
-  let updatedKustomization = kustomization.replace(
-    /(name:\s+registry\.ide-newton\.ts\.net\/lab\/jangar\s*\n\s*newTag:\s*)(.+)/,
-    (_, prefix) => `${prefix}${tag}`,
-  )
+  const imagePattern = new RegExp(`(name:\\s+${escapeRegExp(imageName)}\\s*\\n\\s*newTag:\\s*)(.+)`, 'm')
+  let updatedKustomization = kustomization.replace(imagePattern, (_, prefix) => `${prefix}${tag}`)
 
   if (digest) {
-    const digestPattern =
-      /(name:\s+registry\.ide-newton\.ts\.net\/lab\/jangar\s*\n\s*newTag:\s*[^\n]+\n\s*digest:\s*)(.+)/
+    const digestPattern = new RegExp(
+      `(name:\\s+${escapeRegExp(imageName)}\\s*\\n\\s*newTag:\\s*[^\\n]+\\n\\s*digest:\\s*)(.+)`,
+      'm',
+    )
     if (digestPattern.test(updatedKustomization)) {
       updatedKustomization = updatedKustomization.replace(digestPattern, (_, prefix) => `${prefix}${digest}`)
     } else {
       updatedKustomization = updatedKustomization.replace(
-        /(name:\s+registry\.ide-newton\.ts\.net\/lab\/jangar\s*\n\s*newTag:\s*[^\n]+)/,
+        new RegExp(`(name:\\s+${escapeRegExp(imageName)}\\s*\\n\\s*newTag:\\s*[^\\n]+)`),
         `$1\n    digest: ${digest}`,
       )
     }
@@ -66,11 +69,13 @@ export const main = async (options: DeployOptions = {}) => {
   const repository = options.repository ?? process.env.JANGAR_IMAGE_REPOSITORY ?? 'lab/jangar'
   const defaultTag = execGit(['rev-parse', '--short', 'HEAD'])
   const tag = options.tag ?? process.env.JANGAR_IMAGE_TAG ?? defaultTag
+  const imageName = `${registry}/${repository}`
   const image = `${registry}/${repository}:${tag}`
 
   await buildImage({ registry, repository, tag })
 
   const repoDigest = inspectImageDigest(image)
+  const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
   console.log(`Image digest: ${repoDigest}`)
 
   const kustomizePath = resolve(
@@ -83,7 +88,14 @@ export const main = async (options: DeployOptions = {}) => {
   )
 
   // Persist image tag and rollout marker in Git before applying
-  updateManifests(`${kustomizePath}/kustomization.yaml`, serviceManifest, tag, repoDigest, new Date().toISOString())
+  updateManifests(
+    `${kustomizePath}/kustomization.yaml`,
+    serviceManifest,
+    imageName,
+    tag,
+    digest,
+    new Date().toISOString(),
+  )
 
   await run('kubectl', ['apply', '-k', kustomizePath])
   await applyKnativeServiceImage('jangar', 'jangar', serviceManifest, image)
