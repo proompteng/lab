@@ -2,9 +2,22 @@
 FROM oven/bun:1.2.23 AS base
 WORKDIR /app
 
-# Install dependencies
+# Base tsconfig for workspace packages
+COPY tsconfig.base.json ./
+
+ENV NODE_ENV=production
+
+# Build codex dependency (file: workspace)
+COPY packages/codex ./packages/codex
+RUN cd packages/codex \
+  && bun add -d typescript@5.9.3 \
+  && bun install --production --frozen-lockfile \
+  && bun run build
+
+# Install jangar deps
+WORKDIR /app/services/jangar
 COPY services/jangar/package.json services/jangar/bun.lock ./
-RUN bun install --frozen-lockfile
+RUN bun install --production --frozen-lockfile
 
 # Copy source
 COPY services/jangar/tsconfig.json ./
