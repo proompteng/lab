@@ -250,7 +250,10 @@ export const runCodexSession = async ({
     }
   }
 
-  codexCommand.push('-')
+  const shouldPassStdinDash = !(resumeArg === '--last')
+  if (shouldPassStdinDash) {
+    codexCommand.push('-')
+  }
 
   const codexProcess = Bun.spawn({
     cmd: codexCommand,
