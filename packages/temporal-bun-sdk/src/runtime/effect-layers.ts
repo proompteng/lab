@@ -8,6 +8,7 @@ import {
   type TemporalInterceptor,
 } from '../client/interceptors'
 import { buildTransportOptions, normalizeTemporalAddress } from '../client/transport'
+import { buildCodecsFromConfig, createDefaultDataConverter, type DataConverter } from '../common/payloads'
 import type { TemporalConfig, TemporalConfigError, TemporalTlsConfigurationError } from '../config'
 import { createObservabilityServices, type ObservabilityOverrides, type ObservabilityServices } from '../observability'
 import type { Logger } from '../observability/logger'
@@ -40,6 +41,11 @@ export class ObservabilityService extends Context.Tag('@proompteng/temporal-bun-
   ObservabilityServices
 >() {}
 
+export class DataConverterService extends Context.Tag('@proompteng/temporal-bun-sdk/DataConverter')<
+  DataConverterService,
+  DataConverter
+>() {}
+
 export class WorkflowServiceClientService extends Context.Tag('@proompteng/temporal-bun-sdk/WorkflowServiceClient')<
   WorkflowServiceClientService,
   WorkflowServiceClient
@@ -50,6 +56,10 @@ export interface WorkflowServiceLayerOptions {
   interceptorBuilder?: InterceptorBuilder
   identity?: string
   namespace?: string
+}
+
+export interface DataConverterLayerOptions {
+  dataConverter?: DataConverter
 }
 
 const closeTransport = (transport: ClosableTransport | undefined) =>
@@ -132,5 +142,26 @@ export const MetricsLayer = ObservabilityLayer
 export const MetricsExporterLayer = ObservabilityLayer
 
 export const WorkflowServiceLayer = createWorkflowServiceLayer()
+
+export const createDataConverterLayer = (
+  options: DataConverterLayerOptions = {},
+): Layer.Layer<DataConverterService, unknown, TemporalConfigService | ObservabilityService> =>
+  Layer.effect(
+    DataConverterService,
+    Effect.gen(function* () {
+      const config = yield* TemporalConfigService
+      const { logger, metricsRegistry } = yield* ObservabilityService
+      const configured =
+        options.dataConverter ??
+        createDefaultDataConverter({
+          payloadCodecs: buildCodecsFromConfig(config.payloadCodecs),
+          logger,
+          metricsRegistry,
+        })
+      return configured
+    }),
+  )
+
+export const DataConverterLayer = createDataConverterLayer()
 
 export type { WorkflowServiceClient }

@@ -83,6 +83,7 @@ const resolveWorkerConfig = async (options: CreateWorkerOptions, derivedBuildId:
       taskQueue: options.taskQueue ?? options.config.taskQueue,
       namespace: options.namespace ?? options.config.namespace,
       workerBuildId: options.config.workerBuildId ?? derivedBuildId,
+      payloadCodecs: options.config.payloadCodecs ?? [],
     }
     return provided
   }

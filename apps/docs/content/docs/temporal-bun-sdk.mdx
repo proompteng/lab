@@ -106,6 +106,9 @@ Environment variables supported by the config loader:
 | `TEMPORAL_TRACING_INTERCEPTORS_ENABLED` | `true` | Set to `false` to disable tracing/audit interceptors when environments forbid spans. |
 | `TEMPORAL_METRICS_EXPORTER` | `in-memory` | Choose metrics sink: `in-memory`, `file`, `prometheus`, or `otlp`. |
 | `TEMPORAL_METRICS_ENDPOINT` | _unset_ | Path or URL consumed by file/Prometheus/OTLP exporters. |
+| `TEMPORAL_PAYLOAD_CODECS` | _unset_ | Comma-separated payload codecs applied in order (e.g. `gzip,aes-gcm`). Defaults to JSON-only when omitted. |
+| `TEMPORAL_CODEC_AES_KEY` | _unset_ | Base64 or hex AES key (128/192/256-bit) required when `aes-gcm` is enabled. |
+| `TEMPORAL_CODEC_AES_KEY_ID` | `default` | Optional key identifier recorded in payload metadata for rotation/diagnostics. |
 
 `loadTemporalConfig()` returns typed values that the client and worker factories
 consume directly, so you never have to stitch addresses or TLS buffers together
@@ -128,6 +131,25 @@ by hand.
 - **Default interceptors** – inbound/outbound hooks wrap every workflow RPC and operation: namespace/identity headers are injected, retries use jittered backoff, and latency/error metrics flow through the configured registry/exporter. Tracing spans are opt-in via `TEMPORAL_TRACING_INTERCEPTORS_ENABLED` (or `tracingEnabled` in code). Append custom middleware with `clientInterceptors` (client) or `interceptors` (worker) to add auth headers, audit logs, or bespoke telemetry.
 - **Memo/search helpers** – `client.memo` and `client.searchAttributes` expose `encode`/`decode` helpers that reuse the client’s `DataConverter`, making it easy to prepare payloads for raw WorkflowService requests.
 - **TLS validation** – TLS buffers are checked up front (missing files, invalid PEMs, and mismatched cert/key pairs throw `TemporalTlsConfigurationError`) and transport failures surface as `TemporalTlsHandshakeError` with remediation hints.
+
+## Payload codecs & failure conversion
+
+The SDK’s `DataConverter` now supports an ordered codec chain so you can compress
+and encrypt payloads without giving up deterministic replay:
+
+- Enable codecs with `TEMPORAL_PAYLOAD_CODECS` (e.g. `gzip,aes-gcm`); AES-GCM
+  requires `TEMPORAL_CODEC_AES_KEY` (128/192/256-bit, base64/hex) and optionally
+  `TEMPORAL_CODEC_AES_KEY_ID` for rotation tracking.
+- Codecs wrap the entire payload proto, so replay remains compatible as long as
+  the chain stays stable for a given workflow history.
+- Codec metrics are emitted per codec/direction
+  (`temporal_payload_codec_encode_total_*`, `*_decode_total_*`,
+  `*_errors_total_*`) and failures log the offending codec/direction.
+- The failure converter returns a structured `TemporalFailureError` that
+  preserves `details` and `cause` payloads using the same codec chain, so
+  workflow/activity/update/query errors decode cleanly on clients.
+- `temporal-bun doctor` now builds the codec chain from config and fails fast on
+  missing/invalid keys while printing the resolved codec list.
 
 ## Observability
 
