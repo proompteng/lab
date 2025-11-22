@@ -151,7 +151,7 @@ describe('codex-runner', () => {
     const spawnArgs = spawnMock.mock.calls[0]?.[0]
     expect(spawnArgs?.cmd).toContain('resume')
     expect(spawnArgs?.cmd).toContain('--last')
-    expect(spawnArgs?.cmd).not.toContain('-')
+    expect(spawnArgs?.cmd).toContain('-')
     expect(promptSink).toEqual(['should-not-be-sent'])
   })
 
