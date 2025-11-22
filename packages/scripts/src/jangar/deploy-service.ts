@@ -17,12 +17,31 @@ type DeployOptions = {
   serviceManifest?: string
 }
 
-const updateManifests = (kustomizePath: string, servicePath: string, tag: string, rolloutTimestamp: string) => {
+const updateManifests = (
+  kustomizePath: string,
+  servicePath: string,
+  tag: string,
+  digest: string | undefined,
+  rolloutTimestamp: string,
+) => {
   const kustomization = readFileSync(kustomizePath, 'utf8')
-  const updatedKustomization = kustomization.replace(
+  let updatedKustomization = kustomization.replace(
     /(name:\s+registry\.ide-newton\.ts\.net\/lab\/jangar\s*\n\s*newTag:\s*)(.+)/,
     (_, prefix) => `${prefix}${tag}`,
   )
+
+  if (digest) {
+    const digestPattern =
+      /(name:\s+registry\.ide-newton\.ts\.net\/lab\/jangar\s*\n\s*newTag:\s*[^\n]+\n\s*digest:\s*)(.+)/
+    if (digestPattern.test(updatedKustomization)) {
+      updatedKustomization = updatedKustomization.replace(digestPattern, (_, prefix) => `${prefix}${digest}`)
+    } else {
+      updatedKustomization = updatedKustomization.replace(
+        /(name:\s+registry\.ide-newton\.ts\.net\/lab\/jangar\s*\n\s*newTag:\s*[^\n]+)/,
+        `$1\n    digest: ${digest}`,
+      )
+    }
+  }
   if (kustomization === updatedKustomization) {
     console.warn('Warning: jangar kustomization was not updated; pattern may have changed.')
   } else {
@@ -64,7 +83,7 @@ export const main = async (options: DeployOptions = {}) => {
   )
 
   // Persist image tag and rollout marker in Git before applying
-  updateManifests(`${kustomizePath}/kustomization.yaml`, serviceManifest, tag, new Date().toISOString())
+  updateManifests(`${kustomizePath}/kustomization.yaml`, serviceManifest, tag, repoDigest, new Date().toISOString())
 
   await run('kubectl', ['apply', '-k', kustomizePath])
   await applyKnativeServiceImage('jangar', 'jangar', serviceManifest, image)
