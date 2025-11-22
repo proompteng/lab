@@ -1,0 +1,39 @@
+name: jangar-ci
+
+on:
+  pull_request:
+    paths:
+      - 'services/jangar/**'
+      - 'packages/scripts/src/jangar/**'
+      - '.github/workflows/jangar-ci.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.11.1
+          cache: pnpm
+
+      - name: Install repo dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install jangar dependencies
+        working-directory: services/jangar
+        run: bun install --frozen-lockfile
+
+      - name: Biome lint
+        run: pnpm exec biome check services/jangar packages/scripts/src/jangar
+
+      - name: Type check (tsc)
+        working-directory: services/jangar
+        run: bunx tsc --noEmit
