@@ -120,19 +120,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-          cache: "pnpm"
-
-      - run: pnpm install --frozen-lockfile
-
-      - run: pnpm --filter @proompteng/codex test
-
-      - run: pnpm --filter @proompteng/codex build
+      # codex CI handled by dedicated workflow (.github/workflows/codex-ci.yml)
 
   discord:
     needs: check_changed_files

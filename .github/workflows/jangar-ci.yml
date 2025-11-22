@@ -1,0 +1,23 @@
+name: jangar-ci
+
+on:
+  pull_request:
+    paths:
+      - 'services/jangar/**'
+      - 'packages/scripts/src/jangar/**'
+      - 'argocd/applications/jangar/**'
+      - '.github/workflows/jangar-ci.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-typecheck:
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      bun-version: 1.3.3
+      node-version: 24.11.1
+      install-command: pnpm install --frozen-lockfile && cd services/jangar && bun install --frozen-lockfile
+      lint-command: pnpm exec biome check services/jangar packages/scripts/src/jangar argocd/applications/jangar
+      test-command: cd services/jangar && bunx tsc --noEmit

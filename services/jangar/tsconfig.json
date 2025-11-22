@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "../../../../",
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "types": ["bun", "bun-types"],
+    "noEmit": false,
+    "paths": {
+      "@proompteng/codex": ["../../packages/codex/src"],
+      "@proompteng/codex/*": ["../../packages/codex/src/*"]
+    }
+  },
+  "include": ["./src/**/*"]
+}

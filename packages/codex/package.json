@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "example": "bun run examples/run-example.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepare": "bun run build"
   },
   "devDependencies": {
     "@types/node": "^22.7.5",

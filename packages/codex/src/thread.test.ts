@@ -1,55 +1,67 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type { CodexExecArgs } from './codex-exec'
-import type { CodexOptions, ThreadOptions } from './options'
 import { Thread } from './thread'
 
-const createThread = (events: string[], options?: ThreadOptions, codexOptions?: CodexOptions) => {
-  const calls: CodexExecArgs[] = []
-  const exec = {
-    run: vi.fn(async function* (args: CodexExecArgs) {
-      calls.push(args)
-      for (const event of events) {
-        yield event
-      }
-    }),
+type EventLine = string
+
+class FakeExec {
+  lines: EventLine[]
+  lastArgs: CodexExecArgs | null
+
+  constructor(lines: EventLine[]) {
+    this.lines = lines
+    this.lastArgs = null
   }
 
-  const thread = new Thread(exec as never, codexOptions ?? {}, options ?? {})
-  return { thread, calls, exec }
+  async *run(args: CodexExecArgs): AsyncGenerator<string> {
+    this.lastArgs = args
+    for (const line of this.lines) {
+      yield line
+    }
+  }
 }
 
 describe('Thread', () => {
-  it('collects agent messages and usage when running a turn', async () => {
-    const events = [
-      JSON.stringify({ type: 'thread.started', thread_id: 'thr_abc' }),
-      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'hello world' } }),
-      JSON.stringify({ type: 'turn.completed', usage: { output_tokens: 42 } }),
-    ]
+  it('collects final response, items, and usage from streamed events', async () => {
+    const exec = new FakeExec([
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-123' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'All done' } }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 } }),
+    ])
 
-    const { thread, calls } = createThread(events, { workingDirectory: '/tmp/workspace' })
-    const result = await thread.run('Describe the repo')
+    const thread = new Thread(exec as never, {}, { sandboxMode: 'workspace-write' })
+    const result = await thread.run('hello world')
 
-    expect(thread.id).toBe('thr_abc')
-    expect(result.finalResponse).toBe('hello world')
-    expect(result.usage?.output_tokens).toBe(42)
-    expect(calls[0]?.workingDirectory).toBe('/tmp/workspace')
+    expect(thread.id).toBe('thread-123')
+    expect(result.finalResponse).toBe('All done')
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0]?.type).toBe('agent_message')
+    expect(result.usage).toMatchObject({ input_tokens: 10, output_tokens: 5 })
   })
 
-  it('streams events and updates thread id lazily', async () => {
-    const events = [
-      JSON.stringify({ type: 'thread.started', thread_id: 'thr_stream' }),
-      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'first chunk' } }),
-    ]
+  it('passes aggregated text and images through to the executor', async () => {
+    const exec = new FakeExec([
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok' } }),
+      JSON.stringify({ type: 'turn.completed', usage: {} }),
+    ])
 
-    const { thread } = createThread(events)
-    const streamed: string[] = []
+    const thread = new Thread(exec as never, {}, { sandboxMode: 'workspace-write' })
+    await thread.run([
+      { type: 'text', text: 'first' },
+      { type: 'text', text: 'second' },
+      { type: 'local_image', path: '/tmp/example.png' },
+    ])
 
-    for await (const event of thread.runStreamed('Ping').events) {
-      streamed.push(event.type)
-    }
+    expect(exec.lastArgs?.input).toBe('first\n\nsecond')
+    expect(exec.lastArgs?.images).toEqual(['/tmp/example.png'])
+  })
 
-    expect(streamed).toEqual(['thread.started', 'item.completed'])
-    expect(thread.id).toBe('thr_stream')
+  it('throws when a turn fails event is received', async () => {
+    const exec = new FakeExec([JSON.stringify({ type: 'turn.failed', error: { message: 'boom' } })])
+
+    const thread = new Thread(exec as never, {}, { sandboxMode: 'workspace-write' })
+
+    await expect(thread.run('trigger failure')).rejects.toThrow('boom')
   })
 })

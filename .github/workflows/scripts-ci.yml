@@ -14,28 +14,10 @@ on:
 
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Lint scripts package
-        run: pnpm --filter @proompteng/scripts lint
-
-      - name: Run Bun tests
-        run: bun test packages/scripts/src
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      bun-version: 1.3.3
+      node-version: 24.11.1
+      install-command: pnpm install --frozen-lockfile
+      lint-command: pnpm --filter @proompteng/scripts lint
+      test-command: bun test packages/scripts/src

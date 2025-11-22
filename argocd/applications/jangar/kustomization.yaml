@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: jangar
+resources:
+  - kservice.yaml
+  - tailscale-service.yaml
+
+images:
+  - name: registry.ide-newton.ts.net/lab/jangar
+    newTag: 185c862a
+    digest: sha256:5019c8d826e91d4ae7587478ee760fb4092756410052d79e9ad97cbf4a4eec8b
