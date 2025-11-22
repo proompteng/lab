@@ -126,7 +126,7 @@ describe('codex-runner', () => {
     expect(result.sessionId).toBe('resume-42')
   })
 
-  it('uses --last resume without piping a prompt', async () => {
+  it('uses --last resume and pipes prompt via stdin dash', async () => {
     const promptSink: string[] = []
     const codexMessages = [
       JSON.stringify({ type: 'session.rehydrated', session: { id: 'resume-99' } }),
@@ -151,8 +151,8 @@ describe('codex-runner', () => {
     const spawnArgs = spawnMock.mock.calls[0]?.[0]
     expect(spawnArgs?.cmd).toContain('resume')
     expect(spawnArgs?.cmd).toContain('--last')
-    expect(spawnArgs?.cmd).not.toContain('-')
-    expect(promptSink).toEqual([])
+    expect(spawnArgs?.cmd).toContain('-')
+    expect(promptSink).toEqual(['should-not-be-sent'])
   })
 
   it('captures session ids from SessionConfiguredEvent log lines', async () => {

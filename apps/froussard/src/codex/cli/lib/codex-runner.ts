@@ -179,7 +179,6 @@ export const runCodexSession = async ({
 }: RunCodexSessionOptions): Promise<RunCodexSessionResult> => {
   const log = logger ?? consoleLogger
   const resumeArg = resumeSessionId?.trim()
-  const isResumeLast = resumeArg === '--last'
 
   const parsePositiveMs = (value: string | undefined, fallback: number) => {
     const parsed = Number(value)
@@ -244,16 +243,14 @@ export const runCodexSession = async ({
 
   if (resumeArg && resumeArg.length > 0) {
     codexCommand.push('resume')
-    if (isResumeLast) {
+    if (resumeArg === '--last') {
       codexCommand.push('--last')
     } else {
       codexCommand.push(resumeArg)
     }
   }
 
-  if (!isResumeLast) {
-    codexCommand.push('-')
-  }
+  codexCommand.push('-')
 
   const codexProcess = Bun.spawn({
     cmd: codexCommand,
@@ -271,9 +268,7 @@ export const runCodexSession = async ({
     throw new Error('Codex subprocess is missing stdin')
   }
 
-  if (!isResumeLast) {
-    await codexStdin.write(prompt)
-  }
+  await codexStdin.write(prompt)
   await codexStdin.close()
 
   const agentMessages: string[] = []
