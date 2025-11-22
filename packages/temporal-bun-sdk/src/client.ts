@@ -1043,7 +1043,7 @@ class TemporalClientImpl implements TemporalClient {
     const context = {
       kind: operation,
       namespace: this.namespace,
-      taskQueue: this.defaultTaskQueue,
+      taskQueue: (metadata.taskQueue as string | undefined) ?? this.defaultTaskQueue,
       identity: this.defaultIdentity,
       workflowId: metadata.workflowId as string | undefined,
       runId: metadata.runId as string | undefined,

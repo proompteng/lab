@@ -97,7 +97,10 @@ export const runInterceptors = <A>(
     return inboundPipeline()
   }
 
-  return Effect.flatMap(outboundPipeline(), (result) => runInbound(result, undefined)).pipe(
-    Effect.catchAll((error) => runInbound(undefined, error)),
+  return outboundPipeline().pipe(
+    Effect.matchEffect({
+      onSuccess: (result) => runInbound(result, undefined),
+      onFailure: (error) => runInbound(undefined, error),
+    }),
   )
 }
