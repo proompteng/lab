@@ -11,7 +11,7 @@ metadata:
     argocd.argoproj.io/compare-options: IgnoreExtraneous
     argocd.argoproj.io/tracking-id: jangar:serving.knative.dev/Service:jangar/jangar
     networking.knative.dev/visibility: cluster-local
-    deploy.knative.dev/rollout: "2025-11-22T08:32:44.593Z"
+    deploy.knative.dev/rollout: "2025-11-22T10:42:29.799Z"
 spec:
   template:
     metadata:

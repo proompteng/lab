@@ -17,7 +17,9 @@ RUN cd packages/codex \
 # Install jangar deps
 WORKDIR /app/services/jangar
 COPY services/jangar/package.json services/jangar/bun.lock ./
-RUN bun install --production --frozen-lockfile
+RUN bun install --production --frozen-lockfile \
+  && mkdir -p node_modules/@proompteng \
+  && ln -sf ../../packages/codex node_modules/@proompteng/codex
 
 # Copy source
 COPY services/jangar/tsconfig.json ./
