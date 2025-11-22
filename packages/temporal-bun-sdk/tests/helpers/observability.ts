@@ -35,6 +35,7 @@ export const createTestTemporalConfig = (overrides: Partial<TemporalConfig> = {}
     jitterFactor: 0,
     retryableStatusCodes: [],
   },
+  payloadCodecs: [],
   ...overrides,
 })
 

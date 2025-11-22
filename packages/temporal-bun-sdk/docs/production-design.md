@@ -85,6 +85,7 @@ in parallel without collisions.
 | **TBS-008** | Documentation & DX | Architecture guide, cookbook, migration path, CLI accessibility. | `apps/docs/content/docs/temporal-bun-sdk.mdx`, `docs/*` |
 | **TBS-009** | Release Automation | CI workflows, changelog, signed publish, support policy artifacts. | `.github/workflows/temporal-bun-sdk.yml`, `packages/temporal-bun-sdk/CHANGELOG.md` |
 | **TBS-010** | Effect Architecture | Migrate worker/client/config/runtime to Effect Layers, structured dependency injection, and fiber supervision. | `src/runtime/effect-layers.ts`, `src/worker/runtime.ts`, `src/client.ts`, `src/config.ts` |
+| **TBS-011** | Payload Codec & Failure Converter | Layered DataConverter with ordered codecs (gzip + AES-GCM), structured failure converter, doctor validation, and observability hooks. | `src/common/payloads/**`, `src/client.ts`, `src/worker/runtime.ts`, `docs/*` |
 
 > **Implementation rule:** Every work item must create or update code that carries
 > a `// TODO(TBS-xxx): ...` marker. Leave stubs effect-safe and executable even
@@ -140,6 +141,23 @@ can contribute independently without re-planning.
   4. Documentation updated with Layer usage patterns.
 - **Dependencies**
   - Enables observability (TBS-004), concurrency (TBS-003), and client resilience (TBS-005) to plug into shared services.
+
+### TBS-011 – Payload Codec & Failure Converter
+
+- **Starting points**
+  - `src/common/payloads/*` – introduce ordered codec chain + failure converter wired through the Effect `DataConverter` layer.
+  - `src/config.ts` – schema + env parsing for `payloadCodecs` (`TEMPORAL_PAYLOAD_CODECS=gzip,aes-gcm`, `TEMPORAL_CODEC_AES_KEY`, optional `TEMPORAL_CODEC_AES_KEY_ID`).
+  - `src/client.ts`, `src/worker/runtime.ts` – resolve codec chain from config, expose metrics/logging around codec successes/failures.
+  - `src/bin/temporal-bun.ts` – doctor command validates codec configuration and reports chain summary.
+- **Acceptance criteria**
+  1. Payload converter supports ordered codecs (gzip + AES-GCM built-in) with replay-safe envelopes; extension point for additional codecs.
+  2. Failure converter maps Temporal `Failure` messages to structured `TemporalFailureError` with details/cause decoded via codec pipeline.
+  3. Worker/client route all payloads (workflow args, activities, queries/updates, memo/search attributes, determinism markers) through the layered converter.
+  4. Observability: counters for codec encode/decode/errors and structured logging for misconfiguration; `temporal-bun doctor` surfaces codec chain and fails fast on invalid keys.
+- **Operational notes**
+  - Default remains JSON-only; enable codecs via config/env to avoid breaking existing users.
+  - AES-GCM keys must be 128/192/256-bit (base64/hex); key IDs travel in payload metadata for rotation.
+  - Determinism: codecs wrap the entire payload proto, so workflow replay is safe as long as the codec chain remains stable for a given history.
 
 ### TBS-001 – History Replay & Sticky Cache
 
