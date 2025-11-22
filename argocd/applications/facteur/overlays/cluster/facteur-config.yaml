@@ -11,14 +11,19 @@ data:
         payload: '{}'
       service_account: facteur-workflow
       workflow_template: facteur-dispatch
+    codex_orchestrator:
+      enabled: true
+      namespace: argo-workflows
+      workflow_template: github-codex-planning
+      service_account: argo-workflows-workflow
+      parameters:
+        rawEvent: ''
+        eventBody: ''
     discord:
       guild_id: ''
       public_key: ''
     redis:
       url: redis://facteur-redis:6379/0
-    codex_dispatch:
-      planning_enabled: true
-      payload_overrides: {}
     role_map:
       plan:
         - '987654321098765432'

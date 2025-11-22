@@ -6,6 +6,7 @@ This plan operationalises the autonomous knowledge base, schema, and vector stra
 - [x] `TODO(codex-autonomy-step-01)`: Wire new `codex_kb` tables into the ORM/data layer (repositories for `ideas`, `tasks`, `task_runs`).
 - [x] `TODO(codex-autonomy-step-02)`: Capture Froussard webhook payloads in `ideas` when Facteur handles GitHub events.
 - [x] `TODO(codex-autonomy-step-03)`: Persist task lifecycle updates (`tasks`, `task_runs`, `run_events`) inside the orchestrator code paths.
+- [x] Routing consolidation: planning is orchestrator-only; Knative service is cluster-local with Tailscale exposure (legacy direct dispatch removed).
 
 ## Phase 2 – Reflection Memory & Retrieval
 - [ ] `TODO(codex-autonomy-step-04)`: Store agent reflections and register them with the vector index.

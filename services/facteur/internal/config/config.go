@@ -3,24 +3,21 @@ package config
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
 )
 
 // Config captures runtime configuration for the facteur service.
 type Config struct {
-	Discord       DiscordConfig       `mapstructure:"discord"`
-	Redis         RedisConfig         `mapstructure:"redis"`
-	Argo          ArgoConfig          `mapstructure:"argo"`
-	RoleMap       map[string][]string `mapstructure:"role_map"`
-	Server        ServerConfig        `mapstructure:"server"`
-	Codex         CodexListenerConfig `mapstructure:"codex_listener"`
-	Planner       PlannerConfig       `mapstructure:"codex_orchestrator"`
-	Postgres      DatabaseConfig      `mapstructure:"postgres"`
-	CodexDispatch CodexDispatchConfig `mapstructure:"codex_dispatch"`
+	Discord  DiscordConfig       `mapstructure:"discord"`
+	Redis    RedisConfig         `mapstructure:"redis"`
+	Argo     ArgoConfig          `mapstructure:"argo"`
+	RoleMap  map[string][]string `mapstructure:"role_map"`
+	Server   ServerConfig        `mapstructure:"server"`
+	Codex    CodexListenerConfig `mapstructure:"codex_listener"`
+	Planner  PlannerConfig       `mapstructure:"codex_orchestrator"`
+	Postgres DatabaseConfig      `mapstructure:"postgres"`
 }
 
 // DiscordConfig aggregates Discord bot credentials and routing data.
@@ -87,12 +84,6 @@ type DatabaseConfig struct {
 	DSN string `mapstructure:"dsn"`
 }
 
-// CodexDispatchConfig governs Codex-triggered workflow submissions.
-type CodexDispatchConfig struct {
-	PlanningEnabled  bool              `mapstructure:"planning_enabled"`
-	PayloadOverrides map[string]string `mapstructure:"payload_overrides"`
-}
-
 // Options customises how configuration should be loaded.
 type Options struct {
 	Path      string
@@ -148,8 +139,6 @@ func LoadWithOptions(opts Options) (*Config, error) {
 		{key: "codex_orchestrator.workflow_template"},
 		{key: "codex_orchestrator.service_account"},
 		{key: "codex_orchestrator.parameters"},
-		{key: "codex_dispatch.planning_enabled"},
-		{key: "codex_dispatch.payload_overrides"},
 	} {
 		if len(binding.envs) == 0 {
 			if err := v.BindEnv(binding.key); err != nil {
@@ -177,8 +166,6 @@ func LoadWithOptions(opts Options) (*Config, error) {
 
 	normaliseConfig(&cfg)
 
-	cfg.CodexDispatch.PayloadOverrides = mergePayloadOverridesCaseSensitive(opts, cfg.CodexDispatch.PayloadOverrides)
-
 	if err := validate(cfg); err != nil {
 		return nil, err
 	}
@@ -201,9 +188,6 @@ func normaliseConfig(cfg *Config) {
 	}
 	if cfg.Codex.GroupID == "" {
 		cfg.Codex.GroupID = "facteur-codex-listener"
-	}
-	if cfg.CodexDispatch.PayloadOverrides == nil {
-		cfg.CodexDispatch.PayloadOverrides = map[string]string{}
 	}
 }
 
@@ -246,113 +230,4 @@ func validate(cfg Config) error {
 	}
 
 	return nil
-}
-
-func mergePayloadOverridesCaseSensitive(opts Options, fallback map[string]string) map[string]string {
-	caseSensitive := map[string]string{}
-	keyIndex := map[string]string{}
-
-	set := func(key, value string) {
-		if key == "" {
-			return
-		}
-		lower := strings.ToLower(key)
-		if existingKey, ok := keyIndex[lower]; ok && existingKey != key {
-			delete(caseSensitive, existingKey)
-		}
-		caseSensitive[key] = value
-		keyIndex[lower] = key
-	}
-
-	for k, v := range readPayloadOverridesFromFile(opts.Path) {
-		set(k, v)
-	}
-
-	for k, v := range readPayloadOverridesFromEnv(opts.EnvPrefix) {
-		set(k, v)
-	}
-
-	if len(caseSensitive) == 0 {
-		if fallback == nil {
-			return map[string]string{}
-		}
-		return fallback
-	}
-
-	for k, v := range fallback {
-		if _, ok := keyIndex[strings.ToLower(k)]; ok {
-			continue
-		}
-		set(k, v)
-	}
-
-	return caseSensitive
-}
-
-func readPayloadOverridesFromFile(path string) map[string]string {
-	if path == "" {
-		return nil
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-
-	var root map[string]any
-	if err := yaml.Unmarshal(data, &root); err != nil {
-		return nil
-	}
-
-	dispatchRaw, ok := root["codex_dispatch"]
-	if !ok {
-		return nil
-	}
-
-	dispatchMap, ok := dispatchRaw.(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	overridesRaw, ok := dispatchMap["payload_overrides"]
-	if !ok {
-		return nil
-	}
-
-	overrideMap, ok := overridesRaw.(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	result := make(map[string]string, len(overrideMap))
-	for key, value := range overrideMap {
-		result[key] = fmt.Sprint(value)
-	}
-
-	return result
-}
-
-func readPayloadOverridesFromEnv(prefix string) map[string]string {
-	upperPrefix := strings.ToUpper(prefix)
-	if upperPrefix == "" {
-		upperPrefix = "FACTEUR"
-	}
-	envPrefix := upperPrefix + "_CODEX_DISPATCH_PAYLOAD_OVERRIDES__"
-
-	result := map[string]string{}
-	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(entry, envPrefix) {
-			continue
-		}
-		pair := strings.TrimPrefix(entry, envPrefix)
-		parts := strings.SplitN(pair, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := parts[0]
-		value := parts[1]
-		result[key] = value
-	}
-
-	return result
 }

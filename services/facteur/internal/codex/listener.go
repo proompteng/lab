@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
-
-	"github.com/proompteng/lab/services/facteur/internal/bridge"
-	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 )
 
 // MessageReader represents the subset of kafka.Reader methods used by Listener.
@@ -28,25 +26,18 @@ type Logger interface {
 
 // Listener consumes structured Codex tasks and emits human-friendly logs.
 type Listener struct {
-	reader      MessageReader
-	logger      Logger
-	dispatcher  bridge.Dispatcher
-	dispatchCfg DispatchConfig
+	reader MessageReader
+	logger Logger
 }
 
 // NewListener constructs a Listener from the provided reader and logger.
-func NewListener(reader MessageReader, logger Logger, dispatcher bridge.Dispatcher, cfg DispatchConfig) *Listener {
+func NewListener(reader MessageReader, logger Logger) *Listener {
 	if logger == nil {
 		logger = log.Default()
 	}
 	return &Listener{
-		reader:     reader,
-		logger:     logger,
-		dispatcher: dispatcher,
-		dispatchCfg: DispatchConfig{
-			PlanningEnabled:  cfg.PlanningEnabled,
-			PayloadOverrides: cloneOverrides(cfg.PayloadOverrides),
-		},
+		reader: reader,
+		logger: logger,
 	}
 }
 
@@ -97,30 +88,12 @@ func (l *Listener) Run(ctx context.Context) error {
 		}
 
 		if task.GetStage() == froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
-			if !l.dispatchCfg.PlanningEnabled {
-				l.logger.Printf(
-					"codex listener: planning dispatch disabled key=%s repo=%s issue=%d",
-					string(msg.Key),
-					task.GetRepository(),
-					task.GetIssueNumber(),
-				)
-			} else if l.dispatcher == nil {
-				l.logger.Printf(
-					"codex listener: dispatcher unavailable key=%s repo=%s issue=%d",
-					string(msg.Key),
-					task.GetRepository(),
-					task.GetIssueNumber(),
-				)
-			} else {
-				if _, dispatchErr := DispatchPlanning(ctx, l.dispatcher, &task, l.dispatchCfg.PayloadOverrides); dispatchErr != nil {
-					return fmt.Errorf("dispatch planning task: %w", dispatchErr)
-				}
-				l.logger.Printf(
-					"codex listener: workflow submitted repo=%s issue=%d",
-					task.GetRepository(),
-					task.GetIssueNumber(),
-				)
-			}
+			l.logger.Printf(
+				"codex listener: planning tasks ignored (orchestrator-only path) key=%s repo=%s issue=%d",
+				string(msg.Key),
+				task.GetRepository(),
+				task.GetIssueNumber(),
+			)
 		}
 
 		if commitErr := l.reader.CommitMessages(ctx, msg); commitErr != nil {

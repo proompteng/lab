@@ -15,7 +15,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/proompteng/lab/services/facteur/internal/bridge"
-	"github.com/proompteng/lab/services/facteur/internal/codex"
 	"github.com/proompteng/lab/services/facteur/internal/facteurpb"
 	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
 	"github.com/proompteng/lab/services/facteur/internal/orchestrator"
@@ -169,7 +168,7 @@ func TestCodexTasksEndpointHandlesError(t *testing.T) {
 	require.NoError(t, err)
 
 	payload, err := proto.Marshal(&froussardpb.CodexTask{
-		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
 		Repository:  "proompteng/lab",
 		IssueNumber: 7,
 		DeliveryId:  "delivery-error",
@@ -332,118 +331,28 @@ func TestCodexTasksPlannerBypass(t *testing.T) {
 	require.Equal(t, 0, planner.calls)
 }
 
-func TestCodexTasksEndpointDispatchesPlanningWhenEnabled(t *testing.T) {
-	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "argo", WorkflowName: "facteur-dispatch", CorrelationID: "wf-123"}}
-	codexStore := &stubCodexStore{
-		ideaID: "idea-1638",
-		taskID: "task-1638",
-		runID:  "run-1638",
-	}
+func TestCodexTasksPlanningWithoutPlannerFails(t *testing.T) {
 	srv, err := server.New(server.Options{
-		Dispatcher:    dispatcher,
-		Store:         &stubStore{},
-		CodexStore:    codexStore,
-		CodexDispatch: codex.DispatchConfig{PlanningEnabled: true},
+		Dispatcher: &stubDispatcher{},
+		Store:      &stubStore{},
+		CodexStore: &stubCodexStore{},
 	})
 	require.NoError(t, err)
 
 	payload, err := proto.Marshal(&froussardpb.CodexTask{
 		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
-		Prompt:      "Generate rollout plan",
 		Repository:  "proompteng/lab",
-		IssueNumber: 1638,
-		DeliveryId:  "delivery-1638",
+		IssueNumber: 9999,
+		DeliveryId:  "delivery-no-planner",
 	})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/x-protobuf")
+
 	resp, err := srv.App().Test(req)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = resp.Body.Close()
-	})
-
-	require.Equal(t, 202, resp.StatusCode)
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.Contains(t, string(body), `"workflowName":"facteur-dispatch"`)
-
-	require.Len(t, dispatcher.requests, 1)
-	require.Equal(t, "codex-planning", dispatcher.requests[0].Command)
-	require.Contains(t, dispatcher.requests[0].Options["payload"], "\"stage\":\"planning\"")
-	require.Equal(t, 1, codexStore.calls)
-}
-
-func TestCodexTasksEndpointSkipsWhenPlanningDisabled(t *testing.T) {
-	dispatcher := &stubDispatcher{}
-	codexStore := &stubCodexStore{}
-	srv, err := server.New(server.Options{
-		Dispatcher:    dispatcher,
-		Store:         &stubStore{},
-		CodexStore:    codexStore,
-		CodexDispatch: codex.DispatchConfig{PlanningEnabled: false},
-	})
-	require.NoError(t, err)
-
-	payload, err := proto.Marshal(&froussardpb.CodexTask{Stage: froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING, Prompt: "Generate", DeliveryId: "delivery"})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
-	resp, err := srv.App().Test(req)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = resp.Body.Close()
-	})
-
-	require.Equal(t, 202, resp.StatusCode)
-	require.Empty(t, dispatcher.requests)
-	require.Equal(t, 1, codexStore.calls)
-}
-
-func TestCodexTasksEndpointReturnsServiceUnavailableWhenDispatcherMissing(t *testing.T) {
-	codexStore := &stubCodexStore{}
-	srv, err := server.New(server.Options{
-		CodexStore:    codexStore,
-		CodexDispatch: codex.DispatchConfig{PlanningEnabled: true},
-	})
-	require.NoError(t, err)
-
-	payload, err := proto.Marshal(&froussardpb.CodexTask{Stage: froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING, Prompt: "Generate"})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
-	resp, err := srv.App().Test(req)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = resp.Body.Close()
-	})
 	require.Equal(t, 503, resp.StatusCode)
-	require.Equal(t, 1, codexStore.calls)
-}
-
-func TestCodexTasksEndpointReturnsErrorWhenDispatchFails(t *testing.T) {
-	dispatcher := &stubDispatcher{err: errors.New("dispatch failed")}
-	codexStore := &stubCodexStore{}
-	srv, err := server.New(server.Options{
-		Dispatcher:    dispatcher,
-		Store:         &stubStore{},
-		CodexStore:    codexStore,
-		CodexDispatch: codex.DispatchConfig{PlanningEnabled: true},
-	})
-	require.NoError(t, err)
-
-	payload, err := proto.Marshal(&froussardpb.CodexTask{Stage: froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING, Prompt: "Generate"})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
-	resp, err := srv.App().Test(req)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = resp.Body.Close()
-	})
-	require.Equal(t, 500, resp.StatusCode)
-	require.Len(t, dispatcher.requests, 1)
-	require.Equal(t, 1, codexStore.calls)
 }
 
 type stubDispatcher struct {

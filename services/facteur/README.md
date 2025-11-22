@@ -104,6 +104,10 @@ When running locally, point these values at your observability environment to ke
 
 Cluster deployments rely on a namespace-scoped Grafana Alloy deployment (`argocd/applications/facteur/overlays/cluster/alloy-*.yaml`) to forward Knative pod logs to the observability Loki gateway (`observability-loki-loki-distributed-gateway`), since the Knative stack does not configure log shipping on its own.
 
+### Codex planning GitHub posting
+
+Planning now runs exclusively through the orchestrator (`codex_orchestrator.enabled=true`) and the `github-codex-planning` template, which forces `POST_TO_GITHUB=true`. The legacy direct-dispatch path is removed.
+
 ## Container image
 
 The service ships as `registry.ide-newton.ts.net/lab/facteur`. Pushes to `main` that touch `services/facteur/**` or `.github/workflows/facteur-build-push.yaml` trigger the `Facteur Docker Build and Push` workflow, which cross-builds (linux/amd64 + linux/arm64) using the local Dockerfile and pushes tags for `main`, `latest`, and the commit SHA. Rotate the image in Kubernetes by updating tags in `argocd/applications/facteur/overlays/cluster/kustomization.yaml` or allow Argo tooling to reference the desired tag.
