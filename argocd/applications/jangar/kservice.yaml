@@ -24,8 +24,6 @@ spec:
           image: registry.ide-newton.ts.net/lab/jangar:latest
           imagePullPolicy: Always
           env:
-            - name: PORT
-              value: "8080"
             - name: TEMPORAL_ADDRESS
               value: temporal-frontend.temporal.svc.cluster.local:7233
             - name: TEMPORAL_NAMESPACE

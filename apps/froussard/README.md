@@ -97,7 +97,7 @@ bun apps/froussard/src/codex/cli/build-codex-image.ts
 ```
 
 - Override `IMAGE_TAG` to publish a different tag or registry.
-- Provide `GH_TOKEN` explicitly if `gh auth token` is unavailable.
+- Provide `GH_TOKEN` explicitly if `gh auth token` is unavailable. The token must include the `workflow` scope (GitHub blocks pushes to `.github/workflows/**` without it); refresh with `gh auth refresh --hostname github.com --scopes repo,workflow` or supply a PAT that carries those scopes.
 - The resulting image defaults to cloning `proompteng/lab` into
   `/workspace/lab`; override `REPO_URL`, `BASE_BRANCH`, or `TARGET_DIR` at
   runtime as needed.
