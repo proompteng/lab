@@ -428,7 +428,9 @@ export const runCodexSession = async ({
       }
     }
 
-    if (eventsLogMissing) {
+    const allowArtifactCapture = eventsLogMissing && codexExitCode === 1
+
+    if (allowArtifactCapture) {
       log.warn(
         `Codex exited with status ${codexExitCode} but event log is missing/empty; continuing to allow artifact capture`,
       )
