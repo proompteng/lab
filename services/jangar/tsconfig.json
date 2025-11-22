@@ -3,6 +3,7 @@
   "compilerOptions": {
     "rootDir": "../../../../",
     "outDir": "./dist",
+    "baseUrl": "./",
     "types": ["bun", "bun-types"],
     "noEmit": false,
     "paths": {
