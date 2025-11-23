@@ -9,28 +9,27 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
 ## Quick Start
 
 1. **Prerequisites**
-   - Node.js 24.11.x and pnpm 10.23.x (via Corepack)
+   - Node.js 24.11.x and Bun 1.3.x
    - Go 1.24+
-   - Bun (optional, see `bun.lock`)
    - Docker / Kubernetes tooling if you plan to run services or apply manifests locally
 2. **Install workspace dependencies**
    ```bash
-   pnpm install
+   bun install
    ```
 3. **Launch the primary web app**
    ```bash
-   pnpm run dev:proompteng
+   bun run dev:proompteng
    ```
 4. **Start the Convex backend locally** (in another terminal)
    ```bash
-   pnpm run dev:convex
+   bun run dev:convex
    ```
 5. **Run Go services** (example)
    ```bash
    go run ./services/prt
    ```
 
-> Prefer a hosted development experience? Click the **Open in Coder** button above to provision a workspace with Node 24, pnpm, and the repository pre-installed.
+> Prefer a hosted development experience? Click the **Open in Coder** button above to provision a workspace with Node 24, Bun, and the repository pre-installed.
 
 ---
 
@@ -54,14 +53,14 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
 ## Development Workflows
 
 ### Frontend
-- Lint & format: `pnpm run lint:proompteng`, `pnpm run format`
-- Build & smoke test: `pnpm run build:proompteng` then `pnpm run start:proompteng`
+- Lint & format: `bun run lint:proompteng`, `bun run format`
+- Build & smoke test: `bun run build:proompteng` then `bun run start:proompteng`
 - Shared Biome config lives at `biome.json`
 
 ### Convex Backend
-- Generate types: `pnpm --filter @proompteng/backend run codegen`
-- Start local dev: `pnpm run dev:convex`
-- Seed models: `pnpm run seed:models`
+- Generate types: `bun run --filter @proompteng/backend codegen`
+- Start local dev: `bun run dev:convex`
+- Seed models: `bun run seed:models`
 
 ### Go Services
 - Test all services: `go test ./services/...`
@@ -110,12 +109,12 @@ These instructions remain intentionally permissive for an isolated lab networkâ€
 
 | Task | Command / Notes |
 | ---- | ---------------- |
-| Plan infrastructure | `pnpm run tf:plan` (OpenTofu under `tofu/harvester`)
-| Apply infrastructure | `pnpm run tf:apply` (only after reviewing the plan)
-| Destroy Harvester VM | `pnpm run tf:destroy`
-| Apply Kubernetes base | `pnpm run harvester:apply` or `./kubernetes/install.sh`
-| Bootstrap Argo CD | `pnpm run k:bootstrap` (applies manifests in `argocd/`)
-| Run Ansible playbooks | `pnpm run ansible`
+| Plan infrastructure | `bun run tf:plan` (OpenTofu under `tofu/harvester`)
+| Apply infrastructure | `bun run tf:apply` (only after reviewing the plan)
+| Destroy Harvester VM | `bun run tf:destroy`
+| Apply Kubernetes base | `bun run harvester:apply` or `./kubernetes/install.sh`
+| Bootstrap Argo CD | `bun run k:bootstrap` (applies manifests in `argocd/`)
+| Run Ansible playbooks | `bun run ansible`
 | Manage Coder template | `kubernetes/coder` contains Terraform + template YAML used by the button above.
 
 Supporting configuration:
@@ -128,7 +127,7 @@ Supporting configuration:
 ## Coder Workspace
 
 - Template name: **k8s-arm64** (see `kubernetes/coder/template.yaml`).
-- Bootstrap script provisions code-server, Node 24, pnpm, Convex CLI, kubectl/argocd, and installs repo dependencies.
+- Bootstrap script provisions code-server, Node 24, Bun, Convex CLI, kubectl/argocd, and installs repo dependencies.
 - Use `coder templates push` / `coder update` to maintain the template when infrastructure changes are made.
 
 ---

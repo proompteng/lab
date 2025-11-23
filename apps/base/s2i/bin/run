@@ -27,13 +27,13 @@ for entry_point in $entry_points_str; do
   fi
 done
 
-# If no direct entry point found, try pnpm start if package.json and start script exist
+# If no direct entry point found, try bun run start if package.json and start script exist
 if [ -f "package.json" ] && grep -q '"start"' package.json; then
-  echo "---> No direct entry point found, attempting to run 'pnpm start'..."
-  exec pnpm start "$@"
+  echo "---> No direct entry point found, attempting to run 'bun run start'..."
+  exec bun run start "$@"
 fi
 
-# If no entry point or pnpm start was found after checking all possibilities
+# If no entry point or bun start was found after checking all possibilities
 # For the error message, we can just show the string
 echo "Error: Unable to find a suitable entry point (checked: $entry_points_str) or a 'start' script in package.json."
 echo "Please ensure your application has a recognized entry file or a 'start' script in package.json, or update the S2I run script."

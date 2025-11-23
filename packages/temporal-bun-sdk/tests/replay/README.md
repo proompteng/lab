@@ -35,7 +35,7 @@ Each fixture must include:
 
 Execute from the repo root:
 ```bash
-pnpm --filter @proompteng/temporal-bun-sdk exec bun test tests/replay/fixtures.test.ts
+bun run --filter @proompteng/temporal-bun-sdk exec bun test tests/replay/fixtures.test.ts
 ```
 
 Set `TEMPORAL_REPLAY_FIXTURE=<name>` to limit the run to fixtures whose filenames

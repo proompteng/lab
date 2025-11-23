@@ -49,10 +49,10 @@ This document explains how to maintain the single `k8s-arm64` template in Coder,
 
 - Waits up to three minutes for `module.nodejs` to finish publishing `~/.nvm/nvm.sh` and Node 24. If the module misses that window, the script installs `nvm` and Node 24 itself.
 - After `nvm use 22`, the script refreshes the shell hash table and blocks until `npm` is reachable to avoid race conditions that previously produced exit code 127.
-- Corepack is preferred for `pnpm` activation; if it never becomes available the script logs the fallback and installs `pnpm` with `npm install -g pnpm`.
-- Installs CLI dependencies in this order: `pnpm`, `convex@1.27.0`, `@openai/codex`, `kubectl`, `argocd`.
-- Appends `PNPM_HOME` and `~/.local/bin` to the login shells (`.profile`, `.bashrc`, `.zshrc`) so future shells inherit the toolchain.
-- Dependency install runs only when a manifest exists: `pnpm install --frozen-lockfile` if the repo has a `pnpm-lock.yaml`, otherwise `npm install` when only `package.json` is present.
+- Installs Bun 1.3.x (via the official shell script) alongside Node so package scripts use the same runtime locally and in automation.
+- Installs CLI dependencies in this order: `bun`, `convex@1.27.0`, `@openai/codex`, `kubectl`, `argocd`.
+- Appends `BUN_INSTALL/bin` and `~/.local/bin` to the login shells (`.profile`, `.bashrc`, `.zshrc`) so future shells inherit the toolchain.
+- Dependency install runs only when a manifest exists: `bun install --frozen-lockfile` when a Bun lockfile is present, otherwise `bun install` when only `package.json` is present.
 
 ## Inspecting Bootstrap Logs
 
@@ -75,7 +75,7 @@ Run these checks inside the workspace to ensure bootstrap success:
 ```bash
 node --version
 npm --version
-pnpm --version
+bun --version
 codex --version
 convex --version
 kubectl version --client
@@ -115,7 +115,7 @@ If you skip step 1 the script fails fast with: `SSH host entry 'coder.<workspace
 
 ## Debug Tips
 
-- Exit code 127 usually means a command was not found. Ensure PATH exports in the bootstrap script include `$HOME/.local/bin` and `$HOME/.local/share/pnpm` before using the tool.
+- Exit code 127 usually means a command was not found. Ensure PATH exports in the bootstrap script include `$HOME/.local/bin` and `$HOME/.bun/bin` before using the tool.
 - Every installation step writes detailed logs under `/tmp/coder-bootstrap/*.log`. Review these before editing the script.
 - For Node tooling, confirm `nvm` sourced correctly by checking `~/.nvm/nvm.sh` and the default alias (`nvm current`).
 - Use `coder templates versions list k8s-arm64` to make sure the expected version is active.
@@ -130,6 +130,6 @@ Following this loop keeps the template lineage clean and ensures future Codex ru
 ## Latest Findings (September 28, 2025)
 
 - Bootstrap script v1.0.17 now tolerates the node module’s nested `~/.nvm/nvm` layout, waits for Node 24, and re-installs nvm if the module lags.
-- Tooling validated inside `greg/proompteng` on template version `xenodochial_jackson9` (Node v24.11.1, pnpm 10.23.0, Convex 1.27.0, codex-cli 0.42.0, kubectl v1.34.1, Argo CD v3.1.7).
-- Repository auto-detection fixes the previous `/home/coder/github.com/workspace` miss; `pnpm install --frozen-lockfile` now runs automatically when `pnpm-lock.yaml` is present.
+- Tooling validated inside `greg/proompteng` on template version `xenodochial_jackson9` (Node v24.11.1, Bun 1.3.x, Convex 1.27.0, codex-cli 0.42.0, kubectl v1.34.1, Argo CD v3.1.7).
+- Repository auto-detection fixes the previous `/home/coder/github.com/workspace` miss; `bun install --frozen-lockfile` now runs automatically when a Bun lockfile is present.
 - `kubectl` and `argocd` binaries are symlinked into `/tmp/coder-script-data/bin`, so `coder ssh workspace -- <command>` works without shell init files.

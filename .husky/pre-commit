@@ -5,4 +5,4 @@ if git diff --cached --quiet --exit-code; then
   exit 0
 fi
 
-pnpm exec lint-staged
+bunx lint-staged

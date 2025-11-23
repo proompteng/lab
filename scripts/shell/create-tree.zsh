@@ -77,15 +77,6 @@ create_tree() {
     echo "create_tree: origin/$branch not found; configured tracking for first push" >&2
   fi
 
-  if command -v pnpm >/dev/null 2>&1; then
-    (cd "$target_path" && pnpm install) || {
-      echo "create_tree: pnpm install failed" >&2
-      return 1
-    }
-  else
-    echo "create_tree: pnpm not found; skipping pnpm install" >&2
-  fi
-
   if command -v bun >/dev/null 2>&1; then
     (cd "$target_path" && bun install) || {
       echo "create_tree: bun install failed" >&2

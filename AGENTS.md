@@ -9,17 +9,17 @@
 
 ## Build, Test & Development Commands
 
-- Install dependencies with `pnpm install` (Node 24.11.1) and run `go mod tidy` inside each Go service.
-- Start UIs with `pnpm run dev:proompteng`; swap the suffix for sibling apps.
-- Build and smoke test via `pnpm run build:<app>` then `pnpm run start:<app>`.
-- Format and lint using `pnpm run format` and `pnpm run lint:<app>`.
+- Install dependencies with `bun install` (Node 24.11.1) and run `go mod tidy` inside each Go service.
+- Start UIs with `bun run dev:proompteng`; swap the suffix for sibling apps.
+- Build and smoke test via `bun run build:<app>` then `bun run start:<app>`.
+- Format and lint using `bun run format` and `bun run lint:<app>`.
 - Run backend workflows through `go test ./...` and `go build ./...`.
-- Infra flow: `pnpm run tf:plan` (review), `pnpm run tf:apply` (approved), and `pnpm run ansible` for playbooks. Use the deployment helper scripts when touching automation services:
+- Infra flow: `bun run tf:plan` (review), `bun run tf:apply` (approved), and `bun run ansible` for playbooks. Use the deployment helper scripts when touching automation services:
   - `bun apps/froussard/src/codex/cli/build-codex-image.ts` to rebuild/push the Codex runner image.
     - Script defaults to the `tuslagch` GitHub CLI account; override with `GH_TOKEN_USER=<other>` if needed. Container git commits use `tuslagch@proompteng.ai`.
   - `bun packages/scripts/src/froussard/deploy-service.ts` to build/push the Froussard Docker image (via `apps/froussard/Dockerfile`), stamp the Knative manifest with the new digest + `FROUSSARD_VERSION/FROUSSARD_COMMIT`, and `kubectl apply` the update.
   - `bun packages/scripts/src/facteur/deploy-service.ts` to build, push, and redeploy Facteur (applies the kustomize overlay and `kn service apply`).
-- Whenever you change any TypeScript/JavaScript files, run the relevant Biome check command (e.g. `pnpm exec biome check <paths>`) and resolve every diagnostic before pushing or opening a PR; mention the run in your PR description if manual fixes were required.
+- Whenever you change any TypeScript/JavaScript files, run the relevant Biome check command (e.g. `bunx biome check <paths>`) and resolve every diagnostic before pushing or opening a PR; mention the run in your PR description if manual fixes were required.
 
 ## Memories service helpers
 
@@ -43,17 +43,17 @@
 ## Testing Guidelines
 
 - Keep Go tests as `*_test.go` next to implementation; narrow runs with `go test ./services/prt -run TestHandleRoot`.
-- Write TypeScript tests as `*.test.ts`; trigger scoped runs with `pnpm --filter cloutt exec jest` or the appropriate workspace filter.
+- Write TypeScript tests as `*.test.ts`; trigger scoped runs with `bun run --filter cloutt test` or the appropriate workspace filter.
 - Target fast unit coverage first, then log manual QA steps in PR descriptions.
 
 ## Commit & Pull Request Guidelines
 
 - Adopt Conventional Commits (e.g. `feat: add prix cache`); use bodies for extra context or breaking notes.
 - Commits and PR titles MUST use the approved types (`build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`).
-- PRs should summarize the change, link issues, list verification (`go test`, `pnpm run lint:<app>`), and attach UI screenshots when visuals shift.
+- PRs should summarize the change, link issues, list verification (`go test`, `bun run lint:<app>`), and attach UI screenshots when visuals shift.
 - Always seed new PRs with the default template. Copy `.github/PULL_REQUEST_TEMPLATE.md` to a scratch file (e.g. `/tmp/pr.md`), fill in every section (Summary, Related Issues, Testing, Screenshots/None, Breaking Changes/None, Checklist), then run `gh pr create --body-file /tmp/pr.md`.
 - Keep scope tight, track follow-ups with TODOs, and document rollout or operational impacts.
-- NEVER edit lockfiles (e.g. `pnpm-lock.yaml`, `bun.lock`) by hand—regenerate them with the package manager instead.
+- NEVER edit lockfiles (e.g. `bun.lock`) by hand—regenerate them with the package manager instead.
 
 ## Cursor Agent CLI
 
@@ -103,7 +103,7 @@
 
 - ArgoCD reconciles desired state; edit manifests in `argocd/` and let automation deploy.
 - Application directories under `argocd/applications/` must expose Kustomize or raw manifests only; the platform `ApplicationSet` owns the Argo CD `Application` objects (no nested `Application` manifests).
-- Pair Terraform plans from `pnpm run tf:plan` with review before `pnpm run tf:apply`; note outcomes after applies.
+- Pair Terraform plans from `bun run tf:plan` with review before `bun run tf:apply`; note outcomes after applies.
 - Prefer read-only `kubectl -n <namespace> get ...` for production checks and capture findings in runbooks.
 
 ## Interactions

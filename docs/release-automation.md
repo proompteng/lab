@@ -25,6 +25,6 @@ This keeps the continuous delivery release tagging and the image publishing work
 ## Formatting Notes
 
 - Use single quotes for all YAML string literals in `.github/workflows/auto-pr-release-branches.yml` to keep quoting consistent and avoid escaping GitHub expressions like `${{ ... }}`.
-- Run `pnpm run format` before committing if you make broader changes that touch project code; the workflow file is not autoformatted, so keep it tidy by hand.
+- Run `bun run format` before committing if you make broader changes that touch project code; the workflow file is not autoformatted, so keep it tidy by hand.
 
 This documentation helps ensure the `workflow_dispatch` options stay synchronized with the applications managed by Argo CD Image Updater.

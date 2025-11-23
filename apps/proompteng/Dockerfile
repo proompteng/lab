@@ -1,22 +1,25 @@
+ARG BUN_VERSION=1.3.2
+
 FROM node:lts-alpine AS deps
+ARG BUN_VERSION
+ENV BUN_INSTALL="/root/.bun"
+ENV PATH="$BUN_INSTALL/bin:$PATH"
+ENV HUSKY=0
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}
+
+COPY package.json bun.lock .npmrc* tsconfig.base.json ./
 COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
 COPY apps/proompteng/package.json ./apps/proompteng/
 COPY packages/backend/package.json ./packages/backend/
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-ENV HUSKY=0
-RUN corepack enable && pnpm install --frozen-lockfile
+RUN bun install --frozen-lockfile --ignore-scripts
 
-FROM node:lts-alpine AS builder
+FROM deps AS builder
 WORKDIR /app
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/proompteng/node_modules ./apps/proompteng/node_modules
+ENV HUSKY=0
 COPY . .
-RUN pnpm install --filter @proompteng/backend --offline --ignore-scripts
-RUN pnpm build:proompteng
+RUN bun install --filter @proompteng/backend --frozen-lockfile --ignore-scripts
+RUN bun run build:proompteng
 
 FROM node:lts-alpine AS runner
 WORKDIR /app

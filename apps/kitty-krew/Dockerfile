@@ -1,24 +1,25 @@
-FROM node:lts-alpine AS builder
+ARG BUN_VERSION=1.3.2
+
+FROM oven/bun:${BUN_VERSION}-alpine AS builder
 
 WORKDIR /repo
 
 # Copy monorepo manifests and scripts so workspace installs can run
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY package.json bun.lock .npmrc* ./
 COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
 
 # Copy the kitty-krew workspace source
 COPY apps/kitty-krew ./apps/kitty-krew
 
-# Install dependencies for the kitty-krew workspace using the root pnpm lockfile
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+# Install dependencies for the kitty-krew workspace using the root Bun lockfile
 ENV HUSKY=0
-RUN corepack enable pnpm && pnpm install --frozen-lockfile
+RUN bun install --frozen-lockfile --ignore-scripts
 
 # Build the application
-RUN pnpm --filter ./apps/kitty-krew run build
+RUN bun run --filter ./apps/kitty-krew build
 
 # Production image
-FROM oven/bun:latest
+FROM oven/bun:${BUN_VERSION}-alpine
 
 WORKDIR /app/apps/kitty-krew
 

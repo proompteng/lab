@@ -23,12 +23,12 @@ cp -Rf /tmp/src/. ./
 
 echo "---> Building application from source..."
 
-if [ -f "pnpm-lock.yaml" ]; then
-  echo "---> Found pnpm-lock.yaml, installing dependencies with pnpm..."
-  pnpm install --frozen-lockfile
+if [ -f "bun.lockb" ] || [ -f "bun.lock" ]; then
+  echo "---> Found Bun lockfile, installing dependencies with bun..."
+  bun install --frozen-lockfile
 elif [ -f "package.json" ]; then
-  echo "---> Found package.json (no pnpm-lock.yaml), installing dependencies with pnpm..."
-  pnpm install
+  echo "---> Found package.json (no Bun lockfile), installing dependencies with bun..."
+  bun install
 else
-  echo "---> No pnpm-lock.yaml or package.json found. Skipping dependency installation."
+  echo "---> No Bun lockfile or package.json found. Skipping dependency installation."
 fi

@@ -18,30 +18,30 @@ This is a comprehensive home cloud laboratory monorepo containing:
 
 ```bash
 # Install all dependencies
-pnpm install
+bun install
 
 # Clean all node_modules
-pnpm run clean
+bun run clean
 
 # Format code using Biome
-pnpm run format
+bun run format
 ```
 
 ### Application Development
 
 ```bash
 # Start development servers
-pnpm run dev:proompteng
+bun run dev:proompteng
 
 # Build applications
-pnpm run build:proompteng
-pnpm run build:reviseur
+bun run build:proompteng
+bun run build:reviseur
 
 # Start production servers
-pnpm run start:proompteng
+bun run start:proompteng
 
 # Lint applications
-pnpm run lint:proompteng
+bun run lint:proompteng
 ```
 
 ### Individual App Commands
@@ -70,17 +70,17 @@ go test ./... # Run tests
 
 ```bash
 # Terraform/OpenTofu operations
-pnpm run tf:plan     # Plan infrastructure changes
-pnpm run tf:apply    # Apply infrastructure changes
-pnpm run tf:destroy  # Destroy infrastructure
+bun run tf:plan     # Plan infrastructure changes
+bun run tf:apply    # Apply infrastructure changes
+bun run tf:destroy  # Destroy infrastructure
 
 # Ansible configuration management
-pnpm run ansible     # Run Rancher installation playbook
+bun run ansible     # Run Rancher installation playbook
 
 # Kubernetes operations
-pnpm run k:install   # Install K3s cluster
-pnpm run k:bootstrap # Bootstrap ArgoCD
-pnpm run harvester:apply # Apply Harvester templates
+bun run k:install   # Install K3s cluster
+bun run k:bootstrap # Bootstrap ArgoCD
+bun run harvester:apply # Apply Harvester templates
 
 # Direct kubectl operations
 kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
@@ -104,7 +104,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 - **Backend**: Go 1.24, Node.js 22.20, Python 3.9-3.13
 - **Data**: Dagster, Temporal, PostgreSQL, Kafka, Milvus
 - **Infrastructure**: Kubernetes (K3s), ArgoCD, Harvester, Ansible
-- **Tooling**: PNPM 10.18.1, Biome, Turbo, Docker, UV
+- **Tooling**: Bun 1.3.x, Biome, Turbo, Docker, UV
 
 ### Application Patterns
 
@@ -128,7 +128,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 
 - Use Biome for formatting and linting (configured in biome.json)
 - Settings: 2 spaces indentation, single quotes, trailing commas, 120 char line width
-- Run `pnpm run format` to format all files
+- Run `bun run format` to format all files
 
 ### File Naming & Structure
 

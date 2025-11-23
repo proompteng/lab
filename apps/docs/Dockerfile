@@ -1,25 +1,27 @@
+ARG BUN_VERSION=1.3.2
+
 FROM node:lts-alpine AS deps
+ARG BUN_VERSION
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+ENV BUN_INSTALL="/root/.bun"
+ENV PATH="$BUN_INSTALL/bin:$PATH"
+
+RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}
+
+COPY package.json bun.lock .npmrc* ./
 COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
 COPY apps/docs ./apps/docs
 
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 ENV HUSKY=0
-RUN corepack enable && pnpm install --frozen-lockfile
+RUN bun install --frozen-lockfile --ignore-scripts
 
-FROM node:lts-alpine AS builder
+FROM deps AS builder
 WORKDIR /app
 
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable
-
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/docs/node_modules ./apps/docs/node_modules
 COPY . .
 
-RUN pnpm --filter docs build
+RUN bun run --filter docs build
 
 FROM node:lts-alpine AS runner
 WORKDIR /app
