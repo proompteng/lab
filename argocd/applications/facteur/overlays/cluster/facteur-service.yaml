@@ -11,7 +11,7 @@ spec:
       annotations:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/target: "100"
-        deploy.knative.dev/rollout: "2025-11-22T06:02:31.313Z"
+        deploy.knative.dev/rollout: "2025-11-23T20:36:24.795Z"
         networking.knative.dev/visibility: cluster-local
     spec:
       serviceAccountName: facteur
