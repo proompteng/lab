@@ -33,6 +33,8 @@ spec:
               value: default
             - name: TEMPORAL_TASK_QUEUE
               value: jangar
+            - name: NODE_ENV
+              value: production
           ports:
             - name: http1
               containerPort: 8080

@@ -2,7 +2,8 @@ import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk/config'
 import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
 import * as activities from './activities'
 
-const address = Bun.env.TEMPORAL_ADDRESS ?? 'temporal-frontend.temporal.svc.cluster.local:7233'
+// Default to the tailnet load balancer for local runs; cluster deploy overrides via env
+const address = Bun.env.TEMPORAL_ADDRESS ?? 'temporal-grpc:7233'
 const namespace = Bun.env.TEMPORAL_NAMESPACE ?? 'default'
 const taskQueue = Bun.env.TEMPORAL_TASK_QUEUE ?? 'jangar'
 

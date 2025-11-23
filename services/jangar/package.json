@@ -7,7 +7,8 @@
   "scripts": {
     "start": "bun run src/worker.ts",
     "dev": "bun --watch src/worker.ts",
-    "check": "bunx tsc --noEmit"
+    "check": "bunx tsc --noEmit",
+    "start:hello": "bun run scripts/start-hello-workflow.ts"
   },
   "dependencies": {
     "@proompteng/codex": "file:../../packages/codex",
