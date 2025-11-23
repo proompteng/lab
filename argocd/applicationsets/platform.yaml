@@ -274,6 +274,13 @@ spec:
             - .spec.template.spec.containers[].readinessProbe.periodSeconds
             - .spec.template.spec.containers[].readinessProbe.successThreshold
             - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
+        - kind: StatefulSet
+          group: apps
+          namespace: temporal
+          name: elasticsearch-master
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates[].apiVersion
+            - .spec.volumeClaimTemplates[].kind
         - kind: Service
           group: serving.knative.dev
           namespace: graf
