@@ -17,6 +17,17 @@ helmCharts:
         enabled: false
       grafana:
         enabled: false
+      elasticsearch:
+        # Persist ES data so Temporal visibility index survives node restarts
+        persistence:
+          enabled: true
+        volumeClaimTemplate:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 100Gi
+          storageClassName: longhorn
       web:
         # https://docs.temporal.io/references/web-ui-environment-variables
         additionalEnv:
