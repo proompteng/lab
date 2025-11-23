@@ -26,7 +26,7 @@ helmCharts:
             - ReadWriteOnce
           resources:
             requests:
-              storage: 20Gi
+              storage: 5Gi
           storageClassName: longhorn
       web:
         # https://docs.temporal.io/references/web-ui-environment-variables
