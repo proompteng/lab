@@ -5,7 +5,6 @@ import { resolve } from 'node:path'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
-import { applyKnativeServiceImage } from '../shared/kn'
 import { buildImage } from './build-image'
 
 export const main = async () => {
@@ -29,12 +28,6 @@ export const main = async () => {
     process.env.FACTEUR_KUSTOMIZE_PATH ?? 'argocd/applications/facteur/overlays/cluster',
   )
   await run('kubectl', ['apply', '-k', overlay])
-
-  const serviceManifest = resolve(
-    repoRoot,
-    process.env.FACTEUR_SERVICE_MANIFEST ?? 'argocd/applications/facteur/overlays/cluster/facteur-service.yaml',
-  )
-  await applyKnativeServiceImage('facteur', 'facteur', serviceManifest, image)
 }
 
 if (import.meta.main) {
@@ -56,7 +49,7 @@ function updateManifests(options: ManifestUpdateOptions) {
   const kustomizationPath = resolve(repoRoot, 'argocd/applications/facteur/overlays/cluster/kustomization.yaml')
   const kustomization = readFileSync(kustomizationPath, 'utf8')
   const updatedKustomization = kustomization.replace(
-    /(name:\s+registry\.ide-newton\.ts\.net\/lab\/facteur\s*\n\s*newTag:\s*)(.+)/,
+    /(-\s*name:\s+registry\.ide-newton\.ts\.net\/lab\/facteur\s*\n\s*newTag:\s*)(.+)/,
     (_, prefix) => `${prefix}${tag}`,
   )
   if (kustomization === updatedKustomization) {

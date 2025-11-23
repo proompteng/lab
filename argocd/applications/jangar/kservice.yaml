@@ -6,15 +6,18 @@ metadata:
   labels:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
+    networking.knative.dev/visibility: cluster-local
   annotations:
     serving.knative.dev/rollout-duration: 10s
     argocd.argoproj.io/compare-options: IgnoreExtraneous
     argocd.argoproj.io/tracking-id: jangar:serving.knative.dev/Service:jangar/jangar
     networking.knative.dev/visibility: cluster-local
-    deploy.knative.dev/rollout: "2025-11-22T10:42:29.799Z"
+    deploy.knative.dev/rollout: "2025-11-23T19:50:57.872Z"
 spec:
   template:
     metadata:
+      labels:
+        networking.knative.dev/visibility: cluster-local
       annotations:
         autoscaling.knative.dev/minScale: "1"
     spec:
@@ -34,6 +37,10 @@ spec:
             - name: http1
               containerPort: 8080
               protocol: TCP
+          readinessProbe:
+            successThreshold: 1
+            tcpSocket:
+              port: 0
           resources:
             requests:
               cpu: 100m
