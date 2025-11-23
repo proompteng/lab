@@ -42,6 +42,10 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    TEMPORAL_STICKY_CACHE_SIZE=256                   # optional – determinism cache capacity
    TEMPORAL_STICKY_TTL_MS=300000                    # optional – eviction TTL in ms
    TEMPORAL_STICKY_SCHEDULING_ENABLED=1             # optional – disable to bypass sticky scheduling
+   TEMPORAL_WORKFLOW_IMPORT_ALLOW=assert,url,util   # optional – safe built-ins permitted in workflows
+   TEMPORAL_WORKFLOW_IMPORT_BLOCK=                  # optional – override blocked built-ins (defaults to all others)
+   TEMPORAL_WORKFLOW_IMPORT_IGNORE=                 # optional – silence specific specifiers during the preflight scan
+   TEMPORAL_WORKFLOW_IMPORT_UNSAFE_OK=0             # optional – debug escape hatch to skip the import guard
    TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS=4000     # optional – heartbeat throttle interval in ms
    TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS=5000  # optional – heartbeat RPC timeout in ms
    TEMPORAL_WORKER_DEPLOYMENT_NAME=replay-worker      # optional – worker deployment metadata
@@ -66,8 +70,19 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
 
 5. **Scaffold a new worker project**
    ```bash
-   temporal-bun init hello-worker
-   ```
+ temporal-bun init hello-worker
+  ```
+
+## Determinism guard
+
+- Worker startup now runs a **preflight import scan** against the workflows entrypoint. Built-in modules are denied by default unless they are explicitly allowed (`assert`, `url`, `util`). Nondeterministic imports such as `fs`, `path`, `crypto`, `worker_threads`, `http`, and other Node/Bun built-ins fail startup with a list of offending specifiers and remediation hints.
+- Configure the policy with environment variables:
+  - `TEMPORAL_WORKFLOW_IMPORT_ALLOW` – comma/space-separated allowlist
+  - `TEMPORAL_WORKFLOW_IMPORT_BLOCK` – optional block overrides (defaults to all other built-ins)
+  - `TEMPORAL_WORKFLOW_IMPORT_IGNORE` – ignore specific specifiers during the scan
+  - `TEMPORAL_WORKFLOW_IMPORT_UNSAFE_OK=1` – debug-only escape hatch to skip the guard
+- The `temporal-bun-worker` CLI accepts `--workflow-import-allow`, `--workflow-import-block`, `--workflow-import-ignore`, and `--workflow-import-unsafe-ok` flags; they map directly to the env vars above.
+- During workflow execution, `WeakRef` and `FinalizationRegistry` are replaced with throwing shims to prevent nondeterministic GC hooks. Move cache/cleanup logic into activities instead.
 
 ## Workflow updates
 

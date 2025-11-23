@@ -1,5 +1,6 @@
 import { createPrivateKey, createPublicKey, X509Certificate } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+import { builtinModules } from 'node:module'
 import { hostname } from 'node:os'
 import { Code } from '@connectrpc/connect'
 import type * as ParseResult from '@effect/schema/ParseResult'
@@ -34,6 +35,21 @@ const DEFAULT_CLIENT_RETRY_INITIAL_MS = defaultRetryPolicy.initialDelayMs
 const DEFAULT_CLIENT_RETRY_MAX_MS = defaultRetryPolicy.maxDelayMs
 const DEFAULT_CLIENT_RETRY_BACKOFF = defaultRetryPolicy.backoffCoefficient
 const DEFAULT_CLIENT_RETRY_JITTER_FACTOR = defaultRetryPolicy.jitterFactor
+const DEFAULT_WORKFLOW_IMPORT_ALLOW = ['assert', 'url', 'util']
+const DEFAULT_WORKFLOW_IMPORT_IGNORE: string[] = []
+const DEFAULT_WORKFLOW_IMPORT_UNSAFE_OK = false
+
+const normalizeBuiltinSpecifier = (specifier: string): string => specifier.replace(/^node:/, '').replace(/^bun:/, '')
+
+const BUN_BUILTINS = ['bun', 'bun:ffi', 'bun:sqlite', 'bun:sqlite3', 'bun:jsc']
+
+const DEFAULT_WORKFLOW_IMPORT_BLOCK = Array.from(
+  new Set(
+    [...builtinModules.map(normalizeBuiltinSpecifier), ...BUN_BUILTINS.map(normalizeBuiltinSpecifier)].filter(
+      (name) => name && !DEFAULT_WORKFLOW_IMPORT_ALLOW.includes(name),
+    ),
+  ),
+)
 
 const CONNECT_CODE_LOOKUP = (() => {
   const byName = new Map<string, number>()
@@ -54,6 +70,13 @@ const cloneRetryPolicy = (policy: TemporalRpcRetryPolicy): TemporalRpcRetryPolic
   backoffCoefficient: policy.backoffCoefficient,
   jitterFactor: policy.jitterFactor,
   retryableStatusCodes: [...policy.retryableStatusCodes],
+})
+
+const cloneWorkflowImportPolicy = (policy: WorkflowImportPolicy): WorkflowImportPolicy => ({
+  allow: [...policy.allow],
+  block: [...policy.block],
+  ignore: [...policy.ignore],
+  unsafeImportsAllowed: policy.unsafeImportsAllowed,
 })
 
 const BufferSchema = Schema.instanceOf(Buffer)
@@ -81,6 +104,12 @@ const TemporalRpcRetryPolicySchema = Schema.Struct({
   jitterFactor: Schema.Number,
   retryableStatusCodes: Schema.Array(Schema.Number),
 })
+const WorkflowImportPolicySchema = Schema.Struct({
+  allow: Schema.Array(Schema.String),
+  block: Schema.Array(Schema.String),
+  ignore: Schema.Array(Schema.String),
+  unsafeImportsAllowed: Schema.Boolean,
+})
 const TemporalConfigSchema = Schema.Struct({
   host: Schema.String,
   port: Schema.Number,
@@ -107,6 +136,7 @@ const TemporalConfigSchema = Schema.Struct({
   tracingInterceptorsEnabled: Schema.Boolean,
   metricsExporter: MetricsExporterSpecSchema,
   rpcRetryPolicy: TemporalRpcRetryPolicySchema,
+  workflowImportPolicy: WorkflowImportPolicySchema,
 })
 const TemporalConfigOverridesSchema = Schema.partial(TemporalConfigSchema)
 const decodeTemporalConfig = Schema.decodeUnknown(TemporalConfigSchema)
@@ -153,6 +183,10 @@ export interface TemporalEnvironment {
   TEMPORAL_CLIENT_RETRY_BACKOFF?: string
   TEMPORAL_CLIENT_RETRY_JITTER_FACTOR?: string
   TEMPORAL_CLIENT_RETRY_STATUS_CODES?: string
+  TEMPORAL_WORKFLOW_IMPORT_ALLOW?: string
+  TEMPORAL_WORKFLOW_IMPORT_BLOCK?: string
+  TEMPORAL_WORKFLOW_IMPORT_IGNORE?: string
+  TEMPORAL_WORKFLOW_IMPORT_UNSAFE_OK?: string
 }
 
 const truthyValues = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
@@ -187,6 +221,32 @@ const parseLogFormat = (value: string | undefined): LogFormat | undefined => {
   }
   throw new TemporalConfigError(`Invalid TEMPORAL_LOG_FORMAT: ${value}`)
 }
+
+const splitImportList = (raw: string | undefined): string[] => {
+  if (!raw) {
+    return []
+  }
+  return raw
+    .split(/[\s,]+/g)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+}
+
+const normalizeImportSpecifier = (specifier: string): string => normalizeBuiltinSpecifier(specifier.trim())
+
+const normalizeImportList = (values: Iterable<string>): string[] => {
+  const normalized = new Set<string>()
+  for (const value of values) {
+    const trimmed = normalizeImportSpecifier(value)
+    if (trimmed.length > 0) {
+      normalized.add(trimmed)
+    }
+  }
+  return [...normalized]
+}
+
+const parseImportList = (raw: string | undefined, fallback: readonly string[]): string[] =>
+  normalizeImportList(raw ? splitImportList(raw) : fallback)
 
 const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
   const read = (key: string) => {
@@ -233,6 +293,10 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     TEMPORAL_CLIENT_RETRY_BACKOFF: read('TEMPORAL_CLIENT_RETRY_BACKOFF'),
     TEMPORAL_CLIENT_RETRY_JITTER_FACTOR: read('TEMPORAL_CLIENT_RETRY_JITTER_FACTOR'),
     TEMPORAL_CLIENT_RETRY_STATUS_CODES: read('TEMPORAL_CLIENT_RETRY_STATUS_CODES'),
+    TEMPORAL_WORKFLOW_IMPORT_ALLOW: read('TEMPORAL_WORKFLOW_IMPORT_ALLOW'),
+    TEMPORAL_WORKFLOW_IMPORT_BLOCK: read('TEMPORAL_WORKFLOW_IMPORT_BLOCK'),
+    TEMPORAL_WORKFLOW_IMPORT_IGNORE: read('TEMPORAL_WORKFLOW_IMPORT_IGNORE'),
+    TEMPORAL_WORKFLOW_IMPORT_UNSAFE_OK: read('TEMPORAL_WORKFLOW_IMPORT_UNSAFE_OK'),
   }
 }
 
@@ -356,6 +420,13 @@ export interface LoadTemporalConfigOptions {
   defaults?: Partial<TemporalConfig>
 }
 
+export interface WorkflowImportPolicy {
+  allow: string[]
+  block: string[]
+  ignore: string[]
+  unsafeImportsAllowed: boolean
+}
+
 export interface TemporalConfig {
   host: string
   port: number
@@ -382,6 +453,7 @@ export interface TemporalConfig {
   tracingInterceptorsEnabled: boolean
   metricsExporter: MetricsExporterSpec
   rpcRetryPolicy: TemporalRpcRetryPolicy
+  workflowImportPolicy: WorkflowImportPolicy
 }
 
 export interface TLSCertPair {
@@ -575,6 +647,39 @@ const resolveClientRetryPolicy = (
   }
 }
 
+const resolveWorkflowImportPolicy = (
+  env: TemporalEnvironment,
+  defaults?: WorkflowImportPolicy,
+): WorkflowImportPolicy => {
+  const allow = parseImportList(env.TEMPORAL_WORKFLOW_IMPORT_ALLOW, defaults?.allow ?? DEFAULT_WORKFLOW_IMPORT_ALLOW)
+  const ignore = parseImportList(
+    env.TEMPORAL_WORKFLOW_IMPORT_IGNORE,
+    defaults?.ignore ?? DEFAULT_WORKFLOW_IMPORT_IGNORE,
+  )
+  const block = parseImportList(env.TEMPORAL_WORKFLOW_IMPORT_BLOCK, defaults?.block ?? DEFAULT_WORKFLOW_IMPORT_BLOCK)
+  const allowSet = new Set(allow)
+  const ignoreSet = new Set(ignore)
+  const normalizedBlock = block.filter((entry) => !allowSet.has(entry) && !ignoreSet.has(entry))
+  const unsafeImportsAllowed =
+    coerceBoolean(env.TEMPORAL_WORKFLOW_IMPORT_UNSAFE_OK) ??
+    defaults?.unsafeImportsAllowed ??
+    DEFAULT_WORKFLOW_IMPORT_UNSAFE_OK
+
+  return {
+    allow,
+    block: normalizedBlock,
+    ignore,
+    unsafeImportsAllowed,
+  }
+}
+
+export const defaultWorkflowImportPolicy: WorkflowImportPolicy = {
+  allow: [...DEFAULT_WORKFLOW_IMPORT_ALLOW],
+  block: [...DEFAULT_WORKFLOW_IMPORT_BLOCK],
+  ignore: [...DEFAULT_WORKFLOW_IMPORT_IGNORE],
+  unsafeImportsAllowed: DEFAULT_WORKFLOW_IMPORT_UNSAFE_OK,
+}
+
 export const loadTemporalConfigEffect = (
   options: LoadTemporalConfigOptions = {},
 ): Effect.Effect<TemporalConfig, TemporalConfigError | TemporalTlsConfigurationError> =>
@@ -655,6 +760,7 @@ export const loadTemporalConfigEffect = (
       env.TEMPORAL_METRICS_ENDPOINT ?? defaults.metricsExporter?.endpoint,
     )
     const rpcRetryPolicy = resolveClientRetryPolicy(env, defaults.rpcRetryPolicy)
+    const workflowImportPolicy = resolveWorkflowImportPolicy(env, defaults.workflowImportPolicy)
 
     const config: TemporalConfig = {
       host,
@@ -682,6 +788,7 @@ export const loadTemporalConfigEffect = (
       tracingInterceptorsEnabled,
       metricsExporter,
       rpcRetryPolicy,
+      workflowImportPolicy,
     }
 
     return yield* mapSchemaError(decodeTemporalConfig(config))
@@ -724,6 +831,7 @@ export const temporalDefaults = {
   tracingInterceptorsEnabled: DEFAULT_TRACING_INTERCEPTORS_ENABLED,
   metricsExporter: cloneMetricsExporterSpec(defaultMetricsExporterSpec),
   rpcRetryPolicy: cloneRetryPolicy(defaultRetryPolicy),
+  workflowImportPolicy: cloneWorkflowImportPolicy(defaultWorkflowImportPolicy),
 } satisfies Pick<
   TemporalConfig,
   | 'host'
@@ -745,4 +853,5 @@ export const temporalDefaults = {
   | 'tracingInterceptorsEnabled'
   | 'metricsExporter'
   | 'rpcRetryPolicy'
+  | 'workflowImportPolicy'
 >

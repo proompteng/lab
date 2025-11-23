@@ -31,9 +31,10 @@ export type {
   WorkflowUpdateResult,
   WorkflowUpdateStage,
 } from './client/types'
-export type { TemporalConfig, TLSConfig } from './config'
+export type { TemporalConfig, TLSConfig, WorkflowImportPolicy } from './config'
 export {
   applyTemporalConfigOverrides,
+  defaultWorkflowImportPolicy,
   loadTemporalConfig,
   loadTemporalConfigEffect,
   TemporalConfigError,
