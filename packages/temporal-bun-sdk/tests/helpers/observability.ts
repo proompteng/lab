@@ -1,6 +1,7 @@
 import { Effect } from 'effect'
 
 import type { TemporalConfig } from '../../src/config'
+import { temporalDefaults } from '../../src/config'
 import type { ObservabilityServices } from '../../src/observability'
 
 export const createTestTemporalConfig = (overrides: Partial<TemporalConfig> = {}): TemporalConfig => ({
@@ -34,6 +35,12 @@ export const createTestTemporalConfig = (overrides: Partial<TemporalConfig> = {}
     backoffCoefficient: 1,
     jitterFactor: 0,
     retryableStatusCodes: [],
+  },
+  workflowImportPolicy: {
+    allow: [...temporalDefaults.workflowImportPolicy.allow],
+    block: [...temporalDefaults.workflowImportPolicy.block],
+    ignore: [...temporalDefaults.workflowImportPolicy.ignore],
+    unsafeAllow: temporalDefaults.workflowImportPolicy.unsafeAllow,
   },
   ...overrides,
 })

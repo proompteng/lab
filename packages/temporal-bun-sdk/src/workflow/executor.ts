@@ -38,6 +38,50 @@ import {
 import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from './inbound'
 import type { WorkflowRegistry } from './registry'
 
+const buildNondeterministicGlobalError = (
+  globalName: 'WeakRef' | 'FinalizationRegistry',
+): WorkflowNondeterminismError =>
+  new WorkflowNondeterminismError(`${globalName} is not deterministic inside Temporal workflows`, {
+    hint: 'Move ephemeral caching or cleanup logic into activities or deterministic workflow state.',
+  })
+
+const withWorkflowGlobalGuards = async <T>(execute: () => Promise<T>): Promise<T> => {
+  const globalObject = globalThis as typeof globalThis & {
+    WeakRef?: typeof WeakRef
+    FinalizationRegistry?: typeof FinalizationRegistry
+  }
+
+  const originalWeakRef = globalObject.WeakRef
+  const originalFinalizationRegistry = globalObject.FinalizationRegistry
+
+  const guardedWeakRef = function guardedWeakRef(): never {
+    throw buildNondeterministicGlobalError('WeakRef')
+  }
+
+  const guardedFinalizationRegistry = function guardedFinalizationRegistry(): never {
+    throw buildNondeterministicGlobalError('FinalizationRegistry')
+  }
+
+  globalObject.WeakRef = guardedWeakRef as typeof WeakRef
+  globalObject.FinalizationRegistry = guardedFinalizationRegistry as typeof FinalizationRegistry
+
+  try {
+    return await execute()
+  } finally {
+    if (originalWeakRef === undefined) {
+      delete globalObject.WeakRef
+    } else {
+      globalObject.WeakRef = originalWeakRef
+    }
+
+    if (originalFinalizationRegistry === undefined) {
+      delete globalObject.FinalizationRegistry
+    } else {
+      globalObject.FinalizationRegistry = originalFinalizationRegistry
+    }
+  }
+}
+
 export interface WorkflowUpdateInvocation {
   readonly protocolInstanceId: string
   readonly requestMessageId: string
@@ -179,7 +223,29 @@ export class WorkflowExecutor {
       )
     })
 
-    const exit = await Effect.runPromiseExit(workflowEffect)
+    let exit: Exit.Exit<
+      {
+        result: unknown
+        context: WorkflowContext<unknown>
+        commandContext: WorkflowCommandContext
+        updateRegistry: WorkflowUpdateRegistry
+      },
+      unknown
+    >
+
+    try {
+      exit = await withWorkflowGlobalGuards(() => Effect.runPromiseExit(workflowEffect))
+    } catch (error) {
+      exit = Exit.fail(error) as Exit.Exit<
+        {
+          result: unknown
+          context: WorkflowContext<unknown>
+          commandContext: WorkflowCommandContext
+          updateRegistry: WorkflowUpdateRegistry
+        },
+        unknown
+      >
+    }
     const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
     const updatesToProcess = executionMode === 'query' ? [] : (input.updates ?? [])
     let updateDispatches: WorkflowUpdateDispatch[] = []

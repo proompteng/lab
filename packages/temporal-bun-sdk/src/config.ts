@@ -34,6 +34,52 @@ const DEFAULT_CLIENT_RETRY_INITIAL_MS = defaultRetryPolicy.initialDelayMs
 const DEFAULT_CLIENT_RETRY_MAX_MS = defaultRetryPolicy.maxDelayMs
 const DEFAULT_CLIENT_RETRY_BACKOFF = defaultRetryPolicy.backoffCoefficient
 const DEFAULT_CLIENT_RETRY_JITTER_FACTOR = defaultRetryPolicy.jitterFactor
+const DEFAULT_WORKFLOW_IMPORT_ALLOW_BUILT_INS = ['assert', 'url', 'util'] as const
+const DEFAULT_WORKFLOW_IMPORT_BLOCK_BUILT_INS = [
+  'async_hooks',
+  'buffer',
+  'bun',
+  'bun:ffi',
+  'bun:jsc',
+  'bun:net',
+  'bun:sqlite',
+  'bun:wrap',
+  'child_process',
+  'cluster',
+  'console',
+  'crypto',
+  'dgram',
+  'dns',
+  'fs',
+  'fs/promises',
+  'http',
+  'http2',
+  'https',
+  'inspector',
+  'module',
+  'net',
+  'os',
+  'path',
+  'perf_hooks',
+  'process',
+  'readline',
+  'repl',
+  'stream',
+  'stream/consumers',
+  'stream/promises',
+  'stream/web',
+  'timers',
+  'timers/promises',
+  'tls',
+  'tty',
+  'util/types',
+  'v8',
+  'vm',
+  'worker_threads',
+  'zlib',
+] as const
+const DEFAULT_WORKFLOW_IMPORT_IGNORE_BUILT_INS: readonly string[] = []
+const DEFAULT_WORKFLOW_IMPORT_UNSAFE_OK = false
 
 const CONNECT_CODE_LOOKUP = (() => {
   const byName = new Map<string, number>()
@@ -81,6 +127,12 @@ const TemporalRpcRetryPolicySchema = Schema.Struct({
   jitterFactor: Schema.Number,
   retryableStatusCodes: Schema.Array(Schema.Number),
 })
+const WorkflowImportPolicySchema = Schema.Struct({
+  allow: Schema.Array(Schema.String),
+  block: Schema.Array(Schema.String),
+  ignore: Schema.Array(Schema.String),
+  unsafeAllow: Schema.Boolean,
+})
 const TemporalConfigSchema = Schema.Struct({
   host: Schema.String,
   port: Schema.Number,
@@ -107,6 +159,7 @@ const TemporalConfigSchema = Schema.Struct({
   tracingInterceptorsEnabled: Schema.Boolean,
   metricsExporter: MetricsExporterSpecSchema,
   rpcRetryPolicy: TemporalRpcRetryPolicySchema,
+  workflowImportPolicy: WorkflowImportPolicySchema,
 })
 const TemporalConfigOverridesSchema = Schema.partial(TemporalConfigSchema)
 const decodeTemporalConfig = Schema.decodeUnknown(TemporalConfigSchema)
@@ -153,6 +206,10 @@ export interface TemporalEnvironment {
   TEMPORAL_CLIENT_RETRY_BACKOFF?: string
   TEMPORAL_CLIENT_RETRY_JITTER_FACTOR?: string
   TEMPORAL_CLIENT_RETRY_STATUS_CODES?: string
+  TEMPORAL_WORKFLOW_IMPORT_ALLOW?: string
+  TEMPORAL_WORKFLOW_IMPORT_BLOCK?: string
+  TEMPORAL_WORKFLOW_IMPORT_IGNORE?: string
+  TEMPORAL_WORKFLOW_IMPORT_UNSAFE_OK?: string
 }
 
 const truthyValues = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
@@ -233,11 +290,22 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     TEMPORAL_CLIENT_RETRY_BACKOFF: read('TEMPORAL_CLIENT_RETRY_BACKOFF'),
     TEMPORAL_CLIENT_RETRY_JITTER_FACTOR: read('TEMPORAL_CLIENT_RETRY_JITTER_FACTOR'),
     TEMPORAL_CLIENT_RETRY_STATUS_CODES: read('TEMPORAL_CLIENT_RETRY_STATUS_CODES'),
+    TEMPORAL_WORKFLOW_IMPORT_ALLOW: read('TEMPORAL_WORKFLOW_IMPORT_ALLOW'),
+    TEMPORAL_WORKFLOW_IMPORT_BLOCK: read('TEMPORAL_WORKFLOW_IMPORT_BLOCK'),
+    TEMPORAL_WORKFLOW_IMPORT_IGNORE: read('TEMPORAL_WORKFLOW_IMPORT_IGNORE'),
+    TEMPORAL_WORKFLOW_IMPORT_UNSAFE_OK: read('TEMPORAL_WORKFLOW_IMPORT_UNSAFE_OK'),
   }
 }
 
 export const resolveTemporalEnvironment = (env?: NodeJS.ProcessEnv): TemporalEnvironment =>
   sanitizeEnvironment(env ?? process.env)
+
+export interface WorkflowImportPolicy {
+  allow: string[]
+  block: string[]
+  ignore: string[]
+  unsafeAllow: boolean
+}
 
 const coerceBoolean = (raw: string | undefined): boolean | undefined => {
   if (!raw) return undefined
@@ -348,6 +416,43 @@ const parseRetryStatusCodes = (raw: string | undefined, fallback: ReadonlyArray<
   return [...resolved]
 }
 
+const parseImportList = (raw: string | undefined, fallback: ReadonlyArray<string>): string[] => {
+  if (raw === undefined) {
+    return [...fallback]
+  }
+  return raw
+    .split(/[\s,]+/g)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+}
+
+const resolveWorkflowImportPolicy = (
+  env: TemporalEnvironment,
+  defaults?: WorkflowImportPolicy,
+): WorkflowImportPolicy => {
+  const allow = parseImportList(
+    env.TEMPORAL_WORKFLOW_IMPORT_ALLOW,
+    defaults?.allow ?? DEFAULT_WORKFLOW_IMPORT_ALLOW_BUILT_INS,
+  )
+  const block = parseImportList(
+    env.TEMPORAL_WORKFLOW_IMPORT_BLOCK,
+    defaults?.block ?? DEFAULT_WORKFLOW_IMPORT_BLOCK_BUILT_INS,
+  )
+  const ignore = parseImportList(
+    env.TEMPORAL_WORKFLOW_IMPORT_IGNORE,
+    defaults?.ignore ?? DEFAULT_WORKFLOW_IMPORT_IGNORE_BUILT_INS,
+  )
+  const unsafeAllow =
+    coerceBoolean(env.TEMPORAL_WORKFLOW_IMPORT_UNSAFE_OK) ?? defaults?.unsafeAllow ?? DEFAULT_WORKFLOW_IMPORT_UNSAFE_OK
+
+  return {
+    allow,
+    block,
+    ignore,
+    unsafeAllow,
+  }
+}
+
 export interface LoadTemporalConfigOptions {
   env?: NodeJS.ProcessEnv
   fs?: {
@@ -382,6 +487,7 @@ export interface TemporalConfig {
   tracingInterceptorsEnabled: boolean
   metricsExporter: MetricsExporterSpec
   rpcRetryPolicy: TemporalRpcRetryPolicy
+  workflowImportPolicy: WorkflowImportPolicy
 }
 
 export interface TLSCertPair {
@@ -655,6 +761,7 @@ export const loadTemporalConfigEffect = (
       env.TEMPORAL_METRICS_ENDPOINT ?? defaults.metricsExporter?.endpoint,
     )
     const rpcRetryPolicy = resolveClientRetryPolicy(env, defaults.rpcRetryPolicy)
+    const workflowImportPolicy = resolveWorkflowImportPolicy(env, defaults.workflowImportPolicy)
 
     const config: TemporalConfig = {
       host,
@@ -682,6 +789,7 @@ export const loadTemporalConfigEffect = (
       tracingInterceptorsEnabled,
       metricsExporter,
       rpcRetryPolicy,
+      workflowImportPolicy,
     }
 
     return yield* mapSchemaError(decodeTemporalConfig(config))
@@ -724,6 +832,12 @@ export const temporalDefaults = {
   tracingInterceptorsEnabled: DEFAULT_TRACING_INTERCEPTORS_ENABLED,
   metricsExporter: cloneMetricsExporterSpec(defaultMetricsExporterSpec),
   rpcRetryPolicy: cloneRetryPolicy(defaultRetryPolicy),
+  workflowImportPolicy: {
+    allow: [...DEFAULT_WORKFLOW_IMPORT_ALLOW_BUILT_INS],
+    block: [...DEFAULT_WORKFLOW_IMPORT_BLOCK_BUILT_INS],
+    ignore: [...DEFAULT_WORKFLOW_IMPORT_IGNORE_BUILT_INS],
+    unsafeAllow: DEFAULT_WORKFLOW_IMPORT_UNSAFE_OK,
+  },
 } satisfies Pick<
   TemporalConfig,
   | 'host'
@@ -745,4 +859,5 @@ export const temporalDefaults = {
   | 'tracingInterceptorsEnabled'
   | 'metricsExporter'
   | 'rpcRetryPolicy'
+  | 'workflowImportPolicy'
 >
