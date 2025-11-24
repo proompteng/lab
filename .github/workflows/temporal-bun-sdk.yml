@@ -96,7 +96,7 @@ jobs:
 
       - name: Run worker load suite
         run: |
-          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk run test:load
+          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load
 
       - name: Upload worker load artifacts
         if: always()
