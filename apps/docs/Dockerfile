@@ -14,7 +14,7 @@ COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
 COPY apps/docs ./apps/docs
 
 ENV HUSKY=0
-RUN bun install --frozen-lockfile --ignore-scripts
+RUN bun install --frozen-lockfile
 
 FROM deps AS builder
 WORKDIR /app
