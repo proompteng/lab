@@ -1,5 +1,16 @@
-# Jangar Start UI scaffold
+# Jangar Start UI
 
-- TODO(jng-070a): initialize TanStack Start app with routes `/` and `/mission/$id`.
-- TODO(jng-070b): add SSE hook to merge deltas from `/orchestrations/:id/stream`.
-- TODO(jng-070c): integrate OpenWebUI shell pointing at `/openai/v1` proxy.
+TanStack Start scaffold for the Jangar operator UI. Routes are currently mock-only while the API/SSE work
+(JNG-060a/b, JNG-070b) lands.
+
+## Commands
+
+- `bun run start:dev` (from `services/jangar`) – boots the Start dev server with mock missions at `/` and `/mission/$id`.
+- `bun run start:build` – produces a production build under `services/jangar/start/dist/`.
+
+The follow-up image work (JNG-080c) will package the Start dist output from `start/dist` alongside the server.
+
+## Notes
+
+- Data is mocked in `start/app/lib/mocks.ts` and mirrored in the UI as loading/error shells.
+- OpenWebUI integration remains TODO(jng-070c); the current layout reserves space for the chat/timeline stream.
