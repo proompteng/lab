@@ -304,6 +304,21 @@
         "vitest": "^3.2.4",
       },
     },
+    "packages/cx-tools": {
+      "name": "@proompteng/cx-tools",
+      "version": "0.0.0",
+      "bin": {
+        "cx-codex-run": "./dist/cx-codex-run.js",
+        "cx-workflow-start": "./dist/cx-workflow-start.js",
+        "cx-workflow-signal": "./dist/cx-workflow-signal.js",
+        "cx-workflow-query": "./dist/cx-workflow-query.js",
+        "cx-workflow-cancel": "./dist/cx-workflow-cancel.js",
+      },
+      "devDependencies": {
+        "bun-types": "^1.1.20",
+        "typescript": "5.9.3",
+      },
+    },
     "packages/discord": {
       "name": "@proompteng/discord",
       "version": "0.0.1",
@@ -1115,6 +1130,8 @@
     "@proompteng/bonjour": ["@proompteng/bonjour@workspace:packages/bonjour"],
 
     "@proompteng/codex": ["@proompteng/codex@workspace:packages/codex"],
+
+    "@proompteng/cx-tools": ["@proompteng/cx-tools@workspace:packages/cx-tools"],
 
     "@proompteng/discord": ["@proompteng/discord@workspace:packages/discord"],
 
