@@ -40,6 +40,7 @@ kubeconfig
 **/charts/*.tgz
 **/generated/*
 **/_generated/
+!packages/backend/convex/_generated/
 argocd/applications/*/charts/
 
 **/temporal/lib
