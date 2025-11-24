@@ -54,7 +54,7 @@ Reestr is a new TanStack Start application under `apps/reestr` that lets platfor
 
 ```mermaid
 flowchart LR
-  user[Operator/Dev<br/>Browser] -->|HTTPS/HTTP via Tailscale host `reestr`| ts[Tailscale Ingress]
+  user[Operator/Dev<br/>Browser] -->|HTTPS/HTTP via Tailscale host `reestr`| ts[Tailscale Service]
   ts --> ks[Knative Service: Reestr<br/>TanStack Start + Better Auth]
 
   ks -->|server routes /api/*| bff[Server BFF<br/>TanStack Start handlers]
@@ -89,7 +89,7 @@ Simplified flow:
 - **Argo CD placement**: ship Reestr as part of the existing `argocd/applications/registry` kustomization so it deploys alongside the registry service in the same namespace. Add a Knative Service (replace the app-specific Deployment/Service) for `apps/reestr` inside that kustomization to keep registry UI and backend co-located.
 - **Redis requirement**: request a Redis instance via the in-cluster Redis Operator (already installed under `argocd/applications/redis-operator`). Create a Redis custom resource in the `registry` namespace, sized for metadata caching (e.g., 1–2Gi memory) and referenced by Reestr via env vars/secrets. Use it for OpenAPI doc cache, repository/tag listings, and precomputed storage totals.
 - **Persistence**: continue using the existing PVC in `argocd/applications/registry` for the registry service; Reestr itself is stateless beyond Redis.
-- **Tailscale ingress**: expose the app via the existing Tailscale ingress pattern in this namespace with a hostname of `reestr` (e.g., `tailscale-ingress.yaml` entry), ensuring compatibility with both HTTPS and HTTP origins.
+- **Tailscale service**: expose the app via the existing Tailscale service pattern in this namespace with a hostname of `reestr` (e.g., `tailscale-service.yaml` entry), ensuring compatibility with both HTTPS and HTTP origins.
 - **Manual deploy helper**: add `bun packages/scripts/src/reestr/deploy-service.ts` mirroring the Facteur/Jangar deploy scripts—build/push image, update the Knative Service image tag and rollout annotation, and `kubectl apply -k argocd/applications/registry`.
 
 ## Configuration Model (draft)
