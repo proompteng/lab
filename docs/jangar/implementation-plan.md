@@ -62,6 +62,10 @@ Context: use this plan to split work across Codex agents/Argo jobs. Markers use 
 
 ### JNG-080 Infra/Build
 - TODO(jng-080a): Add CNPG manifest `argocd/applications/jangar/postgres-cluster.yaml` and include in kustomization.
+- NOTE(jng-080a): CNPG Cluster `jangar-db` (10Gi longhorn PVC, instances: 1, `primaryUpdateStrategy: unsupervised`,
+  PodMonitor enabled) auto-generates `jangar-db-app` (uri, user, password, host, port, dbname) and `jangar-db-ca`
+  (ca.crt). The service should read `DATABASE_URL` from `jangar-db-app:uri` and `PGSSLROOTCERT` from
+  `jangar-db-ca:ca.crt`.
 - TODO(jng-080b): Extend `argocd/applications/jangar/kservice.yaml` with env/secret mounts (DATABASE_URL, CODEX_API_KEY, GITHUB_TOKEN, CA mount) and add OpenWebUI sidecar.
 - TODO(jng-080c): Update `packages/scripts/src/jangar/build-image.ts` & `deploy-service.ts` to bundle `packages/cx-tools/dist`, UI dist, and stamp `JANGAR_VERSION/JANGAR_COMMIT`.
 
