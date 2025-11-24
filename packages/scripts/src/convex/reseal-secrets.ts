@@ -3,7 +3,6 @@
 import { chmodSync, mkdirSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
-import { $ } from 'bun'
 import { ensureCli, fatal, repoRoot } from '../shared/cli'
 
 const capture = async (cmd: string[], stdin?: string): Promise<string> => {

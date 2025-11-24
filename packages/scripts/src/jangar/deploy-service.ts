@@ -53,10 +53,7 @@ const updateManifests = (
   }
 
   const service = readFileSync(servicePath, 'utf8')
-  const updatedService = service.replace(
-    /(deploy\.knative\.dev\/rollout:\s*")([^"\n]*)(\"?)/,
-    `$1${rolloutTimestamp}$3`,
-  )
+  const updatedService = service.replace(/(deploy\.knative\.dev\/rollout:\s*")([^"\n]*)("?)/, `$1${rolloutTimestamp}$3`)
   if (service === updatedService) {
     console.warn('Warning: jangar service rollout annotation was not updated; pattern may have changed.')
   } else {
