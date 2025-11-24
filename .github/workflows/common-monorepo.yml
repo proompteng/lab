@@ -44,12 +44,16 @@ jobs:
         with:
           bun-version: ${{ inputs.bun-version }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ inputs.bun-version }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-${{ inputs.bun-version }}-
 
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ inputs.node-version }}
-          cache: pnpm
 
       - name: Install dependencies
         run: ${{ inputs.install-command }}

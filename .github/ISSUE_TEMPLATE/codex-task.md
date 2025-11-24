@@ -29,7 +29,7 @@ assignees: ''
 - Follow-up items: <!-- Optional downstream clean-up or monitoring stories. -->
 
 ## Validation Checklist
-- [ ] <!-- e.g., `pnpm --filter @proompteng/temporal-bun-sdk exec bun test packages/...` -->
+- [ ] <!-- e.g., `bun run --filter @proompteng/temporal-bun-sdk test` -->
 - [ ] <!-- Add all required commands or manual verifications. -->
 
 ## Rollout / Ops Notes

@@ -19,24 +19,24 @@ jobs:
         with:
           node-version: '24.11.1'
 
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Prepare pnpm
-        run: |
-          PACKAGE_MANAGER=$(node -p "require('./package.json').packageManager")
-          corepack prepare "$PACKAGE_MANAGER" --activate
-
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.3
+
+      - name: Cache Bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.3-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.3-
 
       - name: Install Buf CLI
         uses: bufbuild/buf-setup-action@v1
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Run Temporal proto regeneration
         run: bun packages/temporal-bun-sdk/scripts/update-temporal-protos.ts
