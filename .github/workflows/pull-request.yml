@@ -82,6 +82,9 @@ jobs:
     needs: check_changed_files
     if: ${{ needs.check_changed_files.outputs.proompteng == 'true' }}
     runs-on: arc-arm64
+    env:
+      CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
+      CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
     steps:
       - uses: actions/checkout@v5
 
