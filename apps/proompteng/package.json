@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "prebuild": "bun run --filter @proompteng/backend codegen || echo 'skip convex codegen (no deployment)'",
+    "prebuild": "bun run --filter @proompteng/backend codegen",
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "bunx biome check",
