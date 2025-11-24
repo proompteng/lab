@@ -19,6 +19,7 @@ export interface CodexExecArgs {
   additionalDirectories?: string[]
   baseUrl?: string
   apiKey?: string
+  env?: Record<string, string>
 }
 
 const INTERNAL_ORIGINATOR_ENV = 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE'
@@ -82,7 +83,7 @@ export class CodexExec {
       commandArgs.push('resume', args.threadId)
     }
 
-    const env = { ...process.env }
+    const env = { ...process.env, ...args.env }
     if (!env[INTERNAL_ORIGINATOR_ENV]) {
       env[INTERNAL_ORIGINATOR_ENV] = ORIGINATOR_VALUE
     }
