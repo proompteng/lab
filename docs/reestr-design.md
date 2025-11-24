@@ -54,43 +54,28 @@ Reestr is a new TanStack Start application under `apps/reestr` that lets platfor
 
 ```mermaid
 flowchart LR
-  user[Operator / Dev
-  Browser] -->|HTTPS/HTTP via Tailscale host `reestr`| ts[Tailscale Ingress]
-  ts --> ks[Knative Service: Reestr
-  (TanStack Start + Better Auth)]
+  user[Operator/Dev<br/>Browser] -->|HTTPS/HTTP via Tailscale host `reestr`| ts[Tailscale Ingress]
+  ts --> ks[Knative Service: Reestr<br/>TanStack Start + Better Auth]
 
-  ks -->|server routes /api/*| bff[Server BFF
-  TanStack Start handlers]
+  ks -->|server routes /api/*| bff[Server BFF<br/>TanStack Start handlers]
   ks -->|auth| auth[Better Auth middleware]
-  auth --> db[(Postgres
-  Better Auth tables)]
-  auth --> rcache[(Redis
-  session cache)]
+  auth --> db[(Postgres<br/>Better Auth tables)]
+  auth --> rcache[(Redis<br/>session cache)]
 
-  bff --> cache[(Redis
-  registry cache)]
-  bff --> registries[Registry APIs
-  (OpenAPI, HTTPS/self-signed or HTTP)]
-  registries --> images[(Container Images
-  & metadata)]
+  bff --> cache[(Redis<br/>registry cache)]
+  bff --> registries[Registry APIs<br/>OpenAPI, HTTPS self-signed or HTTP]
+  registries --> images[(Container images<br/>and metadata)]
 
-  bff --> openapi[OpenAPI clients
-  (.gen per registry)]
+  bff --> openapi[OpenAPI clients<br/>generated per registry]
   openapi --> registries
 
-  ts -.->|ingress rule| ks
-
-  subgraph ArgoCD Application: registry ns
+  subgraph \"Argo CD app: registry ns\"
     ts
     ks
     cache
     rcache
   end
-
-  subgraph Cluster Operators
-    redisop[Redis Operator]
-  end
-  redisop --> cache
+  redisop[Redis Operator] --> cache
   redisop --> rcache
 ```
 
