@@ -1,4 +1,4 @@
-# Reestr Registry Browser — Design
+# Reestr Registry Browser - Design
 
 ## Overview
 Reestr is a new TanStack Start application under `apps/reestr` that lets platform teams register container registry APIs via their OpenAPI schema and browse hosted images much like Docker Hub. The app ingests registry metadata (endpoints, auth, capabilities) from configuration, validates against the OpenAPI spec, and exposes a searchable UI for repositories, tags, manifests, and readme/metadata. It runs as a single Bun/TanStack server, serving SSR/SPA routes and a small API proxy for registry calls.
@@ -33,7 +33,7 @@ Reestr is a new TanStack Start application under `apps/reestr` that lets platfor
 6. **Storage accounting**: surface total image storage per registry and per repository (sum of layers by digest) and highlight largest images; allow sorting/filtering by size. Cache computed totals server-side to avoid recomputation per request.
 7. **Connectivity**: operate against registries over HTTPS (including self-signed certificates) and plaintext HTTP when explicitly allowed in config; per-registry toggles control TLS verification and HTTP enablement.
 8. **Performance**: SSR prefetch for above-the-fold data, TanStack Query caches with sensible `staleTime`, tag list virtualization for large repos, lazy-load README and SBOM panes.
-9. **Accessibility & interaction**: follow AGENTS interaction rules—keyboard reachable controls, focus-visible rings, no blocked paste, confirm destructive actions (e.g., clearing cache), `aria-live` for toasts, responsive targets ≥24px (44px on mobile), respect `prefers-reduced-motion`.
+9. **Accessibility & interaction**: follow AGENTS interaction rules-keyboard reachable controls, focus-visible rings, no blocked paste, confirm destructive actions (e.g., clearing cache), `aria-live` for toasts, responsive targets ≥24px (44px on mobile), respect `prefers-reduced-motion`.
 
 ## Non-Functional Requirements
 - **Reliability**: tolerate per-registry failure; degraded UI should not block others. Schema refresh should be idempotent and timeout-bounded.
@@ -90,7 +90,7 @@ Simplified flow:
 - **Redis requirement**: request a Redis instance via the in-cluster Redis Operator (already installed under `argocd/applications/redis-operator`). Create a Redis custom resource in the `registry` namespace, sized for metadata caching (e.g., 1–2Gi memory) and referenced by Reestr via env vars/secrets. Use it for OpenAPI doc cache, repository/tag listings, and precomputed storage totals.
 - **Persistence**: continue using the existing PVC in `argocd/applications/registry` for the registry service; Reestr itself is stateless beyond Redis.
 - **Tailscale service**: expose the app via the existing Tailscale service pattern in this namespace with a hostname of `reestr` (e.g., `tailscale-service.yaml` entry), ensuring compatibility with both HTTPS and HTTP origins.
-- **Manual deploy helper**: add `bun packages/scripts/src/reestr/deploy-service.ts` mirroring the Facteur/Jangar deploy scripts—build/push image, update the Knative Service image tag and rollout annotation, and `kubectl apply -k argocd/applications/registry`.
+- **Manual deploy helper**: add `bun packages/scripts/src/reestr/deploy-service.ts` mirroring the Facteur/Jangar deploy scripts-build/push image, update the Knative Service image tag and rollout annotation, and `kubectl apply -k argocd/applications/registry`.
 
 ## Configuration Model (draft)
 ```ts
@@ -129,10 +129,10 @@ Helper `defineRegistries` validates ids, checks env presence for required tokens
 
 ## UI/UX Plan
 - **Routes**
-  - `/` — registries list with status, quick filters (auth required/anonymous), “Resync schema” per card.
-  - `/r/$registryId` — repository search + filters; table/grid view toggle; pagination persisted in URL.
-  - `/r/$registryId/$repo` — repository detail with summary, README, tags table (virtualized), metrics (pulls, last pushed), copyable pull command.
-  - `/r/$registryId/$repo/$tag` — tag modal/page with manifest details, platform matrix, SBOM/attestations tabs if available.
+  - `/` - registries list with status, quick filters (auth required/anonymous), “Resync schema” per card.
+  - `/r/$registryId` - repository search + filters; table/grid view toggle; pagination persisted in URL.
+  - `/r/$registryId/$repo` - repository detail with summary, README, tags table (virtualized), metrics (pulls, last pushed), copyable pull command.
+  - `/r/$registryId/$repo/$tag` - tag modal/page with manifest details, platform matrix, SBOM/attestations tabs if available.
 - **Interaction guarantees**: keyboard nav with roving tabindex in tables/cards, focus-return after closing modals, `aria-live="polite"` for fetch errors, skip-to-content link, scroll position restoration, `scroll-margin-top` on anchors, mobile inputs at ≥16px font.
 - **Visuals**: keep consistent with existing design system; avoid default stacks; ensure contrast; include reduced-motion styles.
 
@@ -157,8 +157,8 @@ Helper `defineRegistries` validates ids, checks env presence for required tokens
 - Enforce origin checks on API routes; CORS disabled except same-origin.
 - Rate-limit per-IP on BFF routes; configurable via middleware.
 - Provide per-registry allowlist for outbound hosts to prevent SSRF.
-- App authentication uses the Better Auth TypeScript library (self-hosted, framework-agnostic middleware—no managed control plane) to gate UI/API access; uses the app database via an adapter plus optional Redis session cache; supports OAuth providers, WebAuthn, and TOTP/2FA; integrate with the existing identity provider when available.
-- TanStack Start remains in beta/RC; expect occasional breaking changes—pin the toolchain and track upstream release notes during implementation.
+- App authentication uses the Better Auth TypeScript library (self-hosted, framework-agnostic middleware-no managed control plane) to gate UI/API access; uses the app database via an adapter plus optional Redis session cache; supports OAuth providers, WebAuthn, and TOTP/2FA; integrate with the existing identity provider when available.
+- TanStack Start remains in beta/RC; expect occasional breaking changes-pin the toolchain and track upstream release notes during implementation.
 
 ## Observability & Ops
 - Structured logs with `registryId`, `route`, `statusCode`, `latencyMs`, `cacheStatus`.
