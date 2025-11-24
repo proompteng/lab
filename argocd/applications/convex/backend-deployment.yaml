@@ -36,6 +36,16 @@ spec:
             - secretRef:
                 name: convex-backend-secrets
           env:
+            - name: INSTANCE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: convex-backend-secrets
+                  key: INSTANCE_NAME
+            - name: INSTANCE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: convex-backend-secrets
+                  key: INSTANCE_SECRET
             - name: PGUSER
               valueFrom:
                 secretKeyRef:

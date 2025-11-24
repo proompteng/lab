@@ -87,9 +87,9 @@ export const main = async () => {
   const controllerNamespace = process.env.SEALED_SECRETS_CONTROLLER_NAMESPACE ?? 'sealed-secrets'
   const namespace = process.env.CONVEX_NAMESPACE ?? 'convex'
 
-  const instanceName = process.env.CONVEX_INSTANCE_NAME ?? 'convex-self-hosted'
-  const instanceSecret = process.env.CONVEX_INSTANCE_SECRET ?? generateHex(32)
-  const adminKey = process.env.CONVEX_ADMIN_KEY ?? generateHex(32)
+  const instanceName = process.env.INSTANCE_NAME ?? 'convex-self-hosted'
+  const instanceSecret = process.env.INSTANCE_SECRET ?? generateHex(32)
+  const adminKey = process.env.ADMIN_KEY ?? generateHex(64)
 
   const outputPath =
     process.env.CONVEX_SEALED_SECRET_OUTPUT ?? resolve(repoRoot, 'argocd/applications/convex/backend-sealedsecret.yaml')
@@ -98,9 +98,9 @@ export const main = async () => {
     name: 'convex-backend-secrets',
     namespace,
     literals: [
-      ['CONVEX_INSTANCE_NAME', instanceName],
-      ['CONVEX_INSTANCE_SECRET', instanceSecret],
-      ['CONVEX_ADMIN_KEY', adminKey],
+      ['INSTANCE_NAME', instanceName],
+      ['INSTANCE_SECRET', instanceSecret],
+      ['ADMIN_KEY', adminKey],
     ],
     controllerName,
     controllerNamespace,
@@ -110,9 +110,9 @@ export const main = async () => {
 
   console.log(`Sealed secret written to ${outputPath}`)
   console.log('Values used (store securely):')
-  console.log(`  CONVEX_INSTANCE_NAME=${instanceName}`)
-  console.log(`  CONVEX_INSTANCE_SECRET=${instanceSecret}`)
-  console.log(`  CONVEX_ADMIN_KEY=${adminKey}`)
+  console.log(`  INSTANCE_NAME=${instanceName}`)
+  console.log(`  INSTANCE_SECRET=${instanceSecret}`)
+  console.log(`  ADMIN_KEY=${adminKey}`)
 }
 
 if (import.meta.main) {
