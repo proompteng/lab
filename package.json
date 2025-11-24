@@ -35,7 +35,8 @@
     "froussard:reseal": "bun run packages/scripts/src/froussard/reseal-secrets.ts",
     "facteur:deploy": "bun run packages/scripts/src/facteur/deploy-service.ts",
     "froussard:deploy": "bun run packages/scripts/src/froussard/deploy-service.ts",
-    "facteur:consume": "bun run packages/scripts/src/facteur/run-consumer.ts"
+    "facteur:consume": "bun run packages/scripts/src/facteur/run-consumer.ts",
+    "convex:reseal": "bun run packages/scripts/src/convex/reseal-secrets.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
