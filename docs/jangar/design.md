@@ -68,7 +68,7 @@ flowchart TD
         subgraph POD[Pod: single image/process]
             S[Bun server.ts\nHTTP + SSE + proxy]
             UIA[TanStack Start assets]
-            OWUI[OpenWebUI frontend (sidecar)]
+            OWUI[OpenWebUI sidecar]
             APP[codex app-server child\nJSON-RPC stdio]
             W[Temporal Worker]
             CXB[cx-tools dist]
