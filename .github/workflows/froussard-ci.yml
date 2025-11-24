@@ -18,5 +18,5 @@ jobs:
     with:
       install-command: bun install --frozen-lockfile
       lint-command: bunx biome check apps/froussard
-      test-command: bun run --filter froussard exec vitest run --coverage && node scripts/report-coverage.mjs
+      test-command: bun run --filter froussard test -- --coverage && node scripts/report-coverage.mjs
     secrets: inherit
