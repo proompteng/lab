@@ -8,6 +8,7 @@ export interface CodexOptions {
   codexPathOverride?: string
   baseUrl?: string
   apiKey?: string
+  env?: Record<string, string>
 }
 
 export interface ThreadOptions {

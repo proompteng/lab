@@ -97,6 +97,7 @@ export class Thread {
       additionalDirectories: this.threadOptions.additionalDirectories,
       baseUrl: this.options.baseUrl,
       apiKey: this.options.apiKey,
+      env: this.options.env,
       signal: turnOptions.signal,
     }
 
