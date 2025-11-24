@@ -50,5 +50,3 @@ export interface OrchestrationConfig {
   depthLimit: number
   maxTurns: number
 }
-
-// TODO(jng-020a): Replace placeholders once Drizzle schema is implemented.
