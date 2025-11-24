@@ -490,11 +490,11 @@ resource "coder_script" "bootstrap_tools" {
     touch "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"
 
     export PATH="$HOME/.local/bin:$PATH"
-    export PNPM_HOME="$HOME/.local/share/pnpm"
-    mkdir -p "$PNPM_HOME" "$HOME/.local/bin" /tmp/coder-script-data/bin
+    export BUN_INSTALL="$HOME/.bun"
+    mkdir -p "$BUN_INSTALL" "$HOME/.local/bin" /tmp/coder-script-data/bin
     case ":$PATH:" in
-      *:"$PNPM_HOME":*) ;;
-      *) export PATH="$PNPM_HOME:$PATH" ;;
+      *:"$BUN_INSTALL/bin":*) ;;
+      *) export PATH="$BUN_INSTALL/bin:$PATH" ;;
     esac
 
     export NVM_DIR="$HOME/.nvm"
@@ -548,47 +548,21 @@ resource "coder_script" "bootstrap_tools" {
       fail "npm not found after Node.js install; see $LOG_DIR/node-install.log"
     fi
 
-    if ! command -v corepack >/dev/null 2>&1; then
-      log "Waiting for corepack availability"
-      wait_for_command corepack 60 2 || log "corepack still unavailable; continuing with npm fallback"
-    fi
-
-    if command -v corepack >/dev/null 2>&1; then
-      log "Enabling corepack"
-      corepack enable >/dev/null 2>&1 || true
-      if corepack prepare pnpm@9 --activate >"$LOG_DIR/pnpm-prepare.log" 2>&1; then
-        hash -r
-      fi
-    else
-      log "corepack not available; will fall back to npm installation"
-    fi
-
-    if ! command -v pnpm >/dev/null 2>&1; then
-      log "Activating pnpm via corepack"
-      if command -v corepack >/dev/null 2>&1; then
-        if ! corepack prepare pnpm@9 --activate >"$LOG_DIR/pnpm-prepare.log" 2>&1; then
-          log "corepack activation failed; falling back to npm install"
-        else
-          hash -r
-        fi
-      fi
-    fi
-
-    if ! command -v pnpm >/dev/null 2>&1; then
-      log "Installing pnpm via npm fallback"
-      if ! npm install -g pnpm >"$LOG_DIR/pnpm-install.log" 2>&1; then
-        fail "pnpm install failed; see $LOG_DIR/pnpm-install.log"
+    if ! command -v bun >/dev/null 2>&1; then
+      log "Installing Bun runtime"
+      if ! curl -fsSL https://bun.sh/install | bash >"$LOG_DIR/bun-install.log" 2>&1; then
+        fail "Bun install failed; see $LOG_DIR/bun-install.log"
       fi
       hash -r
     fi
 
-    if ! command -v pnpm >/dev/null 2>&1; then
-      fail "pnpm not found after install; see $LOG_DIR/pnpm-install.log"
+    if ! command -v bun >/dev/null 2>&1; then
+      fail "Bun not found after install; see $LOG_DIR/bun-install.log"
     fi
 
-    if command -v pnpm >/dev/null 2>&1; then
-      PNPM_VERSION=$(pnpm --version 2>/dev/null || echo "unknown")
-      log "pnpm $PNPM_VERSION ready"
+    if command -v bun >/dev/null 2>&1; then
+      BUN_VERSION=$(bun --version 2>/dev/null || echo "unknown")
+      log "bun $BUN_VERSION ready"
     fi
 
     if ! command -v convex >/dev/null 2>&1; then
@@ -689,18 +663,18 @@ export NVM_DIR="$NVM_DIR"
 ZSHRC_NVM
     fi
 
-    if ! grep -q "PNPM_HOME" "$HOME/.profile" 2>/dev/null; then
+    if ! grep -q "BUN_INSTALL" "$HOME/.profile" 2>/dev/null; then
       cat <<'PROFILE' >> "$HOME/.profile"
-export PNPM_HOME="$HOME/.local/share/pnpm"
-export PATH="$PNPM_HOME:$PATH"
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
 export PATH="$HOME/.local/bin:$PATH"
 PROFILE
     fi
 
-    if ! grep -q "PNPM_HOME" "$HOME/.zshrc" 2>/dev/null; then
+    if ! grep -q "BUN_INSTALL" "$HOME/.zshrc" 2>/dev/null; then
       cat <<'ZSHRC' >> "$HOME/.zshrc"
-export PNPM_HOME="$HOME/.local/share/pnpm"
-export PATH="$PNPM_HOME:$PATH"
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
 export PATH="$HOME/.local/bin:$PATH"
 ZSHRC
     fi
@@ -721,15 +695,15 @@ ZSHRC
     fi
 
     if [ -d "$REPO_ROOT/.git" ]; then
-      if [ -f "$REPO_ROOT/pnpm-lock.yaml" ]; then
-        log "Installing workspace dependencies with pnpm"
-        if ! (cd "$REPO_ROOT" && pnpm install --frozen-lockfile >"$LOG_DIR/pnpm-install.log" 2>&1); then
-          fail "pnpm install failed; see $LOG_DIR/pnpm-install.log"
+      if [ -f "$REPO_ROOT/bun.lockb" ] || [ -f "$REPO_ROOT/bun.lock" ]; then
+        log "Installing workspace dependencies with bun"
+        if ! (cd "$REPO_ROOT" && bun install --frozen-lockfile >"$LOG_DIR/bun-install.log" 2>&1); then
+          fail "bun install failed; see $LOG_DIR/bun-install.log"
         fi
       elif [ -f "$REPO_ROOT/package.json" ]; then
-        log "Installing workspace dependencies with npm"
-        if ! (cd "$REPO_ROOT" && npm install >"$LOG_DIR/npm-install.log" 2>&1); then
-          fail "npm install failed; see $LOG_DIR/npm-install.log"
+        log "Installing workspace dependencies with bun (no lockfile)"
+        if ! (cd "$REPO_ROOT" && bun install >"$LOG_DIR/bun-install.log" 2>&1); then
+          fail "bun install failed; see $LOG_DIR/bun-install.log"
         fi
       else
         log "No Node.js manifest found in $REPO_ROOT; skipping dependency install"

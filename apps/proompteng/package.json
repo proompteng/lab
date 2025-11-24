@@ -4,11 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "prebuild": "pnpm --filter @proompteng/backend run codegen",
+    "prebuild": "bun run --filter @proompteng/backend codegen",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "biome check",
-    "format": "biome format --write"
+    "lint": "bunx biome check",
+    "format": "bunx biome format --write"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

@@ -24,7 +24,7 @@
 | Item | Details |
 | --- | --- |
 | Host | macOS 15 (arm64) |
-| Temporal CLI | `temporal server start-dev` via `pnpm --filter @proompteng/temporal-bun-sdk exec bun run scripts/start-temporal-cli.ts` |
+| Temporal CLI | `temporal server start-dev` via `bun run --filter @proompteng/temporal-bun-sdk exec bun run scripts/start-temporal-cli.ts` |
 | Bun Runtime | `bun test` (bundled with repo) |
 | Feature Flag | _Removed (legacy `TEMPORAL_BUN_SDK_USE_ZIG`)_ |
 | Build ID | Derived automatically (`<identity>-build`) unless `TEMPORAL_WORKER_BUILD_ID` is set |
@@ -32,7 +32,7 @@
 ### Steps to Reproduce Hang (before fix)
 
 1. Ensure Temporal dev server is running on `127.0.0.1:7233`.
-2. Execute `TEMPORAL_TEST_SERVER=1 TEMPORAL_BUN_SDK_USE_ZIG=1 pnpm --filter @proompteng/temporal-bun-sdk exec bun test tests/native.integration.test.ts`.
+2. Execute `TEMPORAL_TEST_SERVER=1 TEMPORAL_BUN_SDK_USE_ZIG=1 bun run --filter @proompteng/temporal-bun-sdk exec bun test tests/native.integration.test.ts`.
 3. Test harness blocks indefinitely while waiting for workflow activations; LLDB shows the poller receiving `success=null`.
 
 ### Observed Logs
@@ -90,7 +90,7 @@
    - Command:  
      ```bash
      TEMPORAL_BUN_SDK_USE_ZIG=1 TEMPORAL_TEST_SERVER=1 \
-       pnpm --filter @proompteng/temporal-bun-sdk exec bun test tests/native.integration.test.ts
+       bun run --filter @proompteng/temporal-bun-sdk exec bun test tests/native.integration.test.ts
      ```
    - Capture fresh logs; confirm activation arrives and workflow completes.
 

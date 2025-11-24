@@ -2,7 +2,7 @@
 
 This guide consolidates the CLI and runtime tooling we keep standardised across the lab workspaces. Examples below assume macOS with Homebrew; when a Linux alternative is materially different we call it out. Use these instructions alongside the Coder bootstrap script so local environments and cloud workspaces stay aligned.
 
-## Node.js, pnpm, and Bun
+## Node.js and Bun
 
 - **Node.js** – Target the Active LTS line (24.x) which receives security fixes through April 30 2028 (see the [Node.js release schedule](https://nodejs.org/en/about/previous-releases)).  
   Workspaces ship with `nvm` preinstalled. To match production:
@@ -10,13 +10,7 @@ This guide consolidates the CLI and runtime tooling we keep standardised across 
   nvm install 24.11.1
   nvm alias default 24.11.1
   ```
-- **pnpm** – Corepack enables pnpm 10.23.x automatically inside new workspaces; if you need to pin or reinstall:  
-  ```bash
-  corepack enable pnpm
-  corepack prepare pnpm@10 --activate
-  ```
-  (Corepack ships with Node.js since v16.9.0 according to the [Corepack documentation](https://nodejs.org/api/corepack.html).)
-- **Bun** – Optional runtime we keep available for FFI experimentation. Install from the official script documented on bun.sh:  
+- **Bun** – Default package manager/runtime (1.3.x). Install from the official script documented on bun.sh:  
   ```bash
   curl -fsSL https://bun.sh/install | bash
   ```  
@@ -32,7 +26,7 @@ This guide consolidates the CLI and runtime tooling we keep standardised across 
   ```bash
   brew install terraform
   ```
-- CLI wrappers such as `pnpm run tf:plan` invoke OpenTofu; when contributing Terraform modules, test with both CLIs if you expect upstream consumers.
+- CLI wrappers such as `bun run tf:plan` invoke OpenTofu; when contributing Terraform modules, test with both CLIs if you expect upstream consumers.
 
 ## Kubernetes Tooling
 

@@ -212,7 +212,7 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "4"
             automation: auto
-            enabled: "false"
+            enabled: "true"
       selector:
         matchExpressions:
           - key: enabled

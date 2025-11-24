@@ -7,7 +7,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepare": "pnpm run build",
+    "prepare": "bun run build",
     "test": "vitest run"
   },
   "dependencies": {

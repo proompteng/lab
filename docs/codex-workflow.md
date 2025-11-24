@@ -59,7 +59,7 @@ WorkflowTemplate, persist intake data, emit structured logs (`workflow submitted
 Codex now mirrors planning and implementation output into a per-run Discord channel when the bot credentials are present.
 
 1. **Provision the secret**
-   - Run `pnpm run froussard:reseal` (requires `op`, `kubectl`, and `kubeseal`) to refresh `argocd/applications/froussard/discord-secrets.yaml` with sealed values for `bot-token`, `guild-id`, and optionally `category-id`.
+   - Run `bun run froussard:reseal` (requires `op`, `kubectl`, and `kubeseal`) to refresh `argocd/applications/froussard/discord-secrets.yaml` with sealed values for `bot-token`, `guild-id`, and optionally `category-id`.
    - Argo CD reconciles the sealed secret into an opaque secret named `discord-codex-bot` in `argo-workflows`.
 2. **Verify workflow envs**
    - The `facteur-dispatch` (planning), `github-codex-implementation`, and `github-codex-review` templates inject `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, and `DISCORD_CATEGORY_ID` into the Codex container. Streaming only activates when the token and guild id are present.
@@ -204,7 +204,7 @@ When you finish a dry run, clean up the temporary artefacts so production dashbo
 
 Whenever you introduce a new Codex workflow or touch the surrounding manifests, run the validation scripts locally before opening a PR:
 
-- `pnpm --filter froussard run test`
+- `bun run --filter froussard test`
 - `scripts/argo-lint.sh` (offline Argo lint of any Workflow/WorkflowTemplate YAML)
 - `scripts/kubeconform.sh argocd` (kubeconform with custom CRD schemas)
 

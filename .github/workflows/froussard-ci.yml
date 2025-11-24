@@ -16,7 +16,7 @@ jobs:
   test:
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      install-command: pnpm install --frozen-lockfile
-      lint-command: pnpm exec biome check apps/froussard
-      test-command: pnpm --filter froussard exec vitest run --coverage && node scripts/report-coverage.mjs
+      install-command: bun install --frozen-lockfile
+      lint-command: bunx biome check apps/froussard
+      test-command: bun run --filter froussard test -- --coverage && node scripts/report-coverage.mjs
     secrets: inherit

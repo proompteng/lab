@@ -13,7 +13,7 @@
 1. Ensure the Temporal test-server binary (CLI) is available on PATH.
 2. From the repo root, run (legacy Zig bridge scenario; the modern TypeScript runtime does not expose this flag):
    ```bash
-   TEMPORAL_BUN_SDK_USE_ZIG=1 TEMPORAL_TEST_SERVER=1 pnpm --filter @proompteng/temporal-bun-sdk exec bun test native.integration.test.ts
+  TEMPORAL_BUN_SDK_USE_ZIG=1 TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk exec bun test native.integration.test.ts
    ```
 3. Expected behaviour: test should complete within ~60s. **Actual**: worker process hangs indefinitely; Temporal CLI shows `WorkflowTaskScheduled` without matching `WorkflowTaskStarted`.
 

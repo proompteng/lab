@@ -31,9 +31,19 @@ export NVM_DIR="$HOME/.nvm"
 
 nvm install
 
-export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-corepack enable
-pnpm install
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+
+if ! command -v bun >/dev/null 2>&1; then
+    echo "Installing Bun..."
+    curl -fsSL https://bun.sh/install | bash
+    echo "✓ Bun installation complete"
+else
+    echo "✓ Bun already installed"
+fi
+
+echo "📦 Installing workspace dependencies with Bun..."
+bun install
 
 (type -p wget >/dev/null || (sudo apt update && sudo apt-get install wget -y)) \
 	&& sudo mkdir -p -m 755 /etc/apt/keyrings \

@@ -11,6 +11,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
 
+type AgentRecord = {
+  _id: string
+  slug: string
+  name: string
+  description: string
+  modelSlug: string
+  status: string
+  tags: string[]
+  createdAt: number
+  updatedAt: number
+}
+
 const AGENT_PATTERNS: { icon: IconName; title: string; text: string }[] = [
   {
     icon: 'Activity',
@@ -72,7 +84,7 @@ export default function AgentsPage() {
 }
 
 function LiveAgentsList() {
-  const agents = useQuery(api.agents.list, {})
+  const agents = useQuery(api.agents.list, {}) as AgentRecord[] | undefined
 
   if (agents === undefined) {
     return <AgentsSkeleton />

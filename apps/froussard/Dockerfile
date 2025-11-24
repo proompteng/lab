@@ -1,34 +1,31 @@
 # syntax=docker/dockerfile:1.7
 
 ARG NODE_VERSION=24.11.1
-ARG BUN_VERSION=1.1.34
+ARG BUN_VERSION=1.3.2
 
 FROM node:${NODE_VERSION}-bookworm AS base
 ARG BUN_VERSION
-ENV PNPM_HOME="/root/.local/share/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
 ENV BUN_INSTALL="/root/.bun"
 ENV PATH="$BUN_INSTALL/bin:$PATH"
 ENV HUSKY=0
 ENV CI=true
-RUN corepack enable \
-  && curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}
+RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}
 WORKDIR /workspace
 
 FROM base AS deps
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY package.json bun.lock tsconfig.base.json ./
 COPY .npmrc* ./
 COPY scripts ./scripts
 COPY apps/froussard ./apps/froussard
 COPY packages/discord ./packages/discord
-RUN pnpm install --filter @proompteng/discord --filter froussard --frozen-lockfile --ignore-scripts
+RUN bun install --filter @proompteng/discord --filter froussard --frozen-lockfile --ignore-scripts
 
 FROM deps AS build
-RUN pnpm --filter @proompteng/discord run build
-RUN pnpm --filter froussard run build
+RUN bun run --filter @proompteng/discord build
+RUN bun run --filter froussard build
 
 FROM deps AS prod-deps
-RUN pnpm install --filter froussard --prod --frozen-lockfile --ignore-scripts
+RUN bun install --filter froussard --production --frozen-lockfile --ignore-scripts
 
 FROM oven/bun:${BUN_VERSION}-slim AS runtime
 ENV NODE_ENV=production

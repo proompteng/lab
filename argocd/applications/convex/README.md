@@ -6,23 +6,16 @@
 - `dashboard-*` resources run `ghcr.io/get-convex/convex-dashboard` for administration. The dashboard stays private on the tailnet.
 
 ## Required Secrets
-Generate the sealed secret before syncing:
+Generate the sealed secret before syncing (the backend reads `INSTANCE_NAME` / `INSTANCE_SECRET` and the dashboard uses `ADMIN_KEY`):
 
 ```bash
-kubectl create secret generic convex-backend-secrets \
-  -n convex \
-  --from-literal=CONVEX_INSTANCE_NAME=<instance-name> \
-  --from-literal=CONVEX_INSTANCE_SECRET=<instance-secret> \
-  --from-literal=CONVEX_ADMIN_KEY=<admin-key> \
-  --dry-run=client -o yaml \
-| kubeseal \
-  --controller-name=sealed-secrets \
-  --controller-namespace=sealed-secrets \
-  --format=yaml \
-> argocd/applications/convex/backend-sealedsecret.yaml
+INSTANCE_NAME=convex-self-hosted \
+INSTANCE_SECRET=$(openssl rand -hex 32) \
+ADMIN_KEY=$(kubectl -n convex exec deploy/convex-backend -- ./generate_key "$INSTANCE_NAME" "$INSTANCE_SECRET") \
+  bun packages/scripts/src/convex/reseal-secrets.ts
 ```
 
-Commit the regenerated manifest so ArgoCD can decrypt it inside the cluster.
+The script writes `argocd/applications/convex/backend-sealedsecret.yaml`; commit that file so ArgoCD can decrypt and sync it in-cluster.
 
 ## Configuration
 `backend-configmap.yaml` defaults to `https://convex.proompteng.ai` so Convex clients use your public Traefik ingress for both HTTP (`/http`) and WebSocket traffic. Keep the `/http` suffix on `CONVEX_SITE_ORIGIN`, and point `CONVEX_CLOUD_ORIGIN` at the bare host. If you change the hostname, update those values plus the ingress route. Set `NEXT_PUBLIC_DEPLOYMENT_URL` to the same host so the dashboard links resolve correctly.

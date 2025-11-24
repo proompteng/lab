@@ -20,7 +20,7 @@
       "!**/.venv",
       "!tmp",
       "!**/coverage",
-      "!**/pnpm-lock.yaml",
+      "!**/bun.lockb",
       "!**/bun.lock",
       "!**/src/app/routeTree.gen.ts",
       "!apps/proompteng/src/components/ui",

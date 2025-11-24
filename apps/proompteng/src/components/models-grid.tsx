@@ -70,7 +70,7 @@ function LiveModelsGrid({
     return (
       <EmptyState
         className={className}
-        note="No models found. Run `pnpm run seed:models` or create models via the Agents workspace."
+        note="No models found. Run `bun run seed:models` or create models via the Agents workspace."
       />
     )
   }

@@ -18,6 +18,6 @@ jobs:
     with:
       bun-version: 1.3.3
       node-version: 24.11.1
-      install-command: pnpm install --frozen-lockfile
-      lint-command: pnpm --filter @proompteng/scripts lint
+      install-command: bun install --frozen-lockfile
+      lint-command: bun run --filter @proompteng/scripts lint
       test-command: bun test packages/scripts/src

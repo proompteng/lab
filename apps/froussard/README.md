@@ -40,9 +40,9 @@ The Argo CD application also provisions the `discord.commands.incoming` Kafka to
 ## Local Development
 
 ```bash
-pnpm install
-pnpm run build
-pnpm run start
+bun install
+bun run build
+bun run start
 ```
 
 > Bun ≥ 1.1 must be available on your PATH—the build step uses `tsdown` to emit ESM bundles and the runtime executes them via `bun dist/index.mjs`.

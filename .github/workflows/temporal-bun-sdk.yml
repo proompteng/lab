@@ -9,7 +9,7 @@ on:
       - '!packages/temporal-bun-sdk/**/*.md'
       - '!packages/temporal-bun-sdk/docs/**'
       - 'packages/temporal-bun-sdk-example/**'
-      - 'pnpm-lock.yaml'
+      - 'bun.lock'
       - '.github/workflows/temporal-bun-sdk.yml'
   pull_request:
     paths:
@@ -17,7 +17,7 @@ on:
       - '!packages/temporal-bun-sdk/**/*.md'
       - '!packages/temporal-bun-sdk/docs/**'
       - 'packages/temporal-bun-sdk-example/**'
-      - 'pnpm-lock.yaml'
+      - 'bun.lock'
       - '.github/workflows/temporal-bun-sdk.yml'
   workflow_dispatch:
     inputs:
@@ -55,28 +55,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-
       - name: Set up Node.js 22
         uses: actions/setup-node@v6
         with:
           node-version: '24.11.1'
-          cache: 'pnpm'
-          cache-dependency-path: pnpm-lock.yaml
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.3
+
+      - name: Cache Bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.3-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.3-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --recursive
+        run: bun install --frozen-lockfile
 
       - name: Build Temporal Bun SDK
-        run: pnpm --filter @proompteng/temporal-bun-sdk build
+        run: bun run --filter @proompteng/temporal-bun-sdk build
 
       - name: Install Temporal CLI
         run: |
@@ -87,15 +88,15 @@ jobs:
         run: temporal --version
 
       - name: Run Biome check (temporal-bun-sdk)
-        run: pnpm exec biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
+        run: bunx biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
 
       - name: Run Temporal Bun SDK tests
         run: |
-          TEMPORAL_TEST_SERVER=1 pnpm --filter @proompteng/temporal-bun-sdk test
+          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test
 
       - name: Run worker load suite
         run: |
-          TEMPORAL_TEST_SERVER=1 pnpm --filter @proompteng/temporal-bun-sdk run test:load
+          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load
 
       - name: Upload worker load artifacts
         if: always()
@@ -120,25 +121,26 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-
       - name: Set up Node.js 22
         uses: actions/setup-node@v6
         with:
           node-version: '24.11.1'
-          cache: 'pnpm'
-          cache-dependency-path: pnpm-lock.yaml
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.3
+
+      - name: Cache Bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.3-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.3-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --recursive
+        run: bun install --frozen-lockfile
 
       - name: Run release-please (manifest)
         id: release_please
@@ -166,7 +168,7 @@ jobs:
 
       - name: Build Temporal Bun SDK
         if: steps.release_branch.outputs.found == 'true'
-        run: pnpm --filter @proompteng/temporal-bun-sdk build
+        run: bun run --filter @proompteng/temporal-bun-sdk build
 
   publish-release:
     name: Publish Temporal Bun SDK
@@ -182,18 +184,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-
       - name: Set up Node.js 22
         uses: actions/setup-node@v6
         with:
           node-version: '24.11.1'
           registry-url: https://registry.npmjs.org
-          cache: 'pnpm'
-          cache-dependency-path: pnpm-lock.yaml
 
       - name: Upgrade npm for trusted publishing
         run: |
@@ -203,10 +198,18 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.3
+
+      - name: Cache Bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.3-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.3-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --recursive
+        run: bun install --frozen-lockfile
 
       - name: Derive release metadata
         id: release_meta
@@ -240,7 +243,7 @@ jobs:
           NODE
 
       - name: Build Temporal Bun SDK
-        run: pnpm --filter @proompteng/temporal-bun-sdk build
+        run: bun run --filter @proompteng/temporal-bun-sdk build
 
       - name: Publish package to npm
         working-directory: packages/temporal-bun-sdk

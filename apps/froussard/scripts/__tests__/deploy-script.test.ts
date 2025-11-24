@@ -79,12 +79,12 @@ describe('deploy script', () => {
       text: vi.fn().mockResolvedValue(kubeJson),
     } as unknown as typeof import('bun')['$'])
 
-    const pnpmMock = vi.fn().mockResolvedValue(undefined)
+    const bunMock = vi.fn().mockResolvedValue(undefined)
     const bunModule = await import('bun')
     const real$ = bunModule.$
     vi.spyOn(bunModule, '$', 'get').mockReturnValue(((...args: unknown[]) => {
-      if (String(args[0]).includes('pnpm')) {
-        return { text: pnpmMock } as unknown as ReturnType<typeof real$>
+      if (String(args[0]).includes('bun')) {
+        return { text: bunMock } as unknown as ReturnType<typeof real$>
       }
       return kubectlMock(...args)
     }) as unknown as typeof real$)
@@ -100,7 +100,7 @@ describe('deploy script', () => {
 
     await import('../deploy')
 
-    expect(pnpmMock).toHaveBeenCalled()
+    expect(bunMock).toHaveBeenCalled()
     expect(writeFileMock).toHaveBeenCalledWith(
       expect.stringContaining(exportPath),
       expect.stringContaining('registry.example.com/foo@sha256:abc'),

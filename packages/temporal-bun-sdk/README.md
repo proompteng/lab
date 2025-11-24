@@ -302,11 +302,11 @@ The TBS-003 load harness lives under `tests/integration/load/**` and uses CPU-he
 
 1. **Bun test suite** (reuses the Temporal CLI harness):
    ```bash
-   TEMPORAL_INTEGRATION_TESTS=1 pnpm --filter @proompteng/temporal-bun-sdk exec bun test tests/integration/worker-load.test.ts
+  TEMPORAL_INTEGRATION_TESTS=1 bun run --filter @proompteng/temporal-bun-sdk exec bun test tests/integration/worker-load.test.ts
    ```
 2. **Developer-friendly CLI runner** (wraps the same scenario without `bun test`):
    ```bash
-   pnpm --filter @proompteng/temporal-bun-sdk run test:load
+  bun run --filter @proompteng/temporal-bun-sdk test:load
    ```
 
 Both commands start the Temporal CLI dev server (unless `TEMPORAL_TEST_SERVER=1` is set), run the worker load scenario, and write artefacts to `.artifacts/worker-load/`:
@@ -319,7 +319,7 @@ The default profile now submits 36 workflows (roughly a 2:1 mix of CPU-heavy to 
 
 ### Tuning the load harness
 
-The harness is driven by env vars (also exposed as CLI flags via `--workflows`, `--workflow-concurrency`, `--activity-concurrency`, and `--timeout` when calling `pnpm run test:load`). Key overrides:
+The harness is driven by env vars (also exposed as CLI flags via `--workflows`, `--workflow-concurrency`, `--activity-concurrency`, and `--timeout` when calling `bun run test:load`). Key overrides:
 
 - `TEMPORAL_LOAD_TEST_WORKFLOWS` – total workflows to submit.
 - `TEMPORAL_LOAD_TEST_WORKFLOW_CONCURRENCY` / `TEMPORAL_LOAD_TEST_ACTIVITY_CONCURRENCY` – poller counts / concurrency targets.
@@ -328,7 +328,7 @@ The harness is driven by env vars (also exposed as CLI flags via `--workflows`, 
 - `TEMPORAL_LOAD_TEST_TIMEOUT_MS` – overall completion timeout per batch.
 - `TEMPORAL_LOAD_TEST_ACTIVITY_BURSTS`, `TEMPORAL_LOAD_TEST_COMPUTE_ITERATIONS`, `TEMPORAL_LOAD_TEST_ACTIVITY_DELAY_MS`, `TEMPORAL_LOAD_TEST_ACTIVITY_PAYLOAD_BYTES` – fine-tune CPU/IO stress.
 
-CI runs `pnpm --filter @proompteng/temporal-bun-sdk run test:load` inside `.github/workflows/temporal-bun-sdk.yml` and uploads `.artifacts/worker-load/{metrics.jsonl,report.json,temporal-cli.log}` so reviewers can inspect regressions. When running locally on slower hardware, lower the concurrency knobs or bump the latency thresholds to avoid spurious failures.
+CI runs `bun run --filter @proompteng/temporal-bun-sdk test:load` inside `.github/workflows/temporal-bun-sdk.yml` and uploads `.artifacts/worker-load/{metrics.jsonl,report.json,temporal-cli.log}` so reviewers can inspect regressions. When running locally on slower hardware, lower the concurrency knobs or bump the latency thresholds to avoid spurious failures.
 
 ## Effect service integration
 

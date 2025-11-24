@@ -55,25 +55,36 @@ jobs:
         with:
           path: |
             ${{ github.workspace }}/apps/docs/.next/cache
-          key: ${{ runner.os }}-nextjs-docs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('apps/docs/**/*.[jt]s?(x)', 'packages/**/*.[jt]s?(x)') }}
+          key: ${{ runner.os }}-nextjs-docs-${{ hashFiles('**/bun.lock') }}-${{ hashFiles('apps/docs/**/*.[jt]s?(x)', 'packages/**/*.[jt]s?(x)') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-docs-${{ hashFiles('**/pnpm-lock.yaml') }}-
-
-      - uses: pnpm/action-setup@v4
+            ${{ runner.os }}-nextjs-docs-${{ hashFiles('**/bun.lock') }}-
 
       - uses: actions/setup-node@v6
         with:
           node-version: 24.11.1
-          cache: "pnpm"
 
-      - run: pnpm install --frozen-lockfile
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.3
 
-      - run: pnpm --filter docs build
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.3-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.3-
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run --filter docs build
 
   proompteng:
     needs: check_changed_files
     if: ${{ needs.check_changed_files.outputs.proompteng == 'true' }}
     runs-on: arc-arm64
+    env:
+      CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
+      CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
     steps:
       - uses: actions/checkout@v5
 
@@ -81,20 +92,28 @@ jobs:
         with:
           path: |
             ${{ github.workspace }}/apps/proompteng/.next/cache
-          key: ${{ runner.os }}-nextjs-proompteng-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('apps/proompteng/**/*.[jt]s?(x)', 'packages/**/*.[jt]s?(x)') }}
+          key: ${{ runner.os }}-nextjs-proompteng-${{ hashFiles('**/bun.lock') }}-${{ hashFiles('apps/proompteng/**/*.[jt]s?(x)', 'packages/**/*.[jt]s?(x)') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-proompteng-${{ hashFiles('**/pnpm-lock.yaml') }}-
-
-      - uses: pnpm/action-setup@v4
+            ${{ runner.os }}-nextjs-proompteng-${{ hashFiles('**/bun.lock') }}-
 
       - uses: actions/setup-node@v6
         with:
           node-version: 24.11.1
-          cache: "pnpm"
 
-      - run: pnpm install --frozen-lockfile
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.3
 
-      - run: pnpm --filter proompteng build
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.3-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.3-
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run --filter proompteng build
 
   bonjour:
     needs: check_changed_files
@@ -103,16 +122,24 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v6
         with:
           node-version: 24.11.1
-          cache: "pnpm"
 
-      - run: pnpm install --frozen-lockfile
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.3
 
-      - run: pnpm --filter @proompteng/bonjour build
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.3-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.3-
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run --filter @proompteng/bonjour build
 
   codex:
     needs: check_changed_files
@@ -129,18 +156,26 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v6
         with:
           node-version: 24.11.1
-          cache: "pnpm"
 
-      - run: pnpm install --frozen-lockfile
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.3
 
-      - run: pnpm --filter @proompteng/discord test
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.3-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.3-
 
-      - run: pnpm --filter @proompteng/discord build
+      - run: bun install --frozen-lockfile
+
+      - run: bun run --filter @proompteng/discord test
+
+      - run: bun run --filter @proompteng/discord build
 
   kitty-krew:
     needs: check_changed_files
@@ -151,7 +186,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.3
 
       - name: Install dependencies
         working-directory: apps/kitty-krew
@@ -180,15 +215,23 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v6
         with:
           node-version: 24.11.1
-          cache: "pnpm"
 
-      - run: pnpm install --frozen-lockfile
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.3
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.3-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.3-
+
+      - run: bun install --frozen-lockfile
         working-directory: apps/reviseur
 
-      - run: pnpm run build
+      - run: bun run build
         working-directory: apps/reviseur

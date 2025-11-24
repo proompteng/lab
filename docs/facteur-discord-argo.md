@@ -60,11 +60,11 @@ The role map controls which Discord roles can invoke specific commands. Schema d
 
 ## Operations scripts
 
-- `pnpm run build:facteur` builds and pushes the multi-arch image via Docker (override registry/tag with `FACTEUR_IMAGE_*`).
-- `pnpm run facteur:reseal` refreshes the `facteur-discord` SealedSecret from 1Password (`op` must be logged in). Kafka credentials are sourced from Strimzi-managed `KafkaUser` secrets instead of SealedSecrets.
-- `pnpm run facteur:deploy` builds a fresh container image, pushes it to the registry, reapplies supporting manifests, and then rolls the Knative Service via `kn service apply`. Override `FACTEUR_IMAGE_TAG`/`FACTEUR_IMAGE_REGISTRY`/`FACTEUR_IMAGE_REPOSITORY` as needed before running.
+- `bun run build:facteur` builds and pushes the multi-arch image via Docker (override registry/tag with `FACTEUR_IMAGE_*`).
+- `bun run facteur:reseal` refreshes the `facteur-discord` SealedSecret from 1Password (`op` must be logged in). Kafka credentials are sourced from Strimzi-managed `KafkaUser` secrets instead of SealedSecrets.
+- `bun run facteur:deploy` builds a fresh container image, pushes it to the registry, reapplies supporting manifests, and then rolls the Knative Service via `kn service apply`. Override `FACTEUR_IMAGE_TAG`/`FACTEUR_IMAGE_REGISTRY`/`FACTEUR_IMAGE_REPOSITORY` as needed before running.
 - `go run ./services/facteur/cmd/facteur migrate` (or `facteur migrate` from a released image) applies database migrations out of band. Use it for manual smoke-tests before rolling a new binary.
-- `pnpm run facteur:consume` runs the local Kafka consumer with `services/facteur/config/example.yaml` (override via `FACTEUR_CONSUMER_CONFIG`).
+- `bun run facteur:consume` runs the local Kafka consumer with `services/facteur/config/example.yaml` (override via `FACTEUR_CONSUMER_CONFIG`).
 
 ### Kafka credentials
 
@@ -112,7 +112,7 @@ feed before deeper integrations are wired up.
 
 ### Protobuf workflow
 
-- The repository is wired to a Buf workspace (`buf.yaml`). Run `buf generate` (or `pnpm proto:generate`) to
+- The repository is wired to a Buf workspace (`buf.yaml`). Run `buf generate` (or `bun run proto:generate`) to
   refresh the Go and TypeScript stubs directly with the locally installed Buf CLI.
 - Go stubs continue to land in `services/facteur/internal/facteurpb` and TypeScript stubs are generated with
   [`protobuf-es`](https://github.com/bufbuild/protobuf-es) for use in `apps/froussard`. Keep dependant services pinned

@@ -685,7 +685,8 @@ export const githubTools = {
         const lockFilePatterns = [
           /package-lock\.json$/,
           /yarn\.lock$/,
-          /pnpm-lock\.yaml$/,
+          /bun\.lockb$/,
+          /bun\.lock$/,
           /Gemfile\.lock$/,
           /Cargo\.lock$/,
           /composer\.lock$/,

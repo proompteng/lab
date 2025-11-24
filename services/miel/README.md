@@ -63,7 +63,7 @@ Enable ledger recording to [TigerBeetle](https://docs.tigerbeetle.com/) by setti
 
 ```bash
 # Install dependencies
-pnpm install  # repo root
+bun install  # repo root
 
 # Tidy the Go module
 cd services/miel

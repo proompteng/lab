@@ -34,7 +34,7 @@ The Altinity ClickHouse Operator implements a Kubernetes-native control plane fo
 1. Initial rollout: keep the ApplicationSet entry at `automation: manual`. Apply a manual sync in a sandbox cluster and observe for 48 hours.
 2. Pre-production checklist:
    - Confirm the `longhorn` storage class (or your chosen override) exists in each target cluster.
-   - Capture validation output for `pnpm run lint:argocd` and `scripts/kubeconform.sh argocd` in the issue.
+   - Capture validation output for `bun run lint:argocd` and `scripts/kubeconform.sh argocd` in the issue.
 3. Enable automation by switching the ApplicationSet entry to `automation: auto` once sign-off is complete.
 4. Operational monitoring: use `argocd app get clickhouse-operator --watch` and `kubectl -n clickhouse-operator get pods` after each chart or values change.
 

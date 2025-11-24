@@ -66,7 +66,7 @@ temporal operator namespace create default
 ### froussard
 
 - Git path: `argocd/applications/froussard`
-- Deploys: manifest bundle rooted at `argocd/applications/froussard` (Argo Workflow sensors, Kafka event sources, Knative service). Use `pnpm run froussard:deploy` (invokes `packages/scripts/src/froussard/deploy-service.ts`) for local rollouts.
+- Deploys: manifest bundle rooted at `argocd/applications/froussard` (Argo Workflow sensors, Kafka event sources, Knative service). Use `bun run froussard:deploy` (invokes `packages/scripts/src/froussard/deploy-service.ts`) for local rollouts.
 - Secrets: `github-secret`, `github-token`, `discord-bot`, `discord-codex-bot`, `kafka-username-secret`. Update via `bun packages/scripts/src/froussard/reseal-secrets.ts`.
 - Notes: Froussard depends on Argo Events (topics under `components/`), so keep the Kafka topics + sensors in sync when updating the service image.
 

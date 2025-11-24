@@ -31,8 +31,8 @@ spec:
                 configMapKeyRef:
                   name: convex-backend-config
                   key: CONVEX_CLOUD_ORIGIN
-            - name: CONVEX_ADMIN_KEY
+            - name: ADMIN_KEY
               valueFrom:
                 secretKeyRef:
                   name: convex-backend-secrets
-                  key: CONVEX_ADMIN_KEY
+                  key: ADMIN_KEY
