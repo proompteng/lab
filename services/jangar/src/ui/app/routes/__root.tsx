@@ -2,7 +2,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
-import { useId } from 'react'
+import { useEffect, useId } from 'react'
 import type { RouterContext } from '../router'
 import '../tailwind.css'
 
@@ -24,10 +24,17 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 function RootDocument() {
   const { queryClient } = Route.useRouteContext()
   const mainId = useId()
+  const criticalStyle = `html,body{background-color:#0f172a;color:#e2e8f0;}html.no-transitions *,html.no-transitions{transition:none!important;}`
+
+  useEffect(() => {
+    const html = document.documentElement
+    html.classList.remove('no-transitions')
+  }, [])
 
   return (
-    <html lang="en" data-theme="dark">
+    <html lang="en" data-theme="dark" className="no-transitions">
       <head>
+        <style>{criticalStyle}</style>
         <HeadContent />
       </head>
       <body className="min-h-screen bg-slate-950 text-slate-50">
