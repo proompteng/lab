@@ -7,5 +7,5 @@ resources:
 
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: e70a0d9f
-    digest: sha256:e6e1a8c7da1a94eacb30e1b37688c90481b487ca29fa78c70973adac46510f4c
+    newTag: cf344297
+    digest: sha256:2dd80ef25350089502c36e426de86d856defb0b9f9b2038a7ff3addfd7b4656e

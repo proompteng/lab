@@ -6,7 +6,6 @@ import { resolve } from 'node:path'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
-import { applyKnativeServiceImage } from '../shared/kn'
 import { buildImage } from './build-image'
 
 type DeployOptions = {
@@ -98,8 +97,6 @@ export const main = async (options: DeployOptions = {}) => {
   )
 
   await run('kubectl', ['apply', '-k', kustomizePath])
-  const imageRef = digest ? `${imageName}@${digest}` : image
-  await applyKnativeServiceImage('jangar', 'jangar', serviceManifest, imageRef)
 }
 
 if (import.meta.main) {

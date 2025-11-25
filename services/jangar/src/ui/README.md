@@ -6,11 +6,11 @@ TanStack Start scaffold for the Jangar operator UI. Routes are currently mock-on
 ## Commands
 
 - `bun run start:dev` (from `services/jangar`) – boots the Start dev server with mock missions at `/` and `/mission/$id`.
-- `bun run start:build` – produces a production build under `services/jangar/start/dist/`.
+- `bun run start:build` – produces a production build under `services/jangar/dist/ui/`.
 
-The follow-up image work (JNG-080c) will package the Start dist output from `start/dist` alongside the server.
+The follow-up image work (JNG-080c) will package the Start dist output from `dist/ui` alongside the server.
 
 ## Notes
 
-- Data is mocked in `start/app/lib/mocks.ts` and mirrored in the UI as loading/error shells.
+- Data is mocked in `src/ui/app/lib/mocks.ts` and mirrored in the UI as loading/error shells.
 - OpenWebUI integration remains TODO(jng-070c); the current layout reserves space for the chat/timeline stream.

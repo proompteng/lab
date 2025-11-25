@@ -1,17 +1,10 @@
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
-import {
-  createRootRouteWithContext,
-  HeadContent,
-  Link,
-  Outlet,
-  Scripts,
-  ScrollRestoration,
-} from '@tanstack/react-router'
+import { createRootRouteWithContext, HeadContent, Link, Outlet, Scripts } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { useId } from 'react'
 import type { RouterContext } from '../router'
-import '../styles.css'
+import '../tailwind.css'
 
 export const Route = createRootRouteWithContext<RouterContext>()({
   head: () => ({
@@ -37,33 +30,15 @@ function RootDocument() {
       <head>
         <HeadContent />
       </head>
-      <body>
-        <a className="skip-link" href={`#${mainId}`}>
+      <body className="min-h-screen bg-slate-950 text-slate-50">
+        <a className="sr-only focus:not-sr-only" href={`#${mainId}`}>
           Skip to content
         </a>
         <QueryClientProvider client={queryClient}>
-          <div className="page-shell">
-            <header className="top-bar">
-              <div className="brand">
-                <span className="brand-dot" aria-hidden="true" />
-                <div>
-                  <p className="brand-title">Jangar</p>
-                  <p className="brand-subtitle">Mission console</p>
-                </div>
-              </div>
-              <nav className="top-links" aria-label="Primary">
-                <Link to="/" className="nav-link" preload="intent">
-                  Missions
-                </Link>
-                <span className="nav-pill">Start</span>
-              </nav>
-            </header>
-            <main id={mainId} className="page-body">
+          <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-4 px-4 py-6">
+            <main id={mainId} className="flex flex-1 flex-col gap-6">
               <Outlet />
             </main>
-            <footer className="page-footer">
-              <p>Mock UI — data updates will arrive via SSE once JNG-070b lands.</p>
-            </footer>
           </div>
           {import.meta.env.DEV ? (
             <>
@@ -72,7 +47,6 @@ function RootDocument() {
             </>
           ) : null}
         </QueryClientProvider>
-        <ScrollRestoration />
         <Scripts />
       </body>
     </html>

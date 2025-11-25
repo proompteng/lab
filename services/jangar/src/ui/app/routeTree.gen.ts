@@ -10,10 +10,16 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/_index'
+import { Route as HealthRouteImport } from './routes/health'
 import { Route as MissionIdRouteImport } from './routes/mission/$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/_index',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HealthRoute = HealthRouteImport.update({
+  id: '/health',
+  path: '/health',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MissionIdRoute = MissionIdRouteImport.update({
@@ -23,26 +29,30 @@ const MissionIdRoute = MissionIdRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
+  '/health': typeof HealthRoute
   '/mission/$id': typeof MissionIdRoute
 }
 export interface FileRoutesByTo {
+  '/health': typeof HealthRoute
   '/mission/$id': typeof MissionIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_index': typeof IndexRoute
+  '/health': typeof HealthRoute
   '/mission/$id': typeof MissionIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/mission/$id'
+  fullPaths: '/health' | '/mission/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/mission/$id'
-  id: '__root__' | '/_index' | '/mission/$id'
+  to: '/health' | '/mission/$id'
+  id: '__root__' | '/_index' | '/health' | '/mission/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  HealthRoute: typeof HealthRoute
   MissionIdRoute: typeof MissionIdRoute
 }
 
@@ -53,6 +63,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: ''
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/health': {
+      id: '/health'
+      path: '/health'
+      fullPath: '/health'
+      preLoaderRoute: typeof HealthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/mission/$id': {
@@ -67,6 +84,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  HealthRoute: HealthRoute,
   MissionIdRoute: MissionIdRoute,
 }
 export const routeTree = rootRouteImport

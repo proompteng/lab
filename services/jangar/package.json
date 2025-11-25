@@ -3,14 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "module": "src/worker.ts",
+  "module": "src/index.ts",
   "scripts": {
-    "start": "bun run src/worker.ts",
+    "start": "bun run src/index.ts",
+    "start:worker": "bun run src/worker.ts",
     "dev": "bun --watch src/worker.ts",
+    "dev:all": "bun run src/index.ts --dev",
     "check": "bunx tsc --noEmit",
     "start:hello": "bun run scripts/start-hello-workflow.ts",
-    "start:dev": "cd start && bunx vite dev --host",
-    "start:build": "cd start && rm -rf dist && bunx vite build && mv .output dist"
+    "start:dev": "cd src/ui && bunx vite dev --host",
+    "start:build": "cd src/ui && rm -rf ../../dist/ui && bunx vite build && mkdir -p ../../dist && mv .output ../../dist/ui"
   },
   "dependencies": {
     "@proompteng/codex": "file:../../packages/codex",
@@ -33,7 +35,10 @@
     "@types/node": "^22.10.2",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
     "@vitejs/plugin-react": "^5.1.1",
+    "tailwindcss": "^3.4.13",
     "typescript": "5.9.3",
     "vite": "^7.2.4"
   }

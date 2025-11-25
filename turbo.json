@@ -12,9 +12,9 @@
       "cache": true
     },
     "start:build": {
-      "outputs": ["services/jangar/start/dist/**"],
+      "outputs": ["dist/ui/**"],
       "inputs": [
-        "services/jangar/start/**",
+        "services/jangar/src/ui/**",
         "services/jangar/package.json",
         "services/jangar/tsconfig.json"
       ]

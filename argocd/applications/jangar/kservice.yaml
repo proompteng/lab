@@ -12,7 +12,7 @@ metadata:
     argocd.argoproj.io/compare-options: IgnoreExtraneous
     argocd.argoproj.io/tracking-id: jangar:serving.knative.dev/Service:jangar/jangar
     networking.knative.dev/visibility: cluster-local
-    deploy.knative.dev/rollout: "2025-11-23T22:44:01.068Z"
+    deploy.knative.dev/rollout: "2025-11-25T03:21:57.131Z"
 spec:
   template:
     metadata:
@@ -41,8 +41,9 @@ spec:
               protocol: TCP
           readinessProbe:
             successThreshold: 1
-            tcpSocket:
-              port: 0
+            httpGet:
+              path: /health
+              port: 8080
           resources:
             requests:
               cpu: 100m
