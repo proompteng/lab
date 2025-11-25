@@ -1,11 +1,24 @@
 import { ConvexHttpClient } from 'convex/browser'
-import type { OrchestrationState, TurnSnapshot, WorkerTaskResult } from '../types/orchestration'
+import type {
+  AppendMessageInput,
+  ChatMessage,
+  ChatSession,
+  CreateWorkOrderInput,
+  WorkOrder,
+  WorkOrderStatus,
+} from '../types/persistence'
 
 export interface DbClient {
-  upsertOrchestration: (state: OrchestrationState) => Promise<void>
-  appendTurn: (orchestrationId: string, snapshot: TurnSnapshot) => Promise<void>
-  appendWorkerResult: (orchestrationId: string, result: WorkerTaskResult) => Promise<void>
-  getState: (orchestrationId: string) => Promise<OrchestrationState | null>
+  createWorkOrder: (input: CreateWorkOrderInput) => Promise<string>
+  updateWorkOrderStatus: (id: string, status: WorkOrderStatus) => Promise<void>
+  updateWorkOrderResult: (id: string, prUrl?: string) => Promise<void>
+  listWorkOrders: (sessionId: string) => Promise<WorkOrder[]>
+  getWorkOrder: (id: string) => Promise<WorkOrder | null>
+  appendMessage: (input: AppendMessageInput) => Promise<string>
+  listMessages: (sessionId: string) => Promise<ChatMessage[]>
+  createSession: (userId: string, title: string) => Promise<string>
+  updateSessionLastMessage: (sessionId: string, at: number) => Promise<void>
+  getSession: (sessionId: string) => Promise<ChatSession | null>
 }
 
 let client: ConvexHttpClient | null = null
@@ -35,8 +48,6 @@ const getClient = () => {
   return client
 }
 
-const toUnixMs = (iso: string) => new Date(iso).getTime()
-
 export const createDbClient = async (): Promise<DbClient> => {
   const convex = getClient()
 
@@ -44,57 +55,57 @@ export const createDbClient = async (): Promise<DbClient> => {
   const query = async <T>(name: string, args: Record<string, unknown>) =>
     (await convex.query(name as never, args as never)) as T
 
-  const upsertOrchestration = async (state: OrchestrationState) => {
-    await mutate('orchestrations:upsert', {
-      state: {
-        ...state,
-        createdAt: toUnixMs(state.createdAt),
-        updatedAt: toUnixMs(state.updatedAt),
-      },
-    })
+  const now = () => Date.now()
+
+  const createSession = async (userId: string, title: string) => {
+    const createdAt = now()
+    return mutate('chat:createSession', { userId, title, createdAt }) as unknown as Promise<string>
   }
 
-  const appendTurn = async (orchestrationId: string, snapshot: TurnSnapshot) => {
-    await mutate('orchestrations:appendTurn', {
-      orchestrationId,
-      snapshot: {
-        ...snapshot,
-        createdAt: toUnixMs(snapshot.createdAt),
-      },
-    })
+  const updateSessionLastMessage = async (sessionId: string, at: number) => {
+    await mutate('chat:updateLastMessage', { sessionId, at })
   }
 
-  const appendWorkerResult = async (orchestrationId: string, result: WorkerTaskResult) => {
-    await mutate('orchestrations:recordWorkerPr', { orchestrationId, result })
+  const getSession = async (sessionId: string) => query<ChatSession | null>('chat:getSession', { sessionId })
+
+  const appendMessage = async (input: AppendMessageInput) => {
+    const createdAt = now()
+    return mutate('chat:appendMessage', { ...input, createdAt }) as unknown as Promise<string>
   }
 
-  const getState = async (orchestrationId: string): Promise<OrchestrationState | null> => {
-    type ConvexTurn = Omit<TurnSnapshot, 'createdAt'> & { createdAt: number }
-    type ConvexState = Omit<OrchestrationState, 'turns' | 'createdAt' | 'updatedAt'> & {
-      turns: ConvexTurn[]
-      createdAt: number
-      updatedAt: number
-    }
+  const listMessages = async (sessionId: string) => query<ChatMessage[]>('chat:listMessages', { sessionId })
 
-    const response = await query<ConvexState | null>('orchestrations:getState', { orchestrationId })
-    if (!response) {
-      return null
-    }
-    return {
-      ...response,
-      turns: response.turns.map((turn) => ({
-        ...turn,
-        createdAt: new Date(turn.createdAt).toISOString(),
-      })),
-      createdAt: new Date(response.createdAt).toISOString(),
-      updatedAt: new Date(response.updatedAt).toISOString(),
-    }
+  const createWorkOrder = async (input: CreateWorkOrderInput) => {
+    const createdAt = now()
+    return mutate('workOrders:create', {
+      ...input,
+      status: input.status ?? 'submitted',
+      createdAt,
+    }) as unknown as Promise<string>
   }
+
+  const updateWorkOrderStatus = async (id: string, status: WorkOrderStatus) => {
+    await mutate('workOrders:updateStatus', { workOrderId: id, status, at: now() })
+  }
+
+  const updateWorkOrderResult = async (id: string, prUrl?: string) => {
+    await mutate('workOrders:updateResult', { workOrderId: id, prUrl, updatedAt: now() })
+  }
+
+  const listWorkOrders = async (sessionId: string) => query<WorkOrder[]>('workOrders:listBySession', { sessionId })
+
+  const getWorkOrder = async (id: string) => query<WorkOrder | null>('workOrders:get', { workOrderId: id })
 
   return {
-    upsertOrchestration,
-    appendTurn,
-    appendWorkerResult,
-    getState,
+    createWorkOrder,
+    updateWorkOrderStatus,
+    updateWorkOrderResult,
+    listWorkOrders,
+    getWorkOrder,
+    appendMessage,
+    listMessages,
+    createSession,
+    updateSessionLastMessage,
+    getSession,
   }
 }

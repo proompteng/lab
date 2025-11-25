@@ -8,7 +8,8 @@
  * @module
  */
 
-import type * as orchestrations from "../orchestrations.js";
+import type * as chat from "../chat.js";
+import type * as work_orders from "../work_orders.js";
 
 import type {
   ApiFromModules,
@@ -17,7 +18,8 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  orchestrations: typeof orchestrations;
+  chat: typeof chat;
+  work_orders: typeof work_orders;
 }>;
 
 /**

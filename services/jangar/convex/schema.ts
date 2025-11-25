@@ -2,31 +2,42 @@ import { defineSchema, defineTable } from 'convex/server'
 import { v } from 'convex/values'
 
 export default defineSchema({
-  orchestrations: defineTable({
-    orchestrationId: v.string(),
-    topic: v.string(),
-    repoUrl: v.optional(v.string()),
-    status: v.string(),
+  chat_sessions: defineTable({
+    userId: v.string(),
+    title: v.string(),
+    lastMessageAt: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index('byOrchestrationId', ['orchestrationId']),
+    deletedAt: v.optional(v.number()),
+  }),
 
-  turns: defineTable({
-    orchestrationId: v.string(),
-    index: v.number(),
-    threadId: v.optional(v.string()),
-    finalResponse: v.string(),
-    items: v.any(),
-    usage: v.optional(v.any()),
+  chat_messages: defineTable({
+    sessionId: v.string(),
+    role: v.string(),
+    content: v.string(),
+    metadata: v.optional(v.any()),
     createdAt: v.number(),
-  }).index('byOrchestrationIdIndex', ['orchestrationId', 'index']),
+    updatedAt: v.number(),
+    deletedAt: v.optional(v.number()),
+  })
+    .index('bySessionCreated', ['sessionId', 'createdAt'])
+    .index('bySessionUpdated', ['sessionId', 'updatedAt']),
 
-  worker_prs: defineTable({
-    orchestrationId: v.string(),
+  work_orders: defineTable({
+    sessionId: v.string(),
+    workflowId: v.string(),
+    githubIssueUrl: v.optional(v.string()),
+    prompt: v.optional(v.string()),
+    title: v.optional(v.string()),
+    status: v.string(),
+    requestedBy: v.optional(v.string()),
+    targetRepo: v.optional(v.string()),
+    targetBranch: v.optional(v.string()),
     prUrl: v.optional(v.string()),
-    branch: v.optional(v.string()),
-    commitSha: v.optional(v.string()),
-    notes: v.optional(v.string()),
     createdAt: v.number(),
-  }).index('byOrchestrationIdCreated', ['orchestrationId', 'createdAt']),
+    updatedAt: v.number(),
+    deletedAt: v.optional(v.number()),
+  })
+    .index('bySessionCreated', ['sessionId', 'createdAt'])
+    .index('byStatusUpdated', ['status', 'updatedAt']),
 })
