@@ -42,12 +42,12 @@ function RootDocument() {
   }, [])
 
   return (
-    <html lang="en" data-theme="dark" className="no-transitions">
+    <html lang="en" data-theme="dark" className="no-transitions" suppressHydrationWarning>
       <head>
         <style>{criticalStyle}</style>
         <HeadContent />
       </head>
-      <body className="min-h-screen bg-slate-950 text-slate-50">
+      <body className="min-h-screen bg-slate-950 text-slate-50" suppressHydrationWarning>
         <a className="sr-only focus:not-sr-only" href={`#${mainId}`}>
           Skip to content
         </a>
