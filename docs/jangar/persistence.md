@@ -31,7 +31,7 @@ Jangar is the control plane UI for Codex background workers. It tracks chat sess
 
 ```mermaid
 erDiagram
-  sessions {
+  chat_sessions {
     string id PK
     string userId
     string title
@@ -39,7 +39,7 @@ erDiagram
     number updatedAt
   }
 
-  threads {
+  messages {
     string id PK
     string sessionId FK
     string role
@@ -106,8 +106,8 @@ erDiagram
     number createdAt
   }
 
-  sessions ||--o{ threads : "messages"
-  sessions ||--o{ work_orders : "work created from chat"
+  chat_sessions ||--o{ messages : "chat history"
+  chat_sessions ||--o{ work_orders : "work created from chat"
   work_orders ||--o{ runs : "Temporal runs"
   runs ||--o{ steps : "activities/checkpoints"
   runs ||--o{ artifacts : "PRs, logs, diffs"
