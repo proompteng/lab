@@ -36,8 +36,7 @@ erDiagram
   work_orders {
     id string PK
     sessionId string FK
-    workflowType string
-    workflowArgs any
+    workflowId string        // Temporal workflow run/workflow id
     githubIssueUrl string
     prompt string
     title string
@@ -85,8 +84,7 @@ erDiagram
 | --- | --- | --- |
 | id | string | PK |
 | sessionId | string | FK chat_sessions.id |
-| workflowType | string | Temporal workflow name |
-| workflowArgs | any | JSON args for workflow start |
+| workflowId | string | Temporal workflow id/run id |
 | githubIssueUrl | string | optional source issue/PR |
 | prompt | string | operator instruction |
 | title | string | human label |
@@ -102,7 +100,11 @@ erDiagram
 ## Functions to implement (Convex)
 - `chatSessions:create`, `chatSessions:list`, `chatSessions:get`, `chatSessions:updateLastMessage`, soft-delete handling
 - `chatMessages:append`, `chatMessages:listBySession`, soft-delete handling
-- `workOrders:create`, `workOrders:updateStatus`, `workOrders:updateResult` (prUrl), `workOrders:listBySession`, `workOrders:get`, soft-delete handling
+- `workOrders:create`
+- `workOrders:updateStatus`
+- `workOrders:updateResult` (prUrl)
+- `workOrders:listBySession`
+- `workOrders:get`
 
 Indexes
 - chat_messages: by `sessionId, createdAt`
