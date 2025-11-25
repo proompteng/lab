@@ -58,58 +58,8 @@ erDiagram
     string title
   }
 
-  runs {
-    string id PK
-    string workflowRequestId FK
-    string temporalWorkflowId
-    string taskQueue
-    string status
-    string workerId
-    string repo
-    string branch
-    string prUrl
-    string commitSha
-    number startedAt
-    number endedAt
-    any    failureReason
-  }
-
-  steps {
-    string id PK
-    string runId FK
-    string name
-    string kind
-    string status
-    number startedAt
-    number endedAt
-    any    payload
-    string logUrl
-  }
-
-  artifacts {
-    string id PK
-    string runId FK
-    string type
-    string url
-    string label
-    number createdAt
-  }
-
-  events {
-    string id PK
-    string runId FK
-    string workflowRequestId FK
-    string type
-    any    data
-    number createdAt
-  }
-
   chat_sessions ||--o{ chat_messages : "chat history"
   chat_sessions ||--o{ workflow_requests : "work created from chat"
-  workflow_requests ||--o{ runs : "Temporal runs"
-  runs ||--o{ steps : "activities/checkpoints"
-  runs ||--o{ artifacts : "PRs, logs, diffs"
-  runs ||--o{ events : "state changes"
 ```
 
 ### Tables (columns → data types)
@@ -143,56 +93,6 @@ erDiagram
 | githubIssueUrl | string |
 | prompt | string |
 | title | string |
-
-**runs**
-| column | type |
-| --- | --- |
-| id | string |
-| workflowRequestId | string (FK workflow_requests.id) |
-| temporalWorkflowId | string |
-| taskQueue | string |
-| status | string (queued | running | succeeded | failed | canceled) |
-| workerId | string |
-| repo | string |
-| branch | string |
-| prUrl | string |
-| commitSha | string |
-| startedAt | number (ms) |
-| endedAt | number (ms) |
-| failureReason | any |
-
-**steps**
-| column | type |
-| --- | --- |
-| id | string |
-| runId | string (FK runs.id) |
-| name | string |
-| kind | string (activity | hook | check) |
-| status | string (pending | running | succeeded | failed) |
-| startedAt | number (ms) |
-| endedAt | number (ms) |
-| payload | any |
-| logUrl | string |
-
-**artifacts**
-| column | type |
-| --- | --- |
-| id | string |
-| runId | string (FK runs.id) |
-| type | string (pr | diff | file | log | screenshot) |
-| url | string |
-| label | string |
-| createdAt | number (ms) |
-
-**events**
-| column | type |
-| --- | --- |
-| id | string |
-| runId | string (FK runs.id) |
-| workflowRequestId | string (FK workflow_requests.id) |
-| type | string (state_change | comment | system) |
-| data | any |
-| createdAt | number (ms) |
 
 ## Deployment
 
