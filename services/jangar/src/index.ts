@@ -6,6 +6,7 @@ import { startUiServer } from './runtime/ui-server'
 
 const serviceRoot = fileURLToPath(new URL('..', import.meta.url))
 const devMode = Bun.argv.includes('--dev') || Bun.env.START_DEV === '1'
+const shouldRunWorker = !(Bun.env.SKIP_WORKER === '1' || Bun.env.SKIP_WORKER?.toLowerCase?.() === 'true')
 
 const onSignal = (cleanup: () => Promise<void>) => {
   const handler = (_signal: string) => {
@@ -40,16 +41,18 @@ const runProd = async () => {
 }
 
 const runDev = async () => {
-  const workerProcess = Bun.spawn({
-    cmd: ['bun', '--watch', join('src', 'worker.ts')],
-    cwd: serviceRoot,
-    stdout: 'inherit',
-    stderr: 'inherit',
-  })
+  const workerProcess = shouldRunWorker
+    ? Bun.spawn({
+        cmd: ['bun', '--watch', join('src', 'worker.ts')],
+        cwd: serviceRoot,
+        stdout: 'inherit',
+        stderr: 'inherit',
+      })
+    : null
 
   const uiProcess = startUiServer({ dev: true })
 
-  const workerExit = workerProcess.exited.then((code) => {
+  const workerExit = workerProcess?.exited.then((code) => {
     if (code !== 0) {
       throw new Error(`Temporal worker (watch) exited with code ${code ?? 'unknown'}`)
     }
@@ -62,11 +65,13 @@ const runDev = async () => {
   })
 
   onSignal(async () => {
-    workerProcess.kill()
+    if (workerProcess) {
+      workerProcess.kill()
+    }
     uiProcess.kill()
   })
 
-  await Promise.race([workerExit, uiExit])
+  await Promise.race([uiExit, workerExit].filter(Boolean) as Promise<unknown>[])
 }
 
 if (devMode) {
