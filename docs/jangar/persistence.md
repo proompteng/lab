@@ -13,41 +13,41 @@ Jangar is the control plane UI for Codex background workers. It stores chat cont
 ```mermaid
 erDiagram
   chat_sessions {
-    id string PK
-    userId string
-    title string
-    lastMessageAt number
-    createdAt number
-    updatedAt number
-    deletedAt number
+    id string not_null
+    userId string not_null
+    title string not_null
+    lastMessageAt number not_null
+    createdAt number not_null
+    updatedAt number not_null
+    deletedAt number nullable
   }
 
   chat_messages {
-    id string PK
-    sessionId string FK
-    role string
-    content string
-    metadata any
-    createdAt number
-    updatedAt number
-    deletedAt number
+    id string not_null
+    sessionId string not_null FK
+    role string not_null
+    content string not_null
+    metadata any nullable
+    createdAt number not_null
+    updatedAt number not_null
+    deletedAt number nullable
   }
 
   work_orders {
-    id string PK
-    sessionId string FK
-    workflowId string
-    githubIssueUrl string
-    prompt string
-    title string
-    status string
-    requestedBy string
-    targetRepo string
-    targetBranch string
-    prUrl string
-    createdAt number
-    updatedAt number
-    deletedAt number
+    id string not_null PK
+    sessionId string not_null FK
+    workflowId string not_null
+    githubIssueUrl string nullable
+    prompt string nullable
+    title string nullable
+    status string not_null
+    requestedBy string nullable
+    targetRepo string nullable
+    targetBranch string nullable
+    prUrl string nullable
+    createdAt number not_null
+    updatedAt number not_null
+    deletedAt number nullable
   }
 
   chat_sessions ||--o{ chat_messages : "chat history"
