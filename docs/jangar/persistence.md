@@ -57,45 +57,45 @@ erDiagram
 ### Column reference
 
 **chat_sessions**
-| column | type | notes |
-| --- | --- | --- |
-| id | string | PK |
-| userId | string | requester |
-| title | string | display title |
-| lastMessageAt | number (ms) | for recency sorting |
-| createdAt | number (ms) | timestamp |
-| updatedAt | number (ms) | timestamp |
-| deletedAt | number (ms) | null when active |
+| column | type | nullable | notes |
+| --- | --- | --- | --- |
+| id | string | no | PK |
+| userId | string | no | requester |
+| title | string | no | display title |
+| lastMessageAt | number (ms) | no | for recency sorting |
+| createdAt | number (ms) | no | timestamp |
+| updatedAt | number (ms) | no | timestamp |
+| deletedAt | number (ms) | yes | null when active |
 
 **chat_messages**
-| column | type | notes |
-| --- | --- | --- |
-| id | string | PK |
-| sessionId | string | FK chat_sessions.id |
-| role | string | user \| assistant \| system |
-| content | string | message text |
-| metadata | any | tool calls, attachments, etc. |
-| createdAt | number (ms) | timestamp |
-| updatedAt | number (ms) | timestamp |
-| deletedAt | number (ms) | null when active |
+| column | type | nullable | notes |
+| --- | --- | --- | --- |
+| id | string | no | PK |
+| sessionId | string | no | FK chat_sessions.id |
+| role | string | no | user \| assistant \| system |
+| content | string | no | message text |
+| metadata | any | yes | tool calls, attachments, etc. |
+| createdAt | number (ms) | no | timestamp |
+| updatedAt | number (ms) | no | timestamp |
+| deletedAt | number (ms) | yes | null when active |
 
 **work_orders**
-| column | type | notes |
-| --- | --- | --- |
-| id | string | PK |
-| sessionId | string | FK chat_sessions.id |
-| workflowId | string | Temporal workflow id/run id |
-| githubIssueUrl | string | optional source issue/PR |
-| prompt | string | operator instruction |
-| title | string | human label |
-| status | string | draft \| submitted \| accepted \| running \| succeeded \| failed \| canceled |
-| requestedBy | string | user id / subject |
-| targetRepo | string | repo URL/path |
-| targetBranch | string | branch to use/create |
-| prUrl | string | resulting PR URL (if produced) |
-| createdAt | number (ms) | timestamp |
-| updatedAt | number (ms) | timestamp |
-| deletedAt | number (ms) | null when active |
+| column | type | nullable | notes |
+| --- | --- | --- | --- |
+| id | string | no | PK |
+| sessionId | string | no | FK chat_sessions.id |
+| workflowId | string | no | Temporal workflow id/run id |
+| githubIssueUrl | string | yes | optional source issue/PR |
+| prompt | string | yes | operator instruction |
+| title | string | yes | human label |
+| status | string | no | draft \| submitted \| accepted \| running \| succeeded \| failed \| canceled |
+| requestedBy | string | yes | user id / subject |
+| targetRepo | string | yes | repo URL/path |
+| targetBranch | string | yes | branch to use/create |
+| prUrl | string | yes | resulting PR URL (if produced) |
+| createdAt | number (ms) | no | timestamp |
+| updatedAt | number (ms) | no | timestamp |
+| deletedAt | number (ms) | yes | null when active |
 
 ## Functions to implement (Convex)
 - `chatSessions:create`, `chatSessions:list`, `chatSessions:get`, `chatSessions:updateLastMessage`, soft-delete handling
