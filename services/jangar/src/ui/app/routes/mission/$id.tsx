@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useId } from 'react'
 import type { ReactNode } from 'react'
+import { useId } from 'react'
+
 import { fetchMissionById } from '../../lib/mocks'
 import { formatClock, formatRelativeTime, formatShortDate } from '../../lib/time'
 import type { MissionDetail as MissionDetailType, TimelineItem } from '../../lib/types'
@@ -169,9 +170,6 @@ function TimelineEntry({ item }: { item: TimelineItem }) {
 }
 
 function MissionDetailSkeleton() {
-  const timelineSkeletons = ['t1', 't2', 't3', 't4']
-  const logSkeletons = ['l1', 'l2', 'l3', 'l4', 'l5']
-
   return (
     <section className="space-y-4" aria-label="Loading mission">
       <div className="h-4 w-40 rounded bg-slate-800" />

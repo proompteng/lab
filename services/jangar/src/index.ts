@@ -1,5 +1,5 @@
-import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { startTemporalWorker } from './runtime/temporal-worker'
 import { startUiServer } from './runtime/ui-server'
@@ -8,7 +8,7 @@ const serviceRoot = fileURLToPath(new URL('..', import.meta.url))
 const devMode = Bun.argv.includes('--dev') || Bun.env.START_DEV === '1'
 
 const onSignal = (cleanup: () => Promise<void>) => {
-  const handler = (signal: string) => {
+  const handler = (_signal: string) => {
     cleanup()
       .catch((error) => {
         console.error('Error while shutting down', error)

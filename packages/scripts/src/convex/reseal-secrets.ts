@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { chmodSync, mkdirSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
+import { chmodSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { ensureCli, fatal, repoRoot } from '../shared/cli'
 

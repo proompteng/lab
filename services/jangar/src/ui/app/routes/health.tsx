@@ -7,9 +7,5 @@ export const Route = createFileRoute('/health')({
 
 function Health() {
   const data = Route.useLoaderData()
-  return (
-    <pre aria-label="health" style={{ fontSize: 14, lineHeight: 1.4 }}>
-      {JSON.stringify(data, null, 2)}
-    </pre>
-  )
+  return <pre className="text-sm leading-6">{JSON.stringify(data, null, 2)}</pre>
 }
