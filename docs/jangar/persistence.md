@@ -1,64 +1,120 @@
-# Jangar persistence (Convex)
+# Jangar persistence (Convex control plane)
 
-Jangar now persists orchestrations, turns, and worker PRs in Convex. The service writes state through Convex server functions and reads via queries; no database migrations or Drizzle remain.
+Jangar is the control plane UI for Codex background workers. It tracks chat sessions, work orders, Temporal runs, step logs, and artifacts in Convex (no Postgres/Drizzle).
 
 ## Environment
-- `CONVEX_URL` or `CONVEX_DEPLOYMENT` (preferred): Convex deployment URL (production).
-- `CONVEX_SELF_HOSTED_URL` or `CONVEX_SITE_ORIGIN` (fallback): self-hosted Convex endpoint (e.g., `https://convex.proompteng.ai/http`).
-- `CONVEX_ADMIN_KEY` or `CONVEX_DEPLOY_KEY` (optional): admin/deploy key; if set, Jangar uses admin auth for server-to-server calls.
-- Local default: if no env is set, Jangar points to `http://127.0.0.1:3210` (Convex dev).
+
+- `CONVEX_URL` or `CONVEX_DEPLOYMENT`: Convex deployment URL for prod.
+- `CONVEX_SELF_HOSTED_URL` / `CONVEX_SITE_ORIGIN`: self-hosted endpoint (e.g., `https://convex.proompteng.ai/http`).
+- `CONVEX_DEPLOY_KEY` or `CONVEX_ADMIN_KEY`: required for deploys and server-to-server calls.
+- Local default: `http://127.0.0.1:3210` when not set.
 
 ## Local workflow
-1. Install deps: `cd services/jangar && bun install`.
-2. Start a Convex dev server in another shell: `cd services/jangar && bunx convex dev` (lists URL/token and stays running).
-3. Run the worker or server as usual (`bun run src/worker.ts` or `bun run src/index.ts --dev`).
 
-- ## Convex schema & functions
-- Schema lives in `services/jangar/convex/schema.ts` with functions under `services/jangar/convex/`.
-- Functions:
-  - `orchestrations:upsert` — create/update orchestration state.
-  - `orchestrations:appendTurn` — append or upsert a turn snapshot.
-  - `orchestrations:recordWorkerPr` — store worker PR metadata.
-  - `orchestrations:getState` — return the orchestration with turns and worker PRs.
+1. `cd services/jangar && bun install`
+2. In another shell: `bunx convex dev` (dev deployment + codegen/watch).
+3. Run UI/worker: `bun run dev:all` (convex + UI + single worker).
 
+## Convex schema & functions
+
+- Schema: `services/jangar/convex/schema.ts`
+- Functions (mutations/queries under `services/jangar/convex/`):
+  - `sessions:create`, `sessions:list`, `sessions:getWithThreads`
+  - `threads:append`
+  - `workOrders:createFromMessage`, `workOrders:listBySession`
+  - `runs:start`, `runs:updateStatus`, `runs:getDashboard`, `runs:getTimeline`
+  - `steps:appendOrUpdate`
+  - `artifacts:add`
+  - `events:append`
 
 ### Data model (Convex)
 
 ```mermaid
 erDiagram
-  orchestrations {
-    string orchestrationId PK
-    string topic
-    string repoUrl
+  sessions {
+    string id PK
+    string userId
+    string title
+    number createdAt
+    number updatedAt
+  }
+
+  threads {
+    string id PK
+    string sessionId FK
+    string role
+    string content
+    any    metadata
+    number createdAt
+  }
+
+  work_orders {
+    string id PK
+    string sessionId FK
+    string triggerMessageId FK
+    string summary
+    string repo
+    string branchHint
     string status
     number createdAt
     number updatedAt
   }
 
-  turns {
-    string orchestrationId FK
-    number index
-    string threadId
-    string finalResponse
-    any    items
-    any    usage
-    number createdAt
-  }
-
-  worker_prs {
-    string orchestrationId FK
-    string prUrl
+  runs {
+    string id PK
+    string workOrderId FK
+    string temporalWorkflowId
+    string taskQueue
+    string status
+    string workerId
+    string repo
     string branch
+    string prUrl
     string commitSha
-    string notes
+    number startedAt
+    number endedAt
+    any    failureReason
+  }
+
+  steps {
+    string id PK
+    string runId FK
+    string name
+    string kind
+    string status
+    number startedAt
+    number endedAt
+    any    payload
+    string logUrl
+  }
+
+  artifacts {
+    string id PK
+    string runId FK
+    string type
+    string url
+    string label
     number createdAt
   }
 
-  orchestrations ||--o{ turns : "has many turns (by orchestrationId)"
-  orchestrations ||--o{ worker_prs : "has many worker PRs (by orchestrationId)"
-```
-## Deployment
-- The Jangar deploy script (`bun packages/scripts/src/jangar/deploy-service.ts`) now runs `convex deploy` for `services/jangar/convex` before applying K8s manifests. It requires `CONVEX_DEPLOYMENT`/`CONVEX_SELF_HOSTED_URL` and `CONVEX_DEPLOY_KEY`/`CONVEX_ADMIN_KEY` in the environment.
-- CI (`.github/workflows/jangar-ci.yml`) deploys Convex on pushes to `main` when Jangar files change.
+  events {
+    string id PK
+    string runId FK
+    string workOrderId FK
+    string type
+    any    data
+    number createdAt
+  }
 
-No SQL migrations are shipped; state is fully managed by Convex.
+  sessions ||--o{ threads : "messages"
+  sessions ||--o{ work_orders : "work created from chat"
+  work_orders ||--o{ runs : "Temporal runs"
+  runs ||--o{ steps : "activities/checkpoints"
+  runs ||--o{ artifacts : "PRs, logs, diffs"
+  runs ||--o{ events : "state changes"
+```
+
+## Deployment
+
+- `bun packages/scripts/src/jangar/deploy-service.ts` runs `convex deploy` before updating the Knative service.
+- Ensure Convex env vars/keys are present in the deploy environment.
