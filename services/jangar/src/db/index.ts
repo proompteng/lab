@@ -1,12 +1,5 @@
-import { readFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { asc, eq } from 'drizzle-orm'
-import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { migrate } from 'drizzle-orm/node-postgres/migrator'
-import { Pool, type PoolConfig } from 'pg'
+import { ConvexHttpClient } from 'convex/browser'
 import type { OrchestrationState, TurnSnapshot, WorkerTaskResult } from '../types/orchestration'
-import { orchestrations, schema, turns, workerPRs } from './schema'
 
 export interface DbClient {
   upsertOrchestration: (state: OrchestrationState) => Promise<void>
@@ -15,165 +8,86 @@ export interface DbClient {
   getState: (orchestrationId: string) => Promise<OrchestrationState | null>
 }
 
-let pool: Pool | null = null
-let db: NodePgDatabase<typeof schema> | null = null
-let migrationsPromise: Promise<void> | null = null
+let client: ConvexHttpClient | null = null
 
-const getEnv = () => ({
-  databaseUrl: Bun.env.DATABASE_URL,
-  sslRootCert: Bun.env.PGSSLROOTCERT,
-})
+const getEnv = () => {
+  const convexUrl =
+    Bun.env.CONVEX_URL ??
+    Bun.env.CONVEX_DEPLOYMENT ??
+    Bun.env.CONVEX_SITE_ORIGIN ??
+    Bun.env.CONVEX_SELF_HOSTED_URL ??
+    'http://127.0.0.1:3210'
 
-const createPool = async () => {
-  if (pool) return pool
+  const adminKey = Bun.env.CONVEX_ADMIN_KEY ?? Bun.env.CONVEX_DEPLOY_KEY
 
-  const { databaseUrl, sslRootCert } = getEnv()
-  if (!databaseUrl) {
-    throw new Error('DATABASE_URL is required to initialize the database client')
-  }
+  const skipUrlCheck = convexUrl.includes('127.0.0.1') || convexUrl.includes('/http') || convexUrl.startsWith('http://')
 
-  const config: PoolConfig = {
-    connectionString: databaseUrl,
-  }
-
-  if (sslRootCert) {
-    const ca = await readFile(sslRootCert, 'utf8').catch((error) => {
-      throw new Error(`Failed to read PGSSLROOTCERT at ${sslRootCert}: ${error.message}`)
-    })
-    config.ssl = { ca, rejectUnauthorized: true }
-  }
-
-  pool = new Pool(config)
-  return pool
+  return { convexUrl, adminKey, skipUrlCheck }
 }
 
-const getDb = async () => {
-  if (db) return db
-  const createdPool = await createPool()
-  db = drizzle(createdPool, { schema })
-  return db
+const getClient = () => {
+  if (client) return client
+  const { convexUrl, adminKey, skipUrlCheck } = getEnv()
+  client = new ConvexHttpClient(convexUrl, { skipConvexDeploymentUrlCheck: skipUrlCheck })
+  if (adminKey) {
+    client.setAuth(adminKey)
+  }
+  return client
 }
 
-export const runMigrations = async () => {
-  if (migrationsPromise) return migrationsPromise
-
-  migrationsPromise = (async () => {
-    const database = await getDb()
-    const migrationsFolder = join(dirname(fileURLToPath(import.meta.url)), '../../drizzle')
-    try {
-      console.info('[db] Running migrations from', migrationsFolder)
-      await migrate(database, { migrationsFolder })
-      console.info('[db] Migrations complete')
-    } catch (error) {
-      console.error('[db] Migration failure', error)
-      throw error
-    }
-  })()
-
-  return migrationsPromise
-}
-
-const toDate = (value: string | Date) => (value instanceof Date ? value : new Date(value))
+const toUnixMs = (iso: string) => new Date(iso).getTime()
 
 export const createDbClient = async (): Promise<DbClient> => {
-  const database = await getDb()
+  const convex = getClient()
+
+  const mutate = (name: string, args: Record<string, unknown>) => convex.mutation(name as never, args as never)
+  const query = async <T>(name: string, args: Record<string, unknown>) =>
+    (await convex.query(name as never, args as never)) as T
 
   const upsertOrchestration = async (state: OrchestrationState) => {
-    await database
-      .insert(orchestrations)
-      .values({
-        id: state.id,
-        topic: state.topic,
-        repoUrl: state.repoUrl ?? null,
-        status: state.status,
-        createdAt: toDate(state.createdAt),
-        updatedAt: toDate(state.updatedAt),
-      })
-      .onConflictDoUpdate({
-        target: orchestrations.id,
-        set: {
-          topic: state.topic,
-          repoUrl: state.repoUrl ?? null,
-          status: state.status,
-          updatedAt: toDate(state.updatedAt),
-        },
-      })
+    await mutate('orchestrations:upsert', {
+      state: {
+        ...state,
+        createdAt: toUnixMs(state.createdAt),
+        updatedAt: toUnixMs(state.updatedAt),
+      },
+    })
   }
 
   const appendTurn = async (orchestrationId: string, snapshot: TurnSnapshot) => {
-    await database
-      .insert(turns)
-      .values({
-        orchestrationId,
-        index: snapshot.index,
-        threadId: snapshot.threadId,
-        finalResponse: snapshot.finalResponse,
-        items: snapshot.items,
-        usage: snapshot.usage,
-        createdAt: toDate(snapshot.createdAt),
-      })
-      .onConflictDoUpdate({
-        target: [turns.orchestrationId, turns.index],
-        set: {
-          threadId: snapshot.threadId,
-          finalResponse: snapshot.finalResponse,
-          items: snapshot.items,
-          usage: snapshot.usage,
-        },
-      })
+    await mutate('orchestrations:appendTurn', {
+      orchestrationId,
+      snapshot: {
+        ...snapshot,
+        createdAt: toUnixMs(snapshot.createdAt),
+      },
+    })
   }
 
   const appendWorkerResult = async (orchestrationId: string, result: WorkerTaskResult) => {
-    await database.insert(workerPRs).values({
-      orchestrationId,
-      prUrl: result.prUrl ?? null,
-      branch: result.branch ?? null,
-      commitSha: result.commitSha ?? null,
-      notes: result.notes ?? null,
-    })
+    await mutate('orchestrations:recordWorkerPr', { orchestrationId, result })
   }
 
   const getState = async (orchestrationId: string): Promise<OrchestrationState | null> => {
-    const orchestration = await database.query.orchestrations.findFirst({
-      where: eq(orchestrations.id, orchestrationId),
-    })
-
-    if (!orchestration) {
-      return null
+    type ConvexTurn = Omit<TurnSnapshot, 'createdAt'> & { createdAt: number }
+    type ConvexState = Omit<OrchestrationState, 'turns' | 'createdAt' | 'updatedAt'> & {
+      turns: ConvexTurn[]
+      createdAt: number
+      updatedAt: number
     }
 
-    const [turnRows, workerRows] = await Promise.all([
-      database.query.turns.findMany({
-        where: eq(turns.orchestrationId, orchestrationId),
-        orderBy: asc(turns.index),
-      }),
-      database.query.workerPRs.findMany({
-        where: eq(workerPRs.orchestrationId, orchestrationId),
-        orderBy: asc(workerPRs.createdAt),
-      }),
-    ])
-
+    const response = await query<ConvexState | null>('orchestrations:getState', { orchestrationId })
+    if (!response) {
+      return null
+    }
     return {
-      id: orchestration.id,
-      topic: orchestration.topic,
-      repoUrl: orchestration.repoUrl ?? undefined,
-      status: orchestration.status,
-      turns: turnRows.map((turn) => ({
-        index: turn.index,
-        threadId: turn.threadId ?? null,
-        finalResponse: turn.finalResponse,
-        items: turn.items,
-        usage: turn.usage,
-        createdAt: turn.createdAt.toISOString(),
+      ...response,
+      turns: response.turns.map((turn) => ({
+        ...turn,
+        createdAt: new Date(turn.createdAt).toISOString(),
       })),
-      workerPRs: workerRows.map((worker) => ({
-        prUrl: worker.prUrl ?? undefined,
-        branch: worker.branch ?? undefined,
-        commitSha: worker.commitSha ?? undefined,
-        notes: worker.notes ?? undefined,
-      })),
-      createdAt: orchestration.createdAt.toISOString(),
-      updatedAt: orchestration.updatedAt.toISOString(),
+      createdAt: new Date(response.createdAt).toISOString(),
+      updatedAt: new Date(response.updatedAt).toISOString(),
     }
   }
 

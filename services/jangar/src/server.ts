@@ -1,5 +1,3 @@
-import { runMigrations } from './db'
-
 const json = (body: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(body, null, 2), {
     headers: { 'content-type': 'application/json' },
@@ -47,9 +45,6 @@ export const startServer = () => {
 
 const main = async () => {
   try {
-    console.info('[server] running database migrations…')
-    await runMigrations()
-    console.info('[server] migrations up to date')
     const server = startServer()
     console.info(`[server] listening on :${server.port}`)
   } catch (error) {

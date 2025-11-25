@@ -7,7 +7,7 @@ Jangar will become a single Bun-based service that provides:
 - A Temporal workflow that runs **one Codex turn per Activity** (auditable, retryable, visible in history).
 - A meta Codex (model `gpt-5.1-max`, `danger-full-access`, network on, approval `never`) that plans and delegates work to worker Codex runs capable of repo changes and PR creation.
 - HTTP + SSE APIs and a TanStack Start UI served from the same process for operators to start missions, chat, and watch execution.
-- Persistence in Postgres for mission snapshots; optional object storage for raw logs.
+- Persistence in Convex (document store with server functions) for mission snapshots; optional object storage for raw logs.
 
 ## Goals
 
@@ -29,7 +29,7 @@ Jangar will become a single Bun-based service that provides:
   - `runWorkerTaskActivity`: clone repo, execute worker Codex, run lint/tests, push branch, open PR.
   - Optional `publishEventActivity` to push deltas to SSE broker.
 - **Toolbelt:** `packages/cx-tools` Bun CLIs (`cx-codex-run`, `cx-workflow-*`, optional `cx-log`) emitting single-line JSON; used by Codex shell calls instead of MCP.
-- **Persistence:** Postgres (CNPG) for orchestration records and per-turn snapshots; optional bucket for raw event logs; OpenWebUI conversations map to orchestration IDs via DB.
+- **Persistence:** Convex for orchestration records and per-turn snapshots (via Convex mutations/queries); optional bucket for raw event logs; OpenWebUI conversations map to orchestration IDs via Convex docs.
 - **Orchestrator UI:** TanStack Start shell plus OpenWebUI front-end pointed at our OpenAI-compatible proxy; exposes a `meta-orchestrator` model that routes into the workflow.
 
 ## Diagrams
@@ -79,27 +79,21 @@ flowchart TD
             W[Temporal Worker]
             CXB[cx-tools dist]
         end
-        POD --> CNPG[(Postgres CNPG)]
         POD --> TF[Temporal Frontend svc]
         POD --> GH[GitHub / gh CLI]
         POD --> TS[Tailscale LB]
         POD --> B[(Optional object store)]
     end
+    KS --> CVX[(Convex cloud\nmanaged)]
 ```
 
 ## Infra Changes (Argo/CD)
 
-- Add `argocd/applications/jangar/postgres-cluster.yaml` (CNPG, 10–30Gi PVC, db/owner `jangar`, `enablePodMonitor: true`).
-- Update `argocd/applications/jangar/kustomization.yaml` to include the cluster.
-- Update `argocd/applications/jangar/kservice.yaml`:
-  - Env: `DATABASE_URL` from secret `jangar-db-app:uri`; `CODEX_API_KEY`; `GITHUB_TOKEN`; optional `CODEX_PATH`, `GH_HOST`, `GH_REPO`.
-  - Mount CA secret `jangar-db-ca` at `/etc/postgres-ca`; set `PGSSLROOTCERT=/etc/postgres-ca/ca.crt`.
+- No in-cluster database. Persist state in Convex; provision a `production` deployment (cloud or self-hosted via ArgoCD `argocd/applications/convex`). Create a service user deploy key with write access.
+- `argocd/applications/jangar/kservice.yaml` updates:
+  - Env: `CONVEX_DEPLOYMENT` (e.g., `https://<deploy-id>.convex.cloud`), `CONVEX_DEPLOY_KEY` (Convex deploy key), `CODEX_API_KEY`, `GITHUB_TOKEN`; optional `CODEX_PATH`, `GH_HOST`, `GH_REPO`.
   - Keep Tailscale LB; containerPort 8080 serves HTTP/API/UI.
-- Add OpenWebUI deployment as a **sidecar container** in the same Knative Service (preferred) or as a separate cluster-local Service if later needed. Configure with:
-  - `OPENAI_API_BASE_URL` pointing to Jangar proxy (`/openai/v1`),
-  - Shared API key secret used by proxy to authenticate UI calls,
-  - Model list containing only `meta-orchestrator` (routes to workflow),
-  - Optional port override if the sidecar should avoid 8080 conflicts.
+- OpenWebUI sidecar remains the same; now backed by Convex for conversation/orchestration persistence instead of Postgres.
 - Optional: bucket creds (MinIO) for log archival; or small Redis for SSE fan-out (otherwise in-process emitter).
 
 ## Component Design (code paths)
@@ -132,13 +126,13 @@ flowchart TD
     - Proxy handler in `services/jangar/src/server.ts` translates `/v1/chat/completions` into Codex app-server JSON-RPC calls (`thread/start`/`turn/start`) and streams deltas back in OpenAI format.
     - Implementation notes:
   - Spawn long-lived `codex app-server` as a child process; perform `initialize` handshake once.
-  - Map OpenWebUI conversation IDs to app-server thread IDs (persist in Postgres).
+  - Map OpenWebUI conversation IDs to app-server thread IDs (persist in Convex).
   - Stream `item/agentMessage/delta` → OpenAI delta chunks; `turn/completed` → final chunk with `finish_reason` and `usage`.
   - Return `/v1/models` stub listing only `meta-orchestrator`.
   - Validate Bearer token against a shared secret; Codex auth remains local (CODEX session/API key).
   - App-server protocol is JSON-RPC 2.0 over stdio (line-delimited JSON); not HTTP. If HTTP is needed, the proxy provides it. Spec: <https://www.jsonrpc.org/specification>.
   - App-server honors per-turn `cwd`, `sandbox_policy`/`sandbox_mode`, `approvalPolicy`, and network toggles—so the proxy can let Codex scan/modify the repo by setting `cwd` to the repo root and `sandbox_mode` to `workspace-write` or `danger-full-access`.
-    - Persist mapping `chat_id ↔ orchestration_id` in Postgres so reloads stay consistent; replay history from DB, not OpenWebUI’s local store.
+    - Persist mapping `chat_id ↔ orchestration_id` in Convex so reloads stay consistent; replay history from Convex, not OpenWebUI’s local store.
 
 4) **Workflow** — `services/jangar/src/workflows/index.ts`
    - `codexOrchestrationWorkflow` input `{topic, repoUrl, constraints?, depth=1, maxTurns=8}`.
@@ -147,29 +141,32 @@ flowchart TD
    - Delegate worker tasks via `runWorkerTaskActivity` when planner requests; feed results into next prompt.
    - Signals: `submitUserMessage`, `abort`. Queries: `getState`.
 
-5) **Persistence layer** — `services/jangar/src/db.ts`
-   - Use Drizzle ORM (Bun/TypeScript) for Postgres access; keep schema migrations alongside app code.
-   - Tables: `orchestrations` (id, topic, repo, status, created_at, updated_at), `turns` (orchestration_id, idx, snapshot JSON, created_at), `worker_prs`.
-   - Activities persist snapshots; HTTP reads snapshots for reload resilience.
+5) **Persistence layer** — Convex functions
+   - Data lives in Convex. Define Convex schema/validators for `orchestrations`, `turns`, `worker_prs`, and `conversations` keyed by orchestration id.
+   - Server functions:
+     - Mutations: `upsertOrchestration`, `appendTurn`, `recordWorkerPr`, `linkConversation`, `setStatus`.
+     - Queries: `getOrchestration`, `listTurns`, `listWorkerPrs`, `getConversationMapping`.
+   - The Bun service calls Convex via the official JS client; Temporal activities write snapshots through Convex mutations.
+   - Keep optional bucket writes for raw logs if needed; Convex holds the authoritative summary state.
 
     ```mermaid
     flowchart LR
       UI["TanStack Start UI\n(services/jangar/src/ui)"] --> API["HTTP/SSE API\nservices/jangar/src/server.ts"]
-      API --> DB[(Postgres)]
+      API --> CVX[(Convex mutations/queries)]
       API --> Temporal["Temporal Workflows\nservices/jangar/src/workflows"]
       Temporal --> Activities["Activities\nservices/jangar/src/activities"]
-      Activities --> DB
+      Activities --> CVX
       Activities -->|optional| Bucket[(Object store)]
       API -. SSE .-> UI
     ```
 
 6) **HTTP + SSE** — `services/jangar/src/server.ts`
-   - `POST /orchestrations` → start workflow, persist record, return id.
-   - `POST /orchestrations/:id/message` → signal.
-   - `POST /orchestrations/:id/abort` → signal abort.
-   - `GET /orchestrations/:id` → DB + workflow query snapshot.
-   - `GET /orchestrations/:id/stream` → SSE emitting deltas on each activity completion (query+DB or emitter).
-   - `/healthz` retained.
+ - `POST /orchestrations` → start workflow, persist record, return id.
+  - `POST /orchestrations/:id/message` → signal.
+  - `POST /orchestrations/:id/abort` → signal abort.
+  - `GET /orchestrations/:id` → Convex + workflow query snapshot.
+  - `GET /orchestrations/:id/stream` → SSE emitting deltas on each activity completion (query+Convex or emitter).
+  - `/healthz` retained.
 
 7) **UI (Orchestrator — TanStack Start + OpenWebUI)** — `services/jangar/src/ui/`
    - Routes: `/` (mission list), `/mission/$id` (chat, plan timeline, activity log, PR card).
@@ -179,12 +176,12 @@ flowchart TD
 8) **Build & Deploy**
    - `packages/scripts/src/jangar/build-image.ts`: bundle `packages/cx-tools/dist`, `services/jangar/dist/ui`, run entry `bun run src/index.ts`.
    - Install Codex CLI inside the image (download official release or pre-bundled binary) so `codex app-server` and `codex exec` are available at runtime.
-   - Kustomize applies Postgres + service + OpenWebUI (cluster-local).
+   - Deploy Convex functions first (`bunx convex deploy --yes` in `services/jangar`), then apply Kustomize for the service + OpenWebUI (cluster-local). Convex may be cloud or the existing self-hosted stack under `argocd/applications/convex`.
 
 ## Data & State
 
 - Temporal history: authoritative per-turn events.
-- Postgres: durable mission/turn snapshots for UI reloads and summaries.
+- Convex: durable mission/turn snapshots and conversation mappings for UI reloads and summaries.
 - Optional bucket: raw event logs/streams (if enabled).
 
 ## Defaults & Guardrails
@@ -197,7 +194,7 @@ flowchart TD
 
 ## Testing Strategy
 
-- Unit: toolbelt CLIs, env builder, git helper, DB layer.
+- Unit: toolbelt CLIs, env builder, git helper, Convex client layer.
 - Integration: Temporal dev; run workflow end-to-end; verify each turn is an Activity and snapshots persist.
 - E2E: sample public repo; worker opens PR; UI shows turn timeline.
 

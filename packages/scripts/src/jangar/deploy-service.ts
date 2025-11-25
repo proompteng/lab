@@ -73,6 +73,19 @@ export const main = async (options: DeployOptions = {}) => {
 
   await buildImage({ registry, repository, tag })
 
+  ensureCli('convex')
+  // Deploy Convex functions for Jangar before rolling the service.
+  await run('bunx', ['convex', 'deploy', '--yes'], {
+    cwd: resolve(repoRoot, 'services/jangar'),
+    env: {
+      CONVEX_DEPLOYMENT: process.env.CONVEX_DEPLOYMENT,
+      CONVEX_SELF_HOSTED_URL: process.env.CONVEX_SELF_HOSTED_URL,
+      CONVEX_SITE_ORIGIN: process.env.CONVEX_SITE_ORIGIN,
+      CONVEX_CLOUD_ORIGIN: process.env.CONVEX_CLOUD_ORIGIN,
+      CONVEX_DEPLOY_KEY: process.env.CONVEX_DEPLOY_KEY ?? process.env.CONVEX_ADMIN_KEY,
+    },
+  })
+
   const repoDigest = inspectImageDigest(image)
   const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
   console.log(`Image digest: ${repoDigest}`)

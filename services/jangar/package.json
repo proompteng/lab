@@ -8,13 +8,14 @@
     "start": "bun run src/index.ts",
     "start:worker": "bun run src/worker.ts",
     "dev": "bun --watch src/worker.ts",
-    "dev:all": "bun run src/index.ts --dev",
+    "dev:app": "bun run src/index.ts --dev",
+    "dev:all": "concurrently -n convex,app,worker -c green,cyan,magenta \"bunx convex dev\" \"bun run dev:app\" \"bun run dev\"",
     "check": "bunx tsc --noEmit",
     "start:hello": "bun run scripts/start-hello-workflow.ts",
     "start:dev": "cd src/ui && bunx vite dev --host",
     "start:build": "cd src/ui && rm -rf ../../dist/ui && bunx vite build && mkdir -p ../../dist && mv .output ../../dist/ui",
-    "db:generate": "bunx drizzle-kit generate --config ./drizzle.config.ts",
-    "db:migrate": "bunx drizzle-kit migrate --config ./drizzle.config.ts"
+    "convex:dev": "bunx convex dev",
+    "convex:deploy": "bunx convex deploy"
   },
   "dependencies": {
     "@proompteng/codex": "file:../../packages/codex",
@@ -31,8 +32,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "vite-tsconfig-paths": "^5.1.4",
-    "drizzle-orm": "^0.44.7",
-    "pg": "^8.16.3"
+    "convex": "^1.29.3"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -46,7 +46,6 @@
     "tailwindcss": "^3.4.13",
     "typescript": "5.9.3",
     "vite": "^7.2.4",
-    "@types/pg": "^8.11.10",
-    "drizzle-kit": "^0.31.7"
+    "concurrently": "^9.1.2"
   }
 }
