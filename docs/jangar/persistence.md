@@ -88,7 +88,6 @@ erDiagram
 | requestedBy | string | user id / subject |
 | targetRepo | string | repo URL/path |
 | targetBranch | string | branch to use/create |
-| commitSha | string | resulting commit SHA (if produced) |
 | prUrl | string | resulting PR URL (if produced) |
 | createdAt | number (ms) | timestamp |
 | updatedAt | number (ms) | timestamp |
