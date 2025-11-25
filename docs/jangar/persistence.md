@@ -1,4 +1,4 @@
-# Jangar persistence (chat + work orders, simple)
+# Jangar persistence
 
 Jangar is the control plane UI for Codex background workers. It stores chat context (sessions + messages) and work orders that launch Temporal workflows—kept simple and denormalized enough to be practical.
 
