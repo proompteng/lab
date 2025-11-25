@@ -1,5 +1,31 @@
 # Reestr Registry Browser - Design
 
+## Implementation Status
+
+### Phase 1: Scaffold & Core (Completed)
+- [x] Initialize TanStack Start application with Bun.
+- [x] Configure `package.json` (React 19, Tailwind 4, TanStack Start latest).
+- [x] Implement `registry.config.ts` and Zod schema validation.
+- [x] Create `gen:reestr` script for OpenAPI client generation.
+- [x] Set up basic routing and Tailwind integration.
+
+### Phase 2: Backend API & Data (Pending)
+- [ ] Implement API routes (`/api/registries`, `/api/registries/:id/...`).
+- [ ] Integrate `openapi-fetch` clients with registry config.
+- [ ] Implement Redis caching layer (with in-memory fallback).
+- [ ] Add structured logging and health checks.
+
+### Phase 3: Frontend UI (Pending)
+- [ ] Registry list dashboard with status indicators.
+- [ ] Repository browser with search and pagination.
+- [ ] Repository detail view (README, tags, metrics).
+- [ ] Tag detail view (Manifest, SBOM).
+
+### Phase 4: Auth & Deployment (Pending)
+- [ ] Integrate Better Auth middleware.
+- [ ] Create Dockerfile and build scripts.
+- [ ] Configure Knative Service and Argo CD manifests.
+
 ## Overview
 Reestr is a new TanStack Start application under `apps/reestr` that lets platform teams register container registry APIs via their OpenAPI schema and browse hosted images much like Docker Hub. The app ingests registry metadata (endpoints, auth, capabilities) from configuration, validates against the OpenAPI spec, and exposes a searchable UI for repositories, tags, manifests, and readme/metadata. It runs as a single Bun/TanStack server, serving SSR/SPA routes and a small API proxy for registry calls.
 

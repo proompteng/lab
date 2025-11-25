@@ -1,0 +1,41 @@
+{
+  "name": "reestr",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vinxi dev",
+    "build": "vinxi build",
+    "start": "vinxi start",
+    "gen:reestr": "bun scripts/gen.ts",
+    "lint": "bunx biome check",
+    "format": "bunx biome format --write"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.90.10",
+    "@tanstack/react-router": "^1.139.3",
+    "@tanstack/start": "^1.120.20",
+    "better-auth": "^1.4.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.544.0",
+    "openapi-fetch": "^0.15.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwind-merge": "^3.0.2",
+    "tailwindcss": "^4.1.17",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.2.4",
+    "@tailwindcss/postcss": "^4.1.17",
+    "@types/node": "^22.13.4",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "openapi-typescript": "^7.10.1",
+    "postcss": "^8.5.2",
+    "typescript": "^5.7.3",
+    "vite": "^7.2.4",
+    "vite-tsconfig-paths": "^5.1.4"
+  }
+}
