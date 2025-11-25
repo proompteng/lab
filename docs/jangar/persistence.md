@@ -19,6 +19,7 @@ erDiagram
     lastMessageAt number
     createdAt number
     updatedAt number
+    deletedAt number
   }
 
   chat_messages {
@@ -29,6 +30,7 @@ erDiagram
     metadata any
     createdAt number
     updatedAt number
+    deletedAt number
   }
 
   work_orders {
@@ -46,6 +48,7 @@ erDiagram
     prUrl string
     createdAt number
     updatedAt number
+    deletedAt number
   }
 
   chat_sessions ||--o{ chat_messages : "chat history"
@@ -63,6 +66,7 @@ erDiagram
 | lastMessageAt | number (ms) | for recency sorting |
 | createdAt | number (ms) | timestamp |
 | updatedAt | number (ms) | timestamp |
+| deletedAt | number (ms) | null when active |
 
 **chat_messages**
 | column | type | notes |
@@ -74,6 +78,7 @@ erDiagram
 | metadata | any | tool calls, attachments, etc. |
 | createdAt | number (ms) | timestamp |
 | updatedAt | number (ms) | timestamp |
+| deletedAt | number (ms) | null when active |
 
 **work_orders**
 | column | type | notes |
@@ -92,19 +97,16 @@ erDiagram
 | prUrl | string | resulting PR URL (if produced) |
 | createdAt | number (ms) | timestamp |
 | updatedAt | number (ms) | timestamp |
+| deletedAt | number (ms) | null when active |
 
 ## Functions to implement (Convex)
-- `chatSessions:create`, `chatSessions:list`, `chatSessions:get`, `chatSessions:updateLastMessage`
-- `chatMessages:append`, `chatMessages:listBySession`
-- `workOrders:create`
-- `workOrders:updateStatus`
-- `workOrders:updateResult` (prUrl)
-- `workOrders:listBySession`
-- `workOrders:get`
+- `chatSessions:create`, `chatSessions:list`, `chatSessions:get`, `chatSessions:updateLastMessage`, soft-delete handling
+- `chatMessages:append`, `chatMessages:listBySession`, soft-delete handling
+- `workOrders:create`, `workOrders:updateStatus`, `workOrders:updateResult` (prUrl), `workOrders:listBySession`, `workOrders:get`, soft-delete handling
 
 Indexes
 - chat_messages: by `sessionId, createdAt`
--, work_orders: by `sessionId, createdAt`; by `status, updatedAt`
+- work_orders: by `sessionId, createdAt`; by `status, updatedAt`
 
 Deployment
 - `bun packages/scripts/src/jangar/deploy-service.ts` runs `convex deploy` before Knative apply; ensure Convex envs/keys are set.
