@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 
 export interface CodexEnvOptions {
-  baseEnv?: Record<string, string>
+  baseEnv?: Record<string, string | undefined>
   workdir?: string
   depth?: number
   toolbeltBinDir?: string
@@ -12,8 +12,8 @@ export const buildCodexEnv = ({
   workdir,
   depth,
   toolbeltBinDir,
-}: CodexEnvOptions): Record<string, string> => {
-  const env: Record<string, string> = { ...process.env, ...baseEnv }
+}: CodexEnvOptions): Record<string, string | undefined> => {
+  const env: Record<string, string | undefined> = { ...process.env, ...baseEnv }
 
   if (toolbeltBinDir) {
     env.PATH = `${toolbeltBinDir}:${env.PATH ?? ''}`

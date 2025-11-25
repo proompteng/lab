@@ -64,7 +64,7 @@ export const MissionCard = ({ mission }: { mission: Mission }) => {
         <p>Snapshot {formatShortDate(mission.updatedAt)}</p>
         <Link
           to="/mission/$id"
-          params={{ id: mission.id }}
+          params={() => ({ id: mission.id })}
           className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-3 py-2 text-slate-50 hover:border-sky-400 hover:text-sky-100"
           preload="intent"
         >

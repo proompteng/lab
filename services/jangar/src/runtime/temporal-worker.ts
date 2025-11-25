@@ -2,6 +2,8 @@ import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk/config'
 import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
 import * as activities from '../activities'
 
+type ActivityHandler = (...args: unknown[]) => unknown | Promise<unknown>
+
 export type TemporalWorkerHandle = {
   runPromise: Promise<void>
   shutdown: () => Promise<void>
@@ -23,8 +25,10 @@ export const startTemporalWorker = async (): Promise<TemporalWorkerHandle> => {
     },
   })
 
+  const activityHandlers = activities as Record<string, ActivityHandler>
+
   const { worker } = await createWorker({
-    activities,
+    activities: activityHandlers,
     workflowsPath: new URL('../workflows/index.ts', import.meta.url).pathname,
     config,
     taskQueue,

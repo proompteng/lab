@@ -22,7 +22,7 @@ function MissionDetailView() {
     <section className="flex flex-col gap-6" aria-labelledby={headingId}>
       <header className="flex items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-400">
-          <Link to="/" className="inline-flex items-center text-sky-300 hover:text-sky-200" preload="intent">
+          <Link to=".." className="inline-flex items-center text-sky-300 hover:text-sky-200" preload="intent">
             ← Back to missions
           </Link>
           <span>Updated {formatRelativeTime(mission.updatedAt)}</span>
@@ -191,7 +191,7 @@ function MissionDetailError({ error }: { error: Error }) {
       <p className="text-lg font-semibold text-rose-100">Mission unavailable</p>
       <p className="text-sm text-rose-200">{error.message}</p>
       <Link
-        to="/"
+        to=".."
         className="inline-flex items-center rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500"
       >
         Back to missions

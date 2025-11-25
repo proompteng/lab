@@ -18,7 +18,7 @@ function MissionList() {
       <header className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-slate-50">Active missions</h1>
         <Link
-          to="/"
+          to="."
           className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-300 focus:ring-offset-1 focus:ring-offset-slate-900"
           aria-label="Create mission"
           preload="intent"

@@ -1,5 +1,8 @@
-import { defineConfig } from '@tanstack/react-start/config'
-
-export default defineConfig({
+const config = {
   srcDir: './app',
-})
+  server: {
+    preset: 'bun',
+  },
+}
+
+export default config
