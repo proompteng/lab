@@ -1,7 +1,5 @@
 # Jangar persistence
 
-Jangar is the control plane UI for Codex background workers. It stores chat context (sessions + messages) and work orders that launch Temporal workflows—kept simple and denormalized enough to be practical.
-
 ## Environment
 
 - `CONVEX_URL` / `CONVEX_DEPLOYMENT`
@@ -14,41 +12,41 @@ Jangar is the control plane UI for Codex background workers. It stores chat cont
 ```mermaid
 erDiagram
   chat_sessions {
-    id string PK
-    userId string NN
-    title string NN
-    lastMessageAt number NN
-    createdAt number NN
-    updatedAt number NN
-    deletedAt number NULL
+    string id
+    string userId
+    string title
+    number lastMessageAt
+    number createdAt
+    number updatedAt
+    number deletedAt
   }
 
   chat_messages {
-    id string PK
-    sessionId string FK NN
-    role string NN
-    content string NN
-    metadata any NULL
-    createdAt number NN
-    updatedAt number NN
-    deletedAt number NULL
+    string id
+    string sessionId
+    string role
+    string content
+    any metadata
+    number createdAt
+    number updatedAt
+    number deletedAt
   }
 
   work_orders {
-    id string PK
-    sessionId string FK NN
-    workflowId string NN
-    githubIssueUrl string NULL
-    prompt string NULL
-    title string NULL
-    status string NN
-    requestedBy string NULL
-    targetRepo string NULL
-    targetBranch string NULL
-    prUrl string NULL
-    createdAt number NN
-    updatedAt number NN
-    deletedAt number NULL
+    string id
+    string sessionId
+    string workflowId
+    string githubIssueUrl
+    string prompt
+    string title
+    string status
+    string requestedBy
+    string targetRepo
+    string targetBranch
+    string prUrl
+    number createdAt
+    number updatedAt
+    number deletedAt
   }
 
   chat_sessions ||--o{ chat_messages : "chat history"
