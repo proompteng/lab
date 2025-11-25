@@ -5,6 +5,7 @@ import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { useEffect, useId } from 'react'
 import type { RouterContext } from '../router'
 import '../tailwind.css'
+import tailwindHref from '../tailwind.css?url'
 
 export const Route = createRootRouteWithContext<RouterContext>()({
   head: () => ({
@@ -18,6 +19,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       { title: 'Jangar mission console' },
     ],
   }),
+  links: () => [{ rel: 'stylesheet', href: tailwindHref }],
   component: RootDocument,
 })
 
