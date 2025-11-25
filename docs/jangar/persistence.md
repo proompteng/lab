@@ -1,6 +1,6 @@
 # Jangar persistence (Convex control plane)
 
-Jangar is the control plane UI for Codex background workers. It tracks chat sessions, work orders, Temporal runs, step logs, and artifacts in Convex (no Postgres/Drizzle).
+Jangar is the control plane UI for Codex background workers. It tracks chat sessions, workflow requests, Temporal runs, step logs, and artifacts in Convex (no Postgres/Drizzle).
 
 ## Environment
 
@@ -48,7 +48,7 @@ erDiagram
     number createdAt
   }
 
-  work_orders {
+  workflow_requests {
     string id PK
     string sessionId FK
     string triggerMessageId FK
@@ -62,7 +62,7 @@ erDiagram
 
   runs {
     string id PK
-    string workOrderId FK
+    string workflowRequestId FK
     string temporalWorkflowId
     string taskQueue
     string status
@@ -107,12 +107,96 @@ erDiagram
   }
 
   chat_sessions ||--o{ messages : "chat history"
-  chat_sessions ||--o{ work_orders : "work created from chat"
-  work_orders ||--o{ runs : "Temporal runs"
+  chat_sessions ||--o{ workflow_requests : "work created from chat"
+  workflow_requests ||--o{ runs : "Temporal runs"
   runs ||--o{ steps : "activities/checkpoints"
   runs ||--o{ artifacts : "PRs, logs, diffs"
   runs ||--o{ events : "state changes"
 ```
+
+### Tables (columns → data types)
+
+**chat_sessions**
+| column | type |
+| --- | --- |
+| id | string |
+| userId | string |
+| title | string |
+| createdAt | number (ms) |
+| updatedAt | number (ms) |
+
+**messages**
+| column | type |
+| --- | --- |
+| id | string |
+| sessionId | string (FK chat_sessions.id) |
+| role | string (user | assistant | system) |
+| content | string |
+| metadata | any |
+| createdAt | number (ms) |
+
+**workflow_requests**
+| column | type |
+| --- | --- |
+| id | string |
+| sessionId | string (FK chat_sessions.id) |
+| triggerMessageId | string (FK messages.id) |
+| summary | string |
+| repo | string |
+| branchHint | string |
+| status | string (queued | running | succeeded | failed | canceled) |
+| createdAt | number (ms) |
+| updatedAt | number (ms) |
+
+**runs**
+| column | type |
+| --- | --- |
+| id | string |
+| workflowRequestId | string (FK workflow_requests.id) |
+| temporalWorkflowId | string |
+| taskQueue | string |
+| status | string (queued | running | succeeded | failed | canceled) |
+| workerId | string |
+| repo | string |
+| branch | string |
+| prUrl | string |
+| commitSha | string |
+| startedAt | number (ms) |
+| endedAt | number (ms) |
+| failureReason | any |
+
+**steps**
+| column | type |
+| --- | --- |
+| id | string |
+| runId | string (FK runs.id) |
+| name | string |
+| kind | string (activity | hook | check) |
+| status | string (pending | running | succeeded | failed) |
+| startedAt | number (ms) |
+| endedAt | number (ms) |
+| payload | any |
+| logUrl | string |
+
+**artifacts**
+| column | type |
+| --- | --- |
+| id | string |
+| runId | string (FK runs.id) |
+| type | string (pr | diff | file | log | screenshot) |
+| url | string |
+| label | string |
+| createdAt | number (ms) |
+
+**events**
+| column | type |
+| --- | --- |
+| id | string |
+| runId | string (FK runs.id) |
+| workflowRequestId | string (FK workflow_requests.id) |
+| type | string (state_change | comment | system) |
+| data | any |
+| createdAt | number (ms) |
 
 ## Deployment
 
