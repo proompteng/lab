@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
@@ -14,9 +15,85 @@ type DeployOptions = {
   tag?: string
   kustomizePath?: string
   serviceManifest?: string
+  convexNamespace?: string
+  convexConfigMap?: string
+  convexSecret?: string
 }
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const capture = async (cmd: string[]): Promise<string> => {
+  const subprocess = Bun.spawn(cmd, {
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+
+  subprocess.stdin?.end()
+
+  const [exitCode, stdout, stderr] = await Promise.all([
+    subprocess.exited,
+    new Response(subprocess.stdout).text(),
+    new Response(subprocess.stderr).text(),
+  ])
+
+  if (exitCode !== 0) {
+    fatal(`Command failed (${exitCode}): ${cmd.join(' ')}`, stderr)
+  }
+
+  return stdout.trim()
+}
+
+const readConvexEnvFromCluster = async (
+  namespace: string,
+  configMapName: string,
+  secretName: string,
+): Promise<{
+  siteOrigin?: string
+  cloudOrigin?: string
+  adminKey?: string
+}> => {
+  const siteOrigin = await capture([
+    'kubectl',
+    '-n',
+    namespace,
+    'get',
+    'configmap',
+    configMapName,
+    '-o',
+    'jsonpath={.data.CONVEX_SITE_ORIGIN}',
+  ])
+
+  const cloudOrigin = await capture([
+    'kubectl',
+    '-n',
+    namespace,
+    'get',
+    'configmap',
+    configMapName,
+    '-o',
+    'jsonpath={.data.CONVEX_CLOUD_ORIGIN}',
+  ])
+
+  const adminKeyBase64 = await capture([
+    'kubectl',
+    '-n',
+    namespace,
+    'get',
+    'secret',
+    secretName,
+    '-o',
+    'jsonpath={.data.ADMIN_KEY}',
+  ])
+
+  const adminKey = adminKeyBase64 ? Buffer.from(adminKeyBase64, 'base64').toString('utf8') : undefined
+
+  return {
+    siteOrigin: siteOrigin || undefined,
+    cloudOrigin: cloudOrigin || undefined,
+    adminKey: adminKey || undefined,
+  }
+}
 
 const updateManifests = (
   kustomizePath: string,
@@ -61,6 +138,31 @@ const updateManifests = (
   }
 }
 
+const buildEnv = (env?: Record<string, string | undefined>) =>
+  Object.fromEntries(
+    Object.entries(env ? { ...process.env, ...env } : process.env).filter(([, value]) => value !== undefined),
+  ) as Record<string, string>
+
+const runConvexDeploy = async (env: Record<string, string | undefined>, envFile?: string) => {
+  const args = ['convex', 'deploy', '--yes']
+  if (envFile) {
+    args.push('--env-file', envFile)
+  }
+
+  console.log(`$ bunx ${args.join(' ')}`.trim())
+  const subprocess = Bun.spawn(['bunx', ...args], {
+    cwd: resolve(repoRoot, 'services/jangar'),
+    env: buildEnv(env),
+    stdout: 'inherit',
+    stderr: 'inherit',
+  })
+
+  const exitCode = await subprocess.exited
+  if (exitCode !== 0) {
+    fatal(`Command failed (${exitCode}): bunx ${args.join(' ')}`)
+  }
+}
+
 export const main = async (options: DeployOptions = {}) => {
   ensureCli('kubectl')
 
@@ -72,6 +174,74 @@ export const main = async (options: DeployOptions = {}) => {
   const image = `${registry}/${repository}:${tag}`
 
   await buildImage({ registry, repository, tag })
+
+  ensureCli('convex')
+  const convexNamespace = options.convexNamespace ?? process.env.CONVEX_NAMESPACE ?? 'convex'
+  const convexConfigMap = options.convexConfigMap ?? process.env.CONVEX_CONFIGMAP ?? 'convex-backend-config'
+  const convexSecret = options.convexSecret ?? process.env.CONVEX_SECRET ?? 'convex-backend-secrets'
+
+  const clusterConvexEnv = await readConvexEnvFromCluster(convexNamespace, convexConfigMap, convexSecret)
+
+  const convexUrlFromCluster =
+    clusterConvexEnv.cloudOrigin ?? clusterConvexEnv.siteOrigin?.replace(/\/?http$/, '') ?? clusterConvexEnv.siteOrigin
+
+  const adminKeyFromCluster = clusterConvexEnv.adminKey
+  const deployKeyFromEnv = process.env.CONVEX_DEPLOY_KEY
+
+  const convexEnv = {
+    CONVEX_SITE_ORIGIN: clusterConvexEnv.siteOrigin ?? process.env.CONVEX_SITE_ORIGIN,
+    CONVEX_CLOUD_ORIGIN: clusterConvexEnv.cloudOrigin ?? process.env.CONVEX_CLOUD_ORIGIN,
+    CONVEX_SELF_HOSTED_URL: process.env.CONVEX_SELF_HOSTED_URL ?? convexUrlFromCluster,
+    CONVEX_URL: process.env.CONVEX_URL ?? convexUrlFromCluster,
+    CONVEX_ADMIN_KEY: process.env.CONVEX_ADMIN_KEY ?? adminKeyFromCluster,
+    CONVEX_SELF_HOSTED_ADMIN_KEY:
+      process.env.CONVEX_SELF_HOSTED_ADMIN_KEY ?? process.env.CONVEX_ADMIN_KEY ?? adminKeyFromCluster,
+    CONVEX_DEPLOY_KEY: deployKeyFromEnv,
+    CONVEX_DEPLOYMENT: process.env.CONVEX_DEPLOYMENT,
+  }
+
+  const useSelfHosted = Boolean(convexEnv.CONVEX_SELF_HOSTED_URL && convexEnv.CONVEX_SELF_HOSTED_ADMIN_KEY)
+  if (useSelfHosted || convexEnv.CONVEX_SELF_HOSTED_URL) {
+    convexEnv.CONVEX_DEPLOYMENT = undefined
+    convexEnv.CONVEX_DEPLOY_KEY = undefined
+  }
+
+  if (!convexEnv.CONVEX_SELF_HOSTED_ADMIN_KEY && !convexEnv.CONVEX_DEPLOY_KEY) {
+    fatal(
+      'Missing Convex admin/deploy key; ensure convex-backend-secrets exists or set CONVEX_SELF_HOSTED_ADMIN_KEY/CONVEX_DEPLOY_KEY',
+    )
+  }
+
+  if (!convexEnv.CONVEX_SITE_ORIGIN && !convexEnv.CONVEX_SELF_HOSTED_URL && !convexEnv.CONVEX_URL) {
+    fatal(
+      'Missing Convex endpoint; ensure convex-backend-config exists or set CONVEX_SELF_HOSTED_URL/CONVEX_SITE_ORIGIN',
+    )
+  }
+
+  console.log(
+    `Using Convex endpoint ${convexEnv.CONVEX_SELF_HOSTED_URL ?? convexEnv.CONVEX_SITE_ORIGIN} from namespace ${convexNamespace}`,
+  )
+
+  let convexEnvFile: string | undefined
+  if (useSelfHosted) {
+    const tmpDir = mkdtempSync(`${tmpdir()}/jangar-convex-`)
+    convexEnvFile = resolve(tmpDir, 'convex.env')
+    const lines = [
+      `CONVEX_SELF_HOSTED_URL=${convexEnv.CONVEX_SELF_HOSTED_URL ?? ''}`,
+      `CONVEX_SELF_HOSTED_ADMIN_KEY=${convexEnv.CONVEX_SELF_HOSTED_ADMIN_KEY ?? ''}`,
+    ]
+    if (convexEnv.CONVEX_SITE_ORIGIN) lines.push(`CONVEX_SITE_ORIGIN=${convexEnv.CONVEX_SITE_ORIGIN}`)
+    if (convexEnv.CONVEX_CLOUD_ORIGIN) lines.push(`CONVEX_CLOUD_ORIGIN=${convexEnv.CONVEX_CLOUD_ORIGIN}`)
+    writeFileSync(convexEnvFile, `${lines.join('\n')}\n`, { mode: 0o600 })
+
+    try {
+      await runConvexDeploy(convexEnv, convexEnvFile)
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  } else {
+    await runConvexDeploy(convexEnv)
+  }
 
   const repoDigest = inspectImageDigest(image)
   const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
@@ -103,4 +273,4 @@ if (import.meta.main) {
   main().catch((error) => fatal('Failed to build and deploy jangar', error))
 }
 
-export const __private = { execGit, updateManifests }
+export const __private = { capture, execGit, readConvexEnvFromCluster, updateManifests }

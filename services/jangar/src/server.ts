@@ -43,5 +43,15 @@ export const startServer = () => {
   })
 }
 
+const main = async () => {
+  try {
+    const server = startServer()
+    console.info(`[server] listening on :${server.port}`)
+  } catch (error) {
+    console.error('[server] failed to start', error)
+    process.exit(1)
+  }
+}
+
 // Start immediately when executed as entrypoint
-startServer()
+void main()

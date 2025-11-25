@@ -4,7 +4,7 @@ import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from '@tanst
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { useId } from 'react'
 import type { RouterContext } from '../router'
-import '../tailwind.css'
+import tailwindHref from '../tailwind.css?url'
 
 export const Route = createRootRouteWithContext<RouterContext>()({
   head: () => ({
@@ -17,6 +17,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       { name: 'theme-color', content: '#0f172a' },
       { title: 'Jangar mission console' },
     ],
+    links: [{ rel: 'stylesheet', href: tailwindHref }],
   }),
   component: RootDocument,
 })
@@ -26,11 +27,11 @@ function RootDocument() {
   const mainId = useId()
 
   return (
-    <html lang="en" data-theme="dark">
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
-      <body className="min-h-screen bg-slate-950 text-slate-50">
+      <body className="min-h-screen bg-slate-950 text-slate-50" suppressHydrationWarning>
         <a className="sr-only focus:not-sr-only" href={`#${mainId}`}>
           Skip to content
         </a>

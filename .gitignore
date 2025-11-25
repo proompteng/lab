@@ -41,6 +41,7 @@ kubeconfig
 **/generated/*
 **/_generated/
 !packages/backend/convex/_generated/
+!services/jangar/convex/_generated/
 argocd/applications/*/charts/
 
 **/temporal/lib
