@@ -51,13 +51,6 @@ erDiagram
   workflow_requests {
     string id PK
     string sessionId FK
-    string triggerMessageId FK
-    string summary
-    string repo
-    string branchHint
-    string status
-    number createdAt
-    number updatedAt
   }
 
   runs {
@@ -100,7 +93,7 @@ erDiagram
   events {
     string id PK
     string runId FK
-    string workOrderId FK
+    string workflowRequestId FK
     string type
     any    data
     number createdAt
@@ -140,13 +133,6 @@ erDiagram
 | --- | --- |
 | id | string |
 | sessionId | string (FK chat_sessions.id) |
-| triggerMessageId | string (FK messages.id) |
-| summary | string |
-| repo | string |
-| branchHint | string |
-| status | string (queued | running | succeeded | failed | canceled) |
-| createdAt | number (ms) |
-| updatedAt | number (ms) |
 
 **runs**
 | column | type |
