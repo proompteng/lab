@@ -39,7 +39,7 @@ erDiagram
     number updatedAt
   }
 
-  messages {
+  chat_messages {
     string id PK
     string sessionId FK
     string role
@@ -106,7 +106,7 @@ erDiagram
     number createdAt
   }
 
-  chat_sessions ||--o{ messages : "chat history"
+  chat_sessions ||--o{ chat_messages : "chat history"
   chat_sessions ||--o{ workflow_requests : "work created from chat"
   workflow_requests ||--o{ runs : "Temporal runs"
   runs ||--o{ steps : "activities/checkpoints"
@@ -125,7 +125,7 @@ erDiagram
 | createdAt | number (ms) |
 | updatedAt | number (ms) |
 
-**messages**
+**chat_messages**
 | column | type |
 | --- | --- |
 | id | string |
