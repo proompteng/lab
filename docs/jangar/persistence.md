@@ -3,6 +3,7 @@
 Jangar is the control plane UI for Codex background workers. It stores chat context (sessions + messages) and work orders that launch Temporal workflows—kept simple and denormalized enough to be practical.
 
 ## Environment
+
 - `CONVEX_URL` / `CONVEX_DEPLOYMENT`
 - `CONVEX_SELF_HOSTED_URL` / `CONVEX_SITE_ORIGIN`
 - `CONVEX_DEPLOY_KEY` or `CONVEX_ADMIN_KEY`
@@ -13,41 +14,41 @@ Jangar is the control plane UI for Codex background workers. It stores chat cont
 ```mermaid
 erDiagram
   chat_sessions {
-    id string_notnull
-    userId string_notnull
-    title string_notnull
-    lastMessageAt number_notnull
-    createdAt number_notnull
-    updatedAt number_notnull
-    deletedAt number_nullable
+    id string PK
+    userId string NN
+    title string NN
+    lastMessageAt number NN
+    createdAt number NN
+    updatedAt number NN
+    deletedAt number NULL
   }
 
   chat_messages {
-    id string_notnull
-    sessionId string_notnull FK
-    role string_notnull
-    content string_notnull
-    metadata any_nullable
-    createdAt number_notnull
-    updatedAt number_notnull
-    deletedAt number_nullable
+    id string PK
+    sessionId string FK NN
+    role string NN
+    content string NN
+    metadata any NULL
+    createdAt number NN
+    updatedAt number NN
+    deletedAt number NULL
   }
 
   work_orders {
-    id string_notnull PK
-    sessionId string_notnull FK
-    workflowId string_notnull
-    githubIssueUrl string_nullable
-    prompt string_nullable
-    title string_nullable
-    status string_notnull
-    requestedBy string_nullable
-    targetRepo string_nullable
-    targetBranch string_nullable
-    prUrl string_nullable
-    createdAt number_notnull
-    updatedAt number_notnull
-    deletedAt number_nullable
+    id string PK
+    sessionId string FK NN
+    workflowId string NN
+    githubIssueUrl string NULL
+    prompt string NULL
+    title string NULL
+    status string NN
+    requestedBy string NULL
+    targetRepo string NULL
+    targetBranch string NULL
+    prUrl string NULL
+    createdAt number NN
+    updatedAt number NN
+    deletedAt number NULL
   }
 
   chat_sessions ||--o{ chat_messages : "chat history"
@@ -57,6 +58,7 @@ erDiagram
 ### Column reference
 
 **chat_sessions**
+
 | column | type | nullable | notes |
 | --- | --- | --- | --- |
 | id | string | no | PK |
@@ -68,6 +70,7 @@ erDiagram
 | deletedAt | number (ms) | yes | null when active |
 
 **chat_messages**
+
 | column | type | nullable | notes |
 | --- | --- | --- | --- |
 | id | string | no | PK |
@@ -80,6 +83,7 @@ erDiagram
 | deletedAt | number (ms) | yes | null when active |
 
 **work_orders**
+
 | column | type | nullable | notes |
 | --- | --- | --- | --- |
 | id | string | no | PK |
@@ -98,6 +102,7 @@ erDiagram
 | deletedAt | number (ms) | yes | null when active |
 
 ## Functions to implement (Convex)
+
 - `chatSessions:create`, `chatSessions:list`, `chatSessions:get`, `chatSessions:updateLastMessage`, soft-delete handling
 - `chatMessages:append`, `chatMessages:listBySession`, soft-delete handling
 - `workOrders:create`
@@ -107,8 +112,10 @@ erDiagram
 - `workOrders:get`
 
 Indexes
+
 - chat_messages: by `sessionId, createdAt`
 - work_orders: by `sessionId, createdAt`; by `status, updatedAt`
 
 Deployment
+
 - `bun packages/scripts/src/jangar/deploy-service.ts` runs `convex deploy` before Knative apply; ensure Convex envs/keys are set.
