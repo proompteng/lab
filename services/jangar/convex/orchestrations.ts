@@ -27,8 +27,6 @@ type WorkerDoc = {
   notes?: string
 }
 
-type IndexQuery = { eq: (field: string, value: unknown) => IndexQuery }
-
 const orchestrationArgs = {
   id: v.string(),
   topic: v.string(),
@@ -59,7 +57,7 @@ export const upsert = mutation({
   handler: async (ctx: MutationCtx, { state }: { state: OrchestrationDoc }) => {
     const existing = await ctx.db
       .query('orchestrations')
-      .withIndex('byOrchestrationId', (q: IndexQuery) => q.eq('orchestrationId', state.id))
+      .withIndex('byOrchestrationId', (q) => q.eq('orchestrationId', state.id))
       .unique()
 
     if (existing) {
@@ -88,9 +86,7 @@ export const appendTurn = mutation({
   handler: async (ctx: MutationCtx, { orchestrationId, snapshot }: { orchestrationId: string; snapshot: TurnDoc }) => {
     const existing = await ctx.db
       .query('turns')
-      .withIndex('byOrchestrationIdIndex', (q: IndexQuery) =>
-        q.eq('orchestrationId', orchestrationId).eq('index', snapshot.index),
-      )
+      .withIndex('byOrchestrationIdIndex', (q) => q.eq('orchestrationId', orchestrationId).eq('index', snapshot.index))
       .unique()
 
     if (existing) {
@@ -134,20 +130,20 @@ export const getState = query({
   handler: async (ctx: QueryCtx, { orchestrationId }: { orchestrationId: string }) => {
     const orchestration = await ctx.db
       .query('orchestrations')
-      .withIndex('byOrchestrationId', (q: IndexQuery) => q.eq('orchestrationId', orchestrationId))
+      .withIndex('byOrchestrationId', (q) => q.eq('orchestrationId', orchestrationId))
       .unique()
 
     if (!orchestration) return null
 
     const turns = await ctx.db
       .query('turns')
-      .withIndex('byOrchestrationIdIndex', (q: IndexQuery) => q.eq('orchestrationId', orchestrationId))
+      .withIndex('byOrchestrationIdIndex', (q) => q.eq('orchestrationId', orchestrationId))
       .order('asc')
       .collect()
 
     const workerPrs = await ctx.db
       .query('worker_prs')
-      .withIndex('byOrchestrationIdCreated', (q: IndexQuery) => q.eq('orchestrationId', orchestrationId))
+      .withIndex('byOrchestrationIdCreated', (q) => q.eq('orchestrationId', orchestrationId))
       .order('asc')
       .collect()
 

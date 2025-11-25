@@ -2,7 +2,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
-import { useEffect, useId } from 'react'
+import { useId } from 'react'
 import type { RouterContext } from '../router'
 import tailwindHref from '../tailwind.css?url'
 
@@ -17,30 +17,18 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       { name: 'theme-color', content: '#0f172a' },
       { title: 'Jangar mission console' },
     ],
+    links: [{ rel: 'stylesheet', href: tailwindHref }],
   }),
-  links: () => [{ rel: 'stylesheet', href: tailwindHref }],
   component: RootDocument,
 })
 
 function RootDocument() {
   const { queryClient } = Route.useRouteContext()
   const mainId = useId()
-  const criticalStyle = `
-    *,*::before,*::after{box-sizing:border-box;}
-    html,body{background-color:#0f172a;color:#e2e8f0;margin:0;padding:0;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased;}
-    a{text-decoration:none;color:inherit;}
-    html.no-transitions *,html.no-transitions{transition:none!important;}
-  `
-
-  useEffect(() => {
-    const html = document.documentElement
-    html.classList.remove('no-transitions')
-  }, [])
 
   return (
-    <html lang="en" data-theme="dark" className="no-transitions" suppressHydrationWarning>
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
-        <style>{criticalStyle}</style>
         <HeadContent />
       </head>
       <body className="min-h-screen bg-slate-950 text-slate-50" suppressHydrationWarning>
