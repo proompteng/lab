@@ -10,6 +10,14 @@
     "dev": {
       "persistent": true,
       "cache": true
+    },
+    "start:build": {
+      "outputs": ["dist/ui/**"],
+      "inputs": ["services/jangar/src/ui/**", "services/jangar/package.json", "services/jangar/tsconfig.json"]
+    },
+    "start:dev": {
+      "persistent": true,
+      "cache": false
     }
   }
 }

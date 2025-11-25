@@ -22,6 +22,7 @@
       "!**/coverage",
       "!**/bun.lockb",
       "!**/bun.lock",
+      "!**/routeTree.gen.ts",
       "!**/src/app/routeTree.gen.ts",
       "!apps/proompteng/src/components/ui",
       "!schemas",

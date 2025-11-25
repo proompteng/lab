@@ -1,19 +1,23 @@
 # Jangar Full-Stack Orchestrator — Design
 
 ## Overview
+
 Jangar will become a single Bun-based service that provides:
+
 - A Temporal workflow that runs **one Codex turn per Activity** (auditable, retryable, visible in history).
 - A meta Codex (model `gpt-5.1-max`, `danger-full-access`, network on, approval `never`) that plans and delegates work to worker Codex runs capable of repo changes and PR creation.
 - HTTP + SSE APIs and a TanStack Start UI served from the same process for operators to start missions, chat, and watch execution.
 - Persistence in Postgres for mission snapshots; optional object storage for raw logs.
 
 ## Goals
+
 - Per-turn durability: every Codex turn is a Temporal Activity with stored snapshot.
 - Full-stack in `services/jangar`: Temporal worker, HTTP/SSE API, UI assets.
 - Repo automation: worker Codex runs can clone repos, apply changes, run tests/linters, and open PRs.
 - Minimal token overhead: no MCP; use small Bun CLIs for side effects.
 
 ## Non-Goals (v1)
+
 - Multi-repo missions in one workflow.
 - Rich RBAC; assume trusted operators.
 - Long-term log archival (optional bucket, not mandatory).
@@ -31,6 +35,7 @@ Jangar will become a single Bun-based service that provides:
 ## Diagrams
 
 ### Turn-by-turn flow
+
 ```mermaid
 sequenceDiagram
     participant U as Operator
@@ -61,6 +66,7 @@ sequenceDiagram
 ```
 
 ### Deployment view
+
 ```mermaid
 flowchart TD
     subgraph NS[K8s namespace: jangar]
@@ -82,6 +88,7 @@ flowchart TD
 ```
 
 ## Infra Changes (Argo/CD)
+
 - Add `argocd/applications/jangar/postgres-cluster.yaml` (CNPG, 10–30Gi PVC, db/owner `jangar`, `enablePodMonitor: true`).
 - Update `argocd/applications/jangar/kustomization.yaml` to include the cluster.
 - Update `argocd/applications/jangar/kservice.yaml`:
@@ -93,9 +100,10 @@ flowchart TD
   - Shared API key secret used by proxy to authenticate UI calls,
   - Model list containing only `meta-orchestrator` (routes to workflow),
   - Optional port override if the sidecar should avoid 8080 conflicts.
- - Optional: bucket creds (MinIO) for log archival; or small Redis for SSE fan-out (otherwise in-process emitter).
+- Optional: bucket creds (MinIO) for log archival; or small Redis for SSE fan-out (otherwise in-process emitter).
 
 ## Component Design (code paths)
+
 1) **Codex wrapper env passthrough**
    - `packages/codex/src/options.ts`: add `env?: Record<string,string>` to `CodexOptions`.
    - `packages/codex/src/codex-exec.ts`: pass provided env to `spawn` (fallback `process.env`).
@@ -113,21 +121,23 @@ flowchart TD
      - Env: `CODEX_API_KEY`, optional `CODEX_PATH`, prepend toolbelt `bin`, set `CX_DEPTH`.
      - Run Codex turn with `model gpt-5.1-max`, `sandbox danger-full-access`, `networkAccessEnabled true`, `approvalPolicy never`.
      - Capture events; return snapshot `{threadId, finalResponse, items, usage, planSummary?, filesTouched?, commandsRun?}`.
- - `run-worker-task.ts`: inputs `{repoUrl, task, depth, baseBranch?, tests?, lint?}`.
-    - Clone shallow; branch `auto/<mission>-<id>`; run Codex worker (single or small loop), run lint/tests, push, open PR (`gh`/GitHub API); return `{prUrl, branch, commitSha, notes}`.
- - Shared helpers in `services/jangar/src/lib/`: git ops, env builders, temp paths.
+
+- `run-worker-task.ts`: inputs `{repoUrl, task, depth, baseBranch?, tests?, lint?}`.
+  - Clone shallow; branch `auto/<mission>-<id>`; run Codex worker (single or small loop), run lint/tests, push, open PR (`gh`/GitHub API); return `{prUrl, branch, commitSha, notes}`.
+- Shared helpers in `services/jangar/src/lib/`: git ops, env builders, temp paths.
 
 3.5) **Orchestrator (OpenWebUI front-end via app-server proxy)**
-   - Deploy OpenWebUI cluster-local; configure it to use Jangar’s OpenAI-compatible proxy with a single model `meta-orchestrator`.
+
+- Deploy OpenWebUI cluster-local; configure it to use Jangar’s OpenAI-compatible proxy with a single model `meta-orchestrator`.
     - Proxy handler in `services/jangar/src/server.ts` translates `/v1/chat/completions` into Codex app-server JSON-RPC calls (`thread/start`/`turn/start`) and streams deltas back in OpenAI format.
     - Implementation notes:
-      - Spawn long-lived `codex app-server` as a child process; perform `initialize` handshake once.
-      - Map OpenWebUI conversation IDs to app-server thread IDs (persist in Postgres).
-      - Stream `item/agentMessage/delta` → OpenAI delta chunks; `turn/completed` → final chunk with `finish_reason` and `usage`.
-      - Return `/v1/models` stub listing only `meta-orchestrator`.
-      - Validate Bearer token against a shared secret; Codex auth remains local (CODEX session/API key).
-      - App-server protocol is JSON-RPC 2.0 over stdio (line-delimited JSON); not HTTP. If HTTP is needed, the proxy provides it. Spec: https://www.jsonrpc.org/specification.
-      - App-server honors per-turn `cwd`, `sandbox_policy`/`sandbox_mode`, `approvalPolicy`, and network toggles—so the proxy can let Codex scan/modify the repo by setting `cwd` to the repo root and `sandbox_mode` to `workspace-write` or `danger-full-access`.
+  - Spawn long-lived `codex app-server` as a child process; perform `initialize` handshake once.
+  - Map OpenWebUI conversation IDs to app-server thread IDs (persist in Postgres).
+  - Stream `item/agentMessage/delta` → OpenAI delta chunks; `turn/completed` → final chunk with `finish_reason` and `usage`.
+  - Return `/v1/models` stub listing only `meta-orchestrator`.
+  - Validate Bearer token against a shared secret; Codex auth remains local (CODEX session/API key).
+  - App-server protocol is JSON-RPC 2.0 over stdio (line-delimited JSON); not HTTP. If HTTP is needed, the proxy provides it. Spec: <https://www.jsonrpc.org/specification>.
+  - App-server honors per-turn `cwd`, `sandbox_policy`/`sandbox_mode`, `approvalPolicy`, and network toggles—so the proxy can let Codex scan/modify the repo by setting `cwd` to the repo root and `sandbox_mode` to `workspace-write` or `danger-full-access`.
     - Persist mapping `chat_id ↔ orchestration_id` in Postgres so reloads stay consistent; replay history from DB, not OpenWebUI’s local store.
 
 4) **Workflow** — `services/jangar/src/workflows/index.ts`
@@ -142,6 +152,17 @@ flowchart TD
    - Tables: `orchestrations` (id, topic, repo, status, created_at, updated_at), `turns` (orchestration_id, idx, snapshot JSON, created_at), `worker_prs`.
    - Activities persist snapshots; HTTP reads snapshots for reload resilience.
 
+    ```mermaid
+    flowchart LR
+      UI["TanStack Start UI\n(services/jangar/src/ui)"] --> API["HTTP/SSE API\nservices/jangar/src/server.ts"]
+      API --> DB[(Postgres)]
+      API --> Temporal["Temporal Workflows\nservices/jangar/src/workflows"]
+      Temporal --> Activities["Activities\nservices/jangar/src/activities"]
+      Activities --> DB
+      Activities -->|optional| Bucket[(Object store)]
+      API -. SSE .-> UI
+    ```
+
 6) **HTTP + SSE** — `services/jangar/src/server.ts`
    - `POST /orchestrations` → start workflow, persist record, return id.
    - `POST /orchestrations/:id/message` → signal.
@@ -150,22 +171,24 @@ flowchart TD
    - `GET /orchestrations/:id/stream` → SSE emitting deltas on each activity completion (query+DB or emitter).
    - `/healthz` retained.
 
-7) **UI (Orchestrator — TanStack Start + OpenWebUI)** — `services/jangar/start/`
+7) **UI (Orchestrator — TanStack Start + OpenWebUI)** — `services/jangar/src/ui/`
    - Routes: `/` (mission list), `/mission/$id` (chat, plan timeline, activity log, PR card).
    - TanStack Query for REST; SSE hook merges deltas.
    - Built assets served by `server.ts`; OpenWebUI is the chat front-end pointing at the proxy.
 
 8) **Build & Deploy**
-   - `packages/scripts/src/jangar/build-image.ts`: bundle `packages/cx-tools/dist`, `services/jangar/start/dist`, run entry `bun run src/server.ts`.
+   - `packages/scripts/src/jangar/build-image.ts`: bundle `packages/cx-tools/dist`, `services/jangar/dist/ui`, run entry `bun run src/index.ts`.
    - Install Codex CLI inside the image (download official release or pre-bundled binary) so `codex app-server` and `codex exec` are available at runtime.
    - Kustomize applies Postgres + service + OpenWebUI (cluster-local).
 
 ## Data & State
+
 - Temporal history: authoritative per-turn events.
 - Postgres: durable mission/turn snapshots for UI reloads and summaries.
 - Optional bucket: raw event logs/streams (if enabled).
 
 ## Defaults & Guardrails
+
 - Depth limit via `CX_DEPTH`; block if exceeded.
 - Allowlisted commands only (`cx-*`, `git`, `gh`, minimal OS tools) when Codex shells.
 - Activity timeout (e.g., 20 min); workflow `maxTurns` default 8.
@@ -173,17 +196,20 @@ flowchart TD
 - Model: `gpt-5.1-max` for meta; worker configurable.
 
 ## Testing Strategy
+
 - Unit: toolbelt CLIs, env builder, git helper, DB layer.
 - Integration: Temporal dev; run workflow end-to-end; verify each turn is an Activity and snapshots persist.
 - E2E: sample public repo; worker opens PR; UI shows turn timeline.
 
 ## Open Questions
+
 - Auth path for PRs (`gh` vs GitHub REST/app token); finalize env contract.
 - Raw event log storage location (bucket vs none).
 - Repo-specific lint/test commands—config-driven or prompt-driven?
 - SSE fan-out scaling—stick to in-process emitter or add Redis.
 
 ## Implementation Order (recommended)
+
 1) Codex env passthrough.
 2) Toolbelt scaffold (`cx-codex-run`, `cx-workflow-start`).
 3) `run-codex-turn` activity + helpers.

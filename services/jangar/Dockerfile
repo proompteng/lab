@@ -1,4 +1,4 @@
-# Bun-based image for jangar Temporal worker
+# Bun-based image for jangar worker + UI
 FROM oven/bun:1.3.3 AS base
 WORKDIR /app
 
@@ -14,18 +14,25 @@ RUN cd packages/codex \
   && bun install --frozen-lockfile \
   && bun run build
 
-# Install jangar deps
+# Install jangar deps (with dev deps for UI build)
 WORKDIR /app/services/jangar
-COPY services/jangar/package.json services/jangar/bun.lock ./
-RUN bun install --production --frozen-lockfile \
+COPY services/jangar/package.json ./
+COPY services/jangar/tsconfig.json ./
+COPY services/jangar/src ./src
+COPY bun.lock ../bun.lock
+RUN bun install --frozen-lockfile
+
+# Build TanStack Start UI
+RUN bun run start:build
+
+# Prune to production deps (retain codex file dep)
+RUN rm -rf node_modules \
+  && bun install --frozen-lockfile --production \
   && mkdir -p node_modules/@proompteng \
   && ln -sf ../../packages/codex node_modules/@proompteng/codex
 
-# Copy source
-COPY services/jangar/tsconfig.json ./
-COPY services/jangar/src ./src
-
 ENV NODE_ENV=production
 ENV PORT=8080
+ENV WORKER_PORT=8070
 
-CMD ["bun", "run", "src/worker.ts"]
+CMD ["bun", "run", "src/index.ts"]

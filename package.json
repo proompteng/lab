@@ -42,8 +42,9 @@
     "@biomejs/biome": "2.2.4",
     "@commitlint/cli": "19.6.0",
     "@commitlint/config-conventional": "19.6.0",
-    "lint-staged": "16.2.3",
     "husky": "9.1.7",
+    "lint-staged": "16.2.3",
+    "turbo": "2.6.1",
     "typescript": "5.9.3"
   },
   "lint-staged": {
@@ -52,7 +53,8 @@
   },
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "services/*"
   ],
   "dependencies": {
     "@headlessui/react": "^2.2.9",

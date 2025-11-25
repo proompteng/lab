@@ -1,0 +1,15 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "esnext",
+    "baseUrl": "./app",
+    "paths": {
+      "@/*": ["./*"]
+    },
+    "types": ["vite/client", "bun"]
+  },
+  "include": ["app/**/*", "start.config.ts", "vite.config.ts"]
+}

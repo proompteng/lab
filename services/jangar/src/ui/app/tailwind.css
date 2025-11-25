@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-slate-950 text-slate-50 antialiased;
+  }
+  a {
+    @apply text-sky-300 hover:text-sky-200 transition;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-slate-800/80 bg-slate-900/80 shadow-lg shadow-black/30 backdrop-blur;
+  }
+  .pill {
+    @apply inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide;
+  }
+  .pill-info {
+    @apply bg-sky-900/60 text-sky-100 border border-sky-700;
+  }
+  .pill-warn {
+    @apply bg-amber-900/70 text-amber-100 border border-amber-700;
+  }
+  .pill-ok {
+    @apply bg-emerald-900/60 text-emerald-100 border border-emerald-700;
+  }
+  .pill-error {
+    @apply bg-rose-900/70 text-rose-100 border border-rose-700;
+  }
+}
