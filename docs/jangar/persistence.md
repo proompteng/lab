@@ -28,6 +28,7 @@ erDiagram
     content string
     metadata any
     createdAt number
+    updatedAt number
   }
 
   work_orders {
@@ -42,7 +43,6 @@ erDiagram
     requestedBy string
     targetRepo string
     targetBranch string
-    commitSha string
     prUrl string
     createdAt number
     updatedAt number
@@ -73,6 +73,7 @@ erDiagram
 | content | string | message text |
 | metadata | any | tool calls, attachments, etc. |
 | createdAt | number (ms) | timestamp |
+| updatedAt | number (ms) | timestamp |
 
 **work_orders**
 | column | type | notes |
@@ -97,13 +98,13 @@ erDiagram
 - `chatMessages:append`, `chatMessages:listBySession`
 - `workOrders:create`
 - `workOrders:updateStatus`
-- `workOrders:updateResult` (commitSha, prUrl)
+- `workOrders:updateResult` (prUrl)
 - `workOrders:listBySession`
 - `workOrders:get`
 
 Indexes
 - chat_messages: by `sessionId, createdAt`
-- work_orders: by `sessionId, createdAt`; by `status, updatedAt`
+-, work_orders: by `sessionId, createdAt`; by `status, updatedAt`
 
 Deployment
 - `bun packages/scripts/src/jangar/deploy-service.ts` runs `convex deploy` before Knative apply; ensure Convex envs/keys are set.
