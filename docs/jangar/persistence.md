@@ -36,7 +36,7 @@ erDiagram
   work_orders {
     id string PK
     sessionId string FK
-    workflowId string        // Temporal workflow run/workflow id
+    workflowId string
     githubIssueUrl string
     prompt string
     title string
