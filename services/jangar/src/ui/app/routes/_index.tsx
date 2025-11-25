@@ -23,7 +23,7 @@ function MissionList() {
           aria-label="Create mission"
           preload="intent"
         >
-          Create mission
+          Create
         </Link>
       </header>
       {missions.length === 0 ? (

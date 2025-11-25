@@ -24,7 +24,12 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 function RootDocument() {
   const { queryClient } = Route.useRouteContext()
   const mainId = useId()
-  const criticalStyle = `html,body{background-color:#0f172a;color:#e2e8f0;}html.no-transitions *,html.no-transitions{transition:none!important;}`
+  const criticalStyle = `
+    *,*::before,*::after{box-sizing:border-box;}
+    html,body{background-color:#0f172a;color:#e2e8f0;margin:0;padding:0;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased;}
+    a{text-decoration:none;color:inherit;}
+    html.no-transitions *,html.no-transitions{transition:none!important;}
+  `
 
   useEffect(() => {
     const html = document.documentElement
