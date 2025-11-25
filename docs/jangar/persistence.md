@@ -51,6 +51,11 @@ erDiagram
   workflow_requests {
     string id PK
     string sessionId FK
+    string workflowType
+    any    workflowArgs
+    string githubIssueUrl
+    string prompt
+    string title
   }
 
   runs {
@@ -133,6 +138,11 @@ erDiagram
 | --- | --- |
 | id | string |
 | sessionId | string (FK chat_sessions.id) |
+| workflowType | string (Temporal workflow type) |
+| workflowArgs | any (JSON-serializable args) |
+| githubIssueUrl | string |
+| prompt | string |
+| title | string |
 
 **runs**
 | column | type |
