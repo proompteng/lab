@@ -19,7 +19,10 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       { title: 'Jangar mission console' },
     ],
   }),
-  links: () => [{ rel: 'stylesheet', href: tailwindHref }],
+  links: () => [
+    { rel: 'preload', href: tailwindHref, as: 'style', crossOrigin: 'anonymous' },
+    { rel: 'stylesheet', href: tailwindHref, crossOrigin: 'anonymous' },
+  ],
   component: RootDocument,
 })
 
