@@ -1,4 +1,4 @@
-import { startTemporalWorker } from './runtime/temporal-worker'
+import { startTemporalWorker } from './workers/temporal-worker'
 
 const { runPromise } = await startTemporalWorker()
 

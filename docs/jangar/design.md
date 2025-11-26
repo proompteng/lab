@@ -7,7 +7,7 @@ Jangar will become a single Bun-based service that provides:
 - A Temporal workflow that runs **one Codex turn per Activity** (auditable, retryable, visible in history).
 - A meta Codex (model `gpt-5.1-max`, `danger-full-access`, network on, approval `never`) that plans and delegates work to worker Codex runs capable of repo changes and PR creation.
 - HTTP + SSE APIs and a TanStack Start UI served from the same process for operators to start missions, chat, and watch execution.
-- Persistence in Convex (document store with server functions) for mission snapshots; optional object storage for raw logs.
+- Persistence in Convex (chat_sessions, chat_messages, work_orders per `docs/jangar/persistence.md`) for chat history, workflow/PR linkage, and recency sorting; optional object storage for raw logs.
 
 ## Goals
 
@@ -29,7 +29,7 @@ Jangar will become a single Bun-based service that provides:
   - `runWorkerTaskActivity`: clone repo, execute worker Codex, run lint/tests, push branch, open PR.
   - Optional `publishEventActivity` to push deltas to SSE broker.
 - **Toolbelt:** `packages/cx-tools` Bun CLIs (`cx-codex-run`, `cx-workflow-*`, optional `cx-log`) emitting single-line JSON; used by Codex shell calls instead of MCP.
-- **Persistence:** Convex for orchestration records and per-turn snapshots (via Convex mutations/queries); optional bucket for raw event logs; OpenWebUI conversations map to orchestration IDs via Convex docs.
+- **Persistence:** Convex collections `chat_sessions`, `chat_messages`, and `work_orders` (see `docs/jangar/persistence.md`) to store conversations, message history, and workflow/PR linkage; optional bucket for raw event logs; OpenWebUI conversations map to `chat_sessions`, and `work_orders.workflowId` links to Temporal.
 - **Orchestrator UI:** TanStack Start shell plus OpenWebUI front-end pointed at our OpenAI-compatible proxy; exposes a `meta-orchestrator` model that routes into the workflow.
 
 ## Diagrams
@@ -141,13 +141,16 @@ flowchart TD
    - Delegate worker tasks via `runWorkerTaskActivity` when planner requests; feed results into next prompt.
    - Signals: `submitUserMessage`, `abort`. Queries: `getState`.
 
-5) **Persistence layer** — Convex functions
-   - Data lives in Convex. Define Convex schema/validators for `orchestrations`, `turns`, `worker_prs`, and `conversations` keyed by orchestration id.
-   - Server functions:
-     - Mutations: `upsertOrchestration`, `appendTurn`, `recordWorkerPr`, `linkConversation`, `setStatus`.
-     - Queries: `getOrchestration`, `listTurns`, `listWorkerPrs`, `getConversationMapping`.
-   - The Bun service calls Convex via the official JS client; Temporal activities write snapshots through Convex mutations.
-   - Keep optional bucket writes for raw logs if needed; Convex holds the authoritative summary state.
+5) **Persistence layer** — Convex functions (see `docs/jangar/persistence.md`)
+   - Collections: `chat_sessions` (chat metadata + recency), `chat_messages` (message history, tool metadata), `work_orders` (link to Temporal `workflowId`, GitHub issue/PR URLs, target repo/branch, status, requester).
+   - Server functions to implement:
+     - `chatSessions:create|get|list|updateLastMessage` (soft-delete aware)
+     - `chatMessages:append|listBySession` (soft-delete aware)
+     - `workOrders:create|updateStatus|updateResult|listBySession|get`
+   - Indexing: chat_messages by `sessionId, createdAt`; work_orders by `sessionId, createdAt` and `status, updatedAt`.
+   - Env: `CONVEX_URL`/`CONVEX_DEPLOYMENT`, `CONVEX_DEPLOY_KEY` (or admin key), optional `CONVEX_SELF_HOSTED_URL`/`CONVEX_SITE_ORIGIN` for self-hosted.
+   - The Bun service calls Convex via the official JS client; Temporal activities write status/PR updates via these mutations; UI queries Convex for session lists/history.
+   - Optional bucket writes remain for raw logs; Convex is the source of truth for chat + work-order state.
 
     ```mermaid
     flowchart LR
@@ -161,17 +164,18 @@ flowchart TD
     ```
 
 6) **HTTP + SSE** — `services/jangar/src/server.ts`
- - `POST /orchestrations` → start workflow, persist record, return id.
-  - `POST /orchestrations/:id/message` → signal.
-  - `POST /orchestrations/:id/abort` → signal abort.
-  - `GET /orchestrations/:id` → Convex + workflow query snapshot.
-  - `GET /orchestrations/:id/stream` → SSE emitting deltas on each activity completion (query+Convex or emitter).
+ - `POST /chat-sessions` → create session in Convex (returns session id, default title).
+  - `POST /chat-sessions/:id/messages` → append message; optional `workOrderId` when spawning work.
+  - `POST /work-orders` → start workflow (Temporal) and persist `work_orders` record (`workflowId`, target repo/branch, status) linked to a chat session.
+  - `POST /work-orders/:id/abort` → signal abort.
+  - `GET /chat-sessions/:id` → Convex session + messages.
+  - `GET /work-orders/:id/stream` → SSE of workflow/PR status deltas (Convex + Temporal query).
   - `/healthz` retained.
 
 7) **UI (Orchestrator — TanStack Start + OpenWebUI)** — `services/jangar/src/ui/`
    - Routes: `/` (mission list), `/mission/$id` (chat, plan timeline, activity log, PR card).
    - TanStack Query for REST; SSE hook merges deltas.
-   - Built assets served by `server.ts`; OpenWebUI is the chat front-end pointing at the proxy.
+   - OpenWebUI is iframe-embedded into the mission view and pointed at the local proxy; keep it cluster-local and hide nav to make the embed feel native. Built assets are still served by `server.ts`.
 
 8) **Build & Deploy**
    - `packages/scripts/src/jangar/build-image.ts`: bundle `packages/cx-tools/dist`, `services/jangar/dist/ui`, run entry `bun run src/index.ts`.
@@ -181,7 +185,7 @@ flowchart TD
 ## Data & State
 
 - Temporal history: authoritative per-turn events.
-- Convex: durable mission/turn snapshots and conversation mappings for UI reloads and summaries.
+- Convex: durable chat sessions/messages plus work orders (workflow/PR linkage) for UI reloads and summaries.
 - Optional bucket: raw event logs/streams (if enabled).
 
 ## Defaults & Guardrails

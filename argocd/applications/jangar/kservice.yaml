@@ -51,3 +51,35 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+        - name: openwebui
+          image: ghcr.io/open-webui/open-webui:v0.6.40
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PORT
+              value: "3000"
+            - name: OPENAI_API_BASE_URL
+              value: http://localhost:8080/openai/v1
+            - name: DEFAULT_MODELS
+              value: meta-orchestrator
+            - name: WEBUI_AUTH
+              value: "false"
+            - name: ENABLE_SIGNUP
+              value: "false"
+          ports:
+            - name: http-openwebui
+              containerPort: 3000
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

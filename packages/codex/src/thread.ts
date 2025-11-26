@@ -86,20 +86,35 @@ export class Thread {
       input: prompt,
       images,
       threadId: this._id,
-      model: this.threadOptions.model,
-      sandboxMode: this.threadOptions.sandboxMode,
-      workingDirectory: this.threadOptions.workingDirectory,
-      skipGitRepoCheck: this.threadOptions.skipGitRepoCheck,
-      modelReasoningEffort: this.threadOptions.modelReasoningEffort,
-      networkAccessEnabled: this.threadOptions.networkAccessEnabled,
-      webSearchEnabled: this.threadOptions.webSearchEnabled,
-      approvalPolicy: this.threadOptions.approvalPolicy,
-      additionalDirectories: this.threadOptions.additionalDirectories,
-      baseUrl: this.options.baseUrl,
-      apiKey: this.options.apiKey,
-      env: this.options.env,
-      signal: turnOptions.signal,
     }
+
+    if (this.threadOptions.additionalDirectories !== undefined) {
+      execArgs.additionalDirectories = this.threadOptions.additionalDirectories
+    }
+    if (this.threadOptions.model !== undefined) execArgs.model = this.threadOptions.model
+    if (this.threadOptions.sandboxMode !== undefined) execArgs.sandboxMode = this.threadOptions.sandboxMode
+    if (this.threadOptions.workingDirectory !== undefined) {
+      execArgs.workingDirectory = this.threadOptions.workingDirectory
+    }
+    if (this.threadOptions.skipGitRepoCheck !== undefined) {
+      execArgs.skipGitRepoCheck = this.threadOptions.skipGitRepoCheck
+    }
+    if (this.threadOptions.modelReasoningEffort !== undefined) {
+      execArgs.modelReasoningEffort = this.threadOptions.modelReasoningEffort
+    }
+    if (this.threadOptions.networkAccessEnabled !== undefined) {
+      execArgs.networkAccessEnabled = this.threadOptions.networkAccessEnabled
+    }
+    if (this.threadOptions.webSearchEnabled !== undefined) {
+      execArgs.webSearchEnabled = this.threadOptions.webSearchEnabled
+    }
+    if (this.threadOptions.approvalPolicy !== undefined) {
+      execArgs.approvalPolicy = this.threadOptions.approvalPolicy
+    }
+    if (this.options.baseUrl !== undefined) execArgs.baseUrl = this.options.baseUrl
+    if (this.options.apiKey !== undefined) execArgs.apiKey = this.options.apiKey
+    if (this.options.env !== undefined) execArgs.env = this.options.env
+    if (turnOptions.signal !== undefined) execArgs.signal = turnOptions.signal
 
     const generator = this.exec.run(execArgs)
 

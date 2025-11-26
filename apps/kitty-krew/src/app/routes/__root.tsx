@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import type { QueryClient } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
@@ -6,7 +7,7 @@ import React from 'react'
 import { CommandPalette } from '~/components/command-palette'
 import type { AppRouter } from '~/server/routers/_app'
 
-import '../main.css'
+import mainCssUrl from '../main.css?url'
 
 export interface RouterAppContext {
   trpc: TRPCOptionsProxy<AppRouter>
@@ -27,6 +28,10 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
   shellComponent: RootDocument,
   head: () => ({
     links: [
+      {
+        rel: 'stylesheet',
+        href: mainCssUrl,
+      },
       {
         rel: 'icon',
         href: '/favicon.ico',
