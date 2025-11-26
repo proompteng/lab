@@ -17,6 +17,7 @@ function MissionDetailView() {
   const mission = Route.useLoaderData() as MissionDetailType
   const statusTone = statusToneMap[mission.status]
   const headingId = useId()
+  const openwebuiUrl = import.meta.env.VITE_OPENWEBUI_URL ?? 'http://localhost:3000'
 
   return (
     <section className="flex flex-col gap-6" aria-labelledby={headingId}>
@@ -152,6 +153,36 @@ function MissionDetailView() {
           </p>
         </article>
       </div>
+
+      <article className="card space-y-3 p-5" aria-label="OpenWebUI chat">
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-wide text-slate-400">Embedded chat</p>
+            <h2 className="text-lg font-semibold text-slate-50">OpenWebUI</h2>
+            <p className="text-sm text-slate-300">
+              The orchestration chat runs locally against the Jangar OpenAI proxy; use this panel to send prompts
+              without leaving the console.
+            </p>
+          </div>
+          <a
+            className="inline-flex items-center rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-900"
+            href={openwebuiUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open full view
+          </a>
+        </div>
+        <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60 shadow-inner">
+          <iframe
+            title="OpenWebUI embedded session"
+            src={openwebuiUrl}
+            className="h-[800px] w-full border-0 bg-slate-950"
+            loading="lazy"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-downloads"
+          />
+        </div>
+      </article>
     </section>
   )
 }
