@@ -66,9 +66,9 @@ const withWorkflowGlobalGuards = async <T>(execute: () => Promise<T>): Promise<T
     }
   }
 
-  const guardedFinalizationRegistry: FinalizationRegistryConstructor = class GuardedFinalizationRegistry<
-    T,
-  > implements FinalizationRegistry<T> {
+  const guardedFinalizationRegistry: FinalizationRegistryConstructor = class GuardedFinalizationRegistry<T>
+    implements FinalizationRegistry<T>
+  {
     readonly [Symbol.toStringTag] = 'FinalizationRegistry'
 
     constructor(_cleanupCallback: (heldValue: T) => void) {
