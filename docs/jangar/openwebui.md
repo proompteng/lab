@@ -16,5 +16,5 @@ OpenWebUI now runs as a sidecar in the `ksvc/jangar` pod and talks to the worker
 
 ## Embedding and local dev
 - Jangar UI embeds OpenWebUI via an iframe in the mission view. Configure the src with `VITE_OPENWEBUI_URL` (defaults to `http://localhost:3000`).
-- For local hacking, run everything together: `cd services/jangar && bun run dev:all` (starts OpenWebUI in Docker on :3000, Convex dev, the app shell, and the worker).
+- For local hacking, run everything together: `cd services/jangar && bun run dev:all` (starts OpenWebUI in Docker on :3000, Convex dev, the app shell, and the worker). If port 3000 is busy, set `OPENWEBUI_PORT=3001` (and `VITE_OPENWEBUI_URL=http://localhost:3001`).
 - Update here if the tag/digest is bumped so ops can reason about the running build.

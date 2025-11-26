@@ -9,7 +9,7 @@
     "start:worker": "bun run src/worker.ts",
     "dev": "bun --watch src/worker.ts",
     "dev:app": "bun run src/index.ts --dev",
-    "dev:all": "concurrently -n openwebui,convex,app,worker -c yellow,green,cyan,magenta \"docker run --rm -p 3000:3000 ghcr.io/open-webui/open-webui:v0.6.38\" \"bunx convex dev\" \"SKIP_WORKER=1 bun run dev:app\" \"bun run dev\"",
+    "dev:all": "OPENWEBUI_PORT=\${OPENWEBUI_PORT:-3000} concurrently -n openwebui,convex,app,worker -c yellow,green,cyan,magenta \"docker run --rm --name jangar-openwebui -p $OPENWEBUI_PORT:3000 ghcr.io/open-webui/open-webui:v0.6.38\" \"bunx convex dev\" \"SKIP_WORKER=1 bun run dev:app\" \"bun run dev\"",
     "check": "bunx tsc --noEmit",
     "start:hello": "bun run scripts/start-hello-workflow.ts",
     "start:dev": "cd src/ui && bunx vite dev --host",
