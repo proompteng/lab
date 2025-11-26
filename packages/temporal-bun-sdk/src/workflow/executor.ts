@@ -245,20 +245,8 @@ export class WorkflowExecutor {
       )
     })
 
-    let exit: Exit.Exit<
-      {
-        result: unknown
-        context: WorkflowContext<unknown>
-        commandContext: WorkflowCommandContext
-        updateRegistry: WorkflowUpdateRegistry
-      },
-      unknown
-    >
-
-    try {
-      exit = await withWorkflowGlobalGuards(() => Effect.runPromiseExit(workflowEffect))
-    } catch (error) {
-      exit = Exit.fail(error) as Exit.Exit<
+    const guarded = await withWorkflowGlobalGuards(async () => {
+      let workflowExit: Exit.Exit<
         {
           result: unknown
           context: WorkflowContext<unknown>
@@ -267,24 +255,45 @@ export class WorkflowExecutor {
         },
         unknown
       >
-    }
-    const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
-    const updatesToProcess = executionMode === 'query' ? [] : (input.updates ?? [])
-    let updateDispatches: WorkflowUpdateDispatch[] = []
 
-    if (updatesToProcess.length > 0) {
-      const contextForUpdates = Exit.isSuccess(exit) ? exit.value.context : lastWorkflowContext
-      const registryForUpdates = Exit.isSuccess(exit) ? exit.value.updateRegistry : lastUpdateRegistry
-      if (!contextForUpdates || !registryForUpdates) {
-        throw new Error('Workflow update context unavailable after execution')
+      try {
+        workflowExit = await Effect.runPromiseExit(workflowEffect)
+      } catch (error) {
+        workflowExit = Exit.fail(error) as Exit.Exit<
+          {
+            result: unknown
+            context: WorkflowContext<unknown>
+            commandContext: WorkflowCommandContext
+            updateRegistry: WorkflowUpdateRegistry
+          },
+          unknown
+        >
       }
-      updateDispatches = await this.#processWorkflowUpdates({
-        context: contextForUpdates,
-        registry: registryForUpdates,
-        updates: updatesToProcess,
-        guard,
-      })
-    }
+
+      const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
+      const updatesToProcess = executionMode === 'query' ? [] : (input.updates ?? [])
+      let updateDispatches: WorkflowUpdateDispatch[] = []
+
+      if (updatesToProcess.length > 0) {
+        const contextForUpdates = Exit.isSuccess(workflowExit) ? workflowExit.value.context : lastWorkflowContext
+        const registryForUpdates = Exit.isSuccess(workflowExit) ? workflowExit.value.updateRegistry : lastUpdateRegistry
+        if (!contextForUpdates || !registryForUpdates) {
+          throw new Error('Workflow update context unavailable after execution')
+        }
+        updateDispatches = await this.#processWorkflowUpdates({
+          context: contextForUpdates,
+          registry: registryForUpdates,
+          updates: updatesToProcess,
+          guard,
+        })
+      }
+
+      return { workflowExit, queryResults, updateDispatches }
+    })
+
+    const exit = guarded.workflowExit
+    const queryResults = guarded.queryResults
+    const updateDispatches = guarded.updateDispatches
 
     if (Exit.isSuccess(exit)) {
       const determinismState = snapshotToDeterminismState(guard.snapshot)
