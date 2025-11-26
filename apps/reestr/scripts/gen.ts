@@ -1,6 +1,6 @@
-import config from '../registry.config'
-import { $ } from 'bun'
 import { mkdir } from 'node:fs/promises'
+import { $ } from 'bun'
+import config from '../registry.config'
 
 async function generate() {
   await mkdir('.gen', { recursive: true })
