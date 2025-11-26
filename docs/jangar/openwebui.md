@@ -10,9 +10,12 @@ OpenWebUI now runs as a sidecar in the `ksvc/jangar` pod and talks to the worker
   ```
 - OpenWebUI authentication and signup are disabled (`WEBUI_AUTH=false`, `ENABLE_SIGNUP=false`); requests go to the local proxy without an API key.
 - Only the `meta-orchestrator` model is advertised (default model env is set; the proxy’s `/v1/models` response should continue to return just that entry).
+- Local docker/`npm run dev:all` now read `JANGAR_OPENAI_BASE_URL` (defaults to
+  `http://host.docker.internal:3000/openai/v1`) so the iframe always points at the Jangar
+  OpenAI-compatible endpoint; bump this if you run the shell on a non-standard port.
 
 ## Image pin
-- Sidecar image: `ghcr.io/open-webui/open-webui:v0.6.38@sha256:e6fdd770ce36e01305242427c0da2d9d8b82a4cd74791cdd27cc0087908e47dd`
+- Sidecar image: `ghcr.io/open-webui/open-webui:v0.6.40`
 
 ## Embedding and local dev
 - Jangar UI embeds OpenWebUI via an iframe in the mission view. Configure the src with `VITE_OPENWEBUI_URL` (defaults to `http://localhost:3000`).

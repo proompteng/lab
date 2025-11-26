@@ -32,7 +32,7 @@ RUN rm -rf node_modules \
   && ln -sf ../../packages/codex node_modules/@proompteng/codex
 
 ENV NODE_ENV=production
-ENV PORT=8080
+ENV PORT=3000
 ENV WORKER_PORT=8070
 
 CMD ["bun", "run", "src/index.ts"]

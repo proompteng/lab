@@ -1,12 +1,18 @@
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { startTemporalWorker } from './runtime/temporal-worker'
-import { startUiServer } from './runtime/ui-server'
+import { startUiServer } from './dev-server'
+import { startTemporalWorker } from './workers/temporal-worker'
 
 const serviceRoot = fileURLToPath(new URL('..', import.meta.url))
+const bunBin = process.execPath
+const bunDir = bunBin.includes('/') ? bunBin.substring(0, bunBin.lastIndexOf('/')) : ''
+const withBunPath = (env: NodeJS.ProcessEnv = {}) => ({
+  ...process.env,
+  ...env,
+  PATH: [bunDir, process.env.PATH].filter(Boolean).join(':'),
+})
 const devMode = Bun.argv.includes('--dev') || Bun.env.START_DEV === '1'
-const shouldRunWorker = !(Bun.env.SKIP_WORKER === '1' || Bun.env.SKIP_WORKER?.toLowerCase?.() === 'true')
 
 const onSignal = (cleanup: () => Promise<void>) => {
   const handler = (_signal: string) => {
@@ -41,18 +47,17 @@ const runProd = async () => {
 }
 
 const runDev = async () => {
-  const workerProcess = shouldRunWorker
-    ? Bun.spawn({
-        cmd: ['bun', '--watch', join('src', 'worker.ts')],
-        cwd: serviceRoot,
-        stdout: 'inherit',
-        stderr: 'inherit',
-      })
-    : null
+  const workerProcess = Bun.spawn({
+    cmd: [bunBin, '--watch', join('src', 'worker.ts')],
+    cwd: serviceRoot,
+    stdout: 'inherit',
+    stderr: 'inherit',
+    env: withBunPath(),
+  })
 
   const uiProcess = startUiServer({ dev: true })
 
-  const workerExit = workerProcess?.exited.then((code) => {
+  const workerExit = workerProcess.exited.then((code) => {
     if (code !== 0) {
       throw new Error(`Temporal worker (watch) exited with code ${code ?? 'unknown'}`)
     }
@@ -65,13 +70,11 @@ const runDev = async () => {
   })
 
   onSignal(async () => {
-    if (workerProcess) {
-      workerProcess.kill()
-    }
+    workerProcess.kill()
     uiProcess.kill()
   })
 
-  await Promise.race([uiExit, workerExit].filter(Boolean) as Promise<unknown>[])
+  await Promise.race([uiExit, workerExit])
 }
 
 if (devMode) {
