@@ -135,132 +135,144 @@ export class WorkflowExecutor {
   }
 
   async execute(input: ExecuteWorkflowInput): Promise<WorkflowExecutionOutput> {
-    const info: WorkflowInfo = {
-      namespace: input.namespace,
-      taskQueue: input.taskQueue,
-      workflowId: input.workflowId,
-      runId: input.runId,
-      workflowType: input.workflowType,
-    }
+    const restoreGlobals = this.#installWorkflowDeterminismGuards()
 
-    const executionMode = input.mode ?? 'workflow'
-
-    const definition = this.#registry.get(input.workflowType)
-    const normalizedArguments = this.#normalizeArguments(input.arguments, definition.decodeArgumentsAsArray)
-    const decodedEffect = Schema.decodeUnknown(definition.schema)(normalizedArguments)
-    const guard = new DeterminismGuard({ previousState: input.determinismState, mode: executionMode })
-
-    let lastCommandContext: WorkflowCommandContext | undefined
-    let lastQueryRegistry: WorkflowQueryRegistry | undefined
-    let lastWorkflowContext: WorkflowContext<unknown> | undefined
-    let lastUpdateRegistry: WorkflowUpdateRegistry | undefined
-
-    const workflowEffect = Effect.flatMap(decodedEffect, (parsed) => {
-      const created = createWorkflowContext({
-        input: parsed,
-        info,
-        determinismGuard: guard,
-        activityResults: input.activityResults,
-        activityScheduleEventIds: input.activityScheduleEventIds,
-        signalDeliveries: input.signalDeliveries,
-        updates: definition.updates,
-      })
-      lastCommandContext = created.commandContext
-      lastQueryRegistry = created.queryRegistry
-      lastWorkflowContext = created.context
-      lastUpdateRegistry = created.updateRegistry
-      return Effect.flatMap(definition.handler(created.context), (result) =>
-        Effect.sync(() => ({
-          result,
-          context: created.context,
-          commandContext: created.commandContext,
-          updateRegistry: created.updateRegistry,
-        })),
-      )
-    })
-
-    const exit = await Effect.runPromiseExit(workflowEffect)
-    const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
-    const updatesToProcess = executionMode === 'query' ? [] : (input.updates ?? [])
-    let updateDispatches: WorkflowUpdateDispatch[] = []
-
-    if (updatesToProcess.length > 0) {
-      const contextForUpdates = Exit.isSuccess(exit) ? exit.value.context : lastWorkflowContext
-      const registryForUpdates = Exit.isSuccess(exit) ? exit.value.updateRegistry : lastUpdateRegistry
-      if (!contextForUpdates || !registryForUpdates) {
-        throw new Error('Workflow update context unavailable after execution')
+    try {
+      const info: WorkflowInfo = {
+        namespace: input.namespace,
+        taskQueue: input.taskQueue,
+        workflowId: input.workflowId,
+        runId: input.runId,
+        workflowType: input.workflowType,
       }
-      updateDispatches = await this.#processWorkflowUpdates({
-        context: contextForUpdates,
-        registry: registryForUpdates,
-        updates: updatesToProcess,
-        guard,
-      })
-    }
 
-    if (Exit.isSuccess(exit)) {
-      const determinismState = snapshotToDeterminismState(guard.snapshot)
-      if (executionMode === 'query') {
+      const executionMode = input.mode ?? 'workflow'
+
+      const definition = this.#registry.get(input.workflowType)
+      const normalizedArguments = this.#normalizeArguments(input.arguments, definition.decodeArgumentsAsArray)
+      const decodedEffect = Schema.decodeUnknown(definition.schema)(normalizedArguments)
+      const guard = new DeterminismGuard({ previousState: input.determinismState, mode: executionMode })
+
+      let lastCommandContext: WorkflowCommandContext | undefined
+      let lastQueryRegistry: WorkflowQueryRegistry | undefined
+      let lastWorkflowContext: WorkflowContext<unknown> | undefined
+      let lastUpdateRegistry: WorkflowUpdateRegistry | undefined
+
+      const workflowEffect = Effect.flatMap(decodedEffect, (parsed) => {
+        const created = createWorkflowContext({
+          input: parsed,
+          info,
+          determinismGuard: guard,
+          activityResults: input.activityResults,
+          activityScheduleEventIds: input.activityScheduleEventIds,
+          signalDeliveries: input.signalDeliveries,
+          updates: definition.updates,
+        })
+        lastCommandContext = created.commandContext
+        lastQueryRegistry = created.queryRegistry
+        lastWorkflowContext = created.context
+        lastUpdateRegistry = created.updateRegistry
+        return Effect.flatMap(definition.handler(created.context), (result) =>
+          Effect.sync(() => ({
+            result,
+            context: created.context,
+            commandContext: created.commandContext,
+            updateRegistry: created.updateRegistry,
+          })),
+        )
+      })
+
+      const exit = await Effect.runPromiseExit(workflowEffect)
+      const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
+      const updatesToProcess = executionMode === 'query' ? [] : (input.updates ?? [])
+      let updateDispatches: WorkflowUpdateDispatch[] = []
+
+      if (updatesToProcess.length > 0) {
+        const contextForUpdates = Exit.isSuccess(exit) ? exit.value.context : lastWorkflowContext
+        const registryForUpdates = Exit.isSuccess(exit) ? exit.value.updateRegistry : lastUpdateRegistry
+        if (!contextForUpdates || !registryForUpdates) {
+          throw new Error('Workflow update context unavailable after execution')
+        }
+        updateDispatches = await this.#processWorkflowUpdates({
+          context: contextForUpdates,
+          registry: registryForUpdates,
+          updates: updatesToProcess,
+          guard,
+        })
+      }
+
+      if (Exit.isSuccess(exit)) {
+        const determinismState = snapshotToDeterminismState(guard.snapshot)
+        if (executionMode === 'query') {
+          return {
+            commands: [],
+            intents: [],
+            determinismState,
+            completion: 'completed',
+            result: exit.value.result,
+            queryResults,
+          }
+        }
+
+        const commands = await this.#buildSuccessCommands(exit.value.commandContext, exit.value.result)
         return {
-          commands: [],
-          intents: [],
+          commands,
+          intents: exit.value.commandContext.intents,
           determinismState,
           completion: 'completed',
           result: exit.value.result,
           queryResults,
+          ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
         }
       }
 
-      const commands = await this.#buildSuccessCommands(exit.value.commandContext, exit.value.result)
-      return {
-        commands,
-        intents: exit.value.commandContext.intents,
-        determinismState,
-        completion: 'completed',
-        result: exit.value.result,
-        queryResults,
-        ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
-      }
-    }
+      const error = this.#resolveError(exit.cause)
 
-    const error = this.#resolveError(exit.cause)
-
-    const continueAsNewError = unwrapWorkflowError(error, ContinueAsNewWorkflowError)
-    if (continueAsNewError) {
-      if (executionMode === 'query') {
-        throw new WorkflowQueryViolationError('Workflow query cannot request continue-as-new')
-      }
-      const rawSnapshot = guard.snapshot
-      const intents = rawSnapshot.commandHistory.map((entry) => entry.intent)
-      const commands = await materializeCommands(intents, { dataConverter: this.#dataConverter })
-      return {
-        commands,
-        intents,
-        determinismState: snapshotToDeterminismState(rawSnapshot),
-        completion: 'continued-as-new',
-        queryResults,
-        ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
-      }
-    }
-
-    const nondeterminismError = unwrapWorkflowError(error, WorkflowNondeterminismError)
-    if (nondeterminismError) {
-      throw nondeterminismError
-    }
-
-    const blockedError = unwrapWorkflowError(error, WorkflowBlockedError)
-    if (blockedError) {
-      const contextForPending =
-        lastCommandContext ??
-        (() => {
-          throw new Error('Workflow pending without command context')
-        })()
-      const pendingCommands = await materializeCommands(contextForPending.intents, {
-        dataConverter: this.#dataConverter,
-      })
-      if (executionMode === 'query') {
+      const continueAsNewError = unwrapWorkflowError(error, ContinueAsNewWorkflowError)
+      if (continueAsNewError) {
+        if (executionMode === 'query') {
+          throw new WorkflowQueryViolationError('Workflow query cannot request continue-as-new')
+        }
+        const rawSnapshot = guard.snapshot
+        const intents = rawSnapshot.commandHistory.map((entry) => entry.intent)
+        const commands = await materializeCommands(intents, { dataConverter: this.#dataConverter })
         return {
-          commands: [],
+          commands,
+          intents,
+          determinismState: snapshotToDeterminismState(rawSnapshot),
+          completion: 'continued-as-new',
+          queryResults,
+          ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
+        }
+      }
+
+      const nondeterminismError = unwrapWorkflowError(error, WorkflowNondeterminismError)
+      if (nondeterminismError) {
+        throw nondeterminismError
+      }
+
+      const blockedError = unwrapWorkflowError(error, WorkflowBlockedError)
+      if (blockedError) {
+        const contextForPending =
+          lastCommandContext ??
+          (() => {
+            throw new Error('Workflow pending without command context')
+          })()
+        const pendingCommands = await materializeCommands(contextForPending.intents, {
+          dataConverter: this.#dataConverter,
+        })
+        if (executionMode === 'query') {
+          return {
+            commands: [],
+            intents: contextForPending.intents,
+            determinismState: snapshotToDeterminismState(guard.snapshot),
+            completion: 'pending',
+            queryResults,
+            ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
+          }
+        }
+        return {
+          commands: pendingCommands,
           intents: contextForPending.intents,
           determinismState: snapshotToDeterminismState(guard.snapshot),
           completion: 'pending',
@@ -268,36 +280,74 @@ export class WorkflowExecutor {
           ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
         }
       }
-      return {
-        commands: pendingCommands,
-        intents: contextForPending.intents,
-        determinismState: snapshotToDeterminismState(guard.snapshot),
-        completion: 'pending',
-        queryResults,
-        ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
-      }
-    }
 
-    if (executionMode === 'query') {
+      if (executionMode === 'query') {
+        return {
+          commands: [],
+          intents: [],
+          determinismState: snapshotToDeterminismState(guard.snapshot),
+          completion: 'failed',
+          failure: error,
+          queryResults,
+        }
+      }
+
+      const failureCommands = await this.#buildFailureCommands(error)
       return {
-        commands: [],
+        commands: failureCommands,
         intents: [],
         determinismState: snapshotToDeterminismState(guard.snapshot),
         completion: 'failed',
         failure: error,
         queryResults,
+        ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
       }
+    } finally {
+      restoreGlobals()
+    }
+  }
+
+  #installWorkflowDeterminismGuards(): () => void {
+    const originalWeakRef = globalThis.WeakRef
+    const originalFinalizationRegistry = globalThis.FinalizationRegistry
+
+    const makeError = (name: string) =>
+      new WorkflowNondeterminismError(
+        `${name} is not allowed inside Temporal workflows because it is nondeterministic; move this logic to an activity instead.`,
+      )
+
+    const weakRefGuard =
+      typeof originalWeakRef === 'undefined'
+        ? undefined
+        : (function WeakRefGuard<T extends object>(_target: T) {
+            throw makeError('WeakRef')
+          } as typeof WeakRef)
+
+    const finalizationRegistryGuard =
+      typeof originalFinalizationRegistry === 'undefined'
+        ? undefined
+        : (function FinalizationRegistryGuard<T extends object>(_cleanup: (heldValue: T) => void, _heldValue?: T) {
+            throw makeError('FinalizationRegistry')
+          } as typeof FinalizationRegistry)
+
+    if (weakRefGuard) {
+      // @ts-expect-error override WeakRef for determinism guard
+      globalThis.WeakRef = weakRefGuard
+    }
+    if (finalizationRegistryGuard) {
+      // @ts-expect-error override FinalizationRegistry for determinism guard
+      globalThis.FinalizationRegistry = finalizationRegistryGuard
     }
 
-    const failureCommands = await this.#buildFailureCommands(error)
-    return {
-      commands: failureCommands,
-      intents: [],
-      determinismState: snapshotToDeterminismState(guard.snapshot),
-      completion: 'failed',
-      failure: error,
-      queryResults,
-      ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
+    return () => {
+      if (weakRefGuard) {
+        // @ts-expect-error restore WeakRef after workflow execution
+        globalThis.WeakRef = originalWeakRef as typeof WeakRef
+      }
+      if (finalizationRegistryGuard) {
+        // @ts-expect-error restore FinalizationRegistry after workflow execution
+        globalThis.FinalizationRegistry = originalFinalizationRegistry as typeof FinalizationRegistry
+      }
     }
   }
 
