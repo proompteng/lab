@@ -15,7 +15,7 @@
     "proto:generate": "buf generate --path proto/proompteng && buf generate --template buf.temporal.gen.yaml --path proto/temporal",
     "clean": "find . -name node_modules -type d -prune -exec rm -rf '{}' +",
     "format": "bunx biome format --write",
-    "dev:all": "cd services/jangar && OPENWEBUI_PORT=${OPENWEBUI_PORT:-3000} concurrently -n openwebui,convex,app,worker -c yellow,green,cyan,magenta \"docker run --rm --name jangar-openwebui -p $OPENWEBUI_PORT:3000 ghcr.io/open-webui/open-webui:v0.6.38\" \"bunx convex dev\" \"SKIP_WORKER=1 bun run dev:app\" \"bun run dev\"",
+    "dev:all": "OPENWEBUI_PORT=${OPENWEBUI_PORT:-3000} concurrently -n openwebui,convex,app,worker -c yellow,green,cyan,magenta \"docker run --rm --name jangar-openwebui -p $OPENWEBUI_PORT:3000 ghcr.io/open-webui/open-webui:v0.6.38\" \"bunx --cwd services/jangar convex dev --no-open\" \"SKIP_WORKER=1 bun --cwd services/jangar --no-workspaces run dev:app\" \"bun --cwd services/jangar --no-workspaces run dev\"",
     "tf:plan": "tofu -chdir='./tofu/harvester' plan",
     "tf:apply": "tofu -chdir='./tofu/harvester' apply -auto-approve",
     "tf:destroy": "tofu -chdir='./tofu/harvester' destroy --target harvester_virtualmachine.kube-cluster -auto-approve",
