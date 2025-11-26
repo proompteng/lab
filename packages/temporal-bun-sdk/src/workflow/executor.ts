@@ -54,16 +54,38 @@ const withWorkflowGlobalGuards = async <T>(execute: () => Promise<T>): Promise<T
   const originalWeakRef = globalObject.WeakRef
   const originalFinalizationRegistry = globalObject.FinalizationRegistry
 
-  const guardedWeakRef = function guardedWeakRef(): never {
-    throw buildNondeterministicGlobalError('WeakRef')
+  const guardedWeakRef: WeakRefConstructor = class GuardedWeakRef<T extends WeakKey> implements WeakRef<T> {
+    readonly [Symbol.toStringTag] = 'WeakRef'
+
+    constructor(_target: T) {
+      throw buildNondeterministicGlobalError('WeakRef')
+    }
+
+    deref(): T | undefined {
+      throw buildNondeterministicGlobalError('WeakRef')
+    }
   }
 
-  const guardedFinalizationRegistry = function guardedFinalizationRegistry(): never {
-    throw buildNondeterministicGlobalError('FinalizationRegistry')
+  const guardedFinalizationRegistry: FinalizationRegistryConstructor = class GuardedFinalizationRegistry<
+    T,
+  > implements FinalizationRegistry<T> {
+    readonly [Symbol.toStringTag] = 'FinalizationRegistry'
+
+    constructor(_cleanupCallback: (heldValue: T) => void) {
+      throw buildNondeterministicGlobalError('FinalizationRegistry')
+    }
+
+    register(_target: object, _heldValue: T, _unregisterToken?: object | undefined): void {
+      throw buildNondeterministicGlobalError('FinalizationRegistry')
+    }
+
+    unregister(_unregisterToken: object): boolean {
+      throw buildNondeterministicGlobalError('FinalizationRegistry')
+    }
   }
 
-  globalObject.WeakRef = guardedWeakRef as typeof WeakRef
-  globalObject.FinalizationRegistry = guardedFinalizationRegistry as typeof FinalizationRegistry
+  globalObject.WeakRef = guardedWeakRef
+  globalObject.FinalizationRegistry = guardedFinalizationRegistry
 
   try {
     return await execute()

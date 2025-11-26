@@ -301,9 +301,9 @@ export const resolveTemporalEnvironment = (env?: NodeJS.ProcessEnv): TemporalEnv
   sanitizeEnvironment(env ?? process.env)
 
 export interface WorkflowImportPolicy {
-  allow: string[]
-  block: string[]
-  ignore: string[]
+  allow: ReadonlyArray<string>
+  block: ReadonlyArray<string>
+  ignore: ReadonlyArray<string>
   unsafeAllow: boolean
 }
 
@@ -416,7 +416,7 @@ const parseRetryStatusCodes = (raw: string | undefined, fallback: ReadonlyArray<
   return [...resolved]
 }
 
-const parseImportList = (raw: string | undefined, fallback: ReadonlyArray<string>): string[] => {
+const parseImportList = (raw: string | undefined, fallback: ReadonlyArray<string>): ReadonlyArray<string> => {
   if (raw === undefined) {
     return [...fallback]
   }
