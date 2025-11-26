@@ -4,7 +4,6 @@ namespace: jangar
 resources:
   - kservice.yaml
   - tailscale-service.yaml
-  - openwebui-secret.yaml
 
 images:
   - name: registry.ide-newton.ts.net/lab/jangar

@@ -35,11 +35,6 @@ spec:
               value: jangar
             - name: NODE_ENV
               value: production
-            - name: OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: jangar-openwebui-secret
-                  key: OPENAI_API_KEY
           ports:
             - name: http1
               containerPort: 8080
@@ -49,10 +44,6 @@ spec:
             httpGet:
               path: /health
               port: 8080
-          volumeMounts:
-            - name: openwebui-shared-secret
-              mountPath: /var/run/secrets/jangar-openwebui
-              readOnly: true
           resources:
             requests:
               cpu: 100m
@@ -68,11 +59,6 @@ spec:
               value: "3000"
             - name: OPENAI_API_BASE_URL
               value: http://localhost:8080/openai/v1
-            - name: OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: jangar-openwebui-secret
-                  key: OPENAI_API_KEY
             - name: DEFAULT_MODELS
               value: meta-orchestrator
             - name: WEBUI_AUTH
@@ -90,10 +76,6 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
             failureThreshold: 3
-          volumeMounts:
-            - name: openwebui-shared-secret
-              mountPath: /var/run/secrets/jangar-openwebui
-              readOnly: true
           resources:
             requests:
               cpu: 100m
@@ -101,7 +83,3 @@ spec:
             limits:
               cpu: "1"
               memory: 512Mi
-      volumes:
-        - name: openwebui-shared-secret
-          secret:
-            secretName: jangar-openwebui-secret
