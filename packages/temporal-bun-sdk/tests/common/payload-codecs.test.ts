@@ -44,4 +44,17 @@ describe('payload codec chain', () => {
     expect((error as { cause?: Error }).cause?.message).toBe('inner-cause')
     expect((error as { details?: unknown[] }).details).toEqual([{ reason: 'boom', code: 500 }])
   })
+
+  test('failure details are not double-encoded by codec pipeline', async () => {
+    const root = new Error('codec-wrapped failure')
+    ;(root as { details?: unknown[] }).details = ['detail-value']
+
+    const failure = await encodeErrorToFailure(dataConverter, root)
+    // encodeFailurePayloads should be a no-op for already encoded details
+    const encodedFailure = await encodeFailurePayloads(dataConverter, failure)
+    const error = await failureToError(dataConverter, encodedFailure)
+
+    expect(error).toBeInstanceOf(Error)
+    expect((error as { details?: unknown[] }).details).toEqual(['detail-value'])
+  })
 })

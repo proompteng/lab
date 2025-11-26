@@ -178,22 +178,18 @@ class DefaultFailureConverter implements FailureConverter {
 
   async encodeFailure(failure: Failure, converter: DataConverter): Promise<Failure> {
     const cause = failure.cause ? await this.encodeFailure(failure.cause, converter) : undefined
-    const applicationDetails =
-      failure.failureInfo?.case === 'applicationFailureInfo' ? failure.failureInfo.value.details?.payloads : undefined
-    const encodedDetails =
-      applicationDetails && applicationDetails.length > 0
-        ? await converter.encodePayloads(applicationDetails)
-        : applicationDetails
 
+    // Failure details coming from errorToFailure are already encoded through the
+    // payload codec pipeline. Re-encoding here would wrap them a second time and
+    // leave failureToError with only one decode pass, resulting in still-encoded
+    // payload blobs. Preserve existing detail payloads as-is.
     const failureInfo =
       failure.failureInfo?.case === 'applicationFailureInfo'
         ? {
             case: 'applicationFailureInfo' as const,
             value: create(ApplicationFailureInfoSchema, {
               ...failure.failureInfo.value,
-              ...(encodedDetails && encodedDetails.length > 0
-                ? { details: create(PayloadsSchema, { payloads: encodedDetails }) }
-                : { details: undefined }),
+              details: failure.failureInfo.value.details,
             }),
           }
         : failure.failureInfo
