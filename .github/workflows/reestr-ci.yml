@@ -1,0 +1,21 @@
+name: reestr
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/reestr/**'
+      - '.github/workflows/reestr-ci.yml'
+  pull_request:
+    paths:
+      - 'apps/reestr/**'
+      - '.github/workflows/reestr-ci.yml'
+
+jobs:
+  ci:
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      install-command: bun install --frozen-lockfile
+      lint-command: bun run --filter reestr lint
+      build-command: bun run --filter reestr build
