@@ -370,10 +370,13 @@ const parseRetryStatusCodes = (raw: string | undefined, fallback: ReadonlyArray<
   return [...resolved]
 }
 
-const parsePayloadCodecs = (env: TemporalEnvironment, defaults?: PayloadCodecConfig[]): PayloadCodecConfig[] => {
+const parsePayloadCodecs = (
+  env: TemporalEnvironment,
+  defaults?: readonly PayloadCodecConfig[],
+): PayloadCodecConfig[] => {
   const raw = env.TEMPORAL_PAYLOAD_CODECS
   if (!raw) {
-    return defaults ?? []
+    return defaults ? [...defaults] : []
   }
   const names = raw
     .split(',')
@@ -443,7 +446,7 @@ export interface TemporalConfig {
   tracingInterceptorsEnabled: boolean
   metricsExporter: MetricsExporterSpec
   rpcRetryPolicy: TemporalRpcRetryPolicy
-  payloadCodecs: PayloadCodecConfig[]
+  payloadCodecs: readonly PayloadCodecConfig[]
 }
 
 export interface TLSCertPair {

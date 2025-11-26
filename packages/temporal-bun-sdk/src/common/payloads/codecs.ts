@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, randomBytes, type CipherGCMTypes } from 'node:crypto'
 import { gunzipSync, gzipSync } from 'node:zlib'
 
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
@@ -149,13 +149,14 @@ export const createAesGcmCodec = (options: AesGcmCodecOptions): PayloadCodec => 
   const key = coerceKeyBuffer(options.key)
   assertAesKeySize(key)
   const keyId = options.keyId ?? 'default'
+  const algorithm = `aes-${key.byteLength * 8}-gcm` as CipherGCMTypes
 
   return {
     name: 'aes-gcm',
     async encode(payloads: Payload[]): Promise<Payload[]> {
       return payloads.map((payload) => {
         const nonce = randomBytes(AES_NONCE_BYTES)
-        const cipher = createCipheriv(`aes-${key.byteLength * 8}-gcm`, key, nonce)
+        const cipher = createCipheriv(algorithm, key, nonce)
         const ciphertext = Buffer.concat([cipher.update(toBinary(PayloadSchema, payload)), cipher.final()])
         const tag = cipher.getAuthTag()
         const data = new Uint8Array(Buffer.concat([nonce, tag, ciphertext]))
@@ -180,7 +181,7 @@ export const createAesGcmCodec = (options: AesGcmCodecOptions): PayloadCodec => 
         const nonce = data.subarray(0, AES_NONCE_BYTES)
         const tag = data.subarray(AES_NONCE_BYTES, AES_NONCE_BYTES + AES_TAG_BYTES)
         const ciphertext = data.subarray(AES_NONCE_BYTES + AES_TAG_BYTES)
-        const decipher = createDecipheriv(`aes-${key.byteLength * 8}-gcm`, key, nonce)
+        const decipher = createDecipheriv(algorithm, key, nonce)
         decipher.setAuthTag(tag)
         const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()])
         return fromBinary(PayloadSchema, plaintext)
