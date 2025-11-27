@@ -159,8 +159,22 @@ export const createIntegrationHarness = (
       console.info('[temporal-bun-sdk] remote Temporal dev server left running (no teardown performed)')
     })
 
+    const ensureAddressArgs = (argv: readonly string[]): string[] => {
+      const hasAddress = argv.includes('--address')
+      const hasNamespace = argv.includes('--namespace')
+      const patched: string[] = []
+      if (!hasAddress) {
+        patched.push('--address', config.address)
+      }
+      if (!hasNamespace) {
+        patched.push('--namespace', config.namespace)
+      }
+      patched.push(...argv)
+      return patched
+    }
+
     const runTemporalCli = (args: readonly string[]) => {
-      const command = [cliExecutable, ...args]
+      const command = [cliExecutable, ...ensureAddressArgs(args)]
       return Effect.tryPromise({
         try: async () => {
           console.info('[temporal-bun-sdk] running CLI command', command.join(' '))
