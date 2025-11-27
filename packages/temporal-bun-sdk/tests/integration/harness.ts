@@ -109,7 +109,8 @@ export class TemporalCliArtifactError extends Error {
 }
 
 const textDecoder = new TextDecoder()
-const reuseExistingServer = process.env.TEMPORAL_TEST_SERVER === '1'
+// Integration tests are expected to target a remote Temporal server; we never start a local dev server here.
+const reuseExistingServer = true
 
 export const createIntegrationHarness = (
   config: TemporalDevServerConfig,
@@ -122,13 +123,6 @@ export const createIntegrationHarness = (
       config.workerLoadArtifactsDir ?? join(artifactsRoot, 'worker-load')
     const temporalCliLogPath =
       config.cliLogPath ?? process.env.TEMPORAL_CLI_LOG_PATH ?? join(projectRoot, '.temporal-cli.log')
-    const startScript = join(projectRoot, 'scripts', 'start-temporal-cli.ts')
-    const stopScript = join(projectRoot, 'scripts', 'stop-temporal-cli.ts')
-
-    if (!existsSync(startScript) || !existsSync(stopScript)) {
-      throw new TemporalCliUnavailableError('Temporal CLI management scripts are missing', [])
-    }
-
     const workerLoadArtifacts = createWorkerLoadArtifactsHelper(workerLoadArtifactsDir)
 
     const { hostname, port } = parseAddress(config.address)
@@ -151,62 +145,18 @@ export const createIntegrationHarness = (
     }
 
     const setup = Effect.tryPromise(async () => {
-      if (started) {
-        return
+      if (started) return
+      if (!reuseExistingServer) {
+        throw new TemporalCliUnavailableError('Temporal dev server reuse is required for integration tests', [])
       }
-      if (reuseExistingServer) {
-        console.info('[temporal-bun-sdk] attempting to reuse Temporal dev server (will start if absent)')
-      }
-      const child = Bun.spawn(['bun', startScript], {
-        cwd: projectRoot,
-        stdout: 'pipe',
-        stderr: 'pipe',
-        env: {
-          ...process.env,
-          TEMPORAL_NAMESPACE: config.namespace,
-          TEMPORAL_CLI_PATH: cliExecutable,
-          TEMPORAL_PORT: String(cliPort),
-          TEMPORAL_UI_PORT: String(cliUiPort),
-          TEMPORAL_ARTIFACTS_DIR: artifactsRoot,
-          TEMPORAL_WORKER_LOAD_ARTIFACTS_DIR: workerLoadArtifacts.root,
-          TEMPORAL_CLI_LOG_PATH: temporalCliLogPath,
-        },
-      })
-      const exitCode = await child.exited
-      const stdout = child.stdout ? await readStream(child.stdout) : ''
-      const stderr = child.stderr ? await readStream(child.stderr) : ''
-      if (exitCode !== 0) {
-        if (stderr.includes('Temporal CLI already running')) {
-          return
-        }
-        throw new TemporalCliCommandError(['bun', startScript], exitCode, stdout, stderr)
-      }
+      // Trust that the remote Temporal endpoint is reachable; failures surface in CLI commands.
       started = true
-      console.info(
-        `[temporal-bun-sdk] Temporal CLI dev server running at ${hostname}:${cliPort} (ui:${cliUiPort})`,
-      )
+      console.info('[temporal-bun-sdk] using remote Temporal dev server at', `${hostname}:${cliPort}`)
     })
 
     const teardown = Effect.tryPromise(async () => {
-      if (!started) {
-        return
-      }
-      if (reuseExistingServer) {
-        console.info('[temporal-bun-sdk] leaving Temporal dev server running (reuse enabled)')
-        return
-      }
-      const child = Bun.spawn(['bun', stopScript], {
-        cwd: projectRoot,
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-      const exitCode = await child.exited
-      const stdout = child.stdout ? await readStream(child.stdout) : ''
-      const stderr = child.stderr ? await readStream(child.stderr) : ''
-      if (exitCode !== 0) {
-        throw new TemporalCliCommandError(['bun', stopScript], exitCode, stdout, stderr)
-      }
-      started = false
+      if (!started) return
+      console.info('[temporal-bun-sdk] remote Temporal dev server left running (no teardown performed)')
     })
 
     const runTemporalCli = (args: readonly string[]) => {
