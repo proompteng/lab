@@ -4,6 +4,7 @@ namespace: jangar
 resources:
   - kservice.yaml
   - tailscale-service.yaml
+  - postgres-cluster.yaml
 
 images:
   - name: registry.ide-newton.ts.net/lab/jangar

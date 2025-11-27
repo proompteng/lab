@@ -17,7 +17,7 @@ export const workflows = [
       const turnResult = yield* activities.schedule('runCodexTurnActivity', [
         {
           threadId: null,
-          prompt: `Plan mission: ${input.topic}`,
+          prompt: `Plan: ${input.topic}`,
           repoUrl: input.repoUrl ?? undefined,
           depth: input.depth,
           constraints: input.constraints,

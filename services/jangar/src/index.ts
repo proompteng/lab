@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { startUiServer } from './dev-server'
+import { getAppServer, stopAppServer } from './lib/app-server'
 import { startTemporalWorker } from './workers/temporal-worker'
 
 const serviceRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -30,6 +31,7 @@ const onSignal = (cleanup: () => Promise<void>) => {
 }
 
 const runProd = async () => {
+  const appServer = getAppServer('codex', serviceRoot)
   const { runPromise, shutdown } = await startTemporalWorker()
   const uiProcess = startUiServer()
   const uiExit = uiProcess.exited.then((code) => {
@@ -38,12 +40,23 @@ const runProd = async () => {
     }
   })
 
-  onSignal(async () => {
+  let cleanedUp = false
+  const cleanup = async () => {
+    if (cleanedUp) return
+    cleanedUp = true
     await shutdown()
+    await stopAppServer(appServer)
     uiProcess.kill()
-  })
+  }
 
-  await Promise.race([runPromise, uiExit])
+  onSignal(cleanup)
+
+  try {
+    await appServer.ready
+    await Promise.race([runPromise, uiExit])
+  } finally {
+    await cleanup()
+  }
 }
 
 const runDev = async () => {

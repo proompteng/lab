@@ -3,6 +3,7 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { useId } from 'react'
+import { AppLayout } from '@/components/app-layout'
 import type { RouterContext } from '../router'
 import stylesHref from '../styles.css?url'
 
@@ -15,7 +16,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
         content: 'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover',
       },
       { name: 'theme-color', content: '#0f172a' },
-      { title: 'Jangar mission console' },
+      { title: 'Jangar platform' },
     ],
     links: [{ rel: 'stylesheet', href: stylesHref }],
   }),
@@ -27,17 +28,17 @@ function RootDocument() {
   const mainId = useId()
 
   return (
-    <html lang="en" data-theme="dark" suppressHydrationWarning>
+    <html lang="en" data-theme="dark" className="dark" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
-      <body className="min-h-screen bg-slate-950 text-slate-50" suppressHydrationWarning>
+      <body className="min-h-screen w-screen overflow-hidden bg-slate-950 text-slate-50" suppressHydrationWarning>
         <QueryClientProvider client={queryClient}>
-          <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-4 px-4 py-6">
-            <main id={mainId} className="flex flex-1 flex-col gap-6">
+          <AppLayout>
+            <main id={mainId} className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               <Outlet />
             </main>
-          </div>
+          </AppLayout>
           {import.meta.env.DEV ? (
             <>
               <TanStackRouterDevtools position="bottom-right" />

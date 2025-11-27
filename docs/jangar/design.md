@@ -6,7 +6,7 @@ Jangar will become a single Bun-based service that provides:
 
 - A Temporal workflow that runs **one Codex turn per Activity** (auditable, retryable, visible in history).
 - A meta Codex (model `gpt-5.1-codex-max`, `danger-full-access`, network on, approval `never`) that plans and delegates work to worker Codex runs capable of repo changes and PR creation.
-- HTTP + SSE APIs and a TanStack Start UI served from the same process for operators to start missions, chat, and watch execution.
+- HTTP + SSE APIs and a TanStack Start UI served from the same process for operators to chat and watch execution.
 - Persistence in Convex (chat_sessions, chat_messages, work_orders per `docs/jangar/persistence.md`) for chat history, workflow/PR linkage, and recency sorting; optional object storage for raw logs.
 
 ## Goals
@@ -18,7 +18,7 @@ Jangar will become a single Bun-based service that provides:
 
 ## Non-Goals (v1)
 
-- Multi-repo missions in one workflow.
+- Multi-repo coordination in one workflow.
 - Rich RBAC; assume trusted operators.
 - Long-term log archival (optional bucket, not mandatory).
 
@@ -48,7 +48,7 @@ sequenceDiagram
     participant WK as Worker Codex
     participant GH as GitHub/Repo
 
-    U->>UI: Start mission / send messages
+    U->>UI: Send messages
     UI->>API: POST /orchestrations, /message
     API->>WF: start workflow / signal
     loop per turn
