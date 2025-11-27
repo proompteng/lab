@@ -3,6 +3,7 @@ import crypto from 'node:crypto'
 import { join } from 'node:path'
 
 import { Effect } from 'effect'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { createDefaultDataConverter } from '../../src/common/payloads'
 import { makeStickyCache } from '../../src/worker/sticky-cache'
@@ -189,11 +190,21 @@ test('sticky cache remains empty after workflow completion', { timeout: replayTi
       throw new Error('Sticky cache not initialised')
     }
     await runTimerWorkflow()
-    const size = await Effect.runPromise(stickyCacheSizeEffect)
+    const size = await waitForStickyDrain(stickyCacheSizeEffect)
     expect(size).toBe(0)
   })
 })
 })
+
+const waitForStickyDrain = async (sizeEffect: Effect.Effect<number, never, never>, timeoutMs = 5_000): Promise<number> => {
+  const deadline = Date.now() + timeoutMs
+  let size = await Effect.runPromise(sizeEffect)
+  while (size > 0 && Date.now() < deadline) {
+    await delay(100)
+    size = await Effect.runPromise(sizeEffect)
+  }
+  return size
+}
 
 const runReplayCliCommand = async (
   execution: WorkflowExecutionHandle,
