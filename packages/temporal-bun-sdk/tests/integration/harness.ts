@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { createConnection } from 'node:net'
 
 import { fromJson } from '@bufbuild/protobuf'
 import { Effect } from 'effect'
@@ -112,25 +111,6 @@ export class TemporalCliArtifactError extends Error {
 const textDecoder = new TextDecoder()
 const reuseExistingServer = process.env.TEMPORAL_TEST_SERVER === '1'
 
-const isServerReachable = async (host: string, port: number): Promise<boolean> =>
-  new Promise((resolve) => {
-    const socket = createConnection({ host, port })
-    const cleanup = (): void => socket.destroy()
-
-    socket.once('connect', () => {
-      cleanup()
-      resolve(true)
-    })
-    socket.once('error', () => {
-      cleanup()
-      resolve(false)
-    })
-    socket.setTimeout(500, () => {
-      cleanup()
-      resolve(false)
-    })
-  })
-
 export const createIntegrationHarness = (
   config: TemporalDevServerConfig,
 ): Effect.Effect<IntegrationHarness, TemporalCliError, never> =>
@@ -175,13 +155,7 @@ export const createIntegrationHarness = (
         return
       }
       if (reuseExistingServer) {
-        const reachable = await isServerReachable(hostname, cliPort)
-        if (reachable) {
-          console.info('[temporal-bun-sdk] reusing existing Temporal dev server')
-          started = true
-          return
-        }
-        console.warn('[temporal-bun-sdk] Temporal dev server not reachable, starting a fresh instance')
+        console.info('[temporal-bun-sdk] attempting to reuse Temporal dev server (will start if absent)')
       }
       const child = Bun.spawn(['bun', startScript], {
         cwd: projectRoot,
