@@ -257,6 +257,16 @@ export const workflows = [
 
 On each workflow task the executor compares newly emitted intents, random values, and logical timestamps against the stored determinism state. Mismatches raise `WorkflowNondeterminismError` and cause the worker to fail the task with `WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR`, mirroring Temporal’s official SDK behavior. Determinism snapshots are recorded as `temporal-bun-sdk/determinism` markers in workflow history and optionally cached via a sticky determinism cache. Tune cache behaviour with `TEMPORAL_STICKY_CACHE_SIZE` and `TEMPORAL_STICKY_TTL_MS`; the sticky worker queue inherits its schedule-to-start timeout from the TTL value.
 
+## Workflow determinism guards
+
+- Worker startup performs a static preflight scan of the workflow entrypoint (`workflowsPath`). Built-in modules are allowed only when they are listed in the policy allow list (default: `assert`, `url`, `util`); other Node/Bun built-ins are denied unless you explicitly override the policy.
+- Configure the policy via env/CLI:
+  - `TEMPORAL_WORKFLOW_IMPORT_ALLOW`, `TEMPORAL_WORKFLOW_IMPORT_BLOCK`, `TEMPORAL_WORKFLOW_IMPORT_IGNORE`
+  - `TEMPORAL_WORKFLOW_IMPORT_UNSAFE_OK=1` (debug-only escape hatch)
+  - `bun run start:worker -- --workflow-import-allow=assert,url --workflow-import-unsafe-ok` (flags map to the same env vars)
+- Startup failures list the offending specifiers with remediation hints; remove nondeterministic imports or add explicit allow/ignore entries. The scan covers static imports resolved by Bun’s import scanner; dynamic imports may still require manual review.
+- During workflow execution the runtime temporarily overrides `WeakRef` and `FinalizationRegistry` so workflow code that touches them throws `WorkflowNondeterminismError`. The originals are restored after each workflow task, keeping activities untouched while protecting workflow determinism.
+
 ## Activity lifecycle
 
 Activities run with an ambient `ActivityContext` (available through `currentActivityContext()`) so you can send heartbeats, observe cancellation, and inspect attempt metadata:

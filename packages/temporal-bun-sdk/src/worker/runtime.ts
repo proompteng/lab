@@ -91,6 +91,7 @@ import type {
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import type { WorkflowQueryEvaluationResult, WorkflowUpdateInvocation } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
+import { assertWorkflowImportsDeterministic } from '../workflow/import-guard'
 import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from '../workflow/inbound'
 import { WorkflowRegistry } from '../workflow/registry'
 import {
@@ -257,6 +258,9 @@ export class WorkerRuntime {
     }
 
     const identity = options.identity ?? config.workerIdentity
+    if (options.workflowsPath) {
+      await assertWorkflowImportsDeterministic(options.workflowsPath, config.workflowImportPolicy)
+    }
     const workflows = await loadWorkflows(options.workflowsPath, options.workflows)
     if (workflows.length === 0) {
       throw new Error('No workflow definitions were registered; provide workflows or workflowsPath')

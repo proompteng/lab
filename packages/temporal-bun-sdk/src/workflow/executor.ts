@@ -38,6 +38,72 @@ import {
 import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from './inbound'
 import type { WorkflowRegistry } from './registry'
 
+const buildNondeterministicGlobalError = (
+  globalName: 'WeakRef' | 'FinalizationRegistry',
+): WorkflowNondeterminismError =>
+  new WorkflowNondeterminismError(`${globalName} is not deterministic inside Temporal workflows`, {
+    hint: 'Move ephemeral caching or cleanup logic into activities or deterministic workflow state.',
+  })
+
+const withWorkflowGlobalGuards = async <T>(execute: () => Promise<T>): Promise<T> => {
+  const globalObject = globalThis as typeof globalThis & {
+    WeakRef?: typeof WeakRef
+    FinalizationRegistry?: typeof FinalizationRegistry
+  }
+
+  const originalWeakRef = globalObject.WeakRef
+  const originalFinalizationRegistry = globalObject.FinalizationRegistry
+
+  const guardedWeakRef: WeakRefConstructor = class GuardedWeakRef<T extends WeakKey> implements WeakRef<T> {
+    readonly [Symbol.toStringTag] = 'WeakRef'
+
+    constructor(_target: T) {
+      throw buildNondeterministicGlobalError('WeakRef')
+    }
+
+    deref(): T | undefined {
+      throw buildNondeterministicGlobalError('WeakRef')
+    }
+  }
+
+  const guardedFinalizationRegistry: FinalizationRegistryConstructor = class GuardedFinalizationRegistry<T>
+    implements FinalizationRegistry<T>
+  {
+    readonly [Symbol.toStringTag] = 'FinalizationRegistry'
+
+    constructor(_cleanupCallback: (heldValue: T) => void) {
+      throw buildNondeterministicGlobalError('FinalizationRegistry')
+    }
+
+    register(_target: object, _heldValue: T, _unregisterToken?: object | undefined): void {
+      throw buildNondeterministicGlobalError('FinalizationRegistry')
+    }
+
+    unregister(_unregisterToken: object): boolean {
+      throw buildNondeterministicGlobalError('FinalizationRegistry')
+    }
+  }
+
+  globalObject.WeakRef = guardedWeakRef
+  globalObject.FinalizationRegistry = guardedFinalizationRegistry
+
+  try {
+    return await execute()
+  } finally {
+    if (originalWeakRef === undefined) {
+      delete globalObject.WeakRef
+    } else {
+      globalObject.WeakRef = originalWeakRef
+    }
+
+    if (originalFinalizationRegistry === undefined) {
+      delete globalObject.FinalizationRegistry
+    } else {
+      globalObject.FinalizationRegistry = originalFinalizationRegistry
+    }
+  }
+}
+
 export interface WorkflowUpdateInvocation {
   readonly protocolInstanceId: string
   readonly requestMessageId: string
@@ -179,24 +245,55 @@ export class WorkflowExecutor {
       )
     })
 
-    const exit = await Effect.runPromiseExit(workflowEffect)
-    const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
-    const updatesToProcess = executionMode === 'query' ? [] : (input.updates ?? [])
-    let updateDispatches: WorkflowUpdateDispatch[] = []
+    const guarded = await withWorkflowGlobalGuards(async () => {
+      let workflowExit: Exit.Exit<
+        {
+          result: unknown
+          context: WorkflowContext<unknown>
+          commandContext: WorkflowCommandContext
+          updateRegistry: WorkflowUpdateRegistry
+        },
+        unknown
+      >
 
-    if (updatesToProcess.length > 0) {
-      const contextForUpdates = Exit.isSuccess(exit) ? exit.value.context : lastWorkflowContext
-      const registryForUpdates = Exit.isSuccess(exit) ? exit.value.updateRegistry : lastUpdateRegistry
-      if (!contextForUpdates || !registryForUpdates) {
-        throw new Error('Workflow update context unavailable after execution')
+      try {
+        workflowExit = await Effect.runPromiseExit(workflowEffect)
+      } catch (error) {
+        workflowExit = Exit.fail(error) as Exit.Exit<
+          {
+            result: unknown
+            context: WorkflowContext<unknown>
+            commandContext: WorkflowCommandContext
+            updateRegistry: WorkflowUpdateRegistry
+          },
+          unknown
+        >
       }
-      updateDispatches = await this.#processWorkflowUpdates({
-        context: contextForUpdates,
-        registry: registryForUpdates,
-        updates: updatesToProcess,
-        guard,
-      })
-    }
+
+      const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
+      const updatesToProcess = executionMode === 'query' ? [] : (input.updates ?? [])
+      let updateDispatches: WorkflowUpdateDispatch[] = []
+
+      if (updatesToProcess.length > 0) {
+        const contextForUpdates = Exit.isSuccess(workflowExit) ? workflowExit.value.context : lastWorkflowContext
+        const registryForUpdates = Exit.isSuccess(workflowExit) ? workflowExit.value.updateRegistry : lastUpdateRegistry
+        if (!contextForUpdates || !registryForUpdates) {
+          throw new Error('Workflow update context unavailable after execution')
+        }
+        updateDispatches = await this.#processWorkflowUpdates({
+          context: contextForUpdates,
+          registry: registryForUpdates,
+          updates: updatesToProcess,
+          guard,
+        })
+      }
+
+      return { workflowExit, queryResults, updateDispatches }
+    })
+
+    const exit = guarded.workflowExit
+    const queryResults = guarded.queryResults
+    const updateDispatches = guarded.updateDispatches
 
     if (Exit.isSuccess(exit)) {
       const determinismState = snapshotToDeterminismState(guard.snapshot)
