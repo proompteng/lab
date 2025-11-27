@@ -1,4 +1,4 @@
-ARG BUN_VERSION=1.3.2
+ARG BUN_VERSION=1.3.3
 
 FROM node:lts-alpine AS deps
 ARG BUN_VERSION
@@ -7,11 +7,14 @@ WORKDIR /app
 ENV BUN_INSTALL="/root/.bun"
 ENV PATH="$BUN_INSTALL/bin:$PATH"
 
+RUN apk add --no-cache bash curl
 RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}
 
-COPY package.json bun.lock .npmrc* ./
+COPY package.json bun.lock .npmrc* turbo.json tsconfig.base.json tsconfig.json ./
 COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
-COPY apps/docs ./apps/docs
+COPY apps ./apps
+COPY packages ./packages
+COPY services ./services
 
 ENV HUSKY=0
 RUN bun install --frozen-lockfile
