@@ -444,6 +444,10 @@ export class WorkflowExecutor {
         })
       } else {
         const failure = this.#resolveError(executionExit.cause)
+        // Allow updates to remain pending when their handlers block on timers/activities.
+        if (failure instanceof WorkflowBlockedError) {
+          continue
+        }
         dispatches.push({
           type: 'completion',
           protocolInstanceId: invocation.protocolInstanceId,

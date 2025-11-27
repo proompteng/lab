@@ -131,6 +131,10 @@ export class DeterminismGuard {
     }
   }
 
+  isQueryMode(): boolean {
+    return this.#mode === 'query'
+  }
+
   recordCommand(intent: WorkflowCommandIntent): RecordedCommandKind {
     const previousEntry = this.#previous?.commandHistory[this.#commandIndex]
 
