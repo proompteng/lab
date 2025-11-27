@@ -24,7 +24,7 @@ harness, and tune sticky cache + determinism diagnostics for
    NODE_PATH=packages/temporal-bun-sdk/node_modules bun scripts/build-replay-fixtures.ts
    ```
 5. Drop the resulting JSON file into `packages/temporal-bun-sdk/tests/replay/fixtures/`
-   and run `bun run --filter @proompteng/temporal-bun-sdk exec bun test tests/replay/fixtures.test.ts`.
+   and run `cd packages/temporal-bun-sdk && bun test tests/replay/fixtures.test.ts`.
    Use `TEMPORAL_REPLAY_FIXTURE=<name-fragment>` to run a subset.
 
 ## Use the CLI replay command
@@ -115,7 +115,7 @@ Attach your own registry via `WorkerRuntimeOptions.metrics` or call
 ## Running the Replay Harness
 
 ```
-bun run --filter @proompteng/temporal-bun-sdk exec bun test \
+cd packages/temporal-bun-sdk && bun test \
   tests/workflow/replay.test.ts \
   tests/replay/fixtures.test.ts
 ```

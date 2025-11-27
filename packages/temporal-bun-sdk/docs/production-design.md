@@ -185,9 +185,9 @@ can contribute independently without re-planning.
   - Sticky cache decisions are now instrumented with counters (`hits`, `misses`, `evictions`, `heal`) and structured logs so nondeterminism causes can be traced via `WorkflowNondeterminismError.details`.
   - Replay fixtures live under `tests/replay/fixtures/*.json` with a dedicated harness (`tests/replay/fixtures.test.ts`) that locks determinism outputs to real histories. The capture/runbook lives in `docs/replay-runbook.md`.
 - **Validation commands**
-  - `bun run --filter @proompteng/temporal-bun-sdk exec bun test tests/workflow/replay.test.ts`
-  - `bun run --filter @proompteng/temporal-bun-sdk exec bun test tests/replay/fixtures.test.ts`
-  - `bun run --filter @proompteng/temporal-bun-sdk exec bun test tests/integration/history-replay.test.ts`
+  - `cd packages/temporal-bun-sdk && bun test tests/workflow/replay.test.ts`
+  - `cd packages/temporal-bun-sdk && bun test tests/replay/fixtures.test.ts`
+  - `cd packages/temporal-bun-sdk && bun test tests/integration/history-replay.test.ts`
 
 - **Dependencies**
   - Optional integration with TBS-004 for logging metrics.
@@ -234,8 +234,8 @@ can contribute independently without re-planning.
 
 - **Load/perf harness**
   - CPU-heavy + I/O-heavy workflows live under `tests/integration/load/**` alongside the JSONL metrics aggregator. The harness starts the Temporal CLI dev server, creates `.artifacts/worker-load` per run, and collects sticky cache, poll latency, and throughput metrics via the worker runtime's file exporter.
-  - Local runs: `TEMPORAL_INTEGRATION_TESTS=1 bun run --filter @proompteng/temporal-bun-sdk exec bun test tests/integration/worker-load.test.ts` (Bun test runner) or `bun run --filter @proompteng/temporal-bun-sdk test:load` (Bun CLI script).
-  - CI: `.github/workflows/temporal-bun-sdk.yml` now executes `bun run --filter @proompteng/temporal-bun-sdk test:load` after the main suite and uploads the `.artifacts/worker-load/{metrics.jsonl,report.json,temporal-cli.log}` bundle for reviewers.
+  - Local runs: `cd packages/temporal-bun-sdk && TEMPORAL_INTEGRATION_TESTS=1 bun test tests/integration/worker-load.test.ts` (Bun test runner) or `cd packages/temporal-bun-sdk && bun run test:load` (Bun CLI script).
+  - CI: `.github/workflows/temporal-bun-sdk.yml` now executes `cd packages/temporal-bun-sdk && bun run test:load` after the main suite and uploads the `.artifacts/worker-load/{metrics.jsonl,report.json,temporal-cli.log}` bundle for reviewers.
   - Default knobs submit 36 workflows with a 100s completion budget and workflow/activity concurrency of 10/14; the Bun test adds a ~15s cushion over `TEMPORAL_LOAD_TEST_TIMEOUT_MS + TEMPORAL_LOAD_TEST_METRICS_FLUSH_MS` so that healthy runs finish well before the CI hard timeout while still exercising the scheduler.
 
 ### TBS-004 – Observability (Complete)
@@ -249,8 +249,8 @@ can contribute independently without re-planning.
   - Observability services are built with `Effect` so they can be composed or swapped (layers remain available for future TBS-010 work).
   - Metrics exporters flush through `Effect` effects to avoid blocking shutdown.
 - **Validation notes**
-  1. `bun run --filter @proompteng/temporal-bun-sdk exec bun test packages/temporal-bun-sdk/tests/**/*` now exercises the new observability unit/integration suites.
-  2. `bun run --filter @proompteng/temporal-bun-sdk exec bunx temporal-bun doctor --log-format=json --metrics=file:/tmp/metrics.json` confirms the documented configuration path and writes benchmark output.
+  1. `cd packages/temporal-bun-sdk && bun test packages/temporal-bun-sdk/tests/**/*` now exercises the new observability unit/integration suites.
+  2. `cd packages/temporal-bun-sdk && bunx temporal-bun doctor --log-format=json --metrics=file:/tmp/metrics.json` confirms the documented configuration path and writes benchmark output.
 
 ### TBS-005 – Client Resilience
 
@@ -349,11 +349,7 @@ can contribute independently without re-planning.
   - `packages/temporal-bun-sdk/CHANGELOG.md` – canonical changelog kept current
     by release-please.
 - **Acceptance criteria (met)**
-  1. The release workflow installs Node 24 + Bun, runs `bun install
-     --frozen-lockfile`, executes `bunx biome check
-     packages/temporal-bun-sdk`, `bun run --filter @proompteng/temporal-bun-sdk
-     test`, `bun run --filter @proompteng/temporal-bun-sdk test:load`, and
-     `bun run --filter @proompteng/temporal-bun-sdk build`. Any failure aborts the
+  1. The release workflow installs Node 24 + Bun, runs `bun install --frozen-lockfile`, executes `bunx biome check packages/temporal-bun-sdk`, `bun test`, `bun run test:load`, and `bun run build`. Any failure aborts the
      publish.
   2. release-please derives the semver bump from Conventional Commits, updates
      `package.json`, and rewrites `CHANGELOG.md` inside the automated release PR.
