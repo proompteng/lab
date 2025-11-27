@@ -155,7 +155,7 @@ export interface WorkflowActivities {
     activityType: string,
     args?: unknown[],
     options?: ScheduleActivityOptions,
-  ): Effect.Effect<WorkflowScheduledCommandRef, never, never>
+  ): Effect.Effect<unknown, never, never>
 
   cancel(
     activityId: string,
@@ -164,7 +164,7 @@ export interface WorkflowActivities {
 }
 
 export interface WorkflowTimers {
-  start(options: StartTimerOptions): Effect.Effect<WorkflowScheduledCommandRef, never, never>
+  start(options: StartTimerOptions): Effect.Effect<{ timerId: string }, never, never>
 
   cancel(timerId: string, options?: CancelTimerOptions): Effect.Effect<WorkflowScheduledCommandRef, never, never>
 }

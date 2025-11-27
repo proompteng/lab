@@ -550,10 +550,12 @@ export class WorkflowExecutor {
       throw new Error('Workflow query registry unavailable')
     }
     if (process.env.CODEX_DEBUG_QUERY_REGISTRY === '1') {
-      // eslint-disable-next-line no-console
-      console.log('query registry handlers', registry.list().map((h) => h.handle.name))
-      // eslint-disable-next-line no-console
-      console.log('requests', requests.map((r) => r.name))
+      console.log(
+        'query registry handlers',
+        registry.list().map((handler) => handler.handle.name),
+        'requests',
+        requests.map((request) => request.name),
+      )
     }
     const results: WorkflowQueryEvaluationResult[] = []
     for (const request of requests) {
