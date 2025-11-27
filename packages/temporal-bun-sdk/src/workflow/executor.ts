@@ -97,6 +97,7 @@ export interface ExecuteWorkflowInput {
   readonly activityResults?: Map<string, ActivityResolution>
   readonly activityScheduleEventIds?: Map<string, string>
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
+  readonly timerResults?: ReadonlySet<string>
   readonly queryRequests?: readonly WorkflowQueryRequest[]
   readonly updates?: readonly WorkflowUpdateInvocation[]
   readonly mode?: 'workflow' | 'query'
@@ -163,6 +164,7 @@ export class WorkflowExecutor {
         activityResults: input.activityResults,
         activityScheduleEventIds: input.activityScheduleEventIds,
         signalDeliveries: input.signalDeliveries,
+        timerResults: input.timerResults,
         updates: definition.updates,
       })
       lastCommandContext = created.commandContext
@@ -180,8 +182,7 @@ export class WorkflowExecutor {
     })
 
     const exit = await Effect.runPromiseExit(workflowEffect)
-    const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
-    const updatesToProcess = executionMode === 'query' ? [] : (input.updates ?? [])
+    const updatesToProcess = input.updates ?? []
     let updateDispatches: WorkflowUpdateDispatch[] = []
 
     if (updatesToProcess.length > 0) {
@@ -197,6 +198,8 @@ export class WorkflowExecutor {
         guard,
       })
     }
+
+    const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
 
     if (Exit.isSuccess(exit)) {
       const determinismState = snapshotToDeterminismState(guard.snapshot)
@@ -545,6 +548,12 @@ export class WorkflowExecutor {
     }
     if (!registry) {
       throw new Error('Workflow query registry unavailable')
+    }
+    if (process.env.CODEX_DEBUG_QUERY_REGISTRY === '1') {
+      // eslint-disable-next-line no-console
+      console.log('query registry handlers', registry.list().map((h) => h.handle.name))
+      // eslint-disable-next-line no-console
+      console.log('requests', requests.map((r) => r.name))
     }
     const results: WorkflowQueryEvaluationResult[] = []
     for (const request of requests) {

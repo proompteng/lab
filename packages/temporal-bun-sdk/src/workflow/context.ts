@@ -253,6 +253,7 @@ export interface CreateWorkflowContextParams<I> {
   readonly activityResults?: Map<string, ActivityResolution>
   readonly activityScheduleEventIds?: Map<string, string>
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
+  readonly timerResults?: ReadonlySet<string>
   readonly updates?: WorkflowUpdateDefinitions
 }
 
@@ -336,7 +337,10 @@ export const createWorkflowContext = <I>(
         if (resolution.status === 'failed') {
           throw resolution.error
         }
-        return createCommandRef(intent, { activityId: intent.activityId, result: resolution.value })
+        // When the activity result is already available (e.g., during replay/query),
+        // return the resolved value instead of a command reference so workflow code
+        // sees the decoded activity output.
+        return resolution.value
       })
     },
     cancel(activityId, options = {}) {
@@ -356,7 +360,12 @@ export const createWorkflowContext = <I>(
         }
         const intent = buildStartTimerIntent(commandContext, options)
         commandContext.addIntent(intent)
-        return createCommandRef(intent, { timerId: intent.timerId })
+        // If the timer hasn't fired yet, block the workflow so it will resume
+        // when the corresponding TimerFired event is observed on replay.
+        if (!params.timerResults?.has(intent.timerId)) {
+          throw new WorkflowBlockedError(`Timer ${intent.timerId} pending`)
+        }
+        return { timerId: intent.timerId }
       })
     },
     cancel(timerId, options = {}) {
@@ -406,7 +415,10 @@ export const createWorkflowContext = <I>(
 
   const queries: WorkflowQueries = {
     register(handle, resolver, options) {
-      return queryRegistry.register(handle, resolver, options)
+      const effect = queryRegistry.register(handle, resolver, options)
+      // Ensure registration occurs immediately even if caller forgets to yield/await.
+      Effect.runSync(effect)
+      return effect
     },
     resolve(handle, input, metadata) {
       return queryRegistry.resolve(handle, input, metadata)
@@ -469,7 +481,11 @@ export const createWorkflowContext = <I>(
 
   if (params.updates) {
     for (const definition of params.updates) {
-      updateRegistry.register(definition, definition.handler, definition.validator)
+      // Some callers supply update definitions as metadata and register handlers at runtime.
+      // Only auto-register when a handler is present to avoid throwing during workflow replay.
+      if ('handler' in definition && typeof definition.handler === 'function') {
+        updateRegistry.register(definition, definition.handler, definition.validator)
+      }
     }
   }
 
@@ -1120,7 +1136,7 @@ export class WorkflowQueryRegistry {
       return Effect.fail(new WorkflowQueryHandlerMissingError(request.name))
     }
     const metadata = request.metadata ?? {}
-    const normalized = normalizeInboundArguments(request.args, entry.handle.decodeInputAsArray)
+    const normalized = normalizeInboundArguments(request.args, entry.handle.decodeInputAsArray) ?? {}
     return Schema.decodeUnknown(entry.handle.inputSchema)(normalized)
       .pipe(
         Effect.flatMap((decoded) =>
@@ -1137,6 +1153,10 @@ export class WorkflowQueryRegistry {
             : ({ request, status: 'failure', error: payload.error } satisfies WorkflowQueryEvaluation),
         ),
       )
+  }
+
+  list(): QueryRegistryEntry[] {
+    return Array.from(this.#handlers.values())
   }
 
   #recordQueryEvaluation(

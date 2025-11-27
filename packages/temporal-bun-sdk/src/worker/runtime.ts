@@ -1053,6 +1053,7 @@ export class WorkerRuntime {
     try {
       const { results: activityResults, scheduledEventIds: activityScheduleEventIds } =
         await this.#extractActivityResolutions(historyEvents)
+      const timerResults = await this.#extractTimerResolutions(historyEvents)
 
       const replayUpdates = historyReplay?.updates ?? []
       const mergedUpdates = mergeUpdateInvocations(replayUpdates, collectedUpdates.invocations)
@@ -1067,6 +1068,7 @@ export class WorkerRuntime {
         activityResults,
         activityScheduleEventIds,
         signalDeliveries,
+        timerResults,
         queryRequests,
         updates: mergedUpdates,
         mode: isLegacyQueryTask ? 'query' : 'workflow',
@@ -1460,6 +1462,23 @@ export class WorkerRuntime {
     }
 
     return deliveries
+  }
+
+  async #extractTimerResolutions(events: HistoryEvent[]): Promise<Set<string>> {
+    const fired = new Set<string>()
+    for (const event of events) {
+      if (event.eventType !== EventType.TIMER_FIRED) {
+        continue
+      }
+      if (event.attributes?.case !== 'timerFiredEventAttributes') {
+        continue
+      }
+      const attrs = event.attributes.value as { timerId?: string }
+      if (attrs.timerId) {
+        fired.add(attrs.timerId)
+      }
+    }
+    return fired
   }
 
   async #extractWorkflowQueryRequests(response: PollWorkflowTaskQueueResponse): Promise<WorkflowQueryRequest[]> {
