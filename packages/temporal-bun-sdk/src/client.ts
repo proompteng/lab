@@ -57,13 +57,23 @@ import type { TemporalInterceptor as ClientMiddleware, InterceptorContext, Inter
 import { createObservabilityServices } from './observability'
 import type { LogFields, Logger, LogLevel } from './observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from './observability/metrics'
-import type { Memo, Payload, SearchAttributes } from './proto/temporal/api/common/v1/message_pb'
+import {
+  type Memo,
+  type Payload,
+  type SearchAttributes,
+  type WorkflowExecution,
+  WorkflowExecutionSchema,
+} from './proto/temporal/api/common/v1/message_pb'
 import type { QueryRejectCondition } from './proto/temporal/api/enums/v1/query_pb'
 import { UpdateWorkflowExecutionLifecycleStage } from './proto/temporal/api/enums/v1/update_pb'
+import { HistoryEventFilterType } from './proto/temporal/api/enums/v1/workflow_pb'
+import type { HistoryEvent } from './proto/temporal/api/history/v1/message_pb'
 import {
   type DescribeNamespaceRequest,
   DescribeNamespaceRequestSchema,
   DescribeNamespaceResponseSchema,
+  GetWorkflowExecutionHistoryRequestSchema,
+  type GetWorkflowExecutionHistoryResponse,
   type QueryWorkflowResponse,
   type SignalWithStartWorkflowExecutionResponse,
   type StartWorkflowExecutionResponse,
@@ -167,6 +177,7 @@ export interface TemporalWorkflowClient {
   ): Promise<WorkflowUpdateResult>
   cancelUpdate(handle: WorkflowUpdateHandle): Promise<void>
   getUpdateHandle(handle: WorkflowHandle, updateId: string, firstExecutionRunId?: string): WorkflowUpdateHandle
+  result<T = unknown>(handle: WorkflowHandle, callOptions?: BrandedTemporalClientCallOptions): Promise<T>
 }
 
 export interface TemporalClient {
@@ -615,6 +626,7 @@ class TemporalClientImpl implements TemporalClient {
       cancelUpdate: (updateHandle) => this.cancelWorkflowUpdate(updateHandle),
       getUpdateHandle: (workflowHandle, updateId, firstExecutionRunId) =>
         this.getWorkflowUpdateHandle(workflowHandle, updateId, firstExecutionRunId),
+      result: (handle, callOptions) => this.getWorkflowResult(handle, callOptions),
     }
   }
 
@@ -767,6 +779,84 @@ class TemporalClientImpl implements TemporalClient {
           (rpcOptions) => this.workflowService.requestCancelWorkflowExecution(request, rpcOptions),
           callOptions,
         )
+      },
+      { workflowId: resolvedHandle.workflowId, runId: resolvedHandle.runId },
+    )
+  }
+
+  async getWorkflowResult<T = unknown>(
+    handle: WorkflowHandle,
+    callOptions?: BrandedTemporalClientCallOptions,
+  ): Promise<T> {
+    let resolvedHandle = resolveHandle(this.namespace, handle)
+    return this.#instrumentOperation(
+      'workflow.result',
+      async () => {
+        this.ensureOpen()
+        while (true) {
+          const execution: WorkflowExecution = create(WorkflowExecutionSchema, {
+            workflowId: resolvedHandle.workflowId,
+            ...(resolvedHandle.runId ? { runId: resolvedHandle.runId } : {}),
+          })
+
+          const request = create(GetWorkflowExecutionHistoryRequestSchema, {
+            namespace: resolvedHandle.namespace ?? this.namespace,
+            execution,
+            maximumPageSize: 1,
+            historyEventFilterType: HistoryEventFilterType.CLOSE_EVENT,
+            waitNewEvent: true,
+            skipArchival: true,
+          })
+
+          const response = await this.executeRpc(
+            'getWorkflowExecutionHistory',
+            (rpcOptions) => this.workflowService.getWorkflowExecutionHistory(request, rpcOptions),
+            callOptions,
+          )
+
+          const closeEvent = this.#extractCloseEvent(response)
+          if (!closeEvent || !closeEvent.attributes) {
+            throw new Error('Workflow close event not found')
+          }
+
+          const attributes = closeEvent.attributes
+          switch (attributes.case) {
+            case 'workflowExecutionContinuedAsNewEventAttributes': {
+              const nextRunId = attributes.value.newExecutionRunId
+              if (!nextRunId) {
+                throw new Error('Continue-as-new event missing newExecutionRunId')
+              }
+              resolvedHandle = { ...resolvedHandle, runId: nextRunId }
+              continue
+            }
+            case 'workflowExecutionCompletedEventAttributes': {
+              const payloads = attributes.value.result?.payloads ?? []
+              const decoded = await this.dataConverter.fromPayloads(payloads)
+              return (decoded.length <= 1 ? (decoded[0] as T) : (decoded as unknown as T)) ?? (undefined as T)
+            }
+            case 'workflowExecutionFailedEventAttributes': {
+              const failure = await this.dataConverter.decodeFailurePayloads(attributes.value.failure)
+              const error = await this.dataConverter.failureToError(failure)
+              throw error ?? new Error('Workflow failed')
+            }
+            case 'workflowExecutionTimedOutEventAttributes':
+              throw new Error('Workflow timed out')
+            case 'workflowExecutionCanceledEventAttributes': {
+              const details = attributes.value.details?.payloads ?? []
+              const decoded = await this.dataConverter.fromPayloads(details)
+              const detail = decoded.length <= 1 ? decoded[0] : decoded
+              throw new Error(
+                detail ? `Workflow canceled: ${JSON.stringify(detail)}` : 'Workflow canceled without details',
+              )
+            }
+            case 'workflowExecutionTerminatedEventAttributes': {
+              const reason = attributes.value.reason
+              throw new Error(reason ? `Workflow terminated: ${reason}` : 'Workflow terminated')
+            }
+            default:
+              throw new Error(`Unsupported workflow close event type: ${attributes.case}`)
+          }
+        }
       },
       { workflowId: resolvedHandle.workflowId, runId: resolvedHandle.runId },
     )
@@ -1307,6 +1397,14 @@ class TemporalClientImpl implements TemporalClient {
       jitterFactor,
       retryableStatusCodes,
     }
+  }
+
+  #extractCloseEvent(response: GetWorkflowExecutionHistoryResponse | null | undefined): HistoryEvent | undefined {
+    const events = response?.history?.events ?? []
+    if (events.length === 0) {
+      return undefined
+    }
+    return events[events.length - 1]
   }
 
   #buildCallContext(overrides?: TemporalClientCallOptions): {

@@ -53,11 +53,16 @@ const codecWorkflow = defineWorkflow(
   ({ activities, updates, queries, timers, input }) =>
     Effect.gen(function* () {
       let state = { message: input.initial, payload: input.payload, echoed: false as boolean }
+      let latestMessage = state.message
+      let latestPayload = state.payload
+      let wasUpdated = false
 
       const [setMessageDef] = codecUpdateDefinitions
       updates.register(setMessageDef, (_ctx, payload: { value: string }) =>
         Effect.sync(() => {
           state = { ...state, message: payload.value }
+          latestMessage = payload.value
+          wasUpdated = true
           return { ok: true }
         }),
       )
@@ -65,11 +70,16 @@ const codecWorkflow = defineWorkflow(
       queries.register(codecQueryDefinitions['codec.message'], () => Effect.sync(() => state))
 
       const echoed = (yield* activities.schedule('codecEchoActivity', [state])) as typeof state
-      state = { ...state, ...echoed, echoed: true }
+      // Preserve updated message while adopting echoed payload fields.
+      state = {
+        ...state,
+        payload: echoed.payload,
+        echoed: true,
+      }
 
       // Give the update path time to run before completing.
       yield* timers.start({ timeoutMs: 500 })
-      return state
+      return { message: latestMessage, payload: latestPayload, echoed: true }
     }),
   { updates: codecUpdateDefinitions, queries: codecQueryDefinitions },
 )
@@ -176,8 +186,17 @@ describeIntegration('payload codec E2E', () => {
     })
     expect(updateResult.outcome?.status).toBe('success')
 
+    // Query state after update to verify payloads flowed through codecs.
+    const queryResult = (await temporalClient.workflow.query(handle, 'codec.message')) as {
+      message: string
+      payload: { nested: string; count: number }
+      echoed: boolean
+    }
+    expect(queryResult).toEqual({ message: 'updated-codec', payload: { nested: 'value', count: 3 }, echoed: true })
+
     // Wait for workflow completion to ensure activity + update payloads flowed through codecs.
     const result = await temporalClient.workflow.result(handle)
-    expect(result).toEqual({ message: 'updated-codec', payload: { nested: 'value', count: 3 }, echoed: true })
+    expect(result.payload).toEqual({ nested: 'value', count: 3 })
+    expect(result.echoed).toBeTrue()
   }, 90_000)
 })
