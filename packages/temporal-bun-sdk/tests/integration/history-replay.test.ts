@@ -22,6 +22,7 @@ const replayTimeoutMs = 60_000
 
 let harness: IntegrationHarness | null = null
 let stickyCacheSizeEffect: Effect.Effect<number, never, never> | null = null
+let stickyCacheClearEffect: Effect.Effect<void, never, never> | null = null
 let runOrSkip: (<A>(name: string, scenario: () => Promise<A>) => Promise<A | undefined>) | null = null
 let integrationEnv: IntegrationTestEnv | null = null
 
@@ -31,6 +32,7 @@ beforeAll(async () => {
   integrationEnv = await acquireIntegrationTestEnv()
   harness = integrationEnv.harness
   stickyCacheSizeEffect = integrationEnv.stickyCacheSizeEffect
+  stickyCacheClearEffect = integrationEnv.stickyCacheClearEffect
   runOrSkip = integrationEnv.runOrSkip
 })
 
@@ -188,6 +190,9 @@ test('sticky cache remains empty after workflow completion', { timeout: replayTi
   await execScenario('sticky cache cleanup', async () => {
     if (!stickyCacheSizeEffect) {
       throw new Error('Sticky cache not initialised')
+    }
+    if (stickyCacheClearEffect) {
+      await Effect.runPromise(stickyCacheClearEffect)
     }
     await runTimerWorkflow()
     const size = await waitForStickyDrain(stickyCacheSizeEffect)

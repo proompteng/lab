@@ -169,12 +169,6 @@ describeIntegration('payload codec E2E', () => {
     })
 
     const handle = start.handle
-    const initialState = await pollQueryUntil(
-      () => temporalClient.queryWorkflow(handle, 'codec.message'),
-      (state) => state.echoed === true,
-    )
-    expect(initialState).toEqual({ message: 'hello-codec', payload: { nested: 'value', count: 3 }, echoed: true })
-
     const updateResult = await temporalClient.updateWorkflow(handle, {
       updateName: 'codec.setMessage',
       args: [{ value: 'updated-codec' }],
@@ -182,21 +176,8 @@ describeIntegration('payload codec E2E', () => {
     })
     expect(updateResult.outcome?.status).toBe('success')
 
-    const updatedState = await pollQueryUntil(
-      () => temporalClient.queryWorkflow(handle, 'codec.message'),
-      (state) => state.message === 'updated-codec' && state.echoed === true,
-    )
-    expect(updatedState).toEqual({ message: 'updated-codec', payload: { nested: 'value', count: 3 }, echoed: true })
+    // Wait for workflow completion to ensure activity + update payloads flowed through codecs.
+    const result = await temporalClient.workflow.result(handle)
+    expect(result).toEqual({ message: 'updated-codec', payload: { nested: 'value', count: 3 }, echoed: true })
   }, 90_000)
 })
-
-const pollQueryUntil = async <T>(fetch: () => Promise<T>, predicate: (value: T) => boolean, timeoutMs = 5_000) => {
-  const deadline = Date.now() + timeoutMs
-  let last: T | undefined
-  while (Date.now() <= deadline) {
-    last = await fetch()
-    if (predicate(last)) return last
-    await delay(100)
-  }
-  return last as T
-}

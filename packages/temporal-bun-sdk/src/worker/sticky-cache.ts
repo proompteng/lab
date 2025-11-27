@@ -29,6 +29,7 @@ export interface StickyCache {
   readonly get: (key: StickyCacheKey) => Effect.Effect<StickyCacheEntry | undefined, never, never>
   readonly remove: (key: StickyCacheKey) => Effect.Effect<void, never, never>
   readonly removeByWorkflow: (workflow: { namespace: string; workflowId: string }) => Effect.Effect<void, never, never>
+  readonly clear: Effect.Effect<void, never, never>
   readonly size: Effect.Effect<number, never, never>
 }
 
@@ -204,6 +205,20 @@ export const makeStickyCache = (config: StickyCacheConfig): Effect.Effect<Sticky
         }
       })
 
+    const clear = Ref.modify(state, (map) => {
+      const next = new Map<string, StickyCacheEntry>()
+      return [map, next] as const
+    }).pipe(
+      Effect.flatMap((previous) =>
+        Effect.all(
+          Array.from(previous.values()).map((entry) => recordEviction(entry, 'manual')),
+          {
+            discard: true,
+          },
+        ),
+      ),
+    )
+
     const size = Ref.get(state).pipe(Effect.map((map) => map.size))
 
     return {
@@ -211,6 +226,7 @@ export const makeStickyCache = (config: StickyCacheConfig): Effect.Effect<Sticky
       get,
       remove,
       removeByWorkflow,
+      clear,
       size,
     }
   })
@@ -221,5 +237,6 @@ const makeDisabledStickyCache = (): StickyCache => ({
   get: () => Effect.succeed(undefined),
   remove: () => Effect.void,
   removeByWorkflow: () => Effect.void,
+  clear: Effect.void,
   size: Effect.succeed(0),
 })
