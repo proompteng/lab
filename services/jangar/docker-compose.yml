@@ -1,10 +1,28 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: jangar-postgres
+    environment:
+      POSTGRES_USER: openwebui
+      POSTGRES_PASSWORD: ${OPENWEBUI_DB_PASSWORD:-openwebui}
+      POSTGRES_DB: openwebui
+    volumes:
+      - openwebui-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openwebui"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   openwebui:
     image: ghcr.io/open-webui/open-webui:v0.6.40
     container_name: jangar-openwebui
     ports:
       - "${OPENWEBUI_PORT:-8080}:8080"
     environment:
+      - DATABASE_URL=postgresql://openwebui:${OPENWEBUI_DB_PASSWORD:-openwebui}@postgres:5432/openwebui
+      - DATABASE_TYPE=postgresql
       - OPENAI_API_BASE_URL=${JANGAR_OPENAI_BASE_URL:-http://host.docker.internal:3000/openai/v1}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-changeme}
       - DEFAULT_MODELS=meta-orchestrator
@@ -18,6 +36,8 @@ services:
       - openwebui-data:/app/backend/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      - postgres
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080"]
@@ -28,3 +48,4 @@ services:
 
 volumes:
   openwebui-data:
+  openwebui-pg-data:
