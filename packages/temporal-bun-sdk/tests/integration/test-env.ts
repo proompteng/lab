@@ -9,13 +9,6 @@ import type { IntegrationHarness } from './harness'
 import { createIntegrationHarness, TemporalCliUnavailableError, TemporalCliCommandError } from './harness'
 import { integrationActivities, integrationWorkflows } from './workflows'
 
-const defaultTaskQueue = (() => {
-  if (process.env.TEMPORAL_TASK_QUEUE) return process.env.TEMPORAL_TASK_QUEUE
-  const runId = process.env.GITHUB_RUN_ID ?? process.pid.toString()
-  const attempt = process.env.GITHUB_RUN_ATTEMPT ?? '1'
-  return `temporal-bun-integration-${runId}-${attempt}`
-})()
-
 type RunOrSkip = <T>(name: string, scenario: () => Promise<T>) => Promise<T | undefined>
 
 export interface IntegrationTestEnv {
@@ -31,7 +24,7 @@ export interface IntegrationTestEnv {
 export const CLI_CONFIG = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
   namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
-  taskQueue: defaultTaskQueue,
+  taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? 'temporal-bun-integration',
 }
 
 let sharedEnvPromise: Promise<IntegrationTestEnv> | null = null
