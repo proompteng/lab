@@ -1117,9 +1117,13 @@ export class WorkerRuntime {
       const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? historyReplay?.lastEventId ?? null
       const shouldRecordMarker = output.completion === 'pending'
       let commandsForResponse = output.commands
-      const dispatchesForNewMessages = (output.updateDispatches ?? []).filter((dispatch) =>
-        collectedUpdates.requestsByUpdateId.has(dispatch.updateId),
-      )
+      const dispatchesForNewMessages = (output.updateDispatches ?? []).filter((dispatch) => {
+        if (dispatch.type === 'acceptance' || dispatch.type === 'rejection') {
+          return collectedUpdates.requestsByUpdateId.has(dispatch.updateId)
+        }
+        // Allow completion messages to be emitted even if the request metadata was seen on a prior task.
+        return true
+      })
       const updateProtocolMessages = await buildUpdateProtocolMessages({
         dispatches: dispatchesForNewMessages,
         collected: collectedUpdates,
@@ -1137,6 +1141,7 @@ export class WorkerRuntime {
           })
         } else {
           await this.#removeStickyEntry(stickyKey)
+          await this.#removeStickyEntriesForWorkflow(stickyKey.workflowId)
           this.#log('debug', 'sticky cache entry cleared (workflow completed)', baseLogFields)
         }
       }
@@ -1192,6 +1197,7 @@ export class WorkerRuntime {
       let stickyEntryCleared = false
       if (stickyKey) {
         await this.#removeStickyEntry(stickyKey)
+        await this.#removeStickyEntriesForWorkflow(stickyKey.workflowId)
         stickyEntryCleared = true
       }
       if (this.#isTaskNotFoundError(error)) {
@@ -1922,6 +1928,11 @@ export class WorkerRuntime {
 
   async #removeStickyEntry(key: StickyCacheKey): Promise<void> {
     await Effect.runPromise(this.#stickyCache.remove(key))
+  }
+
+  async #removeStickyEntriesForWorkflow(workflowId: string): Promise<void> {
+    if (!workflowId) return
+    await Effect.runPromise(this.#stickyCache.removeByWorkflow({ namespace: this.#namespace, workflowId }))
   }
 
   async #failWorkflowTask(

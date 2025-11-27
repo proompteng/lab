@@ -28,6 +28,7 @@ export interface StickyCache {
   readonly upsert: (entry: StickyCacheEntry) => Effect.Effect<void, never, never>
   readonly get: (key: StickyCacheKey) => Effect.Effect<StickyCacheEntry | undefined, never, never>
   readonly remove: (key: StickyCacheKey) => Effect.Effect<void, never, never>
+  readonly removeByWorkflow: (workflow: { namespace: string; workflowId: string }) => Effect.Effect<void, never, never>
   readonly size: Effect.Effect<number, never, never>
 }
 
@@ -182,12 +183,34 @@ export const makeStickyCache = (config: StickyCacheConfig): Effect.Effect<Sticky
         }
       })
 
+    const removeByWorkflow: StickyCache['removeByWorkflow'] = (workflow) =>
+      Effect.gen(function* () {
+        const removed = yield* Ref.modify(state, (map) => {
+          const next = new Map(map)
+          const evicted: StickyCacheEntry[] = []
+
+          for (const [id, entry] of next) {
+            if (entry.key.namespace === workflow.namespace && entry.key.workflowId === workflow.workflowId) {
+              next.delete(id)
+              evicted.push(entry)
+            }
+          }
+
+          return [evicted, next] as const
+        })
+
+        for (const entry of removed) {
+          yield* recordEviction(entry, 'manual')
+        }
+      })
+
     const size = Ref.get(state).pipe(Effect.map((map) => map.size))
 
     return {
       upsert,
       get,
       remove,
+      removeByWorkflow,
       size,
     }
   })
@@ -197,5 +220,6 @@ const makeDisabledStickyCache = (): StickyCache => ({
   upsert: () => Effect.void,
   get: () => Effect.succeed(undefined),
   remove: () => Effect.void,
+  removeByWorkflow: () => Effect.void,
   size: Effect.succeed(0),
 })

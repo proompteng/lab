@@ -155,6 +155,7 @@ export class WorkflowExecutor {
     let lastQueryRegistry: WorkflowQueryRegistry | undefined
     let lastWorkflowContext: WorkflowContext<unknown> | undefined
     let lastUpdateRegistry: WorkflowUpdateRegistry | undefined
+    let blockedFromUpdates: WorkflowBlockedError | undefined
 
     const workflowEffect = Effect.flatMap(decodedEffect, (parsed) => {
       const created = createWorkflowContext({
@@ -191,12 +192,20 @@ export class WorkflowExecutor {
       if (!contextForUpdates || !registryForUpdates) {
         throw new Error('Workflow update context unavailable after execution')
       }
-      updateDispatches = await this.#processWorkflowUpdates({
-        context: contextForUpdates,
-        registry: registryForUpdates,
-        updates: updatesToProcess,
-        guard,
-      })
+      try {
+        updateDispatches = await this.#processWorkflowUpdates({
+          context: contextForUpdates,
+          registry: registryForUpdates,
+          updates: updatesToProcess,
+          guard,
+        })
+      } catch (error) {
+        if (error instanceof WorkflowBlockedError) {
+          blockedFromUpdates = error
+        } else {
+          throw error
+        }
+      }
     }
 
     const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
@@ -251,7 +260,7 @@ export class WorkflowExecutor {
       throw nondeterminismError
     }
 
-    const blockedError = unwrapWorkflowError(error, WorkflowBlockedError)
+    const blockedError = unwrapWorkflowError(error, WorkflowBlockedError) ?? blockedFromUpdates
     if (blockedError) {
       const contextForPending =
         lastCommandContext ??
@@ -423,6 +432,14 @@ export class WorkflowExecutor {
         messageId,
       })
 
+      const priorCompletion = guard.getUpdateCompletion(invocation.updateId)
+      if (priorCompletion) {
+        // Re-run the handler to rebuild workflow state during replay, but avoid emitting duplicate protocol messages.
+        await Effect.runPromiseExit(registered.handler(context as never, decodedInput as never))
+        guard.recordUpdate(priorCompletion)
+        continue
+      }
+
       const executionExit = await Effect.runPromiseExit(registered.handler(context as never, decodedInput as never))
       if (Exit.isSuccess(executionExit)) {
         dispatches.push({
@@ -444,7 +461,6 @@ export class WorkflowExecutor {
         })
       } else {
         const failure = this.#resolveError(executionExit.cause)
-        // Allow updates to remain pending when their handlers block on timers/activities.
         if (failure instanceof WorkflowBlockedError) {
           continue
         }

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import crypto from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { Effect, Exit } from 'effect'
 import * as Schema from 'effect/Schema'
@@ -168,7 +169,10 @@ describeIntegration('payload codec E2E', () => {
     })
 
     const handle = start.handle
-    const initialState = await temporalClient.queryWorkflow(handle, 'codec.message')
+    const initialState = await pollQueryUntil(
+      () => temporalClient.queryWorkflow(handle, 'codec.message'),
+      (state) => state.echoed === true,
+    )
     expect(initialState).toEqual({ message: 'hello-codec', payload: { nested: 'value', count: 3 }, echoed: true })
 
     const updateResult = await temporalClient.updateWorkflow(handle, {
@@ -178,7 +182,21 @@ describeIntegration('payload codec E2E', () => {
     })
     expect(updateResult.outcome?.status).toBe('success')
 
-    const updatedState = await temporalClient.queryWorkflow(handle, 'codec.message')
+    const updatedState = await pollQueryUntil(
+      () => temporalClient.queryWorkflow(handle, 'codec.message'),
+      (state) => state.message === 'updated-codec' && state.echoed === true,
+    )
     expect(updatedState).toEqual({ message: 'updated-codec', payload: { nested: 'value', count: 3 }, echoed: true })
   }, 90_000)
 })
+
+const pollQueryUntil = async <T>(fetch: () => Promise<T>, predicate: (value: T) => boolean, timeoutMs = 5_000) => {
+  const deadline = Date.now() + timeoutMs
+  let last: T | undefined
+  while (Date.now() <= deadline) {
+    last = await fetch()
+    if (predicate(last)) return last
+    await delay(100)
+  }
+  return last as T
+}
