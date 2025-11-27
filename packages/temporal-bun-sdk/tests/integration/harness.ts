@@ -167,6 +167,14 @@ export const createIntegrationHarness = (
           const child = Bun.spawn(command, {
             stdout: 'pipe',
             stderr: 'pipe',
+            env: {
+              ...process.env,
+              TEMPORAL_ADDRESS: config.address,
+              TEMPORAL_NAMESPACE: config.namespace,
+              ...(config.tls?.caPath ? { TEMPORAL_TLS_CA_PATH: config.tls.caPath } : {}),
+              ...(config.tls?.certPath ? { TEMPORAL_TLS_CERT_PATH: config.tls.certPath } : {}),
+              ...(config.tls?.keyPath ? { TEMPORAL_TLS_KEY_PATH: config.tls.keyPath } : {}),
+            },
           })
           const exitCode = await child.exited
           const stdout = child.stdout ? await readStream(child.stdout) : ''
