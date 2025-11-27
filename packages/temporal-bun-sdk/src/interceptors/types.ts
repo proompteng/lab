@@ -8,6 +8,7 @@ export type InterceptorKind =
   | 'workflow.start'
   | 'workflow.signal'
   | 'workflow.query'
+  | 'workflow.result'
   | 'workflow.update'
   | 'workflow.cancel'
   | 'workflow.terminate'

@@ -113,6 +113,8 @@ const createTestConfig = (overrides: Partial<TemporalConfig> = {}): TemporalConf
   namespace: 'default',
   taskQueue: 'test-task-queue',
   allowInsecureTls: true,
+  apiKey: undefined,
+  tls: undefined,
   stickySchedulingEnabled: false,
   workerIdentity: 'test-worker',
   workerIdentityPrefix: 'test',
@@ -128,6 +130,16 @@ const createTestConfig = (overrides: Partial<TemporalConfig> = {}): TemporalConf
   logLevel: 'info',
   logFormat: 'pretty',
   metricsExporter: cloneMetricsExporterSpec(defaultMetricsExporterSpec),
+  tracingInterceptorsEnabled: false,
+  rpcRetryPolicy: {
+    maxAttempts: 1,
+    initialDelayMs: 1,
+    maxDelayMs: 1,
+    backoffCoefficient: 1,
+    jitterFactor: 0,
+    retryableStatusCodes: [],
+  },
+  payloadCodecs: [],
   ...overrides,
 })
 

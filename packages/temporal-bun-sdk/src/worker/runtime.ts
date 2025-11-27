@@ -15,6 +15,7 @@ import {
 import { buildTransportOptions, normalizeTemporalAddress } from '../client'
 import { durationFromMillis, durationToMillis } from '../common/duration'
 import {
+  buildCodecsFromConfig,
   createDefaultDataConverter,
   type DataConverter,
   decodePayloadsToValues,
@@ -244,7 +245,6 @@ export interface WorkerRuntimeOptions {
 export class WorkerRuntime {
   static async create(options: WorkerRuntimeOptions = {}): Promise<WorkerRuntime> {
     const config = options.config ?? (await loadTemporalConfig())
-    const dataConverter = options.dataConverter ?? createDefaultDataConverter()
 
     const namespace = options.namespace ?? config.namespace
     if (!namespace) {
@@ -262,13 +262,6 @@ export class WorkerRuntime {
       throw new Error('No workflow definitions were registered; provide workflows or workflowsPath')
     }
 
-    const registry = new WorkflowRegistry()
-    registry.registerMany(workflows)
-    const executor = new WorkflowExecutor({
-      registry,
-      dataConverter,
-    })
-
     const activities = options.activities ?? {}
     const observability = await Effect.runPromise(
       createObservabilityServices(
@@ -285,6 +278,20 @@ export class WorkerRuntime {
       ),
     )
     const { logger, metricsRegistry, metricsExporter } = observability
+    const dataConverter =
+      options.dataConverter ??
+      createDefaultDataConverter({
+        payloadCodecs: buildCodecsFromConfig(config.payloadCodecs),
+        logger,
+        metricsRegistry,
+      })
+    const registry = new WorkflowRegistry()
+    registry.registerMany(workflows)
+    const executor = new WorkflowExecutor({
+      registry,
+      dataConverter,
+    })
+
     const runtimeMetrics = await WorkerRuntime.#initMetrics(metricsRegistry)
     let workflowService: WorkflowServiceClient
     if (options.workflowService) {
@@ -1046,6 +1053,7 @@ export class WorkerRuntime {
     try {
       const { results: activityResults, scheduledEventIds: activityScheduleEventIds } =
         await this.#extractActivityResolutions(historyEvents)
+      const timerResults = await this.#extractTimerResolutions(historyEvents)
 
       const replayUpdates = historyReplay?.updates ?? []
       const mergedUpdates = mergeUpdateInvocations(replayUpdates, collectedUpdates.invocations)
@@ -1060,6 +1068,7 @@ export class WorkerRuntime {
         activityResults,
         activityScheduleEventIds,
         signalDeliveries,
+        timerResults,
         queryRequests,
         updates: mergedUpdates,
         mode: isLegacyQueryTask ? 'query' : 'workflow',
@@ -1108,9 +1117,13 @@ export class WorkerRuntime {
       const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? historyReplay?.lastEventId ?? null
       const shouldRecordMarker = output.completion === 'pending'
       let commandsForResponse = output.commands
-      const dispatchesForNewMessages = (output.updateDispatches ?? []).filter((dispatch) =>
-        collectedUpdates.requestsByUpdateId.has(dispatch.updateId),
-      )
+      const dispatchesForNewMessages = (output.updateDispatches ?? []).filter((dispatch) => {
+        if (dispatch.type === 'acceptance' || dispatch.type === 'rejection') {
+          return collectedUpdates.requestsByUpdateId.has(dispatch.updateId)
+        }
+        // Allow completion messages to be emitted even if the request metadata was seen on a prior task.
+        return true
+      })
       const updateProtocolMessages = await buildUpdateProtocolMessages({
         dispatches: dispatchesForNewMessages,
         collected: collectedUpdates,
@@ -1128,6 +1141,7 @@ export class WorkerRuntime {
           })
         } else {
           await this.#removeStickyEntry(stickyKey)
+          await this.#removeStickyEntriesForWorkflow(stickyKey.workflowId)
           this.#log('debug', 'sticky cache entry cleared (workflow completed)', baseLogFields)
         }
       }
@@ -1183,6 +1197,7 @@ export class WorkerRuntime {
       let stickyEntryCleared = false
       if (stickyKey) {
         await this.#removeStickyEntry(stickyKey)
+        await this.#removeStickyEntriesForWorkflow(stickyKey.workflowId)
         stickyEntryCleared = true
       }
       if (this.#isTaskNotFoundError(error)) {
@@ -1453,6 +1468,23 @@ export class WorkerRuntime {
     }
 
     return deliveries
+  }
+
+  async #extractTimerResolutions(events: HistoryEvent[]): Promise<Set<string>> {
+    const fired = new Set<string>()
+    for (const event of events) {
+      if (event.eventType !== EventType.TIMER_FIRED) {
+        continue
+      }
+      if (event.attributes?.case !== 'timerFiredEventAttributes') {
+        continue
+      }
+      const attrs = event.attributes.value as { timerId?: string }
+      if (attrs.timerId) {
+        fired.add(attrs.timerId)
+      }
+    }
+    return fired
   }
 
   async #extractWorkflowQueryRequests(response: PollWorkflowTaskQueueResponse): Promise<WorkflowQueryRequest[]> {
@@ -1896,6 +1928,11 @@ export class WorkerRuntime {
 
   async #removeStickyEntry(key: StickyCacheKey): Promise<void> {
     await Effect.runPromise(this.#stickyCache.remove(key))
+  }
+
+  async #removeStickyEntriesForWorkflow(workflowId: string): Promise<void> {
+    if (!workflowId) return
+    await Effect.runPromise(this.#stickyCache.removeByWorkflow({ namespace: this.#namespace, workflowId }))
   }
 
   async #failWorkflowTask(

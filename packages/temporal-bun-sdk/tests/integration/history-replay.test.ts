@@ -3,6 +3,7 @@ import crypto from 'node:crypto'
 import { join } from 'node:path'
 
 import { Effect } from 'effect'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { createDefaultDataConverter } from '../../src/common/payloads'
 import { makeStickyCache } from '../../src/worker/sticky-cache'
@@ -21,6 +22,7 @@ const replayTimeoutMs = 60_000
 
 let harness: IntegrationHarness | null = null
 let stickyCacheSizeEffect: Effect.Effect<number, never, never> | null = null
+let stickyCacheClearEffect: Effect.Effect<void, never, never> | null = null
 let runOrSkip: (<A>(name: string, scenario: () => Promise<A>) => Promise<A | undefined>) | null = null
 let integrationEnv: IntegrationTestEnv | null = null
 
@@ -30,6 +32,7 @@ beforeAll(async () => {
   integrationEnv = await acquireIntegrationTestEnv()
   harness = integrationEnv.harness
   stickyCacheSizeEffect = integrationEnv.stickyCacheSizeEffect
+  stickyCacheClearEffect = integrationEnv.stickyCacheClearEffect
   runOrSkip = integrationEnv.runOrSkip
 })
 
@@ -188,12 +191,25 @@ test('sticky cache remains empty after workflow completion', { timeout: replayTi
     if (!stickyCacheSizeEffect) {
       throw new Error('Sticky cache not initialised')
     }
+    if (stickyCacheClearEffect) {
+      await Effect.runPromise(stickyCacheClearEffect)
+    }
     await runTimerWorkflow()
-    const size = await Effect.runPromise(stickyCacheSizeEffect)
+    const size = await waitForStickyDrain(stickyCacheSizeEffect)
     expect(size).toBe(0)
   })
 })
 })
+
+const waitForStickyDrain = async (sizeEffect: Effect.Effect<number, never, never>, timeoutMs = 5_000): Promise<number> => {
+  const deadline = Date.now() + timeoutMs
+  let size = await Effect.runPromise(sizeEffect)
+  while (size > 0 && Date.now() < deadline) {
+    await delay(100)
+    size = await Effect.runPromise(sizeEffect)
+  }
+  return size
+}
 
 const runReplayCliCommand = async (
   execution: WorkflowExecutionHandle,

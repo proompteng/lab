@@ -131,6 +131,20 @@ export class DeterminismGuard {
     }
   }
 
+  isQueryMode(): boolean {
+    return this.#mode === 'query'
+  }
+
+  hasUpdateCompletion(updateId: string): boolean {
+    return this.getUpdateCompletion(updateId) !== undefined
+  }
+
+  getUpdateCompletion(updateId: string): WorkflowUpdateDeterminismEntry | undefined {
+    const completed = (entry: WorkflowUpdateDeterminismEntry) =>
+      entry.updateId === updateId && entry.stage === 'completed'
+    return this.snapshot.updates.find(completed) ?? (this.#previous?.updates ?? []).find(completed)
+  }
+
   recordCommand(intent: WorkflowCommandIntent): RecordedCommandKind {
     const previousEntry = this.#previous?.commandHistory[this.#commandIndex]
 

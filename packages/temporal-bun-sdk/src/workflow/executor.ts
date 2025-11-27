@@ -97,6 +97,7 @@ export interface ExecuteWorkflowInput {
   readonly activityResults?: Map<string, ActivityResolution>
   readonly activityScheduleEventIds?: Map<string, string>
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
+  readonly timerResults?: ReadonlySet<string>
   readonly queryRequests?: readonly WorkflowQueryRequest[]
   readonly updates?: readonly WorkflowUpdateInvocation[]
   readonly mode?: 'workflow' | 'query'
@@ -154,6 +155,7 @@ export class WorkflowExecutor {
     let lastQueryRegistry: WorkflowQueryRegistry | undefined
     let lastWorkflowContext: WorkflowContext<unknown> | undefined
     let lastUpdateRegistry: WorkflowUpdateRegistry | undefined
+    let blockedFromUpdates: WorkflowBlockedError | undefined
 
     const workflowEffect = Effect.flatMap(decodedEffect, (parsed) => {
       const created = createWorkflowContext({
@@ -163,6 +165,7 @@ export class WorkflowExecutor {
         activityResults: input.activityResults,
         activityScheduleEventIds: input.activityScheduleEventIds,
         signalDeliveries: input.signalDeliveries,
+        timerResults: input.timerResults,
         updates: definition.updates,
       })
       lastCommandContext = created.commandContext
@@ -180,8 +183,7 @@ export class WorkflowExecutor {
     })
 
     const exit = await Effect.runPromiseExit(workflowEffect)
-    const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
-    const updatesToProcess = executionMode === 'query' ? [] : (input.updates ?? [])
+    const updatesToProcess = input.updates ?? []
     let updateDispatches: WorkflowUpdateDispatch[] = []
 
     if (updatesToProcess.length > 0) {
@@ -190,13 +192,23 @@ export class WorkflowExecutor {
       if (!contextForUpdates || !registryForUpdates) {
         throw new Error('Workflow update context unavailable after execution')
       }
-      updateDispatches = await this.#processWorkflowUpdates({
-        context: contextForUpdates,
-        registry: registryForUpdates,
-        updates: updatesToProcess,
-        guard,
-      })
+      try {
+        updateDispatches = await this.#processWorkflowUpdates({
+          context: contextForUpdates,
+          registry: registryForUpdates,
+          updates: updatesToProcess,
+          guard,
+        })
+      } catch (error) {
+        if (error instanceof WorkflowBlockedError) {
+          blockedFromUpdates = error
+        } else {
+          throw error
+        }
+      }
     }
+
+    const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
 
     if (Exit.isSuccess(exit)) {
       const determinismState = snapshotToDeterminismState(guard.snapshot)
@@ -248,7 +260,7 @@ export class WorkflowExecutor {
       throw nondeterminismError
     }
 
-    const blockedError = unwrapWorkflowError(error, WorkflowBlockedError)
+    const blockedError = unwrapWorkflowError(error, WorkflowBlockedError) ?? blockedFromUpdates
     if (blockedError) {
       const contextForPending =
         lastCommandContext ??
@@ -420,6 +432,14 @@ export class WorkflowExecutor {
         messageId,
       })
 
+      const priorCompletion = guard.getUpdateCompletion(invocation.updateId)
+      if (priorCompletion) {
+        // Re-run the handler to rebuild workflow state during replay, but avoid emitting duplicate protocol messages.
+        await Effect.runPromiseExit(registered.handler(context as never, decodedInput as never))
+        guard.recordUpdate(priorCompletion)
+        continue
+      }
+
       const executionExit = await Effect.runPromiseExit(registered.handler(context as never, decodedInput as never))
       if (Exit.isSuccess(executionExit)) {
         dispatches.push({
@@ -441,6 +461,9 @@ export class WorkflowExecutor {
         })
       } else {
         const failure = this.#resolveError(executionExit.cause)
+        if (failure instanceof WorkflowBlockedError) {
+          continue
+        }
         dispatches.push({
           type: 'completion',
           protocolInstanceId: invocation.protocolInstanceId,
@@ -545,6 +568,14 @@ export class WorkflowExecutor {
     }
     if (!registry) {
       throw new Error('Workflow query registry unavailable')
+    }
+    if (process.env.CODEX_DEBUG_QUERY_REGISTRY === '1') {
+      console.log(
+        'query registry handlers',
+        registry.list().map((handler) => handler.handle.name),
+        'requests',
+        requests.map((request) => request.name),
+      )
     }
     const results: WorkflowQueryEvaluationResult[] = []
     for (const request of requests) {

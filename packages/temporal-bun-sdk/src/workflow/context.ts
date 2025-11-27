@@ -155,7 +155,7 @@ export interface WorkflowActivities {
     activityType: string,
     args?: unknown[],
     options?: ScheduleActivityOptions,
-  ): Effect.Effect<WorkflowScheduledCommandRef, never, never>
+  ): Effect.Effect<unknown, never, never>
 
   cancel(
     activityId: string,
@@ -164,7 +164,7 @@ export interface WorkflowActivities {
 }
 
 export interface WorkflowTimers {
-  start(options: StartTimerOptions): Effect.Effect<WorkflowScheduledCommandRef, never, never>
+  start(options: StartTimerOptions): Effect.Effect<{ timerId: string }, never, never>
 
   cancel(timerId: string, options?: CancelTimerOptions): Effect.Effect<WorkflowScheduledCommandRef, never, never>
 }
@@ -253,6 +253,7 @@ export interface CreateWorkflowContextParams<I> {
   readonly activityResults?: Map<string, ActivityResolution>
   readonly activityScheduleEventIds?: Map<string, string>
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
+  readonly timerResults?: ReadonlySet<string>
   readonly updates?: WorkflowUpdateDefinitions
 }
 
@@ -331,12 +332,20 @@ export const createWorkflowContext = <I>(
         commandContext.addIntent(intent)
         const resolution = activityResults.get(intent.activityId)
         if (!resolution) {
+          // In query mode we must not block; return a deterministic command ref so query
+          // handlers can surface the latest known state without introducing new commands.
+          if (params.determinismGuard.isQueryMode()) {
+            return createCommandRef(intent, { activityId: intent.activityId })
+          }
           throw new WorkflowBlockedError(`Activity ${intent.activityId} pending`)
         }
         if (resolution.status === 'failed') {
           throw resolution.error
         }
-        return createCommandRef(intent, { activityId: intent.activityId, result: resolution.value })
+        // When the activity result is already available (e.g., during replay/query),
+        // return the resolved value instead of a command reference so workflow code
+        // sees the decoded activity output.
+        return resolution.value
       })
     },
     cancel(activityId, options = {}) {
@@ -356,7 +365,15 @@ export const createWorkflowContext = <I>(
         }
         const intent = buildStartTimerIntent(commandContext, options)
         commandContext.addIntent(intent)
-        return createCommandRef(intent, { timerId: intent.timerId })
+        // If the timer hasn't fired yet, block the workflow so it will resume
+        // when the corresponding TimerFired event is observed on replay.
+        if (!params.timerResults?.has(intent.timerId)) {
+          if (params.determinismGuard.isQueryMode()) {
+            return { timerId: intent.timerId }
+          }
+          throw new WorkflowBlockedError(`Timer ${intent.timerId} pending`)
+        }
+        return { timerId: intent.timerId }
       })
     },
     cancel(timerId, options = {}) {
@@ -406,7 +423,10 @@ export const createWorkflowContext = <I>(
 
   const queries: WorkflowQueries = {
     register(handle, resolver, options) {
-      return queryRegistry.register(handle, resolver, options)
+      const effect = queryRegistry.register(handle, resolver, options)
+      // Ensure registration occurs immediately even if caller forgets to yield/await.
+      Effect.runSync(effect)
+      return effect
     },
     resolve(handle, input, metadata) {
       return queryRegistry.resolve(handle, input, metadata)
@@ -469,7 +489,11 @@ export const createWorkflowContext = <I>(
 
   if (params.updates) {
     for (const definition of params.updates) {
-      updateRegistry.register(definition, definition.handler, definition.validator)
+      // Some callers supply update definitions as metadata and register handlers at runtime.
+      // Only auto-register when a handler is present to avoid throwing during workflow replay.
+      if ('handler' in definition && typeof definition.handler === 'function') {
+        updateRegistry.register(definition, definition.handler, definition.validator)
+      }
     }
   }
 
@@ -541,12 +565,17 @@ const buildScheduleActivityIntent = (
 
 const buildStartTimerIntent = (ctx: WorkflowCommandContext, options: StartTimerOptions): StartTimerCommandIntent => {
   const sequence = ctx.nextSequence()
+  const previous = ctx.previousIntent(sequence)
+  const timeoutMs =
+    previous && previous.kind === 'start-timer' && typeof previous.timeoutMs === 'number'
+      ? previous.timeoutMs
+      : options.timeoutMs
   return {
     id: `start-timer-${sequence}`,
     kind: 'start-timer',
     sequence,
     timerId: options.timerId ?? `timer-${sequence}`,
-    timeoutMs: options.timeoutMs,
+    timeoutMs,
   }
 }
 
@@ -1120,7 +1149,7 @@ export class WorkflowQueryRegistry {
       return Effect.fail(new WorkflowQueryHandlerMissingError(request.name))
     }
     const metadata = request.metadata ?? {}
-    const normalized = normalizeInboundArguments(request.args, entry.handle.decodeInputAsArray)
+    const normalized = normalizeInboundArguments(request.args, entry.handle.decodeInputAsArray) ?? {}
     return Schema.decodeUnknown(entry.handle.inputSchema)(normalized)
       .pipe(
         Effect.flatMap((decoded) =>
@@ -1137,6 +1166,10 @@ export class WorkflowQueryRegistry {
             : ({ request, status: 'failure', error: payload.error } satisfies WorkflowQueryEvaluation),
         ),
       )
+  }
+
+  list(): QueryRegistryEntry[] {
+    return Array.from(this.#handlers.values())
   }
 
   #recordQueryEvaluation(

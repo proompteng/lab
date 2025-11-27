@@ -28,6 +28,8 @@ export interface StickyCache {
   readonly upsert: (entry: StickyCacheEntry) => Effect.Effect<void, never, never>
   readonly get: (key: StickyCacheKey) => Effect.Effect<StickyCacheEntry | undefined, never, never>
   readonly remove: (key: StickyCacheKey) => Effect.Effect<void, never, never>
+  readonly removeByWorkflow: (workflow: { namespace: string; workflowId: string }) => Effect.Effect<void, never, never>
+  readonly clear: Effect.Effect<void, never, never>
   readonly size: Effect.Effect<number, never, never>
 }
 
@@ -182,12 +184,49 @@ export const makeStickyCache = (config: StickyCacheConfig): Effect.Effect<Sticky
         }
       })
 
+    const removeByWorkflow: StickyCache['removeByWorkflow'] = (workflow) =>
+      Effect.gen(function* () {
+        const removed = yield* Ref.modify(state, (map) => {
+          const next = new Map(map)
+          const evicted: StickyCacheEntry[] = []
+
+          for (const [id, entry] of next) {
+            if (entry.key.namespace === workflow.namespace && entry.key.workflowId === workflow.workflowId) {
+              next.delete(id)
+              evicted.push(entry)
+            }
+          }
+
+          return [evicted, next] as const
+        })
+
+        for (const entry of removed) {
+          yield* recordEviction(entry, 'manual')
+        }
+      })
+
+    const clear = Ref.modify(state, (map) => {
+      const next = new Map<string, StickyCacheEntry>()
+      return [map, next] as const
+    }).pipe(
+      Effect.flatMap((previous) =>
+        Effect.all(
+          Array.from(previous.values()).map((entry) => recordEviction(entry, 'manual')),
+          {
+            discard: true,
+          },
+        ),
+      ),
+    )
+
     const size = Ref.get(state).pipe(Effect.map((map) => map.size))
 
     return {
       upsert,
       get,
       remove,
+      removeByWorkflow,
+      clear,
       size,
     }
   })
@@ -197,5 +236,7 @@ const makeDisabledStickyCache = (): StickyCache => ({
   upsert: () => Effect.void,
   get: () => Effect.succeed(undefined),
   remove: () => Effect.void,
+  removeByWorkflow: () => Effect.void,
+  clear: Effect.void,
   size: Effect.succeed(0),
 })

@@ -130,6 +130,9 @@ export const buildUpdateProtocolMessages = async (
 ): Promise<ProtocolMessage[]> => {
   const { dispatches, collected, dataConverter, defaultIdentity, log } = options
   const generateId = options.generateMessageId ?? defaultProtocolMessageId
+  const acceptedUpdates = new Set<string>()
+  const rejectedUpdates = new Set<string>()
+  const completedUpdates = new Set<string>()
 
   if (!dispatches || dispatches.length === 0) {
     return []
@@ -147,6 +150,10 @@ export const buildUpdateProtocolMessages = async (
           })
           break
         }
+        if (acceptedUpdates.has(dispatch.updateId)) {
+          break
+        }
+        acceptedUpdates.add(dispatch.updateId)
         const sequencingValue = parseSequencingValue(dispatch.sequencingEventId ?? metadata.sequencingEventId)
         const acceptance = create(AcceptanceSchema, {
           acceptedRequestMessageId: dispatch.requestMessageId,
@@ -174,6 +181,10 @@ export const buildUpdateProtocolMessages = async (
           })
           break
         }
+        if (rejectedUpdates.has(dispatch.updateId)) {
+          break
+        }
+        rejectedUpdates.add(dispatch.updateId)
         const sequencingValue = parseSequencingValue(dispatch.sequencingEventId ?? metadata.sequencingEventId)
         const failure = await encodeErrorToFailure(dataConverter, dispatch.failure ?? new Error(dispatch.reason))
         const rejection = create(RejectionSchema, {
@@ -198,6 +209,9 @@ export const buildUpdateProtocolMessages = async (
       case 'completion': {
         const requestMetadata = collected.requestsByUpdateId.get(dispatch.updateId)
         const identity = dispatch.identity ?? requestMetadata?.request.meta?.identity ?? defaultIdentity
+        if (completedUpdates.has(dispatch.updateId)) {
+          break
+        }
         if (dispatch.status === 'success') {
           const payloadArray = await encodeValuesToPayloads(
             dataConverter,
@@ -245,6 +259,7 @@ export const buildUpdateProtocolMessages = async (
             }),
           )
         }
+        completedUpdates.add(dispatch.updateId)
         break
       }
       default:

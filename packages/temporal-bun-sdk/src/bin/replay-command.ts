@@ -4,7 +4,7 @@ import { cwd } from 'node:process'
 import { create, fromJson, type JsonValue } from '@bufbuild/protobuf'
 import { Effect } from 'effect'
 
-import { createDefaultDataConverter } from '../common/payloads'
+import { buildCodecsFromConfig, createDefaultDataConverter } from '../common/payloads'
 import type { TemporalConfig } from '../config'
 import { WorkflowExecutionSchema } from '../proto/temporal/api/common/v1/message_pb'
 import { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
@@ -160,7 +160,11 @@ const executeReplayInternal = (
       metadata: historyOutcome.record.metadata,
     })
 
-    const dataConverter = createDefaultDataConverter()
+    const dataConverter = createDefaultDataConverter({
+      payloadCodecs: buildCodecsFromConfig(config.payloadCodecs),
+      logger,
+      metricsRegistry,
+    })
 
     yield* logger.log('info', 'temporal-bun replay started', {
       workflowId: workflowInfo.workflowId,

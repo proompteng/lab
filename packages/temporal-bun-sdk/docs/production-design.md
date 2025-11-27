@@ -85,6 +85,7 @@ in parallel without collisions.
 | **TBS-008** | Documentation & DX | Architecture guide, cookbook, migration path, CLI accessibility. | `apps/docs/content/docs/temporal-bun-sdk.mdx`, `docs/*` |
 | **TBS-009** | Release Automation | CI workflows, changelog, signed publish, support policy artifacts. | `.github/workflows/temporal-bun-sdk.yml`, `packages/temporal-bun-sdk/CHANGELOG.md` |
 | **TBS-010** | Effect Architecture | Migrate worker/client/config/runtime to Effect Layers, structured dependency injection, and fiber supervision. | `src/runtime/effect-layers.ts`, `src/worker/runtime.ts`, `src/client.ts`, `src/config.ts` |
+| **TBS-011** | Payload Codec & Failure Converter | Layered DataConverter with ordered codecs (gzip + AES-GCM), structured failure converter, doctor validation, and observability hooks. | `src/common/payloads/**`, `src/client.ts`, `src/worker/runtime.ts`, `docs/*` |
 
 > **Implementation rule:** Every work item must create or update code that carries
 > a `// TODO(TBS-xxx): ...` marker. Leave stubs effect-safe and executable even
@@ -141,6 +142,23 @@ can contribute independently without re-planning.
 - **Dependencies**
   - Enables observability (TBS-004), concurrency (TBS-003), and client resilience (TBS-005) to plug into shared services.
 
+### TBS-011 – Payload Codec & Failure Converter
+
+- **Starting points**
+  - `src/common/payloads/*` – introduce ordered codec chain + failure converter wired through the Effect `DataConverter` layer.
+  - `src/config.ts` – schema + env parsing for `payloadCodecs` (`TEMPORAL_PAYLOAD_CODECS=gzip,aes-gcm`, `TEMPORAL_CODEC_AES_KEY`, optional `TEMPORAL_CODEC_AES_KEY_ID`).
+  - `src/client.ts`, `src/worker/runtime.ts` – resolve codec chain from config, expose metrics/logging around codec successes/failures.
+  - `src/bin/temporal-bun.ts` – doctor command validates codec configuration and reports chain summary.
+- **Acceptance criteria**
+  1. Payload converter supports ordered codecs (gzip + AES-GCM built-in) with replay-safe envelopes; extension point for additional codecs.
+  2. Failure converter maps Temporal `Failure` messages to structured `TemporalFailureError` with details/cause decoded via codec pipeline.
+  3. Worker/client route all payloads (workflow args, activities, queries/updates, memo/search attributes, determinism markers) through the layered converter.
+  4. Observability: counters for codec encode/decode/errors and structured logging for misconfiguration; `temporal-bun doctor` surfaces codec chain and fails fast on invalid keys.
+- **Operational notes**
+  - Default remains JSON-only; enable codecs via config/env to avoid breaking existing users.
+  - AES-GCM keys must be 128/192/256-bit (base64/hex); key IDs travel in payload metadata for rotation.
+  - Determinism: codecs wrap the entire payload proto, so workflow replay is safe as long as the codec chain remains stable for a given history.
+
 ### TBS-001 – History Replay & Sticky Cache
 
 - **Status**: ✅ Completed (November 2025) — determinism replay ingestion, sticky cache eviction/metrics, and the integration + replay harnesses now live on `main`.
@@ -167,9 +185,9 @@ can contribute independently without re-planning.
   - Sticky cache decisions are now instrumented with counters (`hits`, `misses`, `evictions`, `heal`) and structured logs so nondeterminism causes can be traced via `WorkflowNondeterminismError.details`.
   - Replay fixtures live under `tests/replay/fixtures/*.json` with a dedicated harness (`tests/replay/fixtures.test.ts`) that locks determinism outputs to real histories. The capture/runbook lives in `docs/replay-runbook.md`.
 - **Validation commands**
-  - `bun run --filter @proompteng/temporal-bun-sdk exec bun test tests/workflow/replay.test.ts`
-  - `bun run --filter @proompteng/temporal-bun-sdk exec bun test tests/replay/fixtures.test.ts`
-  - `bun run --filter @proompteng/temporal-bun-sdk exec bun test tests/integration/history-replay.test.ts`
+  - `cd packages/temporal-bun-sdk && bun test tests/workflow/replay.test.ts`
+  - `cd packages/temporal-bun-sdk && bun test tests/replay/fixtures.test.ts`
+  - `cd packages/temporal-bun-sdk && bun test tests/integration/history-replay.test.ts`
 
 - **Dependencies**
   - Optional integration with TBS-004 for logging metrics.
@@ -216,8 +234,8 @@ can contribute independently without re-planning.
 
 - **Load/perf harness**
   - CPU-heavy + I/O-heavy workflows live under `tests/integration/load/**` alongside the JSONL metrics aggregator. The harness starts the Temporal CLI dev server, creates `.artifacts/worker-load` per run, and collects sticky cache, poll latency, and throughput metrics via the worker runtime's file exporter.
-  - Local runs: `TEMPORAL_INTEGRATION_TESTS=1 bun run --filter @proompteng/temporal-bun-sdk exec bun test tests/integration/worker-load.test.ts` (Bun test runner) or `bun run --filter @proompteng/temporal-bun-sdk test:load` (Bun CLI script).
-  - CI: `.github/workflows/temporal-bun-sdk.yml` now executes `bun run --filter @proompteng/temporal-bun-sdk test:load` after the main suite and uploads the `.artifacts/worker-load/{metrics.jsonl,report.json,temporal-cli.log}` bundle for reviewers.
+  - Local runs: `cd packages/temporal-bun-sdk && TEMPORAL_INTEGRATION_TESTS=1 bun test tests/integration/worker-load.test.ts` (Bun test runner) or `cd packages/temporal-bun-sdk && bun run test:load` (Bun CLI script).
+  - CI: `.github/workflows/temporal-bun-sdk.yml` now executes `cd packages/temporal-bun-sdk && bun run test:load` after the main suite and uploads the `.artifacts/worker-load/{metrics.jsonl,report.json,temporal-cli.log}` bundle for reviewers.
   - Default knobs submit 36 workflows with a 100s completion budget and workflow/activity concurrency of 10/14; the Bun test adds a ~15s cushion over `TEMPORAL_LOAD_TEST_TIMEOUT_MS + TEMPORAL_LOAD_TEST_METRICS_FLUSH_MS` so that healthy runs finish well before the CI hard timeout while still exercising the scheduler.
 
 ### TBS-004 – Observability (Complete)
@@ -231,8 +249,8 @@ can contribute independently without re-planning.
   - Observability services are built with `Effect` so they can be composed or swapped (layers remain available for future TBS-010 work).
   - Metrics exporters flush through `Effect` effects to avoid blocking shutdown.
 - **Validation notes**
-  1. `bun run --filter @proompteng/temporal-bun-sdk exec bun test packages/temporal-bun-sdk/tests/**/*` now exercises the new observability unit/integration suites.
-  2. `bun run --filter @proompteng/temporal-bun-sdk exec bunx temporal-bun doctor --log-format=json --metrics=file:/tmp/metrics.json` confirms the documented configuration path and writes benchmark output.
+  1. `cd packages/temporal-bun-sdk && bun test packages/temporal-bun-sdk/tests/**/*` now exercises the new observability unit/integration suites.
+  2. `cd packages/temporal-bun-sdk && bunx temporal-bun doctor --log-format=json --metrics=file:/tmp/metrics.json` confirms the documented configuration path and writes benchmark output.
 
 ### TBS-005 – Client Resilience
 
@@ -331,11 +349,7 @@ can contribute independently without re-planning.
   - `packages/temporal-bun-sdk/CHANGELOG.md` – canonical changelog kept current
     by release-please.
 - **Acceptance criteria (met)**
-  1. The release workflow installs Node 24 + Bun, runs `bun install
-     --frozen-lockfile`, executes `bunx biome check
-     packages/temporal-bun-sdk`, `bun run --filter @proompteng/temporal-bun-sdk
-     test`, `bun run --filter @proompteng/temporal-bun-sdk test:load`, and
-     `bun run --filter @proompteng/temporal-bun-sdk build`. Any failure aborts the
+  1. The release workflow installs Node 24 + Bun, runs `bun install --frozen-lockfile`, executes `bunx biome check packages/temporal-bun-sdk`, `bun test`, `bun run test:load`, and `bun run build`. Any failure aborts the
      publish.
   2. release-please derives the semver bump from Conventional Commits, updates
      `package.json`, and rewrites `CHANGELOG.md` inside the automated release PR.

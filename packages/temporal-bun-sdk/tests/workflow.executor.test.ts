@@ -91,7 +91,8 @@ test('emits start timer command', async () => {
 
   const output = await execute(executor, { workflowType: 'startTimer', arguments: [2500] })
 
-  expect(output.commands).toHaveLength(2)
+  expect(output.completion).toBe('pending')
+  expect(output.commands).toHaveLength(1)
   const timerCommand = output.commands[0]
   expect(timerCommand.commandType).toBe(CommandType.START_TIMER)
   expect(timerCommand.attributes?.case).toBe('startTimerCommandAttributes')

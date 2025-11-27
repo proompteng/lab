@@ -16,6 +16,7 @@ export interface IntegrationTestEnv {
   readonly cliConfig: typeof CLI_CONFIG
   readonly runOrSkip: RunOrSkip
   readonly stickyCacheSizeEffect: Effect.Effect<number, never, never> | null
+  readonly stickyCacheClearEffect: Effect.Effect<void, never, never> | null
   readonly runtime: WorkerRuntime | null
   readonly runtimePromise: Promise<void> | null
   readonly isCliUnavailable: () => boolean
@@ -68,11 +69,13 @@ const setupIntegrationTestEnv = async (): Promise<IntegrationTestEnv> => {
   let runtime: WorkerRuntime | null = null
   let runtimePromise: Promise<void> | null = null
   let stickyCacheSizeEffect: Effect.Effect<number, never, never> | null = null
+  let stickyCacheClearEffect: Effect.Effect<void, never, never> | null = null
 
   if (!cliUnavailable) {
     const baseConfig = await loadTemporalConfig()
     const stickyCache = await Effect.runPromise(makeStickyCache({ maxEntries: 2, ttlMs: 60_000 }))
     stickyCacheSizeEffect = stickyCache.size
+    stickyCacheClearEffect = stickyCache.clear
 
     const runtimeConfig = {
       ...baseConfig,
@@ -130,6 +133,7 @@ const setupIntegrationTestEnv = async (): Promise<IntegrationTestEnv> => {
     cliConfig: CLI_CONFIG,
     runOrSkip,
     stickyCacheSizeEffect,
+    stickyCacheClearEffect,
     runtime,
     runtimePromise,
     isCliUnavailable: () => cliUnavailable,
