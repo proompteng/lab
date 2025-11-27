@@ -5,7 +5,7 @@
 Jangar will become a single Bun-based service that provides:
 
 - A Temporal workflow that runs **one Codex turn per Activity** (auditable, retryable, visible in history).
-- A meta Codex (model `gpt-5.1-max`, `danger-full-access`, network on, approval `never`) that plans and delegates work to worker Codex runs capable of repo changes and PR creation.
+- A meta Codex (model `gpt-5.1-codex-max`, `danger-full-access`, network on, approval `never`) that plans and delegates work to worker Codex runs capable of repo changes and PR creation.
 - HTTP + SSE APIs and a TanStack Start UI served from the same process for operators to start missions, chat, and watch execution.
 - Persistence in Convex (chat_sessions, chat_messages, work_orders per `docs/jangar/persistence.md`) for chat history, workflow/PR linkage, and recency sorting; optional object storage for raw logs.
 
@@ -124,6 +124,7 @@ flowchart TD
 
 - Deploy OpenWebUI cluster-local; configure it to use Jangar’s OpenAI-compatible proxy with a single model `meta-orchestrator`.
     - Proxy handler in `services/jangar/src/server.ts` translates `/v1/chat/completions` into Codex app-server JSON-RPC calls (`thread/start`/`turn/start`) and streams deltas back in OpenAI format.
+    - Default model served to OpenWebUI is now `gpt-5.1-codex-max`; requests for `meta-orchestrator` are mapped to this model to avoid Codex backend 400s.
     - Implementation notes:
   - Spawn long-lived `codex app-server` as a child process; perform `initialize` handshake once.
   - Map OpenWebUI conversation IDs to app-server thread IDs (persist in Convex).

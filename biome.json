@@ -34,6 +34,7 @@
       "!packages/temporal-bun-sdk/src/proto",
       "!packages/backend/convex/_generated",
       "!services/jangar/convex/_generated",
+      "!packages/codex/src/app-server",
       "!packages/temporal-bun-sdk/tests",
       "!packages/temporal-bun-sdk-example",
       "!kubernetes",
