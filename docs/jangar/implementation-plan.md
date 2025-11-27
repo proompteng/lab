@@ -40,7 +40,7 @@ Context: use this plan to split work across Codex agents/Argo jobs. Markers use 
 
 - TODO(jng-030a): Implement `runCodexTurnActivity` in `services/jangar/src/activities/run-codex-turn.ts`:
   - Prepare temp `CODEX_HOME`, optional repo clone into temp workdir, set `CX_DEPTH`, inject toolbelt `PATH`.
-  - Invoke Codex meta turn (`gpt-5.1-max`, sandbox `danger-full-access`, approval `never`, network on), capture events, items, usage.
+- Invoke Codex meta turn (`gpt-5.1-codex-max`, sandbox `danger-full-access`, approval `never`, network on), capture events, items, usage.
   - Persist snapshot via DB helper; return `RunCodexTurnResult`.
 - TODO(jng-030b): Implement `publishEventActivity` (SSE/log fan-out) stubbed in `services/jangar/src/activities/publish-event.ts`.
 

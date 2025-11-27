@@ -10,6 +10,11 @@ const nitroPlugin = nitro({
 }) as unknown as Plugin
 
 export default defineConfig({
+  server: {
+    host: true,
+    port: Number(process.env.UI_PORT ?? process.env.PORT ?? '3000'),
+    allowedHosts: ['host.docker.internal'],
+  },
   plugins: [
     nitroPlugin,
     tsconfigPaths({

@@ -12,6 +12,7 @@ const colors: Record<string, string> = {
   convex: '\u001b[33m',
   app: '\u001b[36m',
   worker: '\u001b[35m',
+  codex: '\u001b[32m',
 }
 const reset = '\u001b[0m'
 
@@ -49,6 +50,8 @@ const runManaged = (name: string, cmd: string[], env: Record<string, string> = {
     env: { ...process.env, ...env },
     stdout: 'pipe',
     stderr: 'pipe',
+    // Keep stdin open for long-lived processes (Codex app-server will exit on EOF).
+    stdin: name === 'codex' ? 'pipe' : undefined,
   })
 
   managed.push({ name, proc })
@@ -70,9 +73,15 @@ const shutdown = (code = 0) => {
   if (shuttingDown) return
   shuttingDown = true
   for (const { proc } of managed) {
-    if (!proc.killed) proc.kill()
+    if (proc.killed) continue
+    // Try graceful first, then force kill after a short grace period to avoid lingering logs.
+    proc.kill()
+    setTimeout(() => {
+      if (!proc.killed) proc.kill('SIGKILL')
+    }, 500)
   }
-  setTimeout(() => process.exit(code), 100)
+  // Give kill timers a moment to run before exiting this supervisor process.
+  setTimeout(() => process.exit(code), 800)
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
@@ -91,6 +100,24 @@ runManaged('convex', [bunBin, 'x', 'convex', 'dev'], {
 runManaged('app', [bunBin, 'run', 'dev:app'], { SKIP_WORKER: '1' })
 
 runManaged('worker', [bunBin, 'run', 'dev:worker'])
+
+runManaged(
+  'codex',
+  [
+    'codex',
+    '--sandbox',
+    'danger-full-access',
+    '--ask-for-approval',
+    'never',
+    '--model',
+    'gpt-5.1-codex-max',
+    'app-server',
+  ],
+  {
+    // Ensure Codex can see the repo during local RPC calls.
+    CODEX_CWD: process.cwd(),
+  },
+)
 
 await Promise.race(managed.map(({ name, proc }) => proc.exited.then(() => name)))
 

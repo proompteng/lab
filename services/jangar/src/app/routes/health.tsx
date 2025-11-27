@@ -1,7 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/health')({
-  loader: () => ({ status: 'ok' as const, service: 'jangar-ui' }),
+  loader: () => {
+    console.info('[jangar] GET /health')
+    return { status: 'ok' as const, service: 'jangar-ui' }
+  },
   component: Health,
 })
 
