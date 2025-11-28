@@ -81,9 +81,45 @@ const fetchHelmV3 = (): { binary: string; tempDir: string } => {
   return { binary: binaryPath, tempDir: tmpDir }
 }
 
+const resolveHelmBinary = (): { binary: string; tempDir?: string; shim?: string } => {
+  const envBin = process.env.HELM_BIN
+  if (envBin) return { binary: envBin }
+
+  const helmPath = Bun.which('helm')
+  if (helmPath) {
+    const version = spawnSync(helmPath, ['version', '--short'], { encoding: 'utf8' })
+    const output = typeof version.stdout === 'string' ? version.stdout.trim() : ''
+    if (output.startsWith('v3.')) {
+      return { binary: helmPath }
+    }
+  }
+
+  const misePath = Bun.which('mise')
+  if (misePath) {
+    const version = (process.env.HELM_V3_VERSION ?? 'v3.15.4').replace(/^v/, '')
+    const helmDir = mkdtempSync(join(tmpdir(), 'helm-mise-shim-'))
+    const shimPath = join(helmDir, 'helm')
+    const script = `#!/usr/bin/env bash\nset -euo pipefail\nexec ${misePath} x helm@${version} -- helm "$@"\n`
+    writeFileSync(shimPath, script, { mode: 0o755 })
+    const cleanup = () => rmSync(helmDir, { recursive: true, force: true })
+    return { binary: shimPath, tempDir: helmDir, shim: 'mise', cleanup }
+  }
+
+  const download = fetchHelmV3()
+  return download
+}
+
 const writeHelmShim = (): { helmDir: string; helmBinary: string; cleanup: () => void } => {
-  const helmDownload = fetchHelmV3()
-  const helmBinary = helmDownload.binary
+  const helmResolved = resolveHelmBinary()
+  if (helmResolved.shim === 'mise') {
+    return {
+      helmDir: helmResolved.tempDir ?? tmpdir(),
+      helmBinary: helmResolved.binary,
+      cleanup: () => helmResolved.tempDir && rmSync(helmResolved.tempDir, { recursive: true, force: true }),
+    }
+  }
+
+  const helmBinary = helmResolved.binary
   const helmDir = mkdtempSync(join(tmpdir(), 'helm-shim-'))
   const shimPath = join(helmDir, 'helm')
   const script = `#!/usr/bin/env bash
@@ -100,7 +136,9 @@ exec ${helmBinary} "${'${'}args[@]}"
   writeFileSync(shimPath, script, { mode: 0o755 })
   const cleanup = () => {
     rmSync(helmDir, { recursive: true, force: true })
-    rmSync(helmDownload.tempDir, { recursive: true, force: true })
+    if (helmResolved.tempDir) {
+      rmSync(helmResolved.tempDir, { recursive: true, force: true })
+    }
   }
   return { helmDir, helmBinary: shimPath, cleanup }
 }
