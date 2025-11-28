@@ -63,6 +63,7 @@ describe('formatToolDelta', () => {
   it('wraps streaming command output in a TypeScript code fence', () => {
     const delta: Parameters<typeof formatToolDelta>[0] = {
       type: 'tool',
+      id: 'tool-1',
       status: 'delta',
       toolKind: 'command',
       title: 'Run tests',
@@ -75,6 +76,7 @@ describe('formatToolDelta', () => {
   it('renders non-delta command updates as bash fences with normalized status', () => {
     const delta: Parameters<typeof formatToolDelta>[0] = {
       type: 'tool',
+      id: 'tool-2',
       status: 'completed',
       toolKind: 'command',
       title: 'Run tests',
@@ -87,6 +89,7 @@ describe('formatToolDelta', () => {
   it('passes through non-command deltas without wrapping', () => {
     const delta: Parameters<typeof formatToolDelta>[0] = {
       type: 'tool',
+      id: 'tool-3',
       status: 'delta',
       toolKind: 'mcp',
       title: 'search',
