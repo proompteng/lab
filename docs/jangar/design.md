@@ -69,29 +69,29 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    subgraph NS[K8s namespace: jangar]
-        KS[Knative Service: jangar\ncluster-local LB] --> APPPOD
-        subgraph APPPOD[Pod: app]
-            S[Bun server.ts\nHTTP + SSE + /openwebui proxy]
-            UIA[TanStack Start assets]
-            APP[codex app-server child\nJSON-RPC stdio]
-            CXB[cx-tools dist]
+    subgraph NS["K8s namespace: jangar"]
+        KS["Knative Service: jangar<br/>cluster-local LB"] --> APPPOD
+        subgraph APPPOD["Pod: app"]
+            S["Bun server.ts<br/>HTTP + SSE + /openwebui proxy"]
+            UIA["TanStack Start assets"]
+            APP["codex app-server child<br/>JSON-RPC stdio"]
+            CXB["cx-tools dist"]
         end
-        subgraph WDPOD[Pod: worker]
-            W[Temporal Worker\n(bun run src/worker.ts)]
+        subgraph WDPOD["Pod: worker"]
+            W["Temporal Worker<br/>(bun run src/worker.ts)"]
         end
-        subgraph OWPOD[Pod: openwebui (StatefulSet)]
-            OWUI[OpenWebUI\n(helm chart v8.18.0 / app v0.6.40)]
+        subgraph OWPOD["Pod: openwebui (StatefulSet)"]
+            OWUI["OpenWebUI<br/>(helm chart v8.18.0 / app v0.6.40)"]
         end
-        OWPOD --> OWDB[(CNPG Cluster: jangar-db)]
-        OWPOD --> OWREDIS[(Redis: jangar-openwebui-redis\nOTCK operator)]
-        APPPOD --> TF[Temporal Frontend svc]
+        OWPOD --> OWDB[("CNPG Cluster: jangar-db")]
+        OWPOD --> OWREDIS[("Redis: jangar-openwebui-redis<br/>OTCK operator")]
+        APPPOD --> TF["Temporal Frontend svc"]
         WDPOD --> TF
-        APPPOD --> GH[GitHub / gh CLI]
-        APPPOD --> TS[Tailscale LB]
-        APPPOD --> B[(Optional object store)]
+        APPPOD --> GH["GitHub / gh CLI"]
+        APPPOD --> TS["Tailscale LB"]
+        APPPOD --> B[("Optional object store")]
     end
-    KS --> CVX[(Convex cloud\nmanaged)]
+    KS --> CVX[("Convex cloud<br/>managed")]
 ```
 
 ## Infra Changes (Argo/CD)
@@ -154,12 +154,12 @@ flowchart TD
 
     ```mermaid
     flowchart LR
-      UI["TanStack Start UI\n(services/jangar/src/ui)"] --> API["HTTP/SSE API\nservices/jangar/src/server.ts"]
-      API --> CVX[(Convex mutations/queries)]
-      API --> Temporal["Temporal Workflows\nservices/jangar/src/workflows"]
-      Temporal --> Activities["Activities\nservices/jangar/src/activities"]
+      UI["TanStack Start UI<br/>(services/jangar/src/ui)"] --> API["HTTP/SSE API<br/>services/jangar/src/server.ts"]
+      API --> CVX[("Convex mutations/queries")]
+      API --> Temporal["Temporal Workflows<br/>services/jangar/src/workflows"]
+      Temporal --> Activities["Activities<br/>services/jangar/src/activities"]
       Activities --> CVX
-      Activities -->|optional| Bucket[(Object store)]
+      Activities -->|optional| Bucket[("Object store")]
       API -. SSE .-> UI
     ```
 
