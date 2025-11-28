@@ -1,23 +1,28 @@
-# OpenWebUI sidecar (JNG-070b/080b)
+# OpenWebUI deployment (separate host)
 
-OpenWebUI now runs as a sidecar in the `ksvc/jangar` pod and talks to the worker’s OpenAI-compatible proxy at `http://localhost:8080/openai/v1`. We no longer inject an `OPENAI_API_KEY`; traffic stays inside the pod and uses the local Codex binary.
+OpenWebUI is installed via the upstream Helm chart (`open-webui` v8.18.0, app v0.6.40) in the `jangar` namespace. The chart creates a StatefulSet and `open-webui` ClusterIP Service; a dedicated Tailscale LoadBalancer `openwebui-tailscale` (hostname `openwebui`) fronts it. Websocket support is enabled and backed by a Redis instance `jangar-openwebui-redis` managed by the OTCK Redis operator. Postgres comes from the existing CNPG cluster `jangar-db` (`jangar-db-app` + `jangar-db-ca`). Jangar no longer proxies or iframes OpenWebUI; users open the Tailscale host directly.
 
-## Access and model surface
-- Port-forward for local smoke tests:
+## Access
+- Via Tailscale: `http://openwebui` (Tailscale LB `openwebui-tailscale` → Service `open-webui:80` → pod :8080).
+- Local smoke test (no tailscale):
   ```bash
-  kubectl -n jangar port-forward ksvc/jangar 8080:80
-  # then open http://localhost:3000
+  # Service forward (preferred):
+  kubectl -n jangar port-forward svc/open-webui 8080:80
+  # or directly to the StatefulSet pod:
+  kubectl -n jangar port-forward statefulset/open-webui 8080:8080
+  # browser: http://localhost:8080/
   ```
-- OpenWebUI authentication and signup are disabled (`WEBUI_AUTH=false`, `ENABLE_SIGNUP=false`); requests go to the local proxy without an API key.
-- Only the `meta-orchestrator` model is advertised (default model env is set; the proxy’s `/v1/models` response should continue to return just that entry).
-- Local docker/`npm run dev:all` now read `JANGAR_OPENAI_BASE_URL` (defaults to
-  `http://host.docker.internal:3000/openai/v1`) so the iframe always points at the Jangar
-  OpenAI-compatible endpoint; bump this if you run the shell on a non-standard port.
+
+## Model & backend wiring
+- OpenAI base URL: `http://jangar.jangar.svc.cluster.local/openai/v1` (set via Helm values).
+- Auth/signup remain disabled (`WEBUI_AUTH=false`, `ENABLE_SIGNUP=false`).
+- Websockets: `WEBSOCKET_MANAGER=redis`, `WEBSOCKET_REDIS_URL=redis://jangar-openwebui-redis:6379/0` (Redis provided by the operator, not the chart).
+- Database: `DATABASE_URL` from CNPG secret `jangar-db-app`; TLS root cert from `jangar-db-ca`.
+- Only the orchestrator model is exposed in `/v1/models` (mapped to `gpt-5.1-codex-max`).
 
 ## Image pin
-- Sidecar image: `ghcr.io/open-webui/open-webui:v0.6.40`
+- `ghcr.io/open-webui/open-webui:v0.6.40` (managed by the Helm chart)
 
-## Embedding and local dev
-- Jangar UI embeds OpenWebUI via an iframe in the mission view. Configure the src with `VITE_OPENWEBUI_URL` (defaults to `http://localhost:3000`).
-- For local hacking, run everything together: `cd services/jangar && bun run dev:all` (starts OpenWebUI in Docker on :3000, Convex dev, the app shell, and the worker). If port 3000 is busy, set `OPENWEBUI_PORT=3001` (and `VITE_OPENWEBUI_URL=http://localhost:3001`).
-- Update here if the tag/digest is bumped so ops can reason about the running build.
+## Dev notes
+- Jangar UI no longer embeds OpenWebUI; if you want a quick link, point to `VITE_OPENWEBUI_EXTERNAL_URL` when running locally.
+- For local all-in-one: `cd services/jangar && bun run dev:all` still starts OpenWebUI (Docker) on :3000; override `OPENWEBUI_PORT` if needed.

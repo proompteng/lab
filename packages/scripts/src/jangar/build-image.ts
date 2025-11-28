@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
-import { resolve } from 'node:path'
+import { mkdirSync, existsSync, copyFileSync, rmSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
 
 import { repoRoot } from '../shared/cli'
 import { buildAndPushDockerImage } from '../shared/docker'
@@ -14,6 +15,7 @@ export type BuildImageOptions = {
   dockerfile?: string
   version?: string
   commit?: string
+  codexAuthPath?: string
 }
 
 export const buildImage = async (options: BuildImageOptions = {}) => {
@@ -27,20 +29,45 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   )
   const version = options.version ?? process.env.JANGAR_VERSION ?? tag
   const commit = options.commit ?? process.env.JANGAR_COMMIT ?? execGit(['rev-parse', 'HEAD'])
+  const codexAuthPath =
+    options.codexAuthPath ?? process.env.CODEX_AUTH_PATH ?? resolve(process.env.HOME ?? '', '.codex/auth.json')
 
-  const result = await buildAndPushDockerImage({
-    registry,
-    repository,
-    tag,
-    context,
-    dockerfile,
-    buildArgs: {
-      JANGAR_VERSION: version,
-      JANGAR_COMMIT: commit,
-    },
-  })
+  // Stage auth into build context so COPY succeeds, then clean up
+  let stagedAuth = false
+  const stagedPath = resolve(repoRoot, 'services/jangar/.codex/auth.json')
+  try {
+    if (existsSync(codexAuthPath)) {
+      mkdirSync(dirname(stagedPath), { recursive: true })
+      copyFileSync(codexAuthPath, stagedPath)
+      stagedAuth = true
+    } else {
+      console.warn(`Codex auth not found at ${codexAuthPath}; build will proceed without it.`)
+    }
 
-  return { ...result, version, commit }
+    const result = await buildAndPushDockerImage({
+      registry,
+      repository,
+      tag,
+      context,
+      dockerfile,
+      buildArgs: {
+        JANGAR_VERSION: version,
+        JANGAR_COMMIT: commit,
+      },
+      codexAuthPath,
+    })
+
+    return { ...result, version, commit }
+  } finally {
+    if (stagedAuth) {
+      try {
+        rmSync(stagedPath, { force: true })
+        rmSync(dirname(stagedPath), { recursive: true, force: true })
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+  }
 }
 
 if (import.meta.main) {

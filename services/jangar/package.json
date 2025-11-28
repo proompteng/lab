@@ -14,7 +14,7 @@
     "dev:all": "bun run scripts/dev-all.ts",
     "check": "bunx tsc --noEmit",
     "start:dev": "cd src && bun --bun vite dev --host",
-    "start:build": "cd src && rm -rf ../dist/ui && bun --bun vite build && mkdir -p ../dist && mv .output ../dist/ui",
+    "start:build": "rm -rf dist/ui src/node_modules/.nitro src/.nitro && cd src && bun --bun vite build && mkdir -p ../dist && mv .output ../dist/ui",
     "convex:dev": "bunx convex dev",
     "convex:deploy": "bunx convex deploy"
   },

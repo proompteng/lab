@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jangar-worker
+  namespace: jangar
+  labels:
+    app.kubernetes.io/name: jangar-worker
+    app.kubernetes.io/part-of: lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jangar-worker
+  template:
+    metadata:
+      labels:
+        app: jangar-worker
+        app.kubernetes.io/name: jangar-worker
+        app.kubernetes.io/part-of: lab
+    spec:
+      containers:
+        - name: worker
+          image: registry.ide-newton.ts.net/lab/jangar:latest
+          imagePullPolicy: Always
+          command: ["bun", "run", "src/worker.ts"]
+          env:
+            - name: TEMPORAL_ADDRESS
+              value: temporal-frontend.temporal.svc.cluster.local:7233
+            - name: TEMPORAL_NAMESPACE
+              value: default
+            - name: TEMPORAL_TASK_QUEUE
+              value: jangar
+            - name: NODE_ENV
+              value: production
+            - name: CODEX_BIN
+              value: /usr/local/bin/codex
+            - name: CODEX_CWD
+              value: /app/github.com/lab
+            - name: CODEX_REPO_SLUG
+              value: proompteng/lab
+            - name: CODEX_REPO_URL
+              value: https://github.com/proompteng/lab.git
+            - name: CODEX_BOOTSTRAP_REPO
+              value: "1"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "echo ok"]
+            initialDelaySeconds: 5
+            periodSeconds: 30

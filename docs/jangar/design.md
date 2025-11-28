@@ -22,7 +22,7 @@ Jangar will become a single Bun-based service that provides:
 - Rich RBAC; assume trusted operators.
 - Long-term log archival (optional bucket, not mandatory).
 
-- **Single entrypoint & image:** One Bun process (`services/jangar/src/server.ts`) in one container image. It starts HTTP/SSE APIs, serves TanStack Start UI, runs/owns a long-lived `codex app-server` child, and hosts the Temporal worker. OpenWebUI runs as a sidecar container (or bundled assets) pointed at the in-process OpenAI proxy.
+- **Split runtime:** The Bun app image (`services/jangar/src/index.ts`) stays the single entrypoint for HTTP/SSE, TanStack Start UI, and the embedded `codex app-server` child. Temporal worker now runs in its own Deployment (same image) so Knative app pods stay lightweight. OpenWebUI is installed via the upstream Helm chart (`open-webui` 8.18.0 / app v0.6.40), which creates a StatefulSet and `open-webui` ClusterIP Service fronted by the Tailscale LB `openwebui` (80→8080). Websocket fan-out is backed by a Redis instance (`jangar-openwebui-redis`) managed by the OT-Container-Kit Redis operator. It reuses the CNPG cluster `jangar-db` for Postgres. The Jangar UI links out (no proxy/embed); OpenWebUI calls Jangar’s OpenAI-compatible endpoint for models/completions over the cluster-local service.
 - **Workflow:** `codexOrchestrationWorkflow` loops, invoking `runCodexTurnActivity` for each turn; delegates worker tasks via `runWorkerTaskActivity`; exposes signals/queries.
 - **Activities:**
   - `runCodexTurnActivity`: run one Codex turn with configured sandbox/model/env; returns events + snapshot.
@@ -65,24 +65,31 @@ sequenceDiagram
     GH-->>UI: PR link/status via workflow state
 ```
 
-### Deployment view
+### Deployment view (current)
 
 ```mermaid
 flowchart TD
     subgraph NS[K8s namespace: jangar]
-        KS[Knative Service: jangar\ncluster-local LB] --> POD
-        subgraph POD[Pod: single image/process]
-            S[Bun server.ts\nHTTP + SSE + proxy]
+        KS[Knative Service: jangar\ncluster-local LB] --> APPPOD
+        subgraph APPPOD[Pod: app]
+            S[Bun server.ts\nHTTP + SSE + /openwebui proxy]
             UIA[TanStack Start assets]
-            OWUI[OpenWebUI sidecar]
             APP[codex app-server child\nJSON-RPC stdio]
-            W[Temporal Worker]
             CXB[cx-tools dist]
         end
-        POD --> TF[Temporal Frontend svc]
-        POD --> GH[GitHub / gh CLI]
-        POD --> TS[Tailscale LB]
-        POD --> B[(Optional object store)]
+        subgraph WDPOD[Pod: worker]
+            W[Temporal Worker\n(bun run src/worker.ts)]
+        end
+        subgraph OWPOD[Pod: openwebui (StatefulSet)]
+            OWUI[OpenWebUI\n(helm chart v8.18.0 / app v0.6.40)]
+        end
+        OWPOD --> OWDB[(CNPG Cluster: jangar-db)]
+        OWPOD --> OWREDIS[(Redis: jangar-openwebui-redis\nOTCK operator)]
+        APPPOD --> TF[Temporal Frontend svc]
+        WDPOD --> TF
+        APPPOD --> GH[GitHub / gh CLI]
+        APPPOD --> TS[Tailscale LB]
+        APPPOD --> B[(Optional object store)]
     end
     KS --> CVX[(Convex cloud\nmanaged)]
 ```
@@ -93,7 +100,7 @@ flowchart TD
 - `argocd/applications/jangar/kservice.yaml` updates:
   - Env: `CONVEX_DEPLOYMENT` (e.g., `https://<deploy-id>.convex.cloud`), `CONVEX_DEPLOY_KEY` (Convex deploy key), `CODEX_API_KEY`, `GITHUB_TOKEN`; optional `CODEX_PATH`, `GH_HOST`, `GH_REPO`.
   - Keep Tailscale LB; containerPort 8080 serves HTTP/API/UI.
-- OpenWebUI sidecar remains the same; now backed by Convex for conversation/orchestration persistence instead of Postgres.
+- OpenWebUI now comes from the upstream Helm chart (StatefulSet + `open-webui` Service, exposed via `openwebui` Tailscale LB). Websocket support is enabled against Redis `jangar-openwebui-redis` managed by the Redis operator. It uses the existing CNPG cluster `jangar-db` for its Postgres; Jangar chat/workflow data still lives in Convex.
 - Optional: bucket creds (MinIO) for log archival; or small Redis for SSE fan-out (otherwise in-process emitter).
 
 ## Component Design (code paths)
@@ -120,20 +127,12 @@ flowchart TD
   - Clone shallow; branch `auto/<mission>-<id>`; run Codex worker (single or small loop), run lint/tests, push, open PR (`gh`/GitHub API); return `{prUrl, branch, commitSha, notes}`.
 - Shared helpers in `services/jangar/src/lib/`: git ops, env builders, temp paths.
 
-3.5) **Orchestrator (OpenWebUI front-end via app-server proxy)**
+3.5) **Orchestrator (OpenWebUI front-end, direct host)**
 
-- Deploy OpenWebUI cluster-local; configure it to use Jangar’s OpenAI-compatible proxy with a single model `meta-orchestrator`.
-    - Proxy handler in `services/jangar/src/server.ts` translates `/v1/chat/completions` into Codex app-server JSON-RPC calls (`thread/start`/`turn/start`) and streams deltas back in OpenAI format.
-    - Default model served to OpenWebUI is now `gpt-5.1-codex-max`; requests for `meta-orchestrator` are mapped to this model to avoid Codex backend 400s.
-    - Implementation notes:
-  - Spawn long-lived `codex app-server` as a child process; perform `initialize` handshake once.
-  - Map OpenWebUI conversation IDs to app-server thread IDs (persist in Convex).
-  - Stream `item/agentMessage/delta` → OpenAI delta chunks; `turn/completed` → final chunk with `finish_reason` and `usage`.
-  - Return `/v1/models` stub listing only `meta-orchestrator`.
-  - Validate Bearer token against a shared secret; Codex auth remains local (CODEX session/API key).
-  - App-server protocol is JSON-RPC 2.0 over stdio (line-delimited JSON); not HTTP. If HTTP is needed, the proxy provides it. Spec: <https://www.jsonrpc.org/specification>.
-  - App-server honors per-turn `cwd`, `sandbox_policy`/`sandbox_mode`, `approvalPolicy`, and network toggles—so the proxy can let Codex scan/modify the repo by setting `cwd` to the repo root and `sandbox_mode` to `workspace-write` or `danger-full-access`.
-    - Persist mapping `chat_id ↔ orchestration_id` in Convex so reloads stay consistent; replay history from Convex, not OpenWebUI’s local store.
+- OpenWebUI runs separately and is accessed via the Tailscale hostname `openwebui`. The Jangar UI links out; no iframe/proxy is used.
+- OpenWebUI is configured to point its OpenAI base URL to the cluster-local Jangar endpoint (e.g., `http://jangar.jangar.svc.cluster.local/openai/v1`). That endpoint translates `/v1/chat/completions` into Codex app-server JSON-RPC calls and streams deltas back in OpenAI format.
+- Default model offered to OpenWebUI remains the single orchestrator model (mapped to `gpt-5.1-codex-max`). `/v1/models` returns only that entry.
+- App-server is spawned once per pod; conversations can be mapped to Convex thread IDs for persistence as needed.
 
 4) **Workflow** — `services/jangar/src/workflows/index.ts`
    - `codexOrchestrationWorkflow` input `{topic, repoUrl, constraints?, depth=1, maxTurns=8}`.
@@ -176,7 +175,7 @@ flowchart TD
 7) **UI (Orchestrator — TanStack Start + OpenWebUI)** — `services/jangar/src/ui/`
    - Routes: `/` (mission list), `/mission/$id` (chat, plan timeline, activity log, PR card).
    - TanStack Query for REST; SSE hook merges deltas.
-   - OpenWebUI is iframe-embedded into the mission view and pointed at the local proxy; keep it cluster-local and hide nav to make the embed feel native. Built assets are still served by `server.ts`.
+   - OpenWebUI is linked out to the dedicated host (`openwebui` via Tailscale) instead of being embedded or proxied. The mission view can surface a CTA/link; assets for the orchestrator UI remain served by `server.ts`.
 
 8) **Build & Deploy**
    - `packages/scripts/src/jangar/build-image.ts`: bundle `packages/cx-tools/dist`, `services/jangar/dist/ui`, run entry `bun run src/index.ts`.

@@ -12,7 +12,7 @@ metadata:
     argocd.argoproj.io/compare-options: IgnoreExtraneous
     argocd.argoproj.io/tracking-id: jangar:serving.knative.dev/Service:jangar/jangar
     networking.knative.dev/visibility: cluster-local
-    deploy.knative.dev/rollout: "2025-11-25T09:04:38.196Z"
+    deploy.knative.dev/rollout: "2025-11-28T02:12:53.859Z"
 spec:
   template:
     metadata:
@@ -23,18 +23,26 @@ spec:
     spec:
       containerConcurrency: 0
       containers:
-        - name: worker
+        - name: app
           image: registry.ide-newton.ts.net/lab/jangar:latest
           imagePullPolicy: Always
           env:
-            - name: TEMPORAL_ADDRESS
-              value: temporal-frontend.temporal.svc.cluster.local:7233
-            - name: TEMPORAL_NAMESPACE
-              value: default
-            - name: TEMPORAL_TASK_QUEUE
-              value: jangar
             - name: NODE_ENV
               value: production
+            - name: UI_PORT
+              value: "8080"
+            - name: ENABLE_TEMPORAL_WORKER
+              value: "0"
+            - name: CODEX_BIN
+              value: /usr/local/bin/codex
+            - name: CODEX_CWD
+              value: /app/github.com/lab
+            - name: CODEX_REPO_SLUG
+              value: proompteng/lab
+            - name: CODEX_REPO_URL
+              value: https://github.com/proompteng/lab.git
+            - name: CODEX_BOOTSTRAP_REPO
+              value: "1"
           ports:
             - name: http1
               containerPort: 8080
@@ -46,59 +54,8 @@ spec:
               port: 8080
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: "2"
+              memory: 4Gi
             limits:
-              cpu: 500m
-              memory: 512Mi
-        - name: openwebui
-          image: ghcr.io/open-webui/open-webui:v0.6.40
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: jangar-db-app
-                  key: uri
-            - name: DATABASE_TYPE
-              value: postgresql
-            - name: PGSSLROOTCERT
-              value: /etc/ssl/certs/jangar-db/ca.crt
-            - name: PGSSLMODE
-              value: require
-            - name: PORT
-              value: "3000"
-            - name: OPENAI_API_BASE_URL
-              value: http://localhost:8080/openai/v1
-            - name: DEFAULT_MODELS
-              value: meta-orchestrator
-            - name: WEBUI_AUTH
-              value: "false"
-            - name: ENABLE_SIGNUP
-              value: "false"
-          volumeMounts:
-            - name: jangar-db-ca
-              mountPath: /etc/ssl/certs/jangar-db
-              readOnly: true
-          ports:
-            - name: http-openwebui
-              containerPort: 3000
-              protocol: TCP
-          readinessProbe:
-            httpGet:
-              path: /
-              port: 3000
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            failureThreshold: 3
-          resources:
-            requests:
-              cpu: 100m
-              memory: 256Mi
-            limits:
-              cpu: "1"
-              memory: 512Mi
-      volumes:
-        - name: jangar-db-ca
-          secret:
-            secretName: jangar-db-ca
+              cpu: "2"
+              memory: 4Gi

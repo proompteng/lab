@@ -5,8 +5,18 @@ resources:
   - kservice.yaml
   - tailscale-service.yaml
   - postgres-cluster.yaml
+  - openwebui-redis.yaml
+  - worker-deployment.yaml
+
+helmCharts:
+  - name: open-webui
+    repo: https://helm.openwebui.com
+    version: 8.18.0
+    releaseName: jangar-openwebui
+    namespace: jangar
+    valuesFile: openwebui-values.yaml
 
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: c856f49a
-    digest: sha256:66a15cbcf653c364a530f9381935311fce22e697c11b2ec528da2ac266b94f04
+    newTag: a5095ed9
+    digest: sha256:ed101cd062d7a1fc9765cf7d739a27d7e08d2abce9ba0d8ca1db027d80f2db14
