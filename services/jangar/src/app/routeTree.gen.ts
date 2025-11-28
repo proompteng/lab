@@ -11,8 +11,6 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/_index'
 import { Route as HealthRouteImport } from './routes/health'
-import { Route as V1ModelsRouteImport } from './routes/v1/models'
-import { Route as V1ChatCompletionsRouteImport } from './routes/v1/chat/completions'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
 
@@ -23,16 +21,6 @@ const IndexRoute = IndexRouteImport.update({
 const HealthRoute = HealthRouteImport.update({
   id: '/health',
   path: '/health',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const V1ModelsRoute = V1ModelsRouteImport.update({
-  id: '/v1/models',
-  path: '/v1/models',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const V1ChatCompletionsRoute = V1ChatCompletionsRouteImport.update({
-  id: '/v1/chat/completions',
-  path: '/v1/chat/completions',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OpenaiV1ModelsRoute = OpenaiV1ModelsRouteImport.update({
@@ -48,58 +36,38 @@ const OpenaiV1ChatCompletionsRoute = OpenaiV1ChatCompletionsRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/health': typeof HealthRoute
-  '/v1/models': typeof V1ModelsRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
-  '/v1/chat/completions': typeof V1ChatCompletionsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
 export interface FileRoutesByTo {
   '/health': typeof HealthRoute
-  '/v1/models': typeof V1ModelsRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
-  '/v1/chat/completions': typeof V1ChatCompletionsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_index': typeof IndexRoute
   '/health': typeof HealthRoute
-  '/v1/models': typeof V1ModelsRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
-  '/v1/chat/completions': typeof V1ChatCompletionsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/health'
-    | '/v1/models'
-    | '/openai/v1/models'
-    | '/v1/chat/completions'
-    | '/openai/v1/chat/completions'
+  fullPaths: '/health' | '/openai/v1/models' | '/openai/v1/chat/completions'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/health'
-    | '/v1/models'
-    | '/openai/v1/models'
-    | '/v1/chat/completions'
-    | '/openai/v1/chat/completions'
+  to: '/health' | '/openai/v1/models' | '/openai/v1/chat/completions'
   id:
     | '__root__'
     | '/_index'
     | '/health'
-    | '/v1/models'
     | '/openai/v1/models'
-    | '/v1/chat/completions'
     | '/openai/v1/chat/completions'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HealthRoute: typeof HealthRoute
-  V1ModelsRoute: typeof V1ModelsRoute
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
-  V1ChatCompletionsRoute: typeof V1ChatCompletionsRoute
   OpenaiV1ChatCompletionsRoute: typeof OpenaiV1ChatCompletionsRoute
 }
 
@@ -117,20 +85,6 @@ declare module '@tanstack/react-router' {
       path: '/health'
       fullPath: '/health'
       preLoaderRoute: typeof HealthRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/v1/models': {
-      id: '/v1/models'
-      path: '/v1/models'
-      fullPath: '/v1/models'
-      preLoaderRoute: typeof V1ModelsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/v1/chat/completions': {
-      id: '/v1/chat/completions'
-      path: '/v1/chat/completions'
-      fullPath: '/v1/chat/completions'
-      preLoaderRoute: typeof V1ChatCompletionsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/openai/v1/models': {
@@ -153,9 +107,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HealthRoute: HealthRoute,
-  V1ModelsRoute: V1ModelsRoute,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,
-  V1ChatCompletionsRoute: V1ChatCompletionsRoute,
   OpenaiV1ChatCompletionsRoute: OpenaiV1ChatCompletionsRoute,
 }
 export const routeTree = rootRouteImport
