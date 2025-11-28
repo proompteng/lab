@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { mkdirSync, existsSync, copyFileSync, rmSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 
 import { repoRoot } from '../shared/cli'
 import { buildAndPushDockerImage } from '../shared/docker'
