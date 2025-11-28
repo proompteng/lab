@@ -20,4 +20,4 @@ jobs:
       node-version: 24.11.1
       install-command: bun install --frozen-lockfile && cd services/jangar && bun install --frozen-lockfile
       lint-command: bunx biome check services/jangar packages/scripts/src/jangar argocd/applications/jangar
-      test-command: cd services/jangar && bunx tsc --noEmit
+      test-command: cd services/jangar && bun test && bunx tsc --noEmit

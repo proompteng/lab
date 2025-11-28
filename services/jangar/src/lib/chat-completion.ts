@@ -4,7 +4,7 @@ import { createDbClient } from '../db'
 import type { ChatMessage, ChatRole } from '../types/persistence'
 import { getAppServer } from './app-server'
 
-type Message = { role: string; content: unknown }
+export type Message = { role: string; content: unknown }
 
 export type ChatCompletionRequest = {
   messages?: Message[]
@@ -22,19 +22,25 @@ const defaultUserId = 'openwebui'
 const systemFingerprint = Bun.env.CODEX_SYSTEM_FINGERPRINT ?? null
 const serviceTier = 'default'
 
-const appServer = getAppServer(Bun.env.CODEX_BIN ?? 'codex', Bun.env.CODEX_CWD ?? process.cwd())
+let sharedAppServer: ReturnType<typeof getAppServer> | null = null
+const resolveAppServer = () => {
+  if (!sharedAppServer) {
+    sharedAppServer = getAppServer(Bun.env.CODEX_BIN ?? 'codex', Bun.env.CODEX_CWD ?? process.cwd())
+  }
+  return sharedAppServer
+}
 
 // Track Codex thread IDs per OpenWebUI chat so we can stream multiple turns without re-initializing.
 const threadMap = new Map<string, string>()
 
-const stripAnsi = (value: string) => {
+export const stripAnsi = (value: string) => {
   const esc = String.fromCharCode(27)
   return value.replace(new RegExp(`${esc}[[0-9;]*[mK]`, 'g'), '')
 }
 
 type ToolDelta = Extract<StreamDelta, { type: 'tool' }>
 
-const formatToolDelta = (delta: ToolDelta): string => {
+export const formatToolDelta = (delta: ToolDelta): string => {
   const statusLabel = delta.status === 'delta' ? '' : ` [${delta.status}]`
   const kind =
     delta.toolKind === 'command'
@@ -69,19 +75,19 @@ const formatToolDelta = (delta: ToolDelta): string => {
 
 const normalizeContent = (content: unknown) => (typeof content === 'string' ? content : JSON.stringify(content))
 
-const buildPrompt = (messages?: Message[]) =>
+export const buildPrompt = (messages?: Message[]) =>
   (messages ?? []).map((m) => `${m.role}: ${normalizeContent(m.content)}`).join('\n')
 
-const estimateTokens = (text: string) => Math.max(1, Math.ceil(text.length / 4))
+export const estimateTokens = (text: string) => Math.max(1, Math.ceil(text.length / 4))
 
-const resolveModel = (requested?: string | null) => {
+export const resolveModel = (requested?: string | null) => {
   if (!requested || requested === 'meta-orchestrator') return defaultCodexModel
   return requested
 }
 
-const deriveChatId = (body: ChatCompletionRequest) => body.chat_id
+export const deriveChatId = (body: ChatCompletionRequest) => body.chat_id
 
-const deriveTitle = (chatId: string | undefined, messages?: Message[]) => {
+export const deriveTitle = (chatId: string | undefined, messages?: Message[]) => {
   if (chatId) return `openwebui:${chatId}`
   const firstUser = (messages ?? []).find((m) => m.role === 'user')
   if (firstUser) {
@@ -141,6 +147,7 @@ type TokenUsage = {
 }
 
 const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response> => {
+  const appServer = resolveAppServer()
   const targetModel = resolveModel(opts.model)
   const existingThreadId = opts.threadId ?? threadMap.get(opts.chatId)
   const { stream, threadId } = existingThreadId
@@ -157,39 +164,6 @@ const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response>
   let lastMessageChunk: string | null = null
   let lastReasoningChunk: string | null = null
   let latestUsage: TokenUsage | null = null
-
-  const formatToolDelta = (delta: Extract<StreamDelta, { type: 'tool' }>): string => {
-    const statusLabel = delta.status === 'delta' ? '' : ` [${delta.status}]`
-    const kind =
-      delta.toolKind === 'command'
-        ? 'cmd'
-        : delta.toolKind === 'file'
-          ? 'file'
-          : delta.toolKind === 'mcp'
-            ? 'tool'
-            : 'search'
-    const detail = delta.detail ? stripAnsi(delta.detail) : ''
-
-    // For streaming command output, wrap in a code fence (TypeScript for readability).
-    if (delta.toolKind === 'command' && delta.status === 'delta' && detail) {
-      return detail.trim().length ? `\n\n\`\`\`ts\n${detail}\n\`\`\`\n` : detail
-    }
-
-    // For non-command deltas, still pass raw progress text through.
-    if (delta.status === 'delta' && detail) return detail
-
-    const suffix = detail ? ` — ${detail}` : ''
-
-    if (delta.toolKind === 'command') {
-      const rawStatus = statusLabel ? statusLabel.trim().replace(/\[|\]/g, '') : delta.status
-      const normalizedStatus = rawStatus === 'started' ? 'start' : rawStatus === 'completed' ? 'end' : rawStatus
-      const rendered = `[${normalizedStatus}] ${stripAnsi(delta.title)}${detail ? ` in ${detail}` : ''}`
-      return `\n\`\`\`bash\n${rendered}\n\`\`\`\n`
-    }
-
-    const title = stripAnsi(delta.title)
-    return `\n(${kind}${statusLabel}) ${title}${suffix}\n`
-  }
 
   const body = new ReadableStream({
     start: async (controller) => {
@@ -503,6 +477,7 @@ export const createChatCompletionHandler = (pathLabel: string) => {
     // Non-streaming: reuse streaming plumbing to capture reasoning and message content accurately.
     try {
       const existingThreadId = threadMap.get(chatId)
+      const appServer = resolveAppServer()
       const { stream, threadId } = await appServer.runTurnStream(
         existingThreadId ? { prompt, model, threadId: existingThreadId } : { prompt, model },
       )
