@@ -9,6 +9,7 @@ export type DockerBuildOptions = {
   buildArgs?: Record<string, string>
   cwd?: string
   platforms?: string[]
+  codexAuthPath?: string
 }
 
 export type DockerBuildResult = DockerBuildOptions & {
@@ -24,6 +25,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
 
   const image = `${options.registry}/${options.repository}:${options.tag}`
   const cwd = options.cwd ?? repoRoot
+  const ghTokenEnv = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
 
   console.log('Building Docker image with configuration:', {
     image,
@@ -36,6 +38,12 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
   if (options.platforms && options.platforms.length > 0) {
     const args = ['buildx', 'build', '--push', '-f', options.dockerfile, '-t', image]
     args.push('--platform', options.platforms.join(','))
+    if (options.codexAuthPath) {
+      args.push('--secret', `id=codexauth,src=${options.codexAuthPath}`)
+    }
+    if (ghTokenEnv) {
+      args.push('--secret', 'id=github_token,env=GH_TOKEN')
+    }
     for (const [key, value] of Object.entries(options.buildArgs ?? {})) {
       args.push('--build-arg', `${key}=${value}`)
     }
@@ -43,6 +51,12 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     await run('docker', args, { cwd })
   } else {
     const args = ['build', '-f', options.dockerfile, '-t', image]
+    if (options.codexAuthPath) {
+      args.push('--secret', `id=codexauth,src=${options.codexAuthPath}`)
+    }
+    if (ghTokenEnv) {
+      args.push('--secret', 'id=github_token,env=GH_TOKEN')
+    }
     for (const [key, value] of Object.entries(options.buildArgs ?? {})) {
       args.push('--build-arg', `${key}=${value}`)
     }

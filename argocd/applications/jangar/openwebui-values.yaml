@@ -1,0 +1,71 @@
+ollama:
+  enabled: false
+
+pipelines:
+  enabled: false
+
+tika:
+  enabled: false
+
+websocket:
+  enabled: true
+  manager: redis
+  url: redis://jangar-openwebui-redis:6379/0
+  redis:
+    enabled: false
+
+image:
+  tag: v0.6.40
+
+openaiApiKey: ""
+
+serviceAccount:
+  enable: true
+  create: true
+  name: ""
+
+openaiBaseApiUrl: http://jangar.jangar.svc.cluster.local/openai/v1
+
+databaseUrl: ""
+
+extraEnvVars:
+  - name: DATABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: jangar-db-app
+        key: uri
+  - name: DATABASE_TYPE
+    value: postgresql
+  - name: PGSSLROOTCERT
+    value: /etc/ssl/certs/jangar-db/ca.crt
+  - name: PGSSLMODE
+    value: require
+  - name: DEFAULT_MODELS
+    value: meta-orchestrator
+  - name: WEBUI_AUTH
+    value: "false"
+  - name: ENABLE_SIGNUP
+    value: "false"
+
+volumes:
+  - name: jangar-db-ca
+    secret:
+      secretName: jangar-db-ca
+
+volumeMounts:
+  container:
+    - name: jangar-db-ca
+      mountPath: /etc/ssl/certs/jangar-db
+      readOnly: true
+
+resources:
+  requests:
+    cpu: "2"
+    memory: 4Gi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+
+persistence:
+  storageClass: longhorn
+  size: 5Gi

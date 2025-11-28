@@ -1,6 +1,7 @@
 # Jangar Start UI
 
-TanStack Start scaffold for the Jangar operator UI. The UI embeds OpenWebUI and shares the same Bun server process; API/SSE wiring is in progress.
+TanStack Start scaffold for the Jangar operator UI. OpenWebUI now ships as its own Helm release; Jangar connects to it via
+the configured host instead of an in-app banner.
 
 ## Commands
 
@@ -12,5 +13,5 @@ The follow-up image work (JNG-080c) will package the Start dist output from `dis
 ## Notes
 
 - Data is mocked in `src/app/lib/mocks.ts` and mirrored in the UI as loading/error shells.
-- UI dev server listens on port 3000 by default; OpenWebUI embed defaults to http://localhost:8080 to avoid port collisions.
-- OpenWebUI integration is embedded via iframe; env var `VITE_OPENWEBUI_URL` controls the target.
+- UI dev server listens on port 3000 by default; OpenWebUI defaults to http://localhost:8080 for local dev and uses the
+  external host in production via `VITE_OPENWEBUI_URL`.

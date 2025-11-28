@@ -14,6 +14,7 @@ const withBunPath = (env: NodeJS.ProcessEnv = {}) => ({
   PATH: [bunDir, process.env.PATH].filter(Boolean).join(':'),
 })
 const devMode = Bun.argv.includes('--dev') || Bun.env.START_DEV === '1'
+const enableWorker = Bun.env.ENABLE_TEMPORAL_WORKER !== '0' && Bun.env.DISABLE_TEMPORAL_WORKER !== '1'
 
 const onSignal = (cleanup: () => Promise<void>) => {
   const handler = (_signal: string) => {
@@ -31,8 +32,8 @@ const onSignal = (cleanup: () => Promise<void>) => {
 }
 
 const runProd = async () => {
-  const appServer = getAppServer('codex', serviceRoot)
-  const { runPromise, shutdown } = await startTemporalWorker()
+  const appServer = getAppServer(Bun.env.CODEX_BIN ?? 'codex', Bun.env.CODEX_CWD)
+  const worker = enableWorker ? await startTemporalWorker() : null
   const uiProcess = startUiServer()
   const uiExit = uiProcess.exited.then((code) => {
     if (code !== 0) {
@@ -44,7 +45,9 @@ const runProd = async () => {
   const cleanup = async () => {
     if (cleanedUp) return
     cleanedUp = true
-    await shutdown()
+    if (worker) {
+      await worker.shutdown()
+    }
     await stopAppServer(appServer)
     uiProcess.kill()
   }
@@ -53,7 +56,11 @@ const runProd = async () => {
 
   try {
     await appServer.ready
-    await Promise.race([runPromise, uiExit])
+    if (worker) {
+      await Promise.race([worker.runPromise, uiExit])
+    } else {
+      await uiExit
+    }
   } finally {
     await cleanup()
   }
