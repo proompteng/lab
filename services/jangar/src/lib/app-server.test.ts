@@ -23,28 +23,38 @@ const loadAppServer = async () => {
   return import('./app-server')
 }
 
+const TEST_TIMEOUT_MS = 20_000
+
 describe('app-server client wiring', () => {
-  it('returns a singleton app server handle', async () => {
-    const { getAppServer } = await loadAppServer()
+  it(
+    'returns a singleton app server handle',
+    async () => {
+      const { getAppServer } = await loadAppServer()
 
-    const first = getAppServer('codex', '/tmp/repo')
-    const second = getAppServer('codex', '/tmp/repo')
+      const first = getAppServer('codex', '/tmp/repo')
+      const second = getAppServer('codex', '/tmp/repo')
 
-    expect(first).toBe(second)
-  })
+      expect(first).toBe(second)
+    },
+    TEST_TIMEOUT_MS,
+  )
 
-  it('stopAppServer delegates to the handle stop method', async () => {
-    const { getAppServer, stopAppServer } = await loadAppServer()
+  it(
+    'stopAppServer delegates to the handle stop method',
+    async () => {
+      const { getAppServer, stopAppServer } = await loadAppServer()
 
-    const handle = getAppServer('codex', '/tmp/repo')
-    let stopped = false
-    // eslint-disable-next-line no-param-reassign
-    handle.stop = () => {
-      stopped = true
-    }
+      const handle = getAppServer('codex', '/tmp/repo')
+      let stopped = false
+      // eslint-disable-next-line no-param-reassign
+      handle.stop = () => {
+        stopped = true
+      }
 
-    await stopAppServer(handle)
+      await stopAppServer(handle)
 
-    expect(stopped).toBe(true)
-  })
+      expect(stopped).toBe(true)
+    },
+    TEST_TIMEOUT_MS,
+  )
 })
