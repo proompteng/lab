@@ -1,14 +1,21 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawn } from 'node:child_process'
+import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 
 import type { ClientInfo, ClientRequest, RequestId, ServerNotification } from './app-server'
+import type { ReasoningEffort } from './app-server/ReasoningEffort'
+import type { TokenUsage } from './app-server/TokenUsage'
 import type {
   AgentMessageDeltaNotification,
   AskForApproval,
+  CommandExecutionOutputDeltaNotification,
+  ItemCompletedNotification,
+  ItemStartedNotification,
+  McpToolCallProgressNotification,
   SandboxMode,
+  ThreadItem,
   ThreadStartParams,
   ThreadStartResponse,
   Turn,
+  TurnCompletedNotification,
   TurnStartParams,
   TurnStartResponse,
 } from './app-server/v2'
@@ -20,11 +27,25 @@ type PendingRequest = {
   startedAt: number
 }
 
+export type StreamDelta =
+  | { type: 'message' | 'reasoning'; delta: string }
+  | {
+      type: 'tool'
+      toolKind: 'command' | 'file' | 'mcp' | 'webSearch'
+      id: string
+      status: 'started' | 'delta' | 'completed'
+      title: string
+      detail?: string
+      data?: Record<string, unknown>
+    }
+  | { type: 'usage'; usage: TokenUsage }
+  | { type: 'error'; error: unknown }
+
 type TurnStream = {
-  push: (delta: string) => void
+  push: (delta: StreamDelta) => void
   complete: (turn: Turn) => void
   fail: (error: unknown) => void
-  iterator: AsyncGenerator<string, Turn | null, void>
+  iterator: AsyncGenerator<StreamDelta, Turn | null, void>
 }
 
 export type CodexAppServerOptions = {
@@ -33,6 +54,7 @@ export type CodexAppServerOptions = {
   sandbox?: SandboxMode
   approval?: AskForApproval
   defaultModel?: string
+  defaultEffort?: ReasoningEffort
   clientInfo?: ClientInfo
   logger?: (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => void
 }
@@ -44,6 +66,7 @@ const toCliSandbox = (mode: SandboxMode): 'danger-full-access' | 'workspace-writ
 }
 
 const defaultClientInfo: ClientInfo = { name: 'lab', title: 'lab app-server client', version: '0.0.0' }
+const DEFAULT_EFFORT: ReasoningEffort = 'high'
 
 const newId = (() => {
   let id = 1
@@ -51,7 +74,7 @@ const newId = (() => {
 })()
 
 const createTurnStream = (): TurnStream => {
-  const queue: Array<string | { done: true; turn: Turn | null } | { error: unknown }> = []
+  const queue: Array<StreamDelta | { done: true; turn: Turn | null } | { error: unknown }> = []
   let resolver: (() => void) | null = null
   let closed = false
 
@@ -62,7 +85,7 @@ const createTurnStream = (): TurnStream => {
     }
   }
 
-  const push = (delta: string) => {
+  const push = (delta: StreamDelta) => {
     if (closed) return
     queue.push(delta)
     wake()
@@ -82,7 +105,7 @@ const createTurnStream = (): TurnStream => {
     wake()
   }
 
-  const iterator = (async function* iterate(): AsyncGenerator<string, Turn | null, void> {
+  const iterator = (async function* iterate(): AsyncGenerator<StreamDelta, Turn | null, void> {
     while (true) {
       if (!queue.length) {
         await new Promise<void>((resolve) => {
@@ -93,11 +116,6 @@ const createTurnStream = (): TurnStream => {
       const next = queue.shift()
       if (!next) continue
 
-      if (typeof next === 'string') {
-        yield next
-        continue
-      }
-
       if ('error' in next) {
         throw next.error
       }
@@ -105,6 +123,8 @@ const createTurnStream = (): TurnStream => {
       if ('done' in next) {
         return next.turn
       }
+
+      yield next
     }
   })()
 
@@ -123,6 +143,7 @@ export class CodexAppServerClient {
   private sandbox: SandboxMode
   private approval: AskForApproval
   private defaultModel: string
+  private defaultEffort: ReasoningEffort
 
   constructor({
     binaryPath = 'codex',
@@ -130,6 +151,7 @@ export class CodexAppServerClient {
     sandbox = 'dangerFullAccess',
     approval = 'never',
     defaultModel = 'gpt-5.1-codex-max',
+    defaultEffort = DEFAULT_EFFORT,
     clientInfo = defaultClientInfo,
     logger,
   }: CodexAppServerOptions = {}) {
@@ -137,6 +159,7 @@ export class CodexAppServerClient {
     this.sandbox = sandbox
     this.approval = approval
     this.defaultModel = defaultModel
+    this.defaultEffort = defaultEffort
 
     const args = [
       '--sandbox',
@@ -178,13 +201,20 @@ export class CodexAppServerClient {
 
   async runTurn(
     prompt: string,
-    { model, cwd }: { model?: string; cwd?: string | null } = {},
-  ): Promise<{ text: string; turn: Turn | null }> {
-    const runOpts: { model?: string; cwd?: string | null } = {}
+    {
+      model,
+      cwd,
+      threadId,
+      effort,
+    }: { model?: string; cwd?: string | null; threadId?: string; effort?: ReasoningEffort } = {},
+  ): Promise<{ text: string; turn: Turn | null; threadId: string }> {
+    const runOpts: { model?: string; cwd?: string | null; threadId?: string; effort?: ReasoningEffort } = {}
     if (model !== undefined) runOpts.model = model
     if (cwd !== undefined) runOpts.cwd = cwd
+    if (threadId !== undefined) runOpts.threadId = threadId
+    if (effort !== undefined) runOpts.effort = effort
 
-    const { stream, turnId } = await this.runTurnStream(prompt, runOpts)
+    const { stream, turnId: activeTurnId, threadId: activeThreadId } = await this.runTurnStream(prompt, runOpts)
     let text = ''
     let turn: Turn | null = null
 
@@ -195,40 +225,54 @@ export class CodexAppServerClient {
         turn = value ?? null
         break
       }
-      text += value
+      if ((value as StreamDelta).type === 'message') {
+        const msg = value as { type: 'message'; delta: string }
+        text += msg.delta
+      }
     }
 
-    this.turnStreams.delete(turnId)
-    return { text, turn }
+    this.turnStreams.delete(activeTurnId)
+    return { text, turn, threadId: activeThreadId }
   }
 
   async runTurnStream(
     prompt: string,
-    { model, cwd }: { model?: string; cwd?: string | null } = {},
-  ): Promise<{ stream: AsyncGenerator<string, Turn | null, void>; turnId: string; threadId: string }> {
+    {
+      model,
+      cwd,
+      threadId,
+      effort,
+    }: { model?: string; cwd?: string | null; threadId?: string; effort?: ReasoningEffort } = {},
+  ): Promise<{ stream: AsyncGenerator<StreamDelta, Turn | null, void>; turnId: string; threadId: string }> {
     await this.ensureReady()
 
-    const turnOptions: { model?: string; cwd?: string | null } = {}
+    const turnOptions: { model?: string; cwd?: string | null; threadId?: string; effort?: ReasoningEffort } = {}
     if (model !== undefined) turnOptions.model = model
     if (cwd !== undefined) turnOptions.cwd = cwd
+    if (threadId !== undefined) turnOptions.threadId = threadId
+    turnOptions.effort = effort ?? this.defaultEffort
 
-    const threadParams: ThreadStartParams = {
-      model: turnOptions.model ?? this.defaultModel,
-      modelProvider: null,
-      cwd: turnOptions.cwd ?? null,
-      approvalPolicy: this.approval,
-      sandbox: this.sandbox,
-      // Disable MCP servers for this app-server client; can be overridden later if needed.
-      config: { mcp_servers: {} },
-      baseInstructions: null,
-      developerInstructions: null,
+    let activeThreadId = turnOptions.threadId
+
+    if (!activeThreadId) {
+      const threadParams: ThreadStartParams = {
+        model: turnOptions.model ?? this.defaultModel,
+        modelProvider: null,
+        cwd: turnOptions.cwd ?? null,
+        approvalPolicy: this.approval,
+        sandbox: this.sandbox,
+        // Disable MCP servers for this app-server client; can be overridden later if needed.
+        config: { mcp_servers: {}, 'features.web_search_request': true },
+        baseInstructions: null,
+        developerInstructions: null,
+      }
+
+      const threadResp = (await this.request<ThreadStartResponse>('thread/start', threadParams)) as ThreadStartResponse
+      activeThreadId = threadResp.thread.id
     }
 
-    const threadResp = (await this.request<ThreadStartResponse>('thread/start', threadParams)) as ThreadStartResponse
-    const threadId = threadResp.thread.id
-
     const turnParams: TurnStartParams = {
-      threadId,
+      threadId: activeThreadId,
       input: [{ type: 'text', text: prompt }],
       cwd: turnOptions.cwd ?? null,
       approvalPolicy: this.approval,
@@ -243,7 +287,7 @@ export class CodexAppServerClient {
             }
           : { type: this.sandbox },
       model: turnOptions.model ?? this.defaultModel,
-      effort: null,
+      effort: turnOptions.effort ?? this.defaultEffort,
       summary: null,
     }
 
@@ -252,7 +296,7 @@ export class CodexAppServerClient {
 
     const stream = createTurnStream()
     this.turnStreams.set(turnId, stream)
-    return { stream: stream.iterator, turnId, threadId }
+    return { stream: stream.iterator, turnId, threadId: activeThreadId }
   }
 
   private async bootstrap(clientInfo: ClientInfo): Promise<void> {
@@ -352,16 +396,118 @@ export class CodexAppServerClient {
 
   private handleNotification(notification: ServerNotification | { method: string; params?: unknown }): void {
     const { method } = notification
+    const pushReasoning = (delta: string | null | undefined) => {
+      if (!delta) return
+      const turn = this.lastTurnStream()
+      if (turn) turn.push({ type: 'reasoning', delta })
+    }
+
+    const pushTool = (
+      payload:
+        | {
+            toolKind: 'command' | 'file' | 'mcp' | 'webSearch'
+            id: string
+            status: 'started' | 'completed' | 'delta'
+            title: string
+            detail?: string
+            data?: Record<string, unknown>
+          }
+        | {
+            toolKind: 'command'
+            id: string
+            status: 'delta'
+            title: string
+            detail?: string
+            data?: Record<string, unknown>
+          },
+    ) => {
+      const turn = this.lastTurnStream()
+      if (!turn) return
+      turn.push({ type: 'tool', ...payload })
+    }
+
+    const pushUsage = (usage: TokenUsage) => {
+      const turn = this.lastTurnStream()
+      if (!turn) return
+      turn.push({ type: 'usage', usage })
+    }
+
+    const toToolDeltaFromItem = (
+      item: ThreadItem,
+      status: 'started' | 'completed',
+    ): Parameters<typeof pushTool>[0] | null => {
+      switch (item.type) {
+        case 'commandExecution':
+          return {
+            toolKind: 'command',
+            id: item.id,
+            status,
+            title: `${item.command}`,
+            detail: item.cwd ?? undefined,
+            data: {
+              status: item.status,
+              aggregatedOutput: item.aggregatedOutput,
+              exitCode: item.exitCode,
+              durationMs: item.durationMs,
+            },
+          }
+        case 'fileChange':
+          return {
+            toolKind: 'file',
+            id: item.id,
+            status,
+            title: 'file changes',
+            detail: `${item.changes.length} change(s)`,
+            data: { status: item.status, changes: item.changes },
+          }
+        case 'mcpToolCall':
+          return {
+            toolKind: 'mcp',
+            id: item.id,
+            status,
+            title: `${item.server}:${item.tool}`,
+            data: { status: item.status, arguments: item.arguments, result: item.result, error: item.error },
+          }
+        case 'webSearch':
+          return {
+            toolKind: 'webSearch',
+            id: item.id,
+            status,
+            title: item.query,
+          }
+        default:
+          return null
+      }
+    }
+
+    const extractDelta = (params: unknown): string | null => {
+      if (!params) return null
+      if (typeof params === 'string') return params
+      if (typeof params === 'object') {
+        const obj = params as { delta?: unknown; msg?: { delta?: unknown } }
+        if (typeof obj.delta === 'string') return obj.delta
+        if (obj.msg && typeof obj.msg.delta === 'string') return obj.msg.delta
+      }
+      return null
+    }
+
     switch (method) {
       case 'item/agentMessage/delta': {
         const params = notification.params as AgentMessageDeltaNotification
         const turn = this.lastTurnStream()
-        if (turn) turn.push(params.delta)
+        if (turn) turn.push({ type: 'message', delta: params.delta })
         this.log('info', 'agent message delta', { deltaBytes: params.delta.length })
         break
       }
+      case 'codex/event/agent_reasoning_delta':
+      case 'codex/event/reasoning_content_delta':
+      case 'item/reasoning/summaryTextDelta': {
+        pushReasoning(extractDelta(notification.params ?? null))
+        this.log('info', 'agent reasoning delta', { method, params: notification.params })
+        break
+      }
       case 'turn/completed': {
-        const params = notification.params as { turn: Turn }
+        const params = notification.params as TurnCompletedNotification
         const turnId = params.turn.id
         const stream = this.turnStreams.get(turnId)
         if (stream) {
@@ -383,11 +529,54 @@ export class CodexAppServerClient {
         this.log('info', 'turn started', { turnId: params.turn.id })
         break
       }
+      case 'item/started': {
+        const params = notification.params as ItemStartedNotification
+        const toolDelta = toToolDeltaFromItem(params.item, 'started')
+        if (toolDelta) pushTool(toolDelta)
+        break
+      }
+      case 'item/completed': {
+        const params = notification.params as ItemCompletedNotification
+        const toolDelta = toToolDeltaFromItem(params.item, 'completed')
+        if (toolDelta) pushTool(toolDelta)
+        break
+      }
+      case 'item/commandExecution/outputDelta': {
+        const params = notification.params as CommandExecutionOutputDeltaNotification
+        pushTool({
+          toolKind: 'command',
+          id: params.itemId,
+          status: 'delta',
+          title: 'command output',
+          detail: params.delta,
+        })
+        break
+      }
+      case 'item/mcpToolCall/progress': {
+        const params = notification.params as McpToolCallProgressNotification
+        pushTool({
+          toolKind: 'mcp',
+          id: params.itemId,
+          status: 'delta',
+          title: 'mcp progress',
+          detail: params.message,
+        })
+        break
+      }
+      case 'thread/tokenUsage/updated': {
+        const params = notification.params as { tokenUsage?: TokenUsage; usage?: TokenUsage }
+        const usage = params.tokenUsage ?? params.usage
+        if (usage) pushUsage(usage)
+        break
+      }
       case 'codex/event/stream_error':
       case 'stream_error':
       case 'error': {
         const stream = this.lastTurnStream()
-        if (stream) stream.fail(new Error(JSON.stringify(notification.params)))
+        if (stream) {
+          stream.push({ type: 'error', error: notification.params ?? 'unknown' })
+          stream.fail(new Error(JSON.stringify(notification.params)))
+        }
         this.log('error', 'codex stream error', { method, params: notification.params })
         break
       }

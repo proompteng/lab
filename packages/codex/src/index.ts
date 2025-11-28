@@ -1,5 +1,6 @@
 export * from './app-server'
 export { CodexAppServerClient } from './app-server-client'
+export type { StreamDelta } from './app-server-client'
 export { Codex } from './codex'
 export type { CodexExecArgs } from './codex-exec'
 export { CodexExec } from './codex-exec'

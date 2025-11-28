@@ -19,6 +19,7 @@ export interface DbClient {
   createSession: (userId: string, title: string) => Promise<string>
   updateSessionLastMessage: (sessionId: string, at: number) => Promise<void>
   getSession: (sessionId: string) => Promise<ChatSession | null>
+  listSessions: (userId?: string) => Promise<ChatSession[]>
 }
 
 let client: ConvexHttpClient | null = null
@@ -68,6 +69,8 @@ export const createDbClient = async (): Promise<DbClient> => {
 
   const getSession = async (sessionId: string) => query<ChatSession | null>('chat:getSession', { sessionId })
 
+  const listSessions = async (userId?: string) => query<ChatSession[]>('chat:listSessions', { userId })
+
   const appendMessage = async (input: AppendMessageInput) => {
     const createdAt = now()
     return mutate('chat:appendMessage', { ...input, createdAt }) as unknown as Promise<string>
@@ -107,5 +110,6 @@ export const createDbClient = async (): Promise<DbClient> => {
     createSession,
     updateSessionLastMessage,
     getSession,
+    listSessions,
   }
 }

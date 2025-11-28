@@ -2,19 +2,25 @@ import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-import { CodexAppServerClient } from '@proompteng/codex'
+import { CodexAppServerClient, type StreamDelta } from '@proompteng/codex'
 
 export type SandboxType = 'dangerFullAccess' | 'workspaceWrite' | 'readOnly'
 export type ApprovalType = 'unlessTrusted' | 'onFailure' | 'onRequest' | 'never'
 
 export interface AppServerHandle {
   ready: Promise<void>
-  runTurn: (options: { prompt: string; model?: string; cwd?: string | null }) => Promise<{ text: string }>
+  runTurn: (options: {
+    prompt: string
+    model?: string
+    cwd?: string | null
+    threadId?: string
+  }) => Promise<{ text: string; threadId: string }>
   runTurnStream: (options: {
     prompt: string
     model?: string
     cwd?: string | null
-  }) => Promise<{ stream: AsyncGenerator<string, unknown, void> }>
+    threadId?: string
+  }) => Promise<{ stream: AsyncGenerator<StreamDelta, unknown, void>; threadId: string; turnId: string }>
   stop: () => void
 }
 
@@ -91,19 +97,21 @@ const startAppServerInternal = (
 
   return {
     ready: client.ensureReady(),
-    runTurn: async ({ prompt, model: modelOverride, cwd }) => {
-      const runOptions: { model?: string; cwd?: string | null } = {}
+    runTurn: async ({ prompt, model: modelOverride, cwd, threadId }) => {
+      const runOptions: { model?: string; cwd?: string | null; threadId?: string } = {}
       if (modelOverride !== undefined) runOptions.model = modelOverride
       if (cwd !== undefined) runOptions.cwd = cwd
-      const { text } = await client.runTurn(prompt, runOptions)
-      return { text }
+      if (threadId !== undefined) runOptions.threadId = threadId
+      const { text, threadId: activeThreadId } = await client.runTurn(prompt, runOptions)
+      return { text, threadId: activeThreadId }
     },
-    runTurnStream: async ({ prompt, model: modelOverride, cwd }) => {
-      const runOptions: { model?: string; cwd?: string | null } = {}
+    runTurnStream: async ({ prompt, model: modelOverride, cwd, threadId }) => {
+      const runOptions: { model?: string; cwd?: string | null; threadId?: string } = {}
       if (modelOverride !== undefined) runOptions.model = modelOverride
       if (cwd !== undefined) runOptions.cwd = cwd
-      const { stream } = await client.runTurnStream(prompt, runOptions)
-      return { stream }
+      if (threadId !== undefined) runOptions.threadId = threadId
+      const { stream, threadId: activeThreadId, turnId } = await client.runTurnStream(prompt, runOptions)
+      return { stream, threadId: activeThreadId, turnId }
     },
     stop: () => client.stop(),
   }
