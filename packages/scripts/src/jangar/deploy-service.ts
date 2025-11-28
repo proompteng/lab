@@ -25,7 +25,8 @@ const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\
 
 const ensureGhToken = async (): Promise<string> => {
   const envToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
-  if (envToken && envToken.trim()) return envToken.trim()
+  const trimmedEnvToken = envToken?.trim()
+  if (trimmedEnvToken) return trimmedEnvToken
 
   const token = (await capture(['gh', 'auth', 'token'])).trim()
   if (!token) {
