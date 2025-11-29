@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: jangar
+  namespace: jangar
+  labels:
+    app: jangar
+    app.kubernetes.io/name: jangar
+    app.kubernetes.io/part-of: lab
+spec:
+  type: ClusterIP
+  selector:
+    app: jangar
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP

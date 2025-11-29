@@ -2,10 +2,14 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: jangar
 resources:
-  - kservice.yaml
+  - deployment.yaml
+  - service.yaml
+  - app-tailscale-service.yaml
   - tailscale-service.yaml
   - postgres-cluster.yaml
   - openwebui-redis.yaml
+  - pvc.yaml
+  - vscode-tailscale-service.yaml
   - worker-deployment.yaml
 
 helmCharts:
@@ -18,5 +22,5 @@ helmCharts:
 
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: b5c4eecc
-    digest: sha256:a099014a98d3ac92e1950fbf0d05f45b51ddcafd4412ad118f0fb57732180e2d
+    newTag: 3e143831
+    digest: sha256:1a878965c275f40b5e7d9fa5025fdc490a655cd1c20ede735a795762dba3be17
