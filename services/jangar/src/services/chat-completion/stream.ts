@@ -4,7 +4,7 @@ import type { ReasoningPart, StreamOptions, TokenUsage, ToolDelta } from './type
 import { buildUsagePayload, createSafeEnqueuer, estimateTokens, formatToolDelta, stripAnsi } from './utils'
 
 const createStreamBody = (prompt: string, opts: StreamOptions) => {
-  const appServer = resolveAppServer()
+  const appServer = opts.appServer ?? resolveAppServer()
   const targetModel = opts.model
   const existingThreadId = opts.threadId ?? threadMap.get(opts.chatId)
 
@@ -37,7 +37,8 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
       throw error
     }
 
-    const { stream, threadId, turnId } = streamHandle
+    const { stream, threadId, turnId: codexTurnId } = streamHandle
+    const turnId = codexTurnId ?? opts.turnId
     if (!existingThreadId) threadMap.set(opts.chatId, threadId)
     const encoder = new TextEncoder()
     const created = Math.floor(Date.now() / 1000)
@@ -48,6 +49,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
     const reasoningParts: ReasoningPart[] = []
     let lastMessageChunk: string | null = null
     let lastReasoningChunk: string | null = null
+    let usagePersisted = false
     let latestUsage: TokenUsage | null = null
 
     const body = new ReadableStream({
@@ -71,7 +73,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
           void persistFailedTurn(
             opts.db,
             {
-              turnId: opts.turnId,
+              turnId,
               conversationId: opts.conversationId,
               chatId: opts.chatId,
               userId: opts.userId,
@@ -97,7 +99,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
           void persistFailedTurn(
             opts.db,
             {
-              turnId: opts.turnId,
+              turnId,
               conversationId: opts.conversationId,
               chatId: opts.chatId,
               userId: opts.userId,
@@ -122,10 +124,11 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
 
             if ((delta as { type?: string }).type === 'usage') {
               latestUsage = (delta as { usage: TokenUsage }).usage
-              await opts.db.appendUsage(buildUsagePayload(opts.turnId, latestUsage) as never)
+              await opts.db.appendUsage(buildUsagePayload(turnId, latestUsage) as never)
+              usagePersisted = true
               await opts.db.appendEvent({
                 conversationId: opts.conversationId,
-                turnId: opts.turnId,
+                turnId,
                 method: 'usage',
                 payload: latestUsage,
                 receivedAt: Date.now(),
@@ -140,7 +143,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
             let toolDelta: ToolDelta | null = null
             if ((delta as { type?: string }).type === 'tool') {
               toolDelta = delta as ToolDelta
-              await persistToolDelta(opts.db, opts.turnId, opts.conversationId, toolDelta)
+              await persistToolDelta(opts.db, turnId, opts.conversationId, toolDelta)
             }
 
             if (typeof delta === 'string') contentDelta = stripAnsi(delta)
@@ -307,6 +310,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
               turnId,
               tokenUsage: latestUsage,
               reasoningSummary: reasoningParts.map((p) => p.text),
+              usagePersisted,
             })
         } catch (error) {
           const codexError = parseCodexError(error)
@@ -317,7 +321,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
             await persistFailedTurn(
               opts.db,
               {
-                turnId: opts.turnId,
+                turnId,
                 conversationId: opts.conversationId,
                 chatId: opts.chatId,
                 userId: opts.userId,
@@ -338,7 +342,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
           await persistFailedTurn(
             opts.db,
             {
-              turnId: opts.turnId,
+              turnId,
               conversationId: opts.conversationId,
               chatId: opts.chatId,
               userId: opts.userId,

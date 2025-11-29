@@ -142,7 +142,7 @@ export const createChatCompletionHandler = (pathLabel: string) => {
             })
           }
 
-          if (meta.tokenUsage) {
+          if (meta.tokenUsage && !meta.usagePersisted) {
             await db.appendUsage(buildUsagePayload(turnId, meta.tokenUsage) as never)
           }
 

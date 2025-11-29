@@ -26,6 +26,7 @@ export type PersistMeta = {
   turnId?: string
   tokenUsage?: TokenUsage | null
   reasoningSummary?: string[]
+  usagePersisted?: boolean
 }
 
 export type ReasoningPart = { type: 'text'; text: string }
@@ -37,6 +38,7 @@ export type StreamOptions = {
   chatId: string
   includeUsage?: boolean
   threadId?: string
+  appServer?: ReturnType<typeof import('../app-server')['getAppServer']>
   db: Awaited<ReturnType<typeof import('~/services/db')['createDbClient']>>
   conversationId: string
   turnId: string

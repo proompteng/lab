@@ -96,9 +96,10 @@ export const persistToolDelta = async (
   if (delta.status === 'delta' && delta.detail) {
     const seq = (commandSeq.get(callId) ?? 0) + 1
     commandSeq.set(callId, seq)
+    const streamName = delta.toolKind === 'command' ? 'stdout' : 'info'
     await db.appendCommandChunk({
       callId,
-      stream: delta.toolKind === 'command' ? 'stdout' : 'stdout',
+      stream: streamName,
       seq,
       chunkBase64: Buffer.from(delta.detail).toString('base64'),
       createdAt: now,
@@ -126,6 +127,10 @@ export const persistToolDelta = async (
     endedAt: now,
     chunked: true,
   })
+
+  if (!['delta', 'started'].includes(delta.status)) {
+    commandSeq.delete(callId)
+  }
 }
 
 const commandSeq = new Map<string, number>()
