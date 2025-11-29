@@ -16,8 +16,7 @@ describe('buildModelsResponse', () => {
     expect(object).toBe('list')
     expect(data).toHaveLength(supportedModels.length)
 
-    for (let i = 0; i < supportedModels.length; i += 1) {
-      const entry = data[i]
+    data.forEach((entry, i) => {
       expect(entry.id).toBe(supportedModels[i])
       expect(entry.root).toBe(supportedModels[i])
       expect(entry.owned_by).toBe('jangar')
@@ -26,6 +25,6 @@ describe('buildModelsResponse', () => {
       // created should be a recent unix timestamp (within 10 seconds of now)
       expect(entry.created).toBeGreaterThanOrEqual(now - 10)
       expect(entry.created).toBeLessThanOrEqual(now + 10)
-    }
+    })
   })
 })
