@@ -217,7 +217,7 @@ export const createChatCompletionHandler = (pathLabel: string) => {
       return buildSseErrorResponse(payload, 500)
     }
 
-    const prompt = buildPrompt(promptMessages)
+    const prompt = buildPrompt(stringifiedMessages)
     const includeUsage = body.stream_options?.include_usage === true
 
     try {
