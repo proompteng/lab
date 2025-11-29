@@ -581,7 +581,10 @@ export class CodexAppServerClient {
         break
       }
       default:
-        this.log('info', 'codex app-server notification', { method, params: notification.params })
+        // Drop noisy catch‑all log line to avoid flooding downstream aggregators (Loki/Alloy)
+        // with repetitive "codex app-server notification" entries. Unknown methods can be
+        // re-enabled for debugging by adding a dedicated debug hook if needed.
+        break
     }
   }
 
@@ -610,10 +613,16 @@ export class CodexAppServerClient {
       return
     }
 
-    const prefix = '[codex-app-server]'
-    const payload = meta ? `${message} ${JSON.stringify(meta)}` : message
-    if (level === 'info') console.info(prefix, payload)
-    else if (level === 'warn') console.warn(prefix, payload)
-    else console.error(prefix, payload)
+    const entry = {
+      ts: new Date().toISOString(),
+      level,
+      message,
+      component: 'codex-app-server-client',
+      ...(meta ?? {}),
+    }
+
+    const line = JSON.stringify(entry)
+    const sink: typeof console.log = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log
+    sink(line)
   }
 }
