@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.6
 # Bun image for jangar worker + UI + Codex app-server
 ARG BUN_VERSION=1.3.3
+ARG NODE24_VERSION=24.11.1
 ARG OPENVSCODE_VERSION=1.105.1
 ARG KUBECTL_VERSION=v1.30.4
 ARG DOCKER_CLI_VERSION=27.1.2
@@ -33,9 +34,22 @@ RUN set -eux; \
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
   apt-get install -y --no-install-recommends gh; \
-  curl -fsSL https://deb.nodesource.com/setup_24.x | bash -; \
-  apt-get install -y --no-install-recommends nodejs; \
   rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+    amd64|x86_64) NODE_ARCH=x64 ;; \
+    arm64|aarch64) NODE_ARCH=arm64 ;; \
+    ppc64le) NODE_ARCH=ppc64le ;; \
+    s390x) NODE_ARCH=s390x ;; \
+    *) NODE_ARCH="$ARCH" ;; \
+  esac; \
+  curl -fsSL "https://nodejs.org/dist/v${NODE24_VERSION}/node-v${NODE24_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz; \
+  tar -xJf /tmp/node.tar.xz -C /tmp; \
+  rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack; \
+  cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/{bin,include,lib,share} /usr/local/; \
+  rm -rf /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH} /tmp/node.tar.xz
 
 # Install kubectl and Docker CLI (arm/amd64 aware)
 RUN set -eux; \
