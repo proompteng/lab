@@ -2,9 +2,13 @@
 # Bun image for jangar worker + UI + Codex app-server
 ARG BUN_VERSION=1.3.3
 ARG OPENVSCODE_VERSION=1.105.1
+ARG KUBECTL_VERSION=v1.30.4
+ARG DOCKER_CLI_VERSION=27.1.2
 
 FROM oven/bun:${BUN_VERSION} AS base
 ARG OPENVSCODE_VERSION
+ARG KUBECTL_VERSION
+ARG DOCKER_CLI_VERSION
 WORKDIR /app
 
 ENV CODEX_CWD=/workspace/lab \
@@ -30,6 +34,22 @@ RUN set -eux; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
   apt-get install -y --no-install-recommends gh; \
   rm -rf /var/lib/apt/lists/*
+
+# Install kubectl and Docker CLI (arm/amd64 aware)
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+    amd64|x86_64) BIN_ARCH=amd64 ;; \
+    arm64|aarch64) BIN_ARCH=arm64 ;; \
+    *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  # kubectl
+  curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux-${BIN_ARCH}/kubectl"; \
+  chmod +x /usr/local/bin/kubectl; \
+  # docker CLI
+  curl -fsSLo /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${BIN_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz"; \
+  tar -xz -C /usr/local/bin --strip-components=1 -f /tmp/docker.tgz docker/docker; \
+  rm /tmp/docker.tgz
 
 # Base tsconfig for workspace packages
 COPY tsconfig.base.json ./
