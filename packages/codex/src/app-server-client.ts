@@ -581,9 +581,9 @@ export class CodexAppServerClient {
         break
       }
       default:
-        // Drop noisy catch‑all log line to avoid flooding downstream aggregators (Loki/Alloy)
-        // with repetitive "codex app-server notification" entries. Unknown methods can be
-        // re-enabled for debugging by adding a dedicated debug hook if needed.
+        // Catch-all: still log unknown/other notifications so we don't lose signal, but let
+        // downstream filters handle volume (structured JSON makes it easy to grep/label).
+        this.log('info', 'codex app-server notification', { method, params: notification.params })
         break
     }
   }
