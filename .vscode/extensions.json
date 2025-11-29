@@ -2,13 +2,11 @@
   "recommendations": [
     "biomejs.biome",
     "bradlc.vscode-tailwindcss",
-    "dbaeumer.vscode-eslint",
     "github.vscode-github-actions",
     "github.vscode-pull-request-github",
     "HashiCorp.terraform",
     "ms-kubernetes-tools.vscode-kubernetes-tools",
     "ms-playwright.playwright",
-    "nrwl.angular-console",
     "yoavbls.pretty-ts-errors",
     "asvetliakov.vscode-neovim",
     "redhat.vscode-knative",
