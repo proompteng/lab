@@ -405,6 +405,19 @@ const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response>
         })
         sendDone()
         closeIfOpen()
+        void persistFailedTurn(
+          opts.db,
+          {
+            turnId: opts.turnId,
+            conversationId: opts.conversationId,
+            chatId: opts.chatId,
+            userId: opts.userId,
+            model: targetModel,
+            startedAt: opts.startedAt,
+          },
+          `stream timeout after ${streamTimeoutMs}ms`,
+          'stream/timeout',
+        )
         try {
           stream.return?.(undefined)
         } catch (error) {
@@ -414,10 +427,24 @@ const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response>
 
       const abortHandler = () => {
         threadMap.delete(opts.chatId)
+        clearTimeout(timeoutId)
         // Emit an SSE end marker so clients don't treat abort as truncation.
         send({ error: { message: 'client aborted', type: 'aborted' } })
         sendDone()
         closeIfOpen()
+        void persistFailedTurn(
+          opts.db,
+          {
+            turnId: opts.turnId,
+            conversationId: opts.conversationId,
+            chatId: opts.chatId,
+            userId: opts.userId,
+            model: targetModel,
+            startedAt: opts.startedAt,
+          },
+          'client aborted',
+          'stream/aborted',
+        )
         try {
           stream.return?.(undefined)
         } catch (error) {
@@ -729,6 +756,34 @@ export const createChatCompletionHandler = (pathLabel: string) => {
       incomingChatId,
     })
 
+    if (body?.stream !== true) {
+      const payload = {
+        error: {
+          message: 'Streaming only: set stream=true',
+          type: 'invalid_request_error',
+          code: 'stream_required',
+        },
+      }
+      threadMap.delete(chatId)
+      const encoder = new TextEncoder()
+      const errorStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+          controller.close()
+        },
+      })
+      return new Response(errorStream, {
+        status: 400,
+        headers: {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          connection: 'keep-alive',
+          'x-accel-buffering': 'no',
+        },
+      })
+    }
+
     if (requestedModel && !isSupportedModel(requestedModel)) {
       const message = `Unsupported model "${requestedModel}". Supported models: ${supportedModels.join(', ')}`
       const payload = { error: { message, type: 'invalid_request_error', code: 'model_not_supported' } }
@@ -785,34 +840,6 @@ export const createChatCompletionHandler = (pathLabel: string) => {
     const prompt = buildPrompt(promptMessages)
 
     const includeUsage = body?.stream_options?.include_usage === true
-
-    if (body?.stream !== true) {
-      const payload = {
-        error: {
-          message: 'Streaming only: set stream=true',
-          type: 'invalid_request_error',
-          code: 'stream_required',
-        },
-      }
-      threadMap.delete(chatId)
-      const encoder = new TextEncoder()
-      const errorStream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
-          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
-          controller.close()
-        },
-      })
-      return new Response(errorStream, {
-        status: 400,
-        headers: {
-          'content-type': 'text/event-stream',
-          'cache-control': 'no-cache',
-          connection: 'keep-alive',
-          'x-accel-buffering': 'no',
-        },
-      })
-    }
 
     try {
       const existingThreadId = threadMap.get(chatId)
@@ -882,6 +909,20 @@ export const createChatCompletionHandler = (pathLabel: string) => {
     } catch (error) {
       console.error('[jangar] codex app-server stream error', error)
       threadMap.delete(chatId)
+
+      await persistFailedTurn(
+        db,
+        {
+          turnId,
+          conversationId,
+          chatId,
+          userId,
+          model,
+          startedAt,
+        },
+        `${error}`,
+        'stream/error',
+      )
 
       const encoder = new TextEncoder()
       const errorStream = new ReadableStream<Uint8Array>({
