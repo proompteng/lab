@@ -87,7 +87,7 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["dockerd-entrypoint.sh"]
           args:
-            - "--host=tcp://0.0.0.0:2375"
+            - "--host=tcp://127.0.0.1:2375"
             - "--host=unix:///var/run/docker.sock"
           env:
             - name: DOCKER_TLS_CERTDIR
@@ -95,7 +95,7 @@ spec:
             - name: XDG_RUNTIME_DIR
               value: /tmp/docker-runtime
             - name: DOCKER_HOST
-              value: tcp://0.0.0.0:2375
+              value: tcp://127.0.0.1:2375
           ports:
             - containerPort: 2375
               name: docker
