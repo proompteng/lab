@@ -87,7 +87,8 @@ RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
   gh auth setup-git
 
 RUN git config --global user.name "tuslagch" \
-  && git config --global user.email "tuslagch@proompteng.ai"
+  && git config --global user.email "tuslagch@proompteng.ai" \
+  && git config --global push.autoSetupRemote true
 
 ENV NODE_ENV=production
 ENV PORT=3000
