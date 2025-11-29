@@ -66,6 +66,13 @@ resources:
     cpu: "2"
     memory: 4Gi
 
+# Increase OpenWebUI verbosity for debugging streaming issues
+logging:
+  level: debug
+  components:
+    openai: debug
+    main: debug
+
 persistence:
   storageClass: longhorn
   size: 5Gi
