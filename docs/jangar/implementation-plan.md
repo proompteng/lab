@@ -7,7 +7,7 @@ Context: use this plan to split work across Codex agents/Argo jobs. Markers use 
 
 - **JNG-001 Foundations:** Codex SDK env passthrough + shared types.
 - **JNG-010 Toolbelt:** `packages/cx-tools` CLIs (`cx-codex-run`, workflow helpers, optional `cx-log`).
-- **JNG-020 Persistence:** Drizzle schema + DB adapter for orchestrations/turns/worker_prs.
+- **JNG-020 Persistence:** Convex schema + mutations for conversations/turns/messages/reasoning/commands/usage/rate limits/events.
 - **JNG-030 Activities:** `runCodexTurnActivity` (meta turn) + `publishEventActivity` (SSE/log fan-out).
 - **JNG-040 Worker activity:** `runWorkerTaskActivity` (clone repo, worker Codex, lint/test, push, PR).
 - **JNG-050 Workflow:** `codexOrchestrationWorkflow` loop, signals/queries, depth/turn limits.
@@ -30,11 +30,12 @@ Context: use this plan to split work across Codex agents/Argo jobs. Markers use 
 - TODO(jng-010c): Optional `cx-log` (tail workflow/activity logs) for debugging.
 - Outputs: compiled to `packages/cx-tools/dist`, binaries exposed via `bin` field; consumed by activities and server proxy.
 
-### JNG-020 Persistence (DB)
+### JNG-020 Persistence (Convex)
 
-- TODO(jng-020a): Define Drizzle schema in `services/jangar/src/db/schema.ts` for `orchestrations`, `turns`, `worker_prs` (see shapes in `services/jangar/src/types/orchestration.ts`).
-- TODO(jng-020b): Implement DB adapter in `services/jangar/src/db/index.ts` (connect using `DATABASE_URL`, `PGSSLROOTCERT` support) with CRUD helpers used by HTTP + activities.
-- TODO(jng-020c): Add migration scripts (Bun task) and bootstrap SQL for CNPG.
+- ✅ Define Convex schema in `services/jangar/convex/schema.ts` for conversations, turns, messages, reasoning sections, commands/command_chunks, usage_snapshots, rate_limits, events_raw.
+- ✅ Implement mutations in `services/jangar/convex/app.ts` and client wrapper in `services/jangar/src/db/index.ts` used by the OpenAI proxy.
+- TODO(jng-020a): Add queries as needed for UI/history views once workflow/state pages land.
+- TODO(jng-020b): Expand persistence to capture worker activity snapshots when worker tasks exist.
 
 ### JNG-030 Activities (meta turn + events)
 
@@ -60,9 +61,10 @@ Context: use this plan to split work across Codex agents/Argo jobs. Markers use 
 
 ### JNG-060 HTTP/SSE + OpenAI proxy
 
-- TODO(jng-060a): Implement REST handlers in `services/jangar/src/server.ts` for create/message/abort/query/stream.
-- TODO(jng-060b): Add OpenAI-compatible proxy routes (`/v1/chat/completions`, `/v1/models`) bridging to `codex app-server` child (see `services/jangar/src/lib/app-server.ts`).
-- TODO(jng-060c): Wire SSE emitter with `publishEventActivity` and DB snapshots.
+- ✅ OpenAI-compatible proxy routes (`/openai/v1/chat/completions`, `/openai/v1/models`) in TanStack Start server, bridging to `codex app-server` and persisting telemetry.
+- ✅ Health route (`/health`).
+- TODO(jng-060a): Add mission/workflow REST + SSE endpoints once workflow loop exists; reconcile with Convex queries.
+- TODO(jng-060b): Add abort/cancel path and idempotency for long-running worker tasks.
 
 ### JNG-070 UI (TanStack Start + OpenWebUI)
 
@@ -71,13 +73,9 @@ Context: use this plan to split work across Codex agents/Argo jobs. Markers use 
 
 ### JNG-080 Infra/Build
 
-- TODO(jng-080a): Add CNPG manifest `argocd/applications/jangar/postgres-cluster.yaml` and include in kustomization.
-- NOTE(jng-080a): CNPG Cluster `jangar-db` (10Gi longhorn PVC, instances: 1, `primaryUpdateStrategy: unsupervised`,
-  PodMonitor enabled) auto-generates `jangar-db-app` (uri, user, password, host, port, dbname) and `jangar-db-ca`
-  (ca.crt). The service should read `DATABASE_URL` from `jangar-db-app:uri` and `PGSSLROOTCERT` from
-  `jangar-db-ca:ca.crt`.
-- TODO(jng-080b): Extend `argocd/applications/jangar/kservice.yaml` with env/secret mounts (DATABASE_URL, CODEX_API_KEY, GITHUB_TOKEN, CA mount) and add OpenWebUI sidecar.
-- TODO(jng-080c): Update `packages/scripts/src/jangar/build-image.ts` & `deploy-service.ts` to bundle `packages/cx-tools/dist`, UI dist, and stamp `JANGAR_VERSION/JANGAR_COMMIT`.
+- TODO(jng-080a): Ensure `argocd/applications/jangar/kservice.yaml` carries Convex env (`CONVEX_DEPLOYMENT`, `CONVEX_DEPLOY_KEY` or self-hosted), `CODEX_API_KEY`, `GITHUB_TOKEN`, and OpenWebUI host vars.
+- TODO(jng-080b): Keep OpenWebUI Helm release pinned; verify Redis/Postgres dependencies in values.
+- TODO(jng-080c): Update `packages/scripts/src/jangar/build-image.ts` & `deploy-service.ts` to bundle `packages/cx-tools/dist`, UI dist, and stamp `JANGAR_VERSION/JANGAR_COMMIT`; preserve `convex deploy --yes` pre-step.
 
 ### JNG-090 Testing/QA
 

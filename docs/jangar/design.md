@@ -7,7 +7,7 @@ Jangar will become a single Bun-based service that provides:
 - A Temporal workflow that runs **one Codex turn per Activity** (auditable, retryable, visible in history).
 - A meta Codex (model `gpt-5.1-codex-max`, `danger-full-access`, network on, approval `never`) that plans and delegates work to worker Codex runs capable of repo changes and PR creation.
 - HTTP + SSE APIs and a TanStack Start UI served from the same process for operators to chat and watch execution.
-- Persistence in Convex (chat_sessions, chat_messages, work_orders per `docs/jangar/persistence.md`) for chat history, workflow/PR linkage, and recency sorting; optional object storage for raw logs.
+- Persistence in Convex (conversations, turns, messages, reasoning, commands, usage, rate limits, events per `docs/jangar/persistence.md`) for chat telemetry and turn history; optional object storage for raw logs.
 
 ## Goals
 
@@ -29,7 +29,7 @@ Jangar will become a single Bun-based service that provides:
   - `runWorkerTaskActivity`: clone repo, execute worker Codex, run lint/tests, push branch, open PR.
   - Optional `publishEventActivity` to push deltas to SSE broker.
 - **Toolbelt:** `packages/cx-tools` Bun CLIs (`cx-codex-run`, `cx-workflow-*`, optional `cx-log`) emitting single-line JSON; used by Codex shell calls instead of MCP.
-- **Persistence:** Convex collections `chat_sessions`, `chat_messages`, and `work_orders` (see `docs/jangar/persistence.md`) to store conversations, message history, and workflow/PR linkage; optional bucket for raw event logs; OpenWebUI conversations map to `chat_sessions`, and `work_orders.workflowId` links to Temporal.
+- **Persistence:** Convex collections `conversations`, `turns`, `messages`, `reasoning_sections`, `commands`/`command_chunks`, `usage_snapshots`, `rate_limits`, and `events_raw` (see `docs/jangar/persistence.md`) to store OpenAI proxy traffic, tool calls, usage, and audit events; optional bucket for raw event logs. OpenWebUI chat IDs map to `conversations.conversationId`; Codex thread IDs are stored on conversations/turns when provided.
 - **Orchestrator UI:** TanStack Start shell plus OpenWebUI front-end pointed at our OpenAI-compatible proxy; exposes a `meta-orchestrator` model that routes into the workflow.
 
 ## Diagrams
@@ -96,11 +96,11 @@ flowchart TD
 
 ## Infra Changes (Argo/CD)
 
-- No in-cluster database. Persist state in Convex; provision a `production` deployment (cloud or self-hosted via ArgoCD `argocd/applications/convex`). Create a service user deploy key with write access.
+- No in-cluster database for Jangar state. Persist telemetry in Convex; provision a `production` deployment (cloud or self-hosted via ArgoCD `argocd/applications/convex`). Create a service user deploy key with write access.
 - `argocd/applications/jangar/kservice.yaml` updates:
   - Env: `CONVEX_DEPLOYMENT` (e.g., `https://<deploy-id>.convex.cloud`), `CONVEX_DEPLOY_KEY` (Convex deploy key), `CODEX_API_KEY`, `GITHUB_TOKEN`; optional `CODEX_PATH`, `GH_HOST`, `GH_REPO`.
   - Keep Tailscale LB; containerPort 8080 serves HTTP/API/UI.
-- OpenWebUI now comes from the upstream Helm chart (StatefulSet + `open-webui` Service, exposed via `openwebui` Tailscale LB). Websocket support is enabled against Redis `jangar-openwebui-redis` managed by the Redis operator. It uses the existing CNPG cluster `jangar-db` for its Postgres; Jangar chat/workflow data still lives in Convex.
+- OpenWebUI is installed separately via Helm (StatefulSet + `open-webui` Service, exposed via `openwebui` Tailscale LB) and backed by Redis/Postgres from the platform stack. Jangar data remains in Convex.
 - Optional: bucket creds (MinIO) for log archival; or small Redis for SSE fan-out (otherwise in-process emitter).
 
 ## Component Design (code paths)
@@ -142,19 +142,16 @@ flowchart TD
    - Signals: `submitUserMessage`, `abort`. Queries: `getState`.
 
 5) **Persistence layer** — Convex functions (see `docs/jangar/persistence.md`)
-   - Collections: `chat_sessions` (chat metadata + recency), `chat_messages` (message history, tool metadata), `work_orders` (link to Temporal `workflowId`, GitHub issue/PR URLs, target repo/branch, status, requester).
-   - Server functions to implement:
-     - `chatSessions:create|get|list|updateLastMessage` (soft-delete aware)
-     - `chatMessages:append|listBySession` (soft-delete aware)
-     - `workOrders:create|updateStatus|updateResult|listBySession|get`
-   - Indexing: chat_messages by `sessionId, createdAt`; work_orders by `sessionId, createdAt` and `status, updatedAt`.
-   - Env: `CONVEX_URL`/`CONVEX_DEPLOYMENT`, `CONVEX_DEPLOY_KEY` (or admin key), optional `CONVEX_SELF_HOSTED_URL`/`CONVEX_SITE_ORIGIN` for self-hosted.
-   - The Bun service calls Convex via the official JS client; Temporal activities write status/PR updates via these mutations; UI queries Convex for session lists/history.
-   - Optional bucket writes remain for raw logs; Convex is the source of truth for chat + work-order state.
+   - Collections: `conversations`, `turns`, `messages`, `reasoning_sections`, `commands`/`command_chunks`, `usage_snapshots`, `rate_limits`, `events_raw`.
+   - Server mutations implemented: `app:upsertConversation`, `app:upsertTurn`, `app:appendMessage`, `app:appendReasoningSection`, `app:upsertCommand`, `app:appendCommandChunk`, `app:appendUsageSnapshot`, `app:appendRateLimit`, `app:appendEvent`.
+   - Indexing: conversations by `conversationId`; turns by `conversationId`, `chatId`, `turnId`; commands by `turnId` and `callId`; usage/rate limits by `turnId`; events by `conversationId, receivedAt`.
+   - Env: `CONVEX_URL`/`CONVEX_DEPLOYMENT`, `CONVEX_DEPLOY_KEY` (or admin key), optional `CONVEX_SELF_HOSTED_URL`/`CONVEX_SITE_ORIGIN` for self-hosted; `VITE_CONVEX_URL` for dev.
+   - The Bun service calls Convex via the official JS client; the OpenAI proxy and Codex stream persistence write usage/events/commands into Convex.
+   - Optional bucket writes remain for raw logs; Convex is the source of truth for chat telemetry.
 
     ```mermaid
     flowchart LR
-      UI["TanStack Start UI<br/>(services/jangar/src/ui)"] --> API["HTTP/SSE API<br/>services/jangar/src/server.ts"]
+      UI["TanStack Start UI<br/>(services/jangar/src/ui)"] --> API["Start server (OpenAI proxy)<br/>services/jangar/src/app"]
       API --> CVX[("Convex mutations/queries")]
       API --> Temporal["Temporal Workflows<br/>services/jangar/src/workflows"]
       Temporal --> Activities["Activities<br/>services/jangar/src/activities"]
@@ -163,14 +160,11 @@ flowchart TD
       API -. SSE .-> UI
     ```
 
-6) **HTTP + SSE** — `services/jangar/src/server.ts`
- - `POST /chat-sessions` → create session in Convex (returns session id, default title).
-  - `POST /chat-sessions/:id/messages` → append message; optional `workOrderId` when spawning work.
-  - `POST /work-orders` → start workflow (Temporal) and persist `work_orders` record (`workflowId`, target repo/branch, status) linked to a chat session.
-  - `POST /work-orders/:id/abort` → signal abort.
-  - `GET /chat-sessions/:id` → Convex session + messages.
-  - `GET /work-orders/:id/stream` → SSE of workflow/PR status deltas (Convex + Temporal query).
-  - `/healthz` retained.
+6) **HTTP + SSE** — TanStack Start server routes (see `services/jangar/src/app/routes`)
+ - `GET /health` → static ok payload.
+ - `GET /openai/v1/models` → returns supported Codex models.
+ - `POST /openai/v1/chat/completions` → OpenAI-compatible streaming proxy to `codex app-server`, persisting turns/usage/events into Convex.
+ - SSE/mission REST endpoints are not yet implemented; workflow creation currently happens via Temporal SDK/activities (stub).
 
 7) **UI (Orchestrator — TanStack Start + OpenWebUI)** — `services/jangar/src/ui/`
    - Routes: `/` (mission list), `/mission/$id` (chat, plan timeline, activity log, PR card).
@@ -184,8 +178,8 @@ flowchart TD
 
 ## Data & State
 
-- Temporal history: authoritative per-turn events.
-- Convex: durable chat sessions/messages plus work orders (workflow/PR linkage) for UI reloads and summaries.
+- Temporal history: authoritative per-turn events (planned once workflow loop lands).
+- Convex: telemetry for conversations, turns, messages, reasoning sections, command logs, usage, rate limits, and raw events streamed from the OpenAI proxy.
 - Optional bucket: raw event logs/streams (if enabled).
 
 ## Defaults & Guardrails
