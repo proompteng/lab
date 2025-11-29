@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { buildPrompt, estimateTokens, formatToolDelta, stripAnsi } from './chat-completion'
+import { buildPrompt, createSafeEnqueuer, estimateTokens, formatToolDelta, stripAnsi } from './chat-completion'
 import { defaultCodexModel, isSupportedModel, resolveModel, supportedModels } from './models'
 
 describe('stripAnsi', () => {
@@ -91,5 +91,30 @@ describe('formatToolDelta', () => {
     }
 
     expect(formatToolDelta(delta)).toBe('indexing')
+  })
+})
+
+describe('createSafeEnqueuer', () => {
+  it('ignores enqueue after the controller has been closed', () => {
+    let closed = false
+    const calls: Uint8Array[] = []
+    const controller = {
+      enqueue: (chunk: Uint8Array) => {
+        if (closed) throw new Error('closed')
+        calls.push(chunk)
+      },
+      close: () => {
+        closed = true
+      },
+    }
+
+    const { safeEnqueue, closeIfOpen, isClosed } = createSafeEnqueuer(controller)
+
+    safeEnqueue(new TextEncoder().encode('first'))
+    closeIfOpen()
+    safeEnqueue(new TextEncoder().encode('second')) // should be ignored
+
+    expect(isClosed()).toBe(true)
+    expect(calls.length).toBe(1)
   })
 })

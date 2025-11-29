@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { buildModelsResponse, supportedModels } from '../../../../lib/models'
+import { buildModelsResponse, supportedModels } from '../../../../../lib/models'
 
 describe('models route helpers', () => {
   it('buildModelsResponse returns the supported models list shape', () => {

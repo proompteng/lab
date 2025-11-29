@@ -32,6 +32,32 @@ const resolveAppServer = () => {
   return sharedAppServer
 }
 
+export const createSafeEnqueuer = (
+  controller: Pick<ReadableStreamDefaultController<Uint8Array>, 'enqueue' | 'close'>,
+) => {
+  let controllerClosed = false
+  const safeEnqueue = (chunk: Uint8Array) => {
+    if (controllerClosed) return
+    try {
+      controller.enqueue(chunk)
+    } catch (error) {
+      controllerClosed = true
+      console.warn('[jangar] stream enqueue after close', error)
+    }
+  }
+  const closeIfOpen = () => {
+    if (controllerClosed) return
+    controllerClosed = true
+    try {
+      controller.close()
+    } catch (error) {
+      console.warn('[jangar] failed to close controller', error)
+    }
+  }
+  const isClosed = () => controllerClosed
+  return { safeEnqueue, closeIfOpen, isClosed }
+}
+
 // Track Codex thread IDs per OpenWebUI chat so we can stream multiple turns without re-initializing.
 const threadMap = new Map<string, string>()
 // Track last chatId per user for cases where chat_id is omitted on follow-ups.
@@ -363,11 +389,13 @@ const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response>
 
   const body = new ReadableStream({
     start: async (controller) => {
-      const send = (payload: unknown) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
-      const sendDone = () => controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+      const { safeEnqueue, closeIfOpen } = createSafeEnqueuer(controller)
+
+      const send = (payload: unknown) => safeEnqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+      const sendDone = () => safeEnqueue(encoder.encode('data: [DONE]\n\n'))
 
       const abortHandler = () => {
-        controller.close()
+        closeIfOpen()
         try {
           stream.return?.(undefined)
         } catch (error) {
@@ -597,14 +625,10 @@ const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response>
             message,
             'stream/error',
           )
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({
-                error: { message, type: 'invalid_request_error', code: 'context_window_exceeded' },
-              })}\n\n`,
-            ),
-          )
-          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+          send({
+            error: { message, type: 'invalid_request_error', code: 'context_window_exceeded' },
+          })
+          sendDone()
           return
         }
 
@@ -624,7 +648,7 @@ const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response>
         )
         controller.error(error)
       } finally {
-        controller.close()
+        closeIfOpen()
       }
     },
   })
