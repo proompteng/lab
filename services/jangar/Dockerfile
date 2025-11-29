@@ -33,6 +33,8 @@ RUN set -eux; \
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
   apt-get install -y --no-install-recommends gh; \
+  curl -fsSL https://deb.nodesource.com/setup_24.x | bash -; \
+  apt-get install -y --no-install-recommends nodejs; \
   rm -rf /var/lib/apt/lists/*
 
 # Install kubectl and Docker CLI (arm/amd64 aware)
