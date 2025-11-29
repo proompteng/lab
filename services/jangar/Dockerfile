@@ -39,15 +39,20 @@ RUN set -eux; \
 RUN set -eux; \
   ARCH="${TARGETARCH:-$(uname -m)}"; \
   case "$ARCH" in \
-    amd64|x86_64) BIN_ARCH=amd64 ;; \
-    arm64|aarch64) BIN_ARCH=arm64 ;; \
+    amd64|x86_64) BIN_ARCH=amd64; DOCKER_ARCH=x86_64 ;; \
+    arm64|aarch64) BIN_ARCH=arm64; DOCKER_ARCH=aarch64 ;; \
     *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
   esac; \
-  # kubectl
-  curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux-${BIN_ARCH}/kubectl"; \
-  chmod +x /usr/local/bin/kubectl; \
+  # kubectl via apt.k8s.io (new repository scheme); derive minor series (e.g., v1.30)
+  KUBE_SERIES="${KUBECTL_VERSION%.*}"; \
+  KUBE_REPO="https://pkgs.k8s.io/core:/stable:/${KUBE_SERIES}/deb"; \
+  install -m 0755 -d /etc/apt/keyrings; \
+  curl -fSLs --noproxy '*' "$KUBE_REPO/Release.key" | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg; \
+  echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] $KUBE_REPO/ /" > /etc/apt/sources.list.d/kubernetes.list; \
+  apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
+  apt-get install -y --no-install-recommends kubectl; \
   # docker CLI
-  curl -fsSLo /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${BIN_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz"; \
+  curl -fSLs -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz"; \
   tar -xz -C /usr/local/bin --strip-components=1 -f /tmp/docker.tgz docker/docker; \
   rm /tmp/docker.tgz
 
