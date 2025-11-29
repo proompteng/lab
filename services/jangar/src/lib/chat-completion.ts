@@ -1,8 +1,8 @@
 import type { StreamDelta } from '@proompteng/codex'
 
 import { createDbClient } from '../db'
-import type { ChatMessage, ChatRole } from '../types/persistence'
 import { getAppServer } from './app-server'
+import { isSupportedModel, resolveModel, supportedModels } from './models'
 
 export type Message = { role: string; content: unknown }
 
@@ -17,10 +17,12 @@ export type ChatCompletionRequest = {
   }
 }
 
-const defaultCodexModel = 'gpt-5.1-codex-max'
 const defaultUserId = 'openwebui'
 const systemFingerprint = Bun.env.CODEX_SYSTEM_FINGERPRINT ?? null
 const serviceTier = 'default'
+
+const defaultContextWindowMessage =
+  "Codex ran out of room in the model's context window. Start a new conversation or clear earlier history before retrying."
 
 let sharedAppServer: ReturnType<typeof getAppServer> | null = null
 const resolveAppServer = () => {
@@ -32,6 +34,8 @@ const resolveAppServer = () => {
 
 // Track Codex thread IDs per OpenWebUI chat so we can stream multiple turns without re-initializing.
 const threadMap = new Map<string, string>()
+// Track last chatId per user for cases where chat_id is omitted on follow-ups.
+const lastChatIdForUser = new Map<string, string>()
 
 export const stripAnsi = (value: string) => {
   const esc = String.fromCharCode(27)
@@ -80,48 +84,218 @@ export const buildPrompt = (messages?: Message[]) =>
 
 export const estimateTokens = (text: string) => Math.max(1, Math.ceil(text.length / 4))
 
-export const resolveModel = (requested?: string | null) => {
-  if (!requested || requested === 'meta-orchestrator') return defaultCodexModel
-  return requested
-}
-
 export const deriveChatId = (body: ChatCompletionRequest) => body.chat_id
 
-export const deriveTitle = (chatId: string | undefined, messages?: Message[]) => {
-  if (chatId) return `openwebui:${chatId}`
-  const firstUser = (messages ?? []).find((m) => m.role === 'user')
-  if (firstUser) {
-    const text = normalizeContent(firstUser.content)
-    return text.slice(0, 60) || 'OpenWebUI chat'
-  }
-  return 'OpenWebUI chat'
+type TokenUsage = {
+  input_tokens?: number
+  cached_input_tokens?: number
+  output_tokens?: number
+  reasoning_output_tokens?: number
+  total_tokens?: number
 }
 
-const syncHistory = async (
+type PersistMeta = {
+  threadId?: string
+  turnId?: string
+  tokenUsage?: TokenUsage | null
+  reasoningSummary?: string[]
+}
+
+const buildUsagePayload = (turnId: string, usage?: TokenUsage | null) => {
+  const payload: Record<string, unknown> = { turnId, capturedAt: Date.now() }
+  if (!usage) return payload
+  if (usage.input_tokens !== undefined) payload.totalInputTokens = usage.input_tokens
+  if (usage.cached_input_tokens !== undefined) payload.cachedInputTokens = usage.cached_input_tokens
+  if (usage.output_tokens !== undefined) payload.outputTokens = usage.output_tokens
+  if (usage.reasoning_output_tokens !== undefined) payload.reasoningOutputTokens = usage.reasoning_output_tokens
+  if (usage.total_tokens !== undefined) payload.totalTokens = usage.total_tokens
+  return payload
+}
+
+const commandSeq = new Map<string, number>()
+
+type NormalizedCodexError = { message: string | null; codexErrorInfo: string | null }
+
+const parseCodexError = (error: unknown): NormalizedCodexError | null => {
+  const candidates: Array<unknown> = [error]
+
+  if (error instanceof Error) {
+    candidates.push(error.message)
+    if (error.cause) candidates.push(error.cause)
+  }
+
+  const tryParse = (value: unknown): Record<string, unknown> | null => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value) as Record<string, unknown>
+      } catch {
+        return null
+      }
+    }
+    if (value && typeof value === 'object') return value as Record<string, unknown>
+    return null
+  }
+
+  for (const candidate of candidates) {
+    const parsed = tryParse(candidate)
+    if (!parsed) {
+      const raw = typeof candidate === 'string' ? candidate : null
+      if (raw?.includes('contextWindowExceeded')) {
+        return { message: raw, codexErrorInfo: 'contextWindowExceeded' }
+      }
+      continue
+    }
+
+    const nestedError = tryParse(parsed.error ?? null)
+    const codexErrorInfo =
+      typeof parsed.codexErrorInfo === 'string'
+        ? parsed.codexErrorInfo
+        : typeof nestedError?.codexErrorInfo === 'string'
+          ? nestedError.codexErrorInfo
+          : null
+    const message =
+      typeof parsed.message === 'string'
+        ? parsed.message
+        : typeof nestedError?.message === 'string'
+          ? nestedError.message
+          : null
+
+    if (codexErrorInfo || message) return { message, codexErrorInfo }
+  }
+
+  return null
+}
+
+const buildContextWindowExceededResponse = (message: string) =>
+  new Response(
+    JSON.stringify({
+      error: {
+        message,
+        type: 'invalid_request_error',
+        code: 'context_window_exceeded',
+      },
+    }),
+    {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    },
+  )
+
+const persistFailedTurn = async (
   db: Awaited<ReturnType<typeof createDbClient>>,
-  sessionId: string,
-  messages: Message[] | undefined,
-  existing: ChatMessage[] | null,
-): Promise<void> => {
-  if (!messages?.length) return
-
-  const already = existing?.length ?? 0
-  const toAppend = messages.slice(already)
-  for (const msg of toAppend) {
-    await db.appendMessage({
-      sessionId,
-      role: (msg.role as ChatRole) ?? 'user',
-      content: normalizeContent(msg.content),
+  {
+    turnId,
+    conversationId,
+    chatId,
+    userId,
+    model,
+    startedAt,
+  }: {
+    turnId: string
+    conversationId: string
+    chatId: string
+    userId: string
+    model?: string | null
+    startedAt: number
+  },
+  errorMessage: string,
+  eventMethod: string = 'turn/error',
+) => {
+  try {
+    await db.upsertTurn({
+      turnId,
+      conversationId,
+      chatId,
+      userId,
+      model: model ?? '',
+      serviceTier,
+      status: 'failed',
+      error: errorMessage,
+      startedAt,
+      endedAt: Date.now(),
     })
+    await db.appendEvent({
+      conversationId,
+      turnId,
+      method: eventMethod,
+      payload: { error: errorMessage },
+      receivedAt: Date.now(),
+    })
+  } catch (persistError) {
+    console.error('[jangar] failed to persist turn error', persistError)
   }
-  await db.updateSessionLastMessage(sessionId, Date.now())
 }
 
-const persistAssistant = async (sessionId: string, content: string) => {
+const persistToolDelta = async (
+  db: Awaited<ReturnType<typeof createDbClient>>,
+  turnId: string,
+  conversationId: string,
+  delta: ToolDelta,
+) => {
+  const callId = delta.id ?? `tool-${crypto.randomUUID()}`
+  const now = Date.now()
+
+  await db.appendEvent({
+    conversationId,
+    turnId,
+    method: 'tool',
+    payload: delta,
+    receivedAt: now,
+  })
+
+  if (delta.status === 'started') {
+    await db.upsertCommand({
+      callId,
+      turnId,
+      command: [stripAnsi(delta.title)],
+      source: delta.toolKind,
+      parsedCmd: delta.detail ? { detail: stripAnsi(delta.detail) } : undefined,
+      status: 'started',
+      startedAt: now,
+      chunked: true,
+    })
+    return
+  }
+
+  if (delta.status === 'delta' && delta.detail) {
+    const seq = (commandSeq.get(callId) ?? 0) + 1
+    commandSeq.set(callId, seq)
+    await db.appendCommandChunk({
+      callId,
+      stream: delta.toolKind === 'command' ? 'stdout' : 'stdout',
+      seq,
+      chunkBase64: Buffer.from(stripAnsi(delta.detail)).toString('base64'),
+      createdAt: now,
+    })
+    await db.upsertCommand({
+      callId,
+      turnId,
+      command: [stripAnsi(delta.title)],
+      source: delta.toolKind,
+      status: 'running',
+      startedAt: now,
+      chunked: true,
+    })
+    return
+  }
+
+  // completed/failed/etc.
+  await db.upsertCommand({
+    callId,
+    turnId,
+    command: [stripAnsi(delta.title)],
+    source: delta.toolKind,
+    status: delta.status,
+    startedAt: now,
+    endedAt: now,
+    chunked: true,
+  })
+}
+
+const persistAssistant = async (turnId: string, content: string, meta?: PersistMeta) => {
   try {
     const db = await createDbClient()
-    await db.appendMessage({ sessionId, role: 'assistant', content })
-    await db.updateSessionLastMessage(sessionId, Date.now())
+    await db.appendAssistantMessageWithMeta(turnId, content, meta)
   } catch (error) {
     console.warn('[jangar] convex persistence failed for assistant message', error)
   }
@@ -132,27 +306,49 @@ type ReasoningPart = { type: 'text'; text: string }
 type StreamOptions = {
   model?: string
   signal: AbortSignal
-  onComplete?: (content: string, reasoning: ReasoningPart[]) => Promise<void>
+  onComplete?: (content: string, reasoning: ReasoningPart[], meta: PersistMeta) => Promise<void>
   chatId: string
   includeUsage?: boolean
   threadId?: string
-}
-
-type TokenUsage = {
-  input_tokens: number
-  cached_input_tokens: number
-  output_tokens: number
-  reasoning_output_tokens: number
-  total_tokens: number
+  db: Awaited<ReturnType<typeof createDbClient>>
+  conversationId: string
+  turnId: string
+  userId: string
+  startedAt: number
 }
 
 const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response> => {
   const appServer = resolveAppServer()
   const targetModel = resolveModel(opts.model)
   const existingThreadId = opts.threadId ?? threadMap.get(opts.chatId)
-  const { stream, threadId } = existingThreadId
-    ? await appServer.runTurnStream({ prompt, model: targetModel, threadId: existingThreadId })
-    : await appServer.runTurnStream({ prompt, model: targetModel })
+  let streamHandle: Awaited<ReturnType<ReturnType<typeof getAppServer>['runTurnStream']>>
+  try {
+    streamHandle = existingThreadId
+      ? await appServer.runTurnStream({ prompt, model: targetModel, threadId: existingThreadId })
+      : await appServer.runTurnStream({ prompt, model: targetModel })
+  } catch (error) {
+    const codexError = parseCodexError(error)
+    if (codexError?.codexErrorInfo === 'contextWindowExceeded') {
+      threadMap.delete(opts.chatId)
+      const message = codexError.message ?? defaultContextWindowMessage
+      await persistFailedTurn(
+        opts.db,
+        {
+          turnId: opts.turnId,
+          conversationId: opts.conversationId,
+          chatId: opts.chatId,
+          userId: opts.userId,
+          model: targetModel,
+          startedAt: opts.startedAt,
+        },
+        message,
+      )
+      return buildContextWindowExceededResponse(message)
+    }
+    throw error
+  }
+
+  const { stream, threadId, turnId } = streamHandle
   if (!existingThreadId) threadMap.set(opts.chatId, threadId)
   const encoder = new TextEncoder()
   const created = Math.floor(Date.now() / 1000)
@@ -187,6 +383,14 @@ const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response>
 
           if ((delta as { type?: string }).type === 'usage') {
             latestUsage = (delta as { usage: TokenUsage }).usage
+            await opts.db.appendUsage(buildUsagePayload(opts.turnId, latestUsage) as never)
+            await opts.db.appendEvent({
+              conversationId: opts.conversationId,
+              turnId: opts.turnId,
+              method: 'usage',
+              payload: latestUsage,
+              receivedAt: Date.now(),
+            })
             continue
           }
           if ((delta as { type?: string }).type === 'error') {
@@ -197,6 +401,7 @@ const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response>
           let toolDelta: ToolDelta | null = null
           if ((delta as { type?: string }).type === 'tool') {
             toolDelta = delta as ToolDelta
+            await persistToolDelta(opts.db, opts.turnId, opts.conversationId, toolDelta)
           }
 
           if (typeof delta === 'string') contentDelta = stripAnsi(delta)
@@ -367,9 +572,56 @@ const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response>
         send(doneChunk)
         sendDone()
 
-        if (opts.onComplete) await opts.onComplete(collected, reasoningParts)
+        if (opts.onComplete)
+          await opts.onComplete(collected, reasoningParts, {
+            threadId,
+            turnId,
+            tokenUsage: latestUsage,
+            reasoningSummary: reasoningParts.map((p) => p.text),
+          })
       } catch (error) {
+        const codexError = parseCodexError(error)
+        if (codexError?.codexErrorInfo === 'contextWindowExceeded') {
+          const message = codexError.message ?? defaultContextWindowMessage
+          threadMap.delete(opts.chatId)
+          await persistFailedTurn(
+            opts.db,
+            {
+              turnId: opts.turnId,
+              conversationId: opts.conversationId,
+              chatId: opts.chatId,
+              userId: opts.userId,
+              model: targetModel,
+              startedAt: opts.startedAt,
+            },
+            message,
+            'stream/error',
+          )
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                error: { message, type: 'invalid_request_error', code: 'context_window_exceeded' },
+              })}\n\n`,
+            ),
+          )
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+          return
+        }
+
         console.error('[jangar] codex stream error', error)
+        await persistFailedTurn(
+          opts.db,
+          {
+            turnId: opts.turnId,
+            conversationId: opts.conversationId,
+            chatId: opts.chatId,
+            userId: opts.userId,
+            model: targetModel,
+            startedAt: opts.startedAt,
+          },
+          `${error}`,
+          'stream/error',
+        )
         controller.error(error)
       } finally {
         controller.close()
@@ -396,11 +648,15 @@ export const createChatCompletionHandler = (pathLabel: string) => {
       // ignore parse errors; return stub anyway
     }
 
-    const model = resolveModel(body?.model)
+    const requestedModel = body?.model
+    const model = resolveModel(requestedModel)
     const userId = body?.user ?? defaultUserId
     const incomingChatId = deriveChatId(body ?? {})
-    const chatId = incomingChatId ?? crypto.randomUUID()
-    let promptMessages: Message[] | undefined = body?.messages
+    const chatId = incomingChatId ?? lastChatIdForUser.get(userId) ?? crypto.randomUUID()
+    const conversationId = chatId
+    const turnId = crypto.randomUUID()
+    const startedAt = Date.now()
+    const promptMessages: Message[] | undefined = body?.messages
 
     console.info(`[jangar] ${pathLabel}`, {
       model,
@@ -411,29 +667,47 @@ export const createChatCompletionHandler = (pathLabel: string) => {
       incomingChatId,
     })
 
-    let sessionId: string | null = null
-    let existingMessages: ChatMessage[] | null = null
-    try {
-      const db = await createDbClient()
-      const title = deriveTitle(chatId, body?.messages)
-      const sessionsForUser = await db.listSessions(userId)
-      const matched = sessionsForUser.find((s) => s.title === title)
-      sessionId = matched?.id ?? (await db.createSession(userId, title))
-      if (!sessionId) throw new Error('failed to resolve session id')
-      existingMessages = await db.listMessages(sessionId)
-      await syncHistory(db, sessionId, body?.messages ?? [], existingMessages)
-      if ((!promptMessages || promptMessages.length === 0) && existingMessages?.length) {
-        promptMessages = existingMessages.map((m) => ({ role: m.role, content: m.content }))
-      }
-      console.info('[jangar][chat]', {
-        userId,
-        chatId,
-        sessionId,
-        incomingMessages: body?.messages?.length ?? 0,
-        storedMessages: existingMessages?.length ?? 0,
+    if (requestedModel && !isSupportedModel(requestedModel)) {
+      const message = `Unsupported model "${requestedModel}". Supported models: ${supportedModels.join(', ')}`
+      const payload = { error: { message, type: 'invalid_request_error', code: 'model_not_supported' } }
+      const bodyStr = JSON.stringify(payload)
+      return new Response(bodyStr, {
+        status: 400,
+        headers: {
+          'content-type': 'application/json',
+          'content-length': String(bodyStr.length),
+        },
       })
-    } catch (error) {
-      console.warn('[jangar] convex persistence unavailable; continuing without DB', error)
+    }
+
+    lastChatIdForUser.set(userId, chatId)
+
+    const db = await createDbClient()
+    await db.upsertConversation({
+      conversationId,
+      threadId: threadMap.get(chatId) ?? '',
+      modelProvider: 'codex',
+      clientName: 'jangar',
+      at: startedAt,
+    })
+    await db.upsertTurn({
+      turnId,
+      conversationId,
+      chatId,
+      userId,
+      model,
+      serviceTier,
+      status: 'running',
+      startedAt,
+    })
+    // Persist all provided messages (order preserved).
+    for (const msg of promptMessages ?? []) {
+      await db.appendMessage({
+        turnId,
+        role: msg.role,
+        content: normalizeContent(msg.content),
+        createdAt: startedAt,
+      })
     }
 
     const prompt = buildPrompt(promptMessages)
@@ -450,18 +724,59 @@ export const createChatCompletionHandler = (pathLabel: string) => {
               chatId,
               includeUsage,
               threadId: existingThreadId,
+              db,
+              conversationId,
+              turnId,
+              userId,
+              startedAt,
             }
           : {
               model,
               signal: request.signal,
               chatId,
               includeUsage,
+              db,
+              conversationId,
+              turnId,
+              userId,
+              startedAt,
             }
 
-        if (sessionId) {
-          sseOptions.onComplete = async (text: string) => {
-            await persistAssistant(sessionId as string, text)
+        sseOptions.onComplete = async (text: string, reasoning, meta) => {
+          await db.upsertConversation({
+            conversationId,
+            threadId: meta.threadId ?? threadMap.get(chatId) ?? '',
+            modelProvider: 'codex',
+            clientName: 'jangar',
+            at: Date.now(),
+          })
+
+          for (const [idx, r] of reasoning.entries()) {
+            await db.appendReasoning({
+              turnId,
+              itemId: `${turnId}-reasoning-${idx}`,
+              summaryText: [r.text],
+              position: idx,
+              createdAt: Date.now(),
+            })
           }
+
+          if (meta.tokenUsage) {
+            await db.appendUsage(buildUsagePayload(turnId, meta.tokenUsage) as never)
+          }
+
+          await persistAssistant(turnId, text, meta)
+          await db.upsertTurn({
+            turnId,
+            conversationId,
+            chatId,
+            userId,
+            model: model ?? '',
+            serviceTier,
+            status: 'succeeded',
+            startedAt,
+            endedAt: Date.now(),
+          })
         }
 
         return await streamSse(prompt, sseOptions)
@@ -478,7 +793,7 @@ export const createChatCompletionHandler = (pathLabel: string) => {
     try {
       const existingThreadId = threadMap.get(chatId)
       const appServer = resolveAppServer()
-      const { stream, threadId } = await appServer.runTurnStream(
+      const { stream, threadId, turnId } = await appServer.runTurnStream(
         existingThreadId ? { prompt, model, threadId: existingThreadId } : { prompt, model },
       )
       if (!existingThreadId) threadMap.set(chatId, threadId)
@@ -490,6 +805,14 @@ export const createChatCompletionHandler = (pathLabel: string) => {
       for await (const delta of stream) {
         if ((delta as { type?: string }).type === 'usage') {
           latestUsage = (delta as { usage: TokenUsage }).usage
+          await db.appendUsage(buildUsagePayload(turnId, latestUsage) as never)
+          await db.appendEvent({
+            conversationId,
+            turnId,
+            method: 'usage',
+            payload: latestUsage,
+            receivedAt: Date.now(),
+          })
           continue
         }
         if (typeof delta === 'string') {
@@ -511,11 +834,48 @@ export const createChatCompletionHandler = (pathLabel: string) => {
             lastReasoningChunk = chunk
           }
         } else if ((delta as { type?: string }).type === 'tool') {
-          text += `\n${formatToolDelta(delta as Extract<StreamDelta, { type: 'tool' }>)}\n`
+          const toolDelta = delta as Extract<StreamDelta, { type: 'tool' }>
+          await persistToolDelta(db, turnId, conversationId, toolDelta)
+          text += `\n${formatToolDelta(toolDelta)}\n`
         }
       }
 
-      if (sessionId) await persistAssistant(sessionId, text)
+      await persistAssistant(turnId, text, {
+        threadId,
+        turnId,
+        tokenUsage: latestUsage,
+        reasoningSummary: reasoningParts.map((p) => p.text),
+      })
+      await db.upsertConversation({
+        conversationId,
+        threadId: threadId ?? '',
+        modelProvider: 'codex',
+        clientName: 'jangar',
+        at: Date.now(),
+      })
+      for (const [idx, r] of reasoningParts.entries()) {
+        await db.appendReasoning({
+          turnId,
+          itemId: `${turnId}-reasoning-${idx}`,
+          summaryText: [r.text],
+          position: idx,
+          createdAt: Date.now(),
+        })
+      }
+      if (latestUsage) {
+        await db.appendUsage(buildUsagePayload(turnId, latestUsage) as never)
+      }
+      await db.upsertTurn({
+        turnId,
+        conversationId,
+        chatId,
+        userId,
+        model: model ?? '',
+        serviceTier,
+        status: 'succeeded',
+        startedAt,
+        endedAt: Date.now(),
+      })
 
       const promptTokens = includeUsage ? (latestUsage?.input_tokens ?? estimateTokens(prompt)) : undefined
       const completionTokens = includeUsage ? (latestUsage?.output_tokens ?? estimateTokens(text)) : undefined
@@ -571,6 +931,37 @@ export const createChatCompletionHandler = (pathLabel: string) => {
         },
       })
     } catch (error) {
+      const codexError = parseCodexError(error)
+      if (codexError?.codexErrorInfo === 'contextWindowExceeded') {
+        const message = codexError.message ?? defaultContextWindowMessage
+        threadMap.delete(chatId)
+        await persistFailedTurn(
+          db,
+          {
+            turnId,
+            conversationId,
+            chatId,
+            userId,
+            model,
+            startedAt,
+          },
+          message,
+        )
+        return buildContextWindowExceededResponse(message)
+      }
+
+      await persistFailedTurn(
+        db,
+        {
+          turnId,
+          conversationId,
+          chatId,
+          userId,
+          model,
+          startedAt,
+        },
+        `${error}`,
+      )
       console.error('[jangar] codex app-server error', error)
       return new Response(JSON.stringify({ error: 'codex app-server failed', details: `${error}` }), {
         status: 500,
