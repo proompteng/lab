@@ -46,6 +46,7 @@ type TurnStream = {
   complete: (turn: Turn) => void
   fail: (error: unknown) => void
   iterator: AsyncGenerator<StreamDelta, Turn | null, void>
+  lastReasoningDelta: string | null
 }
 
 export type CodexAppServerOptions = {
@@ -128,7 +129,7 @@ const createTurnStream = (): TurnStream => {
     }
   })()
 
-  return { push, complete, fail, iterator }
+  return { push, complete, fail, iterator, lastReasoningDelta: null }
 }
 
 export class CodexAppServerClient {
@@ -399,7 +400,13 @@ export class CodexAppServerClient {
     const pushReasoning = (delta: string | null | undefined) => {
       if (!delta) return
       const turn = this.lastTurnStream()
-      if (turn) turn.push({ type: 'reasoning', delta })
+      if (!turn) return
+      if (turn.lastReasoningDelta === delta) {
+        this.log('info', 'skipping duplicate reasoning delta', { delta })
+        return
+      }
+      turn.lastReasoningDelta = delta
+      turn.push({ type: 'reasoning', delta })
     }
 
     const pushTool = (

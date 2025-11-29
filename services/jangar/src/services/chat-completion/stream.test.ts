@@ -139,4 +139,50 @@ describe('streamSse', () => {
 
     expect(threadMap.get(chatId)).toBeUndefined()
   })
+
+  it('emits each unique reasoning delta only once', async () => {
+    const { db } = createMockDb()
+    const appServer = {
+      runTurnStream: async () => ({
+        threadId: 'thread-reasoning',
+        turnId: 'turn-reasoning',
+        stream: (async function* () {
+          yield { type: 'reasoning', delta: '**Acknowled**' }
+          yield { type: 'reasoning', delta: '**Acknowled**' }
+          yield { type: 'reasoning', delta: 'Acknowledging completion' }
+        })(),
+      }),
+    }
+
+    const { text } = await runStream({
+      model: 'gpt-5.1-codex-max',
+      signal: new AbortController().signal,
+      chatId: 'chat-reasoning',
+      db,
+      conversationId: 'conv-reasoning',
+      turnId: 'turn-reasoning',
+      userId: 'user-reasoning',
+      startedAt: Date.now(),
+      appServer: appServer as never,
+    })
+
+    const chunks = text
+      .split('\n')
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => line.substring('data: '.length))
+      .filter((line) => line !== '[DONE]')
+      .map((line) => JSON.parse(line) as { choices?: Array<{ delta?: { reasoning_content?: string } }> })
+
+    type ReasoningChunk = {
+      choices: [{ delta: { reasoning_content: string } }]
+    }
+
+    const reasoningChunks = chunks.filter(
+      (chunk): chunk is ReasoningChunk =>
+        typeof chunk.choices?.[0]?.delta?.reasoning_content === 'string',
+    )
+    const reasoningTexts = reasoningChunks.map((chunk) => chunk.choices[0].delta.reasoning_content)
+
+    expect(reasoningTexts).toEqual(['**Acknowled**', 'Acknowledging completion'])
+  })
 })
