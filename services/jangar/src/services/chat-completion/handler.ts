@@ -1,9 +1,9 @@
-import { createDbClient } from '../../lib/db'
+import { createDbClient } from '../db'
 import { buildPrompt, deriveChatId } from './utils'
 import { buildUsagePayload, persistAssistant, persistFailedTurn } from './persistence'
-import { lastChatIdForUser, serviceTier, threadMap } from './state'
+import { defaultUserId, lastChatIdForUser, serviceTier, threadMap } from './state'
 import { streamSse } from './stream'
-import { isSupportedModel, resolveModel, supportedModels } from '../../lib/models'
+import { isSupportedModel, resolveModel, supportedModels } from '../models'
 import type { ChatCompletionRequest, Message } from './types'
 
 const buildSseErrorResponse = (payload: unknown, status = 400) => {
@@ -37,7 +37,7 @@ export const createChatCompletionHandler = (pathLabel: string) => {
 
     const requestedModel = body?.model
     const model = resolveModel(requestedModel)
-    const userId = body?.user ?? 'openwebui'
+    const userId = body?.user ?? defaultUserId
     const incomingChatId = deriveChatId(body ?? {})
     const chatId = incomingChatId ?? lastChatIdForUser.get(userId) ?? crypto.randomUUID()
     const conversationId = chatId

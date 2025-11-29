@@ -1,4 +1,4 @@
-import { getAppServer } from '../../lib/app-server'
+import { getAppServer } from '../app-server'
 
 export const defaultUserId = 'openwebui'
 export const systemFingerprint = Bun.env.CODEX_SYSTEM_FINGERPRINT ?? null

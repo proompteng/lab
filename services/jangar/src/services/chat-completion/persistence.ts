@@ -1,4 +1,4 @@
-import { createDbClient } from '../../lib/db'
+import { createDbClient } from '../db'
 import { serviceTier } from './state'
 import { buildUsagePayload } from './utils'
 import type { NormalizedCodexError, ToolDelta, TokenUsage } from './types'
