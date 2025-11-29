@@ -32,6 +32,8 @@ services:
       - DEFAULT_USER_ROLE=admin
       - WEBUI_AUTH=false
       - ENABLE_LOGIN_FORM=false
+      - GLOBAL_LOG_LEVEL=DEBUG
+      - UVICORN_LOG_LEVEL=debug
     volumes:
       - openwebui-data:/app/backend/data
     extra_hosts:
