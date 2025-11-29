@@ -46,6 +46,16 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
       })
     }
     if (!existingThreadId) threadMap.set(opts.chatId, threadId)
+
+    if (codexTurnId) {
+      await opts.db.appendEvent({
+        conversationId: opts.conversationId,
+        turnId,
+        method: 'codex_turn_id',
+        payload: { codexTurnId },
+        receivedAt: Date.now(),
+      })
+    }
     const encoder = new TextEncoder()
     const created = Math.floor(Date.now() / 1000)
     const id = `chatcmpl-${crypto.randomUUID()}`

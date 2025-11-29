@@ -89,7 +89,19 @@ export const createChatCompletionHandler = (pathLabel: string) => {
     const model = resolveModel(requestedModel)
     const userId = body.user ?? defaultUserId
     const incomingChatId = deriveChatId(body ?? {})
-    const chatId = incomingChatId ?? lastChatIdForUser.get(userId) ?? crypto.randomUUID()
+    if (incomingChatId !== undefined && typeof incomingChatId !== 'string') {
+      const payload = {
+        error: {
+          message: '`chat_id` must be a string when provided',
+          type: 'invalid_request_error',
+          code: 'chat_id_invalid',
+        },
+      }
+      return buildSseErrorResponse(payload, 400)
+    }
+
+    const namespacedChatId = incomingChatId ? `${userId}:${incomingChatId}` : undefined
+    const chatId = namespacedChatId ?? lastChatIdForUser.get(userId) ?? crypto.randomUUID()
     const conversationId = chatId
     const turnId = crypto.randomUUID()
     const startedAt = Date.now()

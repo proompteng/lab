@@ -103,4 +103,25 @@ describe('createChatCompletionHandler', () => {
     expect(text).toContain('messages_invalid')
     expect(text).toContain('[DONE]')
   })
+
+  it('rejects non-string chat_id and does not alter thread map', async () => {
+    const chatId = 1234
+    threadMap.set('keep', 'thread-keep')
+
+    const body = {
+      model: 'gpt-5.1-codex-max',
+      stream: true,
+      chat_id: chatId,
+      messages: [{ role: 'user', content: 'hi' }],
+    }
+
+    const res = await handler({
+      request: new Request('http://localhost', { method: 'POST', body: JSON.stringify(body) }),
+    })
+
+    expect(res.status).toBe(400)
+    const text = await readText(res)
+    expect(text).toContain('chat_id_invalid')
+    expect(threadMap.get('keep')).toBe('thread-keep')
+  })
 })
