@@ -393,8 +393,30 @@ const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response>
 
       const send = (payload: unknown) => safeEnqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
       const sendDone = () => safeEnqueue(encoder.encode('data: [DONE]\n\n'))
+      const streamTimeoutMs = Number(Bun.env.JANGAR_STREAM_TIMEOUT_MS ?? '300000')
+      const timeoutId = setTimeout(() => {
+        threadMap.delete(opts.chatId)
+        send({
+          error: {
+            message: `stream timeout after ${streamTimeoutMs}ms`,
+            type: 'timeout',
+            code: 'stream_timeout',
+          },
+        })
+        sendDone()
+        closeIfOpen()
+        try {
+          stream.return?.(undefined)
+        } catch (error) {
+          console.warn('[jangar] failed to return stream on timeout', error)
+        }
+      }, streamTimeoutMs)
 
       const abortHandler = () => {
+        threadMap.delete(opts.chatId)
+        // Emit an SSE end marker so clients don't treat abort as truncation.
+        send({ error: { message: 'client aborted', type: 'aborted' } })
+        sendDone()
         closeIfOpen()
         try {
           stream.return?.(undefined)
@@ -609,9 +631,10 @@ const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response>
           })
       } catch (error) {
         const codexError = parseCodexError(error)
+        threadMap.delete(opts.chatId)
+
         if (codexError?.codexErrorInfo === 'contextWindowExceeded') {
           const message = codexError.message ?? defaultContextWindowMessage
-          threadMap.delete(opts.chatId)
           await persistFailedTurn(
             opts.db,
             {
@@ -646,8 +669,18 @@ const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response>
           `${error}`,
           'stream/error',
         )
-        controller.error(error)
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : typeof error === 'string'
+              ? error
+              : 'streaming error (unexpected end)'
+        send({ error: { message, type: 'server_error' } })
+        sendDone()
+        return
       } finally {
+        clearTimeout(timeoutId)
         closeIfOpen()
       }
     },
@@ -682,10 +715,15 @@ export const createChatCompletionHandler = (pathLabel: string) => {
     const startedAt = Date.now()
     const promptMessages: Message[] | undefined = body?.messages
 
+    const requestedStream = body?.stream
+    const acceptedStream = requestedStream === true
+
     console.info(`[jangar] ${pathLabel}`, {
       model,
       messageCount: body?.messages?.length ?? 0,
-      stream: body?.stream ?? false,
+      requestedStream,
+      acceptedStream,
+      streamRequired: true,
       chatId,
       userId,
       incomingChatId,
@@ -694,12 +732,22 @@ export const createChatCompletionHandler = (pathLabel: string) => {
     if (requestedModel && !isSupportedModel(requestedModel)) {
       const message = `Unsupported model "${requestedModel}". Supported models: ${supportedModels.join(', ')}`
       const payload = { error: { message, type: 'invalid_request_error', code: 'model_not_supported' } }
-      const bodyStr = JSON.stringify(payload)
-      return new Response(bodyStr, {
+      threadMap.delete(chatId)
+      const encoder = new TextEncoder()
+      const errorStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+          controller.close()
+        },
+      })
+      return new Response(errorStream, {
         status: 400,
         headers: {
-          'content-type': 'application/json',
-          'content-length': String(bodyStr.length),
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          connection: 'keep-alive',
+          'x-accel-buffering': 'no',
         },
       })
     }
@@ -738,258 +786,122 @@ export const createChatCompletionHandler = (pathLabel: string) => {
 
     const includeUsage = body?.stream_options?.include_usage === true
 
-    if (body?.stream) {
-      try {
-        const existingThreadId = threadMap.get(chatId)
-        const sseOptions: StreamOptions = existingThreadId
-          ? {
-              model,
-              signal: request.signal,
-              chatId,
-              includeUsage,
-              threadId: existingThreadId,
-              db,
-              conversationId,
-              turnId,
-              userId,
-              startedAt,
-            }
-          : {
-              model,
-              signal: request.signal,
-              chatId,
-              includeUsage,
-              db,
-              conversationId,
-              turnId,
-              userId,
-              startedAt,
-            }
-
-        sseOptions.onComplete = async (text: string, reasoning, meta) => {
-          await db.upsertConversation({
-            conversationId,
-            threadId: meta.threadId ?? threadMap.get(chatId) ?? '',
-            modelProvider: 'codex',
-            clientName: 'jangar',
-            at: Date.now(),
-          })
-
-          for (const [idx, r] of reasoning.entries()) {
-            await db.appendReasoning({
-              turnId,
-              itemId: `${turnId}-reasoning-${idx}`,
-              summaryText: [r.text],
-              position: idx,
-              createdAt: Date.now(),
-            })
-          }
-
-          if (meta.tokenUsage) {
-            await db.appendUsage(buildUsagePayload(turnId, meta.tokenUsage) as never)
-          }
-
-          await persistAssistant(turnId, text, meta)
-          await db.upsertTurn({
-            turnId,
-            conversationId,
-            chatId,
-            userId,
-            model: model ?? '',
-            serviceTier,
-            status: 'succeeded',
-            startedAt,
-            endedAt: Date.now(),
-          })
-        }
-
-        return await streamSse(prompt, sseOptions)
-      } catch (error) {
-        console.error('[jangar] codex app-server stream error', error)
-        return new Response(JSON.stringify({ error: 'codex app-server failed', details: `${error}` }), {
-          status: 500,
-          headers: { 'content-type': 'application/json' },
-        })
+    if (body?.stream !== true) {
+      const payload = {
+        error: {
+          message: 'Streaming only: set stream=true',
+          type: 'invalid_request_error',
+          code: 'stream_required',
+        },
       }
-    }
-
-    // Non-streaming: reuse streaming plumbing to capture reasoning and message content accurately.
-    try {
-      const existingThreadId = threadMap.get(chatId)
-      const appServer = resolveAppServer()
-      const { stream, threadId, turnId } = await appServer.runTurnStream(
-        existingThreadId ? { prompt, model, threadId: existingThreadId } : { prompt, model },
-      )
-      if (!existingThreadId) threadMap.set(chatId, threadId)
-      let text = ''
-      const reasoningParts: ReasoningPart[] = []
-      let lastMessageChunk: string | null = null
-      let lastReasoningChunk: string | null = null
-      let latestUsage: TokenUsage | null = null
-      for await (const delta of stream) {
-        if ((delta as { type?: string }).type === 'usage') {
-          latestUsage = (delta as { usage: TokenUsage }).usage
-          await db.appendUsage(buildUsagePayload(turnId, latestUsage) as never)
-          await db.appendEvent({
-            conversationId,
-            turnId,
-            method: 'usage',
-            payload: latestUsage,
-            receivedAt: Date.now(),
-          })
-          continue
-        }
-        if (typeof delta === 'string') {
-          if (delta !== lastMessageChunk) {
-            const clean = stripAnsi(delta)
-            text += clean
-            lastMessageChunk = clean
-          }
-        } else if ((delta as { type?: string }).type === 'message') {
-          const chunk = stripAnsi((delta as { delta: string }).delta)
-          if (chunk !== lastMessageChunk) {
-            text += chunk
-            lastMessageChunk = chunk
-          }
-        } else if ((delta as { type?: string }).type === 'reasoning') {
-          const chunk = stripAnsi((delta as { delta: string }).delta)
-          if (chunk !== lastReasoningChunk) {
-            reasoningParts.push({ type: 'text', text: chunk })
-            lastReasoningChunk = chunk
-          }
-        } else if ((delta as { type?: string }).type === 'tool') {
-          const toolDelta = delta as Extract<StreamDelta, { type: 'tool' }>
-          await persistToolDelta(db, turnId, conversationId, toolDelta)
-          text += `\n${formatToolDelta(toolDelta)}\n`
-        }
-      }
-
-      await persistAssistant(turnId, text, {
-        threadId,
-        turnId,
-        tokenUsage: latestUsage,
-        reasoningSummary: reasoningParts.map((p) => p.text),
-      })
-      await db.upsertConversation({
-        conversationId,
-        threadId: threadId ?? '',
-        modelProvider: 'codex',
-        clientName: 'jangar',
-        at: Date.now(),
-      })
-      for (const [idx, r] of reasoningParts.entries()) {
-        await db.appendReasoning({
-          turnId,
-          itemId: `${turnId}-reasoning-${idx}`,
-          summaryText: [r.text],
-          position: idx,
-          createdAt: Date.now(),
-        })
-      }
-      if (latestUsage) {
-        await db.appendUsage(buildUsagePayload(turnId, latestUsage) as never)
-      }
-      await db.upsertTurn({
-        turnId,
-        conversationId,
-        chatId,
-        userId,
-        model: model ?? '',
-        serviceTier,
-        status: 'succeeded',
-        startedAt,
-        endedAt: Date.now(),
-      })
-
-      const promptTokens = includeUsage ? (latestUsage?.input_tokens ?? estimateTokens(prompt)) : undefined
-      const completionTokens = includeUsage ? (latestUsage?.output_tokens ?? estimateTokens(text)) : undefined
-
-      const responseBody = JSON.stringify({
-        id: `chatcmpl-${crypto.randomUUID()}`,
-        object: 'chat.completion',
-        created: Math.floor(Date.now() / 1000),
-        model,
-        system_fingerprint: systemFingerprint,
-        service_tier: serviceTier,
-        chat_id: chatId,
-        choices: [
-          {
-            index: 0,
-            message: {
-              role: 'assistant' as const,
-              content: text,
-              refusal: null,
-              reasoning_content: reasoningParts.length ? reasoningParts : undefined,
-            },
-            finish_reason: 'stop' as const,
-            logprobs: null,
-          },
-        ],
-        ...(includeUsage
-          ? {
-              usage: {
-                prompt_tokens: promptTokens,
-                completion_tokens: completionTokens,
-                total_tokens: (promptTokens ?? 0) + (completionTokens ?? 0),
-                prompt_tokens_details: {
-                  cached_tokens: latestUsage?.cached_input_tokens ?? 0,
-                  audio_tokens: 0,
-                },
-                completion_tokens_details: {
-                  reasoning_tokens:
-                    latestUsage?.reasoning_output_tokens ??
-                    (reasoningParts.length ? estimateTokens(reasoningParts.map((p) => p.text).join(' ')) : 0),
-                  audio_tokens: 0,
-                  accepted_prediction_tokens: 0,
-                  rejected_prediction_tokens: 0,
-                },
-              },
-            }
-          : {}),
-      })
-
-      return new Response(responseBody, {
-        headers: {
-          'content-type': 'application/json',
-          'content-length': String(responseBody.length),
+      threadMap.delete(chatId)
+      const encoder = new TextEncoder()
+      const errorStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+          controller.close()
         },
       })
-    } catch (error) {
-      const codexError = parseCodexError(error)
-      if (codexError?.codexErrorInfo === 'contextWindowExceeded') {
-        const message = codexError.message ?? defaultContextWindowMessage
-        threadMap.delete(chatId)
-        await persistFailedTurn(
-          db,
-          {
-            turnId,
-            conversationId,
-            chatId,
-            userId,
-            model,
-            startedAt,
-          },
-          message,
-        )
-        return buildContextWindowExceededResponse(message)
-      }
+      return new Response(errorStream, {
+        status: 400,
+        headers: {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          connection: 'keep-alive',
+          'x-accel-buffering': 'no',
+        },
+      })
+    }
 
-      await persistFailedTurn(
-        db,
-        {
+    try {
+      const existingThreadId = threadMap.get(chatId)
+      const sseOptions: StreamOptions = existingThreadId
+        ? {
+            model,
+            signal: request.signal,
+            chatId,
+            includeUsage,
+            threadId: existingThreadId,
+            db,
+            conversationId,
+            turnId,
+            userId,
+            startedAt,
+          }
+        : {
+            model,
+            signal: request.signal,
+            chatId,
+            includeUsage,
+            db,
+            conversationId,
+            turnId,
+            userId,
+            startedAt,
+          }
+
+      sseOptions.onComplete = async (text: string, reasoning, meta) => {
+        await db.upsertConversation({
+          conversationId,
+          threadId: meta.threadId ?? threadMap.get(chatId) ?? '',
+          modelProvider: 'codex',
+          clientName: 'jangar',
+          at: Date.now(),
+        })
+
+        for (const [idx, r] of reasoning.entries()) {
+          await db.appendReasoning({
+            turnId,
+            itemId: `${turnId}-reasoning-${idx}`,
+            summaryText: [r.text],
+            position: idx,
+            createdAt: Date.now(),
+          })
+        }
+
+        if (meta.tokenUsage) {
+          await db.appendUsage(buildUsagePayload(turnId, meta.tokenUsage) as never)
+        }
+
+        await persistAssistant(turnId, text, meta)
+        await db.upsertTurn({
           turnId,
           conversationId,
           chatId,
           userId,
-          model,
+          model: model ?? '',
+          serviceTier,
+          status: 'succeeded',
           startedAt,
+          endedAt: Date.now(),
+        })
+      }
+
+      return await streamSse(prompt, sseOptions)
+    } catch (error) {
+      console.error('[jangar] codex app-server stream error', error)
+      threadMap.delete(chatId)
+
+      const encoder = new TextEncoder()
+      const errorStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify({ error: 'codex app-server failed', details: `${error}` })}\n\n`),
+          )
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+          controller.close()
         },
-        `${error}`,
-      )
-      console.error('[jangar] codex app-server error', error)
-      return new Response(JSON.stringify({ error: 'codex app-server failed', details: `${error}` }), {
-        status: 500,
-        headers: { 'content-type': 'application/json' },
+      })
+
+      return new Response(errorStream, {
+        status: 200,
+        headers: {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          connection: 'keep-alive',
+          'x-accel-buffering': 'no',
+        },
       })
     }
   }

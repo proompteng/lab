@@ -16,7 +16,6 @@ export const Route = createFileRoute('/openai/v1/models')({
         return new Response(body, {
           headers: {
             'content-type': 'application/json',
-            'content-length': String(body.length),
           },
         })
       },
