@@ -17,8 +17,9 @@ describe('buildModelsResponse', () => {
     expect(data).toHaveLength(supportedModels.length)
 
     data.forEach((entry, i) => {
-      expect(entry.id).toBe(supportedModels[i])
-      expect(entry.root).toBe(supportedModels[i])
+      const expected = supportedModels[i] ?? supportedModels[0]
+      expect(entry.id).toBe(expected)
+      expect(entry.root).toBe(expected)
       expect(entry.owned_by).toBe('jangar')
       expect(entry.object).toBe('model')
       expect(entry.parent).toBeNull()

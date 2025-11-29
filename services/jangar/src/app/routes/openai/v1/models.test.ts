@@ -7,7 +7,7 @@ describe('models route helpers', () => {
     const { object, data } = buildModelsResponse()
 
     expect(object).toBe('list')
-    expect(data.map((m) => m.id)).toEqual(supportedModels)
+    expect(data.map((m) => m.id)).toEqual([...supportedModels])
     data.forEach((entry) => {
       expect(entry.object).toBe('model')
       expect(entry.parent).toBeNull()
