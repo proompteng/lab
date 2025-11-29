@@ -2,14 +2,16 @@
 # Bun + Node image for jangar worker + UI + Codex app-server
 ARG NODE_VERSION=24.11.1
 ARG BUN_VERSION=1.3.3
+ARG OPENVSCODE_VERSION=1.105.1
 
 FROM node:${NODE_VERSION}-bookworm AS base
 ARG BUN_VERSION
+ARG OPENVSCODE_VERSION
 ENV BUN_INSTALL=/root/.bun
 ENV PATH="$BUN_INSTALL/bin:$PATH"
 WORKDIR /app
 
-ENV CODEX_CWD=/app/github.com/lab \
+ENV CODEX_CWD=/workspace/lab \
   CODEX_REPO_SLUG=proompteng/lab \
   CODEX_REPO_URL=https://github.com/proompteng/lab.git \
   CODEX_BOOTSTRAP_REPO=1
@@ -22,7 +24,8 @@ RUN set -eux; \
     ca-certificates \
     curl \
     git \
-    gnupg; \
+    gnupg \
+    tini; \
   install -m 0755 -d /etc/apt/keyrings; \
   curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg; \
   chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
@@ -68,6 +71,20 @@ RUN rm -rf node_modules \
 # Install Codex CLI so the app-server binary is available at runtime
 RUN npm install -g @openai/codex@latest
 
+# Install openvscode-server (upstream VS Code server build from gitpod-io)
+RUN set -eux; \
+  ARCH="$(uname -m)"; \
+  case "$ARCH" in \
+    aarch64|arm64) OVS_ARCH=arm64 ;; \
+    x86_64|amd64)  OVS_ARCH=x64 ;; \
+    *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  curl -fL "https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-v${OPENVSCODE_VERSION}/openvscode-server-v${OPENVSCODE_VERSION}-linux-${OVS_ARCH}.tar.gz" -o /tmp/ovscode.tar.gz; \
+  mkdir -p /opt/openvscode-server; \
+  tar -xzf /tmp/ovscode.tar.gz -C /opt/openvscode-server --strip-components=1; \
+  rm /tmp/ovscode.tar.gz; \
+  ln -sf /opt/openvscode-server/bin/openvscode-server /usr/local/bin/openvscode-server
+
 # Authenticate gh during build (requires BuildKit secret github_token with workflow scope)
 RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
   set -eux; \
@@ -81,5 +98,29 @@ RUN git config --global user.name "tuslagch" \
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV WORKER_PORT=8070
+ENV VSCODE_PORT=8081
+ENV VSCODE_DATA_DIR=/workspace/.ovscode
+ENV VSCODE_DEFAULT_FOLDER=/workspace/lab
 
+# Launch openvscode-server alongside the app
+RUN cat <<'EOF' > /usr/local/bin/entrypoint.sh \
+  && chmod +x /usr/local/bin/entrypoint.sh
+#!/bin/bash
+set -euo pipefail
+mkdir -p "$VSCODE_DATA_DIR" "$VSCODE_DEFAULT_FOLDER"
+# Start OpenVSCode in background; exit container if it dies
+openvscode-server \
+  --host 0.0.0.0 \
+  --port "$VSCODE_PORT" \
+  --disable-telemetry \
+  --without-connection-token \
+  --user-data-dir "$VSCODE_DATA_DIR" \
+  --extensions-dir "$VSCODE_DATA_DIR/extensions" \
+  --default-folder "$VSCODE_DEFAULT_FOLDER" &
+vscode_pid=$!
+trap "kill $vscode_pid" EXIT
+exec "$@"
+EOF
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 CMD ["bun", "run", "src/index.ts"]

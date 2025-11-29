@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
-import { buildPrompt, deriveTitle, estimateTokens, formatToolDelta, resolveModel, stripAnsi } from './chat-completion'
+import { buildPrompt, estimateTokens, formatToolDelta, stripAnsi } from './chat-completion'
+import { defaultCodexModel, isSupportedModel, resolveModel, supportedModels } from './models'
 
 describe('stripAnsi', () => {
   it('removes color codes', () => {
@@ -10,14 +11,23 @@ describe('stripAnsi', () => {
 
 describe('resolveModel', () => {
   it('falls back to the default model when unspecified or meta-orchestrator', () => {
-    const defaultModel = resolveModel(undefined)
-
-    expect(resolveModel('meta-orchestrator')).toBe(defaultModel)
-    expect(defaultModel).toBeTruthy()
+    expect(resolveModel(undefined)).toBe(defaultCodexModel)
+    expect(resolveModel('meta-orchestrator')).toBe(defaultCodexModel)
   })
 
   it('returns the requested model when provided', () => {
-    expect(resolveModel('gpt-4.1')).toBe('gpt-4.1')
+    expect(resolveModel(supportedModels[1])).toBe(supportedModels[1])
+  })
+
+  it('falls back to default for unsupported models', () => {
+    expect(resolveModel('not-a-model')).toBe(defaultCodexModel)
+  })
+})
+
+describe('isSupportedModel', () => {
+  it('validates known ids', () => {
+    expect(isSupportedModel(supportedModels[0])).toBe(true)
+    expect(isSupportedModel('unknown')).toBe(false)
   })
 })
 
@@ -30,22 +40,6 @@ describe('buildPrompt', () => {
     ])
 
     expect(prompt).toBe('system: {"topic":"tests"}\nuser: hello\nassistant: hi')
-  })
-})
-
-describe('deriveTitle', () => {
-  it('uses the chat id when provided', () => {
-    expect(deriveTitle('abc-123', [])).toBe('openwebui:abc-123')
-  })
-
-  it('derives a title from the first user message and truncates to 60 characters', () => {
-    const long = 'a'.repeat(80)
-
-    expect(deriveTitle(undefined, [{ role: 'user', content: long }])).toBe(long.slice(0, 60))
-  })
-
-  it('defaults to a generic label when no messages exist', () => {
-    expect(deriveTitle(undefined, [])).toBe('OpenWebUI chat')
   })
 })
 

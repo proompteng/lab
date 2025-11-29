@@ -91,15 +91,19 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   })
 }
 
-runManaged('convex', [bunBin, 'x', 'convex', 'dev'], {
+const convexUrl = process.env.CONVEX_URL ?? process.env.VITE_CONVEX_URL ?? 'http://127.0.0.1:3210'
+const convexDeployment = process.env.CONVEX_DEPLOYMENT ?? 'anonymous:anonymous-agent'
+const convexEnv = {
   CONVEX_AGENT_MODE: 'anonymous',
-  CONVEX_DEPLOYMENT: '',
-  CONVEX_URL: '',
-})
+  CONVEX_DEPLOYMENT: convexDeployment,
+  CONVEX_URL: convexUrl,
+  VITE_CONVEX_URL: process.env.VITE_CONVEX_URL ?? convexUrl,
+}
+runManaged('convex', [bunBin, 'x', 'convex', 'dev'], convexEnv)
 
-runManaged('app', [bunBin, 'run', 'dev:app'], { SKIP_WORKER: '1' })
+runManaged('app', [bunBin, 'run', 'dev:app'], { SKIP_WORKER: '1', ...convexEnv })
 
-runManaged('worker', [bunBin, 'run', 'dev:worker'])
+runManaged('worker', [bunBin, 'run', 'dev:worker'], convexEnv)
 
 runManaged(
   'codex',

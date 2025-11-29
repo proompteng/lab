@@ -30,27 +30,29 @@ spec:
               value: default
             - name: TEMPORAL_TASK_QUEUE
               value: jangar
+            - name: CONVEX_URL
+              value: https://convex.proompteng.ai
             - name: NODE_ENV
               value: production
             - name: CODEX_BIN
               value: /usr/local/bin/codex
             - name: CODEX_CWD
-              value: /app/github.com/lab
+              value: /tmp/lab
             - name: CODEX_REPO_SLUG
               value: proompteng/lab
             - name: CODEX_REPO_URL
               value: https://github.com/proompteng/lab.git
             - name: CODEX_BOOTSTRAP_REPO
               value: "1"
-          resources:
-            requests:
-              cpu: "2"
-              memory: 4Gi
-            limits:
-              cpu: "2"
-              memory: 4Gi
           readinessProbe:
             exec:
               command: ["/bin/sh", "-c", "echo ok"]
             initialDelaySeconds: 5
             periodSeconds: 30
+      resources:
+        requests:
+          cpu: "2"
+          memory: 4Gi
+        limits:
+          cpu: "2"
+          memory: 4Gi

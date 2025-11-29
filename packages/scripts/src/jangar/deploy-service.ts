@@ -356,7 +356,7 @@ export const main = async (options: DeployOptions = {}) => {
   )
   const serviceManifest = resolve(
     repoRoot,
-    options.serviceManifest ?? process.env.JANGAR_SERVICE_MANIFEST ?? 'argocd/applications/jangar/kservice.yaml',
+    options.serviceManifest ?? process.env.JANGAR_SERVICE_MANIFEST ?? 'argocd/applications/jangar/deployment.yaml',
   )
 
   // Persist image tag and rollout marker in Git before applying

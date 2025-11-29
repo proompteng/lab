@@ -1,27 +1,28 @@
-apiVersion: serving.knative.dev/v1
-kind: Service
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: jangar
   namespace: jangar
   labels:
+    app: jangar
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
-    networking.knative.dev/visibility: cluster-local
   annotations:
-    serving.knative.dev/rollout-duration: 10s
-    argocd.argoproj.io/compare-options: IgnoreExtraneous
-    argocd.argoproj.io/tracking-id: jangar:serving.knative.dev/Service:jangar/jangar
-    networking.knative.dev/visibility: cluster-local
-    deploy.knative.dev/rollout: "2025-11-28T07:47:50.765Z"
+    deploy.knative.dev/rollout: "2025-11-29T01:35:20.642Z"
 spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: jangar
   template:
     metadata:
       labels:
-        networking.knative.dev/visibility: cluster-local
-      annotations:
-        autoscaling.knative.dev/minScale: "1"
+        app: jangar
+        app.kubernetes.io/name: jangar
+        app.kubernetes.io/part-of: lab
     spec:
-      containerConcurrency: 0
       containers:
         - name: app
           image: registry.ide-newton.ts.net/lab/jangar:latest
@@ -29,6 +30,8 @@ spec:
           env:
             - name: NODE_ENV
               value: production
+            - name: CONVEX_URL
+              value: https://convex.proompteng.ai
             - name: UI_PORT
               value: "8080"
             - name: ENABLE_TEMPORAL_WORKER
@@ -36,22 +39,29 @@ spec:
             - name: CODEX_BIN
               value: /usr/local/bin/codex
             - name: CODEX_CWD
-              value: /app/github.com/lab
+              value: /workspace/lab
             - name: CODEX_REPO_SLUG
               value: proompteng/lab
             - name: CODEX_REPO_URL
               value: https://github.com/proompteng/lab.git
             - name: CODEX_BOOTSTRAP_REPO
               value: "1"
+            - name: VSCODE_DATA_DIR
+              value: /workspace/.ovscode
+            - name: VSCODE_DEFAULT_FOLDER
+              value: /workspace/lab
           ports:
-            - name: http1
+            - name: http
               containerPort: 8080
               protocol: TCP
+            - name: vscode
+              containerPort: 8081
+              protocol: TCP
           readinessProbe:
-            successThreshold: 1
             httpGet:
               path: /health
               port: 8080
+            successThreshold: 1
           resources:
             requests:
               cpu: "2"
@@ -59,3 +69,10 @@ spec:
             limits:
               cpu: "2"
               memory: 4Gi
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: jangar-workspace

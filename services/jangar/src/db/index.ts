@@ -1,28 +1,113 @@
 import { ConvexHttpClient } from 'convex/browser'
-import type {
-  AppendMessageInput,
-  ChatMessage,
-  ChatSession,
-  CreateWorkOrderInput,
-  WorkOrder,
-  WorkOrderStatus,
-} from '../types/persistence'
 
-export interface DbClient {
-  createWorkOrder: (input: CreateWorkOrderInput) => Promise<string>
-  updateWorkOrderStatus: (id: string, status: WorkOrderStatus) => Promise<void>
-  updateWorkOrderResult: (id: string, prUrl?: string) => Promise<void>
-  listWorkOrders: (sessionId: string) => Promise<WorkOrder[]>
-  getWorkOrder: (id: string) => Promise<WorkOrder | null>
-  appendMessage: (input: AppendMessageInput) => Promise<string>
-  listMessages: (sessionId: string) => Promise<ChatMessage[]>
-  createSession: (userId: string, title: string) => Promise<string>
-  updateSessionLastMessage: (sessionId: string, at: number) => Promise<void>
-  getSession: (sessionId: string) => Promise<ChatSession | null>
-  listSessions: (userId?: string) => Promise<ChatSession[]>
+type TokenUsage = {
+  input_tokens?: number
+  cached_input_tokens?: number
+  output_tokens?: number
+  reasoning_output_tokens?: number
+  total_tokens?: number
 }
 
-let client: ConvexHttpClient | null = null
+type PersistMeta = {
+  threadId?: string
+  turnId?: string
+  tokenUsage?: TokenUsage | null
+  reasoningSummary?: string[]
+}
+
+export interface DbClient {
+  upsertConversation: (input: {
+    conversationId: string
+    threadId?: string
+    modelProvider?: string
+    clientName?: string
+    at: number
+  }) => Promise<string>
+  upsertTurn: (input: {
+    turnId: string
+    conversationId: string
+    chatId?: string
+    userId?: string
+    model?: string
+    serviceTier?: string
+    status: string
+    error?: string
+    path?: string
+    turnNumber?: number
+    startedAt: number
+    endedAt?: number
+  }) => Promise<string>
+  appendMessage: (input: {
+    turnId: string
+    role: string
+    content: string
+    rawContent?: unknown
+    createdAt: number
+  }) => Promise<string>
+  appendReasoning: (input: {
+    turnId: string
+    itemId: string
+    summaryText?: string[]
+    rawContent?: unknown
+    position?: number
+    createdAt: number
+  }) => Promise<string>
+  appendUsage: (input: {
+    turnId: string
+    totalInputTokens?: number
+    cachedInputTokens?: number
+    outputTokens?: number
+    reasoningOutputTokens?: number
+    totalTokens?: number
+    modelContextWindow?: number
+    source?: string
+    capturedAt: number
+  }) => Promise<string>
+  appendRateLimit: (input: {
+    turnId: string
+    scope: string
+    usedPercent?: number
+    windowMinutes?: number
+    resetsAt?: number
+    balance?: string
+    unlimited?: boolean
+    hasCredits?: boolean
+    capturedAt: number
+  }) => Promise<string>
+  upsertCommand: (input: {
+    callId: string
+    turnId: string
+    command: string[]
+    cwd?: string
+    source?: string
+    parsedCmd?: unknown
+    status?: string
+    startedAt: number
+    endedAt?: number
+    exitCode?: number
+    durationMs?: number
+    stdout?: string
+    stderr?: string
+    aggregatedOutput?: string
+    chunked: boolean
+  }) => Promise<string>
+  appendCommandChunk: (input: {
+    callId: string
+    stream: string
+    seq: number
+    chunkBase64: string
+    encoding?: string
+    createdAt: number
+  }) => Promise<string>
+  appendEvent: (input: {
+    conversationId: string
+    turnId?: string
+    method: string
+    payload: unknown
+    receivedAt: number
+  }) => Promise<string>
+  appendAssistantMessageWithMeta: (turnId: string, content: string, meta?: PersistMeta) => Promise<string>
+}
 
 const getEnv = () => {
   const convexUrl =
@@ -30,6 +115,8 @@ const getEnv = () => {
     Bun.env.CONVEX_DEPLOYMENT ??
     Bun.env.CONVEX_SITE_ORIGIN ??
     Bun.env.CONVEX_SELF_HOSTED_URL ??
+    // When running `bun run dev:all`, Convex often binds to the port written to VITE_CONVEX_URL.
+    Bun.env.VITE_CONVEX_URL ??
     'http://127.0.0.1:3210'
 
   const adminKey = Bun.env.CONVEX_ADMIN_KEY ?? Bun.env.CONVEX_DEPLOY_KEY
@@ -39,77 +126,59 @@ const getEnv = () => {
   return { convexUrl, adminKey, skipUrlCheck }
 }
 
-const getClient = () => {
-  if (client) return client
+const createClient = () => {
   const { convexUrl, adminKey, skipUrlCheck } = getEnv()
-  client = new ConvexHttpClient(convexUrl, { skipConvexDeploymentUrlCheck: skipUrlCheck })
+  const client = new ConvexHttpClient(convexUrl, { skipConvexDeploymentUrlCheck: skipUrlCheck })
   if (adminKey) {
-    client.setAuth(adminKey)
+    // @ts-expect-error setAdminAuth exists at runtime but may not be in browser typings
+    client.setAdminAuth(adminKey)
   }
   return client
 }
 
 export const createDbClient = async (): Promise<DbClient> => {
-  const convex = getClient()
-
+  const convex = createClient()
   const mutate = (name: string, args: Record<string, unknown>) => convex.mutation(name as never, args as never)
-  const query = async <T>(name: string, args: Record<string, unknown>) =>
-    (await convex.query(name as never, args as never)) as T
-
   const now = () => Date.now()
 
-  const createSession = async (userId: string, title: string) => {
-    const createdAt = now()
-    return mutate('chat:createSession', { userId, title, createdAt }) as unknown as Promise<string>
-  }
+  const upsertConversation: DbClient['upsertConversation'] = (input) =>
+    mutate('app:upsertConversation', input) as unknown as Promise<string>
 
-  const updateSessionLastMessage = async (sessionId: string, at: number) => {
-    await mutate('chat:updateLastMessage', { sessionId, at })
-  }
+  const upsertTurn: DbClient['upsertTurn'] = (input) => mutate('app:upsertTurn', input) as unknown as Promise<string>
 
-  const getSession = async (sessionId: string) => query<ChatSession | null>('chat:getSession', { sessionId })
+  const appendMessage: DbClient['appendMessage'] = (input) =>
+    mutate('app:appendMessage', input) as unknown as Promise<string>
 
-  const listSessions = async (userId?: string) => query<ChatSession[]>('chat:listSessions', { userId })
+  const appendReasoning: DbClient['appendReasoning'] = (input) =>
+    mutate('app:appendReasoningSection', input) as unknown as Promise<string>
 
-  const appendMessage = async (input: AppendMessageInput) => {
-    const createdAt = now()
-    return mutate('chat:appendMessage', { ...input, createdAt }) as unknown as Promise<string>
-  }
+  const appendUsage: DbClient['appendUsage'] = (input) =>
+    mutate('app:appendUsageSnapshot', input) as unknown as Promise<string>
 
-  const listMessages = async (sessionId: string) => query<ChatMessage[]>('chat:listMessages', { sessionId })
+  const appendRateLimit: DbClient['appendRateLimit'] = (input) =>
+    mutate('app:appendRateLimit', input) as unknown as Promise<string>
 
-  const createWorkOrder = async (input: CreateWorkOrderInput) => {
-    const createdAt = now()
-    return mutate('workOrders:create', {
-      ...input,
-      status: input.status ?? 'submitted',
-      createdAt,
-    }) as unknown as Promise<string>
-  }
+  const upsertCommand: DbClient['upsertCommand'] = (input) =>
+    mutate('app:upsertCommand', input) as unknown as Promise<string>
 
-  const updateWorkOrderStatus = async (id: string, status: WorkOrderStatus) => {
-    await mutate('workOrders:updateStatus', { workOrderId: id, status, at: now() })
-  }
+  const appendCommandChunk: DbClient['appendCommandChunk'] = (input) =>
+    mutate('app:appendCommandChunk', input) as unknown as Promise<string>
 
-  const updateWorkOrderResult = async (id: string, prUrl?: string) => {
-    await mutate('workOrders:updateResult', { workOrderId: id, prUrl, updatedAt: now() })
-  }
+  const appendEvent: DbClient['appendEvent'] = (input) => mutate('app:appendEvent', input) as unknown as Promise<string>
 
-  const listWorkOrders = async (sessionId: string) => query<WorkOrder[]>('workOrders:listBySession', { sessionId })
-
-  const getWorkOrder = async (id: string) => query<WorkOrder | null>('workOrders:get', { workOrderId: id })
+  const appendAssistantMessageWithMeta: DbClient['appendAssistantMessageWithMeta'] = (turnId, content, meta) =>
+    appendMessage({ turnId, role: 'assistant', content, rawContent: meta, createdAt: now() })
 
   return {
-    createWorkOrder,
-    updateWorkOrderStatus,
-    updateWorkOrderResult,
-    listWorkOrders,
-    getWorkOrder,
+    upsertConversation,
+    upsertTurn,
     appendMessage,
-    listMessages,
-    createSession,
-    updateSessionLastMessage,
-    getSession,
-    listSessions,
+    appendReasoning,
+    appendUsage,
+    appendRateLimit,
+    upsertCommand,
+    appendCommandChunk,
+    appendEvent,
+    appendAssistantMessageWithMeta,
   }
 }

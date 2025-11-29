@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { CodexAppServerClient, type StreamDelta } from '@proompteng/codex'
@@ -31,6 +31,8 @@ const DEFAULT_REPO_SLUG = process.env.CODEX_REPO_SLUG ?? 'proompteng/lab'
 const DEFAULT_REPO_URL = process.env.CODEX_REPO_URL ?? `https://github.com/${DEFAULT_REPO_SLUG}.git`
 const DEFAULT_CWD = process.env.CODEX_CWD ?? join('/app', 'github.com', 'lab')
 const SHOULD_BOOTSTRAP_REPO = process.env.CODEX_BOOTSTRAP_REPO !== '0'
+const IS_DEV = process.env.NODE_ENV !== 'production'
+const DEV_LOG_PATH = process.env.APP_SERVER_DEV_LOG_PATH ?? join(process.cwd(), '.logs', 'app-server-dev.log')
 
 const hasCommand = (cmd: string) => {
   try {
@@ -80,6 +82,18 @@ const startAppServerInternal = (
 ): AppServerHandle => {
   ensureRepoCheckout(workingDirectory ?? DEFAULT_CWD)
 
+  const logToFile = (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => {
+    if (!IS_DEV) return
+    try {
+      mkdirSync(dirname(DEV_LOG_PATH), { recursive: true })
+      const line = `${new Date().toISOString()} [${level}] ${message}${meta ? ` ${JSON.stringify(meta)}` : ''}\n`
+      appendFileSync(DEV_LOG_PATH, line)
+    } catch (error) {
+      // Swallow file logging errors to avoid breaking dev flow.
+      console.warn('[jangar][codex] failed to write app-server dev log', error)
+    }
+  }
+
   const client = new CodexAppServerClient({
     binaryPath,
     ...(workingDirectory ? { cwd: workingDirectory } : { cwd: DEFAULT_CWD }),
@@ -92,6 +106,7 @@ const startAppServerInternal = (
       if (level === 'info') console.info('[jangar][codex]', payload)
       else if (level === 'warn') console.warn('[jangar][codex]', payload)
       else console.error('[jangar][codex]', payload)
+      logToFile(level, message, meta as Record<string, unknown> | undefined)
     },
   })
 
