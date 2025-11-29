@@ -1,10 +1,10 @@
 import { createDbClient } from '~/services/db'
-import { buildPrompt, deriveChatId } from './utils'
+import { isSupportedModel, resolveModel, supportedModels } from '~/services/models'
 import { buildUsagePayload, persistAssistant, persistFailedTurn } from './persistence'
 import { defaultUserId, lastChatIdForUser, serviceTier, threadMap } from './state'
 import { streamSse } from './stream'
-import { isSupportedModel, resolveModel, supportedModels } from '~/services/models'
-import type { ChatCompletionRequest, Message } from './types'
+import type { ChatCompletionRequest, Message, PersistMeta, ReasoningPart, StreamOptions } from './types'
+import { buildPrompt, deriveChatId } from './utils'
 
 const buildSseErrorResponse = (payload: unknown, status = 400) => {
   const encoder = new TextEncoder()
@@ -112,54 +112,53 @@ export const createChatCompletionHandler = (pathLabel: string) => {
 
     try {
       const existingThreadId = threadMap.get(chatId)
-      const sseOptions = {
+      const sseOptions: StreamOptions = {
         model,
         signal: request.signal,
         chatId,
         includeUsage,
-        threadId: existingThreadId,
+        ...(existingThreadId ? { threadId: existingThreadId } : {}),
         db,
         conversationId,
         turnId,
         userId,
         startedAt,
-      }
-
-      sseOptions.onComplete = async (text: string, reasoning, meta) => {
-        await db.upsertConversation({
-          conversationId,
-          threadId: meta.threadId ?? threadMap.get(chatId) ?? '',
-          modelProvider: 'codex',
-          clientName: 'jangar',
-          at: Date.now(),
-        })
-
-        for (const [idx, r] of reasoning.entries()) {
-          await db.appendReasoning({
-            turnId,
-            itemId: `${turnId}-reasoning-${idx}`,
-            summaryText: [r.text],
-            position: idx,
-            createdAt: Date.now(),
+        onComplete: async (text: string, reasoning: ReasoningPart[], meta: PersistMeta) => {
+          await db.upsertConversation({
+            conversationId,
+            threadId: meta.threadId ?? threadMap.get(chatId) ?? '',
+            modelProvider: 'codex',
+            clientName: 'jangar',
+            at: Date.now(),
           })
-        }
 
-        if (meta.tokenUsage) {
-          await db.appendUsage(buildUsagePayload(turnId, meta.tokenUsage) as never)
-        }
+          for (const [idx, r] of reasoning.entries()) {
+            await db.appendReasoning({
+              turnId,
+              itemId: `${turnId}-reasoning-${idx}`,
+              summaryText: [r.text],
+              position: idx,
+              createdAt: Date.now(),
+            })
+          }
 
-        await persistAssistant(turnId, text, meta)
-        await db.upsertTurn({
-          turnId,
-          conversationId,
-          chatId,
-          userId,
-          model: model ?? '',
-          serviceTier,
-          status: 'succeeded',
-          startedAt,
-          endedAt: Date.now(),
-        })
+          if (meta.tokenUsage) {
+            await db.appendUsage(buildUsagePayload(turnId, meta.tokenUsage) as never)
+          }
+
+          await persistAssistant(turnId, text, meta)
+          await db.upsertTurn({
+            turnId,
+            conversationId,
+            chatId,
+            userId,
+            model: model ?? '',
+            serviceTier,
+            status: 'succeeded',
+            startedAt,
+            endedAt: Date.now(),
+          })
+        },
       }
 
       return await streamSse(prompt, sseOptions)

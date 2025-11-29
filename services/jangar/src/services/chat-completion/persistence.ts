@@ -1,7 +1,8 @@
 import { createDbClient } from '~/services/db'
 import { serviceTier } from './state'
-import { buildUsagePayload } from './utils'
-import type { NormalizedCodexError, ToolDelta, TokenUsage } from './types'
+import type { NormalizedCodexError, TokenUsage, ToolDelta } from './types'
+
+export { buildUsagePayload } from './utils'
 
 export const persistAssistant = async (
   turnId: string,
@@ -202,5 +203,3 @@ export const persistFailedTurnEvent = (
     payload,
     receivedAt: Date.now(),
   })
-
-export { buildUsagePayload } from './utils'

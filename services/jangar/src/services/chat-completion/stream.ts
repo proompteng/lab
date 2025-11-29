@@ -1,7 +1,7 @@
-import { createSafeEnqueuer, estimateTokens, formatToolDelta, stripAnsi } from './utils'
 import { buildContextWindowExceededResponse, parseCodexError, persistFailedTurn, persistToolDelta } from './persistence'
 import { resolveAppServer, serviceTier, systemFingerprint, threadMap } from './state'
 import type { ReasoningPart, StreamOptions, TokenUsage, ToolDelta } from './types'
+import { buildUsagePayload, createSafeEnqueuer, estimateTokens, formatToolDelta, stripAnsi } from './utils'
 
 const createStreamBody = (prompt: string, opts: StreamOptions) => {
   const appServer = resolveAppServer()
@@ -11,9 +11,10 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
   return (async () => {
     let streamHandle: Awaited<ReturnType<ReturnType<typeof resolveAppServer>['runTurnStream']>>
     try {
-      streamHandle = existingThreadId
-        ? await appServer.runTurnStream({ prompt, model: targetModel, threadId: existingThreadId })
-        : await appServer.runTurnStream({ prompt, model: targetModel })
+      const runTurnArgs: { prompt: string; model?: string; threadId?: string } = { prompt }
+      if (targetModel) runTurnArgs.model = targetModel
+      if (existingThreadId) runTurnArgs.threadId = existingThreadId
+      streamHandle = await appServer.runTurnStream(runTurnArgs)
     } catch (error) {
       const codexError = parseCodexError(error)
       if (codexError?.codexErrorInfo === 'contextWindowExceeded') {
@@ -26,7 +27,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
             conversationId: opts.conversationId,
             chatId: opts.chatId,
             userId: opts.userId,
-            model: targetModel,
+            model: targetModel ?? null,
             startedAt: opts.startedAt,
           },
           message,
@@ -74,7 +75,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
               conversationId: opts.conversationId,
               chatId: opts.chatId,
               userId: opts.userId,
-              model: targetModel,
+              model: targetModel ?? null,
               startedAt: opts.startedAt,
             },
             `stream timeout after ${streamTimeoutMs}ms`,
@@ -100,7 +101,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
               conversationId: opts.conversationId,
               chatId: opts.chatId,
               userId: opts.userId,
-              model: targetModel,
+              model: targetModel ?? null,
               startedAt: opts.startedAt,
             },
             'client aborted',
@@ -320,7 +321,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
                 conversationId: opts.conversationId,
                 chatId: opts.chatId,
                 userId: opts.userId,
-                model: targetModel,
+                model: targetModel ?? null,
                 startedAt: opts.startedAt,
               },
               message,
@@ -341,7 +342,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
               conversationId: opts.conversationId,
               chatId: opts.chatId,
               userId: opts.userId,
-              model: targetModel,
+              model: targetModel ?? null,
               startedAt: opts.startedAt,
             },
             `${error}`,
@@ -372,7 +373,11 @@ export const streamSse = async (prompt: string, opts: StreamOptions): Promise<Re
   const result = await createStreamBody(prompt, opts)
   if (result.contextError) return result.contextError
 
-  return new Response(result.body!, {
+  if (!result.body) {
+    return new Response('stream body unavailable', { status: 500 })
+  }
+
+  return new Response(result.body, {
     headers: {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache',

@@ -37,7 +37,7 @@ export type StreamOptions = {
   chatId: string
   includeUsage?: boolean
   threadId?: string
-  db: Awaited<ReturnType<typeof import('../db')['createDbClient']>>
+  db: Awaited<ReturnType<typeof import('~/services/db')['createDbClient']>>
   conversationId: string
   turnId: string
   userId: string
