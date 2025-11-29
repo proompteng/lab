@@ -1,0 +1,133 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jangar-alloy
+  namespace: jangar
+data:
+  config.river: |
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+
+    // Jangar web app
+    discovery.kubernetes "jangar" {
+      role = "pod"
+
+      namespaces {
+        names = ["jangar"]
+      }
+
+      selectors {
+        role  = "pod"
+        label = "app=jangar"
+      }
+    }
+
+    loki.source.kubernetes "jangar" {
+      targets    = discovery.kubernetes.jangar.targets
+      forward_to = [loki.process.jangar.receiver]
+    }
+
+    loki.process "jangar" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          app = "jangar",
+          job = "jangar",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    // Jangar worker
+    discovery.kubernetes "jangar_worker" {
+      role = "pod"
+
+      namespaces {
+        names = ["jangar"]
+      }
+
+      selectors {
+        role  = "pod"
+        label = "app=jangar-worker"
+      }
+    }
+
+    loki.source.kubernetes "jangar_worker" {
+      targets    = discovery.kubernetes.jangar_worker.targets
+      forward_to = [loki.process.jangar_worker.receiver]
+    }
+
+    loki.process "jangar_worker" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          app = "jangar-worker",
+          job = "jangar-worker",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    // Jangar Open WebUI Helm release
+    discovery.kubernetes "jangar_openwebui" {
+      role = "pod"
+
+      namespaces {
+        names = ["jangar"]
+      }
+
+      selectors {
+        role  = "pod"
+        label = "app.kubernetes.io/instance=jangar-openwebui"
+      }
+    }
+
+    loki.source.kubernetes "jangar_openwebui" {
+      targets    = discovery.kubernetes.jangar_openwebui.targets
+      forward_to = [loki.process.jangar_openwebui.receiver]
+    }
+
+    loki.process "jangar_openwebui" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          app = "jangar-openwebui",
+          job = "jangar-openwebui",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"
+      }
+    }
+
+    // Future: add OTLP/metrics pipelines here once Jangar publishes telemetry.
