@@ -26,6 +26,21 @@ const buildSseErrorResponse = (payload: unknown, status = 400) => {
   })
 }
 
+const safeStringifyContent = (value: unknown): string => {
+  const seen = new WeakSet<object>()
+  const replacer = (_key: string, val: unknown) => {
+    if (typeof val === 'bigint') throw new TypeError('BigInt not supported in content')
+    if (typeof val === 'object' && val !== null) {
+      if (seen.has(val)) throw new TypeError('circular content not supported')
+      seen.add(val)
+    }
+    return val
+  }
+
+  if (typeof value === 'string') return value
+  return JSON.stringify(value, replacer)
+}
+
 export const createChatCompletionHandler = (pathLabel: string) => {
   return async ({ request }: { request: Request }): Promise<Response> => {
     let body: ChatCompletionRequest
@@ -86,6 +101,22 @@ export const createChatCompletionHandler = (pathLabel: string) => {
       }
     }
 
+    const stringifiedMessages: Array<{ role: string; content: string }> = []
+    try {
+      for (const msg of promptMessages) {
+        stringifiedMessages.push({ role: msg.role, content: safeStringifyContent(msg.content) })
+      }
+    } catch (error) {
+      const payload = {
+        error: {
+          message: `messages content invalid: ${error instanceof Error ? error.message : error}`,
+          type: 'invalid_request_error',
+          code: 'messages_content_invalid',
+        },
+      }
+      return buildSseErrorResponse(payload, 400)
+    }
+
     const model = resolveModel(requestedModel)
     const userId = body.user ?? defaultUserId
     const incomingChatId = deriveChatId(body ?? {})
@@ -93,6 +124,17 @@ export const createChatCompletionHandler = (pathLabel: string) => {
       const payload = {
         error: {
           message: '`chat_id` must be a string when provided',
+          type: 'invalid_request_error',
+          code: 'chat_id_invalid',
+        },
+      }
+      return buildSseErrorResponse(payload, 400)
+    }
+
+    if (incomingChatId && incomingChatId.length > 256) {
+      const payload = {
+        error: {
+          message: '`chat_id` exceeds 256 characters',
           type: 'invalid_request_error',
           code: 'chat_id_invalid',
         },
@@ -120,31 +162,59 @@ export const createChatCompletionHandler = (pathLabel: string) => {
 
     lastChatIdForUser.set(userId, chatId)
 
-    const db = await createDbClient()
-    await db.upsertConversation({
-      conversationId,
-      threadId: threadMap.get(chatId) ?? '',
-      modelProvider: 'codex',
-      clientName: 'jangar',
-      at: startedAt,
-    })
-    await db.upsertTurn({
-      turnId,
-      conversationId,
-      chatId,
-      userId,
-      model,
-      serviceTier,
-      status: 'running',
-      startedAt,
-    })
-    for (const msg of promptMessages) {
-      await db.appendMessage({
-        turnId,
-        role: msg.role,
-        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-        createdAt: startedAt,
+    let db: Awaited<ReturnType<typeof createDbClient>> | null = null
+    try {
+      db = await createDbClient()
+      await db.upsertConversation({
+        conversationId,
+        threadId: threadMap.get(chatId) ?? '',
+        modelProvider: 'codex',
+        clientName: 'jangar',
+        at: startedAt,
       })
+      await db.upsertTurn({
+        turnId,
+        conversationId,
+        chatId,
+        userId,
+        model,
+        serviceTier,
+        status: 'running',
+        startedAt,
+      })
+      for (const msg of stringifiedMessages) {
+        await db.appendMessage({
+          turnId,
+          role: msg.role,
+          content: msg.content,
+          createdAt: startedAt,
+        })
+      }
+    } catch (error) {
+      console.error('[jangar] db write failed before streaming', error)
+      if (db)
+        await persistFailedTurn(
+          db,
+          {
+            turnId,
+            conversationId,
+            chatId,
+            userId,
+            model,
+            startedAt,
+          },
+          `${error}`,
+          'db/error',
+        )
+
+      const payload = {
+        error: {
+          message: 'failed to prepare turn',
+          type: 'server_error',
+          code: 'db_error',
+        },
+      }
+      return buildSseErrorResponse(payload, 500)
     }
 
     const prompt = buildPrompt(promptMessages)
