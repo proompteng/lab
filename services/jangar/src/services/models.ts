@@ -12,8 +12,12 @@ export const isSupportedModel = (model?: string | null): model is (typeof suppor
   isSupportedModelValue(model)
 
 export const resolveModel = (requested?: string | null) => {
-  if (!requested || requested === 'meta-orchestrator') return defaultCodexModel
-  if (isSupportedModel(requested)) return requested
+  if (!requested || requested === 'meta-orchestrator') {
+    return defaultCodexModel
+  }
+  if (isSupportedModel(requested)) {
+    return requested
+  }
   return defaultCodexModel
 }
 

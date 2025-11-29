@@ -32,24 +32,19 @@ export const stripAnsi = (value: string) => {
 }
 
 export const formatToolDelta = (delta: ToolDelta): string => {
-  const statusLabel = delta.status === 'delta' ? '' : ` [${delta.status}]`
-  const kind =
-    delta.toolKind === 'command'
-      ? 'cmd'
-      : delta.toolKind === 'file'
-        ? 'file'
-        : delta.toolKind === 'mcp'
-          ? 'tool'
-          : 'search'
   const detail = delta.detail ? stripAnsi(delta.detail) : ''
 
-  // For streaming command output, wrap in a code fence (TypeScript for readability).
   if (delta.toolKind === 'command' && delta.status === 'delta' && detail) {
     return detail.trim().length ? `\n\n\`\`\`ts\n${detail}\n\`\`\`\n` : detail
   }
 
-  // For non-command deltas, still pass raw progress text through.
   if (delta.status === 'delta' && detail) return detail
+
+  const statusLabel = delta.status === 'delta' ? '' : ` [${delta.status}]`
+  let kind = 'search'
+  if (delta.toolKind === 'command') kind = 'cmd'
+  else if (delta.toolKind === 'file') kind = 'file'
+  else if (delta.toolKind === 'mcp') kind = 'tool'
 
   const suffix = detail ? ` — ${detail}` : ''
 

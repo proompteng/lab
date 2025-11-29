@@ -177,6 +177,26 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
               lastReasoningChunk = reasoningDelta
             }
 
+            const choiceDelta: {
+              role?: 'assistant'
+              content?: string
+              reasoning_content?: string
+              refusal: null
+              tool_calls?: Array<{
+                id: string
+                type: 'function'
+                function: { name: string; arguments: string }
+              }>
+            } = {
+              refusal: null,
+            }
+
+            if (!sentFirstDelta) {
+              choiceDelta.role = 'assistant'
+            }
+            if (contentDelta) choiceDelta.content = contentDelta
+            if (reasoningDelta) choiceDelta.reasoning_content = reasoningDelta
+
             const chunk = {
               id,
               object: 'chat.completion.chunk',
@@ -188,18 +208,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
               choices: [
                 {
                   index: 0,
-                  delta: sentFirstDelta
-                    ? {
-                        content: contentDelta ?? undefined,
-                        reasoning_content: reasoningDelta ?? undefined,
-                        refusal: null,
-                      }
-                    : {
-                        role: 'assistant' as const,
-                        content: contentDelta ?? undefined,
-                        reasoning_content: reasoningDelta ?? undefined,
-                        refusal: null,
-                      },
+                  delta: choiceDelta,
                   finish_reason: null,
                   logprobs: null,
                 },
@@ -208,14 +217,20 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
 
             if (toolDelta && toolDelta.status === 'started') {
               const id = toolDelta.id || `tool_${crypto.randomUUID()}`
-              const name =
-                toolDelta.toolKind === 'command'
-                  ? 'command_execution'
-                  : toolDelta.toolKind === 'file'
-                    ? 'file_change'
-                    : toolDelta.toolKind === 'mcp'
-                      ? 'mcp_tool_call'
-                      : 'web_search'
+              let name: string
+              switch (toolDelta.toolKind) {
+                case 'command':
+                  name = 'command_execution'
+                  break
+                case 'file':
+                  name = 'file_change'
+                  break
+                case 'mcp':
+                  name = 'mcp_tool_call'
+                  break
+                default:
+                  name = 'web_search'
+              }
               const args = {
                 title: stripAnsi(toolDelta.title),
                 detail: toolDelta.detail ? stripAnsi(toolDelta.detail) : undefined,
