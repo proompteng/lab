@@ -11,6 +11,7 @@
     "asvetliakov.vscode-neovim",
     "redhat.vscode-knative",
     "golang.go",
-    "joshmu.periscope"
+    "joshmu.periscope",
+    "oven.bun-vscode"
   ]
 }
