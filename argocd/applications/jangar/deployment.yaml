@@ -23,6 +23,7 @@ spec:
         app.kubernetes.io/name: jangar
         app.kubernetes.io/part-of: lab
     spec:
+      serviceAccountName: jangar-inspector
       containers:
         - name: app
           image: registry.ide-newton.ts.net/lab/jangar:latest
@@ -50,6 +51,12 @@ spec:
               value: /workspace/.ovscode
             - name: VSCODE_DEFAULT_FOLDER
               value: /workspace/lab
+            - name: DOCKER_HOST
+              value: tcp://127.0.0.1:2375
+            - name: DOCKER_TLS_VERIFY
+              value: ""
+            - name: DOCKER_ENABLED
+              value: "1"
           ports:
             - name: http
               containerPort: 8080
@@ -65,14 +72,49 @@ spec:
           resources:
             requests:
               cpu: "2"
-              memory: 4Gi
+              memory: 6Gi
+            limits:
+              cpu: "2"
+              memory: 6Gi
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: docker-lib
+              mountPath: /var/lib/docker
+              readOnly: true
+        - name: docker
+          image: docker:25.0-dind
+          imagePullPolicy: IfNotPresent
+          command: ["dockerd-entrypoint.sh"]
+          args:
+            - "--host=tcp://0.0.0.0:2375"
+            - "--host=unix:///var/run/docker.sock"
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+            - name: XDG_RUNTIME_DIR
+              value: /tmp/docker-runtime
+            - name: DOCKER_HOST
+              value: tcp://0.0.0.0:2375
+          ports:
+            - containerPort: 2375
+              name: docker
+              protocol: TCP
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
             limits:
               cpu: "2"
               memory: 4Gi
           volumeMounts:
-            - name: workspace
-              mountPath: /workspace
+            - name: docker-lib
+              mountPath: /var/lib/docker
       volumes:
         - name: workspace
           persistentVolumeClaim:
             claimName: jangar-workspace
+        - name: docker-lib
+          emptyDir: {}
