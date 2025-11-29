@@ -1,14 +1,10 @@
 # syntax=docker/dockerfile:1.6
-# Bun + Node image for jangar worker + UI + Codex app-server
-ARG NODE_VERSION=24.11.1
+# Bun image for jangar worker + UI + Codex app-server
 ARG BUN_VERSION=1.3.3
 ARG OPENVSCODE_VERSION=1.105.1
 
-FROM node:${NODE_VERSION}-bookworm AS base
-ARG BUN_VERSION
+FROM oven/bun:${BUN_VERSION} AS base
 ARG OPENVSCODE_VERSION
-ENV BUN_INSTALL=/root/.bun
-ENV PATH="$BUN_INSTALL/bin:$PATH"
 WORKDIR /app
 
 ENV CODEX_CWD=/workspace/lab \
@@ -16,7 +12,7 @@ ENV CODEX_CWD=/workspace/lab \
   CODEX_REPO_URL=https://github.com/proompteng/lab.git \
   CODEX_BOOTSTRAP_REPO=1
 
-# Tooling needed for builds and gh CLI auth
+# Tooling needed for builds, gh CLI auth, and VS Code server
 RUN set -eux; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
   apt-get install -y --no-install-recommends \
@@ -25,6 +21,7 @@ RUN set -eux; \
     curl \
     git \
     gnupg \
+    ripgrep \
     tini; \
   install -m 0755 -d /etc/apt/keyrings; \
   curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg; \
@@ -33,9 +30,6 @@ RUN set -eux; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
   apt-get install -y --no-install-recommends gh; \
   rm -rf /var/lib/apt/lists/*
-
-# Install Bun alongside Node
-RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}
 
 # Base tsconfig for workspace packages
 COPY tsconfig.base.json ./
@@ -68,8 +62,8 @@ RUN rm -rf node_modules \
   && mkdir -p node_modules/@proompteng \
   && ln -sf ../../packages/codex node_modules/@proompteng/codex
 
-# Install Codex CLI so the app-server binary is available at runtime
-RUN npm install -g @openai/codex@latest
+# Install Codex CLI with Bun so the app-server binary is available at runtime
+RUN bun add -g @openai/codex@latest
 
 # Install openvscode-server (upstream VS Code server build from gitpod-io)
 RUN set -eux; \
@@ -103,7 +97,7 @@ ENV VSCODE_DATA_DIR=/workspace/.ovscode
 ENV VSCODE_DEFAULT_FOLDER=/workspace/lab
 
 # Launch openvscode-server alongside the app
-RUN cat <<'EOF' > /usr/local/bin/entrypoint.sh \
+RUN cat <<'ENTRY' > /usr/local/bin/entrypoint.sh \
   && chmod +x /usr/local/bin/entrypoint.sh
 #!/bin/bash
 set -euo pipefail
@@ -120,7 +114,7 @@ openvscode-server \
 vscode_pid=$!
 trap "kill $vscode_pid" EXIT
 exec "$@"
-EOF
+ENTRY
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 CMD ["bun", "run", "src/index.ts"]
