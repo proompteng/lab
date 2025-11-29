@@ -32,7 +32,9 @@ const createMockDb = () => {
     upsertCommand: noop,
     appendCommandChunk: noop,
     appendEvent: async (input: AppendEventInput) => {
-      calls.appendEvent.push({ method: input.method, turnId: input.turnId })
+      const event: { method: string; turnId?: string } = { method: input.method }
+      if (input.turnId) event.turnId = input.turnId
+      calls.appendEvent.push(event)
       return 'event'
     },
     appendAssistantMessageWithMeta: noop,
