@@ -178,8 +178,7 @@ describe('streamSse', () => {
     }
 
     const reasoningChunks = chunks.filter(
-      (chunk): chunk is ReasoningChunk =>
-        typeof chunk.choices?.[0]?.delta?.reasoning_content === 'string',
+      (chunk): chunk is ReasoningChunk => typeof chunk.choices?.[0]?.delta?.reasoning_content === 'string',
     )
     const reasoningTexts = reasoningChunks.map((chunk) => chunk.choices[0].delta.reasoning_content)
 
