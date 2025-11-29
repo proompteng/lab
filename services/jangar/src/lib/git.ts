@@ -1,1 +1,1 @@
-export * from '../services/git'
+export * from '~/services/git'

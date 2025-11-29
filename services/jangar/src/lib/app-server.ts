@@ -1,1 +1,1 @@
-export * from '../services/app-server'
+export * from '~/services/app-server'

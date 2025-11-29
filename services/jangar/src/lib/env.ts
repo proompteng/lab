@@ -1,1 +1,1 @@
-export * from '../services/env'
+export * from '~/services/env'

@@ -1,9 +1,9 @@
-import { createDbClient } from '../db'
+import { createDbClient } from '~/services/db'
 import { buildPrompt, deriveChatId } from './utils'
 import { buildUsagePayload, persistAssistant, persistFailedTurn } from './persistence'
 import { defaultUserId, lastChatIdForUser, serviceTier, threadMap } from './state'
 import { streamSse } from './stream'
-import { isSupportedModel, resolveModel, supportedModels } from '../models'
+import { isSupportedModel, resolveModel, supportedModels } from '~/services/models'
 import type { ChatCompletionRequest, Message } from './types'
 
 const buildSseErrorResponse = (payload: unknown, status = 400) => {
