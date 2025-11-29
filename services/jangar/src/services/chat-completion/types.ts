@@ -24,6 +24,7 @@ export type TokenUsage = {
 export type PersistMeta = {
   threadId?: string
   turnId?: string
+  codexTurnId?: string
   tokenUsage?: TokenUsage | null
   reasoningSummary?: string[]
   usagePersisted?: boolean

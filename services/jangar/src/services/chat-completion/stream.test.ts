@@ -1,131 +1,140 @@
 import { describe, expect, it } from 'bun:test'
 
-import type { StreamDelta } from '@proompteng/codex'
-import { persistToolDelta } from './persistence'
+import type { DbClient } from '~/services/db'
+import { threadMap } from './state'
 import { streamSse } from './stream'
-import type { StreamOptions, ToolDelta } from './types'
 
-const makeDbMock = () => {
-  const events: Array<Record<string, unknown>> = []
-  const usages: Array<Record<string, unknown>> = []
-  const commandChunks: Array<{ stream: string; seq: number }> = []
-  const commands: Array<{ status: string }> = []
-  return {
-    events,
-    usages,
-    commandChunks,
-    commands,
-    db: {
-      appendEvent: async (input: Record<string, unknown>) => {
-        events.push(input)
-        return ''
-      },
-      appendUsage: async (input: Record<string, unknown>) => {
-        usages.push(input)
-        return ''
-      },
-      appendCommandChunk: async (input: { stream: string; seq: number }) => {
-        commandChunks.push({ stream: input.stream, seq: input.seq })
-        return ''
-      },
-      upsertCommand: async (input: { status?: string }) => {
-        commands.push({ status: input.status ?? '' })
-        return ''
-      },
-      appendAssistantMessageWithMeta: async () => '',
-      upsertConversation: async () => '',
-      upsertTurn: async () => '',
-      appendMessage: async () => '',
-      appendReasoning: async () => '',
-      appendRateLimit: async () => '',
-    },
+type UpsertTurnInput = Parameters<DbClient['upsertTurn']>[0]
+type AppendUsageInput = Parameters<DbClient['appendUsage']>[0]
+type AppendEventInput = Parameters<DbClient['appendEvent']>[0]
+
+const createMockDb = () => {
+  const calls = {
+    appendUsage: [] as Array<{ turnId: string }>,
+    appendEvent: [] as Array<{ method: string; turnId?: string }>,
+    upsertTurn: [] as Array<{ turnId: string; status: string }>,
   }
+
+  const noop = async (): Promise<string> => 'ok'
+  const db: DbClient = {
+    upsertConversation: noop,
+    upsertTurn: async (input: UpsertTurnInput) => {
+      calls.upsertTurn.push({ turnId: input.turnId, status: input.status })
+      return 'turn'
+    },
+    appendMessage: noop,
+    appendReasoning: noop,
+    appendUsage: async (input: AppendUsageInput) => {
+      calls.appendUsage.push({ turnId: input.turnId })
+      return 'usage'
+    },
+    appendRateLimit: noop,
+    upsertCommand: noop,
+    appendCommandChunk: noop,
+    appendEvent: async (input: AppendEventInput) => {
+      calls.appendEvent.push({ method: input.method, turnId: input.turnId })
+      return 'event'
+    },
+    appendAssistantMessageWithMeta: noop,
+  }
+
+  return { db, calls }
 }
 
-describe('stream usage handling', () => {
-  it('persists usage once per turn and propagates codex turnId', async () => {
-    const db = makeDbMock()
-    const onCompleteMeta: Record<string, unknown> = {}
-    const dbClient = db.db as unknown as StreamOptions['db']
+const runStream = async (opts: Parameters<typeof streamSse>[1]) => {
+  const res = await streamSse('hello', opts)
+  const text = await res.text()
+  return { res, text }
+}
 
-    async function* fakeStream(): AsyncGenerator<StreamDelta, void, unknown> {
-      yield { type: 'usage', usage: { input_tokens: 10, output_tokens: 5 } } as StreamDelta
-      yield { type: 'message', delta: 'hi' } as StreamDelta
+describe('streamSse', () => {
+  it('keeps DB turnId when Codex returns a different turnId', async () => {
+    const { db, calls } = createMockDb()
+    const appServer = {
+      runTurnStream: async () => ({
+        turnId: 'codex-turn-99',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'usage', usage: { input_tokens: 5 } }
+          yield 'done'
+        })(),
+      }),
     }
 
-    const options: StreamOptions = {
-      model: 'gpt-5.1-codex',
+    await runStream({
+      model: 'gpt-5.1-codex-max',
       signal: new AbortController().signal,
       chatId: 'chat-1',
       includeUsage: true,
-      appServer: {
-        ready: Promise.resolve(),
-        runTurnStream: async () => ({ stream: fakeStream(), threadId: 'thread-1', turnId: 'codex-turn' }),
-        runTurn: async () => ({ text: '', threadId: '' }),
-        stop: () => {},
-      },
-      db: dbClient,
+      db,
       conversationId: 'conv-1',
-      turnId: 'client-turn',
+      turnId: 'db-turn-1',
       userId: 'user-1',
       startedAt: Date.now(),
-      onComplete: async (_text, _reasoning, meta) => {
-        Object.assign(onCompleteMeta, meta)
-      },
+      appServer: appServer as never,
+    })
+
+    expect(calls.appendUsage.map((u) => u.turnId)).toEqual(['db-turn-1'])
+  })
+
+  it('persists onComplete errors without emitting server_error SSE after [DONE]', async () => {
+    const { db, calls } = createMockDb()
+    const appServer = {
+      runTurnStream: async () => ({
+        threadId: 'thread-2',
+        stream: (async function* () {
+          yield 'hello'
+        })(),
+      }),
     }
 
-    const response = await streamSse('prompt', options)
-    await response.text() // drain the stream
+    const { text } = await runStream({
+      model: 'gpt-5.1-codex-max',
+      signal: new AbortController().signal,
+      chatId: 'chat-2',
+      db,
+      conversationId: 'conv-2',
+      turnId: 'db-turn-2',
+      userId: 'user-2',
+      startedAt: Date.now(),
+      appServer: appServer as never,
+      onComplete: async () => {
+        throw new Error('persist failed')
+      },
+    })
 
-    expect(db.usages.length).toBe(1)
-    expect(db.events.find((e) => e.method === 'usage')?.turnId).toBe('codex-turn')
-    expect(onCompleteMeta.turnId).toBe('codex-turn')
-    expect(onCompleteMeta.usagePersisted).toBe(true)
-  })
-})
-
-describe('persistToolDelta sequencing and streams', () => {
-  it('resets sequence after terminal status', async () => {
-    const db = makeDbMock()
-    const dbClient = db.db as unknown as StreamOptions['db']
-    const callId = 'call-1'
-    await persistToolDelta(dbClient, 'turn', 'conv', {
-      id: callId,
-      toolKind: 'command',
-      status: 'delta',
-      title: 't',
-      detail: 'a',
-    } as ToolDelta)
-    await persistToolDelta(dbClient, 'turn', 'conv', {
-      id: callId,
-      toolKind: 'command',
-      status: 'completed',
-      title: 't',
-    } as ToolDelta)
-    await persistToolDelta(dbClient, 'turn', 'conv', {
-      id: callId,
-      toolKind: 'command',
-      status: 'delta',
-      title: 't',
-      detail: 'b',
-    } as ToolDelta)
-
-    const seqs = db.commandChunks.map((c) => c.seq)
-    expect(seqs[0]).toBe(1)
-    expect(seqs[seqs.length - 1]).toBe(1)
+    expect(text).not.toContain('server_error')
+    expect(text.trim().endsWith('[DONE]')).toBe(true)
+    expect(calls.appendEvent.some((e) => e.method === 'turn/persist_error')).toBe(true)
+    expect(calls.upsertTurn.some((t) => t.status === 'succeeded')).toBe(true)
   })
 
-  it('uses info stream for non-command tool deltas', async () => {
-    const db = makeDbMock()
-    const dbClient = db.db as unknown as StreamOptions['db']
-    await persistToolDelta(dbClient, 'turn', 'conv', {
-      id: 'file-1',
-      toolKind: 'file',
-      status: 'delta',
-      title: 'file op',
-      detail: 'patched file',
-    } as ToolDelta)
+  it('clears threadMap when context window is exceeded mid-stream', async () => {
+    const { db } = createMockDb()
+    const chatId = 'chat-context'
 
-    expect(db.commandChunks[0]?.stream).toBe('info')
+    const appServer = {
+      runTurnStream: async () => ({
+        threadId: 'thread-context',
+        stream: (async function* () {
+          yield 'chunk'
+          throw new Error(JSON.stringify({ error: { codexErrorInfo: 'contextWindowExceeded', message: 'too long' } }))
+        })(),
+      }),
+    }
+
+    await runStream({
+      model: 'gpt-5.1-codex-max',
+      signal: new AbortController().signal,
+      chatId,
+      db,
+      conversationId: 'conv-ctx',
+      turnId: 'turn-ctx',
+      userId: 'user-ctx',
+      startedAt: Date.now(),
+      appServer: appServer as never,
+    })
+
+    expect(threadMap.get(chatId)).toBeUndefined()
   })
 })

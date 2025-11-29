@@ -28,38 +28,22 @@ const buildSseErrorResponse = (payload: unknown, status = 400) => {
 
 export const createChatCompletionHandler = (pathLabel: string) => {
   return async ({ request }: { request: Request }): Promise<Response> => {
-    let body: ChatCompletionRequest | null = null
+    let body: ChatCompletionRequest
     try {
       body = (await request.json()) as ChatCompletionRequest
     } catch {
-      // ignore parse errors; return stub anyway
+      const payload = {
+        error: {
+          message: 'Invalid JSON body',
+          type: 'invalid_request_error',
+          code: 'invalid_json',
+        },
+      }
+      return buildSseErrorResponse(payload, 400)
     }
 
-    const requestedModel = body?.model
-    const model = resolveModel(requestedModel)
-    const userId = body?.user ?? defaultUserId
-    const incomingChatId = deriveChatId(body ?? {})
-    const chatId = incomingChatId ?? lastChatIdForUser.get(userId) ?? crypto.randomUUID()
-    const conversationId = chatId
-    const turnId = crypto.randomUUID()
-    const startedAt = Date.now()
-    const promptMessages: Message[] | undefined = body?.messages
-
-    const requestedStream = body?.stream
-    const acceptedStream = requestedStream === true
-
-    console.info(`[jangar] ${pathLabel}`, {
-      model,
-      messageCount: body?.messages?.length ?? 0,
-      requestedStream,
-      acceptedStream,
-      streamRequired: true,
-      chatId,
-      userId,
-      incomingChatId,
-    })
-
-    if (body?.stream !== true) {
+    const requestedStream = body.stream
+    if (requestedStream !== true) {
       const payload = {
         error: {
           message: 'Streaming only: set stream=true',
@@ -67,16 +51,60 @@ export const createChatCompletionHandler = (pathLabel: string) => {
           code: 'stream_required',
         },
       }
-      threadMap.delete(chatId)
       return buildSseErrorResponse(payload, 400)
     }
 
+    const requestedModel = body.model
     if (requestedModel && !isSupportedModel(requestedModel)) {
       const message = `Unsupported model "${requestedModel}". Supported models: ${supportedModels.join(', ')}`
       const payload = { error: { message, type: 'invalid_request_error', code: 'model_not_supported' } }
-      threadMap.delete(chatId)
       return buildSseErrorResponse(payload, 400)
     }
+
+    const promptMessages: Message[] | null = Array.isArray(body.messages) ? (body.messages as Message[]) : null
+    if (!promptMessages || promptMessages.length === 0) {
+      const payload = {
+        error: {
+          message: '`messages` must be a non-empty array',
+          type: 'invalid_request_error',
+          code: 'messages_required',
+        },
+      }
+      return buildSseErrorResponse(payload, 400)
+    }
+
+    for (const [idx, msg] of promptMessages.entries()) {
+      if (!msg || typeof msg !== 'object' || typeof msg.role !== 'string' || msg.content === undefined) {
+        const payload = {
+          error: {
+            message: `messages[${idx}] must include role (string) and content`,
+            type: 'invalid_request_error',
+            code: 'messages_invalid',
+          },
+        }
+        return buildSseErrorResponse(payload, 400)
+      }
+    }
+
+    const model = resolveModel(requestedModel)
+    const userId = body.user ?? defaultUserId
+    const incomingChatId = deriveChatId(body ?? {})
+    const chatId = incomingChatId ?? lastChatIdForUser.get(userId) ?? crypto.randomUUID()
+    const conversationId = chatId
+    const turnId = crypto.randomUUID()
+    const startedAt = Date.now()
+    const acceptedStream = requestedStream === true
+
+    console.info(`[jangar] ${pathLabel}`, {
+      model,
+      messageCount: promptMessages.length,
+      requestedStream,
+      acceptedStream,
+      streamRequired: true,
+      chatId,
+      userId,
+      incomingChatId,
+    })
 
     lastChatIdForUser.set(userId, chatId)
 
@@ -98,7 +126,7 @@ export const createChatCompletionHandler = (pathLabel: string) => {
       status: 'running',
       startedAt,
     })
-    for (const msg of promptMessages ?? []) {
+    for (const msg of promptMessages) {
       await db.appendMessage({
         turnId,
         role: msg.role,
@@ -108,7 +136,7 @@ export const createChatCompletionHandler = (pathLabel: string) => {
     }
 
     const prompt = buildPrompt(promptMessages)
-    const includeUsage = body?.stream_options?.include_usage === true
+    const includeUsage = body.stream_options?.include_usage === true
 
     try {
       const existingThreadId = threadMap.get(chatId)
@@ -180,7 +208,7 @@ export const createChatCompletionHandler = (pathLabel: string) => {
         'stream/error',
       )
 
-      return buildSseErrorResponse({ error: 'codex app-server failed', details: `${error}` }, 200)
+      return buildSseErrorResponse({ error: 'codex app-server failed', details: `${error}` }, 500)
     }
   }
 }

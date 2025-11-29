@@ -38,7 +38,13 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
     }
 
     const { stream, threadId, turnId: codexTurnId } = streamHandle
-    const turnId = codexTurnId ?? opts.turnId
+    const turnId = opts.turnId
+    if (codexTurnId && codexTurnId !== turnId) {
+      console.warn('[jangar] codex turnId mismatch; keeping db turnId', {
+        dbTurnId: turnId,
+        codexTurnId,
+      })
+    }
     if (!existingThreadId) threadMap.set(opts.chatId, threadId)
     const encoder = new TextEncoder()
     const created = Math.floor(Date.now() / 1000)
@@ -47,8 +53,6 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
     let collected = ''
     const promptTokens = estimateTokens(prompt)
     const reasoningParts: ReasoningPart[] = []
-    let lastMessageChunk: string | null = null
-    let lastReasoningChunk: string | null = null
     let usagePersisted = false
     let latestUsage: TokenUsage | null = null
 
@@ -169,16 +173,11 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
               }
             }
 
-            if (contentDelta === lastMessageChunk) contentDelta = null
-            if (reasoningDelta === lastReasoningChunk) reasoningDelta = null
-
             if (contentDelta) {
               collected += contentDelta
-              lastMessageChunk = contentDelta
             }
             if (reasoningDelta) {
               reasoningParts.push({ type: 'text', text: reasoningDelta })
-              lastReasoningChunk = reasoningDelta
             }
 
             const choiceDelta: {
@@ -304,20 +303,45 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
           send(doneChunk)
           sendDone()
 
-          if (opts.onComplete)
-            await opts.onComplete(collected, reasoningParts, {
-              threadId,
-              turnId,
-              tokenUsage: latestUsage,
-              reasoningSummary: reasoningParts.map((p) => p.text),
-              usagePersisted,
-            })
+          if (opts.onComplete) {
+            try {
+              await opts.onComplete(collected, reasoningParts, {
+                threadId,
+                turnId,
+                codexTurnId,
+                tokenUsage: latestUsage,
+                reasoningSummary: reasoningParts.map((p) => p.text),
+                usagePersisted,
+              })
+            } catch (error) {
+              console.error('[jangar] onComplete persistence failed', error)
+              await opts.db.appendEvent({
+                conversationId: opts.conversationId,
+                turnId,
+                method: 'turn/persist_error',
+                payload: { error: `${error}` },
+                receivedAt: Date.now(),
+              })
+              await opts.db.upsertTurn({
+                turnId,
+                conversationId: opts.conversationId,
+                chatId: opts.chatId,
+                userId: opts.userId,
+                model: targetModel ?? '',
+                serviceTier,
+                status: 'succeeded',
+                startedAt: opts.startedAt,
+                endedAt: Date.now(),
+              })
+            }
+          }
         } catch (error) {
           const codexError = parseCodexError(error)
           threadMap.delete(opts.chatId)
 
           if (codexError?.codexErrorInfo === 'contextWindowExceeded') {
             const message = codexError.message ?? 'context window exceeded'
+            threadMap.delete(opts.chatId)
             await persistFailedTurn(
               opts.db,
               {
