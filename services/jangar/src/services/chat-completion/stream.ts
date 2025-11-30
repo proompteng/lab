@@ -207,9 +207,14 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
             if (contentDelta) {
               collected += contentDelta
             }
-            if (reasoningDelta && reasoningDelta !== lastReasoningDelta) {
-              reasoningParts.push({ type: 'text', text: reasoningDelta })
-              lastReasoningDelta = reasoningDelta
+            if (reasoningDelta) {
+              if (reasoningDelta !== lastReasoningDelta) {
+                reasoningParts.push({ type: 'text', text: reasoningDelta })
+                lastReasoningDelta = reasoningDelta
+              } else {
+                // suppress duplicate reasoning deltas from both payload and SSE chunk
+                reasoningDelta = null
+              }
             }
 
             const choiceDelta: {
