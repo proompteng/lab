@@ -1,0 +1,19 @@
+name: schematic-ci
+
+on:
+  pull_request:
+    paths:
+      - 'packages/schematic/**'
+      - '.github/workflows/schematic-ci.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      install-command: bun install --frozen-lockfile
+      lint-command: bunx biome check packages/schematic
+      test-command: bun test packages/schematic

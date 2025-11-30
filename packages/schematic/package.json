@@ -1,0 +1,27 @@
+{
+  "name": "@proompteng/schematic",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "schematic": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -w -p tsconfig.json",
+    "lint": "bunx biome check src",
+    "start": "bun run build && node dist/cli.js",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.10.0",
+    "change-case": "^5.4.4",
+    "execa": "^9.5.1",
+    "kleur": "^4.1.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "bun-types": "^1.1.20",
+    "typescript": "^5.9.3"
+  }
+}
