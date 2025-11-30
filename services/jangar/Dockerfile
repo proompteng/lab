@@ -94,8 +94,6 @@ RUN set -eux; \
 # Base tsconfig for workspace packages
 COPY tsconfig.base.json ./
 
-ENV NODE_ENV=production
-
 # Build codex dependency (file: workspace)
 COPY packages/codex ./packages/codex
 RUN cd packages/codex \
