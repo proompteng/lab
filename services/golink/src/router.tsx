@@ -1,15 +1,12 @@
 import { createRouter } from '@tanstack/react-router'
-
-// Import the generated route tree
+import { Route as SlugRoute } from './routes/$slug'
 import { routeTree } from './routeTree.gen'
 
-// Create a new router instance
-export const getRouter = () => {
-  const router = createRouter({
-    routeTree,
+const appRouteTree = routeTree.addChildren([SlugRoute])
+
+export const getRouter = () =>
+  createRouter({
+    routeTree: appRouteTree,
     scrollRestoration: true,
     defaultPreloadStaleTime: 0,
   })
-
-  return router
-}
