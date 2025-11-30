@@ -24,22 +24,22 @@ RUN --mount=type=cache,target=/var/cache/apt \
   export DEBIAN_FRONTEND=noninteractive; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
   apt-get install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    curl \
-    git \
-    gnupg \
-    ripgrep \
-    tini; \
+  build-essential \
+  ca-certificates \
+  curl \
+  git \
+  gnupg \
+  ripgrep \
+  tini; \
   rm -rf /var/lib/apt/lists/*
 
 # Lightweight GitHub CLI install (no apt repo)
 RUN set -eux; \
   ARCH="$(uname -m)"; \
   case "$ARCH" in \
-    amd64|x86_64) GH_ARCH=amd64 ;; \
-    arm64|aarch64) GH_ARCH=arm64 ;; \
-    *) echo "Unsupported arch for gh: $ARCH" >&2; exit 1 ;; \
+  amd64|x86_64) GH_ARCH=amd64 ;; \
+  arm64|aarch64) GH_ARCH=arm64 ;; \
+  *) echo "Unsupported arch for gh: $ARCH" >&2; exit 1 ;; \
   esac; \
   curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${GH_ARCH}.tar.gz" -o /tmp/gh.tar.gz; \
   tar -xzf /tmp/gh.tar.gz -C /tmp; \
@@ -50,11 +50,11 @@ RUN set -eux; \
 RUN set -eux; \
   ARCH="${TARGETARCH:-$(uname -m)}"; \
   case "$ARCH" in \
-    amd64|x86_64) NODE_ARCH=x64 ;; \
-    arm64|aarch64) NODE_ARCH=arm64 ;; \
-    ppc64le) NODE_ARCH=ppc64le ;; \
-    s390x) NODE_ARCH=s390x ;; \
-    *) NODE_ARCH="$ARCH" ;; \
+  amd64|x86_64) NODE_ARCH=x64 ;; \
+  arm64|aarch64) NODE_ARCH=arm64 ;; \
+  ppc64le) NODE_ARCH=ppc64le ;; \
+  s390x) NODE_ARCH=s390x ;; \
+  *) NODE_ARCH="$ARCH" ;; \
   esac; \
   curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://nodejs.org/dist/v${NODE24_VERSION}/node-v${NODE24_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz; \
   tar -xJf /tmp/node.tar.xz -C /tmp; \
@@ -69,15 +69,22 @@ RUN set -eux; \
 RUN set -eux; \
   ARCH="${TARGETARCH:-$(uname -m)}"; \
   case "$ARCH" in \
-    amd64|x86_64) K_ARCH=amd64 ;; \
-    arm64|aarch64) K_ARCH=arm64 ;; \
-    *) echo "Unsupported arch for kubectl: $ARCH" >&2; exit 1 ;; \
+  amd64|x86_64) K_ARCH=amd64 ;; \
+  arm64|aarch64) K_ARCH=arm64 ;; \
+  *) echo "Unsupported arch for kubectl: $ARCH" >&2; exit 1 ;; \
   esac; \
-  curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${K_ARCH}/kubectl"; \
-  curl -fsSLo /tmp/kubectl.sha256 "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${K_ARCH}/kubectl.sha256"; \
-  echo "$(< /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum --check; \
-  install -o root -g root -m 0755 /tmp/kubectl /usr/local/bin/kubectl; \
-  rm /tmp/kubectl /tmp/kubectl.sha256; \
+  cd /tmp; \
+  curl -fsSLO "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${K_ARCH}/kubectl"; \
+  curl -fsSLO "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${K_ARCH}/kubectl.sha256"; \
+  # sanity check: ensure checksum file looks like a single SHA-256
+  if ! grep -Eq '^[0-9a-f]{64}$' kubectl.sha256; then \
+  echo "kubectl.sha256 has unexpected contents:" >&2; \
+  cat kubectl.sha256 >&2; \
+  exit 1; \
+  fi; \
+  printf '%s  %s\n' "$(cat kubectl.sha256)" kubectl | sha256sum -c -; \
+  install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl; \
+  rm kubectl kubectl.sha256; \
   kubectl version --client --output=yaml
 
 # Base tsconfig for workspace packages
@@ -119,9 +126,9 @@ RUN bun add -g @openai/codex@latest
 RUN set -eux; \
   ARCH="$(uname -m)"; \
   case "$ARCH" in \
-    aarch64|arm64) OVS_ARCH=arm64 ;; \
-    x86_64|amd64)  OVS_ARCH=x64 ;; \
-    *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
+  aarch64|arm64) OVS_ARCH=arm64 ;; \
+  x86_64|amd64)  OVS_ARCH=x64 ;; \
+  *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
   esac; \
   curl -fL --retry 5 --retry-delay 2 --retry-all-errors "https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-v${OPENVSCODE_VERSION}/openvscode-server-v${OPENVSCODE_VERSION}-linux-${OVS_ARCH}.tar.gz" -o /tmp/ovscode.tar.gz; \
   mkdir -p /opt/openvscode-server; \
