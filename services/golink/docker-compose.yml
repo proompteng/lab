@@ -16,19 +16,6 @@ services:
     volumes:
       - golink-db-data:/var/lib/postgresql/data
 
-  db-init:
-    image: postgres:18-bookworm
-    container_name: golink-postgres-init
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      PGPASSWORD: golink
-    command: >-
-      sh -c "psql -h db -U golink -tc \"SELECT 1 FROM pg_database WHERE datname='golink'\" | grep -q 1
-      || psql -h db -U golink -c 'CREATE DATABASE golink'"
-    restart: on-failure
-
 volumes:
   golink-db-data:
     driver: local
