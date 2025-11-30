@@ -18,7 +18,7 @@ OpenWebUI is installed via the upstream Helm chart (`open-webui` v8.18.0, app v0
 - Auth/signup remain disabled (`WEBUI_AUTH=false`, `ENABLE_SIGNUP=false`).
 - Websockets: `WEBSOCKET_MANAGER=redis`, `WEBSOCKET_REDIS_URL=redis://jangar-openwebui-redis:6379/0` (Redis provided by the operator, not the chart).
 - Database: `DATABASE_URL` from CNPG secret `jangar-db-app`; TLS root cert from `jangar-db-ca`.
-- Only the orchestrator model is exposed in `/v1/models` (mapped to `gpt-5.1-codex-max`).
+- Current code returns four models from `/v1/models` (`gpt-5.1-codex-max`, `gpt-5.1-codex`, `gpt-5.1-codex-mini`, `gpt-5.1`); if OpenWebUI should show a single orchestrator entry, narrow the list in `services/jangar/src/services/models.ts` or filter in values.
 
 ## Image pin
 - `ghcr.io/open-webui/open-webui:v0.6.40` (managed by the Helm chart)
