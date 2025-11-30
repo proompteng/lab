@@ -213,6 +213,13 @@ spec:
               argocd.argoproj.io/sync-wave: "4"
             automation: auto
             enabled: "true"
+          - name: kestra
+            path: argocd/applications/kestra
+            namespace: kestra
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+            enabled: "true"
       selector:
         matchExpressions:
           - key: enabled

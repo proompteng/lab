@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - postgres-cluster.yaml
+  - minio-tenant.yaml
+  - minio-credentials-sealedsecret.yaml
+  - minio-bucket-job.yaml
+  - tailscale-service.yaml
+
+helmCharts:
+  - name: kestra
+    repo: https://helm.kestra.io
+    version: 1.0.18
+    releaseName: kestra
+    namespace: kestra
+    includeCRDs: true
+    valuesFile: kestra-values.yaml

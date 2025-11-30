@@ -135,3 +135,11 @@ op signin
 - **Registry access**
 
   The Tailscale registry at `registry.ide-newton.ts.net` allows anonymous pulls, so no `docker-registry` secrets are required in `argocd` or workload namespaces. Prune any legacy `registry` or `kalmyk-registry` secrets before syncing.
+
+## Kestra
+
+- Manifests live in `argocd/applications/kestra/` and register through `applicationsets/platform.yaml` (automation: manual, sync-wave 4).
+- Helm chart `kestra/kestra` pinned at `1.0.18`; override values in `argocd/applications/kestra/kestra-values.yaml` (standalone mode, external Postgres via CNPG, MinIO-backed S3 storage).
+- Supporting infra: `kestra-db` CloudNativePG cluster (namespace `kestra`, 50Gi longhorn) and MinIO tenant `kestra` (namespace `minio`, 1x2×20Gi).
+- Secrets: `kestra-minio-creds` SealedSecret **must be re-sealed with the cluster SealedSecrets certificate before first sync**; see `argocd/applications/kestra/README.md` for the reseal snippet.
+- Exposure: `Service/kestra-tailscale` uses `loadBalancerClass: tailscale` with hostname `kestra` on the tailnet (no public ingress).
