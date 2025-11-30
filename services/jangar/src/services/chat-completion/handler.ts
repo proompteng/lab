@@ -4,7 +4,7 @@ import { buildUsagePayload, persistAssistant, persistFailedTurn } from './persis
 import { defaultUserId, lastChatIdForUser, serviceTier, threadMap } from './state'
 import { streamSse } from './stream'
 import type { ChatCompletionRequest, Message, PersistMeta, ReasoningPart, StreamOptions } from './types'
-import { buildPrompt, deriveChatId } from './utils'
+import { buildPrompt, deriveChatId, truncateForConvex } from './utils'
 
 const buildSseErrorResponse = (payload: unknown, status = 400) => {
   const encoder = new TextEncoder()
@@ -183,10 +183,11 @@ export const createChatCompletionHandler = (pathLabel: string) => {
         startedAt,
       })
       for (const msg of stringifiedMessages) {
+        const safeContent = truncateForConvex(msg.content, 'message_content')
         await db.appendMessage({
           turnId,
           role: msg.role,
-          content: msg.content,
+          content: safeContent,
           createdAt: startedAt,
         })
       }
@@ -234,6 +235,10 @@ export const createChatCompletionHandler = (pathLabel: string) => {
         userId,
         startedAt,
         onComplete: async (text: string, reasoning: ReasoningPart[], meta: PersistMeta) => {
+          const combinedReasoning = reasoning.map((r) => r.text).join('')
+          const safeReasoning = combinedReasoning ? truncateForConvex(combinedReasoning, 'reasoning') : ''
+          const safeAssistantText = truncateForConvex(text, 'assistant_content')
+
           await db.upsertConversation({
             conversationId,
             threadId: meta.threadId ?? threadMap.get(chatId) ?? '',
@@ -242,12 +247,12 @@ export const createChatCompletionHandler = (pathLabel: string) => {
             at: Date.now(),
           })
 
-          for (const [idx, r] of reasoning.entries()) {
+          if (safeReasoning) {
             await db.appendReasoning({
               turnId,
-              itemId: `${turnId}-reasoning-${idx}`,
-              summaryText: [r.text],
-              position: idx,
+              itemId: `${turnId}-reasoning`,
+              summaryText: [safeReasoning],
+              position: 0,
               createdAt: Date.now(),
             })
           }
@@ -256,7 +261,10 @@ export const createChatCompletionHandler = (pathLabel: string) => {
             await db.appendUsage(buildUsagePayload(turnId, meta.tokenUsage) as never)
           }
 
-          await persistAssistant(turnId, text, meta)
+          await persistAssistant(turnId, safeAssistantText, {
+            ...meta,
+            reasoningSummary: safeReasoning ? [safeReasoning] : [],
+          })
           await db.upsertTurn({
             turnId,
             conversationId,

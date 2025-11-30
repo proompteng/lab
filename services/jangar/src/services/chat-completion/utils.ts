@@ -80,3 +80,42 @@ export const buildUsagePayload = (turnId: string, usage?: Record<string, unknown
   if ('total_tokens' in usage) payload.totalTokens = (usage as { total_tokens?: number }).total_tokens
   return payload
 }
+
+const DEFAULT_CONVEX_LIMIT_BYTES = 950 * 1024 // keep a buffer under Convex 1 MiB limit
+
+const trimToBytes = (value: string, maxBytes: number) => {
+  if (maxBytes <= 0) return ''
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
+
+  let low = 0
+  let high = value.length
+  let best = ''
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2)
+    const slice = value.slice(0, mid)
+    const size = Buffer.byteLength(slice, 'utf8')
+    if (size <= maxBytes) {
+      best = slice
+      low = mid + 1
+    } else {
+      high = mid - 1
+    }
+  }
+
+  return best
+}
+
+export const truncateForConvex = (value: string, label = 'payload', maxBytes = DEFAULT_CONVEX_LIMIT_BYTES) => {
+  const totalBytes = Buffer.byteLength(value, 'utf8')
+  if (totalBytes <= maxBytes) return value
+
+  const suffix = `\n\n[truncated ${totalBytes - maxBytes} bytes from ${label}]`
+  const suffixBytes = Buffer.byteLength(suffix, 'utf8')
+  const allowedBytes = maxBytes - suffixBytes
+
+  if (allowedBytes <= 0) return trimToBytes(suffix, maxBytes)
+
+  const truncated = trimToBytes(value, allowedBytes)
+  return `${truncated}${suffix}`
+}
