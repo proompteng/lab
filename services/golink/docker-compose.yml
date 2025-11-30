@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:18-bookworm
+    container_name: golink-postgres
+    environment:
+      POSTGRES_DB: golink
+      POSTGRES_USER: golink
+      POSTGRES_PASSWORD: golink
+    ports:
+      - '15433:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U golink -d golink']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - golink-db-data:/var/lib/postgresql/data
+
+  golink:
+    build:
+      context: ../..
+      dockerfile: services/golink/Dockerfile
+    container_name: golink-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOLINK_DATABASE_URL: postgres://golink:golink@db:5432/golink?sslmode=disable
+      PORT: '3000'
+    ports:
+      - '3000:3000'
+
+volumes:
+  golink-db-data:
+    driver: local
