@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev --host --port 3000",
+    "dev": "PORT=${PORT:-3000} vite dev --host --port $PORT",
     "build": "vite build",
     "start": "vite preview --host --port ${PORT:-3000}",
     "lint": "bunx biome check src",
