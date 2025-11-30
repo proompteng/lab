@@ -5,6 +5,7 @@ ARG NODE24_VERSION=24.11.1
 ARG OPENVSCODE_VERSION=1.105.1
 ARG KUBECTL_VERSION=v1.30.4
 ARG DOCKER_CLI_VERSION=27.1.2
+ARG BUILDX_VERSION=v0.30.1
 
 FROM oven/bun:${BUN_VERSION} AS base
 ARG OPENVSCODE_VERSION
@@ -71,6 +72,21 @@ RUN set -eux; \
   curl -fSLs -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz"; \
   tar -xz -C /usr/local/bin --strip-components=1 -f /tmp/docker.tgz docker/docker; \
   rm /tmp/docker.tgz
+
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+    amd64|x86_64) BUILDx_ARCH=amd64 ;; \
+    arm64|aarch64) BUILDx_ARCH=arm64 ;; \
+    ppc64le) BUILDx_ARCH=ppc64le ;; \
+    s390x) BUILDx_ARCH=s390x ;; \
+    *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  mkdir -p /usr/libexec/docker/cli-plugins /usr/local/lib/docker/cli-plugins /usr/lib/docker/cli-plugins; \
+  curl -fsSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-${BUILDx_ARCH}" -o /usr/libexec/docker/cli-plugins/docker-buildx; \
+  chmod +x /usr/libexec/docker/cli-plugins/docker-buildx; \
+  ln -sf /usr/libexec/docker/cli-plugins/docker-buildx /usr/local/lib/docker/cli-plugins/docker-buildx; \
+  ln -sf /usr/libexec/docker/cli-plugins/docker-buildx /usr/lib/docker/cli-plugins/docker-buildx
 
 # Base tsconfig for workspace packages
 COPY tsconfig.base.json ./
