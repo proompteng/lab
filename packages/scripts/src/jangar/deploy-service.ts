@@ -291,9 +291,6 @@ export const main = async (options: DeployOptions = {}) => {
   ensureCli('tar')
   await ensureGhToken()
 
-  const buildxDefaultVersion = process.env.BUILDX_VERSION ?? 'v0.30.1'
-  process.env.BUILDX_VERSION = buildxDefaultVersion
-
   const registry = options.registry ?? process.env.JANGAR_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.JANGAR_IMAGE_REPOSITORY ?? 'lab/jangar'
   const defaultTag = execGit(['rev-parse', '--short', 'HEAD'])
