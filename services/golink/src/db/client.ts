@@ -6,6 +6,7 @@ import { migrate } from 'drizzle-orm/pglite/migrator'
 import { drizzle as drizzlePg } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import * as schema from './schema/links'
+import { loadEnv } from '../env'
 
 export type Database = ReturnType<typeof drizzlePg<typeof schema>>
 export type TestDatabase = ReturnType<typeof drizzlePglite<typeof schema>>
@@ -13,6 +14,8 @@ export type TestDatabase = ReturnType<typeof drizzlePglite<typeof schema>>
 const globalForDb: { client?: ReturnType<typeof postgres>; db?: Database } = globalThis as never
 
 export const getDb = () => {
+  loadEnv()
+
   if (globalForDb.db) {
     return globalForDb.db
   }

@@ -3,7 +3,7 @@
 Internal Knative service that powers `http://go/<slug>` redirects with a small admin UI. Built with TanStack Start (React), Tailwind CSS v4, shadcn/ui, and Drizzle on Postgres/CNPG.
 
 ## Prerequisites
-- `GOLINK_DATABASE_URL` – Postgres connection string (CNPG secret in-cluster).
+- `.env.local` in `services/golink` (copy `.env.example`) with `GOLINK_DATABASE_URL` set. Defaults point to the local compose Postgres on port 15433.
 - Bun 1.3.x and Node 24.11.1 (workspace defaults).
 
 ## Scripts
@@ -26,6 +26,7 @@ bun run test:golink
 
 # Drizzle migrations
 cd services/golink
+cp .env.example .env.local # set a custom DB url if needed
 bun run generate   # generate SQL from schema
 bun run migrate    # push to DB (requires GOLINK_DATABASE_URL)
 
