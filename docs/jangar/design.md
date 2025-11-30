@@ -1,5 +1,31 @@
 # Jangar Full-Stack Orchestrator — Design
 
+## Current implementation snapshot (2025-11-30)
+- OpenAI-compatible streaming proxy is live: `/openai/v1/chat/completions` and `/openai/v1/models` call the local Codex app-server and persist telemetry to Convex (conversations, turns, messages, reasoning, commands, usage, rate limits, events).
+- Convex schema and mutations are implemented and wired from the proxy; no Convex queries/read endpoints exist yet.
+- App-server wrapper boots a single Codex app-server inside the pod and reuses thread IDs per chat. Repo bootstrap to `/workspace/lab` is enabled when missing.
+- Temporal worker scaffolding exists, but the orchestration workflow and activities are stubs: `runCodexTurnActivity`, `runWorkerTaskActivity`, and `publishEventActivity` return placeholders; the workflow schedules only one stub turn and has no signals/queries/worker delegation.
+- Toolbelt (`packages/cx-tools`) is not implemented; activities currently have nothing to exec for Codex/Temporal CLI calls.
+- UI is a TanStack Start scaffold with only a welcome and health route; no mission timeline/chat/SSE wiring. OpenWebUI remains external per `openwebui.md`.
+- Infra manifests deploy the app and worker images with Convex URL configured; secrets for CODEX/GitHub/Convex deploy keys are not yet wired into k8s manifests.
+
+The sections below describe the intended design; treat them as forward-looking. When in doubt, prefer the snapshot above and the source code under `services/jangar`.
+
+## Current Implementation Snapshot (2025-11-30)
+
+The design below is aspirational. The checked-in code as of November 30, 2025 currently provides:
+
+- HTTP OpenAI-compatible proxy (`/openai/v1/chat/completions`, `/openai/v1/models`) backed by the Codex app-server. Streaming works and persists telemetry to Convex via mutations.
+- Convex schema and mutations for conversations/turns/messages/reasoning/commands/usage/rate_limits/events are implemented and used by the proxy. No read-side queries yet.
+- Temporal worker and workflow stubs exist, but the orchestration loop is not implemented. The workflow schedules exactly one turn and returns.
+- Activities are placeholders: `run-codex-turn`, `run-worker-task`, and `publish-event` are stubs; git helpers are unimplemented.
+- Toolbelt package `packages/cx-tools` is only scaffolding; no CLI binaries are built or bundled.
+- UI is a minimal TanStack Start shell with a welcome page and health check; mission/detail pages and SSE wiring are not present.
+- `/v1/models` currently returns four Codex variants (`gpt-5.1-codex-max`, `gpt-5.1-codex`, `gpt-5.1-codex-mini`, `gpt-5.1`), not a single orchestrator alias.
+- Deploy manifests include separate app and worker Deployments using the same image; the app pod disables the Temporal worker by default (`ENABLE_TEMPORAL_WORKER=0`). Required secrets such as `CODEX_API_KEY`, `GITHUB_TOKEN`, and Convex deploy/admin keys are not yet wired into the manifests.
+
+The rest of this document describes the target architecture; keep the snapshot above in mind when testing the current tree.
+
 ## Overview
 
 Jangar will become a single Bun-based service that provides:
@@ -43,7 +69,7 @@ sequenceDiagram
     participant API as HTTP/SSE server
     participant WF as Temporal Workflow
     participant ACT as runCodexTurnActivity
-    participant CX as Meta Codex (gpt-5.1-max)
+    participant CX as Meta Codex (gpt-5.1-codex-max default)
     participant TB as cx-* toolbelt
     participant WK as Worker Codex
     participant GH as GitHub/Repo
@@ -120,7 +146,7 @@ flowchart TD
    - `run-codex-turn.ts`: inputs `{threadId?, prompt, images?, depth, repoUrl?, workdir?, userMessages?, constraints?}`.
      - Prepare temp `CODEX_HOME`, temp workdir (clone if repoUrl).
      - Env: `CODEX_API_KEY`, optional `CODEX_PATH`, prepend toolbelt `bin`, set `CX_DEPTH`.
-     - Run Codex turn with `model gpt-5.1-max`, `sandbox danger-full-access`, `networkAccessEnabled true`, `approvalPolicy never`.
+     - Run Codex turn with `model gpt-5.1-codex-max` (current default in code), `sandbox danger-full-access`, `networkAccessEnabled true`, `approvalPolicy never`.
      - Capture events; return snapshot `{threadId, finalResponse, items, usage, planSummary?, filesTouched?, commandsRun?}`.
 
 - `run-worker-task.ts`: inputs `{repoUrl, task, depth, baseBranch?, tests?, lint?}`.
@@ -131,7 +157,7 @@ flowchart TD
 
 - OpenWebUI runs separately and is accessed via the Tailscale hostname `openwebui`. The Jangar UI links out; no iframe/proxy is used.
 - OpenWebUI is configured to point its OpenAI base URL to the cluster-local Jangar endpoint (e.g., `http://jangar.jangar.svc.cluster.local/openai/v1`). That endpoint translates `/v1/chat/completions` into Codex app-server JSON-RPC calls and streams deltas back in OpenAI format.
-- Default model offered to OpenWebUI remains the single orchestrator model (mapped to `gpt-5.1-codex-max`). `/v1/models` returns only that entry.
+- In code today, `/v1/models` exposes four Codex variants (`gpt-5.1-codex-max`, `gpt-5.1-codex`, `gpt-5.1-codex-mini`, `gpt-5.1`). Planned direction is to present a single orchestrator model to OpenWebUI once selection is narrowed in `services/jangar/src/services/models.ts`.
 - App-server is spawned once per pod; conversations can be mapped to Convex thread IDs for persistence as needed.
 
 4) **Workflow** — `services/jangar/src/workflows/index.ts`
@@ -162,9 +188,9 @@ flowchart TD
 
 6) **HTTP + SSE** — TanStack Start server routes (see `services/jangar/src/app/routes`)
  - `GET /health` → static ok payload.
- - `GET /openai/v1/models` → returns supported Codex models.
+ - `GET /openai/v1/models` → returns supported Codex models (currently four entries; see snapshot above).
  - `POST /openai/v1/chat/completions` → OpenAI-compatible streaming proxy to `codex app-server`, persisting turns/usage/events into Convex.
- - SSE/mission REST endpoints are not yet implemented; workflow creation currently happens via Temporal SDK/activities (stub).
+ - Mission REST/SSE endpoints are **not implemented yet**; workflow creation currently happens via Temporal SDK/activities (stub).
 
 7) **UI (Orchestrator — TanStack Start + OpenWebUI)** — `services/jangar/src/ui/`
    - Routes: `/` (mission list), `/mission/$id` (chat, plan timeline, activity log, PR card).
@@ -188,7 +214,7 @@ flowchart TD
 - Allowlisted commands only (`cx-*`, `git`, `gh`, minimal OS tools) when Codex shells.
 - Activity timeout (e.g., 20 min); workflow `maxTurns` default 8.
 - Sandbox `danger-full-access`; network on; approval `never` for meta; worker may reuse or downgrade per call.
-- Model: `gpt-5.1-max` for meta; worker configurable.
+- Model: `gpt-5.1-codex-max` is the current default for meta; worker configurable.
 
 ## Testing Strategy
 

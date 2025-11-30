@@ -1,7 +1,7 @@
 # Jangar Implementation Plan (sync point)
 
-Date: 2025-11-24  
-Context: use this plan to split work across Codex agents/Argo jobs. Markers use the format `JNG-###` and appear in code as `TODO(jng-###)`.
+Date: 2025-11-24 (updated 2025-11-30)  
+Context: use this plan to split work across Codex agents/Argo jobs. Markers use the format `JNG-###` and appear in code as `TODO(jng-###)`. Source code is the source of truth; statuses below match what is currently implemented.
 
 ## Workstream map
 
@@ -16,70 +16,67 @@ Context: use this plan to split work across Codex agents/Argo jobs. Markers use 
 - **JNG-080 Infra/Build:** Image assembly, kustomize/Argo updates, OpenWebUI sidecar, CNPG.
 - **JNG-090 Testing/QA:** Unit, integration (Temporal dev), E2E happy-path + failure-path.
 
-## Assignment-ready task list
+## Assignment-ready task list (status = current code)
 
 ### JNG-001 Foundations (in progress)
 
-- ✅ Add `env?: Record<string, string>` to Codex options and pass through to `codex-exec` spawn env.
-- TODO(jng-001): Export helper to merge base env + turn-specific env (see `services/jangar/src/lib/env.ts`).
+- ✅ `env?: Record<string, string>` is plumbed through the Codex SDK to `codex-exec` spawn env.
+- ⏳ TODO(jng-001): Export helper to merge base env + turn-specific env (`services/jangar/src/services/env.ts`), and wire CODEX_API_KEY/CODEX_PATH once secrets are finalized.
 
 ### JNG-010 Toolbelt (`packages/cx-tools`)
 
-- TODO(jng-010a): Implement `cx-codex-run` CLI; flags: `--prompt/--file`, `--images`, `--model`, `--sandbox`, `--cwd`, `--depth`, `--env KEY=VAL`, `--json`. Streams JSON lines.
-- TODO(jng-010b): Implement workflow CLIs: `cx-workflow-start`, `cx-workflow-signal`, `cx-workflow-query`, `cx-workflow-cancel` (Temporal client wrapper). Config via env/flags for namespace/task queue/address.
-- TODO(jng-010c): Optional `cx-log` (tail workflow/activity logs) for debugging.
-- Outputs: compiled to `packages/cx-tools/dist`, binaries exposed via `bin` field; consumed by activities and server proxy.
+- 🚧 Not started. `packages/cx-tools` only exports a `notImplemented` placeholder; no CLIs exist.
+- TODO(jng-010a): Implement `cx-codex-run` CLI; flags `--prompt/--file`, `--images`, `--model`, `--sandbox`, `--cwd`, `--depth`, `--env KEY=VAL`, `--json`. Streams JSON lines.
+- TODO(jng-010b): Implement workflow CLIs `cx-workflow-start/signal/query/cancel` (Temporal client wrapper) with env/flag config for namespace/task queue/address.
+- TODO(jng-010c): Optional `cx-log` tailer for workflow/activity logs.
+- Deliverables: build to `dist/`, expose via `bin`, bundle into image scripts.
 
 ### JNG-020 Persistence (Convex)
 
-- ✅ Define Convex schema in `services/jangar/convex/schema.ts` for conversations, turns, messages, reasoning sections, commands/command_chunks, usage_snapshots, rate_limits, events_raw.
-- ✅ Implement mutations in `services/jangar/convex/app.ts` and client wrapper in `services/jangar/src/db/index.ts` used by the OpenAI proxy.
-- TODO(jng-020a): Add queries as needed for UI/history views once workflow/state pages land.
-- TODO(jng-020b): Expand persistence to capture worker activity snapshots when worker tasks exist.
+- ✅ Convex schema exists (`services/jangar/convex/schema.ts`).
+- ✅ Mutations exist (`services/jangar/convex/app.ts`) and are invoked by the OpenAI proxy via `services/jangar/src/services/db/index.ts`.
+- ⏳ TODO(jng-020a): Add queries/read endpoints for UI/history views.
+- ⏳ TODO(jng-020b): Persist worker activity snapshots once worker tasks are implemented.
 
 ### JNG-030 Activities (meta turn + events)
 
-- TODO(jng-030a): Implement `runCodexTurnActivity` in `services/jangar/src/activities/run-codex-turn.ts`:
-  - Prepare temp `CODEX_HOME`, optional repo clone into temp workdir, set `CX_DEPTH`, inject toolbelt `PATH`.
-- Invoke Codex meta turn (`gpt-5.1-codex-max`, sandbox `danger-full-access`, approval `never`, network on), capture events, items, usage.
-  - Persist snapshot via DB helper; return `RunCodexTurnResult`.
-- TODO(jng-030b): Implement `publishEventActivity` (SSE/log fan-out) stubbed in `services/jangar/src/activities/publish-event.ts`.
+- 🚧 Stubs. `runCodexTurnActivity` and `publishEventActivity` return placeholders; no Codex invocation or persistence occurs.
+- TODO(jng-030a): Implement `runCodexTurnActivity` (prepare env/workdir, run Codex meta turn, capture events/items/usage, persist snapshot).
+- TODO(jng-030b): Implement `publishEventActivity` for SSE/log fan-out.
 
 ### JNG-040 Worker activity (implementation delegate)
 
-- TODO(jng-040a): Implement `runWorkerTaskActivity` in `services/jangar/src/activities/run-worker-task.ts`:
-  - Clone repo shallow, create branch `auto/<mission>-<id>`.
-  - Run worker Codex turn/loop with provided depth; run lint/tests; push branch; open PR via `gh` or REST.
-  - Return `WorkerTaskResult` with `prUrl`, `branch`, `commitSha`, `notes`.
+- 🚧 Stub. `runWorkerTaskActivity` and git helpers are placeholders.
+- TODO(jng-040a): Clone repo shallow, create branch `auto/<mission>-<id>`, run worker Codex + lint/tests, push, open PR; return `prUrl/branch/commitSha/notes`.
 
 ### JNG-050 Workflow (Temporal)
 
-- TODO(jng-050a): Flesh `codexOrchestrationWorkflow` in `services/jangar/src/workflows/orchestration.ts`:
-  - Input `{topic, repoUrl, constraints?, depth=1, maxTurns=8}`.
-  - Loop until done/max; schedule `runCodexTurnActivity`; capture snapshots; delegate worker tasks when requested; support signals (`submitUserMessage`, `abort`) and query (`getState`).
-  - Enforce depth/turn guardrails; write state to DB.
+- 🚧 Stub. Workflow currently schedules a single placeholder turn and returns `{status: 'pending'}` with no signals/queries/worker delegation.
+- TODO(jng-050a): Implement loop with maxTurns/depth guardrails, signals (`submitUserMessage`, `abort`), query (`getState`), worker delegation, DB writes.
 
 ### JNG-060 HTTP/SSE + OpenAI proxy
 
-- ✅ OpenAI-compatible proxy routes (`/openai/v1/chat/completions`, `/openai/v1/models`) in TanStack Start server, bridging to `codex app-server` and persisting telemetry.
-- ✅ Health route (`/health`).
-- TODO(jng-060a): Add mission/workflow REST + SSE endpoints once workflow loop exists; reconcile with Convex queries.
-- TODO(jng-060b): Add abort/cancel path and idempotency for long-running worker tasks.
+- ✅ Streaming OpenAI-compatible proxy (`/openai/v1/chat/completions`, `/openai/v1/models`) plus `/health` are live.
+- ⏳ TODO(jng-060a): Mission/workflow REST + SSE endpoints to expose Temporal state once the workflow exists.
+- ⏳ TODO(jng-060b): Abort/cancel path and idempotency for long-running worker tasks.
 
 ### JNG-070 UI (TanStack Start + OpenWebUI)
 
-- TODO(jng-070a): Scaffold TanStack Start app under `services/jangar/src/ui/` with routes `/`, `/mission/$id` (list/detail/chat/logs/PR card).
-- TODO(jng-070b): Point OpenWebUI sidecar at proxy; ensure single model `meta-orchestrator`.
+- 🚧 Minimal scaffold (welcome + health). No mission list/detail/chat/logs/PR cards; no SSE wiring.
+- TODO(jng-070a): Build `/` and `/mission/$id` routes backed by Temporal/Convex data.
+- TODO(jng-070b): Surface single orchestrator model in UI copy; link out to OpenWebUI host.
 
 ### JNG-080 Infra/Build
 
-- TODO(jng-080a): Ensure `argocd/applications/jangar/kservice.yaml` carries Convex env (`CONVEX_DEPLOYMENT`, `CONVEX_DEPLOY_KEY` or self-hosted), `CODEX_API_KEY`, `GITHUB_TOKEN`, and OpenWebUI host vars.
-- TODO(jng-080b): Keep OpenWebUI Helm release pinned; verify Redis/Postgres dependencies in values.
-- TODO(jng-080c): Update `packages/scripts/src/jangar/build-image.ts` & `deploy-service.ts` to bundle `packages/cx-tools/dist`, UI dist, and stamp `JANGAR_VERSION/JANGAR_COMMIT`; preserve `convex deploy --yes` pre-step.
+- 🚧 Partial. ArgoCD manifests deploy app + worker with Convex URL only; CODEX_API_KEY/GITHUB_TOKEN/Convex deploy/admin keys not present. Image scripts exist but do not yet ensure `cx-tools`/UI dist bundling.
+- TODO(jng-080a): Add required secrets/env to manifests (`argocd/applications/jangar/*`).
+- TODO(jng-080b): Keep OpenWebUI Helm release pinned; verify Redis/Postgres deps in values.
+- TODO(jng-080c): Update `packages/scripts/src/jangar/build-image.ts` & `deploy-service.ts` to bundle `packages/cx-tools/dist`, UI dist, and stamp `JANGAR_VERSION/JANGAR_COMMIT`; keep `convex deploy --yes` pre-step.
 
 ### JNG-090 Testing/QA
 
-- TODO(jng-090a): Unit tests for env builder, git helper, activity inputs, DB adapter.
+- 🚧 Partial. Some handler/env tests exist; activities/workflow/git helpers lack coverage.
+- TODO(jng-090a): Unit tests for env builder, git helper, activity inputs, DB adapter (beyond current coverage).
 - TODO(jng-090b): Integration: Temporal dev workflow end-to-end with sample repo; verify per-turn snapshots.
 - TODO(jng-090c): E2E: worker opens PR on sample public repo; UI renders timeline and SSE updates.
 
