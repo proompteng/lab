@@ -18,7 +18,32 @@ export const Route = createRootRoute({
     links: [{ rel: 'stylesheet', href: appCss }],
   }),
   component: RootDocument,
+  notFoundComponent: NotFound,
 })
+
+function NotFound() {
+  return (
+    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 text-center text-slate-100">
+      <div className="rounded-full bg-white/5 px-4 py-2 text-xs uppercase tracking-[0.2em] text-amber-300">404</div>
+      <h1 className="text-3xl font-semibold">Page not found</h1>
+      <p className="max-w-lg text-slate-300">We couldn’t find that route. Check the URL or return to the overview.</p>
+      <div className="flex gap-3">
+        <Link
+          to="/"
+          className="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-500/30 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+        >
+          Go to overview
+        </Link>
+        <Link
+          to="/admin"
+          className="rounded-full border border-white/10 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+        >
+          Open admin
+        </Link>
+      </div>
+    </div>
+  )
+}
 
 function RootDocument() {
   const [queryClient] = useState(
