@@ -3,11 +3,13 @@
 ARG BUN_VERSION=1.3.3
 ARG OPENVSCODE_VERSION=1.105.1
 ARG GH_VERSION=2.65.0
+ARG KUBECTL_VERSION=1.31.0
 
 FROM oven/bun:${BUN_VERSION} AS base
 ARG NODE24_VERSION=24.11.1
 ARG OPENVSCODE_VERSION
 ARG GH_VERSION
+ARG KUBECTL_VERSION
 WORKDIR /app
 
 ENV CODEX_CWD=/workspace/lab \
@@ -62,6 +64,21 @@ RUN set -eux; \
   cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/lib /usr/local/; \
   cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/share /usr/local/; \
   rm -rf /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH} /tmp/node.tar.xz
+
+# Install kubectl (per kubernetes.io guidance)
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+    amd64|x86_64) K_ARCH=amd64 ;; \
+    arm64|aarch64) K_ARCH=arm64 ;; \
+    *) echo "Unsupported arch for kubectl: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${K_ARCH}/kubectl"; \
+  curl -fsSLo /tmp/kubectl.sha256 "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${K_ARCH}/kubectl.sha256"; \
+  echo "$(< /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum --check; \
+  install -o root -g root -m 0755 /tmp/kubectl /usr/local/bin/kubectl; \
+  rm /tmp/kubectl /tmp/kubectl.sha256; \
+  kubectl version --client --output=yaml
 
 # Base tsconfig for workspace packages
 COPY tsconfig.base.json ./

@@ -880,6 +880,21 @@ export class WorkerRuntime {
     return isAbortError(error) || (error instanceof ConnectError && error.code === Code.Canceled)
   }
 
+  #isBenignPollTimeout(error: unknown): boolean {
+    if (error instanceof ConnectError) {
+      return error.code === Code.DeadlineExceeded || error.code === Code.Canceled
+    }
+    if (error instanceof Error) {
+      const msg = error.message.toLowerCase()
+      return msg.includes('deadline') && msg.includes('exceeded')
+    }
+    if (typeof error === 'string') {
+      const msg = error.toLowerCase()
+      return msg.includes('deadline') && msg.includes('exceeded')
+    }
+    return false
+  }
+
   async #enqueueActivityTask(response: PollActivityTaskQueueResponse): Promise<void> {
     const taskToken = response.taskToken ?? new Uint8Array()
     const envelope: ActivityTaskEnvelope = {
@@ -892,6 +907,13 @@ export class WorkerRuntime {
 
   #handleWorkflowPollerError(queueName: string, error: unknown): Effect.Effect<void, never, never> {
     return Effect.promise(async () => {
+      if (this.#isBenignPollTimeout(error)) {
+        this.#log('debug', 'workflow poll timeout (no tasks)', {
+          queueName,
+          namespace: this.#namespace,
+        })
+        return
+      }
       this.#incrementCounter(this.#metrics.workflowPollErrors)
       this.#log('warn', 'workflow polling failed', {
         queueName,
@@ -904,6 +926,13 @@ export class WorkerRuntime {
 
   #handleActivityPollerError(error: unknown): Effect.Effect<void, never, never> {
     return Effect.promise(async () => {
+      if (this.#isBenignPollTimeout(error)) {
+        this.#log('debug', 'activity poll timeout (no tasks)', {
+          namespace: this.#namespace,
+          taskQueue: this.#taskQueue,
+        })
+        return
+      }
       this.#incrementCounter(this.#metrics.activityPollErrors)
       this.#log('warn', 'activity polling failed', {
         namespace: this.#namespace,
