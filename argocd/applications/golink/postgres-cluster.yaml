@@ -1,0 +1,20 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: golink-db
+  namespace: golink
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  storage:
+    storageClass: longhorn
+    size: 5Gi
+  bootstrap:
+    initdb:
+      database: golink
+      owner: golink
+      encoding: "UTF8"
+      dataChecksums: true
+  monitoring:
+    enablePodMonitor: true
+# CNPG will emit application credentials in the secret `golink-db-app`
