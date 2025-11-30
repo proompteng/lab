@@ -34,5 +34,8 @@ export const loadEnv = () => {
   // Load .env.local first so it can override .env for local dev
   loadFile(resolve(serviceRoot, '.env.local'))
   loadFile(resolve(serviceRoot, '.env'))
+  if (!process.env.GOLINK_DATABASE_URL) {
+    process.env.GOLINK_DATABASE_URL = 'postgres://golink:golink@localhost:15433/golink?sslmode=disable'
+  }
   loaded = true
 }
