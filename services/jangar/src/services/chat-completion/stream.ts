@@ -63,6 +63,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
     let collected = ''
     const promptTokens = estimateTokens(prompt)
     const reasoningParts: ReasoningPart[] = []
+    let lastReasoningDelta: string | null = null
     let usagePersisted = false
     let latestUsage: TokenUsage | null = null
 
@@ -187,7 +188,12 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
               collected += contentDelta
             }
             if (reasoningDelta) {
-              reasoningParts.push({ type: 'text', text: reasoningDelta })
+              if (reasoningDelta === lastReasoningDelta) {
+                reasoningDelta = null
+              } else {
+                reasoningParts.push({ type: 'text', text: reasoningDelta })
+                lastReasoningDelta = reasoningDelta
+              }
             }
 
             const choiceDelta: {

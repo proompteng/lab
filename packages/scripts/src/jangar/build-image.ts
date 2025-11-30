@@ -44,16 +44,21 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
       console.warn(`Codex auth not found at ${codexAuthPath}; build will proceed without it.`)
     }
 
+    const buildArgs: Record<string, string> = {
+      JANGAR_VERSION: version,
+      JANGAR_COMMIT: commit,
+    }
+    if (process.env.BUILDX_VERSION) {
+      buildArgs.BUILDX_VERSION = process.env.BUILDX_VERSION
+    }
+
     const result = await buildAndPushDockerImage({
       registry,
       repository,
       tag,
       context,
       dockerfile,
-      buildArgs: {
-        JANGAR_VERSION: version,
-        JANGAR_COMMIT: commit,
-      },
+      buildArgs,
       codexAuthPath,
     })
 
