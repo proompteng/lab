@@ -50,6 +50,35 @@ const runStream = async (opts: Parameters<typeof streamSse>[1]) => {
 }
 
 describe('streamSse', () => {
+  it('sends heartbeat pings without polluting payload', async () => {
+    const { db } = createMockDb()
+    const appServer = {
+      runTurnStream: async () => ({
+        threadId: 'thread-hb',
+        stream: (async function* () {
+          yield 'hello'
+        })(),
+      }),
+    }
+
+    const { text } = await runStream({
+      model: 'gpt-5.1-codex-max',
+      signal: new AbortController().signal,
+      chatId: 'chat-hb',
+      db,
+      conversationId: 'conv-hb',
+      turnId: 'turn-hb',
+      userId: 'user-hb',
+      startedAt: Date.now(),
+      appServer: appServer as never,
+    })
+
+    // Heartbeats are SSE comments; they should not surface in the data payload we parse as text.
+    expect(text).toContain('data: {"id"')
+    expect(text).not.toContain(':ping')
+    expect(text.trim().endsWith('[DONE]')).toBe(true)
+  })
+
   it('keeps DB turnId when Codex returns a different turnId', async () => {
     const { db, calls } = createMockDb()
     const appServer = {
@@ -77,6 +106,40 @@ describe('streamSse', () => {
     })
 
     expect(calls.appendUsage.map((u) => u.turnId)).toEqual(['db-turn-1'])
+  })
+
+  it('deduplicates consecutive reasoning deltas', async () => {
+    const { db } = createMockDb()
+    const appServer = {
+      runTurnStream: async () => ({
+        threadId: 'thread-reason',
+        stream: (async function* () {
+          yield { type: 'reasoning', delta: 'foo ' }
+          yield { type: 'reasoning', delta: 'foo ' }
+          yield { type: 'reasoning', delta: 'bar ' }
+          yield 'done'
+        })(),
+      }),
+    }
+
+    let capturedReasoning: string[] = []
+
+    await runStream({
+      model: 'gpt-5.1-codex-max',
+      signal: new AbortController().signal,
+      chatId: 'chat-reason',
+      db,
+      conversationId: 'conv-reason',
+      turnId: 'turn-reason',
+      userId: 'user-reason',
+      startedAt: Date.now(),
+      appServer: appServer as never,
+      onComplete: async (_text, reasoning, _meta) => {
+        capturedReasoning = reasoning.map((r) => r.text)
+      },
+    })
+
+    expect(capturedReasoning.join('')).toBe('foo bar ')
   })
 
   it('persists onComplete errors without emitting server_error SSE after [DONE]', async () => {

@@ -64,7 +64,9 @@ const ensureRepoCheckout = (workingDirectory?: string) => {
       execSync(`gh repo clone ${repoSlug} ${workingDirectory}`, { stdio: 'inherit' })
       return
     } catch (error) {
-      console.warn('[jangar][codex] gh repo clone failed, falling back to git clone', error)
+      console.warn(
+        JSON.stringify({ service: 'jangar', component: 'codex', event: 'gh_clone_fallback', error: `${error}` }),
+      )
     }
   }
 
@@ -90,7 +92,9 @@ const startAppServerInternal = (
       appendFileSync(DEV_LOG_PATH, line)
     } catch (error) {
       // Swallow file logging errors to avoid breaking dev flow.
-      console.warn('[jangar][codex] failed to write app-server dev log', error)
+      console.warn(
+        JSON.stringify({ service: 'jangar', component: 'codex', event: 'dev_log_write_failed', error: `${error}` }),
+      )
     }
   }
 
@@ -102,10 +106,17 @@ const startAppServerInternal = (
     defaultModel: model,
     clientInfo: { name: 'jangar', title: 'Jangar UI', version: '0.0.0' },
     logger: (level, message, meta) => {
-      const payload = meta ? `${message} ${JSON.stringify(meta)}` : message
-      if (level === 'info') console.info('[jangar][codex]', payload)
-      else if (level === 'warn') console.warn('[jangar][codex]', payload)
-      else console.error('[jangar][codex]', payload)
+      const entry = {
+        service: 'jangar',
+        component: 'codex',
+        level,
+        message,
+        ...(meta ?? {}),
+      }
+      const line = JSON.stringify(entry)
+      if (level === 'info') console.info(line)
+      else if (level === 'warn') console.warn(line)
+      else console.error(line)
       logToFile(level, message, meta as Record<string, unknown> | undefined)
     },
   })

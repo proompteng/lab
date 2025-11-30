@@ -2,15 +2,12 @@
 # Bun image for jangar worker + UI + Codex app-server
 ARG BUN_VERSION=1.3.3
 ARG OPENVSCODE_VERSION=1.105.1
-ARG KUBECTL_VERSION=v1.30.4
-ARG DOCKER_CLI_VERSION=27.1.2
+ARG GH_VERSION=2.65.0
 
 FROM oven/bun:${BUN_VERSION} AS base
 ARG NODE24_VERSION=24.11.1
-ARG BUILDX_VERSION
 ARG OPENVSCODE_VERSION
-ARG KUBECTL_VERSION
-ARG DOCKER_CLI_VERSION
+ARG GH_VERSION
 WORKDIR /app
 
 ENV CODEX_CWD=/workspace/lab \
@@ -18,8 +15,11 @@ ENV CODEX_CWD=/workspace/lab \
   CODEX_REPO_URL=https://github.com/proompteng/lab.git \
   CODEX_BOOTSTRAP_REPO=1
 
-# Tooling needed for builds, gh CLI auth, and VS Code server
-RUN set -eux; \
+# Tooling needed for builds and VS Code server
+RUN --mount=type=cache,target=/var/cache/apt \
+  --mount=type=cache,target=/var/lib/apt/lists \
+  set -eux; \
+  export DEBIAN_FRONTEND=noninteractive; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
   apt-get install -y --no-install-recommends \
     build-essential \
@@ -29,19 +29,22 @@ RUN set -eux; \
     gnupg \
     ripgrep \
     tini; \
-  install -m 0755 -d /etc/apt/keyrings; \
-  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg; \
-  chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list; \
-  KUBE_SERIES="${KUBECTL_VERSION%.*}"; \
-  KUBE_REPO="https://pkgs.k8s.io/core:/stable:/${KUBE_SERIES}/deb"; \
-  curl -fSLs --noproxy '*' "$KUBE_REPO/Release.key" | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg; \
-  echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] $KUBE_REPO/ /" > /etc/apt/sources.list.d/kubernetes.list; \
-  apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
-  apt-get install -y --no-install-recommends gh kubectl; \
   rm -rf /var/lib/apt/lists/*
 
-# Install Node.js, Docker CLI, and buildx plugins in a single block to avoid repeating arch detection
+# Lightweight GitHub CLI install (no apt repo)
+RUN set -eux; \
+  ARCH="$(uname -m)"; \
+  case "$ARCH" in \
+    amd64|x86_64) GH_ARCH=amd64 ;; \
+    arm64|aarch64) GH_ARCH=arm64 ;; \
+    *) echo "Unsupported arch for gh: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${GH_ARCH}.tar.gz" -o /tmp/gh.tar.gz; \
+  tar -xzf /tmp/gh.tar.gz -C /tmp; \
+  install /tmp/gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh /usr/local/bin/gh; \
+  rm -rf /tmp/gh.tar.gz /tmp/gh_${GH_VERSION}_linux_${GH_ARCH}
+
+# Install Node.js once for both Bun and tools that expect node
 RUN set -eux; \
   ARCH="${TARGETARCH:-$(uname -m)}"; \
   case "$ARCH" in \
@@ -51,54 +54,37 @@ RUN set -eux; \
     s390x) NODE_ARCH=s390x ;; \
     *) NODE_ARCH="$ARCH" ;; \
   esac; \
-  curl -fsSL "https://nodejs.org/dist/v${NODE24_VERSION}/node-v${NODE24_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://nodejs.org/dist/v${NODE24_VERSION}/node-v${NODE24_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz; \
   tar -xJf /tmp/node.tar.xz -C /tmp; \
   rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack; \
   cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/bin /usr/local/; \
   cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/include /usr/local/; \
   cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/lib /usr/local/; \
   cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/share /usr/local/; \
-  rm -rf /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH} /tmp/node.tar.xz; \
-  case "$ARCH" in \
-    amd64|x86_64) DOCKER_ARCH=x86_64 ;; \
-    arm64|aarch64) DOCKER_ARCH=aarch64 ;; \
-    *) echo "Unsupported arch for Docker CLI: $ARCH" >&2; exit 1 ;; \
-  esac; \
-  case "$ARCH" in \
-    amd64|x86_64) BUILDx_ARCH=amd64 ;; \
-    arm64|aarch64) BUILDx_ARCH=arm64 ;; \
-    ppc64le) BUILDx_ARCH=ppc64le ;; \
-    s390x) BUILDx_ARCH=s390x ;; \
-    *) echo "Unsupported arch for Docker buildx: $ARCH" >&2; exit 1 ;; \
-  esac; \
-  curl -fSLs -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz"; \
-  tar -xz -C /usr/local/bin --strip-components=1 -f /tmp/docker.tgz docker/docker; \
-  rm /tmp/docker.tgz; \
-  mkdir -p /usr/libexec/docker/cli-plugins /usr/local/lib/docker/cli-plugins /usr/lib/docker/cli-plugins; \
-  curl -fsSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-${BUILDx_ARCH}" -o /usr/libexec/docker/cli-plugins/docker-buildx; \
-  chmod +x /usr/libexec/docker/cli-plugins/docker-buildx; \
-  ln -sf /usr/libexec/docker/cli-plugins/docker-buildx /usr/local/lib/docker/cli-plugins/docker-buildx; \
-  ln -sf /usr/libexec/docker/cli-plugins/docker-buildx /usr/lib/docker/cli-plugins/docker-buildx
+  rm -rf /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH} /tmp/node.tar.xz
 
 # Base tsconfig for workspace packages
 COPY tsconfig.base.json ./
 
 # Build codex dependency (file: workspace)
 COPY packages/codex ./packages/codex
-RUN cd packages/codex \
+RUN --mount=type=cache,target=/root/.cache/bun \
+  cd packages/codex \
   && bun add -d typescript@5.9.3 \
   && bun install --frozen-lockfile \
   && bun run build
 
 # Install jangar deps (with dev deps for UI build)
 WORKDIR /app/services/jangar
+COPY bun.lock ../bun.lock
 COPY services/jangar/package.json ./
 COPY services/jangar/tsconfig.json ./
-COPY services/jangar/src ./src
-COPY bun.lock ../bun.lock
 RUN mkdir -p /root/.codex
 COPY services/jangar/.codex /root/.codex
-RUN bun install --frozen-lockfile
+RUN --mount=type=cache,target=/root/.cache/bun bun install --frozen-lockfile
+
+# Copy source after deps to maximize layer cache hits
+COPY services/jangar/src ./src
 
 # Build TanStack Start UI
 RUN bun run start:build
@@ -120,7 +106,7 @@ RUN set -eux; \
     x86_64|amd64)  OVS_ARCH=x64 ;; \
     *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
   esac; \
-  curl -fL "https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-v${OPENVSCODE_VERSION}/openvscode-server-v${OPENVSCODE_VERSION}-linux-${OVS_ARCH}.tar.gz" -o /tmp/ovscode.tar.gz; \
+  curl -fL --retry 5 --retry-delay 2 --retry-all-errors "https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-v${OPENVSCODE_VERSION}/openvscode-server-v${OPENVSCODE_VERSION}-linux-${OVS_ARCH}.tar.gz" -o /tmp/ovscode.tar.gz; \
   mkdir -p /opt/openvscode-server; \
   tar -xzf /tmp/ovscode.tar.gz -C /opt/openvscode-server --strip-components=1; \
   rm /tmp/ovscode.tar.gz; \

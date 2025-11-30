@@ -1,9 +1,13 @@
-import { buildContextWindowExceededResponse, parseCodexError, persistFailedTurn, persistToolDelta } from './persistence'
+import { parseCodexError, persistFailedTurn, persistToolDelta } from './persistence'
 import { resolveAppServer, serviceTier, systemFingerprint, threadMap } from './state'
 import type { ReasoningPart, StreamOptions, TokenUsage, ToolDelta } from './types'
 import { buildUsagePayload, createSafeEnqueuer, estimateTokens, formatToolDelta, stripAnsi } from './utils'
 
-const createStreamBody = (prompt: string, opts: StreamOptions) => {
+type StreamBuildResult =
+  | { body: ReadableStream<Uint8Array>; errorPayload?: undefined }
+  | { body: null; errorPayload: { error: { message: string; type: string; code: string } } }
+
+const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBuildResult> => {
   const appServer = opts.appServer ?? resolveAppServer()
   const targetModel = opts.model
   const existingThreadId = opts.threadId ?? threadMap.get(opts.chatId)
@@ -32,7 +36,16 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
           },
           message,
         )
-        return { body: null, contextError: buildContextWindowExceededResponse(message) }
+        return {
+          body: null,
+          errorPayload: {
+            error: {
+              message,
+              type: 'invalid_request_error',
+              code: 'context_window_exceeded',
+            },
+          },
+        }
       }
       throw error
     }
@@ -63,7 +76,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
     let collected = ''
     const promptTokens = estimateTokens(prompt)
     const reasoningParts: ReasoningPart[] = []
-    let lastReasoningDelta: string | null = null
+    let lastReasoningDelta = ''
     let usagePersisted = false
     let latestUsage: TokenUsage | null = null
 
@@ -105,9 +118,16 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
           }
         }, streamTimeoutMs)
 
+        const heartbeatMs = Number(Bun.env.JANGAR_STREAM_HEARTBEAT_MS ?? '15000')
+        const heartbeatId = setInterval(() => {
+          // SSE comment to keep connection alive
+          safeEnqueue(encoder.encode(':ping\n\n'))
+        }, heartbeatMs)
+
         const abortHandler = () => {
           threadMap.delete(opts.chatId)
           clearTimeout(timeoutId)
+          clearInterval(heartbeatId)
           send({ error: { message: 'client aborted', type: 'aborted' } })
           sendDone()
           closeIfOpen()
@@ -188,11 +208,12 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
               collected += contentDelta
             }
             if (reasoningDelta) {
-              if (reasoningDelta === lastReasoningDelta) {
-                reasoningDelta = null
-              } else {
+              if (reasoningDelta !== lastReasoningDelta) {
                 reasoningParts.push({ type: 'text', text: reasoningDelta })
                 lastReasoningDelta = reasoningDelta
+              } else {
+                // suppress duplicate reasoning deltas from both payload and SSE chunk
+                reasoningDelta = null
               }
             }
 
@@ -404,6 +425,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
           return
         } finally {
           clearTimeout(timeoutId)
+          clearInterval(heartbeatId)
           closeIfOpen()
         }
       },
@@ -415,7 +437,25 @@ const createStreamBody = (prompt: string, opts: StreamOptions) => {
 
 export const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response> => {
   const result = await createStreamBody(prompt, opts)
-  if (result.contextError) return result.contextError
+  if (!result.body && result.errorPayload) {
+    const encoder = new TextEncoder()
+    const errorStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(result.errorPayload)}\n\n`))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      },
+    })
+    return new Response(errorStream, {
+      status: 200,
+      headers: {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      },
+    })
+  }
 
   if (!result.body) {
     return new Response('stream body unavailable', { status: 500 })
