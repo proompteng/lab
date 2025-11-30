@@ -8,6 +8,8 @@ ARG DOCKER_CLI_VERSION=27.1.2
 ARG BUILDX_VERSION=v0.30.1
 
 FROM oven/bun:${BUN_VERSION} AS base
+ARG NODE24_VERSION=24.11.1
+ARG BUILDX_VERSION
 ARG OPENVSCODE_VERSION
 ARG KUBECTL_VERSION
 ARG DOCKER_CLI_VERSION
@@ -49,27 +51,25 @@ RUN set -eux; \
   curl -fsSL "https://nodejs.org/dist/v${NODE24_VERSION}/node-v${NODE24_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz; \
   tar -xJf /tmp/node.tar.xz -C /tmp; \
   rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack; \
-  cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/{bin,include,lib,share} /usr/local/; \
+  cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/bin /usr/local/; \
+  cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/include /usr/local/; \
+  cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/lib /usr/local/; \
+  cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/share /usr/local/; \
   rm -rf /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH} /tmp/node.tar.xz
 
 # Install kubectl and Docker CLI (arm/amd64 aware)
 RUN set -eux; \
   ARCH="${TARGETARCH:-$(uname -m)}"; \
   case "$ARCH" in \
-    amd64|x86_64) BIN_ARCH=amd64; DOCKER_ARCH=x86_64 ;; \
-    arm64|aarch64) BIN_ARCH=arm64; DOCKER_ARCH=aarch64 ;; \
+    amd64|x86_64) BIN_ARCH=amd64; DOCKER_CLI_ARCH=x86_64 ;; \
+    arm64|aarch64) BIN_ARCH=arm64; DOCKER_CLI_ARCH=aarch64 ;; \
     *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
   esac; \
-  # kubectl via apt.k8s.io (new repository scheme); derive minor series (e.g., v1.30)
-  KUBE_SERIES="${KUBECTL_VERSION%.*}"; \
-  KUBE_REPO="https://pkgs.k8s.io/core:/stable:/${KUBE_SERIES}/deb"; \
-  install -m 0755 -d /etc/apt/keyrings; \
-  curl -fSLs --noproxy '*' "$KUBE_REPO/Release.key" | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg; \
-  echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] $KUBE_REPO/ /" > /etc/apt/sources.list.d/kubernetes.list; \
-  apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
-  apt-get install -y --no-install-recommends kubectl; \
+  # kubectl
+  curl -fsSL -o /usr/local/bin/kubectl "https://storage.googleapis.com/kubernetes-release/release/${KUBECTL_VERSION}/bin/linux/${BIN_ARCH}/kubectl"; \
+  chmod +x /usr/local/bin/kubectl; \
   # docker CLI
-  curl -fSLs -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz"; \
+  curl -fsSL -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${DOCKER_CLI_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz"; \
   tar -xz -C /usr/local/bin --strip-components=1 -f /tmp/docker.tgz docker/docker; \
   rm /tmp/docker.tgz
 
