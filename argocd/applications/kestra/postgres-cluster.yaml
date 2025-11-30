@@ -1,0 +1,18 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: kestra-db
+  namespace: kestra
+spec:
+  instances: 2
+  storage:
+    storageClass: longhorn
+    size: 50Gi
+  bootstrap:
+    initdb:
+      database: kestra
+      owner: kestra
+      dataChecksums: true
+      encoding: "UTF8"
+  monitoring:
+    enablePodMonitor: true
