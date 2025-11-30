@@ -16,20 +16,6 @@ services:
     volumes:
       - golink-db-data:/var/lib/postgresql/data
 
-  golink:
-    build:
-      context: ../..
-      dockerfile: services/golink/Dockerfile
-    container_name: golink-app
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      GOLINK_DATABASE_URL: postgres://golink:golink@db:5432/golink?sslmode=disable
-      PORT: '3000'
-    ports:
-      - '3000:3000'
-
 volumes:
   golink-db-data:
     driver: local
