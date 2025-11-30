@@ -33,10 +33,15 @@ RUN set -eux; \
   curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg; \
   chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list; \
+  KUBE_SERIES="${KUBECTL_VERSION%.*}"; \
+  KUBE_REPO="https://pkgs.k8s.io/core:/stable:/${KUBE_SERIES}/deb"; \
+  curl -fSLs --noproxy '*' "$KUBE_REPO/Release.key" | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg; \
+  echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] $KUBE_REPO/ /" > /etc/apt/sources.list.d/kubernetes.list; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
-  apt-get install -y --no-install-recommends gh; \
+  apt-get install -y --no-install-recommends gh kubectl; \
   rm -rf /var/lib/apt/lists/*
 
+# Install Node.js, Docker CLI, and buildx plugins in a single block to avoid repeating arch detection
 RUN set -eux; \
   ARCH="${TARGETARCH:-$(uname -m)}"; \
   case "$ARCH" in \
@@ -53,38 +58,22 @@ RUN set -eux; \
   cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/include /usr/local/; \
   cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/lib /usr/local/; \
   cp -r /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH}/share /usr/local/; \
-  rm -rf /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH} /tmp/node.tar.xz
-
-# Install kubectl and Docker CLI (arm/amd64 aware)
-RUN set -eux; \
-  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  rm -rf /tmp/node-v${NODE24_VERSION}-linux-${NODE_ARCH} /tmp/node.tar.xz; \
   case "$ARCH" in \
-    amd64|x86_64) BIN_ARCH=amd64; DOCKER_ARCH=x86_64 ;; \
-    arm64|aarch64) BIN_ARCH=arm64; DOCKER_ARCH=aarch64 ;; \
-    *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
+    amd64|x86_64) DOCKER_ARCH=x86_64 ;; \
+    arm64|aarch64) DOCKER_ARCH=aarch64 ;; \
+    *) echo "Unsupported arch for Docker CLI: $ARCH" >&2; exit 1 ;; \
   esac; \
-  # kubectl via apt.k8s.io (new repository scheme); derive minor series (e.g., v1.30)
-  KUBE_SERIES="${KUBECTL_VERSION%.*}"; \
-  KUBE_REPO="https://pkgs.k8s.io/core:/stable:/${KUBE_SERIES}/deb"; \
-  install -m 0755 -d /etc/apt/keyrings; \
-  curl -fSLs --noproxy '*' "$KUBE_REPO/Release.key" | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg; \
-  echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] $KUBE_REPO/ /" > /etc/apt/sources.list.d/kubernetes.list; \
-  apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
-  apt-get install -y --no-install-recommends kubectl; \
-  # docker CLI
-  curl -fSLs -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz"; \
-  tar -xz -C /usr/local/bin --strip-components=1 -f /tmp/docker.tgz docker/docker; \
-  rm /tmp/docker.tgz
-
-RUN set -eux; \
-  ARCH="${TARGETARCH:-$(uname -m)}"; \
   case "$ARCH" in \
     amd64|x86_64) BUILDx_ARCH=amd64 ;; \
     arm64|aarch64) BUILDx_ARCH=arm64 ;; \
     ppc64le) BUILDx_ARCH=ppc64le ;; \
     s390x) BUILDx_ARCH=s390x ;; \
-    *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
+    *) echo "Unsupported arch for Docker buildx: $ARCH" >&2; exit 1 ;; \
   esac; \
+  curl -fSLs -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz"; \
+  tar -xz -C /usr/local/bin --strip-components=1 -f /tmp/docker.tgz docker/docker; \
+  rm /tmp/docker.tgz; \
   mkdir -p /usr/libexec/docker/cli-plugins /usr/local/lib/docker/cli-plugins /usr/lib/docker/cli-plugins; \
   curl -fsSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-${BUILDx_ARCH}" -o /usr/libexec/docker/cli-plugins/docker-buildx; \
   chmod +x /usr/libexec/docker/cli-plugins/docker-buildx; \
