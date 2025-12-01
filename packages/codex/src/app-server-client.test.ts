@@ -251,4 +251,20 @@ describe('CodexAppServerClient', () => {
     const internals = getInternals(client)
     expect(internals.pending.size).toBe(0)
   })
+
+  it('rejects readiness when writing to the child fails', async () => {
+    const child = new FakeChildProcess()
+    child.stdin.write = vi.fn(() => {
+      throw new Error('broken pipe')
+    }) as unknown as PassThrough['write']
+
+    spawnMock.mockReturnValue(child as unknown as ChildProcessWithoutNullStreams)
+
+    const client = new CodexAppServerClient({ logger: () => {} })
+
+    await expect(client.ensureReady()).rejects.toThrow('broken pipe')
+    const internals = getInternals(client)
+    expect(internals.pending.size).toBe(0)
+    expect(child.killed).toBe(true)
+  })
 })

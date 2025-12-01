@@ -137,8 +137,9 @@ const createTurnStream = (): TurnStream => {
 
 export class CodexAppServerClient {
   private child: ChildProcessWithoutNullStreams
+  private fatalErrorHandled = false
   private send = (payload: unknown) => {
-    this.child.stdin.write(`${JSON.stringify(payload)}\n`)
+    this.writeToChild(payload)
   }
   private pending = new Map<RequestId, PendingRequest>()
   private turnStreams = new Map<string, TurnStream>()
@@ -231,6 +232,9 @@ export class CodexAppServerClient {
   }
 
   private handleFatalError(error: unknown): void {
+    if (this.fatalErrorHandled) return
+    this.fatalErrorHandled = true
+
     if (!this.readySettled) {
       this.readySettled = true
       if (this.bootstrapTimeout) {
@@ -242,6 +246,10 @@ export class CodexAppServerClient {
 
     this.rejectAllPending(error)
     this.failAllStreams(error)
+
+    if (!this.child.killed) {
+      this.child.kill()
+    }
   }
 
   async runTurn(
@@ -775,8 +783,14 @@ export class CodexAppServerClient {
       this.pending.set(id, { resolve: wrappedResolve, reject, method, startedAt: Date.now() })
     })
 
-    this.child.stdin.write(`${JSON.stringify(payload)}\n`)
-    this.log('info', 'codex app-server request', { id, method })
+    try {
+      this.writeToChild(payload)
+      this.log('info', 'codex app-server request', { id, method })
+    } catch (error) {
+      // writeToChild already triggered fatal handling; return the same promise which will reject.
+      this.log('error', 'failed to send codex app-server request', { id, method, error })
+    }
+
     return promise
   }
 
@@ -797,5 +811,16 @@ export class CodexAppServerClient {
     const line = JSON.stringify(entry)
     const sink: typeof console.log = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log
     sink(line)
+  }
+
+  private writeToChild(payload: unknown): void {
+    try {
+      this.child.stdin.write(`${JSON.stringify(payload)}\n`)
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error('failed to write to codex app-server')
+      this.log('error', 'failed to write to codex app-server', { error: err.message })
+      this.handleFatalError(err)
+      throw err
+    }
   }
 }
