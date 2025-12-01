@@ -14,7 +14,7 @@ spec:
   template:
     metadata:
       annotations:
-        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/minScale: "1"
         client.knative.dev/updateTimestamp: 2025-11-30T00:00:00Z
     spec:
       containerConcurrency: 0
