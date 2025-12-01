@@ -7,6 +7,7 @@ import type {
   AgentMessageDeltaNotification,
   AskForApproval,
   CommandExecutionOutputDeltaNotification,
+  ErrorNotification,
   ItemCompletedNotification,
   ItemStartedNotification,
   McpToolCallProgressNotification,
@@ -58,6 +59,7 @@ export type CodexAppServerOptions = {
   defaultEffort?: ReasoningEffort
   clientInfo?: ClientInfo
   logger?: (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => void
+  bootstrapTimeoutMs?: number
 }
 
 const toCliSandbox = (mode: SandboxMode): 'danger-full-access' | 'workspace-write' | 'read-only' => {
@@ -139,12 +141,19 @@ export class CodexAppServerClient {
   }
   private pending = new Map<RequestId, PendingRequest>()
   private turnStreams = new Map<string, TurnStream>()
+  private itemTurn = new Map<string, string>()
+  private turnItems = new Map<string, Set<string>>()
   private readyPromise: Promise<void>
+  private readyResolve?: () => void
+  private readyReject?: (reason: unknown) => void
+  private readySettled = false
+  private readyTimeout?: ReturnType<typeof setTimeout>
   private logger: CodexAppServerOptions['logger']
   private sandbox: SandboxMode
   private approval: AskForApproval
   private defaultModel: string
   private defaultEffort: ReasoningEffort
+  private bootstrapTimeoutMs: number
 
   constructor({
     binaryPath = 'codex',
@@ -155,12 +164,14 @@ export class CodexAppServerClient {
     defaultEffort = DEFAULT_EFFORT,
     clientInfo = defaultClientInfo,
     logger,
+    bootstrapTimeoutMs = 10_000,
   }: CodexAppServerOptions = {}) {
     this.logger = logger
     this.sandbox = sandbox
     this.approval = approval
     this.defaultModel = defaultModel
     this.defaultEffort = defaultEffort
+    this.bootstrapTimeoutMs = bootstrapTimeoutMs
 
     const args = [
       '--sandbox',
@@ -176,19 +187,22 @@ export class CodexAppServerClient {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
 
-    this.readyPromise = this.bootstrap(clientInfo)
+    this.readyPromise = new Promise<void>((resolve, reject) => {
+      this.readyResolve = resolve
+      this.readyReject = reject
+    })
+
+    this.startReadyTimeout()
+    this.bootstrap(clientInfo)
+      .then(() => this.resolveReady())
+      .catch((error) => this.rejectReady(error))
 
     this.child.on('exit', (code, signal) => {
       this.log('error', 'codex app-server exited', { code, signal })
       const error = new Error(`codex app-server exited with code ${code ?? 'unknown'} signal ${signal ?? 'unknown'}`)
-      for (const [, entry] of this.pending) {
-        entry.reject(error)
-      }
-      this.pending.clear()
-      for (const [, stream] of this.turnStreams) {
-        stream.fail(error)
-      }
-      this.turnStreams.clear()
+      this.rejectPending(error)
+      this.failAllStreams(error)
+      this.rejectReady(error)
     })
   }
 
@@ -220,19 +234,21 @@ export class CodexAppServerClient {
     let turn: Turn | null = null
 
     const iterator = stream[Symbol.asyncIterator]()
-    while (true) {
-      const { value, done } = await iterator.next()
-      if (done) {
-        turn = value ?? null
-        break
+    try {
+      while (true) {
+        const { value, done } = await iterator.next()
+        if (done) {
+          turn = value ?? null
+          break
+        }
+        if ((value as StreamDelta).type === 'message') {
+          const msg = value as { type: 'message'; delta: string }
+          text += msg.delta
+        }
       }
-      if ((value as StreamDelta).type === 'message') {
-        const msg = value as { type: 'message'; delta: string }
-        text += msg.delta
-      }
+    } finally {
+      this.clearTurn(activeTurnId)
     }
-
-    this.turnStreams.delete(activeTurnId)
     return { text, turn, threadId: activeThreadId }
   }
 
@@ -297,6 +313,7 @@ export class CodexAppServerClient {
 
     const stream = createTurnStream()
     this.turnStreams.set(turnId, stream)
+    this.turnItems.set(turnId, new Set())
     return { stream: stream.iterator, turnId, threadId: activeThreadId }
   }
 
@@ -397,19 +414,19 @@ export class CodexAppServerClient {
 
   private handleNotification(notification: ServerNotification | { method: string; params?: unknown }): void {
     const { method } = notification
-    const pushReasoning = (delta: string | null | undefined) => {
-      if (!delta) return
-      const turn = this.lastTurnStream()
-      if (!turn) return
-      if (turn.lastReasoningDelta === delta) {
+    const target = this.targetStreamFromNotification(notification)
+    const pushReasoning = (stream: TurnStream | undefined, delta: string | null | undefined) => {
+      if (!stream || !delta) return
+      if (stream.lastReasoningDelta === delta) {
         this.log('info', 'skipping duplicate reasoning delta', { delta })
         return
       }
-      turn.lastReasoningDelta = delta
-      turn.push({ type: 'reasoning', delta })
+      stream.lastReasoningDelta = delta
+      stream.push({ type: 'reasoning', delta })
     }
 
     const pushTool = (
+      stream: TurnStream | undefined,
       payload:
         | {
             toolKind: 'command' | 'file' | 'mcp' | 'webSearch'
@@ -428,15 +445,13 @@ export class CodexAppServerClient {
             data?: Record<string, unknown>
           },
     ) => {
-      const turn = this.lastTurnStream()
-      if (!turn) return
-      turn.push({ type: 'tool', ...payload })
+      if (!stream) return
+      stream.push({ type: 'tool', ...payload })
     }
 
-    const pushUsage = (usage: TokenUsage) => {
-      const turn = this.lastTurnStream()
-      if (!turn) return
-      turn.push({ type: 'usage', usage })
+    const pushUsage = (stream: TurnStream | undefined, usage: TokenUsage) => {
+      if (!stream) return
+      stream.push({ type: 'usage', usage })
     }
 
     const toToolDeltaFromItem = (
@@ -501,15 +516,22 @@ export class CodexAppServerClient {
     switch (method) {
       case 'item/agentMessage/delta': {
         const params = notification.params as AgentMessageDeltaNotification
-        const turn = this.lastTurnStream()
-        if (turn) turn.push({ type: 'message', delta: params.delta })
+        const turnId = target.turnId ?? this.extractTurnId(params)
+        if (turnId && params.itemId) this.registerItem(turnId, params.itemId)
+        const stream = this.turnStreams.get(turnId ?? this.itemTurn.get(params.itemId))
+        if (stream) stream.push({ type: 'message', delta: params.delta })
         this.log('info', 'agent message delta', { deltaBytes: params.delta.length })
         break
       }
       case 'codex/event/agent_reasoning_delta':
       case 'codex/event/reasoning_content_delta':
       case 'item/reasoning/summaryTextDelta': {
-        pushReasoning(extractDelta(notification.params ?? null))
+        const params = notification.params as Record<string, unknown>
+        const turnId = target.turnId ?? this.extractTurnId(params)
+        const itemId = this.extractItemId(params)
+        if (turnId && itemId) this.registerItem(turnId, itemId)
+        const stream = this.turnStreams.get(turnId ?? (itemId ? this.itemTurn.get(itemId) : undefined))
+        pushReasoning(stream, extractDelta(params ?? null))
         this.log('info', 'agent reasoning delta', { method, params: notification.params })
         break
       }
@@ -523,7 +545,7 @@ export class CodexAppServerClient {
           } else {
             stream.complete(params.turn)
           }
-          this.turnStreams.delete(turnId)
+          this.clearTurn(turnId)
         }
         this.log(params.turn.status === 'failed' ? 'error' : 'info', 'turn completed', {
           turnId,
@@ -539,18 +561,28 @@ export class CodexAppServerClient {
       case 'item/started': {
         const params = notification.params as ItemStartedNotification
         const toolDelta = toToolDeltaFromItem(params.item, 'started')
-        if (toolDelta) pushTool(toolDelta)
+        if (toolDelta) {
+          if (target.turnId) this.registerItem(target.turnId, params.item.id)
+          const stream = target.turnId ? this.turnStreams.get(target.turnId) : undefined
+          pushTool(stream, toolDelta)
+        }
         break
       }
       case 'item/completed': {
         const params = notification.params as ItemCompletedNotification
         const toolDelta = toToolDeltaFromItem(params.item, 'completed')
-        if (toolDelta) pushTool(toolDelta)
+        if (toolDelta) {
+          if (target.turnId) this.registerItem(target.turnId, params.item.id)
+          const stream = target.turnId ? this.turnStreams.get(target.turnId) : undefined
+          pushTool(stream, toolDelta)
+        }
         break
       }
       case 'item/commandExecution/outputDelta': {
         const params = notification.params as CommandExecutionOutputDeltaNotification
-        pushTool({
+        const turnId = target.turnId ?? this.itemTurn.get(params.itemId)
+        const stream = turnId ? this.turnStreams.get(turnId) : undefined
+        pushTool(stream, {
           toolKind: 'command',
           id: params.itemId,
           status: 'delta',
@@ -561,7 +593,9 @@ export class CodexAppServerClient {
       }
       case 'item/mcpToolCall/progress': {
         const params = notification.params as McpToolCallProgressNotification
-        pushTool({
+        const turnId = target.turnId ?? this.itemTurn.get(params.itemId)
+        const stream = turnId ? this.turnStreams.get(turnId) : undefined
+        pushTool(stream, {
           toolKind: 'mcp',
           id: params.itemId,
           status: 'delta',
@@ -573,16 +607,19 @@ export class CodexAppServerClient {
       case 'thread/tokenUsage/updated': {
         const params = notification.params as { tokenUsage?: TokenUsage; usage?: TokenUsage }
         const usage = params.tokenUsage ?? params.usage
-        if (usage) pushUsage(usage)
+        if (usage) pushUsage(target.stream, usage)
         break
       }
       case 'codex/event/stream_error':
       case 'stream_error':
       case 'error': {
-        const stream = this.lastTurnStream()
-        if (stream) {
+        const params = notification.params as ErrorNotification | undefined
+        const turnId = target.turnId ?? this.extractTurnId(params)
+        const stream = turnId ? this.turnStreams.get(turnId) : target.stream
+        if (stream && turnId) {
           stream.push({ type: 'error', error: notification.params ?? 'unknown' })
           stream.fail(new Error(JSON.stringify(notification.params)))
+          this.clearTurn(turnId)
         }
         this.log('error', 'codex stream error', { method, params: notification.params })
         break
@@ -595,9 +632,97 @@ export class CodexAppServerClient {
     }
   }
 
-  private lastTurnStream(): TurnStream | undefined {
-    const entries = Array.from(this.turnStreams.values())
-    return entries.at(-1)
+  private extractTurnId(params: unknown): string | undefined {
+    if (!params || typeof params !== 'object') return undefined
+    const obj = params as Record<string, unknown>
+    if (typeof obj.turnId === 'string') return obj.turnId
+    if (typeof obj.turn_id === 'string') return obj.turn_id
+    if (obj.turn && typeof (obj.turn as { id?: unknown }).id === 'string') return (obj.turn as { id: string }).id
+    return undefined
+  }
+
+  private extractItemId(params: unknown): string | undefined {
+    if (!params || typeof params !== 'object') return undefined
+    const obj = params as Record<string, unknown>
+    if (typeof obj.itemId === 'string') return obj.itemId
+    if (obj.item && typeof (obj.item as { id?: unknown }).id === 'string') return (obj.item as { id: string }).id
+    return undefined
+  }
+
+  private targetStreamFromNotification(notification: ServerNotification | { method: string; params?: unknown }): {
+    stream?: TurnStream
+    turnId?: string
+    itemId?: string
+  } {
+    const params = notification.params as Record<string, unknown> | undefined
+    const turnId = this.extractTurnId(params)
+    const itemId = this.extractItemId(params)
+    const resolvedTurnId = turnId ?? (itemId ? this.itemTurn.get(itemId) : undefined)
+    return {
+      turnId: resolvedTurnId,
+      itemId,
+      stream: resolvedTurnId ? this.turnStreams.get(resolvedTurnId) : undefined,
+    }
+  }
+
+  private registerItem(turnId: string | undefined, itemId: string | undefined): void {
+    if (!turnId || !itemId) return
+    this.itemTurn.set(itemId, turnId)
+    const items = this.turnItems.get(turnId) ?? new Set<string>()
+    items.add(itemId)
+    this.turnItems.set(turnId, items)
+  }
+
+  private clearTurn(turnId: string): void {
+    this.turnStreams.delete(turnId)
+    const items = this.turnItems.get(turnId)
+    if (items) {
+      for (const itemId of items) {
+        this.itemTurn.delete(itemId)
+      }
+      this.turnItems.delete(turnId)
+    }
+  }
+
+  private startReadyTimeout(): void {
+    const timeoutMs = this.bootstrapTimeoutMs
+    this.readyTimeout = setTimeout(() => {
+      const error = new Error(`codex app-server bootstrap timed out after ${timeoutMs}ms`)
+      this.rejectReady(error)
+      this.rejectPending(error)
+      this.failAllStreams(error)
+    }, timeoutMs)
+    this.readyTimeout.unref?.()
+  }
+
+  private resolveReady(): void {
+    if (this.readySettled) return
+    this.readySettled = true
+    if (this.readyTimeout) clearTimeout(this.readyTimeout)
+    this.readyResolve?.()
+  }
+
+  private rejectReady(reason: unknown): void {
+    if (this.readySettled) return
+    this.readySettled = true
+    if (this.readyTimeout) clearTimeout(this.readyTimeout)
+    this.readyReject?.(reason)
+  }
+
+  private rejectPending(error: unknown): void {
+    for (const [, entry] of this.pending) {
+      entry.reject(error)
+    }
+    this.pending.clear()
+  }
+
+  private failAllStreams(error: unknown): void {
+    for (const [, stream] of this.turnStreams) {
+      stream.fail(error)
+    }
+    this.turnStreams.clear()
+    this.itemTurn.clear()
+    this.turnItems.clear()
   }
 
   private request<T = unknown>(method: ClientRequest['method'], params: ClientRequest['params']): Promise<T> {
