@@ -7,6 +7,7 @@ import type {
   AgentMessageDeltaNotification,
   AskForApproval,
   CommandExecutionOutputDeltaNotification,
+  ErrorNotification,
   ItemCompletedNotification,
   ItemStartedNotification,
   McpToolCallProgressNotification,
@@ -58,6 +59,7 @@ export type CodexAppServerOptions = {
   defaultEffort?: ReasoningEffort
   clientInfo?: ClientInfo
   logger?: (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => void
+  bootstrapTimeoutMs?: number
 }
 
 const toCliSandbox = (mode: SandboxMode): 'danger-full-access' | 'workspace-write' | 'read-only' => {
@@ -68,6 +70,7 @@ const toCliSandbox = (mode: SandboxMode): 'danger-full-access' | 'workspace-writ
 
 const defaultClientInfo: ClientInfo = { name: 'lab', title: 'lab app-server client', version: '0.0.0' }
 const DEFAULT_EFFORT: ReasoningEffort = 'high'
+const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10_000
 
 const newId = (() => {
   let id = 1
@@ -134,12 +137,21 @@ const createTurnStream = (): TurnStream => {
 
 export class CodexAppServerClient {
   private child: ChildProcessWithoutNullStreams
+  private fatalErrorHandled = false
   private send = (payload: unknown) => {
-    this.child.stdin.write(`${JSON.stringify(payload)}\n`)
+    this.writeToChild(payload)
   }
   private pending = new Map<RequestId, PendingRequest>()
   private turnStreams = new Map<string, TurnStream>()
+  private turnItems = new Map<string, Set<string>>()
+  private itemTurnMap = new Map<string, string>()
+  private lastActiveTurnId: string | null = null
   private readyPromise: Promise<void>
+  private resolveReady: (() => void) | null = null
+  private rejectReady: ((reason: unknown) => void) | null = null
+  private readySettled = false
+  private bootstrapTimeout: ReturnType<typeof setTimeout> | null = null
+  private bootstrapTimeoutMs: number
   private logger: CodexAppServerOptions['logger']
   private sandbox: SandboxMode
   private approval: AskForApproval
@@ -155,12 +167,14 @@ export class CodexAppServerClient {
     defaultEffort = DEFAULT_EFFORT,
     clientInfo = defaultClientInfo,
     logger,
+    bootstrapTimeoutMs = DEFAULT_BOOTSTRAP_TIMEOUT_MS,
   }: CodexAppServerOptions = {}) {
     this.logger = logger
     this.sandbox = sandbox
     this.approval = approval
     this.defaultModel = defaultModel
     this.defaultEffort = defaultEffort
+    this.bootstrapTimeoutMs = bootstrapTimeoutMs
 
     const args = [
       '--sandbox',
@@ -176,19 +190,23 @@ export class CodexAppServerClient {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
 
-    this.readyPromise = this.bootstrap(clientInfo)
+    this.readyPromise = new Promise<void>((resolve, reject) => {
+      this.resolveReady = resolve
+      this.rejectReady = reject
+    })
+
+    this.bootstrapTimeout = setTimeout(() => {
+      this.handleFatalError(new Error(`codex app-server failed to initialize within ${this.bootstrapTimeoutMs}ms`))
+    }, this.bootstrapTimeoutMs)
+
+    this.bootstrap(clientInfo)
+      .then(() => this.settleReady())
+      .catch((error) => this.handleFatalError(error))
 
     this.child.on('exit', (code, signal) => {
       this.log('error', 'codex app-server exited', { code, signal })
       const error = new Error(`codex app-server exited with code ${code ?? 'unknown'} signal ${signal ?? 'unknown'}`)
-      for (const [, entry] of this.pending) {
-        entry.reject(error)
-      }
-      this.pending.clear()
-      for (const [, stream] of this.turnStreams) {
-        stream.fail(error)
-      }
-      this.turnStreams.clear()
+      this.handleFatalError(error)
     })
   }
 
@@ -197,7 +215,42 @@ export class CodexAppServerClient {
   }
 
   stop(): void {
+    if (this.bootstrapTimeout) {
+      clearTimeout(this.bootstrapTimeout)
+      this.bootstrapTimeout = null
+    }
     this.child.kill()
+  }
+
+  private settleReady(): void {
+    if (this.readySettled) return
+    this.readySettled = true
+    if (this.bootstrapTimeout) {
+      clearTimeout(this.bootstrapTimeout)
+      this.bootstrapTimeout = null
+    }
+    this.resolveReady?.()
+  }
+
+  private handleFatalError(error: unknown): void {
+    if (this.fatalErrorHandled) return
+    this.fatalErrorHandled = true
+
+    if (!this.readySettled) {
+      this.readySettled = true
+      if (this.bootstrapTimeout) {
+        clearTimeout(this.bootstrapTimeout)
+        this.bootstrapTimeout = null
+      }
+      this.rejectReady?.(error)
+    }
+
+    this.rejectAllPending(error)
+    this.failAllStreams(error)
+
+    if (!this.child.killed) {
+      this.child.kill()
+    }
   }
 
   async runTurn(
@@ -220,19 +273,22 @@ export class CodexAppServerClient {
     let turn: Turn | null = null
 
     const iterator = stream[Symbol.asyncIterator]()
-    while (true) {
-      const { value, done } = await iterator.next()
-      if (done) {
-        turn = value ?? null
-        break
+    try {
+      while (true) {
+        const { value, done } = await iterator.next()
+        if (done) {
+          turn = value ?? null
+          break
+        }
+        if ((value as StreamDelta).type === 'message') {
+          const msg = value as { type: 'message'; delta: string }
+          text += msg.delta
+        }
       }
-      if ((value as StreamDelta).type === 'message') {
-        const msg = value as { type: 'message'; delta: string }
-        text += msg.delta
-      }
+    } finally {
+      this.clearTurn(activeTurnId)
     }
 
-    this.turnStreams.delete(activeTurnId)
     return { text, turn, threadId: activeThreadId }
   }
 
@@ -297,6 +353,8 @@ export class CodexAppServerClient {
 
     const stream = createTurnStream()
     this.turnStreams.set(turnId, stream)
+    this.turnItems.set(turnId, new Set())
+    this.lastActiveTurnId = turnId
     return { stream: stream.iterator, turnId, threadId: activeThreadId }
   }
 
@@ -397,16 +455,33 @@ export class CodexAppServerClient {
 
   private handleNotification(notification: ServerNotification | { method: string; params?: unknown }): void {
     const { method } = notification
+    const params = notification.params
+
+    const routeToStream = (
+      targetParams: unknown,
+      handler: (stream: TurnStream, turnId: string) => void,
+      { trackItem }: { trackItem?: boolean } = {},
+    ): boolean => {
+      if (trackItem) this.trackItemFromParams(targetParams)
+      const resolved = this.resolveTurnStream(targetParams)
+      if (!resolved) {
+        this.log('warn', 'no turn stream for notification', { method, params: targetParams })
+        return false
+      }
+      handler(resolved.stream, resolved.turnId)
+      return true
+    }
+
     const pushReasoning = (delta: string | null | undefined) => {
       if (!delta) return
-      const turn = this.lastTurnStream()
-      if (!turn) return
-      if (turn.lastReasoningDelta === delta) {
-        this.log('info', 'skipping duplicate reasoning delta', { delta })
-        return
-      }
-      turn.lastReasoningDelta = delta
-      turn.push({ type: 'reasoning', delta })
+      routeToStream(params, (stream) => {
+        if (stream.lastReasoningDelta === delta) {
+          this.log('info', 'skipping duplicate reasoning delta', { delta })
+          return
+        }
+        stream.lastReasoningDelta = delta
+        stream.push({ type: 'reasoning', delta })
+      })
     }
 
     const pushTool = (
@@ -428,15 +503,15 @@ export class CodexAppServerClient {
             data?: Record<string, unknown>
           },
     ) => {
-      const turn = this.lastTurnStream()
-      if (!turn) return
-      turn.push({ type: 'tool', ...payload })
+      routeToStream(params, (stream) => {
+        stream.push({ type: 'tool', ...payload })
+      })
     }
 
     const pushUsage = (usage: TokenUsage) => {
-      const turn = this.lastTurnStream()
-      if (!turn) return
-      turn.push({ type: 'usage', usage })
+      routeToStream(params, (stream) => {
+        stream.push({ type: 'usage', usage })
+      })
     }
 
     const toToolDeltaFromItem = (
@@ -501,8 +576,13 @@ export class CodexAppServerClient {
     switch (method) {
       case 'item/agentMessage/delta': {
         const params = notification.params as AgentMessageDeltaNotification
-        const turn = this.lastTurnStream()
-        if (turn) turn.push({ type: 'message', delta: params.delta })
+        routeToStream(
+          params,
+          (stream) => {
+            stream.push({ type: 'message', delta: params.delta })
+          },
+          { trackItem: true },
+        )
         this.log('info', 'agent message delta', { deltaBytes: params.delta.length })
         break
       }
@@ -515,7 +595,7 @@ export class CodexAppServerClient {
       }
       case 'turn/completed': {
         const params = notification.params as TurnCompletedNotification
-        const turnId = params.turn.id
+        const turnId = this.findTurnId(params) ?? params.turn.id
         const stream = this.turnStreams.get(turnId)
         if (stream) {
           if (params.turn.status === 'failed') {
@@ -523,8 +603,8 @@ export class CodexAppServerClient {
           } else {
             stream.complete(params.turn)
           }
-          this.turnStreams.delete(turnId)
         }
+        this.clearTurn(turnId)
         this.log(params.turn.status === 'failed' ? 'error' : 'info', 'turn completed', {
           turnId,
           status: params.turn.status,
@@ -538,18 +618,21 @@ export class CodexAppServerClient {
       }
       case 'item/started': {
         const params = notification.params as ItemStartedNotification
+        this.trackItemFromParams(params)
         const toolDelta = toToolDeltaFromItem(params.item, 'started')
         if (toolDelta) pushTool(toolDelta)
         break
       }
       case 'item/completed': {
         const params = notification.params as ItemCompletedNotification
+        this.trackItemFromParams(params)
         const toolDelta = toToolDeltaFromItem(params.item, 'completed')
         if (toolDelta) pushTool(toolDelta)
         break
       }
       case 'item/commandExecution/outputDelta': {
         const params = notification.params as CommandExecutionOutputDeltaNotification
+        this.trackItemFromParams(params)
         pushTool({
           toolKind: 'command',
           id: params.itemId,
@@ -561,6 +644,7 @@ export class CodexAppServerClient {
       }
       case 'item/mcpToolCall/progress': {
         const params = notification.params as McpToolCallProgressNotification
+        this.trackItemFromParams(params)
         pushTool({
           toolKind: 'mcp',
           id: params.itemId,
@@ -579,10 +663,13 @@ export class CodexAppServerClient {
       case 'codex/event/stream_error':
       case 'stream_error':
       case 'error': {
-        const stream = this.lastTurnStream()
-        if (stream) {
-          stream.push({ type: 'error', error: notification.params ?? 'unknown' })
-          stream.fail(new Error(JSON.stringify(notification.params)))
+        const errorPayload = (notification.params as ErrorNotification) ?? { message: 'unknown error' }
+        const resolved = this.resolveTurnStream(notification.params)
+        if (resolved) {
+          resolved.stream.push({ type: 'error', error: errorPayload })
+          this.failTurnStream(resolved.turnId, new Error(JSON.stringify(errorPayload)))
+        } else {
+          this.log('warn', 'stream error without matching turn', { method, params: notification.params })
         }
         this.log('error', 'codex stream error', { method, params: notification.params })
         break
@@ -595,9 +682,107 @@ export class CodexAppServerClient {
     }
   }
 
-  private lastTurnStream(): TurnStream | undefined {
-    const entries = Array.from(this.turnStreams.values())
-    return entries.at(-1)
+  private findTurnId(params: unknown): string | null {
+    if (!params || typeof params !== 'object') return null
+    const obj = params as { [key: string]: unknown }
+
+    if (typeof obj.turnId === 'string') return obj.turnId
+    if (typeof obj.turn_id === 'string') return obj.turn_id
+    if (obj.turn && typeof (obj.turn as { id?: unknown }).id === 'string') return (obj.turn as { id: string }).id
+    if (obj.params && typeof (obj.params as { turnId?: unknown }).turnId === 'string') {
+      return (obj.params as { turnId: string }).turnId
+    }
+    return null
+  }
+
+  private findItemId(params: unknown): string | null {
+    if (!params || typeof params !== 'object') return null
+    const obj = params as { [key: string]: unknown }
+
+    if (typeof obj.itemId === 'string') return obj.itemId
+    if (typeof obj.item_id === 'string') return obj.item_id
+    if (obj.item && typeof (obj.item as { id?: unknown }).id === 'string') return (obj.item as { id: string }).id
+    return null
+  }
+
+  private resolveTurnStream(params: unknown): { stream: TurnStream; turnId: string } | null {
+    const turnIdFromParams = this.findTurnId(params)
+    const itemIdFromParams = this.findItemId(params)
+    const turnId = turnIdFromParams ?? (itemIdFromParams ? (this.itemTurnMap.get(itemIdFromParams) ?? null) : null)
+    if (!turnId) return null
+    const stream = this.turnStreams.get(turnId)
+    if (!stream) return null
+    return { stream, turnId }
+  }
+
+  private trackItemFromParams(params: unknown): void {
+    let turnId = this.findTurnId(params)
+    const itemId = this.findItemId(params)
+    if (!itemId) return
+
+    if (!turnId) {
+      const activeTurnIds = Array.from(this.turnStreams.keys())
+      if (activeTurnIds.length === 0) return
+
+      const inferred: string =
+        this.lastActiveTurnId && this.turnStreams.has(this.lastActiveTurnId)
+          ? this.lastActiveTurnId
+          : activeTurnIds[activeTurnIds.length - 1]!
+
+      this.log('warn', 'inferring turn for item without turnId', {
+        itemId,
+        inferredTurnId: inferred,
+        activeTurnIds,
+      })
+      turnId = inferred
+    }
+
+    if (!turnId) return
+
+    this.trackItemForTurn(turnId, itemId)
+  }
+
+  private trackItemForTurn(turnId: string, itemId: string): void {
+    this.itemTurnMap.set(itemId, turnId)
+    const existing = this.turnItems.get(turnId)
+    if (existing) {
+      existing.add(itemId)
+      return
+    }
+    this.turnItems.set(turnId, new Set([itemId]))
+  }
+
+  private clearTurn(turnId: string): void {
+    const items = this.turnItems.get(turnId)
+    if (items) {
+      for (const itemId of items) this.itemTurnMap.delete(itemId)
+      this.turnItems.delete(turnId)
+    }
+    this.turnStreams.delete(turnId)
+    if (this.lastActiveTurnId === turnId) {
+      const remaining = Array.from(this.turnStreams.keys())
+      this.lastActiveTurnId = remaining.length ? remaining[remaining.length - 1]! : null
+    }
+  }
+
+  private failTurnStream(turnId: string, error: unknown): void {
+    const stream = this.turnStreams.get(turnId)
+    if (stream) stream.fail(error)
+    this.clearTurn(turnId)
+  }
+
+  private rejectAllPending(error: unknown): void {
+    for (const [, entry] of this.pending) {
+      entry.reject(error)
+    }
+    this.pending.clear()
+  }
+
+  private failAllStreams(error: unknown): void {
+    const turnIds = Array.from(this.turnStreams.keys())
+    for (const turnId of turnIds) {
+      this.failTurnStream(turnId, error)
+    }
   }
 
   private request<T = unknown>(method: ClientRequest['method'], params: ClientRequest['params']): Promise<T> {
@@ -609,8 +794,14 @@ export class CodexAppServerClient {
       this.pending.set(id, { resolve: wrappedResolve, reject, method, startedAt: Date.now() })
     })
 
-    this.child.stdin.write(`${JSON.stringify(payload)}\n`)
-    this.log('info', 'codex app-server request', { id, method })
+    try {
+      this.writeToChild(payload)
+      this.log('info', 'codex app-server request', { id, method })
+    } catch (error) {
+      // writeToChild already triggered fatal handling; return the same promise which will reject.
+      this.log('error', 'failed to send codex app-server request', { id, method, error })
+    }
+
     return promise
   }
 
@@ -631,5 +822,16 @@ export class CodexAppServerClient {
     const line = JSON.stringify(entry)
     const sink: typeof console.log = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log
     sink(line)
+  }
+
+  private writeToChild(payload: unknown): void {
+    try {
+      this.child.stdin.write(`${JSON.stringify(payload)}\n`)
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error('failed to write to codex app-server')
+      this.log('error', 'failed to write to codex app-server', { error: err.message })
+      this.handleFatalError(err)
+      throw err
+    }
   }
 }

@@ -35,9 +35,13 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   // Stage auth into build context so COPY succeeds, then clean up
   let stagedAuth = false
   const stagedPath = resolve(repoRoot, 'services/jangar/.codex/auth.json')
+  const codexDir = dirname(stagedPath)
+  const hadCodexDir = existsSync(codexDir)
   try {
     if (existsSync(codexAuthPath)) {
-      mkdirSync(dirname(stagedPath), { recursive: true })
+      if (!hadCodexDir) {
+        mkdirSync(codexDir, { recursive: true })
+      }
       copyFileSync(codexAuthPath, stagedPath)
       stagedAuth = true
     } else {
@@ -67,7 +71,9 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
     if (stagedAuth) {
       try {
         rmSync(stagedPath, { force: true })
-        rmSync(dirname(stagedPath), { recursive: true, force: true })
+        if (!hadCodexDir) {
+          rmSync(codexDir, { recursive: true, force: true })
+        }
       } catch {
         // ignore cleanup errors
       }
