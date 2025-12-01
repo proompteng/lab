@@ -1,7 +1,7 @@
-import { mkdir, writeFile, access } from 'node:fs/promises'
 import { constants } from 'node:fs'
+import { access, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
-import type { GeneratedFile } from './templates/tanstackStartService'
+import type { GeneratedFile } from './templates/tanstack/types'
 
 export type WriteOptions = {
   dryRun?: boolean

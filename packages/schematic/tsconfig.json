@@ -6,13 +6,13 @@
     "module": "ESNext",
     "target": "ES2022",
     "moduleResolution": "Bundler",
-    "preserveShebangs": true,
     "allowImportingTsExtensions": false,
     "verbatimModuleSyntax": true,
     "noEmit": false,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "types": ["bun-types"]
   },
   "include": ["src/**/*"]
 }

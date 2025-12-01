@@ -1,14 +1,11 @@
-import { relative, resolve } from 'node:path'
+import { relative } from 'node:path'
 import { cancel, confirm, intro, isCancel, note, outro, select, spinner, text } from '@clack/prompts'
-import { paramCase } from 'change-case'
+import { kebabCase } from 'change-case'
 import kleur from 'kleur'
 import { z } from 'zod'
 import { writeFiles } from './fs'
-import {
-  buildTanstackStartService,
-  type GeneratedFile,
-  type TanstackServiceOptions,
-} from './templates/tanstackStartService'
+import { buildTanstackStartService } from './templates/tanstack/create-service'
+import type { TanstackServiceOptions } from './templates/tanstack/types'
 
 const nameSchema = z
   .string()
@@ -21,13 +18,14 @@ const promptName = async (initial?: string) => {
     message: 'Service name (kebab-case)',
     initialValue: initial,
     validate: (value) => {
-      const parsed = nameSchema.safeParse(paramCase(value ?? ''))
+      const parsed = nameSchema.safeParse(kebabCase(value ?? ''))
       return parsed.success ? undefined : parsed.error.issues[0]?.message
     },
   })
 
   if (isCancel(answer)) cancel('Aborted')
-  return paramCase((answer ?? '').trim())
+  const normalized = typeof answer === 'string' ? answer : String(answer ?? '')
+  return kebabCase(normalized.trim())
 }
 
 export type CliOptions = {
@@ -37,10 +35,12 @@ export type CliOptions = {
   name?: string
 }
 
+const clean = (value: string | symbol | null | undefined) => (typeof value === 'string' ? value : '')
+
 export const runCli = async (opts: CliOptions = {}) => {
   intro(kleur.bold('schematic'))
 
-  const name = opts.name ? paramCase(opts.name) : await promptName()
+  const name = opts.name ? kebabCase(opts.name) : await promptName()
 
   const type =
     opts.type ||
@@ -136,23 +136,23 @@ export const runCli = async (opts: CliOptions = {}) => {
 
   const generatorOptions: TanstackServiceOptions = {
     name,
-    description: (description ?? '').trim() || undefined,
-    owner: (owner ?? '').trim() || undefined,
+    description: clean(description).trim() || undefined,
+    owner: clean(owner).trim() || undefined,
     exposure,
     enablePostgres: Boolean(enablePostgres),
     enableRedis: Boolean(enableRedis),
     includeCi: Boolean(includeCi),
     includeArgo: Boolean(includeArgo),
     includeScripts: Boolean(includeScripts),
-    domain: (domain ?? '').trim() || undefined,
-    tailscaleHostname: (tailscaleHostname ?? '').trim() || undefined,
-    namespace: (namespace ?? '').trim() || undefined,
-    imageRegistry: (imageRegistry ?? '').trim(),
+    domain: clean(domain).trim() || undefined,
+    tailscaleHostname: clean(tailscaleHostname).trim() || undefined,
+    namespace: clean(namespace).trim() || undefined,
+    imageRegistry: clean(imageRegistry).trim(),
   }
 
   const files =
     type === 'tanstack-start'
-      ? buildTanstackStartService(generatorOptions)
+      ? await buildTanstackStartService(generatorOptions)
       : (() => {
           throw new Error(`Unsupported template: ${String(type)}`)
         })()

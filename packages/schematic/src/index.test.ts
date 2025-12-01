@@ -1,8 +1,9 @@
+import { expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFiles } from './fs'
-import type { GeneratedFile } from './templates/tanstackStartService'
+import type { GeneratedFile } from './templates/tanstack/types'
 
 const tmp = () => mkdtempSync('/tmp/schematic-')
 
