@@ -47,5 +47,5 @@ export const createTestDb = async () => {
 
 export const closeTestDb = async (client?: PGlite) => {
   if (!client) return
-  await client.close({ force: true })
+  await client.close()
 }

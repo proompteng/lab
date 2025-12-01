@@ -10,8 +10,13 @@ const slugSchema = z
   .min(1, 'Slug is required')
   .max(120, 'Keep slugs under 120 characters')
   .regex(/^[A-Za-z0-9][A-Za-z0-9\-_/]*$/, 'Only letters, numbers, dashes, underscores, and slashes are allowed')
+const linkIdSchema = z.number().int().positive()
 const urlSchema = z.string().url('Target must be a valid URL').max(2048)
-const titleSchema = z.string().trim().min(1, 'Title is required').max(200)
+const titleSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed === '' ? undefined : trimmed
+}, z.string().max(200, 'Keep titles under 200 characters').optional())
 const notesSchema = z
   .string()
   .trim()
@@ -78,23 +83,32 @@ type DbClient = Database | TestDatabase
 
 export const listLinks = async (db: DbClient, filters?: LinkFilters) => {
   const { search, sort, direction } = filters ?? {}
-  let query = db.select().from(links)
+  const baseQuery = db.select().from(links)
 
-  if (search && search.trim().length > 0) {
-    const term = `%${search.trim()}%`
-    query = query.where(
-      or(ilike(links.slug, term), ilike(links.title, term), ilike(links.targetUrl, term), ilike(links.notes, term)),
-    )
-  }
+  const filteredQuery = (() => {
+    if (search && search.trim().length > 0) {
+      const term = `%${search.trim()}%`
+      return baseQuery.where(
+        or(ilike(links.slug, term), ilike(links.title, term), ilike(links.targetUrl, term), ilike(links.notes, term)),
+      )
+    }
+    return baseQuery
+  })()
 
-  query = query.orderBy(toOrderBy(sort, direction))
-  return query
+  return filteredQuery.orderBy(toOrderBy(sort, direction))
+}
+
+const normalizeOptional = (value?: string) => {
+  if (!value) return undefined
+  const trimmed = value.trim()
+  return trimmed === '' ? undefined : trimmed
 }
 
 export const createLink = async (db: DbClient, input: LinkInput) => {
   const values = {
     ...input,
-    notes: input.notes?.trim() === '' ? undefined : input.notes?.trim(),
+    title: normalizeOptional(input.title),
+    notes: normalizeOptional(input.notes),
   }
   try {
     const [record] = await db.insert(links).values(values).returning()
@@ -109,7 +123,12 @@ export const updateLink = async (db: DbClient, input: LinkUpdateInput) => {
   try {
     const [record] = await db
       .update(links)
-      .set({ ...rest, updatedAt: new Date() })
+      .set({
+        ...rest,
+        title: normalizeOptional(rest.title),
+        notes: normalizeOptional(rest.notes),
+        updatedAt: new Date(),
+      })
       .where(eq(links.id, id))
       .returning()
     if (!record) {
@@ -119,6 +138,11 @@ export const updateLink = async (db: DbClient, input: LinkUpdateInput) => {
   } catch (error) {
     return { ok: false as const, message: mapError(error) }
   }
+}
+
+export const findById = async (db: DbClient, id: number) => {
+  const [record] = await db.select().from(links).where(eq(links.id, id)).limit(1)
+  return record ?? null
 }
 
 export const deleteLink = async (db: DbClient, id: number) => {
@@ -150,6 +174,10 @@ const deleteLinkServer = createServerFn({ method: 'POST' })
   .inputValidator((input) => deleteLinkSchema.parse(input))
   .handler(async ({ data }) => deleteLink(getDb(), data.id))
 
+const resolveIdServer = createServerFn({ method: 'GET' })
+  .inputValidator((input) => z.object({ id: linkIdSchema }).parse(input))
+  .handler(async ({ data }) => findById(getDb(), data.id))
+
 const resolveSlugServer = createServerFn({ method: 'GET' })
   .inputValidator((input) => z.object({ slug: slugSchema }).parse(input))
   .handler(async ({ data }) => findBySlug(getDb(), data.slug))
@@ -159,6 +187,7 @@ export const serverFns = {
   createLink: createLinkServer,
   updateLink: updateLinkServer,
   deleteLink: deleteLinkServer,
+  getLinkById: resolveIdServer,
   resolveSlug: resolveSlugServer,
 }
 

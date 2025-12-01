@@ -1,8 +1,27 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
-import { ArrowUpDown, Loader2, Plus, RefreshCw, Save, Trash2 } from 'lucide-react'
-import { useId, useMemo, useState } from 'react'
+import { createFileRoute, Outlet, Link as RouterLink, useRouterState } from '@tanstack/react-router'
+import { ArrowUpDown, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '../components/ui/alert-dialog'
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '../components/ui/breadcrumb'
 import { Button } from '../components/ui/button'
 import {
   DropdownMenu,
@@ -12,13 +31,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu'
-import { Input } from '../components/ui/input'
-import { Label } from '../components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
-import { Textarea } from '../components/ui/textarea'
 import type { Link } from '../db/schema/links'
 import { cn } from '../lib/utils'
-import { type LinkInput, type LinkUpdateInput, linkInputSchema, linkUpdateSchema, serverFns } from '../server/links'
+import { serverFns } from '../server/links'
 
 export const Route = createFileRoute('/admin')({
   component: Admin,
@@ -29,20 +45,11 @@ type Filters = {
   direction?: 'asc' | 'desc'
 }
 
-type FormState = LinkInput & { id?: number }
-
 const defaultFilters: Filters = { sort: 'createdAt', direction: 'desc' }
-const defaultForm: FormState = { slug: '', targetUrl: '', title: '', notes: '' }
-
 function Admin() {
+  const { location } = useRouterState()
+  const isAdminRoot = location.pathname === '/admin'
   const [filters, setFilters] = useState<Filters>(defaultFilters)
-  const [form, setForm] = useState<FormState>(defaultForm)
-  const [editingId, setEditingId] = useState<number | null>(null)
-  const [errors, setErrors] = useState<Record<string, string>>({})
-  const slugId = useId()
-  const targetUrlId = useId()
-  const titleId = useId()
-  const notesId = useId()
 
   const queryClient = useQueryClient()
   const queryKey = useMemo(
@@ -53,81 +60,14 @@ function Admin() {
   const linksQuery = useQuery<Link[]>({
     queryKey,
     queryFn: async () => (await serverFns.listLinks({ data: filters })) as Link[],
+    enabled: isAdminRoot,
   })
-
-  const onValidationError = (message: string, field?: string) => {
-    if (field) {
-      setErrors((prev) => ({ ...prev, [field]: message }))
-    }
-    toast.error(message)
-  }
 
   const buildRollback = (previous?: Link[]) => () => {
     if (previous) {
       queryClient.setQueryData(queryKey, previous)
     }
   }
-
-  const createMutation = useMutation({
-    mutationFn: (input: LinkInput) => serverFns.createLink({ data: input }),
-    onMutate: async (input) => {
-      await queryClient.cancelQueries({ queryKey })
-      const previous = queryClient.getQueryData<Link[]>(queryKey) ?? []
-      const optimistic: Link = {
-        id: Date.now() * -1,
-        slug: input.slug,
-        targetUrl: input.targetUrl,
-        title: input.title,
-        notes: input.notes,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-      queryClient.setQueryData(queryKey, [optimistic, ...previous])
-      setForm(defaultForm)
-      return { previous, optimisticId: optimistic.id }
-    },
-    onError: (_error, _input, context) => {
-      buildRollback(context?.previous)()
-    },
-    onSuccess: (result, _input, context) => {
-      if (!result.ok) {
-        buildRollback(context?.previous)()
-        return toast.error(result.message)
-      }
-
-      queryClient.setQueryData<Link[]>(queryKey, (current = []) => {
-        const filtered = current.filter((item) => item.id !== context?.optimisticId)
-        return [result.link, ...filtered]
-      })
-      toast.success('Link created')
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey }),
-  })
-
-  const updateMutation = useMutation({
-    mutationFn: (input: LinkUpdateInput) => serverFns.updateLink({ data: input }),
-    onMutate: async (input) => {
-      await queryClient.cancelQueries({ queryKey })
-      const previous = queryClient.getQueryData<Link[]>(queryKey) ?? []
-      queryClient.setQueryData<Link[]>(queryKey, (current = []) =>
-        current.map((link) => (link.id === input.id ? { ...link, ...input, updatedAt: new Date() } : link)),
-      )
-      return { previous }
-    },
-    onError: (_error, _input, context) => buildRollback(context?.previous)(),
-    onSuccess: (result, input, context) => {
-      if (!result.ok) {
-        buildRollback(context?.previous)()
-        return toast.error(result.message)
-      }
-      queryClient.setQueryData<Link[]>(queryKey, (current = []) =>
-        current.map((link) => (link.id === input.id ? result.link : link)),
-      )
-      setEditingId(null)
-      toast.success('Link updated')
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey }),
-  })
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => serverFns.deleteLink({ data: { id } }),
@@ -148,144 +88,104 @@ function Admin() {
     onSettled: () => queryClient.invalidateQueries({ queryKey }),
   })
 
-  const isBusy = createMutation.isPending || updateMutation.isPending || deleteMutation.isPending
-
-  const validateForm = (draft: FormState, isUpdate = false) => {
-    const schema = isUpdate ? linkUpdateSchema : linkInputSchema
-    const parsed = schema.safeParse(draft)
-    if (!parsed.success) {
-      const fieldErrors: Record<string, string> = {}
-      parsed.error.errors.forEach((err) => {
-        const field = err.path[0]
-        if (typeof field === 'string') {
-          fieldErrors[field] = err.message
-        }
-      })
-      setErrors(fieldErrors)
-      const first = parsed.error.errors[0]
-      onValidationError(first.message, typeof first.path[0] === 'string' ? (first.path[0] as string) : undefined)
-      return null
-    }
-    setErrors({})
-    return parsed.data
-  }
-
-  const submitCreate = () => {
-    const parsed = validateForm(form)
-    if (!parsed) return
-    createMutation.mutate(parsed)
-  }
-
-  const submitUpdate = (draft: FormState) => {
-    const parsed = validateForm(draft as FormState, true)
-    if (!parsed) return
-    updateMutation.mutate(parsed as LinkUpdateInput)
-  }
-
-  const handleEdit = (link: Link) => {
-    setEditingId(link.id)
-    setForm({ ...link })
-    setErrors({})
-  }
+  const isBusy = deleteMutation.isPending
+  const pendingDeleteId = deleteMutation.variables
 
   const renderRow = (link: Link) => {
-    const isEditing = editingId === link.id
-    const draft = isEditing ? form : link
-
     return (
       <TableRow key={link.id} className="align-top">
-        <TableCell className="font-mono text-sm text-cyan-200">{link.slug}</TableCell>
-        <TableCell>
-          {isEditing ? (
-            <Input
-              value={draft.targetUrl}
-              onChange={(e) => setForm((prev) => ({ ...prev, targetUrl: e.target.value }))}
-              autoFocus
-              className={cn(errors.targetUrl && 'ring-2 ring-destructive')}
-              aria-invalid={Boolean(errors.targetUrl)}
-            />
-          ) : (
-            <a href={link.targetUrl} className="truncate text-cyan-200" target="_blank" rel="noreferrer">
-              {link.targetUrl}
-            </a>
-          )}
-          {isEditing && errors.targetUrl && <p className="mt-1 text-xs text-rose-300">{errors.targetUrl}</p>}
+        <TableCell className="font-mono text-sm">
+          <RouterLink
+            to="/admin/links/$linkId"
+            params={{ linkId: String(link.id) }}
+            className="text-cyan-200 underline decoration-dotted underline-offset-4 hover:text-cyan-100"
+          >
+            {link.slug}
+          </RouterLink>
         </TableCell>
         <TableCell>
-          {isEditing ? (
-            <Input
-              value={draft.title}
-              onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
-              className={cn(errors.title && 'ring-2 ring-destructive')}
-              aria-invalid={Boolean(errors.title)}
-            />
-          ) : (
-            <p className="font-medium text-white">{link.title}</p>
-          )}
-          {isEditing && errors.title && <p className="mt-1 text-xs text-rose-300">{errors.title}</p>}
+          <a href={link.targetUrl} className="truncate text-cyan-200" target="_blank" rel="noreferrer">
+            {link.targetUrl}
+          </a>
+        </TableCell>
+        <TableCell>
+          <p className="font-medium text-white">{link.title ?? '—'}</p>
         </TableCell>
         <TableCell className="max-w-xs">
-          {isEditing ? (
-            <Textarea
-              value={draft.notes ?? ''}
-              onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
-              className="min-h-20"
-            />
-          ) : (
-            <p className="text-sm text-zinc-300 line-clamp-3">{link.notes ?? '—'}</p>
-          )}
+          <p className="text-sm text-zinc-300 line-clamp-3">{link.notes ?? '—'}</p>
         </TableCell>
         <TableCell className="whitespace-nowrap text-sm text-zinc-400">
           {new Date(link.updatedAt ?? link.createdAt).toLocaleString()}
         </TableCell>
         <TableCell className="w-[170px] text-right">
-          {isEditing ? (
-            <div className="flex justify-end gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={isBusy}
-                onClick={() => {
-                  setEditingId(null)
-                  setErrors({})
-                  setForm(defaultForm)
-                }}
-              >
-                Cancel
-              </Button>
-              <Button size="sm" onClick={() => submitUpdate({ ...draft, id: link.id })} disabled={isBusy}>
-                <Save className="mr-1 h-4 w-4" /> Save
-              </Button>
-            </div>
-          ) : (
-            <div className="flex justify-end gap-2">
-              <Button size="sm" variant="secondary" onClick={() => handleEdit(link)}>
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="secondary" asChild>
+              <RouterLink to="/admin/links/$linkId" params={{ linkId: String(link.id) }}>
                 Edit
-              </Button>
-              <Button size="sm" variant="destructive" onClick={() => deleteMutation.mutate(link.id)} disabled={isBusy}>
-                <Trash2 className="mr-1 h-4 w-4" />
-                Delete
-              </Button>
-            </div>
-          )}
+              </RouterLink>
+            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button size="sm" variant="destructive" disabled={isBusy && pendingDeleteId === link.id}>
+                  <Trash2 className="mr-1 h-4 w-4" />
+                  Delete
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete “{link.slug}”?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This action removes the short link immediately. Existing redirects will stop working and cannot be
+                    undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isBusy && pendingDeleteId === link.id}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-white hover:bg-destructive/90"
+                    disabled={isBusy && pendingDeleteId === link.id}
+                    onClick={() => deleteMutation.mutate(link.id)}
+                  >
+                    Confirm delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
         </TableCell>
       </TableRow>
     )
   }
 
-  const submitOnEnter = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      submitCreate()
-    }
+  if (!isAdminRoot) {
+    return <Outlet />
   }
 
   return (
-    <div className="grid gap-6">
-      <div className="flex flex-col gap-3 rounded-sm border border-white/5 bg-zinc-900/60 p-5 glass-surface">
+    <div className="grid gap-4">
+      <div className="flex flex-col gap-3 rounded-sm glass-surface">
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink asChild>
+                <RouterLink to="/">Home</RouterLink>
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbLink asChild>
+                <RouterLink to="/admin">Admin</RouterLink>
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage>Links</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => linksQuery.refetch()} disabled={linksQuery.isFetching}>
+          <div className="flex gap-4">
+            <Button variant="outline" size="sm" onClick={() => linksQuery.refetch()} disabled={linksQuery.isFetching}>
               <RefreshCw className={cn('mr-2 h-4 w-4', linksQuery.isFetching && 'animate-spin')} />
               Refresh
             </Button>
@@ -312,75 +212,11 @@ function Admin() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-        </div>
-        <div className="grid gap-3 rounded-sm border border-white/10 bg-zinc-900/40 p-4 shadow-inner">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <div className="space-y-2">
-              <Label htmlFor={slugId}>Slug</Label>
-              <Input
-                id={slugId}
-                name="slug"
-                placeholder="docs"
-                value={form.slug}
-                onChange={(e) => setForm((prev) => ({ ...prev, slug: e.target.value }))}
-                onKeyDown={submitOnEnter}
-                autoComplete="off"
-                aria-invalid={Boolean(errors.slug)}
-                className={cn(errors.slug && 'ring-2 ring-destructive')}
-              />
-              {errors.slug && <p className="text-xs text-rose-300">{errors.slug}</p>}
-            </div>
-            <div className="space-y-2 md:col-span-2 lg:col-span-2">
-              <Label htmlFor={targetUrlId}>Target URL</Label>
-              <Input
-                id={targetUrlId}
-                name="targetUrl"
-                placeholder="https://..."
-                value={form.targetUrl}
-                onChange={(e) => setForm((prev) => ({ ...prev, targetUrl: e.target.value }))}
-                onKeyDown={submitOnEnter}
-                autoComplete="off"
-                aria-invalid={Boolean(errors.targetUrl)}
-                className={cn(errors.targetUrl && 'ring-2 ring-destructive')}
-              />
-              {errors.targetUrl && <p className="text-xs text-rose-300">{errors.targetUrl}</p>}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor={titleId}>Title</Label>
-              <Input
-                id={titleId}
-                name="title"
-                placeholder="Team handbook"
-                value={form.title}
-                onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
-                onKeyDown={submitOnEnter}
-                aria-invalid={Boolean(errors.title)}
-                className={cn(errors.title && 'ring-2 ring-destructive')}
-              />
-              {errors.title && <p className="text-xs text-rose-300">{errors.title}</p>}
-            </div>
-            <div className="space-y-2 md:col-span-2 lg:col-span-1">
-              <Label htmlFor={notesId}>Notes</Label>
-              <Input
-                id={notesId}
-                name="notes"
-                placeholder="Optional context"
-                value={form.notes ?? ''}
-                onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
-                onKeyDown={submitOnEnter}
-              />
-            </div>
-          </div>
-          <div className="flex items-center justify-end gap-3">
-            <Button onClick={submitCreate} disabled={isBusy} className="px-4">
-              {createMutation.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Plus className="mr-2 h-4 w-4" />
-              )}
-              Save link
-            </Button>
-          </div>
+          <Button size="sm" className="px-3" asChild>
+            <RouterLink to="/admin/links/create" className="inline-flex items-center">
+              <Plus className="mr-2 h-4 w-4" /> Create link
+            </RouterLink>
+          </Button>
         </div>
       </div>
 
@@ -415,7 +251,7 @@ function Admin() {
             {linksQuery.data?.length === 0 && !linksQuery.isLoading && (
               <TableRow>
                 <TableCell colSpan={6} className="py-12 text-center text-zinc-300">
-                  No links yet. Add one above to get started.
+                  No links yet. Use the Create link button to add your first entry.
                 </TableCell>
               </TableRow>
             )}

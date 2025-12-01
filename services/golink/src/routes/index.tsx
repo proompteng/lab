@@ -12,7 +12,6 @@ function Overview() {
       <section className="glass-surface rounded-2xl py-8 px-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-3xl uppercase tracking-[0.2em] text-cyan-300 font-semibold">golink</p>
             <h1 className="text-2xl tracking-tight">Short, memorable links</h1>
             <p className="mt-2 max-w-2xl text-slate-300">Add links that so that you don't have to remember</p>
           </div>

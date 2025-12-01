@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as SlugRouteImport } from './routes/$slug'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdminLinksCreateRouteImport } from './routes/admin.links.create'
+import { Route as AdminLinksLinkIdRouteImport } from './routes/admin.links.$linkId'
 
 const AdminRoute = AdminRouteImport.update({
   id: '/admin',
@@ -28,35 +30,62 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminLinksCreateRoute = AdminLinksCreateRouteImport.update({
+  id: '/links/create',
+  path: '/links/create',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminLinksLinkIdRoute = AdminLinksLinkIdRouteImport.update({
+  id: '/links/$linkId',
+  path: '/links/$linkId',
+  getParentRoute: () => AdminRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$slug': typeof SlugRoute
-  '/admin': typeof AdminRoute
+  '/admin': typeof AdminRouteWithChildren
+  '/admin/links/$linkId': typeof AdminLinksLinkIdRoute
+  '/admin/links/create': typeof AdminLinksCreateRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$slug': typeof SlugRoute
-  '/admin': typeof AdminRoute
+  '/admin': typeof AdminRouteWithChildren
+  '/admin/links/$linkId': typeof AdminLinksLinkIdRoute
+  '/admin/links/create': typeof AdminLinksCreateRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$slug': typeof SlugRoute
-  '/admin': typeof AdminRoute
+  '/admin': typeof AdminRouteWithChildren
+  '/admin/links/$linkId': typeof AdminLinksLinkIdRoute
+  '/admin/links/create': typeof AdminLinksCreateRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/$slug' | '/admin'
+  fullPaths:
+    | '/'
+    | '/$slug'
+    | '/admin'
+    | '/admin/links/$linkId'
+    | '/admin/links/create'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/$slug' | '/admin'
-  id: '__root__' | '/' | '/$slug' | '/admin'
+  to: '/' | '/$slug' | '/admin' | '/admin/links/$linkId' | '/admin/links/create'
+  id:
+    | '__root__'
+    | '/'
+    | '/$slug'
+    | '/admin'
+    | '/admin/links/$linkId'
+    | '/admin/links/create'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SlugRoute: typeof SlugRoute
-  AdminRoute: typeof AdminRoute
+  AdminRoute: typeof AdminRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -82,13 +111,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/links/create': {
+      id: '/admin/links/create'
+      path: '/links/create'
+      fullPath: '/admin/links/create'
+      preLoaderRoute: typeof AdminLinksCreateRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/links/$linkId': {
+      id: '/admin/links/$linkId'
+      path: '/links/$linkId'
+      fullPath: '/admin/links/$linkId'
+      preLoaderRoute: typeof AdminLinksLinkIdRouteImport
+      parentRoute: typeof AdminRoute
+    }
   }
 }
+
+interface AdminRouteChildren {
+  AdminLinksLinkIdRoute: typeof AdminLinksLinkIdRoute
+  AdminLinksCreateRoute: typeof AdminLinksCreateRoute
+}
+
+const AdminRouteChildren: AdminRouteChildren = {
+  AdminLinksLinkIdRoute: AdminLinksLinkIdRoute,
+  AdminLinksCreateRoute: AdminLinksCreateRoute,
+}
+
+const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SlugRoute: SlugRoute,
-  AdminRoute: AdminRoute,
+  AdminRoute: AdminRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

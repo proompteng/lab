@@ -6,7 +6,7 @@ export const links = pgTable(
     id: serial('id').primaryKey(),
     slug: text('slug').notNull(),
     targetUrl: text('target_url').notNull(),
-    title: text('title').notNull(),
+    title: text('title'),
     notes: text('notes'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
