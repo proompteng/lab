@@ -3,10 +3,13 @@ ARG BUN_VERSION=1.3.3
 
 FROM oven/bun:${BUN_VERSION} AS builder
 WORKDIR /workspace
+ENV HUSKY=0
 
 COPY bun.lock package.json tsconfig.base.json tsconfig.json turbo.json ./
 COPY services ./services
 COPY packages ./packages
+COPY apps ./apps
+COPY scripts ./scripts
 
 RUN bun install --frozen-lockfile
 RUN bun run build:golink
