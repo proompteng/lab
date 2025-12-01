@@ -724,7 +724,7 @@ export class CodexAppServerClient {
       const activeTurnIds = Array.from(this.turnStreams.keys())
       if (activeTurnIds.length === 0) return
 
-      const inferred =
+      const inferred: string =
         this.lastActiveTurnId && this.turnStreams.has(this.lastActiveTurnId)
           ? this.lastActiveTurnId
           : activeTurnIds[activeTurnIds.length - 1]
@@ -736,6 +736,8 @@ export class CodexAppServerClient {
       })
       turnId = inferred
     }
+
+    if (!turnId) return
 
     this.trackItemForTurn(turnId, itemId)
   }
@@ -759,7 +761,7 @@ export class CodexAppServerClient {
     this.turnStreams.delete(turnId)
     if (this.lastActiveTurnId === turnId) {
       const remaining = Array.from(this.turnStreams.keys())
-      this.lastActiveTurnId = remaining.length ? remaining[remaining.length - 1] : null
+      this.lastActiveTurnId = remaining.length ? remaining[remaining.length - 1]! : null
     }
   }
 
