@@ -190,9 +190,9 @@ const scaffoldWithTanstackCli = async (opts: TanstackServiceOptions): Promise<Ge
 
   try {
     const args = [
-      '--yes',
-      'create-start',
+      '@tanstack/start@latest',
       opts.name,
+      '--',
       '--no-git',
       '--package-manager',
       'bun',
@@ -205,7 +205,12 @@ const scaffoldWithTanstackCli = async (opts: TanstackServiceOptions): Promise<Ge
       targetDir,
     ]
 
-    await execa('bunx', args, { cwd: tempDir, stdio: 'pipe' })
+    await execa('npm', ['create', ...args], {
+      cwd: tempDir,
+      stdio: 'pipe',
+      env: { CI: '1', npm_config_yes: 'true' },
+      timeout: 120_000,
+    })
 
     await rm(join(targetDir, 'node_modules'), { recursive: true, force: true })
     await rm(join(targetDir, 'bun.lock'), { force: true })
@@ -286,6 +291,7 @@ const scaffoldWithTanstackCli = async (opts: TanstackServiceOptions): Promise<Ge
     await writeFile(join(targetDir, 'README.md'), serviceReadme(opts.name, opts.description), 'utf8')
 
     if (opts.enablePostgres) {
+      await mkdir(join(targetDir, 'src', 'db', 'schema'), { recursive: true })
       await writeFile(join(targetDir, 'drizzle.config.ts'), drizzleConfig(opts.name), 'utf8')
       await writeFile(join(targetDir, 'src', 'db', 'schema', 'app.ts'), drizzleSchema, 'utf8')
       await mkdir(join(targetDir, 'src', 'db', 'migrations'), { recursive: true })

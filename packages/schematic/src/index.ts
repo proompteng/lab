@@ -15,7 +15,7 @@ const nameSchema = z
 
 const promptName = async (initial?: string) => {
   const answer = await text({
-    message: 'Service name (kebab-case)',
+    message: 'Service name',
     initialValue: initial,
     validate: (value) => {
       const parsed = nameSchema.safeParse(kebabCase(value ?? ''))
@@ -35,10 +35,24 @@ export type CliOptions = {
   name?: string
 }
 
+export const createSigintHandler = (
+  onCancel: (reason?: string) => void = cancel,
+  onExit: (code?: number) => never = process.exit,
+) => {
+  const handler = () => {
+    onCancel('Aborted')
+    onExit(1)
+  }
+  process.once('SIGINT', handler)
+  return () => process.off('SIGINT', handler)
+}
+
 const clean = (value: string | symbol | null | undefined) => (typeof value === 'string' ? value : '')
 
 export const runCli = async (opts: CliOptions = {}) => {
   intro(kleur.bold('schematic'))
+
+  const detachSigint = createSigintHandler()
 
   const name = opts.name ? kebabCase(opts.name) : await promptName()
 
@@ -52,15 +66,6 @@ export const runCli = async (opts: CliOptions = {}) => {
 
   if (isCancel(type)) cancel('Aborted')
 
-  const description = await text({
-    message: 'Short description (optional)',
-    placeholder: 'Service purpose',
-  })
-  if (isCancel(description)) cancel('Aborted')
-
-  const owner = await text({ message: 'Owner (team/handle, optional)' })
-  if (isCancel(owner)) cancel('Aborted')
-
   const enablePostgres = await confirm({
     message: 'Add CloudNativePG Postgres manifest + env wiring?',
     initialValue: true,
@@ -72,21 +77,6 @@ export const runCli = async (opts: CliOptions = {}) => {
     initialValue: false,
   })
   if (isCancel(enableRedis)) cancel('Aborted')
-
-  const includeCi = await confirm({
-    message: 'Include GitHub Actions CI + docker build workflows?',
-    initialValue: true,
-  })
-  if (isCancel(includeCi)) cancel('Aborted')
-
-  const includeArgo = await confirm({ message: 'Generate ArgoCD/Knative kustomize stack?', initialValue: true })
-  if (isCancel(includeArgo)) cancel('Aborted')
-
-  const includeScripts = await confirm({
-    message: 'Create build/deploy scripts under packages/scripts?',
-    initialValue: true,
-  })
-  if (isCancel(includeScripts)) cancel('Aborted')
 
   const exposure = (await select({
     message: 'Traffic exposure',
@@ -106,48 +96,93 @@ export const runCli = async (opts: CliOptions = {}) => {
   })) as 'external-dns' | 'tailscale'
   if (isCancel(exposure)) cancel('Aborted')
 
-  const domain = await text({
-    message: 'Custom domain (optional, defaults to <name>.proompteng.ai)',
-    initialValue: `${name}.proompteng.ai`,
+  const customize = await confirm({
+    message: 'Customize domain/registry/namespace/CI/Argo/scripts?',
+    initialValue: false,
   })
-  if (isCancel(domain)) cancel('Aborted')
+  if (isCancel(customize)) cancel('Aborted')
 
-  const tailscaleHostname = await text({
-    message: 'Tailscale hostname (only used if tailscale exposure)',
-    initialValue: name,
-  })
-  if (isCancel(tailscaleHostname)) cancel('Aborted')
+  let domain = exposure === 'external-dns' ? `${name}.proompteng.ai` : undefined
+  let tailscaleHostname = exposure === 'tailscale' ? name : undefined
+  let namespace = name
+  let imageRegistry = 'registry.ide-newton.ts.net'
+  let includeCi = true
+  let includeArgo = true
+  let includeScripts = true
 
-  const namespace = await text({
-    message: 'Kubernetes namespace (optional)',
-    initialValue: name,
-  })
-  if (isCancel(namespace)) cancel('Aborted')
+  if (customize) {
+    if (exposure === 'external-dns') {
+      const domainAnswer = await text({
+        message: 'Custom domain (defaults to <name>.proompteng.ai)',
+        initialValue: domain,
+      })
+      if (isCancel(domainAnswer)) cancel('Aborted')
+      domain = clean(domainAnswer).trim() || domain
+    }
 
-  const imageRegistry = await text({
-    message: 'Image registry',
-    initialValue: 'registry.ide-newton.ts.net',
-    validate: (value) => (!value?.trim() ? 'Registry is required' : undefined),
-  })
-  if (isCancel(imageRegistry)) cancel('Aborted')
+    if (exposure === 'tailscale') {
+      const tailAnswer = await text({
+        message: 'Tailscale hostname',
+        initialValue: tailscaleHostname,
+      })
+      if (isCancel(tailAnswer)) cancel('Aborted')
+      tailscaleHostname = clean(tailAnswer).trim() || tailscaleHostname
+    }
+
+    const nsAnswer = await text({
+      message: 'Kubernetes namespace',
+      initialValue: namespace,
+    })
+    if (isCancel(nsAnswer)) cancel('Aborted')
+    namespace = clean(nsAnswer).trim() || namespace
+
+    const registryAnswer = await text({
+      message: 'Image registry',
+      initialValue: imageRegistry,
+      validate: (value) => (!value?.trim() ? 'Registry is required' : undefined),
+    })
+    if (isCancel(registryAnswer)) cancel('Aborted')
+    imageRegistry = clean(registryAnswer).trim() || imageRegistry
+
+    const includeCiAnswer = await confirm({
+      message: 'Include GitHub Actions CI + docker build workflows?',
+      initialValue: includeCi,
+    })
+    if (isCancel(includeCiAnswer)) cancel('Aborted')
+    includeCi = Boolean(includeCiAnswer)
+
+    const includeArgoAnswer = await confirm({
+      message: 'Generate ArgoCD/Knative kustomize stack?',
+      initialValue: includeArgo,
+    })
+    if (isCancel(includeArgoAnswer)) cancel('Aborted')
+    includeArgo = Boolean(includeArgoAnswer)
+
+    const includeScriptsAnswer = await confirm({
+      message: 'Create build/deploy scripts under packages/scripts?',
+      initialValue: includeScripts,
+    })
+    if (isCancel(includeScriptsAnswer)) cancel('Aborted')
+    includeScripts = Boolean(includeScriptsAnswer)
+  }
 
   const s = spinner()
   s.start('Generating files')
 
   const generatorOptions: TanstackServiceOptions = {
     name,
-    description: clean(description).trim() || undefined,
-    owner: clean(owner).trim() || undefined,
+    description: undefined,
+    owner: undefined,
     exposure,
     enablePostgres: Boolean(enablePostgres),
     enableRedis: Boolean(enableRedis),
-    includeCi: Boolean(includeCi),
-    includeArgo: Boolean(includeArgo),
-    includeScripts: Boolean(includeScripts),
-    domain: clean(domain).trim() || undefined,
-    tailscaleHostname: clean(tailscaleHostname).trim() || undefined,
-    namespace: clean(namespace).trim() || undefined,
-    imageRegistry: clean(imageRegistry).trim(),
+    includeCi,
+    includeArgo,
+    includeScripts,
+    domain,
+    tailscaleHostname,
+    namespace,
+    imageRegistry,
   }
 
   const files =
@@ -177,6 +212,8 @@ export const runCli = async (opts: CliOptions = {}) => {
   )
 
   outro('Done')
+
+  detachSigint()
 }
 
 if (import.meta.main) {

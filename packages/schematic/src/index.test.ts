@@ -1,8 +1,9 @@
-import { expect, test } from 'bun:test'
+import { expect, test, vi } from 'bun:test'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFiles } from './fs'
+import { createSigintHandler } from './index'
 import type { GeneratedFile } from './templates/tanstack/types'
 
 const tmp = () => mkdtempSync('/tmp/schematic-')
@@ -28,4 +29,18 @@ test('writeFiles dry-run does not create files', async () => {
   expect(() => readFileSync(join(dir, 'noop.txt'), 'utf8')).toThrow()
 
   await rm(dir, { recursive: true, force: true })
+})
+
+test('createSigintHandler cancels and exits on SIGINT', () => {
+  const cancelMock = vi.fn()
+  const exitMock = vi.fn()
+
+  const detach = createSigintHandler(cancelMock, exitMock as unknown as (code?: number) => never)
+
+  process.emit('SIGINT')
+
+  expect(cancelMock).toHaveBeenCalledWith('Aborted')
+  expect(exitMock).toHaveBeenCalledWith(1)
+
+  detach()
 })
