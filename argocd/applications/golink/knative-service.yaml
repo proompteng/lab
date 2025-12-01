@@ -26,8 +26,6 @@ spec:
             - name: http1
               containerPort: 3000
           env:
-            - name: PORT
-              value: "3000"
             - name: GOLINK_DATABASE_URL
               valueFrom:
                 secretKeyRef:
