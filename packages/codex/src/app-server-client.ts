@@ -145,6 +145,7 @@ export class CodexAppServerClient {
   private turnStreams = new Map<string, TurnStream>()
   private turnItems = new Map<string, Set<string>>()
   private itemTurnMap = new Map<string, string>()
+  private lastActiveTurnId: string | null = null
   private readyPromise: Promise<void>
   private resolveReady: (() => void) | null = null
   private rejectReady: ((reason: unknown) => void) | null = null
@@ -353,6 +354,7 @@ export class CodexAppServerClient {
     const stream = createTurnStream()
     this.turnStreams.set(turnId, stream)
     this.turnItems.set(turnId, new Set())
+    this.lastActiveTurnId = turnId
     return { stream: stream.iterator, turnId, threadId: activeThreadId }
   }
 
@@ -719,17 +721,20 @@ export class CodexAppServerClient {
     if (!itemId) return
 
     if (!turnId) {
-      // The app-server v2 notifications currently omit turnId; when a single turn is active, infer it to avoid
-      // dropping live deltas. If multiple turns are active we avoid guessing to prevent misrouting.
-      if (this.turnStreams.size === 1) {
-        ;[turnId] = this.turnStreams.keys()
-      } else {
-        this.log('warn', 'cannot resolve turn for item without turnId', {
-          itemId,
-          activeTurnIds: Array.from(this.turnStreams.keys()),
-        })
-        return
-      }
+      const activeTurnIds = Array.from(this.turnStreams.keys())
+      if (activeTurnIds.length === 0) return
+
+      const inferred =
+        this.lastActiveTurnId && this.turnStreams.has(this.lastActiveTurnId)
+          ? this.lastActiveTurnId
+          : activeTurnIds[activeTurnIds.length - 1]
+
+      this.log('warn', 'inferring turn for item without turnId', {
+        itemId,
+        inferredTurnId: inferred,
+        activeTurnIds,
+      })
+      turnId = inferred
     }
 
     this.trackItemForTurn(turnId, itemId)
@@ -752,6 +757,10 @@ export class CodexAppServerClient {
       this.turnItems.delete(turnId)
     }
     this.turnStreams.delete(turnId)
+    if (this.lastActiveTurnId === turnId) {
+      const remaining = Array.from(this.turnStreams.keys())
+      this.lastActiveTurnId = remaining.length ? remaining[remaining.length - 1] : null
+    }
   }
 
   private failTurnStream(turnId: string, error: unknown): void {

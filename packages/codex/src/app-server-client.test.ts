@@ -230,6 +230,40 @@ describe('CodexAppServerClient', () => {
     expect(internals.itemTurnMap.size).toBe(0)
   })
 
+  it('routes item notifications without turnId across multiple turns using the latest active turn', async () => {
+    const logs: Array<{ level: string; message: string; meta?: Record<string, unknown> }> = []
+    const logger = (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => {
+      logs.push({ level, message, meta })
+    }
+
+    const child = new FakeChildProcess()
+    spawnMock.mockReturnValue(child as unknown as ChildProcessWithoutNullStreams)
+    const client = new CodexAppServerClient({ logger })
+
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const firstRun = client.runTurnStream('one')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    await firstRun
+
+    const secondRun = client.runTurnStream('two')
+    await respondToThreadStart(child, 'thread-2')
+    await respondToTurnStart(child, 'turn-2')
+    const { stream: streamTwo } = await secondRun
+
+    writeLine(child, { method: 'item/started', params: { item: { type: 'agentMessage', id: 'item-2', text: '' } } })
+    writeLine(child, { method: 'item/agentMessage/delta', params: { itemId: 'item-2', delta: 'hello from two' } })
+
+    const delta = await streamTwo.next()
+    expect(delta.value).toEqual({ type: 'message', delta: 'hello from two' })
+
+    const warnLog = logs.find((entry) => entry.level === 'warn' && entry.message.includes('inferring turn'))
+    expect(warnLog).toBeDefined()
+    expect(warnLog?.meta?.inferredTurnId).toBe('turn-2')
+  })
+
   it('rejects readiness when the child exits before initialization', async () => {
     const { child, client } = setupClient()
     const readyPromise = client.ensureReady()
