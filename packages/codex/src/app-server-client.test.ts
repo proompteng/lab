@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 
 import type { CodexAppServerOptions } from './app-server-client'
 import { CodexAppServerClient } from './app-server-client'
@@ -36,7 +36,7 @@ class FakeChildProcess extends EventEmitter {
   }
 }
 
-const spawnMock = spawn as unknown as vi.Mock
+const spawnMock = spawn as unknown as Mock
 
 type ClientInternals = {
   turnStreams: Map<string, unknown>
@@ -200,6 +200,34 @@ describe('CodexAppServerClient', () => {
     await streamOne.next()
     writeLine(child, { method: 'turn/completed', params: { turn: { id: turnTwo, status: 'completed', items: [] } } })
     await streamTwo.next()
+  })
+
+  it('routes item notifications without turnId when a single turn is active', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('solo')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'item/started',
+      params: { item: { type: 'agentMessage', id: 'item-1', text: '' } },
+    })
+
+    writeLine(child, { method: 'item/agentMessage/delta', params: { itemId: 'item-1', delta: 'hello' } })
+
+    const delta = await stream.next()
+    expect(delta.value).toEqual({ type: 'message', delta: 'hello' })
+
+    writeLine(child, { method: 'turn/completed', params: { turn: { id: 'turn-1', status: 'completed', items: [] } } })
+    await stream.next()
+
+    const internals = getInternals(client)
+    expect(internals.turnStreams.size).toBe(0)
+    expect(internals.itemTurnMap.size).toBe(0)
   })
 
   it('rejects readiness when the child exits before initialization', async () => {

@@ -706,9 +706,24 @@ export class CodexAppServerClient {
   }
 
   private trackItemFromParams(params: unknown): void {
-    const turnId = this.findTurnId(params)
+    let turnId = this.findTurnId(params)
     const itemId = this.findItemId(params)
-    if (!turnId || !itemId) return
+    if (!itemId) return
+
+    if (!turnId) {
+      // The app-server v2 notifications currently omit turnId; when a single turn is active, infer it to avoid
+      // dropping live deltas. If multiple turns are active we avoid guessing to prevent misrouting.
+      if (this.turnStreams.size === 1) {
+        ;[turnId] = this.turnStreams.keys()
+      } else {
+        this.log('warn', 'cannot resolve turn for item without turnId', {
+          itemId,
+          activeTurnIds: Array.from(this.turnStreams.keys()),
+        })
+        return
+      }
+    }
+
     this.trackItemForTurn(turnId, itemId)
   }
 
