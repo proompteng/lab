@@ -18,21 +18,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Textarea } from '../components/ui/textarea'
 import type { Link } from '../db/schema/links'
 import { cn } from '../lib/utils'
-import {
-  type LinkInput,
-  type LinkUpdateInput,
-  linkInputSchema,
-  linkUpdateSchema,
-  listFiltersSchema,
-  serverFns,
-} from '../server/links'
+import { type LinkInput, type LinkUpdateInput, linkInputSchema, linkUpdateSchema, serverFns } from '../server/links'
 
 export const Route = createFileRoute('/admin')({
   component: Admin,
 })
 
 type Filters = {
-  search?: string
   sort?: 'createdAt' | 'slug' | 'title'
   direction?: 'asc' | 'desc'
 }
@@ -51,11 +43,10 @@ function Admin() {
   const targetUrlId = useId()
   const titleId = useId()
   const notesId = useId()
-  const searchId = useId()
 
   const queryClient = useQueryClient()
   const queryKey = useMemo(
-    () => ['links', filters.search ?? '', filters.sort ?? 'createdAt', filters.direction ?? 'desc'] as const,
+    () => ['links', filters.sort ?? 'createdAt', filters.direction ?? 'desc'] as const,
     [filters],
   )
 
@@ -214,12 +205,7 @@ function Admin() {
               aria-invalid={Boolean(errors.targetUrl)}
             />
           ) : (
-            <a
-              href={link.targetUrl}
-              className="truncate text-cyan-200 hover:underline"
-              target="_blank"
-              rel="noreferrer"
-            >
+            <a href={link.targetUrl} className="truncate text-cyan-200" target="_blank" rel="noreferrer">
               {link.targetUrl}
             </a>
           )}
@@ -243,13 +229,13 @@ function Admin() {
             <Textarea
               value={draft.notes ?? ''}
               onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
-              className="min-h-[80px]"
+              className="min-h-20"
             />
           ) : (
-            <p className="text-sm text-slate-300 line-clamp-3">{link.notes ?? '—'}</p>
+            <p className="text-sm text-zinc-300 line-clamp-3">{link.notes ?? '—'}</p>
           )}
         </TableCell>
-        <TableCell className="whitespace-nowrap text-sm text-slate-400">
+        <TableCell className="whitespace-nowrap text-sm text-zinc-400">
           {new Date(link.updatedAt ?? link.createdAt).toLocaleString()}
         </TableCell>
         <TableCell className="w-[170px] text-right">
@@ -273,16 +259,10 @@ function Admin() {
             </div>
           ) : (
             <div className="flex justify-end gap-2">
-              <Button size="sm" variant="secondary" onClick={() => handleEdit(link)} className="hover:border-white/30">
+              <Button size="sm" variant="secondary" onClick={() => handleEdit(link)}>
                 Edit
               </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={() => deleteMutation.mutate(link.id)}
-                disabled={isBusy}
-                className="hover:bg-rose-500"
-              >
+              <Button size="sm" variant="destructive" onClick={() => deleteMutation.mutate(link.id)} disabled={isBusy}>
                 <Trash2 className="mr-1 h-4 w-4" />
                 Delete
               </Button>
@@ -300,17 +280,10 @@ function Admin() {
     }
   }
 
-  const parsedFilters = listFiltersSchema.parse(filters ?? {})
-
   return (
     <div className="grid gap-6">
-      <div className="flex flex-col gap-3 rounded-2xl border border-white/5 bg-slate-900/60 p-5 glass-surface">
+      <div className="flex flex-col gap-3 rounded-sm border border-white/5 bg-zinc-900/60 p-5 glass-surface">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm uppercase tracking-[0.15em] text-cyan-300">Admin</p>
-            <h1 className="text-2xl font-semibold text-white">Manage go links</h1>
-            <p className="text-sm text-slate-300">Create, edit, or delete slugs. Changes apply immediately.</p>
-          </div>
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" onClick={() => linksQuery.refetch()} disabled={linksQuery.isFetching}>
               <RefreshCw className={cn('mr-2 h-4 w-4', linksQuery.isFetching && 'animate-spin')} />
@@ -340,7 +313,7 @@ function Admin() {
             </DropdownMenu>
           </div>
         </div>
-        <div className="grid gap-3 rounded-xl border border-white/10 bg-slate-900/40 p-4 shadow-inner">
+        <div className="grid gap-3 rounded-sm border border-white/10 bg-zinc-900/40 p-4 shadow-inner">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <div className="space-y-2">
               <Label htmlFor={slugId}>Slug</Label>
@@ -398,29 +371,7 @@ function Admin() {
               />
             </div>
           </div>
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <Label className="text-sm text-slate-300" htmlFor={searchId}>
-                Filter
-              </Label>
-              <Input
-                id={searchId}
-                placeholder="Search slug, title, or URL"
-                value={filters.search ?? ''}
-                onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
-                className="max-w-sm"
-              />
-              {filters.search && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setFilters((prev) => ({ ...prev, search: '' }))}
-                  className="text-slate-300"
-                >
-                  Clear
-                </Button>
-              )}
-            </div>
+          <div className="flex items-center justify-end gap-3">
             <Button onClick={submitCreate} disabled={isBusy} className="px-4">
               {createMutation.isPending ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -433,22 +384,22 @@ function Admin() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-white/5 bg-slate-950/60 shadow-xl">
+      <div className="overflow-hidden rounded-sm border border-white/5 bg-zinc-950/60">
         <Table>
           <TableHeader>
             <TableRow className="border-white/5">
-              <TableHead className="w-32 text-slate-300">Slug</TableHead>
-              <TableHead className="min-w-[240px] text-slate-300">Target</TableHead>
-              <TableHead className="w-48 text-slate-300">Title</TableHead>
-              <TableHead className="text-slate-300">Notes</TableHead>
-              <TableHead className="w-48 text-slate-300">Updated</TableHead>
-              <TableHead className="w-40 text-right text-slate-300">Actions</TableHead>
+              <TableHead className="w-32 text-zinc-300">Slug</TableHead>
+              <TableHead className="min-w-60 text-zinc-300">Target</TableHead>
+              <TableHead className="w-48 text-zinc-300">Title</TableHead>
+              <TableHead className="text-zinc-300">Notes</TableHead>
+              <TableHead className="w-48 text-zinc-300">Updated</TableHead>
+              <TableHead className="w-40 text-right text-zinc-300">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {linksQuery.isLoading && (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-slate-300">
+                <TableCell colSpan={6} className="py-10 text-center text-zinc-300">
                   <Loader2 className="mr-2 inline-block h-4 w-4 animate-spin" /> Loading links…
                 </TableCell>
               </TableRow>
@@ -463,7 +414,7 @@ function Admin() {
             )}
             {linksQuery.data?.length === 0 && !linksQuery.isLoading && (
               <TableRow>
-                <TableCell colSpan={6} className="py-12 text-center text-slate-300">
+                <TableCell colSpan={6} className="py-12 text-center text-zinc-300">
                   No links yet. Add one above to get started.
                 </TableCell>
               </TableRow>
@@ -471,12 +422,6 @@ function Admin() {
             {linksQuery.data?.map((link) => renderRow(link))}
           </TableBody>
         </Table>
-      </div>
-
-      <div className="flex flex-wrap gap-3 text-xs text-slate-400">
-        <span className="rounded-full bg-white/5 px-3 py-1">Sort: {parsedFilters.sort ?? 'createdAt'}</span>
-        <span className="rounded-full bg-white/5 px-3 py-1">Direction: {parsedFilters.direction ?? 'desc'}</span>
-        {filters.search && <span className="rounded-full bg-white/5 px-3 py-1">Filter: {filters.search}</span>}
       </div>
     </div>
   )

@@ -23,20 +23,20 @@ export const Route = createRootRoute({
 
 function NotFound() {
   return (
-    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 text-center text-slate-100">
+    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 text-center text-zinc-100">
       <div className="rounded-full bg-white/5 px-4 py-2 text-xs uppercase tracking-[0.2em] text-amber-300">404</div>
       <h1 className="text-3xl font-semibold">Page not found</h1>
-      <p className="max-w-lg text-slate-300">We couldn’t find that route. Check the URL or return to the overview.</p>
+      <p className="max-w-lg text-zinc-300">We couldn’t find that route. Check the URL or return to the overview.</p>
       <div className="flex gap-3">
         <Link
           to="/"
-          className="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-500/30 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+          className="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-zinc-950 shadow-lg shadow-cyan-500/30 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
         >
           Go to overview
         </Link>
         <Link
           to="/admin"
-          className="rounded-full border border-white/10 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+          className="rounded-full border border-white/10 px-4 py-2 text-sm font-semibold text-zinc-100 hover:bg-white/5 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
         >
           Open admin
         </Link>
@@ -58,43 +58,20 @@ function RootDocument() {
       <head>
         <HeadContent />
       </head>
-      <body className="min-h-screen bg-slate-950 text-slate-50">
+      <body className="min-h-screen bg-zinc-950 dark">
         <a
           href="#main-content"
-          className="sr-only focus:not-sr-only focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-slate-900 rounded-md bg-slate-800 px-3 py-2 ml-3 mt-3 inline-block"
+          className="sr-only focus:not-sr-only focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-zinc-900 rounded-md bg-zinc-800 px-3 py-2 ml-3 mt-3 inline-block"
         >
           Skip to content
         </a>
         <QueryClientProvider client={queryClient}>
           <div className="relative isolate overflow-hidden min-h-screen">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(94,234,212,0.12),transparent_40%),radial-gradient(circle_at_80%_0%,rgba(129,140,248,0.16),transparent_35%),radial-gradient(circle_at_50%_80%,rgba(56,189,248,0.1),transparent_40%)]" />
             <div className="relative z-10 flex min-h-screen flex-col">
-              <header className="sticky top-0 backdrop-blur-md bg-slate-950/70 border-b border-white/5">
+              <header className="sticky top-0 backdrop-blur-md bg-zinc-950/70 border-b border-white/5">
                 <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="h-10 w-10 rounded-xl bg-gradient-to-br from-cyan-400 via-indigo-500 to-violet-500 shadow-lg shadow-cyan-500/20"
-                      aria-hidden
-                    />
-                    <div>
-                      <p className="text-lg font-semibold tracking-tight">golink</p>
-                      <p className="text-xs text-slate-400">Internal redirects & admin</p>
-                    </div>
-                  </div>
-                  <nav className="flex items-center gap-3 text-sm">
-                    <Link
-                      to="/admin"
-                      className="rounded-full px-3 py-2 transition-colors hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-                    >
-                      Admin
-                    </Link>
-                    <Link
-                      to="/"
-                      className="rounded-full px-3 py-2 transition-colors hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-                    >
-                      Overview
-                    </Link>
-                  </nav>
+                  <div className="flex items-center gap-3" />
+                  <nav className="flex items-center gap-3 text-sm h-8" />
                 </div>
               </header>
               <main id={mainId} className="flex-1">
@@ -102,11 +79,11 @@ function RootDocument() {
                   <Outlet />
                 </div>
               </main>
-              <footer className="border-t border-white/5 bg-slate-950/80">
-                <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4 text-xs text-slate-400">
-                  <span>© {year} ProomptEng – golink</span>
-                  <span className="rounded-full border border-white/10 px-3 py-1 text-[11px] uppercase tracking-wide text-slate-300">
-                    cluster-local · host go
+              <footer className="border-t border-white/5 bg-zinc-950/80">
+                <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4 text-xs text-zinc-400">
+                  <span>© {year} ProomptEng - golink</span>
+                  <span className="rounded-full border border-white/10 px-3 py-1 text-[11px] uppercase tracking-wide text-zinc-300">
+                    ready
                   </span>
                 </div>
               </footer>

@@ -5,8 +5,8 @@ import { drizzle as drizzlePglite } from 'drizzle-orm/pglite'
 import { migrate } from 'drizzle-orm/pglite/migrator'
 import { drizzle as drizzlePg } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
-import * as schema from './schema/links'
 import { loadEnv } from '../env'
+import * as schema from './schema/links'
 
 export type Database = ReturnType<typeof drizzlePg<typeof schema>>
 export type TestDatabase = ReturnType<typeof drizzlePglite<typeof schema>>

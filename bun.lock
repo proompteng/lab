@@ -428,6 +428,7 @@
         "clsx": "^2.1.1",
         "drizzle-orm": "^0.44.7",
         "lucide-react": "^0.555.0",
+        "next-themes": "^0.4.6",
         "nitro": "latest",
         "postgres": "^3.4.5",
         "react": "^19.2.0",

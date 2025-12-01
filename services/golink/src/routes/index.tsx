@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowRight } from 'lucide-react'
+import { Button } from '../components/ui/button'
 
 export const Route = createFileRoute('/')({
   component: Overview,
@@ -8,31 +9,26 @@ export const Route = createFileRoute('/')({
 function Overview() {
   return (
     <div className="grid gap-8 text-slate-100">
-      <section className="glass-surface rounded-2xl p-8">
+      <section className="glass-surface rounded-2xl py-8 px-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-sm uppercase tracking-[0.2em] text-cyan-300">golink</p>
-            <h1 className="text-3xl font-semibold tracking-tight">Short, memorable routes for the team</h1>
-            <p className="mt-2 max-w-2xl text-slate-300">
-              Add a slug once and everyone can reach it via{' '}
-              <span className="font-semibold text-white">http://go/&lt;slug&gt;</span>. Admins can search, edit, and
-              remove entries without downtime.
-            </p>
+            <p className="text-3xl uppercase tracking-[0.2em] text-cyan-300 font-semibold">golink</p>
+            <h1 className="text-2xl tracking-tight">Short, memorable links</h1>
+            <p className="mt-2 max-w-2xl text-slate-300">Add links that so that you don't have to remember</p>
           </div>
-          <Link
-            to="/admin"
-            className="group inline-flex items-center justify-center rounded-full bg-gradient-to-r from-cyan-400 via-indigo-500 to-violet-500 px-5 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-500/30 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
-          >
-            Open admin
-            <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
-          </Link>
+          <Button className="flex">
+            <Link to="/admin" className="group inline-flex items-center">
+              <span>Go to admin</span>
+              <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
+            </Link>
+          </Button>
         </div>
       </section>
 
       <section className="grid gap-4 sm:grid-cols-3">
-        <Card title="Create" body="Add a slug, target URL, and context in seconds." />
-        <Card title="Redirect" body="Requests to /{slug} 302 to the saved target; missing slugs return a 404." />
-        <Card title="Audit" body="Optimistic edits roll back on failure and keep inline errors visible." />
+        <Card title="Create" body="Add short links" />
+        <Card title="Redirect" body="Redirect via short URLs" />
+        <Card title="Edit" body="Edit existing short links" />
       </section>
     </div>
   )

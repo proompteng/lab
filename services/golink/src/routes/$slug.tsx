@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute, notFound, redirect } from '@tanstack/react-router'
 import { serverFns } from '../server/links'
 
 export const Route = createFileRoute('/$slug')({
@@ -6,9 +6,10 @@ export const Route = createFileRoute('/$slug')({
     const record = await serverFns.resolveSlug({ data: { slug: params.slug } })
 
     if (!record) {
-      throw new Response('Not Found', { status: 404 })
+      throw notFound()
     }
 
-    throw redirect({ to: record.targetUrl, status: 302 })
+    // External redirect: use `href` so absolute URLs aren't prefixed and SSR can emit a clean 302.
+    throw redirect({ href: record.targetUrl, statusCode: 302 })
   },
 })

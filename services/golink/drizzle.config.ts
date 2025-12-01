@@ -5,6 +5,7 @@ export default defineConfig({
   out: './src/db/migrations',
   dialect: 'postgresql',
   dbCredentials: {
-    url: process.env.GOLINK_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/golink',
+    // Match the local docker-compose port/user so migrations run without extra env
+    url: process.env.GOLINK_DATABASE_URL ?? 'postgres://golink:golink@localhost:15433/golink?sslmode=disable',
   },
 })
