@@ -108,6 +108,13 @@ spec:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
             enabled: true
+          - name: golink
+            path: argocd/applications/golink
+            namespace: golink
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+            enabled: true
           - name: miel
             path: argocd/applications/miel
             namespace: miel

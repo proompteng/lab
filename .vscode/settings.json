@@ -14,6 +14,6 @@
     "asvetliakov.vscode-neovim": 1
   },
   "[jsonc]": {
-    "editor.defaultFormatter": "biomejs.biome"
+    "editor.defaultFormatter": "vscode.json-language-features"
   }
 }
