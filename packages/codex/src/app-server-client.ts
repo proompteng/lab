@@ -727,7 +727,7 @@ export class CodexAppServerClient {
       const inferred: string =
         this.lastActiveTurnId && this.turnStreams.has(this.lastActiveTurnId)
           ? this.lastActiveTurnId
-          : activeTurnIds[activeTurnIds.length - 1]
+          : (activeTurnIds[activeTurnIds.length - 1] ?? activeTurnIds[0])
 
       this.log('warn', 'inferring turn for item without turnId', {
         itemId,
