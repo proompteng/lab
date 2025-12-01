@@ -6,6 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: golink
     app.kubernetes.io/part-of: lab
+    networking.knative.dev/visibility: cluster-local
   annotations:
     serving.knative.dev/rollout-duration: 10s
     argocd.argoproj.io/tracking-id: golink:serving.knative.dev/Service:golink/golink
