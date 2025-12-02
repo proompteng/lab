@@ -738,14 +738,14 @@ export class CodexAppServerClient {
     let turnId = turnIdFromParams ?? (itemIdFromParams ? (this.itemTurnMap.get(itemIdFromParams) ?? null) : null)
     if (!turnId) {
       const activeTurnIds = Array.from(this.turnStreams.keys())
-      if (activeTurnIds.length === 1) {
-        const [onlyActiveTurnId] = activeTurnIds
-        if (!onlyActiveTurnId) return null
-        turnId = onlyActiveTurnId
-        this.log('info', 'inferring turn for notification without turnId', { activeTurnIds })
-      } else {
-        return null
-      }
+      if (activeTurnIds.length === 0) return null
+      const inferred =
+        this.lastActiveTurnId && this.turnStreams.has(this.lastActiveTurnId)
+          ? this.lastActiveTurnId
+          : activeTurnIds[activeTurnIds.length - 1]
+      if (!inferred) return null
+      turnId = inferred
+      this.log('info', 'inferring turn for notification without turnId', { activeTurnIds, inferredTurnId: inferred })
     }
     const stream = this.turnStreams.get(turnId)
     if (!stream) return null
@@ -759,15 +759,15 @@ export class CodexAppServerClient {
 
     if (!turnId) {
       const activeTurnIds = Array.from(this.turnStreams.keys())
-      if (activeTurnIds.length !== 1) {
-        this.log('info', 'ignoring item notification without turnId', { itemId, activeTurnIds })
-        return
-      }
+      if (activeTurnIds.length === 0) return
 
-      const [inferred] = activeTurnIds
+      const inferred =
+        this.lastActiveTurnId && this.turnStreams.has(this.lastActiveTurnId)
+          ? this.lastActiveTurnId
+          : activeTurnIds[activeTurnIds.length - 1]
       if (!inferred || !this.turnStreams.has(inferred)) return
 
-      this.log('info', 'inferring turn for item without turnId', {
+      this.log('warn', 'inferring turn for item without turnId', {
         itemId,
         inferredTurnId: inferred,
         activeTurnIds,
