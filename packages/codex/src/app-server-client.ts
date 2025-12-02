@@ -17,6 +17,8 @@ import type {
   ThreadStartResponse,
   Turn,
   TurnCompletedNotification,
+  TurnInterruptParams,
+  TurnInterruptResponse,
   TurnStartParams,
   TurnStartResponse,
 } from './app-server/v2'
@@ -142,6 +144,8 @@ export class CodexAppServerClient {
     this.writeToChild(payload)
   }
   private pending = new Map<RequestId, PendingRequest>()
+  // Active turn streams keyed by Codex turn_id. Notifications without turn_id are only inferred when exactly
+  // one active stream exists to preserve the per-conversation “one live turn at a time” invariant enforced upstream.
   private turnStreams = new Map<string, TurnStream>()
   private turnItems = new Map<string, Set<string>>()
   private itemTurnMap = new Map<string, string>()
@@ -358,6 +362,20 @@ export class CodexAppServerClient {
     return { stream: stream.iterator, turnId, threadId: activeThreadId }
   }
 
+  async interruptTurn(turnId: string, threadId: string): Promise<void> {
+    await this.ensureReady()
+    const params: TurnInterruptParams = { threadId, turnId }
+    try {
+      await this.request<TurnInterruptResponse>('turn/interrupt', params)
+      this.log('info', 'turn interrupt requested', { turnId, threadId })
+    } catch (error) {
+      this.log('warn', 'turn interrupt failed', { turnId, threadId, error })
+      throw error
+    } finally {
+      this.clearTurn(turnId)
+    }
+  }
+
   private async bootstrap(clientInfo: ClientInfo): Promise<void> {
     const decoder = new TextDecoder()
     let buffer = ''
@@ -465,7 +483,13 @@ export class CodexAppServerClient {
       if (trackItem) this.trackItemFromParams(targetParams)
       const resolved = this.resolveTurnStream(targetParams)
       if (!resolved) {
-        this.log('warn', 'no turn stream for notification', { method, params: targetParams })
+        const activeTurnIds = Array.from(this.turnStreams.keys())
+        const turnId = this.findTurnId(targetParams)
+        this.log('info', 'dropping notification for inactive turn stream', {
+          method,
+          turnId,
+          activeTurnIds,
+        })
         return false
       }
       handler(resolved.stream, resolved.turnId)
@@ -669,7 +693,10 @@ export class CodexAppServerClient {
           resolved.stream.push({ type: 'error', error: errorPayload })
           this.failTurnStream(resolved.turnId, new Error(JSON.stringify(errorPayload)))
         } else {
-          this.log('warn', 'stream error without matching turn', { method, params: notification.params })
+          this.log('info', 'stream error without matching active turn (dropped)', {
+            method,
+            params: notification.params,
+          })
         }
         this.log('error', 'codex stream error', { method, params: notification.params })
         break
@@ -708,8 +735,18 @@ export class CodexAppServerClient {
   private resolveTurnStream(params: unknown): { stream: TurnStream; turnId: string } | null {
     const turnIdFromParams = this.findTurnId(params)
     const itemIdFromParams = this.findItemId(params)
-    const turnId = turnIdFromParams ?? (itemIdFromParams ? (this.itemTurnMap.get(itemIdFromParams) ?? null) : null)
-    if (!turnId) return null
+    let turnId = turnIdFromParams ?? (itemIdFromParams ? (this.itemTurnMap.get(itemIdFromParams) ?? null) : null)
+    if (!turnId) {
+      const activeTurnIds = Array.from(this.turnStreams.keys())
+      if (activeTurnIds.length === 1) {
+        const [onlyActiveTurnId] = activeTurnIds
+        if (!onlyActiveTurnId) return null
+        turnId = onlyActiveTurnId
+        this.log('info', 'inferring turn for notification without turnId', { activeTurnIds })
+      } else {
+        return null
+      }
+    }
     const stream = this.turnStreams.get(turnId)
     if (!stream) return null
     return { stream, turnId }
@@ -722,14 +759,15 @@ export class CodexAppServerClient {
 
     if (!turnId) {
       const activeTurnIds = Array.from(this.turnStreams.keys())
-      if (activeTurnIds.length === 0) return
+      if (activeTurnIds.length !== 1) {
+        this.log('info', 'ignoring item notification without turnId', { itemId, activeTurnIds })
+        return
+      }
 
-      const inferred: string =
-        this.lastActiveTurnId && this.turnStreams.has(this.lastActiveTurnId)
-          ? this.lastActiveTurnId
-          : activeTurnIds[activeTurnIds.length - 1]!
+      const [inferred] = activeTurnIds
+      if (!inferred || !this.turnStreams.has(inferred)) return
 
-      this.log('warn', 'inferring turn for item without turnId', {
+      this.log('info', 'inferring turn for item without turnId', {
         itemId,
         inferredTurnId: inferred,
         activeTurnIds,
@@ -761,7 +799,7 @@ export class CodexAppServerClient {
     this.turnStreams.delete(turnId)
     if (this.lastActiveTurnId === turnId) {
       const remaining = Array.from(this.turnStreams.keys())
-      this.lastActiveTurnId = remaining.length ? remaining[remaining.length - 1]! : null
+      this.lastActiveTurnId = remaining.length ? (remaining.at(-1) ?? null) : null
     }
   }
 

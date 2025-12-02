@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
 import { createChatCompletionHandler } from '~/services/chat-completion'
-import { threadMap } from './state'
+import { clearActiveTurn, registerActiveTurn, threadMap } from './state'
 
 const handler = createChatCompletionHandler('test-path')
 
@@ -123,5 +123,28 @@ describe('createChatCompletionHandler', () => {
     const text = await readText(res)
     expect(text).toContain('chat_id_invalid')
     expect(threadMap.get('keep')).toBe('thread-keep')
+  })
+
+  it('returns 409 when a turn is already active for the chat', async () => {
+    const chatId = 'openwebui:conflict-chat'
+    registerActiveTurn(chatId, { turnId: 'turn-existing', conversationId: chatId, startedAt: Date.now() })
+
+    const body = {
+      model: 'gpt-5.1-codex-max',
+      stream: true,
+      chat_id: 'conflict-chat',
+      messages: [{ role: 'user', content: 'hi again' }],
+    }
+
+    const res = await handler({
+      request: new Request('http://localhost', { method: 'POST', body: JSON.stringify(body) }),
+    })
+
+    expect(res.status).toBe(409)
+    const payload = (await res.json()) as { error?: { code?: string; turn_id?: string } }
+    expect(payload.error?.code).toBe('turn_active')
+    expect(payload.error?.turn_id).toBe('turn-existing')
+
+    clearActiveTurn(chatId, 'turn-existing')
   })
 })

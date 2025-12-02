@@ -36,6 +36,11 @@ export type StreamOptions = {
   model?: string
   signal: AbortSignal
   onComplete?: (content: string, reasoning: ReasoningPart[], meta: PersistMeta) => Promise<void>
+  onFinalize?: (result: {
+    outcome: 'succeeded' | 'failed' | 'aborted' | 'timeout' | 'error'
+    reason?: string
+  }) => void | Promise<void>
+  onCodexTurn?: (ids: { threadId: string; codexTurnId?: string }) => void
   chatId: string
   includeUsage?: boolean
   threadId?: string

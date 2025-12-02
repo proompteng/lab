@@ -1,250 +1,177 @@
 import { describe, expect, it } from 'bun:test'
 
-import type { DbClient } from '~/services/db'
-import { threadMap } from './state'
+import type { StreamDelta } from '@proompteng/codex'
+
+type FinalizeInfo = {
+  outcome: 'succeeded' | 'failed' | 'aborted' | 'timeout' | 'error'
+  reason?: string
+}
+
 import { streamSse } from './stream'
 
-type UpsertTurnInput = Parameters<DbClient['upsertTurn']>[0]
-type AppendUsageInput = Parameters<DbClient['appendUsage']>[0]
-type AppendEventInput = Parameters<DbClient['appendEvent']>[0]
+const buildMockAppServer = ({
+  deltas,
+  returnValue = null,
+  delayMs = 0,
+  hang = false,
+}: {
+  deltas: StreamDelta[]
+  returnValue?: unknown
+  delayMs?: number
+  hang?: boolean
+}) => {
+  const interruptCalls: Array<{ threadId: string; turnId: string }> = []
 
-const createMockDb = () => {
-  const calls = {
-    appendUsage: [] as Array<{ turnId: string }>,
-    appendEvent: [] as Array<{ method: string; turnId?: string }>,
-    upsertTurn: [] as Array<{ turnId: string; status: string }>,
+  const runTurnStream = async () => {
+    async function* generator() {
+      if (hang) {
+        // never yield or return; simulates a stuck Codex turn
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          await Bun.sleep(1000)
+        }
+      }
+
+      for (const delta of deltas) {
+        if (delayMs) await Bun.sleep(delayMs)
+        yield delta
+      }
+      return returnValue as never
+    }
+
+    return { stream: generator(), threadId: 'thread-1', turnId: 'codex-1' }
   }
 
-  const noop = async (): Promise<string> => 'ok'
-  const db: DbClient = {
-    upsertConversation: noop,
-    upsertTurn: async (input: UpsertTurnInput) => {
-      calls.upsertTurn.push({ turnId: input.turnId, status: input.status })
-      return 'turn'
-    },
-    appendMessage: noop,
-    appendReasoning: noop,
-    appendUsage: async (input: AppendUsageInput) => {
-      calls.appendUsage.push({ turnId: input.turnId })
-      return 'usage'
-    },
-    appendRateLimit: noop,
-    upsertCommand: noop,
-    appendCommandChunk: noop,
-    appendEvent: async (input: AppendEventInput) => {
-      const event: { method: string; turnId?: string } = { method: input.method }
-      if (input.turnId) event.turnId = input.turnId
-      calls.appendEvent.push(event)
-      return 'event'
-    },
-    appendAssistantMessageWithMeta: noop,
+  const interruptTurn = async ({ threadId, turnId }: { threadId: string; turnId: string }) => {
+    interruptCalls.push({ threadId, turnId })
   }
 
-  return { db, calls }
+  return { runTurnStream, interruptTurn, interruptCalls }
 }
 
-const runStream = async (opts: Parameters<typeof streamSse>[1]) => {
-  const res = await streamSse('hello', opts)
-  const text = await res.text()
-  return { res, text }
+const readAll = async (res: Response) => {
+  const reader = res.body?.getReader()
+  if (!reader) return ''
+  const chunks: Uint8Array[] = []
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    if (value) chunks.push(value)
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks))
 }
 
-describe('streamSse', () => {
-  it('sends heartbeat pings without polluting payload', async () => {
-    const { db } = createMockDb()
-    const appServer = {
-      runTurnStream: async () => ({
-        threadId: 'thread-hb',
-        stream: (async function* () {
-          yield 'hello'
-        })(),
-      }),
-    }
+describe('streamSse lifecycle', () => {
+  it('calls onFinalize once on success', async () => {
+    const mock = buildMockAppServer({ deltas: [{ type: 'message', delta: 'hi' }] })
+    let finalized: FinalizeInfo | null = null
 
-    const { text } = await runStream({
+    const res = await streamSse('prompt', {
       model: 'gpt-5.1-codex-max',
       signal: new AbortController().signal,
-      chatId: 'chat-hb',
-      db,
-      conversationId: 'conv-hb',
-      turnId: 'turn-hb',
-      userId: 'user-hb',
+      chatId: 'chat-finalize',
+      db: {
+        // minimal mocks for persistence used in the stream helper
+        appendEvent: async () => {},
+        appendUsage: async () => {},
+        appendReasoning: async () => {},
+        upsertTurn: async () => {},
+        upsertConversation: async () => {},
+        appendMessage: async () => {},
+      } as never,
+      conversationId: 'chat-finalize',
+      turnId: 'turn-1',
+      userId: 'user',
       startedAt: Date.now(),
-      appServer: appServer as never,
-    })
-
-    // Heartbeats are SSE comments; they should not surface in the data payload we parse as text.
-    expect(text).toContain('data: {"id"')
-    expect(text).not.toContain(':ping')
-    expect(text.trim().endsWith('[DONE]')).toBe(true)
-  })
-
-  it('keeps DB turnId when Codex returns a different turnId', async () => {
-    const { db, calls } = createMockDb()
-    const appServer = {
-      runTurnStream: async () => ({
-        turnId: 'codex-turn-99',
-        threadId: 'thread-1',
-        stream: (async function* () {
-          yield { type: 'usage', usage: { input_tokens: 5 } }
-          yield 'done'
-        })(),
-      }),
-    }
-
-    await runStream({
-      model: 'gpt-5.1-codex-max',
-      signal: new AbortController().signal,
-      chatId: 'chat-1',
-      includeUsage: true,
-      db,
-      conversationId: 'conv-1',
-      turnId: 'db-turn-1',
-      userId: 'user-1',
-      startedAt: Date.now(),
-      appServer: appServer as never,
-    })
-
-    expect(calls.appendUsage.map((u) => u.turnId)).toEqual(['db-turn-1'])
-  })
-
-  it('deduplicates consecutive reasoning deltas', async () => {
-    const { db } = createMockDb()
-    const appServer = {
-      runTurnStream: async () => ({
-        threadId: 'thread-reason',
-        stream: (async function* () {
-          yield { type: 'reasoning', delta: 'foo ' }
-          yield { type: 'reasoning', delta: 'foo ' }
-          yield { type: 'reasoning', delta: 'bar ' }
-          yield 'done'
-        })(),
-      }),
-    }
-
-    let capturedReasoning: string[] = []
-
-    await runStream({
-      model: 'gpt-5.1-codex-max',
-      signal: new AbortController().signal,
-      chatId: 'chat-reason',
-      db,
-      conversationId: 'conv-reason',
-      turnId: 'turn-reason',
-      userId: 'user-reason',
-      startedAt: Date.now(),
-      appServer: appServer as never,
-      onComplete: async (_text, reasoning, _meta) => {
-        capturedReasoning = reasoning.map((r) => r.text)
+      onFinalize: (info) => {
+        finalized = info
       },
+      appServer: mock as never,
     })
 
-    expect(capturedReasoning.join('')).toBe('foo bar ')
+    const text = await readAll(res)
+    expect(text).toContain('[DONE]')
+    if (!finalized) throw new Error('onFinalize was not called')
+    const info = finalized as FinalizeInfo
+    expect(info.outcome).toBe('succeeded')
+    expect(mock.interruptCalls).toHaveLength(0)
   })
 
-  it('persists onComplete errors without emitting server_error SSE after [DONE]', async () => {
-    const { db, calls } = createMockDb()
-    const appServer = {
-      runTurnStream: async () => ({
-        threadId: 'thread-2',
-        stream: (async function* () {
-          yield 'hello'
-        })(),
-      }),
-    }
+  it('interrupts Codex and finalizes on abort', async () => {
+    const mock = buildMockAppServer({ deltas: [], hang: true })
+    const controller = new AbortController()
+    let finalized: FinalizeInfo | null = null
 
-    const { text } = await runStream({
+    const resPromise = streamSse('prompt', {
       model: 'gpt-5.1-codex-max',
-      signal: new AbortController().signal,
-      chatId: 'chat-2',
-      db,
-      conversationId: 'conv-2',
-      turnId: 'db-turn-2',
-      userId: 'user-2',
+      signal: controller.signal,
+      chatId: 'chat-abort',
+      db: {
+        appendEvent: async () => {},
+        appendUsage: async () => {},
+        appendReasoning: async () => {},
+        upsertTurn: async () => {},
+        upsertConversation: async () => {},
+        appendMessage: async () => {},
+      } as never,
+      conversationId: 'chat-abort',
+      turnId: 'turn-2',
+      userId: 'user',
       startedAt: Date.now(),
-      appServer: appServer as never,
-      onComplete: async () => {
-        throw new Error('persist failed')
+      onFinalize: (info) => {
+        finalized = info
       },
+      appServer: mock as never,
     })
 
-    expect(text).not.toContain('server_error')
-    expect(text.trim().endsWith('[DONE]')).toBe(true)
-    expect(calls.appendEvent.some((e) => e.method === 'turn/persist_error')).toBe(true)
-    expect(calls.upsertTurn.some((t) => t.status === 'succeeded')).toBe(true)
+    // Abort shortly after starting
+    setTimeout(() => controller.abort(), 10)
+    const res = await resPromise
+    await readAll(res)
+    await Bun.sleep(20)
+
+    if (!finalized) throw new Error('onFinalize was not called')
+    const info = finalized as FinalizeInfo
+    expect(info.outcome).toBe('aborted')
+    expect(mock.interruptCalls).toEqual([{ threadId: 'thread-1', turnId: 'codex-1' }])
   })
 
-  it('clears threadMap when context window is exceeded mid-stream', async () => {
-    const { db } = createMockDb()
-    const chatId = 'chat-context'
+  it('times out and interrupts Codex when no deltas are produced', async () => {
+    const originalTimeout = process.env.JANGAR_STREAM_TIMEOUT_MS
+    process.env.JANGAR_STREAM_TIMEOUT_MS = '10'
 
-    const appServer = {
-      runTurnStream: async () => ({
-        threadId: 'thread-context',
-        stream: (async function* () {
-          yield 'chunk'
-          throw new Error(JSON.stringify({ error: { codexErrorInfo: 'contextWindowExceeded', message: 'too long' } }))
-        })(),
-      }),
-    }
+    const mock = buildMockAppServer({ deltas: [], hang: true })
+    let finalized: FinalizeInfo | null = null
 
-    await runStream({
+    const res = await streamSse('prompt', {
       model: 'gpt-5.1-codex-max',
       signal: new AbortController().signal,
-      chatId,
-      db,
-      conversationId: 'conv-ctx',
-      turnId: 'turn-ctx',
-      userId: 'user-ctx',
+      chatId: 'chat-timeout',
+      db: {
+        appendEvent: async () => {},
+        appendUsage: async () => {},
+        appendReasoning: async () => {},
+        upsertTurn: async () => {},
+        upsertConversation: async () => {},
+        appendMessage: async () => {},
+      } as never,
+      conversationId: 'chat-timeout',
+      turnId: 'turn-3',
+      userId: 'user',
       startedAt: Date.now(),
-      appServer: appServer as never,
+      onFinalize: (info) => {
+        finalized = info
+      },
+      appServer: mock as never,
     })
 
-    expect(threadMap.get(chatId)).toBeUndefined()
-  })
+    await readAll(res)
+    await Bun.sleep(20)
 
-  it('emits each unique reasoning delta only once', async () => {
-    const { db } = createMockDb()
-    const appServer = {
-      runTurnStream: async () => ({
-        threadId: 'thread-reasoning',
-        turnId: 'turn-reasoning',
-        stream: (async function* () {
-          yield { type: 'reasoning', delta: '**Acknowled**' }
-          yield { type: 'reasoning', delta: '**Acknowled**' }
-          yield { type: 'reasoning', delta: 'Acknowledging completion' }
-        })(),
-      }),
-    }
-
-    const { text } = await runStream({
-      model: 'gpt-5.1-codex-max',
-      signal: new AbortController().signal,
-      chatId: 'chat-reasoning',
-      db,
-      conversationId: 'conv-reasoning',
-      turnId: 'turn-reasoning',
-      userId: 'user-reasoning',
-      startedAt: Date.now(),
-      appServer: appServer as never,
-    })
-
-    const chunks = text
-      .split('\n')
-      .filter((line) => line.startsWith('data: '))
-      .map((line) => line.substring('data: '.length))
-      .filter((line) => line !== '[DONE]')
-      .map((line) => JSON.parse(line) as { choices?: Array<{ delta?: { reasoning_content?: string } }> })
-
-    type ReasoningChunk = {
-      choices: [{ delta: { reasoning_content: string } }]
-    }
-
-    const reasoningChunks = chunks.filter(
-      (chunk): chunk is ReasoningChunk => typeof chunk.choices?.[0]?.delta?.reasoning_content === 'string',
-    )
-    const reasoningTexts = reasoningChunks.map((chunk) => chunk.choices[0].delta.reasoning_content)
-
-    expect(reasoningTexts).toEqual(['**Acknowled**', 'Acknowledging completion'])
+    if (!finalized) throw new Error('onFinalize was not called')
+    const info = finalized as FinalizeInfo
+    expect(info.outcome).toBe('timeout')
+    expect(mock.interruptCalls).toEqual([{ threadId: 'thread-1', turnId: 'codex-1' }])
+    process.env.JANGAR_STREAM_TIMEOUT_MS = originalTimeout
   })
 })

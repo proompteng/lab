@@ -1,7 +1,16 @@
 import { createDbClient } from '~/services/db'
 import { isSupportedModel, resolveModel, supportedModels } from '~/services/models'
 import { buildUsagePayload, persistAssistant, persistFailedTurn } from './persistence'
-import { defaultUserId, lastChatIdForUser, serviceTier, threadMap } from './state'
+import {
+  clearActiveTurn,
+  defaultUserId,
+  getActiveTurn,
+  lastChatIdForUser,
+  registerActiveTurn,
+  serviceTier,
+  threadMap,
+  updateActiveTurnCodexIds,
+} from './state'
 import { streamSse } from './stream'
 import type { ChatCompletionRequest, Message, PersistMeta, ReasoningPart, StreamOptions } from './types'
 import { buildPrompt, deriveChatId, truncateForConvex } from './utils'
@@ -149,6 +158,26 @@ export const createChatCompletionHandler = (pathLabel: string) => {
     const startedAt = Date.now()
     const acceptedStream = requestedStream === true
 
+    // Invariant: one active turn per chatId/conversation. Reject overlapping requests early.
+    const activeTurn = getActiveTurn(chatId)
+    if (activeTurn) {
+      const payload = {
+        error: {
+          message: 'a turn is already running for this chat; wait for it to finish before starting another',
+          type: 'conflict',
+          code: 'turn_active',
+          turn_id: activeTurn.turnId,
+        },
+      }
+      return new Response(JSON.stringify(payload), {
+        status: 409,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+
+    registerActiveTurn(chatId, { turnId, conversationId, startedAt })
+    const releaseActiveTurn = () => clearActiveTurn(chatId, turnId)
+
     console.info(`[jangar] ${pathLabel}`, {
       model,
       messageCount: promptMessages.length,
@@ -193,6 +222,7 @@ export const createChatCompletionHandler = (pathLabel: string) => {
       }
     } catch (error) {
       console.error('[jangar] db write failed before streaming', error)
+      releaseActiveTurn()
       if (db)
         await persistFailedTurn(
           db,
@@ -234,6 +264,28 @@ export const createChatCompletionHandler = (pathLabel: string) => {
         turnId,
         userId,
         startedAt,
+        onCodexTurn: ({ threadId: codexThreadId, codexTurnId }) => {
+          const codexIds: { threadId?: string; codexTurnId?: string } = { threadId: codexThreadId }
+          if (codexTurnId !== undefined) codexIds.codexTurnId = codexTurnId
+          updateActiveTurnCodexIds(chatId, codexIds)
+          console.info('[jangar] codex turn attached', {
+            chatId,
+            conversationId,
+            turnId,
+            codexTurnId,
+            threadId: codexThreadId,
+          })
+        },
+        onFinalize: async ({ outcome, reason }) => {
+          releaseActiveTurn()
+          await db.appendEvent({
+            conversationId,
+            turnId,
+            method: 'turn/settled',
+            payload: { outcome, reason },
+            receivedAt: Date.now(),
+          })
+        },
         onComplete: async (text: string, reasoning: ReasoningPart[], meta: PersistMeta) => {
           const combinedReasoning = reasoning.map((r) => r.text).join('')
           const safeReasoning = combinedReasoning ? truncateForConvex(combinedReasoning, 'reasoning') : ''
@@ -282,7 +334,7 @@ export const createChatCompletionHandler = (pathLabel: string) => {
       return await streamSse(prompt, sseOptions)
     } catch (error) {
       console.error('[jangar] codex app-server stream error', error)
-      threadMap.delete(chatId)
+      releaseActiveTurn()
 
       await persistFailedTurn(
         db,
