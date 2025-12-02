@@ -230,7 +230,7 @@ describe('CodexAppServerClient', () => {
     expect(internals.itemTurnMap.size).toBe(0)
   })
 
-  it('routes item notifications without turnId across multiple turns using the latest active turn', async () => {
+  it('ignores notifications without turnId when multiple turns are active', async () => {
     const logs: Array<{ level: string; message: string; meta?: Record<string, unknown> }> = []
     const logger = (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => {
       logs.push({ level, message, meta })
@@ -256,12 +256,23 @@ describe('CodexAppServerClient', () => {
     writeLine(child, { method: 'item/started', params: { item: { type: 'agentMessage', id: 'item-2', text: '' } } })
     writeLine(child, { method: 'item/agentMessage/delta', params: { itemId: 'item-2', delta: 'hello from two' } })
 
-    const delta = await streamTwo.next()
-    expect(delta.value).toEqual({ type: 'message', delta: 'hello from two' })
+    const pendingDelta = streamTwo.next()
+    const raced = await Promise.race([pendingDelta.then(() => 'resolved'), delay(30).then(() => 'timeout')])
+    expect(raced).toBe('timeout')
 
-    const warnLog = logs.find((entry) => entry.level === 'warn' && entry.message.includes('inferring turn'))
-    expect(warnLog).toBeDefined()
-    expect(warnLog?.meta?.inferredTurnId).toBe('turn-2')
+    // Now send a notification without turnId; it should be ignored because two turns are active.
+    writeLine(child, {
+      method: 'item/agentMessage/delta',
+      params: { itemId: 'item-without-turn', delta: 'should drop' },
+    })
+
+    // Complete the turn to finish the iterator; the unaddressed delta should have been ignored.
+    writeLine(child, { method: 'turn/completed', params: { turn: { id: 'turn-2', status: 'completed', items: [] } } })
+    const after = await pendingDelta
+    expect(after.done).toBe(true)
+
+    const ignored = logs.find((entry) => entry.message.includes('ignoring notification without turnId'))
+    expect(ignored).toBeDefined()
   })
 
   it('rejects readiness when the child exits before initialization', async () => {
