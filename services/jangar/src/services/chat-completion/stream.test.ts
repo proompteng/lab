@@ -131,6 +131,45 @@ describe('streamSse lifecycle', () => {
     expect(mock.interruptCalls).toHaveLength(0)
   })
 
+  it('swallows onFinalize errors when context window is exceeded before streaming', async () => {
+    const error = { message: 'ctx exceeded', codexErrorInfo: 'contextWindowExceeded' }
+    const mock = {
+      runTurnStream: async () => {
+        throw error
+      },
+    }
+
+    let finalizeCalls = 0
+
+    const res = await streamSse('prompt', {
+      model: 'gpt-5.1-codex-max',
+      signal: new AbortController().signal,
+      chatId: 'chat-context-window',
+      db: {
+        appendEvent: async () => {},
+        appendUsage: async () => {},
+        appendReasoning: async () => {},
+        upsertTurn: async () => {},
+        upsertConversation: async () => {},
+        appendMessage: async () => {},
+      } as never,
+      conversationId: 'chat-context-window',
+      turnId: 'turn-ctx',
+      userId: 'user',
+      startedAt: Date.now(),
+      onFinalize: () => {
+        finalizeCalls += 1
+        throw new Error('finalize failed')
+      },
+      appServer: mock as never,
+    })
+
+    const text = await readAll(res)
+    expect(text).toContain('context_window_exceeded')
+    expect(finalizeCalls).toBe(1)
+    expect(res.status).toBe(200)
+  })
+
   it('interrupts Codex and finalizes on abort', async () => {
     const mock = buildMockAppServer({ deltas: [], hang: true })
     const controller = new AbortController()

@@ -11,6 +11,16 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
   const appServer = opts.appServer ?? resolveAppServer()
   const targetModel = opts.model
   const existingThreadId = opts.threadId ?? threadMap.get(opts.chatId)
+  const finalizeSafely = async (payload: {
+    outcome: 'succeeded' | 'failed' | 'aborted' | 'timeout' | 'error'
+    reason?: string
+  }) => {
+    try {
+      await opts.onFinalize?.(payload)
+    } catch (error) {
+      console.warn('[jangar] onFinalize ignored error', { error: `${error}` })
+    }
+  }
 
   return (async () => {
     let streamHandle: Awaited<ReturnType<ReturnType<typeof resolveAppServer>['runTurnStream']>>
@@ -36,7 +46,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
           },
           message,
         )
-        await opts.onFinalize?.({ outcome: 'failed', reason: message })
+        await finalizeSafely({ outcome: 'failed', reason: message })
         return {
           body: null,
           errorPayload: {
@@ -94,11 +104,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
           if (settled) return
           settled = true
           const payload = reason === undefined ? { outcome } : { outcome, reason }
-          try {
-            await opts.onFinalize?.(payload)
-          } catch (error) {
-            console.warn('[jangar] onFinalize ignored error', { error: `${error}` })
-          }
+          await finalizeSafely(payload)
         }
 
         const interruptTurn = async (reason: 'timeout' | 'aborted' | 'error') => {
