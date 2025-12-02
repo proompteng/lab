@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { startUiServer } from './dev-server'
-import { getAppServer, stopAppServer } from './lib/app-server'
+import { getAppServer, stopAppServer } from './services/app-server'
 import { startTemporalWorker } from './workers/temporal-worker'
 
 const serviceRoot = fileURLToPath(new URL('..', import.meta.url))

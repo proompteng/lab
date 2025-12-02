@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { createChatCompletionHandler } from '~/lib/chat-completion'
+import { createChatCompletionHandler } from '~/services/chat-completion'
 
 export const Route = createFileRoute('/openai/v1/chat/completions')({
   server: {
