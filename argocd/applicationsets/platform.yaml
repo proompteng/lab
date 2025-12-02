@@ -163,6 +163,13 @@ spec:
               argocd.argoproj.io/sync-wave: "4"
             automation: auto
             enabled: "false"
+          - name: kestra
+            path: argocd/applications/kestra
+            namespace: kestra
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+            enabled: "true"
           - name: verdaccio
             path: argocd/applications/verdaccio
             namespace: verdaccio

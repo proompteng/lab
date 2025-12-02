@@ -1,0 +1,59 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kestra-minio-bucket
+  namespace: minio
+  labels:
+    app.kubernetes.io/name: kestra-minio-bucket
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    argocd.argoproj.io/sync-options: Replace=true
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kestra-minio-bucket
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: create-bucket
+          image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+          env:
+            - name: MINIO_ENDPOINT
+              value: http://kestra-minio.minio.svc.cluster.local:9000
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: kestra-minio-creds
+                  key: accesskey
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kestra-minio-creds
+                  key: secretkey
+            - name: KESTRA_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kestra-minio-creds
+                  key: kestra-access-key
+            - name: KESTRA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kestra-minio-creds
+                  key: kestra-secret-key
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              until mc alias set minio "$MINIO_ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
+                echo "waiting for MinIO..."
+                sleep 5
+              done
+              mc mb -p minio/kestra || true
+              mc admin user add minio "$KESTRA_ACCESS_KEY" "$KESTRA_SECRET_KEY" || true
+              mc admin policy attach minio readwrite --user "$KESTRA_ACCESS_KEY" || true
+              mc anonymous set none minio/kestra || true
+              echo "Bucket 'kestra' ensured with readwrite user."

@@ -1,0 +1,74 @@
+common:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  extraEnv:
+    - name: KESTRA_DB_USER
+      valueFrom:
+        secretKeyRef:
+          name: kestra-db-app
+          key: username
+    - name: KESTRA_DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: kestra-db-app
+          key: password
+    - name: KESTRA_DB_URL
+      valueFrom:
+        secretKeyRef:
+          name: kestra-db-app
+          key: jdbc-uri
+    - name: KESTRA_STORAGE_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: kestra-minio-creds
+          key: kestra-access-key
+    - name: KESTRA_STORAGE_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: kestra-minio-creds
+          key: kestra-secret-key
+  configmapReloader:
+    enabled: true
+
+configurations:
+  application:
+    datasources:
+      postgres:
+        url: ${KESTRA_DB_URL}
+        driverClassName: org.postgresql.Driver
+        username: ${KESTRA_DB_USER}
+        password: ${KESTRA_DB_PASSWORD}
+    kestra:
+      queue:
+        type: postgres
+      repository:
+        type: postgres
+      storage:
+        type: minio
+        minio:
+          endpoint: kestra-minio.minio.svc.cluster.local
+          port: 9000
+          secure: false
+          bucket: kestra
+          region: us-east-1
+          access-key: ${KESTRA_STORAGE_ACCESS_KEY}
+          secret-key: ${KESTRA_STORAGE_SECRET_KEY}
+          path-style-access: true
+      tasks:
+        tmpDir:
+          path: /tmp/kestra
+      url: http://kestra
+
+deployments:
+  standalone:
+    enabled: true
+    dind:
+      enabled: false
+
+service:
+  type: ClusterIP
