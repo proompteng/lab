@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { buildModelsResponse, defaultCodexModel, supportedModels } from './models'
+import { buildModelsResponse, defaultCodexModel, supportedModels } from '~/services/models'
 
 describe('defaultCodexModel', () => {
   it('falls back to the first supported model when env is unset or invalid', () => {

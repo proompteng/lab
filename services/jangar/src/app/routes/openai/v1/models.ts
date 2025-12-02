@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { buildModelsResponse } from '~/lib/models'
+import { buildModelsResponse } from '~/services/models'
 
 const logRouteHit = (path: string) => {
   console.info(`[jangar] ${path}`)

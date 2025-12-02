@@ -20,7 +20,7 @@ mock.module('@proompteng/codex', () => {
 const loadAppServer = async () => {
   process.env.CODEX_BOOTSTRAP_REPO = '0'
   process.env.CODEX_CWD = '/tmp/repo'
-  return import('./app-server')
+  return import('~/services/app-server')
 }
 
 const TEST_TIMEOUT_MS = 20_000

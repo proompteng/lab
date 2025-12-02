@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
-import { buildPrompt, createSafeEnqueuer, estimateTokens, formatToolDelta, stripAnsi } from './chat-completion'
-import { defaultCodexModel, isSupportedModel, resolveModel, supportedModels } from './models'
+import { buildPrompt, createSafeEnqueuer, estimateTokens, formatToolDelta, stripAnsi } from '~/services/chat-completion'
+import { defaultCodexModel, isSupportedModel, resolveModel, supportedModels } from '~/services/models'
 
 describe('stripAnsi', () => {
   it('removes color codes', () => {
