@@ -21,6 +21,7 @@ export interface AppServerHandle {
     cwd?: string | null
     threadId?: string
   }) => Promise<{ stream: AsyncGenerator<StreamDelta, unknown, void>; threadId: string; turnId: string }>
+  interruptTurn: (options: { threadId: string; turnId: string }) => Promise<void>
   stop: () => void
 }
 
@@ -139,6 +140,7 @@ const startAppServerInternal = (
       const { stream, threadId: activeThreadId, turnId } = await client.runTurnStream(prompt, runOptions)
       return { stream, threadId: activeThreadId, turnId }
     },
+    interruptTurn: async ({ threadId, turnId }) => client.interruptTurn(turnId, threadId),
     stop: () => client.stop(),
   }
 }

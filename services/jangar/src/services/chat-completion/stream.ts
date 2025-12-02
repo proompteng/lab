@@ -11,6 +11,16 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
   const appServer = opts.appServer ?? resolveAppServer()
   const targetModel = opts.model
   const existingThreadId = opts.threadId ?? threadMap.get(opts.chatId)
+  const finalizeSafely = async (payload: {
+    outcome: 'succeeded' | 'failed' | 'aborted' | 'timeout' | 'error'
+    reason?: string
+  }) => {
+    try {
+      await opts.onFinalize?.(payload)
+    } catch (error) {
+      console.warn('[jangar] onFinalize ignored error', { error: `${error}` })
+    }
+  }
 
   return (async () => {
     let streamHandle: Awaited<ReturnType<ReturnType<typeof resolveAppServer>['runTurnStream']>>
@@ -36,6 +46,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
           },
           message,
         )
+        await finalizeSafely({ outcome: 'failed', reason: message })
         return {
           body: null,
           errorPayload: {
@@ -59,6 +70,8 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
       })
     }
     if (!existingThreadId) threadMap.set(opts.chatId, threadId)
+
+    opts.onCodexTurn?.({ threadId, codexTurnId: codexTurnId ?? undefined })
 
     if (codexTurnId) {
       await opts.db.appendEvent({
@@ -86,36 +99,64 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
 
         const send = (payload: unknown) => safeEnqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
         const sendDone = () => safeEnqueue(encoder.encode('data: [DONE]\n\n'))
+        let settled = false
+        const finalize = async (outcome: 'succeeded' | 'failed' | 'aborted' | 'timeout' | 'error', reason?: string) => {
+          if (settled) return
+          settled = true
+          const payload = reason === undefined ? { outcome } : { outcome, reason }
+          await finalizeSafely(payload)
+        }
+
+        const interruptTurn = async (reason: 'timeout' | 'aborted' | 'error') => {
+          if (!codexTurnId || !threadId || typeof appServer.interruptTurn !== 'function') return
+          try {
+            await appServer.interruptTurn({ threadId, turnId: codexTurnId })
+            await opts.db.appendEvent({
+              conversationId: opts.conversationId,
+              turnId,
+              method: 'turn/interrupted',
+              payload: { reason },
+              receivedAt: Date.now(),
+            })
+          } catch (error) {
+            console.warn('[jangar] failed to interrupt codex turn', { error, codexTurnId, threadId })
+          }
+        }
+
         const streamTimeoutMs = Number(Bun.env.JANGAR_STREAM_TIMEOUT_MS ?? '300000')
         const timeoutId = setTimeout(() => {
-          threadMap.delete(opts.chatId)
-          send({
-            error: {
-              message: `stream timeout after ${streamTimeoutMs}ms`,
-              type: 'timeout',
-              code: 'stream_timeout',
-            },
-          })
-          sendDone()
-          closeIfOpen()
-          void persistFailedTurn(
-            opts.db,
-            {
-              turnId,
-              conversationId: opts.conversationId,
-              chatId: opts.chatId,
-              userId: opts.userId,
-              model: targetModel ?? null,
-              startedAt: opts.startedAt,
-            },
-            `stream timeout after ${streamTimeoutMs}ms`,
-            'stream/timeout',
-          )
-          try {
-            stream.return?.(undefined)
-          } catch (error) {
-            console.warn('[jangar] failed to return stream on timeout', error)
-          }
+          void (async () => {
+            const reason = `stream timeout after ${streamTimeoutMs}ms`
+            send({
+              error: {
+                message: reason,
+                type: 'timeout',
+                code: 'stream_timeout',
+              },
+            })
+            sendDone()
+            closeIfOpen()
+            await persistFailedTurn(
+              opts.db,
+              {
+                turnId,
+                conversationId: opts.conversationId,
+                chatId: opts.chatId,
+                userId: opts.userId,
+                model: targetModel ?? null,
+                startedAt: opts.startedAt,
+              },
+              reason,
+              'stream/timeout',
+            )
+            await interruptTurn('timeout')
+            await finalize('timeout', reason)
+            try {
+              stream.return?.(undefined)
+            } catch (error) {
+              console.warn('[jangar] failed to return stream on timeout', error)
+            }
+          })()
         }, streamTimeoutMs)
 
         const heartbeatMs = Number(Bun.env.JANGAR_STREAM_HEARTBEAT_MS ?? '15000')
@@ -125,30 +166,34 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
         }, heartbeatMs)
 
         const abortHandler = () => {
-          threadMap.delete(opts.chatId)
-          clearTimeout(timeoutId)
-          clearInterval(heartbeatId)
-          send({ error: { message: 'client aborted', type: 'aborted' } })
-          sendDone()
-          closeIfOpen()
-          void persistFailedTurn(
-            opts.db,
-            {
-              turnId,
-              conversationId: opts.conversationId,
-              chatId: opts.chatId,
-              userId: opts.userId,
-              model: targetModel ?? null,
-              startedAt: opts.startedAt,
-            },
-            'client aborted',
-            'stream/aborted',
-          )
-          try {
-            stream.return?.(undefined)
-          } catch (error) {
-            console.warn('[jangar] failed to return stream on abort', error)
-          }
+          void (async () => {
+            clearTimeout(timeoutId)
+            clearInterval(heartbeatId)
+            const reason = 'client aborted'
+            send({ error: { message: reason, type: 'aborted' } })
+            sendDone()
+            closeIfOpen()
+            await persistFailedTurn(
+              opts.db,
+              {
+                turnId,
+                conversationId: opts.conversationId,
+                chatId: opts.chatId,
+                userId: opts.userId,
+                model: targetModel ?? null,
+                startedAt: opts.startedAt,
+              },
+              reason,
+              'stream/aborted',
+            )
+            await interruptTurn('aborted')
+            await finalize('aborted', reason)
+            try {
+              stream.return?.(undefined)
+            } catch (error) {
+              console.warn('[jangar] failed to return stream on abort', error)
+            }
+          })()
         }
         opts.signal.addEventListener('abort', abortHandler, { once: true })
 
@@ -340,6 +385,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
           send(doneChunk)
           sendDone()
 
+          let onCompleteFailed = false
           if (opts.onComplete) {
             try {
               await opts.onComplete(collected, reasoningParts, {
@@ -352,6 +398,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
               })
             } catch (error) {
               console.error('[jangar] onComplete persistence failed', error)
+              onCompleteFailed = true
               await opts.db.appendEvent({
                 conversationId: opts.conversationId,
                 turnId,
@@ -372,13 +419,13 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
               })
             }
           }
+
+          await finalize(onCompleteFailed ? 'error' : 'succeeded', onCompleteFailed ? 'persistence failed' : undefined)
         } catch (error) {
           const codexError = parseCodexError(error)
-          threadMap.delete(opts.chatId)
 
           if (codexError?.codexErrorInfo === 'contextWindowExceeded') {
             const message = codexError.message ?? 'context window exceeded'
-            threadMap.delete(opts.chatId)
             await persistFailedTurn(
               opts.db,
               {
@@ -396,6 +443,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
               error: { message, type: 'invalid_request_error', code: 'context_window_exceeded' },
             })
             sendDone()
+            await finalize('failed', message)
             return
           }
 
@@ -422,11 +470,14 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
                 : 'streaming error (unexpected end)'
           send({ error: { message, type: 'server_error' } })
           sendDone()
+          await interruptTurn('error')
+          await finalize('error', message)
           return
         } finally {
           clearTimeout(timeoutId)
           clearInterval(heartbeatId)
           closeIfOpen()
+          await finalize('failed', 'stream closed')
         }
       },
     })

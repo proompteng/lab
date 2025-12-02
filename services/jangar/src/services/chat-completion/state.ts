@@ -19,3 +19,43 @@ export const resolveAppServer = () => {
 export const threadMap = new Map<string, string>()
 // Track last chatId per user for cases where chat_id is omitted on follow-ups.
 export const lastChatIdForUser = new Map<string, string>()
+
+// One chat/conversation must have at most one active turn at a time. This guard is cleared only when the
+// corresponding stream finishes (success, timeout, abort, or error) to avoid ghost turn events from Codex.
+export type ActiveTurn = {
+  turnId: string
+  conversationId: string
+  startedAt: number
+  threadId?: string | undefined
+  codexTurnId?: string | undefined
+}
+
+export const activeTurnByChatId = new Map<string, ActiveTurn>()
+
+export const registerActiveTurn = (chatId: string, turn: ActiveTurn): void => {
+  activeTurnByChatId.set(chatId, turn)
+}
+
+export const updateActiveTurnCodexIds = (
+  chatId: string,
+  { threadId, codexTurnId }: { threadId?: string; codexTurnId?: string },
+): ActiveTurn | null => {
+  const existing = activeTurnByChatId.get(chatId)
+  if (!existing) return null
+  const updated: ActiveTurn = {
+    ...existing,
+    threadId: threadId ?? existing.threadId ?? undefined,
+    codexTurnId: codexTurnId ?? existing.codexTurnId ?? undefined,
+  }
+  activeTurnByChatId.set(chatId, updated)
+  return updated
+}
+
+export const clearActiveTurn = (chatId: string, turnId: string): boolean => {
+  const existing = activeTurnByChatId.get(chatId)
+  if (!existing || existing.turnId !== turnId) return false
+  activeTurnByChatId.delete(chatId)
+  return true
+}
+
+export const getActiveTurn = (chatId: string): ActiveTurn | null => activeTurnByChatId.get(chatId) ?? null
