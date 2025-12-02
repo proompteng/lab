@@ -97,6 +97,40 @@ describe('streamSse lifecycle', () => {
     expect(mock.interruptCalls).toHaveLength(0)
   })
 
+  it('swallows onFinalize errors after a completed stream', async () => {
+    const mock = buildMockAppServer({ deltas: [{ type: 'message', delta: 'hi' }] })
+    let finalizeCalls = 0
+
+    const res = await streamSse('prompt', {
+      model: 'gpt-5.1-codex-max',
+      signal: new AbortController().signal,
+      chatId: 'chat-finalize-throw',
+      db: {
+        // minimal mocks for persistence used in the stream helper
+        appendEvent: async () => {},
+        appendUsage: async () => {},
+        appendReasoning: async () => {},
+        upsertTurn: async () => {},
+        upsertConversation: async () => {},
+        appendMessage: async () => {},
+      } as never,
+      conversationId: 'chat-finalize',
+      turnId: 'turn-1',
+      userId: 'user',
+      startedAt: Date.now(),
+      onFinalize: (_info) => {
+        finalizeCalls += 1
+        throw new Error('finalize failed')
+      },
+      appServer: mock as never,
+    })
+
+    const text = await readAll(res)
+    expect(text).toContain('[DONE]')
+    expect(finalizeCalls).toBe(1)
+    expect(mock.interruptCalls).toHaveLength(0)
+  })
+
   it('interrupts Codex and finalizes on abort', async () => {
     const mock = buildMockAppServer({ deltas: [], hang: true })
     const controller = new AbortController()

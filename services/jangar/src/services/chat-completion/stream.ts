@@ -94,7 +94,11 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
           if (settled) return
           settled = true
           const payload = reason === undefined ? { outcome } : { outcome, reason }
-          await opts.onFinalize?.(payload)
+          try {
+            await opts.onFinalize?.(payload)
+          } catch (error) {
+            console.warn('[jangar] onFinalize ignored error', { error: `${error}` })
+          }
         }
 
         const interruptTurn = async (reason: 'timeout' | 'aborted' | 'error') => {

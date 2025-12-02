@@ -1,13 +1,18 @@
-import { describe, expect, it } from 'bun:test'
+import { beforeEach, describe, expect, it } from 'bun:test'
 
 import { createChatCompletionHandler } from '~/services/chat-completion'
-import { clearActiveTurn, registerActiveTurn, threadMap } from './state'
+import { activeTurnByChatId, clearActiveTurn, registerActiveTurn, threadMap } from './state'
 
 const handler = createChatCompletionHandler('test-path')
 
 const readText = async (res: Response) => await res.text()
 
 describe('createChatCompletionHandler', () => {
+  beforeEach(() => {
+    threadMap.clear()
+    activeTurnByChatId.clear()
+  })
+
   it('rejects non-stream requests early with SSE error and 400', async () => {
     const body = {
       model: 'gpt-5.1-codex-max',
