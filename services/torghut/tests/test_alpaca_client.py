@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, List
 from unittest import TestCase
+from unittest.mock import patch
 
 from app.alpaca_client import TorghutAlpacaClient
 
@@ -88,3 +89,16 @@ class TestAlpacaClient(TestCase):
 
         cancelled = client.cancel_all_orders()
         self.assertEqual(len(cancelled), 2)
+
+    def test_market_data_uses_data_endpoint_by_default(self) -> None:
+        with patch("app.alpaca_client.StockHistoricalDataClient") as mock_data_client:
+            TorghutAlpacaClient(
+                api_key="k",
+                secret_key="s",
+                base_url="https://paper-api.alpaca.markets",
+                trading_client=DummyTradingClient(),
+            )
+
+            called_kwargs = mock_data_client.call_args.kwargs
+            self.assertIsNone(called_kwargs.get("url_override"))
+            self.assertTrue(called_kwargs.get("sandbox"))
