@@ -83,6 +83,7 @@ spec:
               mc mb -p minio/mimir-blocks || true
               mc mb -p minio/mimir-ruler || true
               mc mb -p minio/mimir-alertmanager || true
+              mc mb -p minio/flink-checkpoints || true
               mc admin policy attach minio readwrite --user "$LOKI_ACCESS_KEY" || true
               mc admin policy attach minio readwrite --user "$TEMPO_ACCESS_KEY" || true
               mc admin policy attach minio readwrite --user "$MIMIR_ACCESS_KEY" || true

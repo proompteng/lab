@@ -1,0 +1,115 @@
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: flink-kafka-roundtrip
+  namespace: flink
+  labels:
+    app.kubernetes.io/name: flink-kafka-roundtrip
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  image: registry.ide-newton.ts.net/lab/flink-kafka-roundtrip:latest
+  imagePullPolicy: IfNotPresent
+  flinkVersion: v1_20
+  serviceAccount: flink
+  flinkConfiguration:
+    high-availability: kubernetes
+    high-availability.cluster-id: flink-kafka-roundtrip
+    high-availability.storageDir: s3://flink-checkpoints/flink-kafka-roundtrip/ha
+    state.checkpoints.dir: s3://flink-checkpoints/flink-kafka-roundtrip/checkpoints
+    state.savepoints.dir: s3://flink-checkpoints/flink-kafka-roundtrip/savepoints
+    s3.endpoint: http://observability-minio.minio.svc.cluster.local:9000
+    s3.path.style.access: "true"
+    execution.checkpointing.interval: 30s
+    execution.checkpointing.mode: EXACTLY_ONCE
+    execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
+    metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporter
+    metrics.reporter.prom.port: "9249"
+    rest.flamegraph.enabled: "true"
+  podTemplate:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app.kubernetes.io/name: flink-kafka-roundtrip
+    spec:
+      containers:
+        - name: flink-main-container
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: flink-kafka-config
+                  key: bootstrapServers
+            - name: KAFKA_INPUT_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: flink-kafka-config
+                  key: inputTopic
+            - name: KAFKA_OUTPUT_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: flink-kafka-config
+                  key: outputTopic
+            - name: KAFKA_SECURITY_PROTOCOL
+              valueFrom:
+                configMapKeyRef:
+                  name: flink-kafka-config
+                  key: securityProtocol
+            - name: KAFKA_SASL_MECHANISM
+              valueFrom:
+                configMapKeyRef:
+                  name: flink-kafka-config
+                  key: saslMechanism
+            - name: KAFKA_SASL_USERNAME
+              value: flink
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: flink
+                  key: password
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: observability-minio-creds
+                  key: accesskey
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: observability-minio-creds
+                  key: secretkey
+            - name: S3_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: flink-s3-config
+                  key: s3Endpoint
+            - name: S3_CHECKPOINT_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: flink-s3-config
+                  key: checkpointBucket
+            - name: S3_BASE_PATH
+              valueFrom:
+                secretKeyRef:
+                  name: flink-s3-config
+                  key: basePath
+          ports:
+            - containerPort: 9249
+              name: prom-metrics
+  jobManager:
+    replicas: 1
+    resource:
+      memory: "2048m"
+      cpu: 1
+  taskManager:
+    replicas: 2
+    resource:
+      memory: "2048m"
+      cpu: 1
+    taskSlots: 2
+  job:
+    jarURI: local:///opt/flink/usrlib/app.jar
+    entryClass: com.proompteng.flink.KafkaRoundTripJob
+    parallelism: 2
+    upgradeMode: savepoint
+    allowNonRestoredState: true
