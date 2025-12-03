@@ -1,10 +1,12 @@
 """Thin wrappers around alpaca-py clients for torghut."""
 
+# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, cast
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
@@ -115,7 +117,9 @@ class TorghutAlpacaClient:
         return [self._model_to_dict(resp) for resp in responses]
 
     # ------------------- Market data -------------------
-    def get_bars(self, symbols: Iterable[str] | str, timeframe: str, lookback_bars: int) -> Dict[str, List[Dict[str, Any]]]:
+    def get_bars(  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
+        self, symbols: Iterable[str] | str, timeframe: str, lookback_bars: int
+    ) -> Dict[str, List[Dict[str, Any]]]:
         timeframe_obj = self._parse_timeframe(timeframe)
         if isinstance(symbols, str):
             symbols = [symbols]
@@ -129,11 +133,18 @@ class TorghutAlpacaClient:
         )
         bars = self.data.get_stock_bars(request)
 
-        parsed: Dict[str, List[Dict[str, Any]]] = {}
-        bar_data = getattr(bars, "data", bars)  # allow raw dicts in tests
-        if isinstance(bar_data, dict):
-            for symbol, bar_list in bar_data.items():
-                parsed[symbol] = [self._model_to_dict(bar) for bar in bar_list]
+        bar_data_raw = getattr(bars, "data", bars)  # allow raw dicts in tests
+        if not isinstance(bar_data_raw, dict):
+            return {}
+
+        bar_dict: Dict[str, List[Any]] = {
+            str(key): cast(List[Any], val) if isinstance(val, list) else [] for key, val in bar_data_raw.items()
+        }
+
+        parsed: Dict[str, List[Dict[str, Any]]] = {
+            symbol: [self._model_to_dict(bar) for bar in bars] for symbol, bars in bar_dict.items()
+        }
+
         return parsed
 
     # ------------------- Helpers -------------------
