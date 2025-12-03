@@ -1,7 +1,6 @@
 {
   "include": ["app"],
-  "typeCheckingMode": "basic",
+  "typeCheckingMode": "strict",
   "venvPath": ".",
-  "venv": ".venv",
-  "reportMissingImports": "warning"
+  "venv": ".venv"
 }
