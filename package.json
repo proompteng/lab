@@ -41,7 +41,9 @@
     "golink:deploy": "bun run packages/scripts/src/golink/deploy-service.ts",
     "froussard:deploy": "bun run packages/scripts/src/froussard/deploy-service.ts",
     "facteur:consume": "bun run packages/scripts/src/facteur/run-consumer.ts",
-    "convex:reseal": "bun run packages/scripts/src/convex/reseal-secrets.ts"
+    "convex:reseal": "bun run packages/scripts/src/convex/reseal-secrets.ts",
+    "build:torghut": "bun run packages/scripts/src/torghut/build-image.ts",
+    "deploy:torghut": "bun run packages/scripts/src/torghut/deploy-service.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",

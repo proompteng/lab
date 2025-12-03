@@ -115,6 +115,13 @@ spec:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
             enabled: true
+          - name: torghut
+            path: argocd/applications/torghut
+            namespace: torghut
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+            enabled: true
           - name: miel
             path: argocd/applications/miel
             namespace: miel

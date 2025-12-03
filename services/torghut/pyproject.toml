@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.26.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "torghut"
+version = "0.1.0"
+description = "Torghut FastAPI service for autonomous Alpaca paper trading via Codex."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "fastapi>=0.115.0,<1.0",
+  "uvicorn[standard]>=0.32.0,<1.0",
+  "pydantic>=2.9.0,<3.0",
+  "pydantic-settings>=2.6.0,<3.0",
+  "sqlalchemy>=2.0.36,<3.0",
+  "psycopg[binary]>=3.2.1,<4.0",
+  "alpaca-py>=0.33.0,<1.0",
+  "pandas>=2.2.3,<3.0",
+  "numpy>=2.1.2,<3.0",
+  "openai>=1.55.3,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pyright>=1.1.389,<2.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
