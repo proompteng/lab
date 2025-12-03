@@ -31,7 +31,7 @@ jobs:
 
       - name: Install torghut (dev)
         working-directory: services/torghut
-        run: uv pip install ".[dev]"
+        run: uv pip install --system ".[dev]"
 
       - name: Type check (pyright)
         working-directory: services/torghut
