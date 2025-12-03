@@ -1,0 +1,35 @@
+{
+  "type": "record",
+  "name": "TaBar1sV1",
+  "namespace": "ai.proompteng.torghut.ta",
+  "doc": "One-second technical analysis micro-bar derived from Alpaca trades with optional quote-derived context.",
+  "fields": [
+    { "name": "symbol", "type": "string", "doc": "Ticker symbol (upper-case)." },
+    { "name": "event_ts", "type": "long", "doc": "Event time of the window end (ms since epoch)." },
+    { "name": "ingest_ts", "type": "long", "doc": "Processing timestamp when the bar was emitted (ms since epoch)." },
+    { "name": "seq", "type": "long", "doc": "Monotonic sequence number per symbol (aligned with window start)." },
+    { "name": "is_final", "type": "boolean", "doc": "True when the bar is based on a finalized upstream record (no expected corrections)." },
+    {
+      "name": "window",
+      "type": {
+        "type": "record",
+        "name": "BarWindow",
+        "fields": [
+          { "name": "start", "type": "long", "doc": "Window start inclusive (ms since epoch)." },
+          { "name": "end", "type": "long", "doc": "Window end exclusive (ms since epoch)." }
+        ]
+      },
+      "doc": "Event-time window for the micro-bar."
+    },
+    { "name": "open", "type": "double", "doc": "First trade price in the window." },
+    { "name": "high", "type": "double", "doc": "Max trade price in the window." },
+    { "name": "low", "type": "double", "doc": "Min trade price in the window." },
+    { "name": "close", "type": "double", "doc": "Last trade price in the window." },
+    { "name": "volume", "type": "double", "doc": "Sum of trade sizes in the window." },
+    { "name": "vwap", "type": "double", "doc": "Volume weighted average price within the window." },
+    { "name": "trade_count", "type": "int", "doc": "Number of trades aggregated." },
+    { "name": "spread_bps", "type": ["null", "double"], "default": null, "doc": "Latest bid/ask spread in basis points at window end (null when quotes unavailable)." },
+    { "name": "imbalance", "type": ["null", "double"], "default": null, "doc": "Order book imbalance [-1,1] at window end (null when quotes unavailable)." },
+    { "name": "source_seq", "type": ["null", "string"], "default": null, "doc": "Upstream sequence or trade ids used for dedupe/debugging." }
+  ]
+}

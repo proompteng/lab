@@ -1,0 +1,46 @@
+{
+  "type": "record",
+  "name": "TaSignalsV1",
+  "namespace": "ai.proompteng.torghut.ta",
+  "doc": "Indicator payload emitted per 1s bar with derived technical metrics used by torghut.",
+  "fields": [
+    { "name": "symbol", "type": "string", "doc": "Ticker symbol (upper-case)." },
+    { "name": "event_ts", "type": "long", "doc": "Event time of the originating bar/window end (ms since epoch)." },
+    { "name": "ingest_ts", "type": "long", "doc": "Processing timestamp when the signal was emitted (ms since epoch)." },
+    { "name": "seq", "type": "long", "doc": "Monotonic sequence number per symbol (mirrors bar window start)." },
+    { "name": "is_final", "type": "boolean", "doc": "True when based on finalized upstream data." },
+    {
+      "name": "window",
+      "type": {
+        "type": "record",
+        "name": "SignalWindow",
+        "fields": [
+          { "name": "start", "type": "long", "doc": "Window start inclusive (ms since epoch)." },
+          { "name": "end", "type": "long", "doc": "Window end exclusive (ms since epoch)." }
+        ]
+      },
+      "doc": "Event-time window matching the aggregated bar."
+    },
+    { "name": "open", "type": "double", "doc": "Open price of the micro-bar." },
+    { "name": "high", "type": "double", "doc": "High price of the micro-bar." },
+    { "name": "low", "type": "double", "doc": "Low price of the micro-bar." },
+    { "name": "close", "type": "double", "doc": "Close price of the micro-bar." },
+    { "name": "volume", "type": "double", "doc": "Total volume of the micro-bar." },
+    { "name": "vwap", "type": "double", "doc": "VWAP of the micro-bar." },
+    { "name": "ema12", "type": "double", "doc": "12-period EMA of close." },
+    { "name": "ema26", "type": "double", "doc": "26-period EMA of close." },
+    { "name": "macd", "type": "double", "doc": "MACD (ema12 - ema26)." },
+    { "name": "macd_signal", "type": "double", "doc": "9-period EMA of MACD." },
+    { "name": "macd_hist", "type": "double", "doc": "MACD histogram (macd - macd_signal)." },
+    { "name": "rsi14", "type": "double", "doc": "14-period RSI on close." },
+    { "name": "boll_mid", "type": "double", "doc": "20-period simple moving average (Bollinger mid)." },
+    { "name": "boll_upper", "type": "double", "doc": "Upper band (mid + 2*std)." },
+    { "name": "boll_lower", "type": "double", "doc": "Lower band (mid - 2*std)." },
+    { "name": "vwap_session", "type": "double", "doc": "Session VWAP from market open." },
+    { "name": "vwap_rolling", "type": "double", "doc": "Rolling VWAP over trailing N bars (default 20)." },
+    { "name": "spread_bps", "type": ["null", "double"], "default": null, "doc": "Bid/ask spread in basis points at signal emission." },
+    { "name": "imbalance", "type": ["null", "double"], "default": null, "doc": "Order book imbalance [-1,1]." },
+    { "name": "realized_volatility", "type": "double", "doc": "Realized volatility using trailing log returns (annualized)." },
+    { "name": "source_seq", "type": ["null", "string"], "default": null, "doc": "Upstream sequence or trade ids used for dedupe/debugging." }
+  ]
+}

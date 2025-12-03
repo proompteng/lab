@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: flink-ta
+  namespace: torghut
+  labels:
+    release: prometheus
+spec:
+  namespaceSelector:
+    matchNames:
+      - torghut
+  selector:
+    matchLabels:
+      app: flink-ta
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s

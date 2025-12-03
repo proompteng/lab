@@ -1,0 +1,59 @@
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: flink-ta
+  namespace: torghut
+  labels:
+    app: flink-ta
+spec:
+  image: ghcr.io/proompteng/flink-ta:dev
+  flinkVersion: v1_20
+  serviceAccount: flink-ta
+  podTemplate:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app: flink-ta
+    spec:
+      serviceAccountName: flink-ta
+      volumes:
+        - name: kafka-secret
+          secret:
+            secretName: torghut-flink
+            optional: true
+      containers:
+        - name: flink-main-container
+          envFrom:
+            - configMapRef:
+                name: flink-ta-config
+            - secretRef:
+                name: torghut-flink
+          env:
+            - name: KAFKA_TRUSTSTORE_PATH
+              value: /etc/kafka/ca.crt
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: SASL_SSL
+            - name: KAFKA_SASL_MECHANISM
+              value: SCRAM-SHA-512
+          volumeMounts:
+            - name: kafka-secret
+              mountPath: /etc/kafka
+              readOnly: true
+  jobManager:
+    replicas: 1
+    resource:
+      cpu: "1"
+      memory: "2048m"
+  taskManager:
+    replicas: 2
+    resource:
+      cpu: "1"
+      memory: "2048m"
+      taskSlots: 1
+  job:
+    entryClass: ai.proompteng.flinkta.FlinkTaJob
+    jarURI: local:///opt/flink/usrlib/flink-ta.jar
+    parallelism: 4
+    upgradeMode: savepoint
+    state: running

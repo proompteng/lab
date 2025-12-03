@@ -31,3 +31,33 @@ uv run pyright
 Health checks:
 - `GET /healthz` – liveness (default port 8181)
 - `GET /db-check` – requires reachable Postgres at `DB_DSN` (default port 8181)
+
+## Consuming TA streams
+
+The `flink-ta` job emits `ta.bars.1s.v1` and `ta.signals.v1` Kafka topics keyed by `symbol`. Both carry the envelope
+`event_ts`, `ingest_ts`, `seq`, `is_final`, and `window { start, end }` with milliseconds since epoch.
+
+Example consumer (read committed + lz4) using `kafka-python`:
+
+```python
+from kafka import KafkaConsumer
+import json
+
+consumer = KafkaConsumer(
+    "ta.signals.v1",
+    bootstrap_servers="kafka-kafka-bootstrap.kafka:9092",
+    security_protocol="SASL_SSL",
+    sasl_mechanism="SCRAM-SHA-512",
+    sasl_plain_username="torghut-flink",
+    sasl_plain_password="<password>",
+    value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+    key_deserializer=lambda m: m.decode("utf-8") if m else None,
+    isolation_level="read_committed",
+)
+
+for msg in consumer:
+    signal = msg.value
+    # use signal['ema12'], signal['macd'], signal['rsi14'], etc.
+```
+
+Schemas live in `schemas/ta/`; see `docs/torghut/flink-ta.md` for the full contract and operational notes.

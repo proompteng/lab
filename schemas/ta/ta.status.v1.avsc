@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "TaStatusV1",
+  "namespace": "ai.proompteng.torghut.ta",
+  "doc": "Operational status events emitted by the Flink TA pipeline.",
+  "fields": [
+    { "name": "component", "type": "string", "doc": "Sub-component reporting status (source|sink|job|checkpoint)." },
+    { "name": "level", "type": { "type": "enum", "name": "StatusLevel", "symbols": ["INFO", "WARN", "ERROR"] }, "doc": "Severity of the status event." },
+    { "name": "message", "type": "string", "doc": "Human friendly description." },
+    { "name": "details", "type": ["null", { "type": "map", "values": "string" }], "default": null, "doc": "Optional key/value detail blob." },
+    { "name": "event_ts", "type": "long", "doc": "Timestamp of the event (ms since epoch)." },
+    { "name": "ingest_ts", "type": "long", "doc": "Processing timestamp (ms since epoch)." }
+  ]
+}

@@ -1,0 +1,129 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: ta.bars.1s.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 12
+  replicas: 3
+  config:
+    cleanup.policy: delete
+    compression.type: lz4
+    retention.ms: 2592000000   # 30d
+    min.insync.replicas: 2
+    message.timestamp.type: CreateTime
+    message.downconversion.enable: "false"
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: ta.signals.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 12
+  replicas: 3
+  config:
+    cleanup.policy: delete
+    compression.type: lz4
+    retention.ms: 1209600000   # 14d
+    min.insync.replicas: 2
+    message.timestamp.type: CreateTime
+    message.downconversion.enable: "false"
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: ta.status.v1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 1
+  replicas: 3
+  config:
+    cleanup.policy: compact,delete
+    compression.type: lz4
+    retention.ms: 604800000    # 7d
+    min.insync.replicas: 2
+    message.timestamp.type: CreateTime
+    message.downconversion.enable: "false"
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: torghut-flink
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - operation: Read
+        resource:
+          type: topic
+          name: alpaca.trades.v1
+      - operation: Read
+        resource:
+          type: topic
+          name: alpaca.quotes.v1
+      - operation: Read
+        resource:
+          type: topic
+          name: alpaca.bars.1m.v1
+      - operation: Describe
+        resource:
+          type: topic
+          name: alpaca.trades.v1
+      - operation: Describe
+        resource:
+          type: topic
+          name: alpaca.quotes.v1
+      - operation: Describe
+        resource:
+          type: topic
+          name: alpaca.bars.1m.v1
+      - operation: Read
+        resource:
+          type: group
+          name: flink-ta-*
+      - operation: Write
+        resource:
+          type: topic
+          name: ta.bars.1s.v1
+      - operation: Write
+        resource:
+          type: topic
+          name: ta.signals.v1
+      - operation: Write
+        resource:
+          type: topic
+          name: ta.status.v1
+      - operation: Describe
+        resource:
+          type: topic
+          name: ta.bars.1s.v1
+      - operation: Describe
+        resource:
+          type: topic
+          name: ta.signals.v1
+      - operation: Describe
+        resource:
+          type: topic
+          name: ta.status.v1
+  template:
+    secret:
+      metadata:
+        labels:
+          kafka.eventing.knative.dev/kafka-secret: "true"
+        annotations:
+          reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+          reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "torghut"
+          reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+          reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "torghut"

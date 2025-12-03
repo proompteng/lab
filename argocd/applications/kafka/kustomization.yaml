@@ -34,6 +34,7 @@ resources:
   - load-balancer.yaml
   - strimzi-kafka-cluster.yaml
   - karapace.yaml
+  - ta-flink.yaml
 patches:
   # Make the operator watch all namespaces
   - target:

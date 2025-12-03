@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flink-ta-config
+  namespace: torghut
+  labels:
+    app: flink-ta
+data:
+  KAFKA_BOOTSTRAP: kafka-kafka-bootstrap.kafka:9092
+  TOPIC_TRADES: alpaca.trades.v1
+  TOPIC_QUOTES: alpaca.quotes.v1
+  TOPIC_TA_BARS: ta.bars.1s.v1
+  TOPIC_TA_SIGNALS: ta.signals.v1
+  TRANSACTION_PREFIX: flink-ta
+  CHECKPOINT_URI: s3a://torghut/flink-ta/checkpoints
+  ALLOWED_LATENESS_SECONDS: "2"
+  DEDUPE_TTL_MINUTES: "10"
+  PARALLELISM: "4"
+  CHECKPOINT_INTERVAL_MS: "10000"
+  CHECKPOINT_TIMEOUT_MS: "120000"
+  CHECKPOINT_MIN_PAUSE_MS: "2000"
+  S3_PATH_STYLE: "true"
