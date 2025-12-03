@@ -36,6 +36,7 @@ class TorghutAlpacaClient:
         key = api_key or settings.apca_api_key_id
         secret = secret_key or settings.apca_api_secret_key
         base = base_url or settings.apca_api_base_url
+        data_base = settings.apca_data_api_base_url
 
         # Default to paper trading; override URL if provided.
         self.trading = trading_client or TradingClient(
@@ -49,7 +50,7 @@ class TorghutAlpacaClient:
         self.data = data_client or StockHistoricalDataClient(
             api_key=key,
             secret_key=secret,
-            url_override=base,
+            url_override=data_base,
             sandbox=True,
         )
 

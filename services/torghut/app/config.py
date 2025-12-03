@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     apca_api_key_id: Optional[str] = Field(default=None, alias="APCA_API_KEY_ID")
     apca_api_secret_key: Optional[str] = Field(default=None, alias="APCA_API_SECRET_KEY")
     apca_api_base_url: Optional[str] = Field(default=None, alias="APCA_API_BASE_URL")
+    apca_data_api_base_url: Optional[str] = Field(default=None, alias="APCA_DATA_API_BASE_URL")
 
     model_config = SettingsConfigDict(
         env_file=".env",
