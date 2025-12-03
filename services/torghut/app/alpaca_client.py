@@ -1,7 +1,5 @@
 """Thin wrappers around alpaca-py clients for torghut."""
 
-# pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false
-
 from __future__ import annotations
 
 import re
@@ -133,16 +131,21 @@ class TorghutAlpacaClient:
         )
         bars = self.data.get_stock_bars(request)
 
-        bar_data_raw = getattr(bars, "data", bars)  # allow raw dicts in tests
-        if not isinstance(bar_data_raw, dict):
+        raw_data = getattr(bars, "data", bars)  # allow raw dicts in tests
+        if not isinstance(raw_data, dict):
             return {}
 
-        bar_dict: Dict[str, List[Any]] = {
-            str(key): cast(List[Any], val) if isinstance(val, list) else [] for key, val in bar_data_raw.items()
-        }
+        bar_data_raw = cast(dict[str, Iterable[Any]], raw_data)
 
-        parsed: Dict[str, List[Dict[str, Any]]] = {
-            symbol: [self._model_to_dict(bar) for bar in bars] for symbol, bars in bar_dict.items()
+        typed_bars: dict[str, list[Any]] = {}
+        for symbol, val in bar_data_raw.items():
+            if isinstance(val, (str, bytes)):
+                continue
+            typed_bars[symbol] = list(val)
+
+        parsed: dict[str, list[Dict[str, Any]]] = {
+            symbol: [self._model_to_dict(bar) for bar in bars_list]
+            for symbol, bars_list in typed_bars.items()
         }
 
         return parsed
@@ -155,7 +158,7 @@ class TorghutAlpacaClient:
         if hasattr(model, "__dict__"):
             return {k: v for k, v in model.__dict__.items() if not k.startswith("_")}
         if isinstance(model, dict):
-            return model
+            return cast(Dict[str, Any], model)
         raise TypeError(f"Unsupported model type: {type(model)}")
 
     @staticmethod
