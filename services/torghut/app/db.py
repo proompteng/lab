@@ -8,6 +8,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from .config import settings
+from .models import Base
 
 engine: Engine = create_engine(
     settings.sqlalchemy_dsn,
@@ -49,6 +50,7 @@ def ensure_schema() -> None:
     """Create minimal schema if the database is reachable."""
 
     metadata.create_all(bind=engine, checkfirst=True)
+    Base.metadata.create_all(bind=engine, checkfirst=True)
 
 
 def ping(session: Session) -> Optional[int]:
