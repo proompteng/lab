@@ -12,9 +12,6 @@ from .db import ensure_schema, get_session, ping
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="torghut")
-app.state.settings = settings
-
 BUILD_VERSION = os.getenv("TORGHUT_VERSION", "dev")
 BUILD_COMMIT = os.getenv("TORGHUT_COMMIT", "unknown")
 
