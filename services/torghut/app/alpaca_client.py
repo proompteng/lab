@@ -131,8 +131,9 @@ class TorghutAlpacaClient:
 
         parsed: Dict[str, List[Dict[str, Any]]] = {}
         bar_data = getattr(bars, "data", bars)  # allow raw dicts in tests
-        for symbol, bar_list in bar_data.items():
-            parsed[symbol] = [self._model_to_dict(bar) for bar in bar_list]
+        if isinstance(bar_data, dict):
+            for symbol, bar_list in bar_data.items():
+                parsed[symbol] = [self._model_to_dict(bar) for bar in bar_list]
         return parsed
 
     # ------------------- Helpers -------------------
