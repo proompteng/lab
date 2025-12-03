@@ -6,8 +6,9 @@ import uuid
 from typing import Any
 
 from sqlalchemy import JSON, MetaData
+from sqlalchemy.engine import Dialect
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from sqlalchemy.types import CHAR, TypeDecorator
+from sqlalchemy.types import CHAR, TypeDecorator, TypeEngine
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -29,7 +30,7 @@ class Base(DeclarativeBase):
     metadata = metadata_obj
 
 
-class GUID(TypeDecorator):
+class GUID(TypeDecorator[uuid.UUID]):
     """Platform-independent UUID type.
 
     Uses PostgreSQL's native UUID when available and falls back to CHAR(36)
@@ -39,19 +40,19 @@ class GUID(TypeDecorator):
     impl = CHAR(36)
     cache_ok = True
 
-    def load_dialect_impl(self, dialect):
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:  # type: ignore[override]
         if dialect.name == "postgresql":
             return dialect.type_descriptor(PGUUID(as_uuid=True))
         return dialect.type_descriptor(CHAR(36))
 
-    def process_bind_param(self, value: Any, dialect):  # noqa: ANN401 - SQLAlchemy typing
+    def process_bind_param(self, value: Any, dialect: Dialect) -> Any:  # noqa: ANN401 - SQLAlchemy typing
         if value is None:
             return value
         if isinstance(value, uuid.UUID):
             return str(value)
         return str(uuid.UUID(str(value)))
 
-    def process_result_value(self, value: Any, dialect):  # noqa: ANN401 - SQLAlchemy typing
+    def process_result_value(self, value: Any, dialect: Dialect) -> Any:  # noqa: ANN401 - SQLAlchemy typing
         if value is None:
             return value
         if isinstance(value, uuid.UUID):
@@ -59,13 +60,13 @@ class GUID(TypeDecorator):
         return uuid.UUID(str(value))
 
 
-class JSONType(TypeDecorator):
+class JSONType(TypeDecorator[Any]):
     """JSON column that prefers PostgreSQL JSONB but works on SQLite."""
 
     impl = JSON
     cache_ok = True
 
-    def load_dialect_impl(self, dialect):
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:  # type: ignore[override]
         if dialect.name == "postgresql":
             from sqlalchemy.dialects.postgresql import JSONB  # imported lazily to avoid hard dependency
 
