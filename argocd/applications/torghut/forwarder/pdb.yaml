@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: torghut-forwarder
+  namespace: torghut
+spec:
+  maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: torghut-forwarder

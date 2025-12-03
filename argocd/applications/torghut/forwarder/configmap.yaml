@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-forwarder-config
+  namespace: torghut
+data:
+  KAFKA_BOOTSTRAP_SERVERS: kafka-kafka-bootstrap.kafka:9092
+  TOPIC_TRADES: alpaca.trades.v1
+  TOPIC_QUOTES: alpaca.quotes.v1
+  TOPIC_BARS: alpaca.bars.1m.v1
+  TOPIC_STATUS: alpaca.status.v1
+  ALPACA_SYMBOLS: SPY,QQQ
+  PRODUCER_LINGER_MS: "50"
+  PRODUCER_COMPRESSION: lz4
+  DEDUP_TTL_SECONDS: "900"
+  LOG_LEVEL: info
+  METRICS_PORT: "8080"

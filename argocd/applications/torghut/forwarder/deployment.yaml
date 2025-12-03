@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-forwarder
+  namespace: torghut
+  labels:
+    app: torghut-forwarder
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: torghut-forwarder
+  template:
+    metadata:
+      labels:
+        app: torghut-forwarder
+    spec:
+      serviceAccountName: torghut-forwarder
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 65532
+      containers:
+        - name: forwarder
+          image: registry.ide-newton.ts.net/lab/torghut-forwarder:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: torghut-forwarder-config
+          env:
+            - name: ALPACA_API_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-alpaca
+                  key: APCA_API_KEY_ID
+            - name: ALPACA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-alpaca
+                  key: APCA_API_SECRET_KEY
+            - name: ALPACA_FEED
+              value: sip
+            - name: KAFKA_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-forwarder
+                  key: username
+            - name: KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-forwarder
+                  key: password
+            - name: KAFKA_SASL_MECHANISM
+              value: SCRAM-SHA-512
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: SASL_PLAINTEXT
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
