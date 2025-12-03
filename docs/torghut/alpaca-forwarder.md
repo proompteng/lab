@@ -1,0 +1,84 @@
+# Alpaca Forwarder (torghut)
+
+## Purpose
+Single-replica Python Deployment that ingests Alpaca market (and optional trading) WebSocket streams and forwards to Kafka with ordering, dedup, and status signals.
+
+## Requirements
+- Streams: trades (`T=t`), quotes (`T=q`), 1m bars/updated bars (`T=b|u`), status; optional `trade_updates`.
+- One active WS per account (Alpaca constraint); reconnect with backoff and resubscribe.
+- Dedup keys: trades by `i`; quotes/bars by `(t,symbol)`; trade_updates by order id; maintain per-symbol monotonic `seq`.
+- Envelope: `ingest_ts`, Alpaca `event_ts` (`t`), `feed`, `channel`, `symbol`, `seq`, `payload`, `is_final?`, `source` (ws/rest), optional `window{}`.
+- Kafka producer: SASL/PLAIN over TLS using Strimzi KafkaUser secret; acks=all; linger 20–50 ms; compression lz4; idempotence on.
+- Optional startup backfill: last 100 1m bars via REST (`source: rest`, `is_final: true`).
+
+### Config knobs
+- Env/ConfigMap keys (suggested):
+  - `ALPACA_KEY_ID`, `ALPACA_SECRET_KEY`, `ALPACA_FEED` (`iex|sip|delayed`), `ALPACA_BASE_URL` (for paper/live)
+  - `SYMBOLS` (comma list), `ENABLE_TRADE_UPDATES` (bool)
+  - `RECONNECT_BASE_MS` (e.g., 500), `RECONNECT_MAX_MS` (e.g., 30000)
+  - `DEDUP_TTL_SEC` (e.g., 5 for quotes/bars), `DEDUP_MAX_ENTRIES`
+  - `KAFKA_BOOTSTRAP`, `KAFKA_SASL_USER`, `KAFKA_SASL_PASSWORD`, `KAFKA_SASL_MECH=SCRAM-SHA-512`, `KAFKA_SECURITY_PROTOCOL=SASL_SSL`
+  - `KAFKA_LINGER_MS=30`, `KAFKA_BATCH_SIZE` (tune), `KAFKA_ACKS=all`
+  - `TOPIC_TRADES`, `TOPIC_QUOTES`, `TOPIC_BARS_1M`, `TOPIC_STATUS`, optional `TOPIC_TRADE_UPDATES`
+  - `METRICS_PORT`, `HEALTH_PORT`
+
+### Reconnect/dedup behavior
+- Exponential backoff with jitter; cap at 30 s.
+- On reconnect: re-auth, resubscribe all symbols/channels, emit status event.
+- Dedup caches keyed per channel; evict by TTL or LRU to bound memory.
+
+### Error handling
+- If Kafka produce fails repeatedly: trip not-ready, continue retrying with backoff; alert via status topic.
+- If WS lags beyond threshold (`now - event_ts > 2s`): emit status + metric; consider reconnect.
+- Startup probe waits for first successful WS subscribe and Kafka metadata fetch.
+
+## Kubernetes Design
+- Namespace: torghut. Objects: Deployment (replicas=1), ServiceAccount, ConfigMap (feeds/symbols/backoff/toggles), Secret refs, Service (health/metrics), optional PDB.
+- Probes: startup (WS connect), liveness (loop running), readiness (Kafka produce + WS subscribed).
+- Security: runAsNonRoot, readOnlyRootFS, drop NET_RAW; limit egress to Alpaca + Kafka + registry.
+- Secrets: reuse torghut secrets or reflector from kafka namespace for KafkaUser; sealed-secret for Alpaca key/secret.
+
+## Observability
+- /metrics (Prometheus format) for scrape by existing Mimir/Grafana Agent stack: reconnect count, WS lag (ingest_ts - event_ts), Kafka send latency, dedup drops.
+- Logs to Loki: JSON structured, include symbol/channel/event_ts/ingest_ts/lag_ms.
+- Status topic fields (example): `{status: "reconnect"|"healthy"|"error", reason, attempt, lag_ms?, ts}`.
+
+## Secrets & Rotation
+- Alpaca keys: sealed-secret in torghut; rotate by updating the SealedSecret and restarting Deployment; never log keys.
+- Kafka auth: Strimzi KafkaUser secret reflected into torghut or mounted directly; rotation via Strimzi user password change + pod restart.
+
+## Network & RBAC
+- NetworkPolicy: egress only to Alpaca endpoints, Kafka bootstrap/brokers, MinIO (if used for backfill), image registry, observability ingress.
+- RBAC: ServiceAccount with minimal permissions; no cluster-admin.
+
+## Incident & Runbook
+- WS 406 (connection limit): ensure only one replica; check leaked connections; restart if stuck.
+- Persistent Kafka produce failures: mark not-ready, emit status, backoff; check auth/ACL; consider rolling restart.
+- Lag spike: compute lag metric; reconnect if `now - event_ts` exceeds threshold; emit status.
+
+## Testing
+- Replay FAKEPACA feed to ensure dedup and envelope correctness.
+- Inject WS disconnect (close socket) and verify auto-reconnect + status emit.
+- Kafka auth negative test: invalid credentials should fail readiness.
+
+## CI/CD & image
+- Dockerfile: multi-stage (builder for deps, slim runtime); non-root user.
+- CI: build/push image, update kustomization tag, run unit tests for envelope/dedup.
+
+## Network & security
+- NetworkPolicy: egress only to Alpaca endpoints, Kafka bootstrap/brokers, registry, optional metrics collector.
+- Truststore: mount from Strimzi secret; set `ssl.endpoint.identification.algorithm=HTTPS` if TLS.
+
+## Topics Produced
+- `trades`/`quotes`/`bars.1m`/`status` (names finalized in issue #1914), partitions=1, RF=3, lz4, retention: trades/quotes 7d; bars 30d; status 7d (compaction optional).
+
+## Mermaid (forwarder lifecycle)
+```mermaid
+stateDiagram-v2
+  [*] --> Init
+  Init --> ConnectWS: auth & subscribe
+  ConnectWS --> Streaming
+  Streaming --> Reconnect: error/close/lag
+  Reconnect --> ConnectWS: backoff + resubscribe
+  Streaming --> [*]: shutdown
+```
