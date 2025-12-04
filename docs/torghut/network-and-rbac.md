@@ -1,16 +1,16 @@
 # NetworkPolicy and RBAC Examples (torghut)
 
-## NetworkPolicy (forwarder)
+## NetworkPolicy (kotlin-ws)
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: forwarder-egress
+  name: ws-egress
   namespace: torghut
 spec:
   podSelector:
     matchLabels:
-      app: alpaca-forwarder
+      app: torghut-ws
   policyTypes: [Egress]
   egress:
     - to:
@@ -59,18 +59,18 @@ spec:
           protocol: TCP
 ```
 
-## RBAC (minimal forwarder)
+## RBAC (minimal kotlin-ws)
 ```yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: alpaca-forwarder
+  name: torghut-ws
   namespace: torghut
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: forwarder-basic
+  name: ws-basic
   namespace: torghut
 rules:
   - apiGroups: [""]
@@ -83,14 +83,14 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: forwarder-basic-binding
+  name: ws-basic-binding
   namespace: torghut
 subjects:
   - kind: ServiceAccount
-    name: alpaca-forwarder
+    name: torghut-ws
 roleRef:
   kind: Role
-  name: forwarder-basic
+  name: ws-basic
   apiGroup: rbac.authorization.k8s.io
 ```
 

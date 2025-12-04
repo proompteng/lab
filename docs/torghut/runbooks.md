@@ -3,13 +3,13 @@
 ## Alpaca credential rotation
 1) Update sealed-secret manifest with new `ALPACA_KEY_ID` / `ALPACA_SECRET_KEY` in torghut namespace.
 2) Apply SealedSecret via Argo CD sync (or `kubectl apply` in emergency, then reconcile Argo).
-3) Restart forwarder Deployment to pick up keys.
-4) Verify forwarder readiness and status topic emits `healthy`; check logs for 401/403.
+3) Restart kotlin-ws Deployment to pick up keys.
+4) Verify ws readiness and status topic emits `healthy`; check logs for 401/403.
 
 ## KafkaUser (SCRAM) rotation
 1) In Strimzi, rotate password on the KafkaUser for torghut (or create new user and update references).
 2) Allow Strimzi to update the Secret; if using reflector, ensure it copies into torghut namespace.
-3) Restart forwarder and Flink workloads to pick up new password/truststore.
+3) Restart kotlin-ws and Flink workloads to pick up new password/truststore.
 4) Confirm produce/consume success; watch for SASL auth errors.
 
 ## MinIO checkpoint credential rotation
@@ -29,16 +29,15 @@ Rollback:
 - Sync Argo; verify job runs and outputs resume.
 
 ## Alpaca WS incident (406 connection limit)
-- Ensure only one forwarder replica is running; scale down accidental extra pods.
+- Ensure only one kotlin-ws replica is running; scale down accidental extra pods.
 - Force close lingering connections by restarting the Deployment.
 - Confirm status topic transitions to `healthy` and logs show successful subscribe.
 
 ## Kafka produce failures
 - Readiness should go false; inspect auth/ACL, broker reachability, and SASL secrets.
-- After fixes, rolling restart the forwarder; confirm status messages return to healthy.
+- After fixes, rolling restart the kotlin-ws service; confirm status messages return to healthy.
 
 ## Lag spike (WS → TA)
-- Check forwarder metric `ws_lag_ms` and Flink watermark lag.
-- Reconnect WS if forwarder lagged; tune watermark/idle-timeout if Flink is blocking on idle partitions.
+- Check kotlin-ws metric `ws_lag_ms` and Flink watermark lag.
+- Reconnect WS if kotlin-ws lagged; tune watermark/idle-timeout if Flink is blocking on idle partitions.
 - If Kafka is slow, check broker health and consumer lag.
-

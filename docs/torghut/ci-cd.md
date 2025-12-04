@@ -1,10 +1,11 @@
 # CI/CD for Torghut Forwarder and Flink TA
 
-## Forwarder (Python)
-- Dockerfile: multi-stage; build with `docker build -t <registry>/torghut-forwarder:<tag> -f apps/torghut-forwarder/Dockerfile .` (path TBD).
-- Tests: `pytest` (unit/dedup/envelope), optional integration hitting Alpaca paper feed.
-- Lint/format: `bunx biome check <paths>` if TS present; `ruff`/`black` for Python if used.
-- Publish: push image to registry; update kustomization image tag under `argocd/applications/torghut/forwarder/` and Argo sync.
+## WS service (Kotlin, multi-project)
+- Build: `./gradlew :ws:shadowJar` (or `bootJar` if Spring) using JDK 21; shared code in `:platform`, TA types in `:ta`.
+- Docker: `docker build -t <registry>/torghut-ws:<tag> -f apps/torghut-ws/Dockerfile .` (image uses the shaded jar from `ws/build/libs`).
+- Tests: `./gradlew :platform:test :ws:test :ta:test` (dedup/envelope, reconnect logic, Avro/JSON encoding).
+- Lint/format: `./gradlew ktlintCheck detekt` (or Spotless) depending on project plugins.
+- Publish: push image; update kustomization image tag under `argocd/applications/torghut/ws/` and Argo sync.
 
 ## Flink TA job
 - Build fat jar/image: `mvn package -Pflink` or `./gradlew shadowJar` (exact module TBD) then `docker build -t <registry>/flink-ta:<tag> -f apps/flink-ta/Dockerfile .`.

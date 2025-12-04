@@ -13,7 +13,7 @@
 ```mermaid
 flowchart LR
   A[Alpaca Market WS<br/>trades/quotes/bars] -->|JSON frames| FWD
-  FWD[Python Forwarder<br/>single Deployment] -->|Kafka producer<br/>acks=all,lz4| K1[(Kafka topics<br/>trades/quotes/bars/status)]
+  FWD[Kotlin WS Service<br/>Gradle multi-project (platform/ws/ta)] -->|Kafka producer<br/>acks=all,lz4| K1[(Kafka topics<br/>trades/quotes/bars/status)]
   K1 --> FL[Apache Flink Job<br/>KafkaSource+Watermarks]
   FL -->|micro-bars 1s| K2[(ta.bars.1s.v1)]
   FL -->|EMA/RSI/MACD/VWAP/etc| K3[(ta.signals.v1)]
@@ -31,7 +31,11 @@ flowchart LR
 ```
 
 ## Components
-- Forwarder: Python 3.11+ (alpaca-py, aiokafka); single replica; dedup on trade `i`, quote/bar `(t,symbol)`.
+- WS service (Gradle multi-project):
+  - `platform`: shared Kotlin/JVM library for config, logging, Kafka, JSON/Avro helpers.
+  - `ws`: Ktor (or similar) WebSocket ingress that connects to Alpaca, dedups (trade `i`, quote/bar `(t,symbol)`), wraps events in the shared envelope, and produces to Kafka with acks=all, lz4, idempotent producers.
+  - `ta`: shared indicator utilities and schemas for downstream consumers (distinct from the Flink TA job; Flink still produces derived topics).
+  - Single replica per Alpaca account to satisfy the single-connection constraint.
 - Kafka: Strimzi-managed, SASL/TLS; topics lz4, RF=3, partitions=1 per symbol.
 - Flink: 1.20.x via Operator 1.13.x; KafkaSource/Sink with exactly-once; checkpoints every 10 s to MinIO/S3.
 - torghut main service: consumes TA topics; feature flag to choose TA source.
@@ -41,7 +45,7 @@ flowchart LR
 - Kafka: Strimzi 0.49.x (Kafka 4.1); Kafka connector 4.x compatible.
 - Flink: 1.20.x runtime; Operator 1.13.x.
 - Checkpoint store: MinIO/S3 via `s3a://`.
-- Python runtime: 3.11/3.12; libs alpaca-py, aiokafka.
+- WS service runtime: Kotlin/JVM (JDK 21), Ktor WS client, kotlinx-serialization/Avro, kafka-clients 4.x; coroutines with structured concurrency.
 
 ### Latency budget (p99 ≤500 ms)
 - WS frame → forwarder ingress: ~5–30 ms
