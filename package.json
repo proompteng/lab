@@ -44,7 +44,7 @@
     "convex:reseal": "bun run packages/scripts/src/convex/reseal-secrets.ts",
     "build:torghut": "bun run packages/scripts/src/torghut/build-image.ts",
     "deploy:torghut": "bun run packages/scripts/src/torghut/deploy-service.ts",
-    "flink:build": "bun run packages/scripts/src/flink/build-and-push.ts"
+    "flink:build": "bun run packages/scripts/src/dorvud/build-and-push.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",

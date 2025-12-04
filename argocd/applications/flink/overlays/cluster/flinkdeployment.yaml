@@ -8,7 +8,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "5"
 spec:
-  image: registry.ide-newton.ts.net/lab/flink-kafka-roundtrip:latest
+  image: registry.ide-newton.ts.net/lab/flink-kafka-roundtrip:2214ca55
   imagePullPolicy: IfNotPresent
   flinkVersion: v1_20
   serviceAccount: flink
@@ -109,7 +109,7 @@ spec:
     taskSlots: 2
   job:
     jarURI: local:///opt/flink/usrlib/app.jar
-    entryClass: com.proompteng.flink.KafkaRoundTripJob
+    entryClass: ai.proompteng.flink.KafkaRoundTripJob
     parallelism: 2
     upgradeMode: savepoint
     allowNonRestoredState: true

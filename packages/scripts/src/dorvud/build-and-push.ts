@@ -1,22 +1,28 @@
 #!/usr/bin/env bun
 
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 import { buildAndPushDockerImage, inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
 
-const SERVICE_ROOT = resolve(repoRoot, 'services/flink-kafka-roundtrip')
+const SERVICE_ROOT = resolve(repoRoot, 'services/dorvud')
+const FLINK_MODULE = 'flink-integration'
+const MODULE_PATH = resolve(SERVICE_ROOT, FLINK_MODULE)
+const GRADLEW = resolve(SERVICE_ROOT, 'gradlew')
 const DEPLOYMENT_PATH = resolve(repoRoot, 'argocd/applications/flink/overlays/cluster/flinkdeployment.yaml')
 
 export const main = async () => {
-  ensureCli('mvn')
   ensureCli('docker')
+
+  if (!existsSync(GRADLEW)) {
+    fatal(`Missing gradlew at ${GRADLEW}`)
+  }
 
   const registry = process.env.FLINK_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = process.env.FLINK_IMAGE_REPOSITORY ?? 'lab/flink-kafka-roundtrip'
   const tag = process.env.FLINK_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
-  const dockerfile = process.env.FLINK_DOCKERFILE ?? 'services/flink-kafka-roundtrip/Dockerfile'
+  const dockerfile = process.env.FLINK_DOCKERFILE ?? `services/dorvud/${FLINK_MODULE}/Dockerfile`
 
   await buildJar()
 
@@ -24,7 +30,7 @@ export const main = async () => {
     registry,
     repository,
     tag,
-    context: SERVICE_ROOT,
+    context: MODULE_PATH,
     dockerfile,
   })
 
@@ -36,8 +42,7 @@ export const main = async () => {
 }
 
 const buildJar = async () => {
-  const pom = resolve(SERVICE_ROOT, 'pom.xml')
-  await run('mvn', ['-f', pom, 'clean', 'package', '-DskipTests'], { cwd: SERVICE_ROOT })
+  await run(GRADLEW, [':flink-integration:clean', ':flink-integration:uberJar'], { cwd: SERVICE_ROOT })
 }
 
 const updateDeploymentImage = (tag: string) => {
