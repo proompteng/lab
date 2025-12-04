@@ -37,3 +37,11 @@
 - Pools are `preservePoolsOnDelete=true` to protect data across app deletions.
 - Storage assumes dedicated raw devices (no PVC-backed OSDs). If nodes lack spare disks, update `cephClusterSpec.storage` before syncing to avoid stuck OSDs.
 - ServiceMonitors and alert rules are enabled via the chart; Prometheus should discover RGW/mgr endpoints automatically.
+
+## Recommendations before replacing MinIO cluster-wide
+- Tighten OSD selection: turn off `useAllDevices` or set explicit `nodes`/`devicePaths` so only intended data disks are claimed.
+- Expose RGW with TLS: add ingress/route (or Tailscale) for the RGW service and enable dashboard TLS; manage the admin password via secret, not defaults.
+- Credential hygiene: source app credentials from Secrets/SealedSecrets (not in chart values) and document a rotation path; avoid embedding static keys in workload values.
+- Multi-tenant buckets: use the `rook-ceph-bucket` StorageClass with ObjectBucketClaims; create per-namespace CephObjectStoreUsers and propagate secrets via Reflector/External Secrets.
+- Data governance: decide on bucket versioning, lifecycle/retention, and quotas/policies for tenants; configure in RGW or via bucket policies.
+- Validation and SLOs: run load and failover drills (OSD drain, mon fail, RGW restart) plus RGW latency/throughput checks before migrating additional workloads.

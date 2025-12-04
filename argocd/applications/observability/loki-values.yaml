@@ -1,4 +1,8 @@
 loki:
+  command:
+    - /usr/bin/loki
+    - -config.file=/etc/loki/config/config.yaml
+    - -config.expand-env=true
   schemaConfig:
     configs:
       - from: "2024-01-01"
@@ -10,11 +14,12 @@ loki:
           period: 24h
   storageConfig:
     aws:
-      s3: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+      s3: ${LOKI_S3_ENDPOINT}
       s3forcepathstyle: true
-      bucketnames: loki-data
-      access_key_id: co0yz7vLmbYmyj3lqzHw
-      secret_access_key: lArwr3tEpTmssI2AEVoTeKDjsdLH3Tj3IQI3PD7l
+      bucketnames: ${LOKI_S3_BUCKET}
+      access_key_id: ${LOKI_S3_ACCESS_KEY}
+      secret_access_key: ${LOKI_S3_SECRET_KEY}
+      region: ${LOKI_S3_REGION}
       insecure: true
     boltdb_shipper:
       cache_location: /var/loki/index
@@ -25,6 +30,38 @@ loki:
       enabled: true
       size: 20Gi
       storageClass: longhorn
+    extraEnv: &rgwEnv
+      - name: LOKI_S3_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: rook-ceph-rgw-loki
+            key: accessKey
+      - name: LOKI_S3_SECRET_KEY
+        valueFrom:
+          secretKeyRef:
+            name: rook-ceph-rgw-loki
+            key: secretKey
+      - name: LOKI_S3_ENDPOINT
+        valueFrom:
+          secretKeyRef:
+            name: rook-ceph-rgw-loki
+            key: endpoint
+      - name: LOKI_S3_BUCKET
+        valueFrom:
+          secretKeyRef:
+            name: rook-ceph-rgw-loki
+            key: bucket
+      - name: LOKI_S3_REGION
+        valueFrom:
+          secretKeyRef:
+            name: rook-ceph-rgw-loki
+            key: region
+    extraArgs:
+      - -config.expand-env=true
+  distributor:
+    extraEnv: *rgwEnv
+    extraArgs:
+      - -config.expand-env=true
   ingester:
     replicas: 2
     persistence:
@@ -33,12 +70,26 @@ loki:
         - name: data
           size: 20Gi
           storageClass: longhorn
+    extraEnv: *rgwEnv
+    extraArgs:
+      - -config.expand-env=true
+  queryFrontend:
+    extraEnv: *rgwEnv
+    extraArgs:
+      - -config.expand-env=true
   querier:
     replicas: 1
     persistence:
       enabled: true
       size: 10Gi
       storageClass: longhorn
+    extraEnv: *rgwEnv
+    extraArgs:
+      - -config.expand-env=true
+  read:
+    extraEnv: *rgwEnv
+    extraArgs:
+      - -config.expand-env=true
   ruler:
     enabled: true
     kind: StatefulSet
@@ -46,3 +97,14 @@ loki:
       enabled: true
       size: 5Gi
       storageClass: longhorn
+    extraEnv: *rgwEnv
+    extraArgs:
+      - -config.expand-env=true
+  write:
+    extraEnv: *rgwEnv
+    extraArgs:
+      - -config.expand-env=true
+  indexGateway:
+    extraEnv: *rgwEnv
+    extraArgs:
+      - -config.expand-env=true
