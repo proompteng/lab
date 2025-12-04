@@ -24,13 +24,13 @@ spec:
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: rook-ceph-rgw-loki
-                  key: accessKey
+                  name: rook-ceph-object-user-objectstore-loki
+                  key: AccessKey
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: rook-ceph-rgw-loki
-                  key: secretKey
+                  name: rook-ceph-object-user-objectstore-loki
+                  key: SecretKey
             - name: AWS_DEFAULT_REGION
               valueFrom:
                 secretKeyRef:

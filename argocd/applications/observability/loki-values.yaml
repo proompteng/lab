@@ -34,13 +34,13 @@ loki:
       - name: LOKI_S3_ACCESS_KEY
         valueFrom:
           secretKeyRef:
-            name: rook-ceph-rgw-loki
-            key: accessKey
+            name: rook-ceph-object-user-objectstore-loki
+            key: AccessKey
       - name: LOKI_S3_SECRET_KEY
         valueFrom:
           secretKeyRef:
-            name: rook-ceph-rgw-loki
-            key: secretKey
+            name: rook-ceph-object-user-objectstore-loki
+            key: SecretKey
       - name: LOKI_S3_ENDPOINT
         valueFrom:
           secretKeyRef:

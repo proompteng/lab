@@ -36,10 +36,3 @@ spec:
     bucket: "*"
     metadata: "read, write"
     usage: "read"
-  keys:
-    - accessKeyRef:
-        name: rook-ceph-rgw-loki
-        key: accessKey
-      secretKeyRef:
-        name: rook-ceph-rgw-loki
-        key: secretKey
