@@ -5,8 +5,7 @@ pspEnable: false
 
 monitoring:
   enabled: true
-  createPrometheusRules: true
-  rulesNamespaceOverride: rook-ceph
+  createPrometheusRules: false
 
 toolbox:
   enabled: true
@@ -57,9 +56,6 @@ cephClusterSpec:
     config:
       databaseSizeMB: "2048"
 
-  monitoring:
-    enabled: true
-
   disruptionManagement:
     managePodBudgets: true
     osdMaintenanceTimeout: 30
@@ -80,12 +76,10 @@ cephObjectStores:
         failureDomain: host
         replicated:
           size: 3
-          minSize: 2
       dataPool:
         failureDomain: host
         replicated:
           size: 3
-          minSize: 2
         parameters:
           bulk: "true"
       preservePoolsOnDelete: true

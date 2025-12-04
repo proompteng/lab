@@ -33,7 +33,7 @@ spec:
   store: objectstore
   displayName: loki
   capabilities:
-    bucket: "read, write, delete"
+    bucket: "*"
     metadata: "read, write"
     usage: "read"
   keys:
