@@ -1,17 +1,17 @@
 # Argo CD / ApplicationSet Notes
 
-## Forwarder app (example)
+## WS app (example)
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: torghut-forwarder
+  name: torghut-ws
 spec:
   project: default
   source:
     repoURL: https://github.com/proompteng/lab.git
     targetRevision: HEAD
-    path: argocd/applications/torghut/forwarder
+    path: argocd/applications/torghut/ws
   destination:
     namespace: torghut
     server: https://kubernetes.default.svc
@@ -28,7 +28,7 @@ Similar shape, path `argocd/applications/torghut/flink-ta`. Ensure sync wave run
 - Use generator fields (e.g., cluster list or repo path) consistent with existing Product ApplicationSet.
 
 ## Sync order
-- Operator (if separate app) → forwarder → flink-ta. Use sync waves/weights if needed.
+- Operator (if separate app) → kotlin-ws → flink-ta. Use sync waves/weights if needed.
 
 ## Namespaces
 - torghut: forwarder, flink-ta runtime.

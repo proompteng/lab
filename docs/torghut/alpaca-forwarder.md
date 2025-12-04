@@ -1,7 +1,7 @@
-# Alpaca Forwarder (torghut)
+# Kotlin WS Service (torghut)
 
 ## Purpose
-Single-replica Python Deployment that ingests Alpaca market (and optional trading) WebSocket streams and forwards to Kafka with ordering, dedup, and status signals.
+Single-replica Kotlin/JVM service (Gradle multi-project) that ingests Alpaca market (and optional trading) WebSocket streams and forwards to Kafka with ordering, dedup, and status signals.
 
 ## Requirements
 - Streams: trades (`T=t`), quotes (`T=q`), 1m bars/updated bars (`T=b|u`), status; optional `trade_updates`.
@@ -31,6 +31,11 @@ Single-replica Python Deployment that ingests Alpaca market (and optional tradin
 - If Kafka produce fails repeatedly: trip not-ready, continue retrying with backoff; alert via status topic.
 - If WS lags beyond threshold (`now - event_ts > 2s`): emit status + metric; consider reconnect.
 - Startup probe waits for first successful WS subscribe and Kafka metadata fetch.
+
+## Project layout (Gradle)
+- `platform`: shared config (typesafe Config), logging (SLF4J), common envelope/Avro, Kafka producer factory.
+- `ws`: Ktor (or JetBrains HTTP) WebSocket client, reconnect/backoff, dedup caches, envelope builder, Kafka producers.
+- `ta`: shared TA schema/types for downstream consumers (used by ws for envelope typing and by Flink integration tests).
 
 ## Kubernetes Design
 - Namespace: torghut. Objects: Deployment (replicas=1), ServiceAccount, ConfigMap (feeds/symbols/backoff/toggles), Secret refs, Service (health/metrics), optional PDB.
@@ -62,8 +67,8 @@ Single-replica Python Deployment that ingests Alpaca market (and optional tradin
 - Kafka auth negative test: invalid credentials should fail readiness.
 
 ## CI/CD & image
-- Dockerfile: multi-stage (builder for deps, slim runtime); non-root user.
-- CI: build/push image, update kustomization tag, run unit tests for envelope/dedup.
+- Dockerfile: multi-stage (Gradle build → slim distroless/temurin runtime); non-root user.
+- CI: `./gradlew :ws:shadowJar` (or `bootJar` if using Spring) + `docker build -t <registry>/torghut-ws:<tag> -f apps/torghut-ws/Dockerfile .`; run unit tests for envelope/dedup.
 
 ## Network & security
 - NetworkPolicy: egress only to Alpaca endpoints, Kafka bootstrap/brokers, registry, optional metrics collector.
