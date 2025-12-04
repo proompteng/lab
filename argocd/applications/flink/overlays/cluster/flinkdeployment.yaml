@@ -8,7 +8,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "5"
 spec:
-  image: registry.ide-newton.ts.net/lab/flink-kafka-roundtrip:2214ca55
+  image: registry.ide-newton.ts.net/lab/flink-kafka-roundtrip:flink2.1.1
   imagePullPolicy: IfNotPresent
   flinkVersion: v1_20
   serviceAccount: flink
