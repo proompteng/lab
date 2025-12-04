@@ -5,6 +5,7 @@ namespace: observability
 resources:
   - minio-secret.yaml
   - minio-buckets-job.yaml
+  - rook-ceph-rgw-secret.yaml
   - graf-mimir-rules.yaml
   - graf-graf-dashboard-configmap.yaml
 

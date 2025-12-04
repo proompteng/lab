@@ -1,0 +1,113 @@
+operatorNamespace: rook-ceph
+clusterName: rook-ceph
+
+pspEnable: false
+
+monitoring:
+  enabled: true
+  createPrometheusRules: true
+  rulesNamespaceOverride: rook-ceph
+
+toolbox:
+  enabled: true
+  resources:
+    limits:
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  priorityClassName: system-cluster-critical
+
+cephClusterSpec:
+  cephVersion:
+    image: quay.io/ceph/ceph:v19.2.3
+    allowUnsupported: false
+
+  dataDirHostPath: /var/lib/rook
+
+  mon:
+    count: 3
+    allowMultiplePerNode: false
+
+  mgr:
+    count: 2
+    allowMultiplePerNode: false
+
+  dashboard:
+    enabled: true
+    ssl: false
+
+  network:
+    connections:
+      encryption:
+        enabled: false
+      compression:
+        enabled: false
+      requireMsgr2: true
+
+  priorityClassNames:
+    mon: system-node-critical
+    osd: system-node-critical
+    mgr: system-cluster-critical
+
+  storage:
+    useAllNodes: true
+    useAllDevices: true
+    deviceFilter: "^(sd[b-z]|vd[b-z]|nvme[0-9]n[0-9])"
+    config:
+      databaseSizeMB: "2048"
+
+  monitoring:
+    enabled: true
+
+  disruptionManagement:
+    managePodBudgets: true
+    osdMaintenanceTimeout: 30
+
+  healthCheck:
+    daemonHealth:
+      mon:
+        interval: 45s
+      osd:
+        interval: 60s
+      status:
+        interval: 60s
+
+cephObjectStores:
+  - name: objectstore
+    spec:
+      metadataPool:
+        failureDomain: host
+        replicated:
+          size: 3
+          minSize: 2
+      dataPool:
+        failureDomain: host
+        replicated:
+          size: 3
+          minSize: 2
+        parameters:
+          bulk: "true"
+      preservePoolsOnDelete: true
+      gateway:
+        port: 80
+        instances: 2
+        priorityClassName: system-cluster-critical
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: "2"
+            memory: 3Gi
+    storageClass:
+      enabled: true
+      name: rook-ceph-bucket
+      reclaimPolicy: Retain
+      volumeBindingMode: Immediate
+      parameters:
+        region: us-east-1
+    ingress:
+      enabled: false
+    route:
+      enabled: false
