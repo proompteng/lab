@@ -1,11 +1,14 @@
 name: dorvud-ci
 
 on:
-  push:
+  # Run once for PRs targeting main; push runs only on main to avoid double CI for PR branches.
+  pull_request:
+    branches: [main]
     paths:
       - 'services/dorvud/**'
       - '.github/workflows/dorvud.yml'
-  pull_request:
+  push:
+    branches: [main]
     paths:
       - 'services/dorvud/**'
       - '.github/workflows/dorvud.yml'
