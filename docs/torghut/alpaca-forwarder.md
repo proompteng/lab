@@ -36,6 +36,7 @@ Single-replica Kotlin/JVM service (Gradle multi-project) that ingests Alpaca mar
 - `platform`: shared config (typesafe Config), logging (SLF4J), common envelope/Avro, Kafka producer factory.
 - `ws`: Ktor (or JetBrains HTTP) WebSocket client, reconnect/backoff, dedup caches, envelope builder, Kafka producers.
 - `ta`: shared TA schema/types for downstream consumers (used by ws for envelope typing and by Flink integration tests).
+- Repo path: `services/dorvud/` (multi-project). Forwarder code lives in the `websockets` module (shared code in `platform`, TA types in `technical-analysis`). Dockerfile under `services/dorvud/websockets/`; Kustomize manifests under `argocd/applications/torghut/ws/`.
 
 ## Kubernetes Design
 - Namespace: torghut. Objects: Deployment (replicas=1), ServiceAccount, ConfigMap (feeds/symbols/backoff/toggles), Secret refs, Service (health/metrics), optional PDB.

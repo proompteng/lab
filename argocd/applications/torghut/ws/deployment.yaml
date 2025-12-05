@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-ws
+  namespace: torghut
+  labels:
+    app: torghut-ws
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: torghut-ws
+  template:
+    metadata:
+      labels:
+        app: torghut-ws
+    spec:
+      serviceAccountName: torghut-ws
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: torghut-ws
+          image: registry.ide-newton.ts.net/lab/torghut-ws:dev
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: torghut-ws-config
+          env:
+            - name: ALPACA_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-alpaca
+                  key: key_id
+            - name: ALPACA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-alpaca
+                  key: secret_key
+            - name: KAFKA_SASL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-ws
+                  key: username
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-ws
+                  key: password
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9090
+              name: metrics
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      nodeSelector: {}
+      tolerations: []

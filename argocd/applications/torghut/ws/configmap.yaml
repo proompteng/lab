@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-ws-config
+  namespace: torghut
+data:
+  ALPACA_FEED: "iex"
+  ALPACA_BASE_URL: "https://data.alpaca.markets"
+  SYMBOLS: "NVDA"
+  ENABLE_TRADE_UPDATES: "false"
+  RECONNECT_BASE_MS: "500"
+  RECONNECT_MAX_MS: "30000"
+  DEDUP_TTL_SEC: "5"
+  DEDUP_MAX_ENTRIES: "10000"
+  KAFKA_BOOTSTRAP: "kafka-kafka-bootstrap.kafka:9093"
+  KAFKA_SECURITY_PROTOCOL: "SASL_SSL"
+  KAFKA_SASL_MECH: "SCRAM-SHA-512"
+  KAFKA_LINGER_MS: "30"
+  KAFKA_BATCH_SIZE: "32768"
+  KAFKA_ACKS: "all"
+  TOPIC_TRADES: "torghut.nvda.trades.v1"
+  TOPIC_QUOTES: "torghut.nvda.quotes.v1"
+  TOPIC_BARS_1M: "torghut.nvda.bars.1m.v1"
+  TOPIC_STATUS: "torghut.nvda.status.v1"

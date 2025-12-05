@@ -1,8 +1,9 @@
 # CI/CD for Torghut Forwarder and Flink TA
 
 ## WS service (Kotlin, multi-project)
-- Build: `./gradlew :ws:shadowJar` (or `bootJar` if Spring) using JDK 21; shared code in `:platform`, TA types in `:ta`.
-- Docker: `docker build -t <registry>/torghut-ws:<tag> -f apps/torghut-ws/Dockerfile .` (image uses the shaded jar from `ws/build/libs`).
+- Build: `cd services/dorvud && ./gradlew :websockets:shadowJar` (or `bootJar` if Spring) using JDK 21; shared code in `:platform`, TA types in `:technical-analysis`.
+- Docker: `cd services/dorvud && docker build -t <registry>/torghut-ws:<tag> -f websockets/Dockerfile .` (image uses the shaded jar from `websockets/build/libs`).
+- Smoke: `bun run smoke:torghut-ws` (requires KAFKA_USERNAME/PASSWORD env, optional SYMBOL/TOPIC/NAMESPACE overrides).
 - Tests: `./gradlew :platform:test :ws:test :ta:test` (dedup/envelope, reconnect logic, Avro/JSON encoding).
 - Lint/format: `./gradlew ktlintCheck detekt` (or Spotless) depending on project plugins.
 - Publish: push image; update kustomization image tag under `argocd/applications/torghut/ws/` and Argo sync.
