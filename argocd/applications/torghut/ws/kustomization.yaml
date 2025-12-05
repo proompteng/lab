@@ -2,7 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: torghut
 resources:
-  - postgres-cluster.yaml
-  - knative-service.yaml
-  - tailscale-service.yaml
-  - ws
+  - serviceaccount.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - pdb.yaml

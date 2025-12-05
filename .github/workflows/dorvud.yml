@@ -1,0 +1,30 @@
+name: dorvud-ci
+
+on:
+  push:
+    paths:
+      - 'services/dorvud/**'
+      - '.github/workflows/dorvud.yml'
+  pull_request:
+    paths:
+      - 'services/dorvud/**'
+      - '.github/workflows/dorvud.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Run tests (platform, websockets, technical-analysis)
+        run: ./gradlew :platform:test :websockets:test :technical-analysis:test
+        working-directory: services/dorvud

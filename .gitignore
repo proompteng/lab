@@ -263,3 +263,5 @@ packages/temporal-bun-sdk/Users/
 /services/graf/.kotlin/
 /services/graf/build/
 /services/graf/gradle/wrapper/dists/
+# Kotlin Gradle build caches
+**/.gradle/
