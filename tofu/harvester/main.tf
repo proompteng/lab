@@ -149,6 +149,7 @@ resource "harvester_virtualmachine" "kube-cluster" {
     auto_delete = true
   }
 
+
   network_interface {
     name           = "bridge"
     model          = "virtio"
