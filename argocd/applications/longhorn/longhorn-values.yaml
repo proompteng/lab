@@ -8,6 +8,6 @@ defaultSettings:
   storageReservedPercentageForDefaultDisk: 30
   storageMinimalAvailablePercentage: 25
   defaultReplicaCount: 3
-  replicaAutoBalance: least-effort
+  replicaAutoBalance: best-effort
   replicaSoftAntiAffinity: false
   allowVolumeCreationWithDegradedAvailability: false
