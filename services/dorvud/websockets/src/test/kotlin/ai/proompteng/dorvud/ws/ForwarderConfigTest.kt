@@ -51,6 +51,7 @@ class ForwarderConfigTest {
     val originalUserDir = System.getProperty("user.dir")
     val originalDotenvPath = System.getProperty("dotenv.path")
     System.setProperty("dotenv.path", envFile.absolutePath)
+    System.setProperty("user.dir", tmpDir.absolutePath)
 
     try {
       val cfg = ForwarderConfig.fromEnv()
@@ -107,6 +108,76 @@ class ForwarderConfigTest {
       envLocalFile.delete()
       envFile.delete()
       tmpDir.delete()
+    }
+  }
+
+  @Test
+  fun `loads dotenv from module subdir when run at repo root`() {
+    val rootDir = Files.createTempDirectory("ws-root-test").toFile()
+    val moduleDir = File(rootDir, "services/dorvud/websockets")
+    moduleDir.mkdirs()
+    val envLocal = File(moduleDir, ".env.local")
+    envLocal.writeText(
+      """
+      ALPACA_KEY_ID=from-subdir
+      ALPACA_SECRET_KEY=subdir-secret
+      SYMBOLS=FAKEPACA
+      KAFKA_BOOTSTRAP=localhost:19092
+      """.trimIndent(),
+    )
+
+    val originalUserDir = System.getProperty("user.dir")
+    System.setProperty("user.dir", rootDir.absolutePath)
+
+    try {
+      val cfg = ForwarderConfig.fromEnv()
+      assertEquals("from-subdir", cfg.alpacaKeyId)
+      assertEquals("localhost:19092", cfg.kafka.bootstrapServers)
+      assertEquals(listOf("FAKEPACA"), cfg.symbols)
+    } finally {
+      System.setProperty("user.dir", originalUserDir)
+      envLocal.delete()
+      moduleDir.delete()
+      File(rootDir, "services/dorvud").delete()
+      File(rootDir, "services").delete()
+      rootDir.delete()
+    }
+  }
+
+  @Test
+  fun `loads plain env file when dotenv parse returns empty`() {
+    val tmpDir = Files.createTempDirectory("ws-plain-env").toFile()
+    val envFile = File(tmpDir, "custom.env")
+    envFile.writeText(
+      """
+      ALPACA_KEY_ID=plain-id
+      ALPACA_SECRET_KEY=plain-secret
+      SYMBOLS=PLAIN
+      """.trimIndent(),
+    )
+
+    val originalDotenvPath = System.getProperty("dotenv.path")
+    val originalUserDir = System.getProperty("user.dir")
+    System.setProperty("dotenv.path", envFile.absolutePath)
+    System.setProperty("user.dir", tmpDir.absolutePath)
+
+    try {
+      val cfg = ForwarderConfig.fromEnv()
+      assertEquals("plain-id", cfg.alpacaKeyId)
+      assertEquals(listOf("PLAIN"), cfg.symbols)
+    } finally {
+      if (originalDotenvPath != null) {
+        System.setProperty("dotenv.path", originalDotenvPath)
+      } else {
+        System.clearProperty("dotenv.path")
+      }
+      envFile.delete()
+      tmpDir.delete()
+      if (originalUserDir != null) {
+        System.setProperty("user.dir", originalUserDir)
+      } else {
+        System.clearProperty("user.dir")
+      }
     }
   }
 }

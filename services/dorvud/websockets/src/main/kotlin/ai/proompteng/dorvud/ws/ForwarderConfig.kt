@@ -47,7 +47,7 @@ data class ForwarderConfig(
       )
 
       val kafka = KafkaProducerSettings(
-        bootstrapServers = mergedEnv["KAFKA_BOOTSTRAP"] ?: "kafka-kafka-bootstrap.kafka:9092",
+        bootstrapServers = mergedEnv["KAFKA_BOOTSTRAP"] ?: "localhost:9093",
         clientId = mergedEnv["KAFKA_CLIENT_ID"] ?: "dorvud-ws",
         lingerMs = mergedEnv["KAFKA_LINGER_MS"]?.toIntOrNull() ?: 30,
         batchSize = mergedEnv["KAFKA_BATCH_SIZE"]?.toIntOrNull() ?: 32768,
