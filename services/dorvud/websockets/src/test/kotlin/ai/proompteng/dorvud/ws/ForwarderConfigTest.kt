@@ -68,4 +68,45 @@ class ForwarderConfigTest {
       tmpDir.delete()
     }
   }
+
+  @Test
+  fun `prefers env local over env`() {
+    val tmpDir = Files.createTempDirectory("ws-dotenv-test").toFile()
+    val envFile = File(tmpDir, ".env")
+    envFile.writeText(
+      """
+      ALPACA_KEY_ID=from-env
+      ALPACA_SECRET_KEY=secret-env
+      SYMBOLS=ENVONLY
+      """.trimIndent(),
+    )
+    val envLocalFile = File(tmpDir, ".env.local")
+    envLocalFile.writeText(
+      """
+      ALPACA_KEY_ID=from-local
+      ALPACA_SECRET_KEY=secret-local
+      SYMBOLS=LOCAL1,LOCAL2
+      """.trimIndent(),
+    )
+
+    val originalDotenvPath = System.getProperty("dotenv.path")
+    val originalUserDir = System.getProperty("user.dir")
+    System.setProperty("user.dir", tmpDir.absolutePath)
+
+    try {
+      val cfg = ForwarderConfig.fromEnv()
+      assertEquals("from-local", cfg.alpacaKeyId)
+      assertEquals(listOf("LOCAL1", "LOCAL2"), cfg.symbols)
+    } finally {
+      System.setProperty("user.dir", originalUserDir)
+      if (originalDotenvPath != null) {
+        System.setProperty("dotenv.path", originalDotenvPath)
+      } else {
+        System.clearProperty("dotenv.path")
+      }
+      envLocalFile.delete()
+      envFile.delete()
+      tmpDir.delete()
+    }
+  }
 }

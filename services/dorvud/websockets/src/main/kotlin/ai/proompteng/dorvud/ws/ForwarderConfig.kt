@@ -93,17 +93,44 @@ data class ForwarderConfig(
 
     private fun loadDotEnv(): Map<String, String> {
       val customPath = System.getProperty("dotenv.path") ?: System.getenv("DOTENV_PATH")
-      val dotenv = dotenv {
-        ignoreIfMissing = true
-        ignoreIfMalformed = true
-        if (customPath != null) {
-          val file = File(customPath)
+      if (customPath != null) {
+        val file = File(customPath)
+        val dotenv = dotenv {
+          ignoreIfMissing = true
+          ignoreIfMalformed = true
           directory = file.parent ?: "."
           filename = file.name
         }
+        return dotenv.entries().associate { it.key to it.value }
       }
 
-      return dotenv.entries().associate { it.key to it.value }
+      val userDir = System.getProperty("user.dir")
+      val candidates = listOfNotNull(
+        userDir?.let { File(it) },
+        userDir?.let { File(it, "websockets") },
+      ).filter { it.exists() }
+
+      val merged = mutableMapOf<String, String>()
+      candidates.forEach { dir ->
+        val envDefault = dotenv {
+          ignoreIfMissing = true
+          ignoreIfMalformed = true
+          filename = ".env"
+          directory = dir.absolutePath
+        }.entries().associate { it.key to it.value }
+
+        val envLocal = dotenv {
+          ignoreIfMissing = true
+          ignoreIfMalformed = true
+          filename = ".env.local"
+          directory = dir.absolutePath
+        }.entries().associate { it.key to it.value }
+
+        merged.putAll(envDefault)
+        merged.putAll(envLocal) // local overrides within same dir
+      }
+
+      return merged
     }
   }
 }
