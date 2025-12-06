@@ -82,7 +82,7 @@ class ForwarderApp(
     quotesDedup: DedupCache<String>,
     barsDedup: DedupCache<String>,
   ) {
-    val url = "wss://stream.data.alpaca.markets/v2/${config.alpacaFeed}"
+    val url = "${config.alpacaStreamUrl.trimEnd('/')}/v2/${config.alpacaFeed}"
     httpClient.webSocket(urlString = url) {
       // auth
       val auth = mapOf("action" to "auth", "key" to config.alpacaKeyId, "secret" to config.alpacaSecretKey)

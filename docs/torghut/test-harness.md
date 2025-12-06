@@ -12,6 +12,18 @@ kcat -b $KAFKA_BOOTSTRAP \
 ```
 Where `nvda-trades.jsonl` contains `<key>:<value>` JSON lines keyed by symbol.
 
+## Alpaca sandbox WS checks
+- Market data test feed: `wss://stream.data.sandbox.alpaca.markets/v2/iex` (use `sip` path if you have SIP entitlement). Use symbol `FAKEPACA` for local smoke if your account has no real entitlements.
+- Paper trading updates: `wss://stream.trading.alpaca.markets/v2/paper` with the same key/secret as your paper account.
+- Quick auth + subscribe with websocat:
+  ```bash
+  websocat "wss://stream.data.sandbox.alpaca.markets/v2/iex" \
+    -H "Authorization: Bearer $ALPACA_KEY_ID" \
+    -H "x-alpaca-secret-key: $ALPACA_SECRET_KEY" \
+    -E
+  # Send: {"action":"subscribe","trades":["NVDA"],"quotes":["NVDA"],"bars":["NVDA"],"updatedBars":["NVDA"]}
+  ```
+
 ## Lag measurement
 - Consumer benchmark:
 ```bash

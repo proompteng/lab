@@ -5,6 +5,7 @@ metadata:
   namespace: torghut
 data:
   ALPACA_FEED: "iex"
+  ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
   ALPACA_BASE_URL: "https://data.alpaca.markets"
   SYMBOLS: "NVDA"
   ENABLE_TRADE_UPDATES: "false"
