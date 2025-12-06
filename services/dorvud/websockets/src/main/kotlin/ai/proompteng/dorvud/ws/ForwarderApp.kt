@@ -18,6 +18,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import mu.KotlinLogging
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerRecord
@@ -85,15 +90,20 @@ class ForwarderApp(
     val url = "${config.alpacaStreamUrl.trimEnd('/')}/v2/${config.alpacaFeed}"
     httpClient.webSocket(urlString = url) {
       // auth
-      val auth = mapOf("action" to "auth", "key" to config.alpacaKeyId, "secret" to config.alpacaSecretKey)
+      val auth = buildJsonObject {
+        put("action", "auth")
+        put("key", config.alpacaKeyId)
+        put("secret", config.alpacaSecretKey)
+      }
       sendSerialized(auth)
-      val subscribe = mapOf(
-        "action" to "subscribe",
-        "trades" to config.symbols,
-        "quotes" to config.symbols,
-        "bars" to config.symbols,
-        "updatedBars" to config.symbols,
-      )
+        val subscribe = buildJsonObject {
+          put("action", "subscribe")
+          val symbolsJson = buildJsonArray { config.symbols.forEach { add(JsonPrimitive(it)) } }
+          put("trades", symbolsJson)
+          put("quotes", symbolsJson)
+          put("bars", symbolsJson)
+        put("updatedBars", symbolsJson)
+      }
       sendSerialized(subscribe)
 
       for (frame in incoming) {
@@ -157,7 +167,7 @@ class ForwarderApp(
     producer.send(ProducerRecord(topic, env.symbol, payload))
   }
 
-  private suspend fun DefaultClientWebSocketSession.sendSerialized(payload: Any) {
+  private suspend fun DefaultClientWebSocketSession.sendSerialized(payload: JsonObject) {
     val text = json.encodeToString(payload)
     send(Frame.Text(text))
   }

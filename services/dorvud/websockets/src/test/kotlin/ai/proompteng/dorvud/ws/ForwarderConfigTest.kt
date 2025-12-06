@@ -18,6 +18,7 @@ class ForwarderConfigTest {
 
     assertEquals(listOf("NVDA"), cfg.symbols)
     assertEquals("wss://stream.data.alpaca.markets", cfg.alpacaStreamUrl)
+    assertEquals("localhost:9093", cfg.kafka.bootstrapServers)
     assertFalse(cfg.enableTradeUpdates)
     assertEquals("torghut.nvda.trades.v1", cfg.topics.trades)
   }
@@ -178,6 +179,45 @@ class ForwarderConfigTest {
       } else {
         System.clearProperty("user.dir")
       }
+    }
+  }
+
+  @Test
+  fun `dotenv path overrides files under user dir`() {
+    val rootDir = Files.createTempDirectory("ws-root-test").toFile()
+    val userEnvLocal = File(rootDir, ".env.local")
+    userEnvLocal.writeText(
+      """
+      ALPACA_KEY_ID=from-userdir
+      ALPACA_SECRET_KEY=userdir-secret
+      SYMBOLS=USERDIR
+      """.trimIndent(),
+    )
+
+    val explicitFile = File(rootDir, "custom.env")
+    explicitFile.writeText(
+      """
+      ALPACA_KEY_ID=from-explicit
+      ALPACA_SECRET_KEY=explicit-secret
+      SYMBOLS=EXPLICIT
+      """.trimIndent(),
+    )
+
+    val originalUserDir = System.getProperty("user.dir")
+    val originalDotenvPath = System.getProperty("dotenv.path")
+    System.setProperty("user.dir", rootDir.absolutePath)
+    System.setProperty("dotenv.path", explicitFile.absolutePath)
+
+    try {
+      val cfg = ForwarderConfig.fromEnv()
+      assertEquals("from-explicit", cfg.alpacaKeyId)
+      assertEquals(listOf("EXPLICIT"), cfg.symbols)
+    } finally {
+      if (originalUserDir != null) System.setProperty("user.dir", originalUserDir) else System.clearProperty("user.dir")
+      if (originalDotenvPath != null) System.setProperty("dotenv.path", originalDotenvPath) else System.clearProperty("dotenv.path")
+      userEnvLocal.delete()
+      explicitFile.delete()
+      rootDir.delete()
     }
   }
 }

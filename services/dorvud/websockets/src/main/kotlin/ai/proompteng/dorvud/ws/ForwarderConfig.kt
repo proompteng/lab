@@ -107,7 +107,10 @@ data class ForwarderConfig(
       }
 
       // 1) Explicit path wins
-      if (customPath != null) mergeFrom(File(customPath))
+      if (customPath != null) {
+        mergeFrom(File(customPath))
+        return mergeTarget
+      }
 
       // 2) Standard locations (support running from repo root or module dir)
       val userDir = System.getProperty("user.dir") ?: "."
