@@ -5,6 +5,7 @@ import ai.proompteng.dorvud.platform.KafkaProducerSettings
 import ai.proompteng.dorvud.platform.KafkaTls
 import io.github.cdimascio.dotenv.dotenv
 import java.io.File
+import java.util.Properties
 
 data class TopicConfig(
   val trades: String,
@@ -93,44 +94,60 @@ data class ForwarderConfig(
 
     private fun loadDotEnv(): Map<String, String> {
       val customPath = System.getProperty("dotenv.path") ?: System.getenv("DOTENV_PATH")
-      if (customPath != null) {
-        val file = File(customPath)
-        val dotenv = dotenv {
-          ignoreIfMissing = true
-          ignoreIfMalformed = true
-          directory = file.parent ?: "."
-          filename = file.name
+      val mergeTarget = mutableMapOf<String, String>()
+
+      fun mergeFrom(file: File) {
+        if (!file.exists()) return
+        val loaded = loadWithDotenv(file.parent ?: ".", file.name)
+        if (loaded.isNotEmpty()) {
+          mergeTarget.putAll(loaded)
+        } else {
+          mergeTarget.putAll(parsePlainEnvFile(file))
         }
-        return dotenv.entries().associate { it.key to it.value }
       }
 
-      val userDir = System.getProperty("user.dir")
-      val candidates = listOfNotNull(
-        userDir?.let { File(it) },
-        userDir?.let { File(it, "websockets") },
-      ).filter { it.exists() }
+      // 1) Explicit path wins
+      if (customPath != null) mergeFrom(File(customPath))
 
-      val merged = mutableMapOf<String, String>()
-      candidates.forEach { dir ->
-        val envDefault = dotenv {
-          ignoreIfMissing = true
-          ignoreIfMalformed = true
-          filename = ".env"
-          directory = dir.absolutePath
-        }.entries().associate { it.key to it.value }
+      // 2) Standard locations (support running from repo root or module dir)
+      val userDir = System.getProperty("user.dir") ?: "."
+      val candidateDirs = listOf(
+        File(userDir),
+        File(userDir, "services/dorvud"),
+        File(userDir, "services/dorvud/websockets"),
+        File(userDir, "websockets"),
+      ).distinct().filter { it.exists() }
 
-        val envLocal = dotenv {
-          ignoreIfMissing = true
-          ignoreIfMalformed = true
-          filename = ".env.local"
-          directory = dir.absolutePath
-        }.entries().associate { it.key to it.value }
-
-        merged.putAll(envDefault)
-        merged.putAll(envLocal) // local overrides within same dir
+      candidateDirs.forEach { dir ->
+        mergeFrom(File(dir, ".env"))
+        mergeFrom(File(dir, ".env.local")) // .env.local overrides within that dir
       }
 
-      return merged
+      return mergeTarget
+    }
+
+    private fun loadWithDotenv(directory: String, filename: String): Map<String, String> {
+      val entries = dotenv {
+        ignoreIfMissing = true
+        ignoreIfMalformed = true
+        this.directory = directory
+        this.filename = filename
+      }.entries().associate { it.key to it.value }
+      return entries
+    }
+
+    private fun parsePlainEnvFile(file: File): Map<String, String> {
+      if (!file.exists()) return emptyMap()
+      return file.readLines()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.startsWith("#") }
+        .mapNotNull { line ->
+          val idx = line.indexOf('=')
+          if (idx <= 0) return@mapNotNull null
+          val key = line.substring(0, idx).trim()
+          val value = line.substring(idx + 1).trim()
+          key to value
+        }.toMap()
     }
   }
 }
