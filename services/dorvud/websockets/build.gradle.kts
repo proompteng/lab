@@ -18,6 +18,7 @@ dependencies {
   implementation("io.ktor:ktor-server-cio:$ktorVersion")
   implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
   implementation("io.ktor:ktor-server-call-logging:$ktorVersion")
+  implementation("io.github.cdimascio:dotenv-kotlin:6.5.1")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutinesVersion")
   implementation("io.github.microutils:kotlin-logging-jvm:$kotlinLoggingVersion")
 

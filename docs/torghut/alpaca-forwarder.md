@@ -13,14 +13,39 @@ Single-replica Kotlin/JVM service (Gradle multi-project) that ingests Alpaca mar
 
 ### Config knobs
 - Env/ConfigMap keys (suggested):
-  - `ALPACA_KEY_ID`, `ALPACA_SECRET_KEY`, `ALPACA_FEED` (`iex|sip|delayed`), `ALPACA_BASE_URL` (for paper/live)
+- `ALPACA_KEY_ID`, `ALPACA_SECRET_KEY`, `ALPACA_FEED` (`iex|sip|delayed`), `ALPACA_BASE_URL` (for paper/live)
+- `ALPACA_STREAM_URL` (WS base; use sandbox `wss://stream.data.sandbox.alpaca.markets` for tests)
   - `SYMBOLS` (comma list), `ENABLE_TRADE_UPDATES` (bool)
   - `RECONNECT_BASE_MS` (e.g., 500), `RECONNECT_MAX_MS` (e.g., 30000)
   - `DEDUP_TTL_SEC` (e.g., 5 for quotes/bars), `DEDUP_MAX_ENTRIES`
   - `KAFKA_BOOTSTRAP`, `KAFKA_SASL_USER`, `KAFKA_SASL_PASSWORD`, `KAFKA_SASL_MECH=SCRAM-SHA-512`, `KAFKA_SECURITY_PROTOCOL=SASL_SSL`
-  - `KAFKA_LINGER_MS=30`, `KAFKA_BATCH_SIZE` (tune), `KAFKA_ACKS=all`
-  - `TOPIC_TRADES`, `TOPIC_QUOTES`, `TOPIC_BARS_1M`, `TOPIC_STATUS`, optional `TOPIC_TRADE_UPDATES`
-  - `METRICS_PORT`, `HEALTH_PORT`
+- `KAFKA_LINGER_MS=30`, `KAFKA_BATCH_SIZE` (tune), `KAFKA_ACKS=all`
+- `TOPIC_TRADES`, `TOPIC_QUOTES`, `TOPIC_BARS_1M`, `TOPIC_STATUS`, optional `TOPIC_TRADE_UPDATES`
+- `METRICS_PORT`, `HEALTH_PORT`
+
+### Local / sandbox testing
+- Copy `services/dorvud/websockets/.env.local.example` to `.env.local` and populate Alpaca sandbox credentials.
+- Point the WS base to sandbox: `ALPACA_STREAM_URL=wss://stream.data.sandbox.alpaca.markets` with `ALPACA_FEED=iex` (or `sip` if available).
+- Keep REST base on sandbox (`ALPACA_BASE_URL=https://data.sandbox.alpaca.markets`) so any backfill stays in the non-live environment.
+- Run locally against a dev Kafka:
+  ```bash
+  cd services/dorvud
+  ./gradlew :websockets:run
+  ```
+- Or spin up local infra (Kafka + UI) with FAKEPACA as the test symbol:
+  ```bash
+  cd services/dorvud/websockets
+  cp .env.local.example .env.local   # set Alpaca keys first
+  docker compose -f docker-compose.local.yml up --build
+  ```
+  Kafka UI will be at http://localhost:8085 and broker at localhost:9092; topics auto-create on first produce. Run the forwarder separately with your `.env.local` loaded: `cd services/dorvud && ./gradlew :websockets:run`.
+- Quick WS smoke (without Kafka):
+  ```bash
+  websocat "wss://stream.data.sandbox.alpaca.markets/v2/iex" \
+    -H "Authorization: Bearer $ALPACA_KEY_ID" \
+    -H "x-alpaca-secret-key: $ALPACA_SECRET_KEY"
+  # then send a subscribe frame for trades/quotes/bars
+  ```
 
 ### Reconnect/dedup behavior
 - Exponential backoff with jitter; cap at 30 s.
