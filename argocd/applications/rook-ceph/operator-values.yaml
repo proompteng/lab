@@ -1,0 +1,42 @@
+image:
+  repository: docker.io/rook/ceph
+  tag: v1.18.7
+  pullPolicy: IfNotPresent
+
+crds:
+  enabled: true
+
+logLevel: INFO
+
+resources:
+  limits:
+    memory: 1Gi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+
+nodeSelector: {}
+
+tolerations:
+  - key: "node-role.kubernetes.io/storage"
+    operator: Exists
+    effect: NoSchedule
+
+rbacEnable: true
+rbacAggregate:
+  enableOBCs: true
+
+pspEnable: false
+
+allowLoopDevices: false
+
+csi:
+  rookUseCsiOperator: true
+  enableRbdDriver: true
+  enableCephfsDriver: true
+  enableRBDSnapshotter: true
+  enableCephfsSnapshotter: true
+  enableCSIHostNetwork: true
+  provisionerReplicas: 2
+  pluginPriorityClassName: system-node-critical
+  provisionerPriorityClassName: system-cluster-critical
