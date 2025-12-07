@@ -30,13 +30,6 @@ spec:
               argocd.argoproj.io/sync-wave: "-1"
             automation: auto
             enabled: "true"
-          - name: rook-ceph
-            path: argocd/applications/rook-ceph
-            namespace: rook-ceph
-            annotations:
-              argocd.argoproj.io/sync-wave: "-1"
-            automation: manual
-            enabled: "false"
           - name: external-dns
             path: argocd/applications/external-dns
             namespace: external-dns
@@ -131,6 +124,13 @@ spec:
           - name: minio
             path: argocd/applications/minio
             namespace: minio
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+            enabled: "true"
+          - name: flink
+            path: argocd/applications/flink
+            namespace: flink
             annotations:
               argocd.argoproj.io/sync-wave: "3"
             automation: manual
