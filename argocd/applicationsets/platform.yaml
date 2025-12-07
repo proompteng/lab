@@ -36,7 +36,7 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "-1"
             automation: manual
-            enabled: "true"
+            enabled: "false"
           - name: external-dns
             path: argocd/applications/external-dns
             namespace: external-dns
