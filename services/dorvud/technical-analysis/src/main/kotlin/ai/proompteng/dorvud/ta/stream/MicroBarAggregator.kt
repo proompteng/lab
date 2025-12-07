@@ -47,14 +47,14 @@ class MicroBarAggregator {
     }
   }
 
-  fun flushAll(now: Instant = Instant.now()): List<Envelope<MicroBarPayload>> {
+  fun flushAll(forceCurrent: Boolean = false, now: Instant = Instant.now()): List<Envelope<MicroBarPayload>> {
     val flushed = mutableListOf<Envelope<MicroBarPayload>>()
     val iterator = buckets.entries.iterator()
     while (iterator.hasNext()) {
       val entry = iterator.next()
       val bucket = entry.value
       val second = now.truncatedTo(ChronoUnit.SECONDS)
-      if (bucket.windowStart.isBefore(second)) {
+      if (forceCurrent || bucket.windowStart.isBefore(second)) {
         flushed += flush(entry.key, bucket)
         iterator.remove()
       }

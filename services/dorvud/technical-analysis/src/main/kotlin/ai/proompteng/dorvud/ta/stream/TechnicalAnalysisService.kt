@@ -63,6 +63,9 @@ class TechnicalAnalysisService(
   suspend fun stop() {
     logger.info { "stopping technical-analysis service" }
     scope.coroutineContext[Job]?.cancelAndJoin()
+    // Flush any in-flight buckets so we don't drop the last second on shutdown
+    val drained = aggregator.flushAll(forceCurrent = true)
+    drained.forEach { emitMicroBar(it) }
     consumer.close()
     producer.flush()
     producer.close()
