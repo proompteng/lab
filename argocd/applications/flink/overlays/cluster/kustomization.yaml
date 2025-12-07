@@ -6,4 +6,3 @@ resources:
   - kafka-config.yaml
   - s3-secret.yaml
   - flinkdeployment.yaml
-  - monitoring.yaml
