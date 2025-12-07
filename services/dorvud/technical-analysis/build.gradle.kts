@@ -17,7 +17,7 @@ dependencies {
   val logbackVersion = "1.5.12"
   val kotlinLoggingVersion = "6.0.4"
   val avroVersion = "1.11.3"
-  val testcontainersVersion = "1.20.3"
+  val testcontainersVersion = "2.0.2"
   val kotestVersion = "5.9.1"
 
   implementation(project(":platform"))
@@ -54,8 +54,8 @@ dependencies {
 
   val testContainersBom = platform("org.testcontainers:testcontainers-bom:$testcontainersVersion")
   testImplementation(testContainersBom)
-  testImplementation("org.testcontainers:kafka")
-  testImplementation("org.testcontainers:junit-jupiter")
+  testImplementation("org.testcontainers:testcontainers-kafka")
+  testImplementation("org.testcontainers:testcontainers-junit-jupiter")
 }
 
 application {
@@ -93,12 +93,19 @@ tasks {
     testClassesDirs = sourceSets["integrationTest"].output.classesDirs
     classpath = sourceSets["integrationTest"].runtimeClasspath
     shouldRunAfter("test")
+    systemProperty("DOCKER_API_VERSION", "1.52")
+    systemProperty("docker.api.version", "1.52")
+  }
+
+  named<ProcessResources>("processIntegrationTestResources") {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
   }
 
   register<Jar>("shadowJar") {
     group = "build"
     archiveClassifier.set("all")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "ai.proompteng.dorvud.ta.MainKt" }
     from(sourceSets.main.get().output)
     dependsOn(configurations.runtimeClasspath)
     from({

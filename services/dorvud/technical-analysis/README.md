@@ -30,7 +30,7 @@ Required configuration (env vars or Typesafe `application.conf`):
 - Micro-bars schema: `docs/torghut/schemas/ta-bars-1s.avsc`
 - Signals schema: `docs/torghut/schemas/ta-signals.avsc`
 
-Produced Kafka records follow the shared envelope: `ingest_ts`, `event_ts`, `symbol`, `seq`, `window`, `payload`, `version`, with idempotent producers (`acks=all`, `compression=lz4`, `enable.idempotence=true`). Consumers use `isolation.level=read_committed`.
+Produced Kafka records follow the shared envelope: `ingest_ts`, `event_ts`, `symbol`, `seq`, `window`, `payload`, `version`, with idempotent producers (`acks=all`, `compression=lz4`, `enable.idempotence=true`). Payloads are Avro binary (schemas in `src/main/resources/schemas`), and consumers use `isolation.level=read_committed`.
 
 ## Validation
 

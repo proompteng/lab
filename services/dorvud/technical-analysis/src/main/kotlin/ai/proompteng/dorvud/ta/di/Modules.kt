@@ -17,6 +17,7 @@ import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.clients.consumer.KafkaConsumer
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerConfig
+import org.apache.kafka.common.serialization.ByteArraySerializer
 import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.kafka.common.serialization.StringSerializer
 import org.koin.core.module.dsl.singleOf
@@ -44,7 +45,7 @@ val taModule = module {
 
   single {
     val cfg: TaServiceConfig = get()
-    KafkaProducer<String, String>(producerProps(cfg))
+    KafkaProducer<String, ByteArray>(producerProps(cfg))
   }
 
   single { HttpServer(get(), get(), get()) }
@@ -95,7 +96,7 @@ private fun producerProps(cfg: TaServiceConfig): Properties = Properties().apply
   put(ProducerConfig.BATCH_SIZE_CONFIG, 32768)
   put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "lz4")
   put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer::class.java)
-  put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer::class.java)
+  put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer::class.java)
   cfg.saslMechanism?.let {
     put("security.protocol", cfg.securityProtocol)
     put("sasl.mechanism", cfg.saslMechanism)

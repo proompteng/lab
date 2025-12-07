@@ -13,8 +13,8 @@ import java.time.Instant
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -29,7 +29,7 @@ import org.apache.kafka.clients.producer.ProducerRecord
 class TechnicalAnalysisService(
   private val config: TaServiceConfig,
   private val consumer: KafkaConsumer<String, String>,
-  private val producer: KafkaProducer<String, String>,
+  private val producer: KafkaProducer<String, ByteArray>,
   private val aggregator: MicroBarAggregator,
   private val engine: TaEngine,
   private val seqTracker: SeqTracker,
@@ -42,6 +42,14 @@ class TechnicalAnalysisService(
   private val lagTimer: Timer = registry.timer("ta_lag_seconds")
 
   fun start(): Job = scope.launch {
+    val flushJob = launch {
+      while (isActive) {
+        val flushed = aggregator.flushAll()
+        flushed.forEach { emitMicroBar(it) }
+        delay(500)
+      }
+    }
+
     logger.info { "technical-analysis service started" }
     while (isActive) {
       val records = consumer.poll(Duration.ofMillis(250))
@@ -49,6 +57,7 @@ class TechnicalAnalysisService(
         handleRecord(record)
       }
     }
+    flushJob.cancel()
   }
 
   suspend fun stop() {
@@ -63,6 +72,7 @@ class TechnicalAnalysisService(
     when {
       record.topic() == config.tradesTopic -> handleTrade(record)
       record.topic() == config.quotesTopic -> handleQuote(record)
+      record.topic() == config.bars1mTopic -> handleBar(record)
       else -> logger.debug { "skipping topic ${record.topic()}" }
     }
   }
@@ -76,12 +86,7 @@ class TechnicalAnalysisService(
 
     val flushed = aggregator.onTrade(envelope.toEnvelope())
     flushed.forEach { barEnv ->
-      val seq = seqTracker.next(barEnv.symbol)
-      val envWithSeq = barEnv.copy(seq = seq)
-      produceMicroBar(envWithSeq)
-      engine.onMicroBar(envWithSeq)?.let { signal ->
-        produceSignal(signal.copy(seq = seq))
-      }
+      emitMicroBar(barEnv)
       val lag = Duration.between(barEnv.eventTs, Instant.now()).toMillis().toDouble() / 1000.0
       lagTimer.record(Duration.ofMillis(lag.toLong()))
     }
@@ -93,20 +98,33 @@ class TechnicalAnalysisService(
       .getOrElse {
         logger.warn(it) { "failed to decode quote payload" }
         return
-      }
+    }
     engine.onQuote(envelope.toEnvelope())
   }
 
-  private fun produceMicroBar(env: ai.proompteng.dorvud.platform.Envelope<MicroBarPayload>) {
-    val payloadJson = avro.toJson(env)
-    val record = ProducerRecord(config.microBarsTopic, env.symbol, payloadJson)
-    producer.send(record)
-    registry.counter("ta_microbars_emitted_total").increment()
+  private fun handleBar(record: ConsumerRecord<String, String>) {
+    if (config.bars1mTopic == null) return
+    val envelope = runCatching { json.decodeFromString<EnvelopeWrapper<MicroBarPayload>>(record.value()) }
+      .getOrElse {
+        logger.warn(it) { "failed to decode bars1m payload" }
+        return
+      }
+    engine.onMicroBar(envelope.toEnvelope())?.let { emitSignal(it) }
   }
 
-  private fun produceSignal(env: ai.proompteng.dorvud.platform.Envelope<TaSignalsPayload>) {
-    val payloadJson = avro.signalJson(env)
-    val record = ProducerRecord(config.signalsTopic, env.symbol, payloadJson)
+  private fun emitMicroBar(env: ai.proompteng.dorvud.platform.Envelope<MicroBarPayload>) {
+    val seq = seqTracker.next(env.symbol)
+    val envWithSeq = env.copy(seq = seq)
+    val bytes = avro.encodeMicroBar(envWithSeq)
+    val record = ProducerRecord(config.microBarsTopic, env.symbol, bytes)
+    producer.send(record)
+    registry.counter("ta_microbars_emitted_total").increment()
+    engine.onMicroBar(envWithSeq)?.let { signal -> emitSignal(signal.copy(seq = seq)) }
+  }
+
+  private fun emitSignal(env: ai.proompteng.dorvud.platform.Envelope<TaSignalsPayload>) {
+    val bytes = avro.encodeSignals(env)
+    val record = ProducerRecord(config.signalsTopic, env.symbol, bytes)
     producer.send(record)
     registry.counter("ta_signals_emitted_total").increment()
   }
