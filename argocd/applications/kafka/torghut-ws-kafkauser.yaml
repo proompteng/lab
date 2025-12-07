@@ -8,25 +8,6 @@ metadata:
 spec:
   authentication:
     type: scram-sha-512
-  authorization:
-    type: simple
-    acls:
-      - resource:
-          type: topic
-          name: torghut.
-          patternType: prefix
-        operations:
-          - Write
-          - Create
-          - Describe
-          - DescribeConfigs
-      - resource:
-          type: group
-          name: torghut-ws
-          patternType: prefix
-        operations:
-          - Read
-          - Describe
   template:
     secret:
       metadata:
