@@ -30,6 +30,13 @@ spec:
               argocd.argoproj.io/sync-wave: "-1"
             automation: auto
             enabled: "true"
+          - name: rook-ceph
+            path: argocd/applications/rook-ceph
+            namespace: rook-ceph
+            annotations:
+              argocd.argoproj.io/sync-wave: "-1"
+            automation: manual
+            enabled: "false"
           - name: external-dns
             path: argocd/applications/external-dns
             namespace: external-dns
