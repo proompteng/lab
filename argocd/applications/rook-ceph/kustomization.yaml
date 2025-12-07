@@ -4,8 +4,6 @@ namespace: rook-ceph
 
 resources:
   - object-users.yaml
-  - object-buckets.yaml
-  - object-user-secret-reflector-job.yaml
 
 helmCharts:
   - name: rook-ceph
