@@ -24,7 +24,7 @@ Common fields: `ingest_ts`, `event_ts`, `feed`, `channel`, `symbol`, `seq`, `pay
 Use Avro or JSON with Karapace; backward-compatible evolution.
 
 ## Flink Job Design
-- Runtime: Flink 1.20.x; Operator 1.13.x; Kafka connector 4.x (FLIP-27/143).
+- Runtime: Flink 1.20.1 (Java 17); Operator 1.13.x; Kafka connector 3.3.0-1.20 (FLIP-27/143).
 - Source: `KafkaSource` with watermark `event_time - 2s` (tunable); idle timeout for idle partitions.
 - Processing:
   - Trades -> hopping 1s/1s to micro-bars (O/H/L/C/V, vwap).
@@ -43,7 +43,7 @@ Use Avro or JSON with Karapace; backward-compatible evolution.
 - Spread/imbalance: bid/ask spread, (bid_sz - ask_sz)/(bid_sz + ask_sz).
 
 ## State & Checkpointing
-- Checkpoints every 10 s to MinIO/S3 (s3a://flink-checkpoints/...); savepoints enabled.
+- Checkpoints every 10 s to MinIO/S3 (`s3a://flink-checkpoints/torghut/technical-analysis/checkpoints`); savepoints enabled under `/savepoints`.
 - Transaction timeout aligned with checkpoint timeout + failover budget.
 - Restart: fixed-delay 5x with 5 s backoff; backpressure monitoring on.
 
@@ -55,11 +55,17 @@ S3A properties (example):
 - `fs.s3a.fast.upload`: true
 
 ## Kubernetes / Argo
-- Kustomization under `argocd/applications/torghut/flink-ta/`.
-- FlinkDeployment (application mode) image includes job jar.
-- Secrets: Strimzi KafkaUser (SCRAM/TLS) in torghut namespace or reflected; optional Schema Registry creds.
-- Resources (initial): JM 1 CPU/2Gi; TM 1–2 CPU/2–4Gi; parallelism 1–2.
+- Kustomization under `argocd/applications/torghut/ta/` (FlinkDeployment `flinkdeployment.yaml`).
+- FlinkDeployment (application mode) image includes the fat jar at `/opt/flink/usrlib/app.jar`.
+- Secrets: Strimzi KafkaUser (SCRAM/TLS) in torghut namespace or reflected; MinIO creds via `observability-minio-creds` (reflected to torghut).
+- Resources (initial): JM 1 CPU/2Gi; TM 1–2 CPU/3–4Gi; parallelism 1.
 - ServiceAccount with least privilege; network policy to Kafka, MinIO, registry only.
+
+## Build & Deploy
+- Jar: `cd services/dorvud && ./gradlew :technical-analysis-flink:uberJar`
+- Image (amd64): `docker buildx build --platform linux/amd64 -f services/dorvud/technical-analysis-flink/Dockerfile -t registry.ide-newton.ts.net/lab/torghut-ta:<tag> services/dorvud --push`
+- Apply: `kubectl -n torghut apply -k argocd/applications/torghut/ta/` or run `bun packages/scripts/src/torghut/deploy-service.ts` to build, push, and wait for `flinkdeployment/torghut-ta` Ready.
+- Checkpoint/Savepoint bucket: `s3a://flink-checkpoints/torghut/technical-analysis/`; provide `TA_S3_ACCESS_KEY/TA_S3_SECRET_KEY` from the MinIO secret.
 
 ### Savepoint / upgrade / rollback
 - Upgrade flow: trigger savepoint (or last-state), update image tag, redeploy; verify running and checkpointing.

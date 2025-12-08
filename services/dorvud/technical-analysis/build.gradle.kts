@@ -1,5 +1,7 @@
 import org.gradle.api.file.DuplicatesStrategy
+import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.jvm.tasks.Jar
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
   application
@@ -114,4 +116,12 @@ tasks {
         .map { zipTree(it) }
     })
   }
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+  compilerOptions.jvmTarget.set(JvmTarget.JVM_17)
+}
+
+tasks.withType<JavaCompile> {
+  options.release.set(17)
 }

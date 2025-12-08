@@ -1,0 +1,89 @@
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: torghut-ta
+  namespace: torghut
+  labels:
+    app: torghut-ta
+spec:
+  image: registry.ide-newton.ts.net/lab/torghut-ta:flink-dev
+  imagePullPolicy: IfNotPresent
+  flinkVersion: v1_20
+  serviceAccount: torghut-ws
+  flinkConfiguration:
+    state.checkpoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/checkpoints
+    state.savepoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/savepoints
+    taskmanager.numberOfTaskSlots: "2"
+    restart-strategy: fixed-delay
+    restart-strategy.fixed-delay.attempts: "5"
+    restart-strategy.fixed-delay.delay: 5 s
+    execution.checkpointing.unaligned: "true"
+    metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+    metrics.reporter.prom.port: "9249"
+    fs.s3a.endpoint: http://observability-minio.minio.svc.cluster.local:9000
+    fs.s3a.connection.ssl.enabled: "false"
+    fs.s3a.path.style.access: "true"
+  podTemplate:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app: torghut-ta
+    spec:
+      serviceAccountName: torghut-ws
+      containers:
+        - name: flink-main-container
+          envFrom:
+            - configMapRef:
+                name: torghut-ta-config
+          env:
+            - name: TA_KAFKA_USERNAME
+              value: torghut-ws
+            - name: TA_KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-ws
+                  key: password
+            - name: TA_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: observability-minio-creds
+                  key: accesskey
+            - name: TA_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: observability-minio-creds
+                  key: secretkey
+            - name: TORGHUT_TA_VERSION
+              value: v0.0.0
+            - name: TORGHUT_TA_COMMIT
+              value: unknown
+          ports:
+            - containerPort: 8081
+              name: rest
+            - containerPort: 9249
+              name: metrics
+  jobManager:
+    resource:
+      cpu: 500m
+      memory: 2048m
+    podTemplate:
+      metadata:
+        labels:
+          app: torghut-ta
+    replicas: 1
+  taskManager:
+    resource:
+      cpu: "1"
+      memory: 3072m
+    podTemplate:
+      metadata:
+        labels:
+          app: torghut-ta
+    replicas: 1
+  job:
+    entryClass: ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJob
+    jarURI: local:///opt/flink/usrlib/app.jar
+    parallelism: 1
+    upgradeMode: savepoint
+    state: running

@@ -1,3 +1,6 @@
+import org.gradle.api.tasks.compile.JavaCompile
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
   kotlin("plugin.serialization")
 }
@@ -21,4 +24,12 @@ dependencies {
   implementation("ch.qos.logback:logback-classic:$logbackVersion")
 
   testImplementation("io.mockk:mockk:1.13.12")
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+  compilerOptions.jvmTarget.set(JvmTarget.JVM_17)
+}
+
+tasks.withType<JavaCompile> {
+  options.release.set(17)
 }
