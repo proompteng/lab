@@ -6,8 +6,8 @@ metadata:
 data:
   TA_HTTP_HOST: "0.0.0.0"
   TA_HTTP_PORT: "8080"
-  TA_KAFKA_BOOTSTRAP: "kafka-kafka-bootstrap.kafka:9093"
-  TA_KAFKA_SECURITY: "SASL_SSL"
+  TA_KAFKA_BOOTSTRAP: "kafka-kafka-bootstrap.kafka:9092"
+  TA_KAFKA_SECURITY: "SASL_PLAINTEXT"
   TA_KAFKA_SASL_MECH: "SCRAM-SHA-512"
   TA_TRADES_TOPIC: "torghut.nvda.trades.v1"
   TA_QUOTES_TOPIC: "torghut.nvda.quotes.v1"
