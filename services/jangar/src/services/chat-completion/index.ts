@@ -5,7 +5,6 @@ export {
   buildPrompt,
   buildUsagePayload,
   createSafeEnqueuer,
-  deriveChatId,
   estimateTokens,
   formatToolDelta,
   stripAnsi,

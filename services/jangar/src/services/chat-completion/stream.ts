@@ -1,5 +1,5 @@
 import { parseCodexError, persistFailedTurn, persistToolDelta } from './persistence'
-import { resolveAppServer, serviceTier, systemFingerprint, threadMap } from './state'
+import { resolveAppServer, serviceTier, systemFingerprint } from './state'
 import type { ReasoningPart, StreamOptions, TokenUsage, ToolDelta } from './types'
 import { buildUsagePayload, createSafeEnqueuer, estimateTokens, formatToolDelta, stripAnsi } from './utils'
 
@@ -10,7 +10,7 @@ type StreamBuildResult =
 const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBuildResult> => {
   const appServer = opts.appServer ?? resolveAppServer()
   const targetModel = opts.model
-  const existingThreadId = opts.threadId ?? threadMap.get(opts.chatId)
+  const existingThreadId = opts.threadId
   const finalizeSafely = async (payload: {
     outcome: 'succeeded' | 'failed' | 'aborted' | 'timeout' | 'error'
     reason?: string
@@ -32,7 +32,6 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
     } catch (error) {
       const codexError = parseCodexError(error)
       if (codexError?.codexErrorInfo === 'contextWindowExceeded') {
-        threadMap.delete(opts.chatId)
         const message = codexError.message ?? 'context window exceeded'
         await persistFailedTurn(
           opts.db,
@@ -69,8 +68,6 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
         codexTurnId,
       })
     }
-    if (!existingThreadId) threadMap.set(opts.chatId, threadId)
-
     opts.onCodexTurn?.({ threadId, codexTurnId: codexTurnId ?? undefined })
 
     if (codexTurnId) {

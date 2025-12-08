@@ -5,15 +5,13 @@ import {
   clearActiveTurn,
   defaultUserId,
   getActiveTurn,
-  lastChatIdForUser,
   registerActiveTurn,
   serviceTier,
-  threadMap,
   updateActiveTurnCodexIds,
 } from './state'
 import { streamSse } from './stream'
 import type { ChatCompletionRequest, Message, PersistMeta, ReasoningPart, StreamOptions } from './types'
-import { buildPrompt, deriveChatId, truncateForConvex } from './utils'
+import { buildPrompt, truncateForConvex } from './utils'
 
 const buildSseErrorResponse = (payload: unknown, status = 400) => {
   const encoder = new TextEncoder()
@@ -128,31 +126,7 @@ export const createChatCompletionHandler = (pathLabel: string) => {
 
     const model = resolveModel(requestedModel)
     const userId = body.user ?? defaultUserId
-    const incomingChatId = deriveChatId(body ?? {})
-    if (incomingChatId !== undefined && typeof incomingChatId !== 'string') {
-      const payload = {
-        error: {
-          message: '`chat_id` must be a string when provided',
-          type: 'invalid_request_error',
-          code: 'chat_id_invalid',
-        },
-      }
-      return buildSseErrorResponse(payload, 400)
-    }
-
-    if (incomingChatId && incomingChatId.length > 256) {
-      const payload = {
-        error: {
-          message: '`chat_id` exceeds 256 characters',
-          type: 'invalid_request_error',
-          code: 'chat_id_invalid',
-        },
-      }
-      return buildSseErrorResponse(payload, 400)
-    }
-
-    const namespacedChatId = incomingChatId ? `${userId}:${incomingChatId}` : undefined
-    const chatId = namespacedChatId ?? lastChatIdForUser.get(userId) ?? crypto.randomUUID()
+    const chatId = crypto.randomUUID()
     const conversationId = chatId
     const turnId = crypto.randomUUID()
     const startedAt = Date.now()
@@ -186,17 +160,14 @@ export const createChatCompletionHandler = (pathLabel: string) => {
       streamRequired: true,
       chatId,
       userId,
-      incomingChatId,
     })
-
-    lastChatIdForUser.set(userId, chatId)
 
     let db: Awaited<ReturnType<typeof createDbClient>> | null = null
     try {
       db = await createDbClient()
       await db.upsertConversation({
         conversationId,
-        threadId: threadMap.get(chatId) ?? '',
+        threadId: '',
         modelProvider: 'codex',
         clientName: 'jangar',
         at: startedAt,
@@ -252,13 +223,11 @@ export const createChatCompletionHandler = (pathLabel: string) => {
     const includeUsage = body.stream_options?.include_usage === true
 
     try {
-      const existingThreadId = threadMap.get(chatId)
       const sseOptions: StreamOptions = {
         model,
         signal: request.signal,
         chatId,
         includeUsage,
-        ...(existingThreadId ? { threadId: existingThreadId } : {}),
         db,
         conversationId,
         turnId,
@@ -293,7 +262,7 @@ export const createChatCompletionHandler = (pathLabel: string) => {
 
           await db.upsertConversation({
             conversationId,
-            threadId: meta.threadId ?? threadMap.get(chatId) ?? '',
+            threadId: meta.threadId ?? '',
             modelProvider: 'codex',
             clientName: 'jangar',
             at: Date.now(),

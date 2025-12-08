@@ -7,7 +7,6 @@ export type ChatCompletionRequest = {
   model?: string
   stream?: boolean
   user?: string
-  chat_id?: string
   stream_options?: {
     include_usage?: boolean
   }

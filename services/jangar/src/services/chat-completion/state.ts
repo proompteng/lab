@@ -15,11 +15,6 @@ export const resolveAppServer = () => {
   return sharedAppServer
 }
 
-// Track Codex thread IDs per OpenWebUI chat so we can stream multiple turns without re-initializing.
-export const threadMap = new Map<string, string>()
-// Track last chatId per user for cases where chat_id is omitted on follow-ups.
-export const lastChatIdForUser = new Map<string, string>()
-
 // One chat/conversation must have at most one active turn at a time. This guard is cleared only when the
 // corresponding stream finishes (success, timeout, abort, or error) to avoid ghost turn events from Codex.
 export type ActiveTurn = {

@@ -66,8 +66,6 @@ export const buildPrompt = (messages?: { role: string; content: unknown }[]) =>
 
 export const estimateTokens = (text: string) => Math.max(1, Math.ceil(text.length / 4))
 
-export const deriveChatId = (body: { chat_id?: string }) => body.chat_id
-
 export const buildUsagePayload = (turnId: string, usage?: Record<string, unknown> | null) => {
   const payload: Record<string, unknown> = { turnId, capturedAt: Date.now() }
   if (!usage) return payload
