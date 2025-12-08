@@ -9,6 +9,9 @@ helmCharts:
     namespace: flink
     includeCRDs: true
     valuesInline:
+      jobServiceAccount:
+        # Avoid duplicate SA with our manually managed flink serviceaccount
+        create: false
       webhook:
         create: false
       metrics:
