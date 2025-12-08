@@ -1,0 +1,17 @@
+# syntax=docker/dockerfile:1
+FROM eclipse-temurin:21-jdk AS build
+WORKDIR /workspace
+
+COPY gradlew gradle.properties settings.gradle.kts build.gradle.kts ./
+COPY gradle ./gradle
+COPY platform ./platform
+COPY technical-analysis ./technical-analysis
+COPY websockets ./websockets
+
+RUN chmod +x ./gradlew
+RUN ./gradlew :technical-analysis:shadowJar --no-daemon
+
+FROM gcr.io/distroless/java21:nonroot
+WORKDIR /app
+COPY --from=build /workspace/technical-analysis/build/libs/technical-analysis-all.jar /app/technical-analysis.jar
+ENTRYPOINT ["/usr/bin/java", "-jar", "/app/technical-analysis.jar"]
