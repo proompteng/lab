@@ -14,6 +14,8 @@ spec:
     metadata:
       labels:
         app: torghut-ws
+      annotations:
+        kubectl.kubernetes.io/restartedAt: 2025-12-08T04:24:17.816Z
     spec:
       serviceAccountName: torghut-ws
       securityContext:
@@ -23,7 +25,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: torghut-ws
-          image: registry.ide-newton.ts.net/lab/torghut-ws:dev
+          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:7f689db90d58fdd3004dea75051971ef64ec97090a48a3f048e704639599870b
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -33,22 +35,23 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: torghut-alpaca
-                  key: key_id
+                  key: APCA_API_KEY_ID
             - name: ALPACA_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: torghut-alpaca
-                  key: secret_key
+                  key: APCA_API_SECRET_KEY
             - name: KAFKA_SASL_USER
-              valueFrom:
-                secretKeyRef:
-                  name: torghut-ws
-                  key: username
+              value: torghut-ws
             - name: KAFKA_SASL_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: torghut-ws
                   key: password
+            - name: TORGHUT_WS_VERSION
+              value: v0.335.1-15-gc16df5a8
+            - name: TORGHUT_WS_COMMIT
+              value: c16df5a831c2e0324ec4ee1be7bd17709597bae8
           ports:
             - containerPort: 8080
               name: http

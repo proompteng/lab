@@ -4,6 +4,5 @@ namespace: torghut
 resources:
   - deployment.yaml
   - service.yaml
-  - serviceaccount.yaml
   - pdb.yaml
   - configmap.yaml

@@ -5,5 +5,6 @@ resources:
   - postgres-cluster.yaml
   - knative-service.yaml
   - tailscale-service.yaml
+  - sealed-secrets.yaml
   - ws
   - ta

@@ -14,8 +14,10 @@ spec:
     metadata:
       labels:
         app: torghut-ta
+      annotations:
+        kubectl.kubernetes.io/restartedAt: 2025-12-08T04:24:17.818Z
     spec:
-      serviceAccountName: torghut-ta
+      serviceAccountName: torghut-ws
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -23,22 +25,23 @@ spec:
         fsGroup: 65532
       containers:
         - name: torghut-ta
-          image: registry.ide-newton.ts.net/lab/torghut-ta:dev
+          image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:d738c93d0967af2785146584ac63c60c7231d2dc34026aedd8a996afb725f6b8
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
                 name: torghut-ta-config
           env:
             - name: TA_KAFKA_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: torghut-ws
-                  key: username
+              value: torghut-ws
             - name: TA_KAFKA_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: torghut-ws
                   key: password
+            - name: TORGHUT_TA_VERSION
+              value: v0.335.1-15-gc16df5a8
+            - name: TORGHUT_TA_COMMIT
+              value: c16df5a831c2e0324ec4ee1be7bd17709597bae8
           ports:
             - containerPort: 8080
               name: http
