@@ -71,7 +71,16 @@ const bootstrapWorkspace = async () => {
 
   const bunExecutable = (await which('bun')) ?? 'bun'
   console.log('Installing workspace dependencies via Bun...')
-  await $`${bunExecutable} install --frozen-lockfile`
+  const installResult = await $`${bunExecutable} install --frozen-lockfile`.nothrow()
+
+  if (installResult.exitCode !== 0) {
+    console.warn('bun install --frozen-lockfile failed; retrying without frozen lockfile')
+    const retryResult = await $`${bunExecutable} install`.nothrow()
+
+    if (retryResult.exitCode !== 0) {
+      throw new Error('Bun install failed even after retry without --frozen-lockfile')
+    }
+  }
 }
 
 const waitForDocker = async () => {

@@ -105,6 +105,18 @@ describe('runCodexBootstrap', () => {
     expect(commands).toContain(`git -C ${workdir} reset --hard origin/main`)
   })
 
+  it('retries bun install without frozen lockfile when frozen install fails', async () => {
+    await mkdir(join(workdir, '.git'), { recursive: true })
+    exitCodeOverrides.set('bun install --frozen-lockfile', 1)
+
+    const exitCode = await runCodexBootstrap()
+
+    expect(exitCode).toBe(0)
+    const commands = execMock.mock.calls.map((call) => call[0]?.command)
+    expect(commands).toContain('bun install --frozen-lockfile')
+    expect(commands).toContain('bun install')
+  })
+
   it('clones the repository when the worktree is missing', async () => {
     const repoDir = join(workdir, 'repo')
     process.env.WORKTREE = repoDir
