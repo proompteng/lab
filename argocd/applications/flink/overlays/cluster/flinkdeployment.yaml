@@ -14,7 +14,6 @@ spec:
   serviceAccount: flink
   flinkConfiguration:
     high-availability: kubernetes
-    high-availability.cluster-id: flink-kafka-roundtrip
     high-availability.storageDir: s3://flink-checkpoints/flink-kafka-roundtrip/ha
     state.checkpoints.dir: s3://flink-checkpoints/flink-kafka-roundtrip/checkpoints
     state.savepoints.dir: s3://flink-checkpoints/flink-kafka-roundtrip/savepoints
@@ -26,6 +25,7 @@ spec:
     metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporter
     metrics.reporter.prom.port: "9249"
     rest.flamegraph.enabled: "true"
+    taskmanager.numberOfTaskSlots: "2"
   podTemplate:
     apiVersion: v1
     kind: Pod
@@ -106,7 +106,6 @@ spec:
     resource:
       memory: "2048m"
       cpu: 1
-    taskSlots: 2
   job:
     jarURI: local:///opt/flink/usrlib/app.jar
     entryClass: ai.proompteng.flink.KafkaRoundTripJob
