@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG BUN_VERSION=1.3.2
+ARG BUN_VERSION=1.3.4
 
 FROM node:24.11.1-bullseye-slim AS builder
 ARG BUN_VERSION

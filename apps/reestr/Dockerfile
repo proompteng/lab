@@ -1,5 +1,5 @@
 # Builder
-FROM oven/bun:1.3.3 AS builder
+FROM oven/bun:1.3.4 AS builder
 WORKDIR /app
 
 COPY bun.lock package.json tsconfig.base.json tsconfig.json turbo.json biome.json ./
@@ -15,7 +15,7 @@ WORKDIR /app/apps/reestr
 RUN bun run build
 
 # Runtime (bun)
-FROM oven/bun:1.3.3 AS runner
+FROM oven/bun:1.3.4 AS runner
 WORKDIR /app/apps/reestr
 ENV NODE_ENV=production
 ENV PORT=4173

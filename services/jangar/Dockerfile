@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 # Bun image for jangar worker + UI + Codex app-server
-ARG BUN_VERSION=1.3.3
+ARG BUN_VERSION=1.3.4
 ARG OPENVSCODE_VERSION=1.105.1
 ARG GH_VERSION=2.65.0
 ARG KUBECTL_VERSION=1.31.0
