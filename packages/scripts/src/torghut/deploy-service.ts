@@ -3,7 +3,7 @@
 import { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import YAML from 'yaml'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
@@ -13,6 +13,11 @@ import { buildImage } from './build-image'
 const manifestPath = resolve(repoRoot, 'argocd/applications/torghut/knative-service.yaml')
 const websocketDeploymentPath = resolve(repoRoot, 'argocd/applications/torghut/ws/deployment.yaml')
 const websocketKustomizePath = resolve(repoRoot, 'argocd/applications/torghut/ws')
+const taDeploymentPath = resolve(
+  repoRoot,
+  process.env.TORGHUT_TA_DEPLOYMENT_PATH ?? 'argocd/applications/torghut/ta/deployment.yaml',
+)
+const taKustomizePath = resolve(repoRoot, process.env.TORGHUT_TA_KUSTOMIZE_PATH ?? 'argocd/applications/torghut/ta')
 const databaseSecretName = 'torghut-db-app'
 const databaseNamespace = 'torghut'
 const databaseService = 'svc/torghut-db-rw'
@@ -259,6 +264,31 @@ const buildWebsocketImage = async () => {
   })
 }
 
+const buildTechnicalAnalysisImage = async () => {
+  const registry = process.env.TORGHUT_TA_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
+  const repository = process.env.TORGHUT_TA_IMAGE_REPOSITORY ?? 'lab/torghut-ta'
+  const tag = process.env.TORGHUT_TA_IMAGE_TAG ?? 'latest'
+  const context = resolve(repoRoot, process.env.TORGHUT_TA_IMAGE_CONTEXT ?? 'services/dorvud')
+  const dockerfile = resolve(
+    repoRoot,
+    process.env.TORGHUT_TA_IMAGE_DOCKERFILE ?? 'services/dorvud/technical-analysis/Dockerfile',
+  )
+  const platforms = process.env.TORGHUT_TA_IMAGE_PLATFORMS?.split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean) ?? ['linux/arm64']
+  const codexAuthPath = process.env.TORGHUT_TA_CODEX_AUTH_PATH
+
+  return buildAndPushDockerImage({
+    registry,
+    repository,
+    tag,
+    context,
+    dockerfile,
+    platforms,
+    codexAuthPath,
+  })
+}
+
 const updateWebsocketDeployment = (image: string, version: string, commit: string) => {
   const raw = readFileSync(websocketDeploymentPath, 'utf8')
   const doc = YAML.parse(raw)
@@ -298,6 +328,49 @@ const updateWebsocketDeployment = (image: string, version: string, commit: strin
   console.log(`Updated ${websocketDeploymentPath} with image ${image}`)
 }
 
+const updateTechnicalAnalysisDeployment = (image: string, version: string, commit: string) => {
+  if (!existsSync(taDeploymentPath)) {
+    fatal(`Technical analysis deployment manifest not found at ${taDeploymentPath}; set TORGHUT_TA_DEPLOYMENT_PATH.`)
+  }
+
+  const raw = readFileSync(taDeploymentPath, 'utf8')
+  const doc = YAML.parse(raw)
+
+  const containers:
+    | Array<{ name?: string; image?: string; env?: Array<{ name?: string; value?: string }> }>
+    | undefined = doc?.spec?.template?.spec?.containers
+
+  if (!containers || containers.length === 0) {
+    throw new Error('Unable to locate torghut technical-analysis container in manifest')
+  }
+
+  const container = containers.find((item) => item?.name === 'torghut-ta') ?? containers[0]
+  container.image = image
+  container.env ??= []
+
+  const ensureEnv = (name: string, value: string) => {
+    const existing = container.env?.find((entry) => entry?.name === name)
+    if (existing) {
+      existing.value = value
+    } else {
+      container.env?.push({ name, value })
+    }
+  }
+
+  ensureEnv('TORGHUT_TA_VERSION', version)
+  ensureEnv('TORGHUT_TA_COMMIT', commit)
+
+  doc.spec ??= {}
+  doc.spec.template ??= {}
+  doc.spec.template.metadata ??= {}
+  doc.spec.template.metadata.annotations ??= {}
+  doc.spec.template.metadata.annotations['kubectl.kubernetes.io/restartedAt'] = new Date().toISOString()
+
+  const updated = YAML.stringify(doc, { lineWidth: 120 })
+  writeFileSync(taDeploymentPath, updated)
+  console.log(`Updated ${taDeploymentPath} with image ${image}`)
+}
+
 const applyManifest = async () => {
   const waitTimeout = process.env.TORGHUT_KN_WAIT_TIMEOUT ?? '300'
   await run('kn', [
@@ -320,6 +393,16 @@ const applyWebsocketResources = async () => {
   await run('kubectl', ['-n', 'torghut', 'rollout', 'status', 'deployment/torghut-ws', `--timeout=${waitTimeout}`])
 }
 
+const applyTechnicalAnalysisResources = async () => {
+  if (!existsSync(taKustomizePath)) {
+    fatal(`Technical analysis kustomize directory not found at ${taKustomizePath}; set TORGHUT_TA_KUSTOMIZE_PATH.`)
+  }
+
+  const waitTimeout = '300s'
+  await run('kubectl', ['apply', '-k', taKustomizePath])
+  await run('kubectl', ['-n', 'torghut', 'rollout', 'status', 'deployment/torghut-ta', `--timeout=${waitTimeout}`])
+}
+
 const main = async () => {
   ensureTools()
 
@@ -329,14 +412,19 @@ const main = async () => {
   const websocketImage = await buildWebsocketImage()
   const websocketDigestRef = inspectImageDigest(websocketImage.image)
 
+  const taImage = await buildTechnicalAnalysisImage()
+  const taDigestRef = inspectImageDigest(taImage.image)
+
   updateManifest(digestRef, version, commit)
   updateWebsocketDeployment(websocketDigestRef, version, commit)
+  updateTechnicalAnalysisDeployment(taDigestRef, version, commit)
   await runMigrations()
   await applyManifest()
   await applyWebsocketResources()
+  await applyTechnicalAnalysisResources()
 
   console.log(
-    'torghut deployment updated (app + websocket forwarder); commit manifest changes for Argo CD reconciliation.',
+    'torghut deployment updated (app + websocket forwarder + technical analysis); commit manifest changes for Argo CD reconciliation.',
   )
 }
 
