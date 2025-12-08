@@ -9,7 +9,6 @@ on:
       - '!packages/temporal-bun-sdk/**/*.md'
       - '!packages/temporal-bun-sdk/docs/**'
       - 'packages/temporal-bun-sdk-example/**'
-      - 'bun.lock'
       - '.github/workflows/temporal-bun-sdk.yml'
   pull_request:
     paths:
@@ -17,7 +16,6 @@ on:
       - '!packages/temporal-bun-sdk/**/*.md'
       - '!packages/temporal-bun-sdk/docs/**'
       - 'packages/temporal-bun-sdk-example/**'
-      - 'bun.lock'
       - '.github/workflows/temporal-bun-sdk.yml'
   workflow_dispatch:
     inputs:

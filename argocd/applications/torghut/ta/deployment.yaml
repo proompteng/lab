@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: torghut-ws
+  name: torghut-ta
   namespace: torghut
   labels:
-    app: torghut-ws
+    app: torghut-ta
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: torghut-ws
+      app: torghut-ta
   template:
     metadata:
       labels:
-        app: torghut-ws
+        app: torghut-ta
       annotations:
-        kubectl.kubernetes.io/restartedAt: 2025-12-08T04:24:17.816Z
+        kubectl.kubernetes.io/restartedAt: 2025-12-08T04:24:17.818Z
     spec:
       serviceAccountName: torghut-ws
       securityContext:
@@ -24,33 +24,23 @@ spec:
         runAsGroup: 65532
         fsGroup: 65532
       containers:
-        - name: torghut-ws
-          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:7f689db90d58fdd3004dea75051971ef64ec97090a48a3f048e704639599870b
+        - name: torghut-ta
+          image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:d738c93d0967af2785146584ac63c60c7231d2dc34026aedd8a996afb725f6b8
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
-                name: torghut-ws-config
+                name: torghut-ta-config
           env:
-            - name: ALPACA_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: torghut-alpaca
-                  key: APCA_API_KEY_ID
-            - name: ALPACA_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: torghut-alpaca
-                  key: APCA_API_SECRET_KEY
-            - name: KAFKA_SASL_USER
+            - name: TA_KAFKA_USERNAME
               value: torghut-ws
-            - name: KAFKA_SASL_PASSWORD
+            - name: TA_KAFKA_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: torghut-ws
                   key: password
-            - name: TORGHUT_WS_VERSION
+            - name: TORGHUT_TA_VERSION
               value: v0.335.1-15-gc16df5a8
-            - name: TORGHUT_WS_COMMIT
+            - name: TORGHUT_TA_COMMIT
               value: c16df5a831c2e0324ec4ee1be7bd17709597bae8
           ports:
             - containerPort: 8080
@@ -59,7 +49,7 @@ spec:
               name: metrics
           readinessProbe:
             httpGet:
-              path: /readyz
+              path: /healthz
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5

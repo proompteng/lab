@@ -6,13 +6,13 @@ COPY gradlew gradle.properties settings.gradle.kts build.gradle.kts ./
 COPY gradle ./gradle
 COPY platform ./platform
 COPY flink-integration ./flink-integration
-COPY websockets ./websockets
 COPY technical-analysis ./technical-analysis
+COPY websockets ./websockets
 
 RUN chmod +x ./gradlew
-RUN ./gradlew :websockets:installDist --no-daemon
+RUN ./gradlew :technical-analysis:shadowJar --no-daemon
 
 FROM gcr.io/distroless/java21:nonroot
 WORKDIR /app
-COPY --from=build /workspace/websockets/build/install/websockets /app
-ENTRYPOINT ["/usr/bin/java", "-cp", "/app/lib/*", "ai.proompteng.dorvud.ws.ForwarderAppKt"]
+COPY --from=build /workspace/technical-analysis/build/libs/*-all.jar /app/technical-analysis.jar
+ENTRYPOINT ["/usr/bin/java", "-jar", "/app/technical-analysis.jar"]
