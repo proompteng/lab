@@ -3,6 +3,3 @@ kind: Kustomization
 namespace: flink
 resources:
   - ../../base
-  - kafka-config.yaml
-  - s3-secret.yaml
-  - flinkdeployment.yaml

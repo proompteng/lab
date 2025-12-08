@@ -34,33 +34,3 @@ data:
             annotations:
               summary: Graf has not processed any requests
               description: The Graf HTTP counter has not incremented in the last 10 minutes.
-      - name: flink.lag
-        rules:
-          - alert: FlinkKafkaLagHigh
-            expr: max_over_time(kafka_consumer_records_lag_max{topic="flink-input"}[5m]) > 1000
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: Flink consumer lag is high
-              description: Kafka consumer lag on topic flink-input is over 1k for 10m.
-      - name: flink.checkpoints
-        rules:
-          - alert: FlinkCheckpointStale
-            expr: time() - max(flink_checkpoint_last_completed_timestamp{job_name="flink-kafka-roundtrip"}) > 600
-            for: 5m
-            labels:
-              severity: critical
-            annotations:
-              summary: Flink checkpoints are stale
-              description: No completed checkpoint for flink-kafka-roundtrip in the last 10 minutes.
-      - name: flink.restarts
-        rules:
-          - alert: FlinkJobRestarts
-            expr: increase(flink_jobmanager_job_numRestarts{job_name="flink-kafka-roundtrip"}[10m]) > 3
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: Flink job restarting frequently
-              description: flink-kafka-roundtrip restarted more than three times in 10 minutes.
