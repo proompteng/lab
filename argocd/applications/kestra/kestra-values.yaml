@@ -1,0 +1,93 @@
+common:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 2Gi
+  extraEnv:
+    - name: KESTRA_DB_USER
+      valueFrom:
+        secretKeyRef:
+          name: kestra-db-app
+          key: user
+    - name: KESTRA_DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: kestra-db-app
+          key: password
+    - name: KESTRA_DB_HOST
+      valueFrom:
+        secretKeyRef:
+          name: kestra-db-app
+          key: host
+    - name: KESTRA_DB_PORT
+      valueFrom:
+        secretKeyRef:
+          name: kestra-db-app
+          key: port
+    - name: KESTRA_DB_NAME
+      value: kestra
+    - name: KESTRA_MINIO_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: kestra-minio-creds
+          key: accesskey
+    - name: KESTRA_MINIO_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: kestra-minio-creds
+          key: secretkey
+    - name: KESTRA_MINIO_ENDPOINT
+      value: kestra-minio.minio.svc.cluster.local:9000
+    - name: KESTRA_MINIO_BUCKET
+      value: kestra
+
+configurations:
+  application:
+    datasources:
+      postgres:
+        url: jdbc:postgresql://${KESTRA_DB_HOST}:${KESTRA_DB_PORT}/${KESTRA_DB_NAME}
+        driverClassName: org.postgresql.Driver
+        username: ${KESTRA_DB_USER}
+        password: ${KESTRA_DB_PASSWORD}
+    kestra:
+      server:
+        basicAuth:
+          enabled: false
+      repository:
+        type: postgres
+      queue:
+        type: postgres
+      storage:
+        type: s3
+        s3:
+          bucket: ${KESTRA_MINIO_BUCKET}
+          region: us-east-1
+          endpoint: http://${KESTRA_MINIO_ENDPOINT}
+          forcePathStyle: true
+          accessKey: ${KESTRA_MINIO_ACCESS_KEY}
+          secretKey: ${KESTRA_MINIO_SECRET_KEY}
+      tasks:
+        tmpDir:
+          path: /tmp/kestra-wd/tmp
+      url: http://kestra.kestra.svc.cluster.local:8080/
+
+deployments:
+  standalone:
+    enabled: true
+  webserver:
+    enabled: false
+  executor:
+    enabled: false
+  indexer:
+    enabled: false
+  scheduler:
+    enabled: false
+  worker:
+    enabled: false
+
+dind:
+  enabled: true
+  mode: rootless

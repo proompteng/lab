@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kestra-tailscale
+  namespace: kestra
+  annotations:
+    tailscale.com/expose: "true"
+    tailscale.com/hostname: kestra
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app.kubernetes.io/name: kestra
+    app.kubernetes.io/instance: kestra
+    app.kubernetes.io/component: "standalone"
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
