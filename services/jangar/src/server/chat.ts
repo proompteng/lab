@@ -1,5 +1,7 @@
 import * as S from '@effect/schema/Schema'
 import type { CodexAppServerClient } from '@proompteng/codex'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Effect, pipe } from 'effect'
 
 import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
@@ -89,13 +91,16 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
   const created = Math.floor(Date.now() / 1000)
   const id = `chatcmpl-${crypto.randomUUID()}`
 
+  const defaultRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+  const codexCwd = process.env.CODEX_CWD ?? (process.env.NODE_ENV === 'production' ? '/workspace/lab' : defaultRepoRoot)
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let finished = false
       try {
         const { stream: codexStream } = await client.runTurnStream(prompt, {
           model,
-          cwd: null,
+          cwd: codexCwd,
         })
 
         for await (const delta of codexStream) {

@@ -156,14 +156,13 @@ ENV WORKER_PORT=8070
 ENV VSCODE_PORT=8081
 ENV VSCODE_DATA_DIR=/workspace/.ovscode
 ENV VSCODE_DEFAULT_FOLDER=/workspace/lab
-ENV CODEX_CWD=/workspace/lab
 
 # Launch openvscode-server alongside the app
 RUN cat <<'ENTRY' > /usr/local/bin/entrypoint.sh \
   && chmod +x /usr/local/bin/entrypoint.sh
 #!/bin/bash
 set -euo pipefail
-mkdir -p "$VSCODE_DATA_DIR" "$VSCODE_DEFAULT_FOLDER" "$CODEX_CWD"
+mkdir -p "$VSCODE_DATA_DIR" "$VSCODE_DEFAULT_FOLDER"
 # Start OpenVSCode in background; exit container if it dies
 openvscode-server \
   --host 0.0.0.0 \
@@ -178,8 +177,6 @@ trap "kill $vscode_pid" EXIT
 exec "$@"
 ENTRY
 
-WORKDIR /workspace/lab
-
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 # Start the compiled Nitro server produced by `bun --bun vite build`
-CMD ["bun", "/app/services/jangar/.output/server/index.mjs"]
+CMD ["bun", "run", ".output/server/index.mjs"]
