@@ -9,10 +9,10 @@ configMapGenerator:
     options:
       disableNameSuffixHash: true
 resources:
-  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.1.8/manifests/ha/install.yaml
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.2.1/manifests/ha/install.yaml
   - base/namespace.yaml
   - base/ingressroute.yaml
-  - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/v0.16.0/manifests/install.yaml
+  - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/v1.0.1/config/install.yaml
   - base/secrets.yaml
   - base/argo-workflows-sso-sealedsecret.yaml
   - base/image-updater-git-ssh.yaml
@@ -31,6 +31,7 @@ patches:
       kind: Deployment
       name: argocd-repo-server
   - path: overlays/argocd-image-updater-config.yaml
+  - path: overlays/argocd-image-updater-namespace-delete.yaml
   - path: overlays/argocd-server-deployment.yaml
     target:
       kind: Deployment
