@@ -108,6 +108,9 @@ COPY services/jangar/.codex /root/.codex
 RUN --mount=type=cache,target=/root/.cache/bun bun install --frozen-lockfile
 
 # Copy source after deps to maximize layer cache hits
+COPY services/jangar/vite.config.ts ./vite.config.ts
+COPY services/jangar/vitest.config.ts ./vitest.config.ts
+COPY services/jangar/public ./public
 COPY services/jangar/src ./src
 
 # Build TanStack Start UI
