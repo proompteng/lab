@@ -10,7 +10,6 @@ resources:
   - openwebui-redis.yaml
   - pvc.yaml
   - vscode-tailscale-service.yaml
-  - worker-deployment.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
@@ -27,5 +26,5 @@ helmCharts:
 
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: a0a932a5
-    digest: sha256:0ea9366727329e0ee9f3924db65adbd5df7c8414a8be829ee43dfa77d0d566e7
+    newTag: 526c785d
+    digest: sha256:ab296b72a4015776c64e209851b1feeb8e1eaaef64a38d242f7cfd26cc8d215b

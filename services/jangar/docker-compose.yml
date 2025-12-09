@@ -16,7 +16,7 @@ services:
     restart: unless-stopped
 
   openwebui:
-    image: ghcr.io/open-webui/open-webui:v0.6.40
+    image: ghcr.io/open-webui/open-webui:v0.6.41
     container_name: jangar-openwebui
     ports:
       - "${OPENWEBUI_PORT:-8080}:8080"

@@ -48,44 +48,6 @@ data:
       forward_to = [loki.write.default.receiver]
     }
 
-    // Jangar worker
-    discovery.kubernetes "jangar_worker" {
-      role = "pod"
-
-      namespaces {
-        names = ["jangar"]
-      }
-
-      selectors {
-        role  = "pod"
-        label = "app=jangar-worker"
-      }
-    }
-
-    loki.source.kubernetes "jangar_worker" {
-      targets    = discovery.kubernetes.jangar_worker.targets
-      forward_to = [loki.process.jangar_worker.receiver]
-    }
-
-    loki.process "jangar_worker" {
-      stage.labels {
-        values = {
-          namespace = "{{ .Labels.namespace }}",
-          pod       = "{{ .Labels.pod }}",
-          container = "{{ .Labels.container }}",
-        }
-      }
-
-      stage.static_labels {
-        values = {
-          app = "jangar-worker",
-          job = "jangar-worker",
-        }
-      }
-
-      forward_to = [loki.write.default.receiver]
-    }
-
     // Jangar Open WebUI Helm release
     discovery.kubernetes "jangar_openwebui" {
       role = "pod"

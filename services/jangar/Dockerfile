@@ -108,6 +108,9 @@ COPY services/jangar/.codex /root/.codex
 RUN --mount=type=cache,target=/root/.cache/bun bun install --frozen-lockfile
 
 # Copy source after deps to maximize layer cache hits
+COPY services/jangar/vite.config.ts ./vite.config.ts
+COPY services/jangar/vitest.config.ts ./vitest.config.ts
+COPY services/jangar/public ./public
 COPY services/jangar/src ./src
 
 # Build TanStack Start UI
@@ -148,7 +151,7 @@ RUN git config --global user.name "tuslagch" \
   && git config --global push.autoSetupRemote true
 
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=8080
 ENV WORKER_PORT=8070
 ENV VSCODE_PORT=8081
 ENV VSCODE_DATA_DIR=/workspace/.ovscode
@@ -175,4 +178,5 @@ exec "$@"
 ENTRY
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
-CMD ["bun", "run", "src/index.ts"]
+# Start the compiled Nitro server produced by `bun --bun vite build`
+CMD ["bun", "run", ".output/server/index.mjs"]
