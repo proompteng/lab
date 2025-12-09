@@ -187,9 +187,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
           void (async () => {
             clearTimeout(timeoutId)
             clearInterval(heartbeatId)
-            const reason = 'client aborted'
-            send({ error: { message: reason, type: 'aborted' } })
-            sendDone()
+            // The client hung up; don't try to write more bytes (avoids truncated chunk errors downstream).
             closeIfOpen()
             await persistFailedTurn(
               opts.db,
@@ -201,11 +199,11 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
                 model: targetModel ?? null,
                 startedAt: opts.startedAt,
               },
-              reason,
+              'client aborted',
               'stream/aborted',
             )
             await interruptTurn('aborted')
-            await finalize('aborted', reason)
+            await finalize('aborted', 'client aborted')
             try {
               stream.return?.(undefined)
             } catch (error) {
@@ -528,6 +526,31 @@ export const streamSse = async (prompt: string, opts: StreamOptions): Promise<Re
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'stream failed unexpectedly'
+
+    try {
+      await persistFailedTurn(
+        opts.db,
+        {
+          turnId: opts.turnId,
+          conversationId: opts.conversationId,
+          chatId: opts.chatId,
+          userId: opts.userId,
+          model: opts.model ?? null,
+          startedAt: opts.startedAt,
+        },
+        message,
+        'stream/error',
+      )
+    } catch (persistError) {
+      console.warn('[jangar] failed to persist stream startup error', persistError)
+    }
+
+    try {
+      await opts.onFinalize?.({ outcome: 'error', reason: message })
+    } catch (finalizeError) {
+      console.warn('[jangar] onFinalize failed after stream startup error', finalizeError)
+    }
+
     return buildErrorSseResponse({ error: { message, type: 'server_error', code: 'stream_unavailable' } }, 500)
   }
 }
