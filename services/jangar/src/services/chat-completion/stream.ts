@@ -1,5 +1,5 @@
 import { parseCodexError, persistFailedTurn, persistToolDelta } from './persistence'
-import { resolveAppServer, serviceTier, systemFingerprint } from './state'
+import { clearActiveTurn, resolveAppServer, serviceTier, systemFingerprint } from './state'
 import type { ReasoningPart, StreamOptions, TokenUsage, ToolDelta } from './types'
 import { buildUsagePayload, createSafeEnqueuer, estimateTokens, formatToolDelta, stripAnsi } from './utils'
 
@@ -550,6 +550,9 @@ export const streamSse = async (prompt: string, opts: StreamOptions): Promise<Re
     } catch (finalizeError) {
       console.warn('[jangar] onFinalize failed after stream startup error', finalizeError)
     }
+
+    // Ensure active-turn guard is cleared even if onFinalize is absent or throws.
+    clearActiveTurn(opts.chatId, opts.turnId)
 
     return buildErrorSseResponse({ error: { message, type: 'server_error', code: 'stream_unavailable' } }, 500)
   }
