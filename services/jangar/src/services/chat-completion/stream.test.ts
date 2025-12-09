@@ -131,6 +131,38 @@ describe('streamSse lifecycle', () => {
     expect(mock.interruptCalls).toHaveLength(0)
   })
 
+  it('returns an SSE error response when the app server fails before streaming', async () => {
+    const mock = {
+      runTurnStream: async () => {
+        throw new Error('failed to start stream')
+      },
+    }
+
+    const res = await streamSse('prompt', {
+      model: 'gpt-5.1-codex-max',
+      signal: new AbortController().signal,
+      chatId: 'chat-error',
+      db: {
+        appendEvent: async () => {},
+        appendUsage: async () => {},
+        appendReasoning: async () => {},
+        upsertTurn: async () => {},
+        upsertConversation: async () => {},
+        appendMessage: async () => {},
+      } as never,
+      conversationId: 'chat-error',
+      turnId: 'turn-error',
+      userId: 'user',
+      startedAt: Date.now(),
+      appServer: mock as never,
+    })
+
+    const text = await readAll(res)
+    expect(res.status).toBe(500)
+    expect(text).toContain('failed to start stream')
+    expect(text).toContain('[DONE]')
+  })
+
   it('swallows onFinalize errors when context window is exceeded before streaming', async () => {
     const error = { message: 'ctx exceeded', codexErrorInfo: 'contextWindowExceeded' }
     const mock = {

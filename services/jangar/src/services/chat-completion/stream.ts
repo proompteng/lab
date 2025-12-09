@@ -7,6 +7,27 @@ type StreamBuildResult =
   | { body: ReadableStream<Uint8Array>; errorPayload?: undefined }
   | { body: null; errorPayload: { error: { message: string; type: string; code: string } } }
 
+const buildErrorSseResponse = (payload: unknown, status: number) => {
+  const encoder = new TextEncoder()
+  const errorStream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+      controller.close()
+    },
+  })
+
+  return new Response(errorStream, {
+    status,
+    headers: {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    },
+  })
+}
+
 const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBuildResult> => {
   const appServer = opts.appServer ?? resolveAppServer()
   const targetModel = opts.model
@@ -484,18 +505,20 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
 }
 
 export const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response> => {
-  const result = await createStreamBody(prompt, opts)
-  if (!result.body && result.errorPayload) {
-    const encoder = new TextEncoder()
-    const errorStream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(result.errorPayload)}\n\n`))
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
-        controller.close()
-      },
-    })
-    return new Response(errorStream, {
-      status: 200,
+  try {
+    const result = await createStreamBody(prompt, opts)
+    if (!result.body && result.errorPayload) {
+      return buildErrorSseResponse(result.errorPayload, 200)
+    }
+
+    if (!result.body) {
+      return buildErrorSseResponse(
+        { error: { message: 'stream body unavailable', type: 'server_error', code: 'stream_unavailable' } },
+        500,
+      )
+    }
+
+    return new Response(result.body, {
       headers: {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
@@ -503,18 +526,8 @@ export const streamSse = async (prompt: string, opts: StreamOptions): Promise<Re
         'x-accel-buffering': 'no',
       },
     })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'stream failed unexpectedly'
+    return buildErrorSseResponse({ error: { message, type: 'server_error', code: 'stream_unavailable' } }, 500)
   }
-
-  if (!result.body) {
-    return new Response('stream body unavailable', { status: 500 })
-  }
-
-  return new Response(result.body, {
-    headers: {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no',
-    },
-  })
 }
