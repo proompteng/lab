@@ -60,11 +60,11 @@ volumeMounts:
 
 resources:
   requests:
-    cpu: "2"
-    memory: 4Gi
+    cpu: "4"
+    memory: 8Gi
   limits:
-    cpu: "2"
-    memory: 4Gi
+    cpu: "4"
+    memory: 8Gi
 
 # Increase OpenWebUI verbosity for debugging streaming issues
 logging:
