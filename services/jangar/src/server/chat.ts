@@ -90,6 +90,9 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
   const encoder = new TextEncoder()
   const created = Math.floor(Date.now() / 1000)
   const id = `chatcmpl-${crypto.randomUUID()}`
+  const sendChunk = (controller: ReadableStreamDefaultController<Uint8Array>, chunk: unknown) => {
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`))
+  }
 
   const defaultRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
   const codexCwd = process.env.CODEX_CWD ?? (process.env.NODE_ENV === 'production' ? '/workspace/lab' : defaultRepoRoot)
@@ -98,6 +101,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
     async start(controller) {
       let finished = false
       let hadError = false
+      let reasoningSnapshot = ''
       try {
         const { stream: codexStream } = await client.runTurnStream(prompt, {
           model,
@@ -109,6 +113,40 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
             hadError = true
             controller.error(new DOMException('Aborted', 'AbortError'))
             return
+          }
+
+          // Codex may resend the cumulative reasoning trace; trim the already-sent
+          // prefix so OpenAI/OpenWebUI clients receive a single, ordered stream
+          // of reasoning_content without duplicates.
+          if (delta.type === 'reasoning') {
+            const reasoningDelta = typeof delta.delta === 'string' ? delta.delta : ''
+            if (!reasoningDelta) {
+              continue
+            }
+
+            const isDuplicate = reasoningDelta === reasoningSnapshot
+            const incrementalDelta = reasoningDelta.startsWith(reasoningSnapshot)
+              ? reasoningDelta.slice(reasoningSnapshot.length)
+              : reasoningDelta
+
+            if (!isDuplicate && incrementalDelta.length > 0) {
+              const chunk = {
+                id,
+                object: 'chat.completion.chunk',
+                created,
+                model,
+                choices: [
+                  {
+                    delta: { reasoning_content: incrementalDelta },
+                    index: 0,
+                    finish_reason: null,
+                  },
+                ],
+              }
+              sendChunk(controller, chunk)
+            }
+
+            reasoningSnapshot = reasoningDelta
           }
 
           if (delta.type === 'message') {
@@ -125,7 +163,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
                 },
               ],
             }
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`))
+            sendChunk(controller, chunk)
           }
 
           if (delta.type === 'usage') {
@@ -143,8 +181,21 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
               ],
               usage: delta.usage,
             }
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(usageChunk)}\n\n`))
+            sendChunk(controller, usageChunk)
             finished = true
+          }
+
+          if (delta.type === 'error') {
+            const payload = {
+              error: {
+                message: delta.error?.message ?? 'Codex stream error',
+                type: 'internal',
+                code: delta.error?.code ?? 'codex_error',
+              },
+            }
+            hadError = true
+            sendChunk(controller, payload)
+            break
           }
         }
       } catch (error) {
@@ -156,7 +207,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
           },
         }
         hadError = true
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+        sendChunk(controller, payload)
       } finally {
         if (!finished && !hadError) {
           const finalChunk = {
@@ -172,7 +223,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
               },
             ],
           }
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(finalChunk)}\n\n`))
+          sendChunk(controller, finalChunk)
         }
         controller.enqueue(encoder.encode('data: [DONE]\n\n'))
         controller.close()
