@@ -169,8 +169,12 @@ describe('streamSse lifecycle', () => {
     expect(res.status).toBe(500)
     expect(text).toContain('failed to start stream')
     expect(text).toContain('[DONE]')
-    expect(finalized?.outcome).toBe('error')
-    expect(persistedError).toContain('failed to start stream')
+
+    expect(finalized).not.toBeNull()
+    expect((finalized as FinalizeInfo).outcome).toBe('error')
+
+    expect(persistedError).not.toBeNull()
+    expect(persistedError as string).toContain('failed to start stream')
   })
 
   it('swallows onFinalize errors when context window is exceeded before streaming', async () => {
