@@ -97,6 +97,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let finished = false
+      let hadError = false
       try {
         const { stream: codexStream } = await client.runTurnStream(prompt, {
           model,
@@ -105,6 +106,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
 
         for await (const delta of codexStream) {
           if (signal?.aborted) {
+            hadError = true
             controller.error(new DOMException('Aborted', 'AbortError'))
             return
           }
@@ -153,9 +155,10 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
             code: 'codex_error',
           },
         }
+        hadError = true
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
       } finally {
-        if (!finished) {
+        if (!finished && !hadError) {
           const finalChunk = {
             id,
             object: 'chat.completion.chunk',
