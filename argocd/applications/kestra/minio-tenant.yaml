@@ -1,0 +1,44 @@
+apiVersion: minio.min.io/v2
+kind: Tenant
+metadata:
+  name: kestra-minio
+  namespace: minio
+spec:
+  image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+  mountPath: /export
+  requestAutoCert: false
+  exposeServices:
+    minio: true
+    console: false
+  configuration:
+    name: kestra-minio-creds
+  pools:
+    - name: pool-0
+      servers: 1
+      volumesPerServer: 2
+      containerSecurityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      volumeClaimTemplate:
+        metadata:
+          name: data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 20Gi
+          storageClassName: longhorn
