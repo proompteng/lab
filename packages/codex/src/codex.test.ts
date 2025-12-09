@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
 import type { CodexExecArgs } from './codex-exec'
-import { Codex } from './codex'
 import { Thread } from './thread'
 
 class FakeExec {
