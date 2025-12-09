@@ -51,6 +51,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
     const buildArgs: Record<string, string> = {
       JANGAR_VERSION: version,
       JANGAR_COMMIT: commit,
+      VITE_BASE_URL: '/openai', // keep OpenWebUI proxy paths stable
     }
     if (process.env.BUILDX_VERSION) {
       buildArgs.BUILDX_VERSION = process.env.BUILDX_VERSION
