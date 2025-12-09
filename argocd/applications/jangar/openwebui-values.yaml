@@ -15,7 +15,7 @@ websocket:
     enabled: false
 
 image:
-  tag: v0.6.40
+  tag: v0.6.41
 
 openaiApiKey: ""
 
