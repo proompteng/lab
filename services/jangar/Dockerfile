@@ -151,7 +151,7 @@ RUN git config --global user.name "tuslagch" \
   && git config --global push.autoSetupRemote true
 
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=8080
 ENV WORKER_PORT=8070
 ENV VSCODE_PORT=8081
 ENV VSCODE_DATA_DIR=/workspace/.ovscode
@@ -178,4 +178,5 @@ exec "$@"
 ENTRY
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
-CMD ["bun", "run", "src/index.ts"]
+# Start the compiled Nitro server produced by `bun --bun vite build`
+CMD ["bun", "run", ".output/server/index.mjs"]
