@@ -481,6 +481,7 @@
       "dependencies": {
         "@effect/schema": "^0.75.5",
         "@proompteng/codex": "file:../../packages/codex",
+        "@tailwindcss/vite": "^4.1.17",
         "@tanstack/react-router": "^1.140.0",
         "@tanstack/react-router-devtools": "^1.140.0",
         "@tanstack/react-router-ssr-query": "^1.140.0",
