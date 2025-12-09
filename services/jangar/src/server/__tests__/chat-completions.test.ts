@@ -131,7 +131,65 @@ describe('chat completions handler', () => {
     expect(reasoningChunk?.choices?.[0]?.delta?.reasoning_content?.[0]?.text).toContain('thinking')
 
     const usageChunk = chunks.find((c) => c.usage)
-    expect(usageChunk?.usage?.output_tokens).toBe(2)
+    expect(usageChunk?.usage?.completion_tokens).toBe(2)
+  })
+
+  it('normalizes codex usage payloads and emits assistant role', async () => {
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'hello' }
+          yield {
+            type: 'usage',
+            usage: {
+              total: {
+                totalTokens: 10,
+                inputTokens: 6,
+                cachedInputTokens: 2,
+                outputTokens: 3,
+                reasoningOutputTokens: 1,
+              },
+              last: {
+                totalTokens: 10,
+                inputTokens: 6,
+                cachedInputTokens: 2,
+                outputTokens: 3,
+                reasoningOutputTokens: 1,
+              },
+            },
+          }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const firstMessageDelta = chunks.find((c) => c.choices?.[0]?.delta?.content)?.choices?.[0]?.delta
+    expect(firstMessageDelta?.role).toBe('assistant')
+
+    const usageChunk = chunks.find((c) => c.usage)
+    expect(usageChunk?.usage?.prompt_tokens).toBe(6)
+    expect(usageChunk?.usage?.completion_tokens).toBe(4) // output + reasoning
+    expect(usageChunk?.usage?.total_tokens).toBe(10)
+    expect(usageChunk?.usage?.prompt_tokens_details?.cached_tokens).toBe(2)
+    expect(usageChunk?.usage?.completion_tokens_details?.reasoning_tokens).toBe(1)
   })
 
   it('returns validation error when messages missing', async () => {

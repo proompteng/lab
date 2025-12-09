@@ -86,6 +86,52 @@ const buildPrompt = (messages: ChatRequest['messages']) =>
     .map((msg) => `${msg.role}: ${typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)}`)
     .join('\n')
 
+const pickNumber = (value: unknown, keys: string[]): number | undefined => {
+  if (!value || typeof value !== 'object') return undefined
+  const record = value as Record<string, unknown>
+  for (const key of keys) {
+    const candidate = record[key]
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return candidate
+    }
+  }
+  return undefined
+}
+
+const normalizeUsage = (raw: unknown) => {
+  const usage = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const totals =
+    (usage.total && typeof usage.total === 'object' ? (usage.total as Record<string, unknown>) : null) ?? usage
+  const last = usage.last && typeof usage.last === 'object' ? (usage.last as Record<string, unknown>) : null
+  const source = Object.keys(totals).length ? totals : (last ?? totals)
+
+  const promptTokens = pickNumber(source, ['input_tokens', 'prompt_tokens', 'inputTokens', 'promptTokens']) ?? 0
+  const cachedTokens =
+    pickNumber(source, ['cached_input_tokens', 'cached_prompt_tokens', 'cachedInputTokens', 'cachedPromptTokens']) ?? 0
+  const completionTokens =
+    pickNumber(source, ['output_tokens', 'completion_tokens', 'outputTokens', 'completionTokens']) ?? 0
+  const reasoningTokens =
+    pickNumber(source, ['reasoning_output_tokens', 'reasoning_tokens', 'reasoningOutputTokens', 'reasoningTokens']) ?? 0
+  const totalTokens =
+    pickNumber(source, ['total_tokens', 'totalTokens', 'token_count', 'tokenCount']) ??
+    promptTokens + completionTokens + reasoningTokens
+
+  const normalized: Record<string, unknown> = {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens + reasoningTokens,
+    total_tokens: totalTokens,
+  }
+
+  if (cachedTokens > 0) {
+    normalized.prompt_tokens_details = { cached_tokens: cachedTokens }
+  }
+  if (reasoningTokens > 0) {
+    normalized.completion_tokens_details = { reasoning_tokens: reasoningTokens }
+  }
+
+  return normalized
+}
+
 const toSseResponse = (client: CodexAppServerClient, prompt: string, model: string, signal?: AbortSignal) => {
   const encoder = new TextEncoder()
   const created = Math.floor(Date.now() / 1000)
@@ -98,15 +144,24 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
     async start(controller) {
       let finished = false
       let hadError = false
+      let aborted = false
+      let controllerClosed = false
+
+      const enqueueChunk = (chunk: unknown) => {
+        if (controllerClosed) return
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`))
+        } catch {
+          controllerClosed = true
+        }
+      }
 
       const toolIndex = new Map<string, number>()
       const toolArguments = new Map<string, { opened: boolean; closed: boolean; entries: number; lastEntry?: string }>()
       let nextToolIndex = 0
+      let messageRoleEmitted = false
       let roleEmittedForTools = false
-
-      const enqueueChunk = (chunk: unknown) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`))
-      }
+      const abortControllers: Array<() => void> = []
 
       type ToolDelta = Extract<StreamDelta, { type: 'tool' }>
 
@@ -203,19 +258,55 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
       }
 
       try {
-        const { stream: codexStream } = await client.runTurnStream(prompt, {
+        const {
+          stream: codexStream,
+          turnId,
+          threadId,
+        } = await client.runTurnStream(prompt, {
           model,
           cwd: codexCwd,
         })
 
-        for await (const delta of codexStream) {
-          if (signal?.aborted) {
-            hadError = true
-            controller.error(new DOMException('Aborted', 'AbortError'))
+        const handleAbort = () => {
+          hadError = true
+          aborted = true
+          enqueueChunk({
+            error: {
+              message: 'request was aborted by the client',
+              type: 'request_cancelled',
+              code: 'client_abort',
+            },
+          })
+          if (!controllerClosed) {
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+            controller.close()
+            controllerClosed = true
+          }
+          // Best-effort interrupt of the Codex turn so we do not leak work
+          void client.interruptTurn(turnId, threadId).catch(() => {})
+        }
+
+        if (signal) {
+          if (signal.aborted) {
+            handleAbort()
             return
+          }
+          signal.addEventListener('abort', handleAbort, { once: true })
+          abortControllers.push(() => signal.removeEventListener('abort', handleAbort))
+        }
+
+        for await (const delta of codexStream) {
+          if (aborted) {
+            break
           }
 
           if (delta.type === 'message') {
+            const deltaPayload: Record<string, unknown> = { content: delta.delta }
+            if (!messageRoleEmitted) {
+              deltaPayload.role = 'assistant'
+              messageRoleEmitted = true
+            }
+
             const chunk = {
               id,
               object: 'chat.completion.chunk',
@@ -223,7 +314,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
               model,
               choices: [
                 {
-                  delta: { content: delta.delta },
+                  delta: deltaPayload,
                   index: 0,
                   finish_reason: null,
                 },
@@ -266,7 +357,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
                   finish_reason: 'stop',
                 },
               ],
-              usage: delta.usage,
+              usage: normalizeUsage(delta.usage),
             }
             enqueueChunk(usageChunk)
             finished = true
@@ -283,6 +374,8 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
         hadError = true
         enqueueChunk(payload)
       } finally {
+        for (const removeAbort of abortControllers) removeAbort()
+
         if (!finished && !hadError) {
           const finalChunk = {
             id,
@@ -299,8 +392,15 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
           }
           enqueueChunk(finalChunk)
         }
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
-        controller.close()
+        if (!controllerClosed) {
+          try {
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+          } catch {
+            // ignore
+          }
+          controller.close()
+          controllerClosed = true
+        }
       }
     },
   })
