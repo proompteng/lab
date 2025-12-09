@@ -18,6 +18,34 @@ export type BuildImageOptions = {
   codexAuthPath?: string
 }
 
+const ensureGhToken = (): string | undefined => {
+  const existing = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
+  if (existing) {
+    return existing
+  }
+
+  if (!Bun.which('gh')) {
+    console.warn('GH_TOKEN is not set and gh CLI is unavailable; skipping GitHub auth secret.')
+    return undefined
+  }
+
+  const result = Bun.spawnSync(['gh', 'auth', 'token'], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+
+  if (result.exitCode === 0) {
+    const token = result.stdout.toString().trim()
+    if (token.length > 0) {
+      process.env.GH_TOKEN = token
+      return token
+    }
+  }
+
+  console.warn('GH_TOKEN is not set and gh auth token could not be resolved; skipping GitHub auth secret.')
+  return undefined
+}
+
 export const buildImage = async (options: BuildImageOptions = {}) => {
   const registry = options.registry ?? process.env.JANGAR_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.JANGAR_IMAGE_REPOSITORY ?? 'lab/jangar'
@@ -31,6 +59,9 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const commit = options.commit ?? process.env.JANGAR_COMMIT ?? execGit(['rev-parse', 'HEAD'])
   const codexAuthPath =
     options.codexAuthPath ?? process.env.CODEX_AUTH_PATH ?? resolve(process.env.HOME ?? '', '.codex/auth.json')
+
+  // Populate GH_TOKEN from local gh CLI if the env var is missing so docker --secret succeeds.
+  ensureGhToken()
 
   // Stage auth into build context so COPY succeeds, then clean up
   let stagedAuth = false
