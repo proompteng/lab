@@ -1,7 +1,7 @@
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import * as S from '@effect/schema/Schema'
 import type { CodexAppServerClient } from '@proompteng/codex'
-import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { Effect, pipe } from 'effect'
 
 import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
