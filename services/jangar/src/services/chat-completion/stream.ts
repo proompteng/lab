@@ -1,11 +1,32 @@
 import { parseCodexError, persistFailedTurn, persistToolDelta } from './persistence'
-import { resolveAppServer, serviceTier, systemFingerprint } from './state'
+import { clearActiveTurn, resolveAppServer, serviceTier, systemFingerprint } from './state'
 import type { ReasoningPart, StreamOptions, TokenUsage, ToolDelta } from './types'
 import { buildUsagePayload, createSafeEnqueuer, estimateTokens, formatToolDelta, stripAnsi } from './utils'
 
 type StreamBuildResult =
   | { body: ReadableStream<Uint8Array>; errorPayload?: undefined }
   | { body: null; errorPayload: { error: { message: string; type: string; code: string } } }
+
+const buildErrorSseResponse = (payload: unknown, status: number) => {
+  const encoder = new TextEncoder()
+  const errorStream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+      controller.close()
+    },
+  })
+
+  return new Response(errorStream, {
+    status,
+    headers: {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    },
+  })
+}
 
 const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBuildResult> => {
   const appServer = opts.appServer ?? resolveAppServer()
@@ -166,9 +187,7 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
           void (async () => {
             clearTimeout(timeoutId)
             clearInterval(heartbeatId)
-            const reason = 'client aborted'
-            send({ error: { message: reason, type: 'aborted' } })
-            sendDone()
+            // The client hung up; don't try to write more bytes (avoids truncated chunk errors downstream).
             closeIfOpen()
             await persistFailedTurn(
               opts.db,
@@ -180,11 +199,11 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
                 model: targetModel ?? null,
                 startedAt: opts.startedAt,
               },
-              reason,
+              'client aborted',
               'stream/aborted',
             )
             await interruptTurn('aborted')
-            await finalize('aborted', reason)
+            await finalize('aborted', 'client aborted')
             try {
               stream.return?.(undefined)
             } catch (error) {
@@ -484,18 +503,20 @@ const createStreamBody = (prompt: string, opts: StreamOptions): Promise<StreamBu
 }
 
 export const streamSse = async (prompt: string, opts: StreamOptions): Promise<Response> => {
-  const result = await createStreamBody(prompt, opts)
-  if (!result.body && result.errorPayload) {
-    const encoder = new TextEncoder()
-    const errorStream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(result.errorPayload)}\n\n`))
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
-        controller.close()
-      },
-    })
-    return new Response(errorStream, {
-      status: 200,
+  try {
+    const result = await createStreamBody(prompt, opts)
+    if (!result.body && result.errorPayload) {
+      return buildErrorSseResponse(result.errorPayload, 200)
+    }
+
+    if (!result.body) {
+      return buildErrorSseResponse(
+        { error: { message: 'stream body unavailable', type: 'server_error', code: 'stream_unavailable' } },
+        500,
+      )
+    }
+
+    return new Response(result.body, {
       headers: {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
@@ -503,18 +524,36 @@ export const streamSse = async (prompt: string, opts: StreamOptions): Promise<Re
         'x-accel-buffering': 'no',
       },
     })
-  }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'stream failed unexpectedly'
 
-  if (!result.body) {
-    return new Response('stream body unavailable', { status: 500 })
-  }
+    try {
+      await persistFailedTurn(
+        opts.db,
+        {
+          turnId: opts.turnId,
+          conversationId: opts.conversationId,
+          chatId: opts.chatId,
+          userId: opts.userId,
+          model: opts.model ?? null,
+          startedAt: opts.startedAt,
+        },
+        message,
+        'stream/error',
+      )
+    } catch (persistError) {
+      console.warn('[jangar] failed to persist stream startup error', persistError)
+    }
 
-  return new Response(result.body, {
-    headers: {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no',
-    },
-  })
+    try {
+      await opts.onFinalize?.({ outcome: 'error', reason: message })
+    } catch (finalizeError) {
+      console.warn('[jangar] onFinalize failed after stream startup error', finalizeError)
+    }
+
+    // Ensure active-turn guard is cleared even if onFinalize is absent or throws.
+    clearActiveTurn(opts.chatId, opts.turnId)
+
+    return buildErrorSseResponse({ error: { message, type: 'server_error', code: 'stream_unavailable' } }, 500)
+  }
 }

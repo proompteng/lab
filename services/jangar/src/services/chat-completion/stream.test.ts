@@ -131,6 +131,53 @@ describe('streamSse lifecycle', () => {
     expect(mock.interruptCalls).toHaveLength(0)
   })
 
+  it('returns an SSE error response when the app server fails before streaming', async () => {
+    const mock = {
+      runTurnStream: async () => {
+        throw new Error('failed to start stream')
+      },
+    }
+
+    let finalized: FinalizeInfo | null = null
+    let persistedError: string | null = null
+
+    const res = await streamSse('prompt', {
+      model: 'gpt-5.1-codex-max',
+      signal: new AbortController().signal,
+      chatId: 'chat-error',
+      db: {
+        appendEvent: async ({ payload }: { payload: { error: string } }) => {
+          persistedError = payload.error
+        },
+        appendUsage: async () => {},
+        appendReasoning: async () => {},
+        upsertTurn: async () => {},
+        upsertConversation: async () => {},
+        appendMessage: async () => {},
+      } as never,
+      conversationId: 'chat-error',
+      turnId: 'turn-error',
+      userId: 'user',
+      startedAt: Date.now(),
+      onFinalize: (info) => {
+        finalized = info
+      },
+      appServer: mock as never,
+    })
+
+    const text = await readAll(res)
+    expect(res.status).toBe(500)
+    expect(text).toContain('failed to start stream')
+    expect(text).toContain('[DONE]')
+
+    expect(finalized).not.toBeNull()
+    const finalizedInfo = finalized as FinalizeInfo | null
+    expect(finalizedInfo?.outcome).toBe('error')
+
+    expect(persistedError).not.toBeNull()
+    expect(persistedError ?? '').toContain('failed to start stream')
+  })
+
   it('swallows onFinalize errors when context window is exceeded before streaming', async () => {
     const error = { message: 'ctx exceeded', codexErrorInfo: 'contextWindowExceeded' }
     const mock = {
