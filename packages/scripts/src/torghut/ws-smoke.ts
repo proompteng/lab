@@ -47,11 +47,16 @@ const main = async () => {
 
   try {
     await run('kafka-console-consumer', [
-      '--bootstrap-server', `localhost:${localPort}`,
-      '--topic', topic,
-      '--max-messages', process.env.MAX_MESSAGES ?? '5',
-      '--timeout-ms', process.env.TIMEOUT_MS ?? '10000',
-      '--consumer.config', configPath,
+      '--bootstrap-server',
+      `localhost:${localPort}`,
+      '--topic',
+      topic,
+      '--max-messages',
+      process.env.MAX_MESSAGES ?? '5',
+      '--timeout-ms',
+      process.env.TIMEOUT_MS ?? '10000',
+      '--consumer.config',
+      configPath,
     ])
   } finally {
     portForward.kill()

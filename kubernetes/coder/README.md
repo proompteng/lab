@@ -49,7 +49,7 @@ coder workspaces create sutro --template "kubernetes/coder"
 - `coder/cursor@1.3.2` to expose Cursor Desktop
 - `thezoker/nodejs@1.0.11` to install Node.js via nvm
 - `coder_script.bootstrap_tools` runs on start to:
-  - Install Node.js LTS (fallback to 22) and Bun 1.3.x
+  - Install Node.js LTS (fallback to 22) and Bun 1.3.4
   - Install Convex CLI, OpenAI Codex CLI, kubectl, and Argo CD CLI when missing
   - Expand the repository path, then run `bun install --frozen-lockfile` or `bun install` based on repo files
   - Persist Bun environment variables in `.profile` and `.zshrc`
