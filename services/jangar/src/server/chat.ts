@@ -1,7 +1,7 @@
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as S from '@effect/schema/Schema'
-import type { CodexAppServerClient } from '@proompteng/codex'
+import type { CodexAppServerClient, StreamDelta } from '@proompteng/codex'
 import { Effect, pipe } from 'effect'
 
 import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
@@ -98,6 +98,110 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
     async start(controller) {
       let finished = false
       let hadError = false
+
+      const toolIndex = new Map<string, number>()
+      const toolArguments = new Map<string, { opened: boolean; closed: boolean; entries: number; lastEntry?: string }>()
+      let nextToolIndex = 0
+      let roleEmittedForTools = false
+
+      const enqueueChunk = (chunk: unknown) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`))
+      }
+
+      type ToolDelta = Extract<StreamDelta, { type: 'tool' }>
+
+      const getToolIndex = (toolId: string) => {
+        const existing = toolIndex.get(toolId)
+        if (typeof existing === 'number') return existing
+        const nextIndex = nextToolIndex
+        toolIndex.set(toolId, nextIndex)
+        nextToolIndex += 1
+        return nextIndex
+      }
+
+      const appendToolArguments = (delta: ToolDelta) => {
+        const state = toolArguments.get(delta.id) ?? { opened: false, closed: false, entries: 0 }
+        const entryPayload = {
+          status: delta.status,
+          title: delta.title,
+          detail: delta.detail,
+          data: delta.data,
+        }
+        const serialized = JSON.stringify(entryPayload)
+
+        if (state.lastEntry === serialized) {
+          toolArguments.set(delta.id, state)
+          return null
+        }
+
+        const fragments: string[] = []
+        if (!state.opened) {
+          fragments.push('[')
+          state.opened = true
+        }
+
+        if (state.entries > 0) {
+          fragments.push(',')
+        }
+
+        fragments.push(serialized)
+        state.entries += 1
+
+        if (delta.status === 'completed' && !state.closed) {
+          fragments.push(']')
+          state.closed = true
+        }
+
+        state.lastEntry = serialized
+        toolArguments.set(delta.id, state)
+
+        return fragments.join('')
+      }
+
+      const toolKindToName = (toolKind: ToolDelta['toolKind']) => (toolKind === 'webSearch' ? 'web_search' : toolKind)
+
+      const emitToolChunk = (delta: ToolDelta) => {
+        const argumentFragment = appendToolArguments(delta)
+        const index = getToolIndex(delta.id)
+
+        if (!argumentFragment) return
+
+        const deltaPayload: Record<string, unknown> = {
+          tool_calls: [
+            {
+              index,
+              id: delta.id,
+              type: 'function',
+              function: {
+                name: toolKindToName(delta.toolKind),
+                arguments: argumentFragment,
+              },
+            },
+          ],
+        }
+
+        if (!roleEmittedForTools) {
+          deltaPayload.role = 'assistant'
+          roleEmittedForTools = true
+        }
+
+        const chunk = {
+          id,
+          object: 'chat.completion.chunk',
+          created,
+          model,
+          choices: [
+            {
+              delta: deltaPayload,
+              index: 0,
+              finish_reason: null,
+            },
+          ],
+        }
+
+        enqueueChunk(chunk)
+      }
+
       try {
         const { stream: codexStream } = await client.runTurnStream(prompt, {
           model,
@@ -125,7 +229,28 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
                 },
               ],
             }
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`))
+            enqueueChunk(chunk)
+          }
+
+          if (delta.type === 'reasoning') {
+            const chunk = {
+              id,
+              object: 'chat.completion.chunk',
+              created,
+              model,
+              choices: [
+                {
+                  delta: { reasoning_content: [{ type: 'text', text: delta.delta }] },
+                  index: 0,
+                  finish_reason: null,
+                },
+              ],
+            }
+            enqueueChunk(chunk)
+          }
+
+          if (delta.type === 'tool') {
+            emitToolChunk(delta)
           }
 
           if (delta.type === 'usage') {
@@ -143,7 +268,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
               ],
               usage: delta.usage,
             }
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(usageChunk)}\n\n`))
+            enqueueChunk(usageChunk)
             finished = true
           }
         }
@@ -156,7 +281,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
           },
         }
         hadError = true
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+        enqueueChunk(payload)
       } finally {
         if (!finished && !hadError) {
           const finalChunk = {
@@ -172,7 +297,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
               },
             ],
           }
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(finalChunk)}\n\n`))
+          enqueueChunk(finalChunk)
         }
         controller.enqueue(encoder.encode('data: [DONE]\n\n'))
         controller.close()
