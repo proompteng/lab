@@ -182,6 +182,10 @@ const rewriteDatabaseUrl = (databaseUrl: string, localPort: number): string => {
 }
 
 const runMigrations = async () => {
+  if (process.env.TORGHUT_SKIP_MIGRATIONS === 'true') {
+    console.log('Skipping torghut DB migrations (TORGHUT_SKIP_MIGRATIONS=true)')
+    return
+  }
   const databaseUrl = await resolveDatabaseUrl()
   const forward = await startPortForward()
   const localUrl = rewriteDatabaseUrl(databaseUrl, forward.localPort)

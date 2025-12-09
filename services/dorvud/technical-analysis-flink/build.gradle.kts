@@ -47,7 +47,7 @@ tasks.register<Jar>("uberJar") {
     }
   })
 
-  manifest { attributes["Main-Class"] = "ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJob" }
+  manifest { attributes["Main-Class"] = "ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJobKt" }
 }
 
 tasks.withType<Test> { useJUnitPlatform() }

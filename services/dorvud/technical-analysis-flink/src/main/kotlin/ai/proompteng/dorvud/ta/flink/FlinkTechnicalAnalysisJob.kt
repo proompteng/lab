@@ -17,7 +17,7 @@ import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
-import org.apache.flink.api.common.functions.FlatMapFunction
+import org.apache.flink.api.common.functions.RichFlatMapFunction
 import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner
 import org.apache.flink.api.common.eventtime.WatermarkStrategy
 import org.apache.flink.api.common.serialization.SimpleStringSchema
@@ -39,7 +39,9 @@ import org.apache.flink.streaming.api.CheckpointingMode
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction
+import org.apache.flink.configuration.Configuration
 import org.apache.flink.util.Collector
+import org.apache.kafka.clients.producer.ProducerRecord
 import org.slf4j.LoggerFactory
 import org.ta4j.core.BaseBar
 import org.ta4j.core.BaseBarSeries
@@ -55,7 +57,6 @@ import org.ta4j.core.indicators.statistics.StandardDeviationIndicator
 
 fun main() {
   val config = FlinkTaConfig.fromEnv()
-  val json = Json { ignoreUnknownKeys = true }
   val serde = AvroSerde()
   applyS3SystemProperties(config)
   val env = StreamExecutionEnvironment.getExecutionEnvironment()
@@ -66,7 +67,7 @@ fun main() {
     kafkaSource(config, config.tradesTopic),
     WatermarkStrategy.noWatermarks(),
     "ta-trades-source",
-  ).flatMap(ParseEnvelopeFn(json, TradePayload.serializer()))
+  ).flatMap(ParseEnvelopeFlatMap(SerializerFactory { TradePayload.serializer() }))
     .returns(object : TypeHint<Envelope<TradePayload>>() {})
     .assignTimestampsAndWatermarks(watermarkStrategy(config))
 
@@ -75,7 +76,7 @@ fun main() {
       kafkaSource(config, config.quotesTopic),
       WatermarkStrategy.noWatermarks(),
       "ta-quotes-source",
-    ).flatMap(ParseEnvelopeFn(json, QuotePayload.serializer()))
+    ).flatMap(ParseEnvelopeFlatMap(SerializerFactory { QuotePayload.serializer() }))
       .returns(object : TypeHint<Envelope<QuotePayload>>() {})
       .assignTimestampsAndWatermarks(watermarkStrategy(config))
   } else {
@@ -88,7 +89,7 @@ fun main() {
       kafkaSource(config, config.bars1mTopic),
       WatermarkStrategy.noWatermarks(),
       "ta-bars1m-source",
-    ).flatMap(ParseEnvelopeFn(json, MicroBarPayload.serializer()))
+    ).flatMap(ParseEnvelopeFlatMap(SerializerFactory { MicroBarPayload.serializer() }))
       .returns(object : TypeHint<Envelope<MicroBarPayload>>() {})
       .assignTimestampsAndWatermarks(watermarkStrategy(config))
   } else {
@@ -98,7 +99,7 @@ fun main() {
 
   val microBars = trades
     .keyBy { it.symbol }
-    .process(MicrobarProcessFunction(config))
+    .process(MicrobarProcessFunction())
     .name("ta-microbars")
     .uid("ta-microbars")
 
@@ -172,13 +173,7 @@ private fun microBarSink(config: FlinkTaConfig, serde: AvroSerde): KafkaSink<Env
     .setBootstrapServers(config.bootstrapServers)
     .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
     .setTransactionalIdPrefix("${config.clientId}-microbars")
-    .setRecordSerializer(
-      KafkaRecordSerializationSchema.builder<Envelope<MicroBarPayload>>()
-        .setTopic(config.microBarsTopic)
-        .setKeySerializationSchema { env: Envelope<MicroBarPayload> -> env.symbol.toByteArray(StandardCharsets.UTF_8) }
-        .setValueSerializationSchema { env: Envelope<MicroBarPayload> -> serde.encodeMicroBar(env) }
-        .build(),
-    )
+    .setRecordSerializer(MicroBarSerializationSchema(config.microBarsTopic, serde))
     .setProperty("transaction.timeout.ms", config.transactionTimeoutMs.toString())
     .setKafkaSecurity(config)
     .build()
@@ -188,26 +183,78 @@ private fun signalSink(config: FlinkTaConfig, serde: AvroSerde): KafkaSink<Envel
     .setBootstrapServers(config.bootstrapServers)
     .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
     .setTransactionalIdPrefix("${config.clientId}-signals")
-    .setRecordSerializer(
-      KafkaRecordSerializationSchema.builder<Envelope<TaSignalsPayload>>()
-        .setTopic(config.signalsTopic)
-        .setKeySerializationSchema { env: Envelope<TaSignalsPayload> -> env.symbol.toByteArray(StandardCharsets.UTF_8) }
-        .setValueSerializationSchema { env: Envelope<TaSignalsPayload> -> serde.encodeSignals(env) }
-        .build(),
-    )
+    .setRecordSerializer(SignalSerializationSchema(config.signalsTopic, serde))
     .setProperty("transaction.timeout.ms", config.transactionTimeoutMs.toString())
     .setKafkaSecurity(config)
     .build()
 
-private fun <T> ParseEnvelopeFn(
-  json: Json,
-  payloadSerializer: KSerializer<T>,
-): FlatMapFunction<String, Envelope<T>> =
-  FlatMapFunction { value, out: Collector<Envelope<T>> ->
+internal class MicroBarSerializationSchema(
+  private val topic: String,
+  private val serde: AvroSerde,
+) : KafkaRecordSerializationSchema<Envelope<MicroBarPayload>>, Serializable {
+
+  companion object { private const val serialVersionUID: Long = 1L }
+
+  override fun serialize(
+    element: Envelope<MicroBarPayload>?,
+    context: KafkaRecordSerializationSchema.KafkaSinkContext,
+    timestamp: Long?,
+  ): ProducerRecord<ByteArray, ByteArray>? {
+    if (element == null) return null
+    val key = element.symbol.toByteArray(StandardCharsets.UTF_8)
+    val value = serde.encodeMicroBar(element)
+    return ProducerRecord(topic, null, timestamp ?: System.currentTimeMillis(), key, value)
+  }
+}
+
+internal class SignalSerializationSchema(
+  private val topic: String,
+  private val serde: AvroSerde,
+) : KafkaRecordSerializationSchema<Envelope<TaSignalsPayload>>, Serializable {
+
+  companion object { private const val serialVersionUID: Long = 1L }
+
+  override fun serialize(
+    element: Envelope<TaSignalsPayload>?,
+    context: KafkaRecordSerializationSchema.KafkaSinkContext,
+    timestamp: Long?,
+  ): ProducerRecord<ByteArray, ByteArray>? {
+    if (element == null) return null
+    val key = element.symbol.toByteArray(StandardCharsets.UTF_8)
+    val value = serde.encodeSignals(element)
+    return ProducerRecord(topic, null, timestamp ?: System.currentTimeMillis(), key, value)
+  }
+}
+
+internal fun interface SerializerFactory<T> : Serializable {
+  fun serializer(): KSerializer<T>
+}
+
+internal class ParseEnvelopeFlatMap<T>(
+  private val serializerFactory: SerializerFactory<T>,
+) : RichFlatMapFunction<String, Envelope<T>>(), Serializable {
+
+  companion object {
+    private const val serialVersionUID: Long = 1L
+  }
+
+  @Transient
+  private lateinit var json: Json
+
+  @Transient
+  private lateinit var payloadSerializer: KSerializer<T>
+
+  override fun open(parameters: Configuration) {
+    json = Json { ignoreUnknownKeys = true }
+    payloadSerializer = serializerFactory.serializer()
+  }
+
+  override fun flatMap(value: String, out: Collector<Envelope<T>>) {
     runCatching { json.decodeFromString(Envelope.serializer(payloadSerializer), value) }
       .onSuccess { out.collect(it) }
       .onFailure { LoggerFactory.getLogger("parse-envelope").warn("Failed to decode envelope", it) }
   }
+}
 
 private fun <T> KafkaSinkBuilder<T>.setKafkaSecurity(config: FlinkTaConfig): KafkaSinkBuilder<T> {
   setProperty("security.protocol", config.securityProtocol)
@@ -221,9 +268,7 @@ private fun <T> KafkaSinkBuilder<T>.setKafkaSecurity(config: FlinkTaConfig): Kaf
   return this
 }
 
-private class MicrobarProcessFunction(
-  private val config: FlinkTaConfig,
-) : KeyedProcessFunction<String, Envelope<TradePayload>, Envelope<MicroBarPayload>>() {
+private class MicrobarProcessFunction : KeyedProcessFunction<String, Envelope<TradePayload>, Envelope<MicroBarPayload>>() {
   private lateinit var bucketState: ValueState<BucketState>
   private lateinit var seqState: ValueState<Long>
 

@@ -16,6 +16,9 @@ RUN ./gradlew :technical-analysis-flink:uberJar --no-daemon
 FROM flink:1.20.1-scala_2.12-java17
 WORKDIR /opt/flink/usrlib
 COPY --from=build /workspace/technical-analysis-flink/build/libs/technical-analysis-flink-all.jar /opt/flink/usrlib/app.jar
+RUN mkdir -p /opt/flink/plugins/s3-fs-hadoop \
+  && curl -fsSL https://repo1.maven.org/maven2/org/apache/flink/flink-s3-fs-hadoop/1.20.1/flink-s3-fs-hadoop-1.20.1.jar \
+    -o /opt/flink/plugins/s3-fs-hadoop/flink-s3-fs-hadoop-1.20.1.jar
 ARG TORGHUT_TA_VERSION=dev
 ARG TORGHUT_TA_COMMIT=dev
 ENV TORGHUT_TA_VERSION=$TORGHUT_TA_VERSION

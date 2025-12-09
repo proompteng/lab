@@ -6,10 +6,10 @@ metadata:
   labels:
     app: torghut-ta
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta:flink-dev
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:8628d930b706ff17b493f6b2b5332e79a8644e3098e8c5d7aea45e3b714d30fa
   imagePullPolicy: IfNotPresent
   flinkVersion: v1_20
-  serviceAccount: torghut-ws
+  serviceAccount: torghut-runtime
   flinkConfiguration:
     state.checkpoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/checkpoints
     state.savepoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/savepoints
@@ -30,7 +30,7 @@ spec:
       labels:
         app: torghut-ta
     spec:
-      serviceAccountName: torghut-ws
+      serviceAccountName: torghut-runtime
       containers:
         - name: flink-main-container
           envFrom:
@@ -55,17 +55,15 @@ spec:
                   name: observability-minio-creds
                   key: secretkey
             - name: TORGHUT_TA_VERSION
-              value: v0.0.0
+              value: v0.336.0-2-g56c56630
             - name: TORGHUT_TA_COMMIT
-              value: unknown
+              value: 56c56630a96c57efef24da55ff6bf52544e0bb18
           ports:
-            - containerPort: 8081
-              name: rest
             - containerPort: 9249
               name: metrics
   jobManager:
     resource:
-      cpu: 500m
+      cpu: 0.5
       memory: 2048m
     podTemplate:
       metadata:
@@ -74,7 +72,7 @@ spec:
     replicas: 1
   taskManager:
     resource:
-      cpu: "1"
+      cpu: 1
       memory: 3072m
     podTemplate:
       metadata:
@@ -82,8 +80,8 @@ spec:
           app: torghut-ta
     replicas: 1
   job:
-    entryClass: ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJob
+    entryClass: ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJobKt
     jarURI: local:///opt/flink/usrlib/app.jar
     parallelism: 1
-    upgradeMode: savepoint
+    upgradeMode: stateless
     state: running

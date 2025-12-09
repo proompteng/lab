@@ -6,5 +6,8 @@ resources:
   - knative-service.yaml
   - tailscale-service.yaml
   - sealed-secrets.yaml
+  - serviceaccount.yaml
+  - role.yaml
+  - rolebinding.yaml
   - ws
   - ta
