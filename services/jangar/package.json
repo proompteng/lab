@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "bun --bun vite dev --host --port 3000",
     "build": "bun --bun vite build",
+    "start:build": "bun --bun vite build",
     "preview": "bun --bun vite preview",
     "test": "bunx vitest run --config vitest.config.ts",
     "tsc": "bunx tsc --noEmit",
