@@ -10,7 +10,6 @@ resources:
   - openwebui-redis.yaml
   - pvc.yaml
   - vscode-tailscale-service.yaml
-  - worker-deployment.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
