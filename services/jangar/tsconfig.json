@@ -1,22 +1,17 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "../..",
-    "outDir": "./dist",
-    "baseUrl": "./",
-    "types": ["bun", "bun-types", "vite/client"],
+    "baseUrl": "./src",
     "jsx": "react-jsx",
+    "noEmit": true,
     "strict": true,
-    "noImplicitAny": true,
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-    "noEmit": false,
+    "strictNullChecks": true,
     "paths": {
-      "@/*": ["./src/app/*"],
-      "~/*": ["./src/*"],
-      "@proompteng/codex": ["../../packages/codex/src"],
-      "@proompteng/codex/*": ["../../packages/codex/src/*"]
+      "@/*": ["./*"],
+      "~/*": ["./*"],
+      "@proompteng/codex": ["../../../packages/codex/src/index.ts"],
+      "@proompteng/codex/*": ["../../../packages/codex/src/*"]
     }
   },
-  "include": ["./src/**/*", "./scripts/**/*"]
+  "include": ["./src/**/*"]
 }
