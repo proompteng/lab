@@ -176,6 +176,8 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
   const encoder = new TextEncoder()
   const created = Math.floor(Date.now() / 1000)
   const id = `chatcmpl-${crypto.randomUUID()}`
+  const heartbeatIntervalMs = 5_000
+  const enableHeartbeat = process.env.NODE_ENV !== 'test'
 
   const codexCwd = resolveCodexCwd()
 
@@ -194,14 +196,27 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
         }
       }
 
+      const safeClose = () => {
+        if (controllerClosed) return
+        try {
+          controller.close()
+        } catch {
+          // ignore
+        } finally {
+          controllerClosed = true
+        }
+      }
+
       const enqueueChunk = (chunk: unknown) => {
         if (controllerClosed) return
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`))
         } catch {
+          // If the client has already gone away, ensure we close the stream and interrupt Codex
           controllerClosed = true
           aborted = true
           interruptCodex()
+          safeClose()
         }
       }
 
@@ -210,9 +225,9 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
       let reasoningBuffer = ''
       let commandFenceOpen = false
       let lastCommandId: string | null = null
-      let commandHasContent = false
       let hasEmittedAnyCommand = false
       let hadError = false
+      let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
       type ToolState = {
         id: string
@@ -271,6 +286,10 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
         const output = typeof payload.output === 'string' ? payload.output : undefined
         const detail = typeof payload.detail === 'string' ? payload.detail : undefined
         const title = typeof payload.title === 'string' ? payload.title : undefined
+        const status = typeof payload.status === 'string' ? payload.status : undefined
+
+        // Skip empty completions; this prevents an extra blank chunk when a command finishes without output.
+        if (status === 'completed' && toolState.toolKind === 'command' && !output && !detail) return ''
 
         if (output && output.length > 0) return truncateLines(output, 5)
         if (detail && detail.length > 0) return truncateLines(detail, 5)
@@ -332,7 +351,6 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
         emitContentDelta('```\n')
         commandFenceOpen = true
         lastCommandId = null
-        commandHasContent = false
       }
 
       const closeCommandFence = () => {
@@ -340,7 +358,6 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
         emitContentDelta('\n```\n')
         commandFenceOpen = false
         lastCommandId = null
-        commandHasContent = false
       }
 
       const ensureRole = (deltaPayload: Record<string, unknown>) => {
@@ -352,6 +369,15 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
 
       const flushReasoning = () => {
         if (!reasoningBuffer) return
+
+        // Preserve up to 3 trailing asterisks to allow cross-delta "****" detection.
+        let carry = ''
+        const carryMatch = reasoningBuffer.match(/(\*{1,3})$/)
+        if (carryMatch) {
+          carry = carryMatch[1]
+          reasoningBuffer = reasoningBuffer.slice(0, -carry.length)
+        }
+
         const sanitized = sanitizeReasoningText(reasoningBuffer)
         const deltaPayload: Record<string, unknown> = {
           reasoning_content: sanitized,
@@ -372,7 +398,22 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
           ],
         }
         enqueueChunk(chunk)
-        reasoningBuffer = ''
+        reasoningBuffer = carry
+      }
+
+      const startHeartbeat = () => {
+        if (!enableHeartbeat) return
+        heartbeatTimer = setInterval(() => {
+          if (controllerClosed || aborted) return
+          try {
+            controller.enqueue(encoder.encode(': keepalive\n\n'))
+          } catch {
+            aborted = true
+            controllerClosed = true
+            interruptCodex()
+            safeClose()
+          }
+        }, heartbeatIntervalMs)
       }
 
       try {
@@ -397,6 +438,11 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
           abortControllers.push(() => signal.removeEventListener('abort', handleAbort))
         }
 
+        abortControllers.push(() => {
+          if (heartbeatTimer) clearInterval(heartbeatTimer)
+        })
+        startHeartbeat()
+
         await Effect.runPromise(
           Effect.acquireUseRelease(
             Effect.promise(() => client.runTurnStream(prompt, { model, cwd: codexCwd })),
@@ -413,6 +459,19 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
 
                   if (delta.type !== 'reasoning') {
                     flushReasoning()
+                  }
+
+                  if (delta.type === 'error') {
+                    hadError = true
+                    const errorPayload = {
+                      error:
+                        delta.error && typeof delta.error === 'object'
+                          ? delta.error
+                          : { message: String(delta.error ?? 'upstream error'), type: 'upstream' },
+                    }
+                    enqueueChunk(errorPayload)
+                    turnFinished = true
+                    break
                   }
 
                   if (delta.type === 'message') {
@@ -438,6 +497,8 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
                   if (delta.type === 'reasoning') {
                     const text = sanitizeReasoningText(normalizeDeltaText(delta.delta))
                     reasoningBuffer += text
+                    // Emit reasoning immediately to avoid long silent periods that can trip upstream timeouts.
+                    flushReasoning()
                   }
 
                   if (delta.type === 'tool') {
@@ -451,9 +512,10 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
                       if (hasEmittedAnyCommand && isNewCommand) {
                         emitContentDelta('\n---\n')
                       }
-                      emitContentDelta(content)
+                      const prefixed =
+                        deltaRecord.status === 'started' && content.length > 0 ? `${content}\n\n` : content
+                      if (prefixed.length > 0) emitContentDelta(prefixed)
                       lastCommandId = toolState.id
-                      commandHasContent = true
                       hasEmittedAnyCommand = true
                     } else {
                       closeCommandFence()
@@ -523,8 +585,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
           } catch {
             // ignore
           }
-          controller.close()
-          controllerClosed = true
+          safeClose()
         }
       }
     },
