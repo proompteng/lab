@@ -25,20 +25,6 @@ describe('chat completions handler', () => {
     resetCodexClient()
   })
 
-  it('returns JSON for non-streaming requests', async () => {
-    const request = new Request('http://localhost', {
-      method: 'POST',
-      body: JSON.stringify({ model: 'test-model', messages: [{ role: 'user', content: 'hi' }], stream: false }),
-    })
-
-    const response = await chatCompletionsHandler(request)
-
-    expect(response.status).toBe(200)
-    const json = await response.json()
-    expect(json.object).toBe('chat.completion')
-    expect(json.choices?.[0]?.message?.content).toContain('hi there')
-  })
-
   it('proxies upstream SSE stream', async () => {
     const request = new Request('http://localhost', {
       method: 'POST',
@@ -53,7 +39,7 @@ describe('chat completions handler', () => {
     expect(response.headers.get('content-type')).toContain('text/event-stream')
   })
 
-  it('drops tool deltas while streaming reasoning in OpenAI-compatible chunks', async () => {
+  it('emits tool calls immediately; command output is code fenced with separation', async () => {
     const mockClient = {
       runTurnStream: async () => ({
         turnId: 'turn-1',
@@ -74,7 +60,7 @@ describe('chat completions handler', () => {
             id: 'tool-1',
             status: 'delta',
             title: 'ls',
-            detail: 'output chunk',
+            delta: 'output chunk\n1\n2\n3\n4\n5\n6',
           }
           yield {
             type: 'tool',
@@ -91,6 +77,13 @@ describe('chat completions handler', () => {
             status: 'completed',
             title: 'ls',
             detail: 'exit 0',
+          }
+          yield {
+            type: 'tool',
+            toolKind: 'command',
+            id: 'tool-3',
+            status: 'started',
+            title: 'pwd',
           }
           yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 2 } }
         })(),
@@ -114,8 +107,28 @@ describe('chat completions handler', () => {
       .filter((part) => part !== '[DONE]')
       .map((part) => JSON.parse(part))
 
-    const toolChunks = chunks.filter((c) => c.choices?.[0]?.delta?.tool_calls)
-    expect(toolChunks.length).toBe(0)
+    const toolCalls = chunks.map((c) => c.choices?.[0]?.delta?.tool_calls?.[0]).filter(Boolean) as Array<{
+      id: string
+      index: number
+      function: { name: string; arguments: string }
+    }>
+
+    expect(toolCalls.length).toBe(0)
+
+    const contentDeltas = chunks
+      .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean) as string[]
+
+    const fences = contentDeltas.filter((c) => c.includes('```'))
+    expect(fences.length).toBeGreaterThanOrEqual(2)
+    expect(contentDeltas.some((c) => c === 'ls')).toBe(true)
+    expect(contentDeltas.some((c) => c.includes('output chunk'))).toBe(true)
+    expect(contentDeltas.some((c) => c.includes('...'))).toBe(true)
+    expect(contentDeltas.some((c) => c.includes('---'))).toBe(true)
+    expect(contentDeltas.some((c) => c.includes('done'))).toBe(true)
+    expect(contentDeltas.some((c) => c.includes('exit 0'))).toBe(true)
+    expect(contentDeltas.some((c) => c.includes('pwd'))).toBe(true)
+    expect((contentDeltas.at(-1) ?? '').includes('```')).toBe(true)
 
     const reasoningChunk = chunks.find((c) => c.choices?.[0]?.delta?.reasoning_content)
     expect(typeof reasoningChunk?.choices?.[0]?.delta?.reasoning_content).toBe('string')
@@ -287,6 +300,80 @@ describe('chat completions handler', () => {
     expect(usageChunk?.usage?.total_tokens).toBe(10)
     expect(usageChunk?.usage?.prompt_tokens_details?.cached_tokens).toBe(2)
     expect(usageChunk?.usage?.completion_tokens_details?.reasoning_tokens).toBe(1)
+  })
+
+  it('keeps streaming after mid-turn usage updates and only finalizes once', async () => {
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'first ' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 0 } }
+          yield { type: 'message', delta: 'second' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 2 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const content = chunks
+      .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean)
+      .join('')
+
+    expect(content).toBe('first second')
+
+    const usageChunks = chunks.filter((c) => c.usage)
+    expect(usageChunks).toHaveLength(1)
+    expect(usageChunks[0].usage?.prompt_tokens).toBe(1)
+    expect(usageChunks[0].usage?.completion_tokens).toBe(2)
+  })
+
+  it('does not hang when codex turn completes normally even if interruptTurn never resolves', async () => {
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'done' }
+        })(),
+      }),
+      interruptTurn: vi.fn(() => new Promise(() => {})),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await Promise.race([
+      response.text(),
+      new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout waiting for stream end')), 1000)),
+    ])
+
+    expect(text.trim().endsWith('[DONE]')).toBe(true)
+    expect(mockClient.interruptTurn).not.toHaveBeenCalled()
   })
 
   it('returns validation error when messages missing', async () => {

@@ -75,6 +75,10 @@ const parseRequest = async (request: Request): Promise<ChatRequest> => {
   if (!parsed.messages.length) {
     throw new RequestError(400, 'messages_required', '`messages` must be a non-empty array')
   }
+
+  if (parsed.stream !== true) {
+    throw new RequestError(400, 'stream_required', '`stream` must be true for streaming responses')
+  }
   return parsed
 }
 
@@ -157,6 +161,12 @@ const normalizeDeltaText = (delta: unknown): string => {
 
 const sanitizeReasoningText = (text: string) => text.replace(/\*{4,}/g, '\n')
 
+const truncateLines = (text: string, maxLines: number) => {
+  const lines = text.split(/\r?\n/)
+  if (lines.length <= maxLines) return text
+  return [...lines.slice(0, maxLines), '...', ''].join('\n')
+}
+
 const resolveCodexCwd = () => {
   const defaultRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
   return process.env.CODEX_CWD ?? (process.env.NODE_ENV === 'production' ? '/workspace/lab' : defaultRepoRoot)
@@ -171,10 +181,18 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      let finished = false
-      let hadError = false
       let aborted = false
       let controllerClosed = false
+      let activeTurnId: string | null = null
+      let activeThreadId: string | null = null
+      let lastUsage: Record<string, unknown> | null = null
+      let turnFinished = false
+
+      const interruptCodex = () => {
+        if (activeTurnId && activeThreadId) {
+          void client.interruptTurn(activeTurnId, activeThreadId).catch(() => {})
+        }
+      }
 
       const enqueueChunk = (chunk: unknown) => {
         if (controllerClosed) return
@@ -182,12 +200,154 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`))
         } catch {
           controllerClosed = true
+          aborted = true
+          interruptCodex()
         }
       }
 
       let messageRoleEmitted = false
       const abortControllers: Array<() => void> = []
       let reasoningBuffer = ''
+      let commandFenceOpen = false
+      let lastCommandId: string | null = null
+      let commandHasContent = false
+      let hasEmittedAnyCommand = false
+
+      type ToolState = {
+        id: string
+        index: number
+        toolKind: string
+        title?: string
+      }
+
+      const toolStates = new Map<string, ToolState>()
+      let nextToolIndex = 0
+
+      const getToolState = (event: Record<string, unknown>): ToolState => {
+        const toolId = typeof event.id === 'string' ? event.id : `tool-${nextToolIndex}`
+        const existing = toolStates.get(toolId)
+        if (existing) {
+          if (!existing.title && typeof event.title === 'string' && event.title.length > 0) {
+            existing.title = event.title
+          }
+          return existing
+        }
+
+        const toolKind = typeof event.toolKind === 'string' && event.toolKind.length > 0 ? event.toolKind : 'tool'
+        const toolState: ToolState = {
+          id: toolId,
+          index: nextToolIndex++,
+          toolKind,
+          title: typeof event.title === 'string' && event.title.length > 0 ? event.title : undefined,
+        }
+        toolStates.set(toolId, toolState)
+        return toolState
+      }
+
+      const formatToolArguments = (toolState: ToolState, event: Record<string, unknown>) => {
+        const payload: Record<string, unknown> = {
+          tool: toolState.toolKind,
+        }
+
+        if (toolState.title) payload.title = toolState.title
+        const status = typeof event.status === 'string' ? event.status : undefined
+        if (status) payload.status = status
+        const detail = typeof event.detail === 'string' ? event.detail : undefined
+        if (typeof event.delta === 'string' && event.delta.length > 0) {
+          payload.output = event.delta
+        } else if (event.delta != null && typeof event.delta !== 'function') {
+          payload.output = String(event.delta)
+        }
+
+        const isCommandLocationDetail = toolState.toolKind === 'command' && detail && status === 'started'
+
+        if (detail && !isCommandLocationDetail) payload.detail = detail
+
+        return payload
+      }
+
+      const formatToolContent = (toolState: ToolState, payload: Record<string, unknown>) => {
+        const output = typeof payload.output === 'string' ? payload.output : undefined
+        const detail = typeof payload.detail === 'string' ? payload.detail : undefined
+        const title = typeof payload.title === 'string' ? payload.title : undefined
+
+        if (output && output.length > 0) return truncateLines(output, 5)
+        if (detail && detail.length > 0) return truncateLines(detail, 5)
+        if (title && title.length > 0) return title
+        return toolState.toolKind
+      }
+
+      const _emitToolCallDelta = (toolState: ToolState, args: string) => {
+        const deltaPayload: Record<string, unknown> = {
+          tool_calls: [
+            {
+              index: toolState.index,
+              id: toolState.id,
+              type: 'function',
+              function: {
+                name: toolState.toolKind,
+                arguments: args,
+              },
+            },
+          ],
+        }
+        ensureRole(deltaPayload)
+        enqueueChunk({
+          id,
+          object: 'chat.completion.chunk',
+          created,
+          model,
+          choices: [
+            {
+              delta: deltaPayload,
+              index: 0,
+              finish_reason: null,
+            },
+          ],
+        })
+      }
+
+      const emitContentDelta = (content: string) => {
+        const deltaPayload: Record<string, unknown> = { content }
+        ensureRole(deltaPayload)
+        const chunk = {
+          id,
+          object: 'chat.completion.chunk',
+          created,
+          model,
+          choices: [
+            {
+              delta: deltaPayload,
+              index: 0,
+              finish_reason: null,
+            },
+          ],
+        }
+        enqueueChunk(chunk)
+      }
+
+      const openCommandFence = () => {
+        if (commandFenceOpen) return
+        emitContentDelta('```\n')
+        commandFenceOpen = true
+        lastCommandId = null
+        commandHasContent = false
+      }
+
+      const closeCommandFence = () => {
+        if (!commandFenceOpen) return
+        emitContentDelta('\n```\n')
+        commandFenceOpen = false
+        lastCommandId = null
+        commandHasContent = false
+      }
+
+      const ensureRole = (deltaPayload: Record<string, unknown>) => {
+        if (!messageRoleEmitted) {
+          deltaPayload.role = 'assistant'
+          messageRoleEmitted = true
+        }
+      }
 
       const flushReasoning = () => {
         if (!reasoningBuffer) return
@@ -195,10 +355,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
         const deltaPayload: Record<string, unknown> = {
           reasoning_content: sanitized,
         }
-        if (!messageRoleEmitted) {
-          deltaPayload.role = 'assistant'
-          messageRoleEmitted = true
-        }
+        ensureRole(deltaPayload)
 
         const chunk = {
           id,
@@ -218,17 +375,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
       }
 
       try {
-        const {
-          stream: codexStream,
-          turnId,
-          threadId,
-        } = await client.runTurnStream(prompt, {
-          model,
-          cwd: codexCwd,
-        })
-
         const handleAbort = () => {
-          hadError = true
           aborted = true
           enqueueChunk({
             error: {
@@ -237,13 +384,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
               code: 'client_abort',
             },
           })
-          if (!controllerClosed) {
-            controller.enqueue(encoder.encode('data: [DONE]\n\n'))
-            controller.close()
-            controllerClosed = true
-          }
-          // Best-effort interrupt of the Codex turn so we do not leak work
-          void client.interruptTurn(turnId, threadId).catch(() => {})
+          interruptCodex()
         }
 
         if (signal) {
@@ -255,65 +396,89 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
           abortControllers.push(() => signal.removeEventListener('abort', handleAbort))
         }
 
-        for await (const delta of codexStream) {
-          if (aborted) {
-            break
-          }
+        await Effect.runPromise(
+          Effect.acquireUseRelease(
+            Effect.promise(() => client.runTurnStream(prompt, { model, cwd: codexCwd })),
+            ({ stream: codexStream, turnId, threadId }) =>
+              Effect.promise(async () => {
+                activeTurnId = turnId
+                activeThreadId = threadId
 
-          if (delta.type !== 'reasoning') {
-            flushReasoning()
-          }
+                for await (const delta of codexStream) {
+                  if (aborted || controllerClosed) {
+                    interruptCodex()
+                    break
+                  }
 
-          if (delta.type === 'message') {
-            const text = normalizeDeltaText(delta.delta)
-            const deltaPayload: Record<string, unknown> = { content: text }
-            if (!messageRoleEmitted) {
-              deltaPayload.role = 'assistant'
-              messageRoleEmitted = true
-            }
+                  if (delta.type !== 'reasoning') {
+                    flushReasoning()
+                  }
 
-            const chunk = {
-              id,
-              object: 'chat.completion.chunk',
-              created,
-              model,
-              choices: [
-                {
-                  delta: deltaPayload,
-                  index: 0,
-                  finish_reason: null,
-                },
-              ],
-            }
-            enqueueChunk(chunk)
-          }
+                  if (delta.type === 'message') {
+                    closeCommandFence()
+                    const text = normalizeDeltaText(delta.delta)
+                    const deltaPayload: Record<string, unknown> = { content: text }
+                    ensureRole(deltaPayload)
+                    enqueueChunk({
+                      id,
+                      object: 'chat.completion.chunk',
+                      created,
+                      model,
+                      choices: [
+                        {
+                          delta: deltaPayload,
+                          index: 0,
+                          finish_reason: null,
+                        },
+                      ],
+                    })
+                  }
 
-          if (delta.type === 'reasoning') {
-            const text = sanitizeReasoningText(normalizeDeltaText(delta.delta))
-            reasoningBuffer += text
-          }
+                  if (delta.type === 'reasoning') {
+                    const text = sanitizeReasoningText(normalizeDeltaText(delta.delta))
+                    reasoningBuffer += text
+                  }
 
-          if (delta.type === 'usage') {
-            const usageChunk = {
-              id,
-              object: 'chat.completion.chunk',
-              created,
-              model,
-              choices: [
-                {
-                  delta: {},
-                  index: 0,
-                  finish_reason: 'stop',
-                },
-              ],
-              usage: normalizeUsage(delta.usage),
-            }
-            enqueueChunk(usageChunk)
-            finished = true
-          }
-        }
+                  if (delta.type === 'tool') {
+                    const deltaRecord = delta as Record<string, unknown>
+                    const toolState = getToolState(deltaRecord)
+                    const argsPayload = formatToolArguments(toolState, deltaRecord)
+                    if (toolState.toolKind === 'command') {
+                      openCommandFence()
+                      const content = formatToolContent(toolState, argsPayload)
+                      const isNewCommand = lastCommandId !== toolState.id
+                      if (hasEmittedAnyCommand && isNewCommand) {
+                        emitContentDelta('\n---\n')
+                      }
+                      emitContentDelta(content)
+                      lastCommandId = toolState.id
+                      commandHasContent = true
+                      hasEmittedAnyCommand = true
+                    } else {
+                      closeCommandFence()
+                      emitContentDelta(formatToolContent(toolState, argsPayload))
+                    }
+                  }
 
-        flushReasoning()
+                  if (delta.type === 'usage') {
+                    closeCommandFence()
+                    lastUsage = normalizeUsage(delta.usage)
+                  }
+                }
+
+                flushReasoning()
+                if (!aborted) {
+                  turnFinished = true
+                }
+              }),
+            ({ turnId, threadId }) =>
+              aborted || !turnFinished
+                ? Effect.sync(() => {
+                    void client.interruptTurn(turnId, threadId).catch(() => {})
+                  })
+                : Effect.succeed(undefined),
+          ),
+        )
       } catch (error) {
         const payload = {
           error: {
@@ -322,27 +487,32 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
             code: 'codex_error',
           },
         }
-        hadError = true
         enqueueChunk(payload)
       } finally {
         for (const removeAbort of abortControllers) removeAbort()
 
-        if (!finished && !hadError) {
-          const finalChunk = {
-            id,
-            object: 'chat.completion.chunk',
-            created,
-            model,
-            choices: [
-              {
-                delta: {},
-                index: 0,
-                finish_reason: 'stop',
-              },
-            ],
-          }
-          enqueueChunk(finalChunk)
+        closeCommandFence()
+
+        const finalChunk: Record<string, unknown> = {
+          id,
+          object: 'chat.completion.chunk',
+          created,
+          model,
+          choices: [
+            {
+              delta: {},
+              index: 0,
+              finish_reason: 'stop',
+            },
+          ],
         }
+
+        if (lastUsage) {
+          finalChunk.usage = lastUsage
+        }
+
+        enqueueChunk(finalChunk)
+
         if (!controllerClosed) {
           try {
             controller.enqueue(encoder.encode('data: [DONE]\n\n'))
@@ -367,116 +537,9 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
   })
 }
 
-const toJsonResponse = async (client: CodexAppServerClient, prompt: string, model: string, signal?: AbortSignal) => {
-  const created = Math.floor(Date.now() / 1000)
-  const id = `chatcmpl-${crypto.randomUUID()}`
-  const codexCwd = resolveCodexCwd()
-
-  let content = ''
-  let reasoning = ''
-  let usage: Record<string, unknown> | null = null
-  let aborted = false
-  let turnId: string | null = null
-  let threadId: string | null = null
-  let removeAbortListener: (() => void) | null = null
-
-  try {
-    const {
-      stream: codexStream,
-      turnId: codexTurnId,
-      threadId: codexThreadId,
-    } = await client.runTurnStream(prompt, {
-      model,
-      cwd: codexCwd,
-    })
-    turnId = codexTurnId
-    threadId = codexThreadId
-
-    const abortHandler = () => {
-      aborted = true
-      if (turnId && threadId) {
-        void client.interruptTurn(turnId, threadId).catch(() => {})
-      }
-    }
-
-    if (signal) {
-      if (signal.aborted) {
-        abortHandler()
-      } else {
-        signal.addEventListener('abort', abortHandler, { once: true })
-        removeAbortListener = () => signal.removeEventListener('abort', abortHandler)
-      }
-    }
-
-    for await (const delta of codexStream) {
-      if (aborted) break
-
-      if (delta.type === 'message') {
-        content += normalizeDeltaText(delta.delta)
-      } else if (delta.type === 'reasoning') {
-        reasoning += sanitizeReasoningText(normalizeDeltaText(delta.delta))
-      } else if (delta.type === 'usage') {
-        usage = normalizeUsage(delta.usage)
-      }
-    }
-  } catch (error) {
-    if (aborted) {
-      return jsonResponse(
-        { error: { message: 'request was aborted by the client', type: 'request_cancelled', code: 'client_abort' } },
-        499,
-      )
-    }
-    return jsonResponse(
-      {
-        error: {
-          message: error instanceof Error ? error.message : String(error),
-          type: 'internal',
-          code: 'codex_error',
-        },
-      },
-      500,
-    )
-  } finally {
-    removeAbortListener?.()
-  }
-
-  if (aborted) {
-    return jsonResponse(
-      { error: { message: 'request was aborted by the client', type: 'request_cancelled', code: 'client_abort' } },
-      499,
-    )
-  }
-
-  const messagePayload: Record<string, unknown> = { role: 'assistant', content }
-  if (reasoning) {
-    messagePayload.reasoning_content = sanitizeReasoningText(reasoning)
-  }
-
-  const payload: Record<string, unknown> = {
-    id,
-    object: 'chat.completion',
-    created,
-    model,
-    choices: [
-      {
-        index: 0,
-        finish_reason: 'stop',
-        message: messagePayload,
-      },
-    ],
-  }
-
-  if (usage) {
-    payload.usage = usage
-  }
-
-  return jsonResponse(payload)
-}
-
 export const handleChatCompletion = async (request: Request): Promise<Response> => {
   try {
     const parsed = await parseRequest(request)
-    const isStream = parsed.stream === true
 
     return await pipe(
       Effect.all({
@@ -487,9 +550,7 @@ export const handleChatCompletion = async (request: Request): Promise<Response> 
         Effect.promise(() => {
           const model = parsed.model ?? config.defaultModel
           const prompt = buildPrompt(parsed.messages)
-          return isStream
-            ? Promise.resolve(toSseResponse(client, prompt, model, request.signal))
-            : toJsonResponse(client, prompt, model, request.signal)
+          return Promise.resolve(toSseResponse(client, prompt, model, request.signal))
         }),
       ),
       Effect.runPromise,
