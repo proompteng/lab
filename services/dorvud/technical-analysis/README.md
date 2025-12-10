@@ -1,6 +1,6 @@
 # Technical Analysis Service (Torghut)
 
-Kotlin/Koin service that consumes Alpaca-derived Kafka topics, aggregates 1‑second micro-bars, computes TA4J indicators, and publishes `ta.bars.1s.v1` + `ta.signals.v1` envelopes.
+Legacy Ktor service that consumes Alpaca-derived Kafka topics, aggregates 1‑second micro-bars, computes TA4J indicators, and publishes `ta.bars.1s.v1` + `ta.signals.v1` envelopes. Production now runs as a Flink job under `services/dorvud/technical-analysis-flink` with the corresponding `FlinkDeployment` at `argocd/applications/torghut/ta/flinkdeployment.yaml`. This module remains for local testing and as a reference for the Flink port.
 
 ## Running locally
 

@@ -7,14 +7,16 @@ FROM python:${PYTHON_VERSION}-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:${PATH}"
+    PATH="/opt/venv/bin:${PATH}" \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10
 
 WORKDIR /app
 
 RUN apt-get update \
  && apt-get install --no-install-recommends -y build-essential libpq-dev \
  && python -m venv /opt/venv \
- && /opt/venv/bin/pip install --no-cache-dir --upgrade pip uv \
+ && /opt/venv/bin/pip install --no-cache-dir --retries 10 --timeout 120 --upgrade pip uv \
  && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock* README.md ./

@@ -8,6 +8,7 @@ COPY platform ./platform
 COPY flink-integration ./flink-integration
 COPY websockets ./websockets
 COPY technical-analysis ./technical-analysis
+COPY technical-analysis-flink ./technical-analysis-flink
 
 RUN chmod +x ./gradlew
 RUN ./gradlew :websockets:installDist --no-daemon

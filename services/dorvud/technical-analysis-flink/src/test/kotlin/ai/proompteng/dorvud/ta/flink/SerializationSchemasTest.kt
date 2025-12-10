@@ -1,0 +1,65 @@
+package ai.proompteng.dorvud.ta.flink
+
+import ai.proompteng.dorvud.platform.Envelope
+import ai.proompteng.dorvud.ta.producer.AvroSerde
+import ai.proompteng.dorvud.ta.stream.MicroBarPayload
+import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
+import ai.proompteng.dorvud.ta.stream.TradePayload
+import java.io.ByteArrayOutputStream
+import java.io.ObjectOutputStream
+import java.time.Instant
+import kotlin.test.Test
+import kotlin.test.assertTrue
+
+class SerializationSchemasTest {
+  private val serde = AvroSerde()
+
+  @Test
+  fun `microbar serialization schema is java-serializable`() {
+    val schema = MicroBarSerializationSchema("topic", serde)
+    assertSerializable(schema)
+  }
+
+  @Test
+  fun `signal serialization schema is java-serializable`() {
+    val schema = SignalSerializationSchema("topic", serde)
+    assertSerializable(schema)
+  }
+
+  @Test
+  fun `parse envelope flatmap remains serializable`() {
+    val fn = ParseEnvelopeFlatMap(SerializerFactory { TradePayload.serializer() })
+    assertSerializable(fn)
+  }
+
+  @Test
+  fun `flink ta config is serializable`() {
+    assertSerializable(FlinkTaConfig.fromEnv())
+  }
+
+  @Test
+  fun `avro serde is java-serializable`() {
+    assertSerializable(serde)
+  }
+
+  private fun assertSerializable(target: Any) {
+    val baos = ByteArrayOutputStream()
+    ObjectOutputStream(baos).use { it.writeObject(target) }
+    assertTrue(baos.size() > 0)
+  }
+
+  // Build a minimal envelope for potential schema usage if needed later
+  private fun sampleEnvelope(): Envelope<MicroBarPayload> = Envelope(
+    ingestTs = Instant.EPOCH,
+    eventTs = Instant.EPOCH,
+    feed = "test",
+    channel = "test",
+    symbol = "ABC",
+    seq = 1,
+    payload = MicroBarPayload(o = 1.0, h = 1.0, l = 1.0, c = 1.0, v = 1.0, vwap = 1.0, count = 1, t = Instant.EPOCH),
+    isFinal = true,
+    source = "test",
+    window = null,
+    version = 1,
+  )
+}

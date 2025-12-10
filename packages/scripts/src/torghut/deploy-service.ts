@@ -15,7 +15,7 @@ const websocketDeploymentPath = resolve(repoRoot, 'argocd/applications/torghut/w
 const websocketKustomizePath = resolve(repoRoot, 'argocd/applications/torghut/ws')
 const taDeploymentPath = resolve(
   repoRoot,
-  process.env.TORGHUT_TA_DEPLOYMENT_PATH ?? 'argocd/applications/torghut/ta/deployment.yaml',
+  process.env.TORGHUT_TA_DEPLOYMENT_PATH ?? 'argocd/applications/torghut/ta/flinkdeployment.yaml',
 )
 const taKustomizePath = resolve(repoRoot, process.env.TORGHUT_TA_KUSTOMIZE_PATH ?? 'argocd/applications/torghut/ta')
 const databaseSecretName = 'torghut-db-app'
@@ -182,6 +182,10 @@ const rewriteDatabaseUrl = (databaseUrl: string, localPort: number): string => {
 }
 
 const runMigrations = async () => {
+  if (process.env.TORGHUT_SKIP_MIGRATIONS === 'true') {
+    console.log('Skipping torghut DB migrations (TORGHUT_SKIP_MIGRATIONS=true)')
+    return
+  }
   const databaseUrl = await resolveDatabaseUrl()
   const forward = await startPortForward()
   const localUrl = rewriteDatabaseUrl(databaseUrl, forward.localPort)
@@ -271,7 +275,7 @@ const buildTechnicalAnalysisImage = async () => {
   const context = resolve(repoRoot, process.env.TORGHUT_TA_IMAGE_CONTEXT ?? 'services/dorvud')
   const dockerfile = resolve(
     repoRoot,
-    process.env.TORGHUT_TA_IMAGE_DOCKERFILE ?? 'services/dorvud/technical-analysis/Dockerfile',
+    process.env.TORGHUT_TA_IMAGE_DOCKERFILE ?? 'services/dorvud/technical-analysis-flink/Dockerfile',
   )
   const platforms = process.env.TORGHUT_TA_IMAGE_PLATFORMS?.split(',')
     .map((entry) => entry.trim())
@@ -336,16 +340,18 @@ const updateTechnicalAnalysisDeployment = (image: string, version: string, commi
   const raw = readFileSync(taDeploymentPath, 'utf8')
   const doc = YAML.parse(raw)
 
+  doc.spec ??= {}
+  doc.spec.image = image
+
   const containers:
     | Array<{ name?: string; image?: string; env?: Array<{ name?: string; value?: string }> }>
-    | undefined = doc?.spec?.template?.spec?.containers
+    | undefined = doc?.spec?.podTemplate?.spec?.containers
 
   if (!containers || containers.length === 0) {
-    throw new Error('Unable to locate torghut technical-analysis container in manifest')
+    throw new Error('Unable to locate flink container in FlinkDeployment manifest')
   }
 
-  const container = containers.find((item) => item?.name === 'torghut-ta') ?? containers[0]
-  container.image = image
+  const container = containers.find((item) => item?.name === 'flink-main-container') ?? containers[0]
   container.env ??= []
 
   const ensureEnv = (name: string, value: string) => {
@@ -359,12 +365,6 @@ const updateTechnicalAnalysisDeployment = (image: string, version: string, commi
 
   ensureEnv('TORGHUT_TA_VERSION', version)
   ensureEnv('TORGHUT_TA_COMMIT', commit)
-
-  doc.spec ??= {}
-  doc.spec.template ??= {}
-  doc.spec.template.metadata ??= {}
-  doc.spec.template.metadata.annotations ??= {}
-  doc.spec.template.metadata.annotations['kubectl.kubernetes.io/restartedAt'] = new Date().toISOString()
 
   const updated = YAML.stringify(doc, { lineWidth: 120 })
   writeFileSync(taDeploymentPath, updated)
@@ -400,7 +400,14 @@ const applyTechnicalAnalysisResources = async () => {
 
   const waitTimeout = '300s'
   await run('kubectl', ['apply', '-k', taKustomizePath])
-  await run('kubectl', ['-n', 'torghut', 'rollout', 'status', 'deployment/torghut-ta', `--timeout=${waitTimeout}`])
+  await run('kubectl', [
+    '-n',
+    'torghut',
+    'wait',
+    '--for=condition=Ready',
+    'flinkdeployment/torghut-ta',
+    `--timeout=${waitTimeout}`,
+  ])
 }
 
 const main = async () => {

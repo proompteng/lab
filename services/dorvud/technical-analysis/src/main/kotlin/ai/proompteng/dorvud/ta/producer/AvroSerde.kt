@@ -4,6 +4,7 @@ import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
 import java.io.ByteArrayOutputStream
+import java.io.Serializable
 import java.nio.charset.StandardCharsets
 import org.apache.avro.Schema
 import org.apache.avro.generic.GenericData
@@ -12,7 +13,11 @@ import org.apache.avro.io.BinaryEncoder
 import org.apache.avro.io.EncoderFactory
 
 /** Lightweight Avro helper to validate and encode payloads against the published schemas. */
-class AvroSerde {
+class AvroSerde : Serializable {
+  companion object {
+    private const val serialVersionUID: Long = 1L
+  }
+
   private val barsSchema: Schema = loadSchema("schemas/ta-bars-1s.avsc")
   private val signalsSchema: Schema = loadSchema("schemas/ta-signals.avsc")
 
