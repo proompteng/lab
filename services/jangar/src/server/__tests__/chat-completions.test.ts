@@ -121,7 +121,7 @@ describe('chat completions handler', () => {
 
     const fences = contentDeltas.filter((c) => c.includes('```'))
     expect(fences.length).toBeGreaterThanOrEqual(2)
-    expect(contentDeltas.some((c) => c === 'ls')).toBe(true)
+    expect(contentDeltas.some((c) => c.startsWith('ls'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('output chunk'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('...'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('---'))).toBe(true)
@@ -136,6 +136,67 @@ describe('chat completions handler', () => {
 
     const usageChunk = chunks.find((c) => c.usage)
     expect(usageChunk?.usage?.completion_tokens).toBe(2)
+  })
+
+  it('streams a single command line once and leaves a blank line before output', async () => {
+    const command = '/bin/bash -lc \'rg -n "jangar" packages | head\''
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'tool', toolKind: 'command', id: 'tool-1', status: 'started', title: command }
+          yield {
+            type: 'tool',
+            toolKind: 'command',
+            id: 'tool-1',
+            status: 'delta',
+            title: command,
+            delta:
+              'packages/cx-tools/README.md:7:Artifacts are expected to build into `dist/`\npackages/scripts/README.md:17:| `src/jangar/build-image.ts` | Builds and pushes the `lab/jangar` Bun worker image',
+          }
+          yield { type: 'tool', toolKind: 'command', id: 'tool-1', status: 'completed', title: command }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 2 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const contentChunks = chunks
+      .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean) as string[]
+
+    // Expect exactly: open fence, command line, output, close fence.
+    expect(contentChunks.length).toBe(4)
+    const [openFence, commandLine, outputChunk] = contentChunks
+
+    expect(openFence.trim()).toBe('```')
+    expect(commandLine).toContain(command)
+    expect(commandLine.endsWith('\n\n')).toBe(true) // ensures output begins on its own line
+
+    // Command string should not reappear inside output chunk.
+    expect(outputChunk.includes(command)).toBe(false)
+
+    // Only one appearance of the command line across all streamed content.
+    const joinedContent = contentChunks.join('')
+    const occurrences = joinedContent.split(command).length - 1
+    expect(occurrences).toBe(1)
   })
 
   it('coalesces consecutive reasoning deltas into one chunk', async () => {
@@ -170,9 +231,10 @@ describe('chat completions handler', () => {
       .map((part) => JSON.parse(part))
 
     const reasoningChunks = chunks.filter((c) => c.choices?.[0]?.delta?.reasoning_content)
-    expect(reasoningChunks).toHaveLength(1)
-    expect(reasoningChunks[0].choices[0].delta.reasoning_content).toBe('first second')
-    expect(reasoningChunks[0].choices[0].delta.content).toBeUndefined()
+    const reasoningText = reasoningChunks.map((c) => c.choices[0].delta.reasoning_content as string).join('')
+    expect(reasoningText).toBe('first second')
+    // No content mixed into reasoning-only chunks
+    expect(reasoningChunks.some((c) => c.choices?.[0]?.delta?.content)).toBe(false)
   })
 
   it('converts four asterisks in reasoning to a newline', async () => {
@@ -204,9 +266,14 @@ describe('chat completions handler', () => {
       .filter((part) => part !== '[DONE]')
       .map((part) => JSON.parse(part))
 
-    const reasoningChunk = chunks.find((c) => c.choices?.[0]?.delta?.reasoning_content)
-    expect(reasoningChunk?.choices?.[0]?.delta?.reasoning_content).toBe('files\nPlanning')
-    expect(reasoningChunk?.choices?.[0]?.delta?.content).toBeUndefined()
+    const reasoningText = chunks
+      .filter((c) => c.choices?.[0]?.delta?.reasoning_content)
+      .map((c) => c.choices[0].delta.reasoning_content as string)
+      .join('')
+    expect(reasoningText).toBe('files\nPlanning')
+    expect(
+      chunks.filter((c) => c.choices?.[0]?.delta?.reasoning_content).some((c) => c.choices?.[0]?.delta?.content),
+    ).toBe(false)
   })
 
   it('converts split asterisk runs across deltas into a newline', async () => {
@@ -239,9 +306,14 @@ describe('chat completions handler', () => {
       .filter((part) => part !== '[DONE]')
       .map((part) => JSON.parse(part))
 
-    const reasoningChunk = chunks.find((c) => c.choices?.[0]?.delta?.reasoning_content)
-    expect(reasoningChunk?.choices?.[0]?.delta?.reasoning_content).toBe('\nAfter')
-    expect(reasoningChunk?.choices?.[0]?.delta?.content).toBeUndefined()
+    const reasoningText = chunks
+      .filter((c) => c.choices?.[0]?.delta?.reasoning_content)
+      .map((c) => c.choices[0].delta.reasoning_content as string)
+      .join('')
+    expect(reasoningText).toBe('\nAfter')
+    expect(
+      chunks.filter((c) => c.choices?.[0]?.delta?.reasoning_content).some((c) => c.choices?.[0]?.delta?.content),
+    ).toBe(false)
   })
 
   it('normalizes codex usage payloads and emits assistant role', async () => {
