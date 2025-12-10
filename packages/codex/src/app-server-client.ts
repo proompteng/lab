@@ -549,7 +549,9 @@ export class CodexAppServerClient {
             id: item.id,
             status,
             title: `${item.command}`,
-            detail: item.cwd ?? undefined,
+            // Avoid streaming cwd/exit metadata into the code fence; let the command string and output
+            // speak for themselves to prevent trailing “/workspace/…” lines.
+            detail: undefined,
             data: {
               status: item.status,
               aggregatedOutput: item.aggregatedOutput,
