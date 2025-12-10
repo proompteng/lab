@@ -1,7 +1,7 @@
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as S from '@effect/schema/Schema'
-import type { CodexAppServerClient, StreamDelta } from '@proompteng/codex'
+import type { CodexAppServerClient } from '@proompteng/codex'
 import { Effect, pipe } from 'effect'
 
 import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
@@ -75,9 +75,6 @@ const parseRequest = async (request: Request): Promise<ChatRequest> => {
   if (!parsed.messages.length) {
     throw new RequestError(400, 'messages_required', '`messages` must be a non-empty array')
   }
-  if (parsed.stream !== true) {
-    throw new RequestError(400, 'stream_required', 'Streaming only: set stream=true')
-  }
   return parsed
 }
 
@@ -132,13 +129,45 @@ const normalizeUsage = (raw: unknown) => {
   return normalized
 }
 
+const normalizeDeltaText = (delta: unknown): string => {
+  if (typeof delta === 'string') return delta
+
+  if (Array.isArray(delta)) {
+    return delta
+      .map((part) => {
+        if (typeof part === 'string') return part
+        if (part && typeof part === 'object') {
+          const obj = part as Record<string, unknown>
+          if (typeof obj.text === 'string') return obj.text
+          if (typeof obj.content === 'string') return obj.content
+        }
+        return String(part)
+      })
+      .join('')
+  }
+
+  if (delta && typeof delta === 'object') {
+    const obj = delta as Record<string, unknown>
+    if (typeof obj.text === 'string') return obj.text
+    if (typeof obj.content === 'string') return obj.content
+  }
+
+  return delta == null ? '' : String(delta)
+}
+
+const sanitizeReasoningText = (text: string) => text.replace(/\*{4,}/g, '\n')
+
+const resolveCodexCwd = () => {
+  const defaultRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+  return process.env.CODEX_CWD ?? (process.env.NODE_ENV === 'production' ? '/workspace/lab' : defaultRepoRoot)
+}
+
 const toSseResponse = (client: CodexAppServerClient, prompt: string, model: string, signal?: AbortSignal) => {
   const encoder = new TextEncoder()
   const created = Math.floor(Date.now() / 1000)
   const id = `chatcmpl-${crypto.randomUUID()}`
 
-  const defaultRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
-  const codexCwd = process.env.CODEX_CWD ?? (process.env.NODE_ENV === 'production' ? '/workspace/lab' : defaultRepoRoot)
+  const codexCwd = resolveCodexCwd()
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -156,88 +185,19 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
         }
       }
 
-      const toolIndex = new Map<string, number>()
-      const toolArguments = new Map<string, { opened: boolean; closed: boolean; entries: number; lastEntry?: string }>()
-      let nextToolIndex = 0
       let messageRoleEmitted = false
-      let roleEmittedForTools = false
       const abortControllers: Array<() => void> = []
+      let reasoningBuffer = ''
 
-      type ToolDelta = Extract<StreamDelta, { type: 'tool' }>
-
-      const getToolIndex = (toolId: string) => {
-        const existing = toolIndex.get(toolId)
-        if (typeof existing === 'number') return existing
-        const nextIndex = nextToolIndex
-        toolIndex.set(toolId, nextIndex)
-        nextToolIndex += 1
-        return nextIndex
-      }
-
-      const appendToolArguments = (delta: ToolDelta) => {
-        const state = toolArguments.get(delta.id) ?? { opened: false, closed: false, entries: 0 }
-        const entryPayload = {
-          status: delta.status,
-          title: delta.title,
-          detail: delta.detail,
-          data: delta.data,
-        }
-        const serialized = JSON.stringify(entryPayload)
-
-        if (state.lastEntry === serialized) {
-          toolArguments.set(delta.id, state)
-          return null
-        }
-
-        const fragments: string[] = []
-        if (!state.opened) {
-          fragments.push('[')
-          state.opened = true
-        }
-
-        if (state.entries > 0) {
-          fragments.push(',')
-        }
-
-        fragments.push(serialized)
-        state.entries += 1
-
-        if (delta.status === 'completed' && !state.closed) {
-          fragments.push(']')
-          state.closed = true
-        }
-
-        state.lastEntry = serialized
-        toolArguments.set(delta.id, state)
-
-        return fragments.join('')
-      }
-
-      const toolKindToName = (toolKind: ToolDelta['toolKind']) => (toolKind === 'webSearch' ? 'web_search' : toolKind)
-
-      const emitToolChunk = (delta: ToolDelta) => {
-        const argumentFragment = appendToolArguments(delta)
-        const index = getToolIndex(delta.id)
-
-        if (!argumentFragment) return
-
+      const flushReasoning = () => {
+        if (!reasoningBuffer) return
+        const sanitized = sanitizeReasoningText(reasoningBuffer)
         const deltaPayload: Record<string, unknown> = {
-          tool_calls: [
-            {
-              index,
-              id: delta.id,
-              type: 'function',
-              function: {
-                name: toolKindToName(delta.toolKind),
-                arguments: argumentFragment,
-              },
-            },
-          ],
+          reasoning_content: sanitized,
         }
-
-        if (!roleEmittedForTools) {
+        if (!messageRoleEmitted) {
           deltaPayload.role = 'assistant'
-          roleEmittedForTools = true
+          messageRoleEmitted = true
         }
 
         const chunk = {
@@ -253,8 +213,8 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
             },
           ],
         }
-
         enqueueChunk(chunk)
+        reasoningBuffer = ''
       }
 
       try {
@@ -300,8 +260,13 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
             break
           }
 
+          if (delta.type !== 'reasoning') {
+            flushReasoning()
+          }
+
           if (delta.type === 'message') {
-            const deltaPayload: Record<string, unknown> = { content: delta.delta }
+            const text = normalizeDeltaText(delta.delta)
+            const deltaPayload: Record<string, unknown> = { content: text }
             if (!messageRoleEmitted) {
               deltaPayload.role = 'assistant'
               messageRoleEmitted = true
@@ -324,24 +289,8 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
           }
 
           if (delta.type === 'reasoning') {
-            const chunk = {
-              id,
-              object: 'chat.completion.chunk',
-              created,
-              model,
-              choices: [
-                {
-                  delta: { reasoning_content: [{ type: 'text', text: delta.delta }] },
-                  index: 0,
-                  finish_reason: null,
-                },
-              ],
-            }
-            enqueueChunk(chunk)
-          }
-
-          if (delta.type === 'tool') {
-            emitToolChunk(delta)
+            const text = sanitizeReasoningText(normalizeDeltaText(delta.delta))
+            reasoningBuffer += text
           }
 
           if (delta.type === 'usage') {
@@ -363,6 +312,8 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
             finished = true
           }
         }
+
+        flushReasoning()
       } catch (error) {
         const payload = {
           error: {
@@ -416,20 +367,131 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
   })
 }
 
+const toJsonResponse = async (client: CodexAppServerClient, prompt: string, model: string, signal?: AbortSignal) => {
+  const created = Math.floor(Date.now() / 1000)
+  const id = `chatcmpl-${crypto.randomUUID()}`
+  const codexCwd = resolveCodexCwd()
+
+  let content = ''
+  let reasoning = ''
+  let usage: Record<string, unknown> | null = null
+  let aborted = false
+  let turnId: string | null = null
+  let threadId: string | null = null
+  let removeAbortListener: (() => void) | null = null
+
+  try {
+    const {
+      stream: codexStream,
+      turnId: codexTurnId,
+      threadId: codexThreadId,
+    } = await client.runTurnStream(prompt, {
+      model,
+      cwd: codexCwd,
+    })
+    turnId = codexTurnId
+    threadId = codexThreadId
+
+    const abortHandler = () => {
+      aborted = true
+      if (turnId && threadId) {
+        void client.interruptTurn(turnId, threadId).catch(() => {})
+      }
+    }
+
+    if (signal) {
+      if (signal.aborted) {
+        abortHandler()
+      } else {
+        signal.addEventListener('abort', abortHandler, { once: true })
+        removeAbortListener = () => signal.removeEventListener('abort', abortHandler)
+      }
+    }
+
+    for await (const delta of codexStream) {
+      if (aborted) break
+
+      if (delta.type === 'message') {
+        content += normalizeDeltaText(delta.delta)
+      } else if (delta.type === 'reasoning') {
+        reasoning += sanitizeReasoningText(normalizeDeltaText(delta.delta))
+      } else if (delta.type === 'usage') {
+        usage = normalizeUsage(delta.usage)
+      }
+    }
+  } catch (error) {
+    if (aborted) {
+      return jsonResponse(
+        { error: { message: 'request was aborted by the client', type: 'request_cancelled', code: 'client_abort' } },
+        499,
+      )
+    }
+    return jsonResponse(
+      {
+        error: {
+          message: error instanceof Error ? error.message : String(error),
+          type: 'internal',
+          code: 'codex_error',
+        },
+      },
+      500,
+    )
+  } finally {
+    removeAbortListener?.()
+  }
+
+  if (aborted) {
+    return jsonResponse(
+      { error: { message: 'request was aborted by the client', type: 'request_cancelled', code: 'client_abort' } },
+      499,
+    )
+  }
+
+  const messagePayload: Record<string, unknown> = { role: 'assistant', content }
+  if (reasoning) {
+    messagePayload.reasoning_content = sanitizeReasoningText(reasoning)
+  }
+
+  const payload: Record<string, unknown> = {
+    id,
+    object: 'chat.completion',
+    created,
+    model,
+    choices: [
+      {
+        index: 0,
+        finish_reason: 'stop',
+        message: messagePayload,
+      },
+    ],
+  }
+
+  if (usage) {
+    payload.usage = usage
+  }
+
+  return jsonResponse(payload)
+}
+
 export const handleChatCompletion = async (request: Request): Promise<Response> => {
   try {
     const parsed = await parseRequest(request)
+    const isStream = parsed.stream === true
 
     return await pipe(
       Effect.all({
         config: loadConfig,
         client: getCodexClient(),
       }),
-      Effect.map(({ config, client }) => ({ model: parsed.model ?? config.defaultModel, client })),
-      Effect.map(({ model, client }) => {
-        const prompt = buildPrompt(parsed.messages)
-        return toSseResponse(client, prompt, model, request.signal)
-      }),
+      Effect.flatMap(({ config, client }) =>
+        Effect.promise(() => {
+          const model = parsed.model ?? config.defaultModel
+          const prompt = buildPrompt(parsed.messages)
+          return isStream
+            ? Promise.resolve(toSseResponse(client, prompt, model, request.signal))
+            : toJsonResponse(client, prompt, model, request.signal)
+        }),
+      ),
       Effect.runPromise,
     )
   } catch (error) {

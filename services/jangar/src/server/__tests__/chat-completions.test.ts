@@ -25,7 +25,7 @@ describe('chat completions handler', () => {
     resetCodexClient()
   })
 
-  it('rejects non-streaming requests', async () => {
+  it('returns JSON for non-streaming requests', async () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({ model: 'test-model', messages: [{ role: 'user', content: 'hi' }], stream: false }),
@@ -33,9 +33,10 @@ describe('chat completions handler', () => {
 
     const response = await chatCompletionsHandler(request)
 
-    expect(response.status).toBe(400)
-    const text = await response.text()
-    expect(text).toContain('stream_required')
+    expect(response.status).toBe(200)
+    const json = await response.json()
+    expect(json.object).toBe('chat.completion')
+    expect(json.choices?.[0]?.message?.content).toContain('hi there')
   })
 
   it('proxies upstream SSE stream', async () => {
@@ -52,7 +53,7 @@ describe('chat completions handler', () => {
     expect(response.headers.get('content-type')).toContain('text/event-stream')
   })
 
-  it('streams tool calls and reasoning deltas in OpenAI-compatible chunks', async () => {
+  it('drops tool deltas while streaming reasoning in OpenAI-compatible chunks', async () => {
     const mockClient = {
       runTurnStream: async () => ({
         turnId: 'turn-1',
@@ -114,24 +115,120 @@ describe('chat completions handler', () => {
       .map((part) => JSON.parse(part))
 
     const toolChunks = chunks.filter((c) => c.choices?.[0]?.delta?.tool_calls)
-    expect(toolChunks.length).toBeGreaterThanOrEqual(3)
-
-    const firstTool = toolChunks[0].choices[0].delta.tool_calls[0]
-    expect(firstTool.id).toBe('tool-1')
-    expect(firstTool.index).toBe(0)
-    expect(firstTool.function.name).toBe('command')
-    expect(firstTool.function.arguments.startsWith('[')).toBe(true)
-    const hasClosingArguments = toolChunks.some((chunk) => {
-      const args = chunk.choices?.[0]?.delta?.tool_calls?.[0]?.function?.arguments
-      return typeof args === 'string' && args.endsWith(']')
-    })
-    expect(hasClosingArguments).toBe(true)
+    expect(toolChunks.length).toBe(0)
 
     const reasoningChunk = chunks.find((c) => c.choices?.[0]?.delta?.reasoning_content)
-    expect(reasoningChunk?.choices?.[0]?.delta?.reasoning_content?.[0]?.text).toContain('thinking')
+    expect(typeof reasoningChunk?.choices?.[0]?.delta?.reasoning_content).toBe('string')
+    expect(reasoningChunk?.choices?.[0]?.delta?.content).toBeUndefined()
 
     const usageChunk = chunks.find((c) => c.usage)
     expect(usageChunk?.usage?.completion_tokens).toBe(2)
+  })
+
+  it('coalesces consecutive reasoning deltas into one chunk', async () => {
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'reasoning', delta: 'first ' }
+          yield { type: 'reasoning', delta: 'second' }
+          yield { type: 'message', delta: 'answer' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 2 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const reasoningChunks = chunks.filter((c) => c.choices?.[0]?.delta?.reasoning_content)
+    expect(reasoningChunks).toHaveLength(1)
+    expect(reasoningChunks[0].choices[0].delta.reasoning_content).toBe('first second')
+    expect(reasoningChunks[0].choices[0].delta.content).toBeUndefined()
+  })
+
+  it('converts four asterisks in reasoning to a newline', async () => {
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'reasoning', delta: 'files****Planning' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const reasoningChunk = chunks.find((c) => c.choices?.[0]?.delta?.reasoning_content)
+    expect(reasoningChunk?.choices?.[0]?.delta?.reasoning_content).toBe('files\nPlanning')
+    expect(reasoningChunk?.choices?.[0]?.delta?.content).toBeUndefined()
+  })
+
+  it('converts split asterisk runs across deltas into a newline', async () => {
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'reasoning', delta: '**' }
+          yield { type: 'reasoning', delta: '**After' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const reasoningChunk = chunks.find((c) => c.choices?.[0]?.delta?.reasoning_content)
+    expect(reasoningChunk?.choices?.[0]?.delta?.reasoning_content).toBe('\nAfter')
+    expect(reasoningChunk?.choices?.[0]?.delta?.content).toBeUndefined()
   })
 
   it('normalizes codex usage payloads and emits assistant role', async () => {
