@@ -162,6 +162,33 @@ exec ${helmBinary} "${'${'}args[@]}"
   return { helmDir, helmBinary: shimPath, cleanup }
 }
 
+const writeKustomizeShim = (): { kustomizeDir: string; kustomizeBinary: string; cleanup: () => void } => {
+  const envBin = process.env.KUSTOMIZE_BIN
+  if (envBin) {
+    return { kustomizeDir: tmpdir(), kustomizeBinary: envBin, cleanup: () => {} }
+  }
+
+  const existing = Bun.which('kustomize')
+  if (existing) {
+    return { kustomizeDir: tmpdir(), kustomizeBinary: existing, cleanup: () => {} }
+  }
+
+  const kubectl = Bun.which('kubectl')
+  if (!kubectl) {
+    fatal('Missing kustomize: install kustomize or provide kubectl so we can run "kubectl kustomize"')
+  }
+
+  const shimDir = mkdtempSync(join(tmpdir(), 'kustomize-shim-'))
+  const shimPath = join(shimDir, 'kustomize')
+  const script = `#!/usr/bin/env bash
+set -euo pipefail
+exec ${kubectl} kustomize "$@"
+`
+  writeFileSync(shimPath, script, { mode: 0o755 })
+  const cleanup = () => rmSync(shimDir, { recursive: true, force: true })
+  return { kustomizeDir: shimDir, kustomizeBinary: shimPath, cleanup }
+}
+
 const updateManifests = (
   kustomizePath: string,
   servicePath: string,
@@ -212,7 +239,6 @@ const buildEnv = (env?: Record<string, string | undefined>) =>
 
 export const main = async (options: DeployOptions = {}) => {
   ensureCli('kubectl')
-  ensureCli('kustomize')
   ensureCli('curl')
   ensureCli('tar')
   await ensureGhToken()
@@ -253,8 +279,9 @@ export const main = async (options: DeployOptions = {}) => {
   )
 
   const { helmDir, helmBinary, cleanup } = writeHelmShim()
-  const renderEnv = { PATH: `${helmDir}:${process.env.PATH ?? ''}`, HELM_BIN: helmBinary }
-  const rendered = await capture(['kustomize', 'build', kustomizePath, '--enable-helm'], renderEnv)
+  const { kustomizeDir, kustomizeBinary, cleanup: kustomizeCleanup } = writeKustomizeShim()
+  const renderEnv = { PATH: `${helmDir}:${kustomizeDir}:${process.env.PATH ?? ''}`, HELM_BIN: helmBinary }
+  const rendered = await capture([kustomizeBinary, 'build', kustomizePath, '--enable-helm'], renderEnv)
   const tmpDir = mkdtempSync(`${tmpdir()}/jangar-render-`)
   const tmpPath = resolve(tmpDir, 'manifests.yaml')
   try {
@@ -262,6 +289,7 @@ export const main = async (options: DeployOptions = {}) => {
     await run('kubectl', ['apply', '-f', tmpPath])
   } finally {
     cleanup()
+    kustomizeCleanup()
     try {
       rmSync(tmpPath, { force: true })
       rmSync(tmpDir, { recursive: true, force: true })

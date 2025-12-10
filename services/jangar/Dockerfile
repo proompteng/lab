@@ -4,6 +4,7 @@ ARG BUN_VERSION=1.3.4
 ARG OPENVSCODE_VERSION=1.105.1
 ARG GH_VERSION=2.65.0
 ARG KUBECTL_VERSION=1.31.0
+ARG DOCKER_CLI_VERSION=29.1.2
 
 FROM oven/bun:${BUN_VERSION} AS base
 ARG NODE24_VERSION=24.11.1
@@ -86,6 +87,22 @@ RUN set -eux; \
   install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl; \
   rm kubectl kubectl.sha256; \
   kubectl version --client --output=yaml
+
+# Install Docker CLI (client only; daemon runs in sidecar)
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) DOCKER_ARCH=x86_64 ;; \
+  arm64|aarch64) DOCKER_ARCH=aarch64 ;; \
+  *) echo "Unsupported arch for docker cli: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz" \
+    -o /tmp/docker.tgz; \
+  tar -xzf /tmp/docker.tgz -C /tmp; \
+  install /tmp/docker/docker /usr/local/bin/docker; \
+  rm -rf /tmp/docker.tgz /tmp/docker; \
+  docker --version
 
 # Base tsconfig for workspace packages
 COPY tsconfig.base.json ./

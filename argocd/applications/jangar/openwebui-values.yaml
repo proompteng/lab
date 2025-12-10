@@ -40,6 +40,9 @@ extraEnvVars:
     value: /etc/ssl/certs/jangar-db/ca.crt
   - name: PGSSLMODE
     value: require
+  # Disable TLS when calling the HTTP-only Jangar OpenAI gateway
+  - name: AIOHTTP_CLIENT_SESSION_SSL
+    value: "false"
   - name: DEFAULT_MODELS
     value: meta-orchestrator
   - name: WEBUI_AUTH

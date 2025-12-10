@@ -6,6 +6,8 @@ Source code is the source of truth; this note captures what is actually implemen
 - OpenAI-compatible proxy endpoints `/openai/v1/chat/completions` (streaming-only) and `/openai/v1/models` backed by the Codex app-server (`gpt-5.1-codex-*`).
 - Convex schema and mutations for conversations, turns, messages, reasoning sections, commands (+ chunks), usage, rate limits, and events. The proxy writes via `src/services/db`.
 - App server wrapper auto-clones the lab repo into `CODEX_CWD` when missing; runs Codex with sandbox `danger-full-access`, approval `never` by default.
+- Tool invocation events from Codex (command/file/mcp/web search) are now forwarded in the SSE stream as OpenAI-style `tool_calls` deltas so OpenWebUI can display them. Example SSE line:
+  - `data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"tool-1","type":"function","function":{"name":"command","arguments":"[{\"status\":\"started\",\"title\":\"ls\"}"}}]},"index":0,"finish_reason":null}],"model":"gpt-5.1-codex","created":1733011200}\n\n`
 
 ## Not yet implemented
 - Activities: `run-codex-turn`, `run-worker-task`, and `publish-event` are stubs; no repo cloning, lint/test, PR creation, or SSE fan-out.
