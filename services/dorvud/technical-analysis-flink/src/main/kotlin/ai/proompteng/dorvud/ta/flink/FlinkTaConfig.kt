@@ -1,5 +1,6 @@
 package ai.proompteng.dorvud.ta.flink
 
+import java.io.Serializable
 import java.time.Duration
 
 data class FlinkTaConfig(
@@ -31,8 +32,10 @@ data class FlinkTaConfig(
   val s3AccessKey: String?,
   val s3SecretKey: String?,
   val transactionTimeoutMs: Long,
-) {
+) : Serializable {
   companion object {
+    private const val serialVersionUID: Long = 1L
+
     fun fromEnv(): FlinkTaConfig {
       fun env(key: String): String? = System.getenv(key)
       fun env(key: String, default: String): String = env(key) ?: default
