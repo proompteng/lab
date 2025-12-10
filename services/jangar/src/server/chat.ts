@@ -212,6 +212,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
       let lastCommandId: string | null = null
       let commandHasContent = false
       let hasEmittedAnyCommand = false
+      let hadError = false
 
       type ToolState = {
         id: string
@@ -480,6 +481,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
           ),
         )
       } catch (error) {
+        hadError = true
         const payload = {
           error: {
             message: error instanceof Error ? error.message : String(error),
@@ -493,25 +495,27 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
 
         closeCommandFence()
 
-        const finalChunk: Record<string, unknown> = {
-          id,
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [
-            {
-              delta: {},
-              index: 0,
-              finish_reason: 'stop',
-            },
-          ],
-        }
+        if (!aborted && !hadError && turnFinished) {
+          const finalChunk: Record<string, unknown> = {
+            id,
+            object: 'chat.completion.chunk',
+            created,
+            model,
+            choices: [
+              {
+                delta: {},
+                index: 0,
+                finish_reason: 'stop',
+              },
+            ],
+          }
 
-        if (lastUsage) {
-          finalChunk.usage = lastUsage
-        }
+          if (lastUsage) {
+            finalChunk.usage = lastUsage
+          }
 
-        enqueueChunk(finalChunk)
+          enqueueChunk(finalChunk)
+        }
 
         if (!controllerClosed) {
           try {

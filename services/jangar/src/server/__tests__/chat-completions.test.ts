@@ -409,5 +409,13 @@ describe('chat completions handler', () => {
     const text = await response.text()
     expect(text).toContain('"code":"codex_error"')
     expect(text.trim().endsWith('[DONE]')).toBe(true)
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+    const stopChunks = chunks.filter((c) => c.choices?.[0]?.finish_reason === 'stop')
+    expect(stopChunks).toHaveLength(0)
   })
 })
