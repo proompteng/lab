@@ -17,6 +17,11 @@ const ChatRequestSchema = S.Struct({
   model: S.optional(S.String),
   messages: S.Array(MessageSchema),
   stream: S.optional(S.Boolean),
+  stream_options: S.optional(
+    S.Struct({
+      include_usage: S.optional(S.Boolean),
+    }),
+  ),
 })
 
 type ChatRequest = S.Schema.Type<typeof ChatRequestSchema>
@@ -101,10 +106,10 @@ const pickNumber = (value: unknown, keys: string[]): number | undefined => {
 
 const normalizeUsage = (raw: unknown) => {
   const usage = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
-  const totals =
-    (usage.total && typeof usage.total === 'object' ? (usage.total as Record<string, unknown>) : null) ?? usage
+  const totals = usage.total && typeof usage.total === 'object' ? (usage.total as Record<string, unknown>) : null
   const last = usage.last && typeof usage.last === 'object' ? (usage.last as Record<string, unknown>) : null
-  const source = Object.keys(totals).length ? totals : (last ?? totals)
+  const source =
+    (last && Object.keys(last).length ? last : null) ?? (totals && Object.keys(totals).length ? totals : null) ?? usage
 
   const promptTokens = pickNumber(source, ['input_tokens', 'prompt_tokens', 'inputTokens', 'promptTokens']) ?? 0
   const cachedTokens =
@@ -172,7 +177,13 @@ const resolveCodexCwd = () => {
   return process.env.CODEX_CWD ?? (process.env.NODE_ENV === 'production' ? '/workspace/lab' : defaultRepoRoot)
 }
 
-const toSseResponse = (client: CodexAppServerClient, prompt: string, model: string, signal?: AbortSignal) => {
+const toSseResponse = (
+  client: CodexAppServerClient,
+  prompt: string,
+  model: string,
+  includeUsage: boolean,
+  signal?: AbortSignal,
+) => {
   const encoder = new TextEncoder()
   const created = Math.floor(Date.now() / 1000)
   const id = `chatcmpl-${crypto.randomUUID()}`
@@ -189,6 +200,8 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
       let activeThreadId: string | null = null
       let lastUsage: Record<string, unknown> | null = null
       let turnFinished = false
+      let sawUpstreamError = false
+      let includeUsageChunk = includeUsage
 
       const interruptCodex = () => {
         if (activeTurnId && activeThreadId) {
@@ -461,8 +474,23 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
                     flushReasoning()
                   }
 
+                  if (delta.type === 'usage') {
+                    closeCommandFence()
+                    if (includeUsageChunk) {
+                      lastUsage = normalizeUsage(delta.usage)
+                    }
+                    continue
+                  }
+
+                  if (sawUpstreamError) {
+                    // After an upstream error we only care about trailing usage updates.
+                    continue
+                  }
+
                   if (delta.type === 'error') {
                     hadError = true
+                    sawUpstreamError = true
+                    closeCommandFence()
                     const errorPayload = {
                       error:
                         delta.error && typeof delta.error === 'object'
@@ -470,8 +498,8 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
                           : { message: String(delta.error ?? 'upstream error'), type: 'upstream' },
                     }
                     enqueueChunk(errorPayload)
-                    turnFinished = true
-                    break
+                    // Keep listening for possible trailing usage.
+                    continue
                   }
 
                   if (delta.type === 'message') {
@@ -505,6 +533,23 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
                     const deltaRecord = delta as Record<string, unknown>
                     const toolState = getToolState(deltaRecord)
                     const argsPayload = formatToolArguments(toolState, deltaRecord)
+                    if (toolState.toolKind === 'webSearch') {
+                      closeCommandFence()
+                      // Emit the attempted search term plainly, wrapped in backticks so UIs like
+                      // OpenWebUI render it as a code span without extra prefixes/suffixes.
+                      if (deltaRecord.status !== 'completed') {
+                        const query =
+                          (typeof toolState.title === 'string' && toolState.title.length > 0
+                            ? toolState.title
+                            : undefined) ??
+                          (typeof argsPayload.detail === 'string' && argsPayload.detail.length > 0
+                            ? argsPayload.detail
+                            : undefined)
+                        if (query) emitContentDelta(`\`${query}\``)
+                      }
+                      continue
+                    }
+
                     if (toolState.toolKind === 'command') {
                       openCommandFence()
                       const content = formatToolContent(toolState, argsPayload)
@@ -521,11 +566,6 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
                       closeCommandFence()
                       emitContentDelta(formatToolContent(toolState, argsPayload))
                     }
-                  }
-
-                  if (delta.type === 'usage') {
-                    closeCommandFence()
-                    lastUsage = normalizeUsage(delta.usage)
                   }
                 }
 
@@ -557,7 +597,18 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
 
         closeCommandFence()
 
-        if (!aborted && !hadError && turnFinished) {
+        if (includeUsageChunk && lastUsage && !controllerClosed) {
+          enqueueChunk({
+            id,
+            object: 'chat.completion.chunk',
+            created,
+            model,
+            choices: [],
+            usage: lastUsage,
+          })
+        }
+
+        if (!aborted && !hadError && turnFinished && !controllerClosed) {
           const finalChunk: Record<string, unknown> = {
             id,
             object: 'chat.completion.chunk',
@@ -570,10 +621,6 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
                 finish_reason: 'stop',
               },
             ],
-          }
-
-          if (lastUsage) {
-            finalChunk.usage = lastUsage
           }
 
           enqueueChunk(finalChunk)
@@ -605,6 +652,7 @@ const toSseResponse = (client: CodexAppServerClient, prompt: string, model: stri
 export const handleChatCompletion = async (request: Request): Promise<Response> => {
   try {
     const parsed = await parseRequest(request)
+    const includeUsage = parsed.stream_options?.include_usage === true
 
     return await pipe(
       Effect.all({
@@ -615,7 +663,7 @@ export const handleChatCompletion = async (request: Request): Promise<Response> 
         Effect.promise(() => {
           const model = parsed.model ?? config.defaultModel
           const prompt = buildPrompt(parsed.messages)
-          return Promise.resolve(toSseResponse(client, prompt, model, request.signal))
+          return Promise.resolve(toSseResponse(client, prompt, model, includeUsage, request.signal))
         }),
       ),
       Effect.runPromise,
