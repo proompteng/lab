@@ -28,7 +28,12 @@ describe('chat completions handler', () => {
   it('proxies upstream SSE stream', async () => {
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
     })
 
     const response = await chatCompletionsHandler(request)
@@ -95,7 +100,12 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
     })
 
     const response = await chatCompletionsHandler(request)
@@ -125,7 +135,6 @@ describe('chat completions handler', () => {
     expect(contentDeltas.some((c) => c.includes('output chunk'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('...'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('---'))).toBe(true)
-    expect(contentDeltas.some((c) => c.includes('done'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('exit 0'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('pwd'))).toBe(true)
     expect((contentDeltas.at(-1) ?? '').includes('```')).toBe(true)
@@ -136,6 +145,53 @@ describe('chat completions handler', () => {
 
     const usageChunk = chunks.find((c) => c.usage)
     expect(usageChunk?.usage?.completion_tokens).toBe(2)
+  })
+
+  it('renders web search queries as backticked terms without prefixes', async () => {
+    const searchQuery = 'best ramen near me'
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'tool', toolKind: 'webSearch', id: 'tool-search', status: 'started', title: searchQuery }
+          yield { type: 'message', delta: 'working on it' }
+          yield { type: 'tool', toolKind: 'webSearch', id: 'tool-search', status: 'completed', title: searchQuery }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 2 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const contentDeltas = chunks
+      .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean) as string[]
+
+    // Should emit the query once, wrapped in backticks, with nothing else attached.
+    const searchContents = contentDeltas.filter((c) => c.includes(searchQuery))
+    expect(searchContents).toHaveLength(1)
+    expect(searchContents[0]).toBe(`\`${searchQuery}\``)
   })
 
   it('streams a single command line once and leaves a blank line before output', async () => {
@@ -166,7 +222,12 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
     })
 
     const response = await chatCompletionsHandler(request)
@@ -218,7 +279,12 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
     })
 
     const response = await chatCompletionsHandler(request)
@@ -254,7 +320,12 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
     })
 
     const response = await chatCompletionsHandler(request)
@@ -294,7 +365,12 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
     })
 
     const response = await chatCompletionsHandler(request)
@@ -351,7 +427,12 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
     })
 
     const response = await chatCompletionsHandler(request)
@@ -374,6 +455,39 @@ describe('chat completions handler', () => {
     expect(usageChunk?.usage?.completion_tokens_details?.reasoning_tokens).toBe(1)
   })
 
+  it('omits usage unless include_usage is requested', async () => {
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'hello' }
+          yield { type: 'usage', usage: { input_tokens: 2, output_tokens: 3 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const usageChunk = chunks.find((c) => c.usage)
+    expect(usageChunk).toBeUndefined()
+  })
+
   it('keeps streaming after mid-turn usage updates and only finalizes once', async () => {
     const mockClient = {
       runTurnStream: async () => ({
@@ -393,7 +507,12 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
     })
 
     const response = await chatCompletionsHandler(request)
