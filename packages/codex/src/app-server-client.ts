@@ -46,7 +46,7 @@ export type StreamDelta =
 
 type TurnStream = {
   push: (delta: StreamDelta) => void
-  complete: (turn: Turn) => void
+  complete: (turn: Turn | null) => void
   fail: (error: unknown) => void
   iterator: AsyncGenerator<StreamDelta, Turn | null, void>
   lastReasoningDelta: string | null
@@ -97,7 +97,7 @@ const createTurnStream = (): TurnStream => {
     wake()
   }
 
-  const complete = (turn: Turn) => {
+  const complete = (turn: Turn | null) => {
     if (closed) return
     closed = true
     queue.push({ done: true, turn })
@@ -617,6 +617,30 @@ export class CodexAppServerClient {
         this.log('info', 'agent reasoning delta', { method, params: notification.params })
         break
       }
+      case 'codex/event/task_complete': {
+        routeToStream(
+          notification.params,
+          (stream, turnId) => {
+            stream.complete(null)
+            this.clearTurn(turnId)
+          },
+          { trackItem: false },
+        )
+        this.log('info', 'codex task complete -> closing turn stream', { params: notification.params })
+        break
+      }
+      case 'codex/event/turn_aborted': {
+        routeToStream(
+          notification.params,
+          (stream, turnId) => {
+            stream.fail(new Error('turn aborted'))
+            this.clearTurn(turnId)
+          },
+          { trackItem: false },
+        )
+        this.log('warn', 'codex turn aborted -> failing turn stream', { params: notification.params })
+        break
+      }
       case 'turn/completed': {
         const params = notification.params as TurnCompletedNotification
         const turnId = this.findTurnId(params) ?? params.turn.id
@@ -713,6 +737,7 @@ export class CodexAppServerClient {
     if (!params || typeof params !== 'object') return null
     const obj = params as { [key: string]: unknown }
 
+    if (typeof obj.id === 'string') return obj.id
     if (typeof obj.turnId === 'string') return obj.turnId
     if (typeof obj.turn_id === 'string') return obj.turn_id
     if (obj.turn && typeof (obj.turn as { id?: unknown }).id === 'string') return (obj.turn as { id: string }).id
