@@ -115,9 +115,10 @@ RUN set -eux; \
   arm64|aarch64) BUILDX_ARCH=linux-arm64 ;; \
   *) echo "Unsupported arch for buildx: $ARCH" >&2; exit 1 ;; \
   esac; \
+  VERSION="${BUILDX_VERSION#v}"; \
   mkdir -p /usr/lib/docker/cli-plugins; \
   curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
-    "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.${BUILDX_ARCH}" \
+    "https://github.com/docker/buildx/releases/download/v${VERSION}/buildx-v${VERSION}.${BUILDX_ARCH}" \
     -o /usr/lib/docker/cli-plugins/docker-buildx; \
   chmod +x /usr/lib/docker/cli-plugins/docker-buildx; \
   /usr/lib/docker/cli-plugins/docker-buildx version
