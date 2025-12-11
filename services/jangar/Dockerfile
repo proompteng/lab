@@ -178,13 +178,9 @@ RUN set -eux; \
 # Authenticate gh during build (requires BuildKit secret github_token with workflow scope)
 RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
   set -eux; \
-  if [ -s /tmp/gh_token ]; then \
-    gh auth login --with-token < /tmp/gh_token; \
-    gh auth status -t | grep -q "workflow" || (echo "GitHub token is missing workflow scope" >&2; exit 1); \
-    gh auth setup-git; \
-  else \
-    echo "Skipping GitHub CLI auth (no github_token secret provided)"; \
-  fi
+  gh auth login --with-token < /tmp/gh_token; \
+  gh auth status -t | grep -q "workflow" || (echo "GitHub token is missing workflow scope" >&2; exit 1); \
+  gh auth setup-git
 
 RUN git config --global user.name "tuslagch" \
   && git config --global user.email "tuslagch@proompteng.ai" \
