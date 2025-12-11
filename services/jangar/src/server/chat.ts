@@ -4,8 +4,8 @@ import * as S from '@effect/schema/Schema'
 import type { CodexAppServerClient } from '@proompteng/codex'
 import { Effect, pipe } from 'effect'
 
+import { type ChatThreadStore, createRedisChatThreadStore } from './chat-thread-store'
 import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
-import { createRedisChatThreadStore, type ChatThreadStore } from './chat-thread-store'
 import { loadConfig } from './config'
 
 const MessageSchema = S.Struct({

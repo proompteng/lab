@@ -4,8 +4,6 @@ export class RedisClient {
   private store = new Map<string, Hash>()
   connected = false
 
-  constructor(_options?: { url?: string }) {}
-
   async connect() {
     this.connected = true
   }
