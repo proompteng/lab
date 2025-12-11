@@ -172,6 +172,26 @@ const truncateLines = (text: string, maxLines: number) => {
   return [...lines.slice(0, maxLines), '...', ''].join('\n')
 }
 
+const renderFileChanges = (rawChanges: unknown, maxDiffLines = 5) => {
+  if (!Array.isArray(rawChanges)) return undefined
+
+  const rendered = rawChanges
+    .map((change) => {
+      if (!change || typeof change !== 'object') return null
+      const obj = change as { path?: unknown; diff?: unknown }
+      const path = typeof obj.path === 'string' && obj.path.length > 0 ? obj.path : 'unknown-file'
+      const diffText = typeof obj.diff === 'string' ? obj.diff : ''
+      const lines = diffText.split(/\r?\n/)
+      const truncated = lines.length > maxDiffLines ? [...lines.slice(0, maxDiffLines), '…'] : lines
+      const body = truncated.join('\n')
+      return `\n\`\`\`bash\n${path}\n${body}\n\`\`\`\n`
+    })
+    .filter(Boolean)
+
+  if (rendered.length === 0) return undefined
+  return rendered.join('')
+}
+
 const resolveCodexCwd = () => {
   const defaultRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
   return process.env.CODEX_CWD ?? (process.env.NODE_ENV === 'production' ? '/workspace/lab' : defaultRepoRoot)
@@ -201,7 +221,7 @@ const toSseResponse = (
       let lastUsage: Record<string, unknown> | null = null
       let turnFinished = false
       let sawUpstreamError = false
-      let includeUsageChunk = includeUsage
+      const includeUsageChunk = includeUsage
 
       const interruptCodex = () => {
         if (activeTurnId && activeThreadId) {
@@ -247,6 +267,8 @@ const toSseResponse = (
         index: number
         toolKind: string
         title?: string
+        lastContent?: string
+        lastStatus?: string
       }
 
       const toolStates = new Map<string, ToolState>()
@@ -533,6 +555,38 @@ const toSseResponse = (
                     const deltaRecord = delta as Record<string, unknown>
                     const toolState = getToolState(deltaRecord)
                     const argsPayload = formatToolArguments(toolState, deltaRecord)
+                    if (toolState.toolKind === 'file') {
+                      closeCommandFence()
+                      const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
+
+                      // Skip the start event to avoid duplicated summaries like "1 change(s)1 change(s)".
+                      if (status === 'started') {
+                        toolState.lastStatus = status
+                        continue
+                      }
+
+                      const changes = Array.isArray((deltaRecord.data as { changes?: unknown } | undefined)?.changes)
+                        ? (deltaRecord.data as { changes: unknown[] }).changes
+                        : Array.isArray(deltaRecord.changes as unknown)
+                          ? (deltaRecord.changes as unknown[])
+                          : undefined
+
+                      const content = renderFileChanges(changes) ?? formatToolContent(toolState, argsPayload)
+                      if (!content) {
+                        toolState.lastStatus = status
+                        continue
+                      }
+
+                      // Avoid re-emitting identical apply_patch summaries across delta/completed events.
+                      if (content === toolState.lastContent && status === toolState.lastStatus) {
+                        continue
+                      }
+
+                      toolState.lastContent = content
+                      toolState.lastStatus = status
+                      emitContentDelta(content)
+                      continue
+                    }
                     if (toolState.toolKind === 'webSearch') {
                       closeCommandFence()
                       // Emit the attempted search term plainly, wrapped in backticks so UIs like
