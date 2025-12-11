@@ -5,6 +5,7 @@ ARG OPENVSCODE_VERSION=1.105.1
 ARG GH_VERSION=2.65.0
 ARG KUBECTL_VERSION=1.34.3
 ARG DOCKER_CLI_VERSION=29.1.2
+ARG BUILDX_VERSION=0.30.1
 
 FROM oven/bun:${BUN_VERSION} AS base
 ARG NODE24_VERSION=24.11.1
@@ -104,6 +105,21 @@ RUN set -eux; \
   install /tmp/docker/docker /usr/local/bin/docker; \
   rm -rf /tmp/docker.tgz /tmp/docker; \
   docker --version
+
+# Install docker buildx plugin so BuildKit secrets and multi-arch builds work in CI/runtime
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) BUILDX_ARCH=linux-amd64 ;; \
+  arm64|aarch64) BUILDX_ARCH=linux-arm64 ;; \
+  *) echo "Unsupported arch for buildx: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  mkdir -p /usr/lib/docker/cli-plugins; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.${BUILDX_ARCH}" \
+    -o /usr/lib/docker/cli-plugins/docker-buildx; \
+  chmod +x /usr/lib/docker/cli-plugins/docker-buildx; \
+  /usr/lib/docker/cli-plugins/docker-buildx version
 
 # Base tsconfig for workspace packages
 COPY tsconfig.base.json ./
