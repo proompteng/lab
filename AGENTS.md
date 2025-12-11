@@ -14,6 +14,7 @@
 - Build and smoke test via `bun run build:<app>` then `bun run start:<app>`.
 - Format and lint using `bun run format` and `bun run lint:<app>`.
 - Run backend workflows through `go test ./...` and `go build ./...`.
+- Regenerate Codex app-server TypeScript bindings when the protocol changes with `codex generate-ts --out packages/codex/src/app-server`.
 - Infra flow: `bun run tf:plan` (review), `bun run tf:apply` (approved), and `bun run ansible` for playbooks. Use the deployment helper scripts when touching automation services:
   - `bun apps/froussard/src/codex/cli/build-codex-image.ts` to rebuild/push the Codex runner image.
     - Script defaults to the `tuslagch` GitHub CLI account; override with `GH_TOKEN_USER=<other>` if needed. Container git commits use `tuslagch@proompteng.ai`.
@@ -53,6 +54,7 @@
 - Commits and PR titles MUST use the approved types (`build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`).
 - PRs should summarize the change, link issues, list verification (`go test`, `bun run lint:<app>`), and attach UI screenshots when visuals shift.
 - Always seed new PRs with the default template. Copy `.github/PULL_REQUEST_TEMPLATE.md` to a scratch file (e.g. `/tmp/pr.md`), fill in every section (Summary, Related Issues, Testing, Screenshots/None, Breaking Changes/None, Checklist), then run `gh pr create --body-file /tmp/pr.md`.
+- Merge with squash (merge commits are blocked): `gh pr merge <number> --squash --delete-branch`.
 - Keep scope tight, track follow-ups with TODOs, and document rollout or operational impacts.
 - NEVER edit lockfiles (e.g. `bun.lock`) by hand—regenerate them with the package manager instead.
 
