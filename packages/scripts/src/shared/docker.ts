@@ -26,6 +26,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
   const image = `${options.registry}/${options.repository}:${options.tag}`
   const cwd = options.cwd ?? repoRoot
   const ghTokenEnv = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
+  const dockerEnv = { DOCKER_BUILDKIT: process.env.DOCKER_BUILDKIT ?? '1' }
 
   console.log('Building Docker image with configuration:', {
     image,
@@ -48,7 +49,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
       args.push('--build-arg', `${key}=${value}`)
     }
     args.push(options.context)
-    await run('docker', args, { cwd })
+    await run('docker', args, { cwd, env: dockerEnv })
   } else {
     const args = ['build', '-f', options.dockerfile, '-t', image]
     if (options.codexAuthPath) {
@@ -61,8 +62,8 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
       args.push('--build-arg', `${key}=${value}`)
     }
     args.push(options.context)
-    await run('docker', args, { cwd })
-    await run('docker', ['push', image], { cwd })
+    await run('docker', args, { cwd, env: dockerEnv })
+    await run('docker', ['push', image], { cwd, env: dockerEnv })
   }
 
   return { ...options, image }

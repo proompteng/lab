@@ -3,8 +3,9 @@
 ARG BUN_VERSION=1.3.4
 ARG OPENVSCODE_VERSION=1.105.1
 ARG GH_VERSION=2.65.0
-ARG KUBECTL_VERSION=1.31.0
+ARG KUBECTL_VERSION=1.34.3
 ARG DOCKER_CLI_VERSION=29.1.2
+ARG BUILDX_VERSION=0.30.1
 
 FROM oven/bun:${BUN_VERSION} AS base
 ARG NODE24_VERSION=24.11.1
@@ -12,6 +13,7 @@ ARG OPENVSCODE_VERSION
 ARG GH_VERSION
 ARG KUBECTL_VERSION
 ARG DOCKER_CLI_VERSION
+ARG BUILDX_VERSION
 WORKDIR /app
 
 ENV CODEX_CWD=/workspace/lab \
@@ -105,6 +107,22 @@ RUN set -eux; \
   rm -rf /tmp/docker.tgz /tmp/docker; \
   docker --version
 
+# Install docker buildx plugin so BuildKit secrets and multi-arch builds work in CI/runtime
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) BUILDX_ARCH=linux-amd64 ;; \
+  arm64|aarch64) BUILDX_ARCH=linux-arm64 ;; \
+  *) echo "Unsupported arch for buildx: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  VERSION="${BUILDX_VERSION#v}"; \
+  mkdir -p /usr/lib/docker/cli-plugins; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://github.com/docker/buildx/releases/download/v${VERSION}/buildx-v${VERSION}.${BUILDX_ARCH}" \
+    -o /usr/lib/docker/cli-plugins/docker-buildx; \
+  chmod +x /usr/lib/docker/cli-plugins/docker-buildx; \
+  /usr/lib/docker/cli-plugins/docker-buildx version
+
 # Base tsconfig for workspace packages
 COPY tsconfig.base.json ./
 
@@ -141,7 +159,7 @@ RUN rm -rf node_modules \
   && ln -sf ../../packages/codex node_modules/@proompteng/codex
 
 # Install Codex CLI with Bun so the app-server binary is available at runtime
-RUN bun add -g @openai/codex@latest
+RUN bun add -g @openai/codex@0.66.0
 
 # Install openvscode-server (upstream VS Code server build from gitpod-io)
 RUN set -eux; \
