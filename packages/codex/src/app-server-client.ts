@@ -12,6 +12,7 @@ import type {
   ItemStartedNotification,
   McpToolCallProgressNotification,
   SandboxMode,
+  TerminalInteractionNotification,
   ThreadItem,
   ThreadStartParams,
   ThreadStartResponse,
@@ -52,11 +53,16 @@ type TurnStream = {
   lastReasoningDelta: string | null
 }
 
+type LegacySandboxMode = 'dangerFullAccess' | 'workspaceWrite' | 'readOnly'
+type SandboxModeInput = SandboxMode | LegacySandboxMode
+type LegacyApprovalMode = 'unlessTrusted' | 'onFailure' | 'onRequest'
+type ApprovalModeInput = AskForApproval | LegacyApprovalMode
+
 export type CodexAppServerOptions = {
   binaryPath?: string
   cwd?: string
-  sandbox?: SandboxMode
-  approval?: AskForApproval
+  sandbox?: SandboxModeInput
+  approval?: ApprovalModeInput
   defaultModel?: string
   defaultEffort?: ReasoningEffort
   clientInfo?: ClientInfo
@@ -64,10 +70,18 @@ export type CodexAppServerOptions = {
   bootstrapTimeoutMs?: number
 }
 
-const toCliSandbox = (mode: SandboxMode): 'danger-full-access' | 'workspace-write' | 'read-only' => {
+const normalizeSandboxMode = (mode: SandboxModeInput): SandboxMode => {
   if (mode === 'dangerFullAccess') return 'danger-full-access'
   if (mode === 'workspaceWrite') return 'workspace-write'
-  return 'read-only'
+  if (mode === 'readOnly') return 'read-only'
+  return mode
+}
+
+const normalizeApprovalPolicy = (approval: ApprovalModeInput): AskForApproval => {
+  if (approval === 'onFailure') return 'on-failure'
+  if (approval === 'onRequest') return 'on-request'
+  if (approval === 'unlessTrusted') return 'untrusted'
+  return approval
 }
 
 const defaultClientInfo: ClientInfo = { name: 'lab', title: 'lab app-server client', version: '0.0.0' }
@@ -78,6 +92,22 @@ const newId = (() => {
   let id = 1
   return () => id++
 })()
+
+const toSandboxPolicy = (mode: SandboxMode) => {
+  if (mode === 'workspace-write') {
+    return {
+      type: 'workspaceWrite' as const,
+      writableRoots: [],
+      networkAccess: true,
+      excludeTmpdirEnvVar: false,
+      excludeSlashTmp: false,
+    }
+  }
+  if (mode === 'read-only') {
+    return { type: 'readOnly' as const }
+  }
+  return { type: 'dangerFullAccess' as const }
+}
 
 const createTurnStream = (): TurnStream => {
   const queue: Array<StreamDelta | { done: true; turn: Turn | null } | { error: unknown }> = []
@@ -165,7 +195,7 @@ export class CodexAppServerClient {
   constructor({
     binaryPath = 'codex',
     cwd,
-    sandbox = 'dangerFullAccess',
+    sandbox = 'danger-full-access',
     approval = 'never',
     defaultModel = 'gpt-5.1-codex-max',
     defaultEffort = DEFAULT_EFFORT,
@@ -174,21 +204,13 @@ export class CodexAppServerClient {
     bootstrapTimeoutMs = DEFAULT_BOOTSTRAP_TIMEOUT_MS,
   }: CodexAppServerOptions = {}) {
     this.logger = logger
-    this.sandbox = sandbox
-    this.approval = approval
+    this.sandbox = normalizeSandboxMode(sandbox)
+    this.approval = normalizeApprovalPolicy(approval)
     this.defaultModel = defaultModel
     this.defaultEffort = defaultEffort
     this.bootstrapTimeoutMs = bootstrapTimeoutMs
 
-    const args = [
-      '--sandbox',
-      toCliSandbox(sandbox),
-      '--ask-for-approval',
-      approval,
-      '--model',
-      defaultModel,
-      'app-server',
-    ]
+    const args = ['--sandbox', this.sandbox, '--ask-for-approval', this.approval, '--model', defaultModel, 'app-server']
     this.child = spawn(binaryPath, args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -266,7 +288,12 @@ export class CodexAppServerClient {
       effort,
     }: { model?: string; cwd?: string | null; threadId?: string; effort?: ReasoningEffort } = {},
   ): Promise<{ text: string; turn: Turn | null; threadId: string }> {
-    const runOpts: { model?: string; cwd?: string | null; threadId?: string; effort?: ReasoningEffort } = {}
+    const runOpts: {
+      model?: string
+      cwd?: string | null
+      threadId?: string
+      effort?: ReasoningEffort
+    } = {}
     if (model !== undefined) runOpts.model = model
     if (cwd !== undefined) runOpts.cwd = cwd
     if (threadId !== undefined) runOpts.threadId = threadId
@@ -303,11 +330,21 @@ export class CodexAppServerClient {
       cwd,
       threadId,
       effort,
-    }: { model?: string; cwd?: string | null; threadId?: string; effort?: ReasoningEffort } = {},
+    }: {
+      model?: string
+      cwd?: string | null
+      threadId?: string
+      effort?: ReasoningEffort
+    } = {},
   ): Promise<{ stream: AsyncGenerator<StreamDelta, Turn | null, void>; turnId: string; threadId: string }> {
     await this.ensureReady()
 
-    const turnOptions: { model?: string; cwd?: string | null; threadId?: string; effort?: ReasoningEffort } = {}
+    const turnOptions: {
+      model?: string
+      cwd?: string | null
+      threadId?: string
+      effort?: ReasoningEffort
+    } = {}
     if (model !== undefined) turnOptions.model = model
     if (cwd !== undefined) turnOptions.cwd = cwd
     if (threadId !== undefined) turnOptions.threadId = threadId
@@ -337,16 +374,7 @@ export class CodexAppServerClient {
       input: [{ type: 'text', text: prompt }],
       cwd: turnOptions.cwd ?? null,
       approvalPolicy: this.approval,
-      sandboxPolicy:
-        this.sandbox === 'workspaceWrite'
-          ? {
-              type: 'workspaceWrite',
-              writableRoots: [],
-              networkAccess: true,
-              excludeTmpdirEnvVar: false,
-              excludeSlashTmp: false,
-            }
-          : { type: this.sandbox },
+      sandboxPolicy: toSandboxPolicy(this.sandbox),
       model: turnOptions.model ?? this.defaultModel,
       effort: turnOptions.effort ?? this.defaultEffort,
       summary: null,
@@ -692,6 +720,19 @@ export class CodexAppServerClient {
         })
         break
       }
+      case 'item/commandExecution/terminalInteraction': {
+        const params = notification.params as TerminalInteractionNotification
+        this.trackItemFromParams(params)
+        pushTool({
+          toolKind: 'command',
+          id: params.itemId,
+          status: 'delta',
+          title: 'command input',
+          detail: params.stdin,
+          data: { processId: params.processId },
+        })
+        break
+      }
       case 'item/mcpToolCall/progress': {
         const params = notification.params as McpToolCallProgressNotification
         this.trackItemFromParams(params)
@@ -900,3 +941,5 @@ export class CodexAppServerClient {
     }
   }
 }
+
+export { normalizeApprovalPolicy, normalizeSandboxMode, toSandboxPolicy }

@@ -159,7 +159,7 @@ RUN rm -rf node_modules \
   && ln -sf ../../packages/codex node_modules/@proompteng/codex
 
 # Install Codex CLI with Bun so the app-server binary is available at runtime
-RUN bun add -g @openai/codex@0.66.0
+RUN bun add -g @openai/codex@latest
 
 # Install openvscode-server (upstream VS Code server build from gitpod-io)
 RUN set -eux; \

@@ -1,4 +1,17 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: jangar-redis
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     container_name: jangar-postgres
@@ -34,12 +47,16 @@ services:
       - ENABLE_LOGIN_FORM=false
       - GLOBAL_LOG_LEVEL=DEBUG
       - UVICORN_LOG_LEVEL=debug
+      - WEBSOCKET_MANAGER=redis
+      - WEBSOCKET_REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - openwebui-data:/app/backend/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       - postgres
+      - redis
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080"]

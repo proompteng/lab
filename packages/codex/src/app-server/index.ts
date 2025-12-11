@@ -155,11 +155,15 @@ export type { SessionConfiguredNotification } from "./SessionConfiguredNotificat
 export type { SessionSource } from "./SessionSource";
 export type { SetDefaultModelParams } from "./SetDefaultModelParams";
 export type { SetDefaultModelResponse } from "./SetDefaultModelResponse";
+export type { SkillErrorInfo } from "./SkillErrorInfo";
+export type { SkillInfo } from "./SkillInfo";
+export type { SkillLoadOutcomeInfo } from "./SkillLoadOutcomeInfo";
 export type { StepStatus } from "./StepStatus";
 export type { StreamErrorEvent } from "./StreamErrorEvent";
 export type { SubAgentSource } from "./SubAgentSource";
 export type { TaskCompleteEvent } from "./TaskCompleteEvent";
 export type { TaskStartedEvent } from "./TaskStartedEvent";
+export type { TerminalInteractionEvent } from "./TerminalInteractionEvent";
 export type { TextContent } from "./TextContent";
 export type { TextResourceContents } from "./TextResourceContents";
 export type { TokenCountEvent } from "./TokenCountEvent";
