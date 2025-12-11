@@ -49,6 +49,9 @@ extraEnvVars:
     value: "false"
   - name: ENABLE_SIGNUP
     value: "false"
+  # Forward chat/user identifiers to the upstream OpenAI-compatible backend
+  - name: ENABLE_FORWARD_USER_INFO_HEADERS
+    value: "true"
 
 volumes:
   - name: jangar-db-ca

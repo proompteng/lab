@@ -2,6 +2,8 @@
 
 OpenWebUI is installed via the upstream Helm chart (`open-webui` v8.18.0, app v0.6.40) in the `jangar` namespace. The chart creates a StatefulSet and `open-webui` ClusterIP Service; a dedicated Tailscale LoadBalancer `openwebui-tailscale` (hostname `openwebui`) fronts it. Websocket support is enabled and backed by a Redis instance `jangar-openwebui-redis` managed by the OTCK Redis operator. Postgres comes from the existing CNPG cluster `jangar-db` (`jangar-db-app` + `jangar-db-ca`). Jangar no longer proxies or iframes OpenWebUI; users open the Tailscale host directly.
 
+OpenWebUI forwards the chat identifier in the `x-openwebui-chat-id` header (enabled via the chart values). Jangar consumes this header to map conversations to Codex thread ids and to increment turn numbers, persisting the mapping in Redis (`redis://jangar-openwebui-redis:6379/1`) with a 7-day TTL so subsequent turns stay on the same thread.
+
 ## Access
 - Via Tailscale: `http://openwebui` (Tailscale LB `openwebui-tailscale` → Service `open-webui:80` → pod :8080).
 - Local smoke test (no tailscale):

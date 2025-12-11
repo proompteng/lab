@@ -5,6 +5,7 @@ import type { CodexAppServerClient } from '@proompteng/codex'
 import { Effect, pipe } from 'effect'
 
 import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
+import { createRedisChatThreadStore, type ChatThreadStore } from './chat-thread-store'
 import { loadConfig } from './config'
 
 const MessageSchema = S.Struct({
@@ -41,6 +42,42 @@ const jsonResponse = (value: unknown, status = 200) =>
     status,
     headers: { 'content-type': 'application/json' },
   })
+
+let defaultThreadStore: ChatThreadStore | null = null
+let customThreadStore: ChatThreadStore | null = null
+
+const getThreadStore = () => {
+  if (customThreadStore) return customThreadStore
+  if (!defaultThreadStore) {
+    defaultThreadStore = createRedisChatThreadStore()
+  }
+  return defaultThreadStore
+}
+
+export const setThreadStore = (store: ChatThreadStore | null) => {
+  customThreadStore = store
+}
+
+export const resetThreadStore = () => {
+  customThreadStore = null
+  if (defaultThreadStore) {
+    const store = defaultThreadStore
+    void pipe(
+      store.clearAll(),
+      Effect.catchAll((error) => {
+        console.warn('[chat] failed to clear redis keys during reset', { error: String(error) })
+        return Effect.succeed(undefined)
+      }),
+      Effect.flatMap(() => store.shutdown()),
+      Effect.catchAll((error) => {
+        console.warn('[chat] failed to close redis client during reset', { error: String(error) })
+        return Effect.succeed(undefined)
+      }),
+      Effect.runPromise,
+    )
+    defaultThreadStore = null
+  }
+}
 
 const sseError = (payload: unknown, status = 400) => {
   const encoder = new TextEncoder()
@@ -198,11 +235,19 @@ const resolveCodexCwd = () => {
   return process.env.CODEX_CWD ?? (process.env.NODE_ENV === 'production' ? '/workspace/lab' : defaultRepoRoot)
 }
 
+type ThreadContext = {
+  chatId: string
+  threadId: string | null
+  store: ChatThreadStore
+  turnNumber: number | null
+}
+
 const toSseResponse = (
   client: CodexAppServerClient,
   prompt: string,
   model: string,
   includeUsage: boolean,
+  threadContext: ThreadContext | null,
   signal?: AbortSignal,
 ) => {
   const encoder = new TextEncoder()
@@ -241,10 +286,21 @@ const toSseResponse = (
         }
       }
 
+      const attachMeta = (chunk: Record<string, unknown>) => {
+        if (threadContext?.threadId || activeThreadId) {
+          chunk.thread_id = activeThreadId ?? threadContext?.threadId ?? undefined
+        }
+        if (threadContext?.turnNumber != null) {
+          chunk.turn_number = threadContext.turnNumber
+        }
+        return chunk
+      }
+
       const enqueueChunk = (chunk: unknown) => {
         if (controllerClosed) return
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`))
+          const withMeta = chunk && typeof chunk === 'object' ? attachMeta(chunk as Record<string, unknown>) : chunk
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(withMeta)}\n\n`))
         } catch {
           // If the client has already gone away, ensure we close the stream and interrupt Codex
           controllerClosed = true
@@ -260,6 +316,10 @@ const toSseResponse = (
       let commandFenceOpen = false
       let hadError = false
       let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+      const ensureTurnNumber = async () => {
+        if (!threadContext || threadContext.turnNumber != null) return
+        threadContext.turnNumber = await pipe(threadContext.store.nextTurn(threadContext.chatId), Effect.runPromise)
+      }
 
       type ToolState = {
         id: string
@@ -449,11 +509,44 @@ const toSseResponse = (
 
         await Effect.runPromise(
           Effect.acquireUseRelease(
-            Effect.promise(() => client.runTurnStream(prompt, { model, cwd: codexCwd })),
+            Effect.promise(() =>
+              client.runTurnStream(prompt, {
+                model,
+                cwd: codexCwd,
+                threadId: threadContext?.threadId ?? undefined,
+              }),
+            ),
             ({ stream: codexStream, turnId, threadId }) =>
               Effect.promise(async () => {
                 activeTurnId = turnId
                 activeThreadId = threadId
+                if (threadContext) {
+                  threadContext.threadId = threadId
+                }
+
+                if (threadContext?.chatId && threadContext.store) {
+                  try {
+                    await pipe(threadContext.store.setThread(threadContext.chatId, threadId), Effect.runPromise)
+                    await ensureTurnNumber()
+                    console.info('[chat] thread stored', {
+                      chatId: threadContext.chatId,
+                      threadId,
+                      turnNumber: threadContext.turnNumber ?? undefined,
+                    })
+                  } catch (error) {
+                    hadError = true
+                    enqueueChunk({
+                      error: {
+                        message: 'failed to persist chat thread',
+                        type: 'internal',
+                        code: 'thread_store_error',
+                        detail: error instanceof Error ? error.message : undefined,
+                      },
+                    })
+                    interruptCodex()
+                    return
+                  }
+                }
 
                 for await (const delta of codexStream) {
                   if (aborted || controllerClosed) {
@@ -575,7 +668,12 @@ const toSseResponse = (
 
                     if (toolState.toolKind === 'command') {
                       openCommandFence()
-                      const content = formatToolContent(toolState, argsPayload)
+                      const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
+                      let content = formatToolContent(toolState, argsPayload)
+                      // Ensure the initial command line is followed by a newline so subsequent output starts on a new line.
+                      if (status === 'started' && content.length > 0 && !content.endsWith('\n')) {
+                        content = `${content}\n\n`
+                      }
                       const hasContent = content.length > 0
                       if (hasContent) emitContentDelta(content)
                     } else {
@@ -669,6 +767,45 @@ export const handleChatCompletion = async (request: Request): Promise<Response> 
   try {
     const parsed = await parseRequest(request)
     const includeUsage = parsed.stream_options?.include_usage === true
+    const chatIdHeader = request.headers.get('x-openwebui-chat-id')
+    const chatId = typeof chatIdHeader === 'string' && chatIdHeader.trim().length > 0 ? chatIdHeader.trim() : null
+    let threadStore: ChatThreadStore | null = null
+    let threadId: string | null = null
+
+    if (chatId) {
+      try {
+        threadStore = getThreadStore()
+      } catch (error) {
+        throw new RequestError(
+          500,
+          'thread_store_unavailable',
+          error instanceof Error ? error.message : 'Chat thread store is not configured',
+        )
+      }
+    }
+
+    if (chatId && threadStore) {
+      try {
+        threadId = await pipe(threadStore.getThread(chatId), Effect.runPromise)
+        console.info('[chat] chat id received', { chatId, threadId })
+      } catch (error) {
+        throw new RequestError(
+          500,
+          'thread_lookup_failed',
+          error instanceof Error ? error.message : 'Unable to read chat thread state',
+        )
+      }
+    }
+
+    const threadContext: ThreadContext | null =
+      chatId && threadStore
+        ? {
+            chatId,
+            threadId,
+            store: threadStore,
+            turnNumber: null,
+          }
+        : null
 
     return await pipe(
       Effect.all({
@@ -679,7 +816,7 @@ export const handleChatCompletion = async (request: Request): Promise<Response> 
         Effect.promise(() => {
           const model = parsed.model ?? config.defaultModel
           const prompt = buildPrompt(parsed.messages)
-          return Promise.resolve(toSseResponse(client, prompt, model, includeUsage, request.signal))
+          return Promise.resolve(toSseResponse(client, prompt, model, includeUsage, threadContext, request.signal))
         }),
       ),
       Effect.runPromise,

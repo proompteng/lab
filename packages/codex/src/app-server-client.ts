@@ -266,7 +266,12 @@ export class CodexAppServerClient {
       effort,
     }: { model?: string; cwd?: string | null; threadId?: string; effort?: ReasoningEffort } = {},
   ): Promise<{ text: string; turn: Turn | null; threadId: string }> {
-    const runOpts: { model?: string; cwd?: string | null; threadId?: string; effort?: ReasoningEffort } = {}
+    const runOpts: {
+      model?: string
+      cwd?: string | null
+      threadId?: string
+      effort?: ReasoningEffort
+    } = {}
     if (model !== undefined) runOpts.model = model
     if (cwd !== undefined) runOpts.cwd = cwd
     if (threadId !== undefined) runOpts.threadId = threadId
@@ -303,11 +308,21 @@ export class CodexAppServerClient {
       cwd,
       threadId,
       effort,
-    }: { model?: string; cwd?: string | null; threadId?: string; effort?: ReasoningEffort } = {},
+    }: {
+      model?: string
+      cwd?: string | null
+      threadId?: string
+      effort?: ReasoningEffort
+    } = {},
   ): Promise<{ stream: AsyncGenerator<StreamDelta, Turn | null, void>; turnId: string; threadId: string }> {
     await this.ensureReady()
 
-    const turnOptions: { model?: string; cwd?: string | null; threadId?: string; effort?: ReasoningEffort } = {}
+    const turnOptions: {
+      model?: string
+      cwd?: string | null
+      threadId?: string
+      effort?: ReasoningEffort
+    } = {}
     if (model !== undefined) turnOptions.model = model
     if (cwd !== undefined) turnOptions.cwd = cwd
     if (threadId !== undefined) turnOptions.threadId = threadId
