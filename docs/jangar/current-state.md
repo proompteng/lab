@@ -1,28 +1,36 @@
-# Jangar current state (2025-11-30)
+# Jangar chat completions (2025-12-11)
 
-Source code is the source of truth; this note captures what is actually implemented today.
+This note describes the currently implemented chat-completion proxy. Source of truth: `services/jangar/src/server/chat.ts` and `services/jangar/src/routes/openai/v1/chat/completions.ts`.
 
-## Working
-- OpenAI-compatible proxy endpoints `/openai/v1/chat/completions` (streaming-only) and `/openai/v1/models` backed by the Codex app-server (`gpt-5.1-codex-*`).
-- Convex schema and mutations for conversations, turns, messages, reasoning sections, commands (+ chunks), usage, rate limits, and events. The proxy writes via `src/services/db`.
-- App server wrapper auto-clones the lab repo into `CODEX_CWD` when missing; runs Codex with sandbox `danger-full-access`, approval `never` by default.
-- Tool invocation events from Codex (command/file/mcp/web search) are now forwarded in the SSE stream as OpenAI-style `tool_calls` deltas so OpenWebUI can display them. Example SSE line:
-  - `data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"tool-1","type":"function","function":{"name":"command","arguments":"[{\"status\":\"started\",\"title\":\"ls\"}"}}]},"index":0,"finish_reason":null}],"model":"gpt-5.1-codex","created":1733011200}\n\n`
+## Endpoint surface
+- POST `/openai/v1/chat/completions` (streaming only). Handler: `chatCompletionsHandler` in `services/jangar/src/routes/openai/v1/chat/completions.ts`.
+- Request schema: `messages` non-empty array of `{ role, content, name? }`; `stream` must be `true` (otherwise SSE error response); optional `model`; optional `stream_options.include_usage`.
+- Model defaults to `gpt-5.1-codex-max` from `services/jangar/src/server/config.ts`.
+- Prompt sent to Codex is built by joining messages as `"role: content"` lines; non-string content is `JSON.stringify`’d.
 
-## Not yet implemented
-- Activities: `run-codex-turn`, `run-worker-task`, and `publish-event` are stubs; no repo cloning, lint/test, PR creation, or SSE fan-out.
-- Workflow: `codexOrchestrationWorkflow` schedules a single stub turn; signals/queries/loop/guardrails are missing.
-- Toolbelt: `packages/cx-tools` contains only scaffolding—no `cx-codex-run` or `cx-workflow-*` binaries are built.
-- UI: only a welcome page and `/health`; mission list/detail, chat, timeline, and SSE wiring are absent.
-- Convex read-side queries are absent; UI cannot fetch history/state.
-- Manifests lack secrets for `CODEX_API_KEY`, `GITHUB_TOKEN`, and Convex deploy/admin keys; app deployment disables the Temporal worker (`ENABLE_TEMPORAL_WORKER=0`).
+## SSE response shape
+- Headers: `content-type: text/event-stream`, `cache-control: no-cache`, `connection: keep-alive`, `x-accel-buffering: no`.
+- Heartbeat comment `: keepalive` every 5s (disabled in tests); no initial `retry:` hint.
+- Validation failure for non-stream requests returns an SSE error payload followed by `[DONE]`; other validation errors are JSON.
+- Stream is driven by `client.runTurnStream(prompt, { model, cwd })`; `CODEX_CWD` env overrides the default repo root (prod default `/workspace/lab`).
+- On client abort the handler emits an error chunk `request_cancelled` and interrupts the active turn.
 
-## Behavioral notes
-- `/v1/models` exposes four Codex variants (`gpt-5.1-codex-max`, `gpt-5.1-codex`, `gpt-5.1-codex-mini`, `gpt-5.1`). Adjust `src/services/models.ts` if only one should appear.
-- Worker and app share the same image; worker command is `bun run src/worker.ts`. App entrypoint `src/index.ts` can start the worker if `ENABLE_TEMPORAL_WORKER` is set.
-- Env helper `buildCodexEnv` sets `CX_DEPTH` and `CODEX_HOME` but does not yet wire `CODEX_API_KEY/CODEX_PATH`.
+## Streamed events
+- **Assistant text**: `choices[0].delta.content` chunks. Role is attached on the first emitted chunk.
+- **Reasoning**: arrives as `reasoning_content`; asterisks of length ≥4 are broken onto newlines to avoid fences; flushed immediately to avoid long silent periods.
+- **Tool events** (per Codex `delta.type === 'tool'`):
+  - `command`: opens a fenced block ```` ``` ````; emits truncated output/detail (max 5 lines). Multiple commands are separated with `\n---\n`.
+  - `file`: skips the `started` event; renders each change as a code block `<path>\n<diff...>` truncated to 5 lines; dedupes identical summaries.
+  - `webSearch`: emits the attempted query in backticks before completion; no fencing.
+  - Other tools: emits a plain text summary (title/detail/output) outside fences.
+- **Usage**: when `stream_options.include_usage=true`, the last seen usage object is normalized to OpenAI fields (`prompt_tokens`, `completion_tokens`, `total_tokens`, plus cached/reasoning details) and emitted once near stream end even if an upstream error occurred.
+- **Errors**: upstream errors are forwarded as `{ error: { message, type, code? } }` and the stream continues listening for trailing usage.
+- **Completion**: if not aborted or errored, emits a final chunk with `finish_reason: "stop"` then `data: [DONE]`.
 
-## Quick smoke
-- From `services/jangar`: `bun run start:dev` (UI) and `curl -N -X POST http://localhost:3000/openai/v1/chat/completions ...` with `stream=true` to confirm SSE proxy + Convex writes.
+## Notable behaviors / gaps
+- Heartbeat interval is 5s and there is no initial comment or `retry` directive, so some proxies may still time out idle connections.
+- Response caching is disabled via `no-cache` but not `no-store`; intermediaries could still buffer.
+- Tool calls are rendered as human-friendly text/fences, not OpenAI `tool_calls` objects; clients expecting strict OpenAI tool-calling need adaptation. We intentionally avoid emitting structured tool calls because OpenWebUI would try to re-execute them, which we do not want.
 
-Keep this file in sync with code changes until the planned features land.
+## Smoke test
+- From `services/jangar`: `bun run start:dev` then stream with `curl -N -X POST http://localhost:3000/openai/v1/chat/completions -H 'content-type: application/json' -d '{"model":"gpt-5.1-codex-max","messages":[{"role":"user","content":"hi"}],"stream":true}'`.

@@ -258,8 +258,6 @@ const toSseResponse = (
       const abortControllers: Array<() => void> = []
       let reasoningBuffer = ''
       let commandFenceOpen = false
-      let lastCommandId: string | null = null
-      let commandCount = 0
       let hadError = false
       let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
@@ -333,36 +331,6 @@ const toSseResponse = (
         return toolState.toolKind
       }
 
-      const _emitToolCallDelta = (toolState: ToolState, args: string) => {
-        const deltaPayload: Record<string, unknown> = {
-          tool_calls: [
-            {
-              index: toolState.index,
-              id: toolState.id,
-              type: 'function',
-              function: {
-                name: toolState.toolKind,
-                arguments: args,
-              },
-            },
-          ],
-        }
-        ensureRole(deltaPayload)
-        enqueueChunk({
-          id,
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [
-            {
-              delta: deltaPayload,
-              index: 0,
-              finish_reason: null,
-            },
-          ],
-        })
-      }
-
       const emitContentDelta = (content: string) => {
         const deltaPayload: Record<string, unknown> = { content }
         ensureRole(deltaPayload)
@@ -384,16 +352,16 @@ const toSseResponse = (
 
       const openCommandFence = () => {
         if (commandFenceOpen) return
-        emitContentDelta('```\n')
+        // Start command output fence without leading/trailing blank lines and with explicit language for clarity.
+        emitContentDelta('```ts\n')
         commandFenceOpen = true
-        lastCommandId = null
       }
 
       const closeCommandFence = () => {
         if (!commandFenceOpen) return
-        emitContentDelta('\n```\n')
+        // Ensure the closing fence is on its own line (and leave a trailing blank line) even when command output does not end with a newline.
+        emitContentDelta('\n```\n\n')
         commandFenceOpen = false
-        lastCommandId = null
       }
 
       const ensureRole = (deltaPayload: Record<string, unknown>) => {
@@ -608,14 +576,8 @@ const toSseResponse = (
                     if (toolState.toolKind === 'command') {
                       openCommandFence()
                       const content = formatToolContent(toolState, argsPayload)
-                      const isNewCommand = lastCommandId !== toolState.id
-                      if (isNewCommand && commandCount >= 1) {
-                        emitContentDelta('\n---\n')
-                      }
-                      const prefixed = content
-                      if (prefixed.length > 0) emitContentDelta(prefixed)
-                      lastCommandId = toolState.id
-                      if (isNewCommand) commandCount += 1
+                      const hasContent = content.length > 0
+                      if (hasContent) emitContentDelta(content)
                     } else {
                       closeCommandFence()
                       emitContentDelta(formatToolContent(toolState, argsPayload))

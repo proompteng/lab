@@ -134,7 +134,7 @@ describe('chat completions handler', () => {
     expect(contentDeltas.some((c) => c.startsWith('ls'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('output chunk'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('...'))).toBe(true)
-    expect(contentDeltas.some((c) => c.includes('---'))).toBe(true)
+    expect(contentDeltas.some((c) => c.includes('---'))).toBe(false)
     expect(contentDeltas.some((c) => c.includes('exit 0'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('pwd'))).toBe(true)
     expect((contentDeltas.at(-1) ?? '').includes('```')).toBe(true)
@@ -307,7 +307,7 @@ describe('chat completions handler', () => {
     expect(contentChunks.length).toBe(4)
     const [openFence, commandLine, outputChunk] = contentChunks
 
-    expect(openFence.trim()).toBe('```')
+    expect(openFence.trim()).toBe('```ts')
     expect(commandLine).toContain(command)
 
     // Command string should not reappear inside output chunk, and output starts on its own line.
@@ -321,7 +321,7 @@ describe('chat completions handler', () => {
     expect(joinedContent.includes('\n---\n')).toBe(false)
   })
 
-  it('inserts a separator before the second command but not for a single command', async () => {
+  it('does not insert separators between two commands', async () => {
     const commandA = 'bash -lc "echo first"'
     const commandB = 'bash -lc "echo second"'
     const mockClient = {
@@ -385,17 +385,135 @@ describe('chat completions handler', () => {
 
     const joined = contentChunks.join('\n')
 
-    // First command should not include a separator before it
+    // No separators should appear anywhere.
     const firstCommandIndex = joined.indexOf(commandA)
     expect(firstCommandIndex).toBeGreaterThanOrEqual(0)
-    const precedingFirst = joined.slice(Math.max(0, firstCommandIndex - 10), firstCommandIndex)
-    expect(precedingFirst.includes('---')).toBe(false)
-
-    // Second command should have a separator immediately before its fence
     const secondCommandIndex = joined.indexOf(commandB)
     expect(secondCommandIndex).toBeGreaterThan(firstCommandIndex)
-    const separatorSlice = joined.slice(Math.max(0, secondCommandIndex - 10), secondCommandIndex)
-    expect(separatorSlice.includes('---')).toBe(true)
+    expect(joined.includes('\n---\n')).toBe(false)
+  })
+
+  it('streams five commands without inserting separators', async () => {
+    const commands = [
+      'bash -lc "echo one"',
+      'bash -lc "echo two"',
+      'bash -lc "echo three"',
+      'bash -lc "echo four"',
+      'bash -lc "echo five"',
+    ]
+
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          for (const [idx, command] of commands.entries()) {
+            const id = `cmd-${idx + 1}`
+            yield { type: 'tool', toolKind: 'command', id, status: 'started', title: command }
+            yield { type: 'tool', toolKind: 'command', id, status: 'delta', title: command, delta: `output ${idx + 1}` }
+            yield { type: 'tool', toolKind: 'command', id, status: 'completed', title: command }
+          }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 5 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const contentChunks = chunks
+      .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean) as string[]
+
+    // Expect an opening fence, then per-command lines and outputs, and a single closing fence — no separators.
+    const joined = contentChunks.join('')
+    const separatorCount = (joined.match(/\n---\n/g) ?? []).length
+    expect(separatorCount).toBe(0)
+
+    // Ensure fences exist once at start and end.
+    const opens = contentChunks.filter((c) => c.startsWith('```ts')).length
+    expect(opens).toBe(1)
+    expect(joined.endsWith('```\n\n')).toBe(true)
+  })
+
+  it('does not insert a separator when the prior command produced no visible content', async () => {
+    const noisyCommand = 'bash -lc "echo noisy"'
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          // A command that never streams content (no title/detail/delta)
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-empty', status: 'completed' }
+
+          // A real command with output
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-noisy', status: 'started', title: noisyCommand }
+          yield {
+            type: 'tool',
+            toolKind: 'command',
+            id: 'cmd-noisy',
+            status: 'delta',
+            title: noisyCommand,
+            delta: 'noisy output',
+          }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-noisy', status: 'completed', title: noisyCommand }
+
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const contentChunks = chunks
+      .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean) as string[]
+
+    const joined = contentChunks.join('\n')
+
+    // No separator should appear because the first command never produced visible content.
+    expect(joined.includes('\n---\n')).toBe(false)
+    expect(joined).toContain(noisyCommand)
+    expect(joined).toContain('noisy output')
   })
 
   it('coalesces consecutive reasoning deltas into one chunk', async () => {
