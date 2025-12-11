@@ -189,7 +189,8 @@ const renderFileChanges = (rawChanges: unknown, maxDiffLines = 5) => {
     .filter(Boolean)
 
   if (rendered.length === 0) return undefined
-  return rendered.join('')
+  if (rendered.length === 1) return rendered[0] as string
+  return rendered.join('\n\n')
 }
 
 const resolveCodexCwd = () => {
@@ -258,7 +259,7 @@ const toSseResponse = (
       let reasoningBuffer = ''
       let commandFenceOpen = false
       let lastCommandId: string | null = null
-      let hasEmittedAnyCommand = false
+      let commandCount = 0
       let hadError = false
       let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
@@ -608,14 +609,13 @@ const toSseResponse = (
                       openCommandFence()
                       const content = formatToolContent(toolState, argsPayload)
                       const isNewCommand = lastCommandId !== toolState.id
-                      if (hasEmittedAnyCommand && isNewCommand) {
+                      if (isNewCommand && commandCount >= 1) {
                         emitContentDelta('\n---\n')
                       }
-                      const prefixed =
-                        deltaRecord.status === 'started' && content.length > 0 ? `${content}\n\n` : content
+                      const prefixed = content
                       if (prefixed.length > 0) emitContentDelta(prefixed)
                       lastCommandId = toolState.id
-                      hasEmittedAnyCommand = true
+                      if (isNewCommand) commandCount += 1
                     } else {
                       closeCommandFence()
                       emitContentDelta(formatToolContent(toolState, argsPayload))

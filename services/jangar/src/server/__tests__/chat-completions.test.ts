@@ -309,15 +309,93 @@ describe('chat completions handler', () => {
 
     expect(openFence.trim()).toBe('```')
     expect(commandLine).toContain(command)
-    expect(commandLine.endsWith('\n\n')).toBe(true) // ensures output begins on its own line
 
-    // Command string should not reappear inside output chunk.
+    // Command string should not reappear inside output chunk, and output starts on its own line.
+    expect(outputChunk.startsWith(command)).toBe(false)
     expect(outputChunk.includes(command)).toBe(false)
 
     // Only one appearance of the command line across all streamed content.
     const joinedContent = contentChunks.join('')
     const occurrences = joinedContent.split(command).length - 1
     expect(occurrences).toBe(1)
+    expect(joinedContent.includes('\n---\n')).toBe(false)
+  })
+
+  it('inserts a separator before the second command but not for a single command', async () => {
+    const commandA = 'bash -lc "echo first"'
+    const commandB = 'bash -lc "echo second"'
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          // First command
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'started', title: commandA }
+          yield {
+            type: 'tool',
+            toolKind: 'command',
+            id: 'cmd-1',
+            status: 'delta',
+            title: commandA,
+            delta: 'first output',
+          }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'completed', title: commandA }
+
+          // Second command
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-2', status: 'started', title: commandB }
+          yield {
+            type: 'tool',
+            toolKind: 'command',
+            id: 'cmd-2',
+            status: 'delta',
+            title: commandB,
+            delta: 'second output',
+          }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-2', status: 'completed', title: commandB }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 2 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const contentChunks = chunks
+      .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean) as string[]
+
+    const joined = contentChunks.join('\n')
+
+    // First command should not include a separator before it
+    const firstCommandIndex = joined.indexOf(commandA)
+    expect(firstCommandIndex).toBeGreaterThanOrEqual(0)
+    const precedingFirst = joined.slice(Math.max(0, firstCommandIndex - 10), firstCommandIndex)
+    expect(precedingFirst.includes('---')).toBe(false)
+
+    // Second command should have a separator immediately before its fence
+    const secondCommandIndex = joined.indexOf(commandB)
+    expect(secondCommandIndex).toBeGreaterThan(firstCommandIndex)
+    const separatorSlice = joined.slice(Math.max(0, secondCommandIndex - 10), secondCommandIndex)
+    expect(separatorSlice.includes('---')).toBe(true)
   })
 
   it('coalesces consecutive reasoning deltas into one chunk', async () => {
