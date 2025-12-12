@@ -147,6 +147,50 @@ describe('chat completions handler', () => {
     expect(usageChunk?.usage?.completion_tokens).toBe(2)
   })
 
+  it('starts command fences on a fresh line after text', async () => {
+    const command = 'bash -lc "echo hi"'
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'hello' }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'started', title: command }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'completed', title: command }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const contentChunks = chunks
+      .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean) as string[]
+
+    expect(contentChunks.join('')).toContain('hello\n```ts')
+  })
+
   it('renders web search queries as backticked terms without prefixes', async () => {
     const searchQuery = 'best ramen near me'
     const mockClient = {

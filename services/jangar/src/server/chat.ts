@@ -314,6 +314,7 @@ const toSseResponse = (
       const abortControllers: Array<() => void> = []
       let reasoningBuffer = ''
       let commandFenceOpen = false
+      let lastContentEndsWithNewline = true
       let hadError = false
       let heartbeatTimer: ReturnType<typeof setInterval> | null = null
       const ensureTurnNumber = async () => {
@@ -408,10 +409,16 @@ const toSseResponse = (
           ],
         }
         enqueueChunk(chunk)
+        if (content.length > 0) {
+          lastContentEndsWithNewline = content.endsWith('\n')
+        }
       }
 
       const openCommandFence = () => {
         if (commandFenceOpen) return
+        if (!lastContentEndsWithNewline) {
+          emitContentDelta('\n')
+        }
         // Start command output fence without leading/trailing blank lines and with explicit language for clarity.
         emitContentDelta('```ts\n')
         commandFenceOpen = true
@@ -589,21 +596,7 @@ const toSseResponse = (
                   if (delta.type === 'message') {
                     closeCommandFence()
                     const text = normalizeDeltaText(delta.delta)
-                    const deltaPayload: Record<string, unknown> = { content: text }
-                    ensureRole(deltaPayload)
-                    enqueueChunk({
-                      id,
-                      object: 'chat.completion.chunk',
-                      created,
-                      model,
-                      choices: [
-                        {
-                          delta: deltaPayload,
-                          index: 0,
-                          finish_reason: null,
-                        },
-                      ],
-                    })
+                    emitContentDelta(text)
                   }
 
                   if (delta.type === 'reasoning') {
