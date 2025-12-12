@@ -9,6 +9,7 @@ export type { ApprovalDecision } from "./ApprovalDecision";
 export type { AskForApproval } from "./AskForApproval";
 export type { CancelLoginAccountParams } from "./CancelLoginAccountParams";
 export type { CancelLoginAccountResponse } from "./CancelLoginAccountResponse";
+export type { CancelLoginAccountStatus } from "./CancelLoginAccountStatus";
 export type { CodexErrorInfo } from "./CodexErrorInfo";
 export type { CommandAction } from "./CommandAction";
 export type { CommandExecParams } from "./CommandExecParams";
