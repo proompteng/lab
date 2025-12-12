@@ -184,6 +184,37 @@ describe('codex-runner', () => {
     expect(result.sessionId).toBe('019a40e5-341a-7501-ad84-5ccdb240e7ff')
   })
 
+  it('passes model override from CODEX_MODEL env to codex exec', async () => {
+    const promptSink: string[] = []
+    const codexMessages = [
+      JSON.stringify({ type: 'session.created', session: { id: 'session-abc' } }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok' } }),
+    ]
+    spawnMock.mockImplementation(() => createCodexProcess(codexMessages, promptSink))
+
+    const originalModel = process.env.CODEX_MODEL
+    process.env.CODEX_MODEL = 'gpt-5.2'
+
+    const outputPath = join(workspace, 'output.log')
+    const jsonOutputPath = join(workspace, 'events.jsonl')
+    const agentOutputPath = join(workspace, 'agent.log')
+
+    await runCodexSession({
+      stage: 'planning',
+      prompt: 'Plan please',
+      outputPath,
+      jsonOutputPath,
+      agentOutputPath,
+    })
+
+    const spawnArgs = spawnMock.mock.calls[0]?.[0]
+    expect(spawnArgs?.cmd).toContain('-m')
+    const modelIndex = spawnArgs?.cmd?.indexOf('-m')
+    expect(spawnArgs?.cmd?.[modelIndex + 1]).toBe('gpt-5.2')
+
+    process.env.CODEX_MODEL = originalModel
+  })
+
   it('streams agent messages and tool calls to a Discord channel when configured', async () => {
     const channelSink: string[] = []
     const promptSink: string[] = []
