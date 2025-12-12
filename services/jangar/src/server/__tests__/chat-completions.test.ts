@@ -1,7 +1,9 @@
 import type { CodexAppServerClient } from '@proompteng/codex'
+import { Effect } from 'effect'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { chatCompletionsHandler } from '~/routes/openai/v1/chat/completions'
-import { resetCodexClient, setCodexClientFactory } from '~/server/chat'
+import { resetCodexClient, setCodexClientFactory, setThreadStore } from '~/server/chat'
+import type { ChatThreadStore } from '~/server/chat-thread-store'
 
 describe('chat completions handler', () => {
   beforeEach(() => {
@@ -23,6 +25,7 @@ describe('chat completions handler', () => {
   afterEach(() => {
     vi.clearAllMocks()
     resetCodexClient()
+    setThreadStore(null)
   })
 
   it('proxies upstream SSE stream', async () => {
@@ -42,6 +45,72 @@ describe('chat completions handler', () => {
     const text = await response.text()
     expect(text).toContain('hi there')
     expect(response.headers.get('content-type')).toContain('text/event-stream')
+  })
+
+  it('retries on stale thread ids by clearing redis mapping', async () => {
+    const threadStore: ChatThreadStore = {
+      getThread: vi.fn(() => Effect.succeed('stale-thread')),
+      setThread: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearThread: vi.fn(() => Effect.succeed(undefined)),
+      clearAll: vi.fn(() => Effect.succeed(undefined)),
+      shutdown: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    setThreadStore(threadStore)
+
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string, opts?: { threadId?: string }) => {
+        if (opts?.threadId === 'stale-thread') {
+          return {
+            turnId: 'turn-1',
+            threadId: 'stale-thread',
+            stream: (async function* () {
+              yield {
+                type: 'error',
+                error: { code: -32600, message: 'conversation not found: stale-thread' },
+              }
+            })(),
+          }
+        }
+
+        return {
+          turnId: 'turn-2',
+          threadId: 'fresh-thread',
+          stream: (async function* () {
+            yield { type: 'message', delta: 'hello after retry' }
+            yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+          })(),
+        }
+      }),
+      interruptTurn: vi.fn(async () => {}),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-openwebui-chat-id': 'chat-1',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+
+    expect(text).toContain('hello after retry')
+    expect(mockClient.runTurnStream).toHaveBeenCalledTimes(2)
+    expect(threadStore.clearThread).toHaveBeenCalledWith('chat-1')
+    expect(threadStore.setThread).toHaveBeenLastCalledWith('chat-1', 'fresh-thread')
   })
 
   it('emits tool calls immediately; command output is code fenced with separation', async () => {

@@ -8,6 +8,7 @@ export type ChatThreadStore = {
   getThread: (chatId: string) => Effect.Effect<string | null, Error>
   setThread: (chatId: string, threadId: string) => Effect.Effect<void, Error>
   nextTurn: (chatId: string) => Effect.Effect<number, Error>
+  clearThread: (chatId: string) => Effect.Effect<void, Error>
   clearAll: () => Effect.Effect<void, Error>
   shutdown: () => Effect.Effect<void, Error>
 }
@@ -87,6 +88,11 @@ export const createRedisChatThreadStore = (options: ChatThreadStoreOptions = {})
       Effect.map(({ turn }) => (typeof turn === 'number' ? turn : Number(turn))),
     )
 
+  const clearThread: ChatThreadStore['clearThread'] = (chatId) =>
+    withClient(async (client) => {
+      await client.del(key(chatId))
+    })
+
   const clearAll: ChatThreadStore['clearAll'] = () =>
     withClient(async (client) => {
       let cursor: string | number = 0
@@ -121,6 +127,7 @@ export const createRedisChatThreadStore = (options: ChatThreadStoreOptions = {})
     getThread,
     setThread,
     nextTurn,
+    clearThread,
     clearAll,
     shutdown,
   }
