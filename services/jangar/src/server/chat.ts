@@ -296,8 +296,11 @@ const toSseResponse = (
         return chunk
       }
 
+      let hasEmittedAnyChunk = false
+
       const enqueueChunk = (chunk: unknown) => {
         if (controllerClosed) return
+        hasEmittedAnyChunk = true
         try {
           const withMeta = chunk && typeof chunk === 'object' ? attachMeta(chunk as Record<string, unknown>) : chunk
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(withMeta)}\n\n`))
@@ -314,6 +317,7 @@ const toSseResponse = (
       const abortControllers: Array<() => void> = []
       let reasoningBuffer = ''
       let commandFenceOpen = false
+      let lastContentEndsWithNewline = true
       let hadError = false
       let heartbeatTimer: ReturnType<typeof setInterval> | null = null
       const ensureTurnNumber = async () => {
@@ -408,10 +412,16 @@ const toSseResponse = (
           ],
         }
         enqueueChunk(chunk)
+        if (content.length > 0) {
+          lastContentEndsWithNewline = content.endsWith('\n')
+        }
       }
 
       const openCommandFence = () => {
         if (commandFenceOpen) return
+        if (!lastContentEndsWithNewline) {
+          emitContentDelta('\n')
+        }
         // Start command output fence without leading/trailing blank lines and with explicit language for clarity.
         emitContentDelta('```ts\n')
         commandFenceOpen = true
@@ -507,195 +517,271 @@ const toSseResponse = (
         })
         startHeartbeat()
 
-        await Effect.runPromise(
-          Effect.acquireUseRelease(
-            Effect.promise(() =>
-              client.runTurnStream(prompt, {
-                model,
-                cwd: codexCwd,
-                threadId: threadContext?.threadId ?? undefined,
-              }),
-            ),
-            ({ stream: codexStream, turnId, threadId }) =>
-              Effect.promise(async () => {
-                activeTurnId = turnId
-                activeThreadId = threadId
-                if (threadContext) {
-                  threadContext.threadId = threadId
-                }
+        class ConversationNotFoundError extends Error {
+          readonly upstream: unknown
 
-                if (threadContext?.chatId && threadContext.store) {
-                  try {
-                    await pipe(threadContext.store.setThread(threadContext.chatId, threadId), Effect.runPromise)
-                    await ensureTurnNumber()
-                    console.info('[chat] thread stored', {
-                      chatId: threadContext.chatId,
-                      threadId,
-                      turnNumber: threadContext.turnNumber ?? undefined,
-                    })
-                  } catch (error) {
-                    hadError = true
-                    enqueueChunk({
-                      error: {
-                        message: 'failed to persist chat thread',
-                        type: 'internal',
-                        code: 'thread_store_error',
-                        detail: error instanceof Error ? error.message : undefined,
-                      },
-                    })
-                    interruptCodex()
-                    return
-                  }
-                }
+          constructor(upstream: unknown) {
+            super('conversation not found')
+            this.upstream = upstream
+          }
+        }
 
-                for await (const delta of codexStream) {
-                  if (aborted || controllerClosed) {
-                    interruptCodex()
-                    break
-                  }
+        const isConversationNotFoundError = (error: unknown): boolean => {
+          if (!error) return false
 
-                  if (delta.type !== 'reasoning') {
-                    flushReasoning()
-                  }
+          const includesConversationNotFound = (message: string) =>
+            message.toLowerCase().includes('conversation not found')
 
-                  if (delta.type === 'usage') {
-                    closeCommandFence()
-                    if (includeUsageChunk) {
-                      lastUsage = normalizeUsage(delta.usage)
-                    }
-                    continue
-                  }
+          if (typeof error === 'string') return includesConversationNotFound(error)
+          if (typeof error !== 'object') return false
 
-                  if (sawUpstreamError) {
-                    // After an upstream error we only care about trailing usage updates.
-                    continue
-                  }
+          const record = error as Record<string, unknown>
+          const code = record.code
+          const message = record.message
 
-                  if (delta.type === 'error') {
-                    hadError = true
-                    sawUpstreamError = true
-                    closeCommandFence()
-                    const errorPayload = {
-                      error:
-                        delta.error && typeof delta.error === 'object'
-                          ? delta.error
-                          : { message: String(delta.error ?? 'upstream error'), type: 'upstream' },
-                    }
-                    enqueueChunk(errorPayload)
-                    // Keep listening for possible trailing usage.
-                    continue
+          if (code === -32600 && typeof message === 'string') {
+            return includesConversationNotFound(message)
+          }
+          if (typeof message === 'string' && includesConversationNotFound(message)) return true
+
+          const nested = record.error
+          if (nested && typeof nested === 'object') {
+            const nestedRecord = nested as Record<string, unknown>
+            const nestedCode = nestedRecord.code
+            const nestedMessage = nestedRecord.message
+            if (nestedCode === -32600 && typeof nestedMessage === 'string') {
+              return includesConversationNotFound(nestedMessage)
+            }
+            if (typeof nestedMessage === 'string' && includesConversationNotFound(nestedMessage)) return true
+          }
+
+          return false
+        }
+
+        const clearStaleThread = async () => {
+          if (!threadContext) return
+          try {
+            await pipe(threadContext.store.clearThread(threadContext.chatId), Effect.runPromise)
+          } catch (error) {
+            console.warn('[chat] failed to clear stale redis thread', {
+              chatId: threadContext.chatId,
+              error: String(error),
+            })
+          }
+          threadContext.threadId = null
+          threadContext.turnNumber = null
+        }
+
+        const runTurnAttempt = async (resumeThreadId: string | null, canRetry: boolean) => {
+          sawUpstreamError = false
+          turnFinished = false
+
+          await Effect.runPromise(
+            Effect.acquireUseRelease(
+              Effect.promise(() =>
+                client.runTurnStream(prompt, {
+                  model,
+                  cwd: codexCwd,
+                  threadId: resumeThreadId ?? undefined,
+                }),
+              ),
+              ({ stream: codexStream, turnId, threadId }) =>
+                Effect.promise(async () => {
+                  activeTurnId = turnId
+                  activeThreadId = threadId
+                  if (threadContext) {
+                    threadContext.threadId = threadId
                   }
 
-                  if (delta.type === 'message') {
-                    closeCommandFence()
-                    const text = normalizeDeltaText(delta.delta)
-                    const deltaPayload: Record<string, unknown> = { content: text }
-                    ensureRole(deltaPayload)
-                    enqueueChunk({
-                      id,
-                      object: 'chat.completion.chunk',
-                      created,
-                      model,
-                      choices: [
-                        {
-                          delta: deltaPayload,
-                          index: 0,
-                          finish_reason: null,
+                  if (threadContext?.chatId && threadContext.store) {
+                    try {
+                      await pipe(threadContext.store.setThread(threadContext.chatId, threadId), Effect.runPromise)
+                      await ensureTurnNumber()
+                      console.info('[chat] thread stored', {
+                        chatId: threadContext.chatId,
+                        threadId,
+                        turnNumber: threadContext.turnNumber ?? undefined,
+                      })
+                    } catch (error) {
+                      hadError = true
+                      enqueueChunk({
+                        error: {
+                          message: 'failed to persist chat thread',
+                          type: 'internal',
+                          code: 'thread_store_error',
+                          detail: error instanceof Error ? error.message : undefined,
                         },
-                      ],
+                      })
+                      interruptCodex()
+                      return
+                    }
+                  }
+
+                  for await (const delta of codexStream) {
+                    if (aborted || controllerClosed) {
+                      interruptCodex()
+                      break
+                    }
+
+                    if (delta.type !== 'reasoning') {
+                      flushReasoning()
+                    }
+
+                    if (delta.type === 'usage') {
+                      closeCommandFence()
+                      if (includeUsageChunk) {
+                        lastUsage = normalizeUsage(delta.usage)
+                      }
+                      continue
+                    }
+
+                    if (sawUpstreamError) {
+                      // After an upstream error we only care about trailing usage updates.
+                      continue
+                    }
+
+                    if (delta.type === 'error') {
+                      if (canRetry && !hasEmittedAnyChunk && isConversationNotFoundError(delta.error)) {
+                        throw new ConversationNotFoundError(delta.error)
+                      }
+
+                      hadError = true
+                      sawUpstreamError = true
+                      closeCommandFence()
+                      const errorPayload = {
+                        error:
+                          delta.error && typeof delta.error === 'object'
+                            ? delta.error
+                            : { message: String(delta.error ?? 'upstream error'), type: 'upstream' },
+                      }
+                      enqueueChunk(errorPayload)
+                      // Keep listening for possible trailing usage.
+                      continue
+                    }
+
+                    if (delta.type === 'message') {
+                      closeCommandFence()
+                      const text = normalizeDeltaText(delta.delta)
+                      emitContentDelta(text)
+                    }
+
+                    if (delta.type === 'reasoning') {
+                      const text = sanitizeReasoningText(normalizeDeltaText(delta.delta))
+                      reasoningBuffer += text
+                      // Emit reasoning immediately to avoid long silent periods that can trip upstream timeouts.
+                      flushReasoning()
+                    }
+
+                    if (delta.type === 'tool') {
+                      const deltaRecord = delta as Record<string, unknown>
+                      const toolState = getToolState(deltaRecord)
+                      const argsPayload = formatToolArguments(toolState, deltaRecord)
+                      if (toolState.toolKind === 'file') {
+                        closeCommandFence()
+                        const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
+
+                        // Skip the start event to avoid duplicated summaries like "1 change(s)1 change(s)".
+                        if (status === 'started') {
+                          toolState.lastStatus = status
+                          continue
+                        }
+
+                        const changes = Array.isArray((deltaRecord.data as { changes?: unknown } | undefined)?.changes)
+                          ? (deltaRecord.data as { changes: unknown[] }).changes
+                          : Array.isArray(deltaRecord.changes as unknown)
+                            ? (deltaRecord.changes as unknown[])
+                            : undefined
+
+                        const content = renderFileChanges(changes) ?? formatToolContent(toolState, argsPayload)
+                        if (!content) {
+                          toolState.lastStatus = status
+                          continue
+                        }
+
+                        // Avoid re-emitting identical apply_patch summaries across delta/completed events.
+                        if (content === toolState.lastContent && status === toolState.lastStatus) {
+                          continue
+                        }
+
+                        toolState.lastContent = content
+                        toolState.lastStatus = status
+                        emitContentDelta(content)
+                        continue
+                      }
+                      if (toolState.toolKind === 'webSearch') {
+                        closeCommandFence()
+                        // Emit the attempted search term plainly, wrapped in backticks so UIs like
+                        // OpenWebUI render it as a code span without extra prefixes/suffixes.
+                        if (deltaRecord.status !== 'completed') {
+                          const query =
+                            (typeof toolState.title === 'string' && toolState.title.length > 0
+                              ? toolState.title
+                              : undefined) ??
+                            (typeof argsPayload.detail === 'string' && argsPayload.detail.length > 0
+                              ? argsPayload.detail
+                              : undefined)
+                          if (query) emitContentDelta(`\`${query}\``)
+                        }
+                        continue
+                      }
+
+                      if (toolState.toolKind === 'command') {
+                        openCommandFence()
+                        const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
+                        let content = formatToolContent(toolState, argsPayload)
+                        // Ensure the initial command line is followed by a newline so subsequent output starts on a new line.
+                        if (status === 'started' && content.length > 0 && !content.endsWith('\n')) {
+                          content = `${content}\n\n`
+                        }
+                        const hasContent = content.length > 0
+                        if (hasContent) emitContentDelta(content)
+                      } else {
+                        closeCommandFence()
+                        emitContentDelta(formatToolContent(toolState, argsPayload))
+                      }
+                    }
+                  }
+
+                  flushReasoning()
+                  if (!aborted) {
+                    turnFinished = true
+                  }
+                }),
+              ({ turnId, threadId }) =>
+                aborted || !turnFinished
+                  ? Effect.sync(() => {
+                      void client.interruptTurn(turnId, threadId).catch(() => {})
                     })
-                  }
+                  : Effect.succeed(undefined),
+            ),
+          )
+        }
 
-                  if (delta.type === 'reasoning') {
-                    const text = sanitizeReasoningText(normalizeDeltaText(delta.delta))
-                    reasoningBuffer += text
-                    // Emit reasoning immediately to avoid long silent periods that can trip upstream timeouts.
-                    flushReasoning()
-                  }
-
-                  if (delta.type === 'tool') {
-                    const deltaRecord = delta as Record<string, unknown>
-                    const toolState = getToolState(deltaRecord)
-                    const argsPayload = formatToolArguments(toolState, deltaRecord)
-                    if (toolState.toolKind === 'file') {
-                      closeCommandFence()
-                      const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
-
-                      // Skip the start event to avoid duplicated summaries like "1 change(s)1 change(s)".
-                      if (status === 'started') {
-                        toolState.lastStatus = status
-                        continue
-                      }
-
-                      const changes = Array.isArray((deltaRecord.data as { changes?: unknown } | undefined)?.changes)
-                        ? (deltaRecord.data as { changes: unknown[] }).changes
-                        : Array.isArray(deltaRecord.changes as unknown)
-                          ? (deltaRecord.changes as unknown[])
-                          : undefined
-
-                      const content = renderFileChanges(changes) ?? formatToolContent(toolState, argsPayload)
-                      if (!content) {
-                        toolState.lastStatus = status
-                        continue
-                      }
-
-                      // Avoid re-emitting identical apply_patch summaries across delta/completed events.
-                      if (content === toolState.lastContent && status === toolState.lastStatus) {
-                        continue
-                      }
-
-                      toolState.lastContent = content
-                      toolState.lastStatus = status
-                      emitContentDelta(content)
-                      continue
-                    }
-                    if (toolState.toolKind === 'webSearch') {
-                      closeCommandFence()
-                      // Emit the attempted search term plainly, wrapped in backticks so UIs like
-                      // OpenWebUI render it as a code span without extra prefixes/suffixes.
-                      if (deltaRecord.status !== 'completed') {
-                        const query =
-                          (typeof toolState.title === 'string' && toolState.title.length > 0
-                            ? toolState.title
-                            : undefined) ??
-                          (typeof argsPayload.detail === 'string' && argsPayload.detail.length > 0
-                            ? argsPayload.detail
-                            : undefined)
-                        if (query) emitContentDelta(`\`${query}\``)
-                      }
-                      continue
-                    }
-
-                    if (toolState.toolKind === 'command') {
-                      openCommandFence()
-                      const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
-                      let content = formatToolContent(toolState, argsPayload)
-                      // Ensure the initial command line is followed by a newline so subsequent output starts on a new line.
-                      if (status === 'started' && content.length > 0 && !content.endsWith('\n')) {
-                        content = `${content}\n\n`
-                      }
-                      const hasContent = content.length > 0
-                      if (hasContent) emitContentDelta(content)
-                    } else {
-                      closeCommandFence()
-                      emitContentDelta(formatToolContent(toolState, argsPayload))
-                    }
-                  }
-                }
-
-                flushReasoning()
-                if (!aborted) {
-                  turnFinished = true
-                }
-              }),
-            ({ turnId, threadId }) =>
-              aborted || !turnFinished
-                ? Effect.sync(() => {
-                    void client.interruptTurn(turnId, threadId).catch(() => {})
-                  })
-                : Effect.succeed(undefined),
-          ),
-        )
+        let resumeThreadId = threadContext?.threadId ?? null
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            await runTurnAttempt(resumeThreadId, attempt === 0 && resumeThreadId != null)
+            break
+          } catch (error) {
+            const upstreamError = error instanceof ConversationNotFoundError ? error.upstream : error
+            if (
+              attempt === 0 &&
+              resumeThreadId != null &&
+              !hasEmittedAnyChunk &&
+              isConversationNotFoundError(upstreamError)
+            ) {
+              console.warn('[chat] stale thread id detected; starting new thread', {
+                chatId: threadContext?.chatId,
+                threadId: resumeThreadId,
+                upstream: String(upstreamError),
+              })
+              await clearStaleThread()
+              resumeThreadId = null
+              continue
+            }
+            throw error
+          }
+        }
       } catch (error) {
         hadError = true
         const payload = {
