@@ -241,6 +241,11 @@ export const runCodexSession = async ({
     outputPath,
   ]
 
+  const envModel = process.env.CODEX_MODEL?.trim()
+  if (envModel) {
+    codexCommand.push('-m', envModel)
+  }
+
   if (resumeArg && resumeArg.length > 0) {
     codexCommand.push('resume')
     if (resumeArg === '--last') {
