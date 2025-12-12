@@ -1,0 +1,23 @@
+{
+  "name": "@proompteng/discord-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun src/main.ts",
+    "start": "bun src/main.ts",
+    "test": "bunx vitest run --config vitest.config.ts",
+    "lint": "bunx biome check src"
+  },
+  "dependencies": {
+    "@proompteng/discord": "file:../../packages/discord",
+    "discord.js": "^14.22.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.2",
+    "bun-types": "latest",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.15"
+  },
+  "packageManager": "bun@1.3.4"
+}

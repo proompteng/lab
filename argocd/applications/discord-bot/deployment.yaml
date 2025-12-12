@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: discord-bot
+  namespace: argo-workflows
+  labels:
+    app: discord-bot
+    app.kubernetes.io/name: discord-bot
+    app.kubernetes.io/part-of: lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: discord-bot
+  template:
+    metadata:
+      labels:
+        app: discord-bot
+        app.kubernetes.io/name: discord-bot
+        app.kubernetes.io/part-of: lab
+    spec:
+      containers:
+        - name: app
+          image: registry.ide-newton.ts.net/lab/discord-bot:latest
+          imagePullPolicy: Always
+          env:
+            - name: DISCORD_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: discord-codex-bot
+                  key: bot-token
+            - name: DISCORD_ALLOWED_GUILD_IDS
+              valueFrom:
+                secretKeyRef:
+                  name: discord-codex-bot
+                  key: guild-id
+                  optional: true
+            - name: JANGAR_BASE_URL
+              value: http://jangar.jangar.svc.cluster.local
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 100m
+              memory: 256Mi
