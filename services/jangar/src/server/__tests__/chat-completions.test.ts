@@ -66,6 +66,103 @@ describe('chat completions handler', () => {
     expect(response.headers.get('content-type')).toContain('text/event-stream')
   })
 
+  it('strips terminal escape codes from streamed content', async () => {
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield {
+            type: 'message',
+            delta: '\u001b[32mgreen\u001b[0m and \u241b[31mred\u241b[0m',
+          }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    expect(text).not.toContain('\u001b')
+    expect(text).not.toContain('\u241b')
+
+    const chunks = text
+      .split('\n\n')
+      .map((part) => part.trim())
+      .filter((part) => part.startsWith('data: '))
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const content = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean)
+      .join('')
+
+    expect(content).toBe('green and red')
+  })
+
+  it('strips terminal escape codes from reasoning content', async () => {
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'reasoning', delta: '\u001b[35mthinking\u001b[0m' }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    expect(text).not.toContain('\u001b')
+    expect(text).not.toContain('\u241b')
+
+    const chunks = text
+      .split('\n\n')
+      .map((part) => part.trim())
+      .filter((part) => part.startsWith('data: '))
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const reasoningText = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.reasoning_content as string | undefined)
+      .filter(Boolean)
+      .join('')
+
+    expect(reasoningText).toBe('thinking')
+  })
+
   it('validates requested model against the advertised list', async () => {
     process.env.JANGAR_MODELS = 'allowed-model'
     process.env.JANGAR_DEFAULT_MODEL = 'allowed-model'

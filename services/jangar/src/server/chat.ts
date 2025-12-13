@@ -45,6 +45,68 @@ const safeJsonStringify = (value: unknown) => {
   }
 }
 
+const stripTerminalControl = (text: string) => {
+  if (text.length === 0) return text
+
+  // Some clients (and copy/paste flows) will include U+241B (SYMBOL FOR ESCAPE) instead of a raw ESC.
+  const input = text.replaceAll('\u241b', '\u001b')
+  const esc = '\u001b'
+  const csi = '\u009b'
+  const bel = '\u0007'
+
+  let output = ''
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index]
+
+    if (char !== esc && char !== csi) {
+      // Drop non-printable control characters (keep \t, \n, \r).
+      if (char <= '\u001f' || char === '\u007f') {
+        if (char === '\n' || char === '\r' || char === '\t') output += char
+        continue
+      }
+
+      output += char
+      continue
+    }
+
+    // Treat CSI (0x9B) like ESC [.
+    const next = char === csi ? '[' : input[index + 1]
+
+    // If we have a bare ESC at end, drop it.
+    if (char === esc && next == null) break
+
+    // OSC / DCS / PM / APC / SOS: skip until BEL or ST (ESC \).
+    if (next === ']' || next === 'P' || next === '^' || next === '_' || next === 'X') {
+      index += char === esc ? 1 : 0
+      for (index += 1; index < input.length; index += 1) {
+        const inner = input[index]
+        if (inner === bel) break
+        if (inner === esc && input[index + 1] === '\\') {
+          index += 1
+          break
+        }
+      }
+      continue
+    }
+
+    // CSI: skip until a final byte in the range @..~.
+    if (next === '[') {
+      index += char === esc ? 1 : 0
+      for (index += 1; index < input.length; index += 1) {
+        const code = input.charCodeAt(index)
+        if (code >= 0x40 && code <= 0x7e) break
+      }
+      continue
+    }
+
+    // Other short ESC sequences: drop ESC and one following byte (if present).
+    if (char === esc) index += 1
+  }
+
+  return output
+}
+
 let defaultThreadStore: ChatThreadStore | null = null
 let customThreadStore: ChatThreadStore | null = null
 
@@ -105,23 +167,23 @@ const normalizeStreamError = (error: unknown) => {
   const normalized: Record<string, unknown> = { type: 'upstream', code: 'upstream_error' }
 
   if (typeof error === 'string') {
-    normalized.message = error
+    normalized.message = stripTerminalControl(error)
     return normalized
   }
 
   if (!error || typeof error !== 'object') {
-    normalized.message = String(error ?? 'upstream error')
+    normalized.message = stripTerminalControl(String(error ?? 'upstream error'))
     return normalized
   }
 
   const record = error as Record<string, unknown>
 
   if (typeof record.message === 'string' && record.message.length > 0) {
-    normalized.message = record.message
+    normalized.message = stripTerminalControl(record.message)
   } else if (record.error && typeof record.error === 'object') {
     const nested = record.error as Record<string, unknown>
     if (typeof nested.message === 'string' && nested.message.length > 0) {
-      normalized.message = nested.message
+      normalized.message = stripTerminalControl(nested.message)
     }
     const codexErrorInfo = nested.codexErrorInfo
     if (typeof codexErrorInfo === 'string' && codexErrorInfo.length > 0) {
@@ -133,7 +195,7 @@ const normalizeStreamError = (error: unknown) => {
   }
 
   if (normalized.message == null) {
-    normalized.message = safeJsonStringify(error)
+    normalized.message = stripTerminalControl(safeJsonStringify(error))
   }
 
   if (typeof record.code === 'string' && record.code.length > 0) {
@@ -160,7 +222,7 @@ const parseRequest = async (request: Request): Promise<ChatRequest> => {
     throw new RequestError(
       400,
       'invalid_request_error',
-      error instanceof Error ? error.message : safeJsonStringify(error),
+      stripTerminalControl(error instanceof Error ? error.message : safeJsonStringify(error)),
     )
   }
 
@@ -503,7 +565,10 @@ const toSseResponse = (
       }
 
       const emitContentDelta = (content: string) => {
-        const deltaPayload: Record<string, unknown> = { content }
+        const sanitizedContent = stripTerminalControl(content)
+        if (sanitizedContent.length === 0) return
+
+        const deltaPayload: Record<string, unknown> = { content: sanitizedContent }
         ensureRole(deltaPayload)
         const chunk = {
           id,
@@ -519,9 +584,7 @@ const toSseResponse = (
           ],
         }
         enqueueChunk(chunk)
-        if (content.length > 0) {
-          lastContentEndsWithNewline = content.endsWith('\n')
-        }
+        lastContentEndsWithNewline = sanitizedContent.endsWith('\n')
       }
 
       const openCommandFence = () => {
@@ -559,7 +622,7 @@ const toSseResponse = (
           reasoningBuffer = reasoningBuffer.slice(0, -carry.length)
         }
 
-        const sanitized = sanitizeReasoningText(reasoningBuffer)
+        const sanitized = stripTerminalControl(sanitizeReasoningText(reasoningBuffer))
         const deltaPayload: Record<string, unknown> = {
           reasoning_content: sanitized,
         }
