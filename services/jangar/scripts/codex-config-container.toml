@@ -3,10 +3,8 @@ model_reasoning_effort = "high"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 
-[tools]
-web_search = true
-
 [features]
+web_search_request = true
 unified_exec = true
 streamable_shell = true
 apply_patch_freeform = true
