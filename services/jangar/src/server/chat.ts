@@ -124,9 +124,56 @@ const parseRequest = async (request: Request): Promise<ChatRequest> => {
   return parsed
 }
 
+const summarizeNonTextPart = (part: Record<string, unknown>) => {
+  const type = typeof part.type === 'string' && part.type.length > 0 ? part.type : 'part'
+  if (type === 'image_url') {
+    const imageUrl = part.image_url
+    if (imageUrl && typeof imageUrl === 'object') {
+      const url = (imageUrl as Record<string, unknown>).url
+      if (typeof url === 'string' && url.length > 0) return ` [image_url] ${url}`
+    }
+    return ' [image_url]'
+  }
+  if (type === 'input_audio') return ' [input_audio]'
+  if (type === 'file') return ' [file]'
+  return ` [${type}]`
+}
+
+const normalizeMessageContent = (content: unknown): string => {
+  if (typeof content === 'string') return content
+
+  if (Array.isArray(content)) {
+    const parts = content
+      .map((part) => {
+        if (typeof part === 'string') return part
+        if (part && typeof part === 'object') {
+          const obj = part as Record<string, unknown>
+          if (typeof obj.text === 'string') return obj.text
+          if (typeof obj.content === 'string') return obj.content
+          return summarizeNonTextPart(obj)
+        }
+        return part == null ? '' : String(part)
+      })
+      .filter((value) => value.length > 0)
+    return parts.join('')
+  }
+
+  if (content && typeof content === 'object') {
+    const obj = content as Record<string, unknown>
+    if (typeof obj.text === 'string') return obj.text
+    if (typeof obj.content === 'string') return obj.content
+    return summarizeNonTextPart(obj)
+  }
+
+  return content == null ? '' : String(content)
+}
+
 const buildPrompt = (messages: ChatRequest['messages']) =>
   messages
-    .map((msg) => `${msg.role}: ${typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)}`)
+    .map((msg) => {
+      const prefix = msg.name && msg.name.length > 0 ? `${msg.role}(${msg.name})` : msg.role
+      return `${prefix}: ${normalizeMessageContent(msg.content)}`
+    })
     .join('\n')
 
 const pickNumber = (value: unknown, keys: string[]): number | undefined => {
@@ -264,15 +311,25 @@ const toSseResponse = (
       let controllerClosed = false
       let activeTurnId: string | null = null
       let activeThreadId: string | null = null
+      let pendingInterrupt = false
+      let didInterrupt = false
       let lastUsage: Record<string, unknown> | null = null
       let turnFinished = false
       let sawUpstreamError = false
       const includeUsageChunk = includeUsage
 
+      const interruptTurn = (turnId: string, threadId: string) => {
+        if (didInterrupt) return
+        didInterrupt = true
+        void client.interruptTurn(turnId, threadId).catch(() => {})
+      }
+
       const interruptCodex = () => {
         if (activeTurnId && activeThreadId) {
-          void client.interruptTurn(activeTurnId, activeThreadId).catch(() => {})
+          interruptTurn(activeTurnId, activeThreadId)
+          return
         }
+        pendingInterrupt = true
       }
 
       const safeClose = () => {
@@ -576,185 +633,191 @@ const toSseResponse = (
           sawUpstreamError = false
           turnFinished = false
 
-          await Effect.runPromise(
-            Effect.acquireUseRelease(
-              Effect.promise(() =>
-                client.runTurnStream(prompt, {
-                  model,
-                  cwd: codexCwd,
-                  threadId: resumeThreadId ?? undefined,
-                }),
-              ),
-              ({ stream: codexStream, turnId, threadId }) =>
-                Effect.promise(async () => {
-                  activeTurnId = turnId
-                  activeThreadId = threadId
-                  if (threadContext) {
-                    threadContext.threadId = threadId
+          if (aborted || controllerClosed) {
+            return
+          }
+
+          const {
+            stream: codexStream,
+            turnId,
+            threadId,
+          } = await client.runTurnStream(prompt, {
+            model,
+            cwd: codexCwd,
+            threadId: resumeThreadId ?? undefined,
+          })
+
+          activeTurnId = turnId
+          activeThreadId = threadId
+
+          if (threadContext) {
+            threadContext.threadId = threadId
+          }
+
+          if (pendingInterrupt || aborted || controllerClosed) {
+            interruptTurn(turnId, threadId)
+            return
+          }
+
+          if (threadContext?.chatId && threadContext.store) {
+            try {
+              await pipe(threadContext.store.setThread(threadContext.chatId, threadId), Effect.runPromise)
+              await ensureTurnNumber()
+              console.info('[chat] thread stored', {
+                chatId: threadContext.chatId,
+                threadId,
+                turnNumber: threadContext.turnNumber ?? undefined,
+              })
+            } catch (error) {
+              hadError = true
+              enqueueChunk({
+                error: {
+                  message: 'failed to persist chat thread',
+                  type: 'internal',
+                  code: 'thread_store_error',
+                  detail: error instanceof Error ? error.message : undefined,
+                },
+              })
+              interruptCodex()
+              return
+            }
+          }
+
+          try {
+            for await (const delta of codexStream) {
+              if (aborted || controllerClosed) {
+                interruptCodex()
+                break
+              }
+
+              if (delta.type !== 'reasoning') {
+                flushReasoning()
+              }
+
+              if (delta.type === 'usage') {
+                closeCommandFence()
+                if (includeUsageChunk) {
+                  lastUsage = normalizeUsage(delta.usage)
+                }
+                continue
+              }
+
+              if (sawUpstreamError) {
+                // After an upstream error we only care about trailing usage updates.
+                continue
+              }
+
+              if (delta.type === 'error') {
+                if (canRetry && !hasEmittedAnyChunk && isConversationNotFoundError(delta.error)) {
+                  throw new ConversationNotFoundError(delta.error)
+                }
+
+                hadError = true
+                sawUpstreamError = true
+                closeCommandFence()
+                const errorPayload = {
+                  error:
+                    delta.error && typeof delta.error === 'object'
+                      ? delta.error
+                      : { message: String(delta.error ?? 'upstream error'), type: 'upstream' },
+                }
+                enqueueChunk(errorPayload)
+                // Keep listening for possible trailing usage.
+                continue
+              }
+
+              if (delta.type === 'message') {
+                closeCommandFence()
+                const text = normalizeDeltaText(delta.delta)
+                emitContentDelta(text)
+              }
+
+              if (delta.type === 'reasoning') {
+                const text = sanitizeReasoningText(normalizeDeltaText(delta.delta))
+                reasoningBuffer += text
+                // Emit reasoning immediately to avoid long silent periods that can trip upstream timeouts.
+                flushReasoning()
+              }
+
+              if (delta.type === 'tool') {
+                const deltaRecord = delta as Record<string, unknown>
+                const toolState = getToolState(deltaRecord)
+                const argsPayload = formatToolArguments(toolState, deltaRecord)
+                if (toolState.toolKind === 'file') {
+                  closeCommandFence()
+                  const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
+
+                  // Skip the start event to avoid duplicated summaries like "1 change(s)1 change(s)".
+                  if (status === 'started') {
+                    toolState.lastStatus = status
+                    continue
                   }
 
-                  if (threadContext?.chatId && threadContext.store) {
-                    try {
-                      await pipe(threadContext.store.setThread(threadContext.chatId, threadId), Effect.runPromise)
-                      await ensureTurnNumber()
-                      console.info('[chat] thread stored', {
-                        chatId: threadContext.chatId,
-                        threadId,
-                        turnNumber: threadContext.turnNumber ?? undefined,
-                      })
-                    } catch (error) {
-                      hadError = true
-                      enqueueChunk({
-                        error: {
-                          message: 'failed to persist chat thread',
-                          type: 'internal',
-                          code: 'thread_store_error',
-                          detail: error instanceof Error ? error.message : undefined,
-                        },
-                      })
-                      interruptCodex()
-                      return
-                    }
+                  const changes = Array.isArray((deltaRecord.data as { changes?: unknown } | undefined)?.changes)
+                    ? (deltaRecord.data as { changes: unknown[] }).changes
+                    : Array.isArray(deltaRecord.changes as unknown)
+                      ? (deltaRecord.changes as unknown[])
+                      : undefined
+
+                  const content = renderFileChanges(changes) ?? formatToolContent(toolState, argsPayload)
+                  if (!content) {
+                    toolState.lastStatus = status
+                    continue
                   }
 
-                  for await (const delta of codexStream) {
-                    if (aborted || controllerClosed) {
-                      interruptCodex()
-                      break
-                    }
-
-                    if (delta.type !== 'reasoning') {
-                      flushReasoning()
-                    }
-
-                    if (delta.type === 'usage') {
-                      closeCommandFence()
-                      if (includeUsageChunk) {
-                        lastUsage = normalizeUsage(delta.usage)
-                      }
-                      continue
-                    }
-
-                    if (sawUpstreamError) {
-                      // After an upstream error we only care about trailing usage updates.
-                      continue
-                    }
-
-                    if (delta.type === 'error') {
-                      if (canRetry && !hasEmittedAnyChunk && isConversationNotFoundError(delta.error)) {
-                        throw new ConversationNotFoundError(delta.error)
-                      }
-
-                      hadError = true
-                      sawUpstreamError = true
-                      closeCommandFence()
-                      const errorPayload = {
-                        error:
-                          delta.error && typeof delta.error === 'object'
-                            ? delta.error
-                            : { message: String(delta.error ?? 'upstream error'), type: 'upstream' },
-                      }
-                      enqueueChunk(errorPayload)
-                      // Keep listening for possible trailing usage.
-                      continue
-                    }
-
-                    if (delta.type === 'message') {
-                      closeCommandFence()
-                      const text = normalizeDeltaText(delta.delta)
-                      emitContentDelta(text)
-                    }
-
-                    if (delta.type === 'reasoning') {
-                      const text = sanitizeReasoningText(normalizeDeltaText(delta.delta))
-                      reasoningBuffer += text
-                      // Emit reasoning immediately to avoid long silent periods that can trip upstream timeouts.
-                      flushReasoning()
-                    }
-
-                    if (delta.type === 'tool') {
-                      const deltaRecord = delta as Record<string, unknown>
-                      const toolState = getToolState(deltaRecord)
-                      const argsPayload = formatToolArguments(toolState, deltaRecord)
-                      if (toolState.toolKind === 'file') {
-                        closeCommandFence()
-                        const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
-
-                        // Skip the start event to avoid duplicated summaries like "1 change(s)1 change(s)".
-                        if (status === 'started') {
-                          toolState.lastStatus = status
-                          continue
-                        }
-
-                        const changes = Array.isArray((deltaRecord.data as { changes?: unknown } | undefined)?.changes)
-                          ? (deltaRecord.data as { changes: unknown[] }).changes
-                          : Array.isArray(deltaRecord.changes as unknown)
-                            ? (deltaRecord.changes as unknown[])
-                            : undefined
-
-                        const content = renderFileChanges(changes) ?? formatToolContent(toolState, argsPayload)
-                        if (!content) {
-                          toolState.lastStatus = status
-                          continue
-                        }
-
-                        // Avoid re-emitting identical apply_patch summaries across delta/completed events.
-                        if (content === toolState.lastContent && status === toolState.lastStatus) {
-                          continue
-                        }
-
-                        toolState.lastContent = content
-                        toolState.lastStatus = status
-                        emitContentDelta(content)
-                        continue
-                      }
-                      if (toolState.toolKind === 'webSearch') {
-                        closeCommandFence()
-                        // Emit the attempted search term plainly, wrapped in backticks so UIs like
-                        // OpenWebUI render it as a code span without extra prefixes/suffixes.
-                        if (deltaRecord.status !== 'completed') {
-                          const query =
-                            (typeof toolState.title === 'string' && toolState.title.length > 0
-                              ? toolState.title
-                              : undefined) ??
-                            (typeof argsPayload.detail === 'string' && argsPayload.detail.length > 0
-                              ? argsPayload.detail
-                              : undefined)
-                          if (query) emitContentDelta(`\`${query}\``)
-                        }
-                        continue
-                      }
-
-                      if (toolState.toolKind === 'command') {
-                        openCommandFence()
-                        const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
-                        let content = formatToolContent(toolState, argsPayload)
-                        // Ensure the initial command line is followed by a newline so subsequent output starts on a new line.
-                        if (status === 'started' && content.length > 0 && !content.endsWith('\n')) {
-                          content = `${content}\n\n`
-                        }
-                        const hasContent = content.length > 0
-                        if (hasContent) emitContentDelta(content)
-                      } else {
-                        closeCommandFence()
-                        emitContentDelta(formatToolContent(toolState, argsPayload))
-                      }
-                    }
+                  // Avoid re-emitting identical apply_patch summaries across delta/completed events.
+                  if (content === toolState.lastContent && status === toolState.lastStatus) {
+                    continue
                   }
 
-                  flushReasoning()
-                  if (!aborted) {
-                    turnFinished = true
+                  toolState.lastContent = content
+                  toolState.lastStatus = status
+                  emitContentDelta(content)
+                  continue
+                }
+                if (toolState.toolKind === 'webSearch') {
+                  closeCommandFence()
+                  // Emit the attempted search term plainly, wrapped in backticks so UIs like
+                  // OpenWebUI render it as a code span without extra prefixes/suffixes.
+                  if (deltaRecord.status !== 'completed') {
+                    const query =
+                      (typeof toolState.title === 'string' && toolState.title.length > 0
+                        ? toolState.title
+                        : undefined) ??
+                      (typeof argsPayload.detail === 'string' && argsPayload.detail.length > 0
+                        ? argsPayload.detail
+                        : undefined)
+                    if (query) emitContentDelta(`\`${query}\``)
                   }
-                }),
-              ({ turnId, threadId }) =>
-                aborted || !turnFinished
-                  ? Effect.sync(() => {
-                      void client.interruptTurn(turnId, threadId).catch(() => {})
-                    })
-                  : Effect.succeed(undefined),
-            ),
-          )
+                  continue
+                }
+
+                if (toolState.toolKind === 'command') {
+                  openCommandFence()
+                  const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
+                  let content = formatToolContent(toolState, argsPayload)
+                  // Ensure the initial command line is followed by a newline so subsequent output starts on a new line.
+                  if (status === 'started' && content.length > 0 && !content.endsWith('\n')) {
+                    content = `${content}\n\n`
+                  }
+                  const hasContent = content.length > 0
+                  if (hasContent) emitContentDelta(content)
+                } else {
+                  closeCommandFence()
+                  emitContentDelta(formatToolContent(toolState, argsPayload))
+                }
+              }
+            }
+
+            flushReasoning()
+            if (!aborted) {
+              turnFinished = true
+            }
+          } finally {
+            if ((aborted || !turnFinished) && activeTurnId && activeThreadId) {
+              interruptTurn(activeTurnId, activeThreadId)
+            }
+          }
         }
 
         let resumeThreadId = threadContext?.threadId ?? null
@@ -893,20 +956,21 @@ export const handleChatCompletion = async (request: Request): Promise<Response> 
           }
         : null
 
-    return await pipe(
+    const { config, client } = await pipe(
       Effect.all({
         config: loadConfig,
         client: getCodexClient(),
       }),
-      Effect.flatMap(({ config, client }) =>
-        Effect.promise(() => {
-          const model = parsed.model ?? config.defaultModel
-          const prompt = buildPrompt(parsed.messages)
-          return Promise.resolve(toSseResponse(client, prompt, model, includeUsage, threadContext, request.signal))
-        }),
-      ),
       Effect.runPromise,
     )
+
+    const model = parsed.model ?? config.defaultModel
+    if (!config.models.includes(model)) {
+      throw new RequestError(400, 'model_not_found', `Unknown model '${model}'. See /openai/v1/models.`)
+    }
+
+    const prompt = buildPrompt(parsed.messages)
+    return toSseResponse(client, prompt, model, includeUsage, threadContext, request.signal)
   } catch (error) {
     if (error instanceof RequestError) {
       return error.code === 'stream_required'

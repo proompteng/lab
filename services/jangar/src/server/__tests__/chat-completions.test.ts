@@ -6,7 +6,14 @@ import { resetCodexClient, setCodexClientFactory, setThreadStore } from '~/serve
 import type { ChatThreadStore } from '~/server/chat-thread-store'
 
 describe('chat completions handler', () => {
+  const previousEnv: Partial<Record<'JANGAR_MODELS' | 'JANGAR_DEFAULT_MODEL', string | undefined>> = {}
+
   beforeEach(() => {
+    previousEnv.JANGAR_MODELS = process.env.JANGAR_MODELS
+    previousEnv.JANGAR_DEFAULT_MODEL = process.env.JANGAR_DEFAULT_MODEL
+    delete process.env.JANGAR_MODELS
+    delete process.env.JANGAR_DEFAULT_MODEL
+
     const mockClient = {
       runTurnStream: async () => ({
         turnId: 'turn-1',
@@ -26,6 +33,18 @@ describe('chat completions handler', () => {
     vi.clearAllMocks()
     resetCodexClient()
     setThreadStore(null)
+
+    if (previousEnv.JANGAR_MODELS === undefined) {
+      delete process.env.JANGAR_MODELS
+    } else {
+      process.env.JANGAR_MODELS = previousEnv.JANGAR_MODELS
+    }
+
+    if (previousEnv.JANGAR_DEFAULT_MODEL === undefined) {
+      delete process.env.JANGAR_DEFAULT_MODEL
+    } else {
+      process.env.JANGAR_DEFAULT_MODEL = previousEnv.JANGAR_DEFAULT_MODEL
+    }
   })
 
   it('proxies upstream SSE stream', async () => {
@@ -45,6 +64,109 @@ describe('chat completions handler', () => {
     const text = await response.text()
     expect(text).toContain('hi there')
     expect(response.headers.get('content-type')).toContain('text/event-stream')
+  })
+
+  it('validates requested model against the advertised list', async () => {
+    process.env.JANGAR_MODELS = 'allowed-model'
+    process.env.JANGAR_DEFAULT_MODEL = 'allowed-model'
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'unknown-model',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+
+    expect(response.status).toBe(400)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    const payload = await response.json()
+    expect(payload?.error?.code).toBe('model_not_found')
+  })
+
+  it('builds prompts from OpenAI-style content parts', async () => {
+    const mockClient = {
+      runTurnStream: vi.fn(async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'ok' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'hello' },
+              { type: 'image_url', image_url: { url: 'https://example.test/cat.png' } },
+            ],
+          },
+        ],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    await response.text()
+
+    expect(mockClient.runTurnStream).toHaveBeenCalled()
+    const [prompt] = mockClient.runTurnStream.mock.calls[0] as [string]
+    expect(prompt).toContain('user: hello [image_url] https://example.test/cat.png')
+  })
+
+  it('interrupts turns even when the client aborts before ids are available', async () => {
+    const abortController = new AbortController()
+
+    const mockClient = {
+      runTurnStream: vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+        return {
+          turnId: 'turn-1',
+          threadId: 'thread-1',
+          stream: (async function* () {
+            // If we ever start streaming, keep it short.
+            yield { type: 'message', delta: 'hello' }
+          })(),
+        }
+      }),
+      interruptTurn: vi.fn(async () => {}),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      signal: abortController.signal,
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const body = response.text()
+    abortController.abort()
+    await body
+
+    expect(mockClient.interruptTurn).toHaveBeenCalledWith('turn-1', 'thread-1')
   })
 
   it('retries on stale thread ids by clearing redis mapping', async () => {

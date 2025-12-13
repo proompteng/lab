@@ -5,8 +5,11 @@ This note describes the currently implemented chat-completion proxy. Source of t
 ## Endpoint surface
 - POST `/openai/v1/chat/completions` (streaming only). Handler: `chatCompletionsHandler` in `services/jangar/src/routes/openai/v1/chat/completions.ts`.
 - Request schema: `messages` non-empty array of `{ role, content, name? }`; `stream` must be `true` (otherwise SSE error response); optional `model`; optional `stream_options.include_usage`.
-- Model defaults to `gpt-5.1-codex-max` from `services/jangar/src/server/config.ts`.
-- Prompt sent to Codex is built by joining messages as `"role: content"` lines; non-string content is `JSON.stringify`’d.
+- Models/default model are configured in `services/jangar/src/server/config.ts`:
+  - `JANGAR_MODELS` (comma-separated) overrides the advertised model list.
+  - `JANGAR_DEFAULT_MODEL` overrides the default model (and is auto-added to `JANGAR_MODELS` if missing).
+- Requests that specify a `model` not present in the advertised list fail fast with `model_not_found`.
+- Prompt sent to Codex is built by joining messages as `"role: content"` lines; for OpenAI-style content parts arrays, text parts are concatenated and non-text parts are summarized (e.g. `[image_url] <url>`).
 
 ## SSE response shape
 - Headers: `content-type: text/event-stream`, `cache-control: no-cache`, `connection: keep-alive`, `x-accel-buffering: no`.
