@@ -89,7 +89,7 @@ describe('chat completions handler', () => {
 
   it('builds prompts from OpenAI-style content parts', async () => {
     const mockClient = {
-      runTurnStream: vi.fn(async () => ({
+      runTurnStream: vi.fn(async (_prompt: string) => ({
         turnId: 'turn-1',
         threadId: 'thread-1',
         stream: (async function* () {
@@ -124,7 +124,8 @@ describe('chat completions handler', () => {
     await response.text()
 
     expect(mockClient.runTurnStream).toHaveBeenCalled()
-    const [prompt] = mockClient.runTurnStream.mock.calls[0] as [string]
+    const prompt = mockClient.runTurnStream.mock.calls[0]?.[0]
+    expect(typeof prompt).toBe('string')
     expect(prompt).toContain('user: hello [image_url] https://example.test/cat.png')
   })
 
