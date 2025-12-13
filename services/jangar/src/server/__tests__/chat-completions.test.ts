@@ -82,9 +82,17 @@ describe('chat completions handler', () => {
     const response = await chatCompletionsHandler(request)
 
     expect(response.status).toBe(400)
-    expect(response.headers.get('content-type')).toContain('application/json')
-    const payload = await response.json()
-    expect(payload?.error?.code).toBe('model_not_found')
+    expect(response.headers.get('content-type')).toContain('text/event-stream')
+    const text = await response.text()
+    expect(text.trim().endsWith('[DONE]')).toBe(true)
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+    const errorChunk = chunks.find((chunk) => chunk.error)
+    expect(errorChunk?.error?.code).toBe('model_not_found')
   })
 
   it('builds prompts from OpenAI-style content parts', async () => {
@@ -1067,8 +1075,17 @@ describe('chat completions handler', () => {
 
     const response = await chatCompletionsHandler(request)
     expect(response.status).toBe(400)
-    const json = await response.json()
-    expect(json.error.message).toMatch(/messages/)
+    expect(response.headers.get('content-type')).toContain('text/event-stream')
+    const text = await response.text()
+    expect(text.trim().endsWith('[DONE]')).toBe(true)
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+    const errorChunk = chunks.find((chunk) => chunk.error)
+    expect(String(errorChunk?.error?.message)).toMatch(/messages/)
   })
 
   it('surfaces codex errors via SSE payload', async () => {
@@ -1100,5 +1117,55 @@ describe('chat completions handler', () => {
       .map((part) => JSON.parse(part))
     const stopChunks = chunks.filter((c) => c.choices?.[0]?.finish_reason === 'stop')
     expect(stopChunks).toHaveLength(0)
+  })
+
+  it('normalizes app-server error notifications to OpenAI error shape', async () => {
+    const mockClient = {
+      runTurnStream: vi.fn(async () => {
+        return {
+          turnId: 'turn-1',
+          threadId: 'thread-1',
+          stream: (async function* () {
+            yield {
+              type: 'error',
+              error: {
+                error: { message: 'conversation not found: stale-thread', codexErrorInfo: null },
+                willRetry: false,
+                threadId: 'thread-1',
+                turnId: 'turn-1',
+              },
+            }
+          })(),
+        }
+      }),
+      interruptTurn: vi.fn(async () => {}),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    expect(text.trim().endsWith('[DONE]')).toBe(true)
+
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const errorChunk = chunks.find((chunk) => chunk.error)
+    expect(errorChunk).toBeTruthy()
+    expect(typeof errorChunk?.error?.message).toBe('string')
+    expect(String(errorChunk?.error?.message)).not.toBe('[object Object]')
+    expect(String(errorChunk?.error?.message)).toMatch(/conversation not found/)
   })
 })

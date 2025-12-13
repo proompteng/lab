@@ -37,11 +37,13 @@ class RequestError extends Error {
   }
 }
 
-const jsonResponse = (value: unknown, status = 200) =>
-  new Response(JSON.stringify(value), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  })
+const safeJsonStringify = (value: unknown) => {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
 
 let defaultThreadStore: ChatThreadStore | null = null
 let customThreadStore: ChatThreadStore | null = null
@@ -99,6 +101,50 @@ const sseError = (payload: unknown, status = 400) => {
   })
 }
 
+const normalizeStreamError = (error: unknown) => {
+  const normalized: Record<string, unknown> = { type: 'upstream', code: 'upstream_error' }
+
+  if (typeof error === 'string') {
+    normalized.message = error
+    return normalized
+  }
+
+  if (!error || typeof error !== 'object') {
+    normalized.message = String(error ?? 'upstream error')
+    return normalized
+  }
+
+  const record = error as Record<string, unknown>
+
+  if (typeof record.message === 'string' && record.message.length > 0) {
+    normalized.message = record.message
+  } else if (record.error && typeof record.error === 'object') {
+    const nested = record.error as Record<string, unknown>
+    if (typeof nested.message === 'string' && nested.message.length > 0) {
+      normalized.message = nested.message
+    }
+    const codexErrorInfo = nested.codexErrorInfo
+    if (typeof codexErrorInfo === 'string' && codexErrorInfo.length > 0) {
+      normalized.code = codexErrorInfo
+    } else if (codexErrorInfo && typeof codexErrorInfo === 'object') {
+      const keys = Object.keys(codexErrorInfo as Record<string, unknown>)
+      if (keys[0]) normalized.code = keys[0]
+    }
+  }
+
+  if (normalized.message == null) {
+    normalized.message = safeJsonStringify(error)
+  }
+
+  if (typeof record.code === 'string' && record.code.length > 0) {
+    normalized.code = record.code
+  } else if (typeof record.code === 'number' && Number.isFinite(record.code)) {
+    normalized.code = String(record.code)
+  }
+
+  return normalized
+}
+
 const parseRequest = async (request: Request): Promise<ChatRequest> => {
   let body: unknown
   try {
@@ -111,7 +157,11 @@ const parseRequest = async (request: Request): Promise<ChatRequest> => {
   try {
     parsed = await S.decodeUnknownPromise(ChatRequestSchema)(body)
   } catch (error) {
-    throw new RequestError(400, 'invalid_request_error', String(error))
+    throw new RequestError(
+      400,
+      'invalid_request_error',
+      error instanceof Error ? error.message : safeJsonStringify(error),
+    )
   }
 
   if (!parsed.messages.length) {
@@ -715,13 +765,7 @@ const toSseResponse = (
                 hadError = true
                 sawUpstreamError = true
                 closeCommandFence()
-                const errorPayload = {
-                  error:
-                    delta.error && typeof delta.error === 'object'
-                      ? delta.error
-                      : { message: String(delta.error ?? 'upstream error'), type: 'upstream' },
-                }
-                enqueueChunk(errorPayload)
+                enqueueChunk({ error: normalizeStreamError(delta.error) })
                 // Keep listening for possible trailing usage.
                 continue
               }
@@ -836,7 +880,7 @@ const toSseResponse = (
               console.warn('[chat] stale thread id detected; starting new thread', {
                 chatId: threadContext?.chatId,
                 threadId: resumeThreadId,
-                upstream: String(upstreamError),
+                upstream: safeJsonStringify(upstreamError),
               })
               await clearStaleThread()
               resumeThreadId = null
@@ -847,14 +891,14 @@ const toSseResponse = (
         }
       } catch (error) {
         hadError = true
-        const payload = {
+        const normalized = normalizeStreamError(error)
+        enqueueChunk({
           error: {
-            message: error instanceof Error ? error.message : String(error),
+            message: typeof normalized.message === 'string' ? normalized.message : safeJsonStringify(normalized),
             type: 'internal',
             code: 'codex_error',
           },
-        }
-        enqueueChunk(payload)
+        })
       } finally {
         for (const removeAbort of abortControllers) removeAbort()
 
@@ -973,14 +1017,12 @@ export const handleChatCompletion = async (request: Request): Promise<Response> 
     return toSseResponse(client, prompt, model, includeUsage, threadContext, request.signal)
   } catch (error) {
     if (error instanceof RequestError) {
-      return error.code === 'stream_required'
-        ? sseError({ error: { message: error.message, type: 'invalid_request_error', code: error.code } }, error.status)
-        : jsonResponse(
-            { error: { message: error.message, type: 'invalid_request_error', code: error.code } },
-            error.status,
-          )
+      return sseError(
+        { error: { message: error.message, type: 'invalid_request_error', code: error.code } },
+        error.status,
+      )
     }
-    return jsonResponse({ error: { message: 'Unknown error', type: 'internal' } }, 500)
+    return sseError({ error: { message: 'Unknown error', type: 'internal', code: 'internal_error' } }, 500)
   }
 }
 
