@@ -141,6 +141,7 @@ COPY services/jangar/package.json ./
 COPY services/jangar/tsconfig.json ./
 RUN mkdir -p /root/.codex
 COPY services/jangar/.codex /root/.codex
+COPY services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
 RUN --mount=type=cache,target=/root/.cache/bun bun install --frozen-lockfile
 
 # Copy source after deps to maximize layer cache hits
@@ -182,8 +183,8 @@ RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
   gh auth status -t | grep -q "workflow" || (echo "GitHub token is missing workflow scope" >&2; exit 1); \
   gh auth setup-git
 
-RUN git config --global user.name "tuslagch" \
-  && git config --global user.email "tuslagch@proompteng.ai" \
+RUN git config --global user.name "gregkonush" \
+  && git config --global user.email "12027037+gregkonush@users.noreply.github.com" \
   && git config --global push.autoSetupRemote true
 
 ENV NODE_ENV=production

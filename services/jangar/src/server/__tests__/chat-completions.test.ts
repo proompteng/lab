@@ -6,7 +6,14 @@ import { resetCodexClient, setCodexClientFactory, setThreadStore } from '~/serve
 import type { ChatThreadStore } from '~/server/chat-thread-store'
 
 describe('chat completions handler', () => {
+  const previousEnv: Partial<Record<'JANGAR_MODELS' | 'JANGAR_DEFAULT_MODEL', string | undefined>> = {}
+
   beforeEach(() => {
+    previousEnv.JANGAR_MODELS = process.env.JANGAR_MODELS
+    previousEnv.JANGAR_DEFAULT_MODEL = process.env.JANGAR_DEFAULT_MODEL
+    delete process.env.JANGAR_MODELS
+    delete process.env.JANGAR_DEFAULT_MODEL
+
     const mockClient = {
       runTurnStream: async () => ({
         turnId: 'turn-1',
@@ -26,6 +33,18 @@ describe('chat completions handler', () => {
     vi.clearAllMocks()
     resetCodexClient()
     setThreadStore(null)
+
+    if (previousEnv.JANGAR_MODELS === undefined) {
+      delete process.env.JANGAR_MODELS
+    } else {
+      process.env.JANGAR_MODELS = previousEnv.JANGAR_MODELS
+    }
+
+    if (previousEnv.JANGAR_DEFAULT_MODEL === undefined) {
+      delete process.env.JANGAR_DEFAULT_MODEL
+    } else {
+      process.env.JANGAR_DEFAULT_MODEL = previousEnv.JANGAR_DEFAULT_MODEL
+    }
   })
 
   it('proxies upstream SSE stream', async () => {
@@ -45,6 +64,215 @@ describe('chat completions handler', () => {
     const text = await response.text()
     expect(text).toContain('hi there')
     expect(response.headers.get('content-type')).toContain('text/event-stream')
+  })
+
+  it('strips terminal escape codes from streamed content', async () => {
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield {
+            type: 'message',
+            delta: '\u001b[32mgreen\u001b[0m and \u241b[31mred\u241b[0m',
+          }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    expect(text).not.toContain('\u001b')
+    expect(text).not.toContain('\u241b')
+
+    const chunks = text
+      .split('\n\n')
+      .map((part) => part.trim())
+      .filter((part) => part.startsWith('data: '))
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const content = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean)
+      .join('')
+
+    expect(content).toBe('green and red')
+  })
+
+  it('strips terminal escape codes from reasoning content', async () => {
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'reasoning', delta: '\u001b[35mthinking\u001b[0m' }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    expect(text).not.toContain('\u001b')
+    expect(text).not.toContain('\u241b')
+
+    const chunks = text
+      .split('\n\n')
+      .map((part) => part.trim())
+      .filter((part) => part.startsWith('data: '))
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const reasoningText = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.reasoning_content as string | undefined)
+      .filter(Boolean)
+      .join('')
+
+    expect(reasoningText).toBe('thinking')
+  })
+
+  it('validates requested model against the advertised list', async () => {
+    process.env.JANGAR_MODELS = 'allowed-model'
+    process.env.JANGAR_DEFAULT_MODEL = 'allowed-model'
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'unknown-model',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+
+    expect(response.status).toBe(400)
+    expect(response.headers.get('content-type')).toContain('text/event-stream')
+    const text = await response.text()
+    expect(text.trim().endsWith('[DONE]')).toBe(true)
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+    const errorChunk = chunks.find((chunk) => chunk.error)
+    expect(errorChunk?.error?.code).toBe('model_not_found')
+  })
+
+  it('builds prompts from OpenAI-style content parts', async () => {
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'ok' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'hello' },
+              { type: 'image_url', image_url: { url: 'https://example.test/cat.png' } },
+            ],
+          },
+        ],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    await response.text()
+
+    expect(mockClient.runTurnStream).toHaveBeenCalled()
+    const prompt = mockClient.runTurnStream.mock.calls[0]?.[0]
+    expect(typeof prompt).toBe('string')
+    expect(prompt).toContain('user: hello [image_url] https://example.test/cat.png')
+  })
+
+  it('interrupts turns even when the client aborts before ids are available', async () => {
+    const abortController = new AbortController()
+
+    const mockClient = {
+      runTurnStream: vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+        return {
+          turnId: 'turn-1',
+          threadId: 'thread-1',
+          stream: (async function* () {
+            // If we ever start streaming, keep it short.
+            yield { type: 'message', delta: 'hello' }
+          })(),
+        }
+      }),
+      interruptTurn: vi.fn(async () => {}),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      signal: abortController.signal,
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const body = response.text()
+    abortController.abort()
+    await body
+
+    expect(mockClient.interruptTurn).toHaveBeenCalledWith('turn-1', 'thread-1')
   })
 
   it('retries on stale thread ids by clearing redis mapping', async () => {
@@ -944,8 +1172,17 @@ describe('chat completions handler', () => {
 
     const response = await chatCompletionsHandler(request)
     expect(response.status).toBe(400)
-    const json = await response.json()
-    expect(json.error.message).toMatch(/messages/)
+    expect(response.headers.get('content-type')).toContain('text/event-stream')
+    const text = await response.text()
+    expect(text.trim().endsWith('[DONE]')).toBe(true)
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+    const errorChunk = chunks.find((chunk) => chunk.error)
+    expect(String(errorChunk?.error?.message)).toMatch(/messages/)
   })
 
   it('surfaces codex errors via SSE payload', async () => {
@@ -977,5 +1214,55 @@ describe('chat completions handler', () => {
       .map((part) => JSON.parse(part))
     const stopChunks = chunks.filter((c) => c.choices?.[0]?.finish_reason === 'stop')
     expect(stopChunks).toHaveLength(0)
+  })
+
+  it('normalizes app-server error notifications to OpenAI error shape', async () => {
+    const mockClient = {
+      runTurnStream: vi.fn(async () => {
+        return {
+          turnId: 'turn-1',
+          threadId: 'thread-1',
+          stream: (async function* () {
+            yield {
+              type: 'error',
+              error: {
+                error: { message: 'conversation not found: stale-thread', codexErrorInfo: null },
+                willRetry: false,
+                threadId: 'thread-1',
+                turnId: 'turn-1',
+              },
+            }
+          })(),
+        }
+      }),
+      interruptTurn: vi.fn(async () => {}),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    expect(text.trim().endsWith('[DONE]')).toBe(true)
+
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const errorChunk = chunks.find((chunk) => chunk.error)
+    expect(errorChunk).toBeTruthy()
+    expect(typeof errorChunk?.error?.message).toBe('string')
+    expect(String(errorChunk?.error?.message)).not.toBe('[object Object]')
+    expect(String(errorChunk?.error?.message)).toMatch(/conversation not found/)
   })
 })
