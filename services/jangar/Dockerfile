@@ -141,6 +141,7 @@ COPY services/jangar/package.json ./
 COPY services/jangar/tsconfig.json ./
 RUN mkdir -p /root/.codex
 COPY services/jangar/.codex /root/.codex
+COPY services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
 RUN --mount=type=cache,target=/root/.cache/bun bun install --frozen-lockfile
 
 # Copy source after deps to maximize layer cache hits
