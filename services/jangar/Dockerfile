@@ -183,8 +183,8 @@ RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
   gh auth status -t | grep -q "workflow" || (echo "GitHub token is missing workflow scope" >&2; exit 1); \
   gh auth setup-git
 
-RUN git config --global user.name "tuslagch" \
-  && git config --global user.email "tuslagch@proompteng.ai" \
+RUN git config --global user.name "gregkonush" \
+  && git config --global user.email "12027037+gregkonush@users.noreply.github.com" \
   && git config --global push.autoSetupRemote true
 
 ENV NODE_ENV=production
