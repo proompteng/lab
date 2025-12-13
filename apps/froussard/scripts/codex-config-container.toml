@@ -1,5 +1,4 @@
 model = "gpt-5.2"
-model_reasoning_summary = "detailed"
 model_reasoning_effort = "high"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
@@ -10,6 +9,11 @@ web_search = true
 [features]
 unified_exec = true
 streamable_shell = true
+apply_patch_freeform = true
+rmcp_client = true
+shell_snapshot = true
+skills = true
+tui2 = true
 
 [shell_environment_policy]
 ignore_default_excludes = true

@@ -7,6 +7,7 @@ sandbox_mode = "danger-full-access"
 web_search = true
 
 [features]
+unified_exec = true
 streamable_shell = true
 apply_patch_freeform = true
 rmcp_client = true
