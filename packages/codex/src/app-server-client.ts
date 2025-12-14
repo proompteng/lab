@@ -651,9 +651,10 @@ export class CodexAppServerClient {
     }
 
     const decodeMaybeBase64Text = (raw: string): string => {
-      // Some app-server surfaces stream bytes as base64 because they may not be valid UTF-8.
-      // Only decode when we can round-trip and the decoded text looks like human output.
-      if (raw.length < 8) return raw
+      // Some app-server surfaces stream bytes as base64 because they may not be valid UTF-8 (e.g. PTY control bytes).
+      // Decode when we can round-trip; if the decoded text isn't "human output" (ANSI escapes, spinners, etc.),
+      // scrub terminal noise and drop empty fragments.
+      if (raw.length < 4) return raw
       // Base64 without padding is valid; reject only impossible lengths.
       if (raw.length % 4 === 1) return raw
 
@@ -679,8 +680,103 @@ export class CodexAppServerClient {
         return printable / decoded.length >= 0.9
       }
 
-      const decodeBase64Token = (token: string): string | null => {
-        if (token.length < 8) return null
+      const sanitizeTerminalNoise = (text: string) => {
+        // Strip ANSI escapes (CSI + OSC), then drop remaining C0 controls (except whitespace) and common spinners.
+        const stripAnsi = (input: string) => {
+          const result: string[] = []
+          let i = 0
+
+          while (i < input.length) {
+            const char = input[i]
+            if (char !== '\u001b') {
+              result.push(char)
+              i += 1
+              continue
+            }
+
+            const next = input[i + 1]
+            if (next === '[') {
+              // CSI: ESC [ ... <final>
+              i += 2
+              while (i < input.length) {
+                const code = input.charCodeAt(i)
+                i += 1
+                if (code >= 0x40 && code <= 0x7e) break
+              }
+              continue
+            }
+
+            if (next === ']') {
+              // OSC: ESC ] ... BEL  OR  ESC ] ... ESC \
+              i += 2
+              while (i < input.length) {
+                const current = input[i]
+                if (current === '\u0007') {
+                  i += 1
+                  break
+                }
+                if (current === '\u001b' && input[i + 1] === '\\') {
+                  i += 2
+                  break
+                }
+                i += 1
+              }
+              continue
+            }
+
+            if (next === '(' || next === ')') {
+              // Charset selection: ESC ( X  or  ESC ) X
+              i += 3
+              continue
+            }
+
+            // Fallback: drop ESC byte.
+            i += 1
+          }
+
+          return result.join('')
+        }
+
+        const strippedAnsi = stripAnsi(text)
+
+        const filtered: string[] = []
+        let sawNonWhitespace = false
+        let sawNonSpinner = false
+        for (let i = 0; i < strippedAnsi.length; i += 1) {
+          const code = strippedAnsi.charCodeAt(i)
+          const char = strippedAnsi[i]
+
+          if (code === 9 || code === 10 || code === 13) {
+            filtered.push(char)
+            continue
+          }
+
+          if (code < 32 || code === 127) continue
+
+          filtered.push(char)
+
+          if (char.trim().length === 0) continue
+          sawNonWhitespace = true
+          if (code < 0x2800 || code > 0x28ff) sawNonSpinner = true
+        }
+
+        if (!sawNonWhitespace) return ''
+        if (!sawNonSpinner) return ''
+
+        return filtered.join('')
+      }
+
+      const decodeBase64TokenIfPrintable = (token: string): string | null => {
+        const decoded = decodeBase64Token(token, { allowShort: true })
+        if (decoded === null) return null
+        if (!looksMostlyPrintable(decoded)) return null
+        return decoded
+      }
+
+      const decodeBase64Token = (token: string, options?: { allowShort?: boolean }): string | null => {
+        const allowShort = options?.allowShort ?? false
+        if (!allowShort && token.length < 8) return null
+        if (token.length < 2) return null
         if (!/^[A-Za-z0-9+/]+={0,2}$/.test(token)) return null
         if (token.length % 4 === 1) return null
 
@@ -691,44 +787,53 @@ export class CodexAppServerClient {
           if (stripPad(buf.toString('base64')) !== stripPad(token)) return null
 
           const decoded = buf.toString('utf8')
-          if (!looksMostlyPrintable(decoded)) return null
-          return decoded
+          if (looksMostlyPrintable(decoded)) return decoded
+
+          const cleaned = sanitizeTerminalNoise(decoded)
+          return cleaned
         } catch {
           return null
         }
       }
 
       const decodedSingle = decodeBase64Token(raw)
-      if (decodedSingle) return decodedSingle
+      if (decodedSingle !== null) return decodedSingle
 
-      // Some tool output deltas arrive as concatenated base64 fragments (each padded) with no separator.
-      // Example: "aGkNCg==dGhlcmUNCg==".
-      if (!/^[A-Za-z0-9+/=]+$/.test(raw) || !raw.includes('=')) return raw
+      // Some tool output deltas arrive as concatenated base64 fragments (often padded) with no separator,
+      // sometimes followed by plain UTF-8 output (e.g. JSON) in the same chunk.
+      if (!raw.includes('=')) return raw
+
+      const firstNonBase64Char = raw.search(/[^A-Za-z0-9+/=]/)
+      const base64Prefix = firstNonBase64Char === -1 ? raw : raw.slice(0, firstNonBase64Char)
+      const suffix = firstNonBase64Char === -1 ? '' : raw.slice(firstNonBase64Char)
+      if (!base64Prefix.includes('=')) return raw
 
       const tokens: string[] = []
       let cursor = 0
-      for (let i = 0; i < raw.length; i += 1) {
-        if (raw[i] !== '=') continue
+      for (let i = 0; i < base64Prefix.length; i += 1) {
+        if (base64Prefix[i] !== '=') continue
         let j = i
-        while (j < raw.length && raw[j] === '=') j += 1
-        const token = raw.slice(cursor, j)
+        while (j < base64Prefix.length && base64Prefix[j] === '=') j += 1
+        const token = base64Prefix.slice(cursor, j)
         if (token.length > 0) tokens.push(token)
         cursor = j
         i = j - 1
       }
-      if (cursor < raw.length) tokens.push(raw.slice(cursor))
 
-      if (tokens.length <= 1) return raw
+      if (tokens.length === 0) return raw
+
+      const remainder = cursor < base64Prefix.length ? base64Prefix.slice(cursor) : ''
 
       const decodedPieces: string[] = []
       for (const token of tokens) {
-        const decoded = decodeBase64Token(token)
-        if (!decoded) return raw
+        const decoded = decodeBase64Token(token, { allowShort: true })
+        if (decoded === null) return raw
         decodedPieces.push(decoded)
       }
 
-      const joined = decodedPieces.join('')
-      return looksMostlyPrintable(joined) ? joined : raw
+      const decodedPrefix = decodedPieces.join('')
+      const decodedRemainder = remainder ? decodeBase64TokenIfPrintable(remainder) : null
+      return `${decodedPrefix}${decodedRemainder ?? remainder}${suffix}`
     }
 
     const extractPlanUpdate = (
