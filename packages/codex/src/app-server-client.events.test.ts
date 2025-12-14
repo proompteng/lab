@@ -366,6 +366,58 @@ describe('CodexAppServerClient codex/event bridging', () => {
     })
   })
 
+  it('decodes concatenated base64 exec_command_output_delta chunks', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'codex/event/exec_command_begin',
+      params: {
+        id: 'turn-1',
+        msg: {
+          type: 'exec_command_begin',
+          call_id: 'call-1',
+          turn_id: 'turn-1',
+          command: ['echo', 'hi'],
+          cwd: '/tmp',
+          parsed_cmd: [],
+          source: 'Agent',
+        },
+      },
+    })
+
+    await stream.next()
+
+    // "hi\\r\\nthere\\r\\n" as two padded base64 chunks concatenated without a separator.
+    writeLine(child, {
+      method: 'codex/event/exec_command_output_delta',
+      params: {
+        msg: {
+          type: 'exec_command_output_delta',
+          call_id: 'call-1',
+          stream: 'stdout',
+          chunk: 'aGkNCg==dGhlcmUNCg==',
+        },
+      },
+    })
+
+    const output = await stream.next()
+    expect(output.value).toEqual({
+      type: 'tool',
+      toolKind: 'command',
+      id: 'call-1',
+      status: 'delta',
+      title: 'command output',
+      detail: 'hi\r\nthere\r\n',
+    })
+  })
+
   it('decodes base64 item/commandExecution/outputDelta deltas', async () => {
     const { child, client } = setupClient()
     await respondToInitialize(child)
@@ -563,6 +615,56 @@ describe('CodexAppServerClient codex/event bridging', () => {
 
     const second = await stream.next()
     expect(second.value).toEqual({ type: 'message', delta: ' story' })
+  })
+
+  it('skips duplicate agent message deltas even when interleaved with reasoning deltas', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'item/agentMessage/delta',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        delta: 'Cool',
+      },
+    })
+
+    writeLine(child, {
+      method: 'codex/event/agent_reasoning_delta',
+      params: {
+        id: 'turn-1',
+        msg: { delta: 'thinking' },
+      },
+    })
+
+    writeLine(child, {
+      method: 'item/agentMessage/delta',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        delta: 'Cool',
+      },
+    })
+
+    writeLine(child, {
+      method: 'turn/completed',
+      params: { turn: { id: 'turn-1', status: 'completed', items: [] } },
+    })
+
+    const deltas = await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
+    expect(deltas).toEqual([
+      { type: 'message', delta: 'Cool' },
+      { type: 'reasoning', delta: 'thinking' },
+    ])
   })
 
   it('emits agent message deltas from only one source (v2 then legacy)', async () => {

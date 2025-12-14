@@ -139,7 +139,7 @@ const createTurnStream = (): TurnStream => {
 
   const push = (delta: StreamDelta) => {
     if (closed) return
-    stream.lastMessageDelta = delta.type === 'message' ? delta.delta : null
+    if (delta.type === 'message') stream.lastMessageDelta = delta.delta
     queue.push(delta)
     wake()
   }
@@ -654,19 +654,12 @@ export class CodexAppServerClient {
       // Some app-server surfaces stream bytes as base64 because they may not be valid UTF-8.
       // Only decode when we can round-trip and the decoded text looks like human output.
       if (raw.length < 8) return raw
-      if (!/^[A-Za-z0-9+/]+={0,2}$/.test(raw)) return raw
       // Base64 without padding is valid; reject only impossible lengths.
       if (raw.length % 4 === 1) return raw
 
-      try {
-        const padded = raw.length % 4 === 0 ? raw : `${raw}${'='.repeat(4 - (raw.length % 4))}`
-        const buf = Buffer.from(padded, 'base64')
-        const stripPad = (value: string) => value.replace(/=+$/g, '')
-        if (stripPad(buf.toString('base64')) !== stripPad(raw)) return raw
-
-        const decoded = buf.toString('utf8')
-        if (decoded.length === 0) return raw
-        if (decoded.includes('\uFFFD')) return raw
+      const looksMostlyPrintable = (decoded: string) => {
+        if (decoded.length === 0) return false
+        if (decoded.includes('\uFFFD')) return false
 
         let printable = 0
         let nonWhitespace = 0
@@ -682,12 +675,60 @@ export class CodexAppServerClient {
           }
         }
 
-        if (nonWhitespace === 0) return raw
-        if (printable / decoded.length < 0.9) return raw
-        return decoded
-      } catch {
-        return raw
+        if (nonWhitespace === 0) return false
+        return printable / decoded.length >= 0.9
       }
+
+      const decodeBase64Token = (token: string): string | null => {
+        if (token.length < 8) return null
+        if (!/^[A-Za-z0-9+/]+={0,2}$/.test(token)) return null
+        if (token.length % 4 === 1) return null
+
+        try {
+          const padded = token.length % 4 === 0 ? token : `${token}${'='.repeat(4 - (token.length % 4))}`
+          const buf = Buffer.from(padded, 'base64')
+          const stripPad = (value: string) => value.replace(/=+$/g, '')
+          if (stripPad(buf.toString('base64')) !== stripPad(token)) return null
+
+          const decoded = buf.toString('utf8')
+          if (!looksMostlyPrintable(decoded)) return null
+          return decoded
+        } catch {
+          return null
+        }
+      }
+
+      const decodedSingle = decodeBase64Token(raw)
+      if (decodedSingle) return decodedSingle
+
+      // Some tool output deltas arrive as concatenated base64 fragments (each padded) with no separator.
+      // Example: "aGkNCg==dGhlcmUNCg==".
+      if (!/^[A-Za-z0-9+/=]+$/.test(raw) || !raw.includes('=')) return raw
+
+      const tokens: string[] = []
+      let cursor = 0
+      for (let i = 0; i < raw.length; i += 1) {
+        if (raw[i] !== '=') continue
+        let j = i
+        while (j < raw.length && raw[j] === '=') j += 1
+        const token = raw.slice(cursor, j)
+        if (token.length > 0) tokens.push(token)
+        cursor = j
+        i = j - 1
+      }
+      if (cursor < raw.length) tokens.push(raw.slice(cursor))
+
+      if (tokens.length <= 1) return raw
+
+      const decodedPieces: string[] = []
+      for (const token of tokens) {
+        const decoded = decodeBase64Token(token)
+        if (!decoded) return raw
+        decodedPieces.push(decoded)
+      }
+
+      const joined = decodedPieces.join('')
+      return looksMostlyPrintable(joined) ? joined : raw
     }
 
     const extractPlanUpdate = (
