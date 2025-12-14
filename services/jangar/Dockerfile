@@ -162,6 +162,13 @@ RUN set -eux; \
   rm kubectl kubectl.sha256; \
   kubectl version --client --output=yaml
 
+# Make `k` available for kubectl (VS Code terminals often prefer `k`).
+RUN set -eux; \
+  ln -sf /usr/local/bin/kubectl /usr/local/bin/k; \
+  cat <<'PROFILE' > /etc/profile.d/jangar-kubectl.sh
+alias k=kubectl
+PROFILE
+
 # Install Docker CLI (client only; daemon runs in sidecar)
 RUN set -eux; \
   ARCH="${TARGETARCH:-$(uname -m)}"; \
