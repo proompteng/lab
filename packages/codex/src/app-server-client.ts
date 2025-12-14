@@ -52,12 +52,16 @@ export type StreamDelta =
   | { type: 'usage'; usage: unknown }
   | { type: 'error'; error: unknown }
 
+type MessageDeltaSource = 'v2' | 'legacy_delta' | 'legacy_content'
+
 type TurnStream = {
   push: (delta: StreamDelta) => void
   complete: (turn: Turn | null) => void
   fail: (error: unknown) => void
   iterator: AsyncGenerator<StreamDelta, Turn | null, void>
   lastReasoningDelta: string | null
+  lastMessageDelta: string | null
+  messageDeltaSource: MessageDeltaSource | null
 }
 
 type LegacySandboxMode = 'dangerFullAccess' | 'workspaceWrite' | 'readOnly'
@@ -120,6 +124,7 @@ const createTurnStream = (): TurnStream => {
   const queue: Array<StreamDelta | { done: true; turn: Turn | null } | { error: unknown }> = []
   let resolver: (() => void) | null = null
   let closed = false
+  let stream: TurnStream
 
   const wake = () => {
     if (resolver) {
@@ -130,6 +135,7 @@ const createTurnStream = (): TurnStream => {
 
   const push = (delta: StreamDelta) => {
     if (closed) return
+    stream.lastMessageDelta = delta.type === 'message' ? delta.delta : null
     queue.push(delta)
     wake()
   }
@@ -171,7 +177,16 @@ const createTurnStream = (): TurnStream => {
     }
   })()
 
-  return { push, complete, fail, iterator, lastReasoningDelta: null }
+  stream = {
+    push,
+    complete,
+    fail,
+    iterator,
+    lastReasoningDelta: null,
+    lastMessageDelta: null,
+    messageDeltaSource: null,
+  }
+  return stream
 }
 
 export class CodexAppServerClient {
@@ -543,6 +558,47 @@ export class CodexAppServerClient {
       })
     }
 
+    const pushMessage = (
+      targetParams: unknown,
+      delta: string,
+      source: MessageDeltaSource,
+      { trackItem }: { trackItem?: boolean } = {},
+    ) => {
+      routeToStream(
+        targetParams,
+        (stream, turnId) => {
+          if (stream.messageDeltaSource && stream.messageDeltaSource !== source) {
+            this.log('info', 'skipping agent message delta from secondary source', {
+              turnId,
+              source,
+              activeSource: stream.messageDeltaSource,
+              method,
+              deltaBytes: delta.length,
+            })
+            return
+          }
+
+          if (!stream.messageDeltaSource) {
+            stream.messageDeltaSource = source
+            this.log('info', 'selected agent message delta source', { turnId, source, method })
+          }
+
+          if (stream.lastMessageDelta === delta) {
+            this.log('info', 'skipping duplicate agent message delta', {
+              turnId,
+              source,
+              method,
+              deltaBytes: delta.length,
+            })
+            return
+          }
+
+          stream.push({ type: 'message', delta })
+        },
+        { trackItem },
+      )
+    }
+
     const pushTool = (
       payload:
         | {
@@ -728,13 +784,7 @@ export class CodexAppServerClient {
     switch (method) {
       case 'item/agentMessage/delta': {
         const params = notification.params as AgentMessageDeltaNotification
-        routeToStream(
-          params,
-          (stream) => {
-            stream.push({ type: 'message', delta: params.delta })
-          },
-          { trackItem: true },
-        )
+        pushMessage(params, params.delta, 'v2', { trackItem: true })
         this.log('info', 'agent message delta', { deltaBytes: params.delta.length })
         break
       }
@@ -750,9 +800,11 @@ export class CodexAppServerClient {
       case 'codex/event/agent_message_content_delta': {
         const delta = extractDelta(notification.params ?? null)
         if (delta) {
-          routeToStream(notification.params, (stream) => {
-            stream.push({ type: 'message', delta })
-          })
+          pushMessage(
+            notification.params,
+            delta,
+            method === 'codex/event/agent_message_content_delta' ? 'legacy_content' : 'legacy_delta',
+          )
         }
         break
       }

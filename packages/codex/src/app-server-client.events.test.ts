@@ -251,6 +251,94 @@ describe('CodexAppServerClient codex/event bridging', () => {
     })
   })
 
+  it('emits agent message deltas from only one source (legacy then v2)', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'codex/event/agent_message_delta',
+      params: {
+        id: 'turn-1',
+        msg: { delta: 'Cool' },
+      },
+    })
+
+    writeLine(child, {
+      method: 'item/agentMessage/delta',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        delta: 'Cool',
+      },
+    })
+
+    writeLine(child, {
+      method: 'codex/event/agent_message_delta',
+      params: {
+        id: 'turn-1',
+        msg: { delta: ' story' },
+      },
+    })
+
+    const first = await stream.next()
+    expect(first.value).toEqual({ type: 'message', delta: 'Cool' })
+
+    const second = await stream.next()
+    expect(second.value).toEqual({ type: 'message', delta: ' story' })
+  })
+
+  it('emits agent message deltas from only one source (v2 then legacy)', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'item/agentMessage/delta',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        delta: 'Cool',
+      },
+    })
+
+    writeLine(child, {
+      method: 'codex/event/agent_message_delta',
+      params: {
+        id: 'turn-1',
+        msg: { delta: 'Cool' },
+      },
+    })
+
+    writeLine(child, {
+      method: 'item/agentMessage/delta',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        delta: ' story',
+      },
+    })
+
+    const first = await stream.next()
+    expect(first.value).toEqual({ type: 'message', delta: 'Cool' })
+
+    const second = await stream.next()
+    expect(second.value).toEqual({ type: 'message', delta: ' story' })
+  })
+
   it('bridges codex/event/plan_update into plan deltas', async () => {
     const { child, client } = setupClient()
     await respondToInitialize(child)
