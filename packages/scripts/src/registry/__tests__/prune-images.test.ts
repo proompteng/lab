@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { parseArgs, selectPrunePlan } from '../prune-images'
+import { computeDeleteManifestPlan, parseArgs, selectPrunePlan } from '../prune-images'
 
 describe('registry prune-images', () => {
   it('keeps last N version-like tags and skips non-version tags by default', () => {
@@ -26,6 +26,29 @@ describe('registry prune-images', () => {
     expect(plan.delete.map((t) => t.tag)).toEqual(['aaa1111'])
     expect(plan.skipped).toContainEqual({ reason: 'protected-tag', tag: 'latest' })
     expect(plan.skipped).toContainEqual({ reason: 'non-version-tag', tag: 'notes' })
+  })
+
+  it('does not delete manifests referenced by protected tags', () => {
+    const tags = [
+      { tag: 'latest', manifestDigest: 'sha256:shared', createdAtMs: 50 },
+      { tag: 'aaa1111', manifestDigest: 'sha256:shared', createdAtMs: 10 },
+      { tag: 'bbb2222', manifestDigest: 'sha256:bbb', createdAtMs: 20 },
+      { tag: 'ccc3333', manifestDigest: 'sha256:ccc', createdAtMs: 30 },
+    ]
+
+    const plan = selectPrunePlan(
+      {
+        keep: 1,
+        keepTags: ['latest'],
+        tagPattern: /^[a-z]{3}\d{4}$/,
+        unsafeAllTags: false,
+      },
+      tags,
+    )
+
+    const manifestPlan = computeDeleteManifestPlan(plan, tags)
+    expect(manifestPlan.skippedByProtectedDigest).toContainEqual({ tag: 'aaa1111', manifestDigest: 'sha256:shared' })
+    expect(manifestPlan.deleteManifests.map((entry) => entry.manifestDigest)).toEqual(['sha256:bbb'])
   })
 
   it('can prune all tags when --unsafe-all-tags is enabled', () => {
@@ -60,7 +83,8 @@ describe('registry prune-images', () => {
       '--keep-tag=main',
       '--keep-tag=latest',
       '--concurrency=3',
-      '--no-gc',
+      '--gc',
+      '--no-restart-registry',
       '--apply',
       '--tag-pattern=^v[0-9]+$',
       '--catalog-page-size=123',
@@ -70,7 +94,8 @@ describe('registry prune-images', () => {
     ])
 
     expect(options.apply).toBe(true)
-    expect(options.gc).toBe(false)
+    expect(options.gc).toBe(true)
+    expect(options.restartRegistry).toBe(false)
     expect(options.keep).toBe(7)
     expect(options.concurrency).toBe(3)
     expect(options.catalogPageSize).toBe(123)

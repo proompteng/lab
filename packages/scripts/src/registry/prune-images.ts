@@ -9,6 +9,7 @@ type PruneOptions = {
   catalogPageSize: number
   concurrency: number
   gc: boolean
+  restartRegistry: boolean
   keep: number
   keepTags: string[]
   namespace: string
@@ -38,7 +39,8 @@ const parseArgs = (args: string[]): PruneOptions => {
     apply: false,
     catalogPageSize: 250,
     concurrency: 8,
-    gc: true,
+    gc: false,
+    restartRegistry: true,
     keep: 5,
     keepTags: ['latest'],
     namespace: 'registry',
@@ -54,8 +56,20 @@ const parseArgs = (args: string[]): PruneOptions => {
       options.apply = true
       continue
     }
+    if (arg === '--gc') {
+      options.gc = true
+      continue
+    }
     if (arg === '--no-gc') {
       options.gc = false
+      continue
+    }
+    if (arg === '--restart-registry') {
+      options.restartRegistry = true
+      continue
+    }
+    if (arg === '--no-restart-registry') {
+      options.restartRegistry = false
       continue
     }
     if (arg === '--no-port-forward') {
@@ -206,6 +220,43 @@ const selectPrunePlan = (
     keep,
     skipped,
   } satisfies PrunePlan
+}
+
+const computeDeleteManifestPlan = (plan: PrunePlan, tags: TagInfo[]) => {
+  const tagIndex = new Map(tags.map((tag) => [tag.tag, tag]))
+
+  const protectedTagSet = new Set<string>([
+    ...plan.keep.map((tag) => tag.tag),
+    ...plan.skipped.map((entry) => entry.tag),
+  ])
+
+  const protectedDigests = new Set<string>()
+  for (const tag of protectedTagSet) {
+    const info = tagIndex.get(tag)
+    if (info) protectedDigests.add(info.manifestDigest)
+  }
+
+  const deleteByDigest = new Map<string, string[]>()
+  const skippedByProtectedDigest: Array<{ tag: string; manifestDigest: string }> = []
+
+  for (const candidate of plan.delete) {
+    if (protectedDigests.has(candidate.manifestDigest)) {
+      skippedByProtectedDigest.push({ tag: candidate.tag, manifestDigest: candidate.manifestDigest })
+      continue
+    }
+    const existing = deleteByDigest.get(candidate.manifestDigest)
+    if (existing) {
+      existing.push(candidate.tag)
+    } else {
+      deleteByDigest.set(candidate.manifestDigest, [candidate.tag])
+    }
+  }
+
+  const deleteManifests = [...deleteByDigest.entries()].map(([manifestDigest, tagList]) => ({
+    manifestDigest,
+    tags: tagList,
+  }))
+  return { deleteManifests, protectedDigests: [...protectedDigests], skippedByProtectedDigest }
 }
 
 const ACCEPT_MANIFEST =
@@ -492,7 +543,7 @@ export const main = async () => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     fatal(
-      `${message}\n\nUsage: bun run packages/scripts/src/registry/prune-images.ts [--repo=lab/jangar] [--keep=5] [--apply] [--no-gc]\n\nDefaults:\n- Uses kubectl port-forward to the in-cluster registry service\n- Keeps 5 tags per repository matching ${DEFAULT_TAG_PATTERN} (keeps non-version tags like 'latest')\n- Runs registry garbage collection unless --no-gc`,
+      `${message}\n\nUsage: bun run packages/scripts/src/registry/prune-images.ts [--repo=lab/jangar] [--keep=5] [--apply] [--gc] [--no-restart-registry]\n\nDefaults:\n- Uses kubectl port-forward to the in-cluster registry service\n- Keeps 5 tags per repository matching ${DEFAULT_TAG_PATTERN} (keeps non-version tags like 'latest')\n- Does NOT run registry garbage collection unless --gc is set\n- Restarts the registry after gc unless --no-restart-registry`,
     )
   }
 
@@ -545,11 +596,16 @@ export const main = async () => {
           tagInfos,
         )
 
-        if (plan.delete.length === 0) continue
+        const manifestPlan = computeDeleteManifestPlan(plan, tagInfos)
+        if (manifestPlan.deleteManifests.length === 0) continue
 
         console.log(`\n${repo}`)
-        console.log(`- keep ${plan.keep.length}`)
-        console.log(`- delete ${plan.delete.length}`)
+        console.log(`- keep tags: ${plan.keep.length}`)
+        console.log(`- delete tags: ${plan.delete.length}`)
+        console.log(`- delete manifests: ${manifestPlan.deleteManifests.length}`)
+        if (manifestPlan.skippedByProtectedDigest.length > 0) {
+          console.warn(`- skip (shared digest): ${manifestPlan.skippedByProtectedDigest.length}`)
+        }
         if (plan.skipped.length > 0) {
           const byReason = plan.skipped.reduce(
             (acc, entry) => {
@@ -573,22 +629,26 @@ export const main = async () => {
 
         if (!options.apply) continue
 
-        const results = await mapLimit(plan.delete, Math.max(1, Math.min(options.concurrency, 4)), async (entry) => {
-          attemptedDeletes += 1
-          const result = await deleteManifestBestEffort(baseUrl, repo, entry.manifestDigest)
-          if (result.ok) {
-            successfulDeletes += 1
+        const results = await mapLimit(
+          manifestPlan.deleteManifests,
+          Math.max(1, Math.min(options.concurrency, 4)),
+          async (entry) => {
+            attemptedDeletes += 1
+            const result = await deleteManifestBestEffort(baseUrl, repo, entry.manifestDigest)
+            if (result.ok) {
+              successfulDeletes += 1
+              return result
+            }
+            failedDeletes += 1
+            failures.push({
+              repo,
+              digest: entry.manifestDigest,
+              tag: entry.tags[0] ?? 'unknown',
+              error: result.error ?? 'unknown error',
+            })
             return result
-          }
-          failedDeletes += 1
-          failures.push({
-            repo,
-            digest: entry.manifestDigest,
-            tag: entry.tag,
-            error: result.error ?? 'unknown error',
-          })
-          return result
-        })
+          },
+        )
 
         const failed = results.filter((r) => !r.ok).length
         if (failed > 0) console.warn(`- delete failures: ${failed}/${results.length}`)
@@ -623,6 +683,23 @@ export const main = async () => {
         '/etc/distribution/config.yml',
       ])
 
+      if (options.restartRegistry) {
+        console.log('\nRestarting registry deployment to clear in-memory cache...')
+        await run('kubectl', ['-n', options.namespace, 'scale', 'deploy/registry', '--replicas=0'])
+        await run('kubectl', [
+          '-n',
+          options.namespace,
+          'delete',
+          'pod',
+          '-l',
+          'app=registry',
+          '--ignore-not-found=true',
+          '--wait=true',
+        ])
+        await run('kubectl', ['-n', options.namespace, 'scale', 'deploy/registry', '--replicas=1'])
+        await run('kubectl', ['-n', options.namespace, 'rollout', 'status', 'deploy/registry', '--timeout=180s'])
+      }
+
       console.log('Disk usage after gc:')
       await run('kubectl', ['-n', options.namespace, 'exec', 'deploy/registry', '--', 'df', '-h', '/var/lib/registry'])
     }
@@ -635,4 +712,4 @@ if (import.meta.main) {
   main().catch((error) => fatal('Failed to prune registry images', error))
 }
 
-export { parseArgs, selectPrunePlan }
+export { computeDeleteManifestPlan, parseArgs, selectPrunePlan }
