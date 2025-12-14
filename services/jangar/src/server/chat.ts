@@ -5,6 +5,7 @@ import type { CodexAppServerClient } from '@proompteng/codex'
 import { Effect, pipe } from 'effect'
 
 import { type ChatThreadStore, createRedisChatThreadStore } from './chat-thread-store'
+import { ChatToolEventRenderer, chatToolEventRendererLive, type ToolRenderer } from './chat-tool-event-renderer'
 import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
 import { loadConfig } from './config'
 
@@ -362,33 +363,6 @@ const normalizeDeltaText = (delta: unknown): string => {
 
 const sanitizeReasoningText = (text: string) => text.replace(/\*{4,}/g, '\n')
 
-const truncateLines = (text: string, maxLines: number) => {
-  const lines = text.split(/\r?\n/)
-  if (lines.length <= maxLines) return text
-  return [...lines.slice(0, maxLines), '...', ''].join('\n')
-}
-
-const renderFileChanges = (rawChanges: unknown, maxDiffLines = 5) => {
-  if (!Array.isArray(rawChanges)) return undefined
-
-  const rendered = rawChanges
-    .map((change) => {
-      if (!change || typeof change !== 'object') return null
-      const obj = change as { path?: unknown; diff?: unknown }
-      const path = typeof obj.path === 'string' && obj.path.length > 0 ? obj.path : 'unknown-file'
-      const diffText = typeof obj.diff === 'string' ? obj.diff : ''
-      const lines = diffText.split(/\r?\n/)
-      const truncated = lines.length > maxDiffLines ? [...lines.slice(0, maxDiffLines), '…'] : lines
-      const body = truncated.join('\n')
-      return `\n\`\`\`bash\n${path}\n${body}\n\`\`\`\n`
-    })
-    .filter(Boolean)
-
-  if (rendered.length === 0) return undefined
-  if (rendered.length === 1) return rendered[0] as string
-  return rendered.join('\n\n')
-}
-
 const resolveCodexCwd = () => {
   const defaultRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
   return process.env.CODEX_CWD ?? (process.env.NODE_ENV === 'production' ? '/workspace/lab' : defaultRepoRoot)
@@ -406,6 +380,7 @@ const toSseResponse = (
   prompt: string,
   model: string,
   includeUsage: boolean,
+  toolRenderer: ToolRenderer,
   threadContext: ThreadContext | null,
   signal?: AbortSignal,
 ) => {
@@ -492,76 +467,6 @@ const toSseResponse = (
       const ensureTurnNumber = async () => {
         if (!threadContext || threadContext.turnNumber != null) return
         threadContext.turnNumber = await pipe(threadContext.store.nextTurn(threadContext.chatId), Effect.runPromise)
-      }
-
-      type ToolState = {
-        id: string
-        index: number
-        toolKind: string
-        title?: string
-        lastContent?: string
-        lastStatus?: string
-      }
-
-      const toolStates = new Map<string, ToolState>()
-      let nextToolIndex = 0
-
-      const getToolState = (event: Record<string, unknown>): ToolState => {
-        const toolId = typeof event.id === 'string' ? event.id : `tool-${nextToolIndex}`
-        const existing = toolStates.get(toolId)
-        if (existing) {
-          if (!existing.title && typeof event.title === 'string' && event.title.length > 0) {
-            existing.title = event.title
-          }
-          return existing
-        }
-
-        const toolKind = typeof event.toolKind === 'string' && event.toolKind.length > 0 ? event.toolKind : 'tool'
-        const toolState: ToolState = {
-          id: toolId,
-          index: nextToolIndex++,
-          toolKind,
-          title: typeof event.title === 'string' && event.title.length > 0 ? event.title : undefined,
-        }
-        toolStates.set(toolId, toolState)
-        return toolState
-      }
-
-      const formatToolArguments = (toolState: ToolState, event: Record<string, unknown>) => {
-        const payload: Record<string, unknown> = {
-          tool: toolState.toolKind,
-        }
-
-        if (toolState.title) payload.title = toolState.title
-        const status = typeof event.status === 'string' ? event.status : undefined
-        if (status) payload.status = status
-        const detail = typeof event.detail === 'string' ? event.detail : undefined
-        if (typeof event.delta === 'string' && event.delta.length > 0) {
-          payload.output = event.delta
-        } else if (event.delta != null && typeof event.delta !== 'function') {
-          payload.output = String(event.delta)
-        }
-
-        const isCommandLocationDetail = toolState.toolKind === 'command' && detail && status === 'started'
-
-        if (detail && !isCommandLocationDetail) payload.detail = detail
-
-        return payload
-      }
-
-      const formatToolContent = (toolState: ToolState, payload: Record<string, unknown>) => {
-        const output = typeof payload.output === 'string' ? payload.output : undefined
-        const detail = typeof payload.detail === 'string' ? payload.detail : undefined
-        const title = typeof payload.title === 'string' ? payload.title : undefined
-        const status = typeof payload.status === 'string' ? payload.status : undefined
-
-        // Skip empty completions; this prevents an extra blank chunk when a command finishes without output.
-        if (status === 'completed' && toolState.toolKind === 'command' && !output && !detail) return ''
-
-        if (output && output.length > 0) return truncateLines(output, 5)
-        if (detail && detail.length > 0) return truncateLines(detail, 5)
-        if (title && title.length > 0) return title
-        return toolState.toolKind
       }
 
       const emitContentDelta = (content: string) => {
@@ -848,70 +753,23 @@ const toSseResponse = (
 
               if (delta.type === 'tool') {
                 const deltaRecord = delta as Record<string, unknown>
-                const toolState = getToolState(deltaRecord)
-                const argsPayload = formatToolArguments(toolState, deltaRecord)
-                if (toolState.toolKind === 'file') {
-                  closeCommandFence()
-                  const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
-
-                  // Skip the start event to avoid duplicated summaries like "1 change(s)1 change(s)".
-                  if (status === 'started') {
-                    toolState.lastStatus = status
+                const actions = toolRenderer.onToolEvent(deltaRecord)
+                for (const action of actions) {
+                  if (action.type === 'openCommandFence') {
+                    openCommandFence()
                     continue
                   }
-
-                  const changes = Array.isArray((deltaRecord.data as { changes?: unknown } | undefined)?.changes)
-                    ? (deltaRecord.data as { changes: unknown[] }).changes
-                    : Array.isArray(deltaRecord.changes as unknown)
-                      ? (deltaRecord.changes as unknown[])
-                      : undefined
-
-                  const content = renderFileChanges(changes) ?? formatToolContent(toolState, argsPayload)
-                  if (!content) {
-                    toolState.lastStatus = status
+                  if (action.type === 'closeCommandFence') {
+                    closeCommandFence()
                     continue
                   }
-
-                  // Avoid re-emitting identical apply_patch summaries across delta/completed events.
-                  if (content === toolState.lastContent && status === toolState.lastStatus) {
-                    continue
+                  if (
+                    action.type === 'emitContent' &&
+                    typeof action.content === 'string' &&
+                    action.content.length > 0
+                  ) {
+                    emitContentDelta(action.content)
                   }
-
-                  toolState.lastContent = content
-                  toolState.lastStatus = status
-                  emitContentDelta(content)
-                  continue
-                }
-                if (toolState.toolKind === 'webSearch') {
-                  closeCommandFence()
-                  // Emit the attempted search term plainly, wrapped in backticks so UIs like
-                  // OpenWebUI render it as a code span without extra prefixes/suffixes.
-                  if (deltaRecord.status !== 'completed') {
-                    const query =
-                      (typeof toolState.title === 'string' && toolState.title.length > 0
-                        ? toolState.title
-                        : undefined) ??
-                      (typeof argsPayload.detail === 'string' && argsPayload.detail.length > 0
-                        ? argsPayload.detail
-                        : undefined)
-                    if (query) emitContentDelta(`\`${query}\``)
-                  }
-                  continue
-                }
-
-                if (toolState.toolKind === 'command') {
-                  openCommandFence()
-                  const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
-                  let content = formatToolContent(toolState, argsPayload)
-                  // Ensure the initial command line is followed by a newline so subsequent output starts on a new line.
-                  if (status === 'started' && content.length > 0 && !content.endsWith('\n')) {
-                    content = `${content}\n\n`
-                  }
-                  const hasContent = content.length > 0
-                  if (hasContent) emitContentDelta(content)
-                } else {
-                  closeCommandFence()
-                  emitContentDelta(formatToolContent(toolState, argsPayload))
                 }
               }
             }
@@ -1063,11 +921,13 @@ export const handleChatCompletion = async (request: Request): Promise<Response> 
           }
         : null
 
-    const { config, client } = await pipe(
+    const { config, client, toolRenderer } = await pipe(
       Effect.all({
         config: loadConfig,
         client: getCodexClient(),
+        toolRenderer: ChatToolEventRenderer,
       }),
+      Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
       Effect.runPromise,
     )
 
@@ -1077,7 +937,7 @@ export const handleChatCompletion = async (request: Request): Promise<Response> 
     }
 
     const prompt = buildPrompt(parsed.messages)
-    return toSseResponse(client, prompt, model, includeUsage, threadContext, request.signal)
+    return toSseResponse(client, prompt, model, includeUsage, toolRenderer.create(), threadContext, request.signal)
   } catch (error) {
     if (error instanceof RequestError) {
       return sseError(
