@@ -232,21 +232,64 @@ FROM tools AS codex-build
 
 # Build codex dependency (workspace package)
 WORKDIR /app
+COPY bun.lock ./bun.lock
 COPY package.json ./package.json
-COPY packages/codex/package.json ./packages/codex/package.json
+COPY apps/docs/package.json /app/apps/docs/package.json
+COPY apps/froussard/package.json /app/apps/froussard/package.json
+COPY apps/kabina/package.json /app/apps/kabina/package.json
+COPY apps/kitty-krew/package.json /app/apps/kitty-krew/package.json
+COPY apps/nata/package.json /app/apps/nata/package.json
+COPY apps/proompteng/package.json /app/apps/proompteng/package.json
+COPY apps/reestr/package.json /app/apps/reestr/package.json
+COPY apps/reviseur/package.json /app/apps/reviseur/package.json
+COPY packages/atelier/package.json /app/packages/atelier/package.json
+COPY packages/backend/package.json /app/packages/backend/package.json
+COPY packages/bonjour/package.json /app/packages/bonjour/package.json
+COPY packages/cloutt/package.json /app/packages/cloutt/package.json
+COPY packages/codex/package.json /app/packages/codex/package.json
+COPY packages/cx-tools/package.json /app/packages/cx-tools/package.json
+COPY packages/discord/package.json /app/packages/discord/package.json
+COPY packages/schematic/package.json /app/packages/schematic/package.json
+COPY packages/scripts/package.json /app/packages/scripts/package.json
+COPY packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
+COPY packages/temporal-bun-sdk-example/package.json /app/packages/temporal-bun-sdk-example/package.json
+COPY services/golink/package.json /app/services/golink/package.json
+COPY services/jangar/package.json /app/services/jangar/package.json
+COPY services/memories/package.json /app/services/memories/package.json
 COPY packages/codex/tsconfig.json ./packages/codex/tsconfig.json
 COPY packages/codex/src ./packages/codex/src
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --ignore-scripts --filter @proompteng/codex \
+  bun install --no-save --frozen-lockfile --ignore-scripts --filter @proompteng/codex \
   && bun --cwd=packages/codex run build
 
 FROM tools AS jangar-deps-dev
 WORKDIR /app/services/jangar
+COPY bun.lock /app/bun.lock
 COPY package.json /app/package.json
+COPY apps/docs/package.json /app/apps/docs/package.json
+COPY apps/froussard/package.json /app/apps/froussard/package.json
+COPY apps/kabina/package.json /app/apps/kabina/package.json
+COPY apps/kitty-krew/package.json /app/apps/kitty-krew/package.json
+COPY apps/nata/package.json /app/apps/nata/package.json
+COPY apps/proompteng/package.json /app/apps/proompteng/package.json
+COPY apps/reestr/package.json /app/apps/reestr/package.json
+COPY apps/reviseur/package.json /app/apps/reviseur/package.json
+COPY packages/atelier/package.json /app/packages/atelier/package.json
+COPY packages/backend/package.json /app/packages/backend/package.json
+COPY packages/bonjour/package.json /app/packages/bonjour/package.json
+COPY packages/cloutt/package.json /app/packages/cloutt/package.json
 COPY packages/codex/package.json /app/packages/codex/package.json
-COPY services/jangar/package.json ./package.json
+COPY packages/cx-tools/package.json /app/packages/cx-tools/package.json
+COPY packages/discord/package.json /app/packages/discord/package.json
+COPY packages/schematic/package.json /app/packages/schematic/package.json
+COPY packages/scripts/package.json /app/packages/scripts/package.json
+COPY packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
+COPY packages/temporal-bun-sdk-example/package.json /app/packages/temporal-bun-sdk-example/package.json
+COPY services/golink/package.json /app/services/golink/package.json
+COPY services/jangar/package.json /app/services/jangar/package.json
+COPY services/memories/package.json /app/services/memories/package.json
 COPY services/jangar/tsconfig.json ./tsconfig.json
-RUN --mount=type=cache,target=/root/.cache/bun bun install --no-save --ignore-scripts
+RUN --mount=type=cache,target=/root/.cache/bun bun install --no-save --frozen-lockfile --ignore-scripts
 
 FROM jangar-deps-dev AS jangar-build
 COPY --from=codex-build /app/packages/codex/src /app/packages/codex/src
@@ -258,10 +301,31 @@ RUN bun run start:build
 
 FROM tools AS jangar-deps-prod
 WORKDIR /app/services/jangar
+COPY bun.lock /app/bun.lock
 COPY package.json /app/package.json
+COPY apps/docs/package.json /app/apps/docs/package.json
+COPY apps/froussard/package.json /app/apps/froussard/package.json
+COPY apps/kabina/package.json /app/apps/kabina/package.json
+COPY apps/kitty-krew/package.json /app/apps/kitty-krew/package.json
+COPY apps/nata/package.json /app/apps/nata/package.json
+COPY apps/proompteng/package.json /app/apps/proompteng/package.json
+COPY apps/reestr/package.json /app/apps/reestr/package.json
+COPY apps/reviseur/package.json /app/apps/reviseur/package.json
+COPY packages/atelier/package.json /app/packages/atelier/package.json
+COPY packages/backend/package.json /app/packages/backend/package.json
+COPY packages/bonjour/package.json /app/packages/bonjour/package.json
+COPY packages/cloutt/package.json /app/packages/cloutt/package.json
 COPY packages/codex/package.json /app/packages/codex/package.json
-COPY services/jangar/package.json ./package.json
-RUN --mount=type=cache,target=/root/.cache/bun bun install --no-save --production --ignore-scripts
+COPY packages/cx-tools/package.json /app/packages/cx-tools/package.json
+COPY packages/discord/package.json /app/packages/discord/package.json
+COPY packages/schematic/package.json /app/packages/schematic/package.json
+COPY packages/scripts/package.json /app/packages/scripts/package.json
+COPY packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
+COPY packages/temporal-bun-sdk-example/package.json /app/packages/temporal-bun-sdk-example/package.json
+COPY services/golink/package.json /app/services/golink/package.json
+COPY services/jangar/package.json /app/services/jangar/package.json
+COPY services/memories/package.json /app/services/memories/package.json
+RUN --mount=type=cache,target=/root/.cache/bun bun install --no-save --production --frozen-lockfile --ignore-scripts
 
 FROM tools AS runtime
 
