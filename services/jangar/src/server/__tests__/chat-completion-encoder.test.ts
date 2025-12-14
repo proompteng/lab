@@ -120,6 +120,26 @@ describe('chat completion encoder', () => {
     expect(content).toContain('\n```\n\n')
   })
 
+  it('renders plan updates as markdown todos', () => {
+    const session = createSession()
+
+    const frames = session.onDelta({
+      type: 'plan',
+      explanation: null,
+      plan: [
+        { step: 'Audit current thread-store behavior', status: 'completed' },
+        { step: 'Create tagged thread-store service', status: 'in_progress' },
+        { step: 'Wire chat handler to service', status: 'pending' },
+      ],
+    })
+
+    const content = collectContent(frames)
+    expect(content).toContain('**Plan**')
+    expect(content).toContain('- [x] Audit current thread-store behavior')
+    expect(content).toContain('- [ ] Create tagged thread-store service (in progress)')
+    expect(content).toContain('- [ ] Wire chat handler to service')
+  })
+
   it('emits usage and stop chunks on finalize when successful', () => {
     const session = createSession({ includeUsage: true })
 

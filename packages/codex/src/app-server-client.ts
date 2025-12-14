@@ -2,12 +2,12 @@ import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 
 import type { ClientInfo, ClientRequest, RequestId, ServerNotification } from './app-server'
 import type { ReasoningEffort } from './app-server/ReasoningEffort'
-import type { TokenUsage } from './app-server/TokenUsage'
 import type {
   AgentMessageDeltaNotification,
   AskForApproval,
   CommandExecutionOutputDeltaNotification,
   ErrorNotification,
+  FileChangeOutputDeltaNotification,
   ItemCompletedNotification,
   ItemStartedNotification,
   McpToolCallProgressNotification,
@@ -18,8 +18,10 @@ import type {
   ThreadStartResponse,
   Turn,
   TurnCompletedNotification,
+  TurnDiffUpdatedNotification,
   TurnInterruptParams,
   TurnInterruptResponse,
+  TurnPlanUpdatedNotification,
   TurnStartParams,
   TurnStartResponse,
 } from './app-server/v2'
@@ -34,6 +36,11 @@ type PendingRequest = {
 export type StreamDelta =
   | { type: 'message' | 'reasoning'; delta: string }
   | {
+      type: 'plan'
+      explanation: string | null
+      plan: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }>
+    }
+  | {
       type: 'tool'
       toolKind: 'command' | 'file' | 'mcp' | 'webSearch'
       id: string
@@ -42,7 +49,7 @@ export type StreamDelta =
       detail?: string
       data?: Record<string, unknown>
     }
-  | { type: 'usage'; usage: TokenUsage }
+  | { type: 'usage'; usage: unknown }
   | { type: 'error'; error: unknown }
 
 type TurnStream = {
@@ -560,10 +567,46 @@ export class CodexAppServerClient {
       })
     }
 
-    const pushUsage = (usage: TokenUsage) => {
+    const pushUsage = (usage: unknown) => {
       routeToStream(params, (stream) => {
         stream.push({ type: 'usage', usage })
       })
+    }
+
+    const normalizePlanStepStatus = (status: unknown): 'pending' | 'in_progress' | 'completed' | null => {
+      if (status === 'pending' || status === 'in_progress' || status === 'completed') return status
+      if (status === 'inProgress') return 'in_progress'
+      return null
+    }
+
+    const extractPlanUpdate = (
+      raw: unknown,
+    ): {
+      explanation: string | null
+      plan: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }>
+    } | null => {
+      if (!raw || typeof raw !== 'object') return null
+      const record = raw as Record<string, unknown>
+      const maybeMsg = record.msg
+      const source = maybeMsg && typeof maybeMsg === 'object' ? (maybeMsg as Record<string, unknown>) : record
+
+      const explanation =
+        source.explanation === null || typeof source.explanation === 'string'
+          ? (source.explanation as string | null)
+          : null
+
+      if (!Array.isArray(source.plan)) return null
+      const plan: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }> = []
+      for (const entry of source.plan) {
+        if (!entry || typeof entry !== 'object') continue
+        const step = entry as Record<string, unknown>
+        if (typeof step.step !== 'string') continue
+        const status = normalizePlanStepStatus(step.status)
+        if (!status) continue
+        plan.push({ step: step.step, status })
+      }
+
+      return { explanation, plan }
     }
 
     const toToolDeltaFromItem = (
@@ -627,6 +670,61 @@ export class CodexAppServerClient {
       return null
     }
 
+    const extractCodexMsg = (raw: unknown): Record<string, unknown> | null => {
+      if (!raw || typeof raw !== 'object') return null
+      const record = raw as Record<string, unknown>
+      const msg = record.msg
+      if (msg && typeof msg === 'object') return msg as Record<string, unknown>
+      return record
+    }
+
+    const extractTokenUsageFromTokenCount = (raw: unknown): unknown | null => {
+      const msg = extractCodexMsg(raw)
+      if (!msg) return null
+      const info = msg.info
+      if (!info || typeof info !== 'object') return null
+      const infoRecord = info as Record<string, unknown>
+
+      const total = infoRecord.total_token_usage
+      const last = infoRecord.last_token_usage
+      const modelContextWindow = infoRecord.model_context_window
+
+      if (!total || typeof total !== 'object' || !last || typeof last !== 'object') return null
+      return { total, last, modelContextWindow: modelContextWindow ?? null }
+    }
+
+    const toCommandTitle = (raw: unknown): string => {
+      if (Array.isArray(raw)) {
+        const parts = raw.filter((part) => typeof part === 'string') as string[]
+        if (parts.length) return parts.join(' ')
+      }
+      if (typeof raw === 'string') return raw
+      return 'command'
+    }
+
+    const toFileChangesForRenderer = (raw: unknown): Array<{ path: string; diff: string }> | null => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+      const record = raw as Record<string, unknown>
+      const changes: Array<{ path: string; diff: string }> = []
+
+      for (const [path, entry] of Object.entries(record)) {
+        if (!entry || typeof entry !== 'object') continue
+        const change = entry as Record<string, unknown>
+        const type = change.type
+        if (type === 'update') {
+          const diff = typeof change.unified_diff === 'string' ? change.unified_diff : ''
+          changes.push({ path, diff })
+          continue
+        }
+        if (type === 'add' || type === 'delete') {
+          const content = typeof change.content === 'string' ? change.content : ''
+          changes.push({ path, diff: content })
+        }
+      }
+
+      return changes.length ? changes : null
+    }
+
     switch (method) {
       case 'item/agentMessage/delta': {
         const params = notification.params as AgentMessageDeltaNotification
@@ -642,9 +740,248 @@ export class CodexAppServerClient {
       }
       case 'codex/event/agent_reasoning_delta':
       case 'codex/event/reasoning_content_delta':
-      case 'item/reasoning/summaryTextDelta': {
+      case 'item/reasoning/summaryTextDelta':
+      case 'item/reasoning/textDelta': {
         pushReasoning(extractDelta(notification.params ?? null))
         this.log('info', 'agent reasoning delta', { method, params: notification.params })
+        break
+      }
+      case 'codex/event/agent_message_delta':
+      case 'codex/event/agent_message_content_delta': {
+        const delta = extractDelta(notification.params ?? null)
+        if (delta) {
+          routeToStream(notification.params, (stream) => {
+            stream.push({ type: 'message', delta })
+          })
+        }
+        break
+      }
+      case 'codex/event/plan_update': {
+        const planUpdate = extractPlanUpdate(notification.params)
+        if (planUpdate) {
+          routeToStream(notification.params, (stream) => {
+            stream.push({ type: 'plan', ...planUpdate })
+          })
+        }
+        this.log('info', 'codex plan update', { params: notification.params })
+        break
+      }
+      case 'codex/event/token_count': {
+        const usage = extractTokenUsageFromTokenCount(notification.params)
+        if (usage) pushUsage(usage)
+        break
+      }
+      case 'codex/event/exec_command_begin': {
+        const msg = extractCodexMsg(notification.params)
+        if (!msg) break
+        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
+        if (!callId) break
+        const title = toCommandTitle(msg.command)
+        routeToStream(
+          notification.params,
+          (stream) => {
+            stream.push({
+              type: 'tool',
+              toolKind: 'command',
+              id: callId,
+              status: 'started',
+              title,
+              detail: typeof msg.cwd === 'string' ? msg.cwd : undefined,
+              data: {
+                processId: typeof msg.process_id === 'string' ? msg.process_id : undefined,
+                source: typeof msg.source === 'string' ? msg.source : undefined,
+              },
+            })
+          },
+          { trackItem: true },
+        )
+        break
+      }
+      case 'codex/event/exec_command_output_delta': {
+        const msg = extractCodexMsg(notification.params)
+        if (!msg) break
+        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
+        if (!callId) break
+        const chunk = typeof msg.chunk === 'string' ? msg.chunk : null
+        if (!chunk) break
+        routeToStream(
+          notification.params,
+          (stream) => {
+            stream.push({
+              type: 'tool',
+              toolKind: 'command',
+              id: callId,
+              status: 'delta',
+              title: 'command output',
+              detail: chunk,
+            })
+          },
+          { trackItem: true },
+        )
+        break
+      }
+      case 'codex/event/terminal_interaction': {
+        const msg = extractCodexMsg(notification.params)
+        if (!msg) break
+        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
+        if (!callId) break
+        const stdin = typeof msg.stdin === 'string' ? msg.stdin : null
+        if (!stdin) break
+        routeToStream(
+          notification.params,
+          (stream) => {
+            stream.push({
+              type: 'tool',
+              toolKind: 'command',
+              id: callId,
+              status: 'delta',
+              title: 'command input',
+              detail: stdin,
+              data: { processId: typeof msg.process_id === 'string' ? msg.process_id : undefined },
+            })
+          },
+          { trackItem: true },
+        )
+        break
+      }
+      case 'codex/event/exec_command_end': {
+        const msg = extractCodexMsg(notification.params)
+        if (!msg) break
+        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
+        if (!callId) break
+        const title = toCommandTitle(msg.command)
+        routeToStream(
+          notification.params,
+          (stream) => {
+            stream.push({
+              type: 'tool',
+              toolKind: 'command',
+              id: callId,
+              status: 'completed',
+              title,
+              data: {
+                aggregatedOutput: typeof msg.aggregated_output === 'string' ? msg.aggregated_output : undefined,
+                exitCode: typeof msg.exit_code === 'number' ? msg.exit_code : undefined,
+                duration: typeof msg.duration === 'string' ? msg.duration : undefined,
+              },
+            })
+          },
+          { trackItem: true },
+        )
+        break
+      }
+      case 'codex/event/patch_apply_begin': {
+        const msg = extractCodexMsg(notification.params)
+        if (!msg) break
+        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
+        if (!callId) break
+        const changes = toFileChangesForRenderer(msg.changes)
+        routeToStream(
+          notification.params,
+          (stream) => {
+            stream.push({
+              type: 'tool',
+              toolKind: 'file',
+              id: callId,
+              status: 'started',
+              title: 'file changes',
+              data: changes ? { changes } : undefined,
+            })
+          },
+          { trackItem: true },
+        )
+        break
+      }
+      case 'codex/event/patch_apply_end': {
+        const msg = extractCodexMsg(notification.params)
+        if (!msg) break
+        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
+        if (!callId) break
+        const changes = toFileChangesForRenderer(msg.changes)
+        routeToStream(
+          notification.params,
+          (stream) => {
+            stream.push({
+              type: 'tool',
+              toolKind: 'file',
+              id: callId,
+              status: 'completed',
+              title: 'file changes',
+              detail: typeof msg.stdout === 'string' ? msg.stdout : undefined,
+              data: {
+                success: typeof msg.success === 'boolean' ? msg.success : undefined,
+                changes: changes ?? undefined,
+              },
+            })
+          },
+          { trackItem: true },
+        )
+        break
+      }
+      case 'codex/event/turn_diff': {
+        const msg = extractCodexMsg(notification.params)
+        if (!msg) break
+        const diff = typeof msg.unified_diff === 'string' ? msg.unified_diff : null
+        if (!diff) break
+        routeToStream(notification.params, (stream) => {
+          stream.push({
+            type: 'tool',
+            toolKind: 'file',
+            id: 'turn.diff',
+            status: 'delta',
+            title: 'turn diff',
+            data: { changes: [{ path: 'turn.diff', diff }] },
+          })
+        })
+        break
+      }
+      case 'codex/event/web_search_begin': {
+        const msg = extractCodexMsg(notification.params)
+        if (!msg) break
+        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
+        if (!callId) break
+        routeToStream(
+          notification.params,
+          (stream) => {
+            stream.push({
+              type: 'tool',
+              toolKind: 'webSearch',
+              id: callId,
+              status: 'started',
+              title: 'web search',
+            })
+          },
+          { trackItem: true },
+        )
+        break
+      }
+      case 'codex/event/web_search_end': {
+        const msg = extractCodexMsg(notification.params)
+        if (!msg) break
+        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
+        if (!callId) break
+        const query = typeof msg.query === 'string' ? msg.query : null
+        if (!query) break
+        routeToStream(
+          notification.params,
+          (stream) => {
+            stream.push({
+              type: 'tool',
+              toolKind: 'webSearch',
+              id: callId,
+              status: 'started',
+              title: query,
+            })
+            stream.push({
+              type: 'tool',
+              toolKind: 'webSearch',
+              id: callId,
+              status: 'completed',
+              title: query,
+            })
+          },
+          { trackItem: true },
+        )
         break
       }
       case 'codex/event/task_complete': {
@@ -694,6 +1031,37 @@ export class CodexAppServerClient {
         this.log('info', 'turn started', { turnId: params.turn.id })
         break
       }
+      case 'turn/diff/updated': {
+        const params = notification.params as TurnDiffUpdatedNotification
+        routeToStream(params, (stream) => {
+          stream.push({
+            type: 'tool',
+            toolKind: 'file',
+            id: `${params.turnId}:diff`,
+            status: 'delta',
+            title: 'turn diff',
+            data: { changes: [{ path: 'turn.diff', diff: params.diff }] },
+          })
+        })
+        break
+      }
+      case 'turn/plan/updated': {
+        const planUpdate = notification.params as TurnPlanUpdatedNotification
+        routeToStream(planUpdate, (stream) => {
+          stream.push({
+            type: 'plan',
+            explanation: planUpdate.explanation,
+            plan: planUpdate.plan
+              .map((step) => ({ step: step.step, status: normalizePlanStepStatus(step.status) }))
+              .filter(
+                (step): step is { step: string; status: 'pending' | 'in_progress' | 'completed' } =>
+                  step.status != null,
+              ),
+          })
+        })
+        this.log('info', 'turn plan updated', { params: notification.params })
+        break
+      }
       case 'item/started': {
         const params = notification.params as ItemStartedNotification
         this.trackItemFromParams(params)
@@ -716,6 +1084,18 @@ export class CodexAppServerClient {
           id: params.itemId,
           status: 'delta',
           title: 'command output',
+          detail: params.delta,
+        })
+        break
+      }
+      case 'item/fileChange/outputDelta': {
+        const params = notification.params as FileChangeOutputDeltaNotification
+        this.trackItemFromParams(params)
+        pushTool({
+          toolKind: 'file',
+          id: params.itemId,
+          status: 'delta',
+          title: 'file changes',
           detail: params.delta,
         })
         break
@@ -746,7 +1126,7 @@ export class CodexAppServerClient {
         break
       }
       case 'thread/tokenUsage/updated': {
-        const params = notification.params as { tokenUsage?: TokenUsage; usage?: TokenUsage }
+        const params = notification.params as { tokenUsage?: unknown; usage?: unknown }
         const usage = params.tokenUsage ?? params.usage
         if (usage) pushUsage(usage)
         break
@@ -787,6 +1167,14 @@ export class CodexAppServerClient {
     if (obj.params && typeof (obj.params as { turnId?: unknown }).turnId === 'string') {
       return (obj.params as { turnId: string }).turnId
     }
+
+    if (obj.msg && typeof obj.msg === 'object') {
+      const msg = obj.msg as { [key: string]: unknown }
+      if (typeof msg.turnId === 'string') return msg.turnId
+      if (typeof msg.turn_id === 'string') return msg.turn_id
+      if (typeof msg.turnID === 'string') return msg.turnID
+    }
+
     return null
   }
 
@@ -796,7 +1184,19 @@ export class CodexAppServerClient {
 
     if (typeof obj.itemId === 'string') return obj.itemId
     if (typeof obj.item_id === 'string') return obj.item_id
+    if (typeof obj.call_id === 'string') return obj.call_id
+    if (typeof obj.callId === 'string') return obj.callId
     if (obj.item && typeof (obj.item as { id?: unknown }).id === 'string') return (obj.item as { id: string }).id
+
+    if (obj.msg && typeof obj.msg === 'object') {
+      const msg = obj.msg as { [key: string]: unknown }
+      if (typeof msg.itemId === 'string') return msg.itemId
+      if (typeof msg.item_id === 'string') return msg.item_id
+      if (typeof msg.call_id === 'string') return msg.call_id
+      if (typeof msg.callId === 'string') return msg.callId
+      if (msg.item && typeof (msg.item as { id?: unknown }).id === 'string') return (msg.item as { id: string }).id
+    }
+
     return null
   }
 

@@ -14,7 +14,7 @@
 - Build and smoke test via `bun run build:<app>` then `bun run start:<app>`.
 - Format and lint using `bun run format` and `bun run lint:<app>`.
 - Run backend workflows through `go test ./...` and `go build ./...`.
-- Regenerate Codex app-server TypeScript bindings when the protocol changes with `codex generate-ts --out packages/codex/src/app-server`.
+- Regenerate Codex app-server TypeScript bindings when the protocol changes with `codex app-server generate-ts --out packages/codex/src/app-server`.
 - Infra flow: `bun run tf:plan` (review), `bun run tf:apply` (approved), and `bun run ansible` for playbooks. Use the deployment helper scripts when touching automation services:
   - `bun apps/froussard/src/codex/cli/build-codex-image.ts` to rebuild/push the Codex runner image.
     - Script defaults to the `tuslagch` GitHub CLI account; override with `GH_TOKEN_USER=<other>` if needed. Container git commits use `tuslagch@proompteng.ai`.
