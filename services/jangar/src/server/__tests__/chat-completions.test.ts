@@ -67,6 +67,115 @@ describe('chat completions handler', () => {
     expect(response.headers.get('content-type')).toContain('text/event-stream')
   })
 
+  it('renders plan deltas as markdown todos by default', async () => {
+    const mockClient = {
+      runTurnStream: vi.fn(async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield {
+            type: 'plan',
+            explanation: null,
+            plan: [
+              { step: 'Audit current thread-store behavior', status: 'completed' },
+              { step: 'Create tagged thread-store service', status: 'in_progress' },
+              { step: 'Wire chat handler to service', status: 'pending' },
+            ],
+          }
+          yield { type: 'message', delta: 'ok' }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.trim())
+      .filter((part) => part.startsWith('data: '))
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const content = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean)
+      .join('')
+
+    expect(content).toContain('**Plan**')
+    expect(content).toContain('- [x] Audit current thread-store behavior')
+    expect(content).toContain('- [ ] Create tagged thread-store service (in progress)')
+    expect(content).toContain('- [ ] Wire chat handler to service')
+    expect(content).toContain('ok')
+  })
+
+  it('suppresses plan deltas when include_plan is false', async () => {
+    const mockClient = {
+      runTurnStream: vi.fn(async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield {
+            type: 'plan',
+            explanation: null,
+            plan: [{ step: 'should not show', status: 'pending' }],
+          }
+          yield { type: 'message', delta: 'ok' }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_plan: false },
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.trim())
+      .filter((part) => part.startsWith('data: '))
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const content = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean)
+      .join('')
+
+    expect(content).not.toContain('**Plan**')
+    expect(content).not.toContain('should not show')
+    expect(content).toContain('ok')
+  })
+
   it('strips terminal escape codes from streamed content', async () => {
     const mockClient = {
       runTurnStream: vi.fn(async (_prompt: string) => ({
@@ -114,7 +223,7 @@ describe('chat completions handler', () => {
       .filter(Boolean)
       .join('')
 
-    expect(content).toBe('green and red')
+    expect(content).toBe('\ngreen and red')
   })
 
   it('strips terminal escape codes from reasoning content', async () => {
@@ -1231,7 +1340,7 @@ describe('chat completions handler', () => {
       .filter(Boolean)
       .join('')
 
-    expect(content).toBe('first second')
+    expect(content).toBe('\nfirst second')
 
     const usageChunks = chunks.filter((c) => c.usage)
     expect(usageChunks).toHaveLength(1)

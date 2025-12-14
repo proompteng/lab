@@ -12,6 +12,49 @@ type ThreadMeta = {
   chatId?: string | null
 }
 
+type PlanStep = {
+  step: string
+  status: 'pending' | 'in_progress' | 'completed' | 'inProgress'
+}
+
+const sanitizePlanText = (value: string) => value.replaceAll('\n', ' ').trim()
+
+const toPlanMarkdown = (value: unknown): string | null => {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (!Array.isArray(record.plan)) return null
+
+  const explanation = typeof record.explanation === 'string' ? sanitizePlanText(record.explanation) : null
+  const steps: string[] = []
+
+  for (const entry of record.plan) {
+    if (!entry || typeof entry !== 'object') continue
+    const step = entry as Partial<PlanStep> & Record<string, unknown>
+    if (typeof step.step !== 'string' || step.step.trim().length === 0) continue
+    const label = sanitizePlanText(step.step)
+    const status = step.status
+
+    if (status === 'completed') {
+      steps.push(`- [x] ${label}`)
+      continue
+    }
+
+    if (status === 'in_progress' || status === 'inProgress') {
+      steps.push(`- [ ] ${label} (in progress)`)
+      continue
+    }
+
+    steps.push(`- [ ] ${label}`)
+  }
+
+  if (!steps.length) return null
+
+  const lines = ['**Plan**']
+  if (explanation && explanation.length > 0) lines.push(explanation)
+  lines.push(...steps)
+  return lines.join('\n')
+}
+
 const pickNumber = (value: unknown, keys: string[]): number | undefined => {
   if (!value || typeof value !== 'object') return undefined
   const record = value as Record<string, unknown>
@@ -182,6 +225,8 @@ const createSession = (args: {
   let sawUpstreamError = false
   let nextAnonymousToolId = 0
   let hasEmittedAnyChunk = false
+  let lastPlanMarkdown: string | null = null
+  let sawAnyMessageDelta = false
 
   const attachMeta = (chunk: Record<string, unknown>) => {
     const threadId = meta.threadId
@@ -302,6 +347,15 @@ const createSession = (args: {
       return frames
     }
 
+    if (type === 'plan') {
+      closeCommandFence(frames)
+      const markdown = toPlanMarkdown(record)
+      if (!markdown || markdown === lastPlanMarkdown) return frames
+      lastPlanMarkdown = markdown
+      emitContentDelta(frames, `\n\n${markdown}\n\n`)
+      return frames
+    }
+
     if (sawUpstreamError) {
       // After an upstream error we only care about trailing usage updates.
       return frames
@@ -317,7 +371,15 @@ const createSession = (args: {
 
     if (type === 'message') {
       closeCommandFence(frames)
-      emitContentDelta(frames, normalizeDeltaText(record?.delta))
+      const text = normalizeDeltaText(record?.delta)
+      if (!sawAnyMessageDelta && text.length > 0 && !text.startsWith('\n')) {
+        emitContentDelta(frames, `\n${text}`)
+      } else {
+        emitContentDelta(frames, text)
+      }
+      if (text.length > 0) {
+        sawAnyMessageDelta = true
+      }
       return frames
     }
 

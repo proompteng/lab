@@ -198,7 +198,18 @@ const createToolRenderer = (): ToolRenderer => {
         if (status === 'started' && content.length > 0 && !content.endsWith('\n')) {
           content = `${content}\n\n`
         }
-        if (content.length > 0) actions.push({ type: 'emitContent', content })
+
+        if (content.length > 0) {
+          // Avoid re-emitting identical command frames when upstream sends duplicated tool events.
+          if (content === toolState.lastContent && status === toolState.lastStatus) {
+            return actions
+          }
+          toolState.lastContent = content
+          toolState.lastStatus = status
+          actions.push({ type: 'emitContent', content })
+        } else {
+          toolState.lastStatus = status
+        }
         return actions
       }
 

@@ -34,6 +34,7 @@ const ChatRequestSchema = S.Struct({
   stream_options: S.optional(
     S.Struct({
       include_usage: S.optional(S.Boolean),
+      include_plan: S.optional(S.Boolean),
     }),
   ),
 })
@@ -168,6 +169,7 @@ const toSseResponse = (
   prompt: string,
   model: string,
   includeUsage: boolean,
+  includePlan: boolean,
   toolRenderer: ToolRenderer,
   completionEncoder: ChatCompletionEncoderService,
   threadContext: ThreadContext | null,
@@ -429,6 +431,15 @@ const toSseResponse = (
                 throw new ConversationNotFoundError((delta as Record<string, unknown>).error)
               }
 
+              if (
+                delta &&
+                typeof delta === 'object' &&
+                (delta as Record<string, unknown>).type === 'plan' &&
+                includePlan !== true
+              ) {
+                continue
+              }
+
               enqueueFrames(session.onDelta(delta))
             }
 
@@ -516,6 +527,7 @@ export const handleChatCompletionEffect = (request: Request) =>
     Effect.flatMap((parsed) =>
       Effect.gen(function* () {
         const includeUsage = parsed.stream_options?.include_usage === true
+        const includePlan = parsed.stream_options?.include_plan !== false
         const chatIdHeader = request.headers.get('x-openwebui-chat-id')
         const chatId = typeof chatIdHeader === 'string' && chatIdHeader.trim().length > 0 ? chatIdHeader.trim() : null
 
@@ -567,6 +579,7 @@ export const handleChatCompletionEffect = (request: Request) =>
           prompt,
           model,
           includeUsage,
+          includePlan,
           toolRenderer.create(),
           encoder,
           threadContext,
