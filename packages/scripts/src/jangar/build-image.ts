@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 
-import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
 
-import { repoRoot } from '../shared/cli'
+import { ensureCli, repoRoot, run } from '../shared/cli'
 import { buildAndPushDockerImage } from '../shared/docker'
 import { execGit } from '../shared/git'
 
@@ -17,6 +18,14 @@ export type BuildImageOptions = {
   commit?: string
   codexAuthPath?: string
   cacheRef?: string
+}
+
+const isTruthyEnv = (value: string | undefined): boolean => {
+  if (!value) return false
+  const normalized = value.trim().toLowerCase()
+  return (
+    normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'y' || normalized === 'on'
+  )
 }
 
 const ensureGhToken = (): string | undefined => {
@@ -47,14 +56,45 @@ const ensureGhToken = (): string | undefined => {
   return undefined
 }
 
+const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void }> => {
+  ensureCli('bunx')
+
+  const dir = mkdtempSync(resolve(tmpdir(), 'jangar-prune-'))
+  const cleanup = () => rmSync(dir, { recursive: true, force: true })
+
+  try {
+    await run('bunx', ['turbo', 'prune', '--scope=@proompteng/jangar', '--docker', `--out-dir=${dir}`], {
+      cwd: repoRoot,
+    })
+
+    // `turbo prune --docker` doesn't currently include this file, but our TS configs extend it.
+    copyFileSync(resolve(repoRoot, 'tsconfig.base.json'), resolve(dir, 'tsconfig.base.json'))
+
+    return { dir, cleanup }
+  } catch (error) {
+    cleanup()
+    throw error
+  }
+}
+
 export const buildImage = async (options: BuildImageOptions = {}) => {
   const registry = options.registry ?? process.env.JANGAR_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.JANGAR_IMAGE_REPOSITORY ?? 'lab/jangar'
   const tag = options.tag ?? process.env.JANGAR_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
-  const context = resolve(repoRoot, options.context ?? process.env.JANGAR_BUILD_CONTEXT ?? '.')
+  const hasManualOverrides =
+    options.context !== undefined ||
+    options.dockerfile !== undefined ||
+    process.env.JANGAR_BUILD_CONTEXT !== undefined ||
+    process.env.JANGAR_DOCKERFILE !== undefined ||
+    isTruthyEnv(process.env.JANGAR_DISABLE_TURBO_PRUNE)
+
+  const usePrune = !hasManualOverrides
+
   const dockerfile = resolve(
     repoRoot,
-    options.dockerfile ?? process.env.JANGAR_DOCKERFILE ?? 'services/jangar/Dockerfile',
+    options.dockerfile ??
+      process.env.JANGAR_DOCKERFILE ??
+      (usePrune ? 'services/jangar/Dockerfile.pruned' : 'services/jangar/Dockerfile'),
   )
   const version = options.version ?? process.env.JANGAR_VERSION ?? tag
   const commit = options.commit ?? process.env.JANGAR_COMMIT ?? execGit(['rev-parse', 'HEAD'])
@@ -65,19 +105,20 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   // Populate GH_TOKEN from local gh CLI if the env var is missing so docker --secret succeeds.
   ensureGhToken()
 
-  // Stage auth into build context so COPY succeeds, then clean up
-  let stagedAuth = false
-  const stagedPath = resolve(repoRoot, 'services/jangar/.codex/auth.json')
-  const codexDir = dirname(stagedPath)
-  const hadCodexDir = existsSync(codexDir)
+  let context: string
+  let pruneCleanup: (() => void) | undefined
+
   try {
-    if (existsSync(codexAuthPath)) {
-      if (!hadCodexDir) {
-        mkdirSync(codexDir, { recursive: true })
-      }
-      copyFileSync(codexAuthPath, stagedPath)
-      stagedAuth = true
+    if (usePrune) {
+      const pruned = await createPrunedContext()
+      context = pruned.dir
+      pruneCleanup = pruned.cleanup
     } else {
+      context = resolve(repoRoot, options.context ?? process.env.JANGAR_BUILD_CONTEXT ?? '.')
+    }
+
+    const codexAuthPathForDocker = existsSync(codexAuthPath) ? codexAuthPath : undefined
+    if (!codexAuthPathForDocker) {
       console.warn(`Codex auth not found at ${codexAuthPath}; build will proceed without it.`)
     }
 
@@ -96,22 +137,13 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
       context,
       dockerfile,
       buildArgs,
-      codexAuthPath,
+      codexAuthPath: codexAuthPathForDocker,
       cacheRef,
     })
 
     return { ...result, version, commit }
   } finally {
-    if (stagedAuth) {
-      try {
-        rmSync(stagedPath, { force: true })
-        if (!hadCodexDir) {
-          rmSync(codexDir, { recursive: true, force: true })
-        }
-      } catch {
-        // ignore cleanup errors
-      }
-    }
+    pruneCleanup?.()
   }
 }
 
