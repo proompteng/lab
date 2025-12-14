@@ -52,6 +52,8 @@ export type StreamDelta =
   | { type: 'usage'; usage: unknown }
   | { type: 'error'; error: unknown }
 
+type ToolPayload = Omit<Extract<StreamDelta, { type: 'tool' }>, 'type'>
+
 type MessageDeltaSource = 'v2' | 'legacy_delta' | 'legacy_content'
 type ToolDeltaSource = 'v2' | 'legacy'
 
@@ -604,23 +606,7 @@ export class CodexAppServerClient {
 
     const pushTool = (
       targetParams: unknown,
-      payload:
-        | {
-            toolKind: 'command' | 'file' | 'mcp' | 'webSearch'
-            id: string
-            status: 'started' | 'completed' | 'delta'
-            title: string
-            detail?: string
-            data?: Record<string, unknown>
-          }
-        | {
-            toolKind: 'command'
-            id: string
-            status: 'delta'
-            title: string
-            detail?: string
-            data?: Record<string, unknown>
-          },
+      payload: ToolPayload,
       source: ToolDeltaSource,
       { trackItem }: { trackItem?: boolean } = {},
     ) => {
@@ -694,10 +680,7 @@ export class CodexAppServerClient {
       return { explanation, plan }
     }
 
-    const toToolDeltaFromItem = (
-      item: ThreadItem,
-      status: 'started' | 'completed',
-    ): Parameters<typeof pushTool>[0] | null => {
+    const toToolDeltaFromItem = (item: ThreadItem, status: 'started' | 'completed'): ToolPayload | null => {
       switch (item.type) {
         case 'commandExecution':
           return {
