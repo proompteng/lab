@@ -22,6 +22,7 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 | `src/facteur/deploy-service.ts` | Builds the Facteur image, applies the kustomize overlay, and redeploys the Knative service. | `kubectl`, `kn`, `docker`/`podman` | `bun run build:facteur` (or direct `bun run …/deploy-service.ts`) |
 | `src/facteur/reseal-secrets.ts` | Reseals Facteur SealedSecrets with the current cluster certs. | `kubectl`, `openssl`, `kubeseal` | `bun run packages/scripts/src/facteur/reseal-secrets.ts` |
 | `src/facteur/run-consumer.ts` | Launches the Facteur Kafka consumer locally for manual verification. | `docker`/`podman` (for build) | `bun run packages/scripts/src/facteur/run-consumer.ts` |
+| `src/registry/prune-images.ts` | Prunes old image tags from the in-cluster registry (keeps last N version-like tags per repository, then runs registry GC). Defaults to dry-run; pass `--apply` to delete. | `kubectl` | `bun run packages/scripts/src/registry/prune-images.ts --repo=lab/jangar --keep=5 --apply` |
 
 ## Testing & linting
 

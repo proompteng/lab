@@ -7,6 +7,7 @@ export type DockerBuildOptions = {
   context: string
   dockerfile: string
   buildArgs?: Record<string, string>
+  noCache?: boolean
   cwd?: string
   platforms?: string[]
   codexAuthPath?: string
@@ -20,6 +21,14 @@ type SpawnSync = typeof Bun.spawnSync
 
 let spawnSyncImpl: SpawnSync = (...args) => Bun.spawnSync(...args)
 
+const isTruthyEnv = (value: string | undefined): boolean => {
+  if (!value) return false
+  const normalized = value.trim().toLowerCase()
+  return (
+    normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'y' || normalized === 'on'
+  )
+}
+
 export const buildAndPushDockerImage = async (options: DockerBuildOptions): Promise<DockerBuildResult> => {
   ensureCli('docker')
 
@@ -27,6 +36,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
   const cwd = options.cwd ?? repoRoot
   const ghTokenEnv = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
   const dockerEnv = { DOCKER_BUILDKIT: process.env.DOCKER_BUILDKIT ?? '1' }
+  const noCache = options.noCache ?? (isTruthyEnv(process.env.DOCKER_NO_CACHE) || isTruthyEnv(process.env.NO_CACHE))
 
   console.log('Building Docker image with configuration:', {
     image,
@@ -34,10 +44,12 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     dockerfile: options.dockerfile,
     platforms: options.platforms && options.platforms.length > 0 ? options.platforms : undefined,
     buildArgs: Object.keys(options.buildArgs ?? {}).length ? options.buildArgs : undefined,
+    noCache: noCache || undefined,
   })
 
   if (options.platforms && options.platforms.length > 0) {
     const args = ['buildx', 'build', '--push', '-f', options.dockerfile, '-t', image]
+    if (noCache) args.push('--no-cache')
     args.push('--platform', options.platforms.join(','))
     if (options.codexAuthPath) {
       args.push('--secret', `id=codexauth,src=${options.codexAuthPath}`)
@@ -52,6 +64,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     await run('docker', args, { cwd, env: dockerEnv })
   } else {
     const args = ['build', '-f', options.dockerfile, '-t', image]
+    if (noCache) args.push('--no-cache')
     if (options.codexAuthPath) {
       args.push('--secret', `id=codexauth,src=${options.codexAuthPath}`)
     }
