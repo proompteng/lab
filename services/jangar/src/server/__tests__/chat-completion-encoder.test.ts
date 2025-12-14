@@ -78,6 +78,13 @@ const getCompletionTokens = (frame: Record<string, unknown>) => {
 }
 
 describe('chat completion encoder', () => {
+  it('starts the first assistant message delta on a new line', () => {
+    const session = createSession()
+    const frames = session.onDelta({ type: 'message', delta: 'hi' })
+    const content = collectContent(frames)
+    expect(content.startsWith('\n')).toBe(true)
+  })
+
   it('emits assistant role only once', () => {
     const session = createSession()
 

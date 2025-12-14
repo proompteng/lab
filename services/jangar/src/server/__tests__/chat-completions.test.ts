@@ -223,7 +223,7 @@ describe('chat completions handler', () => {
       .filter(Boolean)
       .join('')
 
-    expect(content).toBe('green and red')
+    expect(content).toBe('\ngreen and red')
   })
 
   it('strips terminal escape codes from reasoning content', async () => {
@@ -1340,7 +1340,7 @@ describe('chat completions handler', () => {
       .filter(Boolean)
       .join('')
 
-    expect(content).toBe('first second')
+    expect(content).toBe('\nfirst second')
 
     const usageChunks = chunks.filter((c) => c.usage)
     expect(usageChunks).toHaveLength(1)

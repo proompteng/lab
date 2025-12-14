@@ -226,6 +226,7 @@ const createSession = (args: {
   let nextAnonymousToolId = 0
   let hasEmittedAnyChunk = false
   let lastPlanMarkdown: string | null = null
+  let sawAnyMessageDelta = false
 
   const attachMeta = (chunk: Record<string, unknown>) => {
     const threadId = meta.threadId
@@ -370,7 +371,15 @@ const createSession = (args: {
 
     if (type === 'message') {
       closeCommandFence(frames)
-      emitContentDelta(frames, normalizeDeltaText(record?.delta))
+      const text = normalizeDeltaText(record?.delta)
+      if (!sawAnyMessageDelta && text.length > 0 && !text.startsWith('\n')) {
+        emitContentDelta(frames, `\n${text}`)
+      } else {
+        emitContentDelta(frames, text)
+      }
+      if (text.length > 0) {
+        sawAnyMessageDelta = true
+      }
       return frames
     }
 
