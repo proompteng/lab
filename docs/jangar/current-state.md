@@ -22,7 +22,7 @@ This note describes the currently implemented chat-completion proxy. Source of t
 - **Assistant text**: `choices[0].delta.content` chunks. Role is attached on the first emitted chunk.
 - **Reasoning**: arrives as `reasoning_content`; asterisks of length ≥4 are broken onto newlines to avoid fences; flushed immediately to avoid long silent periods.
 - **Tool events** (per Codex `delta.type === 'tool'`):
-  - `command`: opens a fenced block ```` ``` ````; emits truncated output/detail (max 5 lines). Multiple commands are separated with `\n---\n`.
+  - `command`: opens a fenced block ```` ``` ````; emits truncated output/detail (max 5 lines). If the upstream only provides an aggregated output on the `completed` event (no output deltas), we emit that aggregated output instead of showing only the command line.
   - `file`: skips the `started` event; renders each change as a code block `<path>\n<diff...>` truncated to 5 lines; dedupes identical summaries.
   - `webSearch`: emits the attempted query in backticks before completion; no fencing.
   - Other tools: emits a plain text summary (title/detail/output) outside fences.

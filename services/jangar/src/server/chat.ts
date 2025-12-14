@@ -4,7 +4,15 @@ import * as S from '@effect/schema/Schema'
 import type { CodexAppServerClient } from '@proompteng/codex'
 import { Effect, pipe } from 'effect'
 
+import {
+  ChatCompletionEncoder,
+  type ChatCompletionEncoderService,
+  chatCompletionEncoderLive,
+  normalizeStreamError,
+} from './chat-completion-encoder'
+import { safeJsonStringify, stripTerminalControl } from './chat-text'
 import { type ChatThreadStore, createRedisChatThreadStore } from './chat-thread-store'
+import { ChatToolEventRenderer, chatToolEventRendererLive, type ToolRenderer } from './chat-tool-event-renderer'
 import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
 import { loadConfig } from './config'
 
@@ -35,76 +43,6 @@ class RequestError extends Error {
     this.status = status
     this.code = code
   }
-}
-
-const safeJsonStringify = (value: unknown) => {
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return String(value)
-  }
-}
-
-const stripTerminalControl = (text: string) => {
-  if (text.length === 0) return text
-
-  // Some clients (and copy/paste flows) will include U+241B (SYMBOL FOR ESCAPE) instead of a raw ESC.
-  const input = text.replaceAll('\u241b', '\u001b')
-  const esc = '\u001b'
-  const csi = '\u009b'
-  const bel = '\u0007'
-
-  let output = ''
-
-  for (let index = 0; index < input.length; index += 1) {
-    const char = input[index]
-
-    if (char !== esc && char !== csi) {
-      // Drop non-printable control characters (keep \t, \n, \r).
-      if (char <= '\u001f' || char === '\u007f') {
-        if (char === '\n' || char === '\r' || char === '\t') output += char
-        continue
-      }
-
-      output += char
-      continue
-    }
-
-    // Treat CSI (0x9B) like ESC [.
-    const next = char === csi ? '[' : input[index + 1]
-
-    // If we have a bare ESC at end, drop it.
-    if (char === esc && next == null) break
-
-    // OSC / DCS / PM / APC / SOS: skip until BEL or ST (ESC \).
-    if (next === ']' || next === 'P' || next === '^' || next === '_' || next === 'X') {
-      index += char === esc ? 1 : 0
-      for (index += 1; index < input.length; index += 1) {
-        const inner = input[index]
-        if (inner === bel) break
-        if (inner === esc && input[index + 1] === '\\') {
-          index += 1
-          break
-        }
-      }
-      continue
-    }
-
-    // CSI: skip until a final byte in the range @..~.
-    if (next === '[') {
-      index += char === esc ? 1 : 0
-      for (index += 1; index < input.length; index += 1) {
-        const code = input.charCodeAt(index)
-        if (code >= 0x40 && code <= 0x7e) break
-      }
-      continue
-    }
-
-    // Other short ESC sequences: drop ESC and one following byte (if present).
-    if (char === esc) index += 1
-  }
-
-  return output
 }
 
 let defaultThreadStore: ChatThreadStore | null = null
@@ -161,50 +99,6 @@ const sseError = (payload: unknown, status = 400) => {
       'x-accel-buffering': 'no',
     },
   })
-}
-
-const normalizeStreamError = (error: unknown) => {
-  const normalized: Record<string, unknown> = { type: 'upstream', code: 'upstream_error' }
-
-  if (typeof error === 'string') {
-    normalized.message = stripTerminalControl(error)
-    return normalized
-  }
-
-  if (!error || typeof error !== 'object') {
-    normalized.message = stripTerminalControl(String(error ?? 'upstream error'))
-    return normalized
-  }
-
-  const record = error as Record<string, unknown>
-
-  if (typeof record.message === 'string' && record.message.length > 0) {
-    normalized.message = stripTerminalControl(record.message)
-  } else if (record.error && typeof record.error === 'object') {
-    const nested = record.error as Record<string, unknown>
-    if (typeof nested.message === 'string' && nested.message.length > 0) {
-      normalized.message = stripTerminalControl(nested.message)
-    }
-    const codexErrorInfo = nested.codexErrorInfo
-    if (typeof codexErrorInfo === 'string' && codexErrorInfo.length > 0) {
-      normalized.code = codexErrorInfo
-    } else if (codexErrorInfo && typeof codexErrorInfo === 'object') {
-      const keys = Object.keys(codexErrorInfo as Record<string, unknown>)
-      if (keys[0]) normalized.code = keys[0]
-    }
-  }
-
-  if (normalized.message == null) {
-    normalized.message = stripTerminalControl(safeJsonStringify(error))
-  }
-
-  if (typeof record.code === 'string' && record.code.length > 0) {
-    normalized.code = record.code
-  } else if (typeof record.code === 'number' && Number.isFinite(record.code)) {
-    normalized.code = String(record.code)
-  }
-
-  return normalized
 }
 
 const parseRequest = async (request: Request): Promise<ChatRequest> => {
@@ -288,107 +182,6 @@ const buildPrompt = (messages: ChatRequest['messages']) =>
     })
     .join('\n')
 
-const pickNumber = (value: unknown, keys: string[]): number | undefined => {
-  if (!value || typeof value !== 'object') return undefined
-  const record = value as Record<string, unknown>
-  for (const key of keys) {
-    const candidate = record[key]
-    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
-      return candidate
-    }
-  }
-  return undefined
-}
-
-const normalizeUsage = (raw: unknown) => {
-  const usage = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
-  const totals = usage.total && typeof usage.total === 'object' ? (usage.total as Record<string, unknown>) : null
-  const last = usage.last && typeof usage.last === 'object' ? (usage.last as Record<string, unknown>) : null
-  const source =
-    (last && Object.keys(last).length ? last : null) ?? (totals && Object.keys(totals).length ? totals : null) ?? usage
-
-  const promptTokens = pickNumber(source, ['input_tokens', 'prompt_tokens', 'inputTokens', 'promptTokens']) ?? 0
-  const cachedTokens =
-    pickNumber(source, ['cached_input_tokens', 'cached_prompt_tokens', 'cachedInputTokens', 'cachedPromptTokens']) ?? 0
-  const completionTokens =
-    pickNumber(source, ['output_tokens', 'completion_tokens', 'outputTokens', 'completionTokens']) ?? 0
-  const reasoningTokens =
-    pickNumber(source, ['reasoning_output_tokens', 'reasoning_tokens', 'reasoningOutputTokens', 'reasoningTokens']) ?? 0
-  const totalTokens =
-    pickNumber(source, ['total_tokens', 'totalTokens', 'token_count', 'tokenCount']) ??
-    promptTokens + completionTokens + reasoningTokens
-
-  const normalized: Record<string, unknown> = {
-    prompt_tokens: promptTokens,
-    completion_tokens: completionTokens + reasoningTokens,
-    total_tokens: totalTokens,
-  }
-
-  if (cachedTokens > 0) {
-    normalized.prompt_tokens_details = { cached_tokens: cachedTokens }
-  }
-  if (reasoningTokens > 0) {
-    normalized.completion_tokens_details = { reasoning_tokens: reasoningTokens }
-  }
-
-  return normalized
-}
-
-const normalizeDeltaText = (delta: unknown): string => {
-  if (typeof delta === 'string') return delta
-
-  if (Array.isArray(delta)) {
-    return delta
-      .map((part) => {
-        if (typeof part === 'string') return part
-        if (part && typeof part === 'object') {
-          const obj = part as Record<string, unknown>
-          if (typeof obj.text === 'string') return obj.text
-          if (typeof obj.content === 'string') return obj.content
-        }
-        return String(part)
-      })
-      .join('')
-  }
-
-  if (delta && typeof delta === 'object') {
-    const obj = delta as Record<string, unknown>
-    if (typeof obj.text === 'string') return obj.text
-    if (typeof obj.content === 'string') return obj.content
-  }
-
-  return delta == null ? '' : String(delta)
-}
-
-const sanitizeReasoningText = (text: string) => text.replace(/\*{4,}/g, '\n')
-
-const truncateLines = (text: string, maxLines: number) => {
-  const lines = text.split(/\r?\n/)
-  if (lines.length <= maxLines) return text
-  return [...lines.slice(0, maxLines), '...', ''].join('\n')
-}
-
-const renderFileChanges = (rawChanges: unknown, maxDiffLines = 5) => {
-  if (!Array.isArray(rawChanges)) return undefined
-
-  const rendered = rawChanges
-    .map((change) => {
-      if (!change || typeof change !== 'object') return null
-      const obj = change as { path?: unknown; diff?: unknown }
-      const path = typeof obj.path === 'string' && obj.path.length > 0 ? obj.path : 'unknown-file'
-      const diffText = typeof obj.diff === 'string' ? obj.diff : ''
-      const lines = diffText.split(/\r?\n/)
-      const truncated = lines.length > maxDiffLines ? [...lines.slice(0, maxDiffLines), '…'] : lines
-      const body = truncated.join('\n')
-      return `\n\`\`\`bash\n${path}\n${body}\n\`\`\`\n`
-    })
-    .filter(Boolean)
-
-  if (rendered.length === 0) return undefined
-  if (rendered.length === 1) return rendered[0] as string
-  return rendered.join('\n\n')
-}
-
 const resolveCodexCwd = () => {
   const defaultRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
   return process.env.CODEX_CWD ?? (process.env.NODE_ENV === 'production' ? '/workspace/lab' : defaultRepoRoot)
@@ -406,10 +199,12 @@ const toSseResponse = (
   prompt: string,
   model: string,
   includeUsage: boolean,
+  toolRenderer: ToolRenderer,
+  completionEncoder: ChatCompletionEncoderService,
   threadContext: ThreadContext | null,
   signal?: AbortSignal,
 ) => {
-  const encoder = new TextEncoder()
+  const textEncoder = new TextEncoder()
   const created = Math.floor(Date.now() / 1000)
   const id = `chatcmpl-${crypto.randomUUID()}`
   const heartbeatIntervalMs = 5_000
@@ -425,10 +220,20 @@ const toSseResponse = (
       let activeThreadId: string | null = null
       let pendingInterrupt = false
       let didInterrupt = false
-      let lastUsage: Record<string, unknown> | null = null
       let turnFinished = false
-      let sawUpstreamError = false
-      const includeUsageChunk = includeUsage
+
+      const session = completionEncoder.create({
+        id,
+        created,
+        model,
+        includeUsage,
+        toolRenderer,
+        meta: {
+          chatId: threadContext?.chatId ?? null,
+          threadId: threadContext?.threadId ?? null,
+          turnNumber: threadContext?.turnNumber ?? null,
+        },
+      })
 
       const interruptTurn = (turnId: string, threadId: string) => {
         if (didInterrupt) return
@@ -465,14 +270,11 @@ const toSseResponse = (
         return chunk
       }
 
-      let hasEmittedAnyChunk = false
-
       const enqueueChunk = (chunk: unknown) => {
         if (controllerClosed) return
-        hasEmittedAnyChunk = true
         try {
           const withMeta = chunk && typeof chunk === 'object' ? attachMeta(chunk as Record<string, unknown>) : chunk
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(withMeta)}\n\n`))
+          controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(withMeta)}\n\n`))
         } catch {
           // If the client has already gone away, ensure we close the stream and interrupt Codex
           controllerClosed = true
@@ -482,167 +284,15 @@ const toSseResponse = (
         }
       }
 
-      let messageRoleEmitted = false
       const abortControllers: Array<() => void> = []
-      let reasoningBuffer = ''
-      let commandFenceOpen = false
-      let lastContentEndsWithNewline = true
-      let hadError = false
       let heartbeatTimer: ReturnType<typeof setInterval> | null = null
       const ensureTurnNumber = async () => {
         if (!threadContext || threadContext.turnNumber != null) return
         threadContext.turnNumber = await pipe(threadContext.store.nextTurn(threadContext.chatId), Effect.runPromise)
       }
 
-      type ToolState = {
-        id: string
-        index: number
-        toolKind: string
-        title?: string
-        lastContent?: string
-        lastStatus?: string
-      }
-
-      const toolStates = new Map<string, ToolState>()
-      let nextToolIndex = 0
-
-      const getToolState = (event: Record<string, unknown>): ToolState => {
-        const toolId = typeof event.id === 'string' ? event.id : `tool-${nextToolIndex}`
-        const existing = toolStates.get(toolId)
-        if (existing) {
-          if (!existing.title && typeof event.title === 'string' && event.title.length > 0) {
-            existing.title = event.title
-          }
-          return existing
-        }
-
-        const toolKind = typeof event.toolKind === 'string' && event.toolKind.length > 0 ? event.toolKind : 'tool'
-        const toolState: ToolState = {
-          id: toolId,
-          index: nextToolIndex++,
-          toolKind,
-          title: typeof event.title === 'string' && event.title.length > 0 ? event.title : undefined,
-        }
-        toolStates.set(toolId, toolState)
-        return toolState
-      }
-
-      const formatToolArguments = (toolState: ToolState, event: Record<string, unknown>) => {
-        const payload: Record<string, unknown> = {
-          tool: toolState.toolKind,
-        }
-
-        if (toolState.title) payload.title = toolState.title
-        const status = typeof event.status === 'string' ? event.status : undefined
-        if (status) payload.status = status
-        const detail = typeof event.detail === 'string' ? event.detail : undefined
-        if (typeof event.delta === 'string' && event.delta.length > 0) {
-          payload.output = event.delta
-        } else if (event.delta != null && typeof event.delta !== 'function') {
-          payload.output = String(event.delta)
-        }
-
-        const isCommandLocationDetail = toolState.toolKind === 'command' && detail && status === 'started'
-
-        if (detail && !isCommandLocationDetail) payload.detail = detail
-
-        return payload
-      }
-
-      const formatToolContent = (toolState: ToolState, payload: Record<string, unknown>) => {
-        const output = typeof payload.output === 'string' ? payload.output : undefined
-        const detail = typeof payload.detail === 'string' ? payload.detail : undefined
-        const title = typeof payload.title === 'string' ? payload.title : undefined
-        const status = typeof payload.status === 'string' ? payload.status : undefined
-
-        // Skip empty completions; this prevents an extra blank chunk when a command finishes without output.
-        if (status === 'completed' && toolState.toolKind === 'command' && !output && !detail) return ''
-
-        if (output && output.length > 0) return truncateLines(output, 5)
-        if (detail && detail.length > 0) return truncateLines(detail, 5)
-        if (title && title.length > 0) return title
-        return toolState.toolKind
-      }
-
-      const emitContentDelta = (content: string) => {
-        const sanitizedContent = stripTerminalControl(content)
-        if (sanitizedContent.length === 0) return
-
-        const deltaPayload: Record<string, unknown> = { content: sanitizedContent }
-        ensureRole(deltaPayload)
-        const chunk = {
-          id,
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [
-            {
-              delta: deltaPayload,
-              index: 0,
-              finish_reason: null,
-            },
-          ],
-        }
-        enqueueChunk(chunk)
-        lastContentEndsWithNewline = sanitizedContent.endsWith('\n')
-      }
-
-      const openCommandFence = () => {
-        if (commandFenceOpen) return
-        if (!lastContentEndsWithNewline) {
-          emitContentDelta('\n')
-        }
-        // Start command output fence without leading/trailing blank lines and with explicit language for clarity.
-        emitContentDelta('```ts\n')
-        commandFenceOpen = true
-      }
-
-      const closeCommandFence = () => {
-        if (!commandFenceOpen) return
-        // Ensure the closing fence is on its own line (and leave a trailing blank line) even when command output does not end with a newline.
-        emitContentDelta('\n```\n\n')
-        commandFenceOpen = false
-      }
-
-      const ensureRole = (deltaPayload: Record<string, unknown>) => {
-        if (!messageRoleEmitted) {
-          deltaPayload.role = 'assistant'
-          messageRoleEmitted = true
-        }
-      }
-
-      const flushReasoning = () => {
-        if (!reasoningBuffer) return
-
-        // Preserve up to 3 trailing asterisks to allow cross-delta "****" detection.
-        let carry = ''
-        const carryMatch = reasoningBuffer.match(/(\*{1,3})$/)
-        if (carryMatch) {
-          carry = carryMatch[1]
-          reasoningBuffer = reasoningBuffer.slice(0, -carry.length)
-        }
-
-        const sanitized = stripTerminalControl(sanitizeReasoningText(reasoningBuffer))
-        const deltaPayload: Record<string, unknown> = {
-          reasoning_content: sanitized,
-        }
-        ensureRole(deltaPayload)
-
-        const chunk = {
-          id,
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [
-            {
-              delta: deltaPayload,
-              index: 0,
-              finish_reason: null,
-            },
-          ],
-        }
-        enqueueChunk(chunk)
-        reasoningBuffer = carry
+      const enqueueFrames = (frames: Record<string, unknown>[]) => {
+        for (const frame of frames) enqueueChunk(frame)
       }
 
       const startHeartbeat = () => {
@@ -650,7 +300,7 @@ const toSseResponse = (
         heartbeatTimer = setInterval(() => {
           if (controllerClosed || aborted) return
           try {
-            controller.enqueue(encoder.encode(': keepalive\n\n'))
+            controller.enqueue(textEncoder.encode(': keepalive\n\n'))
           } catch {
             aborted = true
             controllerClosed = true
@@ -663,13 +313,7 @@ const toSseResponse = (
       try {
         const handleAbort = () => {
           aborted = true
-          enqueueChunk({
-            error: {
-              message: 'request was aborted by the client',
-              type: 'request_cancelled',
-              code: 'client_abort',
-            },
-          })
+          enqueueFrames(session.onClientAbort())
           interruptCodex()
         }
 
@@ -743,7 +387,6 @@ const toSseResponse = (
         }
 
         const runTurnAttempt = async (resumeThreadId: string | null, canRetry: boolean) => {
-          sawUpstreamError = false
           turnFinished = false
 
           if (aborted || controllerClosed) {
@@ -762,6 +405,7 @@ const toSseResponse = (
 
           activeTurnId = turnId
           activeThreadId = threadId
+          session.setThreadMeta({ threadId })
 
           if (threadContext) {
             threadContext.threadId = threadId
@@ -776,21 +420,21 @@ const toSseResponse = (
             try {
               await pipe(threadContext.store.setThread(threadContext.chatId, threadId), Effect.runPromise)
               await ensureTurnNumber()
+              session.setThreadMeta({ turnNumber: threadContext.turnNumber, chatId: threadContext.chatId })
               console.info('[chat] thread stored', {
                 chatId: threadContext.chatId,
                 threadId,
                 turnNumber: threadContext.turnNumber ?? undefined,
               })
             } catch (error) {
-              hadError = true
-              enqueueChunk({
-                error: {
+              enqueueFrames(
+                session.onInternalError({
                   message: 'failed to persist chat thread',
                   type: 'internal',
                   code: 'thread_store_error',
                   detail: error instanceof Error ? error.message : undefined,
-                },
-              })
+                }),
+              )
               interruptCodex()
               return
             }
@@ -802,121 +446,20 @@ const toSseResponse = (
                 interruptCodex()
                 break
               }
-
-              if (delta.type !== 'reasoning') {
-                flushReasoning()
+              if (
+                delta &&
+                typeof delta === 'object' &&
+                (delta as Record<string, unknown>).type === 'error' &&
+                canRetry &&
+                !session.getState().hasEmittedAnyChunk &&
+                isConversationNotFoundError((delta as Record<string, unknown>).error)
+              ) {
+                throw new ConversationNotFoundError((delta as Record<string, unknown>).error)
               }
 
-              if (delta.type === 'usage') {
-                closeCommandFence()
-                if (includeUsageChunk) {
-                  lastUsage = normalizeUsage(delta.usage)
-                }
-                continue
-              }
-
-              if (sawUpstreamError) {
-                // After an upstream error we only care about trailing usage updates.
-                continue
-              }
-
-              if (delta.type === 'error') {
-                if (canRetry && !hasEmittedAnyChunk && isConversationNotFoundError(delta.error)) {
-                  throw new ConversationNotFoundError(delta.error)
-                }
-
-                hadError = true
-                sawUpstreamError = true
-                closeCommandFence()
-                enqueueChunk({ error: normalizeStreamError(delta.error) })
-                // Keep listening for possible trailing usage.
-                continue
-              }
-
-              if (delta.type === 'message') {
-                closeCommandFence()
-                const text = normalizeDeltaText(delta.delta)
-                emitContentDelta(text)
-              }
-
-              if (delta.type === 'reasoning') {
-                const text = sanitizeReasoningText(normalizeDeltaText(delta.delta))
-                reasoningBuffer += text
-                // Emit reasoning immediately to avoid long silent periods that can trip upstream timeouts.
-                flushReasoning()
-              }
-
-              if (delta.type === 'tool') {
-                const deltaRecord = delta as Record<string, unknown>
-                const toolState = getToolState(deltaRecord)
-                const argsPayload = formatToolArguments(toolState, deltaRecord)
-                if (toolState.toolKind === 'file') {
-                  closeCommandFence()
-                  const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
-
-                  // Skip the start event to avoid duplicated summaries like "1 change(s)1 change(s)".
-                  if (status === 'started') {
-                    toolState.lastStatus = status
-                    continue
-                  }
-
-                  const changes = Array.isArray((deltaRecord.data as { changes?: unknown } | undefined)?.changes)
-                    ? (deltaRecord.data as { changes: unknown[] }).changes
-                    : Array.isArray(deltaRecord.changes as unknown)
-                      ? (deltaRecord.changes as unknown[])
-                      : undefined
-
-                  const content = renderFileChanges(changes) ?? formatToolContent(toolState, argsPayload)
-                  if (!content) {
-                    toolState.lastStatus = status
-                    continue
-                  }
-
-                  // Avoid re-emitting identical apply_patch summaries across delta/completed events.
-                  if (content === toolState.lastContent && status === toolState.lastStatus) {
-                    continue
-                  }
-
-                  toolState.lastContent = content
-                  toolState.lastStatus = status
-                  emitContentDelta(content)
-                  continue
-                }
-                if (toolState.toolKind === 'webSearch') {
-                  closeCommandFence()
-                  // Emit the attempted search term plainly, wrapped in backticks so UIs like
-                  // OpenWebUI render it as a code span without extra prefixes/suffixes.
-                  if (deltaRecord.status !== 'completed') {
-                    const query =
-                      (typeof toolState.title === 'string' && toolState.title.length > 0
-                        ? toolState.title
-                        : undefined) ??
-                      (typeof argsPayload.detail === 'string' && argsPayload.detail.length > 0
-                        ? argsPayload.detail
-                        : undefined)
-                    if (query) emitContentDelta(`\`${query}\``)
-                  }
-                  continue
-                }
-
-                if (toolState.toolKind === 'command') {
-                  openCommandFence()
-                  const status = typeof deltaRecord.status === 'string' ? deltaRecord.status : undefined
-                  let content = formatToolContent(toolState, argsPayload)
-                  // Ensure the initial command line is followed by a newline so subsequent output starts on a new line.
-                  if (status === 'started' && content.length > 0 && !content.endsWith('\n')) {
-                    content = `${content}\n\n`
-                  }
-                  const hasContent = content.length > 0
-                  if (hasContent) emitContentDelta(content)
-                } else {
-                  closeCommandFence()
-                  emitContentDelta(formatToolContent(toolState, argsPayload))
-                }
-              }
+              enqueueFrames(session.onDelta(delta))
             }
 
-            flushReasoning()
             if (!aborted) {
               turnFinished = true
             }
@@ -937,7 +480,7 @@ const toSseResponse = (
             if (
               attempt === 0 &&
               resumeThreadId != null &&
-              !hasEmittedAnyChunk &&
+              !session.getState().hasEmittedAnyChunk &&
               isConversationNotFoundError(upstreamError)
             ) {
               console.warn('[chat] stale thread id detected; starting new thread', {
@@ -953,52 +496,21 @@ const toSseResponse = (
           }
         }
       } catch (error) {
-        hadError = true
         const normalized = normalizeStreamError(error)
-        enqueueChunk({
-          error: {
+        enqueueFrames(
+          session.onInternalError({
             message: typeof normalized.message === 'string' ? normalized.message : safeJsonStringify(normalized),
             type: 'internal',
             code: 'codex_error',
-          },
-        })
+          }),
+        )
       } finally {
         for (const removeAbort of abortControllers) removeAbort()
-
-        closeCommandFence()
-
-        if (includeUsageChunk && lastUsage && !controllerClosed) {
-          enqueueChunk({
-            id,
-            object: 'chat.completion.chunk',
-            created,
-            model,
-            choices: [],
-            usage: lastUsage,
-          })
-        }
-
-        if (!aborted && !hadError && turnFinished && !controllerClosed) {
-          const finalChunk: Record<string, unknown> = {
-            id,
-            object: 'chat.completion.chunk',
-            created,
-            model,
-            choices: [
-              {
-                delta: {},
-                index: 0,
-                finish_reason: 'stop',
-              },
-            ],
-          }
-
-          enqueueChunk(finalChunk)
-        }
+        enqueueFrames(session.finalize({ aborted, turnFinished }))
 
         if (!controllerClosed) {
           try {
-            controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+            controller.enqueue(textEncoder.encode('data: [DONE]\n\n'))
           } catch {
             // ignore
           }
@@ -1063,11 +575,15 @@ export const handleChatCompletion = async (request: Request): Promise<Response> 
           }
         : null
 
-    const { config, client } = await pipe(
+    const { config, client, toolRenderer, encoder } = await pipe(
       Effect.all({
         config: loadConfig,
         client: getCodexClient(),
+        toolRenderer: ChatToolEventRenderer,
+        encoder: ChatCompletionEncoder,
       }),
+      Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+      Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
       Effect.runPromise,
     )
 
@@ -1077,7 +593,16 @@ export const handleChatCompletion = async (request: Request): Promise<Response> 
     }
 
     const prompt = buildPrompt(parsed.messages)
-    return toSseResponse(client, prompt, model, includeUsage, threadContext, request.signal)
+    return toSseResponse(
+      client,
+      prompt,
+      model,
+      includeUsage,
+      toolRenderer.create(),
+      encoder,
+      threadContext,
+      request.signal,
+    )
   } catch (error) {
     if (error instanceof RequestError) {
       return sseError(

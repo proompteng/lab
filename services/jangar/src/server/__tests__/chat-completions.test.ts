@@ -662,6 +662,107 @@ describe('chat completions handler', () => {
     expect(joinedContent.includes('\n---\n')).toBe(false)
   })
 
+  it('renders aggregated command output when no output deltas were streamed', async () => {
+    const command = "/bin/bash -lc 'cd /workspace/lab && cat services/jangar/src/routes/openai/v1/chat/completions.ts'"
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'started', title: command }
+          yield {
+            type: 'tool',
+            toolKind: 'command',
+            id: 'cmd-1',
+            status: 'completed',
+            title: command,
+            data: {
+              aggregatedOutput:
+                "import { createFileRoute } from '@tanstack/react-router'\nimport { handleChatCompletion } from '~/server/chat'\n",
+            },
+          }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 2 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const contentChunks = chunks
+      .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean) as string[]
+
+    expect(contentChunks[0]?.trim()).toBe('```ts')
+    expect(contentChunks.some((chunk) => chunk.includes(command))).toBe(true)
+    expect(
+      contentChunks.some((chunk) => chunk.includes("import { createFileRoute } from '@tanstack/react-router'")),
+    ).toBe(true)
+  })
+
+  it('logs tool event decode failures with a searchable tag', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield {
+            type: 'tool',
+            // Invalid types on purpose: should trigger schema decode failure.
+            toolKind: 123,
+            id: 456,
+            status: 'started',
+            title: 'bad tool',
+          } as unknown
+          yield { type: 'message', delta: 'ok' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 2 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    expect(response.status).toBe(200)
+    await response.text()
+
+    expect(warnSpy.mock.calls.some((call) => call[0] === '[jangar][tool-event][decode-failed]')).toBe(true)
+
+    warnSpy.mockRestore()
+  })
+
   it('does not insert separators between two commands', async () => {
     const commandA = 'bash -lc "echo first"'
     const commandB = 'bash -lc "echo second"'
@@ -1213,7 +1314,7 @@ describe('chat completions handler', () => {
       .filter((part) => part !== '[DONE]')
       .map((part) => JSON.parse(part))
     const stopChunks = chunks.filter((c) => c.choices?.[0]?.finish_reason === 'stop')
-    expect(stopChunks).toHaveLength(0)
+    expect(stopChunks).toHaveLength(1)
   })
 
   it('normalizes app-server error notifications to OpenAI error shape', async () => {
