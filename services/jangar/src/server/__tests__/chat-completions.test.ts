@@ -938,7 +938,7 @@ describe('chat completions handler', () => {
       .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
       .filter(Boolean) as string[]
 
-    const joined = contentChunks.join('\n')
+    const joined = contentChunks.join('')
 
     // No separators should appear anywhere.
     const firstCommandIndex = joined.indexOf(commandA)
@@ -946,6 +946,9 @@ describe('chat completions handler', () => {
     const secondCommandIndex = joined.indexOf(commandB)
     expect(secondCommandIndex).toBeGreaterThan(firstCommandIndex)
     expect(joined.includes('\n---\n')).toBe(false)
+
+    // Ensure consecutive commands are separated by a blank line.
+    expect(joined).toContain(`first output\n\n${commandB}`)
   })
 
   it('streams five commands without inserting separators', async () => {

@@ -219,7 +219,7 @@ const createSession = (args: {
   let messageRoleEmitted = false
   let reasoningBuffer = ''
   let commandFenceOpen = false
-  let lastContentEndsWithNewline = true
+  let trailingNewlines = 1
   let lastUsage: Record<string, unknown> | null = null
   let hadError = false
   let sawUpstreamError = false
@@ -275,12 +275,14 @@ const createSession = (args: {
       ],
     }
     pushChunk(frames, chunk)
-    lastContentEndsWithNewline = sanitizedContent.endsWith('\n')
+
+    const trailingMatch = sanitizedContent.match(/\n+$/)
+    trailingNewlines = trailingMatch ? Math.min(2, trailingMatch[0].length) : 0
   }
 
   const openCommandFence = (frames: Record<string, unknown>[]) => {
     if (commandFenceOpen) return
-    if (!lastContentEndsWithNewline) {
+    if (trailingNewlines === 0) {
       emitContentDelta(frames, '\n')
     }
     // Start command output fence without leading/trailing blank lines and with explicit language for clarity.
@@ -408,7 +410,20 @@ const createSession = (args: {
         return frames
       }
 
-      const actions = toolRenderer.onToolEvent(decoded.right)
+      const toolEvent = decoded.right
+
+      // If a new command starts while the command fence is already open, ensure there is a blank line before
+      // the next command header. This prevents consecutive commands from visually "sticking" together.
+      if (
+        toolEvent.toolKind === 'command' &&
+        toolEvent.status === 'started' &&
+        commandFenceOpen &&
+        trailingNewlines < 2
+      ) {
+        emitContentDelta(frames, '\n'.repeat(2 - trailingNewlines))
+      }
+
+      const actions = toolRenderer.onToolEvent(toolEvent)
       for (const action of actions) {
         if (action.type === 'openCommandFence') {
           openCommandFence(frames)
