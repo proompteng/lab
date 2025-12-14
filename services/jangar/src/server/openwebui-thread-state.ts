@@ -21,57 +21,77 @@ export class OpenWebUiThreadState extends Context.Tag('OpenWebUiThreadState')<
 const normalizeError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
 
-const makeOpenWebUiThreadState = (): OpenWebUiThreadStateService => {
-  let store: ChatThreadStore | null = null
+export const OpenWebUiThreadStateLive = Layer.scoped(
+  OpenWebUiThreadState,
+  Effect.gen(function* () {
+    let store: ChatThreadStore | null = null
 
-  const getStoreEffect = () =>
-    Effect.try({
-      try: () => {
-        if (!store) store = createRedisChatThreadStore()
-        return store
-      },
-      catch: (error) =>
-        new OpenWebUiThreadStateUnavailableError(
-          error instanceof Error ? error.message : 'OpenWebUI thread store is not configured',
-        ),
+    yield* Effect.addFinalizer(() => {
+      if (!store) return Effect.void
+      return pipe(
+        store.shutdown(),
+        Effect.catchAll((error) => {
+          console.warn('[chat] failed to close OpenWebUI thread store', { error: String(error) })
+          return Effect.void
+        }),
+      )
     })
 
-  return {
-    getThreadId: (chatId) =>
-      pipe(
-        getStoreEffect(),
-        Effect.flatMap((threadStore) => threadStore.getThread(chatId)),
-        Effect.mapError((error) =>
-          error instanceof OpenWebUiThreadStateUnavailableError ? error : normalizeError('thread lookup failed', error),
-        ),
-      ),
-    setThreadId: (chatId, threadId) =>
-      pipe(
-        getStoreEffect(),
-        Effect.flatMap((threadStore) => threadStore.setThread(chatId, threadId)),
-        Effect.mapError((error) =>
-          error instanceof OpenWebUiThreadStateUnavailableError ? error : normalizeError('thread write failed', error),
-        ),
-      ),
-    nextTurn: (chatId) =>
-      pipe(
-        getStoreEffect(),
-        Effect.flatMap((threadStore) => threadStore.nextTurn(chatId)),
-        Effect.mapError((error) =>
-          error instanceof OpenWebUiThreadStateUnavailableError
-            ? error
-            : normalizeError('turn increment failed', error),
-        ),
-      ),
-    clearChat: (chatId) =>
-      pipe(
-        getStoreEffect(),
-        Effect.flatMap((threadStore) => threadStore.clearThread(chatId)),
-        Effect.mapError((error) =>
-          error instanceof OpenWebUiThreadStateUnavailableError ? error : normalizeError('thread clear failed', error),
-        ),
-      ),
-  }
-}
+    const getStoreEffect = () =>
+      Effect.try({
+        try: () => {
+          if (!store) store = createRedisChatThreadStore()
+          return store
+        },
+        catch: (error) =>
+          new OpenWebUiThreadStateUnavailableError(
+            error instanceof Error ? error.message : 'OpenWebUI thread store is not configured',
+          ),
+      })
 
-export const OpenWebUiThreadStateLive = Layer.sync(OpenWebUiThreadState, () => makeOpenWebUiThreadState())
+    const service: OpenWebUiThreadStateService = {
+      getThreadId: (chatId) =>
+        pipe(
+          getStoreEffect(),
+          Effect.flatMap((threadStore) => threadStore.getThread(chatId)),
+          Effect.mapError((error) =>
+            error instanceof OpenWebUiThreadStateUnavailableError
+              ? error
+              : normalizeError('thread lookup failed', error),
+          ),
+        ),
+      setThreadId: (chatId, threadId) =>
+        pipe(
+          getStoreEffect(),
+          Effect.flatMap((threadStore) => threadStore.setThread(chatId, threadId)),
+          Effect.mapError((error) =>
+            error instanceof OpenWebUiThreadStateUnavailableError
+              ? error
+              : normalizeError('thread write failed', error),
+          ),
+        ),
+      nextTurn: (chatId) =>
+        pipe(
+          getStoreEffect(),
+          Effect.flatMap((threadStore) => threadStore.nextTurn(chatId)),
+          Effect.mapError((error) =>
+            error instanceof OpenWebUiThreadStateUnavailableError
+              ? error
+              : normalizeError('turn increment failed', error),
+          ),
+        ),
+      clearChat: (chatId) =>
+        pipe(
+          getStoreEffect(),
+          Effect.flatMap((threadStore) => threadStore.clearThread(chatId)),
+          Effect.mapError((error) =>
+            error instanceof OpenWebUiThreadStateUnavailableError
+              ? error
+              : normalizeError('thread clear failed', error),
+          ),
+        ),
+    }
+
+    return service
+  }),
+)

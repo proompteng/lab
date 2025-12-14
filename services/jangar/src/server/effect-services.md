@@ -25,7 +25,7 @@ This server codebase uses Effect’s **service pattern**:
 **2) Provide a live layer**
 
 - Example: `src/server/openwebui-thread-state.ts` exports:
-  - `OpenWebUiThreadStateLive` (`Layer.sync(...)`)
+  - `OpenWebUiThreadStateLive` (`Layer.scoped(...)`)
 
 Notes:
 - Prefer `Layer.sync` / `Layer.effect` for simple services.
@@ -36,7 +36,11 @@ Notes:
 
 - Example: `src/server/chat.ts` exports:
   - `handleChatCompletionEffect(request)` – returns an `Effect` that requires services
-  - `handleChatCompletion(request)` – thin wrapper that provides live layers/services and runs the effect
+  - `handleChatCompletion(request)` – thin wrapper that runs the effect on a shared `ManagedRuntime`
+
+Notes:
+- **Do not** build “live” layers inside every request handler invocation if the service holds resources (e.g. Redis clients).
+- Prefer a module-level `ManagedRuntime.make(Layer.mergeAll(...))` and call `runtime.runPromise(effect)` per request, so services are reused and scoped finalizers run when the runtime is disposed (e.g. during shutdown or tests).
 
 **4) Test overrides**
 
@@ -44,4 +48,3 @@ Notes:
   - `OpenWebUiThreadState` via `Effect.provideService(OpenWebUiThreadState, fakeThreadState)`
 
 This keeps tests isolated and avoids mutating module globals like `setFoo(...)` / `resetFoo(...)`.
-

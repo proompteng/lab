@@ -2,7 +2,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as S from '@effect/schema/Schema'
 import type { CodexAppServerClient } from '@proompteng/codex'
-import { Effect, pipe } from 'effect'
+import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import {
   ChatCompletionEncoder,
@@ -589,13 +589,15 @@ export const handleChatCompletionEffect = (request: Request) =>
     }),
   )
 
+const handlerRuntime = ManagedRuntime.make(
+  Layer.mergeAll(
+    OpenWebUiThreadStateLive,
+    Layer.succeed(ChatToolEventRenderer, chatToolEventRendererLive),
+    Layer.succeed(ChatCompletionEncoder, chatCompletionEncoderLive),
+  ),
+)
+
 export const handleChatCompletion = (request: Request): Promise<Response> =>
-  pipe(
-    handleChatCompletionEffect(request),
-    Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
-    Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
-    Effect.provide(OpenWebUiThreadStateLive),
-    Effect.runPromise,
-  )
+  handlerRuntime.runPromise(handleChatCompletionEffect(request))
 
 export { setCodexClientFactory, resetCodexClient }
