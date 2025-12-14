@@ -1,8 +1,56 @@
 import { describe, expect, it } from 'bun:test'
 
-import { computeDeleteManifestPlan, parseArgs, selectPrunePlan } from '../prune-images'
+import { __private, computeDeleteManifestPlan, parseArgs, selectPrunePlan } from '../prune-images'
 
 describe('registry prune-images', () => {
+  it('paginates /tags/list responses using the Link header', async () => {
+    const originalFetch = globalThis.fetch
+    const calls: string[] = []
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? new URL(input) : input instanceof URL ? input : new URL(input.url)
+      calls.push(url.toString())
+
+      if (!url.pathname.endsWith('/tags/list')) {
+        return new Response('not found', { status: 404 })
+      }
+
+      const last = url.searchParams.get('last')
+      if (!last) {
+        return new Response(JSON.stringify({ name: 'lab/jangar', tags: ['a', 'b'] }), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            link: '<http://example/v2/lab/jangar/tags/list?n=1000&last=b>; rel="next"',
+          },
+        })
+      }
+
+      if (last === 'b') {
+        return new Response(JSON.stringify({ name: 'lab/jangar', tags: ['c'] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+
+      return new Response(JSON.stringify({ name: 'lab/jangar', tags: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+
+    try {
+      const tags = await __private.listTags('http://example', 'lab/jangar')
+      expect(tags).toEqual(['a', 'b', 'c'])
+      expect(calls.length).toBe(2)
+      expect(calls[0]).toContain('n=1000')
+      expect(calls[0]).not.toContain('last=')
+      expect(calls[1]).toContain('last=b')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('keeps last N version-like tags and skips non-version tags by default', () => {
     const tags = [
       { tag: 'latest', manifestDigest: 'sha256:latest', createdAtMs: 50 },

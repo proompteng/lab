@@ -271,6 +271,15 @@ const fetchJson = async (url: string, init?: RequestInit) => {
   return response.json() as Promise<unknown>
 }
 
+const fetchJsonWithHeaders = async (url: URL, init?: RequestInit): Promise<{ payload: unknown; headers: Headers }> => {
+  const response = await fetch(url, init)
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(`Request failed: ${response.status} ${response.statusText} (${url})${body ? `\n${body}` : ''}`)
+  }
+  return { payload: (await response.json()) as unknown, headers: response.headers }
+}
+
 const fetchManifest = async (baseUrl: string, repo: string, reference: string) => {
   const response = await fetch(`${baseUrl}/v2/${encodePath(repo)}/manifests/${encodeURIComponent(reference)}`, {
     headers: { accept: ACCEPT_MANIFEST },
@@ -528,10 +537,36 @@ const listRepositories = async (baseUrl: string, pageSize: number) => {
 }
 
 const listTags = async (baseUrl: string, repo: string) => {
-  const payload = (await fetchJson(`${baseUrl}/v2/${encodePath(repo)}/tags/list`)) as { tags?: unknown }
-  const tags = payload?.tags
-  if (!Array.isArray(tags)) return []
-  return tags.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0)
+  const tags: string[] = []
+  let last: string | null = null
+  const seenLast = new Set<string>()
+
+  while (true) {
+    const url = new URL(`${baseUrl}/v2/${encodePath(repo)}/tags/list`)
+    url.searchParams.set('n', '1000')
+    if (last) url.searchParams.set('last', last)
+
+    const { payload, headers } = await fetchJsonWithHeaders(url)
+    const tagList =
+      (payload && typeof payload === 'object' ? (payload as { tags?: unknown }).tags : undefined) ?? undefined
+    const page = Array.isArray(tagList)
+      ? tagList.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0)
+      : []
+    tags.push(...page)
+
+    const link = headers.get('link')
+    if (!link) break
+
+    const match = link.match(/<[^>]*[?&]last=([^&>]+)[^>]*>;\s*rel="next"/)
+    if (!match) break
+
+    last = decodeURIComponent(match[1])
+    if (!last) break
+    if (seenLast.has(last)) break
+    seenLast.add(last)
+  }
+
+  return [...new Set(tags)]
 }
 
 export const main = async () => {
@@ -710,6 +745,11 @@ export const main = async () => {
 
 if (import.meta.main) {
   main().catch((error) => fatal('Failed to prune registry images', error))
+}
+
+export const __private = {
+  fetchJsonWithHeaders,
+  listTags,
 }
 
 export { computeDeleteManifestPlan, parseArgs, selectPrunePlan }
