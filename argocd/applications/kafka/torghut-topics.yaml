@@ -6,7 +6,7 @@ metadata:
   labels:
     strimzi.io/cluster: kafka
 spec:
-  partitions: 24
+  partitions: 10
   replicas: 3
   config:
     compression.type: lz4
@@ -21,7 +21,7 @@ metadata:
   labels:
     strimzi.io/cluster: kafka
 spec:
-  partitions: 24
+  partitions: 10
   replicas: 3
   config:
     compression.type: lz4
@@ -36,7 +36,7 @@ metadata:
   labels:
     strimzi.io/cluster: kafka
 spec:
-  partitions: 24
+  partitions: 10
   replicas: 3
   config:
     compression.type: lz4
