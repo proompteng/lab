@@ -418,6 +418,58 @@ describe('CodexAppServerClient codex/event bridging', () => {
     })
   })
 
+  it('decodes concatenated base64 chunks when the last chunk is unpadded', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'codex/event/exec_command_begin',
+      params: {
+        id: 'turn-1',
+        msg: {
+          type: 'exec_command_begin',
+          call_id: 'call-1',
+          turn_id: 'turn-1',
+          command: ['echo', 'hi'],
+          cwd: '/tmp',
+          parsed_cmd: [],
+          source: 'Agent',
+        },
+      },
+    })
+
+    await stream.next()
+
+    // "hi\\r\\nthere\\r\\n" as a padded base64 chunk concatenated with an unpadded base64 chunk.
+    writeLine(child, {
+      method: 'codex/event/exec_command_output_delta',
+      params: {
+        msg: {
+          type: 'exec_command_output_delta',
+          call_id: 'call-1',
+          stream: 'stdout',
+          chunk: 'aGkNCg==dGhlcmUNCg',
+        },
+      },
+    })
+
+    const output = await stream.next()
+    expect(output.value).toEqual({
+      type: 'tool',
+      toolKind: 'command',
+      id: 'call-1',
+      status: 'delta',
+      title: 'command output',
+      detail: 'hi\r\nthere\r\n',
+    })
+  })
+
   it('drops base64-encoded terminal control noise before plain output', async () => {
     const { child, client } = setupClient()
     await respondToInitialize(child)

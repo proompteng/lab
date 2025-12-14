@@ -19,7 +19,7 @@ export type DockerBuildResult = DockerBuildOptions & {
 
 type SpawnSync = typeof Bun.spawnSync
 
-let spawnSyncImpl: SpawnSync = (...args) => Bun.spawnSync(...args)
+let spawnSyncImpl: SpawnSync = Bun.spawnSync
 
 const isTruthyEnv = (value: string | undefined): boolean => {
   if (!value) return false
@@ -149,7 +149,7 @@ const getRepositoryFromReference = (reference: string): string => {
 }
 
 const setSpawnSync = (fn?: SpawnSync) => {
-  spawnSyncImpl = fn ?? ((...args) => Bun.spawnSync(...args))
+  spawnSyncImpl = fn ?? Bun.spawnSync
 }
 
 export const __private = {

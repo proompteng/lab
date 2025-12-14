@@ -766,6 +766,13 @@ export class CodexAppServerClient {
         return filtered.join('')
       }
 
+      const decodeBase64TokenIfPrintable = (token: string): string | null => {
+        const decoded = decodeBase64Token(token, { allowShort: true })
+        if (decoded === null) return null
+        if (!looksMostlyPrintable(decoded)) return null
+        return decoded
+      }
+
       const decodeBase64Token = (token: string, options?: { allowShort?: boolean }): string | null => {
         const allowShort = options?.allowShort ?? false
         if (!allowShort && token.length < 8) return null
@@ -825,7 +832,8 @@ export class CodexAppServerClient {
       }
 
       const decodedPrefix = decodedPieces.join('')
-      return `${decodedPrefix}${remainder}${suffix}`
+      const decodedRemainder = remainder ? decodeBase64TokenIfPrintable(remainder) : null
+      return `${decodedPrefix}${decodedRemainder ?? remainder}${suffix}`
     }
 
     const extractPlanUpdate = (

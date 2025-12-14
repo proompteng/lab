@@ -98,8 +98,7 @@ const resolveHelmBinary = (): { binary: string; tempDir?: string; shim?: string 
     const shimPath = join(helmDir, 'helm')
     const script = `#!/usr/bin/env bash\nset -euo pipefail\nexec ${misePath} x helm@${version} -- helm "$@"\n`
     writeFileSync(shimPath, script, { mode: 0o755 })
-    const cleanup = () => rmSync(helmDir, { recursive: true, force: true })
-    return { binary: shimPath, tempDir: helmDir, shim: 'mise', cleanup }
+    return { binary: shimPath, tempDir: helmDir, shim: 'mise' }
   }
 
   const download = fetchHelmV3()
