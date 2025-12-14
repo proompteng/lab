@@ -1,12 +1,12 @@
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
 metadata:
-  name: torghut-nvda-trades-v1
+  name: torghut.trades.v1
   namespace: kafka
   labels:
     strimzi.io/cluster: kafka
 spec:
-  partitions: 1
+  partitions: 24
   replicas: 3
   config:
     compression.type: lz4
@@ -16,12 +16,12 @@ spec:
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
 metadata:
-  name: torghut-nvda-quotes-v1
+  name: torghut.quotes.v1
   namespace: kafka
   labels:
     strimzi.io/cluster: kafka
 spec:
-  partitions: 1
+  partitions: 24
   replicas: 3
   config:
     compression.type: lz4
@@ -31,12 +31,12 @@ spec:
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
 metadata:
-  name: torghut-nvda-bars-1m-v1
+  name: torghut.bars.1m.v1
   namespace: kafka
   labels:
     strimzi.io/cluster: kafka
 spec:
-  partitions: 1
+  partitions: 24
   replicas: 3
   config:
     compression.type: lz4
@@ -46,12 +46,12 @@ spec:
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
 metadata:
-  name: torghut-nvda-status-v1
+  name: torghut.status.v1
   namespace: kafka
   labels:
     strimzi.io/cluster: kafka
 spec:
-  partitions: 1
+  partitions: 3
   replicas: 3
   config:
     compression.type: lz4

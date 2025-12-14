@@ -17,10 +17,15 @@ class ForwarderConfigTest {
     )
 
     assertEquals(listOf("NVDA"), cfg.symbols)
+    assertEquals(null, cfg.jangarSymbolsUrl)
+    assertEquals(30_000, cfg.symbolsPollIntervalMs)
+    assertEquals(200, cfg.subscribeBatchSize)
+    assertEquals(1, cfg.shardCount)
+    assertEquals(0, cfg.shardIndex)
     assertEquals("wss://stream.data.alpaca.markets", cfg.alpacaStreamUrl)
     assertEquals("localhost:9093", cfg.kafka.bootstrapServers)
     assertFalse(cfg.enableTradeUpdates)
-    assertEquals("torghut.nvda.trades.v1", cfg.topics.trades)
+    assertEquals("torghut.trades.v1", cfg.topics.trades)
   }
 
   @Test

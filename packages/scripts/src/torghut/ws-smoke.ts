@@ -12,8 +12,7 @@ const main = async () => {
   ensureCli('kafka-console-consumer')
 
   const namespace = process.env.NAMESPACE ?? 'kafka'
-  const symbol = (process.env.SYMBOL ?? 'nvda').toLowerCase()
-  const topic = process.env.TOPIC ?? `torghut.${symbol}.trades.v1`
+  const topic = process.env.TOPIC ?? 'torghut.trades.v1'
   const username = process.env.KAFKA_USERNAME ?? fatal('KAFKA_USERNAME is required')
   const password = process.env.KAFKA_PASSWORD ?? fatal('KAFKA_PASSWORD is required')
   const securityProtocol = process.env.KAFKA_SECURITY_PROTOCOL ?? 'SASL_SSL'

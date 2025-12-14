@@ -4,16 +4,16 @@
 
 | Topic | Purpose | Partitions | RF | Retention | Compression | Cleanup |
 | --- | --- | --- | --- | --- | --- | --- |
-| `torghut.<symbol>.trades.v1` | Alpaca trades | 1 | 3 | 7d | lz4 | delete |
-| `torghut.<symbol>.quotes.v1` | Alpaca quotes | 1 | 3 | 7d | lz4 | delete |
-| `torghut.<symbol>.bars.1m.v1` | 1m bars (+updatedBars) | 1 | 3 | 30d | lz4 | delete |
-| `torghut.<symbol>.status.v1` | forwarder status/heartbeat | 1 | 3 | 7d | lz4 | compaction optional |
+| `torghut.trades.v1` | Alpaca trades (keyed by `symbol`) | 12+ | 3 | 7d | lz4 | delete |
+| `torghut.quotes.v1` | Alpaca quotes (keyed by `symbol`) | 12+ | 3 | 7d | lz4 | delete |
+| `torghut.bars.1m.v1` | 1m bars (+updatedBars) (keyed by `symbol`) | 12+ | 3 | 30d | lz4 | delete |
+| `torghut.status.v1` | forwarder status/heartbeat (keyed by `symbol` or `instance`) | 3+ | 3 | 7d | lz4 | compaction optional |
 | `torghut.<symbol>.ta.bars.1s.v1` | derived micro-bars | 1 | 3 | 14d | lz4 | delete |
 | `torghut.<symbol>.ta.signals.v1` | TA indicators/signals | 1 | 3 | 14d | lz4 | delete |
 | `torghut.<symbol>.ta.status.v1` | TA job status | 1 | 3 | 7d | lz4 | compaction optional |
 
 Notes:
-- Partitions=1 preserves per-symbol ordering; scale by symbol sharding if adding more symbols later.
+- Ordering is preserved per symbol by using Kafka message key = `symbol`.
 - Use KafkaTopic CRs (Strimzi) for declarative management.
 
 ## Envelope (shared)
@@ -94,16 +94,16 @@ Registration helper: `docs/torghut/register-schemas.sh` (uses KARAPACE_URL env, 
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
 metadata:
-  name: torghut-nvda-ta-signals-v1
+  name: torghut-trades-v1
   labels:
     strimzi.io/cluster: kafka
 spec:
-  partitions: 1
+  partitions: 24
   replicas: 3
   config:
     cleanup.policy: delete
     compression.type: lz4
-    retention.ms: 1209600000 # 14d
+    retention.ms: 604800000 # 7d
     min.insync.replicas: 2
 ```
 

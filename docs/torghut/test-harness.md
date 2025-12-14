@@ -8,7 +8,7 @@ kcat -b $KAFKA_BOOTSTRAP \
   -X security.protocol=SASL_SSL \
   -X sasl.mechanisms=SCRAM-SHA-512 \
   -X sasl.username=$USER -X sasl.password=$PASS \
-  -t torghut.nvda.trades.v1 -K: -l samples/nvda-trades.jsonl
+  -t torghut.trades.v1 -K: -l samples/nvda-trades.jsonl
 ```
 Where `nvda-trades.jsonl` contains `<key>:<value>` JSON lines keyed by symbol.
 

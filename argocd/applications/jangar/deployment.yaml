@@ -56,6 +56,8 @@ spec:
                   key: uri
             - name: PGSSLMODE
               value: require
+            - name: JANGAR_DB_CA_CERT
+              value: /etc/ssl/certs/jangar-db/ca.crt
             - name: VSCODE_DATA_DIR
               value: /workspace/.ovscode
             - name: VSCODE_DEFAULT_FOLDER
@@ -99,6 +101,9 @@ spec:
               readOnly: true
             - name: docker-sock
               mountPath: /var/run
+            - name: jangar-db-ca
+              mountPath: /etc/ssl/certs/jangar-db
+              readOnly: true
         - name: docker
           image: docker:25.0-dind
           imagePullPolicy: IfNotPresent
@@ -132,3 +137,6 @@ spec:
           emptyDir: {}
         - name: docker-sock
           emptyDir: {}
+        - name: jangar-db-ca
+          secret:
+            secretName: jangar-db-ca
