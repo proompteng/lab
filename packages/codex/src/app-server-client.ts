@@ -650,6 +650,27 @@ export class CodexAppServerClient {
       return null
     }
 
+    const decodeMaybeBase64Text = (raw: string): string => {
+      // Some app-server surfaces stream bytes as base64 because they may not be valid UTF-8.
+      // Only decode when we can round-trip and the decoded text looks like human output (whitespace present).
+      if (raw.length === 0) return raw
+      if (!raw.includes('=')) return raw
+      if (raw.length % 4 !== 0) return raw
+      if (!/^[A-Za-z0-9+/]+={0,2}$/.test(raw)) return raw
+
+      try {
+        const buf = Buffer.from(raw, 'base64')
+        const stripPad = (value: string) => value.replace(/=+$/g, '')
+        if (stripPad(buf.toString('base64')) !== stripPad(raw)) return raw
+
+        const decoded = buf.toString('utf8')
+        if (!/[\r\n\t ]/.test(decoded)) return raw
+        return decoded
+      } catch {
+        return raw
+      }
+    }
+
     const extractPlanUpdate = (
       raw: unknown,
     ): {
@@ -693,7 +714,8 @@ export class CodexAppServerClient {
             detail: undefined,
             data: {
               status: item.status,
-              aggregatedOutput: item.aggregatedOutput,
+              aggregatedOutput:
+                typeof item.aggregatedOutput === 'string' ? decodeMaybeBase64Text(item.aggregatedOutput) : null,
               exitCode: item.exitCode,
               durationMs: item.durationMs,
             },
@@ -864,7 +886,7 @@ export class CodexAppServerClient {
         if (!msg) break
         const callId = typeof msg.call_id === 'string' ? msg.call_id : null
         if (!callId) break
-        const chunk = typeof msg.chunk === 'string' ? msg.chunk : null
+        const chunk = typeof msg.chunk === 'string' ? decodeMaybeBase64Text(msg.chunk) : null
         if (!chunk) break
         pushTool(
           notification.params,
@@ -910,7 +932,8 @@ export class CodexAppServerClient {
             status: 'completed',
             title,
             data: {
-              aggregatedOutput: typeof msg.aggregated_output === 'string' ? msg.aggregated_output : undefined,
+              aggregatedOutput:
+                typeof msg.aggregated_output === 'string' ? decodeMaybeBase64Text(msg.aggregated_output) : undefined,
               exitCode: typeof msg.exit_code === 'number' ? msg.exit_code : undefined,
               duration: typeof msg.duration === 'string' ? msg.duration : undefined,
             },
@@ -1113,7 +1136,13 @@ export class CodexAppServerClient {
         this.trackItemFromParams(params)
         pushTool(
           params,
-          { toolKind: 'command', id: params.itemId, status: 'delta', title: 'command output', detail: params.delta },
+          {
+            toolKind: 'command',
+            id: params.itemId,
+            status: 'delta',
+            title: 'command output',
+            detail: decodeMaybeBase64Text(params.delta),
+          },
           'v2',
         )
         break

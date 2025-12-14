@@ -262,6 +262,89 @@ describe('CodexAppServerClient codex/event bridging', () => {
     })
   })
 
+  it('decodes base64 exec_command_output_delta chunks', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'codex/event/exec_command_begin',
+      params: {
+        id: 'turn-1',
+        msg: {
+          type: 'exec_command_begin',
+          call_id: 'call-1',
+          turn_id: 'turn-1',
+          command: ['echo', 'hi'],
+          cwd: '/tmp',
+          parsed_cmd: [],
+          source: 'Agent',
+        },
+      },
+    })
+
+    await stream.next()
+
+    // "hi\\r\\n" as padded base64, matching raw-bytes encoding used by app-server.
+    writeLine(child, {
+      method: 'codex/event/exec_command_output_delta',
+      params: {
+        msg: {
+          type: 'exec_command_output_delta',
+          call_id: 'call-1',
+          stream: 'stdout',
+          chunk: 'aGkNCg==',
+        },
+      },
+    })
+
+    const output = await stream.next()
+    expect(output.value).toEqual({
+      type: 'tool',
+      toolKind: 'command',
+      id: 'call-1',
+      status: 'delta',
+      title: 'command output',
+      detail: 'hi\r\n',
+    })
+  })
+
+  it('decodes base64 item/commandExecution/outputDelta deltas', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'item/commandExecution/outputDelta',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        delta: 'aGkNCg==',
+      },
+    })
+
+    const output = await stream.next()
+    expect(output.value).toEqual({
+      type: 'tool',
+      toolKind: 'command',
+      id: 'item-1',
+      status: 'delta',
+      title: 'command output',
+      detail: 'hi\r\n',
+    })
+  })
+
   it('emits tool deltas from only one source (legacy then v2)', async () => {
     const { child, client } = setupClient()
     await respondToInitialize(child)
