@@ -20,14 +20,6 @@ export type BuildImageOptions = {
   cacheRef?: string
 }
 
-const isTruthyEnv = (value: string | undefined): boolean => {
-  if (!value) return false
-  const normalized = value.trim().toLowerCase()
-  return (
-    normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'y' || normalized === 'on'
-  )
-}
-
 const ensureGhToken = (): string | undefined => {
   const existing = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
   if (existing) {
@@ -81,20 +73,11 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const registry = options.registry ?? process.env.JANGAR_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.JANGAR_IMAGE_REPOSITORY ?? 'lab/jangar'
   const tag = options.tag ?? process.env.JANGAR_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
-  const hasManualOverrides =
-    options.context !== undefined ||
-    options.dockerfile !== undefined ||
-    process.env.JANGAR_BUILD_CONTEXT !== undefined ||
-    process.env.JANGAR_DOCKERFILE !== undefined ||
-    isTruthyEnv(process.env.JANGAR_DISABLE_TURBO_PRUNE)
-
-  const usePrune = !hasManualOverrides
+  const usePrune = options.context === undefined && process.env.JANGAR_BUILD_CONTEXT === undefined
 
   const dockerfile = resolve(
     repoRoot,
-    options.dockerfile ??
-      process.env.JANGAR_DOCKERFILE ??
-      (usePrune ? 'services/jangar/Dockerfile.pruned' : 'services/jangar/Dockerfile'),
+    options.dockerfile ?? process.env.JANGAR_DOCKERFILE ?? 'services/jangar/Dockerfile',
   )
   const version = options.version ?? process.env.JANGAR_VERSION ?? tag
   const commit = options.commit ?? process.env.JANGAR_COMMIT ?? execGit(['rev-parse', 'HEAD'])

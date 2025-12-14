@@ -1,5 +1,13 @@
 # syntax=docker/dockerfile:1.6
 # Bun image for jangar worker + UI + Codex app-server
+#
+# NOTE: This Dockerfile is intended to be built from a Turbo-pruned context produced by:
+#   `bunx turbo prune --scope=@proompteng/jangar --docker --out-dir <dir>`
+#
+# Expected build context layout:
+# - `json/` contains the pruned `package.json` + workspace package.jsons + `bun.lock`
+# - `full/` contains the full pruned source tree
+# - `tsconfig.base.json` is copied into the context root by the build script
 ARG BUN_VERSION=1.3.4
 ARG OPENVSCODE_VERSION=1.105.1
 ARG GH_VERSION=2.65.0
@@ -125,7 +133,6 @@ RUN set -eux; \
   cd /tmp; \
   curl -fsSLO "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${K_ARCH}/kubectl"; \
   curl -fsSLO "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${K_ARCH}/kubectl.sha256"; \
-  # sanity check: ensure checksum file looks like a single SHA-256
   if ! grep -Eq '^[0-9a-f]{64}$' kubectl.sha256; then \
   echo "kubectl.sha256 has unexpected contents:" >&2; \
   cat kubectl.sha256 >&2; \
@@ -152,7 +159,7 @@ RUN set -eux; \
   rm -rf /tmp/docker.tgz /tmp/docker; \
   docker --version
 
-# Install docker buildx plugin so BuildKit secrets and multi-arch builds work in CI/runtime
+# Install docker buildx
 RUN set -eux; \
   ARCH="${TARGETARCH:-$(uname -m)}"; \
   case "$ARCH" in \
@@ -169,7 +176,7 @@ RUN set -eux; \
   /usr/lib/docker/cli-plugins/docker-buildx version
 
 # Install Codex CLI with Bun so the app-server binary is available at runtime
-RUN bun add -g @openai/codex@latest
+RUN --mount=type=cache,target=/root/.cache/bun bun add -g @openai/codex@latest
 
 # Install openvscode-server (upstream VS Code server build from gitpod-io)
 RUN set -eux; \
@@ -229,118 +236,48 @@ ENTRY
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 
 FROM tools AS codex-build
-
-# Build codex dependency (workspace package)
 WORKDIR /app
-COPY bun.lock ./bun.lock
-COPY package.json ./package.json
-COPY apps/docs/package.json /app/apps/docs/package.json
-COPY apps/froussard/package.json /app/apps/froussard/package.json
-COPY apps/kabina/package.json /app/apps/kabina/package.json
-COPY apps/kitty-krew/package.json /app/apps/kitty-krew/package.json
-COPY apps/nata/package.json /app/apps/nata/package.json
-COPY apps/proompteng/package.json /app/apps/proompteng/package.json
-COPY apps/reestr/package.json /app/apps/reestr/package.json
-COPY apps/reviseur/package.json /app/apps/reviseur/package.json
-COPY packages/atelier/package.json /app/packages/atelier/package.json
-COPY packages/backend/package.json /app/packages/backend/package.json
-COPY packages/bonjour/package.json /app/packages/bonjour/package.json
-COPY packages/cloutt/package.json /app/packages/cloutt/package.json
-COPY packages/codex/package.json /app/packages/codex/package.json
-COPY packages/cx-tools/package.json /app/packages/cx-tools/package.json
-COPY packages/discord/package.json /app/packages/discord/package.json
-COPY packages/schematic/package.json /app/packages/schematic/package.json
-COPY packages/scripts/package.json /app/packages/scripts/package.json
-COPY packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
-COPY packages/temporal-bun-sdk-example/package.json /app/packages/temporal-bun-sdk-example/package.json
-COPY services/golink/package.json /app/services/golink/package.json
-COPY services/jangar/package.json /app/services/jangar/package.json
-COPY services/memories/package.json /app/services/memories/package.json
-COPY packages/codex/tsconfig.json ./packages/codex/tsconfig.json
-COPY packages/codex/src ./packages/codex/src
+COPY json/ .
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --frozen-lockfile --ignore-scripts --filter @proompteng/codex \
-  && bun --cwd=packages/codex run build
+  bun install --no-save --frozen-lockfile --ignore-scripts --filter @proompteng/codex
+COPY full/ .
+RUN bun --cwd=packages/codex run build
 
 FROM tools AS jangar-deps-dev
-WORKDIR /app/services/jangar
-COPY bun.lock /app/bun.lock
-COPY package.json /app/package.json
-COPY apps/docs/package.json /app/apps/docs/package.json
-COPY apps/froussard/package.json /app/apps/froussard/package.json
-COPY apps/kabina/package.json /app/apps/kabina/package.json
-COPY apps/kitty-krew/package.json /app/apps/kitty-krew/package.json
-COPY apps/nata/package.json /app/apps/nata/package.json
-COPY apps/proompteng/package.json /app/apps/proompteng/package.json
-COPY apps/reestr/package.json /app/apps/reestr/package.json
-COPY apps/reviseur/package.json /app/apps/reviseur/package.json
-COPY packages/atelier/package.json /app/packages/atelier/package.json
-COPY packages/backend/package.json /app/packages/backend/package.json
-COPY packages/bonjour/package.json /app/packages/bonjour/package.json
-COPY packages/cloutt/package.json /app/packages/cloutt/package.json
-COPY packages/codex/package.json /app/packages/codex/package.json
-COPY packages/cx-tools/package.json /app/packages/cx-tools/package.json
-COPY packages/discord/package.json /app/packages/discord/package.json
-COPY packages/schematic/package.json /app/packages/schematic/package.json
-COPY packages/scripts/package.json /app/packages/scripts/package.json
-COPY packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
-COPY packages/temporal-bun-sdk-example/package.json /app/packages/temporal-bun-sdk-example/package.json
-COPY services/golink/package.json /app/services/golink/package.json
-COPY services/jangar/package.json /app/services/jangar/package.json
-COPY services/memories/package.json /app/services/memories/package.json
-COPY services/jangar/tsconfig.json ./tsconfig.json
-RUN --mount=type=cache,target=/root/.cache/bun bun install --no-save --frozen-lockfile --ignore-scripts
+WORKDIR /app
+COPY json/ .
+RUN --mount=type=cache,target=/root/.cache/bun \
+  bun install --no-save --frozen-lockfile --ignore-scripts --filter @proompteng/jangar
 
 FROM jangar-deps-dev AS jangar-build
-COPY --from=codex-build /app/packages/codex/src /app/packages/codex/src
-COPY services/jangar/vite.config.ts /app/services/jangar/vite.config.ts
-COPY services/jangar/vitest.config.ts /app/services/jangar/vitest.config.ts
-COPY services/jangar/public /app/services/jangar/public
-COPY services/jangar/src /app/services/jangar/src
+WORKDIR /app
+COPY full/ .
+WORKDIR /app/services/jangar
 RUN bun run start:build
 
 FROM tools AS jangar-deps-prod
-WORKDIR /app/services/jangar
-COPY bun.lock /app/bun.lock
-COPY package.json /app/package.json
-COPY apps/docs/package.json /app/apps/docs/package.json
-COPY apps/froussard/package.json /app/apps/froussard/package.json
-COPY apps/kabina/package.json /app/apps/kabina/package.json
-COPY apps/kitty-krew/package.json /app/apps/kitty-krew/package.json
-COPY apps/nata/package.json /app/apps/nata/package.json
-COPY apps/proompteng/package.json /app/apps/proompteng/package.json
-COPY apps/reestr/package.json /app/apps/reestr/package.json
-COPY apps/reviseur/package.json /app/apps/reviseur/package.json
-COPY packages/atelier/package.json /app/packages/atelier/package.json
-COPY packages/backend/package.json /app/packages/backend/package.json
-COPY packages/bonjour/package.json /app/packages/bonjour/package.json
-COPY packages/cloutt/package.json /app/packages/cloutt/package.json
-COPY packages/codex/package.json /app/packages/codex/package.json
-COPY packages/cx-tools/package.json /app/packages/cx-tools/package.json
-COPY packages/discord/package.json /app/packages/discord/package.json
-COPY packages/schematic/package.json /app/packages/schematic/package.json
-COPY packages/scripts/package.json /app/packages/scripts/package.json
-COPY packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
-COPY packages/temporal-bun-sdk-example/package.json /app/packages/temporal-bun-sdk-example/package.json
-COPY services/golink/package.json /app/services/golink/package.json
-COPY services/jangar/package.json /app/services/jangar/package.json
-COPY services/memories/package.json /app/services/memories/package.json
-RUN --mount=type=cache,target=/root/.cache/bun bun install --no-save --production --frozen-lockfile --ignore-scripts
+WORKDIR /app
+COPY json/ .
+RUN --mount=type=cache,target=/root/.cache/bun \
+  bun install --no-save --production --frozen-lockfile --ignore-scripts --filter @proompteng/jangar
 
 FROM tools AS runtime
 
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
 
+WORKDIR /app
+COPY --from=jangar-deps-prod /app/node_modules ./node_modules
+
 WORKDIR /app/services/jangar
-COPY --from=jangar-deps-prod /app/services/jangar/node_modules ./node_modules
 COPY --from=jangar-build /app/services/jangar/.output ./.output
-COPY services/jangar/package.json ./package.json
+COPY --from=jangar-build /app/services/jangar/package.json ./package.json
 
 RUN mkdir -p /root/.codex
 RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json \
   install -m 600 /tmp/codex_auth.json /root/.codex/auth.json
-COPY services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
+COPY --from=jangar-build /app/services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
 
 # Start the compiled Nitro server produced by `bun --bun vite build`
 CMD ["bun", "run", ".output/server/index.mjs"]
+
