@@ -3,11 +3,14 @@ import { fileURLToPath } from 'node:url'
 import * as S from '@effect/schema/Schema'
 import type { CodexAppServerClient } from '@proompteng/codex'
 import { Effect, pipe } from 'effect'
-
+import * as Either from 'effect/Either'
 import { type ChatThreadStore, createRedisChatThreadStore } from './chat-thread-store'
+import { decodeToolEvent } from './chat-tool-event'
 import { ChatToolEventRenderer, chatToolEventRendererLive, type ToolRenderer } from './chat-tool-event-renderer'
 import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
 import { loadConfig } from './config'
+
+const TOOL_EVENT_DECODE_FAILED_TAG = '[jangar][tool-event][decode-failed]'
 
 const MessageSchema = S.Struct({
   role: S.String,
@@ -403,6 +406,7 @@ const toSseResponse = (
       let lastUsage: Record<string, unknown> | null = null
       let turnFinished = false
       let sawUpstreamError = false
+      let nextAnonymousToolId = 0
       const includeUsageChunk = includeUsage
 
       const interruptTurn = (turnId: string, threadId: string) => {
@@ -752,8 +756,24 @@ const toSseResponse = (
               }
 
               if (delta.type === 'tool') {
-                const deltaRecord = delta as Record<string, unknown>
-                const actions = toolRenderer.onToolEvent(deltaRecord)
+                const decoded = decodeToolEvent(delta, `tool-${nextAnonymousToolId++}`)
+                if (Either.isLeft(decoded)) {
+                  closeCommandFence()
+                  const raw = delta as Record<string, unknown>
+                  console.warn(TOOL_EVENT_DECODE_FAILED_TAG, {
+                    chatId: threadContext?.chatId,
+                    threadId: activeThreadId ?? threadContext?.threadId ?? undefined,
+                    turnNumber: threadContext?.turnNumber ?? undefined,
+                    error: decoded.left,
+                    rawKeys: typeof raw === 'object' && raw ? Object.keys(raw) : undefined,
+                    rawToolKind: typeof raw.toolKind === 'string' ? raw.toolKind : undefined,
+                    rawStatus: typeof raw.status === 'string' ? raw.status : undefined,
+                    rawTitle: typeof raw.title === 'string' ? raw.title : undefined,
+                  })
+                  continue
+                }
+
+                const actions = toolRenderer.onToolEvent(decoded.right)
                 for (const action of actions) {
                   if (action.type === 'openCommandFence') {
                     openCommandFence()

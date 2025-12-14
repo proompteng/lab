@@ -719,6 +719,50 @@ describe('chat completions handler', () => {
     ).toBe(true)
   })
 
+  it('logs tool event decode failures with a searchable tag', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield {
+            type: 'tool',
+            // Invalid types on purpose: should trigger schema decode failure.
+            toolKind: 123,
+            id: 456,
+            status: 'started',
+            title: 'bad tool',
+          } as unknown
+          yield { type: 'message', delta: 'ok' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 2 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    expect(response.status).toBe(200)
+    await response.text()
+
+    expect(warnSpy.mock.calls.some((call) => call[0] === '[jangar][tool-event][decode-failed]')).toBe(true)
+
+    warnSpy.mockRestore()
+  })
+
   it('does not insert separators between two commands', async () => {
     const commandA = 'bash -lc "echo first"'
     const commandB = 'bash -lc "echo second"'

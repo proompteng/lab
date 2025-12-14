@@ -1,12 +1,14 @@
 import { Context } from 'effect'
 
+import type { ToolEvent } from './chat-tool-event'
+
 export type ToolRenderAction =
   | { type: 'openCommandFence' }
   | { type: 'closeCommandFence' }
   | { type: 'emitContent'; content: string }
 
 export type ToolRenderer = {
-  onToolEvent: (event: Record<string, unknown>) => ToolRenderAction[]
+  onToolEvent: (event: ToolEvent) => ToolRenderAction[]
 }
 
 export type ChatToolEventRendererService = {
@@ -70,41 +72,34 @@ const createToolRenderer = (): ToolRenderer => {
   const toolStates = new Map<string, ToolState>()
   let nextToolIndex = 0
 
-  const getToolState = (event: Record<string, unknown>): ToolState => {
-    const toolId = typeof event.id === 'string' ? event.id : `tool-${nextToolIndex}`
+  const getToolState = (event: ToolEvent): ToolState => {
+    const toolId = event.id
     const existing = toolStates.get(toolId)
     if (existing) {
-      if (!existing.title && typeof event.title === 'string' && event.title.length > 0) {
-        existing.title = event.title
-      }
+      if (!existing.title && event.title) existing.title = event.title
       return existing
     }
 
-    const toolKind = typeof event.toolKind === 'string' && event.toolKind.length > 0 ? event.toolKind : 'tool'
     const toolState: ToolState = {
       id: toolId,
       index: nextToolIndex++,
-      toolKind,
-      title: typeof event.title === 'string' && event.title.length > 0 ? event.title : undefined,
+      toolKind: event.toolKind,
+      title: event.title,
     }
     toolStates.set(toolId, toolState)
     return toolState
   }
 
-  const formatToolArguments = (toolState: ToolState, event: Record<string, unknown>) => {
+  const formatToolArguments = (toolState: ToolState, event: ToolEvent) => {
     const payload: Record<string, unknown> = {
       tool: toolState.toolKind,
     }
 
     if (toolState.title) payload.title = toolState.title
-    const status = typeof event.status === 'string' ? event.status : undefined
+    const status = event.status
     if (status) payload.status = status
-    const detail = typeof event.detail === 'string' ? event.detail : undefined
-    if (typeof event.delta === 'string' && event.delta.length > 0) {
-      payload.output = event.delta
-    } else if (event.delta != null && typeof event.delta !== 'function') {
-      payload.output = String(event.delta)
-    }
+    const detail = event.detail
+    if (event.delta) payload.output = event.delta
 
     const isCommandLocationDetail = toolState.toolKind === 'command' && detail && status === 'started'
 
@@ -129,14 +124,14 @@ const createToolRenderer = (): ToolRenderer => {
   }
 
   return {
-    onToolEvent: (event: Record<string, unknown>) => {
+    onToolEvent: (event: ToolEvent) => {
       const toolState = getToolState(event)
       const actions: ToolRenderAction[] = []
       const argsPayload = formatToolArguments(toolState, event)
 
       if (toolState.toolKind === 'file') {
         actions.push({ type: 'closeCommandFence' })
-        const status = typeof event.status === 'string' ? event.status : undefined
+        const status = event.status
 
         // Skip the start event to avoid duplicated summaries like "1 change(s)1 change(s)".
         if (status === 'started') {
@@ -144,13 +139,7 @@ const createToolRenderer = (): ToolRenderer => {
           return actions
         }
 
-        const changes = Array.isArray((event.data as { changes?: unknown } | undefined)?.changes)
-          ? (event.data as { changes: unknown[] }).changes
-          : Array.isArray(event.changes as unknown)
-            ? (event.changes as unknown[])
-            : undefined
-
-        const content = renderFileChanges(changes) ?? formatToolContent(toolState, argsPayload)
+        const content = renderFileChanges(event.changes) ?? formatToolContent(toolState, argsPayload)
         if (!content) {
           toolState.lastStatus = status
           return actions
@@ -182,9 +171,9 @@ const createToolRenderer = (): ToolRenderer => {
 
       if (toolState.toolKind === 'command') {
         actions.push({ type: 'openCommandFence' })
-        const status = typeof event.status === 'string' ? event.status : undefined
+        const status = event.status
 
-        const eventTitle = typeof event.title === 'string' ? event.title : undefined
+        const eventTitle = event.title
         const isCommandInputDelta = eventTitle === 'command input'
 
         const aggregatedOutput = pickAggregatedOutput(event.data)
