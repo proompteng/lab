@@ -90,6 +90,25 @@ RUN set -eux; \
 ENV GRADLE_HOME=/opt/gradle/current
 ENV PATH="${GRADLE_HOME}/bin:${PATH}"
 
+# Make Java/Gradle discoverable even in login shells that overwrite PATH (e.g. VS Code terminal).
+RUN set -eux; \
+  ln -sf /opt/java/current/bin/java /usr/local/bin/java; \
+  if [ -x /opt/java/current/bin/javac ]; then ln -sf /opt/java/current/bin/javac /usr/local/bin/javac; fi; \
+  ln -sf /opt/gradle/current/bin/gradle /usr/local/bin/gradle; \
+  cat <<'PROFILE' > /etc/profile.d/jangar-java-gradle.sh
+export JAVA_HOME=/opt/java/current
+export GRADLE_HOME=/opt/gradle/current
+case ":$PATH:" in
+  *":/opt/java/current/bin:"*) ;;
+  *) PATH="/opt/java/current/bin:$PATH" ;;
+esac
+case ":$PATH:" in
+  *":/opt/gradle/current/bin:"*) ;;
+  *) PATH="/opt/gradle/current/bin:$PATH" ;;
+esac
+export PATH
+PROFILE
+
 # Lightweight GitHub CLI install (no apt repo)
 RUN set -eux; \
   ARCH="$(uname -m)"; \
@@ -280,4 +299,3 @@ COPY --from=jangar-build /app/services/jangar/scripts/codex-config-container.tom
 
 # Start the compiled Nitro server produced by `bun --bun vite build`
 CMD ["bun", "run", ".output/server/index.mjs"]
-
