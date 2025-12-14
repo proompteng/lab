@@ -89,6 +89,17 @@ const setupClient = () => {
   return { child, client }
 }
 
+const drainStream = async (stream: AsyncGenerator<unknown, unknown, void>) => {
+  const deltas: unknown[] = []
+  while (true) {
+    // eslint-disable-next-line no-await-in-loop
+    const next = await stream.next()
+    if (next.done) break
+    deltas.push(next.value)
+  }
+  return deltas
+}
+
 describe('CodexAppServerClient codex/event bridging', () => {
   beforeEach(() => {
     spawnMock.mockReset()
@@ -249,6 +260,131 @@ describe('CodexAppServerClient codex/event bridging', () => {
       title: 'echo hi',
       data: { aggregatedOutput: 'hello\\n', exitCode: 0, duration: '10ms' },
     })
+  })
+
+  it('emits tool deltas from only one source (legacy then v2)', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'codex/event/exec_command_begin',
+      params: {
+        id: 'turn-1',
+        msg: {
+          type: 'exec_command_begin',
+          call_id: 'call-1',
+          turn_id: 'turn-1',
+          command: ['bash', '-lc', 'echo hi'],
+          cwd: '/tmp',
+          parsed_cmd: [],
+          source: 'Agent',
+        },
+      },
+    })
+
+    // If v2 tool events also arrive for the same turn, they should be suppressed once legacy is selected.
+    writeLine(child, {
+      method: 'item/started',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        item: {
+          type: 'commandExecution',
+          id: 'item-1',
+          status: 'inProgress',
+          command: 'bash -lc echo hi',
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      },
+    })
+
+    writeLine(child, {
+      method: 'turn/completed',
+      params: { turn: { id: 'turn-1', status: 'completed', items: [] } },
+    })
+
+    const deltas = await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
+    expect(deltas).toEqual([
+      {
+        type: 'tool',
+        toolKind: 'command',
+        id: 'call-1',
+        status: 'started',
+        title: 'bash -lc echo hi',
+        detail: '/tmp',
+        data: { processId: undefined, source: 'Agent' },
+      },
+    ])
+  })
+
+  it('emits tool deltas from only one source (v2 then legacy)', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'item/started',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        item: {
+          type: 'commandExecution',
+          id: 'item-1',
+          status: 'inProgress',
+          command: 'bash -lc echo hi',
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      },
+    })
+
+    // Legacy tool events should be suppressed once v2 is selected.
+    writeLine(child, {
+      method: 'codex/event/exec_command_begin',
+      params: {
+        id: 'turn-1',
+        msg: {
+          type: 'exec_command_begin',
+          call_id: 'call-1',
+          turn_id: 'turn-1',
+          command: ['bash', '-lc', 'echo hi'],
+          cwd: '/tmp',
+          parsed_cmd: [],
+          source: 'Agent',
+        },
+      },
+    })
+
+    writeLine(child, {
+      method: 'turn/completed',
+      params: { turn: { id: 'turn-1', status: 'completed', items: [] } },
+    })
+
+    const deltas = await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
+    expect(deltas).toEqual([
+      {
+        type: 'tool',
+        toolKind: 'command',
+        id: 'item-1',
+        status: 'started',
+        title: 'bash -lc echo hi',
+        data: { aggregatedOutput: null, durationMs: null, exitCode: null, status: 'inProgress' },
+      },
+    ])
   })
 
   it('emits agent message deltas from only one source (legacy then v2)', async () => {
