@@ -23,7 +23,7 @@ fi
 
 SCHEMA_ARGS=("--schema-location" "default")
 if [[ -d "$SCHEMA_DIR" ]]; then
-  SCHEMA_ARGS+=("--schema-location" "file://${SCHEMA_DIR}")
+  SCHEMA_ARGS+=("--schema-location" "file://${SCHEMA_DIR}/{{.Group}}_{{.ResourceAPIVersion}}_{{.ResourceKind}}.json")
 fi
 
 kubeconform --strict --summary --ignore-missing-schemas \

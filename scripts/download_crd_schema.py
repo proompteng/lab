@@ -32,7 +32,8 @@ for version_entry in crd.get("spec", {}).get("versions", []):
             "definitions": schema.get("definitions", {}),
             "additionalProperties": schema.get("additionalProperties", True),
         }
-        out_path = Path(f"schemas/custom/{group}_{kind}_{version}.json" )
+        # kubeconform expects schemas named as: <group>_<version>_<kind>.json
+        out_path = Path(f"schemas/custom/{group}_{version}_{kind}.json")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(output))
         print(f"wrote {out_path}")

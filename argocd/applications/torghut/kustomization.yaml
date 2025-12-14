@@ -9,5 +9,6 @@ resources:
   - serviceaccount.yaml
   - role.yaml
   - rolebinding.yaml
+  - clickhouse
   - ws
   - ta
