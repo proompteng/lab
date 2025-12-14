@@ -1,0 +1,80 @@
+apiVersion: clickhouse.altinity.com/v1
+kind: ClickHouseInstallation
+metadata:
+  name: torghut-clickhouse
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-clickhouse
+    app.kubernetes.io/part-of: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  configuration:
+    zookeeper:
+      nodes:
+        - host: keeper-torghut-keeper
+          port: 2181
+    users:
+      default/password_sha256_hex:
+        valueFrom:
+          secretKeyRef:
+            name: torghut-clickhouse-auth
+            key: default_password_sha256_hex
+      default/networks/ip:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      torghut/password_sha256_hex:
+        valueFrom:
+          secretKeyRef:
+            name: torghut-clickhouse-auth
+            key: torghut_password_sha256_hex
+      torghut/profile: default
+      torghut/quota: default
+      torghut/networks/ip:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+    clusters:
+      - name: default
+        layout:
+          shardsCount: 1
+          replicasCount: 2
+        templates:
+          podTemplates:
+            - name: chi-default
+              spec:
+                nodeSelector:
+                  kubernetes.io/arch: arm64
+                affinity:
+                  podAntiAffinity:
+                    requiredDuringSchedulingIgnoredDuringExecution:
+                      - labelSelector:
+                          matchExpressions:
+                            - key: clickhouse.altinity.com/cluster
+                              operator: In
+                              values:
+                                - default
+                        topologyKey: kubernetes.io/hostname
+                containers:
+                  - name: clickhouse
+                    resources:
+                      requests:
+                        cpu: 1
+                        memory: 2Gi
+                      limits:
+                        cpu: 2
+                        memory: 4Gi
+          volumeClaimTemplates:
+            - name: chi-data
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 5Gi
+                storageClassName: longhorn
+  defaults:
+    templates:
+      podTemplate: chi-default
+      volumeClaimTemplate: chi-data
