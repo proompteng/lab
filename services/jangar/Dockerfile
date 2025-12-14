@@ -1,19 +1,33 @@
 # syntax=docker/dockerfile:1.6
 # Bun image for jangar worker + UI + Codex app-server
+#
+# NOTE: This Dockerfile is intended to be built from a Turbo-pruned context produced by:
+#   `bunx turbo prune --scope=@proompteng/jangar --docker --out-dir <dir>`
+#
+# Expected build context layout:
+# - `json/` contains the pruned `package.json` + workspace package.jsons + `bun.lock`
+# - `full/` contains the full pruned source tree
+# - `tsconfig.base.json` is copied into the context root by the build script
 ARG BUN_VERSION=1.3.4
 ARG OPENVSCODE_VERSION=1.105.1
 ARG GH_VERSION=2.65.0
 ARG KUBECTL_VERSION=1.34.3
 ARG DOCKER_CLI_VERSION=29.1.2
 ARG BUILDX_VERSION=0.30.1
+ARG TEMURIN25_JDK_TAG=jdk-25.0.1+8
+ARG TEMURIN25_JDK_VERSION=25.0.1_8
+ARG GRADLE_VERSION=9.2.1
 
-FROM oven/bun:${BUN_VERSION} AS base
+FROM oven/bun:${BUN_VERSION} AS tools
 ARG NODE24_VERSION=24.11.1
 ARG OPENVSCODE_VERSION
 ARG GH_VERSION
 ARG KUBECTL_VERSION
 ARG DOCKER_CLI_VERSION
 ARG BUILDX_VERSION
+ARG TEMURIN25_JDK_TAG
+ARG TEMURIN25_JDK_VERSION
+ARG GRADLE_VERSION
 WORKDIR /app
 
 ENV CODEX_CWD=/workspace/lab \
@@ -34,8 +48,66 @@ RUN --mount=type=cache,target=/var/cache/apt \
   git \
   gnupg \
   ripgrep \
-  tini; \
+  tini \
+  unzip; \
   rm -rf /var/lib/apt/lists/*
+
+# Install Java 25 (Temurin)
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) JDK_ARCH=x64 ;; \
+  arm64|aarch64) JDK_ARCH=aarch64 ;; \
+  *) echo "Unsupported arch for temurin jdk: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://github.com/adoptium/temurin25-binaries/releases/download/${TEMURIN25_JDK_TAG}/OpenJDK25U-jdk_${JDK_ARCH}_linux_hotspot_${TEMURIN25_JDK_VERSION}.tar.gz" \
+    -o /tmp/jdk.tgz; \
+  mkdir -p /opt/java; \
+  tar -xzf /tmp/jdk.tgz -C /opt/java; \
+  rm -f /tmp/jdk.tgz; \
+  jdk_dir="/opt/java/${TEMURIN25_JDK_TAG}"; \
+  if [ ! -d "$jdk_dir" ]; then \
+    jdk_dir="$(find /opt/java -maxdepth 1 -type d -name 'jdk-*' | head -n 1)"; \
+  fi; \
+  test -d "$jdk_dir"; \
+  ln -sfn "$jdk_dir" /opt/java/current
+
+ENV JAVA_HOME=/opt/java/current
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Install Gradle
+RUN set -eux; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+    -o /tmp/gradle.zip; \
+  mkdir -p /opt/gradle; \
+  unzip -q /tmp/gradle.zip -d /opt/gradle; \
+  rm -f /tmp/gradle.zip; \
+  test -d "/opt/gradle/gradle-${GRADLE_VERSION}"; \
+  ln -sfn "/opt/gradle/gradle-${GRADLE_VERSION}" /opt/gradle/current
+
+ENV GRADLE_HOME=/opt/gradle/current
+ENV PATH="${GRADLE_HOME}/bin:${PATH}"
+
+# Make Java/Gradle discoverable even in login shells that overwrite PATH (e.g. VS Code terminal).
+RUN set -eux; \
+  ln -sf /opt/java/current/bin/java /usr/local/bin/java; \
+  if [ -x /opt/java/current/bin/javac ]; then ln -sf /opt/java/current/bin/javac /usr/local/bin/javac; fi; \
+  ln -sf /opt/gradle/current/bin/gradle /usr/local/bin/gradle; \
+  cat <<'PROFILE' > /etc/profile.d/jangar-java-gradle.sh
+export JAVA_HOME=/opt/java/current
+export GRADLE_HOME=/opt/gradle/current
+case ":$PATH:" in
+  *":/opt/java/current/bin:"*) ;;
+  *) PATH="/opt/java/current/bin:$PATH" ;;
+esac
+case ":$PATH:" in
+  *":/opt/gradle/current/bin:"*) ;;
+  *) PATH="/opt/gradle/current/bin:$PATH" ;;
+esac
+export PATH
+PROFILE
 
 # Lightweight GitHub CLI install (no apt repo)
 RUN set -eux; \
@@ -80,7 +152,6 @@ RUN set -eux; \
   cd /tmp; \
   curl -fsSLO "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${K_ARCH}/kubectl"; \
   curl -fsSLO "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${K_ARCH}/kubectl.sha256"; \
-  # sanity check: ensure checksum file looks like a single SHA-256
   if ! grep -Eq '^[0-9a-f]{64}$' kubectl.sha256; then \
   echo "kubectl.sha256 has unexpected contents:" >&2; \
   cat kubectl.sha256 >&2; \
@@ -90,6 +161,13 @@ RUN set -eux; \
   install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl; \
   rm kubectl kubectl.sha256; \
   kubectl version --client --output=yaml
+
+# Make `k` available for kubectl (VS Code terminals often prefer `k`).
+RUN set -eux; \
+  ln -sf /usr/local/bin/kubectl /usr/local/bin/k; \
+  cat <<'PROFILE' > /etc/profile.d/jangar-kubectl.sh
+alias k=kubectl
+PROFILE
 
 # Install Docker CLI (client only; daemon runs in sidecar)
 RUN set -eux; \
@@ -107,7 +185,7 @@ RUN set -eux; \
   rm -rf /tmp/docker.tgz /tmp/docker; \
   docker --version
 
-# Install docker buildx plugin so BuildKit secrets and multi-arch builds work in CI/runtime
+# Install docker buildx
 RUN set -eux; \
   ARCH="${TARGETARCH:-$(uname -m)}"; \
   case "$ARCH" in \
@@ -123,45 +201,8 @@ RUN set -eux; \
   chmod +x /usr/lib/docker/cli-plugins/docker-buildx; \
   /usr/lib/docker/cli-plugins/docker-buildx version
 
-# Base tsconfig for workspace packages
-COPY tsconfig.base.json ./
-
-# Build codex dependency (file: workspace)
-COPY packages/codex ./packages/codex
-RUN --mount=type=cache,target=/root/.cache/bun \
-  cd packages/codex \
-  && bun add -d typescript@5.9.3 \
-  && bun install --frozen-lockfile \
-  && bun run build
-
-# Install jangar deps (with dev deps for UI build)
-WORKDIR /app/services/jangar
-COPY bun.lock ../bun.lock
-COPY services/jangar/package.json ./
-COPY services/jangar/tsconfig.json ./
-RUN mkdir -p /root/.codex
-RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json \
-  install -m 600 /tmp/codex_auth.json /root/.codex/auth.json
-COPY services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
-RUN --mount=type=cache,target=/root/.cache/bun bun install --frozen-lockfile
-
-# Copy source after deps to maximize layer cache hits
-COPY services/jangar/vite.config.ts ./vite.config.ts
-COPY services/jangar/vitest.config.ts ./vitest.config.ts
-COPY services/jangar/public ./public
-COPY services/jangar/src ./src
-
-# Build TanStack Start UI
-RUN bun run start:build
-
-# Prune to production deps (retain codex file dep)
-RUN rm -rf node_modules \
-  && bun install --frozen-lockfile --production \
-  && mkdir -p node_modules/@proompteng \
-  && ln -sf ../../packages/codex node_modules/@proompteng/codex
-
 # Install Codex CLI with Bun so the app-server binary is available at runtime
-RUN bun add -g @openai/codex@latest
+RUN --mount=type=cache,target=/root/.cache/bun bun add -g @openai/codex@latest
 
 # Install openvscode-server (upstream VS Code server build from gitpod-io)
 RUN set -eux; \
@@ -176,6 +217,9 @@ RUN set -eux; \
   tar -xzf /tmp/ovscode.tar.gz -C /opt/openvscode-server --strip-components=1; \
   rm /tmp/ovscode.tar.gz; \
   ln -sf /opt/openvscode-server/bin/openvscode-server /usr/local/bin/openvscode-server
+
+# Base tsconfig for workspace packages
+COPY tsconfig.base.json ./
 
 # Authenticate gh during build (requires BuildKit secret github_token with workflow scope)
 RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
@@ -216,5 +260,49 @@ exec "$@"
 ENTRY
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
+
+FROM tools AS codex-build
+WORKDIR /app
+COPY json/ .
+RUN --mount=type=cache,target=/root/.cache/bun \
+  bun install --no-save --frozen-lockfile --ignore-scripts --filter @proompteng/codex
+COPY full/ .
+RUN bun --cwd=packages/codex run build
+
+FROM tools AS jangar-deps-dev
+WORKDIR /app
+COPY json/ .
+RUN --mount=type=cache,target=/root/.cache/bun \
+  bun install --no-save --frozen-lockfile --ignore-scripts --filter @proompteng/jangar
+
+FROM jangar-deps-dev AS jangar-build
+WORKDIR /app
+COPY full/ .
+WORKDIR /app/services/jangar
+RUN bun run start:build
+
+FROM tools AS jangar-deps-prod
+WORKDIR /app
+COPY json/ .
+RUN --mount=type=cache,target=/root/.cache/bun \
+  bun install --no-save --production --frozen-lockfile --ignore-scripts --filter @proompteng/jangar
+
+FROM tools AS runtime
+
+COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
+COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
+
+WORKDIR /app
+COPY --from=jangar-deps-prod /app/node_modules ./node_modules
+
+WORKDIR /app/services/jangar
+COPY --from=jangar-build /app/services/jangar/.output ./.output
+COPY --from=jangar-build /app/services/jangar/package.json ./package.json
+
+RUN mkdir -p /root/.codex
+RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json \
+  install -m 600 /tmp/codex_auth.json /root/.codex/auth.json
+COPY --from=jangar-build /app/services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
+
 # Start the compiled Nitro server produced by `bun --bun vite build`
 CMD ["bun", "run", ".output/server/index.mjs"]
