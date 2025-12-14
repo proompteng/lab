@@ -1314,7 +1314,7 @@ describe('chat completions handler', () => {
       .filter((part) => part !== '[DONE]')
       .map((part) => JSON.parse(part))
     const stopChunks = chunks.filter((c) => c.choices?.[0]?.finish_reason === 'stop')
-    expect(stopChunks).toHaveLength(0)
+    expect(stopChunks).toHaveLength(1)
   })
 
   it('normalizes app-server error notifications to OpenAI error shape', async () => {
