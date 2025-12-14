@@ -11,6 +11,8 @@ export type DockerBuildOptions = {
   cwd?: string
   platforms?: string[]
   codexAuthPath?: string
+  cacheRef?: string
+  useBuildx?: boolean
 }
 
 export type DockerBuildResult = DockerBuildOptions & {
@@ -45,12 +47,27 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     platforms: options.platforms && options.platforms.length > 0 ? options.platforms : undefined,
     buildArgs: Object.keys(options.buildArgs ?? {}).length ? options.buildArgs : undefined,
     noCache: noCache || undefined,
+    cacheRef: options.cacheRef,
+    useBuildx: options.useBuildx || undefined,
   })
 
-  if (options.platforms && options.platforms.length > 0) {
+  let shouldUseBuildx =
+    options.useBuildx === true || Boolean(options.cacheRef) || (options.platforms && options.platforms.length > 0)
+  if (shouldUseBuildx && !isDockerBuildxAvailable()) {
+    console.warn('docker buildx is unavailable; falling back to docker build + docker push (no remote cache).')
+    shouldUseBuildx = false
+  }
+
+  if (shouldUseBuildx) {
     const args = ['buildx', 'build', '--push', '-f', options.dockerfile, '-t', image]
     if (noCache) args.push('--no-cache')
-    args.push('--platform', options.platforms.join(','))
+    if (options.platforms && options.platforms.length > 0) {
+      args.push('--platform', options.platforms.join(','))
+    }
+    if (options.cacheRef) {
+      args.push('--cache-from', `type=registry,ref=${options.cacheRef}`)
+      args.push('--cache-to', `type=registry,ref=${options.cacheRef},mode=max`)
+    }
     if (options.codexAuthPath) {
       args.push('--secret', `id=codexauth,src=${options.codexAuthPath}`)
     }
@@ -80,6 +97,11 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
   }
 
   return { ...options, image }
+}
+
+const isDockerBuildxAvailable = (): boolean => {
+  const probe = spawnSyncImpl(['docker', 'buildx', 'version'], { cwd: repoRoot })
+  return probe.exitCode === 0
 }
 
 export const inspectImageDigest = (image: string): string => {

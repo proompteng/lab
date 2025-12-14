@@ -16,6 +16,7 @@ export type BuildImageOptions = {
   version?: string
   commit?: string
   codexAuthPath?: string
+  cacheRef?: string
 }
 
 const ensureGhToken = (): string | undefined => {
@@ -59,6 +60,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const commit = options.commit ?? process.env.JANGAR_COMMIT ?? execGit(['rev-parse', 'HEAD'])
   const codexAuthPath =
     options.codexAuthPath ?? process.env.CODEX_AUTH_PATH ?? resolve(process.env.HOME ?? '', '.codex/auth.json')
+  const cacheRef = options.cacheRef ?? process.env.JANGAR_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
 
   // Populate GH_TOKEN from local gh CLI if the env var is missing so docker --secret succeeds.
   ensureGhToken()
@@ -95,6 +97,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
       dockerfile,
       buildArgs,
       codexAuthPath,
+      cacheRef,
     })
 
     return { ...result, version, commit }

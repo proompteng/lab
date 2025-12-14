@@ -105,28 +105,6 @@ const resolveHelmBinary = (): { binary: string; tempDir?: string; shim?: string 
   return download
 }
 
-const resolveBuildxVersion = async (): Promise<string> => {
-  const envVersion = process.env.BUILDX_VERSION?.trim()
-  if (envVersion) return envVersion
-
-  console.log('Fetching latest docker/buildx release information...')
-  const response = await fetch('https://api.github.com/repos/docker/buildx/releases/latest', {
-    headers: { 'User-Agent': 'proompteng-lab-deploy' },
-  })
-  if (!response.ok) {
-    fatal(`Unable to fetch docker/buildx release metadata: ${response.status} ${response.statusText}`)
-  }
-
-  const payload = (await response.json()) as { tag_name?: string }
-  const tag = payload?.tag_name?.trim()
-  if (!tag) {
-    fatal('docker/buildx release metadata did not include a tag_name entry')
-  }
-
-  process.env.BUILDX_VERSION = tag
-  return tag
-}
-
 const writeHelmShim = (): { helmDir: string; helmBinary: string; cleanup: () => void } => {
   const helmResolved = resolveHelmBinary()
   if (helmResolved.shim === 'mise') {
@@ -221,9 +199,6 @@ export const main = async (options: DeployOptions = {}) => {
   const tag = options.tag ?? process.env.JANGAR_IMAGE_TAG ?? defaultTag
   const imageName = `${registry}/${repository}`
   const image = `${registry}/${repository}:${tag}`
-
-  const buildxVersion = await resolveBuildxVersion()
-  console.log(`Using docker/buildx ${buildxVersion}`)
 
   await buildImage({ registry, repository, tag })
 

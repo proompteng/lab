@@ -6,14 +6,20 @@ ARG GH_VERSION=2.65.0
 ARG KUBECTL_VERSION=1.34.3
 ARG DOCKER_CLI_VERSION=29.1.2
 ARG BUILDX_VERSION=0.30.1
+ARG TEMURIN25_JDK_TAG=jdk-25.0.1+8
+ARG TEMURIN25_JDK_VERSION=25.0.1_8
+ARG GRADLE_VERSION=9.2.1
 
-FROM oven/bun:${BUN_VERSION} AS base
+FROM oven/bun:${BUN_VERSION} AS tools
 ARG NODE24_VERSION=24.11.1
 ARG OPENVSCODE_VERSION
 ARG GH_VERSION
 ARG KUBECTL_VERSION
 ARG DOCKER_CLI_VERSION
 ARG BUILDX_VERSION
+ARG TEMURIN25_JDK_TAG
+ARG TEMURIN25_JDK_VERSION
+ARG GRADLE_VERSION
 WORKDIR /app
 
 ENV CODEX_CWD=/workspace/lab \
@@ -34,8 +40,47 @@ RUN --mount=type=cache,target=/var/cache/apt \
   git \
   gnupg \
   ripgrep \
-  tini; \
+  tini \
+  unzip; \
   rm -rf /var/lib/apt/lists/*
+
+# Install Java 25 (Temurin)
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) JDK_ARCH=x64 ;; \
+  arm64|aarch64) JDK_ARCH=aarch64 ;; \
+  *) echo "Unsupported arch for temurin jdk: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://github.com/adoptium/temurin25-binaries/releases/download/${TEMURIN25_JDK_TAG}/OpenJDK25U-jdk_${JDK_ARCH}_linux_hotspot_${TEMURIN25_JDK_VERSION}.tar.gz" \
+    -o /tmp/jdk.tgz; \
+  mkdir -p /opt/java; \
+  tar -xzf /tmp/jdk.tgz -C /opt/java; \
+  rm -f /tmp/jdk.tgz; \
+  jdk_dir="/opt/java/${TEMURIN25_JDK_TAG}"; \
+  if [ ! -d "$jdk_dir" ]; then \
+    jdk_dir="$(find /opt/java -maxdepth 1 -type d -name 'jdk-*' | head -n 1)"; \
+  fi; \
+  test -d "$jdk_dir"; \
+  ln -sfn "$jdk_dir" /opt/java/current
+
+ENV JAVA_HOME=/opt/java/current
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Install Gradle
+RUN set -eux; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+    -o /tmp/gradle.zip; \
+  mkdir -p /opt/gradle; \
+  unzip -q /tmp/gradle.zip -d /opt/gradle; \
+  rm -f /tmp/gradle.zip; \
+  test -d "/opt/gradle/gradle-${GRADLE_VERSION}"; \
+  ln -sfn "/opt/gradle/gradle-${GRADLE_VERSION}" /opt/gradle/current
+
+ENV GRADLE_HOME=/opt/gradle/current
+ENV PATH="${GRADLE_HOME}/bin:${PATH}"
 
 # Lightweight GitHub CLI install (no apt repo)
 RUN set -eux; \
@@ -123,43 +168,6 @@ RUN set -eux; \
   chmod +x /usr/lib/docker/cli-plugins/docker-buildx; \
   /usr/lib/docker/cli-plugins/docker-buildx version
 
-# Base tsconfig for workspace packages
-COPY tsconfig.base.json ./
-
-# Build codex dependency (file: workspace)
-COPY packages/codex ./packages/codex
-RUN --mount=type=cache,target=/root/.cache/bun \
-  cd packages/codex \
-  && bun add -d typescript@5.9.3 \
-  && bun install --frozen-lockfile \
-  && bun run build
-
-# Install jangar deps (with dev deps for UI build)
-WORKDIR /app/services/jangar
-COPY bun.lock ../bun.lock
-COPY services/jangar/package.json ./
-COPY services/jangar/tsconfig.json ./
-RUN mkdir -p /root/.codex
-RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json \
-  install -m 600 /tmp/codex_auth.json /root/.codex/auth.json
-COPY services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
-RUN --mount=type=cache,target=/root/.cache/bun bun install --frozen-lockfile
-
-# Copy source after deps to maximize layer cache hits
-COPY services/jangar/vite.config.ts ./vite.config.ts
-COPY services/jangar/vitest.config.ts ./vitest.config.ts
-COPY services/jangar/public ./public
-COPY services/jangar/src ./src
-
-# Build TanStack Start UI
-RUN bun run start:build
-
-# Prune to production deps (retain codex file dep)
-RUN rm -rf node_modules \
-  && bun install --frozen-lockfile --production \
-  && mkdir -p node_modules/@proompteng \
-  && ln -sf ../../packages/codex node_modules/@proompteng/codex
-
 # Install Codex CLI with Bun so the app-server binary is available at runtime
 RUN bun add -g @openai/codex@latest
 
@@ -176,6 +184,9 @@ RUN set -eux; \
   tar -xzf /tmp/ovscode.tar.gz -C /opt/openvscode-server --strip-components=1; \
   rm /tmp/ovscode.tar.gz; \
   ln -sf /opt/openvscode-server/bin/openvscode-server /usr/local/bin/openvscode-server
+
+# Base tsconfig for workspace packages
+COPY tsconfig.base.json ./
 
 # Authenticate gh during build (requires BuildKit secret github_token with workflow scope)
 RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
@@ -216,5 +227,56 @@ exec "$@"
 ENTRY
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
+
+FROM tools AS codex-build
+
+# Build codex dependency (workspace package)
+WORKDIR /app
+COPY package.json ./package.json
+COPY packages/codex/package.json ./packages/codex/package.json
+COPY packages/codex/tsconfig.json ./packages/codex/tsconfig.json
+COPY packages/codex/src ./packages/codex/src
+RUN --mount=type=cache,target=/root/.cache/bun \
+  bun install --no-save --ignore-scripts --filter @proompteng/codex \
+  && bun --cwd=packages/codex run build
+
+FROM tools AS jangar-deps-dev
+WORKDIR /app/services/jangar
+COPY package.json /app/package.json
+COPY packages/codex/package.json /app/packages/codex/package.json
+COPY services/jangar/package.json ./package.json
+COPY services/jangar/tsconfig.json ./tsconfig.json
+RUN --mount=type=cache,target=/root/.cache/bun bun install --no-save --ignore-scripts
+
+FROM jangar-deps-dev AS jangar-build
+COPY --from=codex-build /app/packages/codex/src /app/packages/codex/src
+COPY services/jangar/vite.config.ts /app/services/jangar/vite.config.ts
+COPY services/jangar/vitest.config.ts /app/services/jangar/vitest.config.ts
+COPY services/jangar/public /app/services/jangar/public
+COPY services/jangar/src /app/services/jangar/src
+RUN bun run start:build
+
+FROM tools AS jangar-deps-prod
+WORKDIR /app/services/jangar
+COPY package.json /app/package.json
+COPY packages/codex/package.json /app/packages/codex/package.json
+COPY services/jangar/package.json ./package.json
+RUN --mount=type=cache,target=/root/.cache/bun bun install --no-save --production --ignore-scripts
+
+FROM tools AS runtime
+
+COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
+COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
+
+WORKDIR /app/services/jangar
+COPY --from=jangar-deps-prod /app/services/jangar/node_modules ./node_modules
+COPY --from=jangar-build /app/services/jangar/.output ./.output
+COPY services/jangar/package.json ./package.json
+
+RUN mkdir -p /root/.codex
+RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json \
+  install -m 600 /tmp/codex_auth.json /root/.codex/auth.json
+COPY services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
+
 # Start the compiled Nitro server produced by `bun --bun vite build`
 CMD ["bun", "run", ".output/server/index.mjs"]
