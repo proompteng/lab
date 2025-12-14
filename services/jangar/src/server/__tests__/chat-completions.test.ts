@@ -1,9 +1,11 @@
 import type { CodexAppServerClient } from '@proompteng/codex'
-import { Effect } from 'effect'
+import { Effect, pipe } from 'effect'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { chatCompletionsHandler } from '~/routes/openai/v1/chat/completions'
-import { resetCodexClient, setCodexClientFactory, setThreadStore } from '~/server/chat'
-import type { ChatThreadStore } from '~/server/chat-thread-store'
+import { handleChatCompletionEffect, resetCodexClient, setCodexClientFactory } from '~/server/chat'
+import { ChatCompletionEncoder, chatCompletionEncoderLive } from '~/server/chat-completion-encoder'
+import { ChatToolEventRenderer, chatToolEventRendererLive } from '~/server/chat-tool-event-renderer'
+import { OpenWebUiThreadState, type OpenWebUiThreadStateService } from '~/server/openwebui-thread-state'
 
 describe('chat completions handler', () => {
   const previousEnv: Partial<Record<'JANGAR_MODELS' | 'JANGAR_DEFAULT_MODEL', string | undefined>> = {}
@@ -32,7 +34,6 @@ describe('chat completions handler', () => {
   afterEach(() => {
     vi.clearAllMocks()
     resetCodexClient()
-    setThreadStore(null)
 
     if (previousEnv.JANGAR_MODELS === undefined) {
       delete process.env.JANGAR_MODELS
@@ -276,16 +277,12 @@ describe('chat completions handler', () => {
   })
 
   it('retries on stale thread ids by clearing redis mapping', async () => {
-    const threadStore: ChatThreadStore = {
-      getThread: vi.fn(() => Effect.succeed('stale-thread')),
-      setThread: vi.fn(() => Effect.succeed(undefined)),
+    const threadState: OpenWebUiThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed('stale-thread')),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
       nextTurn: vi.fn(() => Effect.succeed(1)),
-      clearThread: vi.fn(() => Effect.succeed(undefined)),
-      clearAll: vi.fn(() => Effect.succeed(undefined)),
-      shutdown: vi.fn(() => Effect.succeed(undefined)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
     }
-
-    setThreadStore(threadStore)
 
     const mockClient = {
       runTurnStream: vi.fn(async (_prompt: string, opts?: { threadId?: string }) => {
@@ -332,13 +329,20 @@ describe('chat completions handler', () => {
       }),
     })
 
-    const response = await chatCompletionsHandler(request)
+    const response = await Effect.runPromise(
+      pipe(
+        handleChatCompletionEffect(request),
+        Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+        Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+        Effect.provideService(OpenWebUiThreadState, threadState),
+      ),
+    )
     const text = await response.text()
 
     expect(text).toContain('hello after retry')
     expect(mockClient.runTurnStream).toHaveBeenCalledTimes(2)
-    expect(threadStore.clearThread).toHaveBeenCalledWith('chat-1')
-    expect(threadStore.setThread).toHaveBeenLastCalledWith('chat-1', 'fresh-thread')
+    expect(threadState.clearChat).toHaveBeenCalledWith('chat-1')
+    expect(threadState.setThreadId).toHaveBeenLastCalledWith('chat-1', 'fresh-thread')
   })
 
   it('emits tool calls immediately; command output is code fenced with separation', async () => {

@@ -2,7 +2,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as S from '@effect/schema/Schema'
 import type { CodexAppServerClient } from '@proompteng/codex'
-import { Effect, pipe } from 'effect'
+import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import {
   ChatCompletionEncoder,
@@ -11,10 +11,15 @@ import {
   normalizeStreamError,
 } from './chat-completion-encoder'
 import { safeJsonStringify, stripTerminalControl } from './chat-text'
-import { type ChatThreadStore, createRedisChatThreadStore } from './chat-thread-store'
 import { ChatToolEventRenderer, chatToolEventRendererLive, type ToolRenderer } from './chat-tool-event-renderer'
 import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
 import { loadConfig } from './config'
+import {
+  OpenWebUiThreadState,
+  OpenWebUiThreadStateLive,
+  type OpenWebUiThreadStateService,
+  OpenWebUiThreadStateUnavailableError,
+} from './openwebui-thread-state'
 
 const MessageSchema = S.Struct({
   role: S.String,
@@ -42,42 +47,6 @@ class RequestError extends Error {
     super(message)
     this.status = status
     this.code = code
-  }
-}
-
-let defaultThreadStore: ChatThreadStore | null = null
-let customThreadStore: ChatThreadStore | null = null
-
-const getThreadStore = () => {
-  if (customThreadStore) return customThreadStore
-  if (!defaultThreadStore) {
-    defaultThreadStore = createRedisChatThreadStore()
-  }
-  return defaultThreadStore
-}
-
-export const setThreadStore = (store: ChatThreadStore | null) => {
-  customThreadStore = store
-}
-
-export const resetThreadStore = () => {
-  customThreadStore = null
-  if (defaultThreadStore) {
-    const store = defaultThreadStore
-    void pipe(
-      store.clearAll(),
-      Effect.catchAll((error) => {
-        console.warn('[chat] failed to clear redis keys during reset', { error: String(error) })
-        return Effect.succeed(undefined)
-      }),
-      Effect.flatMap(() => store.shutdown()),
-      Effect.catchAll((error) => {
-        console.warn('[chat] failed to close redis client during reset', { error: String(error) })
-        return Effect.succeed(undefined)
-      }),
-      Effect.runPromise,
-    )
-    defaultThreadStore = null
   }
 }
 
@@ -190,7 +159,7 @@ const resolveCodexCwd = () => {
 type ThreadContext = {
   chatId: string
   threadId: string | null
-  store: ChatThreadStore
+  threadState: OpenWebUiThreadStateService
   turnNumber: number | null
 }
 
@@ -288,7 +257,10 @@ const toSseResponse = (
       let heartbeatTimer: ReturnType<typeof setInterval> | null = null
       const ensureTurnNumber = async () => {
         if (!threadContext || threadContext.turnNumber != null) return
-        threadContext.turnNumber = await pipe(threadContext.store.nextTurn(threadContext.chatId), Effect.runPromise)
+        threadContext.turnNumber = await pipe(
+          threadContext.threadState.nextTurn(threadContext.chatId),
+          Effect.runPromise,
+        )
       }
 
       const enqueueFrames = (frames: Record<string, unknown>[]) => {
@@ -375,7 +347,7 @@ const toSseResponse = (
         const clearStaleThread = async () => {
           if (!threadContext) return
           try {
-            await pipe(threadContext.store.clearThread(threadContext.chatId), Effect.runPromise)
+            await pipe(threadContext.threadState.clearChat(threadContext.chatId), Effect.runPromise)
           } catch (error) {
             console.warn('[chat] failed to clear stale redis thread', {
               chatId: threadContext.chatId,
@@ -416,9 +388,9 @@ const toSseResponse = (
             return
           }
 
-          if (threadContext?.chatId && threadContext.store) {
+          if (threadContext?.chatId) {
             try {
-              await pipe(threadContext.store.setThread(threadContext.chatId, threadId), Effect.runPromise)
+              await pipe(threadContext.threadState.setThreadId(threadContext.chatId, threadId), Effect.runPromise)
               await ensureTurnNumber()
               session.setThreadMeta({ turnNumber: threadContext.turnNumber, chatId: threadContext.chatId })
               console.info('[chat] thread stored', {
@@ -531,87 +503,101 @@ const toSseResponse = (
   })
 }
 
-export const handleChatCompletion = async (request: Request): Promise<Response> => {
-  try {
-    const parsed = await parseRequest(request)
-    const includeUsage = parsed.stream_options?.include_usage === true
-    const chatIdHeader = request.headers.get('x-openwebui-chat-id')
-    const chatId = typeof chatIdHeader === 'string' && chatIdHeader.trim().length > 0 ? chatIdHeader.trim() : null
-    let threadStore: ChatThreadStore | null = null
-    let threadId: string | null = null
+const parseRequestEffect = (request: Request) =>
+  Effect.tryPromise({
+    try: () => parseRequest(request),
+    catch: (error) =>
+      error instanceof RequestError ? error : new RequestError(500, 'internal_error', 'Unknown error'),
+  })
 
-    if (chatId) {
-      try {
-        threadStore = getThreadStore()
-      } catch (error) {
-        throw new RequestError(
-          500,
-          'thread_store_unavailable',
-          error instanceof Error ? error.message : 'Chat thread store is not configured',
-        )
-      }
-    }
+export const handleChatCompletionEffect = (request: Request) =>
+  pipe(
+    parseRequestEffect(request),
+    Effect.flatMap((parsed) =>
+      Effect.gen(function* () {
+        const includeUsage = parsed.stream_options?.include_usage === true
+        const chatIdHeader = request.headers.get('x-openwebui-chat-id')
+        const chatId = typeof chatIdHeader === 'string' && chatIdHeader.trim().length > 0 ? chatIdHeader.trim() : null
 
-    if (chatId && threadStore) {
-      try {
-        threadId = await pipe(threadStore.getThread(chatId), Effect.runPromise)
-        console.info('[chat] chat id received', { chatId, threadId })
-      } catch (error) {
-        throw new RequestError(
-          500,
-          'thread_lookup_failed',
-          error instanceof Error ? error.message : 'Unable to read chat thread state',
-        )
-      }
-    }
+        const { config, client, toolRenderer, encoder } = yield* Effect.all({
+          config: loadConfig,
+          client: getCodexClient(),
+          toolRenderer: ChatToolEventRenderer,
+          encoder: ChatCompletionEncoder,
+        })
 
-    const threadContext: ThreadContext | null =
-      chatId && threadStore
-        ? {
+        let threadContext: ThreadContext | null = null
+        if (chatId) {
+          const threadState = yield* OpenWebUiThreadState
+          const threadId = yield* pipe(
+            threadState.getThreadId(chatId),
+            Effect.catchAll((error) => {
+              if (error instanceof OpenWebUiThreadStateUnavailableError) {
+                return Effect.fail(new RequestError(500, 'thread_store_unavailable', error.message))
+              }
+              return Effect.fail(
+                new RequestError(
+                  500,
+                  'thread_lookup_failed',
+                  error instanceof Error ? error.message : 'Unable to read chat thread state',
+                ),
+              )
+            }),
+          )
+
+          console.info('[chat] chat id received', { chatId, threadId })
+          threadContext = {
             chatId,
             threadId,
-            store: threadStore,
+            threadState,
             turnNumber: null,
           }
-        : null
+        }
 
-    const { config, client, toolRenderer, encoder } = await pipe(
-      Effect.all({
-        config: loadConfig,
-        client: getCodexClient(),
-        toolRenderer: ChatToolEventRenderer,
-        encoder: ChatCompletionEncoder,
+        const model = parsed.model ?? config.defaultModel
+        if (!config.models.includes(model)) {
+          return yield* Effect.fail(
+            new RequestError(400, 'model_not_found', `Unknown model '${model}'. See /openai/v1/models.`),
+          )
+        }
+
+        const prompt = buildPrompt(parsed.messages)
+        return toSseResponse(
+          client,
+          prompt,
+          model,
+          includeUsage,
+          toolRenderer.create(),
+          encoder,
+          threadContext,
+          request.signal,
+        )
       }),
-      Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
-      Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
-      Effect.runPromise,
-    )
-
-    const model = parsed.model ?? config.defaultModel
-    if (!config.models.includes(model)) {
-      throw new RequestError(400, 'model_not_found', `Unknown model '${model}'. See /openai/v1/models.`)
-    }
-
-    const prompt = buildPrompt(parsed.messages)
-    return toSseResponse(
-      client,
-      prompt,
-      model,
-      includeUsage,
-      toolRenderer.create(),
-      encoder,
-      threadContext,
-      request.signal,
-    )
-  } catch (error) {
-    if (error instanceof RequestError) {
-      return sseError(
-        { error: { message: error.message, type: 'invalid_request_error', code: error.code } },
-        error.status,
+    ),
+    Effect.catchAll((error) => {
+      if (error instanceof RequestError) {
+        return Effect.succeed(
+          sseError(
+            { error: { message: error.message, type: 'invalid_request_error', code: error.code } },
+            error.status,
+          ),
+        )
+      }
+      return Effect.succeed(
+        sseError({ error: { message: 'Unknown error', type: 'internal', code: 'internal_error' } }, 500),
       )
-    }
-    return sseError({ error: { message: 'Unknown error', type: 'internal', code: 'internal_error' } }, 500)
-  }
-}
+    }),
+  )
+
+const handlerRuntime = ManagedRuntime.make(
+  Layer.mergeAll(
+    OpenWebUiThreadStateLive,
+    Layer.succeed(ChatToolEventRenderer, chatToolEventRendererLive),
+    Layer.succeed(ChatCompletionEncoder, chatCompletionEncoderLive),
+  ),
+)
+
+export const handleChatCompletion = (request: Request): Promise<Response> =>
+  handlerRuntime.runPromise(handleChatCompletionEffect(request))
 
 export { setCodexClientFactory, resetCodexClient }
