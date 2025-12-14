@@ -652,19 +652,38 @@ export class CodexAppServerClient {
 
     const decodeMaybeBase64Text = (raw: string): string => {
       // Some app-server surfaces stream bytes as base64 because they may not be valid UTF-8.
-      // Only decode when we can round-trip and the decoded text looks like human output (whitespace present).
-      if (raw.length === 0) return raw
-      if (!raw.includes('=')) return raw
-      if (raw.length % 4 !== 0) return raw
+      // Only decode when we can round-trip and the decoded text looks like human output.
+      if (raw.length < 8) return raw
       if (!/^[A-Za-z0-9+/]+={0,2}$/.test(raw)) return raw
+      // Base64 without padding is valid; reject only impossible lengths.
+      if (raw.length % 4 === 1) return raw
 
       try {
-        const buf = Buffer.from(raw, 'base64')
+        const padded = raw.length % 4 === 0 ? raw : `${raw}${'='.repeat(4 - (raw.length % 4))}`
+        const buf = Buffer.from(padded, 'base64')
         const stripPad = (value: string) => value.replace(/=+$/g, '')
         if (stripPad(buf.toString('base64')) !== stripPad(raw)) return raw
 
         const decoded = buf.toString('utf8')
-        if (!/[\r\n\t ]/.test(decoded)) return raw
+        if (decoded.length === 0) return raw
+        if (decoded.includes('\uFFFD')) return raw
+
+        let printable = 0
+        let nonWhitespace = 0
+        for (let i = 0; i < decoded.length; i += 1) {
+          const code = decoded.charCodeAt(i)
+          if (code === 9 || code === 10 || code === 13) {
+            printable += 1
+            continue
+          }
+          if (code >= 32 && code !== 127) {
+            printable += 1
+            if (code !== 32) nonWhitespace += 1
+          }
+        }
+
+        if (nonWhitespace === 0) return raw
+        if (printable / decoded.length < 0.9) return raw
         return decoded
       } catch {
         return raw

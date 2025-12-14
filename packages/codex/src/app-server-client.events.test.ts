@@ -314,6 +314,58 @@ describe('CodexAppServerClient codex/event bridging', () => {
     })
   })
 
+  it('decodes unpadded base64 exec_command_output_delta chunks', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'codex/event/exec_command_begin',
+      params: {
+        id: 'turn-1',
+        msg: {
+          type: 'exec_command_begin',
+          call_id: 'call-1',
+          turn_id: 'turn-1',
+          command: ['echo', 'hi'],
+          cwd: '/tmp',
+          parsed_cmd: [],
+          source: 'Agent',
+        },
+      },
+    })
+
+    await stream.next()
+
+    // "UPDATED\\r\\n" encoded without padding.
+    writeLine(child, {
+      method: 'codex/event/exec_command_output_delta',
+      params: {
+        msg: {
+          type: 'exec_command_output_delta',
+          call_id: 'call-1',
+          stream: 'stdout',
+          chunk: 'VVBEQVRFRA0K',
+        },
+      },
+    })
+
+    const output = await stream.next()
+    expect(output.value).toEqual({
+      type: 'tool',
+      toolKind: 'command',
+      id: 'call-1',
+      status: 'delta',
+      title: 'command output',
+      detail: 'UPDATED\r\n',
+    })
+  })
+
   it('decodes base64 item/commandExecution/outputDelta deltas', async () => {
     const { child, client } = setupClient()
     await respondToInitialize(child)
