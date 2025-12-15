@@ -29,7 +29,11 @@ export const patchSymbolHandler = async (symbol: string, request: Request) => {
   if (!payload || typeof payload !== 'object') return jsonResponse({ error: 'invalid JSON body' }, 400)
   const enabled = (payload as Record<string, unknown>).enabled
   if (enabled !== true && enabled !== false) return jsonResponse({ error: 'enabled must be boolean' }, 400)
+  const assetClass = (payload as Record<string, unknown>).assetClass
+  if (assetClass !== undefined && assetClass !== 'equity' && assetClass !== 'crypto') {
+    return jsonResponse({ error: 'assetClass must be equity or crypto' }, 400)
+  }
 
-  await setTorghutSymbolEnabled({ db, symbol, enabled })
+  await setTorghutSymbolEnabled({ db, symbol, enabled, assetClass })
   return jsonResponse({ ok: true })
 }

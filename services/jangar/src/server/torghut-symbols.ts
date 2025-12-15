@@ -110,7 +110,9 @@ export const setTorghutSymbolEnabled = async ({
   db,
   symbol,
   enabled,
+  assetClass,
 }: {
+  assetClass?: TorghutAssetClass
   db: Db
   enabled: boolean
   symbol: string
@@ -118,10 +120,16 @@ export const setTorghutSymbolEnabled = async ({
   await ensureSchema(db)
 
   const normalized = normalizeTorghutSymbol(symbol)
+  const updatedRows: Array<{ asset_class: string }> = await db`
+    update torghut_symbols
+    set enabled = ${enabled}, updated_at = now()
+    where symbol = ${normalized}
+    returning asset_class
+  `
+  if (updatedRows.length > 0) return
+
   await db`
     insert into torghut_symbols (symbol, enabled, asset_class, updated_at)
-    values (${normalized}, ${enabled}, 'equity', now())
-    on conflict (symbol) do update
-    set enabled = excluded.enabled, updated_at = excluded.updated_at
+    values (${normalized}, ${enabled}, ${assetClass ?? 'equity'}, now())
   `
 }
