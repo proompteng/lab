@@ -53,6 +53,7 @@ export type StreamDelta =
   | { type: 'error'; error: unknown }
 
 type ToolPayload = Omit<Extract<StreamDelta, { type: 'tool' }>, 'type'>
+type ToolKind = ToolPayload['toolKind']
 
 type MessageDeltaSource = 'v2' | 'legacy_delta' | 'legacy_content'
 type ToolDeltaSource = 'v2' | 'legacy'
@@ -65,7 +66,8 @@ type TurnStream = {
   lastReasoningDelta: string | null
   lastMessageDelta: string | null
   messageDeltaSource: MessageDeltaSource | null
-  toolDeltaSource: ToolDeltaSource | null
+  toolDeltaSources: Partial<Record<ToolKind, ToolDeltaSource>>
+  turnDiffDeltaSource: ToolDeltaSource | null
 }
 
 type LegacySandboxMode = 'dangerFullAccess' | 'workspaceWrite' | 'readOnly'
@@ -189,7 +191,8 @@ const createTurnStream = (): TurnStream => {
     lastReasoningDelta: null,
     lastMessageDelta: null,
     messageDeltaSource: null,
-    toolDeltaSource: null,
+    toolDeltaSources: {},
+    turnDiffDeltaSource: null,
   }
   return stream
 }
@@ -610,14 +613,16 @@ export class CodexAppServerClient {
       source: ToolDeltaSource,
       { trackItem }: { trackItem?: boolean } = {},
     ) => {
+      const isTurnDiff = payload.toolKind === 'file' && payload.title === 'turn diff'
       routeToStream(
         targetParams,
         (stream, turnId) => {
-          if (stream.toolDeltaSource && stream.toolDeltaSource !== source) {
+          const activeSource = isTurnDiff ? stream.turnDiffDeltaSource : stream.toolDeltaSources[payload.toolKind]
+          if (activeSource && activeSource !== source) {
             this.log('info', 'skipping tool delta from secondary source', {
               turnId,
               source,
-              activeSource: stream.toolDeltaSource,
+              activeSource,
               method,
               toolKind: payload.toolKind,
               status: payload.status,
@@ -627,8 +632,12 @@ export class CodexAppServerClient {
             return
           }
 
-          if (!stream.toolDeltaSource) {
-            stream.toolDeltaSource = source
+          if (!activeSource) {
+            if (isTurnDiff) {
+              stream.turnDiffDeltaSource = source
+            } else {
+              stream.toolDeltaSources[payload.toolKind] = source
+            }
             this.log('info', 'selected tool delta source', { turnId, source, method })
           }
 
@@ -1193,8 +1202,9 @@ export class CodexAppServerClient {
         routeToStream(
           notification.params,
           (stream) => {
-            if (stream.toolDeltaSource && stream.toolDeltaSource !== 'legacy') return
-            if (!stream.toolDeltaSource) stream.toolDeltaSource = 'legacy'
+            const activeSource = stream.toolDeltaSources.webSearch
+            if (activeSource && activeSource !== 'legacy') return
+            if (!activeSource) stream.toolDeltaSources.webSearch = 'legacy'
 
             stream.push({ type: 'tool', toolKind: 'webSearch', id: callId, status: 'started', title: query })
             stream.push({ type: 'tool', toolKind: 'webSearch', id: callId, status: 'completed', title: query })
