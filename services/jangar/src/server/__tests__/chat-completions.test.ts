@@ -648,7 +648,7 @@ describe('chat completions handler', () => {
     expect(searchContents[0]).toBe(`\`${searchQuery}\``)
   })
 
-  it('emits apply_patch diffs once inside a bash fence', async () => {
+  it('emits apply_patch diffs once with a header and diff fence', async () => {
     const mockClient = {
       runTurnStream: async () => ({
         turnId: 'turn-1',
@@ -705,7 +705,66 @@ describe('chat completions handler', () => {
     const contents = chunks.map((c) => c.choices?.[0]?.delta?.content as string | undefined).filter(Boolean) as string[]
 
     // Should output exactly one fenced diff, truncated to five lines plus an ellipsis.
-    expect(contents).toEqual(['\n```bash\nsrc/example.ts\n@@\n- old\n+ new\n+ another\n+ third\n…\n```\n'])
+    expect(contents).toEqual([
+      '`file changes`\n\n`src/example.ts`\n```diff\n@@\n- old\n+ new\n+ another\n+ third\n…\n```\n',
+    ])
+  })
+
+  it('buffers file-change success deltas until the diff is available', async () => {
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield {
+            type: 'tool',
+            toolKind: 'file',
+            id: 'file-1',
+            status: 'delta',
+            title: 'file changes',
+            detail: 'Success. Updated the following files:\nA src/example.ts',
+          }
+          yield {
+            type: 'tool',
+            toolKind: 'file',
+            id: 'file-1',
+            status: 'completed',
+            title: 'file changes',
+            data: {
+              changes: [{ path: '/workspace/lab/src/example.ts', diff: "import { SQL } from 'bun'\n" }],
+            },
+          }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.1-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const contents = chunks.map((c) => c.choices?.[0]?.delta?.content as string | undefined).filter(Boolean) as string[]
+    expect(contents).toEqual([
+      "`file changes`\nSuccess. Updated the following files:\nA src/example.ts\n\n`src/example.ts`\n```ts\nimport { SQL } from 'bun'\n\n```\n",
+    ])
   })
 
   it('streams a single command line once and leaves a blank line before output', async () => {

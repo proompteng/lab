@@ -26,6 +26,36 @@ const truncateLines = (text: string, maxLines: number) => {
   return [...lines.slice(0, maxLines), '...', ''].join('\n')
 }
 
+const normalizeChangePath = (rawPath: string) => {
+  const candidates = ['/workspace/lab/', '/workspace/']
+  for (const prefix of candidates) {
+    if (rawPath.startsWith(prefix)) return rawPath.slice(prefix.length)
+  }
+  return rawPath
+}
+
+const inferFenceLanguage = (path: string, diffText: string) => {
+  if (
+    diffText.startsWith('diff --git') ||
+    diffText.startsWith('@@') ||
+    diffText.startsWith('--- ') ||
+    diffText.startsWith('+++ ') ||
+    diffText.includes('\n@@')
+  ) {
+    return 'diff'
+  }
+
+  const normalized = path.toLowerCase()
+  if (normalized.endsWith('.ts') || normalized.endsWith('.tsx')) return 'ts'
+  if (normalized.endsWith('.js') || normalized.endsWith('.jsx')) return 'js'
+  if (normalized.endsWith('.json')) return 'json'
+  if (normalized.endsWith('.md') || normalized.endsWith('.mdx')) return 'md'
+  if (normalized.endsWith('.yml') || normalized.endsWith('.yaml')) return 'yaml'
+  if (normalized.endsWith('.go')) return 'go'
+  if (normalized.endsWith('.sh')) return 'bash'
+  return 'text'
+}
+
 const renderFileChanges = (rawChanges: unknown, maxDiffLines = 5) => {
   if (!Array.isArray(rawChanges)) return undefined
 
@@ -33,12 +63,13 @@ const renderFileChanges = (rawChanges: unknown, maxDiffLines = 5) => {
     .map((change) => {
       if (!change || typeof change !== 'object') return null
       const obj = change as { path?: unknown; diff?: unknown }
-      const path = typeof obj.path === 'string' && obj.path.length > 0 ? obj.path : 'unknown-file'
+      const path = typeof obj.path === 'string' && obj.path.length > 0 ? normalizeChangePath(obj.path) : 'unknown-file'
       const diffText = typeof obj.diff === 'string' ? obj.diff : ''
+      const language = inferFenceLanguage(path, diffText)
       const lines = diffText.split(/\r?\n/)
       const truncated = lines.length > maxDiffLines ? [...lines.slice(0, maxDiffLines), '…'] : lines
       const body = truncated.join('\n')
-      return `\n\`\`\`bash\n${path}\n${body}\n\`\`\`\n`
+      return `\n\`${path}\`\n\`\`\`${language}\n${body}\n\`\`\`\n`
     })
     .filter(Boolean)
 
@@ -55,6 +86,7 @@ type ToolState = {
   lastContent?: string
   lastStatus?: string
   hasCommandOutput?: boolean
+  pendingDetail?: string
 }
 
 const pickAggregatedOutput = (data: unknown): string | undefined => {
@@ -139,20 +171,37 @@ const createToolRenderer = (): ToolRenderer => {
           return actions
         }
 
-        const content = renderFileChanges(event.changes) ?? formatToolContent(toolState, argsPayload)
+        const renderedChanges = renderFileChanges(event.changes)
+
+        // Buffer “success” / progress deltas so we don't emit an out-of-context paragraph before the final diff.
+        if (status === 'delta' && !renderedChanges) {
+          const detail = typeof event.detail === 'string' ? event.detail : undefined
+          if (detail && detail.length > 0) {
+            toolState.pendingDetail = detail
+            toolState.lastStatus = status
+            return actions
+          }
+        }
+
+        const header = toolState.title ? `\`${toolState.title}\`\n` : ''
+        const detail = toolState.pendingDetail ? `${toolState.pendingDetail}\n` : ''
+        const content = renderedChanges ?? formatToolContent(toolState, argsPayload)
         if (!content) {
           toolState.lastStatus = status
           return actions
         }
 
+        toolState.pendingDetail = undefined
+        const fullContent = `${header}${detail}${content}`
+
         // Avoid re-emitting identical apply_patch summaries across delta/completed events.
-        if (content === toolState.lastContent && status === toolState.lastStatus) {
+        if (fullContent === toolState.lastContent && status === toolState.lastStatus) {
           return actions
         }
 
-        toolState.lastContent = content
+        toolState.lastContent = fullContent
         toolState.lastStatus = status
-        actions.push({ type: 'emitContent', content })
+        actions.push({ type: 'emitContent', content: fullContent })
         return actions
       }
 
