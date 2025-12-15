@@ -26,6 +26,9 @@ These templates are the “source of intent” for passthrough on `altra`:
 - `tofu/harvester/templates/pcideviceclaim-altra-000c01001.yaml` (claim audio function so the IOMMU group is fully tracked)
 - `tofu/harvester/templates/vm-docker-host-nvidia-gpu.patch.json` (merge-patch to attach GPU to the VM)
 
+## Why this isn’t in `tofu/harvester/main.tf`
+We can’t express “attach this PCI device to the VM” through the `harvester/harvester` OpenTofu provider today (even on the latest provider release — `v1.6.0` as of 2025-12-15). The workaround is to apply the Harvester CRDs (`PCIDeviceClaim`) and patch the underlying KubeVirt `VirtualMachine` spec directly via `kubectl`.
+
 ## Apply (cluster)
 Apply the claims:
 
