@@ -20,6 +20,7 @@ ansible-playbook -i ../inventory/hosts.ini install_tailscale.yml
 # Run with automatic authentication using an authkey
 export TAILSCALE_AUTHKEY=tskey-auth-xxxxxxxxxxxx
 ansible-playbook -i ../inventory/hosts.ini install_tailscale.yml
+```
 
 ### Start/Enable/Auth only (no installation)
 
@@ -29,6 +30,14 @@ If Tailscale was installed during Harvester bootstrap, use this playbook to ensu
 # Start and enable tailscaled, authenticate with authkey
 export TAILSCALE_AUTHKEY=tskey-auth-xxxxxxxxxxxx
 ansible-playbook -i ../inventory/hosts.ini start_enable_tailscale.yml
+```
+
+### Client-only (proxy/docker hosts): no tags, no subnets
+
+This playbook is for hosts like `nuc` and `docker-host` that should not request ACL tags or advertise subnet routes. It will print an interactive login URL when login is required:
+
+```bash
+ansible-playbook -i ../inventory/hosts.ini start_enable_tailscale_client.yml -l 'proxy:docker_hosts'
 ```
 
 #### First-time SSH host keys (auto-accept)
@@ -41,7 +50,6 @@ ansible-playbook -i ../inventory/hosts.ini -u kalmyk -b \
   start_enable_tailscale.yml \
   -l 'kube_masters:kube_workers' -f 30 \
   --ssh-extra-args '-o StrictHostKeyChecking=accept-new'
-```
 ```
 
 You can get an auth key from the [Tailscale Admin Console](https://login.tailscale.com/admin/settings/keys).

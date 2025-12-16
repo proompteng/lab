@@ -1,0 +1,14 @@
+# Optional variables for Tailscale playbooks.
+#
+# If you want to keep secrets out of your shell environment, you can copy this file to
+# `ansible/inventory/group_vars/all/tailscale.yml` (or `.yaml`) and fill it in.
+#
+# NOTE: Any `tailscale.yml`/`tailscale.yaml` placed in `group_vars/all` will be loaded
+# automatically by Ansible. If you encrypt it with `ansible-vault`, you'll need to
+# provide vault secrets (`--ask-vault-pass` or `--vault-password-file`) when running.
+#
+# Example (plaintext):
+#
+# tailscale_authkey: "tskey-auth-..."
+# tailscale_advertised_routes: "10.42.0.0/16,10.43.0.0/16"
+# tailscale_advertise_tags: "tag:kube-node"

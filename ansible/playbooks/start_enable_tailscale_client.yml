@@ -1,0 +1,59 @@
+---
+- name: Start Tailscale on non-router hosts (no tags, no subnets)
+  hosts: proxy:docker_hosts
+  become: true
+  tasks:
+    - name: Ensure tailscaled service is enabled and started
+      ansible.builtin.systemd:
+        name: tailscaled
+        state: started
+        enabled: yes
+
+    - name: Stop advertising any subnet routes
+      ansible.builtin.command: tailscale set --advertise-routes=
+      changed_when: false
+      failed_when: false
+
+    - name: Read current Tailscale status
+      ansible.builtin.command: tailscale status --json
+      register: tailscale_status
+      changed_when: false
+      failed_when: false
+
+    - name: Parse status
+      ansible.builtin.set_fact:
+        tailscale_backend_state: "{{ (tailscale_status.stdout | from_json).BackendState | default('Unknown', true) }}"
+        tailscale_auth_url: "{{ (tailscale_status.stdout | from_json).AuthURL | default('', true) }}"
+        tailscale_tags: "{{ ((tailscale_status.stdout | from_json).Self.Tags | default([], true)) }}"
+      when: tailscale_status.rc == 0
+
+    - name: Force re-login when tags are present (tags require admin/policy; proxies should be user-owned)
+      ansible.builtin.command: tailscale logout
+      changed_when: false
+      failed_when: false
+      when: (tailscale_tags | default([])) | length > 0
+
+    - name: Trigger interactive login (no subnets/tags) when needed
+      ansible.builtin.command: tailscale up --reset --timeout=10s
+      register: tailscale_up
+      changed_when: false
+      failed_when: false
+      when: (tailscale_backend_state | default('Unknown')) != 'Running'
+
+    - name: Refresh AuthURL
+      ansible.builtin.command: tailscale status --json
+      register: tailscale_status_after
+      changed_when: false
+      failed_when: false
+      when: (tailscale_backend_state | default('Unknown')) != 'Running'
+
+    - name: Print interactive login URL
+      ansible.builtin.debug:
+        msg: >-
+          Tailscale needs login on {{ inventory_hostname }}. Open this URL to authenticate:
+          {{ ((tailscale_status_after.stdout | from_json).AuthURL | default(tailscale_auth_url | default(''), true)) }}
+      when: (tailscale_backend_state | default('Unknown')) != 'Running'
+
+    - name: Stop processing this host until login completes
+      ansible.builtin.meta: end_host
+      when: (tailscale_backend_state | default('Unknown')) != 'Running'
