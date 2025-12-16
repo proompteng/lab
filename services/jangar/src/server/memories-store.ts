@@ -64,10 +64,12 @@ const withDefaultSslMode = (rawUrl: string): string => {
   return url.toString()
 }
 
-const requireEnv = (name: string): string => {
-  const value = process.env[name]
-  if (!value) throw new Error(`missing ${name}`)
-  return value
+const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
+  try {
+    return new URL(rawBaseUrl).hostname === 'api.openai.com'
+  } catch {
+    return rawBaseUrl.includes('api.openai.com')
+  }
 }
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
@@ -97,8 +99,13 @@ const loadEmbeddingMaxInputChars = () => {
 }
 
 const loadEmbeddingConfig = () => {
-  const apiKey = requireEnv('OPENAI_API_KEY')
   const apiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? 'https://api.openai.com/v1'
+  const apiKey = process.env.OPENAI_API_KEY?.trim() || null
+  if (!apiKey && isHostedOpenAiBaseUrl(apiBaseUrl)) {
+    throw new Error(
+      'missing OPENAI_API_KEY; set it or point OPENAI_API_BASE_URL at an OpenAI-compatible endpoint (e.g. Ollama)',
+    )
+  }
   const model = process.env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-3-small'
   const dimension = loadEmbeddingDimension()
   const timeoutMs = loadEmbeddingTimeoutMs()
@@ -117,12 +124,16 @@ const embedText = async (text: string): Promise<number[]> => {
   const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+    }
+    if (apiKey) {
+      headers.authorization = `Bearer ${apiKey}`
+    }
+
     const response = await fetch(`${apiBaseUrl}/embeddings`, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${apiKey}`,
-      },
+      headers,
       body: JSON.stringify({ model, input: text }),
       signal: controller.signal,
     })

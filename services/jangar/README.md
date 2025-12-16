@@ -94,9 +94,20 @@ Storage details:
 - `DATABASE_URL` (required to use MCP memories tools)
 - `PGSSLMODE` (optional; defaults to `require`)
 - `PGSSLROOTCERT` (optional; path; passed through to Postgres URL query)
-- `OPENAI_API_KEY` (required for embeddings when using MCP memories tools)
+- `OPENAI_API_KEY` (API key used for embedding calls; required for providers that need auth; optional for self-hosted OpenAI-compatible endpoints like Ollama)
 - `OPENAI_API_BASE_URL` / `OPENAI_API_BASE` (optional; defaults to `https://api.openai.com/v1`)
 - `OPENAI_EMBEDDING_MODEL` (optional; defaults to `text-embedding-3-small`)
 - `OPENAI_EMBEDDING_DIMENSION` (optional; defaults to `1536`)
 - `OPENAI_EMBEDDING_TIMEOUT_MS` (optional; defaults to `15000`)
 - `OPENAI_EMBEDDING_MAX_INPUT_CHARS` (optional; defaults to `60000`)
+
+### Ollama embeddings (docker-host)
+
+To use the self-hosted embeddings model on `docker-host`:
+
+```bash
+export OPENAI_API_BASE_URL='http://docker-host.pihole.lan:11434/v1'
+export OPENAI_EMBEDDING_MODEL='qwen3-embedding:0.6b'
+export OPENAI_EMBEDDING_DIMENSION='1024'
+# OPENAI_API_KEY is optional for Ollama
+```

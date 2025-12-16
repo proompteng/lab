@@ -99,6 +99,17 @@ curl -fsS http://127.0.0.1:11434/v1/embeddings \
 
 Note: no changes to `jangar` are required for embeddings — as long as clients can reach `http://docker-host.pihole.lan:11434`, they can call `POST /v1/embeddings` directly.
 
+### Configure Jangar / memories to use Ollama embeddings
+
+Both `services/jangar` (MCP memories tools) and `services/memories` (CLI helpers) can point at Ollama via the same OpenAI-style env vars:
+
+```bash
+export OPENAI_API_BASE_URL='http://docker-host.pihole.lan:11434/v1'
+export OPENAI_EMBEDDING_MODEL='qwen3-embedding:0.6b'
+export OPENAI_EMBEDDING_DIMENSION='1024'
+# OPENAI_API_KEY is optional for Ollama
+```
+
 ## Wire Jangar OpenWebUI to `docker-host` Ollama
 OpenWebUI in the `jangar` namespace is Helm-managed via `argocd/applications/jangar/openwebui-values.yaml`. It’s configured to use Jangar as the OpenAI-compatible backend, but can also be given one or more Ollama endpoints.
 
