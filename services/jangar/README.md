@@ -70,9 +70,33 @@ bun --cwd services/jangar run tsc
 - Usage totals are emitted only when the request includes `stream_options: { include_usage: true }`. The final SSE chunk (empty `choices` array) carries the normalized OpenAI-style `usage`, even when a turn ends with an upstream error or client abort.
 - Server-side Effect services follow `Context.Tag + Layer` patterns; see `src/server/effect-services.md`.
 
+## MCP (memories)
+
+Jangar exposes an MCP endpoint at `POST /mcp` (see `services/jangar/src/routes/mcp.ts`). The Codex app-server is configured to use it via `threadConfig.mcp_servers.jangar` (see `services/jangar/src/server/codex-client.ts`).
+
+The MCP server provides:
+
+- `persist_memory`: stores `{ namespace, content, summary?, tags? }` plus an OpenAI embedding in Postgres (pgvector).
+- `retrieve_memory`: semantic search over stored memories (cosine distance) for a namespace.
+
+Storage details:
+
+- Table is `memories.entries` (auto-created on first use; see `schemas/embeddings/memories.sql`) and requires `pgvector` + `pgcrypto` extensions.
+- No table migrations are performed; the store expects the current schema only. If `OPENAI_EMBEDDING_DIMENSION` does not match the existing `memories.entries.embedding` column dimension, MCP calls will fail with a schema mismatch error.
+
 ## Environment
 
 - `JANGAR_MODELS` (comma-separated list; optional)
 - `JANGAR_DEFAULT_MODEL` (optional)
 - `JANGAR_REDIS_URL` (required only when using `x-openwebui-chat-id` thread persistence)
 - `JANGAR_CHAT_KEY_PREFIX` (optional; defaults to `openwebui:chat`)
+- `JANGAR_MCP_URL` (optional; defaults to `http://127.0.0.1:$PORT/mcp`)
+- `DATABASE_URL` (required to use MCP memories tools)
+- `PGSSLMODE` (optional; defaults to `require`)
+- `PGSSLROOTCERT` (optional; path; passed through to Postgres URL query)
+- `OPENAI_API_KEY` (required for embeddings when using MCP memories tools)
+- `OPENAI_API_BASE_URL` / `OPENAI_API_BASE` (optional; defaults to `https://api.openai.com/v1`)
+- `OPENAI_EMBEDDING_MODEL` (optional; defaults to `text-embedding-3-small`)
+- `OPENAI_EMBEDDING_DIMENSION` (optional; defaults to `1536`)
+- `OPENAI_EMBEDDING_TIMEOUT_MS` (optional; defaults to `15000`)
+- `OPENAI_EMBEDDING_MAX_INPUT_CHARS` (optional; defaults to `60000`)

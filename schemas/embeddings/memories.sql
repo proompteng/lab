@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS memories.entries (
   tags TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
   source TEXT NOT NULL,
 
-  -- Vector embedding column. Adjust dimension to match the LLM/encoder (default 1536 for text-embedding-3-small).
+-- Vector embedding column. Dimension must match the embeddings you generate (and `OPENAI_EMBEDDING_DIMENSION` when using Jangar's MCP tools).
   embedding vector(1536) NOT NULL,
   encoder_model TEXT NOT NULL,
   encoder_version TEXT,

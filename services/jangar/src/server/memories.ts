@@ -1,0 +1,73 @@
+import { Context, Effect, Layer, pipe } from 'effect'
+
+import {
+  createPostgresMemoriesStore,
+  type MemoryRecord,
+  type PersistMemoryInput,
+  type RetrieveMemoryInput,
+} from './memories-store'
+
+export type MemoriesService = {
+  persist: (input: PersistMemoryInput) => Effect.Effect<MemoryRecord, Error>
+  retrieve: (input: RetrieveMemoryInput) => Effect.Effect<MemoryRecord[], Error>
+}
+
+export class Memories extends Context.Tag('Memories')<Memories, MemoriesService>() {}
+
+const normalizeError = (message: string, error: unknown) =>
+  new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
+
+export const MemoriesLive = Layer.scoped(
+  Memories,
+  Effect.gen(function* () {
+    let store: ReturnType<typeof createPostgresMemoriesStore> | null = null
+
+    const getStore = () =>
+      Effect.try({
+        try: () => {
+          if (!store) store = createPostgresMemoriesStore()
+          return store
+        },
+        catch: (error) => normalizeError('memories store unavailable', error),
+      })
+
+    yield* Effect.addFinalizer(() => {
+      if (!store) return Effect.void
+      return pipe(
+        Effect.tryPromise({
+          try: () => store.close(),
+          catch: (error) => normalizeError('close memories store', error),
+        }),
+        Effect.catchAll((error) => {
+          console.warn('[mcp] failed to close memories store', { error: String(error) })
+          return Effect.void
+        }),
+      )
+    })
+
+    const service: MemoriesService = {
+      persist: (input) =>
+        pipe(
+          getStore(),
+          Effect.flatMap((resolved) =>
+            Effect.tryPromise({
+              try: () => resolved.persist(input),
+              catch: (error) => normalizeError('persist memory failed', error),
+            }),
+          ),
+        ),
+      retrieve: (input) =>
+        pipe(
+          getStore(),
+          Effect.flatMap((resolved) =>
+            Effect.tryPromise({
+              try: () => resolved.retrieve(input),
+              catch: (error) => normalizeError('retrieve memories failed', error),
+            }),
+          ),
+        ),
+    }
+
+    return service
+  }),
+)
