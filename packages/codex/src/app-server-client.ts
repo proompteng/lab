@@ -2,6 +2,7 @@ import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 
 import type { ClientInfo, ClientRequest, RequestId, ServerNotification } from './app-server'
 import type { ReasoningEffort } from './app-server/ReasoningEffort'
+import type { JsonValue } from './app-server/serde_json/JsonValue'
 import type {
   AgentMessageDeltaNotification,
   AskForApproval,
@@ -87,6 +88,12 @@ export type CodexAppServerOptions = {
   approval?: ApprovalModeInput
   defaultModel?: string
   defaultEffort?: ReasoningEffort
+  /**
+   * Thread-level app-server config blob.
+   *
+   * When omitted, we keep MCP servers disabled by default.
+   */
+  threadConfig?: { [key in string]?: JsonValue } | null
   autoCompaction?:
     | boolean
     | {
@@ -247,6 +254,7 @@ export class CodexAppServerClient {
   private approval: AskForApproval
   private defaultModel: string
   private defaultEffort: ReasoningEffort
+  private threadConfig: { [key in string]?: JsonValue } | null
   private autoCompaction: {
     enabled: boolean
     threshold: number
@@ -264,6 +272,7 @@ export class CodexAppServerClient {
     approval = 'never',
     defaultModel = 'gpt-5.1-codex-max',
     defaultEffort = DEFAULT_EFFORT,
+    threadConfig,
     autoCompaction = true,
     clientInfo = defaultClientInfo,
     logger,
@@ -274,6 +283,8 @@ export class CodexAppServerClient {
     this.approval = normalizeApprovalPolicy(approval)
     this.defaultModel = defaultModel
     this.defaultEffort = defaultEffort
+    this.threadConfig =
+      threadConfig === undefined ? { mcp_servers: {}, 'features.web_search_request': true } : threadConfig
     this.bootstrapTimeoutMs = bootstrapTimeoutMs
     this.autoCompaction = this.normalizeAutoCompaction(autoCompaction)
 
@@ -426,8 +437,7 @@ export class CodexAppServerClient {
         cwd: turnOptions.cwd ?? null,
         approvalPolicy: this.approval,
         sandbox: this.sandbox,
-        // Disable MCP servers for this app-server client; can be overridden later if needed.
-        config: { mcp_servers: {}, 'features.web_search_request': true },
+        config: this.threadConfig,
         baseInstructions: null,
         developerInstructions: null,
       }

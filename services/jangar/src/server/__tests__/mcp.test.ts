@@ -64,6 +64,18 @@ describe('Jangar MCP handler', () => {
     ])
   })
 
+  it('supports resources/list + resources/templates/list', async () => {
+    const { service } = makeService()
+
+    const resources = await post(service, { jsonrpc: '2.0', id: 1, method: 'resources/list' })
+    expect(resources.response.status).toBe(200)
+    expect(resources.json?.result?.resources).toEqual([])
+
+    const templates = await post(service, { jsonrpc: '2.0', id: 2, method: 'resources/templates/list' })
+    expect(templates.response.status).toBe(200)
+    expect(templates.json?.result?.resourceTemplates).toEqual([])
+  })
+
   it('supports persist_memory + retrieve_memory', async () => {
     const { service } = makeService()
 

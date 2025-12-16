@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2025-12-14T23:20:12.369Z"
+    deploy.knative.dev/rollout: "2025-12-16T09:37:17.825Z"
 spec:
   replicas: 1
   strategy:
@@ -49,6 +49,13 @@ spec:
               value: "1"
             - name: JANGAR_REDIS_URL
               value: redis://jangar-openwebui-redis:6379/1
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: jangar-db-app
+                  key: uri
+            - name: PGSSLMODE
+              value: require
             - name: VSCODE_DATA_DIR
               value: /workspace/.ovscode
             - name: VSCODE_DEFAULT_FOLDER

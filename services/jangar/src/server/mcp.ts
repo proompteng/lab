@@ -152,6 +152,14 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
         if (isNotification) return null
         return asJsonRpcResponse(id, toolsListResult)
       }
+      case 'resources/list': {
+        if (isNotification) return null
+        return asJsonRpcResponse(id, { resources: [] })
+      }
+      case 'resources/templates/list': {
+        if (isNotification) return null
+        return asJsonRpcResponse(id, { resourceTemplates: [] })
+      }
       case 'tools/call': {
         const parsed = parseToolCall(msg.params)
         if ('code' in parsed) {

@@ -47,6 +47,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
   curl \
   git \
   gnupg \
+  jq \
   ripgrep \
   tini \
   unzip; \

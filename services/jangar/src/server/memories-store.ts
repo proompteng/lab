@@ -31,6 +31,13 @@ export type MemoriesStore = {
 
 type PostgresMemoriesStoreOptions = {
   url?: string
+  embedText?: (text: string) => Promise<number[]>
+  createDb?: (url: string) => {
+    (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]>
+    unsafe: <T = unknown>(query: string, params?: unknown[]) => Promise<T>
+    array: (values: unknown[], elementType?: string) => unknown
+    close: () => Promise<void>
+  }
 }
 
 const DEFAULT_NAMESPACE = 'default'
@@ -55,14 +62,11 @@ const withDefaultSslMode = (rawUrl: string): string => {
   const sslmode = envMode && envMode.length > 0 ? envMode : DEFAULT_SSLMODE
   params.set('sslmode', sslmode)
 
-  const sslrootcert = process.env.PGSSLROOTCERT?.trim()
-  if (sslrootcert && sslrootcert.length > 0 && !params.get('sslrootcert')) {
-    params.set('sslrootcert', sslrootcert)
-  }
-
   url.search = params.toString()
   return url.toString()
 }
+
+export const __private = { withDefaultSslMode }
 
 const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
   try {
@@ -169,9 +173,10 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     throw new Error('DATABASE_URL is required for MCP memories storage')
   }
 
-  const db = new SQL(withDefaultSslMode(url))
+  const db = (options.createDb ?? ((resolvedUrl: string) => new SQL(resolvedUrl)))(withDefaultSslMode(url))
   let schemaReady: Promise<void> | null = null
   const expectedEmbeddingDimension = loadEmbeddingDimension()
+  const embed = options.embedText ?? embedText
 
   const ensureEmbeddingDimensionMatches = async () => {
     const rows = await db.unsafe<Array<{ embedding_type: string | null }>>(
@@ -209,20 +214,27 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
       schemaReady = (async () => {
         try {
           await db.unsafe('CREATE SCHEMA IF NOT EXISTS memories;')
-          await db.unsafe('CREATE EXTENSION IF NOT EXISTS vector;')
-          await db.unsafe('CREATE EXTENSION IF NOT EXISTS pgcrypto;')
         } catch (error) {
+          throw new Error(`failed to ensure Postgres prerequisites (schema). Original error: ${String(error)}`)
+        }
+
+        const extensionRows = await db.unsafe<Array<{ extname: string }>>(
+          `SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')`,
+        )
+        const installed = new Set(extensionRows.map((row) => row.extname))
+        const missing = ['vector', 'pgcrypto'].filter((ext) => !installed.has(ext))
+        if (missing.length > 0) {
           throw new Error(
-            `failed to ensure Postgres prerequisites (pgvector/pgcrypto). Ensure the Postgres cluster uses a pgvector-enabled image and has CREATE EXTENSION permissions. Original error: ${String(
-              error,
-            )}`,
+            `missing required Postgres extensions: ${missing.join(', ')}. ` +
+              'Install them as a privileged user (e.g. `CREATE EXTENSION vector; CREATE EXTENSION pgcrypto;`) ' +
+              'or configure CNPG bootstrap.initdb.postInitApplicationSQL to create them at cluster init.',
           )
         }
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.${TABLE} (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	          CREATE TABLE IF NOT EXISTS ${SCHEMA}.${TABLE} (
+	            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             execution_id UUID NULL,
             task_name TEXT NOT NULL,
@@ -294,39 +306,34 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
       .filter((tag) => tag.length > 0)
       .slice(0, 50)
 
-    const embedding = await embedText(resolvedSummary ? `${resolvedSummary}\n\n${resolvedContent}` : resolvedContent)
+    const embedding = await embed(resolvedSummary ? `${resolvedSummary}\n\n${resolvedContent}` : resolvedContent)
     const vectorString = vectorToPgArray(embedding)
     const encoderModel = process.env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-3-small'
     const derivedSummary = resolvedSummary ?? resolvedContent.slice(0, 300)
     const metadata = JSON.stringify({ namespace: resolvedNamespace })
     const source = 'jangar.mcp'
 
-    const rows = await db.unsafe<
-      Array<{
-        id: string
-        task_name: string
-        content: string
-        summary: string
-        tags: string[]
-        created_at: string | Date
-      }>
-    >(
-      `
-        INSERT INTO ${SCHEMA}.${TABLE} (task_name, content, summary, tags, metadata, source, embedding, encoder_model)
-        VALUES ($1, $2, $3, $4::text[], $5::jsonb, $6, $7::vector, $8)
-        RETURNING id, task_name, content, summary, tags, created_at;
-      `,
-      [
-        resolvedNamespace,
-        resolvedContent,
-        derivedSummary,
-        db.array(resolvedTags),
-        metadata,
-        source,
-        vectorString,
-        encoderModel,
-      ],
-    )
+    const rows = (await db`
+	      INSERT INTO memories.entries (task_name, content, summary, tags, metadata, source, embedding, encoder_model)
+	      VALUES (
+	        ${resolvedNamespace},
+	        ${resolvedContent},
+	        ${derivedSummary},
+	        ${db.array(resolvedTags, 'text')}::text[],
+	        ${metadata}::jsonb,
+	        ${source},
+	        ${vectorString}::vector,
+	        ${encoderModel}
+	      )
+	      RETURNING id, task_name, content, summary, tags, created_at;
+	    `) as Array<{
+      id: string
+      task_name: string
+      content: string
+      summary: string
+      tags: string[]
+      created_at: string | Date
+    }>
 
     const row = rows[0]
     if (!row) throw new Error('insert failed')
@@ -355,43 +362,39 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
 
     const resolvedLimit = Math.max(1, Math.min(50, limit ?? DEFAULT_LIMIT))
 
-    const embedding = await embedText(resolvedQuery)
+    const embedding = await embed(resolvedQuery)
     const vectorString = vectorToPgArray(embedding)
 
-    const rows = await db.unsafe<
-      Array<{
-        id: string
-        task_name: string
-        content: string
-        summary: string
-        tags: string[]
-        created_at: string | Date
-        distance: number
-      }>
-    >(
-      `
-        SELECT
-          id,
-          task_name,
-          content,
-          summary,
-          tags,
-          created_at,
-          embedding <=> $2::vector AS distance
-        FROM ${SCHEMA}.${TABLE}
-        WHERE task_name = $1
-        ORDER BY distance ASC
-        LIMIT $3;
-      `,
-      [resolvedNamespace, vectorString, resolvedLimit],
-    )
+    const rows = (await db`
+	      SELECT
+	        id,
+	        task_name,
+	        content,
+	        summary,
+	        tags,
+	        created_at,
+	        embedding <=> ${vectorString}::vector AS distance
+	      FROM memories.entries
+	      WHERE task_name = ${resolvedNamespace}
+	      ORDER BY distance ASC
+	      LIMIT ${resolvedLimit};
+	    `) as Array<{
+      id: string
+      task_name: string
+      content: string
+      summary: string
+      tags: string[]
+      created_at: string | Date
+      distance: number
+    }>
 
     const ids = rows.map((row) => row.id)
     if (ids.length > 0) {
-      await db.unsafe(
-        `UPDATE ${SCHEMA}.${TABLE} SET last_accessed_at = now(), updated_at = now() WHERE id = ANY($1::uuid[])`,
-        [db.array(ids)],
-      )
+      await db`
+	        UPDATE memories.entries
+	        SET last_accessed_at = now(), updated_at = now()
+	        WHERE id = ANY(${db.array(ids, 'uuid')}::uuid[])
+	      `
     }
 
     return rows.map((row) => ({

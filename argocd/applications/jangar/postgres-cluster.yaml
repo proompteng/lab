@@ -14,6 +14,9 @@ spec:
       owner: jangar
       encoding: "UTF8"
       dataChecksums: true
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS pgcrypto;
+        - CREATE EXTENSION IF NOT EXISTS vector;
   monitoring:
     enablePodMonitor: true
 # CNPG defaults generate application credentials in `jangar-db-app` (uri, user, password, host, port, dbname)
