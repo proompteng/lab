@@ -53,16 +53,16 @@ const makeFakeDb = (options: { extensions?: string[]; selectRows?: unknown[] } =
     return []
   }) as FakeDb
 
-  db.unsafe = async (query: string, params?: unknown[]) => {
+  db.unsafe = async <T = unknown>(query: string, params?: unknown[]) => {
     calls.push({ kind: 'unsafe', query, params })
     if (query.includes("SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')")) {
       const extensions = options.extensions ?? ['vector', 'pgcrypto']
-      return extensions.map((ext) => ({ extname: ext }))
+      return extensions.map((ext) => ({ extname: ext })) as unknown as T
     }
     if (query.includes('format_type') && query.includes('pg_catalog.pg_attribute')) {
-      return []
+      return [] as unknown as T
     }
-    return []
+    return [] as unknown as T
   }
 
   db.array = (values: unknown[], elementType?: string) => {

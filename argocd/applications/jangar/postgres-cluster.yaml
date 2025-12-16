@@ -20,4 +20,5 @@ spec:
   monitoring:
     enablePodMonitor: true
 # CNPG defaults generate application credentials in `jangar-db-app` (uri, user, password, host, port, dbname)
-# and the CA bundle in `jangar-db-ca` (ca.crt). JNG-080b will wire DATABASE_URL and PGSSLROOTCERT from these.
+# and the CA bundle in `jangar-db-ca` (ca.crt). Jangar currently uses `PGSSLMODE=require` and does not pass
+# `sslrootcert` URL params (Bun’s Postgres client treats those as server GUCs and errors).
