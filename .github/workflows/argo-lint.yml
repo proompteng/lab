@@ -22,9 +22,20 @@ jobs:
 
       - name: Install Argo CLI
         run: |
+          set -euo pipefail
+
           ARGO_VERSION="v3.5.9"
-          curl -sLO https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-linux-amd64.gz
-          gunzip argo-linux-amd64.gz
+          ARGO_URL="https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-linux-amd64.gz"
+
+          curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o argo-linux-amd64.gz "${ARGO_URL}"
+
+          if ! gzip -t argo-linux-amd64.gz; then
+            echo "Downloaded Argo CLI is not a gzip archive; first 200 bytes:"
+            head -c 200 argo-linux-amd64.gz || true
+            exit 1
+          fi
+
+          gunzip -f argo-linux-amd64.gz
           chmod +x argo-linux-amd64
           sudo mv argo-linux-amd64 /usr/local/bin/argo
           argo version
