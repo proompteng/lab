@@ -1,7 +1,5 @@
 -- Schema for storing Codex execution memories and related semantic data.
--- Assumes PostgreSQL with the pgvector extension enabled.
--- This schema uses a 1536-dimension vector column; if you're using a 1024-dimension embeddings model (e.g. Ollama qwen3-embedding:0.6b),
--- apply `schemas/embeddings/memories-1024.sql` instead.
+-- Assumes PostgreSQL with the pgvector extension enabled (vector dimension configurable per model).
 
 CREATE SCHEMA IF NOT EXISTS memories;
 

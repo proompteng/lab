@@ -2,6 +2,8 @@
 
 This directory hosts a small Bun service that backs Codex memory storage and retrieval.
 
+Note: this service is intended for local/dev agents. Production deployments should use Jangar's MCP memories storage (`services/jangar`) instead.
+
 ## Setup
 
 ```bash
@@ -23,23 +25,10 @@ Set `DATABASE_URL` to `postgres://cerebrum:cerebrum@localhost:5432/cerebrum?sslm
 ### Required environment
 
 - `DATABASE_URL` – Postgres (pgvector-enabled) endpoint with the `memories` schema.
-- `OPENAI_API_KEY` – API key used for embedding calls (required for providers that need auth; optional for self-hosted OpenAI-compatible endpoints like Ollama).
+- `OPENAI_API_KEY` – key used for the embedding API calls.
 - `OPENAI_EMBEDDING_MODEL` – optional (defaults to `text-embedding-3-small`).
 - `OPENAI_EMBEDDING_DIMENSION` – optional (defaults to `1536`).
 - `OPENAI_API_BASE_URL` – optional (defaults to `https://api.openai.com/v1`).
-
-### Using Ollama on `docker-host` (self-hosted embeddings)
-
-Ollama exposes an OpenAI-compatible embeddings endpoint at `POST /v1/embeddings` (see `docs/jangar/ollama-docker-host.md`).
-
-Example environment:
-
-```bash
-export OPENAI_API_BASE_URL='http://docker-host.pihole.lan:11434/v1'
-export OPENAI_EMBEDDING_MODEL='qwen3-embedding:0.6b'
-export OPENAI_EMBEDDING_DIMENSION='1024'
-# OPENAI_API_KEY is optional for Ollama
-```
 
 ## Scripts
 
@@ -82,4 +71,4 @@ bun test tests
 
 ## Database schema
 
-Apply `schemas/embeddings/memories.sql` against the target Postgres database to create the `memories` schema, entries table, event log, and indexes (it also enables the `vector` extension). If you use a 1024-dimension embeddings model (e.g. `qwen3-embedding:0.6b` on Ollama), apply `schemas/embeddings/memories-1024.sql` instead.
+Apply `schemas/embeddings/memories.sql` against the target Postgres database to create the `memories` schema, entries table, event log, and indexes (it also enables the `vector` extension).

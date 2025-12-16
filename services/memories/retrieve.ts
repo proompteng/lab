@@ -4,6 +4,7 @@ import {
   getFlagValue,
   parseCliFlags,
   parseCommaList,
+  requireEnv,
   toPgTextArray,
   vectorToPgArray,
 } from './cli'
@@ -47,40 +48,22 @@ if (!queryText.trim()) {
 
 const encoderModel = getFlagValue(flags, 'model') ?? process.env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-3-small'
 const openAiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? 'https://api.openai.com/v1'
-const apiKey = process.env.OPENAI_API_KEY?.trim()
+const apiKey = requireEnv('OPENAI_API_KEY')
 const expectedDimension = parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? '1536', 10)
 const databaseUrl = process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL
 
-const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
-  try {
-    return new URL(rawBaseUrl).hostname === 'api.openai.com'
-  } catch {
-    return rawBaseUrl.includes('api.openai.com')
-  }
-}
-
-if (!apiKey && isHostedOpenAiBaseUrl(openAiBaseUrl)) {
-  throw new Error(
-    'missing OPENAI_API_KEY; set it or point OPENAI_API_BASE_URL at an OpenAI-compatible endpoint (e.g. Ollama)',
-  )
-}
-
-const headers: Record<string, string> = {
-  'Content-Type': 'application/json',
-}
-if (apiKey) {
-  headers.Authorization = `Bearer ${apiKey}`
-}
-
 const embedResponse = await fetch(`${openAiBaseUrl}/embeddings`, {
   method: 'POST',
-  headers,
+  headers: {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+  },
   body: JSON.stringify({ model: encoderModel, input: queryText }),
 })
 
 if (!embedResponse.ok) {
   const body = await embedResponse.text()
-  throw new Error(`embedding request failed (${embedResponse.status}): ${body}`)
+  throw new Error(`OpenAI embedding request failed (${embedResponse.status}): ${body}`)
 }
 
 const embedJson = (await embedResponse.json()) as { data?: { embedding?: number[] }[] } & {
@@ -88,7 +71,7 @@ const embedJson = (await embedResponse.json()) as { data?: { embedding?: number[
 }
 const embedding = embedJson.data?.[0]?.embedding
 if (!embedding || !Array.isArray(embedding)) {
-  throw new Error('embedding response missing data[0].embedding')
+  throw new Error('OpenAI did not return an embedding')
 }
 
 if (embedding.length !== expectedDimension) {

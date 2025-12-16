@@ -106,7 +106,7 @@ Storage details:
 To use the self-hosted embeddings model on `docker-host`:
 
 ```bash
-export OPENAI_API_BASE_URL='http://docker-host.pihole.lan:11434/v1'
+export OPENAI_API_BASE_URL='http://192.168.1.190:11434/v1'
 export OPENAI_EMBEDDING_MODEL='qwen3-embedding:0.6b'
 export OPENAI_EMBEDDING_DIMENSION='1024'
 # OPENAI_API_KEY is optional for Ollama
