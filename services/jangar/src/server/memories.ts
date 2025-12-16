@@ -32,10 +32,11 @@ export const MemoriesLive = Layer.scoped(
       })
 
     yield* Effect.addFinalizer(() => {
-      if (!store) return Effect.void
+      const currentStore = store
+      if (!currentStore) return Effect.void
       return pipe(
         Effect.tryPromise({
-          try: () => store.close(),
+          try: () => currentStore.close(),
           catch: (error) => normalizeError('close memories store', error),
         }),
         Effect.catchAll((error) => {
