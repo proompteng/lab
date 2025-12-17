@@ -93,5 +93,20 @@
     "parser": {
       "tailwindDirectives": true
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["services/jangar/src/components/ui/**", "src/components/ui/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "useExhaustiveDependencies": "off"
+          },
+          "suspicious": {
+            "noDocumentCookie": "off"
+          }
+        }
+      }
+    }
+  ]
 }

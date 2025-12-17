@@ -10,6 +10,7 @@ import {
 export type MemoriesService = {
   persist: (input: PersistMemoryInput) => Effect.Effect<MemoryRecord, Error>
   retrieve: (input: RetrieveMemoryInput) => Effect.Effect<MemoryRecord[], Error>
+  count: (input?: { namespace?: string }) => Effect.Effect<number, Error>
 }
 
 export class Memories extends Context.Tag('Memories')<Memories, MemoriesService>() {}
@@ -64,6 +65,16 @@ export const MemoriesLive = Layer.scoped(
             Effect.tryPromise({
               try: () => resolved.retrieve(input),
               catch: (error) => normalizeError('retrieve memories failed', error),
+            }),
+          ),
+        ),
+      count: (input) =>
+        pipe(
+          getStore(),
+          Effect.flatMap((resolved) =>
+            Effect.tryPromise({
+              try: () => resolved.count(input),
+              catch: (error) => normalizeError('count memories failed', error),
             }),
           ),
         ),

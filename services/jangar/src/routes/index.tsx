@@ -1,44 +1,53 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
+import * as React from 'react'
+
+import { Button } from '@/components/ui/button'
+import { serverFns } from '../data/memories'
 
 export const Route = createFileRoute('/')({ component: Home })
 
 function Home() {
+  const [count, setCount] = React.useState<number | null>(null)
+  const [error, setError] = React.useState<string | null>(null)
+  const [isLoading, setIsLoading] = React.useState(true)
+
+  const load = React.useCallback(async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const result = await serverFns.countMemories({ data: {} })
+      if (!result.ok) {
+        setError(result.message)
+        setCount(null)
+        return
+      }
+      setCount(result.count)
+    } catch {
+      setError('Unable to load memory count right now.')
+      setCount(null)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void load()
+  }, [load])
+
   return (
-    <main className="mx-auto max-w-5xl px-6 py-12 space-y-6">
-      <header className="space-y-2">
-        <p className="text-sm uppercase tracking-widest text-cyan-400">Jangar</p>
-        <h1 className="text-3xl font-semibold">OpenAI-compatible gateway for OpenWebUI</h1>
-        <p className="text-slate-300 max-w-3xl">
-          This service exposes <code className="px-1 py-0.5 bg-slate-800 rounded">/openai/v1</code> endpoints backed by
-          Effect-powered request validation and streaming passthrough to your configured OpenAI API base.
-        </p>
+    <main className="mx-auto w-full max-w-4xl p-6 space-y-4">
+      <header className="flex items-center justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="text-sm font-medium">Memories</h1>
+          <p className="text-xs text-muted-foreground">Total entries</p>
+        </div>
+        <Button variant="outline" onClick={load} disabled={isLoading}>
+          Refresh
+        </Button>
       </header>
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <Card title="Models endpoint" detail="Lists configured upstream models">
-          <Link className="text-cyan-300 underline" to="/openai/v1/models">
-            GET /openai/v1/models
-          </Link>
-        </Card>
-        <Card title="Chat completions" detail="Streaming-only SSE proxy for OpenWebUI">
-          <code className="text-sm">POST /openai/v1/chat/completions</code>
-        </Card>
-        <Card title="Memories" detail="Save notes and query them semantically">
-          <Link className="text-cyan-300 underline" to="/memories">
-            /memories
-          </Link>
-        </Card>
-      </section>
+      {error ? <div className="text-xs text-destructive">{error}</div> : null}
+      <div className="text-3xl font-medium tabular-nums">{count ?? (isLoading ? '…' : '—')}</div>
     </main>
-  )
-}
-
-function Card({ title, detail, children }: { title: string; detail: string; children?: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 shadow-lg shadow-black/30">
-      <h3 className="text-lg font-medium text-slate-100">{title}</h3>
-      <p className="text-slate-400 text-sm mb-3">{detail}</p>
-      {children}
-    </div>
   )
 }

@@ -29,6 +29,8 @@ const makeService = (): { service: MemoriesService; saved: MemoryRecord[] } => {
           .filter((mem) => mem.content.includes(query) || (mem.summary ?? '').includes(query))
           .slice(0, limit ?? 10),
       ),
+    count: ({ namespace } = {}) =>
+      Effect.sync(() => saved.filter((mem) => (namespace ? mem.namespace === namespace : true)).length),
   }
 
   return { service, saved }
@@ -125,6 +127,7 @@ describe('Jangar MCP handler', () => {
     const failing: MemoriesService = {
       persist: () => Effect.fail(new Error('persist failed')),
       retrieve: () => Effect.fail(new Error('retrieve failed')),
+      count: () => Effect.fail(new Error('count failed')),
     }
 
     const persist = await post(failing, {
@@ -152,6 +155,7 @@ describe('Jangar MCP handler', () => {
     const failing: MemoriesService = {
       persist: () => Effect.fail(new Error('persist failed')),
       retrieve: () => Effect.fail(new Error('retrieve failed')),
+      count: () => Effect.fail(new Error('count failed')),
     }
 
     const batch = await post(

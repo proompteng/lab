@@ -1,0 +1,124 @@
+import { IconBrain, IconHeart, IconHome, IconRobot } from '@tabler/icons-react'
+import { Link, useRouterState } from '@tanstack/react-router'
+
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarRail,
+  useSidebar,
+} from '@/components/ui/sidebar'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+
+const appNav = [
+  { to: '/', label: 'Home', icon: IconHome },
+  { to: '/memories', label: 'Memories', icon: IconBrain },
+] as const
+
+const apiNav = [
+  { to: '/api/models', label: 'Models', icon: IconRobot },
+  { to: '/api/health', label: 'Health', icon: IconHeart },
+] as const
+
+export function AppSidebar() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const { state: sidebarState } = useSidebar()
+  const isCollapsed = sidebarState === 'collapsed'
+
+  return (
+    <Sidebar collapsible="icon">
+      <SidebarHeader className="h-12 p-0 border-b justify-center">
+        <div
+          className={[
+            'flex h-12 w-full items-center overflow-hidden whitespace-nowrap',
+            isCollapsed ? 'justify-center px-0' : 'px-2',
+          ].join(' ')}
+        >
+          <span className="truncate text-xs font-medium">{isCollapsed ? 'J' : 'Jangar'}</span>
+        </div>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>App</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {appNav.map((item) => (
+                <SidebarMenuItem key={item.to}>
+                  <SidebarNavButton
+                    icon={item.icon}
+                    isActive={pathname === item.to}
+                    isCollapsed={isCollapsed}
+                    label={item.label}
+                    to={item.to}
+                  />
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>API</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {apiNav.map((item) => (
+                <SidebarMenuItem key={item.to}>
+                  <SidebarNavButton
+                    icon={item.icon}
+                    isActive={pathname === item.to}
+                    isCollapsed={isCollapsed}
+                    label={item.label}
+                    to={item.to}
+                  />
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarRail />
+    </Sidebar>
+  )
+}
+
+function SidebarNavButton({
+  icon: Icon,
+  isActive,
+  isCollapsed,
+  label,
+  to,
+}: {
+  icon: React.ComponentType
+  isActive: boolean
+  isCollapsed: boolean
+  label: string
+  to: string
+}) {
+  const button = (
+    <SidebarMenuButton
+      isActive={isActive}
+      className={isCollapsed ? 'justify-center' : undefined}
+      render={<Link to={to} />}
+    >
+      <Icon />
+      {isCollapsed ? null : <span>{label}</span>}
+    </SidebarMenuButton>
+  )
+
+  if (!isCollapsed) return button
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={button} />
+      <TooltipContent side="right" align="center">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  )
+}

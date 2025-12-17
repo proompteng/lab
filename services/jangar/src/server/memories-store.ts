@@ -26,6 +26,7 @@ export type RetrieveMemoryInput = {
 export type MemoriesStore = {
   persist: (input: PersistMemoryInput) => Promise<MemoryRecord>
   retrieve: (input: RetrieveMemoryInput) => Promise<MemoryRecord[]>
+  count: (input?: { namespace?: string }) => Promise<number>
   close: () => Promise<void>
 }
 
@@ -412,5 +413,27 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     await db.close()
   }
 
-  return { persist, retrieve, close }
+  const count: MemoriesStore['count'] = async (input = {}) => {
+    await ensureSchema()
+
+    const rawNamespace = typeof input.namespace === 'string' ? input.namespace.trim() : ''
+    const resolvedNamespace = rawNamespace.length > 0 ? rawNamespace.slice(0, 200) : null
+
+    const rows = resolvedNamespace
+      ? ((await db`
+	          SELECT count(*)::bigint AS count
+	          FROM memories.entries
+	          WHERE task_name = ${resolvedNamespace};
+	        `) as Array<{ count: bigint | number | string }>)
+      : ((await db`
+	          SELECT count(*)::bigint AS count
+	          FROM memories.entries;
+	        `) as Array<{ count: bigint | number | string }>)
+
+    const raw = rows[0]?.count ?? 0
+    const parsed = typeof raw === 'bigint' ? Number(raw) : Number.parseInt(String(raw), 10)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
+  return { persist, retrieve, count, close }
 }
