@@ -9,12 +9,18 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as MemoriesRouteImport } from './routes/memories'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
 
+const MemoriesRoute = MemoriesRouteImport.update({
+  id: '/memories',
+  path: '/memories',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const McpRoute = McpRouteImport.update({
   id: '/mcp',
   path: '/mcp',
@@ -45,6 +51,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
+  '/memories': typeof MemoriesRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
@@ -52,6 +59,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
+  '/memories': typeof MemoriesRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
@@ -60,6 +68,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
+  '/memories': typeof MemoriesRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
@@ -69,6 +78,7 @@ export interface FileRouteTypes {
     | '/'
     | '/health'
     | '/mcp'
+    | '/memories'
     | '/openai/v1/models'
     | '/openai/v1/chat/completions'
   fileRoutesByTo: FileRoutesByTo
@@ -76,6 +86,7 @@ export interface FileRouteTypes {
     | '/'
     | '/health'
     | '/mcp'
+    | '/memories'
     | '/openai/v1/models'
     | '/openai/v1/chat/completions'
   id:
@@ -83,6 +94,7 @@ export interface FileRouteTypes {
     | '/'
     | '/health'
     | '/mcp'
+    | '/memories'
     | '/openai/v1/models'
     | '/openai/v1/chat/completions'
   fileRoutesById: FileRoutesById
@@ -91,12 +103,20 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HealthRoute: typeof HealthRoute
   McpRoute: typeof McpRoute
+  MemoriesRoute: typeof MemoriesRoute
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
   OpenaiV1ChatCompletionsRoute: typeof OpenaiV1ChatCompletionsRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/memories': {
+      id: '/memories'
+      path: '/memories'
+      fullPath: '/memories'
+      preLoaderRoute: typeof MemoriesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/mcp': {
       id: '/mcp'
       path: '/mcp'
@@ -139,6 +159,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HealthRoute: HealthRoute,
   McpRoute: McpRoute,
+  MemoriesRoute: MemoriesRoute,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,
   OpenaiV1ChatCompletionsRoute: OpenaiV1ChatCompletionsRoute,
 }

@@ -14,7 +14,7 @@ function Home() {
         </p>
       </header>
 
-      <section className="grid gap-4 md:grid-cols-2">
+      <section className="grid gap-4 md:grid-cols-3">
         <Card title="Models endpoint" detail="Lists configured upstream models">
           <Link className="text-cyan-300 underline" to="/openai/v1/models">
             GET /openai/v1/models
@@ -22,6 +22,11 @@ function Home() {
         </Card>
         <Card title="Chat completions" detail="Streaming-only SSE proxy for OpenWebUI">
           <code className="text-sm">POST /openai/v1/chat/completions</code>
+        </Card>
+        <Card title="Memories" detail="Save notes and query them semantically">
+          <Link className="text-cyan-300 underline" to="/memories">
+            /memories
+          </Link>
         </Card>
       </section>
     </main>
