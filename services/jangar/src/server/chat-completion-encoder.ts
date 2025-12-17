@@ -354,7 +354,7 @@ const createSession = (args: {
       const markdown = toPlanMarkdown(record)
       if (!markdown || markdown === lastPlanMarkdown) return frames
       lastPlanMarkdown = markdown
-      emitContentDelta(frames, `\n\n${markdown}\n\n`)
+      emitContentDelta(frames, `\n\n${markdown}\n\n\n`)
       return frames
     }
 
