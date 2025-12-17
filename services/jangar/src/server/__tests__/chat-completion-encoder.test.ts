@@ -145,6 +145,7 @@ describe('chat completion encoder', () => {
     expect(content).toContain('- [x] Audit current thread-store behavior')
     expect(content).toContain('- [ ] Create tagged thread-store service (in progress)')
     expect(content).toContain('- [ ] Wire chat handler to service')
+    expect(content.endsWith('\n\n\n')).toBe(true)
   })
 
   it('emits usage and stop chunks on finalize when successful', () => {

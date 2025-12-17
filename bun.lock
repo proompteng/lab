@@ -5,17 +5,17 @@
     "": {
       "name": "@proompteng/source",
       "dependencies": {
-        "@headlessui/react": "latest",
-        "xstate": "latest",
+        "@headlessui/react": "^2.2.9",
+        "xstate": "^5.25.0",
       },
       "devDependencies": {
-        "@biomejs/biome": "latest",
-        "@commitlint/cli": "latest",
-        "@commitlint/config-conventional": "latest",
-        "husky": "latest",
-        "lint-staged": "latest",
-        "turbo": "latest",
-        "typescript": "latest",
+        "@biomejs/biome": "2.3.8",
+        "@commitlint/cli": "20.2.0",
+        "@commitlint/config-conventional": "20.2.0",
+        "husky": "9.1.7",
+        "lint-staged": "16.2.7",
+        "turbo": "2.6.3",
+        "typescript": "5.9.3",
       },
     },
     "apps/docs": {

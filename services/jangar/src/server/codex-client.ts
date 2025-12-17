@@ -3,7 +3,27 @@ import { Effect } from 'effect'
 
 type Factory = (options?: { defaultModel?: string }) => CodexAppServerClient
 
-const defaultFactory: Factory = (options) => new CodexAppServerClient({ defaultModel: options?.defaultModel })
+const resolveMcpUrl = () => {
+  const envUrl = process.env.JANGAR_MCP_URL?.trim()
+  if (envUrl && envUrl.length > 0) return envUrl
+
+  const port = (process.env.UI_PORT ?? process.env.PORT ?? '8080').trim()
+  return `http://127.0.0.1:${port}/mcp`
+}
+
+const defaultFactory: Factory = (options) =>
+  new CodexAppServerClient({
+    defaultModel: options?.defaultModel,
+    threadConfig: {
+      'features.rmcp_client': true,
+      'features.web_search_request': true,
+      mcp_servers: {
+        jangar: {
+          url: resolveMcpUrl(),
+        },
+      },
+    },
+  })
 
 let activeClient: CodexAppServerClient | null = null
 let factory: Factory = defaultFactory

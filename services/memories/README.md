@@ -2,6 +2,8 @@
 
 This directory hosts a small Bun service that backs Codex memory storage and retrieval.
 
+Note: this service is intended for local/dev agents. Production deployments should use Jangar's MCP memories storage (`services/jangar`) instead.
+
 ## Setup
 
 ```bash

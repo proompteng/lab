@@ -12,6 +12,7 @@ ARG BUN_VERSION=1.3.4
 ARG OPENVSCODE_VERSION=1.105.1
 ARG GH_VERSION=2.65.0
 ARG KUBECTL_VERSION=1.34.3
+ARG CNPG_VERSION=1.28.0
 ARG DOCKER_CLI_VERSION=29.1.2
 ARG BUILDX_VERSION=0.30.1
 ARG TEMURIN25_JDK_TAG=jdk-25.0.1+8
@@ -23,6 +24,7 @@ ARG NODE24_VERSION=24.11.1
 ARG OPENVSCODE_VERSION
 ARG GH_VERSION
 ARG KUBECTL_VERSION
+ARG CNPG_VERSION
 ARG DOCKER_CLI_VERSION
 ARG BUILDX_VERSION
 ARG TEMURIN25_JDK_TAG
@@ -47,6 +49,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
   curl \
   git \
   gnupg \
+  jq \
   ripgrep \
   tini \
   unzip; \
@@ -161,6 +164,32 @@ RUN set -eux; \
   install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl; \
   rm kubectl kubectl.sha256; \
   kubectl version --client --output=yaml
+
+# Install CloudNativePG kubectl plugin (`kubectl cnpg ...`)
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) CNPG_ARCH=linux_x86_64 ;; \
+  arm64|aarch64) CNPG_ARCH=linux_arm64 ;; \
+  *) echo "Unsupported arch for kubectl-cnpg: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  cd /tmp; \
+  TARBALL="kubectl-cnpg_${CNPG_VERSION}_${CNPG_ARCH}.tar.gz"; \
+  CHECKSUMS="cnpg-${CNPG_VERSION}-checksums.txt"; \
+  BASE_URL="https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v${CNPG_VERSION}"; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "${BASE_URL}/${TARBALL}" -o "${TARBALL}"; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "${BASE_URL}/${CHECKSUMS}" -o "${CHECKSUMS}"; \
+  EXPECTED_SHA="$(grep -E "^[0-9a-f]{64}  ${TARBALL}$" "${CHECKSUMS}" | awk '{print $1}')"; \
+  if [ -z "${EXPECTED_SHA}" ]; then \
+    echo "Failed to find checksum entry for ${TARBALL} in ${CHECKSUMS}" >&2; \
+    head -n 50 "${CHECKSUMS}" >&2; \
+    exit 1; \
+  fi; \
+  printf '%s  %s\n' "${EXPECTED_SHA}" "${TARBALL}" | sha256sum -c -; \
+  tar -xzf "${TARBALL}" -C /tmp; \
+  install -o root -g root -m 0755 /tmp/kubectl-cnpg /usr/local/bin/kubectl-cnpg; \
+  rm -f "${TARBALL}" "${CHECKSUMS}" /tmp/kubectl-cnpg; \
+  command -v kubectl-cnpg >/dev/null
 
 # Make `k` available for kubectl (VS Code terminals often prefer `k`).
 RUN set -eux; \

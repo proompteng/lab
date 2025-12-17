@@ -97,20 +97,31 @@ curl -fsS http://127.0.0.1:11434/v1/embeddings \
   python3 -c 'import json,sys; r=json.load(sys.stdin); print(len(r["data"][0]["embedding"]))'
 ```
 
-Note: no changes to `jangar` are required for embeddings — as long as clients can reach `http://docker-host.pihole.lan:11434`, they can call `POST /v1/embeddings` directly.
+Note: no changes to `jangar` are required for embeddings — as long as clients can reach `http://192.168.1.190:11434`, they can call `POST /v1/embeddings` directly.
+
+### Configure Jangar / memories to use Ollama embeddings
+
+Both `services/jangar` (MCP memories tools) and `services/memories` (CLI helpers) can point at Ollama via the same OpenAI-style env vars:
+
+```bash
+export OPENAI_API_BASE_URL='http://192.168.1.190:11434/v1'
+export OPENAI_EMBEDDING_MODEL='qwen3-embedding:0.6b'
+export OPENAI_EMBEDDING_DIMENSION='1024'
+# OPENAI_API_KEY is optional for Ollama
+```
 
 ## Wire Jangar OpenWebUI to `docker-host` Ollama
 OpenWebUI in the `jangar` namespace is Helm-managed via `argocd/applications/jangar/openwebui-values.yaml`. It’s configured to use Jangar as the OpenAI-compatible backend, but can also be given one or more Ollama endpoints.
 
 Desired state (GitOps):
 - `argocd/applications/jangar/openwebui-values.yaml` sets:
-  - `ollamaUrls: [http://docker-host.pihole.lan:11434]`
+  - `ollamaUrls: [http://192.168.1.190:11434]`
   - `ENABLE_OLLAMA_API=true` (via `extraEnvVars`)
 
 After ArgoCD reconciles, you can verify reachability from inside the OpenWebUI pod:
 
 ```bash
-kubectl -n jangar exec open-webui-0 -- sh -lc 'curl -fsS http://docker-host.pihole.lan:11434/api/tags | head -c 400; echo'
+kubectl -n jangar exec open-webui-0 -- sh -lc 'curl -fsS http://192.168.1.190:11434/api/tags | head -c 400; echo'
 ```
 
 If the models are available, OpenWebUI should include `qwen3-coder:30b-a3b-q4_K_M` in its model list.

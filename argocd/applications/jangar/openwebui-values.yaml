@@ -2,7 +2,7 @@ ollama:
   enabled: false
 
 ollamaUrls:
-  - http://docker-host.pihole.lan:11434
+  - http://192.168.1.190:11434
 
 pipelines:
   enabled: false
