@@ -17,8 +17,13 @@ export type RetrieveNotesInput = {
   limit?: number
 }
 
+export type CountMemoriesInput = {
+  namespace?: string
+}
+
 export type PersistNoteResult = { ok: true; memory: MemoryRecord } | { ok: false; message: string }
 export type RetrieveNotesResult = { ok: true; memories: MemoryRecord[] } | { ok: false; message: string }
+export type CountMemoriesResult = { ok: true; count: number } | { ok: false; message: string }
 
 const DEFAULT_NAMESPACE = 'default'
 const DEFAULT_LIMIT = 10
@@ -35,6 +40,11 @@ const normalizeNamespace = (namespace: unknown) => {
   const raw = typeof namespace === 'string' ? namespace.trim() : ''
   const resolved = raw.length > 0 ? raw : DEFAULT_NAMESPACE
   return resolved.slice(0, MAX_NAMESPACE_CHARS)
+}
+
+const normalizeOptionalNamespace = (namespace: unknown) => {
+  const raw = typeof namespace === 'string' ? namespace.trim() : ''
+  return raw.length > 0 ? raw.slice(0, MAX_NAMESPACE_CHARS) : undefined
 }
 
 const normalizeTags = (tags: unknown): string[] => {
@@ -106,7 +116,27 @@ const retrieveNotesServer = createServerFn({ method: 'POST' })
     return { ok: true, memories: memoriesResult.right }
   })
 
+const countMemoriesServer = createServerFn({ method: 'POST' })
+  .inputValidator((input) => (input ?? {}) as CountMemoriesInput)
+  .handler(async ({ data }): Promise<CountMemoriesResult> => {
+    const payload = data as Partial<CountMemoriesInput>
+    const namespace = normalizeOptionalNamespace(payload.namespace)
+
+    const countResult = await handlerRuntime.runPromise(
+      Effect.either(
+        Effect.gen(function* () {
+          const service = yield* Memories
+          return yield* service.count({ namespace })
+        }),
+      ),
+    )
+
+    if (countResult._tag === 'Left') return { ok: false, message: countResult.left.message }
+    return { ok: true, count: countResult.right }
+  })
+
 export const serverFns = {
   persistNote: persistNoteServer,
   retrieveNotes: retrieveNotesServer,
+  countMemories: countMemoriesServer,
 }

@@ -1,15 +1,18 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/health')({
-  loader: () => ({ status: 'ok', service: 'jangar' as const }),
-  component: Health,
+  server: {
+    handlers: {
+      GET: async () => {
+        const body = JSON.stringify({ status: 'ok', service: 'jangar' as const })
+        return new Response(body, {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            'content-length': Buffer.byteLength(body).toString(),
+          },
+        })
+      },
+    },
+  },
 })
-
-function Health() {
-  const data = Route.useLoaderData()
-  return (
-    <pre className="p-4 text-sm leading-6 bg-slate-900 text-slate-100 rounded-lg border border-slate-800">
-      {JSON.stringify(data, null, 2)}
-    </pre>
-  )
-}

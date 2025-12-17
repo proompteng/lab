@@ -1,6 +1,6 @@
 import { createRootRoute, HeadContent, Scripts } from '@tanstack/react-router'
 import React from 'react'
-
+import { AppShell } from '@/components/app-shell'
 import appCss from '../styles.css?url'
 
 export const Route = createRootRoute({
@@ -22,17 +22,15 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   const mainId = React.useId()
 
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <head>
         <HeadContent />
       </head>
-      <body className="min-h-screen bg-slate-950 text-slate-100">
+      <body className="min-h-screen bg-background text-foreground">
         <a href={`#${mainId}`} className="sr-only focus:not-sr-only">
           Skip to content
         </a>
-        <div id={mainId} className="min-h-screen">
-          {children}
-        </div>
+        <AppShell mainId={mainId}>{children}</AppShell>
         <Scripts />
       </body>
     </html>

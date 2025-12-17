@@ -13,6 +13,8 @@ import { Route as MemoriesRouteImport } from './routes/memories'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiModelsRouteImport } from './routes/api/models'
+import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
 
@@ -36,6 +38,16 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiModelsRoute = ApiModelsRouteImport.update({
+  id: '/api/models',
+  path: '/api/models',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHealthRoute = ApiHealthRouteImport.update({
+  id: '/api/health',
+  path: '/api/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OpenaiV1ModelsRoute = OpenaiV1ModelsRouteImport.update({
   id: '/openai/v1/models',
   path: '/openai/v1/models',
@@ -52,6 +64,8 @@ export interface FileRoutesByFullPath {
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/models': typeof ApiModelsRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
@@ -60,6 +74,8 @@ export interface FileRoutesByTo {
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/models': typeof ApiModelsRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
@@ -69,6 +85,8 @@ export interface FileRoutesById {
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/models': typeof ApiModelsRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
@@ -79,6 +97,8 @@ export interface FileRouteTypes {
     | '/health'
     | '/mcp'
     | '/memories'
+    | '/api/health'
+    | '/api/models'
     | '/openai/v1/models'
     | '/openai/v1/chat/completions'
   fileRoutesByTo: FileRoutesByTo
@@ -87,6 +107,8 @@ export interface FileRouteTypes {
     | '/health'
     | '/mcp'
     | '/memories'
+    | '/api/health'
+    | '/api/models'
     | '/openai/v1/models'
     | '/openai/v1/chat/completions'
   id:
@@ -95,6 +117,8 @@ export interface FileRouteTypes {
     | '/health'
     | '/mcp'
     | '/memories'
+    | '/api/health'
+    | '/api/models'
     | '/openai/v1/models'
     | '/openai/v1/chat/completions'
   fileRoutesById: FileRoutesById
@@ -104,6 +128,8 @@ export interface RootRouteChildren {
   HealthRoute: typeof HealthRoute
   McpRoute: typeof McpRoute
   MemoriesRoute: typeof MemoriesRoute
+  ApiHealthRoute: typeof ApiHealthRoute
+  ApiModelsRoute: typeof ApiModelsRoute
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
   OpenaiV1ChatCompletionsRoute: typeof OpenaiV1ChatCompletionsRoute
 }
@@ -138,6 +164,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/models': {
+      id: '/api/models'
+      path: '/api/models'
+      fullPath: '/api/models'
+      preLoaderRoute: typeof ApiModelsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/health': {
+      id: '/api/health'
+      path: '/api/health'
+      fullPath: '/api/health'
+      preLoaderRoute: typeof ApiHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/openai/v1/models': {
       id: '/openai/v1/models'
       path: '/openai/v1/models'
@@ -160,6 +200,8 @@ const rootRouteChildren: RootRouteChildren = {
   HealthRoute: HealthRoute,
   McpRoute: McpRoute,
   MemoriesRoute: MemoriesRoute,
+  ApiHealthRoute: ApiHealthRoute,
+  ApiModelsRoute: ApiModelsRoute,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,
   OpenaiV1ChatCompletionsRoute: OpenaiV1ChatCompletionsRoute,
 }
