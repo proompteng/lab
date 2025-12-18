@@ -65,7 +65,7 @@ S3A properties (example):
 - Jar: `cd services/dorvud && ./gradlew :technical-analysis-flink:uberJar`
 - Image (amd64): `docker buildx build --platform linux/amd64 -f services/dorvud/technical-analysis-flink/Dockerfile -t registry.ide-newton.ts.net/lab/torghut-ta:<tag> services/dorvud --push`
 - Apply: `kubectl -n torghut apply -k argocd/applications/torghut/ta/` or run `bun packages/scripts/src/torghut/deploy-service.ts` to build, push, and wait for `flinkdeployment/torghut-ta` Ready.
-- Checkpoint/Savepoint bucket: `s3a://flink-checkpoints/torghut/technical-analysis/`; provide `TA_S3_ACCESS_KEY/TA_S3_SECRET_KEY` from the MinIO secret.
+- Checkpoint/Savepoint bucket: `s3a://flink-checkpoints/torghut/technical-analysis/`; provide MinIO creds via `TA_S3_ACCESS_KEY/TA_S3_SECRET_KEY` and `AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY` (S3A credential providers look for AWS env vars).
 
 ### Savepoint / upgrade / rollback
 - Upgrade flow: trigger savepoint (or last-state), update image tag, redeploy; verify running and checkpointing.

@@ -4,6 +4,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.fail
 
 class AlpacaMapperTest {
   @Test
@@ -18,5 +19,25 @@ class AlpacaMapperTest {
     assertEquals(true, env.isFinal)
     val payloadSymbol = env.payload.jsonObject["S"]?.toString()?.trim('"')
     assertEquals("AAPL", payloadSymbol)
+  }
+
+  @Test
+  fun `decoding unknown message types does not crash`() {
+    val msg = """{"T":"n","foo":"bar"}"""
+    try {
+      AlpacaMapper.decode(msg)
+    } catch (e: Exception) {
+      fail("expected decode to succeed, got ${e::class.simpleName}: ${e.message}")
+    }
+  }
+
+  @Test
+  fun `decoding messages without T does not crash`() {
+    val msg = """{"foo":"bar"}"""
+    try {
+      AlpacaMapper.decode(msg)
+    } catch (e: Exception) {
+      fail("expected decode to succeed, got ${e::class.simpleName}: ${e.message}")
+    }
   }
 }

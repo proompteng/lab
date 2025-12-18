@@ -6,7 +6,7 @@ metadata:
   labels:
     app: torghut-ta
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:8628d930b706ff17b493f6b2b5332e79a8644e3098e8c5d7aea45e3b714d30fa
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:574956b501e45d6ad9fd25b4024ce759c48ed9b5adfa1d874db3e70be1207a49
   imagePullPolicy: IfNotPresent
   flinkVersion: v1_20
   serviceAccount: torghut-runtime
@@ -54,10 +54,30 @@ spec:
                 secretKeyRef:
                   name: observability-minio-creds
                   key: secretkey
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: observability-minio-creds
+                  key: accesskey
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: observability-minio-creds
+                  key: secretkey
+            - name: AWS_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: observability-minio-creds
+                  key: accesskey
+            - name: AWS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: observability-minio-creds
+                  key: secretkey
             - name: TORGHUT_TA_VERSION
-              value: v0.336.0-2-g56c56630
+              value: v0.342.1-1-g32907c81
             - name: TORGHUT_TA_COMMIT
-              value: 56c56630a96c57efef24da55ff6bf52544e0bb18
+              value: 32907c81669dff3baa00393b0050c43c6e1a1200
           ports:
             - containerPort: 9249
               name: metrics

@@ -16,6 +16,7 @@ data:
   TA_SIGNALS_TOPIC: "torghut.nvda.ta.signals.v1"
   TA_GROUP_ID: "torghut-ta-nvda"
   TA_CLIENT_ID: "torghut-ta-nvda"
+  TA_AUTO_OFFSET_RESET: "latest"
   TA_CHECKPOINT_DIR: "s3a://flink-checkpoints/torghut/technical-analysis"
   TA_SAVEPOINT_DIR: "s3a://flink-checkpoints/torghut/technical-analysis/savepoints"
   TA_CHECKPOINT_INTERVAL_MS: "10000"

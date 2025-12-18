@@ -40,6 +40,7 @@ import io.ktor.websocket.WebSocketSession
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.SerializationException
 
 private val logger = KotlinLogging.logger {}
 
@@ -112,11 +113,21 @@ class ForwarderApp(
           is Frame.Binary -> frame.readBytes().decodeToString()
           else -> continue
         }
-        val elements = json.parseToJsonElement(text)
+        val elements = try {
+          json.parseToJsonElement(text)
+        } catch (e: SerializationException) {
+          logger.warn(e) { "failed to parse alpaca frame as JSON; dropping" }
+          continue
+        }
         val messages: List<JsonElement> =
           if (elements is JsonArray) elements.toList() else listOf(elements)
         messages.forEach { el ->
-          val msg = json.decodeFromJsonElement(AlpacaMessageSerializer, el)
+          val msg = try {
+            json.decodeFromJsonElement(AlpacaMessageSerializer, el)
+          } catch (e: SerializationException) {
+            logger.warn(e) { "failed to decode alpaca message; dropping" }
+            return@forEach
+          }
           handleMessage(msg, producer, seq, tradesDedup, quotesDedup, barsDedup)
         }
       }
@@ -132,6 +143,14 @@ class ForwarderApp(
     barsDedup: DedupCache<String>,
   ) {
     when (msg) {
+      is AlpacaError -> {
+        logger.error { "alpaca error code=${msg.code} msg=${msg.msg}" }
+        return
+      }
+      is AlpacaUnknownMessage -> {
+        logger.warn { "alpaca unknown message type=${msg.type}; dropping" }
+        return
+      }
       is AlpacaTrade -> {
         if (tradesDedup.isDuplicate(msg.id.toString())) return
       }

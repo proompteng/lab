@@ -41,6 +41,7 @@ import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction
 import org.apache.flink.configuration.Configuration
 import org.apache.flink.util.Collector
+import org.apache.kafka.clients.consumer.OffsetResetStrategy
 import org.apache.kafka.clients.producer.ProducerRecord
 import org.slf4j.LoggerFactory
 import org.ta4j.core.BaseBar
@@ -144,13 +145,20 @@ private fun <T> watermarkStrategy(config: FlinkTaConfig): WatermarkStrategy<Enve
 private fun <T> emptyWatermarks(): WatermarkStrategy<T> = WatermarkStrategy.noWatermarks()
 
 private fun kafkaSource(config: FlinkTaConfig, topic: String): KafkaSource<String> {
+  val offsetResetStrategy = when (config.autoOffsetReset.lowercase()) {
+    "earliest" -> OffsetResetStrategy.EARLIEST
+    "latest" -> OffsetResetStrategy.LATEST
+    "none" -> OffsetResetStrategy.NONE
+    else -> OffsetResetStrategy.LATEST
+  }
+
   val builder = KafkaSource.builder<String>()
     .setBootstrapServers(config.bootstrapServers)
     .setTopics(topic)
     .setClientIdPrefix(config.clientId)
     .setGroupId(config.groupId)
     .setValueOnlyDeserializer(SimpleStringSchema())
-    .setStartingOffsets(OffsetsInitializer.committedOffsets())
+    .setStartingOffsets(OffsetsInitializer.committedOffsets(offsetResetStrategy))
 
   builder.setProperty("auto.offset.reset", config.autoOffsetReset)
   builder.setProperty("isolation.level", "read_committed")
