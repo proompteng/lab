@@ -2,10 +2,24 @@ package ai.proompteng.dorvud.ws
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 /** Alpaca market data frames (v2 streaming). */
 @Serializable
 sealed interface AlpacaMessage { val type: String }
+
+@Serializable
+@SerialName("error")
+data class AlpacaError(
+  @SerialName("T") override val type: String = "error",
+  val code: Int? = null,
+  val msg: String? = null,
+) : AlpacaMessage
+
+data class AlpacaUnknownMessage(
+  override val type: String,
+  val raw: JsonElement,
+) : AlpacaMessage
 
 @Serializable
 @SerialName("success")
