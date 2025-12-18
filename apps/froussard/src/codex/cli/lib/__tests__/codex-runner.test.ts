@@ -159,7 +159,7 @@ describe('codex-runner', () => {
     const promptSink: string[] = []
     const sessionLog = [
       '2025-11-01T19:29:14.313728Z  INFO codex_exec: Codex initialized with event: SessionConfiguredEvent { ',
-      'session_id: ConversationId { uuid: 019a40e5-341a-7501-ad84-5ccdb240e7ff }, model: "gpt-5.1-codex-max", ',
+      'session_id: ConversationId { uuid: 019a40e5-341a-7501-ad84-5ccdb240e7ff }, model: "gpt-5.2-codex", ',
       'reasoning_effort: Some(High), history_log_id: 0, history_entry_count: 0, initial_messages: None, ',
       'rollout_path: "/root/.codex/sessions/2025/11/01/rollout-2025-11-01T19-29-14-019a40e5-341a-7501-ad84-5ccdb240e7ff.jsonl" }',
     ].join('')
@@ -193,7 +193,7 @@ describe('codex-runner', () => {
     spawnMock.mockImplementation(() => createCodexProcess(codexMessages, promptSink))
 
     const originalModel = process.env.CODEX_MODEL
-    process.env.CODEX_MODEL = 'gpt-5.2'
+    process.env.CODEX_MODEL = 'gpt-5.2-codex'
 
     const outputPath = join(workspace, 'output.log')
     const jsonOutputPath = join(workspace, 'events.jsonl')
@@ -210,7 +210,7 @@ describe('codex-runner', () => {
     const spawnArgs = spawnMock.mock.calls[0]?.[0]
     expect(spawnArgs?.cmd).toContain('-m')
     const modelIndex = spawnArgs?.cmd?.indexOf('-m')
-    expect(spawnArgs?.cmd?.[modelIndex + 1]).toBe('gpt-5.2')
+    expect(spawnArgs?.cmd?.[modelIndex + 1]).toBe('gpt-5.2-codex')
 
     process.env.CODEX_MODEL = originalModel
   })

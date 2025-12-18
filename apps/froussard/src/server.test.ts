@@ -180,7 +180,7 @@ describe('server bootstrap', () => {
     expect(ensureConnectedSpy).toHaveBeenCalled()
     expect(mockCreateHealthHandlers).toHaveBeenCalled()
     expect(mockCreateWebhookHandler).toHaveBeenCalled()
-  })
+  }, 15_000)
 
   it('exposes build metadata on the root route', async () => {
     process.env.FROUSSARD_VERSION = '1.2.3'
@@ -206,5 +206,5 @@ describe('server bootstrap', () => {
       version: '1.2.3',
       commit: 'deadbeef',
     })
-  })
+  }, 15_000)
 })

@@ -1,5 +1,6 @@
 // GENERATED CODE! DO NOT MODIFY BY HAND!
 
+export type { AbsolutePathBuf } from "./AbsolutePathBuf";
 export type { AddConversationListenerParams } from "./AddConversationListenerParams";
 export type { AddConversationSubscriptionResponse } from "./AddConversationSubscriptionResponse";
 export type { AgentMessageContent } from "./AgentMessageContent";
@@ -87,6 +88,7 @@ export type { ItemStartedEvent } from "./ItemStartedEvent";
 export type { ListConversationsParams } from "./ListConversationsParams";
 export type { ListConversationsResponse } from "./ListConversationsResponse";
 export type { ListCustomPromptsResponseEvent } from "./ListCustomPromptsResponseEvent";
+export type { ListSkillsResponseEvent } from "./ListSkillsResponseEvent";
 export type { LocalShellAction } from "./LocalShellAction";
 export type { LocalShellExecAction } from "./LocalShellExecAction";
 export type { LocalShellStatus } from "./LocalShellStatus";
@@ -158,6 +160,9 @@ export type { SetDefaultModelResponse } from "./SetDefaultModelResponse";
 export type { SkillErrorInfo } from "./SkillErrorInfo";
 export type { SkillInfo } from "./SkillInfo";
 export type { SkillLoadOutcomeInfo } from "./SkillLoadOutcomeInfo";
+export type { SkillMetadata } from "./SkillMetadata";
+export type { SkillScope } from "./SkillScope";
+export type { SkillsListEntry } from "./SkillsListEntry";
 export type { StepStatus } from "./StepStatus";
 export type { StreamErrorEvent } from "./StreamErrorEvent";
 export type { SubAgentSource } from "./SubAgentSource";
