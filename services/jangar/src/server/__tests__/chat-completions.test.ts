@@ -52,7 +52,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -94,7 +94,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
       }),
@@ -147,7 +147,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_plan: false },
@@ -197,7 +197,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
       }),
@@ -244,7 +244,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
       }),
@@ -321,7 +321,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [
           {
             role: 'user',
@@ -370,7 +370,7 @@ describe('chat completions handler', () => {
       method: 'POST',
       signal: abortController.signal,
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -431,7 +431,7 @@ describe('chat completions handler', () => {
         'x-openwebui-chat-id': 'chat-1',
       },
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -511,7 +511,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -578,7 +578,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -622,7 +622,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -686,7 +686,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -737,7 +737,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -805,7 +805,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -861,7 +861,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
       }),
@@ -918,7 +918,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -982,7 +982,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -1046,7 +1046,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -1094,7 +1094,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -1135,7 +1135,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -1180,7 +1180,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -1242,7 +1242,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -1286,7 +1286,7 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({ model: 'gpt-5.2-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
     })
 
     const response = await chatCompletionsHandler(request)
@@ -1322,7 +1322,7 @@ describe('chat completions handler', () => {
     const request = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({
-        model: 'gpt-5.1-codex',
+        model: 'gpt-5.2-codex',
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
         stream_options: { include_usage: true },
@@ -1368,7 +1368,7 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({ model: 'gpt-5.2-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
     })
 
     const response = await chatCompletionsHandler(request)
@@ -1414,7 +1414,7 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({ model: 'gpt-5.2-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
     })
 
     const response = await chatCompletionsHandler(request)
@@ -1460,7 +1460,7 @@ describe('chat completions handler', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ model: 'gpt-5.1-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+      body: JSON.stringify({ model: 'gpt-5.2-codex', messages: [{ role: 'user', content: 'hi' }], stream: true }),
     })
 
     const response = await chatCompletionsHandler(request)

@@ -270,7 +270,7 @@ export class CodexAppServerClient {
     cwd,
     sandbox = 'danger-full-access',
     approval = 'never',
-    defaultModel = 'gpt-5.1-codex-max',
+    defaultModel = 'gpt-5.2-codex',
     defaultEffort = DEFAULT_EFFORT,
     threadConfig,
     autoCompaction = true,

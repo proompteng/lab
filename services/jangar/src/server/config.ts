@@ -7,7 +7,7 @@ export type OpenAIConfig = {
   defaultModel: string
 }
 
-const DEFAULT_MODELS = ['gpt-5.1-codex-max', 'gpt-5.1-codex', 'gpt-5.1-codex-mini', 'gpt-5.1', 'gpt-5.2']
+const DEFAULT_MODELS = ['gpt-5.2-codex']
 
 const parseModelsEnv = (raw: string | undefined) => {
   if (!raw) return null

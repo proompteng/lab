@@ -9,7 +9,7 @@ This guide explains how the three-stage Codex automation pipeline works and how 
 3. **Argo Events** (`github-codex` EventSource/Sensor) continues to consume the JSON stream (`github.codex.tasks`) for implementation and review handoffs.
    - `github-codex-implementation` for approved plans.
    - `github-codex-review` for review/maintenance loops until the PR becomes mergeable.
-4. Each **WorkflowTemplate** runs the Codex container (`gpt-5.1-codex-max` with `--reasoning high --search --mode yolo`), orchestrated by [Argo Workflows](https://argo-workflows.readthedocs.io/en/stable/).
+4. Each **WorkflowTemplate** runs the Codex container (`gpt-5.2-codex` with `--reasoning high --search --mode yolo`), orchestrated by [Argo Workflows](https://argo-workflows.readthedocs.io/en/stable/).
    - `stage=planning`: `codex-plan.ts` (via the `facteur-dispatch` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`. Facteur prefixes runs with `codex-planning-` to keep planner workflows distinct, and the Argo Events fallback reuses the same template if re-enabled.
    - `stage=implementation`: `codex-implement.ts` executes the approved plan, pushes the feature branch, opens a **draft** PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.ts`, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
    - `stage=review`: `codex-review.ts` consumes the review payload, synthesises the reviewer feedback plus failing checks into a new prompt, reuses the existing Codex branch, and streams the run into `.codex-review.log` for artifacts and Discord updates.
