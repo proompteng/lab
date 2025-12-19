@@ -1,10 +1,10 @@
 import { SQL } from 'bun'
 import {
-  DEFAULT_DATABASE_URL,
   getFlagValue,
   parseCliFlags,
   parseCommaList,
   requireEnv,
+  resolveDatabaseSession,
   toPgTextArray,
   vectorToPgArray,
 } from './cli'
@@ -50,7 +50,6 @@ const encoderModel = getFlagValue(flags, 'model') ?? process.env.OPENAI_EMBEDDIN
 const openAiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? 'https://api.openai.com/v1'
 const apiKey = requireEnv('OPENAI_API_KEY')
 const expectedDimension = parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? '1536', 10)
-const databaseUrl = process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL
 
 const embedResponse = await fetch(`${openAiBaseUrl}/embeddings`, {
   method: 'POST',
@@ -92,7 +91,8 @@ if (Number.isNaN(limitRaw)) {
 }
 const limit = Math.max(1, Math.floor(limitRaw))
 
-const db = new SQL(databaseUrl)
+const databaseSession = await resolveDatabaseSession()
+const db = new SQL(databaseSession.databaseUrl)
 
 const params: unknown[] = []
 const pushParam = (value: unknown) => {
@@ -155,19 +155,16 @@ try {
     })
 
     const ids = rows.map((row) => row.id)
-    const snippet = queryText.trim().slice(0, 120)
     const idsArrayLiteral = toPgTextArray(ids)
 
     await db.unsafe('UPDATE memories.entries SET last_accessed_at = now() WHERE id = ANY($1::uuid[])', [
       idsArrayLiteral,
     ])
-
-    await db.unsafe(
-      `INSERT INTO memories.events (entry_id, event_type, event_summary)
-       SELECT id, 'retrieved', $2 FROM memories.entries WHERE id = ANY($1::uuid[])`,
-      [idsArrayLiteral, `retrieved for query: ${snippet}`],
-    )
   }
 } finally {
-  await db.close()
+  try {
+    await db.close()
+  } finally {
+    await databaseSession.stop()
+  }
 }
