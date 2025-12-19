@@ -155,4 +155,29 @@ describe('registry prune-images', () => {
     expect(options.tagPattern.test('v12')).toBe(true)
     expect(options.unsafeAllTags).toBe(true)
   })
+
+  it('parseArgs can clear default keep tags', () => {
+    const options = parseArgs(['--no-keep-tags', '--keep-tag=main'])
+
+    expect(options.keepTags).toEqual(['main'])
+  })
+
+  it('parseArgs can drop latest keep tag', () => {
+    const options = parseArgs(['--no-keep-tag-latest'])
+
+    expect(options.keepTags).toEqual([])
+  })
+
+  it('parseArgs accepts base URL and disables port-forward', () => {
+    const options = parseArgs(['--base-url=https://registry.example'])
+
+    expect(options.baseUrl).toBe('https://registry.example')
+    expect(options.portForward).toBe(false)
+  })
+
+  it('parseArgs can disable deleting untagged manifests', () => {
+    const options = parseArgs(['--no-delete-untagged'])
+
+    expect(options.deleteUntagged).toBe(false)
+  })
 })

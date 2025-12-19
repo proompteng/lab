@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oirat
+  labels:
+    app.kubernetes.io/name: oirat
+    app.kubernetes.io/part-of: lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oirat
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oirat
+        app.kubernetes.io/part-of: lab
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2025-12-19T08:12:34.952Z"
+    spec:
+      containers:
+        - name: oirat
+          image: registry.ide-newton.ts.net/lab/oirat
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: oirat-config
+          env:
+            - name: DISCORD_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: oirat-discord
+                  key: bot-token
+            - name: JANGAR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: oirat-jangar
+                  key: api-key
+                  optional: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

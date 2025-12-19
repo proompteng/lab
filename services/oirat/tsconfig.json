@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": "./src",
+    "noEmit": true,
+    "strict": true,
+    "strictNullChecks": true,
+    "types": ["bun-types"],
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["./src/**/*"]
+}

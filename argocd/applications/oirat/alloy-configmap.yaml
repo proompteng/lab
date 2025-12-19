@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oirat-alloy
+  namespace: oirat
+data:
+  config.river: |
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+
+    discovery.kubernetes "oirat" {
+      role = "pod"
+
+      namespaces {
+        names = ["oirat"]
+      }
+
+      selectors {
+        role  = "pod"
+        label = "app.kubernetes.io/name=oirat"
+      }
+    }
+
+    loki.source.kubernetes "oirat" {
+      targets    = discovery.kubernetes.oirat.targets
+      forward_to = [loki.process.oirat.receiver]
+    }
+
+    loki.process "oirat" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          app = "oirat",
+          job = "oirat",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"
+      }
+    }
