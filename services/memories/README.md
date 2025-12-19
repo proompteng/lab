@@ -10,7 +10,16 @@ Note: this service is intended for local/dev agents. Production deployments shou
 bun install
 ```
 
-### Local Postgres
+### Kubernetes Postgres (Jangar)
+
+By default the `save-memory` and `retrieve-memory` helpers connect to the Jangar Postgres cluster by:
+
+- reading the connection URI from the `jangar-db-app` secret in your current kubectl namespace (override with `MEMORIES_KUBE_NAMESPACE`)
+- starting a `kubectl port-forward` to `svc/jangar-db-rw` and rewriting the URI to `127.0.0.1`
+
+If your database lives outside your current kubectl namespace, export `MEMORIES_KUBE_NAMESPACE=<namespace>` before running the scripts.
+
+### Local Postgres (optional)
 
 Bootstrapping the local Postgres schema creates a dedicated `cerebrum` role and database. Run:
 
@@ -24,11 +33,18 @@ Set `DATABASE_URL` to `postgres://cerebrum:cerebrum@localhost:5432/cerebrum?sslm
 
 ### Required environment
 
-- `DATABASE_URL` – Postgres (pgvector-enabled) endpoint with the `memories` schema.
+- `DATABASE_URL` – optional override for the Postgres endpoint (pgvector-enabled) with the `memories` schema.
 - `OPENAI_API_KEY` – key used for the embedding API calls.
 - `OPENAI_EMBEDDING_MODEL` – optional (defaults to `text-embedding-3-small`).
 - `OPENAI_EMBEDDING_DIMENSION` – optional (defaults to `1536`).
 - `OPENAI_API_BASE_URL` – optional (defaults to `https://api.openai.com/v1`).
+
+Optional Kubernetes overrides:
+
+- `MEMORIES_KUBE_NAMESPACE` – namespace to read secrets/port-forward (defaults to kubectl current namespace).
+- `MEMORIES_KUBE_SECRET` – override the secret name (defaults to `jangar-db-app`).
+- `MEMORIES_KUBE_SERVICE` – override the Postgres service (defaults to `svc/jangar-db-rw`).
+- `MEMORIES_KUBE_PORT` – override the Postgres port (defaults to `5432`).
 
 ## Scripts
 
