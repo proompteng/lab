@@ -48,13 +48,14 @@ const (
 
 // Options configures the HTTP server lifecycle.
 type Options struct {
-	ListenAddress string
-	Prefork       bool
-	Dispatcher    bridge.Dispatcher
-	Store         session.Store
-	SessionTTL    time.Duration
-	CodexStore    CodexStore
-	CodexPlanner  CodexPlannerOptions
+	ListenAddress    string
+	Prefork          bool
+	Dispatcher       bridge.Dispatcher
+	Store            session.Store
+	SessionTTL       time.Duration
+	CodexStore       CodexStore
+	CodexPlanner     CodexPlannerOptions
+	CodexImplementer CodexImplementerOptions
 }
 
 // CodexStore defines the storage surface required for Codex task ingestion.
@@ -66,6 +67,17 @@ type CodexStore interface {
 type CodexPlannerOptions struct {
 	Enabled bool
 	Planner orchestrator.Planner
+}
+
+// CodexImplementer defines the implementation orchestration surface required for Codex tasks.
+type CodexImplementer interface {
+	Implement(ctx context.Context, task *froussardpb.CodexTask) (orchestrator.Result, error)
+}
+
+// CodexImplementerOptions wires the implementation orchestrator into the HTTP layer.
+type CodexImplementerOptions struct {
+	Enabled     bool
+	Implementer CodexImplementer
 }
 
 // Server wraps a Fiber application with lifecycle helpers.
@@ -309,6 +321,51 @@ func registerRoutes(app *fiber.App, opts Options) {
 			})
 		}
 
+		if opts.CodexImplementer.Enabled && opts.CodexImplementer.Implementer != nil &&
+			task.GetStage() == froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION {
+			result, err := opts.CodexImplementer.Implementer.Implement(ctx, &task)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "implementation orchestrator failed")
+				log.Printf(
+					"codex implementation orchestrator failed: repo=%s issue=%d delivery=%s err=%v",
+					task.GetRepository(),
+					task.GetIssueNumber(),
+					task.GetDeliveryId(),
+					err,
+				)
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error":   "implementation orchestrator failed",
+					"details": err.Error(),
+				})
+			}
+
+			span.SetAttributes(
+				attribute.String("facteur.codex.namespace", result.Namespace),
+				attribute.String("facteur.codex.workflow", result.WorkflowName),
+				attribute.Bool("facteur.codex.duplicate", result.Duplicate),
+			)
+			span.SetStatus(codes.Ok, "implementation orchestrator dispatched")
+
+			log.Printf(
+				"codex implementation orchestrated: repo=%s issue=%d delivery=%s workflow=%s namespace=%s duplicate=%t",
+				task.GetRepository(),
+				task.GetIssueNumber(),
+				task.GetDeliveryId(),
+				result.WorkflowName,
+				result.Namespace,
+				result.Duplicate,
+			)
+
+			return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+				"stage":        "implementation",
+				"namespace":    result.Namespace,
+				"workflowName": result.WorkflowName,
+				"submittedAt":  result.SubmittedAt.UTC().Format(time.RFC3339),
+				"duplicate":    result.Duplicate,
+			})
+		}
+
 		if task.GetStage() == froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
 			log.Printf(
 				"codex planning orchestrator disabled: repo=%s issue=%d",
@@ -319,7 +376,7 @@ func registerRoutes(app *fiber.App, opts Options) {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "planning orchestrator disabled"})
 		}
 
-		span.SetStatus(codes.Ok, "planner bypassed")
+		span.SetStatus(codes.Ok, "orchestrator bypassed")
 
 		if opts.CodexStore == nil {
 			span.SetStatus(codes.Error, "codex store unavailable")

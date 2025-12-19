@@ -36,6 +36,13 @@ codex_orchestrator:
   service_account: planner
   parameters:
     rawEvent: '{}'
+codex_implementation_orchestrator:
+  enabled: true
+  namespace: implementation
+  workflow_template: github-codex-implementation
+  service_account: implementer
+  parameters:
+    eventBody: '{}'
 server:
   listen_address: ":9000"
 role_map:
@@ -71,6 +78,11 @@ codex_listener:
 		require.Equal(t, "github-codex-planning", cfg.Planner.WorkflowTemplate)
 		require.Equal(t, "planner", cfg.Planner.ServiceAccount)
 		require.Equal(t, map[string]string{"rawevent": "{}"}, cfg.Planner.Parameters)
+		require.True(t, cfg.Implementer.Enabled)
+		require.Equal(t, "implementation", cfg.Implementer.Namespace)
+		require.Equal(t, "github-codex-implementation", cfg.Implementer.WorkflowTemplate)
+		require.Equal(t, "implementer", cfg.Implementer.ServiceAccount)
+		require.Equal(t, map[string]string{"eventbody": "{}"}, cfg.Implementer.Parameters)
 		require.Equal(t, ":9000", cfg.Server.ListenAddress)
 		require.Equal(t, map[string][]string{
 			"plan":   []string{"admin", "operator"},
@@ -104,6 +116,8 @@ argo:
 		t.Setenv("FACTEUR_POSTGRES_DSN", "postgres://override")
 		t.Setenv("FACTEUR_CODEX_ENABLE_PLANNING_ORCHESTRATION", "true")
 		t.Setenv("FACTEUR_CODEX_ORCHESTRATOR_WORKFLOW_TEMPLATE", "env-planning")
+		t.Setenv("FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION", "true")
+		t.Setenv("FACTEUR_CODEX_IMPLEMENTATION_ORCHESTRATOR_WORKFLOW_TEMPLATE", "env-implementation")
 
 		cfg, err := config.LoadWithOptions(config.Options{Path: path, EnvPrefix: "FACTEUR"})
 		require.NoError(t, err)
@@ -114,6 +128,8 @@ argo:
 		require.False(t, cfg.Codex.Enabled)
 		require.True(t, cfg.Planner.Enabled)
 		require.Equal(t, "env-planning", cfg.Planner.WorkflowTemplate)
+		require.True(t, cfg.Implementer.Enabled)
+		require.Equal(t, "env-implementation", cfg.Implementer.WorkflowTemplate)
 	})
 
 	t.Run("missing required fields", func(t *testing.T) {
@@ -151,8 +167,11 @@ redis:
 		require.Empty(t, cfg.RoleMap)
 		require.False(t, cfg.Codex.Enabled)
 		require.False(t, cfg.Planner.Enabled)
+		require.False(t, cfg.Implementer.Enabled)
 		require.NotNil(t, cfg.Planner.Parameters)
 		require.Empty(t, cfg.Planner.Parameters)
+		require.NotNil(t, cfg.Implementer.Parameters)
+		require.Empty(t, cfg.Implementer.Parameters)
 	})
 
 	t.Run("env override preserves key casing", func(t *testing.T) {

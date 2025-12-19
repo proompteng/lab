@@ -18,7 +18,7 @@ describe('Codex Argo manifests', () => {
   it('base64-encodes Codex task payloads before submitting workflows', async () => {
     const sensor = await loadYaml<Record<string, unknown>>('argocd/applications/froussard/github-codex-sensor.yaml')
     const triggers: Array<Record<string, unknown>> = sensor?.spec?.triggers ?? []
-    const triggerNames = ['implementation-workflow', 'review-workflow']
+    const triggerNames = ['review-workflow']
 
     for (const name of triggerNames) {
       const trigger = triggers.find((entry) => entry?.template?.name === name)

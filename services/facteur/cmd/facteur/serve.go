@@ -56,13 +56,16 @@ func NewServeCommand() *cobra.Command {
 			cfg.Postgres.DSN = dsn
 
 			cmd.Printf(
-				"config: argo ns=%s template=%s sa=%s planner_enabled=%t planner_ns=%s planner_template=%s redis=%s postgres=%s listen=%s\n",
+				"config: argo ns=%s template=%s sa=%s planner_enabled=%t planner_ns=%s planner_template=%s implementer_enabled=%t implementer_ns=%s implementer_template=%s redis=%s postgres=%s listen=%s\n",
 				cfg.Argo.Namespace,
 				cfg.Argo.WorkflowTemplate,
 				cfg.Argo.ServiceAccount,
 				cfg.Planner.Enabled,
 				firstNonEmpty(cfg.Planner.Namespace, cfg.Argo.Namespace),
 				firstNonEmpty(cfg.Planner.WorkflowTemplate, cfg.Argo.WorkflowTemplate),
+				cfg.Implementer.Enabled,
+				firstNonEmpty(cfg.Implementer.Namespace, cfg.Argo.Namespace),
+				firstNonEmpty(cfg.Implementer.WorkflowTemplate, cfg.Argo.WorkflowTemplate),
 				redactURL(cfg.Redis.URL),
 				redactURL(cfg.Postgres.DSN),
 				cfg.Server.ListenAddress,
@@ -155,13 +158,57 @@ func NewServeCommand() *cobra.Command {
 				)
 			}
 
+			implementerOpts := server.CodexImplementerOptions{}
+			if cfg.Implementer.Enabled {
+				implementerCfg := orchestrator.Config{
+					Namespace:        cfg.Implementer.Namespace,
+					WorkflowTemplate: cfg.Implementer.WorkflowTemplate,
+					ServiceAccount:   cfg.Implementer.ServiceAccount,
+					Parameters:       map[string]string{},
+				}
+
+				for k, v := range cfg.Argo.Parameters {
+					implementerCfg.Parameters[k] = v
+				}
+				for k, v := range cfg.Implementer.Parameters {
+					implementerCfg.Parameters[k] = v
+				}
+
+				if implementerCfg.Namespace == "" {
+					implementerCfg.Namespace = cfg.Argo.Namespace
+				}
+				if implementerCfg.WorkflowTemplate == "" {
+					implementerCfg.WorkflowTemplate = cfg.Argo.WorkflowTemplate
+				}
+				if implementerCfg.ServiceAccount == "" {
+					implementerCfg.ServiceAccount = cfg.Argo.ServiceAccount
+				}
+				implementerCfg.GenerateNamePrefix = "github-codex-implementation-"
+
+				implementer, err := orchestrator.NewImplementer(knowledgeStore, runner, implementerCfg)
+				if err != nil {
+					return fmt.Errorf("init codex implementer: %w", err)
+				}
+
+				implementerOpts = server.CodexImplementerOptions{
+					Enabled:     true,
+					Implementer: implementer,
+				}
+				cmd.Printf(
+					"codex implementation orchestration enabled (namespace=%s template=%s)\n",
+					implementerCfg.Namespace,
+					implementerCfg.WorkflowTemplate,
+				)
+			}
+
 			srv, err := server.New(server.Options{
-				ListenAddress: cfg.Server.ListenAddress,
-				Prefork:       prefork,
-				Dispatcher:    dispatcher,
-				Store:         sessionStore,
-				CodexStore:    knowledgeStore,
-				CodexPlanner:  plannerOpts,
+				ListenAddress:    cfg.Server.ListenAddress,
+				Prefork:          prefork,
+				Dispatcher:       dispatcher,
+				Store:            sessionStore,
+				CodexStore:       knowledgeStore,
+				CodexPlanner:     plannerOpts,
+				CodexImplementer: implementerOpts,
 			})
 			if err != nil {
 				return fmt.Errorf("init server: %w", err)

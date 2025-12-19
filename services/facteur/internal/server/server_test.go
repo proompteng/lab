@@ -292,7 +292,82 @@ func TestCodexTasksPlanningPlannerError(t *testing.T) {
 	require.Equal(t, 1, planner.calls)
 }
 
-func TestCodexTasksPlannerBypass(t *testing.T) {
+func TestCodexTasksImplementationDispatches(t *testing.T) {
+	implementer := &stubImplementer{result: orchestrator.Result{
+		Namespace:    "argo-workflows",
+		WorkflowName: "github-codex-implementation-abc123",
+		SubmittedAt:  time.Unix(1735600400, 0).UTC(),
+	}}
+	srv, err := server.New(server.Options{
+		Dispatcher: &stubDispatcher{},
+		Store:      &stubStore{},
+		CodexStore: &stubCodexStore{},
+		CodexImplementer: server.CodexImplementerOptions{
+			Enabled:     true,
+			Implementer: implementer,
+		},
+	})
+	require.NoError(t, err)
+
+	payload, err := proto.Marshal(&froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
+		Repository:  "proompteng/lab",
+		IssueNumber: 1636,
+		DeliveryId:  "delivery-impl",
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/x-protobuf")
+
+	resp, err := srv.App().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 202, resp.StatusCode)
+
+	var data map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&data))
+	_ = resp.Body.Close()
+	require.Equal(t, "implementation", data["stage"])
+	require.Equal(t, "argo-workflows", data["namespace"])
+	require.Equal(t, "github-codex-implementation-abc123", data["workflowName"])
+	require.Equal(t, implementer.result.SubmittedAt.Format(time.RFC3339), data["submittedAt"])
+	require.False(t, data["duplicate"].(bool))
+	require.Equal(t, 1, implementer.calls)
+}
+
+func TestCodexTasksImplementationImplementerError(t *testing.T) {
+	implementer := &stubImplementer{err: errors.New("implementer boom")}
+	codexStore := &stubCodexStore{}
+	srv, err := server.New(server.Options{
+		Dispatcher: &stubDispatcher{},
+		Store:      &stubStore{},
+		CodexStore: codexStore,
+		CodexImplementer: server.CodexImplementerOptions{
+			Enabled:     true,
+			Implementer: implementer,
+		},
+	})
+	require.NoError(t, err)
+
+	payload, err := proto.Marshal(&froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
+		Repository:  "proompteng/lab",
+		IssueNumber: 1636,
+		DeliveryId:  "delivery-error",
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/x-protobuf")
+
+	resp, err := srv.App().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 500, resp.StatusCode)
+	require.Equal(t, 1, implementer.calls)
+	require.Equal(t, 0, codexStore.calls)
+}
+
+func TestCodexTasksImplementationBypass(t *testing.T) {
 	planner := &stubPlanner{}
 	codexStore := &stubCodexStore{
 		ideaID: "idea-99",
@@ -306,6 +381,10 @@ func TestCodexTasksPlannerBypass(t *testing.T) {
 		CodexPlanner: server.CodexPlannerOptions{
 			Enabled: false,
 			Planner: planner,
+		},
+		CodexImplementer: server.CodexImplementerOptions{
+			Enabled:     false,
+			Implementer: &stubImplementer{},
 		},
 	})
 	require.NoError(t, err)
@@ -417,6 +496,20 @@ type stubPlanner struct {
 }
 
 func (s *stubPlanner) Plan(_ context.Context, _ *froussardpb.CodexTask) (orchestrator.Result, error) {
+	s.calls++
+	if s.err != nil {
+		return orchestrator.Result{}, s.err
+	}
+	return s.result, nil
+}
+
+type stubImplementer struct {
+	result orchestrator.Result
+	err    error
+	calls  int
+}
+
+func (s *stubImplementer) Implement(_ context.Context, _ *froussardpb.CodexTask) (orchestrator.Result, error) {
 	s.calls++
 	if s.err != nil {
 		return orchestrator.Result{}, s.err

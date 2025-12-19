@@ -19,6 +19,16 @@ data:
       parameters:
         rawEvent: ''
         eventBody: ''
+    codex_implementation_orchestrator:
+      enabled: true
+      namespace: argo-workflows
+      workflow_template: github-codex-implementation
+      service_account: argo-workflows-workflow
+      parameters:
+        rawEvent: ''
+        eventBody: ''
+        head: ''
+        base: ''
     discord:
       guild_id: ''
       public_key: ''
