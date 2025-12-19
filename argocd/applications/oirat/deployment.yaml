@@ -16,7 +16,7 @@ spec:
         app.kubernetes.io/name: oirat
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2025-12-19T08:12:34.952Z"
+        kubectl.kubernetes.io/restartedAt: "2025-12-19T09:36:03.695Z"
     spec:
       containers:
         - name: oirat
