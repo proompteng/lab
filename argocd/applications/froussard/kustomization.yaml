@@ -1,8 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# Optional fallback component:
+# Optional fallback components (re-enable Argo Events triggers if Facteur orchestration is disabled):
 # components:
 #   - components/codex-planning-argo-fallback
+#   - components/codex-implementation-argo-fallback
 resources:
   - github-secrets.yaml
   - discord-secrets.yaml

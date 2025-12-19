@@ -5,9 +5,8 @@ This guide explains how the three-stage Codex automation pipeline works and how 
 ## Architecture
 
 1. **Froussard** consumes GitHub webhooks and normalises them into Kafka topics (`github.codex.tasks`, `github.issues.codex.tasks`). When the planning workflow leaves a `<!-- codex:plan -->` marker the service promotes the issue to implementation, mirroring GitHub’s recommended pattern for approval comments (see the [GitHub webhooks guide](https://docs.github.com/en/webhooks-and-events/webhooks/about-webhooks)).
-2. **Facteur** subscribes to the structured mirror via Knative Eventing (`/codex/tasks`) and, when `codex_dispatch.planning_enabled` is `true`, persists planning-stage `proompteng.froussard.v1.CodexTask` payloads into `codex_kb`, dispatches the shared `facteur-dispatch` WorkflowTemplate, and records the correlation ID from the Kafka delivery identifier while emitting OTEL spans tagged `codex.stage=planning`. With the flag disabled it logs the delivery and defers to the legacy Argo Events trigger; the optional component at `argocd/applications/froussard/components/codex-planning-argo-fallback/` re-adds the planning dependency/trigger if you need to roll back.
-3. **Argo Events** (`github-codex` EventSource/Sensor) continues to consume the JSON stream (`github.codex.tasks`) for implementation and review handoffs.
-   - `github-codex-implementation` for approved plans.
+2. **Facteur** subscribes to the structured mirror via Knative Eventing (`/codex/tasks`). When `codex_orchestrator.enabled` is `true` it persists planning-stage `proompteng.froussard.v1.CodexTask` payloads into `codex_kb`, dispatches the shared `facteur-dispatch` WorkflowTemplate, and records the correlation ID from the Kafka delivery identifier while emitting OTEL spans tagged `codex.stage=planning`. When `codex_implementation_orchestrator.enabled` is `true` it performs the same persistence for implementation payloads and submits the `github-codex-implementation` WorkflowTemplate. If either flag is disabled, Facteur logs the delivery and can defer to the legacy Argo Events triggers by enabling the optional fallback components at `argocd/applications/froussard/components/codex-planning-argo-fallback/` and `argocd/applications/froussard/components/codex-implementation-argo-fallback/`.
+3. **Argo Events** (`github-codex` EventSource/Sensor) continues to consume the JSON stream (`github.codex.tasks`) only for review handoffs.
    - `github-codex-review` for review/maintenance loops until the PR becomes mergeable.
 4. Each **WorkflowTemplate** runs the Codex container (`gpt-5.2-codex` with `--reasoning high --search --mode yolo`), orchestrated by [Argo Workflows](https://argo-workflows.readthedocs.io/en/stable/).
    - `stage=planning`: `codex-plan.ts` (via the `facteur-dispatch` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`. Facteur prefixes runs with `codex-planning-` to keep planner workflows distinct, and the Argo Events fallback reuses the same template if re-enabled.
@@ -34,16 +33,19 @@ flowchart LR
   end
   Tasks --> Sensor
   Facteur --> FacteurPlanning["Workflow facteur-dispatch (planning)"]
-  Sensor --> Implementation["Workflow github-codex-implementation"]
+  Facteur --> Implementation["Workflow github-codex-implementation"]
   Sensor --> Review["Workflow github-codex-review"]
   Sensor -. fallback component .-> FacteurPlanning
+  Sensor -. fallback component .-> Implementation
 ```
 
 Run `facteur codex-listen --config <path>` to stream the structured payloads while you build consumers; the command uses the
 `github.issues.codex.tasks` topic and mirrors the behaviour of the Knative KafkaSource. In production the same feed reaches
-Facteur via `argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasource.yaml`. When `codex_dispatch.planning_enabled` is `false` the handler logs
-stage/repository/issue metadata for observability; once the flag flips, planning payloads enqueue the `facteur-dispatch`
-WorkflowTemplate, persist intake data, emit structured logs (`workflow submitted: stage=PLANNING …`), and surface workflow metadata before committing the Kafka message.
+Facteur via `argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasource.yaml`. When `codex_orchestrator.enabled` or
+`codex_implementation_orchestrator.enabled` is `false` the handler logs stage/repository/issue metadata for observability; once
+enabled, planning payloads enqueue the `facteur-dispatch` WorkflowTemplate, implementation payloads enqueue the
+`github-codex-implementation` WorkflowTemplate, both persist intake data, emit structured logs (`workflow submitted: stage=...`),
+and surface workflow metadata before committing the Kafka message.
 ## Prerequisites
 
 - Use the **Codex Task** GitHub issue template (`.github/ISSUE_TEMPLATE/codex-task.md`) when opening automation requests. The form keeps summary, scope guardrails, validation commands, and the Codex prompt structured so Froussard can forward them directly to the Argo workflows.
