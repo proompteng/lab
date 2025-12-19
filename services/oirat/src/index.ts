@@ -259,9 +259,17 @@ const runWithTypingIndicator = async <T>(
 }
 
 const createDiscordStreamWriter = (thread: Pick<ThreadChannel, 'send'>) => {
+  const flushIntervalMs = 400
+  const flushThresholdChars = 280
+
   let currentMessage: Message | null = null
   let currentContent = ''
+  let pendingBuffer = ''
   let sentAny = false
+  let flushTimer: ReturnType<typeof setTimeout> | null = null
+  let closed = false
+  let flushChain: Promise<void> = Promise.resolve()
+  let flushError: Error | null = null
 
   const sendMessage = async (content: string) => {
     const message = await thread.send(content)
@@ -278,7 +286,44 @@ const createDiscordStreamWriter = (thread: Pick<ThreadChannel, 'send'>) => {
     sentAny = true
   }
 
-  const pushDelta = async (delta: string) => {
+  const enqueueFlush = (task: () => Promise<void>) => {
+    flushChain = flushChain.then(task).catch((error) => {
+      const resolved = error instanceof Error ? error : new Error(String(error))
+      flushError = resolved
+      console.error('[discord-stream] flush failed', resolved)
+    })
+    return flushChain
+  }
+
+  const findFlushBoundary = (text: string) => {
+    const boundaryPattern = /(?:\n|[.!?…]\s)/g
+    let match: RegExpExecArray | null = boundaryPattern.exec(text)
+    let lastIndex = -1
+    let lastLength = 0
+    while (match) {
+      lastIndex = match.index
+      lastLength = match[0].length
+      match = boundaryPattern.exec(text)
+    }
+    if (lastIndex === -1) return null
+    return lastIndex + lastLength
+  }
+
+  const selectFlushText = (text: string, final: boolean) => {
+    if (final) {
+      return { flushText: text, remainder: '' }
+    }
+    const boundaryIndex = findFlushBoundary(text)
+    if (boundaryIndex !== null && boundaryIndex > 0 && boundaryIndex < text.length) {
+      return {
+        flushText: text.slice(0, boundaryIndex),
+        remainder: text.slice(boundaryIndex),
+      }
+    }
+    return { flushText: text, remainder: '' }
+  }
+
+  const applyDelta = async (delta: string) => {
     if (!delta) return
     currentContent += delta
 
@@ -307,14 +352,56 @@ const createDiscordStreamWriter = (thread: Pick<ThreadChannel, 'send'>) => {
     currentMessage = null
   }
 
-  const finalize = async () => {
-    if (!sentAny && currentContent.length === 0) return
-    if (!sentAny && currentContent.length > 0) {
-      currentMessage = await sendMessage(currentContent)
+  const flushPending = async ({ final }: { final: boolean }) => {
+    if (pendingBuffer.length === 0) return
+    if (flushTimer) {
+      clearTimeout(flushTimer)
+      flushTimer = null
+    }
+
+    const { flushText, remainder } = selectFlushText(pendingBuffer, final)
+    if (!flushText) return
+    pendingBuffer = remainder
+
+    await enqueueFlush(async () => {
+      await applyDelta(flushText)
+    })
+
+    if (!final && pendingBuffer.length >= flushThresholdChars) {
+      await flushPending({ final: false })
+    }
+  }
+
+  const scheduleFlush = () => {
+    if (flushTimer || closed) return
+    flushTimer = setTimeout(() => {
+      flushTimer = null
+      void flushPending({ final: false })
+    }, flushIntervalMs)
+  }
+
+  const pushDelta = async (delta: string) => {
+    if (!delta || closed) return
+    pendingBuffer += delta
+
+    if (pendingBuffer.length >= flushThresholdChars) {
+      await flushPending({ final: false })
       return
     }
-    if (currentMessage && currentContent.length > 0) {
-      await currentMessage.edit(currentContent)
+
+    scheduleFlush()
+  }
+
+  const finalize = async () => {
+    closed = true
+    if (flushTimer) {
+      clearTimeout(flushTimer)
+      flushTimer = null
+    }
+    await flushPending({ final: true })
+    await flushChain
+    if (flushError) {
+      throw flushError
     }
   }
 
