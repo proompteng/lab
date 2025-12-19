@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -61,7 +61,10 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
 
     // `turbo prune --docker` doesn't currently include this file, but our TS configs extend it.
     copyFileSync(resolve(repoRoot, 'tsconfig.base.json'), resolve(dir, 'tsconfig.base.json'))
-
+    const skillsSource = resolve(repoRoot, 'skills')
+    if (existsSync(skillsSource)) {
+      cpSync(skillsSource, resolve(dir, 'skills'), { recursive: true })
+    }
     return { dir, cleanup }
   } catch (error) {
     cleanup()

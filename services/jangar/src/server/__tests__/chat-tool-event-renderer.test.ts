@@ -24,4 +24,37 @@ describe('chat tool event renderer', () => {
     expect(content).toContain('/bin/bash -lc echo hi')
     expect(content.split('/bin/bash -lc echo hi').length - 1).toBe(1)
   })
+
+  it('wraps file tool summaries in a code fence', () => {
+    const completed: ToolEvent = {
+      id: 'tool-2',
+      toolKind: 'file',
+      status: 'completed',
+      title: 'file changes',
+      detail: 'Success. Updated the following files:\nM services/jangar/src/server/chat.ts',
+    }
+
+    const content = collectEmittedContent([completed])
+    expect(content).toContain('```text')
+    expect(content).toContain('Success. Updated the following files:')
+  })
+
+  it('keeps diff-formatted file changes fenced as bash', () => {
+    const completed: ToolEvent = {
+      id: 'tool-3',
+      toolKind: 'file',
+      status: 'completed',
+      title: 'file changes',
+      changes: [
+        {
+          path: 'services/jangar/src/server/chat.ts',
+          diff: '-old\n+new\n',
+        },
+      ],
+    }
+
+    const content = collectEmittedContent([completed])
+    expect(content).toContain('```bash')
+    expect(content).not.toContain('```text')
+  })
 })
