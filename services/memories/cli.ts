@@ -116,10 +116,7 @@ export type DatabaseSession = {
 }
 
 const namespaceArgs = () => {
-  const namespace = process.env.MEMORIES_KUBE_NAMESPACE
-  if (!namespace) {
-    return [] as string[]
-  }
+  const namespace = process.env.MEMORIES_KUBE_NAMESPACE ?? 'jangar'
   return ['-n', namespace]
 }
 

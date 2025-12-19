@@ -49,7 +49,17 @@ const encoderModel = getFlagValue(flags, 'model') ?? process.env.OPENAI_EMBEDDIN
 const encoderVersion = getFlagValue(flags, 'encoder-version')
 const openAiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? 'https://api.openai.com/v1'
 const apiKey = requireEnv('OPENAI_API_KEY')
-const expectedDimension = parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? '1536', 10)
+const dimensionsRaw = process.env.OPENAI_EMBEDDING_DIMENSION
+const expectedDimension = parseInt(dimensionsRaw ?? '1536', 10)
+
+const embedBody: Record<string, unknown> = {
+  model: encoderModel,
+  input: content,
+}
+
+if (dimensionsRaw) {
+  embedBody.dimensions = expectedDimension
+}
 
 const embedResponse = await fetch(`${openAiBaseUrl}/embeddings`, {
   method: 'POST',
@@ -57,7 +67,7 @@ const embedResponse = await fetch(`${openAiBaseUrl}/embeddings`, {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${apiKey}`,
   },
-  body: JSON.stringify({ model: encoderModel, input: content }),
+  body: JSON.stringify(embedBody),
 })
 
 if (!embedResponse.ok) {
