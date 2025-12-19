@@ -258,11 +258,13 @@ const runWithTypingIndicator = async <T>(
   }
 }
 
-const createDiscordStreamWriter = (thread: Pick<ThreadChannel, 'send'>) => {
+const createDiscordStreamWriter = <TMessage extends { edit: (content: string) => Promise<unknown> }>(thread: {
+  send: (content: string) => Promise<TMessage>
+}) => {
   const flushIntervalMs = 400
   const flushThresholdChars = 280
 
-  let currentMessage: Message | null = null
+  let currentMessage: TMessage | null = null
   let currentContent = ''
   let pendingBuffer = ''
   let sentAny = false

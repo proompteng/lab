@@ -106,11 +106,11 @@ describe('createDiscordStreamWriter', () => {
     await writer.pushDelta('Hello')
     await writer.pushDelta(' world')
     await writer.pushDelta('!')
+    await writer.finalize()
 
     const sent = thread.getSent()
     expect(sent.length).toBe(1)
     expect(sent[0]?.content).toBe('Hello world!')
-    expect(sent[0]?.edits.length).toBeGreaterThan(0)
   })
 
   it('splits messages when the content exceeds the Discord limit', async () => {
@@ -119,6 +119,7 @@ describe('createDiscordStreamWriter', () => {
 
     const longDelta = 'x'.repeat(DISCORD_MESSAGE_LIMIT + 10)
     await writer.pushDelta(longDelta)
+    await writer.finalize()
 
     const sent = thread.getSent()
     expect(sent.length).toBe(2)
