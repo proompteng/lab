@@ -142,7 +142,7 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
         return asJsonRpcResponse(id, {
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: 'jangar', version: '0.1.0' },
+          serverInfo: { name: 'memories', version: '0.1.0' },
         })
       }
       case 'notifications/initialized': {
