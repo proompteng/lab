@@ -44,6 +44,11 @@ type PostgresMemoriesStoreOptions = {
 const DEFAULT_NAMESPACE = 'default'
 const DEFAULT_LIMIT = 10
 const DEFAULT_SSLMODE = 'require'
+const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
+const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
+const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
+const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding:0.6b'
+const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
 
 const SCHEMA = 'memories'
 const TABLE = 'entries'
@@ -79,8 +84,8 @@ const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
 
-const loadEmbeddingDimension = () => {
-  const dimension = Number.parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? '1536', 10)
+const loadEmbeddingDimension = (fallback: number) => {
+  const dimension = Number.parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? String(fallback), 10)
   if (!Number.isFinite(dimension) || dimension <= 0) {
     throw new Error('OPENAI_EMBEDDING_DIMENSION must be a positive integer')
   }
@@ -103,16 +108,25 @@ const loadEmbeddingMaxInputChars = () => {
   return maxInputChars
 }
 
+const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
+  const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
+  return {
+    model: hosted ? DEFAULT_OPENAI_EMBEDDING_MODEL : DEFAULT_SELF_HOSTED_EMBEDDING_MODEL,
+    dimension: hosted ? DEFAULT_OPENAI_EMBEDDING_DIMENSION : DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION,
+  }
+}
+
 const loadEmbeddingConfig = () => {
-  const apiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? 'https://api.openai.com/v1'
+  const apiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
   const apiKey = process.env.OPENAI_API_KEY?.trim() || null
   if (!apiKey && isHostedOpenAiBaseUrl(apiBaseUrl)) {
     throw new Error(
       'missing OPENAI_API_KEY; set it or point OPENAI_API_BASE_URL at an OpenAI-compatible endpoint (e.g. Ollama)',
     )
   }
-  const model = process.env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-3-small'
-  const dimension = loadEmbeddingDimension()
+  const defaults = resolveEmbeddingDefaults(apiBaseUrl)
+  const model = process.env.OPENAI_EMBEDDING_MODEL ?? defaults.model
+  const dimension = loadEmbeddingDimension(defaults.dimension)
   const timeoutMs = loadEmbeddingTimeoutMs()
   const maxInputChars = loadEmbeddingMaxInputChars()
 
@@ -176,7 +190,10 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
 
   const db = (options.createDb ?? ((resolvedUrl: string) => new SQL(resolvedUrl)))(withDefaultSslMode(url))
   let schemaReady: Promise<void> | null = null
-  const expectedEmbeddingDimension = loadEmbeddingDimension()
+  const defaults = resolveEmbeddingDefaults(
+    process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL,
+  )
+  const expectedEmbeddingDimension = loadEmbeddingDimension(defaults.dimension)
   const embed = options.embedText ?? embedText
 
   const ensureEmbeddingDimensionMatches = async () => {
