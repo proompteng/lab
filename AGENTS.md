@@ -9,7 +9,7 @@
 
 ## Build, Test & Development Commands
 
-- Install dependencies with `bun install` (Node 24.11.1, Bun 1.3.4) and run `go mod tidy` inside each Go service.
+- Install dependencies with `bun install` (Node 24.11.1, Bun 1.3.5) and run `go mod tidy` inside each Go service.
 - Start UIs with `bun run dev:proompteng`; swap the suffix for sibling apps.
 - Build and smoke test via `bun run build:<app>` then `bun run start:<app>`.
 - Format and lint using `bun run format` and `bun run lint:<app>`.

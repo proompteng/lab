@@ -9,7 +9,7 @@
 # - `full/` contains the full pruned source tree
 # - `tsconfig.base.json` is copied into the context root by the build script
 # - `skills/` is present at the context root for Codex CLI skills
-ARG BUN_VERSION=1.3.4
+ARG BUN_VERSION=1.3.5
 ARG OPENVSCODE_VERSION=1.105.1
 ARG GH_VERSION=2.65.0
 ARG KUBECTL_VERSION=1.34.3
