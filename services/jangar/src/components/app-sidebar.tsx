@@ -1,4 +1,4 @@
-import { IconBrain, IconHeart, IconHome, IconRobot } from '@tabler/icons-react'
+import { IconBrain, IconHeart, IconHome, IconList, IconRobot } from '@tabler/icons-react'
 import { Link, useRouterState } from '@tanstack/react-router'
 
 import {
@@ -25,6 +25,8 @@ const apiNav = [
   { to: '/api/models', label: 'Models', icon: IconRobot },
   { to: '/api/health', label: 'Health', icon: IconHeart },
 ] as const
+
+const torghutNav = [{ to: '/torghut/symbols', label: 'Symbols', icon: IconList }] as const
 
 export function AppSidebar() {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
@@ -68,6 +70,25 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {apiNav.map((item) => (
+                <SidebarMenuItem key={item.to}>
+                  <SidebarNavButton
+                    icon={item.icon}
+                    isActive={pathname === item.to}
+                    isCollapsed={isCollapsed}
+                    label={item.label}
+                    to={item.to}
+                  />
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Torghut</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {torghutNav.map((item) => (
                 <SidebarMenuItem key={item.to}>
                   <SidebarNavButton
                     icon={item.icon}
