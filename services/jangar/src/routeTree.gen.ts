@@ -13,10 +13,13 @@ import { Route as MemoriesRouteImport } from './routes/memories'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
 import { Route as ApiModelsRouteImport } from './routes/api/models'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
+import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
+import { Route as ApiTorghutSymbolsSymbolRouteImport } from './routes/api/torghut/symbols/$symbol'
 
 const MemoriesRoute = MemoriesRouteImport.update({
   id: '/memories',
@@ -38,6 +41,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TorghutSymbolsRoute = TorghutSymbolsRouteImport.update({
+  id: '/torghut/symbols',
+  path: '/torghut/symbols',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiModelsRoute = ApiModelsRouteImport.update({
   id: '/api/models',
   path: '/api/models',
@@ -53,10 +61,20 @@ const OpenaiV1ModelsRoute = OpenaiV1ModelsRouteImport.update({
   path: '/openai/v1/models',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTorghutSymbolsRoute = ApiTorghutSymbolsRouteImport.update({
+  id: '/api/torghut/symbols',
+  path: '/api/torghut/symbols',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OpenaiV1ChatCompletionsRoute = OpenaiV1ChatCompletionsRouteImport.update({
   id: '/openai/v1/chat/completions',
   path: '/openai/v1/chat/completions',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ApiTorghutSymbolsSymbolRoute = ApiTorghutSymbolsSymbolRouteImport.update({
+  id: '/$symbol',
+  path: '/$symbol',
+  getParentRoute: () => ApiTorghutSymbolsRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -66,7 +84,10 @@ export interface FileRoutesByFullPath {
   '/memories': typeof MemoriesRoute
   '/api/health': typeof ApiHealthRoute
   '/api/models': typeof ApiModelsRoute
+  '/torghut/symbols': typeof TorghutSymbolsRoute
+  '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
+  '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
 export interface FileRoutesByTo {
@@ -76,7 +97,10 @@ export interface FileRoutesByTo {
   '/memories': typeof MemoriesRoute
   '/api/health': typeof ApiHealthRoute
   '/api/models': typeof ApiModelsRoute
+  '/torghut/symbols': typeof TorghutSymbolsRoute
+  '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
+  '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
 export interface FileRoutesById {
@@ -87,7 +111,10 @@ export interface FileRoutesById {
   '/memories': typeof MemoriesRoute
   '/api/health': typeof ApiHealthRoute
   '/api/models': typeof ApiModelsRoute
+  '/torghut/symbols': typeof TorghutSymbolsRoute
+  '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
+  '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
 export interface FileRouteTypes {
@@ -99,7 +126,10 @@ export interface FileRouteTypes {
     | '/memories'
     | '/api/health'
     | '/api/models'
+    | '/torghut/symbols'
+    | '/api/torghut/symbols'
     | '/openai/v1/models'
+    | '/api/torghut/symbols/$symbol'
     | '/openai/v1/chat/completions'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -109,7 +139,10 @@ export interface FileRouteTypes {
     | '/memories'
     | '/api/health'
     | '/api/models'
+    | '/torghut/symbols'
+    | '/api/torghut/symbols'
     | '/openai/v1/models'
+    | '/api/torghut/symbols/$symbol'
     | '/openai/v1/chat/completions'
   id:
     | '__root__'
@@ -119,7 +152,10 @@ export interface FileRouteTypes {
     | '/memories'
     | '/api/health'
     | '/api/models'
+    | '/torghut/symbols'
+    | '/api/torghut/symbols'
     | '/openai/v1/models'
+    | '/api/torghut/symbols/$symbol'
     | '/openai/v1/chat/completions'
   fileRoutesById: FileRoutesById
 }
@@ -130,6 +166,8 @@ export interface RootRouteChildren {
   MemoriesRoute: typeof MemoriesRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiModelsRoute: typeof ApiModelsRoute
+  TorghutSymbolsRoute: typeof TorghutSymbolsRoute
+  ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
   OpenaiV1ChatCompletionsRoute: typeof OpenaiV1ChatCompletionsRoute
 }
@@ -164,6 +202,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/torghut/symbols': {
+      id: '/torghut/symbols'
+      path: '/torghut/symbols'
+      fullPath: '/torghut/symbols'
+      preLoaderRoute: typeof TorghutSymbolsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/models': {
       id: '/api/models'
       path: '/api/models'
@@ -185,6 +230,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OpenaiV1ModelsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/torghut/symbols': {
+      id: '/api/torghut/symbols'
+      path: '/api/torghut/symbols'
+      fullPath: '/api/torghut/symbols'
+      preLoaderRoute: typeof ApiTorghutSymbolsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/openai/v1/chat/completions': {
       id: '/openai/v1/chat/completions'
       path: '/openai/v1/chat/completions'
@@ -192,8 +244,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OpenaiV1ChatCompletionsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/torghut/symbols/$symbol': {
+      id: '/api/torghut/symbols/$symbol'
+      path: '/$symbol'
+      fullPath: '/api/torghut/symbols/$symbol'
+      preLoaderRoute: typeof ApiTorghutSymbolsSymbolRouteImport
+      parentRoute: typeof ApiTorghutSymbolsRoute
+    }
   }
 }
+
+interface ApiTorghutSymbolsRouteChildren {
+  ApiTorghutSymbolsSymbolRoute: typeof ApiTorghutSymbolsSymbolRoute
+}
+
+const ApiTorghutSymbolsRouteChildren: ApiTorghutSymbolsRouteChildren = {
+  ApiTorghutSymbolsSymbolRoute: ApiTorghutSymbolsSymbolRoute,
+}
+
+const ApiTorghutSymbolsRouteWithChildren =
+  ApiTorghutSymbolsRoute._addFileChildren(ApiTorghutSymbolsRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -202,6 +272,8 @@ const rootRouteChildren: RootRouteChildren = {
   MemoriesRoute: MemoriesRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiModelsRoute: ApiModelsRoute,
+  TorghutSymbolsRoute: TorghutSymbolsRoute,
+  ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,
   OpenaiV1ChatCompletionsRoute: OpenaiV1ChatCompletionsRoute,
 }

@@ -7,15 +7,20 @@ import ai.proompteng.dorvud.platform.SeqTracker
 import ai.proompteng.dorvud.platform.buildProducer
 import java.time.Duration
 import java.time.Instant
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.CRC32
 import kotlin.system.exitProcess
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -27,11 +32,13 @@ import mu.KotlinLogging
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerRecord
 import io.ktor.client.HttpClient
+import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.request.get
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
@@ -41,6 +48,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.Serializable
 
 private val logger = KotlinLogging.logger {}
 
@@ -58,7 +66,7 @@ class ForwarderApp(
 
   fun start(): Job {
     val job = scope.launch {
-      logger.info { "dorvud-ws starting with symbols=${config.symbols}" }
+      logger.info { "dorvud-ws starting with symbols=${config.symbols} shard=${config.shardIndex}/${config.shardCount} jangarSymbolsUrl=${config.jangarSymbolsUrl}" }
       val producer = producerFactory(config)
       val seq = SeqTracker()
 
@@ -97,41 +105,137 @@ class ForwarderApp(
         put("secret", config.alpacaSecretKey)
       }
       sendSerialized(auth)
-        val subscribe = buildJsonObject {
-          put("action", "subscribe")
-          val symbolsJson = buildJsonArray { config.symbols.forEach { add(JsonPrimitive(it)) } }
-          put("trades", symbolsJson)
-          put("quotes", symbolsJson)
-          put("bars", symbolsJson)
-        put("updatedBars", symbolsJson)
-      }
-      sendSerialized(subscribe)
 
-      for (frame in incoming) {
-        val text = when (frame) {
-          is Frame.Text -> frame.readText()
-          is Frame.Binary -> frame.readBytes().decodeToString()
-          else -> continue
-        }
-        val elements = try {
-          json.parseToJsonElement(text)
-        } catch (e: SerializationException) {
-          logger.warn(e) { "failed to parse alpaca frame as JSON; dropping" }
-          continue
-        }
-        val messages: List<JsonElement> =
-          if (elements is JsonArray) elements.toList() else listOf(elements)
-        messages.forEach { el ->
-          val msg = try {
-            json.decodeFromJsonElement(AlpacaMessageSerializer, el)
-          } catch (e: SerializationException) {
-            logger.warn(e) { "failed to decode alpaca message; dropping" }
-            return@forEach
+      val subscribedSymbols = mutableSetOf<String>()
+      val subscribedLock = Mutex()
+
+      suspend fun applySubscribe(symbols: List<String>) {
+        if (symbols.isEmpty()) return
+        symbols.chunked(config.subscribeBatchSize).forEach { batch ->
+          val subscribe = buildJsonObject {
+            put("action", "subscribe")
+            val symbolsJson = buildJsonArray { batch.forEach { add(JsonPrimitive(it)) } }
+            put("trades", symbolsJson)
+            put("quotes", symbolsJson)
+            put("bars", symbolsJson)
+            put("updatedBars", symbolsJson)
           }
-          handleMessage(msg, producer, seq, tradesDedup, quotesDedup, barsDedup)
+          sendSerialized(subscribe)
         }
+      }
+
+      suspend fun applyUnsubscribe(symbols: List<String>) {
+        if (symbols.isEmpty()) return
+        symbols.chunked(config.subscribeBatchSize).forEach { batch ->
+          val unsubscribe = buildJsonObject {
+            put("action", "unsubscribe")
+            val symbolsJson = buildJsonArray { batch.forEach { add(JsonPrimitive(it)) } }
+            put("trades", symbolsJson)
+            put("quotes", symbolsJson)
+            put("bars", symbolsJson)
+            put("updatedBars", symbolsJson)
+          }
+          sendSerialized(unsubscribe)
+        }
+      }
+
+      suspend fun desiredSymbols(): List<String> {
+        val raw = fetchDesiredSymbols()
+        return raw
+          .map { it.trim().uppercase() }
+          .filter { it.isNotEmpty() }
+          .filter { ownsSymbol(it) }
+          .distinct()
+      }
+
+      val initial = runCatching { desiredSymbols() }.getOrElse { err ->
+        logger.warn(err) { "failed to fetch desired symbols; falling back to static SYMBOLS" }
+        config.symbols.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.filter { ownsSymbol(it) }.distinct()
+      }
+
+      subscribedLock.withLock {
+        subscribedSymbols.clear()
+        subscribedSymbols.addAll(initial)
+      }
+      applySubscribe(initial)
+
+      val poller = config.jangarSymbolsUrl?.let {
+        launch {
+          while (isActive) {
+            delay(config.symbolsPollIntervalMs)
+            val desired = runCatching { desiredSymbols() }.getOrElse { err ->
+              logger.warn(err) { "failed to poll desired symbols" }
+              continue
+            }
+
+            val (toAdd, toRemove) = subscribedLock.withLock {
+              val add = desired.filter { !subscribedSymbols.contains(it) }
+              val remove = subscribedSymbols.filter { !desired.contains(it) }
+              subscribedSymbols.addAll(add)
+              remove.forEach { subscribedSymbols.remove(it) }
+              add to remove
+            }
+
+            if (toAdd.isNotEmpty()) {
+              logger.info { "subscribing ${toAdd.size} symbols" }
+              applySubscribe(toAdd)
+            }
+            if (toRemove.isNotEmpty()) {
+              logger.info { "unsubscribing ${toRemove.size} symbols" }
+              applyUnsubscribe(toRemove)
+            }
+          }
+        }
+      }
+
+      try {
+        for (frame in incoming) {
+          val text = when (frame) {
+            is Frame.Text -> frame.readText()
+            is Frame.Binary -> frame.readBytes().decodeToString()
+            else -> continue
+          }
+          val elements = try {
+            json.parseToJsonElement(text)
+          } catch (e: SerializationException) {
+            logger.warn(e) { "failed to parse alpaca frame as JSON; dropping" }
+            continue
+          }
+          val messages: List<JsonElement> =
+            if (elements is JsonArray) elements.toList() else listOf(elements)
+          messages.forEach { el ->
+            val msg = try {
+              json.decodeFromJsonElement(AlpacaMessageSerializer, el)
+            } catch (e: SerializationException) {
+              logger.warn(e) { "failed to decode alpaca message; dropping" }
+              return@forEach
+            }
+            handleMessage(msg, producer, seq, tradesDedup, quotesDedup, barsDedup)
+          }
+        }
+      } finally {
+        poller?.cancel()
       }
     }
+  }
+
+  @Serializable
+  private data class JangarSymbolsResponse(
+    val symbols: List<String>,
+  )
+
+  private suspend fun fetchDesiredSymbols(): List<String> {
+    val url = config.jangarSymbolsUrl ?: return config.symbols
+    val response: JangarSymbolsResponse = httpClient.get(url).body()
+    return response.symbols
+  }
+
+  private fun ownsSymbol(symbol: String): Boolean {
+    if (config.shardCount <= 1) return true
+    val crc = CRC32()
+    crc.update(symbol.toByteArray(StandardCharsets.UTF_8))
+    val bucket = (crc.value % config.shardCount.toLong()).toInt()
+    return bucket == config.shardIndex
   }
 
   private suspend fun handleMessage(

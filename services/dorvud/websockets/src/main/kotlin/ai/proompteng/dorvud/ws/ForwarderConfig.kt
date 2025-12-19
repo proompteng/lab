@@ -22,6 +22,11 @@ data class ForwarderConfig(
   val alpacaStreamUrl: String,
   val alpacaBaseUrl: String,
   val symbols: List<String>,
+  val jangarSymbolsUrl: String?,
+  val symbolsPollIntervalMs: Long,
+  val subscribeBatchSize: Int,
+  val shardCount: Int,
+  val shardIndex: Int,
   val enableTradeUpdates: Boolean,
   val reconnectBaseMs: Long,
   val reconnectMaxMs: Long,
@@ -38,11 +43,21 @@ data class ForwarderConfig(
 
       val symbols = mergedEnv["SYMBOLS"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
         ?: listOf("NVDA")
+      val shardCount = mergedEnv["SHARD_COUNT"]?.toIntOrNull() ?: 1
+      val shardIndex = mergedEnv["SHARD_INDEX"]?.toIntOrNull() ?: 0
+      if (shardCount <= 0) error("SHARD_COUNT must be > 0")
+      if (shardIndex < 0 || shardIndex >= shardCount) error("SHARD_INDEX must be within [0, SHARD_COUNT)")
+
+      val symbolsPollIntervalMs = mergedEnv["SYMBOLS_POLL_INTERVAL_MS"]?.toLongOrNull() ?: 30_000
+      val subscribeBatchSize = mergedEnv["SUBSCRIBE_BATCH_SIZE"]?.toIntOrNull() ?: 200
+      if (symbolsPollIntervalMs <= 0) error("SYMBOLS_POLL_INTERVAL_MS must be > 0")
+      if (subscribeBatchSize <= 0) error("SUBSCRIBE_BATCH_SIZE must be > 0")
+
       val topics = TopicConfig(
-        trades = mergedEnv["TOPIC_TRADES"] ?: "torghut.nvda.trades.v1",
-        quotes = mergedEnv["TOPIC_QUOTES"] ?: "torghut.nvda.quotes.v1",
-        bars1m = mergedEnv["TOPIC_BARS_1M"] ?: "torghut.nvda.bars.1m.v1",
-        status = mergedEnv["TOPIC_STATUS"] ?: "torghut.nvda.status.v1",
+        trades = mergedEnv["TOPIC_TRADES"] ?: "torghut.trades.v1",
+        quotes = mergedEnv["TOPIC_QUOTES"] ?: "torghut.quotes.v1",
+        bars1m = mergedEnv["TOPIC_BARS_1M"] ?: "torghut.bars.1m.v1",
+        status = mergedEnv["TOPIC_STATUS"] ?: "torghut.status.v1",
         tradeUpdates = mergedEnv["TOPIC_TRADE_UPDATES"],
       )
 
@@ -73,6 +88,11 @@ data class ForwarderConfig(
         alpacaStreamUrl = mergedEnv["ALPACA_STREAM_URL"] ?: "wss://stream.data.alpaca.markets",
         alpacaBaseUrl = mergedEnv["ALPACA_BASE_URL"] ?: "https://data.alpaca.markets",
         symbols = symbols,
+        jangarSymbolsUrl = mergedEnv["JANGAR_SYMBOLS_URL"]?.trim()?.takeIf { it.isNotEmpty() },
+        symbolsPollIntervalMs = symbolsPollIntervalMs,
+        subscribeBatchSize = subscribeBatchSize,
+        shardCount = shardCount,
+        shardIndex = shardIndex,
         enableTradeUpdates = mergedEnv["ENABLE_TRADE_UPDATES"]?.toBooleanStrictOrNull() ?: false,
         reconnectBaseMs = mergedEnv["RECONNECT_BASE_MS"]?.toLongOrNull() ?: 500,
         reconnectMaxMs = mergedEnv["RECONNECT_MAX_MS"]?.toLongOrNull() ?: 30_000,
