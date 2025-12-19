@@ -116,7 +116,14 @@ const collectThreadMessages = async (
   return ordered
 }
 
-const fetchJangarCompletion = async (state: BotState, messages: ChatMessage[]): Promise<string> => {
+const buildOpenWebUiChatId = (thread: { id: string; guildId?: string | null }): string =>
+  thread.guildId ? `discord:${thread.guildId}:${thread.id}` : `discord:${thread.id}`
+
+const fetchJangarCompletion = async (
+  state: BotState,
+  messages: ChatMessage[],
+  options: { chatId?: string } = {},
+): Promise<string> => {
   const payload = {
     model: state.config.jangarModel,
     messages,
@@ -128,6 +135,9 @@ const fetchJangarCompletion = async (state: BotState, messages: ChatMessage[]): 
   }
   if (state.config.jangarApiKey) {
     headers.authorization = `Bearer ${state.config.jangarApiKey}`
+  }
+  if (options.chatId) {
+    headers['x-openwebui-chat-id'] = options.chatId
   }
 
   const response = await fetch(`${state.config.jangarBaseUrl}/openai/v1/chat/completions`, {
@@ -202,6 +212,51 @@ const fetchJangarCompletion = async (state: BotState, messages: ChatMessage[]): 
   return output.trim()
 }
 
+type TypingChannel = Pick<ThreadChannel, 'id' | 'sendTyping'>
+
+const runWithTypingIndicator = async <T>(
+  thread: TypingChannel,
+  task: () => Promise<T>,
+  options: { intervalMs?: number } = {},
+): Promise<T> => {
+  const intervalMs = options.intervalMs ?? 8_000
+  let typingTimer: ReturnType<typeof setInterval> | null = null
+  let typingInFlight = false
+  let typingStopped = false
+
+  const stopTyping = () => {
+    if (typingStopped) return
+    typingStopped = true
+    if (typingTimer) {
+      clearInterval(typingTimer)
+      typingTimer = null
+    }
+  }
+
+  const sendTyping = async () => {
+    if (typingStopped || typingInFlight) return
+    typingInFlight = true
+    try {
+      await thread.sendTyping()
+    } catch (error) {
+      console.warn(`[thread:${thread.id}] sendTyping failed`, error)
+    } finally {
+      typingInFlight = false
+    }
+  }
+
+  await sendTyping()
+  typingTimer = setInterval(() => {
+    void sendTyping()
+  }, intervalMs)
+
+  try {
+    return await task()
+  } finally {
+    stopTyping()
+  }
+}
+
 const respondInThread = async (state: BotState, thread: ThreadChannel, seed?: GuildMessage) => {
   const messages = await collectThreadMessages(state, thread, seed)
   const chatMessages = buildChatMessages(state, messages)
@@ -211,12 +266,13 @@ const respondInThread = async (state: BotState, thread: ThreadChannel, seed?: Gu
     return
   }
 
-  await thread.sendTyping()
-
   let responseText: string
   try {
-    console.log(`[thread:${thread.id}] requesting completion`, { messageCount: chatMessages.length })
-    responseText = await fetchJangarCompletion(state, chatMessages)
+    responseText = await runWithTypingIndicator(thread, async () => {
+      console.log(`[thread:${thread.id}] requesting completion`, { messageCount: chatMessages.length })
+      const chatId = buildOpenWebUiChatId(thread)
+      return await fetchJangarCompletion(state, chatMessages, { chatId })
+    })
   } catch (error) {
     console.error(`[thread:${thread.id}] Jangar request failed`, error)
     responseText = 'Sorry, something went wrong while generating a reply.'
@@ -356,3 +412,5 @@ if (import.meta.main) {
     process.exit(1)
   })
 }
+
+export const __testing = { runWithTypingIndicator, buildOpenWebUiChatId }
