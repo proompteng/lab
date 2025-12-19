@@ -4,10 +4,10 @@
 
 | Topic | Purpose | Partitions | RF | Retention | Compression | Cleanup |
 | --- | --- | --- | --- | --- | --- | --- |
-| `torghut.trades.v1` | Alpaca trades (keyed by `symbol`) | 10 | 3 | 7d | lz4 | delete |
-| `torghut.quotes.v1` | Alpaca quotes (keyed by `symbol`) | 10 | 3 | 7d | lz4 | delete |
-| `torghut.bars.1m.v1` | 1m bars (+updatedBars) (keyed by `symbol`) | 10 | 3 | 30d | lz4 | delete |
-| `torghut.status.v1` | forwarder status/heartbeat (keyed by `symbol` or `instance`) | 3+ | 3 | 7d | lz4 | compaction optional |
+| `torghut.trades.v1` | Alpaca trades (keyed by `symbol`) | 3 | 3 | 7d | lz4 | delete |
+| `torghut.quotes.v1` | Alpaca quotes (keyed by `symbol`) | 3 | 3 | 7d | lz4 | delete |
+| `torghut.bars.1m.v1` | 1m bars (+updatedBars) (keyed by `symbol`) | 3 | 3 | 30d | lz4 | delete |
+| `torghut.status.v1` | forwarder status/heartbeat (keyed by `symbol` or `instance`) | 3 | 3 | 7d | lz4 | compaction optional |
 | `torghut.<symbol>.ta.bars.1s.v1` | derived micro-bars | 1 | 3 | 14d | lz4 | delete |
 | `torghut.<symbol>.ta.signals.v1` | TA indicators/signals | 1 | 3 | 14d | lz4 | delete |
 | `torghut.<symbol>.ta.status.v1` | TA job status | 1 | 3 | 7d | lz4 | compaction optional |
@@ -98,7 +98,7 @@ metadata:
   labels:
     strimzi.io/cluster: kafka
 spec:
-  partitions: 10
+  partitions: 3
   replicas: 3
   config:
     cleanup.policy: delete
