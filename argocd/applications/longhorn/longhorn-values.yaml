@@ -7,7 +7,7 @@ ingress:
 defaultSettings:
   storageReservedPercentageForDefaultDisk: 30
   storageMinimalAvailablePercentage: 25
-  defaultReplicaCount: 3
+  defaultReplicaCount: 1
   replicaAutoBalance: best-effort
   replicaSoftAntiAffinity: false
   allowVolumeCreationWithDegradedAvailability: false

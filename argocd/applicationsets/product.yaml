@@ -94,6 +94,13 @@ spec:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
             enabled: true
+          - name: oirat
+            path: argocd/applications/oirat
+            namespace: oirat
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+            enabled: true
           - name: galette
             path: argocd/applications/galette
             namespace: galette

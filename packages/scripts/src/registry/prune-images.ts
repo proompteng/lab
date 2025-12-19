@@ -6,8 +6,10 @@ import { ensureCli, fatal, run } from '../shared/cli'
 
 type PruneOptions = {
   apply: boolean
+  baseUrl: string | null
   catalogPageSize: number
   concurrency: number
+  deleteUntagged: boolean
   gc: boolean
   restartRegistry: boolean
   keep: number
@@ -37,8 +39,10 @@ const DEFAULT_TAG_PATTERN = /^[0-9a-f]{7,}$/i
 const parseArgs = (args: string[]): PruneOptions => {
   const options: PruneOptions = {
     apply: false,
+    baseUrl: null,
     catalogPageSize: 250,
     concurrency: 8,
+    deleteUntagged: true,
     gc: false,
     restartRegistry: true,
     keep: 5,
@@ -64,6 +68,14 @@ const parseArgs = (args: string[]): PruneOptions => {
       options.gc = false
       continue
     }
+    if (arg === '--delete-untagged') {
+      options.deleteUntagged = true
+      continue
+    }
+    if (arg === '--no-delete-untagged') {
+      options.deleteUntagged = false
+      continue
+    }
     if (arg === '--restart-registry') {
       options.restartRegistry = true
       continue
@@ -76,6 +88,14 @@ const parseArgs = (args: string[]): PruneOptions => {
       options.portForward = false
       continue
     }
+    if (arg === '--no-keep-tags') {
+      options.keepTags = []
+      continue
+    }
+    if (arg === '--no-keep-tag-latest') {
+      options.keepTags = options.keepTags.filter((tag) => tag !== 'latest')
+      continue
+    }
     if (arg === '--unsafe-all-tags') {
       options.unsafeAllTags = true
       continue
@@ -86,6 +106,13 @@ const parseArgs = (args: string[]): PruneOptions => {
         throw new Error(`--keep must be a non-negative number (received '${arg}')`)
       }
       options.keep = value
+      continue
+    }
+    if (arg.startsWith('--base-url=')) {
+      const value = arg.slice('--base-url='.length)
+      if (!value) throw new Error(`--base-url must be non-empty (received '${arg}')`)
+      options.baseUrl = value
+      options.portForward = false
       continue
     }
     if (arg.startsWith('--concurrency=')) {
@@ -578,7 +605,7 @@ export const main = async () => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     fatal(
-      `${message}\n\nUsage: bun run packages/scripts/src/registry/prune-images.ts [--repo=lab/jangar] [--keep=5] [--apply] [--gc] [--no-restart-registry]\n\nDefaults:\n- Uses kubectl port-forward to the in-cluster registry service\n- Keeps 5 tags per repository matching ${DEFAULT_TAG_PATTERN} (keeps non-version tags like 'latest')\n- Does NOT run registry garbage collection unless --gc is set\n- Restarts the registry after gc unless --no-restart-registry`,
+      `${message}\n\nUsage: bun run packages/scripts/src/registry/prune-images.ts [--repo=lab/jangar] [--keep=5] [--apply] [--gc] [--no-restart-registry] [--no-keep-tags | --no-keep-tag-latest] [--base-url=https://registry.example] [--no-delete-untagged]\n\nDefaults:\n- Uses kubectl port-forward to the in-cluster registry service\n- Keeps 5 tags per repository matching ${DEFAULT_TAG_PATTERN} (keeps non-version tags like 'latest')\n- Does NOT run registry garbage collection unless --gc is set\n- GC deletes untagged manifests by default (use --no-delete-untagged to disable)\n- Restarts the registry after gc unless --no-restart-registry`,
     )
   }
 
@@ -588,8 +615,9 @@ export const main = async () => {
     console.log('Running in DRY-RUN mode (no deletes). Pass --apply to delete.')
   }
 
-  const portForward = options.portForward ? await startPortForward(options.namespace, options.portForwardPort) : null
-  const baseUrl = portForward?.baseUrl ?? 'http://registry.registry.svc.cluster.local'
+  const portForward =
+    options.baseUrl || !options.portForward ? null : await startPortForward(options.namespace, options.portForwardPort)
+  const baseUrl = options.baseUrl ?? portForward?.baseUrl ?? 'http://registry.registry.svc.cluster.local'
 
   try {
     const allRepos =
@@ -707,16 +735,12 @@ export const main = async () => {
 
     if (options.apply && options.gc) {
       console.log('\nRunning registry garbage collection...')
-      await run('kubectl', [
-        '-n',
-        options.namespace,
-        'exec',
-        'deploy/registry',
-        '--',
-        'registry',
-        'garbage-collect',
-        '/etc/distribution/config.yml',
-      ])
+      const gcArgs = ['-n', options.namespace, 'exec', 'deploy/registry', '--', 'registry', 'garbage-collect']
+      if (options.deleteUntagged) {
+        gcArgs.push('--delete-untagged')
+      }
+      gcArgs.push('/etc/distribution/config.yml')
+      await run('kubectl', gcArgs)
 
       if (options.restartRegistry) {
         console.log('\nRestarting registry deployment to clear in-memory cache...')

@@ -1,0 +1,358 @@
+import { chunkContent } from '@proompteng/discord'
+import { Client, GatewayIntentBits, type Message, Partials, type Snowflake, type ThreadChannel } from 'discord.js'
+import { type Config, loadConfig } from './config'
+import { buildMessageContent, buildThreadName } from './utils'
+
+type ChatMessage = {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+  name?: string
+}
+
+type ThreadQueue = Map<string, Promise<void>>
+type GuildMessage = Message<true>
+
+type BotState = {
+  client: Client
+  config: Config
+  threadQueues: ThreadQueue
+}
+
+const logContext = (message: GuildMessage) => ({
+  messageId: message.id,
+  channelId: message.channelId,
+  guildId: message.guild?.id,
+  authorId: message.author.id,
+  threadId: message.channel.isThread() ? message.channel.id : null,
+})
+
+const createClient = () =>
+  new Client({
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+    partials: [Partials.Channel, Partials.Message, Partials.GuildMember],
+  })
+
+const enqueueThread = (threadQueues: ThreadQueue, threadId: string, task: () => Promise<void>) => {
+  const previous = threadQueues.get(threadId) ?? Promise.resolve()
+  if (threadQueues.has(threadId)) {
+    console.log(`[thread:${threadId}] queueing response behind previous task`)
+  }
+  const next = previous
+    .then(async () => {
+      console.log(`[thread:${threadId}] processing queued response`)
+      await task()
+    })
+    .catch((error) => {
+      console.error(`[thread:${threadId}] task failed`, error)
+    })
+    .finally(() => {
+      if (threadQueues.get(threadId) === next) {
+        threadQueues.delete(threadId)
+      }
+    })
+  threadQueues.set(threadId, next)
+}
+
+const isAllowedGuild = (config: Config, message: GuildMessage): boolean => {
+  if (!config.allowedGuildIds) return true
+  const guildId = message.guild?.id
+  return guildId ? config.allowedGuildIds.has(guildId as Snowflake) : false
+}
+
+const isAllowedChannel = (config: Config, message: GuildMessage): boolean => {
+  if (!config.allowedChannelIds) return true
+  const channelId = message.channelId
+  if (config.allowedChannelIds.has(channelId as Snowflake)) return true
+  if (message.channel.isThread() && message.channel.parentId) {
+    return config.allowedChannelIds.has(message.channel.parentId as Snowflake)
+  }
+  return false
+}
+
+const buildChatMessages = (state: BotState, messages: GuildMessage[]): ChatMessage[] => {
+  const output: ChatMessage[] = []
+
+  if (state.config.systemPrompt.trim().length > 0) {
+    output.push({ role: 'system', content: state.config.systemPrompt })
+  }
+
+  for (const message of messages) {
+    if (message.author.bot && message.author.id !== state.client.user?.id) {
+      continue
+    }
+
+    const content = buildMessageContent({
+      content: message.content,
+      cleanContent: message.cleanContent,
+      attachmentUrls: Array.from(message.attachments.values()).map((attachment) => attachment.url),
+      botId: state.client.user?.id ?? null,
+    })
+
+    if (!content) continue
+
+    const role: ChatMessage['role'] = message.author.id === state.client.user?.id ? 'assistant' : 'user'
+    output.push({
+      role,
+      content,
+      name: message.author.username,
+    })
+  }
+
+  return output
+}
+
+const collectThreadMessages = async (
+  state: BotState,
+  thread: ThreadChannel,
+  seed?: GuildMessage,
+): Promise<GuildMessage[]> => {
+  const fetched = await thread.messages.fetch({ limit: state.config.historyLimit })
+  const messages = Array.from(fetched.values())
+  if (seed && !messages.some((msg) => msg.id === seed.id)) {
+    messages.push(seed)
+  }
+  const ordered = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+  console.log(`[thread:${thread.id}] fetched ${ordered.length} messages`)
+  return ordered
+}
+
+const fetchJangarCompletion = async (state: BotState, messages: ChatMessage[]): Promise<string> => {
+  const payload = {
+    model: state.config.jangarModel,
+    messages,
+    stream: true,
+  }
+
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  }
+  if (state.config.jangarApiKey) {
+    headers.authorization = `Bearer ${state.config.jangarApiKey}`
+  }
+
+  const response = await fetch(`${state.config.jangarBaseUrl}/openai/v1/chat/completions`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Jangar error ${response.status}: ${errorText}`)
+  }
+
+  if (!response.body) {
+    throw new Error('Jangar response missing body')
+  }
+
+  const decoder = new TextDecoder()
+  const reader = response.body.getReader()
+  let buffer = ''
+  let output = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (!value) continue
+
+    buffer += decoder.decode(value, { stream: true })
+
+    while (true) {
+      const boundary = buffer.indexOf('\n\n')
+      if (boundary === -1) break
+
+      const event = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 2)
+
+      const dataLines = event
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trimStart())
+
+      if (dataLines.length === 0) continue
+
+      const data = dataLines.join('\n')
+      if (data === '[DONE]') {
+        return output.trim()
+      }
+
+      let payload: unknown
+      try {
+        payload = JSON.parse(data)
+      } catch (error) {
+        console.warn('Failed to parse Jangar chunk', error)
+        continue
+      }
+
+      if (payload && typeof payload === 'object') {
+        const errorMessage = (payload as { error?: { message?: string } }).error?.message
+        if (errorMessage) {
+          throw new Error(`Jangar error: ${errorMessage}`)
+        }
+
+        const delta = (payload as { choices?: Array<{ delta?: { content?: string } }> }).choices?.[0]?.delta?.content
+        if (typeof delta === 'string') {
+          output += delta
+        }
+      }
+    }
+  }
+
+  return output.trim()
+}
+
+const respondInThread = async (state: BotState, thread: ThreadChannel, seed?: GuildMessage) => {
+  const messages = await collectThreadMessages(state, thread, seed)
+  const chatMessages = buildChatMessages(state, messages)
+
+  if (chatMessages.length === 0) {
+    console.log(`[thread:${thread.id}] no chat messages to send`)
+    return
+  }
+
+  await thread.sendTyping()
+
+  let responseText: string
+  try {
+    console.log(`[thread:${thread.id}] requesting completion`, { messageCount: chatMessages.length })
+    responseText = await fetchJangarCompletion(state, chatMessages)
+  } catch (error) {
+    console.error(`[thread:${thread.id}] Jangar request failed`, error)
+    responseText = 'Sorry, something went wrong while generating a reply.'
+  }
+
+  const chunks = chunkContent(responseText || '...')
+  console.log(`[thread:${thread.id}] sending ${chunks.length} chunk(s)`)
+  for (const chunk of chunks) {
+    await thread.send(chunk)
+  }
+}
+
+const handleMention = async (state: BotState, message: GuildMessage) => {
+  if (!message.channel.isTextBased()) return
+
+  console.log('Mention detected', logContext(message))
+
+  let thread: ThreadChannel | null = null
+  if (message.hasThread) {
+    thread = message.thread ?? null
+    if (!thread) {
+      const refreshed = await message.fetch().catch(() => null)
+      thread = refreshed?.thread ?? null
+    }
+  }
+
+  if (!thread) {
+    console.log('Creating thread for mention', {
+      ...logContext(message),
+      threadNamePrefix: state.config.threadNamePrefix,
+    })
+    thread = await message.startThread({
+      name: buildThreadName({
+        content: message.content,
+        botId: state.client.user?.id ?? null,
+        prefix: state.config.threadNamePrefix,
+      }),
+      autoArchiveDuration: state.config.threadAutoArchiveMinutes,
+    })
+  } else {
+    console.log(`[thread:${thread.id}] reusing existing thread`, logContext(message))
+  }
+
+  if (!thread) {
+    console.warn('Unable to resolve thread for message', message.id)
+    return
+  }
+
+  enqueueThread(state.threadQueues, thread.id, async () => {
+    await respondInThread(state, thread, message)
+  })
+}
+
+const handleThreadMessage = async (state: BotState, message: GuildMessage, thread: ThreadChannel) => {
+  const isBotThread = thread.ownerId === state.client.user?.id
+  const mentionedBot = message.mentions.users.has(state.client.user?.id ?? '')
+
+  if (!isBotThread && !mentionedBot) {
+    return
+  }
+
+  console.log(`[thread:${thread.id}] inbound thread message`, {
+    ...logContext(message),
+    isBotThread,
+    mentionedBot,
+  })
+
+  enqueueThread(state.threadQueues, thread.id, async () => {
+    await respondInThread(state, thread)
+  })
+}
+
+const attachClientHandlers = (state: BotState) => {
+  state.client.on('messageCreate', async (message) => {
+    if (message.author.bot) return
+    if (!message.inGuild()) return
+    if (!isAllowedGuild(state.config, message) || !isAllowedChannel(state.config, message)) return
+
+    const botId = state.client.user?.id
+    if (!botId) return
+
+    if (message.channel.isThread()) {
+      await handleThreadMessage(state, message, message.channel)
+      return
+    }
+
+    const mentionedBot = message.mentions.users.has(botId)
+    if (!mentionedBot) return
+
+    await handleMention(state, message)
+  })
+
+  state.client.once('clientReady', () => {
+    console.log(`Discord mention bot ready as ${state.client.user?.tag}`)
+    console.log('Oirat config', {
+      historyLimit: state.config.historyLimit,
+      allowedGuilds: state.config.allowedGuildIds?.size ?? 0,
+      allowedChannels: state.config.allowedChannelIds?.size ?? 0,
+      threadNamePrefix: state.config.threadNamePrefix,
+      threadAutoArchiveMinutes: state.config.threadAutoArchiveMinutes,
+      jangarBaseUrl: state.config.jangarBaseUrl,
+      jangarModel: state.config.jangarModel,
+    })
+  })
+
+  state.client.on('error', (error) => {
+    console.error('Discord client error', error)
+  })
+}
+
+const runBot = async () => {
+  const config = loadConfig()
+  const client = createClient()
+  const state: BotState = {
+    client,
+    config,
+    threadQueues: new Map(),
+  }
+
+  attachClientHandlers(state)
+
+  const shutdown = () => {
+    console.log('Shutting down...')
+    client.destroy()
+    process.exit(0)
+  }
+
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
+
+  await client.login(config.discordToken)
+}
+
+if (import.meta.main) {
+  runBot().catch((error) => {
+    console.error('Discord mention bot failed to start', error)
+    process.exit(1)
+  })
+}

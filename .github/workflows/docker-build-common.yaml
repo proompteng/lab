@@ -23,6 +23,18 @@ on:
         required: false
         type: string
         default: 'linux/arm64'
+      turbo_scope:
+        required: false
+        type: string
+        default: ''
+      turbo_copy:
+        required: false
+        type: string
+        default: 'tsconfig.base.json'
+      bun_version:
+        required: false
+        type: string
+        default: '1.3.5'
 
 jobs:
   build:
@@ -33,6 +45,35 @@ jobs:
         with:
           repository: ${{ inputs.external_repository }}
           path: ${{ inputs.external_repository && 'external_repo' || '.' }}
+
+      - name: Resolve repo root
+        id: repo
+        run: echo "root=${{ inputs.external_repository != '' && 'external_repo' || '.' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Bun (turbo prune)
+        if: inputs.turbo_scope != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ inputs.bun_version }}
+
+      - name: Turbo prune
+        if: inputs.turbo_scope != ''
+        id: prune
+        working-directory: ${{ steps.repo.outputs.root }}
+        run: |
+          set -euo pipefail
+          PRUNE_DIR="$(mktemp -d)"
+          bunx turbo prune --scope="${{ inputs.turbo_scope }}" --docker --out-dir="$PRUNE_DIR"
+          if [ -n "${{ inputs.turbo_copy }}" ]; then
+            IFS=',' read -r -a FILES <<< "${{ inputs.turbo_copy }}"
+            for file in "${FILES[@]}"; do
+              file="$(echo "$file" | xargs)"
+              if [ -e "${{ steps.repo.outputs.root }}/${file}" ]; then
+                cp -R "${{ steps.repo.outputs.root }}/${file}" "$PRUNE_DIR/"
+              fi
+            done
+          fi
+          echo "context=$PRUNE_DIR" >> "$GITHUB_OUTPUT"
 
       - name: Docker meta
         id: meta
@@ -55,7 +96,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           platforms: ${{ inputs.platforms }}
-          context: ${{ inputs.external_repository && 'external_repo' || inputs.context }}
+          context: ${{ steps.prune.outputs.context || (inputs.external_repository && 'external_repo' || inputs.context) }}
           file: ${{ inputs.external_repository && 'external_repo/' || '' }}${{ inputs.dockerfile }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
