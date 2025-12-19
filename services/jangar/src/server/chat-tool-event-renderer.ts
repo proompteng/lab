@@ -47,6 +47,13 @@ const renderFileChanges = (rawChanges: unknown, maxDiffLines = 5) => {
   return rendered.join('\n\n')
 }
 
+const wrapInCodeFence = (content: string, language = 'text') => {
+  if (content.includes('```')) return content
+  const trimmed = content.trimEnd()
+  if (!trimmed) return ''
+  return `\n\`\`\`${language}\n${trimmed}\n\`\`\`\n`
+}
+
 type ToolState = {
   id: string
   index: number
@@ -139,7 +146,8 @@ const createToolRenderer = (): ToolRenderer => {
           return actions
         }
 
-        const content = renderFileChanges(event.changes) ?? formatToolContent(toolState, argsPayload)
+        const renderedChanges = renderFileChanges(event.changes)
+        const content = renderedChanges ?? wrapInCodeFence(formatToolContent(toolState, argsPayload))
         if (!content) {
           toolState.lastStatus = status
           return actions
