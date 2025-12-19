@@ -1,4 +1,4 @@
-import { chunkContent } from '@proompteng/discord'
+import { chunkContent, consumeChunks, DISCORD_MESSAGE_LIMIT } from '@proompteng/discord'
 import { Client, GatewayIntentBits, type Message, Partials, type Snowflake, type ThreadChannel } from 'discord.js'
 import { type Config, loadConfig } from './config'
 import { buildMessageContent, buildThreadName } from './utils'
@@ -122,7 +122,7 @@ const buildOpenWebUiChatId = (thread: { id: string; guildId?: string | null }): 
 const fetchJangarCompletion = async (
   state: BotState,
   messages: ChatMessage[],
-  options: { chatId?: string } = {},
+  options: { chatId?: string; onDelta?: (delta: string) => Promise<void> | void } = {},
 ): Promise<string> => {
   const payload = {
     model: state.config.jangarModel,
@@ -204,6 +204,7 @@ const fetchJangarCompletion = async (
         const delta = (payload as { choices?: Array<{ delta?: { content?: string } }> }).choices?.[0]?.delta?.content
         if (typeof delta === 'string') {
           output += delta
+          await options.onDelta?.(delta)
         }
       }
     }
@@ -257,6 +258,73 @@ const runWithTypingIndicator = async <T>(
   }
 }
 
+const createDiscordStreamWriter = (thread: Pick<ThreadChannel, 'send'>) => {
+  let currentMessage: Message | null = null
+  let currentContent = ''
+  let sentAny = false
+
+  const sendMessage = async (content: string) => {
+    const message = await thread.send(content)
+    sentAny = true
+    return message
+  }
+
+  const upsertCurrentMessage = async (content: string) => {
+    if (!currentMessage) {
+      currentMessage = await sendMessage(content)
+      return
+    }
+    await currentMessage.edit(content)
+    sentAny = true
+  }
+
+  const pushDelta = async (delta: string) => {
+    if (!delta) return
+    currentContent += delta
+
+    if (currentContent.length <= DISCORD_MESSAGE_LIMIT) {
+      await upsertCurrentMessage(currentContent)
+      return
+    }
+
+    const { chunks, remainder } = consumeChunks(currentContent, DISCORD_MESSAGE_LIMIT)
+
+    if (chunks.length > 0) {
+      await upsertCurrentMessage(chunks[0])
+      for (const chunk of chunks.slice(1)) {
+        if (!chunk) continue
+        currentMessage = await sendMessage(chunk)
+      }
+    }
+
+    currentContent = remainder
+
+    if (currentContent.length > 0) {
+      currentMessage = await sendMessage(currentContent)
+      return
+    }
+
+    currentMessage = null
+  }
+
+  const finalize = async () => {
+    if (!sentAny && currentContent.length === 0) return
+    if (!sentAny && currentContent.length > 0) {
+      currentMessage = await sendMessage(currentContent)
+      return
+    }
+    if (currentMessage && currentContent.length > 0) {
+      await currentMessage.edit(currentContent)
+    }
+  }
+
+  return {
+    pushDelta,
+    finalize,
+    hasSent: () => sentAny,
+  }
+}
+
 const respondInThread = async (state: BotState, thread: ThreadChannel, seed?: GuildMessage) => {
   const messages = await collectThreadMessages(state, thread, seed)
   const chatMessages = buildChatMessages(state, messages)
@@ -266,16 +334,32 @@ const respondInThread = async (state: BotState, thread: ThreadChannel, seed?: Gu
     return
   }
 
-  let responseText: string
+  const streamWriter = createDiscordStreamWriter(thread)
+  let responseText = ''
   try {
     responseText = await runWithTypingIndicator(thread, async () => {
       console.log(`[thread:${thread.id}] requesting completion`, { messageCount: chatMessages.length })
       const chatId = buildOpenWebUiChatId(thread)
-      return await fetchJangarCompletion(state, chatMessages, { chatId })
+      return await fetchJangarCompletion(state, chatMessages, {
+        chatId,
+        onDelta: async (delta) => {
+          await streamWriter.pushDelta(delta)
+        },
+      })
     })
   } catch (error) {
     console.error(`[thread:${thread.id}] Jangar request failed`, error)
     responseText = 'Sorry, something went wrong while generating a reply.'
+    if (!streamWriter.hasSent()) {
+      await thread.send(responseText)
+    }
+    return
+  }
+
+  await streamWriter.finalize()
+
+  if (streamWriter.hasSent()) {
+    return
   }
 
   const chunks = chunkContent(responseText || '...')
@@ -413,4 +497,4 @@ if (import.meta.main) {
   })
 }
 
-export const __testing = { runWithTypingIndicator, buildOpenWebUiChatId }
+export const __testing = { runWithTypingIndicator, buildOpenWebUiChatId, createDiscordStreamWriter }

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'bun:test'
+import { DISCORD_MESSAGE_LIMIT } from '@proompteng/discord'
+
 import { __testing } from './index'
 
-const { runWithTypingIndicator, buildOpenWebUiChatId } = __testing
+const { runWithTypingIndicator, buildOpenWebUiChatId, createDiscordStreamWriter } = __testing
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -72,5 +74,55 @@ describe('buildOpenWebUiChatId', () => {
   it('falls back to thread id when guild is missing', () => {
     const chatId = buildOpenWebUiChatId({ id: 'thread-abc', guildId: null })
     expect(chatId).toBe('discord:thread-abc')
+  })
+})
+
+describe('createDiscordStreamWriter', () => {
+  const createThread = () => {
+    const sent: Array<{ content: string; edits: string[] }> = []
+    const thread = {
+      send: async (content: string) => {
+        const message = {
+          content,
+          edits: [] as string[],
+          edit: async (next: string) => {
+            message.content = next
+            message.edits.push(next)
+            return message
+          },
+        }
+        sent.push(message)
+        return message
+      },
+      getSent: () => sent,
+    }
+    return thread
+  }
+
+  it('edits the current message as new deltas arrive', async () => {
+    const thread = createThread()
+    const writer = createDiscordStreamWriter(thread)
+
+    await writer.pushDelta('Hello')
+    await writer.pushDelta(' world')
+    await writer.pushDelta('!')
+
+    const sent = thread.getSent()
+    expect(sent.length).toBe(1)
+    expect(sent[0]?.content).toBe('Hello world!')
+    expect(sent[0]?.edits.length).toBeGreaterThan(0)
+  })
+
+  it('splits messages when the content exceeds the Discord limit', async () => {
+    const thread = createThread()
+    const writer = createDiscordStreamWriter(thread)
+
+    const longDelta = 'x'.repeat(DISCORD_MESSAGE_LIMIT + 10)
+    await writer.pushDelta(longDelta)
+
+    const sent = thread.getSent()
+    expect(sent.length).toBe(2)
+    expect(sent[0]?.content.length).toBeLessThanOrEqual(DISCORD_MESSAGE_LIMIT)
+    expect(sent[1]?.content.length).toBe(10)
   })
 })
