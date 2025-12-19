@@ -1,5 +1,5 @@
 ---
-name: lab-repo-map
+name: repo-map
 description: Locate code, services, and infra in the lab monorepo.
 ---
 

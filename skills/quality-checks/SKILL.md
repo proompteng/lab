@@ -1,5 +1,5 @@
 ---
-name: lab-quality-checks
+name: quality-checks
 description: Run required formatting and tests for TS/Go changes.
 ---
 

@@ -1,5 +1,5 @@
 ---
-name: lab-pr-process
+name: pr-process
 description: Follow the repo’s PR and commit conventions.
 ---
 
