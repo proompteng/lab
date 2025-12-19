@@ -54,6 +54,26 @@ const wrapInCodeFence = (content: string, language = 'text') => {
   return `\n\`\`\`${language}\n${trimmed}\n\`\`\`\n`
 }
 
+const stripShellPrefix = (value: string) => {
+  const trimmed = value.trim()
+  const match = trimmed.match(/^(?:\/(?:usr\/)?bin\/(?:ba|z)sh|(?:ba|z)sh)\s+-lc\s+([\s\S]+)$/u)
+  if (!match) return value
+  let command = match[1]?.trim() ?? ''
+  if (
+    command.length >= 2 &&
+    ((command.startsWith("'") && command.endsWith("'")) || (command.startsWith('"') && command.endsWith('"')))
+  ) {
+    const quote = command[0]
+    command = command.slice(1, -1)
+    if (quote === '"') {
+      command = command.replace(/\\"/g, '"')
+    } else if (quote === "'") {
+      command = command.replace(/\\'/g, "'")
+    }
+  }
+  return command
+}
+
 type ToolState = {
   id: string
   index: number
@@ -118,7 +138,8 @@ const createToolRenderer = (): ToolRenderer => {
   const formatToolContent = (toolState: ToolState, payload: Record<string, unknown>) => {
     const output = typeof payload.output === 'string' ? payload.output : undefined
     const detail = typeof payload.detail === 'string' ? payload.detail : undefined
-    const title = typeof payload.title === 'string' ? payload.title : undefined
+    const rawTitle = typeof payload.title === 'string' ? payload.title : undefined
+    const title = rawTitle && toolState.toolKind === 'command' ? stripShellPrefix(rawTitle) : rawTitle
     const status = typeof payload.status === 'string' ? payload.status : undefined
 
     // Skip empty completions; this prevents an extra blank chunk when a command finishes without output.

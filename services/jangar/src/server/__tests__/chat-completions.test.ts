@@ -709,23 +709,24 @@ describe('chat completions handler', () => {
   })
 
   it('streams a single command line once and leaves a blank line before output', async () => {
-    const command = '/bin/bash -lc \'rg -n "jangar" packages | head\''
+    const rawCommand = '/bin/bash -lc \'rg -n "jangar" packages | head\''
+    const displayCommand = 'rg -n "jangar" packages | head'
     const mockClient = {
       runTurnStream: async () => ({
         turnId: 'turn-1',
         threadId: 'thread-1',
         stream: (async function* () {
-          yield { type: 'tool', toolKind: 'command', id: 'tool-1', status: 'started', title: command }
+          yield { type: 'tool', toolKind: 'command', id: 'tool-1', status: 'started', title: rawCommand }
           yield {
             type: 'tool',
             toolKind: 'command',
             id: 'tool-1',
             status: 'delta',
-            title: command,
+            title: rawCommand,
             delta:
               'packages/cx-tools/README.md:7:Artifacts are expected to build into `dist/`\npackages/scripts/README.md:17:| `src/jangar/build-image.ts` | Builds and pushes the `lab/jangar` Bun worker image',
           }
-          yield { type: 'tool', toolKind: 'command', id: 'tool-1', status: 'completed', title: command }
+          yield { type: 'tool', toolKind: 'command', id: 'tool-1', status: 'completed', title: rawCommand }
           yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 2 } }
         })(),
       }),
@@ -762,33 +763,38 @@ describe('chat completions handler', () => {
     const [openFence, commandLine, outputChunk] = contentChunks
 
     expect(openFence.trim()).toBe('```ts')
-    expect(commandLine).toContain(command)
+    expect(commandLine).toContain(displayCommand)
+    expect(commandLine).not.toContain(rawCommand)
 
     // Command string should not reappear inside output chunk, and output starts on its own line.
-    expect(outputChunk.startsWith(command)).toBe(false)
-    expect(outputChunk.includes(command)).toBe(false)
+    expect(outputChunk.startsWith(displayCommand)).toBe(false)
+    expect(outputChunk.includes(displayCommand)).toBe(false)
+    expect(outputChunk.includes(rawCommand)).toBe(false)
 
     // Only one appearance of the command line across all streamed content.
     const joinedContent = contentChunks.join('')
-    const occurrences = joinedContent.split(command).length - 1
+    const occurrences = joinedContent.split(displayCommand).length - 1
     expect(occurrences).toBe(1)
+    expect(joinedContent.includes(rawCommand)).toBe(false)
     expect(joinedContent.includes('\n---\n')).toBe(false)
   })
 
   it('renders aggregated command output when no output deltas were streamed', async () => {
-    const command = "/bin/bash -lc 'cd /workspace/lab && cat services/jangar/src/routes/openai/v1/chat/completions.ts'"
+    const rawCommand =
+      "/bin/bash -lc 'cd /workspace/lab && cat services/jangar/src/routes/openai/v1/chat/completions.ts'"
+    const displayCommand = 'cd /workspace/lab && cat services/jangar/src/routes/openai/v1/chat/completions.ts'
     const mockClient = {
       runTurnStream: async () => ({
         turnId: 'turn-1',
         threadId: 'thread-1',
         stream: (async function* () {
-          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'started', title: command }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'started', title: rawCommand }
           yield {
             type: 'tool',
             toolKind: 'command',
             id: 'cmd-1',
             status: 'completed',
-            title: command,
+            title: rawCommand,
             data: {
               aggregatedOutput:
                 "import { createFileRoute } from '@tanstack/react-router'\nimport { handleChatCompletion } from '~/server/chat'\n",
@@ -826,7 +832,8 @@ describe('chat completions handler', () => {
       .filter(Boolean) as string[]
 
     expect(contentChunks[0]?.trim()).toBe('```ts')
-    expect(contentChunks.some((chunk) => chunk.includes(command))).toBe(true)
+    expect(contentChunks.some((chunk) => chunk.includes(displayCommand))).toBe(true)
+    expect(contentChunks.some((chunk) => chunk.includes(rawCommand))).toBe(false)
     expect(
       contentChunks.some((chunk) => chunk.includes("import { createFileRoute } from '@tanstack/react-router'")),
     ).toBe(true)
@@ -877,36 +884,38 @@ describe('chat completions handler', () => {
   })
 
   it('does not insert separators between two commands', async () => {
-    const commandA = 'bash -lc "echo first"'
-    const commandB = 'bash -lc "echo second"'
+    const rawCommandA = 'bash -lc "echo first"'
+    const rawCommandB = 'bash -lc "echo second"'
+    const displayCommandA = 'echo first'
+    const displayCommandB = 'echo second'
     const mockClient = {
       runTurnStream: async () => ({
         turnId: 'turn-1',
         threadId: 'thread-1',
         stream: (async function* () {
           // First command
-          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'started', title: commandA }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'started', title: rawCommandA }
           yield {
             type: 'tool',
             toolKind: 'command',
             id: 'cmd-1',
             status: 'delta',
-            title: commandA,
+            title: rawCommandA,
             delta: 'first output',
           }
-          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'completed', title: commandA }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'completed', title: rawCommandA }
 
           // Second command
-          yield { type: 'tool', toolKind: 'command', id: 'cmd-2', status: 'started', title: commandB }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-2', status: 'started', title: rawCommandB }
           yield {
             type: 'tool',
             toolKind: 'command',
             id: 'cmd-2',
             status: 'delta',
-            title: commandB,
+            title: rawCommandB,
             delta: 'second output',
           }
-          yield { type: 'tool', toolKind: 'command', id: 'cmd-2', status: 'completed', title: commandB }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-2', status: 'completed', title: rawCommandB }
           yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 2 } }
         })(),
       }),
@@ -941,14 +950,14 @@ describe('chat completions handler', () => {
     const joined = contentChunks.join('')
 
     // No separators should appear anywhere.
-    const firstCommandIndex = joined.indexOf(commandA)
+    const firstCommandIndex = joined.indexOf(displayCommandA)
     expect(firstCommandIndex).toBeGreaterThanOrEqual(0)
-    const secondCommandIndex = joined.indexOf(commandB)
+    const secondCommandIndex = joined.indexOf(displayCommandB)
     expect(secondCommandIndex).toBeGreaterThan(firstCommandIndex)
     expect(joined.includes('\n---\n')).toBe(false)
 
     // Ensure consecutive commands are separated by a blank line.
-    expect(joined).toContain(`first output\n\n${commandB}`)
+    expect(joined).toContain(`first output\n\n${displayCommandB}`)
   })
 
   it('streams five commands without inserting separators', async () => {
@@ -1014,7 +1023,8 @@ describe('chat completions handler', () => {
   })
 
   it('does not insert a separator when the prior command produced no visible content', async () => {
-    const noisyCommand = 'bash -lc "echo noisy"'
+    const rawCommand = 'bash -lc "echo noisy"'
+    const displayCommand = 'echo noisy'
     const mockClient = {
       runTurnStream: async () => ({
         turnId: 'turn-1',
@@ -1024,16 +1034,16 @@ describe('chat completions handler', () => {
           yield { type: 'tool', toolKind: 'command', id: 'cmd-empty', status: 'completed' }
 
           // A real command with output
-          yield { type: 'tool', toolKind: 'command', id: 'cmd-noisy', status: 'started', title: noisyCommand }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-noisy', status: 'started', title: rawCommand }
           yield {
             type: 'tool',
             toolKind: 'command',
             id: 'cmd-noisy',
             status: 'delta',
-            title: noisyCommand,
+            title: rawCommand,
             delta: 'noisy output',
           }
-          yield { type: 'tool', toolKind: 'command', id: 'cmd-noisy', status: 'completed', title: noisyCommand }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-noisy', status: 'completed', title: rawCommand }
 
           yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
         })(),
@@ -1070,7 +1080,7 @@ describe('chat completions handler', () => {
 
     // No separator should appear because the first command never produced visible content.
     expect(joined.includes('\n---\n')).toBe(false)
-    expect(joined).toContain(noisyCommand)
+    expect(joined).toContain(displayCommand)
     expect(joined).toContain('noisy output')
   })
 
