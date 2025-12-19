@@ -312,7 +312,7 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     const encoderModel = process.env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-3-small'
     const derivedSummary = resolvedSummary ?? resolvedContent.slice(0, 300)
     const metadata = JSON.stringify({ namespace: resolvedNamespace })
-    const source = 'jangar.mcp'
+    const source = 'memories.mcp'
 
     const rows = (await db`
 	      INSERT INTO memories.entries (task_name, content, summary, tags, metadata, source, embedding, encoder_model)

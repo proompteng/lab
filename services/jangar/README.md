@@ -72,7 +72,7 @@ bun --cwd services/jangar run tsc
 
 ## MCP (memories)
 
-Jangar exposes an MCP endpoint at `POST /mcp` (see `services/jangar/src/routes/mcp.ts`). The Codex app-server is configured to use it via `threadConfig.mcp_servers.jangar` (see `services/jangar/src/server/codex-client.ts`).
+The memories MCP endpoint is available at `POST /mcp` (see `services/jangar/src/routes/mcp.ts`). The Codex app-server is configured to use it via `threadConfig.mcp_servers.memories` (see `services/jangar/src/server/codex-client.ts`).
 
 The MCP server provides:
 

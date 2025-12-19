@@ -50,13 +50,13 @@ const post = async (service: MemoriesService, body: unknown, headers: Record<str
   return { response, json }
 }
 
-describe('Jangar MCP handler', () => {
+describe('Memories MCP handler', () => {
   it('supports initialize + tools/list', async () => {
     const { service } = makeService()
 
     const init = await post(service, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
     expect(init.response.status).toBe(200)
-    expect(init.json?.result?.serverInfo?.name).toBe('jangar')
+    expect(init.json?.result?.serverInfo?.name).toBe('memories')
 
     const list = await post(service, { jsonrpc: '2.0', id: 2, method: 'tools/list' })
     expect(list.response.status).toBe(200)
@@ -181,7 +181,7 @@ describe('Jangar MCP handler', () => {
     expect(batch.response.headers.get('Mcp-Session-Id')).toBe('session-1')
     expect(Array.isArray(batch.json)).toBe(true)
     expect(batch.json?.map((item: { id: number }) => item.id)).toEqual([1, 2, 3])
-    expect(batch.json?.find((item: { id: number }) => item.id === 1)?.result?.serverInfo?.name).toBe('jangar')
+    expect(batch.json?.find((item: { id: number }) => item.id === 1)?.result?.serverInfo?.name).toBe('memories')
     expect(batch.json?.find((item: { id: number }) => item.id === 2)?.error?.code).toBe(-32000)
     expect(batch.json?.find((item: { id: number }) => item.id === 3)?.error?.code).toBe(-32000)
   })

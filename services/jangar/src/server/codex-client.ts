@@ -18,7 +18,7 @@ const defaultFactory: Factory = (options) =>
       'features.rmcp_client': true,
       'features.web_search_request': true,
       mcp_servers: {
-        jangar: {
+        memories: {
           url: resolveMcpUrl(),
         },
       },
