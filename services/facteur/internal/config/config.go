@@ -10,14 +10,15 @@ import (
 
 // Config captures runtime configuration for the facteur service.
 type Config struct {
-	Discord  DiscordConfig       `mapstructure:"discord"`
-	Redis    RedisConfig         `mapstructure:"redis"`
-	Argo     ArgoConfig          `mapstructure:"argo"`
-	RoleMap  map[string][]string `mapstructure:"role_map"`
-	Server   ServerConfig        `mapstructure:"server"`
-	Codex    CodexListenerConfig `mapstructure:"codex_listener"`
-	Planner  PlannerConfig       `mapstructure:"codex_orchestrator"`
-	Postgres DatabaseConfig      `mapstructure:"postgres"`
+	Discord     DiscordConfig       `mapstructure:"discord"`
+	Redis       RedisConfig         `mapstructure:"redis"`
+	Argo        ArgoConfig          `mapstructure:"argo"`
+	RoleMap     map[string][]string `mapstructure:"role_map"`
+	Server      ServerConfig        `mapstructure:"server"`
+	Codex       CodexListenerConfig `mapstructure:"codex_listener"`
+	Planner     PlannerConfig       `mapstructure:"codex_orchestrator"`
+	Implementer ImplementerConfig   `mapstructure:"codex_implementation_orchestrator"`
+	Postgres    DatabaseConfig      `mapstructure:"postgres"`
 }
 
 // DiscordConfig aggregates Discord bot credentials and routing data.
@@ -43,6 +44,15 @@ type ArgoConfig struct {
 
 // PlannerConfig controls Facteur-led Codex orchestration behaviour.
 type PlannerConfig struct {
+	Enabled          bool              `mapstructure:"enabled"`
+	Namespace        string            `mapstructure:"namespace"`
+	WorkflowTemplate string            `mapstructure:"workflow_template"`
+	ServiceAccount   string            `mapstructure:"service_account"`
+	Parameters       map[string]string `mapstructure:"parameters"`
+}
+
+// ImplementerConfig controls Facteur-led Codex implementation orchestration behaviour.
+type ImplementerConfig struct {
 	Enabled          bool              `mapstructure:"enabled"`
 	Namespace        string            `mapstructure:"namespace"`
 	WorkflowTemplate string            `mapstructure:"workflow_template"`
@@ -139,6 +149,14 @@ func LoadWithOptions(opts Options) (*Config, error) {
 		{key: "codex_orchestrator.workflow_template"},
 		{key: "codex_orchestrator.service_account"},
 		{key: "codex_orchestrator.parameters"},
+		{
+			key:  "codex_implementation_orchestrator.enabled",
+			envs: []string{"FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION"},
+		},
+		{key: "codex_implementation_orchestrator.namespace"},
+		{key: "codex_implementation_orchestrator.workflow_template"},
+		{key: "codex_implementation_orchestrator.service_account"},
+		{key: "codex_implementation_orchestrator.parameters"},
 	} {
 		if len(binding.envs) == 0 {
 			if err := v.BindEnv(binding.key); err != nil {
@@ -182,6 +200,9 @@ func normaliseConfig(cfg *Config) {
 	}
 	if cfg.Planner.Parameters == nil {
 		cfg.Planner.Parameters = map[string]string{}
+	}
+	if cfg.Implementer.Parameters == nil {
+		cfg.Implementer.Parameters = map[string]string{}
 	}
 	if cfg.Server.ListenAddress == "" {
 		cfg.Server.ListenAddress = ":8080"

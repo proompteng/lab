@@ -48,6 +48,16 @@ codex_orchestrator:
   service_account: facteur
   parameters:
     rawEvent: ""
+codex_implementation_orchestrator:
+  enabled: false
+  namespace: argo
+  workflow_template: github-codex-implementation
+  service_account: facteur
+  parameters:
+    rawEvent: ""
+    eventBody: ""
+    head: ""
+    base: ""
 role_map:
   plan:
     - "123456789012345678"
