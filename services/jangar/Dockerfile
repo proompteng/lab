@@ -8,6 +8,7 @@
 # - `json/` contains the pruned `package.json` + workspace package.jsons + `bun.lock`
 # - `full/` contains the full pruned source tree
 # - `tsconfig.base.json` is copied into the context root by the build script
+# - `skills/` is present at the context root for Codex CLI skills
 ARG BUN_VERSION=1.3.4
 ARG OPENVSCODE_VERSION=1.105.1
 ARG GH_VERSION=2.65.0
@@ -332,7 +333,7 @@ RUN mkdir -p /root/.codex
 RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json \
   install -m 600 /tmp/codex_auth.json /root/.codex/auth.json
 COPY --from=jangar-build /app/services/jangar/scripts/codex-config-container.toml /root/.codex/config.toml
-COPY --from=jangar-build /app/skills /workspace/lab/skills
+COPY skills/ /root/.codex/skills/
 
 # Start the compiled Nitro server produced by `bun --bun vite build`
 CMD ["bun", "run", ".output/server/index.mjs"]

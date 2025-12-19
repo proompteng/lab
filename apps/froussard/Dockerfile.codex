@@ -88,7 +88,7 @@ RUN --mount=type=secret,id=codex_auth,target=/tmp/codex_auth.json \
     && printf '%s\n' "${CODEX_AUTH_CHECKSUM}" > /root/.codex/auth.checksum
 
 COPY apps/froussard/scripts/codex-config-container.toml /root/.codex/config.toml
-COPY skills/ "$WORKTREE/skills/"
+COPY skills/ /root/.codex/skills/
 
 # Authenticate gh using provided token and wire git credential helper
 RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \

@@ -63,9 +63,8 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
     copyFileSync(resolve(repoRoot, 'tsconfig.base.json'), resolve(dir, 'tsconfig.base.json'))
     const skillsSource = resolve(repoRoot, 'skills')
     if (existsSync(skillsSource)) {
-      cpSync(skillsSource, resolve(dir, 'full', 'skills'), { recursive: true })
+      cpSync(skillsSource, resolve(dir, 'skills'), { recursive: true })
     }
-
     return { dir, cleanup }
   } catch (error) {
     cleanup()
