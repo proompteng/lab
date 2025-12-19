@@ -21,8 +21,21 @@ describe('chat tool event renderer', () => {
     }
 
     const content = collectEmittedContent([started, started])
-    expect(content).toContain('/bin/bash -lc echo hi')
-    expect(content.split('/bin/bash -lc echo hi').length - 1).toBe(1)
+    expect(content).toContain('echo hi')
+    expect(content.split('echo hi').length - 1).toBe(1)
+  })
+
+  it('strips zsh prefixes from command titles', () => {
+    const started: ToolEvent = {
+      id: 'tool-4',
+      toolKind: 'command',
+      status: 'started',
+      title: '/bin/zsh -lc "rg -n \\"jangar\\""',
+    }
+
+    const content = collectEmittedContent([started])
+    expect(content).toContain('rg -n "jangar"')
+    expect(content).not.toContain('/bin/zsh -lc')
   })
 
   it('wraps file tool summaries in a code fence', () => {
