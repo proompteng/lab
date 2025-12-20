@@ -33,6 +33,12 @@ export class RedisClient {
     // no-op for stub
   }
 
+  async del(...keys: string[]) {
+    for (const key of keys) {
+      this.store.delete(key)
+    }
+  }
+
   async close() {
     this.connected = false
     this.store.clear()

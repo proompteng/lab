@@ -1,5 +1,8 @@
-import { dirname, resolve } from 'node:path'
+import { existsSync } from 'node:fs'
+import { mkdir, readdir, stat } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
 import * as S from '@effect/schema/Schema'
 import type { CodexAppServerClient } from '@proompteng/codex'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
@@ -20,6 +23,12 @@ import {
   type OpenWebUiThreadStateService,
   OpenWebUiThreadStateUnavailableError,
 } from './openwebui-thread-state'
+import {
+  OpenWebUiWorktreeState,
+  OpenWebUiWorktreeStateLive,
+  OpenWebUiWorktreeStateUnavailableError,
+} from './openwebui-worktree-state'
+import { pickWorktreeCityName } from './worktree-cities'
 
 const MessageSchema = S.Struct({
   role: S.String,
@@ -152,9 +161,100 @@ const buildPrompt = (messages: ChatRequest['messages']) =>
     })
     .join('\n')
 
-const resolveCodexCwd = () => {
-  const defaultRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
-  return process.env.CODEX_CWD ?? (process.env.NODE_ENV === 'production' ? '/workspace/lab' : defaultRepoRoot)
+const WORKTREE_DIR_NAME = '.worktrees'
+const WORKTREE_NAME_PATTERN = /^[a-z0-9-]+$/
+
+const isErrno = (error: unknown): error is NodeJS.ErrnoException =>
+  typeof error === 'object' && error !== null && 'code' in error
+
+const shouldSkipGitWorktree = () => {
+  if (process.env.NODE_ENV === 'test') return true
+  return typeof (globalThis as { Bun?: unknown }).Bun === 'undefined'
+}
+
+const resolveRepoRoot = () => resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+
+const resolveCodexBaseCwd = () => {
+  const envCwd = process.env.CODEX_CWD?.trim()
+  if (envCwd) return envCwd
+  return process.env.NODE_ENV === 'production' ? '/workspace/lab' : resolveRepoRoot()
+}
+
+const resolveCodexCwd = (worktreePath?: string) => worktreePath ?? resolveCodexBaseCwd()
+
+const resolveWorktreeRoot = () => join(resolveCodexBaseCwd(), WORKTREE_DIR_NAME)
+
+const readExistingWorktreeNames = async (worktreeRoot: string) => {
+  const entries = await readdir(worktreeRoot, { withFileTypes: true })
+  return new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
+}
+
+const createGitWorktree = async (repoRoot: string, worktreePath: string) => {
+  const process = Bun.spawn(['git', 'worktree', 'add', '--detach', worktreePath, 'HEAD'], {
+    cwd: repoRoot,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const exitCode = await process.exited
+  if (exitCode === 0) return
+  const stdout = await new Response(process.stdout).text()
+  const stderr = await new Response(process.stderr).text()
+  const detail = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n')
+  throw new Error(`git worktree add failed${detail ? `: ${detail}` : ''}`)
+}
+
+const ensureWorktreePath = async (worktreeName: string) => {
+  if (!WORKTREE_NAME_PATTERN.test(worktreeName)) {
+    throw new Error(`Invalid worktree name '${worktreeName}'`)
+  }
+
+  const worktreeRoot = resolveWorktreeRoot()
+  await mkdir(worktreeRoot, { recursive: true })
+  const worktreePath = join(worktreeRoot, worktreeName)
+
+  const existing = await stat(worktreePath).catch((error) => {
+    if (isErrno(error) && error.code === 'ENOENT') return null
+    throw error
+  })
+
+  if (existing) {
+    if (!existing.isDirectory()) {
+      throw new Error(`Worktree path exists but is not a directory: ${worktreePath}`)
+    }
+    return worktreePath
+  }
+
+  if (shouldSkipGitWorktree()) {
+    await mkdir(worktreePath, { recursive: true })
+    return worktreePath
+  }
+
+  await createGitWorktree(resolveCodexBaseCwd(), worktreePath)
+  return worktreePath
+}
+
+const allocateWorktree = async () => {
+  const worktreeRoot = resolveWorktreeRoot()
+  await mkdir(worktreeRoot, { recursive: true })
+  const existing = await readExistingWorktreeNames(worktreeRoot)
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const candidate = pickWorktreeCityName(existing)
+    try {
+      const path = await ensureWorktreePath(candidate)
+      return { name: candidate, path }
+    } catch (error) {
+      if (existsSync(join(worktreeRoot, candidate))) {
+        existing.add(candidate)
+        lastError = error instanceof Error ? error : new Error(String(error))
+        continue
+      }
+      throw error
+    }
+  }
+
+  throw lastError ?? new Error('Unable to allocate a new worktree')
 }
 
 type ThreadContext = {
@@ -173,6 +273,7 @@ const toSseResponse = (
   toolRenderer: ToolRenderer,
   completionEncoder: ChatCompletionEncoderService,
   threadContext: ThreadContext | null,
+  codexCwd: string,
   signal?: AbortSignal,
 ) => {
   const textEncoder = new TextEncoder()
@@ -180,8 +281,6 @@ const toSseResponse = (
   const id = `chatcmpl-${crypto.randomUUID()}`
   const heartbeatIntervalMs = 5_000
   const enableHeartbeat = process.env.NODE_ENV !== 'test'
-
-  const codexCwd = resolveCodexCwd()
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -539,8 +638,11 @@ export const handleChatCompletionEffect = (request: Request) =>
         })
 
         let threadContext: ThreadContext | null = null
+        let codexCwd = resolveCodexCwd()
         if (chatId) {
           const threadState = yield* OpenWebUiThreadState
+          const worktreeState = yield* OpenWebUiWorktreeState
+
           const threadId = yield* pipe(
             threadState.getThreadId(chatId),
             Effect.catchAll((error) => {
@@ -557,7 +659,70 @@ export const handleChatCompletionEffect = (request: Request) =>
             }),
           )
 
+          const storedWorktreeName = yield* pipe(
+            worktreeState.getWorktreeName(chatId),
+            Effect.catchAll((error) => {
+              if (error instanceof OpenWebUiWorktreeStateUnavailableError) {
+                return Effect.fail(new RequestError(500, 'worktree_store_unavailable', error.message))
+              }
+              return Effect.fail(
+                new RequestError(
+                  500,
+                  'worktree_lookup_failed',
+                  error instanceof Error ? error.message : 'Unable to read chat worktree state',
+                ),
+              )
+            }),
+          )
+
+          let worktreeName = storedWorktreeName
+          let worktreePath: string
+
+          if (worktreeName) {
+            const existingName = worktreeName
+            worktreePath = yield* Effect.tryPromise({
+              try: () => ensureWorktreePath(existingName),
+              catch: (error) =>
+                new RequestError(
+                  500,
+                  'worktree_setup_failed',
+                  error instanceof Error ? error.message : 'Unable to ensure chat worktree',
+                ),
+            })
+          } else {
+            const allocation = yield* Effect.tryPromise({
+              try: () => allocateWorktree(),
+              catch: (error) =>
+                new RequestError(
+                  500,
+                  'worktree_setup_failed',
+                  error instanceof Error ? error.message : 'Unable to allocate chat worktree',
+                ),
+            })
+            const allocatedName = allocation.name
+            worktreeName = allocatedName
+            worktreePath = allocation.path
+
+            yield* pipe(
+              worktreeState.setWorktreeName(chatId, allocatedName),
+              Effect.catchAll((error) => {
+                if (error instanceof OpenWebUiWorktreeStateUnavailableError) {
+                  return Effect.fail(new RequestError(500, 'worktree_store_unavailable', error.message))
+                }
+                return Effect.fail(
+                  new RequestError(
+                    500,
+                    'worktree_write_failed',
+                    error instanceof Error ? error.message : 'Unable to persist chat worktree',
+                  ),
+                )
+              }),
+            )
+          }
+
+          codexCwd = resolveCodexCwd(worktreePath)
           console.info('[chat] chat id received', { chatId, threadId })
+          console.info('[chat] worktree resolved', { chatId, worktreeName, worktreePath })
           threadContext = {
             chatId,
             threadId,
@@ -583,6 +748,7 @@ export const handleChatCompletionEffect = (request: Request) =>
           toolRenderer.create(),
           encoder,
           threadContext,
+          codexCwd,
           request.signal,
         )
       }),
@@ -605,6 +771,7 @@ export const handleChatCompletionEffect = (request: Request) =>
 const handlerRuntime = ManagedRuntime.make(
   Layer.mergeAll(
     OpenWebUiThreadStateLive,
+    OpenWebUiWorktreeStateLive,
     Layer.succeed(ChatToolEventRenderer, chatToolEventRendererLive),
     Layer.succeed(ChatCompletionEncoder, chatCompletionEncoderLive),
   ),

@@ -90,6 +90,7 @@ Storage details:
 - `JANGAR_DEFAULT_MODEL` (optional)
 - `JANGAR_REDIS_URL` (required only when using `x-openwebui-chat-id` thread persistence)
 - `JANGAR_CHAT_KEY_PREFIX` (optional; defaults to `openwebui:chat`)
+- `JANGAR_WORKTREE_KEY_PREFIX` (optional; defaults to `openwebui:worktree`)
 - `JANGAR_MCP_URL` (optional; defaults to `http://127.0.0.1:$PORT/mcp`)
 - `DATABASE_URL` (required to use MCP memories tools)
 - `PGSSLMODE` (optional; defaults to `require`; Jangar does not support `sslrootcert` URL params for Bun’s Postgres client)

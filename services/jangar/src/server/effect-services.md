@@ -21,11 +21,16 @@ This server codebase uses Effect’s **service pattern**:
 - Example: `src/server/openwebui-thread-state.ts` exports:
   - `OpenWebUiThreadStateService` (interface)
   - `OpenWebUiThreadState` (`Context.Tag(...)`)
+- Example: `src/server/openwebui-worktree-state.ts` exports:
+  - `OpenWebUiWorktreeStateService` (interface)
+  - `OpenWebUiWorktreeState` (`Context.Tag(...)`)
 
 **2) Provide a live layer**
 
 - Example: `src/server/openwebui-thread-state.ts` exports:
   - `OpenWebUiThreadStateLive` (`Layer.scoped(...)`)
+- Example: `src/server/openwebui-worktree-state.ts` exports:
+  - `OpenWebUiWorktreeStateLive` (`Layer.scoped(...)`)
 
 Notes:
 - Prefer `Layer.sync` / `Layer.effect` for simple services.
@@ -46,5 +51,6 @@ Notes:
 
 - Example: `src/server/__tests__/chat-completions.test.ts` overrides:
   - `OpenWebUiThreadState` via `Effect.provideService(OpenWebUiThreadState, fakeThreadState)`
+  - `OpenWebUiWorktreeState` via `Effect.provideService(OpenWebUiWorktreeState, fakeWorktreeState)`
 
 This keeps tests isolated and avoids mutating module globals like `setFoo(...)` / `resetFoo(...)`.

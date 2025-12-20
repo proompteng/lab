@@ -1,20 +1,31 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import type { CodexAppServerClient } from '@proompteng/codex'
 import { Effect, pipe } from 'effect'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { chatCompletionsHandler } from '~/routes/openai/v1/chat/completions'
 import { handleChatCompletionEffect, resetCodexClient, setCodexClientFactory } from '~/server/chat'
 import { ChatCompletionEncoder, chatCompletionEncoderLive } from '~/server/chat-completion-encoder'
 import { ChatToolEventRenderer, chatToolEventRendererLive } from '~/server/chat-tool-event-renderer'
 import { OpenWebUiThreadState, type OpenWebUiThreadStateService } from '~/server/openwebui-thread-state'
+import { OpenWebUiWorktreeState, type OpenWebUiWorktreeStateService } from '~/server/openwebui-worktree-state'
 
 describe('chat completions handler', () => {
-  const previousEnv: Partial<Record<'JANGAR_MODELS' | 'JANGAR_DEFAULT_MODEL', string | undefined>> = {}
+  const previousEnv: Partial<Record<'JANGAR_MODELS' | 'JANGAR_DEFAULT_MODEL' | 'CODEX_CWD', string | undefined>> = {}
+  let worktreeRoot: string | null = null
 
-  beforeEach(() => {
+  beforeEach(async () => {
     previousEnv.JANGAR_MODELS = process.env.JANGAR_MODELS
     previousEnv.JANGAR_DEFAULT_MODEL = process.env.JANGAR_DEFAULT_MODEL
+    previousEnv.CODEX_CWD = process.env.CODEX_CWD
     delete process.env.JANGAR_MODELS
     delete process.env.JANGAR_DEFAULT_MODEL
+
+    worktreeRoot = await mkdtemp(join(tmpdir(), 'jangar-worktree-'))
+    process.env.CODEX_CWD = worktreeRoot
 
     const mockClient = {
       runTurnStream: async () => ({
@@ -31,9 +42,14 @@ describe('chat completions handler', () => {
     setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.clearAllMocks()
     resetCodexClient()
+
+    if (worktreeRoot) {
+      await rm(worktreeRoot, { recursive: true, force: true })
+      worktreeRoot = null
+    }
 
     if (previousEnv.JANGAR_MODELS === undefined) {
       delete process.env.JANGAR_MODELS
@@ -45,6 +61,12 @@ describe('chat completions handler', () => {
       delete process.env.JANGAR_DEFAULT_MODEL
     } else {
       process.env.JANGAR_DEFAULT_MODEL = previousEnv.JANGAR_DEFAULT_MODEL
+    }
+
+    if (previousEnv.CODEX_CWD === undefined) {
+      delete process.env.CODEX_CWD
+    } else {
+      process.env.CODEX_CWD = previousEnv.CODEX_CWD
     }
   })
 
@@ -392,6 +414,11 @@ describe('chat completions handler', () => {
       nextTurn: vi.fn(() => Effect.succeed(1)),
       clearChat: vi.fn(() => Effect.succeed(undefined)),
     }
+    const worktreeState: OpenWebUiWorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed('austin')),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
 
     const mockClient = {
       runTurnStream: vi.fn(async (_prompt: string, opts?: { threadId?: string }) => {
@@ -444,6 +471,7 @@ describe('chat completions handler', () => {
         Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
         Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
         Effect.provideService(OpenWebUiThreadState, threadState),
+        Effect.provideService(OpenWebUiWorktreeState, worktreeState),
       ),
     )
     const text = await response.text()
