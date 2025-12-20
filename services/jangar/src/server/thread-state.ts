@@ -2,27 +2,24 @@ import { Context, Effect, Layer, pipe } from 'effect'
 
 import { type ChatThreadStore, createRedisChatThreadStore } from './chat-thread-store'
 
-export class OpenWebUiThreadStateUnavailableError extends Error {
-  readonly _tag = 'OpenWebUiThreadStateUnavailableError'
+export class ThreadStateUnavailableError extends Error {
+  readonly _tag = 'ThreadStateUnavailableError'
 }
 
-export type OpenWebUiThreadStateService = {
+export type ThreadStateService = {
   getThreadId: (chatId: string) => Effect.Effect<string | null, Error>
   setThreadId: (chatId: string, threadId: string) => Effect.Effect<void, Error>
   nextTurn: (chatId: string) => Effect.Effect<number, Error>
   clearChat: (chatId: string) => Effect.Effect<void, Error>
 }
 
-export class OpenWebUiThreadState extends Context.Tag('OpenWebUiThreadState')<
-  OpenWebUiThreadState,
-  OpenWebUiThreadStateService
->() {}
+export class ThreadState extends Context.Tag('ThreadState')<ThreadState, ThreadStateService>() {}
 
 const normalizeError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
 
-export const OpenWebUiThreadStateLive = Layer.scoped(
-  OpenWebUiThreadState,
+export const ThreadStateLive = Layer.scoped(
+  ThreadState,
   Effect.gen(function* () {
     let store: ChatThreadStore | null = null
 
@@ -31,7 +28,7 @@ export const OpenWebUiThreadStateLive = Layer.scoped(
       return pipe(
         store.shutdown(),
         Effect.catchAll((error) => {
-          console.warn('[chat] failed to close OpenWebUI thread store', { error: String(error) })
+          console.warn('[chat] failed to close thread store', { error: String(error) })
           return Effect.void
         }),
       )
@@ -44,20 +41,16 @@ export const OpenWebUiThreadStateLive = Layer.scoped(
           return store
         },
         catch: (error) =>
-          new OpenWebUiThreadStateUnavailableError(
-            error instanceof Error ? error.message : 'OpenWebUI thread store is not configured',
-          ),
+          new ThreadStateUnavailableError(error instanceof Error ? error.message : 'Thread store is not configured'),
       })
 
-    const service: OpenWebUiThreadStateService = {
+    const service: ThreadStateService = {
       getThreadId: (chatId) =>
         pipe(
           getStoreEffect(),
           Effect.flatMap((threadStore) => threadStore.getThread(chatId)),
           Effect.mapError((error) =>
-            error instanceof OpenWebUiThreadStateUnavailableError
-              ? error
-              : normalizeError('thread lookup failed', error),
+            error instanceof ThreadStateUnavailableError ? error : normalizeError('thread lookup failed', error),
           ),
         ),
       setThreadId: (chatId, threadId) =>
@@ -65,9 +58,7 @@ export const OpenWebUiThreadStateLive = Layer.scoped(
           getStoreEffect(),
           Effect.flatMap((threadStore) => threadStore.setThread(chatId, threadId)),
           Effect.mapError((error) =>
-            error instanceof OpenWebUiThreadStateUnavailableError
-              ? error
-              : normalizeError('thread write failed', error),
+            error instanceof ThreadStateUnavailableError ? error : normalizeError('thread write failed', error),
           ),
         ),
       nextTurn: (chatId) =>
@@ -75,9 +66,7 @@ export const OpenWebUiThreadStateLive = Layer.scoped(
           getStoreEffect(),
           Effect.flatMap((threadStore) => threadStore.nextTurn(chatId)),
           Effect.mapError((error) =>
-            error instanceof OpenWebUiThreadStateUnavailableError
-              ? error
-              : normalizeError('turn increment failed', error),
+            error instanceof ThreadStateUnavailableError ? error : normalizeError('turn increment failed', error),
           ),
         ),
       clearChat: (chatId) =>
@@ -85,9 +74,7 @@ export const OpenWebUiThreadStateLive = Layer.scoped(
           getStoreEffect(),
           Effect.flatMap((threadStore) => threadStore.clearThread(chatId)),
           Effect.mapError((error) =>
-            error instanceof OpenWebUiThreadStateUnavailableError
-              ? error
-              : normalizeError('thread clear failed', error),
+            error instanceof ThreadStateUnavailableError ? error : normalizeError('thread clear failed', error),
           ),
         ),
     }

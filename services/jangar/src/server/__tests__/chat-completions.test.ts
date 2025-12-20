@@ -10,8 +10,8 @@ import { chatCompletionsHandler } from '~/routes/openai/v1/chat/completions'
 import { handleChatCompletionEffect, resetCodexClient, setCodexClientFactory } from '~/server/chat'
 import { ChatCompletionEncoder, chatCompletionEncoderLive } from '~/server/chat-completion-encoder'
 import { ChatToolEventRenderer, chatToolEventRendererLive } from '~/server/chat-tool-event-renderer'
-import { OpenWebUiThreadState, type OpenWebUiThreadStateService } from '~/server/openwebui-thread-state'
-import { OpenWebUiWorktreeState, type OpenWebUiWorktreeStateService } from '~/server/openwebui-worktree-state'
+import { ThreadState, type ThreadStateService } from '~/server/thread-state'
+import { WorktreeState, type WorktreeStateService } from '~/server/worktree-state'
 
 describe('chat completions handler', () => {
   const previousEnv: Partial<Record<'JANGAR_MODELS' | 'JANGAR_DEFAULT_MODEL' | 'CODEX_CWD', string | undefined>> = {}
@@ -408,13 +408,13 @@ describe('chat completions handler', () => {
   })
 
   it('retries on stale thread ids by clearing redis mapping', async () => {
-    const threadState: OpenWebUiThreadStateService = {
+    const threadState: ThreadStateService = {
       getThreadId: vi.fn(() => Effect.succeed('stale-thread')),
       setThreadId: vi.fn(() => Effect.succeed(undefined)),
       nextTurn: vi.fn(() => Effect.succeed(1)),
       clearChat: vi.fn(() => Effect.succeed(undefined)),
     }
-    const worktreeState: OpenWebUiWorktreeStateService = {
+    const worktreeState: WorktreeStateService = {
       getWorktreeName: vi.fn(() => Effect.succeed('austin')),
       setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
       clearWorktree: vi.fn(() => Effect.succeed(undefined)),
@@ -470,8 +470,8 @@ describe('chat completions handler', () => {
         handleChatCompletionEffect(request),
         Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
         Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
-        Effect.provideService(OpenWebUiThreadState, threadState),
-        Effect.provideService(OpenWebUiWorktreeState, worktreeState),
+        Effect.provideService(ThreadState, threadState),
+        Effect.provideService(WorktreeState, worktreeState),
       ),
     )
     const text = await response.text()

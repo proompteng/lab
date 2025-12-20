@@ -17,18 +17,9 @@ import { safeJsonStringify, stripTerminalControl } from './chat-text'
 import { ChatToolEventRenderer, chatToolEventRendererLive, type ToolRenderer } from './chat-tool-event-renderer'
 import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
 import { loadConfig } from './config'
-import {
-  OpenWebUiThreadState,
-  OpenWebUiThreadStateLive,
-  type OpenWebUiThreadStateService,
-  OpenWebUiThreadStateUnavailableError,
-} from './openwebui-thread-state'
-import {
-  OpenWebUiWorktreeState,
-  OpenWebUiWorktreeStateLive,
-  OpenWebUiWorktreeStateUnavailableError,
-} from './openwebui-worktree-state'
+import { ThreadState, ThreadStateLive, type ThreadStateService, ThreadStateUnavailableError } from './thread-state'
 import { pickWorktreeCityName } from './worktree-cities'
+import { WorktreeState, WorktreeStateLive, WorktreeStateUnavailableError } from './worktree-state'
 
 const MessageSchema = S.Struct({
   role: S.String,
@@ -279,7 +270,7 @@ const allocateWorktree = async () => {
 type ThreadContext = {
   chatId: string
   threadId: string | null
-  threadState: OpenWebUiThreadStateService
+  threadState: ThreadStateService
   turnNumber: number | null
 }
 
@@ -659,13 +650,13 @@ export const handleChatCompletionEffect = (request: Request) =>
         let threadContext: ThreadContext | null = null
         let codexCwd = resolveCodexCwd()
         if (chatId) {
-          const threadState = yield* OpenWebUiThreadState
-          const worktreeState = yield* OpenWebUiWorktreeState
+          const threadState = yield* ThreadState
+          const worktreeState = yield* WorktreeState
 
           const threadId = yield* pipe(
             threadState.getThreadId(chatId),
             Effect.catchAll((error) => {
-              if (error instanceof OpenWebUiThreadStateUnavailableError) {
+              if (error instanceof ThreadStateUnavailableError) {
                 return Effect.fail(new RequestError(500, 'thread_store_unavailable', error.message))
               }
               return Effect.fail(
@@ -681,7 +672,7 @@ export const handleChatCompletionEffect = (request: Request) =>
           const storedWorktreeName = yield* pipe(
             worktreeState.getWorktreeName(chatId),
             Effect.catchAll((error) => {
-              if (error instanceof OpenWebUiWorktreeStateUnavailableError) {
+              if (error instanceof WorktreeStateUnavailableError) {
                 return Effect.fail(new RequestError(500, 'worktree_store_unavailable', error.message))
               }
               return Effect.fail(
@@ -725,7 +716,7 @@ export const handleChatCompletionEffect = (request: Request) =>
             yield* pipe(
               worktreeState.setWorktreeName(chatId, allocatedName),
               Effect.catchAll((error) => {
-                if (error instanceof OpenWebUiWorktreeStateUnavailableError) {
+                if (error instanceof WorktreeStateUnavailableError) {
                   return Effect.fail(new RequestError(500, 'worktree_store_unavailable', error.message))
                 }
                 return Effect.fail(
@@ -789,8 +780,8 @@ export const handleChatCompletionEffect = (request: Request) =>
 
 const handlerRuntime = ManagedRuntime.make(
   Layer.mergeAll(
-    OpenWebUiThreadStateLive,
-    OpenWebUiWorktreeStateLive,
+    ThreadStateLive,
+    WorktreeStateLive,
     Layer.succeed(ChatToolEventRenderer, chatToolEventRendererLive),
     Layer.succeed(ChatCompletionEncoder, chatCompletionEncoderLive),
   ),

@@ -6,7 +6,7 @@ This note describes the current Jangar OpenAI-compatible chat-completions proxy 
 - `services/jangar/src/server/chat.ts`
 - `services/jangar/src/server/chat-completion-encoder.ts`
 - `services/jangar/src/server/chat-tool-event-renderer.ts`
-- `services/jangar/src/server/openwebui-thread-state.ts`
+- `services/jangar/src/server/thread-state.ts`
 - `services/jangar/src/server/chat-thread-store.ts`
 
 ## Architecture (components)
@@ -26,7 +26,7 @@ flowchart TD
     Config["loadConfig\nservices/jangar/src/server/config.ts"]
     Encoder["ChatCompletionEncoder\nservices/jangar/src/server/chat-completion-encoder.ts"]
     ToolRenderer["ChatToolEventRenderer\nservices/jangar/src/server/chat-tool-event-renderer.ts"]
-    ThreadState["OpenWebUiThreadState\nservices/jangar/src/server/openwebui-thread-state.ts"]
+    ThreadState["ThreadState\nservices/jangar/src/server/thread-state.ts"]
     ThreadStore["Redis ChatThreadStore\nservices/jangar/src/server/chat-thread-store.ts"]
   end
 
@@ -82,8 +82,8 @@ flowchart TD
 
 If a request includes `x-openwebui-chat-id`, Jangar persists thread state to keep OpenWebUI chats “continuous” across requests:
 
-- The handler reads/writes thread state via the Effect service `OpenWebUiThreadState`.
-- `OpenWebUiThreadState` lazily initializes a Redis-backed `ChatThreadStore` (only when needed).
+- The handler reads/writes thread state via the Effect service `ThreadState`.
+- `ThreadState` lazily initializes a Redis-backed `ChatThreadStore` (only when needed).
 - Required config for this feature:
   - `JANGAR_REDIS_URL`
   - optional `JANGAR_CHAT_KEY_PREFIX` (defaults to `openwebui:chat`)
