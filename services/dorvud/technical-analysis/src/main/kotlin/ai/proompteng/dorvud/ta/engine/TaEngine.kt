@@ -12,6 +12,7 @@ import ai.proompteng.dorvud.ta.stream.QuotePayload
 import ai.proompteng.dorvud.ta.stream.RealizedVol
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
 import ai.proompteng.dorvud.ta.stream.Vwap
+import ai.proompteng.dorvud.ta.stream.withPayload
 import org.ta4j.core.BarSeries
 import org.ta4j.core.BaseBar
 import org.ta4j.core.BaseBarSeries
