@@ -498,8 +498,8 @@ describe('chat completions handler', () => {
       clearWorktree: vi.fn(() => Effect.succeed(undefined)),
     }
 
-    const originalBun = (globalThis as { Bun?: unknown }).Bun
-    const spawnSpy = vi.fn((args: string[] | string, options?: { cwd?: string }) => {
+    const originalBun = (globalThis as { Bun?: { spawn?: unknown } }).Bun
+    const spawnImpl = vi.fn((args: string[] | string, options?: { cwd?: string }) => {
       const command = Array.isArray(args) ? args : [args]
       const exitCode = command[0] === 'git' && command[1] === 'show-ref' ? 1 : 0
       const stream = new ReadableStream({
@@ -515,8 +515,19 @@ describe('chat completions handler', () => {
         ...options,
       }
     })
+    let spawnSpy: { mock: { calls: unknown[][] } } & { mockRestore?: () => void }
+    let shouldDeleteBun = false
 
-    ;(globalThis as { Bun?: unknown }).Bun = { spawn: spawnSpy }
+    if (originalBun?.spawn && typeof originalBun.spawn === 'function') {
+      spawnSpy = vi.spyOn(originalBun, 'spawn').mockImplementation(spawnImpl)
+    } else {
+      Object.defineProperty(globalThis, 'Bun', {
+        value: { spawn: spawnImpl },
+        configurable: true,
+      })
+      spawnSpy = spawnImpl
+      shouldDeleteBun = true
+    }
 
     const request = new Request('http://localhost', {
       method: 'POST',
@@ -547,10 +558,9 @@ describe('chat completions handler', () => {
       expect(bunCalls).toHaveLength(1)
       expect(bunCalls[0]?.[0]).toEqual(['bun', 'install'])
 
-      if (originalBun === undefined) {
+      spawnSpy.mockRestore?.()
+      if (shouldDeleteBun) {
         delete (globalThis as { Bun?: unknown }).Bun
-      } else {
-        ;(globalThis as { Bun?: unknown }).Bun = originalBun
       }
       if (previousNodeEnv === undefined) {
         delete process.env.NODE_ENV
