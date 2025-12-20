@@ -106,6 +106,7 @@ export type { McpStartupStatus } from "./McpStartupStatus";
 export type { McpStartupUpdateEvent } from "./McpStartupUpdateEvent";
 export type { McpToolCallBeginEvent } from "./McpToolCallBeginEvent";
 export type { McpToolCallEndEvent } from "./McpToolCallEndEvent";
+export type { NetworkAccess } from "./NetworkAccess";
 export type { NewConversationParams } from "./NewConversationParams";
 export type { NewConversationResponse } from "./NewConversationResponse";
 export type { ParsedCommand } from "./ParsedCommand";

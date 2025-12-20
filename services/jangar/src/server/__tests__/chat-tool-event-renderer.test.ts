@@ -70,4 +70,25 @@ describe('chat tool event renderer', () => {
     expect(content).toContain('```bash')
     expect(content).not.toContain('```text')
   })
+
+  it('renders mcp tool calls as plain text json', () => {
+    const completed: ToolEvent = {
+      id: 'tool-mcp',
+      toolKind: 'mcp',
+      status: 'completed',
+      title: 'memories:retrieve',
+      data: {
+        arguments: { query: 'hello' },
+        result: { ok: true, memories: [{ id: '1', content: 'hi' }] },
+      },
+    }
+
+    const content = collectEmittedContent([completed])
+    expect(content).toContain('**MCP tool**')
+    expect(content).toContain('`memories:retrieve`')
+    expect(content).toContain('**Arguments**')
+    expect(content).toContain('"query": "hello"')
+    expect(content).toContain('**Result**')
+    expect(content).toContain('"ok": true')
+  })
 })

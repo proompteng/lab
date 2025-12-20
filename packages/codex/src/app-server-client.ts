@@ -76,6 +76,14 @@ type TurnStream = {
   turnDiffDeltaSource: ToolDeltaSource | null
 }
 
+type ExtendedClientRequest =
+  | ClientRequest
+  | {
+      method: 'thread/compact'
+      id: RequestId
+      params: ThreadCompactParams
+    }
+
 type LegacySandboxMode = 'dangerFullAccess' | 'workspaceWrite' | 'readOnly'
 type SandboxModeInput = SandboxMode | LegacySandboxMode
 type LegacyApprovalMode = 'unlessTrusted' | 'onFailure' | 'onRequest'
@@ -94,6 +102,11 @@ export type CodexAppServerOptions = {
    * When omitted, we keep MCP servers disabled by default.
    */
   threadConfig?: { [key in string]?: JsonValue } | null
+  /**
+   * Opt into emitting raw response items on the event stream.
+   * Defaults to false.
+   */
+  experimentalRawEvents?: boolean
   autoCompaction?:
     | boolean
     | {
@@ -255,6 +268,7 @@ export class CodexAppServerClient {
   private defaultModel: string
   private defaultEffort: ReasoningEffort
   private threadConfig: { [key in string]?: JsonValue } | null
+  private experimentalRawEvents: boolean
   private autoCompaction: {
     enabled: boolean
     threshold: number
@@ -273,6 +287,7 @@ export class CodexAppServerClient {
     defaultModel = 'gpt-5.2-codex',
     defaultEffort = DEFAULT_EFFORT,
     threadConfig,
+    experimentalRawEvents = false,
     autoCompaction = true,
     clientInfo = defaultClientInfo,
     logger,
@@ -285,6 +300,7 @@ export class CodexAppServerClient {
     this.defaultEffort = defaultEffort
     this.threadConfig =
       threadConfig === undefined ? { mcp_servers: {}, 'features.web_search_request': true } : threadConfig
+    this.experimentalRawEvents = experimentalRawEvents
     this.bootstrapTimeoutMs = bootstrapTimeoutMs
     this.autoCompaction = this.normalizeAutoCompaction(autoCompaction)
 
@@ -440,6 +456,7 @@ export class CodexAppServerClient {
         config: this.threadConfig,
         baseInstructions: null,
         developerInstructions: null,
+        experimentalRawEvents: this.experimentalRawEvents,
       }
 
       const threadResp = (await this.request<ThreadStartResponse>('thread/start', threadParams)) as ThreadStartResponse
@@ -1272,6 +1289,70 @@ export class CodexAppServerClient {
         )
         break
       }
+      case 'codex/event/mcp_tool_call_begin': {
+        const msg = extractCodexMsg(notification.params)
+        if (!msg) break
+        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
+        if (!callId) break
+        const invocation =
+          msg.invocation && typeof msg.invocation === 'object' ? (msg.invocation as Record<string, unknown>) : null
+        const server = invocation && typeof invocation.server === 'string' ? invocation.server : null
+        const tool = invocation && typeof invocation.tool === 'string' ? invocation.tool : null
+        const title = server && tool ? `${server}:${tool}` : 'mcp'
+        const args = invocation ? invocation.arguments : undefined
+
+        pushTool(
+          notification.params,
+          {
+            toolKind: 'mcp',
+            id: callId,
+            status: 'started',
+            title,
+            data: { arguments: args },
+          },
+          'legacy',
+          { trackItem: true },
+        )
+        break
+      }
+      case 'codex/event/mcp_tool_call_end': {
+        const msg = extractCodexMsg(notification.params)
+        if (!msg) break
+        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
+        if (!callId) break
+        const invocation =
+          msg.invocation && typeof msg.invocation === 'object' ? (msg.invocation as Record<string, unknown>) : null
+        const server = invocation && typeof invocation.server === 'string' ? invocation.server : null
+        const tool = invocation && typeof invocation.tool === 'string' ? invocation.tool : null
+        const title = server && tool ? `${server}:${tool}` : 'mcp'
+        const args = invocation ? invocation.arguments : undefined
+
+        let result: unknown
+        let error: unknown
+        if (msg.result && typeof msg.result === 'object') {
+          const payload = msg.result as Record<string, unknown>
+          if ('Ok' in payload) result = payload.Ok
+          if ('Err' in payload) error = payload.Err
+        }
+
+        pushTool(
+          notification.params,
+          {
+            toolKind: 'mcp',
+            id: callId,
+            status: 'completed',
+            title,
+            data: {
+              arguments: args,
+              result,
+              error,
+            },
+          },
+          'legacy',
+          { trackItem: true },
+        )
+        break
+      }
       case 'codex/event/patch_apply_begin': {
         const msg = extractCodexMsg(notification.params)
         if (!msg) break
@@ -1692,9 +1773,12 @@ export class CodexAppServerClient {
     }
   }
 
-  private request<T = unknown>(method: ClientRequest['method'], params: ClientRequest['params']): Promise<T> {
+  private request<T = unknown>(
+    method: ExtendedClientRequest['method'],
+    params: ExtendedClientRequest['params'],
+  ): Promise<T> {
     const id: RequestId = newId()
-    const payload = { id, method, params } as ClientRequest & { id: RequestId }
+    const payload = { id, method, params } as ExtendedClientRequest & { id: RequestId }
 
     const promise = new Promise<T>((resolve, reject) => {
       const wrappedResolve = (value: unknown) => resolve(value as T)

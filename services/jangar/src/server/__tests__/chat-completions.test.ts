@@ -543,7 +543,7 @@ describe('chat completions handler', () => {
     expect(fences.length).toBeGreaterThanOrEqual(2)
     expect(contentDeltas.some((c) => c.startsWith('ls'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('output chunk'))).toBe(true)
-    expect(contentDeltas.some((c) => c.includes('...'))).toBe(true)
+    expect(contentDeltas.some((c) => c.includes('…'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('---'))).toBe(false)
     expect(contentDeltas.some((c) => c.includes('exit 0'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('pwd'))).toBe(true)
