@@ -498,7 +498,7 @@ describe('chat completions handler', () => {
       clearWorktree: vi.fn(() => Effect.succeed(undefined)),
     }
 
-    const originalBun = (globalThis as { Bun?: { spawn?: unknown } }).Bun
+    const originalBun = (globalThis as { Bun?: unknown }).Bun
     const spawnImpl = vi.fn((args: string[] | string, options?: { cwd?: string }) => {
       const command = Array.isArray(args) ? args : [args]
       const exitCode = command[0] === 'git' && command[1] === 'show-ref' ? 1 : 0
@@ -518,8 +518,9 @@ describe('chat completions handler', () => {
     let spawnSpy: { mock: { calls: unknown[][] } } & { mockRestore?: () => void }
     let shouldDeleteBun = false
 
-    if (originalBun?.spawn && typeof originalBun.spawn === 'function') {
-      spawnSpy = vi.spyOn(originalBun, 'spawn').mockImplementation(spawnImpl)
+    if (originalBun && typeof (originalBun as { spawn?: unknown }).spawn === 'function') {
+      const bunForSpy = originalBun as { spawn: (...args: unknown[]) => unknown }
+      spawnSpy = vi.spyOn(bunForSpy, 'spawn').mockImplementation(spawnImpl as (...args: unknown[]) => unknown)
     } else {
       Object.defineProperty(globalThis, 'Bun', {
         value: { spawn: spawnImpl },
