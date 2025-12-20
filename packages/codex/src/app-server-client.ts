@@ -76,6 +76,14 @@ type TurnStream = {
   turnDiffDeltaSource: ToolDeltaSource | null
 }
 
+type ExtendedClientRequest =
+  | ClientRequest
+  | {
+      method: 'thread/compact'
+      id: RequestId
+      params: ThreadCompactParams
+    }
+
 type LegacySandboxMode = 'dangerFullAccess' | 'workspaceWrite' | 'readOnly'
 type SandboxModeInput = SandboxMode | LegacySandboxMode
 type LegacyApprovalMode = 'unlessTrusted' | 'onFailure' | 'onRequest'
@@ -94,6 +102,11 @@ export type CodexAppServerOptions = {
    * When omitted, we keep MCP servers disabled by default.
    */
   threadConfig?: { [key in string]?: JsonValue } | null
+  /**
+   * Opt into emitting raw response items on the event stream.
+   * Defaults to false.
+   */
+  experimentalRawEvents?: boolean
   autoCompaction?:
     | boolean
     | {
@@ -255,6 +268,7 @@ export class CodexAppServerClient {
   private defaultModel: string
   private defaultEffort: ReasoningEffort
   private threadConfig: { [key in string]?: JsonValue } | null
+  private experimentalRawEvents: boolean
   private autoCompaction: {
     enabled: boolean
     threshold: number
@@ -273,6 +287,7 @@ export class CodexAppServerClient {
     defaultModel = 'gpt-5.2-codex',
     defaultEffort = DEFAULT_EFFORT,
     threadConfig,
+    experimentalRawEvents = false,
     autoCompaction = true,
     clientInfo = defaultClientInfo,
     logger,
@@ -285,6 +300,7 @@ export class CodexAppServerClient {
     this.defaultEffort = defaultEffort
     this.threadConfig =
       threadConfig === undefined ? { mcp_servers: {}, 'features.web_search_request': true } : threadConfig
+    this.experimentalRawEvents = experimentalRawEvents
     this.bootstrapTimeoutMs = bootstrapTimeoutMs
     this.autoCompaction = this.normalizeAutoCompaction(autoCompaction)
 
@@ -440,6 +456,7 @@ export class CodexAppServerClient {
         config: this.threadConfig,
         baseInstructions: null,
         developerInstructions: null,
+        experimentalRawEvents: this.experimentalRawEvents,
       }
 
       const threadResp = (await this.request<ThreadStartResponse>('thread/start', threadParams)) as ThreadStartResponse
@@ -1756,9 +1773,12 @@ export class CodexAppServerClient {
     }
   }
 
-  private request<T = unknown>(method: ClientRequest['method'], params: ClientRequest['params']): Promise<T> {
+  private request<T = unknown>(
+    method: ExtendedClientRequest['method'],
+    params: ExtendedClientRequest['params'],
+  ): Promise<T> {
     const id: RequestId = newId()
-    const payload = { id, method, params } as ClientRequest & { id: RequestId }
+    const payload = { id, method, params } as ExtendedClientRequest & { id: RequestId }
 
     const promise = new Promise<T>((resolve, reject) => {
       const wrappedResolve = (value: unknown) => resolve(value as T)
