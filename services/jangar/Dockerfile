@@ -13,6 +13,7 @@ ARG BUN_VERSION=1.3.5
 ARG OPENVSCODE_VERSION=1.105.1
 ARG GH_VERSION=2.65.0
 ARG KUBECTL_VERSION=1.34.3
+ARG KN_VERSION=1.20.0
 ARG CNPG_VERSION=1.28.0
 ARG DOCKER_CLI_VERSION=29.1.2
 ARG BUILDX_VERSION=0.30.1
@@ -25,6 +26,7 @@ ARG NODE24_VERSION=24.11.1
 ARG OPENVSCODE_VERSION
 ARG GH_VERSION
 ARG KUBECTL_VERSION
+ARG KN_VERSION
 ARG CNPG_VERSION
 ARG DOCKER_CLI_VERSION
 ARG BUILDX_VERSION
@@ -165,6 +167,30 @@ RUN set -eux; \
   install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl; \
   rm kubectl kubectl.sha256; \
   kubectl version --client --output=yaml
+
+# Install Knative CLI (kn)
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) KN_ARCH=amd64 ;; \
+  arm64|aarch64) KN_ARCH=arm64 ;; \
+  *) echo "Unsupported arch for kn: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  cd /tmp; \
+  KN_TAG="knative-v${KN_VERSION}"; \
+  ASSET="kn-linux-${KN_ARCH}"; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://github.com/knative/client/releases/download/${KN_TAG}/${ASSET}" -o "${ASSET}"; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://github.com/knative/client/releases/download/${KN_TAG}/checksums.txt" -o checksums.txt; \
+  EXPECTED_SHA="$(grep -E "^[0-9a-f]{64}  ${ASSET}$" checksums.txt | awk '{print $1}')"; \
+  if [ -z "${EXPECTED_SHA}" ]; then \
+    echo "Failed to find checksum entry for ${ASSET} in checksums.txt" >&2; \
+    head -n 50 checksums.txt >&2; \
+    exit 1; \
+  fi; \
+  printf '%s  %s\n' "${EXPECTED_SHA}" "${ASSET}" | sha256sum -c -; \
+  install -o root -g root -m 0755 "${ASSET}" /usr/local/bin/kn; \
+  rm -f "${ASSET}" checksums.txt; \
+  kn version
 
 # Install CloudNativePG kubectl plugin (`kubectl cnpg ...`)
 RUN set -eux; \

@@ -4,7 +4,7 @@
 - ✅ Graf now runs entirely on Quarkus. All former Ktor route handlers have been replaced with Quarkus resources (`GraphResource`, `ServiceResource`) that delegate to the existing `GraphService`, Codex launchers, and AutoResearch workflows.
 - ✅ JSON compatibility parity is restored: `KotlinSerializationConfig` produces a singleton `Json` instance with `ignoreUnknownKeys = true`, `explicitNulls = false`, and `encodeDefaults = true`, so `/v1/**` endpoints accept forward-compatible payloads exactly as before.
 - ✅ HTTP/CORS and port settings come from `graf-quarkus-config` using uppercase Quarkus env keys (`QUARKUS_HTTP_*`, `QUARKUS_HTTP_CORS_*`), ensuring `envFrom` works and cross-origin clients keep functioning.
-- ✅ Docker/Gradle toolchain updated to Kotlin 2.2.21, ktlint 14.0.1, and a Gradle 9.2 JDK21 builder + distroless Java 21 runtime; `quarkusBuild` artifacts are copied from `/workspace/build/quarkus-app`.
+- ✅ Docker/Gradle toolchain updated to Kotlin 2.3.0, ktlint 14.0.1, and a Gradle 9.2 JDK25 builder + distroless Java 25 runtime; `quarkusBuild` artifacts are copied from `/workspace/build/quarkus-app`.
 - ✅ Tests cover the new surface: `AutoResearchServiceTest`, `ServiceResourceTest`, and `KotlinSerializationConfigTest` guard the delegation logic, env wiring, and tolerant parsing. `./gradlew test` and `./gradlew koverXmlReport` pass locally, and Docker builds complete (`docker build -t graf-temp services/graf`).
 
 ## Runtime & API Surface
@@ -17,8 +17,8 @@
 - `TelemetryFilters` and `GrafTelemetry` still apply OTEL spans/metrics for every route. The Knative deployment mounts `graf-otel-config` so Quarkus exporters can reach the same OTLP endpoints. Feature parity with the Ktor OTEL counters has been confirmed by exercising `/` and `/v1/entities` locally with the bearer token.
 
 ## Build, Config, and Deployment Notes
-- Build entrypoint: `services/graf/build.gradle.kts` (Kotlin 2.2.21 plugins, ktlint 14.0.1, Kover 0.9.3). Ktlint/Kover tasks are part of CI, and `./gradlew test` is the primary validation command.
-- Containerization: `services/graf/Dockerfile` performs a `quarkusBuild` inside `gradle:9.2-jdk21`, then copies `/workspace/build/quarkus-app` into `gcr.io/distroless/java21-debian12:nonroot`. This aligns with Knative’s expectation of a runnable `quarkus-run.jar`.
+- Build entrypoint: `services/graf/build.gradle.kts` (Kotlin 2.3.0 plugins, ktlint 14.0.1, Kover 0.9.3). Ktlint/Kover tasks are part of CI, and `./gradlew test` is the primary validation command.
+- Containerization: `services/graf/Dockerfile` performs a `quarkusBuild` inside `gradle:9.2-jdk25`, then copies `/workspace/build/quarkus-app` into `gcr.io/distroless/java25-debian12:nonroot`. This aligns with Knative’s expectation of a runnable `quarkus-run.jar`.
 - Configuration: `argocd/applications/graf/graf-quarkus-configmap.yaml` now stores uppercase Quarkus env names (e.g., `QUARKUS_HTTP_CORS_ORIGINS`). Pods load it via `envFrom`, so adding new Quarkus properties only requires extending that ConfigMap. OTEL exporters remain in `graf-otel-config`.
 - Deployment: the Knative service manifest still references the Quarkus image (`registry.ide-newton.ts.net/proompteng/graf:quarkus`), mounts Neo4j/MinIO secrets, and injects bearer-token material. No additional Kubernetes resources were required post-migration.
 

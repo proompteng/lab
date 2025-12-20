@@ -21,12 +21,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java 21
+      - name: Set up Java 25
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 25
           cache: gradle
+
+      - name: Run ktlint
+        run: ./gradlew ktlintCheck
+        working-directory: services/dorvud
 
       - name: Run tests (platform, websockets, technical-analysis)
         run: ./gradlew :platform:test :websockets:test :technical-analysis:test

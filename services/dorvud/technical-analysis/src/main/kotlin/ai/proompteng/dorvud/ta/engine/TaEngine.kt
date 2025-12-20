@@ -3,15 +3,18 @@ package ai.proompteng.dorvud.ta.engine
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.platform.Window
 import ai.proompteng.dorvud.ta.config.TaServiceConfig
-import ai.proompteng.dorvud.ta.stream.*
-import java.time.Duration
-import java.time.ZoneOffset
-import java.time.ZonedDateTime
-import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.ln
+import ai.proompteng.dorvud.ta.stream.Bollinger
+import ai.proompteng.dorvud.ta.stream.Ema
+import ai.proompteng.dorvud.ta.stream.Imbalance
+import ai.proompteng.dorvud.ta.stream.Macd
+import ai.proompteng.dorvud.ta.stream.MicroBarPayload
+import ai.proompteng.dorvud.ta.stream.QuotePayload
+import ai.proompteng.dorvud.ta.stream.RealizedVol
+import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
+import ai.proompteng.dorvud.ta.stream.Vwap
+import org.ta4j.core.BarSeries
 import org.ta4j.core.BaseBar
 import org.ta4j.core.BaseBarSeries
-import org.ta4j.core.BarSeries
 import org.ta4j.core.indicators.EMAIndicator
 import org.ta4j.core.indicators.MACDIndicator
 import org.ta4j.core.indicators.RSIIndicator
@@ -21,11 +24,18 @@ import org.ta4j.core.indicators.bollinger.BollingerBandsMiddleIndicator
 import org.ta4j.core.indicators.bollinger.BollingerBandsUpperIndicator
 import org.ta4j.core.indicators.helpers.ClosePriceIndicator
 import org.ta4j.core.indicators.statistics.StandardDeviationIndicator
+import java.time.Duration
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.ln
 
 /**
  * Wraps TA4J indicators. One BarSeries per symbol; computes indicators when a new micro-bar arrives.
  */
-class TaEngine(private val config: TaServiceConfig) {
+class TaEngine(
+  private val config: TaServiceConfig,
+) {
   private val seriesBySymbol = ConcurrentHashMap<String, BarSeries>()
   private val lastQuoteBySymbol = ConcurrentHashMap<String, QuotePayload>()
   private val sessionVwap = ConcurrentHashMap<String, SessionAccumulator>()
@@ -38,15 +48,16 @@ class TaEngine(private val config: TaServiceConfig) {
     val symbol = envelope.symbol
     val series = seriesBySymbol.computeIfAbsent(symbol) { BaseBarSeries(symbol) }
     val barTime = ZonedDateTime.ofInstant(envelope.payload.t, ZoneOffset.UTC)
-    val bar = BaseBar(
-      Duration.ofSeconds(1),
-      barTime,
-      envelope.payload.o,
-      envelope.payload.h,
-      envelope.payload.l,
-      envelope.payload.c,
-      envelope.payload.v,
-    )
+    val bar =
+      BaseBar(
+        Duration.ofSeconds(1),
+        barTime,
+        envelope.payload.o,
+        envelope.payload.h,
+        envelope.payload.l,
+        envelope.payload.c,
+        envelope.payload.v,
+      )
     series.addBar(bar)
 
     val close = ClosePriceIndicator(series)
@@ -67,46 +78,60 @@ class TaEngine(private val config: TaServiceConfig) {
     val stdDev = StandardDeviationIndicator(close, 20)
     val upperIndicator = BollingerBandsUpperIndicator(middle, stdDev)
     val lowerIndicator = BollingerBandsLowerIndicator(middle, stdDev)
-    val boll = if (series.endIndex + 1 >= 20) {
-      Bollinger(
-        mid = middle.getValue(series.endIndex).doubleValue(),
-        upper = upperIndicator.getValue(series.endIndex).doubleValue(),
-        lower = lowerIndicator.getValue(series.endIndex).doubleValue(),
-      )
-    } else null
+    val boll =
+      if (series.endIndex + 1 >= 20) {
+        Bollinger(
+          mid = middle.getValue(series.endIndex).doubleValue(),
+          upper = upperIndicator.getValue(series.endIndex).doubleValue(),
+          lower = lowerIndicator.getValue(series.endIndex).doubleValue(),
+        )
+      } else {
+        null
+      }
 
-    val vwapSession = sessionVwap.compute(symbol) { _, acc ->
-      val existing = acc ?: SessionAccumulator()
-      existing.add(envelope.payload.c, envelope.payload.v)
-      existing
-    }!!.value()
+    val vwapSession =
+      sessionVwap
+        .compute(symbol) { _, acc ->
+          val existing = acc ?: SessionAccumulator()
+          existing.add(envelope.payload.c, envelope.payload.v)
+          existing
+        }!!
+        .value()
 
     val vwap5m = rollingVwap(series, config.vwapWindow)
     val realizedVol = realizedVol(series, config.realizedVolWindow)
 
     val quote = lastQuoteBySymbol[symbol]
-    val imbalance = quote?.let {
-      val spread = it.ap - it.bp
-      val denom = (it.bs + it.`as`).coerceAtLeast(1)
-      Imbalance(spread = spread, bid_px = it.bp, ask_px = it.ap, bid_sz = it.bs, ask_sz = it.`as`)
-    }
+    val imbalance =
+      quote?.let {
+        val spread = it.ap - it.bp
+        val denom = (it.bs + it.`as`).coerceAtLeast(1)
+        Imbalance(spread = spread, bid_px = it.bp, ask_px = it.ap, bid_sz = it.bs, ask_sz = it.`as`)
+      }
 
-    val payload = TaSignalsPayload(
-      macd = Macd(macd = macdVal, signal = signalVal, hist = histVal),
-      ema = Ema(ema12 = ema12Val, ema26 = ema26Val),
-      rsi14 = rsiVal,
-      boll = boll,
-      vwap = Vwap(session = vwapSession, w5m = vwap5m),
-      imbalance = imbalance,
-      vol_realized = realizedVol?.let { RealizedVol(it) },
-    )
+    val payload =
+      TaSignalsPayload(
+        macd = Macd(macd = macdVal, signal = signalVal, hist = histVal),
+        ema = Ema(ema12 = ema12Val, ema26 = ema26Val),
+        rsi14 = rsiVal,
+        boll = boll,
+        vwap = Vwap(session = vwapSession, w5m = vwap5m),
+        imbalance = imbalance,
+        vol_realized = realizedVol?.let { RealizedVol(it) },
+      )
 
-    val windowStart = envelope.payload.t.minusSeconds(1).toString()
+    val windowStart =
+      envelope.payload.t
+        .minusSeconds(1)
+        .toString()
     val window = envelope.window ?: Window(size = "PT1S", step = "PT1S", start = windowStart, end = envelope.payload.t.toString())
     return envelope.withPayload(payload, window = window)
   }
 
-  private fun rollingVwap(series: BarSeries, window: Duration): Double? {
+  private fun rollingVwap(
+    series: BarSeries,
+    window: Duration,
+  ): Double? {
     val bars = series.barCount
     if (bars == 0) return null
     val windowBars = (window.seconds).toInt()
@@ -121,7 +146,10 @@ class TaEngine(private val config: TaServiceConfig) {
     return sumPv / sumVol
   }
 
-  private fun realizedVol(series: BarSeries, window: Int): Double? {
+  private fun realizedVol(
+    series: BarSeries,
+    window: Int,
+  ): Double? {
     if (series.barCount < 2) return null
     val end = series.endIndex
     val start = (series.barCount - window).coerceAtLeast(1)
@@ -142,7 +170,10 @@ class TaEngine(private val config: TaServiceConfig) {
     private var pv = 0.0
     private var vol = 0.0
 
-    fun add(price: Double, volume: Double) {
+    fun add(
+      price: Double,
+      volume: Double,
+    ) {
       pv += price * volume
       vol += volume
     }

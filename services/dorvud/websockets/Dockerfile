@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM eclipse-temurin:21-jdk AS build
+FROM eclipse-temurin:25-jdk AS build
 WORKDIR /workspace
 
 COPY gradlew gradle.properties settings.gradle.kts build.gradle.kts ./
@@ -13,7 +13,7 @@ COPY technical-analysis-flink ./technical-analysis-flink
 RUN chmod +x ./gradlew
 RUN ./gradlew :websockets:installDist --no-daemon
 
-FROM gcr.io/distroless/java21:nonroot
+FROM gcr.io/distroless/java25:nonroot
 WORKDIR /app
 COPY --from=build /workspace/websockets/build/install/websockets /app
 ENTRYPOINT ["/usr/bin/java", "-cp", "/app/lib/*", "ai.proompteng.dorvud.ws.ForwarderAppKt"]

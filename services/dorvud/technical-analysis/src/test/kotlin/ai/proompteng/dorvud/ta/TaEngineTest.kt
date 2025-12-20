@@ -15,40 +15,43 @@ import kotlin.test.assertTrue
 class TaEngineTest {
   @Test
   fun `computes indicators for rolling bars`() {
-    val cfg = TaServiceConfig(
-      bootstrapServers = "N/A",
-      tradesTopic = "t",
-      microBarsTopic = "out",
-      signalsTopic = "sig",
-    )
+    val cfg =
+      TaServiceConfig(
+        bootstrapServers = "N/A",
+        tradesTopic = "t",
+        microBarsTopic = "out",
+        signalsTopic = "sig",
+      )
     val engine = TaEngine(cfg)
 
     var last: Envelope<TaSignalsPayload>? = null
     var ts = Instant.parse("2025-01-01T00:00:00Z")
     for (i in 0 until 40) {
       val price = 100.0 + i
-      val barEnv = Envelope(
-        ingestTs = ts,
-        eventTs = ts,
-        feed = "alpaca",
-        channel = "trades",
-        symbol = "TEST",
-        seq = i.toLong(),
-        payload = MicroBarPayload(
-          o = price,
-          h = price,
-          l = price,
-          c = price,
-          v = 10.0,
-          vwap = price,
-          count = 1,
-          t = ts,
-        ),
-        isFinal = true,
-        source = "unit",
-        window = Window(size = "PT1S", step = "PT1S", start = ts.toString(), end = ts.plus(1, ChronoUnit.SECONDS).toString()),
-        version = 1,
-      )
+      val barEnv =
+        Envelope(
+          ingestTs = ts,
+          eventTs = ts,
+          feed = "alpaca",
+          channel = "trades",
+          symbol = "TEST",
+          seq = i.toLong(),
+          payload =
+            MicroBarPayload(
+              o = price,
+              h = price,
+              l = price,
+              c = price,
+              v = 10.0,
+              vwap = price,
+              count = 1,
+              t = ts,
+            ),
+          isFinal = true,
+          source = "unit",
+          window = Window(size = "PT1S", step = "PT1S", start = ts.toString(), end = ts.plus(1, ChronoUnit.SECONDS).toString()),
+          version = 1,
+        )
       last = engine.onMicroBar(barEnv)
       ts = ts.plusSeconds(1)
     }
@@ -65,5 +68,4 @@ class TaEngineTest {
   }
 }
 
-private fun TaSignalsPayload.payloadPriceHint(): Double =
-  ema?.ema12 ?: ema?.ema26 ?: macd?.macd ?: 0.0
+private fun TaSignalsPayload.payloadPriceHint(): Double = ema?.ema12 ?: ema?.ema26 ?: macd?.macd ?: 0.0

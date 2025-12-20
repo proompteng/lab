@@ -19,7 +19,8 @@ internal fun parseBearerTokenValue(headerValue: String?): String? {
 
 internal fun requireBearerToken(requestContext: ContainerRequestContext): String {
   val authorization =
-    requestContext.headers.getFirst("Authorization")
+    requestContext.headers
+      .getFirst("Authorization")
       ?.trim()
       ?: throw NotAuthorizedException("missing Authorization header")
   return parseBearerTokenValue(authorization)

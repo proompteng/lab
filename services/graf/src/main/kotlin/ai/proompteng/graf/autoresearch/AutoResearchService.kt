@@ -52,7 +52,10 @@ class AutoResearchPromptBuilder(
     val timestamp = Instant.now(clock).toString()
     val operatorGuidance = userPrompt?.trim()?.takeIf { it.isNotEmpty() } ?: config.defaultOperatorGuidance
     val goalBlock =
-      config.defaultGoalsText.trim().lines().joinToString("\n") { "|${it.trim()}" }
+      config.defaultGoalsText
+        .trim()
+        .lines()
+        .joinToString("\n") { "|${it.trim()}" }
     val headerLine =
       "${config.knowledgeBaseName} · v$PROMPT_VERSION · stage ${config.stage} · UTC $timestamp"
     return """

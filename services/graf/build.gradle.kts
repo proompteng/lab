@@ -3,8 +3,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
   id("io.quarkus") version "3.29.2"
-  kotlin("jvm") version "2.2.21"
-  kotlin("plugin.serialization") version "2.2.21"
+  kotlin("jvm") version "2.3.0"
+  kotlin("plugin.serialization") version "2.3.0"
   id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
   id("org.jetbrains.kotlinx.kover") version "0.9.3"
 }
@@ -19,10 +19,10 @@ val koinVersion = "4.1.1"
 
 kotlin {
   jvmToolchain {
-    languageVersion.set(JavaLanguageVersion.of(21))
+    languageVersion.set(JavaLanguageVersion.of(25))
   }
   compilerOptions {
-    jvmTarget.set(JvmTarget.JVM_21)
+    jvmTarget.set(JvmTarget.JVM_25)
   }
 }
 
@@ -53,7 +53,7 @@ dependencies {
   implementation("io.insert-koin:koin-logger-slf4j:$koinVersion")
 
   testImplementation("io.quarkus:quarkus-junit5")
-  testImplementation("org.jetbrains.kotlin:kotlin-test:2.2.21")
+  testImplementation("org.jetbrains.kotlin:kotlin-test:2.3.0")
   testImplementation("io.temporal:temporal-testing:$temporalVersion")
   testImplementation("io.mockk:mockk:1.13.12")
   testImplementation("com.squareup.okhttp3:mockwebserver:5.3.0")

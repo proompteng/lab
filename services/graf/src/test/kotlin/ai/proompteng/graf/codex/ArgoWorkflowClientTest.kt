@@ -116,10 +116,20 @@ class ArgoWorkflowClientTest {
       assertEquals("Bearer graf-token", recorded.getHeader("Authorization"))
       val payload =
         json.decodeFromString(ArgoWorkflowCreatePayload.serializer(), recorded.body.readUtf8())
-      val promptParam = payload.spec.arguments.parameters.first { it.name == "prompt" }
+      val promptParam =
+        payload
+          .spec
+          .arguments
+          .parameters
+          .first { it.name == "prompt" }
       val decodedPrompt = String(Base64.getDecoder().decode(promptParam.value), Charsets.UTF_8)
       assertEquals("hello {{ world }}", decodedPrompt)
-      val metadataParam = payload.spec.arguments.parameters.first { it.name == "metadata" }
+      val metadataParam =
+        payload
+          .spec
+          .arguments
+          .parameters
+          .first { it.name == "metadata" }
       val decodedMetadata = String(Base64.getDecoder().decode(metadataParam.value), Charsets.UTF_8)
       assertTrue(decodedMetadata.contains("\"note\":\"{{ inputs.proto_ref }}\""))
     }

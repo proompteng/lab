@@ -24,19 +24,20 @@ class HttpServer(
 
   fun start() {
     if (engine != null) return
-    engine = embeddedServer(Netty, host = config.httpHost, port = config.httpPort) {
-      install(MicrometerMetrics) {
-        this.registry = this@HttpServer.registry
-      }
-      routing {
-        get("/healthz") { call.respondText("ok") }
-        get("/metrics") {
-          val body =
-            if (registry is PrometheusMeterRegistry) registry.scrape() else "prometheus registry not configured"
-          call.respondText(body)
+    engine =
+      embeddedServer(Netty, host = config.httpHost, port = config.httpPort) {
+        install(MicrometerMetrics) {
+          this.registry = this@HttpServer.registry
         }
-      }
-    }.start(wait = false)
+        routing {
+          get("/healthz") { call.respondText("ok") }
+          get("/metrics") {
+            val body =
+              if (registry is PrometheusMeterRegistry) registry.scrape() else "prometheus registry not configured"
+            call.respondText(body)
+          }
+        }
+      }.start(wait = false)
     logger.info { "http server listening on ${config.httpHost}:${config.httpPort}" }
   }
 

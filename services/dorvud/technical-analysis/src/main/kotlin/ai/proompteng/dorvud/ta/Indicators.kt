@@ -20,7 +20,14 @@ data class SignalSnapshot(
 )
 
 @Serializable
-data class Macd(val macd: Double, val signal: Double, val hist: Double)
+data class Macd(
+  val macd: Double,
+  val signal: Double,
+  val hist: Double,
+)
 
 @Serializable
-data class Ema(val ema12: Double? = null, val ema26: Double? = null)
+data class Ema(
+  val ema12: Double? = null,
+  val ema26: Double? = null,
+)

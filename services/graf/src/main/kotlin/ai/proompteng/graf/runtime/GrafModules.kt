@@ -22,9 +22,6 @@ import ai.proompteng.graf.services.GraphService
 import ai.proompteng.graf.telemetry.GrafTelemetry
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import org.koin.core.qualifier.named
-import org.koin.dsl.bind
-import org.koin.dsl.module
 import io.minio.MinioClient
 import io.temporal.authorization.AuthorizationGrpcMetadataProvider
 import io.temporal.authorization.AuthorizationTokenSupplier
@@ -35,6 +32,9 @@ import io.temporal.common.converter.JacksonJsonPayloadConverter
 import io.temporal.serviceclient.WorkflowServiceStubs
 import io.temporal.serviceclient.WorkflowServiceStubsOptions
 import io.temporal.worker.WorkerFactory
+import org.koin.core.qualifier.named
+import org.koin.dsl.bind
+import org.koin.dsl.module
 import org.neo4j.driver.AuthTokens
 import org.neo4j.driver.GraphDatabase
 import java.io.FileInputStream
@@ -58,86 +58,91 @@ object GrafScopes {
   val Request = named(REQUEST_SCOPE)
 }
 
-fun grafLifecycleModule() = module {
-  single { GrafLifecycleRegistry() }
-}
+fun grafLifecycleModule() =
+  module {
+    single { GrafLifecycleRegistry() }
+  }
 
-fun grafConfigModule() = module {
-  single { Neo4jConfig.fromEnvironment() }
-  single { TemporalConfig.fromEnvironment() }
-  single { ArgoConfig.fromEnvironment() }
-  single { MinioConfig.fromEnvironment() }
-  single { AutoResearchConfig.fromEnvironment() }
-  single(qualifier = GrafQualifiers.Json) { grafJson() }
-}
+fun grafConfigModule() =
+  module {
+    single { Neo4jConfig.fromEnvironment() }
+    single { TemporalConfig.fromEnvironment() }
+    single { ArgoConfig.fromEnvironment() }
+    single { MinioConfig.fromEnvironment() }
+    single { AutoResearchConfig.fromEnvironment() }
+    single(qualifier = GrafQualifiers.Json) { grafJson() }
+  }
 
-fun grafClientModule() = module {
-  single {
-    provideNeo4jClient(
-      neo4jConfig = get(),
-      lifecycle = get(),
-    )
+fun grafClientModule() =
+  module {
+    single {
+      provideNeo4jClient(
+        neo4jConfig = get(),
+        lifecycle = get(),
+      )
+    }
+    single {
+      provideMinioClient(
+        config = get(),
+        lifecycle = get(),
+      )
+    }
+    single {
+      provideWorkflowServiceStubs(
+        config = get(),
+        lifecycle = get(),
+      )
+    }
+    single {
+      provideWorkflowClient(
+        config = get(),
+        stubs = get(),
+      )
+    }
+    single { WorkerFactory.newInstance(get()) }
+    single(qualifier = GrafQualifiers.ArgoToken) { loadServiceAccountToken(get<ArgoConfig>().tokenPath) }
+    single { buildKubernetesHttpClient(get()) }
   }
-  single {
-    provideMinioClient(
-      config = get(),
-      lifecycle = get(),
-    )
-  }
-  single {
-    provideWorkflowServiceStubs(
-      config = get(),
-      lifecycle = get(),
-    )
-  }
-  single {
-    provideWorkflowClient(
-      config = get(),
-      stubs = get(),
-    )
-  }
-  single { WorkerFactory.newInstance(get()) }
-  single(qualifier = GrafQualifiers.ArgoToken) { loadServiceAccountToken(get<ArgoConfig>().tokenPath) }
-  single { buildKubernetesHttpClient(get()) }
-}
 
-fun grafServiceModule() = module {
-  single { GraphService(get()) } bind GraphPersistence::class
-  single<MinioArtifactFetcher> { MinioArtifactFetcherImpl(get()) }
-  single {
-    ArgoWorkflowClient(
-      config = get(),
-      httpClient = get(),
-      minioConfig = get(),
-      json = get(GrafQualifiers.Json),
-      serviceAccountToken = get(GrafQualifiers.ArgoToken),
-    )
+fun grafServiceModule() =
+  module {
+    single { GraphService(get()) } bind GraphPersistence::class
+    single<MinioArtifactFetcher> { MinioArtifactFetcherImpl(get()) }
+    single {
+      ArgoWorkflowClient(
+        config = get(),
+        httpClient = get(),
+        minioConfig = get(),
+        json = get(GrafQualifiers.Json),
+        serviceAccountToken = get(GrafQualifiers.ArgoToken),
+      )
+    }
+    single<CodexResearchActivities> {
+      CodexResearchActivitiesImpl(
+        argoClient = get(),
+        graphPersistence = get(),
+        artifactFetcher = get(),
+        json = get(GrafQualifiers.Json),
+      )
+    }
+    single {
+      CodexResearchService(
+        workflowClient = get(),
+        workflowServiceStubs = get(),
+        taskQueue = get<TemporalConfig>().taskQueue,
+        argoPollTimeoutSeconds = get<ArgoConfig>().pollTimeoutSeconds,
+      )
+    }
+    single { AutoResearchPromptBuilder(get()) }
+    single<AutoResearchLauncher> { AutoResearchService(get(), get()) }
   }
-  single<CodexResearchActivities> {
-    CodexResearchActivitiesImpl(
-      argoClient = get(),
-      graphPersistence = get(),
-      artifactFetcher = get(),
-      json = get(GrafQualifiers.Json),
-    )
-  }
-  single {
-    CodexResearchService(
-      workflowClient = get(),
-      workflowServiceStubs = get(),
-      taskQueue = get<TemporalConfig>().taskQueue,
-      argoPollTimeoutSeconds = get<ArgoConfig>().pollTimeoutSeconds,
-    )
-  }
-  single { AutoResearchPromptBuilder(get()) }
-  single<AutoResearchLauncher> { AutoResearchService(get(), get()) }
-}
 
-fun grafRequestScopeModule() = module {
-  scope(GrafScopes.Request) {
-    scoped { GrafRequestContext() }
+fun grafRequestScopeModule() =
+  module {
+    scope(GrafScopes.Request) {
+      scoped { GrafRequestContext() }
+    }
   }
-}
 
 private fun provideNeo4jClient(
   neo4jConfig: Neo4jConfig,

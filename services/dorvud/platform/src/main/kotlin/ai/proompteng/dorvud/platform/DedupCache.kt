@@ -15,7 +15,10 @@ class DedupCache<K>(
   private val entries = ConcurrentHashMap<K, Instant>()
   private val order = ConcurrentLinkedQueue<K>()
 
-  fun isDuplicate(key: K, now: Instant = Instant.now()): Boolean {
+  fun isDuplicate(
+    key: K,
+    now: Instant = Instant.now(),
+  ): Boolean {
     evictExpired(now)
     val existing = entries.putIfAbsent(key, now)
     if (existing != null) return true

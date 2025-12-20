@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1.6
 
-FROM gradle:9.2-jdk21 as builder
+FROM gradle:9.2-jdk25 as builder
 WORKDIR /workspace
 COPY --chown=gradle:gradle . .
 RUN ./gradlew clean quarkusBuild --no-daemon
 
-FROM gcr.io/distroless/java21-debian12:nonroot
+FROM gcr.io/distroless/java25-debian12:nonroot
 WORKDIR /app
 COPY --from=builder /workspace/build/quarkus-app /app/quarkus-app
 ENV PORT=8080

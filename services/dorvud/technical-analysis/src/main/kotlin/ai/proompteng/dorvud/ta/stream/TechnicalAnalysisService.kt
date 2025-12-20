@@ -8,8 +8,6 @@ import ai.proompteng.dorvud.ta.producer.AvroSerde
 import io.github.oshai.kotlinlogging.KLogger
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
-import java.time.Duration
-import java.time.Instant
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,6 +20,8 @@ import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.clients.consumer.KafkaConsumer
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerRecord
+import java.time.Duration
+import java.time.Instant
 
 /**
  * Main event loop: consume trades/quotes, emit 1s bars and derived signals.
@@ -41,24 +41,26 @@ class TechnicalAnalysisService(
   private val json = Json { ignoreUnknownKeys = true }
   private val lagTimer: Timer = registry.timer("ta_lag_seconds")
 
-  fun start(): Job = scope.launch {
-    val flushJob = launch {
-      while (isActive) {
-        val flushed = aggregator.flushAll()
-        flushed.forEach { emitMicroBar(it) }
-        delay(500)
-      }
-    }
+  fun start(): Job =
+    scope.launch {
+      val flushJob =
+        launch {
+          while (isActive) {
+            val flushed = aggregator.flushAll()
+            flushed.forEach { emitMicroBar(it) }
+            delay(500)
+          }
+        }
 
-    logger.info { "technical-analysis service started" }
-    while (isActive) {
-      val records = consumer.poll(Duration.ofMillis(250))
-      for (record in records) {
-        handleRecord(record)
+      logger.info { "technical-analysis service started" }
+      while (isActive) {
+        val records = consumer.poll(Duration.ofMillis(250))
+        for (record in records) {
+          handleRecord(record)
+        }
       }
+      flushJob.cancel()
     }
-    flushJob.cancel()
-  }
 
   suspend fun stop() {
     logger.info { "stopping technical-analysis service" }
@@ -81,11 +83,12 @@ class TechnicalAnalysisService(
   }
 
   private fun handleTrade(record: ConsumerRecord<String, String>) {
-    val envelope = runCatching { json.decodeFromString<EnvelopeWrapper<TradePayload>>(record.value()) }
-      .getOrElse {
-        logger.warn(it) { "failed to decode trade payload" }
-        return
-      }
+    val envelope =
+      runCatching { json.decodeFromString<EnvelopeWrapper<TradePayload>>(record.value()) }
+        .getOrElse {
+          logger.warn(it) { "failed to decode trade payload" }
+          return
+        }
 
     val flushed = aggregator.onTrade(envelope.toEnvelope())
     flushed.forEach { barEnv ->
@@ -97,21 +100,23 @@ class TechnicalAnalysisService(
 
   private fun handleQuote(record: ConsumerRecord<String, String>) {
     if (config.quotesTopic == null) return
-    val envelope = runCatching { json.decodeFromString<EnvelopeWrapper<QuotePayload>>(record.value()) }
-      .getOrElse {
-        logger.warn(it) { "failed to decode quote payload" }
-        return
-    }
+    val envelope =
+      runCatching { json.decodeFromString<EnvelopeWrapper<QuotePayload>>(record.value()) }
+        .getOrElse {
+          logger.warn(it) { "failed to decode quote payload" }
+          return
+        }
     engine.onQuote(envelope.toEnvelope())
   }
 
   private fun handleBar(record: ConsumerRecord<String, String>) {
     if (config.bars1mTopic == null) return
-    val envelope = runCatching { json.decodeFromString<EnvelopeWrapper<MicroBarPayload>>(record.value()) }
-      .getOrElse {
-        logger.warn(it) { "failed to decode bars1m payload" }
-        return
-      }
+    val envelope =
+      runCatching { json.decodeFromString<EnvelopeWrapper<MicroBarPayload>>(record.value()) }
+        .getOrElse {
+          logger.warn(it) { "failed to decode bars1m payload" }
+          return
+        }
     engine.onMicroBar(envelope.toEnvelope())?.let { emitSignal(it) }
   }
 

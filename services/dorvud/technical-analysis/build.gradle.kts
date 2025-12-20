@@ -111,7 +111,8 @@ tasks {
     from(sourceSets.main.get().output)
     dependsOn(configurations.runtimeClasspath)
     from({
-      configurations.runtimeClasspath.get()
+      configurations.runtimeClasspath
+        .get()
         .filter { it.name.endsWith(".jar") }
         .map { zipTree(it) }
     })
@@ -119,9 +120,9 @@ tasks {
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
-  compilerOptions.jvmTarget.set(JvmTarget.JVM_17)
+  compilerOptions.jvmTarget.set(JvmTarget.JVM_25)
 }
 
 tasks.withType<JavaCompile> {
-  options.release.set(17)
+  options.release.set(25)
 }

@@ -3,14 +3,14 @@ package ai.proompteng.dorvud.ta.producer
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
-import java.io.ByteArrayOutputStream
-import java.io.Serializable
-import java.nio.charset.StandardCharsets
 import org.apache.avro.Schema
 import org.apache.avro.generic.GenericData
 import org.apache.avro.generic.GenericDatumWriter
 import org.apache.avro.io.BinaryEncoder
 import org.apache.avro.io.EncoderFactory
+import java.io.ByteArrayOutputStream
+import java.io.Serializable
+import java.nio.charset.StandardCharsets
 
 /** Lightweight Avro helper to validate and encode payloads against the published schemas. */
 class AvroSerde : Serializable {
@@ -30,8 +30,9 @@ class AvroSerde : Serializable {
   fun signalJson(env: Envelope<TaSignalsPayload>): String = flattenSignal(env).toString()
 
   private fun loadSchema(resourcePath: String): Schema {
-    val stream = javaClass.classLoader.getResourceAsStream(resourcePath)
-      ?: error("Schema resource not found: $resourcePath")
+    val stream =
+      javaClass.classLoader.getResourceAsStream(resourcePath)
+        ?: error("Schema resource not found: $resourcePath")
     return stream.use { Schema.Parser().parse(it) }
   }
 
@@ -44,7 +45,12 @@ class AvroSerde : Serializable {
     record.put("is_final", env.isFinal)
     record.put("source", env.source)
     env.window?.let { window ->
-      val windowSchema = barsSchema.getField("window").schema().types.first { it.type == Schema.Type.RECORD }
+      val windowSchema =
+        barsSchema
+          .getField("window")
+          .schema()
+          .types
+          .first { it.type == Schema.Type.RECORD }
       val winRecord = GenericData.Record(windowSchema)
       winRecord.put("size", window.size)
       winRecord.put("step", window.step)
@@ -72,7 +78,12 @@ class AvroSerde : Serializable {
     record.put("is_final", env.isFinal)
     record.put("source", env.source)
     env.window?.let { window ->
-      val windowSchema = signalsSchema.getField("window").schema().types.first { it.type == Schema.Type.RECORD }
+      val windowSchema =
+        signalsSchema
+          .getField("window")
+          .schema()
+          .types
+          .first { it.type == Schema.Type.RECORD }
       val winRecord = GenericData.Record(windowSchema)
       winRecord.put("size", window.size)
       winRecord.put("step", window.step)
@@ -82,7 +93,12 @@ class AvroSerde : Serializable {
     }
 
     env.payload.macd?.let {
-      val schema = signalsSchema.getField("macd").schema().types.first { it.type == Schema.Type.RECORD }
+      val schema =
+        signalsSchema
+          .getField("macd")
+          .schema()
+          .types
+          .first { it.type == Schema.Type.RECORD }
       val r = GenericData.Record(schema)
       r.put("macd", it.macd)
       r.put("signal", it.signal)
@@ -91,7 +107,12 @@ class AvroSerde : Serializable {
     }
 
     env.payload.ema?.let {
-      val schema = signalsSchema.getField("ema").schema().types.first { it.type == Schema.Type.RECORD }
+      val schema =
+        signalsSchema
+          .getField("ema")
+          .schema()
+          .types
+          .first { it.type == Schema.Type.RECORD }
       val r = GenericData.Record(schema)
       r.put("ema12", it.ema12)
       r.put("ema26", it.ema26)
@@ -101,7 +122,12 @@ class AvroSerde : Serializable {
     env.payload.rsi14?.let { record.put("rsi14", it) }
 
     env.payload.boll?.let {
-      val schema = signalsSchema.getField("boll").schema().types.first { it.type == Schema.Type.RECORD }
+      val schema =
+        signalsSchema
+          .getField("boll")
+          .schema()
+          .types
+          .first { it.type == Schema.Type.RECORD }
       val r = GenericData.Record(schema)
       r.put("mid", it.mid)
       r.put("upper", it.upper)
@@ -110,7 +136,12 @@ class AvroSerde : Serializable {
     }
 
     env.payload.vwap?.let {
-      val schema = signalsSchema.getField("vwap").schema().types.first { it.type == Schema.Type.RECORD }
+      val schema =
+        signalsSchema
+          .getField("vwap")
+          .schema()
+          .types
+          .first { it.type == Schema.Type.RECORD }
       val r = GenericData.Record(schema)
       r.put("session", it.session)
       r.put("w5m", it.w5m)
@@ -118,7 +149,12 @@ class AvroSerde : Serializable {
     }
 
     env.payload.imbalance?.let {
-      val schema = signalsSchema.getField("imbalance").schema().types.first { it.type == Schema.Type.RECORD }
+      val schema =
+        signalsSchema
+          .getField("imbalance")
+          .schema()
+          .types
+          .first { it.type == Schema.Type.RECORD }
       val r = GenericData.Record(schema)
       r.put("spread", it.spread)
       r.put("bid_px", it.bid_px)
@@ -129,7 +165,12 @@ class AvroSerde : Serializable {
     }
 
     env.payload.vol_realized?.let {
-      val schema = signalsSchema.getField("vol_realized").schema().types.first { it.type == Schema.Type.RECORD }
+      val schema =
+        signalsSchema
+          .getField("vol_realized")
+          .schema()
+          .types
+          .first { it.type == Schema.Type.RECORD }
       val r = GenericData.Record(schema)
       r.put("w60s", it.w60s)
       record.put("vol_realized", r)
@@ -139,7 +180,10 @@ class AvroSerde : Serializable {
     return record
   }
 
-  private fun encode(record: GenericData.Record, schema: Schema): ByteArray {
+  private fun encode(
+    record: GenericData.Record,
+    schema: Schema,
+  ): ByteArray {
     val out = ByteArrayOutputStream()
     val encoder: BinaryEncoder = EncoderFactory.get().binaryEncoder(out, null)
     val writer = GenericDatumWriter<GenericData.Record>(schema)
