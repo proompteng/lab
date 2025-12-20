@@ -52,7 +52,7 @@ export function requireEnv(name: string): string {
   return value
 }
 
-export const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
+export const DEFAULT_OPENAI_API_BASE_URL = 'http://192.168.1.190:11434/v1'
 export const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
 export const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
 export const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding:0.6b'
