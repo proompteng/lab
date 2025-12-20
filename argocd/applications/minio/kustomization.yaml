@@ -9,3 +9,11 @@ resources:
   - observability-minio-service.yaml
   - observability-object-browser-deployment.yaml
   - observability-object-browser-service.yaml
+
+patches:
+  - target:
+      group: apiextensions.k8s.io
+      version: v1
+      kind: CustomResourceDefinition
+      name: policybindings.sts.min.io
+    path: policybindings-v1beta1.patch.yaml

@@ -12,6 +12,8 @@
 - Kubernetes API was intermittently unavailable (connection refused / unexpected EOF), delaying remediation.
 - Kafka broker `kafka-pool-a-2` was stuck `ContainerCreating` due to filesystem corruption on its Longhorn PVC.
 - Temporal outage due to Elasticsearch data corruption and failed volume attachments (incident ongoing).
+- Torghut ClickHouse/ClickHouse Keeper resources failed to apply due to manifest schema mismatch.
+- MinIO operator sync blocked by a CRD storedVersion mismatch (`policybindings.sts.min.io`).
 
 ## Timeline (Pacific Time)
 
@@ -25,12 +27,17 @@
 | 2025-12-20 ~12:50 | Temporal Elasticsearch (`elasticsearch-master-0`) reports I/O errors and attach timeouts on PVC `pvc-a794ca22-df7d-4053-9cfb-fb2a4211794a`. |
 | 2025-12-20 ~13:00 | Temporal set to single-node Cassandra and ES; ES PVCs deleted and recreated. |
 | 2025-12-20 ~13:10 | ES single-node bootstrap adjustments applied; readiness probe relaxed to `yellow`. |
+| 2025-12-20 ~13:25 | Torghut ClickHouse/ClickHouse Keeper manifests fail Argo CD apply due to `podTemplates`/`volumeClaimTemplates` schema mismatch. |
+| 2025-12-20 ~13:30 | Torghut manifests updated to move templates under `spec.templates` and referenced by name in cluster-level templates. |
+| 2025-12-20 ~14:10 | MinIO CRD sync fails: `policybindings.sts.min.io` has `status.storedVersions` set to `v1beta1` but `spec.versions` no longer includes `v1beta1`. |
 
 ## Root Cause
 
 - **Longhorn upgrade failure**: Existing Longhorn CRDs contained stale `spec.conversion.webhookClientConfig` without `spec.conversion.strategy: Webhook`. Kubernetes rejected the updated CRDs during sync.
 - **Kafka mount failure**: Filesystem corruption on the Longhorn volume backing `data-kafka-pool-a-2` required a manual `fsck`. Automated fsck could not repair orphaned inodes.
 - **Temporal outage**: Elasticsearch data path on `elasticsearch-master-0` returned I/O errors, plus Longhorn attachment ticket churn blocked recovery until the data volume was re-created and ES was reconfigured for single-node bootstrap.
+- **Torghut ClickHouse**: ClickHouse Keeper CRD rejected `spec.configuration.clusters[].templates.podTemplates` because the schema expects template names there, not inline templates.
+- **MinIO CRD mismatch**: The MinIO operator upgrade dropped `v1beta1` from `spec.versions` while the cluster still reports `status.storedVersions: [v1beta1]`, causing the CRD update to be rejected.
 
 ## Contributing Factors
 
@@ -47,6 +54,8 @@
 4. Verified `kafka-pool-a-2` Ready and mounted volume healthy.
 5. Rebuilt Temporal Elasticsearch storage (delete PVCs) and reconfigured ES/Cassandra to single-node.
 6. Applied ES single-node bootstrap fixes and readiness adjustments; restarted ES pod.
+7. Updated Torghut ClickHouse and ClickHouse Keeper manifests to define templates under `spec.templates` and reference them by name.
+8. Reintroduced the `v1beta1` CRD version for MinIO `policybindings.sts.min.io` (served, non-storage) to satisfy storedVersions.
 
 ## Manual Interventions (Commands and Hacks)
 
@@ -145,6 +154,23 @@ kubectl -n temporal patch sts elasticsearch-master --type json \
 kubectl -n temporal delete pod elasticsearch-master-0
 ```
 
+### Torghut: ClickHouse manifest schema fix
+
+```bash
+# Move inline templates to top-level spec.templates and reference by name
+argocd app sync torghut
+# or apply directly when API is stable
+kubectl -n torghut apply -f argocd/applications/torghut/clickhouse/clickhouse-keeper.yaml
+kubectl -n torghut apply -f argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml
+```
+
+### MinIO: policybindings CRD storedVersions fix
+
+```bash
+# Re-add v1beta1 to spec.versions so storedVersions can reconcile
+kubectl apply -k argocd/applications/minio
+```
+
 ## Follow-up Actions
 
 - **Upgrade guardrail**: Add a pre-upgrade step for Longhorn CRDs to normalize or remove stale conversion fields before chart upgrades.
@@ -152,6 +178,8 @@ kubectl -n temporal delete pod elasticsearch-master-0
 - **Monitoring**: Add alerts for repeated `FailedMount` errors and for API server instability during Argo CD syncs.
 - **Post-upgrade validation**: Verify Longhorn controller/daemonset health and Kafka ISR/under-replicated partitions after storage incidents.
 - **Temporal hardening**: Add explicit single-node values in Git (ES `replicas`, `minimumMasterNodes`, `clusterHealthCheckParams`, Cassandra `cluster_size`) and document the required ES bootstrap env changes.
+- **Torghut ClickHouse**: Add a validation check (CRD schema) in CI or pre-sync linting to catch invalid template nesting.
+- **MinIO CRD upgrades**: Keep old CRD versions in `spec.versions` until storage migration removes them from `status.storedVersions`.
 
 ## Lessons Learned
 
