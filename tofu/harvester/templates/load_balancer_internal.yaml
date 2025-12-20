@@ -11,6 +11,10 @@ spec:
       port: 443
       protocol: TCP
       backendPort: 443
+    - name: kube-apiserver
+      port: 6443
+      protocol: TCP
+      backendPort: 6443
     - name: http
       port: 80
       protocol: TCP

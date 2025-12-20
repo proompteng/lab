@@ -15,6 +15,7 @@ const sshKeyPath = process.env.K3S_SSH_KEY ?? `${homeDir}/.ssh/id_ed25519`
 const kubeConfigPath = process.env.K3S_LOCAL_PATH ?? `${homeDir}/.kube/config`
 const kubeContext = process.env.K3S_CONTEXT ?? 'default'
 const primaryHost = process.env.K3S_PRIMARY_HOST ?? '192.168.1.150'
+const apiLoadBalancer = process.env.K3S_API_LB ?? ''
 
 function readParallelism(value: string | undefined, fallback: number) {
   if (!value) {
@@ -31,7 +32,14 @@ const baseParallelism = readParallelism(process.env.K3S_PARALLELISM, 5)
 const serverParallelism = readParallelism(process.env.K3S_SERVER_PARALLELISM, baseParallelism)
 const workerParallelism = readParallelism(process.env.K3S_WORKER_PARALLELISM, baseParallelism)
 
+const tlsSans = parseCsvList(
+  process.env.K3S_TLS_SANS,
+  [primaryHost, apiLoadBalancer].filter(Boolean) as string[],
+)
+const tlsSanArgs = tlsSans.map((san) => `--tls-san=${san}`)
+
 const defaultServerExtraArgs = [
+  ...tlsSanArgs,
   '--disable servicelb',
   '--flannel-backend=host-gw',
   '--etcd-arg=auto-compaction-mode=periodic',
@@ -120,6 +128,16 @@ function expandHostSegment(segment: string): string[] {
     hosts.push(`${prefix}${octet}`)
   }
   return hosts
+}
+
+function parseCsvList(value: string | undefined, fallback: string[]) {
+  if (value === undefined) {
+    return fallback
+  }
+  return value
+    .split(',')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
 }
 
 function validateHost(host: string) {
