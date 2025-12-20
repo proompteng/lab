@@ -398,16 +398,7 @@ const applyTechnicalAnalysisResources = async () => {
     fatal(`Technical analysis kustomize directory not found at ${taKustomizePath}; set TORGHUT_TA_KUSTOMIZE_PATH.`)
   }
 
-  const waitTimeout = '300s'
   await run('kubectl', ['apply', '-k', taKustomizePath])
-  await run('kubectl', [
-    '-n',
-    'torghut',
-    'wait',
-    '--for=condition=Ready',
-    'flinkdeployment/torghut-ta',
-    `--timeout=${waitTimeout}`,
-  ])
 }
 
 const main = async () => {

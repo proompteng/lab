@@ -9,8 +9,8 @@ plugins {
 
 description = "Flink job for torghut technical analysis"
 
-val flinkVersion = "1.20.1"
-val kafkaConnectorVersion = "3.3.0-1.20"
+val flinkVersion = "2.0.1"
+val kafkaConnectorVersion = "4.0.1-2.0"
 val serializationVersion = "1.7.3"
 val logbackVersion = "1.5.12"
 
@@ -53,9 +53,9 @@ tasks.register<Jar>("uberJar") {
 tasks.withType<Test> { useJUnitPlatform() }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
-  compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_25)
+  compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
 }
 
 tasks.withType<JavaCompile> {
-  options.release.set(25)
+  options.release.set(21)
 }

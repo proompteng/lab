@@ -12,6 +12,7 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner
 import org.apache.flink.api.common.eventtime.WatermarkStrategy
+import org.apache.flink.api.common.functions.OpenContext
 import org.apache.flink.api.common.functions.RichFlatMapFunction
 import org.apache.flink.api.common.serialization.SimpleStringSchema
 import org.apache.flink.api.common.state.ListState
@@ -20,7 +21,6 @@ import org.apache.flink.api.common.state.ValueState
 import org.apache.flink.api.common.state.ValueStateDescriptor
 import org.apache.flink.api.common.typeinfo.TypeHint
 import org.apache.flink.api.common.typeinfo.TypeInformation
-import org.apache.flink.configuration.Configuration
 import org.apache.flink.connector.base.DeliveryGuarantee
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema
 import org.apache.flink.connector.kafka.sink.KafkaSink
@@ -29,7 +29,6 @@ import org.apache.flink.connector.kafka.source.KafkaSource
 import org.apache.flink.connector.kafka.source.KafkaSourceBuilder
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer
 import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializationSchema
-import org.apache.flink.streaming.api.CheckpointingMode
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction
 import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction
@@ -86,7 +85,7 @@ fun main() {
         .assignTimestampsAndWatermarks(watermarkStrategy(config))
     } else {
       env
-        .fromCollection(emptyList<Envelope<QuotePayload>>())
+        .fromData(emptyList<Envelope<QuotePayload>>())
         .assignTimestampsAndWatermarks(emptyWatermarks())
     }
 
@@ -102,7 +101,7 @@ fun main() {
         .assignTimestampsAndWatermarks(watermarkStrategy(config))
     } else {
       env
-        .fromCollection(emptyList<Envelope<MicroBarPayload>>())
+        .fromData(emptyList<Envelope<MicroBarPayload>>())
         .assignTimestampsAndWatermarks(emptyWatermarks())
     }
 
@@ -134,7 +133,7 @@ private fun configureEnvironment(
   config: FlinkTaConfig,
 ) {
   env.setParallelism(config.parallelism)
-  env.enableCheckpointing(config.checkpointIntervalMs, CheckpointingMode.EXACTLY_ONCE)
+  env.enableCheckpointing(config.checkpointIntervalMs)
   val checkpointConfig = env.checkpointConfig
   checkpointConfig.checkpointTimeout = config.checkpointTimeoutMs
   checkpointConfig.minPauseBetweenCheckpoints = config.minPauseBetweenCheckpointsMs
@@ -162,7 +161,7 @@ private fun kafkaSource(
   topic: String,
 ): KafkaSource<String> {
   val offsetResetStrategy =
-    when (config.autoOffsetReset.lowercase()) {
+    when (config.autoOffsetReset.trim().lowercase()) {
       "earliest" -> OffsetResetStrategy.EARLIEST
       "latest" -> OffsetResetStrategy.LATEST
       "none" -> OffsetResetStrategy.NONE
@@ -205,10 +204,15 @@ private fun microBarSink(
   KafkaSink
     .builder<Envelope<MicroBarPayload>>()
     .setBootstrapServers(config.bootstrapServers)
-    .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
-    .setTransactionalIdPrefix("${config.clientId}-microbars")
+    .setDeliveryGuarantee(config.deliveryGuarantee)
+    .also {
+      if (config.deliveryGuarantee == DeliveryGuarantee.EXACTLY_ONCE) {
+        it
+          .setTransactionalIdPrefix("${config.clientId}-microbars")
+          .setProperty("transaction.timeout.ms", config.transactionTimeoutMs.toString())
+      }
+    }
     .setRecordSerializer(MicroBarSerializationSchema(config.microBarsTopic, serde))
-    .setProperty("transaction.timeout.ms", config.transactionTimeoutMs.toString())
     .setKafkaSecurity(config)
     .build()
 
@@ -219,10 +223,15 @@ private fun signalSink(
   KafkaSink
     .builder<Envelope<TaSignalsPayload>>()
     .setBootstrapServers(config.bootstrapServers)
-    .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
-    .setTransactionalIdPrefix("${config.clientId}-signals")
+    .setDeliveryGuarantee(config.deliveryGuarantee)
+    .also {
+      if (config.deliveryGuarantee == DeliveryGuarantee.EXACTLY_ONCE) {
+        it
+          .setTransactionalIdPrefix("${config.clientId}-signals")
+          .setProperty("transaction.timeout.ms", config.transactionTimeoutMs.toString())
+      }
+    }
     .setRecordSerializer(SignalSerializationSchema(config.signalsTopic, serde))
-    .setProperty("transaction.timeout.ms", config.transactionTimeoutMs.toString())
     .setKafkaSecurity(config)
     .build()
 
@@ -286,7 +295,7 @@ internal class ParseEnvelopeFlatMap<T>(
   @Transient
   private lateinit var payloadSerializer: KSerializer<T>
 
-  override fun open(parameters: Configuration) {
+  override fun open(openContext: OpenContext) {
     json = Json { ignoreUnknownKeys = true }
     payloadSerializer = serializerFactory.serializer()
   }
@@ -330,7 +339,7 @@ private class MicrobarProcessFunction : KeyedProcessFunction<String, Envelope<Tr
   private lateinit var bucketState: ValueState<BucketState>
   private lateinit var seqState: ValueState<Long>
 
-  override fun open(parameters: org.apache.flink.configuration.Configuration) {
+  override fun open(openContext: OpenContext) {
     bucketState = runtimeContext.getState(ValueStateDescriptor("bucket", BucketState::class.java))
     seqState = runtimeContext.getState(ValueStateDescriptor("seq", Long::class.java))
   }
@@ -468,7 +477,7 @@ private class TaSignalsFunction(
   private lateinit var quoteState: ValueState<QuotePayload>
   private lateinit var sessionState: ValueState<SessionAccumulatorState>
 
-  override fun open(parameters: org.apache.flink.configuration.Configuration) {
+  override fun open(openContext: OpenContext) {
     barsState = runtimeContext.getListState(ListStateDescriptor("bars", TypeInformation.of(MicroBarPayload::class.java)))
     quoteState = runtimeContext.getState(ValueStateDescriptor("quote", QuotePayload::class.java))
     sessionState = runtimeContext.getState(ValueStateDescriptor("session", SessionAccumulatorState::class.java))

@@ -6,15 +6,15 @@ metadata:
   labels:
     app: torghut-ta
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:5ad374b015e1cba62b484f15d1c572d44b0dede5297e13bc7cf4086c353069db
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:89b7dd3adf708aa73976df2a1128d063a4d4fccc695f530f6f8aba5c7cc68285
   imagePullPolicy: IfNotPresent
-  flinkVersion: v1_20
+  flinkVersion: v2_0
   serviceAccount: torghut-runtime
   flinkConfiguration:
     state.checkpoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/checkpoints
     state.savepoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/savepoints
     taskmanager.numberOfTaskSlots: "2"
-    restart-strategy: fixed-delay
+    restart-strategy.type: fixed-delay
     restart-strategy.fixed-delay.attempts: "5"
     restart-strategy.fixed-delay.delay: 5 s
     execution.checkpointing.unaligned: "true"
@@ -37,6 +37,8 @@ spec:
             - configMapRef:
                 name: torghut-ta-config
           env:
+            - name: TA_KAFKA_DELIVERY_GUARANTEE
+              value: AT_LEAST_ONCE
             - name: TA_KAFKA_USERNAME
               value: torghut-ws
             - name: TA_KAFKA_PASSWORD
@@ -75,9 +77,9 @@ spec:
                   name: observability-minio-creds
                   key: secretkey
             - name: TORGHUT_TA_VERSION
-              value: v0.347.0-1-g96ad00d8
+              value: v0.347.0-2-g21f57a4a
             - name: TORGHUT_TA_COMMIT
-              value: 96ad00d87c9c03181aa27f3d0ce05db13c36233d
+              value: 21f57a4ab035afd1cc99fd60ea3b5553ea977435
           ports:
             - containerPort: 9249
               name: metrics

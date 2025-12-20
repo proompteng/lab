@@ -1,5 +1,6 @@
 package ai.proompteng.dorvud.ta.flink
 
+import org.apache.flink.connector.base.DeliveryGuarantee
 import java.io.Serializable
 import java.time.Duration
 
@@ -31,6 +32,7 @@ data class FlinkTaConfig(
   val s3Secure: Boolean,
   val s3AccessKey: String?,
   val s3SecretKey: String?,
+  val deliveryGuarantee: DeliveryGuarantee,
   val transactionTimeoutMs: Long,
 ) : Serializable {
   companion object {
@@ -59,15 +61,28 @@ data class FlinkTaConfig(
         default: Boolean,
       ): Boolean = env(key)?.lowercase()?.let { it in setOf("1", "true", "yes") } ?: default
 
+      fun envDeliveryGuarantee(
+        key: String,
+        default: DeliveryGuarantee,
+      ): DeliveryGuarantee {
+        return when (env(key)?.trim()?.uppercase()) {
+          null -> default
+          "EXACTLY_ONCE" -> DeliveryGuarantee.EXACTLY_ONCE
+          "AT_LEAST_ONCE" -> DeliveryGuarantee.AT_LEAST_ONCE
+          "NONE" -> DeliveryGuarantee.NONE
+          else -> default
+        }
+      }
+
       val checkpointBase = env("TA_CHECKPOINT_DIR", "s3a://flink-checkpoints/torghut/technical-analysis")
 
       return FlinkTaConfig(
         bootstrapServers = env("TA_KAFKA_BOOTSTRAP", "kafka-kafka-bootstrap.kafka:9092"),
-        tradesTopic = env("TA_TRADES_TOPIC", "torghut.nvda.trades.v1"),
+        tradesTopic = env("TA_TRADES_TOPIC", "torghut.trades.v1"),
         quotesTopic = env("TA_QUOTES_TOPIC"),
         bars1mTopic = env("TA_BARS1M_TOPIC"),
-        microBarsTopic = env("TA_MICROBARS_TOPIC", "torghut.nvda.ta.bars.1s.v1"),
-        signalsTopic = env("TA_SIGNALS_TOPIC", "torghut.nvda.ta.signals.v1"),
+        microBarsTopic = env("TA_MICROBARS_TOPIC", "torghut.ta.bars.1s.v1"),
+        signalsTopic = env("TA_SIGNALS_TOPIC", "torghut.ta.signals.v1"),
         groupId = env("TA_GROUP_ID", "torghut-ta-flink"),
         clientId = env("TA_CLIENT_ID", "torghut-ta-flink"),
         securityProtocol = env("TA_KAFKA_SECURITY", "SASL_PLAINTEXT"),
@@ -89,6 +104,7 @@ data class FlinkTaConfig(
         s3Secure = envBool("TA_S3_SECURE", false),
         s3AccessKey = env("TA_S3_ACCESS_KEY"),
         s3SecretKey = env("TA_S3_SECRET_KEY"),
+        deliveryGuarantee = envDeliveryGuarantee("TA_KAFKA_DELIVERY_GUARANTEE", DeliveryGuarantee.EXACTLY_ONCE),
         transactionTimeoutMs = envLong("TA_KAFKA_TRANSACTION_TIMEOUT_MS", 120_000),
       )
     }

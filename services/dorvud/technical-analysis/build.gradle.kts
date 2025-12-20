@@ -8,6 +8,10 @@ plugins {
   kotlin("plugin.serialization")
 }
 
+kotlin {
+  jvmToolchain(21)
+}
+
 dependencies {
   val serializationVersion = "1.7.3"
   val coroutinesVersion = "1.9.0"
@@ -120,9 +124,9 @@ tasks {
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
-  compilerOptions.jvmTarget.set(JvmTarget.JVM_25)
+  compilerOptions.jvmTarget.set(JvmTarget.JVM_21)
 }
 
 tasks.withType<JavaCompile> {
-  options.release.set(25)
+  options.release.set(21)
 }

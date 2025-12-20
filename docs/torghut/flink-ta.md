@@ -24,7 +24,7 @@ Common fields: `ingest_ts`, `event_ts`, `feed`, `channel`, `symbol`, `seq`, `pay
 Use Avro or JSON with Karapace; backward-compatible evolution.
 
 ## Flink Job Design
-- Runtime: Flink 1.20.1 (Java 17); Operator 1.13.x; Kafka connector 3.3.0-1.20 (FLIP-27/143).
+- Runtime: Flink 2.0.1 (Java 21); Operator 1.13.x; Kafka connector 4.0.1-2.0 (FLIP-27/143).
 - Source: `KafkaSource` with watermark `event_time - 2s` (tunable); idle timeout for idle partitions.
 - Processing:
   - Trades -> hopping 1s/1s to micro-bars (O/H/L/C/V, vwap).

@@ -27,7 +27,7 @@ Where `nvda-trades.jsonl` contains `<key>:<value>` JSON lines keyed by symbol.
 ## Lag measurement
 - Consumer benchmark:
 ```bash
-kcat -b $KAFKA_BOOTSTRAP -t torghut.nvda.ta.signals.v1 \
+kcat -b $KAFKA_BOOTSTRAP -t torghut.ta.signals.v1 \
   -C -o end -q -c 1000 -J \
   | jq 'now*1000 - (.event_ts | fromdateiso8601*1000)'
 ```
