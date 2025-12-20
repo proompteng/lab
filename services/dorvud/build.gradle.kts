@@ -1,3 +1,6 @@
+import org.gradle.api.JavaVersion
+import org.gradle.api.plugins.JavaPluginExtension
+import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.api.tasks.testing.Test
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.jlleitschuh.gradle.ktlint.KtlintExtension
@@ -24,11 +27,19 @@ subprojects {
 
   extensions.configure<KotlinJvmProjectExtension> {
     jvmToolchain {
-      languageVersion.set(JavaLanguageVersion.of(25))
+      languageVersion.set(JavaLanguageVersion.of(21))
     }
     compilerOptions {
-      jvmTarget.set(JvmTarget.JVM_25)
+      jvmTarget.set(JvmTarget.JVM_21)
     }
+  }
+
+  extensions.configure<JavaPluginExtension> {
+    toolchain {
+      languageVersion.set(JavaLanguageVersion.of(21))
+    }
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
   }
 
   dependencies {
@@ -41,7 +52,7 @@ subprojects {
   }
 
   tasks.withType<JavaCompile> {
-    options.release.set(25)
+    options.release.set(21)
   }
 
   extensions.configure<KtlintExtension> {

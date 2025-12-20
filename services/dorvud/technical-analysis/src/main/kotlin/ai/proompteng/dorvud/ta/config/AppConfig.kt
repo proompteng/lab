@@ -49,7 +49,7 @@ object ConfigLoader {
     ): Duration = if (cfg.hasPath(path)) cfg.getDuration(path) else default
 
     val bootstrap = envOr("TA_KAFKA_BOOTSTRAP", cfgString("ta.kafka.bootstrap", "localhost:9092"))
-    val tradesTopic = envOr("TA_TRADES_TOPIC", cfgString("ta.topics.trades", "torghut.NVDA.trades.v1"))
+    val tradesTopic = envOr("TA_TRADES_TOPIC", cfgString("ta.topics.trades", "torghut.trades.v1"))
 
     return TaServiceConfig(
       serviceName = envOr("TA_SERVICE_NAME", cfgString("ta.service.name", "torghut-ta"))!!,
@@ -57,8 +57,8 @@ object ConfigLoader {
       tradesTopic = tradesTopic!!,
       quotesTopic = envOr("TA_QUOTES_TOPIC", cfgString("ta.topics.quotes")),
       bars1mTopic = envOr("TA_BARS1M_TOPIC", cfgString("ta.topics.bars1m")),
-      microBarsTopic = envOr("TA_MICROBARS_TOPIC", cfgString("ta.topics.microbars", "torghut.NVDA.ta.bars.1s.v1"))!!,
-      signalsTopic = envOr("TA_SIGNALS_TOPIC", cfgString("ta.topics.signals", "torghut.NVDA.ta.signals.v1"))!!,
+      microBarsTopic = envOr("TA_MICROBARS_TOPIC", cfgString("ta.topics.microbars", "torghut.ta.bars.1s.v1"))!!,
+      signalsTopic = envOr("TA_SIGNALS_TOPIC", cfgString("ta.topics.signals", "torghut.ta.signals.v1"))!!,
       groupId = envOr("TA_GROUP_ID", cfgString("ta.kafka.groupId", "torghut-ta-service"))!!,
       clientId = envOr("TA_CLIENT_ID", cfgString("ta.kafka.clientId", "torghut-ta-service"))!!,
       securityProtocol = envOr("TA_KAFKA_SECURITY", cfgString("ta.kafka.security", "PLAINTEXT"))!!,
@@ -67,7 +67,7 @@ object ConfigLoader {
       saslPassword = envOr("TA_KAFKA_PASSWORD", cfgString("ta.kafka.sasl.password")),
       autoOffsetReset = envOr("TA_AUTO_OFFSET_RESET", cfgString("ta.kafka.autoOffsetReset", "latest"))!!,
       httpHost = envOr("TA_HTTP_HOST", cfgString("ta.http.host", "0.0.0.0"))!!,
-      httpPort = envOr("TA_HTTP_PORT", cfgInt("ta.http.port", 8080)).toInt(),
+      httpPort = envOr("TA_HTTP_PORT", cfgInt("ta.http.port", 8080)),
       vwapWindow = cfgDuration("ta.indicators.vwapWindow", Duration.ofMinutes(5)),
       realizedVolWindow = cfgInt("ta.indicators.realizedVolWindow", 60),
       gracefulShutdown = cfgDuration("ta.service.shutdown", Duration.ofSeconds(15)),

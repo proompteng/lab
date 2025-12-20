@@ -62,9 +62,9 @@ class TaEngineTest {
     assertNotNull(payload.ema)
     assertNotNull(payload.boll)
     assertNotNull(payload.rsi14)
-    val diff = kotlin.math.abs(payload.macd!!.hist - (payload.macd!!.macd - payload.macd!!.signal))
+    val diff = kotlin.math.abs(payload.macd.hist - (payload.macd.macd - payload.macd.signal))
     assertTrue(diff < 1e-6)
-    assertTrue { payload.ema!!.ema12 > 0 }
+    assertTrue { payload.ema.ema12 > 0 }
   }
 }
 

@@ -48,10 +48,10 @@ Options:
 
 Examples:
   KAFKA_USERNAME=torghut-ws KAFKA_PASSWORD=$(kubectl -n torghut get secret torghut-ws -o jsonpath='{.data.password}' | base64 -d) \\
-    bun run packages/scripts/src/kafka/tail-topic.ts --topic torghut.nvda.bars.1m.v1 --tail 1
+    bun run packages/scripts/src/kafka/tail-topic.ts --topic torghut.bars.1m.v1 --tail 1
 
   KAFKA_USERNAME=torghut-ws \\
-    bun run packages/scripts/src/kafka/tail-topic.ts --topic torghut.nvda.trades.v1 --tail 5 \\
+    bun run packages/scripts/src/kafka/tail-topic.ts --topic torghut.trades.v1 --tail 5 \\
     --password-secret-namespace torghut --password-secret-name torghut-ws --password-secret-key password
 `.trim()
 
