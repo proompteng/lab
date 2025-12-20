@@ -21,7 +21,7 @@ flowchart TD
     Config["loadConfig\nservices/jangar/src/server/config.ts"]
     Encoder["ChatCompletionEncoder\nservices/jangar/src/server/chat-completion-encoder.ts"]
     ToolRenderer["ChatToolEventRenderer\nservices/jangar/src/server/chat-tool-event-renderer.ts"]
-    ThreadState["OpenWebUiThreadState\nservices/jangar/src/server/openwebui-thread-state.ts"]
+    ThreadState["ThreadState\nservices/jangar/src/server/thread-state.ts"]
     ThreadStore["Redis ChatThreadStore\nservices/jangar/src/server/chat-thread-store.ts"]
   end
 

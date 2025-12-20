@@ -22,7 +22,7 @@ const redisError = (message: string, error: unknown) =>
 export const createRedisWorktreeStore = (options: WorktreeStoreOptions = {}): WorktreeStore => {
   const url = options.url ?? process.env.JANGAR_REDIS_URL
   if (!url) {
-    throw new Error('JANGAR_REDIS_URL is required for OpenWebUI worktree storage')
+    throw new Error('JANGAR_REDIS_URL is required for worktree storage')
   }
 
   const prefix = (options.prefix ?? process.env.JANGAR_WORKTREE_KEY_PREFIX ?? DEFAULT_PREFIX).replace(/:+$/, '')

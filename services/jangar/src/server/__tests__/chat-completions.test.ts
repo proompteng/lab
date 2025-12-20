@@ -10,8 +10,8 @@ import { chatCompletionsHandler } from '~/routes/openai/v1/chat/completions'
 import { handleChatCompletionEffect, resetCodexClient, setCodexClientFactory } from '~/server/chat'
 import { ChatCompletionEncoder, chatCompletionEncoderLive } from '~/server/chat-completion-encoder'
 import { ChatToolEventRenderer, chatToolEventRendererLive } from '~/server/chat-tool-event-renderer'
-import { OpenWebUiThreadState, type OpenWebUiThreadStateService } from '~/server/openwebui-thread-state'
-import { OpenWebUiWorktreeState, type OpenWebUiWorktreeStateService } from '~/server/openwebui-worktree-state'
+import { ThreadState, type ThreadStateService } from '~/server/thread-state'
+import { WorktreeState, type WorktreeStateService } from '~/server/worktree-state'
 
 describe('chat completions handler', () => {
   const previousEnv: Partial<Record<'JANGAR_MODELS' | 'JANGAR_DEFAULT_MODEL' | 'CODEX_CWD', string | undefined>> = {}
@@ -408,13 +408,13 @@ describe('chat completions handler', () => {
   })
 
   it('retries on stale thread ids by clearing redis mapping', async () => {
-    const threadState: OpenWebUiThreadStateService = {
+    const threadState: ThreadStateService = {
       getThreadId: vi.fn(() => Effect.succeed('stale-thread')),
       setThreadId: vi.fn(() => Effect.succeed(undefined)),
       nextTurn: vi.fn(() => Effect.succeed(1)),
       clearChat: vi.fn(() => Effect.succeed(undefined)),
     }
-    const worktreeState: OpenWebUiWorktreeStateService = {
+    const worktreeState: WorktreeStateService = {
       getWorktreeName: vi.fn(() => Effect.succeed('austin')),
       setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
       clearWorktree: vi.fn(() => Effect.succeed(undefined)),
@@ -470,8 +470,8 @@ describe('chat completions handler', () => {
         handleChatCompletionEffect(request),
         Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
         Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
-        Effect.provideService(OpenWebUiThreadState, threadState),
-        Effect.provideService(OpenWebUiWorktreeState, worktreeState),
+        Effect.provideService(ThreadState, threadState),
+        Effect.provideService(WorktreeState, worktreeState),
       ),
     )
     const text = await response.text()
@@ -480,6 +480,95 @@ describe('chat completions handler', () => {
     expect(mockClient.runTurnStream).toHaveBeenCalledTimes(2)
     expect(threadState.clearChat).toHaveBeenCalledWith('chat-1')
     expect(threadState.setThreadId).toHaveBeenLastCalledWith('chat-1', 'fresh-thread')
+  })
+
+  it('installs dependencies when allocating a new worktree', async () => {
+    const previousNodeEnv = process.env.NODE_ENV
+    process.env.NODE_ENV = 'production'
+
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed(null)),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed(null)),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const originalBun = (globalThis as { Bun?: unknown }).Bun
+    const spawnImpl = vi.fn((args: string[] | string, options?: { cwd?: string }) => {
+      const command = Array.isArray(args) ? args : [args]
+      const exitCode = command[0] === 'git' && command[1] === 'show-ref' ? 1 : 0
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.close()
+        },
+      })
+
+      return {
+        exited: Promise.resolve(exitCode),
+        stdout: stream,
+        stderr: stream,
+        ...options,
+      }
+    })
+    let spawnSpy: { mock: { calls: unknown[][] } } & { mockRestore?: () => void }
+    let shouldDeleteBun = false
+
+    if (originalBun && typeof (originalBun as { spawn?: unknown }).spawn === 'function') {
+      const bunForSpy = originalBun as { spawn: (...args: unknown[]) => unknown }
+      spawnSpy = vi.spyOn(bunForSpy, 'spawn').mockImplementation(spawnImpl as (...args: unknown[]) => unknown)
+    } else {
+      Object.defineProperty(globalThis, 'Bun', {
+        value: { spawn: spawnImpl },
+        configurable: true,
+      })
+      spawnSpy = spawnImpl
+      shouldDeleteBun = true
+    }
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-openwebui-chat-id': 'chat-2',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.2-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+
+    try {
+      const response = await Effect.runPromise(
+        pipe(
+          handleChatCompletionEffect(request),
+          Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+          Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+          Effect.provideService(ThreadState, threadState),
+          Effect.provideService(WorktreeState, worktreeState),
+        ),
+      )
+      await response.text()
+    } finally {
+      const bunCalls = spawnSpy.mock.calls.filter((call) => Array.isArray(call[0]) && call[0][0] === 'bun')
+      expect(bunCalls).toHaveLength(1)
+      expect(bunCalls[0]?.[0]).toEqual(['bun', 'install'])
+
+      spawnSpy.mockRestore?.()
+      if (shouldDeleteBun) {
+        delete (globalThis as { Bun?: unknown }).Bun
+      }
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previousNodeEnv
+      }
+    }
   })
 
   it('emits tool calls immediately; command output is code fenced with separation', async () => {

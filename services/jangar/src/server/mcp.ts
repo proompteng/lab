@@ -25,6 +25,8 @@ type JsonRpcResponse = {
 }
 
 const MCP_SESSION_HEADER = 'Mcp-Session-Id'
+const MCP_PROTOCOL_VERSION = '2024-11-05'
+const MCP_SERVER_INFO = { name: 'memories', version: '0.1.0' } as const
 
 const jsonResponse = (payload: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(payload), {
@@ -87,6 +89,19 @@ const toolsListResult = {
   ],
 } as const
 
+const MCP_CONFIG_RESOURCE_URI = 'memories://config'
+
+const resourcesListResult = {
+  resources: [
+    {
+      uri: MCP_CONFIG_RESOURCE_URI,
+      name: 'Memories MCP config',
+      description: 'Server metadata and defaults for the memories tools.',
+      mimeType: 'application/json',
+    },
+  ],
+} as const
+
 const toTextToolResult = (text: string) => ({
   content: [{ type: 'text', text }],
 })
@@ -110,6 +125,17 @@ const parseToolCall = (params: unknown): { name: string; args: Record<string, un
   return { name, args: args as Record<string, unknown> }
 }
 
+const parseResourceReadParams = (params: unknown): { uri: string } | JsonRpcError => {
+  if (!isRecord(params)) {
+    return { code: -32602, message: 'Invalid params' }
+  }
+  const uri = params.uri
+  if (typeof uri !== 'string' || uri.length === 0) {
+    return { code: -32602, message: 'Invalid params: missing resource uri' }
+  }
+  return { uri }
+}
+
 const toolError = (id: JsonRpcId, message: string, data?: unknown): JsonRpcResponse =>
   asJsonRpcError(id, { code: -32000, message, data })
 
@@ -119,6 +145,32 @@ const invalidParams = (id: JsonRpcId, message: string, data?: unknown): JsonRpcR
 const MAX_CONTENT_CHARS = 50_000
 const MAX_QUERY_CHARS = 10_000
 const MAX_SUMMARY_CHARS = 5_000
+
+const buildConfigResource = (request: Request) => {
+  const endpoint = new URL(request.url).toString()
+  return {
+    uri: MCP_CONFIG_RESOURCE_URI,
+    mimeType: 'application/json',
+    text: JSON.stringify(
+      {
+        protocolVersion: MCP_PROTOCOL_VERSION,
+        serverInfo: MCP_SERVER_INFO,
+        endpoint,
+        tools: toolsListResult.tools,
+        defaults: {
+          namespace: 'default',
+          limits: {
+            maxContentChars: MAX_CONTENT_CHARS,
+            maxQueryChars: MAX_QUERY_CHARS,
+            maxSummaryChars: MAX_SUMMARY_CHARS,
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  }
+}
 
 const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
   Effect.gen(function* () {
@@ -140,9 +192,9 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
       case 'initialize': {
         if (isNotification) return null
         return asJsonRpcResponse(id, {
-          protocolVersion: '2024-11-05',
-          capabilities: { tools: {} },
-          serverInfo: { name: 'memories', version: '0.1.0' },
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          capabilities: { tools: {}, resources: {} },
+          serverInfo: MCP_SERVER_INFO,
         })
       }
       case 'notifications/initialized': {
@@ -154,7 +206,20 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
       }
       case 'resources/list': {
         if (isNotification) return null
-        return asJsonRpcResponse(id, { resources: [] })
+        return asJsonRpcResponse(id, resourcesListResult)
+      }
+      case 'resources/read': {
+        const parsed = parseResourceReadParams(msg.params)
+        if ('code' in parsed) {
+          if (isNotification) return null
+          return asJsonRpcError(id, parsed)
+        }
+        if (parsed.uri !== MCP_CONFIG_RESOURCE_URI) {
+          if (isNotification) return null
+          return invalidParams(id, 'Invalid params: unknown resource uri')
+        }
+        if (isNotification) return null
+        return asJsonRpcResponse(id, { contents: [buildConfigResource(request)] })
       }
       case 'resources/templates/list': {
         if (isNotification) return null
