@@ -189,17 +189,36 @@ const readExistingWorktreeNames = async (worktreeRoot: string) => {
   return new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
 }
 
-const createGitWorktree = async (repoRoot: string, worktreePath: string) => {
-  const process = Bun.spawn(['git', 'worktree', 'add', '--detach', worktreePath, 'HEAD'], {
+const readProcessText = async (stream: ReadableStream | null) => {
+  if (!stream) return ''
+  return new Response(stream).text()
+}
+
+const runGitCommand = async (repoRoot: string, args: string[]) => {
+  const process = Bun.spawn(['git', ...args], {
     cwd: repoRoot,
     stdout: 'pipe',
     stderr: 'pipe',
   })
   const exitCode = await process.exited
-  if (exitCode === 0) return
-  const stdout = await new Response(process.stdout).text()
-  const stderr = await new Response(process.stderr).text()
-  const detail = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n')
+  const stdout = await readProcessText(process.stdout)
+  const stderr = await readProcessText(process.stderr)
+  return { exitCode, stdout, stderr }
+}
+
+const gitBranchExists = async (repoRoot: string, branchName: string) => {
+  const result = await runGitCommand(repoRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`])
+  return result.exitCode === 0
+}
+
+const createGitWorktree = async (repoRoot: string, worktreePath: string, worktreeName: string) => {
+  const branchExists = await gitBranchExists(repoRoot, worktreeName)
+  const args = branchExists
+    ? ['worktree', 'add', worktreePath, worktreeName]
+    : ['worktree', 'add', '-b', worktreeName, worktreePath, 'HEAD']
+  const result = await runGitCommand(repoRoot, args)
+  if (result.exitCode === 0) return
+  const detail = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n')
   throw new Error(`git worktree add failed${detail ? `: ${detail}` : ''}`)
 }
 
@@ -229,7 +248,7 @@ const ensureWorktreePath = async (worktreeName: string) => {
     return worktreePath
   }
 
-  await createGitWorktree(resolveCodexBaseCwd(), worktreePath)
+  await createGitWorktree(resolveCodexBaseCwd(), worktreePath, worktreeName)
   return worktreePath
 }
 
