@@ -34,9 +34,9 @@ Set `DATABASE_URL` to `postgres://cerebrum:cerebrum@localhost:5432/cerebrum?sslm
 ### Required environment
 
 - `DATABASE_URL` – optional override for the Postgres endpoint (pgvector-enabled) with the `memories` schema.
-- `OPENAI_API_KEY` – key used for the embedding API calls.
-- `OPENAI_EMBEDDING_MODEL` – optional (defaults to `text-embedding-3-small`).
-- `OPENAI_EMBEDDING_DIMENSION` – optional (defaults to `1536`).
+- `OPENAI_API_KEY` – key used for embedding API calls (required for hosted OpenAI, optional for self-hosted endpoints).
+- `OPENAI_EMBEDDING_MODEL` – optional (defaults to `text-embedding-3-small` on OpenAI, or `qwen3-embedding:0.6b` when using a self-hosted base URL).
+- `OPENAI_EMBEDDING_DIMENSION` – optional (defaults to `1536` on OpenAI, or `1024` for the self-hosted model).
 - `OPENAI_API_BASE_URL` – optional (defaults to `https://api.openai.com/v1`).
 
 Optional Kubernetes overrides:

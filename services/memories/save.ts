@@ -1,11 +1,13 @@
 import { SQL } from 'bun'
 import {
+  DEFAULT_OPENAI_API_BASE_URL,
   getFlagValue,
   parseCliFlags,
   parseCommaList,
   parseJson,
-  requireEnv,
   resolveDatabaseSession,
+  resolveEmbeddingApiKey,
+  resolveEmbeddingDefaults,
   toPgTextArray,
   vectorToPgArray,
 } from './cli'
@@ -45,12 +47,13 @@ const executionId = getFlagValue(flags, 'execution-id')
 const source = getFlagValue(flags, 'source') ?? 'codex-memory'
 const tags = parseCommaList(getFlagValue(flags, 'tags'))
 const metadata = parseJson(getFlagValue(flags, 'metadata'))
-const encoderModel = getFlagValue(flags, 'model') ?? process.env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-3-small'
+const openAiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
+const embeddingDefaults = resolveEmbeddingDefaults(openAiBaseUrl)
+const encoderModel = getFlagValue(flags, 'model') ?? process.env.OPENAI_EMBEDDING_MODEL ?? embeddingDefaults.model
 const encoderVersion = getFlagValue(flags, 'encoder-version')
-const openAiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? 'https://api.openai.com/v1'
-const apiKey = requireEnv('OPENAI_API_KEY')
+const apiKey = resolveEmbeddingApiKey(openAiBaseUrl)
 const dimensionsRaw = process.env.OPENAI_EMBEDDING_DIMENSION
-const expectedDimension = parseInt(dimensionsRaw ?? '1536', 10)
+const expectedDimension = parseInt(dimensionsRaw ?? String(embeddingDefaults.dimension), 10)
 
 const embedBody: Record<string, unknown> = {
   model: encoderModel,
@@ -61,12 +64,16 @@ if (dimensionsRaw) {
   embedBody.dimensions = expectedDimension
 }
 
+const headers: Record<string, string> = {
+  'Content-Type': 'application/json',
+}
+if (apiKey) {
+  headers.Authorization = `Bearer ${apiKey}`
+}
+
 const embedResponse = await fetch(`${openAiBaseUrl}/embeddings`, {
   method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${apiKey}`,
-  },
+  headers,
   body: JSON.stringify(embedBody),
 })
 

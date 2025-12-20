@@ -52,6 +52,38 @@ export function requireEnv(name: string): string {
   return value
 }
 
+export const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
+export const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
+export const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
+export const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding:0.6b'
+export const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
+
+export const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
+  try {
+    return new URL(rawBaseUrl).hostname === 'api.openai.com'
+  } catch {
+    return rawBaseUrl.includes('api.openai.com')
+  }
+}
+
+export const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
+  const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
+  return {
+    hosted,
+    model: hosted ? DEFAULT_OPENAI_EMBEDDING_MODEL : DEFAULT_SELF_HOSTED_EMBEDDING_MODEL,
+    dimension: hosted ? DEFAULT_OPENAI_EMBEDDING_DIMENSION : DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION,
+  }
+}
+
+export const resolveEmbeddingApiKey = (apiBaseUrl: string) => {
+  const { hosted } = resolveEmbeddingDefaults(apiBaseUrl)
+  const apiKey = process.env.OPENAI_API_KEY?.trim() ?? ''
+  if (!apiKey && hosted) {
+    throw new Error('missing OPENAI_API_KEY; set it or point OPENAI_API_BASE_URL at a self-hosted endpoint')
+  }
+  return apiKey || null
+}
+
 export const LOCAL_DATABASE_URL = 'postgres://cerebrum:cerebrum@localhost:5432/cerebrum?sslmode=disable'
 const DEFAULT_KUBE_SECRET = 'jangar-db-app'
 const DEFAULT_KUBE_SERVICE = 'svc/jangar-db-rw'

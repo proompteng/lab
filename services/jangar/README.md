@@ -93,10 +93,10 @@ Storage details:
 - `JANGAR_MCP_URL` (optional; defaults to `http://127.0.0.1:$PORT/mcp`)
 - `DATABASE_URL` (required to use MCP memories tools)
 - `PGSSLMODE` (optional; defaults to `require`; Jangar does not support `sslrootcert` URL params for Bun’s Postgres client)
-- `OPENAI_API_KEY` (API key used for embedding calls; required for providers that need auth; optional for self-hosted OpenAI-compatible endpoints like Ollama)
+- `OPENAI_API_KEY` (API key used for embedding calls; required for hosted OpenAI, optional for self-hosted OpenAI-compatible endpoints like Ollama)
 - `OPENAI_API_BASE_URL` / `OPENAI_API_BASE` (optional; defaults to `https://api.openai.com/v1`)
-- `OPENAI_EMBEDDING_MODEL` (optional; defaults to `text-embedding-3-small`)
-- `OPENAI_EMBEDDING_DIMENSION` (optional; defaults to `1536`)
+- `OPENAI_EMBEDDING_MODEL` (optional; defaults to `text-embedding-3-small` on OpenAI, or `qwen3-embedding:0.6b` for self-hosted bases)
+- `OPENAI_EMBEDDING_DIMENSION` (optional; defaults to `1536` on OpenAI, or `1024` for the self-hosted model)
 - `OPENAI_EMBEDDING_TIMEOUT_MS` (optional; defaults to `15000`)
 - `OPENAI_EMBEDDING_MAX_INPUT_CHARS` (optional; defaults to `60000`)
 

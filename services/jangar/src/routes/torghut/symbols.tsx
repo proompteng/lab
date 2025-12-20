@@ -12,6 +12,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+import { randomUuid } from '@/lib/uuid'
 
 type SymbolItem = {
   assetClass: 'equity' | 'crypto'
@@ -64,7 +65,7 @@ function TorghutSymbols() {
     try {
       const res = await fetch('/api/torghut/symbols', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
+        headers: { 'content-type': 'application/json', 'idempotency-key': randomUuid() },
         body: JSON.stringify({ symbolsText: trimmed, enabled: true, assetClass: 'equity' }),
       })
       if (!res.ok) throw new Error(`Failed to save (${res.status})`)

@@ -1,10 +1,12 @@
 import { SQL } from 'bun'
 import {
+  DEFAULT_OPENAI_API_BASE_URL,
   getFlagValue,
   parseCliFlags,
   parseCommaList,
-  requireEnv,
   resolveDatabaseSession,
+  resolveEmbeddingApiKey,
+  resolveEmbeddingDefaults,
   toPgTextArray,
   vectorToPgArray,
 } from './cli'
@@ -46,17 +48,22 @@ if (!queryText.trim()) {
   throw new Error('query text cannot be empty')
 }
 
-const encoderModel = getFlagValue(flags, 'model') ?? process.env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-3-small'
-const openAiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? 'https://api.openai.com/v1'
-const apiKey = requireEnv('OPENAI_API_KEY')
-const expectedDimension = parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? '1536', 10)
+const openAiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
+const embeddingDefaults = resolveEmbeddingDefaults(openAiBaseUrl)
+const encoderModel = getFlagValue(flags, 'model') ?? process.env.OPENAI_EMBEDDING_MODEL ?? embeddingDefaults.model
+const apiKey = resolveEmbeddingApiKey(openAiBaseUrl)
+const expectedDimension = parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? String(embeddingDefaults.dimension), 10)
+
+const headers: Record<string, string> = {
+  'Content-Type': 'application/json',
+}
+if (apiKey) {
+  headers.Authorization = `Bearer ${apiKey}`
+}
 
 const embedResponse = await fetch(`${openAiBaseUrl}/embeddings`, {
   method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${apiKey}`,
-  },
+  headers,
   body: JSON.stringify({ model: encoderModel, input: queryText }),
 })
 
