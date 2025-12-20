@@ -32,10 +32,7 @@ const baseParallelism = readParallelism(process.env.K3S_PARALLELISM, 5)
 const serverParallelism = readParallelism(process.env.K3S_SERVER_PARALLELISM, baseParallelism)
 const workerParallelism = readParallelism(process.env.K3S_WORKER_PARALLELISM, baseParallelism)
 
-const tlsSans = parseCsvList(
-  process.env.K3S_TLS_SANS,
-  [primaryHost, apiLoadBalancer].filter(Boolean) as string[],
-)
+const tlsSans = parseCsvList(process.env.K3S_TLS_SANS, [primaryHost, apiLoadBalancer].filter(Boolean) as string[])
 const tlsSanArgs = tlsSans.map((san) => `--tls-san=${san}`)
 
 const defaultServerExtraArgs = [
@@ -288,7 +285,11 @@ async function runParallel<T>(items: T[], concurrency: number, task: (item: T, i
         return
       }
       nextIndex += 1
-      await task(items[currentIndex]!, currentIndex)
+      const item = items[currentIndex]
+      if (item === undefined) {
+        return
+      }
+      await task(item, currentIndex)
     }
   }
 
