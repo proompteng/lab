@@ -1,5 +1,6 @@
 import { Context } from 'effect'
 
+import { safeJsonStringify } from './chat-text'
 import type { ToolEvent } from './chat-tool-event'
 
 export type ToolRenderAction =
@@ -23,7 +24,7 @@ export class ChatToolEventRenderer extends Context.Tag('ChatToolEventRenderer')<
 const truncateLines = (text: string, maxLines: number) => {
   const lines = text.split(/\r?\n/)
   if (lines.length <= maxLines) return text
-  return [...lines.slice(0, maxLines), '...', ''].join('\n')
+  return [...lines.slice(0, maxLines), '…', ''].join('\n')
 }
 
 const renderFileChanges = (rawChanges: unknown, maxDiffLines = 5) => {
@@ -52,6 +53,46 @@ const wrapInCodeFence = (content: string, language = 'text') => {
   const trimmed = content.trimEnd()
   if (!trimmed) return ''
   return `\n\`\`\`${language}\n${trimmed}\n\`\`\`\n`
+}
+
+const stringifyMcpPayload = (payload: Record<string, unknown>) => {
+  try {
+    return JSON.stringify(payload, null, 2)
+  } catch {
+    return safeJsonStringify(payload)
+  }
+}
+
+const renderMcpJsonBlock = (value: unknown, maxLines: number) => {
+  const raw = stringifyMcpPayload({ value })
+  const body = raw.replace(/^\{\n\s*"value":\s*/u, '').replace(/\n\}$/u, '')
+  const truncated = truncateLines(body, maxLines)
+  return wrapInCodeFence(truncated, 'json')
+}
+
+const renderMcpTextBlock = (value: string, maxLines: number) => {
+  const truncated = truncateLines(value, maxLines)
+  return wrapInCodeFence(truncated, 'text')
+}
+
+const renderMcpPayload = (payload: Record<string, unknown>, maxLines = 12) => {
+  const tool = typeof payload.tool === 'string' ? payload.tool : 'mcp'
+  const status = typeof payload.status === 'string' ? payload.status : undefined
+  const detail = typeof payload.detail === 'string' ? payload.detail : undefined
+  const output = typeof payload.output === 'string' ? payload.output : undefined
+  const args = payload.arguments
+  const result = payload.result
+  const error = payload.error
+
+  const sections: string[] = [`\n**MCP tool**: \`${tool}\``]
+  if (status) sections.push(`**Status**: \`${status}\``)
+  if (detail) sections.push(`**Detail**\n${renderMcpTextBlock(detail, 4)}`)
+  if (output) sections.push(`**Output**\n${renderMcpTextBlock(output, maxLines)}`)
+  if (args !== undefined) sections.push(`**Arguments**\n${renderMcpJsonBlock(args, maxLines)}`)
+  if (result !== undefined) sections.push(`**Result**\n${renderMcpJsonBlock(result, maxLines)}`)
+  if (error !== undefined) sections.push(`**Error**\n${renderMcpJsonBlock(error, maxLines)}`)
+
+  return `${sections.filter(Boolean).join('\n')}\n`
 }
 
 const stripShellPrefix = (value: string) => {
@@ -195,6 +236,40 @@ const createToolRenderer = (): ToolRenderer => {
             (typeof argsPayload.detail === 'string' && argsPayload.detail.length > 0 ? argsPayload.detail : undefined)
           if (query) actions.push({ type: 'emitContent', content: `\`${query}\`` })
         }
+        return actions
+      }
+
+      if (toolState.toolKind === 'mcp') {
+        actions.push({ type: 'closeCommandFence' })
+        const status = event.status
+        const payload: Record<string, unknown> = {
+          tool: toolState.title ?? toolState.toolKind,
+        }
+
+        if (status) payload.status = status
+        if (event.detail) payload.detail = event.detail
+        if (event.delta) payload.output = event.delta
+
+        if (event.data && typeof event.data === 'object') {
+          const data = event.data as Record<string, unknown>
+          if ('arguments' in data) payload.arguments = data.arguments
+          if ('result' in data) payload.result = data.result
+          if ('error' in data) payload.error = data.error
+        }
+
+        const content = renderMcpPayload(payload)
+        if (!content) {
+          toolState.lastStatus = status
+          return actions
+        }
+
+        if (content === toolState.lastContent && status === toolState.lastStatus) {
+          return actions
+        }
+
+        toolState.lastContent = content
+        toolState.lastStatus = status
+        actions.push({ type: 'emitContent', content })
         return actions
       }
 

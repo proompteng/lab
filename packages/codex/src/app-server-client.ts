@@ -1272,6 +1272,70 @@ export class CodexAppServerClient {
         )
         break
       }
+      case 'codex/event/mcp_tool_call_begin': {
+        const msg = extractCodexMsg(notification.params)
+        if (!msg) break
+        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
+        if (!callId) break
+        const invocation =
+          msg.invocation && typeof msg.invocation === 'object' ? (msg.invocation as Record<string, unknown>) : null
+        const server = invocation && typeof invocation.server === 'string' ? invocation.server : null
+        const tool = invocation && typeof invocation.tool === 'string' ? invocation.tool : null
+        const title = server && tool ? `${server}:${tool}` : 'mcp'
+        const args = invocation ? invocation.arguments : undefined
+
+        pushTool(
+          notification.params,
+          {
+            toolKind: 'mcp',
+            id: callId,
+            status: 'started',
+            title,
+            data: { arguments: args },
+          },
+          'legacy',
+          { trackItem: true },
+        )
+        break
+      }
+      case 'codex/event/mcp_tool_call_end': {
+        const msg = extractCodexMsg(notification.params)
+        if (!msg) break
+        const callId = typeof msg.call_id === 'string' ? msg.call_id : null
+        if (!callId) break
+        const invocation =
+          msg.invocation && typeof msg.invocation === 'object' ? (msg.invocation as Record<string, unknown>) : null
+        const server = invocation && typeof invocation.server === 'string' ? invocation.server : null
+        const tool = invocation && typeof invocation.tool === 'string' ? invocation.tool : null
+        const title = server && tool ? `${server}:${tool}` : 'mcp'
+        const args = invocation ? invocation.arguments : undefined
+
+        let result: unknown
+        let error: unknown
+        if (msg.result && typeof msg.result === 'object') {
+          const payload = msg.result as Record<string, unknown>
+          if ('Ok' in payload) result = payload.Ok
+          if ('Err' in payload) error = payload.Err
+        }
+
+        pushTool(
+          notification.params,
+          {
+            toolKind: 'mcp',
+            id: callId,
+            status: 'completed',
+            title,
+            data: {
+              arguments: args,
+              result,
+              error,
+            },
+          },
+          'legacy',
+          { trackItem: true },
+        )
+        break
+      }
       case 'codex/event/patch_apply_begin': {
         const msg = extractCodexMsg(notification.params)
         if (!msg) break

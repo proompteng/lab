@@ -338,6 +338,82 @@ describe('CodexAppServerClient codex/event bridging', () => {
     })
   })
 
+  it('bridges codex/event/mcp_tool_call_* into tool deltas', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'codex/event/mcp_tool_call_begin',
+      params: {
+        id: 'turn-1',
+        msg: {
+          type: 'mcp_tool_call_begin',
+          call_id: 'mcp-1',
+          invocation: {
+            server: 'memories',
+            tool: 'retrieve',
+            arguments: { query: 'hello' },
+          },
+        },
+      },
+    })
+
+    const started = await stream.next()
+    expect(started.value).toEqual({
+      type: 'tool',
+      toolKind: 'mcp',
+      id: 'mcp-1',
+      status: 'started',
+      title: 'memories:retrieve',
+      data: { arguments: { query: 'hello' } },
+    })
+
+    writeLine(child, {
+      method: 'codex/event/mcp_tool_call_end',
+      params: {
+        msg: {
+          type: 'mcp_tool_call_end',
+          call_id: 'mcp-1',
+          invocation: {
+            server: 'memories',
+            tool: 'retrieve',
+            arguments: { query: 'hello' },
+          },
+          duration: '15ms',
+          result: {
+            Ok: {
+              content: [{ type: 'text', text: 'ok' }],
+              structuredContent: { ok: true },
+            },
+          },
+        },
+      },
+    })
+
+    const completed = await stream.next()
+    expect(completed.value).toEqual({
+      type: 'tool',
+      toolKind: 'mcp',
+      id: 'mcp-1',
+      status: 'completed',
+      title: 'memories:retrieve',
+      data: {
+        arguments: { query: 'hello' },
+        result: {
+          content: [{ type: 'text', text: 'ok' }],
+          structuredContent: { ok: true },
+        },
+        error: undefined,
+      },
+    })
+  })
+
   it('decodes base64 exec_command_output_delta chunks', async () => {
     const { child, client } = setupClient()
     await respondToInitialize(child)
