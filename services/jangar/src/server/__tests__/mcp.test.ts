@@ -71,11 +71,26 @@ describe('Memories MCP handler', () => {
 
     const resources = await post(service, { jsonrpc: '2.0', id: 1, method: 'resources/list' })
     expect(resources.response.status).toBe(200)
-    expect(resources.json?.result?.resources).toEqual([])
+    expect(resources.json?.result?.resources?.[0]?.uri).toBe('memories://config')
 
     const templates = await post(service, { jsonrpc: '2.0', id: 2, method: 'resources/templates/list' })
     expect(templates.response.status).toBe(200)
     expect(templates.json?.result?.resourceTemplates).toEqual([])
+  })
+
+  it('supports resources/read for the config resource', async () => {
+    const { service } = makeService()
+
+    const resource = await post(service, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'resources/read',
+      params: { uri: 'memories://config' },
+    })
+    expect(resource.response.status).toBe(200)
+    const text = resource.json?.result?.contents?.[0]?.text as string
+    expect(text).toContain('"serverInfo"')
+    expect(text).toContain('"memories"')
   })
 
   it('supports persist_memory + retrieve_memory', async () => {
