@@ -15,31 +15,33 @@ spec:
         layout:
           replicasCount: 1
         templates:
-          podTemplates:
-            - name: chk-default
-              spec:
-                nodeSelector:
-                  kubernetes.io/arch: arm64
-                containers:
-                  - name: clickhouse-keeper
-                    resources:
-                      requests:
-                        cpu: 250m
-                        memory: 256Mi
-                      limits:
-                        cpu: 500m
-                        memory: 512Mi
-          volumeClaimTemplates:
-            - name: chk-data
-              spec:
-                accessModes:
-                  - ReadWriteOnce
-                resources:
-                  requests:
-                    storage: 1Gi
-                storageClassName: longhorn
+          podTemplate: chk-default
+          volumeClaimTemplate: chk-data
+  templates:
+    podTemplates:
+      - name: chk-default
+        spec:
+          nodeSelector:
+            kubernetes.io/arch: arm64
+          containers:
+            - name: clickhouse-keeper
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+    volumeClaimTemplates:
+      - name: chk-data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+          storageClassName: longhorn
   defaults:
     templates:
       podTemplate: chk-default
       volumeClaimTemplate: chk-data
-
