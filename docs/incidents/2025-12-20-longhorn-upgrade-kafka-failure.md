@@ -1,0 +1,206 @@
+# Incident Report: Longhorn 1.10.1 Upgrade, Kafka Mount Failure, API Instability
+
+- **Date**: 20 Dec 2025
+- **Detected by**: Argo CD sync failure, Kafka `FailedMount` events
+- **Reported by**: gregkonush
+- **Services Affected**: Longhorn (storage), Kafka (`kafka` namespace), Temporal, Kubernetes API stability
+- **Severity**: High - Kafka broker unavailable; cluster control-plane intermittently unavailable; Temporal down
+
+## Impact Summary
+
+- Longhorn upgrade to 1.10.1 failed in Argo CD due to invalid CRD conversion fields.
+- Kubernetes API was intermittently unavailable (connection refused / unexpected EOF), delaying remediation.
+- Kafka broker `kafka-pool-a-2` was stuck `ContainerCreating` due to filesystem corruption on its Longhorn PVC.
+- Temporal outage due to Elasticsearch data corruption and failed volume attachments (incident ongoing).
+
+## Timeline (Pacific Time)
+
+| Time | Event |
+|------|-------|
+| 2025-12-20 11:39:36 | Argo CD reports Longhorn sync failure: CRDs invalid because `spec.conversion.strategy` missing while conversion webhook config present. |
+| 2025-12-20 ~11:49 | Argo CD still OutOfSync; Kubernetes API intermittently refuses connections during sync/patch attempts. |
+| 2025-12-20 12:22 | Kafka pod `kafka-pool-a-2` reports `FailedMount`: fsck detects filesystem errors and requires manual repair. |
+| 2025-12-20 ~12:30 | Manual fsck executed on Longhorn device for PVC `pvc-40d29f68-1901-457b-8313-1ca1310861c6`. |
+| 2025-12-20 ~12:40 | Stale VolumeAttachment cleared; Kafka pod reattached to PVC and became Ready. |
+| 2025-12-20 ~12:50 | Temporal Elasticsearch (`elasticsearch-master-0`) reports I/O errors and attach timeouts on PVC `pvc-a794ca22-df7d-4053-9cfb-fb2a4211794a`. |
+| 2025-12-20 ~13:00 | Temporal set to single-node Cassandra and ES; ES PVCs deleted and recreated. |
+| 2025-12-20 ~13:10 | ES single-node bootstrap adjustments applied; readiness probe relaxed to `yellow`. |
+
+## Root Cause
+
+- **Longhorn upgrade failure**: Existing Longhorn CRDs contained stale `spec.conversion.webhookClientConfig` without `spec.conversion.strategy: Webhook`. Kubernetes rejected the updated CRDs during sync.
+- **Kafka mount failure**: Filesystem corruption on the Longhorn volume backing `data-kafka-pool-a-2` required a manual `fsck`. Automated fsck could not repair orphaned inodes.
+- **Temporal outage**: Elasticsearch data path on `elasticsearch-master-0` returned I/O errors, plus Longhorn attachment ticket churn blocked recovery until the data volume was re-created and ES was reconfigured for single-node bootstrap.
+
+## Contributing Factors
+
+- Argo CD autosync applied new CRDs while legacy conversion fields were still present.
+- Kubernetes API instability (connection refused / unexpected EOF) interrupted remediation steps.
+- Kafka pod rescheduled to a different node, causing multi-attach conflicts until the stale VolumeAttachment was removed.
+- Temporal Elasticsearch StatefulSet kept previous multi-node bootstrap settings while replicas were reduced to 1, causing `MasterNotDiscoveredException` and `cluster.initial_master_nodes` conflicts until the config was updated.
+
+## Remediation Actions
+
+1. Patched Longhorn CRDs to remove `spec.conversion` blocks (defaults to `strategy: None`).
+2. Ran `e2fsck -f -y` on `/dev/longhorn/pvc-40d29f68-1901-457b-8313-1ca1310861c6` from a privileged pod on the node hosting the volume.
+3. Removed stale VolumeAttachment and reattached the PVC to the Kafka node.
+4. Verified `kafka-pool-a-2` Ready and mounted volume healthy.
+5. Rebuilt Temporal Elasticsearch storage (delete PVCs) and reconfigured ES/Cassandra to single-node.
+6. Applied ES single-node bootstrap fixes and readiness adjustments; restarted ES pod.
+
+## Manual Interventions (Commands and Hacks)
+
+These were executed manually during the incident to force recovery.
+
+### Longhorn / CRDs
+
+```bash
+# Remove invalid CRD conversion blocks
+for crd in nodes.longhorn.io volumes.longhorn.io backingimages.longhorn.io backuptargets.longhorn.io engineimages.longhorn.io; do
+  kubectl patch crd "$crd" --type=json -p='[{"op":"remove","path":"/spec/conversion"}]' || true
+done
+```
+
+### Jangar PVC resize (drifted from Git until PR merged)
+
+```bash
+kubectl -n jangar patch pvc jangar-workspace --type merge -p '{"spec":{"resources":{"requests":{"storage":"50Gi"}}}}'
+kubectl -n jangar rollout restart deploy/jangar
+```
+
+### Kafka fsck + attach cleanup
+
+```bash
+# fsck on Longhorn device (kube-worker-15)
+kubectl -n longhorn-system apply -f - <<'POD'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fsck-pvc-40d29f68
+  namespace: longhorn-system
+spec:
+  nodeName: kube-worker-15
+  restartPolicy: Never
+  tolerations:
+    - operator: Exists
+  containers:
+    - name: fsck
+      image: alpine:3.20
+      securityContext:
+        privileged: true
+      command:
+        - sh
+        - -c
+        - |
+          set -eux
+          apk add --no-cache e2fsprogs
+          e2fsck -f -y /dev/longhorn/pvc-40d29f68-1901-457b-8313-1ca1310861c6
+      volumeMounts:
+        - name: dev
+          mountPath: /dev/longhorn
+  volumes:
+    - name: dev
+      hostPath:
+        path: /dev/longhorn
+POD
+
+# Clear stale CSI VolumeAttachment
+kubectl delete volumeattachment csi-52b1b23e4a807061e8e0531fc07bcd0e945e3ecf4f5a2ac099bd67361d21b8ff
+```
+
+### Temporal: pause autosync, single-node, and storage reset
+
+```bash
+# Disable Temporal autosync by switching ApplicationSet automation to manual
+kubectl -n argocd patch applicationset platform --type json \
+  -p='[{"op":"replace","path":"/spec/generators/0/list/elements/21/automation","value":"manual"}]'
+
+# Scale down ES + Cassandra
+kubectl -n temporal scale sts elasticsearch-master --replicas=0
+kubectl -n temporal scale sts temporal-cassandra --replicas=0
+
+# Nuke ES PVCs (data reset)
+kubectl -n temporal delete pvc -l app=elasticsearch-master
+
+# Scale up to single node
+kubectl -n temporal scale sts temporal-cassandra --replicas=1
+kubectl -n temporal scale sts elasticsearch-master --replicas=1
+```
+
+### Temporal: ES bootstrap and readiness fixes
+
+```bash
+# Apply manifest changes (single-node Cassandra/ES + readiness)
+argocd app sync temporal
+
+# Force ES env updates and readiness relaxation via kubectl apply
+kubectl apply -f /tmp/temporal-elasticsearch-master.json
+kubectl apply -f /tmp/temporal-cassandra.json
+
+# Remove discovery.type after conflict with cluster.initial_master_nodes
+kubectl -n temporal patch sts elasticsearch-master --type json \
+  -p='[{"op":"remove","path":"/spec/template/spec/containers/0/env/11"}]'
+
+# Restart ES pod to pick up env changes
+kubectl -n temporal delete pod elasticsearch-master-0
+```
+
+## Follow-up Actions
+
+- **Upgrade guardrail**: Add a pre-upgrade step for Longhorn CRDs to normalize or remove stale conversion fields before chart upgrades.
+- **Runbook**: Document a standard Longhorn fsck workflow for corrupted volumes (including attach/detach and VolumeAttachment cleanup).
+- **Monitoring**: Add alerts for repeated `FailedMount` errors and for API server instability during Argo CD syncs.
+- **Post-upgrade validation**: Verify Longhorn controller/daemonset health and Kafka ISR/under-replicated partitions after storage incidents.
+- **Temporal hardening**: Add explicit single-node values in Git (ES `replicas`, `minimumMasterNodes`, `clusterHealthCheckParams`, Cassandra `cluster_size`) and document the required ES bootstrap env changes.
+
+## Lessons Learned
+
+- Legacy CRD conversion fields can block upgrades; plan a normalization step in storage upgrades.
+- Manual fsck remains a necessary recovery path for Longhorn-backed volumes when automated repair fails.
+- Stale VolumeAttachments can prevent recovery when pods reschedule; cleanup should be part of the runbook.
+- Reducing ES replicas to 1 requires matching bootstrap settings (`cluster.initial_master_nodes` and readiness threshold) or it will never elect a master.
+
+## Relevant Commands
+
+```bash
+# Remove CRD conversion blocks
+for crd in nodes.longhorn.io volumes.longhorn.io backingimages.longhorn.io backuptargets.longhorn.io engineimages.longhorn.io; do
+  kubectl patch crd "$crd" --type=json -p='[{"op":"remove","path":"/spec/conversion"}]' || true
+  done
+
+# Manual fsck via privileged pod
+kubectl apply -f - <<'POD'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fsck-pvc-40d29f68
+  namespace: longhorn-system
+spec:
+  nodeName: kube-worker-15
+  restartPolicy: Never
+  tolerations:
+    - operator: Exists
+  containers:
+    - name: fsck
+      image: alpine:3.20
+      securityContext:
+        privileged: true
+      command:
+        - sh
+        - -c
+        - |
+          set -eux
+          apk add --no-cache e2fsprogs
+          e2fsck -f -y /dev/longhorn/pvc-40d29f68-1901-457b-8313-1ca1310861c6
+      volumeMounts:
+        - name: dev
+          mountPath: /dev/longhorn
+  volumes:
+    - name: dev
+      hostPath:
+        path: /dev/longhorn
+POD
+
+# Clear stale attachment if needed
+kubectl delete volumeattachment <name>
+```

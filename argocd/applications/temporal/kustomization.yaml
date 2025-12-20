@@ -18,6 +18,9 @@ helmCharts:
       grafana:
         enabled: false
       elasticsearch:
+        replicas: 1
+        minimumMasterNodes: 1
+        clusterHealthCheckParams: "wait_for_status=yellow&timeout=1s"
         # Persist ES data so Temporal visibility index survives node restarts
         persistence:
           enabled: true
@@ -28,6 +31,9 @@ helmCharts:
             requests:
               storage: 5Gi
           storageClassName: longhorn
+      cassandra:
+        config:
+          cluster_size: 1
       web:
         # https://docs.temporal.io/references/web-ui-environment-variables
         additionalEnv:
