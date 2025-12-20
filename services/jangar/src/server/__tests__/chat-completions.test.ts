@@ -482,6 +482,84 @@ describe('chat completions handler', () => {
     expect(threadState.setThreadId).toHaveBeenLastCalledWith('chat-1', 'fresh-thread')
   })
 
+  it('installs dependencies when allocating a new worktree', async () => {
+    const previousNodeEnv = process.env.NODE_ENV
+    process.env.NODE_ENV = 'production'
+
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed(null)),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed(null)),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const originalBun = (globalThis as { Bun?: unknown }).Bun
+    const spawnSpy = vi.fn((args: string[] | string, options?: { cwd?: string }) => {
+      const command = Array.isArray(args) ? args : [args]
+      const exitCode = command[0] === 'git' && command[1] === 'show-ref' ? 1 : 0
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.close()
+        },
+      })
+
+      return {
+        exited: Promise.resolve(exitCode),
+        stdout: stream,
+        stderr: stream,
+        ...options,
+      }
+    })
+
+    ;(globalThis as { Bun?: unknown }).Bun = { spawn: spawnSpy }
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-openwebui-chat-id': 'chat-2',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.2-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+      }),
+    })
+
+    try {
+      const response = await Effect.runPromise(
+        pipe(
+          handleChatCompletionEffect(request),
+          Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+          Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+          Effect.provideService(ThreadState, threadState),
+          Effect.provideService(WorktreeState, worktreeState),
+        ),
+      )
+      await response.text()
+    } finally {
+      const bunCalls = spawnSpy.mock.calls.filter((call) => Array.isArray(call[0]) && call[0][0] === 'bun')
+      expect(bunCalls).toHaveLength(1)
+      expect(bunCalls[0]?.[0]).toEqual(['bun', 'install'])
+
+      if (originalBun === undefined) {
+        delete (globalThis as { Bun?: unknown }).Bun
+      } else {
+        ;(globalThis as { Bun?: unknown }).Bun = originalBun
+      }
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previousNodeEnv
+      }
+    }
+  })
+
   it('emits tool calls immediately; command output is code fenced with separation', async () => {
     const mockClient = {
       runTurnStream: async () => ({
