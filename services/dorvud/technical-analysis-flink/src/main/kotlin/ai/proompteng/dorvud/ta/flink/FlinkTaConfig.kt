@@ -38,10 +38,26 @@ data class FlinkTaConfig(
 
     fun fromEnv(): FlinkTaConfig {
       fun env(key: String): String? = System.getenv(key)
-      fun env(key: String, default: String): String = env(key) ?: default
-      fun envInt(key: String, default: Int): Int = env(key)?.toIntOrNull() ?: default
-      fun envLong(key: String, default: Long): Long = env(key)?.toLongOrNull() ?: default
-      fun envBool(key: String, default: Boolean): Boolean = env(key)?.lowercase()?.let { it in setOf("1", "true", "yes") } ?: default
+
+      fun env(
+        key: String,
+        default: String,
+      ): String = env(key) ?: default
+
+      fun envInt(
+        key: String,
+        default: Int,
+      ): Int = env(key)?.toIntOrNull() ?: default
+
+      fun envLong(
+        key: String,
+        default: Long,
+      ): Long = env(key)?.toLongOrNull() ?: default
+
+      fun envBool(
+        key: String,
+        default: Boolean,
+      ): Boolean = env(key)?.lowercase()?.let { it in setOf("1", "true", "yes") } ?: default
 
       val checkpointBase = env("TA_CHECKPOINT_DIR", "s3a://flink-checkpoints/torghut/technical-analysis")
 

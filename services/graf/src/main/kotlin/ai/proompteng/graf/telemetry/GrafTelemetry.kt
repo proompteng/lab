@@ -235,8 +235,7 @@ object GrafTelemetry {
         .apply {
           artifactId?.let { put(AttributeKey.stringKey("artifact.id"), it) }
           researchSource?.let { put(AttributeKey.stringKey("research.source"), it) }
-        }
-        .build()
+        }.build()
     graphBatchDuration.record(durationMs.toDouble(), attributes)
     graphBatchRecords.add(recordCount.toLong(), attributes)
   }

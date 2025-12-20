@@ -14,16 +14,18 @@ import kotlinx.serialization.json.jsonPrimitive
 object AlpacaMessageSerializer : KSerializer<AlpacaMessage> {
   override val descriptor: SerialDescriptor = buildClassSerialDescriptor("AlpacaMessage")
 
-  override fun serialize(encoder: Encoder, value: AlpacaMessage) {
-    throw SerializationException("encoding not supported")
-  }
+  override fun serialize(
+    encoder: Encoder,
+    value: AlpacaMessage,
+  ): Unit = throw SerializationException("encoding not supported")
 
   override fun deserialize(decoder: Decoder): AlpacaMessage {
     val input = decoder as? JsonDecoder ?: error("JSON decoder required")
     val element = input.decodeJsonElement()
     val obj = element as? JsonObject ?: return AlpacaUnknownMessage("non_object", element)
-    val type = obj["T"]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
-      ?: return AlpacaUnknownMessage("missing_T", obj)
+    val type =
+      obj["T"]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+        ?: return AlpacaUnknownMessage("missing_T", obj)
     return when (type) {
       "t" -> input.json.decodeFromJsonElement(AlpacaTrade.serializer(), obj)
       "q" -> input.json.decodeFromJsonElement(AlpacaQuote.serializer(), obj)

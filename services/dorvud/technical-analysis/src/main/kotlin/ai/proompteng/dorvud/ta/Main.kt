@@ -8,22 +8,25 @@ import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.java.KoinJavaComponent.getKoin
 
-fun main() = runBlocking {
-  startKoin { modules(taModule) }
-  val koin = getKoin()
-  val http = koin.get<HttpServer>()
-  val service = koin.get<TechnicalAnalysisService>()
+fun main() =
+  runBlocking {
+    startKoin { modules(taModule) }
+    val koin = getKoin()
+    val http = koin.get<HttpServer>()
+    val service = koin.get<TechnicalAnalysisService>()
 
-  http.start()
-  val job = service.start()
+    http.start()
+    val job = service.start()
 
-  Runtime.getRuntime().addShutdownHook(Thread {
-    runBlocking {
-      http.stop()
-      service.stop()
-      stopKoin()
-    }
-  })
+    Runtime.getRuntime().addShutdownHook(
+      Thread {
+        runBlocking {
+          http.stop()
+          service.stop()
+          stopKoin()
+        }
+      },
+    )
 
-  job.join()
-}
+    job.join()
+  }

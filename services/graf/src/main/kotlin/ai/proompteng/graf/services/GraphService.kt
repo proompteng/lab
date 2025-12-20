@@ -339,27 +339,30 @@ class GraphService(
 
   private suspend fun upsertEntitiesBatch(entities: List<EntityRequest>): BatchResponse =
     neo4j.executeWrite("upsertEntitiesBatch") { tx ->
-      val rows = entities.map { entity ->
-        val label = entity.label.ensureIdentifier("label")
-        val entityId = entity.id.takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString()
-        val props = entity.properties.toValueMap().toMutableMap().apply {
-          this["artifactId"] = entity.artifactId
-          this["researchSource"] = entity.researchSource
-          this["streamId"] = entity.streamId
-          this["updatedAt"] = Instant.now().toString()
-          this["id"] = entityId
+      val rows =
+        entities.map { entity ->
+          val label = entity.label.ensureIdentifier("label")
+          val entityId = entity.id.takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString()
+          val props =
+            entity.properties.toValueMap().toMutableMap().apply {
+              this["artifactId"] = entity.artifactId
+              this["researchSource"] = entity.researchSource
+              this["streamId"] = entity.streamId
+              this["updatedAt"] = Instant.now().toString()
+              this["id"] = entityId
+            }
+          EntityBatchRow(entityId, label, props.filterValues { it != null }, entity.artifactId)
         }
-        EntityBatchRow(entityId, label, props.filterValues { it != null }, entity.artifactId)
-      }
       rows.groupBy { it.label }.forEach { (label, batchRows) ->
         val params =
           mapOf(
-            "rows" to batchRows.map { row ->
-              mapOf(
-                "id" to row.id,
-                "props" to row.props,
-              )
-            },
+            "rows" to
+              batchRows.map { row ->
+                mapOf(
+                  "id" to row.id,
+                  "props" to row.props,
+                )
+              },
           )
         val query =
           buildString {
@@ -378,31 +381,34 @@ class GraphService(
 
   private suspend fun upsertRelationshipsBatch(relationships: List<RelationshipRequest>): BatchResponse =
     neo4j.executeWrite("upsertRelationshipsBatch") { tx ->
-      val rows = relationships.map { request ->
-        val relType = request.type.ensureIdentifier("relationship type")
-        val fromId = request.fromId.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("fromId must be provided")
-        val toId = request.toId.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("toId must be provided")
-        val relId = request.id.takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString()
-        val props = request.properties.toValueMap().toMutableMap().apply {
-          this["artifactId"] = request.artifactId
-          this["researchSource"] = request.researchSource
-          this["streamId"] = request.streamId
-          this["updatedAt"] = Instant.now().toString()
-          this["id"] = relId
+      val rows =
+        relationships.map { request ->
+          val relType = request.type.ensureIdentifier("relationship type")
+          val fromId = request.fromId.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("fromId must be provided")
+          val toId = request.toId.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("toId must be provided")
+          val relId = request.id.takeUnless { it.isNullOrBlank() } ?: UUID.randomUUID().toString()
+          val props =
+            request.properties.toValueMap().toMutableMap().apply {
+              this["artifactId"] = request.artifactId
+              this["researchSource"] = request.researchSource
+              this["streamId"] = request.streamId
+              this["updatedAt"] = Instant.now().toString()
+              this["id"] = relId
+            }
+          RelationshipBatchRow(relId, relType, fromId, toId, props.filterValues { it != null }, request.artifactId)
         }
-        RelationshipBatchRow(relId, relType, fromId, toId, props.filterValues { it != null }, request.artifactId)
-      }
       rows.groupBy { it.type }.forEach { (type, batchRows) ->
         val params =
           mapOf(
-            "rows" to batchRows.map { row ->
-              mapOf(
-                "id" to row.id,
-                "fromId" to row.fromId,
-                "toId" to row.toId,
-                "props" to row.props,
-              )
-            },
+            "rows" to
+              batchRows.map { row ->
+                mapOf(
+                  "id" to row.id,
+                  "fromId" to row.fromId,
+                  "toId" to row.toId,
+                  "props" to row.props,
+                )
+              },
           )
         val query =
           buildString {

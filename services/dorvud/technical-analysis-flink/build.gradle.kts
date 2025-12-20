@@ -1,6 +1,6 @@
 import org.gradle.api.file.DuplicatesStrategy
-import org.gradle.jvm.tasks.Jar
 import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.jvm.tasks.Jar
 
 plugins {
   kotlin("jvm")
@@ -53,9 +53,9 @@ tasks.register<Jar>("uberJar") {
 tasks.withType<Test> { useJUnitPlatform() }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
-  compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+  compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_25)
 }
 
 tasks.withType<JavaCompile> {
-  options.release.set(17)
+  options.release.set(25)
 }

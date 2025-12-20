@@ -4,7 +4,6 @@ import ai.proompteng.graf.autoresearch.AutoResearchConfig
 import ai.proompteng.graf.autoresearch.AutoResearchLauncher
 import ai.proompteng.graf.codex.CodexResearchService
 import ai.proompteng.graf.config.MinioConfig
-import ai.proompteng.graf.runtime.GrafKoin
 import ai.proompteng.graf.model.ArtifactReference
 import ai.proompteng.graf.model.AutoResearchLaunchResponse
 import ai.proompteng.graf.model.AutoResearchRequest
@@ -21,6 +20,7 @@ import ai.proompteng.graf.model.EntityPatchRequest
 import ai.proompteng.graf.model.GraphResponse
 import ai.proompteng.graf.model.RelationshipBatchRequest
 import ai.proompteng.graf.model.RelationshipPatchRequest
+import ai.proompteng.graf.runtime.GrafKoin
 import ai.proompteng.graf.services.GraphService
 import ai.proompteng.graf.telemetry.GrafRouteTemplate
 import jakarta.enterprise.context.ApplicationScoped
@@ -60,112 +60,113 @@ class GraphResource(
   private val autoResearchLauncher: AutoResearchLauncher by lazy {
     providedAutoResearchLauncher ?: GrafKoin.koin().get<AutoResearchLauncher>()
   }
-    @POST
-    @Path("/entities")
-    @GrafRouteTemplate("POST /v1/entities")
-    suspend fun upsertEntities(payload: EntityBatchRequest): BatchResponse = graphService.upsertEntities(payload)
 
-    @POST
-    @Path("/relationships")
-    @GrafRouteTemplate("POST /v1/relationships")
-    suspend fun upsertRelationships(payload: RelationshipBatchRequest): BatchResponse = graphService.upsertRelationships(payload)
+  @POST
+  @Path("/entities")
+  @GrafRouteTemplate("POST /v1/entities")
+  suspend fun upsertEntities(payload: EntityBatchRequest): BatchResponse = graphService.upsertEntities(payload)
 
-    @PATCH
-    @Path("/entities/{id}")
-    @GrafRouteTemplate("PATCH /v1/entities/{id}")
-    suspend fun patchEntity(
-      @PathParam("id") id: String,
-      payload: EntityPatchRequest,
-    ): GraphResponse = graphService.patchEntity(id, payload)
+  @POST
+  @Path("/relationships")
+  @GrafRouteTemplate("POST /v1/relationships")
+  suspend fun upsertRelationships(payload: RelationshipBatchRequest): BatchResponse = graphService.upsertRelationships(payload)
 
-    @PATCH
-    @Path("/relationships/{id}")
-    @GrafRouteTemplate("PATCH /v1/relationships/{id}")
-    suspend fun patchRelationship(
-      @PathParam("id") id: String,
-      payload: RelationshipPatchRequest,
-    ): GraphResponse = graphService.patchRelationship(id, payload)
+  @PATCH
+  @Path("/entities/{id}")
+  @GrafRouteTemplate("PATCH /v1/entities/{id}")
+  suspend fun patchEntity(
+    @PathParam("id") id: String,
+    payload: EntityPatchRequest,
+  ): GraphResponse = graphService.patchEntity(id, payload)
 
-    @DELETE
-    @Path("/entities/{id}")
-    @GrafRouteTemplate("DELETE /v1/entities/{id}")
-    suspend fun deleteEntity(
-      @PathParam("id") id: String,
-      payload: DeleteRequest,
-    ): GraphResponse = graphService.deleteEntity(id, payload)
+  @PATCH
+  @Path("/relationships/{id}")
+  @GrafRouteTemplate("PATCH /v1/relationships/{id}")
+  suspend fun patchRelationship(
+    @PathParam("id") id: String,
+    payload: RelationshipPatchRequest,
+  ): GraphResponse = graphService.patchRelationship(id, payload)
 
-    @DELETE
-    @Path("/relationships/{id}")
-    @GrafRouteTemplate("DELETE /v1/relationships/{id}")
-    suspend fun deleteRelationship(
-      @PathParam("id") id: String,
-      payload: DeleteRequest,
-    ): GraphResponse = graphService.deleteRelationship(id, payload)
+  @DELETE
+  @Path("/entities/{id}")
+  @GrafRouteTemplate("DELETE /v1/entities/{id}")
+  suspend fun deleteEntity(
+    @PathParam("id") id: String,
+    payload: DeleteRequest,
+  ): GraphResponse = graphService.deleteEntity(id, payload)
 
-    @POST
-    @Path("/complement")
-    @GrafRouteTemplate("POST /v1/complement")
-    suspend fun complement(payload: ComplementRequest): ComplementResponse = graphService.complement(payload)
+  @DELETE
+  @Path("/relationships/{id}")
+  @GrafRouteTemplate("DELETE /v1/relationships/{id}")
+  suspend fun deleteRelationship(
+    @PathParam("id") id: String,
+    payload: DeleteRequest,
+  ): GraphResponse = graphService.deleteRelationship(id, payload)
 
-    @POST
-    @Path("/clean")
-    @GrafRouteTemplate("POST /v1/clean")
-    suspend fun clean(payload: CleanRequest): CleanResponse = graphService.clean(payload)
+  @POST
+  @Path("/complement")
+  @GrafRouteTemplate("POST /v1/complement")
+  suspend fun complement(payload: ComplementRequest): ComplementResponse = graphService.complement(payload)
 
-    @POST
-    @Path("/codex-research")
-    @GrafRouteTemplate("POST /v1/codex-research")
-    suspend fun startCodexResearch(payload: CodexResearchRequest): Response {
-      val argoWorkflowName = "codex-research-${UUID.randomUUID()}"
-      val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
-      val launch =
-        withContext(Dispatchers.IO) {
-          codexResearchService.startResearch(payload, argoWorkflowName, artifactKey)
-        }
-      val artifactReference =
-        ArtifactReference(
-          bucket = minioConfig.bucket,
-          key = artifactKey,
-          endpoint = minioConfig.endpoint,
-          region = minioConfig.region,
-        )
-      val responsePayload =
-        CodexResearchResponse(
-          workflowId = launch.workflowId,
-          runId = launch.runId,
-          argoWorkflowName = argoWorkflowName,
-          artifactReferences = listOf(artifactReference),
-          startedAt = launch.startedAt,
-        )
-      return Response.status(Response.Status.ACCEPTED).entity(responsePayload).build()
-    }
+  @POST
+  @Path("/clean")
+  @GrafRouteTemplate("POST /v1/clean")
+  suspend fun clean(payload: CleanRequest): CleanResponse = graphService.clean(payload)
 
-    @POST
-    @Path("/autoresearch")
-    @GrafRouteTemplate("POST /v1/autoresearch")
-    suspend fun startAutoResearch(payload: AutoResearchRequest): Response {
-      val workflowPrefix = autoResearchConfig.workflowNamePrefix
-      val argoWorkflowName = "$workflowPrefix-${UUID.randomUUID()}"
-      val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
-      val launch =
-        withContext(Dispatchers.IO) {
-          autoResearchLauncher.startResearch(payload, argoWorkflowName, artifactKey)
-        }
-      val artifactReference =
-        ArtifactReference(
-          bucket = minioConfig.bucket,
-          key = artifactKey,
-          endpoint = minioConfig.endpoint,
-          region = minioConfig.region,
-        )
-      val responsePayload =
-        AutoResearchLaunchResponse(
-          workflowId = launch.workflowId,
-          runId = launch.runId,
-          argoWorkflowName = argoWorkflowName,
-          artifactReferences = listOf(artifactReference),
-          startedAt = launch.startedAt,
-        )
-      return Response.status(Response.Status.ACCEPTED).entity(responsePayload).build()
-    }
+  @POST
+  @Path("/codex-research")
+  @GrafRouteTemplate("POST /v1/codex-research")
+  suspend fun startCodexResearch(payload: CodexResearchRequest): Response {
+    val argoWorkflowName = "codex-research-${UUID.randomUUID()}"
+    val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
+    val launch =
+      withContext(Dispatchers.IO) {
+        codexResearchService.startResearch(payload, argoWorkflowName, artifactKey)
+      }
+    val artifactReference =
+      ArtifactReference(
+        bucket = minioConfig.bucket,
+        key = artifactKey,
+        endpoint = minioConfig.endpoint,
+        region = minioConfig.region,
+      )
+    val responsePayload =
+      CodexResearchResponse(
+        workflowId = launch.workflowId,
+        runId = launch.runId,
+        argoWorkflowName = argoWorkflowName,
+        artifactReferences = listOf(artifactReference),
+        startedAt = launch.startedAt,
+      )
+    return Response.status(Response.Status.ACCEPTED).entity(responsePayload).build()
   }
+
+  @POST
+  @Path("/autoresearch")
+  @GrafRouteTemplate("POST /v1/autoresearch")
+  suspend fun startAutoResearch(payload: AutoResearchRequest): Response {
+    val workflowPrefix = autoResearchConfig.workflowNamePrefix
+    val argoWorkflowName = "$workflowPrefix-${UUID.randomUUID()}"
+    val artifactKey = "codex-research/$argoWorkflowName/codex-artifact.json"
+    val launch =
+      withContext(Dispatchers.IO) {
+        autoResearchLauncher.startResearch(payload, argoWorkflowName, artifactKey)
+      }
+    val artifactReference =
+      ArtifactReference(
+        bucket = minioConfig.bucket,
+        key = artifactKey,
+        endpoint = minioConfig.endpoint,
+        region = minioConfig.region,
+      )
+    val responsePayload =
+      AutoResearchLaunchResponse(
+        workflowId = launch.workflowId,
+        runId = launch.runId,
+        argoWorkflowName = argoWorkflowName,
+        artifactReferences = listOf(artifactReference),
+        startedAt = launch.startedAt,
+      )
+    return Response.status(Response.Status.ACCEPTED).entity(responsePayload).build()
+  }
+}

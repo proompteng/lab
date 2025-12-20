@@ -47,7 +47,10 @@ class MicroBarAggregator {
     }
   }
 
-  fun flushAll(forceCurrent: Boolean = false, now: Instant = Instant.now()): List<Envelope<MicroBarPayload>> {
+  fun flushAll(
+    forceCurrent: Boolean = false,
+    now: Instant = Instant.now(),
+  ): List<Envelope<MicroBarPayload>> {
     val flushed = mutableListOf<Envelope<MicroBarPayload>>()
     val iterator = buckets.entries.iterator()
     while (iterator.hasNext()) {
@@ -62,18 +65,22 @@ class MicroBarAggregator {
     return flushed
   }
 
-  private fun flush(symbol: String, bucket: Bucket): Envelope<MicroBarPayload> {
+  private fun flush(
+    symbol: String,
+    bucket: Bucket,
+  ): Envelope<MicroBarPayload> {
     val end = bucket.windowStart.plusSeconds(1)
-    val payload = MicroBarPayload(
-      o = bucket.open,
-      h = bucket.high,
-      l = bucket.low,
-      c = bucket.close,
-      v = bucket.volume,
-      vwap = if (bucket.volume == 0.0) null else bucket.vwapNumerator / bucket.volume,
-      count = bucket.count,
-      t = end,
-    )
+    val payload =
+      MicroBarPayload(
+        o = bucket.open,
+        h = bucket.high,
+        l = bucket.low,
+        c = bucket.close,
+        v = bucket.volume,
+        vwap = if (bucket.volume == 0.0) null else bucket.vwapNumerator / bucket.volume,
+        count = bucket.count,
+        t = end,
+      )
     return Envelope(
       ingestTs = Instant.now(),
       eventTs = end,
@@ -89,19 +96,24 @@ class MicroBarAggregator {
     )
   }
 
-  private fun newBucket(trade: TradePayload, windowStart: Instant) =
-    Bucket(
-      windowStart = windowStart,
-      open = trade.p,
-      high = trade.p,
-      low = trade.p,
-      close = trade.p,
-      volume = trade.s.toDouble(),
-      vwapNumerator = trade.p * trade.s,
-      count = 1,
-    )
+  private fun newBucket(
+    trade: TradePayload,
+    windowStart: Instant,
+  ) = Bucket(
+    windowStart = windowStart,
+    open = trade.p,
+    high = trade.p,
+    low = trade.p,
+    close = trade.p,
+    volume = trade.s.toDouble(),
+    vwapNumerator = trade.p * trade.s,
+    count = 1,
+  )
 
-  private fun updateBucket(bucket: Bucket, trade: TradePayload) {
+  private fun updateBucket(
+    bucket: Bucket,
+    trade: TradePayload,
+  ) {
     bucket.high = max(bucket.high, trade.p)
     bucket.low = min(bucket.low, trade.p)
     bucket.close = trade.p

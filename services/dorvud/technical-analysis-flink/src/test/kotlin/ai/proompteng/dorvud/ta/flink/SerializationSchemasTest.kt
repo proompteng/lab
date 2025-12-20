@@ -49,17 +49,18 @@ class SerializationSchemasTest {
   }
 
   // Build a minimal envelope for potential schema usage if needed later
-  private fun sampleEnvelope(): Envelope<MicroBarPayload> = Envelope(
-    ingestTs = Instant.EPOCH,
-    eventTs = Instant.EPOCH,
-    feed = "test",
-    channel = "test",
-    symbol = "ABC",
-    seq = 1,
-    payload = MicroBarPayload(o = 1.0, h = 1.0, l = 1.0, c = 1.0, v = 1.0, vwap = 1.0, count = 1, t = Instant.EPOCH),
-    isFinal = true,
-    source = "test",
-    window = null,
-    version = 1,
-  )
+  private fun sampleEnvelope(): Envelope<MicroBarPayload> =
+    Envelope(
+      ingestTs = Instant.EPOCH,
+      eventTs = Instant.EPOCH,
+      feed = "test",
+      channel = "test",
+      symbol = "ABC",
+      seq = 1,
+      payload = MicroBarPayload(o = 1.0, h = 1.0, l = 1.0, c = 1.0, v = 1.0, vwap = 1.0, count = 1, t = Instant.EPOCH),
+      isFinal = true,
+      source = "test",
+      window = null,
+      version = 1,
+    )
 }

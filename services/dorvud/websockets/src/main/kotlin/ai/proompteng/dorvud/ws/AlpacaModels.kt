@@ -6,7 +6,9 @@ import kotlinx.serialization.json.JsonElement
 
 /** Alpaca market data frames (v2 streaming). */
 @Serializable
-sealed interface AlpacaMessage { val type: String }
+sealed interface AlpacaMessage {
+  val type: String
+}
 
 @Serializable
 @SerialName("error")

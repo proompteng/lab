@@ -3,8 +3,8 @@ package ai.proompteng.dorvud.ta.stream
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.platform.InstantIsoSerializer
 import ai.proompteng.dorvud.platform.Window
-import java.time.Instant
 import kotlinx.serialization.Serializable
+import java.time.Instant
 
 @Serializable
 data class TradePayload(
@@ -49,16 +49,30 @@ data class TaSignalsPayload(
 )
 
 @Serializable
-data class Macd(val macd: Double, val signal: Double, val hist: Double)
+data class Macd(
+  val macd: Double,
+  val signal: Double,
+  val hist: Double,
+)
 
 @Serializable
-data class Ema(val ema12: Double, val ema26: Double)
+data class Ema(
+  val ema12: Double,
+  val ema26: Double,
+)
 
 @Serializable
-data class Bollinger(val mid: Double, val upper: Double, val lower: Double)
+data class Bollinger(
+  val mid: Double,
+  val upper: Double,
+  val lower: Double,
+)
 
 @Serializable
-data class Vwap(val session: Double, val w5m: Double? = null)
+data class Vwap(
+  val session: Double,
+  val w5m: Double? = null,
+)
 
 @Serializable
 data class Imbalance(
@@ -70,10 +84,16 @@ data class Imbalance(
 )
 
 @Serializable
-data class RealizedVol(val w60s: Double)
+data class RealizedVol(
+  val w60s: Double,
+)
 
 /** Helper to copy envelope with a new payload but the same metadata. */
-fun <T, R> Envelope<T>.withPayload(newPayload: R, window: Window? = this.window, seqOverride: Long? = null): Envelope<R> =
+fun <T, R> Envelope<T>.withPayload(
+  newPayload: R,
+  window: Window? = this.window,
+  seqOverride: Long? = null,
+): Envelope<R> =
   Envelope(
     ingestTs = ingestTs,
     eventTs = eventTs,

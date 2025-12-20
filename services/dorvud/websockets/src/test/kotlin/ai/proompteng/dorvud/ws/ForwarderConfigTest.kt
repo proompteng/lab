@@ -1,23 +1,25 @@
 package ai.proompteng.dorvud.ws
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import java.io.File
 import java.nio.file.Files
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 
 class ForwarderConfigTest {
   @Test
   fun `loads defaults when optional envs missing`() {
-    val cfg = ForwarderConfig.fromEnv(
-      mapOf(
-        "ALPACA_KEY_ID" to "key",
-        "ALPACA_SECRET_KEY" to "secret",
-      ),
-    )
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
+        ),
+      )
 
-    assertEquals(listOf("NVDA"), cfg.symbols)
-    assertEquals(null, cfg.jangarSymbolsUrl)
+    assertEquals("http://jangar.test/api/torghut/symbols", cfg.jangarSymbolsUrl)
     assertEquals(30_000, cfg.symbolsPollIntervalMs)
     assertEquals(200, cfg.subscribeBatchSize)
     assertEquals(1, cfg.shardCount)
@@ -29,14 +31,41 @@ class ForwarderConfigTest {
   }
 
   @Test
+  fun `requires jangar symbols url`() {
+    assertFailsWith<IllegalStateException> {
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+        ),
+      )
+    }
+  }
+
+  @Test
+  fun `rejects empty jangar symbols url`() {
+    assertFailsWith<IllegalStateException> {
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "   ",
+        ),
+      )
+    }
+  }
+
+  @Test
   fun `allows overriding stream url`() {
-    val cfg = ForwarderConfig.fromEnv(
-      mapOf(
-        "ALPACA_KEY_ID" to "key",
-        "ALPACA_SECRET_KEY" to "secret",
-        "ALPACA_STREAM_URL" to "wss://stream.data.sandbox.alpaca.markets",
-      ),
-    )
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
+          "ALPACA_STREAM_URL" to "wss://stream.data.sandbox.alpaca.markets",
+        ),
+      )
 
     assertEquals("wss://stream.data.sandbox.alpaca.markets", cfg.alpacaStreamUrl)
   }
@@ -50,7 +79,7 @@ class ForwarderConfigTest {
       ALPACA_KEY_ID=from-dotenv
       ALPACA_SECRET_KEY=secret
       ALPACA_STREAM_URL=wss://example.test
-      SYMBOLS=MSFT,SPY
+      JANGAR_SYMBOLS_URL=http://jangar.test/api/torghut/symbols
       """.trimIndent(),
     )
 
@@ -63,7 +92,7 @@ class ForwarderConfigTest {
       val cfg = ForwarderConfig.fromEnv()
       assertEquals("from-dotenv", cfg.alpacaKeyId)
       assertEquals("wss://example.test", cfg.alpacaStreamUrl)
-      assertEquals(listOf("MSFT", "SPY"), cfg.symbols)
+      assertEquals("http://jangar.test/api/torghut/symbols", cfg.jangarSymbolsUrl)
     } finally {
       System.setProperty("user.dir", originalUserDir)
       if (originalDotenvPath != null) {
@@ -84,7 +113,7 @@ class ForwarderConfigTest {
       """
       ALPACA_KEY_ID=from-env
       ALPACA_SECRET_KEY=secret-env
-      SYMBOLS=ENVONLY
+      JANGAR_SYMBOLS_URL=http://jangar.env/api/torghut/symbols
       """.trimIndent(),
     )
     val envLocalFile = File(tmpDir, ".env.local")
@@ -92,7 +121,7 @@ class ForwarderConfigTest {
       """
       ALPACA_KEY_ID=from-local
       ALPACA_SECRET_KEY=secret-local
-      SYMBOLS=LOCAL1,LOCAL2
+      JANGAR_SYMBOLS_URL=http://jangar.local/api/torghut/symbols
       """.trimIndent(),
     )
 
@@ -103,7 +132,7 @@ class ForwarderConfigTest {
     try {
       val cfg = ForwarderConfig.fromEnv()
       assertEquals("from-local", cfg.alpacaKeyId)
-      assertEquals(listOf("LOCAL1", "LOCAL2"), cfg.symbols)
+      assertEquals("http://jangar.local/api/torghut/symbols", cfg.jangarSymbolsUrl)
     } finally {
       System.setProperty("user.dir", originalUserDir)
       if (originalDotenvPath != null) {
@@ -127,7 +156,7 @@ class ForwarderConfigTest {
       """
       ALPACA_KEY_ID=from-subdir
       ALPACA_SECRET_KEY=subdir-secret
-      SYMBOLS=FAKEPACA
+      JANGAR_SYMBOLS_URL=http://jangar.subdir/api/torghut/symbols
       KAFKA_BOOTSTRAP=localhost:19092
       """.trimIndent(),
     )
@@ -139,7 +168,7 @@ class ForwarderConfigTest {
       val cfg = ForwarderConfig.fromEnv()
       assertEquals("from-subdir", cfg.alpacaKeyId)
       assertEquals("localhost:19092", cfg.kafka.bootstrapServers)
-      assertEquals(listOf("FAKEPACA"), cfg.symbols)
+      assertEquals("http://jangar.subdir/api/torghut/symbols", cfg.jangarSymbolsUrl)
     } finally {
       System.setProperty("user.dir", originalUserDir)
       envLocal.delete()
@@ -158,7 +187,7 @@ class ForwarderConfigTest {
       """
       ALPACA_KEY_ID=plain-id
       ALPACA_SECRET_KEY=plain-secret
-      SYMBOLS=PLAIN
+      JANGAR_SYMBOLS_URL=http://jangar.plain/api/torghut/symbols
       """.trimIndent(),
     )
 
@@ -170,7 +199,7 @@ class ForwarderConfigTest {
     try {
       val cfg = ForwarderConfig.fromEnv()
       assertEquals("plain-id", cfg.alpacaKeyId)
-      assertEquals(listOf("PLAIN"), cfg.symbols)
+      assertEquals("http://jangar.plain/api/torghut/symbols", cfg.jangarSymbolsUrl)
     } finally {
       if (originalDotenvPath != null) {
         System.setProperty("dotenv.path", originalDotenvPath)
@@ -195,7 +224,7 @@ class ForwarderConfigTest {
       """
       ALPACA_KEY_ID=from-userdir
       ALPACA_SECRET_KEY=userdir-secret
-      SYMBOLS=USERDIR
+      JANGAR_SYMBOLS_URL=http://jangar.userdir/api/torghut/symbols
       """.trimIndent(),
     )
 
@@ -204,7 +233,7 @@ class ForwarderConfigTest {
       """
       ALPACA_KEY_ID=from-explicit
       ALPACA_SECRET_KEY=explicit-secret
-      SYMBOLS=EXPLICIT
+      JANGAR_SYMBOLS_URL=http://jangar.explicit/api/torghut/symbols
       """.trimIndent(),
     )
 
@@ -216,7 +245,7 @@ class ForwarderConfigTest {
     try {
       val cfg = ForwarderConfig.fromEnv()
       assertEquals("from-explicit", cfg.alpacaKeyId)
-      assertEquals(listOf("EXPLICIT"), cfg.symbols)
+      assertEquals("http://jangar.explicit/api/torghut/symbols", cfg.jangarSymbolsUrl)
     } finally {
       if (originalUserDir != null) System.setProperty("user.dir", originalUserDir) else System.clearProperty("user.dir")
       if (originalDotenvPath != null) System.setProperty("dotenv.path", originalDotenvPath) else System.clearProperty("dotenv.path")

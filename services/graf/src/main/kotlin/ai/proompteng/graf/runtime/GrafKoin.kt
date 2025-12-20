@@ -46,8 +46,7 @@ object GrafKoin {
     return koinApplication.koin
   }
 
-  inline fun <reified T : Any> lazyInject(): Lazy<T> =
-    lazy(LazyThreadSafetyMode.NONE) { koin().get<T>() }
+  inline fun <reified T : Any> lazyInject(): Lazy<T> = lazy(LazyThreadSafetyMode.NONE) { koin().get<T>() }
 
   inline fun <reified T : Any> get(): T = koin().get()
 

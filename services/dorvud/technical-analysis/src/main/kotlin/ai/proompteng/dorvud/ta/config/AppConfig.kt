@@ -32,13 +32,21 @@ data class TaServiceConfig(
 object ConfigLoader {
   fun load(): TaServiceConfig {
     val cfg = ConfigFactory.load()
-    fun cfgString(path: String, default: String? = null): String? =
-      if (cfg.hasPath(path)) cfg.getString(path) else default
 
-    fun cfgInt(path: String, default: Int): Int = if (cfg.hasPath(path)) cfg.getInt(path) else default
+    fun cfgString(
+      path: String,
+      default: String? = null,
+    ): String? = if (cfg.hasPath(path)) cfg.getString(path) else default
 
-    fun cfgDuration(path: String, default: Duration): Duration =
-      if (cfg.hasPath(path)) cfg.getDuration(path) else default
+    fun cfgInt(
+      path: String,
+      default: Int,
+    ): Int = if (cfg.hasPath(path)) cfg.getInt(path) else default
+
+    fun cfgDuration(
+      path: String,
+      default: Duration,
+    ): Duration = if (cfg.hasPath(path)) cfg.getDuration(path) else default
 
     val bootstrap = envOr("TA_KAFKA_BOOTSTRAP", cfgString("ta.kafka.bootstrap", "localhost:9092"))
     val tradesTopic = envOr("TA_TRADES_TOPIC", cfgString("ta.topics.trades", "torghut.NVDA.trades.v1"))
@@ -66,6 +74,13 @@ object ConfigLoader {
     )
   }
 
-  private fun envOr(key: String, fallback: String?): String? = System.getenv(key) ?: fallback
-  private fun envOr(key: String, fallback: Int): Int = System.getenv(key)?.toIntOrNull() ?: fallback
+  private fun envOr(
+    key: String,
+    fallback: String?,
+  ): String? = System.getenv(key) ?: fallback
+
+  private fun envOr(
+    key: String,
+    fallback: Int,
+  ): Int = System.getenv(key)?.toIntOrNull() ?: fallback
 }

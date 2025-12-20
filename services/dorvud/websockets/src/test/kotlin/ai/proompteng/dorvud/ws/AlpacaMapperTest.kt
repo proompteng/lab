@@ -17,7 +17,10 @@ class AlpacaMapperTest {
     assertEquals("AAPL", env.symbol)
     assertEquals("trades", env.channel)
     assertEquals(true, env.isFinal)
-    val payloadSymbol = env.payload.jsonObject["S"]?.toString()?.trim('"')
+    val payloadSymbol =
+      env.payload.jsonObject["S"]
+        ?.toString()
+        ?.trim('"')
     assertEquals("AAPL", payloadSymbol)
   }
 

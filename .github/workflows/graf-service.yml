@@ -28,6 +28,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: wrapper
+      - name: Run ktlint
+        working-directory: services/graf
+        run: ./gradlew ktlintCheck
       - name: Run Graf tests
         working-directory: services/graf
         run: ./gradlew clean test

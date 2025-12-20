@@ -14,7 +14,9 @@ import org.koin.core.scope.get
 
 @Provider
 @Priority(Priorities.USER + 5)
-class GrafRequestContextFilter : ContainerRequestFilter, ContainerResponseFilter {
+class GrafRequestContextFilter :
+  ContainerRequestFilter,
+  ContainerResponseFilter {
   override fun filter(requestContext: ContainerRequestContext) {
     val scope = GrafKoin.openRequestScope()
     requestContext.setProperty(SCOPE_PROPERTY, scope)

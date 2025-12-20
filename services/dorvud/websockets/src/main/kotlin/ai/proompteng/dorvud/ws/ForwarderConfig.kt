@@ -21,7 +21,6 @@ data class ForwarderConfig(
   val alpacaFeed: String,
   val alpacaStreamUrl: String,
   val alpacaBaseUrl: String,
-  val symbols: List<String>,
   val jangarSymbolsUrl: String?,
   val symbolsPollIntervalMs: Long,
   val subscribeBatchSize: Int,
@@ -41,8 +40,6 @@ data class ForwarderConfig(
     fun fromEnv(env: Map<String, String>? = null): ForwarderConfig {
       val mergedEnv = env ?: mergeEnv()
 
-      val symbols = mergedEnv["SYMBOLS"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
-        ?: listOf("NVDA")
       val shardCount = mergedEnv["SHARD_COUNT"]?.toIntOrNull() ?: 1
       val shardIndex = mergedEnv["SHARD_INDEX"]?.toIntOrNull() ?: 0
       if (shardCount <= 0) error("SHARD_COUNT must be > 0")
@@ -53,33 +50,41 @@ data class ForwarderConfig(
       if (symbolsPollIntervalMs <= 0) error("SYMBOLS_POLL_INTERVAL_MS must be > 0")
       if (subscribeBatchSize <= 0) error("SUBSCRIBE_BATCH_SIZE must be > 0")
 
-      val topics = TopicConfig(
-        trades = mergedEnv["TOPIC_TRADES"] ?: "torghut.trades.v1",
-        quotes = mergedEnv["TOPIC_QUOTES"] ?: "torghut.quotes.v1",
-        bars1m = mergedEnv["TOPIC_BARS_1M"] ?: "torghut.bars.1m.v1",
-        status = mergedEnv["TOPIC_STATUS"] ?: "torghut.status.v1",
-        tradeUpdates = mergedEnv["TOPIC_TRADE_UPDATES"],
-      )
+      val jangarSymbolsUrl =
+        mergedEnv["JANGAR_SYMBOLS_URL"]?.trim()?.takeIf { it.isNotEmpty() }
+          ?: error("JANGAR_SYMBOLS_URL must be set")
 
-      val kafka = KafkaProducerSettings(
-        bootstrapServers = mergedEnv["KAFKA_BOOTSTRAP"] ?: "localhost:9093",
-        clientId = mergedEnv["KAFKA_CLIENT_ID"] ?: "dorvud-ws",
-        lingerMs = mergedEnv["KAFKA_LINGER_MS"]?.toIntOrNull() ?: 30,
-        batchSize = mergedEnv["KAFKA_BATCH_SIZE"]?.toIntOrNull() ?: 32768,
-        acks = mergedEnv["KAFKA_ACKS"] ?: "all",
-        compressionType = mergedEnv["KAFKA_COMPRESSION"] ?: "lz4",
-        securityProtocol = mergedEnv["KAFKA_SECURITY_PROTOCOL"] ?: "SASL_SSL",
-        auth = KafkaAuth(
-          username = mergedEnv["KAFKA_SASL_USER"] ?: "dorvud-ws",
-          password = mergedEnv["KAFKA_SASL_PASSWORD"] ?: "changeme",
-          mechanism = mergedEnv["KAFKA_SASL_MECH"] ?: "SCRAM-SHA-512",
-        ),
-        tls = KafkaTls(
-          truststorePath = mergedEnv["KAFKA_TRUSTSTORE_PATH"],
-          truststorePassword = mergedEnv["KAFKA_TRUSTSTORE_PASSWORD"],
-          endpointIdentification = mergedEnv["KAFKA_SSL_ENDPOINT_IDENTIFICATION"] ?: "HTTPS",
-        ),
-      )
+      val topics =
+        TopicConfig(
+          trades = mergedEnv["TOPIC_TRADES"] ?: "torghut.trades.v1",
+          quotes = mergedEnv["TOPIC_QUOTES"] ?: "torghut.quotes.v1",
+          bars1m = mergedEnv["TOPIC_BARS_1M"] ?: "torghut.bars.1m.v1",
+          status = mergedEnv["TOPIC_STATUS"] ?: "torghut.status.v1",
+          tradeUpdates = mergedEnv["TOPIC_TRADE_UPDATES"],
+        )
+
+      val kafka =
+        KafkaProducerSettings(
+          bootstrapServers = mergedEnv["KAFKA_BOOTSTRAP"] ?: "localhost:9093",
+          clientId = mergedEnv["KAFKA_CLIENT_ID"] ?: "dorvud-ws",
+          lingerMs = mergedEnv["KAFKA_LINGER_MS"]?.toIntOrNull() ?: 30,
+          batchSize = mergedEnv["KAFKA_BATCH_SIZE"]?.toIntOrNull() ?: 32768,
+          acks = mergedEnv["KAFKA_ACKS"] ?: "all",
+          compressionType = mergedEnv["KAFKA_COMPRESSION"] ?: "lz4",
+          securityProtocol = mergedEnv["KAFKA_SECURITY_PROTOCOL"] ?: "SASL_SSL",
+          auth =
+            KafkaAuth(
+              username = mergedEnv["KAFKA_SASL_USER"] ?: "dorvud-ws",
+              password = mergedEnv["KAFKA_SASL_PASSWORD"] ?: "changeme",
+              mechanism = mergedEnv["KAFKA_SASL_MECH"] ?: "SCRAM-SHA-512",
+            ),
+          tls =
+            KafkaTls(
+              truststorePath = mergedEnv["KAFKA_TRUSTSTORE_PATH"],
+              truststorePassword = mergedEnv["KAFKA_TRUSTSTORE_PASSWORD"],
+              endpointIdentification = mergedEnv["KAFKA_SSL_ENDPOINT_IDENTIFICATION"] ?: "HTTPS",
+            ),
+        )
 
       return ForwarderConfig(
         alpacaKeyId = mergedEnv.getValue("ALPACA_KEY_ID"),
@@ -87,8 +92,7 @@ data class ForwarderConfig(
         alpacaFeed = mergedEnv["ALPACA_FEED"] ?: "iex",
         alpacaStreamUrl = mergedEnv["ALPACA_STREAM_URL"] ?: "wss://stream.data.alpaca.markets",
         alpacaBaseUrl = mergedEnv["ALPACA_BASE_URL"] ?: "https://data.alpaca.markets",
-        symbols = symbols,
-        jangarSymbolsUrl = mergedEnv["JANGAR_SYMBOLS_URL"]?.trim()?.takeIf { it.isNotEmpty() },
+        jangarSymbolsUrl = jangarSymbolsUrl,
         symbolsPollIntervalMs = symbolsPollIntervalMs,
         subscribeBatchSize = subscribeBatchSize,
         shardCount = shardCount,
@@ -134,12 +138,13 @@ data class ForwarderConfig(
 
       // 2) Standard locations (support running from repo root or module dir)
       val userDir = System.getProperty("user.dir") ?: "."
-      val candidateDirs = listOf(
-        File(userDir),
-        File(userDir, "services/dorvud"),
-        File(userDir, "services/dorvud/websockets"),
-        File(userDir, "websockets"),
-      ).distinct().filter { it.exists() }
+      val candidateDirs =
+        listOf(
+          File(userDir),
+          File(userDir, "services/dorvud"),
+          File(userDir, "services/dorvud/websockets"),
+          File(userDir, "websockets"),
+        ).distinct().filter { it.exists() }
 
       candidateDirs.forEach { dir ->
         mergeFrom(File(dir, ".env"))
@@ -149,19 +154,24 @@ data class ForwarderConfig(
       return mergeTarget
     }
 
-    private fun loadWithDotenv(directory: String, filename: String): Map<String, String> {
-      val entries = dotenv {
-        ignoreIfMissing = true
-        ignoreIfMalformed = true
-        this.directory = directory
-        this.filename = filename
-      }.entries().associate { it.key to it.value }
+    private fun loadWithDotenv(
+      directory: String,
+      filename: String,
+    ): Map<String, String> {
+      val entries =
+        dotenv {
+          ignoreIfMissing = true
+          ignoreIfMalformed = true
+          this.directory = directory
+          this.filename = filename
+        }.entries().associate { it.key to it.value }
       return entries
     }
 
     private fun parsePlainEnvFile(file: File): Map<String, String> {
       if (!file.exists()) return emptyMap()
-      return file.readLines()
+      return file
+        .readLines()
         .map { it.trim() }
         .filter { it.isNotEmpty() && !it.startsWith("#") }
         .mapNotNull { line ->
