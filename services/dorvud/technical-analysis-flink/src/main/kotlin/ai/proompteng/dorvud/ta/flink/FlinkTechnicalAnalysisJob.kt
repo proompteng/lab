@@ -200,40 +200,42 @@ private fun applyKafkaSecurity(
 private fun microBarSink(
   config: FlinkTaConfig,
   serde: AvroSerde,
-): KafkaSink<Envelope<MicroBarPayload>> =
-  KafkaSink
-    .builder<Envelope<MicroBarPayload>>()
-    .setBootstrapServers(config.bootstrapServers)
-    .setDeliveryGuarantee(config.deliveryGuarantee)
-    .also {
-      if (config.deliveryGuarantee == DeliveryGuarantee.EXACTLY_ONCE) {
-        it
-          .setTransactionalIdPrefix("${config.clientId}-microbars")
-          .setProperty("transaction.timeout.ms", config.transactionTimeoutMs.toString())
-      }
-    }
-    .setRecordSerializer(MicroBarSerializationSchema(config.microBarsTopic, serde))
-    .setKafkaSecurity(config)
-    .build()
+): KafkaSink<Envelope<MicroBarPayload>> {
+  val sinkBuilder =
+    KafkaSink
+      .builder<Envelope<MicroBarPayload>>()
+      .setBootstrapServers(config.bootstrapServers)
+      .setDeliveryGuarantee(config.deliveryGuarantee)
+
+  if (config.deliveryGuarantee == DeliveryGuarantee.EXACTLY_ONCE) {
+    sinkBuilder.setTransactionalIdPrefix("${config.clientId}-microbars")
+    sinkBuilder.setProperty("transaction.timeout.ms", config.transactionTimeoutMs.toString())
+  }
+
+  sinkBuilder.setRecordSerializer(MicroBarSerializationSchema(config.microBarsTopic, serde))
+  sinkBuilder.setKafkaSecurity(config)
+  return sinkBuilder.build()
+}
 
 private fun signalSink(
   config: FlinkTaConfig,
   serde: AvroSerde,
-): KafkaSink<Envelope<TaSignalsPayload>> =
-  KafkaSink
-    .builder<Envelope<TaSignalsPayload>>()
-    .setBootstrapServers(config.bootstrapServers)
-    .setDeliveryGuarantee(config.deliveryGuarantee)
-    .also {
-      if (config.deliveryGuarantee == DeliveryGuarantee.EXACTLY_ONCE) {
-        it
-          .setTransactionalIdPrefix("${config.clientId}-signals")
-          .setProperty("transaction.timeout.ms", config.transactionTimeoutMs.toString())
-      }
-    }
-    .setRecordSerializer(SignalSerializationSchema(config.signalsTopic, serde))
-    .setKafkaSecurity(config)
-    .build()
+): KafkaSink<Envelope<TaSignalsPayload>> {
+  val sinkBuilder =
+    KafkaSink
+      .builder<Envelope<TaSignalsPayload>>()
+      .setBootstrapServers(config.bootstrapServers)
+      .setDeliveryGuarantee(config.deliveryGuarantee)
+
+  if (config.deliveryGuarantee == DeliveryGuarantee.EXACTLY_ONCE) {
+    sinkBuilder.setTransactionalIdPrefix("${config.clientId}-signals")
+    sinkBuilder.setProperty("transaction.timeout.ms", config.transactionTimeoutMs.toString())
+  }
+
+  sinkBuilder.setRecordSerializer(SignalSerializationSchema(config.signalsTopic, serde))
+  sinkBuilder.setKafkaSecurity(config)
+  return sinkBuilder.build()
+}
 
 internal class MicroBarSerializationSchema(
   private val topic: String,

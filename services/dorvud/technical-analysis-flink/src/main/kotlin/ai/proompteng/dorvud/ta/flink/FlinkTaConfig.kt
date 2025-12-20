@@ -64,15 +64,14 @@ data class FlinkTaConfig(
       fun envDeliveryGuarantee(
         key: String,
         default: DeliveryGuarantee,
-      ): DeliveryGuarantee {
-        return when (env(key)?.trim()?.uppercase()) {
+      ): DeliveryGuarantee =
+        when (env(key)?.trim()?.uppercase()) {
           null -> default
           "EXACTLY_ONCE" -> DeliveryGuarantee.EXACTLY_ONCE
           "AT_LEAST_ONCE" -> DeliveryGuarantee.AT_LEAST_ONCE
           "NONE" -> DeliveryGuarantee.NONE
           else -> default
         }
-      }
 
       val checkpointBase = env("TA_CHECKPOINT_DIR", "s3a://flink-checkpoints/torghut/technical-analysis")
 
