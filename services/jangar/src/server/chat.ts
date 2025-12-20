@@ -163,6 +163,8 @@ const shouldSkipGitWorktree = () => {
   return typeof (globalThis as { Bun?: unknown }).Bun === 'undefined'
 }
 
+const shouldInstallWorktreeDeps = () => process.env.NODE_ENV !== 'test'
+
 const resolveRepoRoot = () => resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
 const resolveCodexBaseCwd = () => {
@@ -213,6 +215,24 @@ const createGitWorktree = async (repoRoot: string, worktreePath: string, worktre
   throw new Error(`git worktree add failed${detail ? `: ${detail}` : ''}`)
 }
 
+const installWorktreeDependencies = async (worktreePath: string) => {
+  if (!shouldInstallWorktreeDeps()) return
+  if (typeof (globalThis as { Bun?: unknown }).Bun === 'undefined') return
+
+  const process = Bun.spawn(['bun', 'install'], {
+    cwd: worktreePath,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const exitCode = await process.exited
+  if (exitCode === 0) return
+
+  const stdout = await readProcessText(process.stdout)
+  const stderr = await readProcessText(process.stderr)
+  const detail = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n')
+  throw new Error(`bun install failed${detail ? `: ${detail}` : ''}`)
+}
+
 const ensureWorktreePath = async (worktreeName: string) => {
   if (!WORKTREE_NAME_PATTERN.test(worktreeName)) {
     throw new Error(`Invalid worktree name '${worktreeName}'`)
@@ -236,10 +256,12 @@ const ensureWorktreePath = async (worktreeName: string) => {
 
   if (shouldSkipGitWorktree()) {
     await mkdir(worktreePath, { recursive: true })
+    await installWorktreeDependencies(worktreePath)
     return worktreePath
   }
 
   await createGitWorktree(resolveCodexBaseCwd(), worktreePath, worktreeName)
+  await installWorktreeDependencies(worktreePath)
   return worktreePath
 }
 
