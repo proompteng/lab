@@ -12,6 +12,7 @@
 ARG BUN_VERSION=1.3.5
 ARG OPENVSCODE_VERSION=1.105.1
 ARG GH_VERSION=2.65.0
+ARG ZOXIDE_VERSION=0.9.8
 ARG KUBECTL_VERSION=1.34.3
 ARG KN_VERSION=1.20.0
 ARG CNPG_VERSION=1.28.0
@@ -25,6 +26,7 @@ FROM oven/bun:${BUN_VERSION} AS tools
 ARG NODE24_VERSION=24.11.1
 ARG OPENVSCODE_VERSION
 ARG GH_VERSION
+ARG ZOXIDE_VERSION
 ARG KUBECTL_VERSION
 ARG KN_VERSION
 ARG CNPG_VERSION
@@ -127,6 +129,23 @@ RUN set -eux; \
   tar -xzf /tmp/gh.tar.gz -C /tmp; \
   install /tmp/gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh /usr/local/bin/gh; \
   rm -rf /tmp/gh.tar.gz /tmp/gh_${GH_VERSION}_linux_${GH_ARCH}
+
+# Install zoxide
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) ZOXIDE_ARCH=x86_64-unknown-linux-musl ;; \
+  arm64|aarch64) ZOXIDE_ARCH=aarch64-unknown-linux-musl ;; \
+  *) echo "Unsupported arch for zoxide: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  cd /tmp; \
+  TARBALL="zoxide-${ZOXIDE_VERSION}-${ZOXIDE_ARCH}.tar.gz"; \
+  BASE_URL="https://github.com/ajeetdsouza/zoxide/releases/download/v${ZOXIDE_VERSION}"; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "${BASE_URL}/${TARBALL}" -o "${TARBALL}"; \
+  tar -xzf "${TARBALL}" -C /tmp; \
+  install -o root -g root -m 0755 /tmp/zoxide /usr/local/bin/zoxide; \
+  rm -f "${TARBALL}" /tmp/zoxide; \
+  zoxide --version
 
 # Install Node.js once for both Bun and tools that expect node
 RUN set -eux; \

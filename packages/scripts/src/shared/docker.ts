@@ -40,17 +40,6 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
   const dockerEnv = { DOCKER_BUILDKIT: process.env.DOCKER_BUILDKIT ?? '1' }
   const noCache = options.noCache ?? (isTruthyEnv(process.env.DOCKER_NO_CACHE) || isTruthyEnv(process.env.NO_CACHE))
 
-  console.log('Building Docker image with configuration:', {
-    image,
-    context: options.context,
-    dockerfile: options.dockerfile,
-    platforms: options.platforms && options.platforms.length > 0 ? options.platforms : undefined,
-    buildArgs: Object.keys(options.buildArgs ?? {}).length ? options.buildArgs : undefined,
-    noCache: noCache || undefined,
-    cacheRef: options.cacheRef,
-    useBuildx: options.useBuildx || undefined,
-  })
-
   let shouldUseBuildx =
     options.useBuildx === true || Boolean(options.cacheRef) || (options.platforms && options.platforms.length > 0)
   if (shouldUseBuildx && !isDockerBuildxAvailable()) {
@@ -58,15 +47,48 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     shouldUseBuildx = false
   }
 
+  let effectiveCacheRef = options.cacheRef
+  let buildxDriver: string | undefined
+  if (shouldUseBuildx && effectiveCacheRef) {
+    buildxDriver = getDockerBuildxDriver()
+    if (buildxDriver === 'docker' && !isTruthyEnv(process.env.DOCKER_BUILDX_ALLOW_DOCKER_DRIVER_CACHE)) {
+      console.warn(
+        'docker buildx is using the docker driver; registry cache export is unsupported. Skipping remote cache.',
+      )
+      effectiveCacheRef = undefined
+    }
+  }
+
+  if (
+    shouldUseBuildx &&
+    !options.useBuildx &&
+    (!options.platforms || options.platforms.length === 0) &&
+    !effectiveCacheRef
+  ) {
+    shouldUseBuildx = false
+  }
+
+  console.log('Building Docker image with configuration:', {
+    image,
+    context: options.context,
+    dockerfile: options.dockerfile,
+    platforms: options.platforms && options.platforms.length > 0 ? options.platforms : undefined,
+    buildArgs: Object.keys(options.buildArgs ?? {}).length ? options.buildArgs : undefined,
+    noCache: noCache || undefined,
+    cacheRef: effectiveCacheRef,
+    buildxDriver: buildxDriver ?? undefined,
+    useBuildx: shouldUseBuildx || undefined,
+  })
+
   if (shouldUseBuildx) {
     const args = ['buildx', 'build', '--push', '-f', options.dockerfile, '-t', image]
     if (noCache) args.push('--no-cache')
     if (options.platforms && options.platforms.length > 0) {
       args.push('--platform', options.platforms.join(','))
     }
-    if (options.cacheRef) {
-      args.push('--cache-from', `type=registry,ref=${options.cacheRef}`)
-      args.push('--cache-to', `type=registry,ref=${options.cacheRef},mode=max`)
+    if (effectiveCacheRef) {
+      args.push('--cache-from', `type=registry,ref=${effectiveCacheRef}`)
+      args.push('--cache-to', `type=registry,ref=${effectiveCacheRef},mode=max`)
     }
     if (options.codexAuthPath) {
       args.push('--secret', `id=codexauth,src=${options.codexAuthPath}`)
@@ -102,6 +124,17 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
 const isDockerBuildxAvailable = (): boolean => {
   const probe = spawnSyncImpl(['docker', 'buildx', 'version'], { cwd: repoRoot })
   return probe.exitCode === 0
+}
+
+const getDockerBuildxDriver = (): string | undefined => {
+  const inspect = spawnSyncImpl(['docker', 'buildx', 'inspect'], { cwd: repoRoot })
+  if (inspect.exitCode !== 0) {
+    return undefined
+  }
+
+  const output = inspect.stdout.toString()
+  const match = output.match(/^Driver:\s+(\S+)/m)
+  return match?.[1]
 }
 
 export const inspectImageDigest = (image: string): string => {
