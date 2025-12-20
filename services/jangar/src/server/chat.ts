@@ -167,7 +167,10 @@ const WORKTREE_NAME_PATTERN = /^[a-z0-9-]+$/
 const isErrno = (error: unknown): error is NodeJS.ErrnoException =>
   typeof error === 'object' && error !== null && 'code' in error
 
-const shouldSkipGitWorktree = () => process.env.NODE_ENV === 'test'
+const shouldSkipGitWorktree = () => {
+  if (process.env.NODE_ENV === 'test') return true
+  return typeof (globalThis as { Bun?: unknown }).Bun === 'undefined'
+}
 
 const resolveRepoRoot = () => resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
@@ -676,8 +679,9 @@ export const handleChatCompletionEffect = (request: Request) =>
           let worktreePath: string
 
           if (worktreeName) {
+            const existingName = worktreeName
             worktreePath = yield* Effect.tryPromise({
-              try: () => ensureWorktreePath(worktreeName),
+              try: () => ensureWorktreePath(existingName),
               catch: (error) =>
                 new RequestError(
                   500,
@@ -695,11 +699,12 @@ export const handleChatCompletionEffect = (request: Request) =>
                   error instanceof Error ? error.message : 'Unable to allocate chat worktree',
                 ),
             })
-            worktreeName = allocation.name
+            const allocatedName = allocation.name
+            worktreeName = allocatedName
             worktreePath = allocation.path
 
             yield* pipe(
-              worktreeState.setWorktreeName(chatId, worktreeName),
+              worktreeState.setWorktreeName(chatId, allocatedName),
               Effect.catchAll((error) => {
                 if (error instanceof OpenWebUiWorktreeStateUnavailableError) {
                   return Effect.fail(new RequestError(500, 'worktree_store_unavailable', error.message))
