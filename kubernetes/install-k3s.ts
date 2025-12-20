@@ -15,7 +15,7 @@ const sshKeyPath = process.env.K3S_SSH_KEY ?? `${homeDir}/.ssh/id_ed25519`
 const kubeConfigPath = process.env.K3S_LOCAL_PATH ?? `${homeDir}/.kube/config`
 const kubeContext = process.env.K3S_CONTEXT ?? 'default'
 const primaryHost = process.env.K3S_PRIMARY_HOST ?? '192.168.1.150'
-const apiLoadBalancer = process.env.K3S_API_LB ?? ''
+const apiLoadBalancer = process.env.K3S_API_LB ?? '192.168.1.200'
 
 function readParallelism(value: string | undefined, fallback: number) {
   if (!value) {
