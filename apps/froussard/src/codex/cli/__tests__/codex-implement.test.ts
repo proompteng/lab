@@ -4,19 +4,24 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runCodexImplementation } from '../codex-implement'
+import type { PushCodexEventsToLokiOptions, RunCodexSessionOptions, RunCodexSessionResult } from '../lib/codex-runner'
 
 const utilMocks = vi.hoisted(() => ({
-  pathExists: vi.fn(async (path: string) => !path.includes('missing')),
-  parseBoolean: vi.fn((value: string | undefined, fallback: boolean) => {
+  pathExists: vi.fn<(path: string) => Promise<boolean>>(async (path) => !path.includes('missing')),
+  parseBoolean: vi.fn<(value: string | undefined, fallback: boolean) => boolean>((value, fallback) => {
     if (value === undefined) {
       return fallback
     }
     return ['1', 'true', 'yes'].includes(value.toLowerCase())
   }),
-  randomRunId: vi.fn(() => 'random123'),
-  timestampUtc: vi.fn(() => '2025-10-11T00:00:00Z'),
-  copyAgentLogIfNeeded: vi.fn(async () => undefined),
-  buildDiscordChannelCommand: vi.fn(async () => ['bun', 'run', 'channel.ts']),
+  randomRunId: vi.fn<() => string>(() => 'random123'),
+  timestampUtc: vi.fn<() => string>(() => '2025-10-11T00:00:00Z'),
+  copyAgentLogIfNeeded: vi.fn<(outputPath: string, agentPath: string) => Promise<void>>(async () => undefined),
+  buildDiscordChannelCommand: vi.fn<(scriptPath: string, args: string[]) => Promise<string[]>>(async () => [
+    'bun',
+    'run',
+    'channel.ts',
+  ]),
 }))
 
 vi.mock('../lib/codex-utils', () => utilMocks)
@@ -28,8 +33,11 @@ const bunUtils = vi.hoisted(() => ({
 vi.mock('bun', () => bunUtils)
 
 const runnerMocks = vi.hoisted(() => ({
-  runCodexSession: vi.fn(async () => ({ agentMessages: [], sessionId: 'session-xyz' })),
-  pushCodexEventsToLoki: vi.fn(async () => {}),
+  runCodexSession: vi.fn<(options: RunCodexSessionOptions) => Promise<RunCodexSessionResult>>(async () => ({
+    agentMessages: [],
+    sessionId: 'session-xyz',
+  })),
+  pushCodexEventsToLoki: vi.fn<(options: PushCodexEventsToLokiOptions) => Promise<void>>(async () => {}),
 }))
 
 vi.mock('../lib/codex-runner', () => runnerMocks)

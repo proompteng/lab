@@ -100,8 +100,12 @@ describe('telemetry', () => {
     autoInstrumentationMock.mockClear()
     setLoggerMock.mockClear()
     diagConsoleLoggerMock.mockClear()
-    processOnSpy = vi.spyOn(process, 'on').mockImplementation(() => process)
-    processOnceSpy = vi.spyOn(process, 'once').mockImplementation(() => process)
+    const processHandle = process as unknown as {
+      on: (...args: unknown[]) => unknown
+      once: (...args: unknown[]) => unknown
+    }
+    processOnSpy = vi.spyOn(processHandle, 'on').mockImplementation(() => processHandle)
+    processOnceSpy = vi.spyOn(processHandle, 'once').mockImplementation(() => processHandle)
   })
 
   afterEach(() => {
@@ -122,7 +126,11 @@ describe('telemetry', () => {
     const module = await import('./telemetry')
 
     expect(nodeSdkCtorMock).toHaveBeenCalledTimes(1)
-    const config = nodeSdkCtorMock.mock.calls[0][0] as { resource: MockResource }
+    const [call] = nodeSdkCtorMock.mock.calls
+    if (!call) {
+      throw new Error('NodeSDK constructor was not called')
+    }
+    const config = call[0] as { resource: MockResource }
 
     expect(config.resource.attributes).toMatchObject({
       'service.name': 'froussard',
@@ -159,7 +167,11 @@ describe('telemetry', () => {
     await import('./telemetry')
 
     expect(nodeSdkCtorMock).toHaveBeenCalledTimes(1)
-    const config = nodeSdkCtorMock.mock.calls[0][0] as { resource: MockResource }
+    const [call] = nodeSdkCtorMock.mock.calls
+    if (!call) {
+      throw new Error('NodeSDK constructor was not called')
+    }
+    const config = call[0] as { resource: MockResource }
 
     expect(config.resource.attributes).toMatchObject({
       'service.instance.id': 'froussard-host',

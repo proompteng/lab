@@ -23,23 +23,31 @@ export const parseIssueNumberFromBranch = (branch: string, prefix: string): numb
     const remainder = branch.slice(prefix.length)
     const match = remainder.match(/^(\d+)/)
     if (match) {
-      const parsed = Number.parseInt(match[1], 10)
-      if (Number.isFinite(parsed)) {
-        return parsed
+      const captured = match[1]
+      if (captured) {
+        const parsed = Number.parseInt(captured, 10)
+        if (Number.isFinite(parsed)) {
+          return parsed
+        }
       }
     }
   }
 
   const fallbackMatch = branch.match(/(\d+)/)
   if (fallbackMatch) {
-    const parsed = Number.parseInt(fallbackMatch[1], 10)
-    if (Number.isFinite(parsed)) {
-      return parsed
+    const captured = fallbackMatch[1]
+    if (captured) {
+      const parsed = Number.parseInt(captured, 10)
+      if (Number.isFinite(parsed)) {
+        return parsed
+      }
     }
   }
 
   return null
 }
+
+export const FORCE_REVIEW_ACTIONS = new Set(['opened', 'ready_for_review', 'reopened'])
 
 const PR_ACTIONS = new Set([
   'opened',
@@ -57,4 +65,13 @@ export const shouldHandlePullRequestAction = (action?: string | null): boolean =
     return false
   }
   return PR_ACTIONS.has(action)
+}
+
+const PR_REVIEW_ACTIONS = new Set(['submitted', 'edited', 'dismissed'])
+
+export const shouldHandlePullRequestReviewAction = (action?: string | null): boolean => {
+  if (!action) {
+    return false
+  }
+  return PR_REVIEW_ACTIONS.has(action)
 }

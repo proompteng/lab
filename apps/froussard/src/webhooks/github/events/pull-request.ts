@@ -1,9 +1,9 @@
 import type { ReadyCommentCommand } from '@/codex/workflow-machine'
 import { deriveRepositoryFullName, type GithubRepository } from '@/github-payload'
 import { logger } from '@/logger'
+import type { WebhookConfig } from '../../types'
 import { CODEX_READY_COMMENT_MARKER, CODEX_READY_TO_MERGE_COMMENT } from '../constants'
 import { shouldHandlePullRequestAction } from '../helpers'
-import type { WebhookConfig } from '../types'
 import type { WorkflowExecutionContext, WorkflowStage } from '../workflow'
 import { executeWorkflowCommands } from '../workflow'
 

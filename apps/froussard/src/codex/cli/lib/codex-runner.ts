@@ -10,7 +10,7 @@ export interface DiscordChannelOptions {
 }
 
 export interface RunCodexSessionOptions {
-  stage: 'implementation' | 'research'
+  stage: 'planning' | 'implementation' | 'review' | 'research'
   prompt: string
   outputPath: string
   jsonOutputPath: string
@@ -119,9 +119,10 @@ const createWritableHandle = (stream: unknown): WritableHandle | undefined => {
   }
 
   if (typeof candidate.write === 'function') {
+    const write = candidate.write
     return {
       write: async (chunk: string) => {
-        candidate.write(chunk)
+        write(chunk)
         if (typeof candidate.flush === 'function') {
           try {
             await candidate.flush()
@@ -145,7 +146,7 @@ const createWritableHandle = (stream: unknown): WritableHandle | undefined => {
 
 const writeLine = (stream: WriteStream, content: string) => {
   return new Promise<void>((resolve, reject) => {
-    stream.write(`${content}\n`, (error) => {
+    stream.write(`${content}\n`, (error: Error | null | undefined) => {
       if (error) {
         reject(error)
       } else {
@@ -157,7 +158,7 @@ const writeLine = (stream: WriteStream, content: string) => {
 
 const closeStream = (stream: WriteStream) => {
   return new Promise<void>((resolve, reject) => {
-    stream.end((error) => {
+    stream.end((error: Error | null | undefined) => {
       if (error) {
         reject(error)
       } else {
@@ -389,9 +390,12 @@ export const runCodexSession = async ({
       break
     }
 
-    const { value, done } = readResult as ReadableStreamDefaultReadResult<Uint8Array>
+    const { value, done } = readResult as { value?: Uint8Array; done?: boolean }
     if (done) {
       break
+    }
+    if (!value) {
+      continue
     }
     buffer += decoder.decode(value, { stream: true })
 

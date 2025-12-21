@@ -1,22 +1,12 @@
 import { Schema } from 'effect'
 
-import {
-  buildCodexBranchName,
-  buildCodexPrompt,
-  type CodexTaskMessage,
-  normalizeLogin,
-} from '@/codex'
+import { buildCodexBranchName, buildCodexPrompt, type CodexTaskMessage, normalizeLogin } from '@/codex'
 import type { ImplementationCommand } from '@/codex/workflow-machine'
 import { selectReactionRepository } from '@/codex-workflow'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent } from '@/github-payload'
-import { logger } from '@/logger'
-import {
-  PROTO_CODEX_TASK_FULL_NAME,
-  PROTO_CODEX_TASK_SCHEMA,
-  PROTO_CONTENT_TYPE,
-} from '../constants'
+import type { WebhookConfig } from '../../types'
+import { PROTO_CODEX_TASK_FULL_NAME, PROTO_CODEX_TASK_SCHEMA, PROTO_CONTENT_TYPE } from '../constants'
 import { toCodexTaskProto } from '../payloads'
-import type { WebhookConfig } from '../types'
 import type { WorkflowExecutionContext, WorkflowStage } from '../workflow'
 import { executeWorkflowCommands } from '../workflow'
 
@@ -33,8 +23,15 @@ const SenderSchema = Schema.optionalWith(
   Schema.Struct({
     login: Schema.optionalWith(Schema.String, { nullable: true }),
   }),
-  { nullable: true, default: () => undefined },
+  { nullable: true, default: () => ({}) },
 )
+
+const RepositoryValueSchema = Schema.Struct({
+  full_name: Schema.optionalWith(Schema.String, { nullable: true }),
+  default_branch: Schema.optionalWith(Schema.String, { nullable: true }),
+})
+
+const RepositorySchema = Schema.optionalWith(RepositoryValueSchema, { nullable: true, default: () => ({}) })
 
 const IssueSchema = Schema.Struct({
   number: Schema.Number,
@@ -42,6 +39,7 @@ const IssueSchema = Schema.Struct({
   body: Schema.optionalWith(Schema.String, { nullable: true }),
   html_url: Schema.optionalWith(Schema.String, { nullable: true }),
   repository_url: Schema.optionalWith(Schema.String, { nullable: true }),
+  repository: Schema.optionalWith(RepositoryValueSchema, { nullable: true }),
   pull_request: Schema.optionalWith(
     Schema.Struct({
       url: Schema.optionalWith(Schema.String, { nullable: true }),
@@ -57,21 +55,13 @@ const IssueSchema = Schema.Struct({
   ),
 })
 
-const RepositorySchema = Schema.optionalWith(
-  Schema.Struct({
-    full_name: Schema.optionalWith(Schema.String, { nullable: true }),
-    default_branch: Schema.optionalWith(Schema.String, { nullable: true }),
-  }),
-  { nullable: true, default: () => ({}) },
-)
-
 const IssueOpenedPayloadSchema = Schema.Struct({
   issue: IssueSchema,
   repository: RepositorySchema,
   sender: SenderSchema,
 })
 
-type IssueOpenedPayload = Schema.Type<typeof IssueOpenedPayloadSchema>
+type IssueOpenedPayload = Schema.Schema.Type<typeof IssueOpenedPayloadSchema>
 
 export const IssueCommentPayloadSchema = Schema.Struct({
   issue: IssueSchema,
@@ -92,7 +82,7 @@ export const IssueCommentPayloadSchema = Schema.Struct({
   }),
 })
 
-export type IssueCommentPayload = Schema.Type<typeof IssueCommentPayloadSchema>
+export type IssueCommentPayload = Schema.Schema.Type<typeof IssueCommentPayloadSchema>
 
 export const handleIssueOpened = async (params: BaseIssueParams): Promise<WorkflowStage | null> => {
   const { parsedPayload, headers, config, executionContext, deliveryId, senderLogin } = params

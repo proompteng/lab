@@ -41,11 +41,6 @@ describe('KafkaProducerLayer', () => {
         codexStructured: 'github.issues.codex.tasks',
         discordCommands: 'discord-topic',
       },
-      sasl: {
-        mechanism: 'scram-sha-512',
-        username: 'user',
-        password: 'pass',
-      },
     },
     codebase: {
       baseBranch: 'main',

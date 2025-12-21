@@ -44,7 +44,7 @@ export const createCodexLogger = async ({ logPath, context }: CreateCodexLoggerO
       ...sanitizedContext,
     }
 
-    writeLine(stream, JSON.stringify(entry)).catch((error) => {
+    writeLine(stream, JSON.stringify(entry)).catch((error: Error) => {
       console.error('Failed to write Codex log entry', error)
     })
   }
@@ -59,7 +59,7 @@ export const createCodexLogger = async ({ logPath, context }: CreateCodexLoggerO
       return
     }
     await new Promise<void>((resolve, reject) => {
-      stream?.end((error) => {
+      stream?.end((error: Error | null | undefined) => {
         if (error) {
           reject(error)
         } else {
@@ -84,7 +84,7 @@ type LogLevel = 'info' | 'warn' | 'error' | 'debug'
 
 const writeLine = (stream: WriteStream, content: string) => {
   return new Promise<void>((resolve, reject) => {
-    stream.write(`${content}\n`, (error) => {
+    stream.write(`${content}\n`, (error: Error | null | undefined) => {
       if (error) {
         reject(error)
       } else {

@@ -88,7 +88,7 @@ export const createDiscordWebhookHandler =
         })
       }
 
-      const rawContent = (event.options.content ?? '').toString().trim()
+      const rawContent = (event.options?.content ?? '').toString().trim()
       const promptContent = rawContent.length > 0 ? rawContent : 'Provide an implementation summary.'
       const firstLine = promptContent.split('\n')[0]?.trim() ?? ''
       const derivedTitle = firstLine.length > 0 ? firstLine : 'Discord implementation request'

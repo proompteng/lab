@@ -14,20 +14,48 @@ const loadYaml = async <T = unknown>(relativePath: string): Promise<T> => {
   return YAML.parse(content) as T
 }
 
+interface SensorSpec {
+  spec?: {
+    triggers?: Array<{
+      template?: {
+        name?: string
+        k8s?: {
+          parameters?: Array<{
+            dest?: string
+            src?: {
+              dataTemplate?: string
+            }
+          }>
+        }
+      }
+    }>
+  }
+}
+
+interface WorkflowTemplate {
+  spec?: {
+    templates?: Array<{
+      container?: {
+        args?: string[]
+      }
+    }>
+  }
+}
+
 describe('Codex Argo manifests', () => {
   it('base64-encodes Codex task payloads before submitting workflows', async () => {
-    const sensor = await loadYaml<Record<string, unknown>>('argocd/applications/froussard/github-codex-sensor.yaml')
-    const triggers: Array<Record<string, unknown>> = sensor?.spec?.triggers ?? []
+    const sensor = await loadYaml<SensorSpec>('argocd/applications/froussard/github-codex-sensor.yaml')
+    const triggers = sensor.spec?.triggers ?? []
     const triggerNames = ['implementation-workflow']
 
     for (const name of triggerNames) {
-      const trigger = triggers.find((entry) => entry?.template?.name === name)
+      const trigger = triggers.find((entry) => entry.template?.name === name)
       expect(trigger, `missing trigger ${name}`).toBeTruthy()
-      const parameters: Array<Record<string, unknown>> = trigger?.template?.k8s?.parameters ?? []
+      const parameters = trigger?.template?.k8s?.parameters ?? []
       const destinations = ['spec.arguments.parameters.0.value', 'spec.arguments.parameters.1.value']
 
       for (const dest of destinations) {
-        const param = parameters.find((entry) => entry?.dest === dest)
+        const param = parameters.find((entry) => entry.dest === dest)
         expect(param, `missing parameter ${dest} on ${name}`).toBeTruthy()
         expect(param?.src?.dataTemplate, `${name}:${dest} not encoded`).toMatch(/b64enc/)
       }
@@ -38,8 +66,8 @@ describe('Codex Argo manifests', () => {
     const templatePaths = ['argocd/applications/froussard/github-codex-implementation-workflow-template.yaml']
 
     for (const relativePath of templatePaths) {
-      const template = await loadYaml<Record<string, unknown>>(relativePath)
-      const implementTemplate = template?.spec?.templates?.[0]
+      const template = await loadYaml<WorkflowTemplate>(relativePath)
+      const implementTemplate = template.spec?.templates?.[0]
       const script: string | undefined = implementTemplate?.container?.args?.[2]
       expect(script, `missing bootstrap script for ${relativePath}`).toBeTruthy()
       expect(script, `workflow ${relativePath} does not decode payloads`).toContain('base64 --decode')

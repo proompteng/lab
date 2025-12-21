@@ -8,7 +8,7 @@ import {
   markPullRequestReadyForReview,
 } from '@/services/github/pull-requests'
 import { listPullRequestReviewThreads } from '@/services/github/reviews'
-import type { FetchLike, FetchResponse } from '@/services/github/types'
+import type { FetchLike } from '@/services/github/types'
 
 const READY_COMMENT_MARKER = '<!-- codex:ready -->'
 
@@ -640,7 +640,7 @@ describe('markPullRequestReadyForReview', () => {
 
   it('returns ok when GitHub accepts the mutation', async () => {
     const fetchSpy = vi
-      .fn<Parameters<FetchLike>, Promise<FetchResponse>>()
+      .fn<FetchLike>()
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -665,7 +665,7 @@ describe('markPullRequestReadyForReview', () => {
 
   it('returns http-error when GitHub rejects the request', async () => {
     const fetchSpy = vi
-      .fn<Parameters<FetchLike>, Promise<FetchResponse>>()
+      .fn<FetchLike>()
       .mockResolvedValueOnce({
         ok: true,
         status: 200,

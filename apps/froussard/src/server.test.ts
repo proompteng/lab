@@ -5,7 +5,7 @@ import type { AppConfig } from '@/effect/config'
 const ensureConnectedSpy = vi.fn()
 
 vi.mock('@/effect/config', () => {
-  const effect = require('effect')
+  const effect = require('effect') as typeof import('effect')
   const { Effect, Layer } = effect
 
   class AppConfigService extends Effect.Tag('@test/AppConfig')<AppConfigService, AppConfig>() {}
@@ -18,11 +18,6 @@ vi.mock('@/effect/config', () => {
       password: 'pass',
       clientId: 'client',
       topics: { raw: 'raw', codex: 'codex', codexStructured: 'codex-structured', discordCommands: 'discord' },
-      sasl: {
-        mechanism: 'scram-sha-512',
-        username: 'user',
-        password: 'pass',
-      },
     },
     codebase: {
       baseBranch: 'main',
@@ -54,7 +49,7 @@ vi.mock('@/effect/config', () => {
 })
 
 vi.mock('@/services/kafka', () => {
-  const effect = require('effect')
+  const effect = require('effect') as typeof import('effect')
   const { Effect, Layer } = effect
 
   class KafkaProducer extends Effect.Tag('@test/KafkaProducer')<
@@ -84,7 +79,7 @@ vi.mock('@/services/kafka', () => {
 })
 
 vi.mock('@/services/github/service', () => {
-  const effect = require('effect')
+  const effect = require('effect') as typeof import('effect')
   const { Effect, Layer } = effect
 
   class GithubService extends Effect.Tag('@test/GithubService')<
@@ -189,12 +184,14 @@ describe('server bootstrap', () => {
     const { createApp } = await import('@/index')
     createApp()
 
-    const rootCall = mockApp.get.mock.calls.find(([path]) => path === '/')
+    const rootCall = (mockApp.get.mock.calls as unknown as Array<[string, (...args: unknown[]) => unknown]>).find(
+      ([path]) => path === '/',
+    )
     expect(rootCall).toBeDefined()
 
     const handler = rootCall?.[1]
     expect(handler).toBeTypeOf('function')
-    const response = await handler?.()
+    const response = (await handler?.()) as Response | undefined
     expect(response).toBeInstanceOf(Response)
     if (!response) {
       throw new Error('expected root handler to return a response')

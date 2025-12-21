@@ -119,7 +119,9 @@ describe('plan modal helpers', () => {
     const modal = buildPlanModalResponse(baseCommandInteraction)
     expect(modal.type).toBe(9)
     expect(modal.data.custom_id).toBe('plan:cmd-123')
-    expect(modal.data.components[0].components[0].custom_id).toBe('content')
+    const firstRow = modal.data.components[0]
+    const firstField = firstRow?.components[0]
+    expect(firstField?.custom_id).toBe('content')
   })
 
   it('normalises modal submission content', () => {
@@ -159,7 +161,7 @@ describe('plan modal helpers', () => {
     expect(event.command).toBe('plan')
     expect(event.commandId).toBe('cmd-123')
     expect(event.options).toEqual({ content: 'Ship the release' })
-    expect(event.user.id).toBe('user-123')
+    expect(event.user?.id).toBe('user-123')
     expect(event.response).toEqual({ type: 4, flags: 64 })
   })
 
@@ -174,7 +176,7 @@ describe('plan modal helpers', () => {
     } as DiscordModalSubmitInteraction
 
     expect(() => toPlanModalEvent(modalSubmission, { deferType: 'channel-message', ephemeral: false })).toThrow(
-      /Unsupported implementation modal identifier/,
+      /Unsupported plan modal identifier/,
     )
   })
 })

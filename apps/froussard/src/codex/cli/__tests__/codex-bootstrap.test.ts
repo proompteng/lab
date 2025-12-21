@@ -6,10 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runCodexBootstrap } from '../codex-bootstrap'
 
 const bunMocks = vi.hoisted(() => {
-  const execMock = vi.fn(async () => ({ text: async () => '' }))
+  const execMock = vi.fn(async (_options: { command: string; cwd?: string }) => ({ text: async () => '' }))
   const spawnMock = vi.fn(() => ({ exited: Promise.resolve(0) }))
   const whichMock = vi.fn(async (command: string) => command)
   const exitCodeOverrides = new Map<string, number>()
+  const isTemplateStringsArray = (value: unknown): value is TemplateStringsArray =>
+    Array.isArray(value) && Object.hasOwn(value, 'raw')
 
   const resolveExitCode = (command: string): number => {
     for (const [needle, code] of exitCodeOverrides.entries()) {
@@ -35,8 +37,8 @@ const bunMocks = vi.hoisted(() => {
 
   const dollar = (...args: unknown[]) => {
     const first = args[0]
-    if (Array.isArray(first) && Object.hasOwn(first, 'raw')) {
-      return makeTagged()(first as TemplateStringsArray, ...(args.slice(1) as unknown[]))
+    if (isTemplateStringsArray(first)) {
+      return makeTagged()(first, ...(args.slice(1) as unknown[]))
     }
     if (typeof first === 'object' && first !== null) {
       const options = first as { cwd?: string }
@@ -74,7 +76,7 @@ const resetEnv = () => {
 
 describe('runCodexBootstrap', () => {
   let workdir: string
-  let chdirSpy: ReturnType<typeof vi.spyOn<typeof process, 'chdir'>>
+  let chdirSpy: ReturnType<typeof vi.spyOn>
 
   beforeEach(async () => {
     workdir = await mkdtemp(join(tmpdir(), 'codex-bootstrap-test-'))

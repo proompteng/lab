@@ -5,9 +5,11 @@ import { Effect } from 'effect'
 import type { Effect as EffectType } from 'effect/Effect'
 import * as TSemaphore from 'effect/TSemaphore'
 
+import type { AppConfigService } from '@/effect/config'
 import type { AppRuntime } from '@/effect/runtime'
-import { logger } from '@/logger'
+import { type AppLogger, logger } from '@/logger'
 import { GithubService } from '@/services/github/service'
+import type { KafkaProducer } from '@/services/kafka'
 
 import { handleIssueCommentCreated, handleIssueOpened } from './github/events/issues'
 import { handlePullRequestEvent } from './github/events/pull-request'
@@ -91,8 +93,9 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
   )
   const githubSemaphore = TSemaphore.unsafeMake(4)
 
-  const runGithub = <R, E, A>(factory: () => EffectType<R, E, A>) =>
-    runtime.runPromise(TSemaphore.withPermits(githubSemaphore, 1)(factory()))
+  const runGithub = <A, E>(
+    factory: () => EffectType<A, E, AppLogger | AppConfigService | GithubService | KafkaProducer>,
+  ) => runtime.runPromise(TSemaphore.withPermits(githubSemaphore, 1)(factory()))
 
   return async (rawBody: string, request: Request): Promise<Response> => {
     const signatureHeader = request.headers.get('x-hub-signature-256')
@@ -188,19 +191,17 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
         }
       }
 
-      if (eventName === 'issue_comment') {
-        if (actionValue === 'created') {
-          const stage = await handleIssueCommentCreated({
-            parsedPayload,
-            headers,
-            config,
-            executionContext,
-            deliveryId,
-            senderLogin,
-          })
-          if (stage) {
-            codexStageTriggered = stage
-          }
+      if (eventName === 'issue_comment' && actionValue === 'created') {
+        const stage = await handleIssueCommentCreated({
+          parsedPayload,
+          headers,
+          config,
+          executionContext,
+          deliveryId,
+          senderLogin,
+        })
+        if (stage) {
+          codexStageTriggered = stage
         }
       }
 

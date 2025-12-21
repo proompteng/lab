@@ -1,8 +1,10 @@
 import { fromBinary } from '@bufbuild/protobuf'
 import { Effect, Layer } from 'effect'
-import { type ManagedRuntime, make as makeManagedRuntime } from 'effect/ManagedRuntime'
+import { make as makeManagedRuntime } from 'effect/ManagedRuntime'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { type AppConfig, AppConfigService } from '@/effect/config'
+import type { AppRuntime } from '@/effect/runtime'
 import { AppLogger } from '@/logger'
 import { CommandEventSchema as FacteurCommandEventSchema } from '@/proto/proompteng/facteur/v1/contract_pb'
 import { CodexTaskSchema, CodexTaskStage } from '@/proto/proompteng/froussard/v1/codex_task_pb'
@@ -102,7 +104,7 @@ const toBuffer = (value: KafkaMessage['value']): Buffer => {
 }
 
 describe('createWebhookHandler', () => {
-  let runtime: ManagedRuntime<unknown, never>
+  let runtime: AppRuntime
   let publishedMessages: KafkaMessage[]
   let githubServiceMock: {
     postIssueReaction: ReturnType<typeof vi.fn>
@@ -150,6 +152,44 @@ describe('createWebhookHandler', () => {
   }
 
   const provideRuntime = () => {
+    const appConfig: AppConfig = {
+      githubWebhookSecret: 'secret',
+      kafka: {
+        brokers: ['localhost:9092'],
+        username: 'user',
+        password: 'pass',
+        clientId: 'froussard-webhook-producer',
+        topics: {
+          raw: baseConfig.topics.raw,
+          codex: baseConfig.topics.codex,
+          codexStructured: baseConfig.topics.codexStructured,
+          discordCommands: baseConfig.topics.discordCommands,
+        },
+      },
+      codebase: {
+        baseBranch: baseConfig.codebase.baseBranch,
+        branchPrefix: baseConfig.codebase.branchPrefix,
+      },
+      codex: {
+        triggerLogins: [...baseConfig.codexTriggerLogins],
+        workflowLogin: baseConfig.codexWorkflowLogin,
+        implementationTriggerPhrase: baseConfig.codexImplementationTriggerPhrase,
+      },
+      discord: {
+        publicKey: baseConfig.discord.publicKey,
+        defaultResponse: {
+          deferType: 'channel-message',
+          ephemeral: baseConfig.discord.response.ephemeral,
+        },
+      },
+      github: {
+        token: baseConfig.github.token,
+        ackReaction: baseConfig.github.ackReaction,
+        apiBaseUrl: baseConfig.github.apiBaseUrl,
+        userAgent: baseConfig.github.userAgent,
+      },
+    }
+    const configLayer = Layer.succeed(AppConfigService, appConfig)
     const kafkaLayer = Layer.succeed(KafkaProducer, {
       publish: (message: KafkaMessage) =>
         Effect.sync(() => {
@@ -177,7 +217,7 @@ describe('createWebhookHandler', () => {
       listPullRequestCheckFailures: githubServiceMock.listPullRequestCheckFailures,
     })
 
-    runtime = makeManagedRuntime(Layer.mergeAll(loggerLayer, kafkaLayer, githubLayer))
+    runtime = makeManagedRuntime(Layer.mergeAll(configLayer, loggerLayer, kafkaLayer, githubLayer))
   }
 
   beforeEach(() => {
@@ -281,9 +321,7 @@ describe('createWebhookHandler', () => {
         )
         expect(implementationStructuredMessage).toBeTruthy()
         expect(githubServiceMock.postIssueReaction).not.toHaveBeenCalled()
-        expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
-          expect.objectContaining({ issueNumber: 42 }),
-        )
+        expect(mockBuildCodexPrompt).toHaveBeenCalledWith(expect.objectContaining({ issueNumber: 42 }))
       },
     },
     {
@@ -310,9 +348,7 @@ describe('createWebhookHandler', () => {
       assert: (body) => {
         expect(body).toMatchObject({ codexStageTriggered: 'implementation' })
         expect(publishedMessages.filter((message) => message.topic === 'codex-topic')).toHaveLength(1)
-        expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
-          expect.objectContaining({ issueNumber: 99 }),
-        )
+        expect(mockBuildCodexPrompt).toHaveBeenCalledWith(expect.objectContaining({ issueNumber: 99 }))
       },
     },
     {
@@ -503,6 +539,9 @@ describe('createWebhookHandler', () => {
     expect(response.status).toBe(202)
     expect(publishedMessages).toHaveLength(3)
     const [implementationJsonMessage, implementationStructuredMessage, rawJsonMessage] = publishedMessages
+    if (!implementationStructuredMessage) {
+      throw new Error('missing structured message')
+    }
 
     expect(implementationJsonMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-1-implementation' })
     expect(implementationStructuredMessage).toMatchObject({
@@ -548,6 +587,9 @@ describe('createWebhookHandler', () => {
 
     expect(publishedMessages).toHaveLength(3)
     const [implementationJsonMessage, implementationStructuredMessage, rawJsonMessage] = publishedMessages
+    if (!implementationStructuredMessage) {
+      throw new Error('missing structured message')
+    }
 
     expect(implementationJsonMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-2-implementation' })
     expect(implementationStructuredMessage).toMatchObject({
@@ -879,8 +921,12 @@ describe('createWebhookHandler', () => {
     expect(publishedMessages).toHaveLength(1)
 
     const [discordMessage] = publishedMessages
+    if (!discordMessage) {
+      throw new Error('missing discord message')
+    }
     expect(discordMessage).toMatchObject({ topic: 'discord-topic', key: 'interaction-123' })
-    expect(discordMessage.headers['content-type']).toBe('application/x-protobuf')
+    const headers = discordMessage.headers ?? {}
+    expect(headers['content-type']).toBe('application/x-protobuf')
 
     const protoEvent = fromBinary(FacteurCommandEventSchema, toBuffer(discordMessage.value))
     expect(protoEvent.options).toEqual(

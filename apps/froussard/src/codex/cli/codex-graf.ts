@@ -47,6 +47,9 @@ const parseArgs = (argv: string[]): Options => {
   const result: Options = { method: 'POST', dryRun: false }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
+    if (!arg) {
+      continue
+    }
     switch (arg) {
       case '--endpoint':
         result.endpoint = argv[++i]
@@ -87,7 +90,8 @@ const parseArgs = (argv: string[]): Options => {
 }
 
 const readFromStdin = async (stdin: NodeJS.ReadableStream): Promise<string> => {
-  if (stdin.isTTY) {
+  const tty = (stdin as NodeJS.ReadStream & { isTTY?: boolean }).isTTY
+  if (tty) {
     throw new Error('Payload must be provided via --body, --body-file, or stdin')
   }
   let content = ''

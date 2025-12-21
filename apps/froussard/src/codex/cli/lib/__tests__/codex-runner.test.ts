@@ -4,9 +4,17 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { pushCodexEventsToLoki, runCodexSession } from '../codex-runner'
 
+type BunProcess = {
+  stdin?: unknown
+  stdout?: unknown
+  stderr?: unknown
+  exited: Promise<number>
+  kill?: () => void
+}
+
 const bunGlobals = vi.hoisted(() => {
-  const spawn = vi.fn()
-  const file = vi.fn()
+  const spawn = vi.fn<(options: { cmd?: string[] }) => BunProcess>()
+  const file = vi.fn<(path: string) => { text: () => Promise<string> }>()
   ;(globalThis as unknown as { Bun?: unknown }).Bun = { spawn, file }
   return { spawn, file }
 })
@@ -80,7 +88,7 @@ describe('codex-runner', () => {
     const agentOutputPath = join(workspace, 'agent.log')
     const result = await runCodexSession({
       stage: 'implementation',
-      prompt: 'Implement please',
+      prompt: 'Plan please',
       outputPath,
       jsonOutputPath,
       agentOutputPath,
@@ -121,7 +129,9 @@ describe('codex-runner', () => {
     )
     expect(spawnArgs?.cmd).toContain('resume')
     const resumeIndex = spawnArgs?.cmd?.indexOf('resume')
-    expect(resumeIndex).toBeGreaterThan(-1)
+    if (resumeIndex === undefined || resumeIndex < 0) {
+      throw new Error('resume argument missing')
+    }
     expect(spawnArgs?.cmd?.[resumeIndex + 1]).toBe('resume-41')
     expect(result.sessionId).toBe('resume-42')
   })
@@ -175,7 +185,7 @@ describe('codex-runner', () => {
 
     const result = await runCodexSession({
       stage: 'implementation',
-      prompt: 'Implement',
+      prompt: 'Plan',
       outputPath,
       jsonOutputPath,
       agentOutputPath,
@@ -201,7 +211,7 @@ describe('codex-runner', () => {
 
     await runCodexSession({
       stage: 'implementation',
-      prompt: 'Implement please',
+      prompt: 'Plan please',
       outputPath,
       jsonOutputPath,
       agentOutputPath,
@@ -210,6 +220,9 @@ describe('codex-runner', () => {
     const spawnArgs = spawnMock.mock.calls[0]?.[0]
     expect(spawnArgs?.cmd).toContain('-m')
     const modelIndex = spawnArgs?.cmd?.indexOf('-m')
+    if (modelIndex === undefined || modelIndex < 0) {
+      throw new Error('model flag missing')
+    }
     expect(spawnArgs?.cmd?.[modelIndex + 1]).toBe('gpt-5.2-codex')
 
     process.env.CODEX_MODEL = originalModel
@@ -258,7 +271,9 @@ describe('codex-runner', () => {
       'utf8',
     )
 
-    const fetchMock = vi.fn(async () => ({ ok: true }))
+    const fetchMock = vi.fn<(input: string | URL, init?: RequestInit) => Promise<{ ok: boolean }>>(async () => ({
+      ok: true,
+    }))
     global.fetch = fetchMock as unknown as typeof fetch
 
     await pushCodexEventsToLoki({
@@ -284,7 +299,9 @@ describe('codex-runner', () => {
     await writeFile(agentPath, 'Agent says hello\nAnother line', 'utf8')
     await writeFile(runtimePath, 'runtime started\nruntime finished', 'utf8')
 
-    const fetchMock = vi.fn(async () => ({ ok: true }))
+    const fetchMock = vi.fn<(input: string | URL, init?: RequestInit) => Promise<{ ok: boolean }>>(async () => ({
+      ok: true,
+    }))
     global.fetch = fetchMock as unknown as typeof fetch
 
     await pushCodexEventsToLoki({
@@ -495,7 +512,7 @@ describe('codex-runner', () => {
     process.env.CODEX_EXIT_GRACE_MS = '20'
 
     const sessionPromise = runCodexSession({
-      stage: 'implementation',
+      stage: 'review',
       prompt: 'turn-complete',
       outputPath,
       jsonOutputPath,

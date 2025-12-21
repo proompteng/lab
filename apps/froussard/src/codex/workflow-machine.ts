@@ -13,7 +13,7 @@ export const ImplementationCommandSchema = Schema.Struct({
   structuredHeaders: Schema.Unknown,
 })
 
-export type ImplementationCommand = Schema.Type<typeof ImplementationCommandSchema>
+export type ImplementationCommand = Schema.Schema.Type<typeof ImplementationCommandSchema>
 
 export const ReadyCommentCommandSchema = Schema.Struct({
   repositoryFullName: Schema.String,
@@ -23,7 +23,7 @@ export const ReadyCommentCommandSchema = Schema.Struct({
   marker: Schema.String,
 })
 
-export type ReadyCommentCommand = Schema.Type<typeof ReadyCommentCommandSchema>
+export type ReadyCommentCommand = Schema.Schema.Type<typeof ReadyCommentCommandSchema>
 
 export const WorkflowCommandSchema = Schema.Union(
   Schema.Struct({
@@ -36,4 +36,4 @@ export const WorkflowCommandSchema = Schema.Union(
   }),
 )
 
-export type WorkflowCommand = Schema.Type<typeof WorkflowCommandSchema>
+export type WorkflowCommand = Schema.Schema.Type<typeof WorkflowCommandSchema>

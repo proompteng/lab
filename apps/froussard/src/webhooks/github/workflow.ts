@@ -1,10 +1,14 @@
+import type { MessageShape } from '@bufbuild/protobuf'
 import { toBinary } from '@bufbuild/protobuf'
 import type { Effect as EffectType } from 'effect/Effect'
 import type { WorkflowCommand } from '@/codex/workflow-machine'
+import type { AppConfigService } from '@/effect/config'
 import type { AppRuntime } from '@/effect/runtime'
-import { logger } from '@/logger'
+import { type AppLogger, logger } from '@/logger'
 import { CodexTaskSchema } from '@/proto/proompteng/froussard/v1/codex_task_pb'
+import type { GithubService } from '@/services/github/service'
 import type { GithubServiceDefinition } from '@/services/github/service.types'
+import type { KafkaProducer } from '@/services/kafka'
 import { publishKafkaMessage } from '@/webhooks/utils'
 import {
   CODEX_READY_COMMENT_MARKER,
@@ -13,12 +17,24 @@ import {
   PROTO_CONTENT_TYPE,
 } from './constants'
 
+const toHeaderRecord = (value: unknown): Record<string, string> => {
+  if (!value || typeof value !== 'object') {
+    return {}
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, entry]) => (typeof entry === 'string' ? [[key, entry]] : [])),
+  )
+}
+
 export type WorkflowStage = 'implementation'
+
+type GithubRuntimeEnv = AppLogger | AppConfigService | GithubService | KafkaProducer
 
 export interface WorkflowExecutionContext {
   runtime: AppRuntime
   githubService: GithubServiceDefinition
-  runGithub: <R, E, A>(factory: () => EffectType<R, E, A>) => Promise<A>
+  runGithub: <A, E>(factory: () => EffectType<A, E, GithubRuntimeEnv>) => Promise<A>
   config: {
     github: {
       token: string | null
@@ -48,13 +64,16 @@ export const executeWorkflowCommands = async (
           { key: command.data.key, deliveryId: context.deliveryId },
           'publishing codex implementation message',
         )
+        const jsonHeaders = toHeaderRecord(command.data.jsonHeaders)
+        const structuredHeaders = toHeaderRecord(command.data.structuredHeaders)
+        const structuredMessage = command.data.structuredMessage as MessageShape<typeof CodexTaskSchema>
         await context.runtime.runPromise(
           publishKafkaMessage({
             topic: command.data.topics.codex,
             key: command.data.key,
             value: JSON.stringify(command.data.codexMessage),
             headers: {
-              ...command.data.jsonHeaders,
+              ...jsonHeaders,
               'x-codex-task-stage': 'implementation',
             },
           }),
@@ -64,9 +83,9 @@ export const executeWorkflowCommands = async (
           publishKafkaMessage({
             topic: command.data.topics.codexStructured,
             key: command.data.key,
-            value: toBinary(CodexTaskSchema, command.data.structuredMessage),
+            value: toBinary(CodexTaskSchema, structuredMessage),
             headers: {
-              ...command.data.structuredHeaders,
+              ...structuredHeaders,
               'x-codex-task-stage': 'implementation',
               'content-type': PROTO_CONTENT_TYPE,
               'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,

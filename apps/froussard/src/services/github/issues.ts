@@ -372,7 +372,7 @@ export const createIssueComment = (options: CreateIssueCommentOptions): Effect.E
     Effect.flatMap((response) => {
       if (response.ok) {
         return readResponseText(response).pipe(
-          Effect.map((text) => {
+          Effect.map((text): CreateIssueCommentResult => {
             if (!text) {
               return { ok: true } as const
             }
@@ -382,13 +382,13 @@ export const createIssueComment = (options: CreateIssueCommentOptions): Effect.E
                 parsed && typeof parsed === 'object' && typeof parsed.html_url === 'string'
                   ? parsed.html_url
                   : undefined
-              return { ok: true, commentUrl }
+              return { ok: true, commentUrl } as const
             } catch (error) {
               return {
                 ok: false as const,
                 reason: 'invalid-json',
                 detail: error instanceof Error ? error.message : String(error),
-              }
+              } as const
             }
           }),
         )

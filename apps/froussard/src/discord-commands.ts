@@ -1,18 +1,18 @@
-import type { PlainMessage } from '@bufbuild/protobuf'
+import type { MessageInitShape } from '@bufbuild/protobuf'
 import { verifyKey } from 'discord-interactions'
 
 import { logger } from '@/logger'
 import type {
-  CommandEvent as FacteurCommandEventMessage,
-  DiscordMember as FacteurDiscordMemberMessage,
-  DiscordUser as FacteurDiscordUserMessage,
-  Response as FacteurResponseMessage,
+  CommandEventSchema,
+  DiscordMemberSchema,
+  DiscordUserSchema,
+  ResponseSchema,
 } from '@/proto/proompteng/facteur/v1/contract_pb'
 
-export type FacteurCommandEvent = PlainMessage<FacteurCommandEventMessage>
-export type FacteurDiscordMember = PlainMessage<FacteurDiscordMemberMessage>
-export type FacteurDiscordUser = PlainMessage<FacteurDiscordUserMessage>
-export type FacteurResponse = PlainMessage<FacteurResponseMessage>
+export type FacteurCommandEvent = MessageInitShape<typeof CommandEventSchema>
+export type FacteurDiscordMember = MessageInitShape<typeof DiscordMemberSchema>
+export type FacteurDiscordUser = MessageInitShape<typeof DiscordUserSchema>
+export type FacteurResponse = MessageInitShape<typeof ResponseSchema>
 export type DiscordCommandEvent = FacteurCommandEvent
 
 const SIGNATURE_HEADER = 'x-signature-ed25519'
@@ -151,14 +151,14 @@ export interface DiscordModalResponse {
 export const buildPlanModalResponse = (interaction: DiscordApplicationCommandInteraction): DiscordModalResponse => {
   const commandId = interaction.data?.id
   if (!commandId) {
-    throw new Error('Cannot build implementation modal without command identifier')
+    throw new Error('Cannot build plan modal without command identifier')
   }
 
   return {
     type: 9,
     data: {
       custom_id: `${PLAN_MODAL_PREFIX}:${commandId}`,
-      title: 'Request Implementation Run',
+      title: 'Request Planning Run',
       components: [
         {
           type: ACTION_ROW_TYPE,
@@ -168,7 +168,7 @@ export const buildPlanModalResponse = (interaction: DiscordApplicationCommandInt
               custom_id: PLAN_MODAL_CONTENT_FIELD,
               label: 'Content',
               style: 2,
-              placeholder: 'Describe the work Codex should implement...',
+              placeholder: 'Describe the work Codex should plan...',
               min_length: 10,
               max_length: 4000,
               required: true,
@@ -185,7 +185,7 @@ export const toPlanModalEvent = (
   responseConfig: DiscordResponseConfig,
 ): DiscordCommandEvent => {
   if (interaction.type !== INTERACTION_TYPE.MODAL_SUBMIT) {
-    throw new Error(`Unsupported interaction type for implementation modal: ${interaction.type}`)
+    throw new Error(`Unsupported interaction type for plan modal: ${interaction.type}`)
   }
 
   const data = interaction.data
@@ -340,7 +340,7 @@ const flattenOptions = (options?: DiscordApplicationCommandOption[]): Record<str
 const parsePlanModalCommandId = (customId: string): string => {
   const [prefix, commandId] = customId.split(':', 2)
   if (prefix !== PLAN_MODAL_PREFIX || !commandId) {
-    throw new Error(`Unsupported implementation modal identifier: ${customId}`)
+    throw new Error(`Unsupported plan modal identifier: ${customId}`)
   }
   return commandId
 }

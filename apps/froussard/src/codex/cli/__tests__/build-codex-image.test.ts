@@ -5,8 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runBuildCodexImage } from '../build-codex-image'
 
 const bunMocks = vi.hoisted(() => {
-  const execMock = vi.fn(async () => ({ text: async () => '' }))
+  const execMock = vi.fn(async (_command: string) => ({ text: async () => '' }))
   const whichMock = vi.fn(async () => 'gh')
+
+  const isTemplateStringsArray = (value: unknown): value is TemplateStringsArray =>
+    Array.isArray(value) && Object.hasOwn(value, 'raw')
 
   const makeTagged =
     () =>
@@ -18,8 +21,8 @@ const bunMocks = vi.hoisted(() => {
 
   const dollar = (...args: unknown[]) => {
     const first = args[0]
-    if (Array.isArray(first) && Object.hasOwn(first, 'raw')) {
-      return makeTagged()(first as TemplateStringsArray, ...(args.slice(1) as unknown[]))
+    if (isTemplateStringsArray(first)) {
+      return makeTagged()(first, ...(args.slice(1) as unknown[]))
     }
     if (typeof first === 'object' && first !== null) {
       return makeTagged()
