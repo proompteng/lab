@@ -673,6 +673,73 @@ describe('chat completions handler', () => {
     expect(usageChunk?.usage?.completion_tokens).toBe(2)
   })
 
+  it('removes reasoning details from command output', async () => {
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield {
+            type: 'tool',
+            toolKind: 'command',
+            id: 'tool-1',
+            status: 'started',
+            title: 'bun install',
+          }
+          yield {
+            type: 'tool',
+            toolKind: 'command',
+            id: 'tool-1',
+            status: 'delta',
+            title: 'bun install',
+            delta: 'Installing\n<details type="reasoning" done="true" duration="0">',
+          }
+          yield {
+            type: 'tool',
+            toolKind: 'command',
+            id: 'tool-1',
+            status: 'delta',
+            title: 'bun install',
+            delta: '<summary>Thought for 0 seconds</summary>\nWaiting</details>\nDone',
+          }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 2 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.2-codex',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const content = chunks
+      .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean)
+      .join('')
+
+    expect(content).toContain('Installing')
+    expect(content).toContain('Done')
+    expect(content).not.toContain('<details')
+    expect(content).not.toContain('Thought for 0 seconds')
+  })
+
   it('starts command fences on a fresh line after text', async () => {
     const command = 'bash -lc "echo hi"'
     const mockClient = {

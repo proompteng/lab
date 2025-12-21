@@ -91,4 +91,60 @@ describe('chat tool event renderer', () => {
     expect(content).toContain('**Result**')
     expect(content).toContain('"ok": true')
   })
+
+  it('strips reasoning details from command output', () => {
+    const events: ToolEvent[] = [
+      {
+        id: 'tool-5',
+        toolKind: 'command',
+        status: 'started',
+        title: 'bun install',
+      },
+      {
+        id: 'tool-5',
+        toolKind: 'command',
+        status: 'delta',
+        title: 'bun install',
+        delta:
+          'Installing\n<details type="reasoning" done="true" duration="0"><summary>Thought</summary>Waiting</details>\nDone',
+      },
+    ]
+
+    const content = collectEmittedContent(events)
+    expect(content).toContain('Installing')
+    expect(content).toContain('Done')
+    expect(content).not.toContain('<details')
+    expect(content).not.toContain('Thought')
+  })
+
+  it('removes reasoning details split across command deltas', () => {
+    const events: ToolEvent[] = [
+      {
+        id: 'tool-6',
+        toolKind: 'command',
+        status: 'started',
+        title: 'bun install',
+      },
+      {
+        id: 'tool-6',
+        toolKind: 'command',
+        status: 'delta',
+        title: 'bun install',
+        delta: 'Installing\n<details type="reasoning" done="true">',
+      },
+      {
+        id: 'tool-6',
+        toolKind: 'command',
+        status: 'delta',
+        title: 'bun install',
+        delta: '<summary>Thought</summary>\nWaiting</details>\nDone',
+      },
+    ]
+
+    const content = collectEmittedContent(events)
+    expect(content).toContain('Installing')
+    expect(content).toContain('Done')
+    expect(content).not.toContain('<details')
+    expect(content).not.toContain('Waiting')
+  })
 })

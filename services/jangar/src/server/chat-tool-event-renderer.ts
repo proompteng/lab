@@ -123,6 +123,7 @@ type ToolState = {
   lastContent?: string
   lastStatus?: string
   hasCommandOutput?: boolean
+  reasoningFilter?: ReasoningDetailsFilterState
 }
 
 const pickAggregatedOutput = (data: unknown): string | undefined => {
@@ -134,6 +135,79 @@ const pickAggregatedOutput = (data: unknown): string | undefined => {
     (typeof record.stdout === 'string' ? record.stdout : undefined) ??
     (typeof record.stderr === 'string' ? record.stderr : undefined)
   return candidate && candidate.length > 0 ? candidate : undefined
+}
+
+type ReasoningDetailsFilterState = {
+  inside: boolean
+  carry: string
+}
+
+const createReasoningDetailsFilterState = (): ReasoningDetailsFilterState => ({
+  inside: false,
+  carry: '',
+})
+
+const stripReasoningDetails = (input: string, state: ReasoningDetailsFilterState): string => {
+  if (!input) return input
+
+  const openToken = '<details'
+  const closeToken = '</details>'
+  const reasoningTagPattern = /<details\b[^>]*\btype\s*=\s*["']reasoning["'][^>]*>/i
+
+  const text = state.carry ? `${state.carry}${input}` : input
+  state.carry = ''
+  let output = ''
+  let index = 0
+  const lower = text.toLowerCase()
+
+  while (index < text.length) {
+    if (state.inside) {
+      const closeIndex = lower.indexOf(closeToken, index)
+      if (closeIndex === -1) {
+        const tailLength = closeToken.length - 1
+        state.carry = text.slice(Math.max(text.length - tailLength, index))
+        return output
+      }
+      index = closeIndex + closeToken.length
+      state.inside = false
+      continue
+    }
+
+    const openIndex = lower.indexOf(openToken, index)
+    if (openIndex === -1) {
+      output += text.slice(index)
+      return output
+    }
+
+    output += text.slice(index, openIndex)
+    const tagEnd = text.indexOf('>', openIndex)
+    if (tagEnd === -1) {
+      state.carry = text.slice(openIndex)
+      return output
+    }
+
+    const tag = text.slice(openIndex, tagEnd + 1)
+    if (reasoningTagPattern.test(tag)) {
+      if (!tag.endsWith('/>')) {
+        state.inside = true
+      }
+      index = tagEnd + 1
+      continue
+    }
+
+    output += tag
+    index = tagEnd + 1
+  }
+
+  return output
+}
+
+const sanitizeCommandOutput = (toolState: ToolState, value: string | undefined) => {
+  if (typeof value !== 'string' || value.length === 0) return value
+  if (!toolState.reasoningFilter) {
+    toolState.reasoningFilter = createReasoningDetailsFilterState()
+  }
+  return stripReasoningDetails(value, toolState.reasoningFilter)
 }
 
 const createToolRenderer = (): ToolRenderer => {
@@ -282,18 +356,27 @@ const createToolRenderer = (): ToolRenderer => {
 
         const aggregatedOutput = pickAggregatedOutput(event.data)
 
-        if (status === 'completed' && !toolState.hasCommandOutput && aggregatedOutput) {
-          argsPayload.output = aggregatedOutput
+        if (typeof argsPayload.output === 'string' && argsPayload.output.length > 0) {
+          argsPayload.output = sanitizeCommandOutput(toolState, argsPayload.output)
+        } else if (typeof argsPayload.detail === 'string' && argsPayload.detail.length > 0) {
+          argsPayload.detail = sanitizeCommandOutput(toolState, argsPayload.detail)
+        }
+
+        const outputText =
+          typeof argsPayload.output === 'string' && argsPayload.output.length > 0 ? argsPayload.output : undefined
+        const detailText =
+          typeof argsPayload.detail === 'string' && argsPayload.detail.length > 0 ? argsPayload.detail : undefined
+        const sanitizedAggregatedOutput =
+          aggregatedOutput && aggregatedOutput.length > 0
+            ? sanitizeCommandOutput(toolState, aggregatedOutput)
+            : undefined
+
+        if (status === 'completed' && !toolState.hasCommandOutput && sanitizedAggregatedOutput) {
+          argsPayload.output = sanitizedAggregatedOutput
           toolState.hasCommandOutput = true
         }
 
-        if (
-          status === 'delta' &&
-          !isCommandInputDelta &&
-          !toolState.hasCommandOutput &&
-          ((typeof argsPayload.output === 'string' && argsPayload.output.length > 0) ||
-            (typeof argsPayload.detail === 'string' && argsPayload.detail.length > 0))
-        ) {
+        if (status === 'delta' && !isCommandInputDelta && !toolState.hasCommandOutput && (outputText || detailText)) {
           toolState.hasCommandOutput = true
         }
 
