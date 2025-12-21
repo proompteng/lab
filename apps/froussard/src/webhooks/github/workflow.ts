@@ -13,7 +13,7 @@ import {
   PROTO_CONTENT_TYPE,
 } from './constants'
 
-export type WorkflowStage = 'planning' | 'implementation' | 'reviewRequested'
+export type WorkflowStage = 'implementation'
 
 export interface WorkflowExecutionContext {
   runtime: AppRuntime
@@ -42,62 +42,6 @@ export const executeWorkflowCommands = async (
 
   for (const command of commands) {
     switch (command.type) {
-      case 'publishPlanning': {
-        stage = 'planning'
-        logger.info({ key: command.data.key, deliveryId: context.deliveryId }, 'publishing codex planning message')
-        await context.runtime.runPromise(
-          publishKafkaMessage({
-            topic: command.data.topics.codex,
-            key: command.data.key,
-            value: JSON.stringify(command.data.codexMessage),
-            headers: {
-              ...command.data.jsonHeaders,
-              'x-codex-task-stage': 'planning',
-            },
-          }),
-        )
-
-        await context.runtime.runPromise(
-          publishKafkaMessage({
-            topic: command.data.topics.codexStructured,
-            key: command.data.key,
-            value: toBinary(CodexTaskSchema, command.data.structuredMessage),
-            headers: {
-              ...command.data.structuredHeaders,
-              'x-codex-task-stage': 'planning',
-              'content-type': PROTO_CONTENT_TYPE,
-              'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,
-              'x-protobuf-schema': PROTO_CODEX_TASK_SCHEMA,
-            },
-          }),
-        )
-
-        if (command.data.ack) {
-          const ackResult = await context.runGithub(() =>
-            context.githubService.postIssueReaction({
-              repositoryFullName: command.data.ack.repositoryFullName,
-              issueNumber: command.data.ack.issueNumber,
-              reactionContent: command.data.ack.reaction,
-              token: context.config.github.token,
-              apiBaseUrl: context.config.github.apiBaseUrl,
-              userAgent: context.config.github.userAgent,
-            }),
-          )
-
-          if (ackResult.ok) {
-            logger.info(
-              {
-                repository: command.data.ack.repositoryFullName,
-                issueNumber: command.data.ack.issueNumber,
-                deliveryId: context.deliveryId,
-                reaction: command.data.ack.reaction,
-              },
-              'acknowledged github issue',
-            )
-          }
-        }
-        break
-      }
       case 'publishImplementation': {
         stage = 'implementation'
         logger.info(
@@ -130,103 +74,6 @@ export const executeWorkflowCommands = async (
             },
           }),
         )
-        break
-      }
-      case 'publishReview': {
-        stage = 'reviewRequested'
-        logger.info({ key: command.data.key, deliveryId: context.deliveryId }, 'publishing codex review message')
-        await context.runtime.runPromise(
-          publishKafkaMessage({
-            topic: command.data.topics.codex,
-            key: command.data.key,
-            value: JSON.stringify(command.data.codexMessage),
-            headers: {
-              ...command.data.jsonHeaders,
-              'x-codex-task-stage': 'review',
-            },
-          }),
-        )
-
-        await context.runtime.runPromise(
-          publishKafkaMessage({
-            topic: command.data.topics.codexStructured,
-            key: command.data.key,
-            value: toBinary(CodexTaskSchema, command.data.structuredMessage),
-            headers: {
-              ...command.data.structuredHeaders,
-              'x-codex-task-stage': 'review',
-              'content-type': PROTO_CONTENT_TYPE,
-              'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,
-              'x-protobuf-schema': PROTO_CODEX_TASK_SCHEMA,
-            },
-          }),
-        )
-        break
-      }
-      case 'markReadyForReview': {
-        logger.info(
-          {
-            deliveryId: context.deliveryId,
-            repository: command.data.repositoryFullName,
-            pullNumber: command.data.pullNumber,
-          },
-          'converting codex pull request to ready state',
-        )
-        const result = await context.runGithub(() =>
-          context.githubService.markPullRequestReadyForReview({
-            repositoryFullName: command.data.repositoryFullName,
-            pullNumber: command.data.pullNumber,
-            token: context.config.github.token,
-            apiBaseUrl: context.config.github.apiBaseUrl,
-            userAgent: context.config.github.userAgent,
-          }),
-        )
-
-        if (result.ok) {
-          logger.info(
-            {
-              deliveryId: context.deliveryId,
-              repository: command.data.repositoryFullName,
-              pullNumber: command.data.pullNumber,
-            },
-            'marking codex pull request ready for review',
-          )
-
-          const commentResult = await context.runGithub(() =>
-            context.githubService.createPullRequestComment({
-              repositoryFullName: command.data.repositoryFullName,
-              pullNumber: command.data.pullNumber,
-              body: command.data.commentBody,
-              token: context.config.github.token,
-              apiBaseUrl: context.config.github.apiBaseUrl,
-              userAgent: context.config.github.userAgent,
-            }),
-          )
-
-          if (!commentResult.ok) {
-            logger.warn(
-              {
-                deliveryId: context.deliveryId,
-                repository: command.data.repositoryFullName,
-                pullNumber: command.data.pullNumber,
-                reason: commentResult.reason,
-                status: commentResult.status,
-              },
-              'failed to post codex review handoff comment',
-            )
-          }
-        } else {
-          logger.warn(
-            {
-              deliveryId: context.deliveryId,
-              repository: command.data.repositoryFullName,
-              pullNumber: command.data.pullNumber,
-              reason: result.reason,
-              status: result.status,
-            },
-            'failed to convert codex pull request to ready state',
-          )
-        }
         break
       }
       case 'postReadyComment': {

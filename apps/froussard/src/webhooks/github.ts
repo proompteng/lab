@@ -11,7 +11,6 @@ import { GithubService } from '@/services/github/service'
 
 import { handleIssueCommentCreated, handleIssueOpened } from './github/events/issues'
 import { handlePullRequestEvent, handlePullRequestReviewEvent } from './github/events/pull-request'
-import { handleReviewComment } from './github/events/pull-request-comment'
 import type { WorkflowExecutionContext, WorkflowStage } from './github/workflow'
 import type { WebhookConfig } from './types'
 import { publishKafkaMessage } from './utils'
@@ -190,21 +189,7 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
       }
 
       if (eventName === 'issue_comment') {
-        const reviewResult = await handleReviewComment({
-          parsedPayload,
-          headers,
-          config,
-          executionContext,
-          deliveryId,
-          senderLogin,
-          actionValue,
-        })
-
-        if (reviewResult.handled) {
-          if (reviewResult.stage && !codexStageTriggered) {
-            codexStageTriggered = reviewResult.stage
-          }
-        } else if (actionValue === 'created') {
+        if (actionValue === 'created') {
           const stage = await handleIssueCommentCreated({
             parsedPayload,
             headers,

@@ -52,7 +52,7 @@ func (s *stubReader) Close() error {
 
 func TestListenerRun_LogsStructuredMessage(t *testing.T) {
 	task := &froussardpb.CodexTask{
-		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
 		Repository:  "proompteng/lab",
 		IssueNumber: 42,
 	}
@@ -62,7 +62,7 @@ func TestListenerRun_LogsStructuredMessage(t *testing.T) {
 	reader := &stubReader{
 		messages: []kafka.Message{
 			{
-				Key:   []byte("issue-42-planning"),
+				Key:   []byte("issue-42-implementation"),
 				Value: payload,
 			},
 		},
@@ -79,8 +79,8 @@ func TestListenerRun_LogsStructuredMessage(t *testing.T) {
 	require.Len(t, reader.committed, 1)
 	require.True(t, reader.closed)
 	output := buf.String()
-	require.Contains(t, output, "codex task key=issue-42-planning")
-	require.Contains(t, output, `"stage":"CODEX_TASK_STAGE_PLANNING"`)
+	require.Contains(t, output, "codex task key=issue-42-implementation")
+	require.Contains(t, output, `"stage":"CODEX_TASK_STAGE_IMPLEMENTATION"`)
 	require.Contains(t, output, `"issueNumber":"42"`)
 }
 
@@ -124,6 +124,7 @@ func TestListenerRun_LogsReviewStage(t *testing.T) {
 	require.Contains(t, output, `"stage":"CODEX_TASK_STAGE_REVIEW"`)
 	require.Contains(t, output, `"issueNumber":"101"`)
 	require.Contains(t, output, `"summary":"1 unresolved thread"`)
+	require.Contains(t, output, "non-implementation task ignored")
 }
 
 func TestListenerRun_IgnoresInvalidMessage(t *testing.T) {
@@ -170,27 +171,4 @@ func TestListenerRun_StopsOnContextError(t *testing.T) {
 	listener := codex.NewListener(reader, log.New(&bytes.Buffer{}, "", 0))
 	err := listener.Run(context.Background())
 	require.NoError(t, err)
-}
-
-func TestListenerRun_DispatchesPlanningWhenEnabled(t *testing.T) {
-	task := &froussardpb.CodexTask{
-		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
-		Prompt:      "Generate rollout plan",
-		Repository:  "proompteng/lab",
-		IssueNumber: 1638,
-		DeliveryId:  "delivery-1638",
-	}
-	payload, err := proto.Marshal(task)
-	require.NoError(t, err)
-
-	reader := &stubReader{
-		messages: []kafka.Message{{Key: []byte("issue-1638"), Value: payload}},
-		fetchErr: context.Canceled,
-	}
-
-	listener := codex.NewListener(reader, log.New(&bytes.Buffer{}, "", 0))
-
-	err = listener.Run(context.Background())
-	require.NoError(t, err)
-	require.Len(t, reader.committed, 1)
 }

@@ -174,7 +174,7 @@ describe('plan modal helpers', () => {
     } as DiscordModalSubmitInteraction
 
     expect(() => toPlanModalEvent(modalSubmission, { deferType: 'channel-message', ephemeral: false })).toThrow(
-      /Unsupported plan modal identifier/,
+      /Unsupported implementation modal identifier/,
     )
   })
 })

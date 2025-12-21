@@ -24,7 +24,4 @@ export interface WebhookConfig {
     publicKey: string
     response: DiscordResponseConfig
   }
-  flags?: {
-    skipPlanningPlaceholder?: boolean
-  }
 }

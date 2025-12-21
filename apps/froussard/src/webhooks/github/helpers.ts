@@ -41,8 +41,6 @@ export const parseIssueNumberFromBranch = (branch: string, prefix: string): numb
   return null
 }
 
-export const FORCE_REVIEW_ACTIONS = new Set(['opened', 'ready_for_review', 'reopened'])
-
 const PR_ACTIONS = new Set([
   'opened',
   'ready_for_review',

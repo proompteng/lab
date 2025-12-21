@@ -1,24 +1,11 @@
-import type {
-  ReadyCommentCommand as ReadyCommentCommandType,
-  ReviewEvaluation,
-  UndraftCommand,
-} from '@/codex/workflow-machine'
-import { evaluateCodexWorkflow, shouldPostReadyCommentGuard, shouldUndraftGuard } from '@/codex/workflow-machine'
+import type { ReadyCommentCommand } from '@/codex/workflow-machine'
 import { deriveRepositoryFullName, type GithubRepository } from '@/github-payload'
 import { logger } from '@/logger'
-import { CODEX_READY_COMMENT_MARKER, CODEX_READY_TO_MERGE_COMMENT, CODEX_REVIEW_COMMENT } from '../constants'
+import { CODEX_READY_COMMENT_MARKER, CODEX_READY_TO_MERGE_COMMENT } from '../constants'
 import {
-  FORCE_REVIEW_ACTIONS,
-  parseIssueNumberFromBranch,
   shouldHandlePullRequestAction,
   shouldHandlePullRequestReviewAction,
 } from '../helpers'
-import { buildReviewCommand } from '../review-command'
-import {
-  buildPullReviewFingerprintKey,
-  forgetReviewFingerprint,
-  rememberReviewFingerprint,
-} from '../review-fingerprint'
 import type { WebhookConfig } from '../types'
 import type { WorkflowExecutionContext, WorkflowStage } from '../workflow'
 import { executeWorkflowCommands } from '../workflow'
@@ -35,8 +22,7 @@ interface PullRequestBaseParams {
 }
 
 export const handlePullRequestEvent = async (params: PullRequestBaseParams): Promise<WorkflowStage | null> => {
-  const { parsedPayload, headers, config, executionContext, deliveryId, actionValue, senderLogin, skipActionCheck } =
-    params
+  const { parsedPayload, config, executionContext, actionValue, skipActionCheck } = params
 
   if (!skipActionCheck && !shouldHandlePullRequestAction(actionValue)) {
     return null
@@ -100,9 +86,6 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
       return null
     }
 
-    const issueNumberCandidate = parseIssueNumberFromBranch(pull.headRef, config.codebase.branchPrefix)
-    const issueNumber = issueNumberCandidate ?? pull.number
-
     const threadsResult = await executionContext.runGithub(() =>
       executionContext.githubService.listPullRequestReviewThreads({
         repositoryFullName: repoFullName,
@@ -157,58 +140,15 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
 
     const unresolvedThreads = threadsResult.threads
     const failingChecks = checksResult.checks
-    const shouldForceReviewStage = actionValue ? FORCE_REVIEW_ACTIONS.has(actionValue) : false
+    const mergeableState = pull.mergeableState ? pull.mergeableState.toLowerCase() : null
+    const mergeStateRequiresAttention = mergeableState
+      ? !['clean', 'unstable', 'unknown'].includes(mergeableState)
+      : false
+    const hasMergeConflicts = mergeableState === 'dirty'
+    const outstandingWork = unresolvedThreads.length > 0 || failingChecks.length > 0 || hasMergeConflicts
 
-    const reviewArtifacts = buildReviewCommand({
-      config,
-      deliveryId,
-      headers,
-      issueNumber,
-      pull: { ...pull, repositoryFullName: repoFullName },
-      reviewThreads: unresolvedThreads,
-      failingChecks,
-      forceReview: shouldForceReviewStage,
-      senderLogin,
-    })
-
-    const fingerprintKey = buildPullReviewFingerprintKey(repoFullName, pull.number)
-    const fingerprintChanged = rememberReviewFingerprint(fingerprintKey, reviewArtifacts.fingerprint)
-
-    const reviewEvaluation: ReviewEvaluation = {
-      outstandingWork: reviewArtifacts.outstandingWork,
-      forceReview: shouldForceReviewStage,
-      isDraft: pull.draft,
-      mergeStateRequiresAttention: reviewArtifacts.mergeStateRequiresAttention,
-      reviewCommand: undefined,
-      undraftCommand: undefined,
-      readyCommentCommand: undefined,
-    }
-
-    const undraftCandidate: UndraftCommand | undefined =
-      pull.draft && actionValue !== 'converted_to_draft'
-        ? {
-            repositoryFullName: repoFullName,
-            pullNumber,
-            commentBody: CODEX_REVIEW_COMMENT,
-          }
-        : undefined
-
-    if (
-      undraftCandidate &&
-      shouldUndraftGuard(
-        { commands: [] },
-        { type: 'PR_ACTIVITY', data: { ...reviewEvaluation, undraftCommand: undraftCandidate } },
-      )
-    ) {
-      reviewEvaluation.undraftCommand = undraftCandidate
-      logger.info({ repository: repoFullName, pullNumber }, 'prepared codex undraft command')
-    }
-
-    const readyCommentCandidate: ReadyCommentCommandType | undefined =
-      hasThumbsUpReaction &&
-      !reviewArtifacts.mergeStateRequiresAttention &&
-      !shouldForceReviewStage &&
-      !reviewArtifacts.outstandingWork
+    const readyCommentCandidate: ReadyCommentCommand | undefined =
+      hasThumbsUpReaction && !mergeStateRequiresAttention && !outstandingWork && !pull.draft
         ? {
             repositoryFullName: repoFullName,
             pullNumber,
@@ -221,31 +161,16 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
           }
         : undefined
 
-    if (
-      readyCommentCandidate &&
-      shouldPostReadyCommentGuard(
-        { commands: [] },
-        { type: 'PR_ACTIVITY', data: { ...reviewEvaluation, readyCommentCommand: readyCommentCandidate } },
-      )
-    ) {
-      reviewEvaluation.readyCommentCommand = readyCommentCandidate
-      logger.info({ repository: repoFullName, pullNumber }, 'prepared codex ready comment')
+    if (!readyCommentCandidate) {
+      return null
     }
 
-    const evaluation = evaluateCodexWorkflow({
-      type: 'PR_ACTIVITY',
-      data: reviewEvaluation,
-    })
-
-    try {
-      const { stage } = await executeWorkflowCommands(evaluation.commands, executionContext)
-      return stage ?? null
-    } catch (error) {
-      if (fingerprintChanged) {
-        forgetReviewFingerprint(fingerprintKey, reviewArtifacts.fingerprint)
-      }
-      throw error
-    }
+    logger.info({ repository: repoFullName, pullNumber }, 'prepared codex ready comment')
+    const { stage } = await executeWorkflowCommands(
+      [{ type: 'postReadyComment', data: readyCommentCandidate }],
+      executionContext,
+    )
+    return stage ?? null
   }
 
   return processPullRequest()

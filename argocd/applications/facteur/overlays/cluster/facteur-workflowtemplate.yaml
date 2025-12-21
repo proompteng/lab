@@ -5,13 +5,13 @@ metadata:
   namespace: argo-workflows
 spec:
   serviceAccountName: facteur-workflow
-  entrypoint: plan
+  entrypoint: implementation
   arguments:
     parameters:
       - name: payload
         value: '{}'
   templates:
-    - name: plan
+    - name: implementation
       inputs:
         parameters:
           - name: payload
@@ -89,9 +89,9 @@ spec:
             fi
             export CODEX_CHANNEL_RUN_ID="$RUN_ID"
 
-            STAGE=$(jq -r '.stage // "planning"' "$PAYLOAD_FILE")
+            STAGE=$(jq -r '.stage // "implementation"' "$PAYLOAD_FILE")
             if [[ "$STAGE" == "null" || -z "$STAGE" ]]; then
-              STAGE="planning"
+              STAGE="implementation"
             fi
             export CODEX_STAGE="$STAGE"
 
@@ -108,14 +108,14 @@ spec:
               export POST_TO_GITHUB=false
             fi
 
-            export OUTPUT_PATH="${PLAN_OUTPUT_PATH:-/workspace/lab/.codex-plan-output.md}"
-            export JSON_OUTPUT_PATH="${JSON_OUTPUT_PATH:-/workspace/lab/.codex-plan-events.jsonl}"
-            export AGENT_OUTPUT_PATH="${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-plan-agent.log}"
+            export OUTPUT_PATH="${IMPLEMENTATION_OUTPUT_PATH:-/workspace/lab/.codex-implementation.log}"
+            export JSON_OUTPUT_PATH="${JSON_OUTPUT_PATH:-/workspace/lab/.codex-implementation-events.jsonl}"
+            export AGENT_OUTPUT_PATH="${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-implementation-agent.log}"
 
-            codex-plan
+            codex-implement
 
             if [[ -s "$OUTPUT_PATH" ]]; then
-              echo "Codex plan output:" >&2
+              echo "Codex implementation output:" >&2
               cat "$OUTPUT_PATH" >&2
             fi
         resources:

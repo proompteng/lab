@@ -11,14 +11,6 @@ data:
         payload: '{}'
       service_account: facteur-workflow
       workflow_template: facteur-dispatch
-    codex_orchestrator:
-      enabled: true
-      namespace: argo-workflows
-      workflow_template: github-codex-planning
-      service_account: argo-workflows-workflow
-      parameters:
-        rawEvent: ''
-        eventBody: ''
     codex_implementation_orchestrator:
       enabled: true
       namespace: argo-workflows

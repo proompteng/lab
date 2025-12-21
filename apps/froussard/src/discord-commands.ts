@@ -151,14 +151,14 @@ export interface DiscordModalResponse {
 export const buildPlanModalResponse = (interaction: DiscordApplicationCommandInteraction): DiscordModalResponse => {
   const commandId = interaction.data?.id
   if (!commandId) {
-    throw new Error('Cannot build plan modal without command identifier')
+    throw new Error('Cannot build implementation modal without command identifier')
   }
 
   return {
     type: 9,
     data: {
       custom_id: `${PLAN_MODAL_PREFIX}:${commandId}`,
-      title: 'Request Planning Run',
+      title: 'Request Implementation Run',
       components: [
         {
           type: ACTION_ROW_TYPE,
@@ -168,7 +168,7 @@ export const buildPlanModalResponse = (interaction: DiscordApplicationCommandInt
               custom_id: PLAN_MODAL_CONTENT_FIELD,
               label: 'Content',
               style: 2,
-              placeholder: 'Describe the work Codex should plan...',
+              placeholder: 'Describe the work Codex should implement...',
               min_length: 10,
               max_length: 4000,
               required: true,
@@ -185,7 +185,7 @@ export const toPlanModalEvent = (
   responseConfig: DiscordResponseConfig,
 ): DiscordCommandEvent => {
   if (interaction.type !== INTERACTION_TYPE.MODAL_SUBMIT) {
-    throw new Error(`Unsupported interaction type for plan modal: ${interaction.type}`)
+    throw new Error(`Unsupported interaction type for implementation modal: ${interaction.type}`)
   }
 
   const data = interaction.data
@@ -340,7 +340,7 @@ const flattenOptions = (options?: DiscordApplicationCommandOption[]): Record<str
 const parsePlanModalCommandId = (customId: string): string => {
   const [prefix, commandId] = customId.split(':', 2)
   if (prefix !== PLAN_MODAL_PREFIX || !commandId) {
-    throw new Error(`Unsupported plan modal identifier: ${customId}`)
+    throw new Error(`Unsupported implementation modal identifier: ${customId}`)
   }
   return commandId
 }

@@ -1,7 +1,5 @@
 import { Effect } from 'effect'
 
-import { PLAN_COMMENT_MARKER } from '@/codex'
-
 import {
   coerceNumericId,
   DEFAULT_API_BASE_URL,
@@ -23,6 +21,7 @@ import type {
 } from './types'
 
 const globalFetch = typeof globalThis.fetch === 'function' ? (globalThis.fetch.bind(globalThis) as FetchLike) : null
+const DEFAULT_COMMENT_MARKER = '<!-- codex:ready -->'
 
 export const postIssueReaction = (options: PostIssueReactionOptions): Effect.Effect<PostIssueReactionResult> => {
   const {
@@ -200,7 +199,7 @@ export const findLatestPlanComment = (options: FindPlanCommentOptions): Effect.E
     repositoryFullName,
     issueNumber,
     token,
-    marker = PLAN_COMMENT_MARKER,
+    marker = DEFAULT_COMMENT_MARKER,
     apiBaseUrl = DEFAULT_API_BASE_URL,
     userAgent = DEFAULT_USER_AGENT,
     fetchImplementation = globalFetch,

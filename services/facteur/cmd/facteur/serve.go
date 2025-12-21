@@ -56,13 +56,10 @@ func NewServeCommand() *cobra.Command {
 			cfg.Postgres.DSN = dsn
 
 			cmd.Printf(
-				"config: argo ns=%s template=%s sa=%s planner_enabled=%t planner_ns=%s planner_template=%s implementer_enabled=%t implementer_ns=%s implementer_template=%s redis=%s postgres=%s listen=%s\n",
+				"config: argo ns=%s template=%s sa=%s implementer_enabled=%t implementer_ns=%s implementer_template=%s redis=%s postgres=%s listen=%s\n",
 				cfg.Argo.Namespace,
 				cfg.Argo.WorkflowTemplate,
 				cfg.Argo.ServiceAccount,
-				cfg.Planner.Enabled,
-				firstNonEmpty(cfg.Planner.Namespace, cfg.Argo.Namespace),
-				firstNonEmpty(cfg.Planner.WorkflowTemplate, cfg.Argo.WorkflowTemplate),
 				cfg.Implementer.Enabled,
 				firstNonEmpty(cfg.Implementer.Namespace, cfg.Argo.Namespace),
 				firstNonEmpty(cfg.Implementer.WorkflowTemplate, cfg.Argo.WorkflowTemplate),
@@ -115,49 +112,6 @@ func NewServeCommand() *cobra.Command {
 
 			knowledgeStore := knowledge.NewStore(db)
 
-			plannerOpts := server.CodexPlannerOptions{}
-			if cfg.Planner.Enabled {
-				plannerCfg := orchestrator.Config{
-					Namespace:        cfg.Planner.Namespace,
-					WorkflowTemplate: cfg.Planner.WorkflowTemplate,
-					ServiceAccount:   cfg.Planner.ServiceAccount,
-					Parameters:       map[string]string{},
-				}
-
-				for k, v := range cfg.Argo.Parameters {
-					plannerCfg.Parameters[k] = v
-				}
-				for k, v := range cfg.Planner.Parameters {
-					plannerCfg.Parameters[k] = v
-				}
-
-				if plannerCfg.Namespace == "" {
-					plannerCfg.Namespace = cfg.Argo.Namespace
-				}
-				if plannerCfg.WorkflowTemplate == "" {
-					plannerCfg.WorkflowTemplate = cfg.Argo.WorkflowTemplate
-				}
-				if plannerCfg.ServiceAccount == "" {
-					plannerCfg.ServiceAccount = cfg.Argo.ServiceAccount
-				}
-				plannerCfg.GenerateNamePrefix = "github-codex-planning-"
-
-				planner, err := orchestrator.NewPlanner(knowledgeStore, runner, plannerCfg)
-				if err != nil {
-					return fmt.Errorf("init codex planner: %w", err)
-				}
-
-				plannerOpts = server.CodexPlannerOptions{
-					Enabled: true,
-					Planner: planner,
-				}
-				cmd.Printf(
-					"codex planner orchestration enabled (namespace=%s template=%s)\n",
-					plannerCfg.Namespace,
-					plannerCfg.WorkflowTemplate,
-				)
-			}
-
 			implementerOpts := server.CodexImplementerOptions{}
 			if cfg.Implementer.Enabled {
 				implementerCfg := orchestrator.Config{
@@ -206,8 +160,6 @@ func NewServeCommand() *cobra.Command {
 				Prefork:          prefork,
 				Dispatcher:       dispatcher,
 				Store:            sessionStore,
-				CodexStore:       knowledgeStore,
-				CodexPlanner:     plannerOpts,
 				CodexImplementer: implementerOpts,
 			})
 			if err != nil {

@@ -31,7 +31,7 @@ vi.mock('@/effect/config', () => {
     codex: {
       triggerLogins: ['gregkonush'],
       workflowLogin: 'github-actions[bot]',
-      implementationTriggerPhrase: 'execute plan',
+      implementationTriggerPhrase: 'implement issue',
     },
     discord: {
       publicKey: 'public',

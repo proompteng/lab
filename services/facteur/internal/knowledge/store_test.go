@@ -94,13 +94,13 @@ func TestRecordTaskLifecycle(t *testing.T) {
 	now := time.Date(2025, 10, 30, 21, 0, 0, 0, time.UTC)
 	created := now.Add(time.Second)
 
-	expectTaskLifecycle(mock, "idea-1", "planning", "task-1", "run-1", now, "delivery-1", created)
+	expectTaskLifecycle(mock, "idea-1", "implementation", "task-1", "run-1", now, "delivery-1", created)
 
 	taskRec, runRec, err := store.RecordTaskLifecycle(ctx, knowledge.TaskRecord{
 		IdeaID:   "idea-1",
-		Stage:    "planning",
+		Stage:    "implementation",
 		State:    "pending",
-		Metadata: []byte(`{"stage":"planning"}`),
+		Metadata: []byte(`{"stage":"implementation"}`),
 	}, knowledge.TaskRunRecord{
 		Status:     "delivered",
 		QueuedAt:   now,

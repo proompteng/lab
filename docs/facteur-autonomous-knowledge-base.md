@@ -44,7 +44,7 @@ flowchart TD
 
 ## End-to-End Lifecycle
 1. **Ingest** – Froussard sends normalized issue payload → Facteur stores in `ideas`; tasks created per stage.
-2. **Execute** – Orchestrator dispatches stage-specific workflow; results tracked in `task_runs` + `run_events`. (Planning is now orchestrator-only; legacy direct dispatch removed and Knative Service is cluster-local with Tailscale-only access.)
+2. **Execute** – Orchestrator dispatches stage-specific workflow; results tracked in `task_runs` + `run_events`. (Implementation is now orchestrator-only; legacy direct dispatch removed and Knative Service is cluster-local with Tailscale-only access.)
 3. **Reflect** – Each agent produces a reflection (success/failure rationale, improvement ideas) saved in `reflections` with embeddings.
 4. **Update KB** – Artifacts, metrics, and policy checks persist alongside reflections; vector index rebuilt incrementally when >4× growth.[^pgvector-guidelines]
 5. **Improve** – Nightly SSFO compares retrieved vs. non-retrieved answers to fine-tune the response model; Self-Routing telemetry updates router weights monthly; REFINE jobs recalibrate embeddings when new domain docs onboard.

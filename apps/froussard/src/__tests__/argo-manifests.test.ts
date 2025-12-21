@@ -18,7 +18,7 @@ describe('Codex Argo manifests', () => {
   it('base64-encodes Codex task payloads before submitting workflows', async () => {
     const sensor = await loadYaml<Record<string, unknown>>('argocd/applications/froussard/github-codex-sensor.yaml')
     const triggers: Array<Record<string, unknown>> = sensor?.spec?.triggers ?? []
-    const triggerNames = ['review-workflow']
+    const triggerNames = ['implementation-workflow']
 
     for (const name of triggerNames) {
       const trigger = triggers.find((entry) => entry?.template?.name === name)
@@ -35,11 +35,7 @@ describe('Codex Argo manifests', () => {
   })
 
   it('decodes payloads inside Codex workflow templates before invoking the CLI', async () => {
-    const templatePaths = [
-      'argocd/applications/froussard/github-codex-planning-workflow-template.yaml',
-      'argocd/applications/froussard/github-codex-implementation-workflow-template.yaml',
-      'argocd/applications/froussard/github-codex-review-workflow-template.yaml',
-    ]
+    const templatePaths = ['argocd/applications/froussard/github-codex-implementation-workflow-template.yaml']
 
     for (const relativePath of templatePaths) {
       const template = await loadYaml<Record<string, unknown>>(relativePath)

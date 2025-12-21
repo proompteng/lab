@@ -13,7 +13,6 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 
 | Script | Description | Required CLIs | Example |
 | --- | --- | --- | --- |
-| `src/codex/trigger-review-workflow.ts` | Collects unresolved review threads and failing checks for a pull request and submits the `github-codex-review` Argo workflow when action is needed. | `gh`, `argo` | `bun run packages/scripts/src/codex/trigger-review-workflow.ts --pr=1529` (also accepts full PR URLs) |
 | `src/jangar/build-image.ts` | Builds and pushes the `lab/jangar` Bun worker image using the jangar Dockerfile. | `docker` | `bun run packages/scripts/src/jangar/build-image.ts` |
 | `src/jangar/deploy-service.ts` | Builds the jangar image, bumps the Argo CD manifests, and applies the Knative service. | `docker`, `kubectl` | `bun run packages/scripts/src/jangar/deploy-service.ts` |
 | `src/froussard/deploy-service.ts` | Builds and pushes the Froussard Docker image, updates `knative-service.yaml` with the new digest + version metadata, and `kubectl apply`s the manifest (pass `--dry-run` to skip pushing/applying). | `docker`, `kubectl` | `bun run packages/scripts/src/froussard/deploy-service.ts` |

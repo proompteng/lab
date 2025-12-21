@@ -10,7 +10,6 @@ ARG CODEX_AUTH_CHECKSUM=unspecified
 ENV DEBIAN_FRONTEND=noninteractive \
     WORKSPACE=/workspace \
     WORKTREE=/workspace/lab \
-    PLAN_OUTPUT_PATH=/workspace/lab/.codex-plan-output.md \
     IMPLEMENTATION_OUTPUT_PATH=/workspace/lab/.codex-implementation.log \
     GIT_TERMINAL_PROMPT=0 \
     BUN_INSTALL=/usr/local \
@@ -99,12 +98,11 @@ RUN git config --global user.name "tuslagch" \
     && git config --global user.email "tuslagch@proompteng.ai"
 
 COPY apps/froussard/src/codex/cli/codex-bootstrap.ts /usr/local/bin/codex-bootstrap
-COPY apps/froussard/src/codex/cli/codex-plan.ts /usr/local/bin/codex-plan
 COPY apps/froussard/src/codex/cli/codex-implement.ts /usr/local/bin/codex-implement
 COPY apps/froussard/src/codex/cli/codex-research.ts /usr/local/bin/codex-research
 COPY apps/froussard/src/codex/cli/codex-graf.ts /usr/local/bin/codex-graf
 COPY apps/froussard/src/codex/cli/lib /usr/local/bin/lib
-RUN chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/codex-plan /usr/local/bin/codex-implement /usr/local/bin/codex-research /usr/local/bin/codex-graf
+RUN chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/codex-implement /usr/local/bin/codex-research /usr/local/bin/codex-graf
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/codex-bootstrap"]

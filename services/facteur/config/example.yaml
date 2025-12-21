@@ -41,13 +41,6 @@ argo:
   service_account: facteur
   parameters:
     environment: staging
-codex_orchestrator:
-  enabled: false
-  namespace: argo
-  workflow_template: github-codex-planning
-  service_account: facteur
-  parameters:
-    rawEvent: ""
 codex_implementation_orchestrator:
   enabled: false
   namespace: argo

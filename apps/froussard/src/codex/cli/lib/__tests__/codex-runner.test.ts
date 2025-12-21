@@ -79,8 +79,8 @@ describe('codex-runner', () => {
     const jsonOutputPath = join(workspace, 'events.jsonl')
     const agentOutputPath = join(workspace, 'agent.log')
     const result = await runCodexSession({
-      stage: 'planning',
-      prompt: 'Plan please',
+      stage: 'implementation',
+      prompt: 'Implement please',
       outputPath,
       jsonOutputPath,
       agentOutputPath,
@@ -174,8 +174,8 @@ describe('codex-runner', () => {
     const agentOutputPath = join(workspace, 'agent.log')
 
     const result = await runCodexSession({
-      stage: 'planning',
-      prompt: 'Plan',
+      stage: 'implementation',
+      prompt: 'Implement',
       outputPath,
       jsonOutputPath,
       agentOutputPath,
@@ -200,8 +200,8 @@ describe('codex-runner', () => {
     const agentOutputPath = join(workspace, 'agent.log')
 
     await runCodexSession({
-      stage: 'planning',
-      prompt: 'Plan please',
+      stage: 'implementation',
+      prompt: 'Implement please',
       outputPath,
       jsonOutputPath,
       agentOutputPath,
@@ -262,7 +262,7 @@ describe('codex-runner', () => {
     global.fetch = fetchMock as unknown as typeof fetch
 
     await pushCodexEventsToLoki({
-      stage: 'planning',
+      stage: 'implementation',
       endpoint: 'https://loki.example.com/api/v1/push',
       jsonPath,
     })
@@ -272,7 +272,7 @@ describe('codex-runner', () => {
     expect(typeof body).toBe('string')
     const payload = JSON.parse(body as string)
     expect(Array.isArray(payload.streams)).toBe(true)
-    expect(payload.streams[0]?.stream).toMatchObject({ stage: 'planning', stream_type: 'json' })
+    expect(payload.streams[0]?.stream).toMatchObject({ stage: 'implementation', stream_type: 'json' })
   })
 
   it('pushes agent and runtime logs and applies tenant headers when provided', async () => {
@@ -335,7 +335,7 @@ describe('codex-runner', () => {
 
     await expect(
       runCodexSession({
-        stage: 'planning',
+        stage: 'implementation',
         prompt: 'fail',
         outputPath: join(workspace, 'output.log'),
         jsonOutputPath: join(workspace, 'events.jsonl'),
@@ -389,7 +389,7 @@ describe('codex-runner', () => {
     const errorSpy = vi.fn()
 
     await runCodexSession({
-      stage: 'planning',
+      stage: 'implementation',
       prompt: 'channel',
       outputPath: join(workspace, 'output.log'),
       jsonOutputPath: join(workspace, 'events.jsonl'),
@@ -412,7 +412,7 @@ describe('codex-runner', () => {
     global.fetch = fetchMock as unknown as typeof fetch
 
     await pushCodexEventsToLoki({
-      stage: 'planning',
+      stage: 'implementation',
       endpoint: 'https://loki.example.com/api/v1/push',
       jsonPath: join(workspace, 'missing.jsonl'),
     })
@@ -446,7 +446,7 @@ describe('codex-runner', () => {
     process.env.CODEX_IDLE_TIMEOUT_MS = '5'
 
     const sessionPromise = runCodexSession({
-      stage: 'planning',
+      stage: 'implementation',
       prompt: 'hang',
       outputPath,
       jsonOutputPath,
@@ -495,7 +495,7 @@ describe('codex-runner', () => {
     process.env.CODEX_EXIT_GRACE_MS = '20'
 
     const sessionPromise = runCodexSession({
-      stage: 'review',
+      stage: 'implementation',
       prompt: 'turn-complete',
       outputPath,
       jsonOutputPath,
@@ -536,7 +536,7 @@ describe('codex-runner', () => {
 
     await expect(
       runCodexSession({
-        stage: 'planning',
+        stage: 'implementation',
         prompt: 'hang-and-kill',
         outputPath,
         jsonOutputPath,

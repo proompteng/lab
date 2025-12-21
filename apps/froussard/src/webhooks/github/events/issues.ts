@@ -1,18 +1,16 @@
-import { Effect, Schema } from 'effect'
+import { Schema } from 'effect'
 
 import {
   buildCodexBranchName,
   buildCodexPrompt,
   type CodexTaskMessage,
   normalizeLogin,
-  PLAN_COMMENT_MARKER,
 } from '@/codex'
-import { evaluateCodexWorkflow, type ImplementationCommand, type PlanningCommand } from '@/codex/workflow-machine'
+import type { ImplementationCommand } from '@/codex/workflow-machine'
 import { selectReactionRepository } from '@/codex-workflow'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent } from '@/github-payload'
 import { logger } from '@/logger'
 import {
-  CODEX_PLAN_MARKER,
   PROTO_CODEX_TASK_FULL_NAME,
   PROTO_CODEX_TASK_SCHEMA,
   PROTO_CONTENT_TYPE,
@@ -96,78 +94,6 @@ export const IssueCommentPayloadSchema = Schema.Struct({
 
 export type IssueCommentPayload = Schema.Type<typeof IssueCommentPayloadSchema>
 
-const PLANNING_PLACEHOLDER_SNIPPET = '_Planning in progress…_'
-
-const isPlanningPlaceholderBody = (body: string): boolean => body.includes(PLANNING_PLACEHOLDER_SNIPPET)
-
-const ensurePlanningPlaceholderComment = async ({
-  repositoryFullName,
-  issueNumber,
-  config,
-  executionContext,
-}: {
-  repositoryFullName: string
-  issueNumber: number
-  config: WebhookConfig
-  executionContext: WorkflowExecutionContext
-}) => {
-  return executionContext.runGithub(() =>
-    Effect.gen(function* (_) {
-      const lookup = yield* executionContext.githubService.findLatestPlanComment({
-        repositoryFullName,
-        issueNumber,
-        token: config.github.token,
-        apiBaseUrl: config.github.apiBaseUrl,
-        userAgent: config.github.userAgent,
-      })
-
-      if (lookup.ok && !isPlanningPlaceholderBody(lookup.comment.body)) {
-        return { _tag: 'plan-exists' as const }
-      }
-
-      if (lookup.ok && isPlanningPlaceholderBody(lookup.comment.body)) {
-        return { _tag: 'placeholder-exists' as const }
-      }
-
-      if (!lookup.ok && lookup.reason !== 'not-found') {
-        return {
-          _tag: 'error' as const,
-          phase: 'lookup' as const,
-          reason: lookup.reason,
-          detail: lookup.detail,
-          status: lookup.status,
-        }
-      }
-
-      if (config.flags?.skipPlanningPlaceholder) {
-        return { _tag: 'skipped' as const }
-      }
-
-      const placeholderBody = `${PLAN_COMMENT_MARKER}\n${PLANNING_PLACEHOLDER_SNIPPET}`
-      const createResult = yield* executionContext.githubService.createIssueComment({
-        repositoryFullName,
-        issueNumber,
-        body: placeholderBody,
-        token: config.github.token,
-        apiBaseUrl: config.github.apiBaseUrl,
-        userAgent: config.github.userAgent,
-      })
-
-      if (createResult.ok) {
-        return { _tag: 'created' as const }
-      }
-
-      return {
-        _tag: 'error' as const,
-        phase: 'create' as const,
-        reason: createResult.reason,
-        detail: createResult.detail,
-        status: createResult.status,
-      }
-    }),
-  )
-}
-
 export const handleIssueOpened = async (params: BaseIssueParams): Promise<WorkflowStage | null> => {
   const { parsedPayload, headers, config, executionContext, deliveryId, senderLogin } = params
 
@@ -208,12 +134,7 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
   const issueTitle = typeof issue?.title === 'string' && issue.title.length > 0 ? issue.title : `Issue #${issueNumber}`
   const issueBody = typeof issue?.body === 'string' ? issue.body : ''
   const issueUrl = typeof issue?.html_url === 'string' ? issue.html_url : ''
-  if (issueBody.includes(PLAN_COMMENT_MARKER)) {
-    logger.info({ repositoryFullName, issueNumber, deliveryId }, 'skipping planning; plan marker found in issue body')
-    return null
-  }
   const prompt = buildCodexPrompt({
-    stage: 'planning',
     issueTitle,
     issueBody,
     repositoryFullName,
@@ -221,177 +142,6 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
     baseBranch,
     headBranch,
     issueUrl,
-  })
-
-  const codexMessage: CodexTaskMessage = {
-    stage: 'planning',
-    prompt,
-    repository: repositoryFullName,
-    base: baseBranch,
-    head: headBranch,
-    issueNumber,
-    issueUrl,
-    issueTitle,
-    issueBody,
-    sender: typeof senderLoginValue === 'string' ? senderLoginValue : '',
-    issuedAt: new Date().toISOString(),
-  }
-
-  const codexStructuredMessage = toCodexTaskProto(codexMessage, deliveryId)
-
-  const planningCommand: PlanningCommand = {
-    stage: 'planning',
-    key: `issue-${issueNumber}-planning`,
-    codexMessage,
-    structuredMessage: codexStructuredMessage,
-    topics: {
-      codex: config.topics.codex,
-      codexStructured: config.topics.codexStructured,
-    },
-    jsonHeaders: {
-      ...headers,
-      'x-codex-task-stage': 'planning',
-    },
-    structuredHeaders: {
-      ...headers,
-      'x-codex-task-stage': 'planning',
-      'content-type': PROTO_CONTENT_TYPE,
-      'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,
-      'x-protobuf-schema': PROTO_CODEX_TASK_SCHEMA,
-    },
-    ack: {
-      repositoryFullName,
-      issueNumber,
-      reaction: config.github.ackReaction,
-    },
-  } as PlanningCommand
-
-  const placeholderOutcome = await ensurePlanningPlaceholderComment({
-    repositoryFullName,
-    issueNumber,
-    config,
-    executionContext,
-  })
-
-  if (placeholderOutcome?._tag === 'error') {
-    logger.warn(
-      {
-        repository: repositoryFullName,
-        issueNumber,
-        deliveryId,
-        phase: placeholderOutcome.phase,
-        reason: placeholderOutcome.reason,
-        status: placeholderOutcome.status,
-        detail: placeholderOutcome.detail,
-      },
-      'failed to ensure planning placeholder comment',
-    )
-  } else if (placeholderOutcome?._tag === 'created') {
-    logger.info({ repository: repositoryFullName, issueNumber, deliveryId }, 'posted planning placeholder comment')
-  } else if (placeholderOutcome?._tag === 'plan-exists') {
-    logger.info(
-      { repository: repositoryFullName, issueNumber, deliveryId },
-      'skipping planning; plan comment already exists',
-    )
-    return null
-  }
-
-  const evaluation = evaluateCodexWorkflow({
-    type: 'ISSUE_OPENED',
-    data: planningCommand,
-  })
-
-  const { stage } = await executeWorkflowCommands(evaluation.commands, executionContext)
-  return stage ?? null
-}
-
-export const handleIssueCommentCreated = async (params: BaseIssueParams): Promise<WorkflowStage | null> => {
-  const { parsedPayload, headers, config, executionContext, deliveryId } = params
-
-  if (!isGithubIssueCommentEvent(parsedPayload)) {
-    return null
-  }
-
-  let payload: IssueCommentPayload
-  try {
-    payload = Schema.decodeUnknownSync(IssueCommentPayloadSchema)(parsedPayload)
-  } catch {
-    return null
-  }
-
-  const rawCommentBody = typeof payload.comment?.body === 'string' ? payload.comment.body : ''
-  const trimmedCommentBody = rawCommentBody.trim()
-  const senderLoginValue = payload.sender?.login
-  const normalizedSender = normalizeLogin(senderLoginValue)
-  const isAuthorizedSender =
-    typeof normalizedSender === 'string' ? config.codexTriggerLogins.includes(normalizedSender) : false
-  const isWorkflowSender = normalizedSender === config.codexWorkflowLogin
-  const hasPlanMarker = rawCommentBody.includes(CODEX_PLAN_MARKER)
-  const isPlanningPlaceholderComment = hasPlanMarker && isPlanningPlaceholderBody(rawCommentBody)
-  const isManualTrigger = trimmedCommentBody === config.codexImplementationTriggerPhrase
-
-  if (isPlanningPlaceholderComment) {
-    return null
-  }
-
-  const shouldTriggerImplementation =
-    (isAuthorizedSender && (isManualTrigger || hasPlanMarker)) || (hasPlanMarker && isWorkflowSender)
-
-  if (!shouldTriggerImplementation) {
-    return null
-  }
-
-  const issue = payload.issue
-  const issueRepository = selectReactionRepository(issue, payload.repository)
-  const repositoryFullName = deriveRepositoryFullName(issueRepository, issue?.repository_url)
-  const issueNumber = typeof issue?.number === 'number' ? issue.number : undefined
-
-  if (!issueNumber || !repositoryFullName) {
-    return null
-  }
-
-  const baseBranch = issueRepository?.default_branch ?? config.codebase.baseBranch
-  const headBranch = buildCodexBranchName(issueNumber, deliveryId, config.codebase.branchPrefix)
-  const issueTitle = typeof issue?.title === 'string' && issue.title.length > 0 ? issue.title : `Issue #${issueNumber}`
-  const issueBody = typeof issue?.body === 'string' ? issue.body : ''
-  const issueUrl = typeof issue?.html_url === 'string' ? issue.html_url : ''
-
-  let planCommentBody: string | undefined
-  let planCommentId: number | undefined
-  let planCommentUrl: string | undefined
-
-  if (hasPlanMarker) {
-    planCommentBody = rawCommentBody
-    planCommentId = typeof payload.comment?.id === 'number' ? payload.comment.id : undefined
-    planCommentUrl = typeof payload.comment?.html_url === 'string' ? payload.comment.html_url : undefined
-  } else {
-    const planLookup = await executionContext.runGithub(() =>
-      executionContext.githubService.findLatestPlanComment({
-        repositoryFullName,
-        issueNumber,
-        token: config.github.token,
-        apiBaseUrl: config.github.apiBaseUrl,
-        userAgent: config.github.userAgent,
-      }),
-    )
-
-    if (planLookup.ok && !isPlanningPlaceholderBody(planLookup.comment.body)) {
-      planCommentBody = planLookup.comment.body
-      planCommentId = planLookup.comment.id
-      planCommentUrl = planLookup.comment.htmlUrl ?? undefined
-    }
-  }
-
-  const prompt = buildCodexPrompt({
-    stage: 'implementation',
-    issueTitle,
-    issueBody,
-    repositoryFullName,
-    issueNumber,
-    baseBranch,
-    headBranch,
-    issueUrl,
-    planCommentBody,
   })
 
   const codexMessage: CodexTaskMessage = {
@@ -406,9 +156,6 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
     issueBody,
     sender: typeof senderLoginValue === 'string' ? senderLoginValue : '',
     issuedAt: new Date().toISOString(),
-    planCommentBody,
-    planCommentId,
-    planCommentUrl,
   }
 
   const codexStructuredMessage = toCodexTaskProto(codexMessage, deliveryId)
@@ -435,11 +182,106 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
     },
   } as ImplementationCommand
 
-  const evaluation = evaluateCodexWorkflow({
-    type: 'PLAN_APPROVED',
-    data: implementationCommand,
+  const { stage } = await executeWorkflowCommands(
+    [{ type: 'publishImplementation', data: implementationCommand }],
+    executionContext,
+  )
+  return stage ?? null
+}
+
+export const handleIssueCommentCreated = async (params: BaseIssueParams): Promise<WorkflowStage | null> => {
+  const { parsedPayload, headers, config, executionContext, deliveryId } = params
+
+  if (!isGithubIssueCommentEvent(parsedPayload)) {
+    return null
+  }
+
+  let payload: IssueCommentPayload
+  try {
+    payload = Schema.decodeUnknownSync(IssueCommentPayloadSchema)(parsedPayload)
+  } catch {
+    return null
+  }
+
+  const rawCommentBody = typeof payload.comment?.body === 'string' ? payload.comment.body : ''
+  const trimmedCommentBody = rawCommentBody.trim()
+  const senderLoginValue = payload.sender?.login
+  const normalizedSender = normalizeLogin(senderLoginValue)
+  const isAuthorizedSender =
+    typeof normalizedSender === 'string' ? config.codexTriggerLogins.includes(normalizedSender) : false
+  const isManualTrigger = trimmedCommentBody === config.codexImplementationTriggerPhrase
+  const shouldTriggerImplementation = isAuthorizedSender && isManualTrigger
+
+  if (!shouldTriggerImplementation) {
+    return null
+  }
+
+  const issue = payload.issue
+  const issueRepository = selectReactionRepository(issue, payload.repository)
+  const repositoryFullName = deriveRepositoryFullName(issueRepository, issue?.repository_url)
+  const issueNumber = typeof issue?.number === 'number' ? issue.number : undefined
+
+  if (!issueNumber || !repositoryFullName) {
+    return null
+  }
+
+  const baseBranch = issueRepository?.default_branch ?? config.codebase.baseBranch
+  const headBranch = buildCodexBranchName(issueNumber, deliveryId, config.codebase.branchPrefix)
+  const issueTitle = typeof issue?.title === 'string' && issue.title.length > 0 ? issue.title : `Issue #${issueNumber}`
+  const issueBody = typeof issue?.body === 'string' ? issue.body : ''
+  const issueUrl = typeof issue?.html_url === 'string' ? issue.html_url : ''
+
+  const prompt = buildCodexPrompt({
+    issueTitle,
+    issueBody,
+    repositoryFullName,
+    issueNumber,
+    baseBranch,
+    headBranch,
+    issueUrl,
   })
 
-  const { stage } = await executeWorkflowCommands(evaluation.commands, executionContext)
+  const codexMessage: CodexTaskMessage = {
+    stage: 'implementation',
+    prompt,
+    repository: repositoryFullName,
+    base: baseBranch,
+    head: headBranch,
+    issueNumber,
+    issueUrl,
+    issueTitle,
+    issueBody,
+    sender: typeof senderLoginValue === 'string' ? senderLoginValue : '',
+    issuedAt: new Date().toISOString(),
+  }
+
+  const codexStructuredMessage = toCodexTaskProto(codexMessage, deliveryId)
+
+  const implementationCommand: ImplementationCommand = {
+    stage: 'implementation',
+    key: `issue-${issueNumber}-implementation`,
+    codexMessage,
+    structuredMessage: codexStructuredMessage,
+    topics: {
+      codex: config.topics.codex,
+      codexStructured: config.topics.codexStructured,
+    },
+    jsonHeaders: {
+      ...headers,
+      'x-codex-task-stage': 'implementation',
+    },
+    structuredHeaders: {
+      ...headers,
+      'x-codex-task-stage': 'implementation',
+      'content-type': PROTO_CONTENT_TYPE,
+      'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,
+      'x-protobuf-schema': PROTO_CODEX_TASK_SCHEMA,
+    },
+  } as ImplementationCommand
+
+  const { stage } = await executeWorkflowCommands(
+    [{ type: 'publishImplementation', data: implementationCommand }],
+    executionContext,
+  )
   return stage ?? null
 }

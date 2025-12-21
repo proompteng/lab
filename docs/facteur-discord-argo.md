@@ -2,6 +2,8 @@
 
 Facteur receives Discord interactions, validates signatures, and submits Argo Workflows against a pre-provisioned WorkflowTemplate. The goal is to document the configuration contract and deployment surface so future automation can plug in without reworking the service. For background, see the [Discord interactions reference](https://discord.com/developers/docs/interactions/receiving-and-responding) and the [Argo Workflows architecture overview](https://argo-workflows.readthedocs.io/en/stable/).
 
+> Note: Codex planning/review dispatch is deprecated; implementation-only automation should be treated as the current production flow.
+
 ## Configuration model
 
 Configuration can be supplied via YAML or environment variables prefixed with `FACTEUR_`. Environment values override the file to support container-based overrides.
