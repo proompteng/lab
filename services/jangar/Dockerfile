@@ -391,6 +391,8 @@ RUN --mount=type=cache,target=/root/.cache/bun \
 
 FROM tools AS runtime
 
+ENV PATH="/usr/local/go/bin:${PATH}"
+
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
 
