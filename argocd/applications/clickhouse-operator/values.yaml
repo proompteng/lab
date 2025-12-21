@@ -50,6 +50,11 @@ affinity:
                 values:
                   - altinity-clickhouse-operator
 configs:
+  files:
+    config.yaml:
+      watch:
+        namespaces:
+          - '.*'
   templatesdFiles:
     lab-clickhouse-template.yaml: |
       apiVersion: clickhouse.altinity.com/v1
