@@ -10,7 +10,7 @@ import { logger } from '@/logger'
 import { GithubService } from '@/services/github/service'
 
 import { handleIssueCommentCreated, handleIssueOpened } from './github/events/issues'
-import { handlePullRequestEvent, handlePullRequestReviewEvent } from './github/events/pull-request'
+import { handlePullRequestEvent } from './github/events/pull-request'
 import type { WorkflowExecutionContext, WorkflowStage } from './github/workflow'
 import type { WebhookConfig } from './types'
 import { publishKafkaMessage } from './utils'
@@ -215,21 +215,6 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
           senderLogin,
         })
         if (stage) {
-          codexStageTriggered = stage
-        }
-      }
-
-      if (eventName === 'pull_request_review') {
-        const stage = await handlePullRequestReviewEvent({
-          parsedPayload,
-          headers,
-          config,
-          executionContext,
-          deliveryId,
-          actionValue,
-          senderLogin,
-        })
-        if (stage && !codexStageTriggered) {
           codexStageTriggered = stage
         }
       }

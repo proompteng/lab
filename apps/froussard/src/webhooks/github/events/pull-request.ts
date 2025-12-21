@@ -2,10 +2,7 @@ import type { ReadyCommentCommand } from '@/codex/workflow-machine'
 import { deriveRepositoryFullName, type GithubRepository } from '@/github-payload'
 import { logger } from '@/logger'
 import { CODEX_READY_COMMENT_MARKER, CODEX_READY_TO_MERGE_COMMENT } from '../constants'
-import {
-  shouldHandlePullRequestAction,
-  shouldHandlePullRequestReviewAction,
-} from '../helpers'
+import { shouldHandlePullRequestAction } from '../helpers'
 import type { WebhookConfig } from '../types'
 import type { WorkflowExecutionContext, WorkflowStage } from '../workflow'
 import { executeWorkflowCommands } from '../workflow'
@@ -174,23 +171,4 @@ export const handlePullRequestEvent = async (params: PullRequestBaseParams): Pro
   }
 
   return processPullRequest()
-}
-
-export const handlePullRequestReviewEvent = async (params: PullRequestBaseParams): Promise<WorkflowStage | null> => {
-  const { parsedPayload, headers, config, executionContext, deliveryId, actionValue, senderLogin } = params
-
-  if (!shouldHandlePullRequestReviewAction(actionValue)) {
-    return null
-  }
-
-  return handlePullRequestEvent({
-    parsedPayload,
-    headers,
-    config,
-    executionContext,
-    deliveryId,
-    actionValue,
-    senderLogin,
-    skipActionCheck: true,
-  })
 }

@@ -58,12 +58,3 @@ export const shouldHandlePullRequestAction = (action?: string | null): boolean =
   }
   return PR_ACTIONS.has(action)
 }
-
-const PR_REVIEW_ACTIONS = new Set(['submitted', 'edited', 'dismissed'])
-
-export const shouldHandlePullRequestReviewAction = (action?: string | null): boolean => {
-  if (!action) {
-    return false
-  }
-  return PR_REVIEW_ACTIONS.has(action)
-}
