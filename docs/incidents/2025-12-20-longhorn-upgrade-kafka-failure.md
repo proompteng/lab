@@ -14,6 +14,7 @@
 - Temporal outage due to Elasticsearch data corruption and failed volume attachments (incident ongoing).
 - Torghut ClickHouse/ClickHouse Keeper resources failed to apply due to manifest schema mismatch.
 - MinIO operator sync blocked by a CRD storedVersion mismatch (`policybindings.sts.min.io`).
+- Temporal intermittently failed to read namespaces because Cassandra could not meet LOCAL_QUORUM after node shrink.
 
 ## Timeline (Pacific Time)
 
@@ -30,6 +31,7 @@
 | 2025-12-20 ~13:25 | Torghut ClickHouse/ClickHouse Keeper manifests fail Argo CD apply due to `podTemplates`/`volumeClaimTemplates` schema mismatch. |
 | 2025-12-20 ~13:30 | Torghut manifests updated to move templates under `spec.templates` and referenced by name in cluster-level templates. |
 | 2025-12-20 ~14:10 | MinIO CRD sync fails: `policybindings.sts.min.io` has `status.storedVersions` set to `v1beta1` but `spec.versions` no longer includes `v1beta1`. |
+| 2025-12-20 ~14:20 | Temporal frontend errors with `Cannot achieve consistency level LOCAL_QUORUM` after Cassandra downscaled. Removed dead nodes from ring and restarted Temporal services. |
 
 ## Root Cause
 
@@ -38,6 +40,7 @@
 - **Temporal outage**: Elasticsearch data path on `elasticsearch-master-0` returned I/O errors, plus Longhorn attachment ticket churn blocked recovery until the data volume was re-created and ES was reconfigured for single-node bootstrap.
 - **Torghut ClickHouse**: ClickHouse Keeper CRD rejected `spec.configuration.clusters[].templates.podTemplates` because the schema expects template names there, not inline templates.
 - **MinIO CRD mismatch**: The MinIO operator upgrade dropped `v1beta1` from `spec.versions` while the cluster still reports `status.storedVersions: [v1beta1]`, causing the CRD update to be rejected.
+- **Temporal Cassandra ring**: Cassandra was reduced to a single node but still listed two dead nodes in the ring. With `replicationFactor: 1`, LOCAL_QUORUM still required responses from tokens owned by down nodes.
 
 ## Contributing Factors
 
@@ -56,6 +59,7 @@
 6. Applied ES single-node bootstrap fixes and readiness adjustments; restarted ES pod.
 7. Updated Torghut ClickHouse and ClickHouse Keeper manifests to define templates under `spec.templates` and reference them by name.
 8. Reintroduced the `v1beta1` CRD version for MinIO `policybindings.sts.min.io` (served, non-storage) to satisfy storedVersions.
+9. Removed dead Cassandra nodes from the ring, then restarted Temporal services to clear LOCAL_QUORUM errors.
 
 ## Manual Interventions (Commands and Hacks)
 
@@ -171,6 +175,17 @@ kubectl -n torghut apply -f argocd/applications/torghut/clickhouse/clickhouse-cl
 kubectl apply -k argocd/applications/minio
 ```
 
+### Temporal: Cassandra ring cleanup (LOCAL_QUORUM failures)
+
+```bash
+# Remove dead Cassandra nodes from ring after downscale
+kubectl -n temporal exec temporal-cassandra-0 -- nodetool removenode 92d0e49d-055b-4c31-ad5e-ead768f49cf7
+kubectl -n temporal exec temporal-cassandra-0 -- nodetool removenode 9f30c1f8-3c47-413d-96b8-5c14fe305444
+
+# Restart Temporal services to pick up healthy persistence
+kubectl -n temporal rollout restart deploy/temporal-frontend deploy/temporal-history deploy/temporal-matching deploy/temporal-worker deploy/temporal-web
+```
+
 ## Follow-up Actions
 
 - **Upgrade guardrail**: Add a pre-upgrade step for Longhorn CRDs to normalize or remove stale conversion fields before chart upgrades.
@@ -180,6 +195,7 @@ kubectl apply -k argocd/applications/minio
 - **Temporal hardening**: Add explicit single-node values in Git (ES `replicas`, `minimumMasterNodes`, `clusterHealthCheckParams`, Cassandra `cluster_size`) and document the required ES bootstrap env changes.
 - **Torghut ClickHouse**: Add a validation check (CRD schema) in CI or pre-sync linting to catch invalid template nesting.
 - **MinIO CRD upgrades**: Keep old CRD versions in `spec.versions` until storage migration removes them from `status.storedVersions`.
+- **Temporal Cassandra downscales**: After reducing replicas, remove dead nodes from the ring to avoid LOCAL_QUORUM failures; document ring cleanup in the runbook.
 
 ## Lessons Learned
 
