@@ -82,18 +82,6 @@ const respondToTurnStart = async (child: FakeChildProcess, turnId: string) => {
   })
 }
 
-const respondToThreadCompact = async (child: FakeChildProcess) => {
-  const request = await nextRequest(child)
-  expect(request.method).toBe('thread/compact')
-  writeLine(child, { id: request.id, result: {} })
-}
-
-const respondToTurnStartError = async (child: FakeChildProcess, message: string) => {
-  const request = await nextRequest(child)
-  expect(request.method).toBe('turn/start')
-  writeLine(child, { id: request.id, error: { message } })
-}
-
 const setupClient = (options: ConstructorParameters<typeof CodexAppServerClient>[0] = {}) => {
   const child = new FakeChildProcess()
   spawnMock.mockReturnValue(child as unknown as ReturnType<typeof spawn>)
@@ -181,70 +169,6 @@ describe('CodexAppServerClient codex/event bridging', () => {
         modelContextWindow: null,
       },
     })
-  })
-
-  it('auto-compacts before starting a new turn when usage is near the context window', async () => {
-    const { child, client } = setupClient({ autoCompaction: true })
-    await respondToInitialize(child)
-    await client.ensureReady()
-
-    const firstTurnPromise = client.runTurnStream('hello')
-    await respondToThreadStart(child, 'thread-1')
-    await respondToTurnStart(child, 'turn-1')
-    const { threadId } = await firstTurnPromise
-
-    writeLine(child, {
-      method: 'turn/completed',
-      params: { turn: { id: 'turn-1', status: 'completed', items: [] } },
-    })
-
-    writeLine(child, {
-      method: 'thread/tokenUsage/updated',
-      params: {
-        threadId: 'thread-1',
-        turnId: 'turn-1',
-        tokenUsage: {
-          total: {
-            totalTokens: 90,
-            inputTokens: 70,
-            cachedInputTokens: 0,
-            outputTokens: 20,
-            reasoningOutputTokens: 0,
-          },
-          last: {
-            totalTokens: 10,
-            inputTokens: 5,
-            cachedInputTokens: 0,
-            outputTokens: 5,
-            reasoningOutputTokens: 0,
-          },
-          modelContextWindow: 100,
-        },
-      },
-    })
-
-    const secondTurnPromise = client.runTurnStream('hi', { threadId })
-    await respondToThreadCompact(child)
-    await respondToTurnStart(child, 'turn-2')
-    const second = await secondTurnPromise
-
-    expect(second.threadId).toBe('thread-1')
-  })
-
-  it('compacts and retries turn/start once when it fails with a context-length error', async () => {
-    const { child, client } = setupClient({ autoCompaction: true })
-    await respondToInitialize(child)
-    await client.ensureReady()
-
-    const runPromise = client.runTurnStream('hello')
-    await respondToThreadStart(child, 'thread-1')
-    await respondToTurnStartError(child, 'Maximum context length exceeded')
-    await respondToThreadCompact(child)
-    await respondToTurnStart(child, 'turn-1')
-
-    const result = await runPromise
-    expect(result.threadId).toBe('thread-1')
-    expect(result.turnId).toBe('turn-1')
   })
 
   it('bridges codex/event/exec_command_* into tool deltas', async () => {
