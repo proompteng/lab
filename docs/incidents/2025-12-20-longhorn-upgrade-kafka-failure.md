@@ -197,6 +197,23 @@ kubectl -n temporal rollout restart deploy/temporal-frontend deploy/temporal-his
 kubectl -n longhorn-system delete replicas.longhorn.io pvc-e438ed00-eae4-456c-89c5-1fe0fc03fbcf-r-43c8733c
 ```
 
+## Post-incident Updates (2025-12-21)
+
+- Reduced Longhorn concurrency to ease control-plane/etcd pressure:
+  - `backup-concurrent-limit=1`
+  - `restore-concurrent-limit=2`
+  - `concurrent-volume-backup-restore-per-node-limit=1`
+  - `concurrent-replica-rebuild-per-node-limit=1`
+  - `concurrent-automatic-engine-upgrade-per-node-limit=0`
+  - `concurrent-backing-image-replenish-per-node-limit=5`
+- Set default replica count for new volumes to `1` (StorageClass default + Longhorn UI default).
+- Patched existing Longhorn volume CRs to `spec.numberOfReplicas=1` to apply the replica change to all current volumes.
+- Persisted these defaults in GitOps (`argocd/applications/longhorn/longhorn-values.yaml`).
+- Redis (jangar/openwebui) crash recovery:
+  - `jangar-openwebui-redis-0` was crash-looping on `Fatal error: can't open the AOF manifest ... I/O error`.
+  - Temporarily scaled the StatefulSet to 0 and back to 1; Redis came up cleanly and reloaded AOF.
+  - PVC remained on Longhorn volume `pvc-f1a0f489-c4f8-427c-9c8f-66a69b40e860` (healthy but previously degraded-flapping).
+
 ## Follow-up Actions
 
 - **Upgrade guardrail**: Add a pre-upgrade step for Longhorn CRDs to normalize or remove stale conversion fields before chart upgrades.

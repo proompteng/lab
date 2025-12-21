@@ -4,10 +4,25 @@ ingress:
   enabled: true
   ingressClassName: traefik
   host: longhorn.lan
+persistence:
+  defaultClassReplicaCount: 1
 defaultSettings:
+  createDefaultDiskLabeledNodes: true
   storageReservedPercentageForDefaultDisk: 30
   storageMinimalAvailablePercentage: 25
   defaultReplicaCount: 1
   replicaAutoBalance: best-effort
   replicaSoftAntiAffinity: false
   allowVolumeCreationWithDegradedAvailability: false
+  backupConcurrentLimit: 1
+  restoreConcurrentLimit: 2
+  concurrentVolumeBackupRestorePerNodeLimit: 1
+  concurrentReplicaRebuildPerNodeLimit: 1
+  concurrentAutomaticEngineUpgradePerNodeLimit: 0
+extraObjects:
+  - apiVersion: longhorn.io/v1beta2
+    kind: Setting
+    metadata:
+      name: concurrent-backing-image-replenish-per-node-limit
+      namespace: longhorn-system
+    value: "5"

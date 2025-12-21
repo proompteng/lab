@@ -50,6 +50,11 @@ affinity:
                 values:
                   - altinity-clickhouse-operator
 configs:
+  files:
+    config.yaml:
+      watch:
+        namespaces:
+          - '.*'
   templatesdFiles:
     lab-clickhouse-template.yaml: |
       apiVersion: clickhouse.altinity.com/v1
@@ -85,6 +90,7 @@ configs:
                               topologyKey: kubernetes.io/hostname
                       containers:
                         - name: clickhouse
+                          image: altinity/clickhouse-server:25.3.6.10034.altinitystable
                           resources:
                             requests:
                               cpu: 1
@@ -135,6 +141,7 @@ configs:
                               topologyKey: kubernetes.io/hostname
                       containers:
                         - name: clickhouse-keeper
+                          image: clickhouse/clickhouse-keeper:24.3.5.46
                           resources:
                             requests:
                               cpu: 500m
