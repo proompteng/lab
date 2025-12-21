@@ -1,5 +1,19 @@
+import { randomUUID } from 'node:crypto'
+
 import { chunkContent, consumeChunks, DISCORD_MESSAGE_LIMIT } from '@proompteng/discord'
-import { Client, GatewayIntentBits, type Message, Partials, type Snowflake, type ThreadChannel } from 'discord.js'
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  Client,
+  GatewayIntentBits,
+  type Message,
+  type MessageCreateOptions,
+  type MessageEditOptions,
+  Partials,
+  type Snowflake,
+  type ThreadChannel,
+} from 'discord.js'
 import { type Config, loadConfig } from './config'
 import { buildMessageContent, buildThreadName } from './utils'
 
@@ -12,11 +26,25 @@ type ChatMessage = {
 type ThreadQueue = Map<string, Promise<void>>
 type GuildMessage = Message<true>
 
+type InflightState = {
+  threadId: string
+  requestId: string
+  abortController: AbortController
+  startedAt: number
+  initiatorId?: string
+  messageId?: string
+  stoppedById?: string
+}
+
 type BotState = {
   client: Client
   config: Config
   threadQueues: ThreadQueue
+  inflightByThread: Map<string, InflightState>
 }
+
+const STOP_COMMANDS = new Set(['stop', '!stop'])
+const STOP_CUSTOM_ID_PREFIX = 'oirat-stop'
 
 const logContext = (message: GuildMessage) => ({
   messageId: message.id,
@@ -119,10 +147,42 @@ const collectThreadMessages = async (
 const buildOpenWebUiChatId = (thread: { id: string; guildId?: string | null }): string =>
   thread.guildId ? `discord:${thread.guildId}:${thread.id}` : `discord:${thread.id}`
 
+const buildStopCustomId = (threadId: string, requestId: string) => `${STOP_CUSTOM_ID_PREFIX}:${threadId}:${requestId}`
+
+const parseStopCustomId = (customId: string): { threadId: string; requestId: string } | null => {
+  if (!customId.startsWith(`${STOP_CUSTOM_ID_PREFIX}:`)) return null
+  const [, threadId, ...rest] = customId.split(':')
+  if (!threadId || rest.length === 0) return null
+  return { threadId, requestId: rest.join(':') }
+}
+
+const buildStopComponents = (threadId: string, requestId: string): MessageCreateOptions['components'] => [
+  new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(buildStopCustomId(threadId, requestId))
+      .setLabel('Stop')
+      .setStyle(ButtonStyle.Danger),
+  ),
+]
+
+const isAbortError = (error: unknown): boolean =>
+  error instanceof Error && (error.name === 'AbortError' || error.message.includes('AbortError'))
+
+const stopInflight = (state: BotState, threadId: string, requestedBy: string, requestId?: string): boolean => {
+  const inflight = state.inflightByThread.get(threadId)
+  if (!inflight) return false
+  if (requestId && inflight.requestId !== requestId) return false
+  inflight.stoppedById = requestedBy
+  if (!inflight.abortController.signal.aborted) {
+    inflight.abortController.abort()
+  }
+  return true
+}
+
 const fetchJangarCompletion = async (
   state: BotState,
   messages: ChatMessage[],
-  options: { chatId?: string; onDelta?: (delta: string) => Promise<void> | void } = {},
+  options: { chatId?: string; onDelta?: (delta: string) => Promise<void> | void; signal?: AbortSignal } = {},
 ): Promise<string> => {
   const payload = {
     model: state.config.jangarModel,
@@ -144,6 +204,7 @@ const fetchJangarCompletion = async (
     method: 'POST',
     headers,
     body: JSON.stringify(payload),
+    signal: options.signal,
   })
 
   if (!response.ok) {
@@ -258,9 +319,18 @@ const runWithTypingIndicator = async <T>(
   }
 }
 
-const createDiscordStreamWriter = <TMessage extends { edit: (content: string) => Promise<unknown> }>(thread: {
-  send: (content: string) => Promise<TMessage>
-}) => {
+type StreamWriterOptions<TMessage> = {
+  getComponents?: () => MessageCreateOptions['components']
+  onMessage?: (message: TMessage) => void
+}
+
+type SendPayload = string | MessageCreateOptions
+type EditPayload = string | MessageEditOptions
+
+const createDiscordStreamWriter = <TMessage extends { id: string; edit: (content: EditPayload) => Promise<unknown> }>(
+  thread: { send: (content: SendPayload) => Promise<TMessage> },
+  options: StreamWriterOptions<TMessage> = {},
+) => {
   const flushIntervalMs = 400
   const flushThresholdChars = 280
 
@@ -272,20 +342,66 @@ const createDiscordStreamWriter = <TMessage extends { edit: (content: string) =>
   let closed = false
   let flushChain: Promise<void> = Promise.resolve()
   let flushError: Error | null = null
+  let activeComponentsMessage: TMessage | null = null
+  let activeComponentsContent = ''
 
-  const sendMessage = async (content: string) => {
-    const message = await thread.send(content)
+  const buildCreatePayload = (
+    content: string,
+    components?: MessageCreateOptions['components'],
+  ): MessageCreateOptions => {
+    const payload: MessageCreateOptions = { content }
+    if (components !== undefined) {
+      payload.components = components
+    }
+    return payload
+  }
+
+  const buildEditPayload = (content: string, components?: MessageCreateOptions['components']): MessageEditOptions => {
+    const payload: MessageEditOptions = { content }
+    if (components !== undefined) {
+      payload.components = components
+    }
+    return payload
+  }
+
+  const editMessage = async (message: TMessage, content: string, components?: MessageCreateOptions['components']) => {
+    await message.edit(buildEditPayload(content, components))
+  }
+
+  const updateActiveComponents = async (message: TMessage, content: string) => {
+    if (!options.getComponents) return
+    if (activeComponentsMessage && activeComponentsMessage !== message) {
+      await editMessage(activeComponentsMessage, activeComponentsContent, [])
+    }
+    activeComponentsMessage = message
+    activeComponentsContent = content
+  }
+
+  const sendMessage = async (content: string, includeComponents: boolean) => {
+    const components = includeComponents ? options.getComponents?.() : options.getComponents ? [] : undefined
+    const message = await thread.send(buildCreatePayload(content, components))
     sentAny = true
+    options.onMessage?.(message)
+    if (includeComponents) {
+      await updateActiveComponents(message, content)
+    }
     return message
   }
 
-  const upsertCurrentMessage = async (content: string) => {
+  const upsertCurrentMessage = async (content: string, includeComponents: boolean) => {
     if (!currentMessage) {
-      currentMessage = await sendMessage(content)
+      currentMessage = await sendMessage(content, includeComponents)
       return
     }
-    await currentMessage.edit(content)
+    const components = includeComponents ? options.getComponents?.() : options.getComponents ? [] : undefined
+    await editMessage(currentMessage, content, components)
     sentAny = true
+    if (includeComponents) {
+      await updateActiveComponents(currentMessage, content)
+    } else if (activeComponentsMessage === currentMessage) {
+      activeComponentsMessage = null
+      activeComponentsContent = ''
+    }
   }
 
   const enqueueFlush = (task: () => Promise<void>) => {
@@ -330,24 +446,29 @@ const createDiscordStreamWriter = <TMessage extends { edit: (content: string) =>
     currentContent += delta
 
     if (currentContent.length <= DISCORD_MESSAGE_LIMIT) {
-      await upsertCurrentMessage(currentContent)
+      await upsertCurrentMessage(currentContent, true)
       return
     }
 
     const { chunks, remainder } = consumeChunks(currentContent, DISCORD_MESSAGE_LIMIT)
 
     if (chunks.length > 0) {
-      await upsertCurrentMessage(chunks[0])
-      for (const chunk of chunks.slice(1)) {
+      const trailingChunks = chunks.slice(1)
+      const hasRemainder = remainder.length > 0
+      const keepComponentsOnCurrent = trailingChunks.length === 0 && !hasRemainder
+      await upsertCurrentMessage(chunks[0], keepComponentsOnCurrent)
+      for (const [index, chunk] of trailingChunks.entries()) {
         if (!chunk) continue
-        currentMessage = await sendMessage(chunk)
+        const isLastChunk = index === trailingChunks.length - 1
+        const includeComponents = isLastChunk && !hasRemainder
+        currentMessage = await sendMessage(chunk, includeComponents)
       }
     }
 
     currentContent = remainder
 
     if (currentContent.length > 0) {
-      currentMessage = await sendMessage(currentContent)
+      currentMessage = await sendMessage(currentContent, true)
       return
     }
 
@@ -402,6 +523,11 @@ const createDiscordStreamWriter = <TMessage extends { edit: (content: string) =>
     }
     await flushPending({ final: true })
     await flushChain
+    if (options.getComponents && activeComponentsMessage) {
+      await editMessage(activeComponentsMessage, activeComponentsContent, [])
+      activeComponentsMessage = null
+      activeComponentsContent = ''
+    }
     if (flushError) {
       throw flushError
     }
@@ -423,29 +549,75 @@ const respondInThread = async (state: BotState, thread: ThreadChannel, seed?: Gu
     return
   }
 
-  const streamWriter = createDiscordStreamWriter(thread)
+  const requestId = randomUUID()
+  const inflight: InflightState = {
+    threadId: thread.id,
+    requestId,
+    abortController: new AbortController(),
+    startedAt: Date.now(),
+    initiatorId: seed?.author.id,
+  }
+  state.inflightByThread.set(thread.id, inflight)
+
+  const streamWriter = createDiscordStreamWriter(thread, {
+    getComponents: () => buildStopComponents(thread.id, requestId),
+    onMessage: (message) => {
+      if (!inflight.messageId) {
+        inflight.messageId = message.id
+      }
+    },
+  })
   let responseText = ''
+  let aborted = false
+  let hadError = false
+  let stoppedById: string | undefined
   try {
     responseText = await runWithTypingIndicator(thread, async () => {
       console.log(`[thread:${thread.id}] requesting completion`, { messageCount: chatMessages.length })
       const chatId = buildOpenWebUiChatId(thread)
       return await fetchJangarCompletion(state, chatMessages, {
         chatId,
+        signal: inflight.abortController.signal,
         onDelta: async (delta) => {
           await streamWriter.pushDelta(delta)
         },
       })
     })
   } catch (error) {
-    console.error(`[thread:${thread.id}] Jangar request failed`, error)
-    responseText = 'Sorry, something went wrong while generating a reply.'
-    if (!streamWriter.hasSent()) {
-      await thread.send(responseText)
+    if (isAbortError(error)) {
+      aborted = true
+      stoppedById = inflight.stoppedById
+    } else {
+      hadError = true
+      console.error(`[thread:${thread.id}] Jangar request failed`, error)
+      if (!streamWriter.hasSent()) {
+        await thread.send('Sorry, something went wrong while generating a reply.')
+      }
     }
+  } finally {
+    state.inflightByThread.delete(thread.id)
+  }
+
+  if (aborted) {
+    await streamWriter.finalize()
+    const notice = stoppedById ? `Stopped by <@${stoppedById}>.` : 'Stopped.'
+    await thread.send(notice)
     return
   }
 
-  await streamWriter.finalize()
+  if (hadError) {
+    await streamWriter.finalize().catch((error) => {
+      console.error(`[thread:${thread.id}] Jangar stream cleanup failed`, error)
+    })
+    return
+  }
+
+  try {
+    await streamWriter.finalize()
+  } catch (error) {
+    console.error(`[thread:${thread.id}] Jangar request failed`, error)
+    return
+  }
 
   if (streamWriter.hasSent()) {
     return
@@ -503,6 +675,12 @@ const handleThreadMessage = async (state: BotState, message: GuildMessage, threa
   const isBotThread = thread.ownerId === state.client.user?.id
   const mentionedBot = message.mentions.users.has(state.client.user?.id ?? '')
 
+  const normalized = message.content.trim().toLowerCase()
+  if (STOP_COMMANDS.has(normalized)) {
+    stopInflight(state, thread.id, message.author.id)
+    return
+  }
+
   if (!isBotThread && !mentionedBot) {
     return
   }
@@ -519,6 +697,18 @@ const handleThreadMessage = async (state: BotState, message: GuildMessage, threa
 }
 
 const attachClientHandlers = (state: BotState) => {
+  state.client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isButton()) return
+
+    const stopTarget = parseStopCustomId(interaction.customId)
+    if (!stopTarget) return
+
+    stopInflight(state, stopTarget.threadId, interaction.user.id, stopTarget.requestId)
+    await interaction.deferUpdate().catch((error) => {
+      console.warn('Failed to acknowledge stop interaction', error)
+    })
+  })
+
   state.client.on('messageCreate', async (message) => {
     if (message.author.bot) return
     if (!message.inGuild()) return
@@ -563,6 +753,7 @@ const runBot = async () => {
     client,
     config,
     threadQueues: new Map(),
+    inflightByThread: new Map(),
   }
 
   attachClientHandlers(state)
