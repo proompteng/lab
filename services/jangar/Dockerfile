@@ -18,6 +18,7 @@ ARG KN_VERSION=1.20.0
 ARG CNPG_VERSION=1.28.0
 ARG DOCKER_CLI_VERSION=29.1.2
 ARG BUILDX_VERSION=0.30.1
+ARG GO_VERSION=1.23.4
 ARG TEMURIN25_JDK_TAG=jdk-25.0.1+8
 ARG TEMURIN25_JDK_VERSION=25.0.1_8
 ARG GRADLE_VERSION=9.2.1
@@ -32,6 +33,7 @@ ARG KN_VERSION
 ARG CNPG_VERSION
 ARG DOCKER_CLI_VERSION
 ARG BUILDX_VERSION
+ARG GO_VERSION
 ARG TEMURIN25_JDK_TAG
 ARG TEMURIN25_JDK_VERSION
 ARG GRADLE_VERSION
@@ -84,6 +86,25 @@ RUN set -eux; \
 ENV JAVA_HOME=/opt/java/current
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
+# Install Go toolchain
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) GO_ARCH=amd64 ;; \
+  arm64|aarch64) GO_ARCH=arm64 ;; \
+  *) echo "Unsupported arch for Go: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" \
+    -o /tmp/go.tgz; \
+  rm -rf /usr/local/go; \
+  tar -xzf /tmp/go.tgz -C /usr/local; \
+  rm -f /tmp/go.tgz; \
+  /usr/local/go/bin/go version
+
+ENV GOROOT=/usr/local/go
+ENV PATH="${GOROOT}/bin:${PATH}"
+
 # Install Gradle
 RUN set -eux; \
   curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
@@ -103,9 +124,11 @@ RUN set -eux; \
   ln -sf /opt/java/current/bin/java /usr/local/bin/java; \
   if [ -x /opt/java/current/bin/javac ]; then ln -sf /opt/java/current/bin/javac /usr/local/bin/javac; fi; \
   ln -sf /opt/gradle/current/bin/gradle /usr/local/bin/gradle; \
+  ln -sf /usr/local/go/bin/go /usr/local/bin/go; \
   cat <<'PROFILE' > /etc/profile.d/jangar-java-gradle.sh
 export JAVA_HOME=/opt/java/current
 export GRADLE_HOME=/opt/gradle/current
+export GOROOT=/usr/local/go
 case ":$PATH:" in
   *":/opt/java/current/bin:"*) ;;
   *) PATH="/opt/java/current/bin:$PATH" ;;
@@ -113,6 +136,10 @@ esac
 case ":$PATH:" in
   *":/opt/gradle/current/bin:"*) ;;
   *) PATH="/opt/gradle/current/bin:$PATH" ;;
+esac
+case ":$PATH:" in
+  *":/usr/local/go/bin:"*) ;;
+  *) PATH="/usr/local/go/bin:$PATH" ;;
 esac
 export PATH
 PROFILE
