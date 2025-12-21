@@ -15,6 +15,7 @@
 - Torghut ClickHouse/ClickHouse Keeper resources failed to apply due to manifest schema mismatch.
 - MinIO operator sync blocked by a CRD storedVersion mismatch (`policybindings.sts.min.io`).
 - Temporal intermittently failed to read namespaces because Cassandra could not meet LOCAL_QUORUM after node shrink.
+- MinIO observability tenant pods stuck Pending due to Longhorn attach timeout on `pvc-e438ed00...`.
 
 ## Timeline (Pacific Time)
 
@@ -32,6 +33,7 @@
 | 2025-12-20 ~13:30 | Torghut manifests updated to move templates under `spec.templates` and referenced by name in cluster-level templates. |
 | 2025-12-20 ~14:10 | MinIO CRD sync fails: `policybindings.sts.min.io` has `status.storedVersions` set to `v1beta1` but `spec.versions` no longer includes `v1beta1`. |
 | 2025-12-20 ~14:20 | Temporal frontend errors with `Cannot achieve consistency level LOCAL_QUORUM` after Cassandra downscaled. Removed dead nodes from ring and restarted Temporal services. |
+| 2025-12-20 ~14:35 | MinIO observability tenant PVC `pvc-e438ed00...` could not attach (Longhorn replica stuck on kube-worker-29). Deleted the stuck replica and volume attached. |
 
 ## Root Cause
 
@@ -41,6 +43,7 @@
 - **Torghut ClickHouse**: ClickHouse Keeper CRD rejected `spec.configuration.clusters[].templates.podTemplates` because the schema expects template names there, not inline templates.
 - **MinIO CRD mismatch**: The MinIO operator upgrade dropped `v1beta1` from `spec.versions` while the cluster still reports `status.storedVersions: [v1beta1]`, causing the CRD update to be rejected.
 - **Temporal Cassandra ring**: Cassandra was reduced to a single node but still listed two dead nodes in the ring. With `replicationFactor: 1`, LOCAL_QUORUM still required responses from tokens owned by down nodes.
+- **MinIO attach failure**: Longhorn volume for the observability tenant had a replica on kube-worker-29 without a valid instance manager, blocking attach to kube-worker-18.
 
 ## Contributing Factors
 
@@ -60,6 +63,7 @@
 7. Updated Torghut ClickHouse and ClickHouse Keeper manifests to define templates under `spec.templates` and reference them by name.
 8. Reintroduced the `v1beta1` CRD version for MinIO `policybindings.sts.min.io` (served, non-storage) to satisfy storedVersions.
 9. Removed dead Cassandra nodes from the ring, then restarted Temporal services to clear LOCAL_QUORUM errors.
+10. Deleted the stuck Longhorn replica for the MinIO observability PVC so the volume could attach and the pod could start.
 
 ## Manual Interventions (Commands and Hacks)
 
@@ -186,6 +190,13 @@ kubectl -n temporal exec temporal-cassandra-0 -- nodetool removenode 9f30c1f8-3c
 kubectl -n temporal rollout restart deploy/temporal-frontend deploy/temporal-history deploy/temporal-matching deploy/temporal-worker deploy/temporal-web
 ```
 
+### MinIO: observability tenant attach failure
+
+```bash
+# Remove stuck replica so volume can attach to kube-worker-18
+kubectl -n longhorn-system delete replicas.longhorn.io pvc-e438ed00-eae4-456c-89c5-1fe0fc03fbcf-r-43c8733c
+```
+
 ## Follow-up Actions
 
 - **Upgrade guardrail**: Add a pre-upgrade step for Longhorn CRDs to normalize or remove stale conversion fields before chart upgrades.
@@ -196,6 +207,7 @@ kubectl -n temporal rollout restart deploy/temporal-frontend deploy/temporal-his
 - **Torghut ClickHouse**: Add a validation check (CRD schema) in CI or pre-sync linting to catch invalid template nesting.
 - **MinIO CRD upgrades**: Keep old CRD versions in `spec.versions` until storage migration removes them from `status.storedVersions`.
 - **Temporal Cassandra downscales**: After reducing replicas, remove dead nodes from the ring to avoid LOCAL_QUORUM failures; document ring cleanup in the runbook.
+- **MinIO observability**: Ensure Longhorn can place replicas on nodes with valid instance managers; avoid scheduling replicas onto tainted nodes without Longhorn managers.
 
 ## Lessons Learned
 
