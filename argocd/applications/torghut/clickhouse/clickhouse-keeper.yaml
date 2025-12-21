@@ -25,6 +25,7 @@ spec:
             kubernetes.io/arch: arm64
           containers:
             - name: clickhouse-keeper
+              image: clickhouse/clickhouse-keeper:24.3.5.46
               resources:
                 requests:
                   cpu: 250m
