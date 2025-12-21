@@ -4,9 +4,17 @@ description: Kubernetes kubectl operations, debugging, inspection, and safe muta
 ---
 
 ## Baseline checks
-- Confirm context/namespace before changes: `kubectl config current-context`, `kubectl get ns`.
+- Confirm namespace before changes: `kubectl get ns`.
 - Prefer read-only first: `kubectl get`, `kubectl describe`, `kubectl get events --sort-by=.lastTimestamp`, `kubectl logs`.
 - Capture resource ownership (ArgoCD/Helm) before mutating: `kubectl get <kind> <name> -o yaml | rg ownerReferences|helm|argocd`.
+
+## Read-only helpers
+- Tail logs with context: `kubectl logs <pod> -c <container> --since=1h --tail=200` (use `-f` to follow).
+- Grep logs (ripgrep/grep): `kubectl logs <pod> -c <container> --since=1h | rg -i 'error|warn'` or `kubectl logs <pod> -c <container> --since=1h | grep -E 'error|warn'`.
+- Crash-loop check: `kubectl logs <pod> -c <container> --previous`.
+- Exec for live inspection: `kubectl exec -it <pod> -c <container> -- <command>` (keep `--` separator).
+- Local access via port-forward: `kubectl port-forward svc/<name> 8080:80` (or `pod/<name>`).
+- Quick resource usage: `kubectl top pods -n <ns>` / `kubectl top nodes` (requires Metrics Server).
 
 ## Safe mutation workflow
 - If GitOps-managed, edit manifests in repo and sync with ArgoCD; document any emergency kubectl edits and reconcile back to Git.
@@ -27,4 +35,5 @@ description: Kubernetes kubectl operations, debugging, inspection, and safe muta
 
 ## Notes
 - Prefer explicit namespaces (`-n <ns>`) and labels (`-l key=value`).
+- Use output formatting when needed: `-o json`, `-o yaml`, or `-o jsonpath=<template>`.
 - Use `--validate=false` only when API validation is temporarily unavailable.
