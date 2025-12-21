@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { DISCORD_MESSAGE_LIMIT } from '@proompteng/discord'
+import type { MessageCreateOptions } from 'discord.js'
 
 import { __testing } from './index'
 
@@ -79,15 +80,28 @@ describe('buildOpenWebUiChatId', () => {
 
 describe('createDiscordStreamWriter', () => {
   const createThread = () => {
-    const sent: Array<{ content: string; edits: string[] }> = []
+    type Payload = { content?: string | null; components?: unknown }
+    const normalize = (payload: string | Payload) =>
+      typeof payload === 'string'
+        ? { content: payload, components: undefined }
+        : { content: payload.content ?? '', components: payload.components }
+    const sent: Array<{
+      content: string
+      creates: Array<{ content: string; components?: unknown }>
+      edits: Array<{ content: string; components?: unknown }>
+    }> = []
     const thread = {
-      send: async (content: string) => {
+      send: async (payload: string | Payload) => {
+        const normalized = normalize(payload)
         const message = {
-          content,
-          edits: [] as string[],
-          edit: async (next: string) => {
-            message.content = next
-            message.edits.push(next)
+          id: `message-${sent.length + 1}`,
+          content: normalized.content,
+          creates: [normalized],
+          edits: [] as Array<{ content: string; components?: unknown }>,
+          edit: async (next: string | Payload) => {
+            const nextPayload = normalize(next)
+            message.content = nextPayload.content
+            message.edits.push(nextPayload)
             return message
           },
         }
@@ -125,5 +139,22 @@ describe('createDiscordStreamWriter', () => {
     expect(sent.length).toBe(2)
     expect(sent[0]?.content.length).toBeLessThanOrEqual(DISCORD_MESSAGE_LIMIT)
     expect(sent[1]?.content.length).toBe(10)
+  })
+
+  it('clears components on finalize', async () => {
+    const thread = createThread()
+    const components = ['stop-button'] as unknown as MessageCreateOptions['components']
+    const writer = createDiscordStreamWriter(thread, {
+      getComponents: () => components,
+    })
+
+    await writer.pushDelta('Hello')
+    await writer.finalize()
+
+    const sent = thread.getSent()
+    expect(sent.length).toBe(1)
+    expect(sent[0]?.creates[0]?.components).toEqual(components)
+    const lastEdit = sent[0]?.edits.at(-1)
+    expect(lastEdit?.components).toEqual([])
   })
 })
