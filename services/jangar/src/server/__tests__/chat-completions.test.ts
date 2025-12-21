@@ -482,7 +482,7 @@ describe('chat completions handler', () => {
     expect(threadState.setThreadId).toHaveBeenLastCalledWith('chat-1', 'fresh-thread')
   })
 
-  it('installs dependencies when allocating a new worktree', async () => {
+  it('does not install dependencies when allocating a new worktree', async () => {
     const previousNodeEnv = process.env.NODE_ENV
     process.env.NODE_ENV = 'production'
 
@@ -556,8 +556,7 @@ describe('chat completions handler', () => {
       await response.text()
     } finally {
       const bunCalls = spawnSpy.mock.calls.filter((call) => Array.isArray(call[0]) && call[0][0] === 'bun')
-      expect(bunCalls).toHaveLength(1)
-      expect(bunCalls[0]?.[0]).toEqual(['bun', 'install'])
+      expect(bunCalls).toHaveLength(0)
 
       spawnSpy.mockRestore?.()
       if (shouldDeleteBun) {

@@ -163,8 +163,6 @@ const shouldSkipGitWorktree = () => {
   return typeof (globalThis as { Bun?: unknown }).Bun === 'undefined'
 }
 
-const shouldInstallWorktreeDeps = () => process.env.NODE_ENV !== 'test'
-
 const resolveRepoRoot = () => resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
 const resolveCodexBaseCwd = () => {
@@ -209,28 +207,18 @@ const createGitWorktree = async (repoRoot: string, worktreePath: string, worktre
   const args = branchExists
     ? ['worktree', 'add', worktreePath, worktreeName]
     : ['worktree', 'add', '-b', worktreeName, worktreePath, 'HEAD']
+  const startedAt = Date.now()
+  console.info('[chat] worktree git add start', { worktreeName, worktreePath, branchExists })
   const result = await runGitCommand(repoRoot, args)
+  console.info('[chat] worktree git add done', {
+    worktreeName,
+    worktreePath,
+    exitCode: result.exitCode,
+    durationMs: Date.now() - startedAt,
+  })
   if (result.exitCode === 0) return
   const detail = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n')
   throw new Error(`git worktree add failed${detail ? `: ${detail}` : ''}`)
-}
-
-const installWorktreeDependencies = async (worktreePath: string) => {
-  if (!shouldInstallWorktreeDeps()) return
-  if (typeof (globalThis as { Bun?: unknown }).Bun === 'undefined') return
-
-  const process = Bun.spawn(['bun', 'install'], {
-    cwd: worktreePath,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  })
-  const exitCode = await process.exited
-  if (exitCode === 0) return
-
-  const stdout = await readProcessText(process.stdout)
-  const stderr = await readProcessText(process.stderr)
-  const detail = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n')
-  throw new Error(`bun install failed${detail ? `: ${detail}` : ''}`)
 }
 
 const ensureWorktreePath = async (worktreeName: string) => {
@@ -239,6 +227,7 @@ const ensureWorktreePath = async (worktreeName: string) => {
   }
 
   const worktreeRoot = resolveWorktreeRoot()
+  console.info('[chat] worktree ensure start', { worktreeName, worktreeRoot })
   await mkdir(worktreeRoot, { recursive: true })
   const worktreePath = join(worktreeRoot, worktreeName)
 
@@ -251,17 +240,20 @@ const ensureWorktreePath = async (worktreeName: string) => {
     if (!existing.isDirectory()) {
       throw new Error(`Worktree path exists but is not a directory: ${worktreePath}`)
     }
+    console.info('[chat] worktree ensure existing', { worktreeName, worktreePath })
     return worktreePath
   }
 
   if (shouldSkipGitWorktree()) {
+    console.info('[chat] worktree ensure create (skip git)', { worktreeName, worktreePath })
     await mkdir(worktreePath, { recursive: true })
-    await installWorktreeDependencies(worktreePath)
+    console.info('[chat] worktree ensure ready', { worktreeName, worktreePath })
     return worktreePath
   }
 
+  console.info('[chat] worktree ensure create (git)', { worktreeName, worktreePath })
   await createGitWorktree(resolveCodexBaseCwd(), worktreePath, worktreeName)
-  await installWorktreeDependencies(worktreePath)
+  console.info('[chat] worktree ensure ready', { worktreeName, worktreePath })
   return worktreePath
 }
 
@@ -269,14 +261,18 @@ const allocateWorktree = async () => {
   const worktreeRoot = resolveWorktreeRoot()
   await mkdir(worktreeRoot, { recursive: true })
   const existing = await readExistingWorktreeNames(worktreeRoot)
+  console.info('[chat] worktree allocate start', { worktreeRoot, existingCount: existing.size })
   let lastError: Error | null = null
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const candidate = pickWorktreeCityName(existing)
+    console.info('[chat] worktree allocate attempt', { attempt: attempt + 1, candidate })
     try {
       const path = await ensureWorktreePath(candidate)
+      console.info('[chat] worktree allocate success', { candidate, path })
       return { name: candidate, path }
     } catch (error) {
+      console.warn('[chat] worktree allocate failed', { candidate, error: String(error) })
       if (existsSync(join(worktreeRoot, candidate))) {
         existing.add(candidate)
         lastError = error instanceof Error ? error : new Error(String(error))
