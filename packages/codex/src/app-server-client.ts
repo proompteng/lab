@@ -15,12 +15,9 @@ import type {
   McpToolCallProgressNotification,
   SandboxMode,
   TerminalInteractionNotification,
-  ThreadCompactParams,
-  ThreadCompactResponse,
   ThreadItem,
   ThreadStartParams,
   ThreadStartResponse,
-  ThreadTokenUsage,
   ThreadTokenUsageUpdatedNotification,
   Turn,
   TurnCompletedNotification,
@@ -76,14 +73,6 @@ type TurnStream = {
   turnDiffDeltaSource: ToolDeltaSource | null
 }
 
-type ExtendedClientRequest =
-  | ClientRequest
-  | {
-      method: 'thread/compact'
-      id: RequestId
-      params: ThreadCompactParams
-    }
-
 type LegacySandboxMode = 'dangerFullAccess' | 'workspaceWrite' | 'readOnly'
 type SandboxModeInput = SandboxMode | LegacySandboxMode
 type LegacyApprovalMode = 'unlessTrusted' | 'onFailure' | 'onRequest'
@@ -107,25 +96,6 @@ export type CodexAppServerOptions = {
    * Defaults to false.
    */
   experimentalRawEvents?: boolean
-  autoCompaction?:
-    | boolean
-    | {
-        enabled?: boolean
-        /**
-         * Trigger proactive compaction when `totalTokens / modelContextWindow >= threshold`.
-         * Defaults to `0.85`.
-         */
-        threshold?: number
-        /**
-         * Minimum time between compactions for the same thread. Defaults to `30_000`.
-         */
-        cooldownMs?: number
-        /**
-         * If `turn/start` fails with a context-length error, attempt a `thread/compact` and retry once.
-         * Defaults to `true`.
-         */
-        retryOnContextError?: boolean
-      }
   clientInfo?: ClientInfo
   logger?: (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => void
   bootstrapTimeoutMs?: number
@@ -148,8 +118,6 @@ const normalizeApprovalPolicy = (approval: ApprovalModeInput): AskForApproval =>
 const defaultClientInfo: ClientInfo = { name: 'lab', title: 'lab app-server client', version: '0.0.0' }
 const DEFAULT_EFFORT: ReasoningEffort = 'high'
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10_000
-const DEFAULT_AUTO_COMPACTION_THRESHOLD = 0.85
-const DEFAULT_AUTO_COMPACTION_COOLDOWN_MS = 30_000
 
 const newId = (() => {
   let id = 1
@@ -269,15 +237,6 @@ export class CodexAppServerClient {
   private defaultEffort: ReasoningEffort
   private threadConfig: { [key in string]?: JsonValue } | null
   private experimentalRawEvents: boolean
-  private autoCompaction: {
-    enabled: boolean
-    threshold: number
-    cooldownMs: number
-    retryOnContextError: boolean
-  }
-  private lastTokenUsageByThread = new Map<string, ThreadTokenUsage>()
-  private lastCompactionAtByThread = new Map<string, number>()
-  private compactionInFlightByThread = new Map<string, Promise<void>>()
 
   constructor({
     binaryPath = 'codex',
@@ -288,7 +247,6 @@ export class CodexAppServerClient {
     defaultEffort = DEFAULT_EFFORT,
     threadConfig,
     experimentalRawEvents = false,
-    autoCompaction = true,
     clientInfo = defaultClientInfo,
     logger,
     bootstrapTimeoutMs = DEFAULT_BOOTSTRAP_TIMEOUT_MS,
@@ -302,7 +260,6 @@ export class CodexAppServerClient {
       threadConfig === undefined ? { mcp_servers: {}, 'features.web_search_request': true } : threadConfig
     this.experimentalRawEvents = experimentalRawEvents
     this.bootstrapTimeoutMs = bootstrapTimeoutMs
-    this.autoCompaction = this.normalizeAutoCompaction(autoCompaction)
 
     const args = ['--sandbox', this.sandbox, '--ask-for-approval', this.approval, '--model', defaultModel, 'app-server']
     this.child = spawn(binaryPath, args, {
@@ -463,8 +420,6 @@ export class CodexAppServerClient {
       activeThreadId = threadResp.thread.id
     }
 
-    await this.maybeAutoCompactThread(activeThreadId, 'pre_turn')
-
     const turnParams: TurnStartParams = {
       threadId: activeThreadId,
       input: [{ type: 'text', text: prompt }],
@@ -476,29 +431,7 @@ export class CodexAppServerClient {
       summary: null,
     }
 
-    let turnResp: TurnStartResponse
-    try {
-      turnResp = (await this.request<TurnStartResponse>('turn/start', turnParams)) as TurnStartResponse
-    } catch (error) {
-      if (this.autoCompaction.enabled && this.autoCompaction.retryOnContextError && isContextLengthError(error)) {
-        this.log('warn', 'turn/start failed due to context length; compacting and retrying once', {
-          threadId: activeThreadId,
-          error: toErrorMessage(error),
-        })
-        try {
-          await this.compactThread(activeThreadId, { force: true, reason: 'turn_start_retry' })
-        } catch (compactError) {
-          this.log('warn', 'thread/compact failed after context-length error', {
-            threadId: activeThreadId,
-            error: toErrorMessage(compactError),
-          })
-          throw error
-        }
-        turnResp = (await this.request<TurnStartResponse>('turn/start', turnParams)) as TurnStartResponse
-      } else {
-        throw error
-      }
-    }
+    const turnResp = (await this.request<TurnStartResponse>('turn/start', turnParams)) as TurnStartResponse
     const turnId = turnResp.turn.id
 
     const stream = createTurnStream()
@@ -506,90 +439,6 @@ export class CodexAppServerClient {
     this.turnItems.set(turnId, new Set())
     this.lastActiveTurnId = turnId
     return { stream: stream.iterator, turnId, threadId: activeThreadId }
-  }
-
-  async compactThread(
-    threadId: string,
-    { force = false, reason }: { force?: boolean; reason?: string } = {},
-  ): Promise<void> {
-    await this.ensureReady()
-
-    const existing = this.compactionInFlightByThread.get(threadId)
-    if (existing) {
-      await existing
-      return
-    }
-
-    const task = (async () => {
-      const startedAt = Date.now()
-      try {
-        if (!force) {
-          if (!this.autoCompaction.enabled) return
-          const usage = this.lastTokenUsageByThread.get(threadId)
-          if (!usage) return
-          if (!shouldCompactForUsage(usage, this.autoCompaction.threshold)) return
-
-          const lastCompactionAt = this.lastCompactionAtByThread.get(threadId) ?? 0
-          if (startedAt - lastCompactionAt < this.autoCompaction.cooldownMs) return
-        }
-
-        const params: ThreadCompactParams = { threadId }
-        await this.request<ThreadCompactResponse>('thread/compact', params)
-        this.lastCompactionAtByThread.set(threadId, Date.now())
-        this.log('info', 'thread compact requested', {
-          threadId,
-          reason: reason ?? null,
-          durationMs: Date.now() - startedAt,
-        })
-      } finally {
-        this.compactionInFlightByThread.delete(threadId)
-      }
-    })()
-
-    this.compactionInFlightByThread.set(threadId, task)
-    await task
-  }
-
-  private normalizeAutoCompaction(
-    value: NonNullable<CodexAppServerOptions['autoCompaction']>,
-  ): CodexAppServerClient['autoCompaction'] {
-    if (value === true) {
-      return {
-        enabled: true,
-        threshold: DEFAULT_AUTO_COMPACTION_THRESHOLD,
-        cooldownMs: DEFAULT_AUTO_COMPACTION_COOLDOWN_MS,
-        retryOnContextError: true,
-      }
-    }
-
-    if (value === false) {
-      return {
-        enabled: false,
-        threshold: DEFAULT_AUTO_COMPACTION_THRESHOLD,
-        cooldownMs: DEFAULT_AUTO_COMPACTION_COOLDOWN_MS,
-        retryOnContextError: true,
-      }
-    }
-
-    return {
-      enabled: value.enabled ?? true,
-      threshold: value.threshold ?? DEFAULT_AUTO_COMPACTION_THRESHOLD,
-      cooldownMs: value.cooldownMs ?? DEFAULT_AUTO_COMPACTION_COOLDOWN_MS,
-      retryOnContextError: value.retryOnContextError ?? true,
-    }
-  }
-
-  private async maybeAutoCompactThread(threadId: string, reason: string): Promise<void> {
-    if (!this.autoCompaction.enabled) return
-    const usage = this.lastTokenUsageByThread.get(threadId)
-    if (!usage) return
-    if (!shouldCompactForUsage(usage, this.autoCompaction.threshold)) return
-
-    try {
-      await this.compactThread(threadId, { force: false, reason })
-    } catch (error) {
-      this.log('warn', 'auto compaction failed (ignored)', { threadId, reason, error: toErrorMessage(error) })
-    }
   }
 
   async interruptTurn(turnId: string, threadId: string): Promise<void> {
@@ -1599,17 +1448,12 @@ export class CodexAppServerClient {
         const raw = (notification.params ?? null) as
           | (Partial<ThreadTokenUsageUpdatedNotification> & { usage?: unknown })
           | null
-        const threadId = raw && typeof raw.threadId === 'string' ? raw.threadId : null
         const usage = raw ? (raw.tokenUsage ?? raw.usage) : null
-        if (threadId && usage && typeof usage === 'object' && !Array.isArray(usage)) {
-          this.lastTokenUsageByThread.set(threadId, usage as ThreadTokenUsage)
-        }
         if (usage) pushUsage(usage)
         break
       }
       case 'thread/compacted': {
         const params = notification.params as ContextCompactedNotification
-        this.lastCompactionAtByThread.set(params.threadId, Date.now())
         this.log('info', 'thread compacted notification received', { threadId: params.threadId, turnId: params.turnId })
         break
       }
@@ -1773,12 +1617,9 @@ export class CodexAppServerClient {
     }
   }
 
-  private request<T = unknown>(
-    method: ExtendedClientRequest['method'],
-    params: ExtendedClientRequest['params'],
-  ): Promise<T> {
+  private request<T = unknown>(method: ClientRequest['method'], params: ClientRequest['params']): Promise<T> {
     const id: RequestId = newId()
-    const payload = { id, method, params } as ExtendedClientRequest & { id: RequestId }
+    const payload = { id, method, params } as ClientRequest
 
     const promise = new Promise<T>((resolve, reject) => {
       const wrappedResolve = (value: unknown) => resolve(value as T)
@@ -1825,49 +1666,6 @@ export class CodexAppServerClient {
       throw err
     }
   }
-}
-
-const toErrorMessage = (error: unknown): string => {
-  if (typeof error === 'string') return error
-  if (error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string') {
-    return (error as { message: string }).message
-  }
-  try {
-    return JSON.stringify(error)
-  } catch {
-    return `${error}`
-  }
-}
-
-const isContextLengthError = (error: unknown): boolean => {
-  const message = toErrorMessage(error).toLowerCase()
-
-  const mentionsContext =
-    message.includes('context') ||
-    message.includes('token') ||
-    message.includes('prompt') ||
-    message.includes('request too large') ||
-    message.includes('too large')
-
-  if (!mentionsContext) return false
-
-  return (
-    message.includes('context length') ||
-    message.includes('maximum context length') ||
-    message.includes('max context length') ||
-    message.includes('context window') ||
-    message.includes('too many tokens') ||
-    message.includes('token limit') ||
-    message.includes('prompt is too long') ||
-    (message.includes('exceed') && (message.includes('context') || message.includes('token')))
-  )
-}
-
-const shouldCompactForUsage = (usage: ThreadTokenUsage, threshold: number): boolean => {
-  const modelContextWindow = usage.modelContextWindow
-  if (!modelContextWindow || modelContextWindow <= 0) return false
-  const ratio = usage.total.totalTokens / modelContextWindow
-  return ratio >= threshold
 }
 
 export { normalizeApprovalPolicy, normalizeSandboxMode, toSandboxPolicy }
