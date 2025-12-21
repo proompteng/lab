@@ -41,39 +41,42 @@ spec:
           shardsCount: 1
           replicasCount: 2
         templates:
-          podTemplates:
-            - name: chi-default
-              spec:
-                nodeSelector:
-                  kubernetes.io/arch: arm64
-                affinity:
-                  podAntiAffinity:
-                    requiredDuringSchedulingIgnoredDuringExecution:
-                      - labelSelector:
-                          matchExpressions:
-                            - key: clickhouse.altinity.com/cluster
-                              operator: In
-                              values:
-                                - default
-                        topologyKey: kubernetes.io/hostname
-                containers:
-                  - name: clickhouse
-                    resources:
-                      requests:
-                        cpu: 1
-                        memory: 2Gi
-                      limits:
-                        cpu: 2
-                        memory: 4Gi
-          volumeClaimTemplates:
-            - name: chi-data
-              spec:
-                accessModes:
-                  - ReadWriteOnce
-                resources:
-                  requests:
-                    storage: 5Gi
-                storageClassName: longhorn
+          podTemplate: chi-default
+          volumeClaimTemplate: chi-data
+  templates:
+    podTemplates:
+      - name: chi-default
+        spec:
+          nodeSelector:
+            kubernetes.io/arch: arm64
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchExpressions:
+                      - key: clickhouse.altinity.com/cluster
+                        operator: In
+                        values:
+                          - default
+                  topologyKey: kubernetes.io/hostname
+          containers:
+            - name: clickhouse
+              resources:
+                requests:
+                  cpu: 1
+                  memory: 2Gi
+                limits:
+                  cpu: 2
+                  memory: 4Gi
+    volumeClaimTemplates:
+      - name: chi-data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 5Gi
+          storageClassName: longhorn
   defaults:
     templates:
       podTemplate: chi-default

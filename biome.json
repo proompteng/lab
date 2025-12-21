@@ -37,7 +37,7 @@
       "!packages/codex/src/app-server",
       "!packages/temporal-bun-sdk/tests",
       "!packages/temporal-bun-sdk-example",
-      "!kubernetes",
+      "kubernetes/**",
       "!apps/docs/.source"
     ],
     "maxSize": 1048576

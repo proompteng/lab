@@ -161,7 +161,7 @@ spec:
             namespace: temporal
             annotations:
               argocd.argoproj.io/sync-wave: "4"
-            automation: auto
+            automation: manual
             enabled: "true"
           - name: airbyte
             path: argocd/applications/airbyte

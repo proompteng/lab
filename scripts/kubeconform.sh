@@ -11,6 +11,9 @@ fi
 
 filtered=()
 while IFS= read -r -d '' file; do
+  if [[ "$file" == *"/charts/"* ]] || [[ "$file" == *".patch.yaml" ]]; then
+    continue
+  fi
   if grep -Eq '^[[:space:]]*kind:' "$file"; then
     filtered+=("$file")
   fi
@@ -28,6 +31,7 @@ fi
 
 kubeconform --strict --summary --ignore-missing-schemas \
   --ignore-filename-pattern 'overlays/' \
+  --ignore-filename-pattern 'charts/' \
   --ignore-filename-pattern 'Chart.yaml' \
   --ignore-filename-pattern 'values.yaml' \
   "${SCHEMA_ARGS[@]}" \
