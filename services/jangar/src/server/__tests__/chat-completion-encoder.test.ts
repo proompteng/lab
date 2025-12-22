@@ -148,6 +148,27 @@ describe('chat completion encoder', () => {
     expect(content.endsWith('\n\n\n')).toBe(true)
   })
 
+  it('renders rate limit updates as blockquote markdown', () => {
+    const session = createSession()
+
+    const frames = session.onDelta({
+      type: 'rate_limits',
+      rateLimits: {
+        planType: 'pro',
+        primary: { usedPercent: 42, windowDurationMins: 90, resetsAt: 1_735_000_000 },
+        secondary: { usedPercent: 10, windowDurationMins: 60, resetsAt: 1_735_000_600 },
+        credits: { hasCredits: true, unlimited: false, balance: '12.34' },
+      },
+    })
+
+    const content = collectContent(frames)
+    expect(content).toContain('> **Rate limits**')
+    expect(content).toContain('> Plan: pro')
+    expect(content).toContain('> Primary: 42% used · 1h 30m window · resets')
+    expect(content).toContain('> Secondary: 10% used · 1h window · resets')
+    expect(content).toContain('> Credits: has credits · balance 12.34')
+  })
+
   it('emits usage and stop chunks on finalize when successful', () => {
     const session = createSession({ includeUsage: true })
 
