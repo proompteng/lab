@@ -1,14 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { ComponentExample } from '~/components/component-example'
 
-export const Route = createFileRoute('/')({
-  component: Home,
-})
+export const Route = createFileRoute('/')({ component: App })
 
-function Home() {
-  return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold">Reestr Registry Browser</h1>
-      <p className="mt-2">Welcome to the container registry browser.</p>
-    </div>
-  )
+function App() {
+  return <ComponentExample />
 }
