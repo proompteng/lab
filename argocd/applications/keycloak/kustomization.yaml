@@ -7,7 +7,7 @@ resources:
   - postgres-cluster.yaml
 helmCharts:
   - name: keycloakx
-    repo: https://codecentric.github.io/helm-charts
+    repo: oci://ghcr.io/codecentric/helm-charts
     version: 7.1.5
     releaseName: keycloak
     namespace: keycloak
