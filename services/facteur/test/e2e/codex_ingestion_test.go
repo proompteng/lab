@@ -144,6 +144,10 @@ func postCodexTask(t *testing.T, client *http.Client, baseURL string, payload []
 				return body
 			}
 
+			if resp.StatusCode == http.StatusServiceUnavailable && bytes.Contains(bodyBytes, []byte("implementation orchestrator disabled")) {
+				t.Skip("implementation orchestrator disabled; enable codex implementation orchestrator to run this e2e test")
+			}
+
 			lastStatus = resp.StatusCode
 			lastBody = bodyBytes
 			lastErr = nil
