@@ -212,6 +212,13 @@ spec:
               argocd.argoproj.io/sync-wave: "4"
             automation: auto
             enabled: "false"
+          - name: headlamp
+            path: argocd/applications/headlamp
+            namespace: headlamp
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: auto
+            enabled: "true"
           - name: graf
             path: argocd/applications/graf
             namespace: graf
