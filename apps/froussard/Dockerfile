@@ -16,8 +16,9 @@ FROM base AS deps
 COPY package.json bun.lock tsconfig.base.json ./
 COPY .npmrc* ./
 COPY scripts ./scripts
-COPY apps/froussard ./apps/froussard
-COPY packages/discord ./packages/discord
+COPY apps ./apps
+COPY packages ./packages
+COPY services ./services
 RUN bun install --filter @proompteng/discord --filter froussard --frozen-lockfile --ignore-scripts
 
 FROM deps AS build
