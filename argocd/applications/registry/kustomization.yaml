@@ -11,4 +11,5 @@ resources:
   - reestr-tailscale-service.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/reestr
-    newTag: latest
+    newTag: "73042974"
+    digest: sha256:a9c9e4f1a568cf1c8185ac9dd4dab2e9fee65a547ebce10e2a80e5c403989a62
