@@ -31,7 +31,7 @@ alloy --version
 
 ## Configure
 
-Homebrew runs Alloy from `/opt/homebrew/etc/grafana-alloy/config.alloy` (this is the file `brew services` uses). The current config on this host forwards OTLP logs to Loki over Tailscale and keeps trace/metric exporters commented out.
+Homebrew runs Alloy from `/opt/homebrew/etc/grafana-alloy/config.alloy` (this is the file `brew services` uses). The current config on this host forwards OTLP logs to Loki over Tailscale (via the Loki push API) and keeps trace/metric exporters commented out.
 
 1) Ensure the config directory exists:
 ```bash
@@ -56,13 +56,17 @@ otelcol.receiver.otlp "codex" {
 
 otelcol.processor.batch "default" {
   output {
-    logs = [otelcol.exporter.otlphttp.loki.input]
+    logs = [otelcol.exporter.loki.default.input]
   }
 }
 
-otelcol.exporter.otlphttp "loki" {
-  client {
-    endpoint = "http://loki/otlp"
+otelcol.exporter.loki "default" {
+  forward_to = [loki.write.tailscale.receiver]
+}
+
+loki.write "tailscale" {
+  endpoint {
+    url = "http://loki/loki/api/v1/push"
   }
 }
 
@@ -83,7 +87,7 @@ otelcol.exporter.otlphttp "loki" {
 Notes:
 - The OTLP HTTP receiver listens on `127.0.0.1:4318` for local apps (for example, Codex).
 - Loki, Tempo, and Mimir are exposed on the Tailscale network as `http://loki`, `http://tempo`, and `http://mimir`.
-- `http://loki/otlp` expects OTLP logs (`/v1/logs`), `http://tempo` expects OTLP traces (`/v1/traces`), and `http://mimir/otlp` expects OTLP metrics (`/v1/metrics`).
+- Loki OTLP ingestion is not enabled in this stack, so we send logs through the Loki push API at `http://loki/loki/api/v1/push`. Tempo expects OTLP traces at `/v1/traces`, and Mimir expects OTLP metrics at `/v1/metrics`.
 
 ### Codex OTEL config (this host)
 
@@ -118,13 +122,13 @@ brew services start grafana-alloy
 ## Pointing to the cluster over Tailscale
 
 Make sure your machine is on Tailscale. The Tailscale load balancers publish the endpoints:
-- Loki logs: `http://loki/otlp`
+- Loki logs: `http://loki/loki/api/v1/push`
 - Tempo traces: `http://tempo` (OTLP HTTP `/v1/traces`)
 - Mimir metrics: `http://mimir/otlp` (OTLP HTTP `/v1/metrics`)
 
 ## Verify
 
-- Alloy logs should show successful `POST /otlp/v1/logs` lines.
+- Alloy logs should show successful sends to `http://loki/loki/api/v1/push` once logs flow.
 - Smoke-test Loki: `curl -s http://loki/loki/api/v1/status/buildinfo`.
 - Smoke-test Tempo: `curl -s http://tempo/api/status/buildinfo`.
 - Smoke-test Mimir: `curl -s http://mimir/api/v1/status/buildinfo`.
