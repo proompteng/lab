@@ -178,13 +178,7 @@ PROFILE
 # Ensure interactive bash shells load zoxide (for `z` alias).
 RUN set -eux; \
   if [ -f /etc/bash.bashrc ]; then \
-    cat <<'BASHRC' >> /etc/bash.bashrc
-
-# zoxide
-if [ -f /etc/profile.d/zoxide.sh ]; then
-  . /etc/profile.d/zoxide.sh
-fi
-BASHRC
+    printf '\n# zoxide\nif [ -f /etc/profile.d/zoxide.sh ]; then\n  . /etc/profile.d/zoxide.sh\nfi\n' >> /etc/bash.bashrc; \
   fi
 
 # Install Node.js once for both Bun and tools that expect node

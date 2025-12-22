@@ -26,6 +26,8 @@ spec:
             - run
             - /etc/alloy/config.river
           ports:
+            - name: otlp-http
+              containerPort: 4318
             - name: http-metrics
               containerPort: 12345
           resources:

@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2025-12-22T03:23:39.688Z"
+    deploy.knative.dev/rollout: "2025-12-22T23:56:22.659Z"
 spec:
   replicas: 1
   strategy:
@@ -47,6 +47,8 @@ spec:
               value: https://github.com/proompteng/lab.git
             - name: CODEX_BOOTSTRAP_REPO
               value: "1"
+            - name: CODEX_INTERNAL_ORIGINATOR_OVERRIDE
+              value: codex
             - name: JANGAR_REDIS_URL
               value: redis://jangar-openwebui-redis:6379/1
             - name: DATABASE_URL

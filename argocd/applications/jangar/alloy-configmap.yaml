@@ -10,6 +10,26 @@ data:
       format = "logfmt"
     }
 
+    otelcol.receiver.otlp "codex" {
+      http {
+        endpoint = "0.0.0.0:4318"
+      }
+
+      output {
+        logs = [otelcol.processor.batch.default.input]
+      }
+    }
+
+    otelcol.processor.batch "default" {
+      output {
+        logs = [otelcol.exporter.loki.codex.input]
+      }
+    }
+
+    otelcol.exporter.loki "codex" {
+      forward_to = [loki.write.default.receiver]
+    }
+
     // Jangar web app
     discovery.kubernetes "jangar" {
       role = "pod"

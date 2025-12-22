@@ -12,6 +12,7 @@ resources:
   - vscode-tailscale-service.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
+  - alloy-service.yaml
   - alloy-deployment.yaml
   - serviceaccount.yaml
   - clusterrolebinding.yaml
@@ -26,5 +27,5 @@ helmCharts:
 
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: 879bdf98
-    digest: sha256:b5637084fee54d5302b7d5c81167420c7f722f255f43a495857adac855cb595f
+    newTag: bc443b84
+    digest: sha256:03708af298c728f67718ffba885edce997b3fc45db3251da44e00d91b051951f

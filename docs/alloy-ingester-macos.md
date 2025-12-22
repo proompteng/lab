@@ -1,6 +1,6 @@
-# Grafana Alloy Ingester on macOS
+# Grafana Alloy on macOS
 
-This guide covers installing and running the Grafana Alloy ingester locally on macOS so you can ship logs (and optionally metrics) to the lab's observability stack.
+This guide covers installing and running Grafana Alloy locally on macOS so you can ship OTLP logs (and optionally traces/metrics) to the lab's observability stack over Tailscale.
 
 ## Version alignment
 
@@ -17,7 +17,8 @@ brew install grafana-alloy
 ```
 
 Homebrew stores configuration in `/opt/homebrew/etc/grafana-alloy` and data in
-`/opt/homebrew/var/lib/grafana-alloy/data`.
+`/opt/homebrew/var/lib/grafana-alloy/data`. The service runs `alloy run /opt/homebrew/etc/grafana-alloy`,
+so only `*.alloy` files in that directory are loaded.
 
 ### Option B: Download the macOS release tarball
 
@@ -30,50 +31,79 @@ alloy --version
 
 ## Configure
 
-Create a local River config. Start with a minimal log pipeline and adjust labels/paths for your machine.
+Homebrew runs Alloy from `/opt/homebrew/etc/grafana-alloy/config.alloy` (this is the file `brew services` uses). The current config on this host forwards OTLP logs to Loki over Tailscale (via the Loki push API) and keeps trace/metric exporters commented out.
 
-1) Create a config directory:
+1) Ensure the config directory exists:
 ```bash
-mkdir -p ~/.config/alloy
+mkdir -p /opt/homebrew/etc/grafana-alloy
 ```
 
-2) Save a config (example below) as `~/.config/alloy/config.river`:
-```river
+2) Save the config below to `/opt/homebrew/etc/grafana-alloy/config.alloy`:
+```alloy
 logging {
-  level  = "info"
-  format = "logfmt"
+  level = "info"
 }
 
-loki.source.file "local_logs" {
-  targets = [
-    { __path__ = "/var/log/system.log", job = "macos-system" },
-    { __path__ = "/var/log/*.log", job = "macos-varlog" },
-  ]
-  forward_to = [loki.process.local.receiver]
-}
-
-loki.process "local" {
-  stage.static_labels {
-    values = {
-      host        = "your-hostname",
-      environment = "local",
-    }
+otelcol.receiver.otlp "codex" {
+  http {
+    endpoint = "127.0.0.1:4318"
   }
 
-  forward_to = [loki.write.default.receiver]
+  output {
+    logs = [otelcol.processor.batch.default.input]
+  }
 }
 
-loki.write "default" {
+otelcol.processor.batch "default" {
+  output {
+    logs = [otelcol.exporter.loki.default.input]
+  }
+}
+
+otelcol.exporter.loki "default" {
+  forward_to = [loki.write.tailscale.receiver]
+}
+
+loki.write "tailscale" {
   endpoint {
-    url = "http://localhost:3100/loki/api/v1/push"
+    url = "http://loki/loki/api/v1/push"
   }
 }
+
+// Uncomment if you want to forward traces/metrics from local apps too.
+// otelcol.exporter.otlphttp "tempo" {
+//   client {
+//     endpoint = "http://tempo"
+//   }
+// }
+//
+// otelcol.exporter.otlphttp "mimir" {
+//   client {
+//     endpoint = "http://mimir/otlp"
+//   }
+// }
 ```
 
 Notes:
-- Replace `your-hostname` with a stable name for your machine.
-- If you want to ship other files, add additional `__path__` targets.
-- River syntax requires commas between key/value pairs inside `values {}` blocks (including the last entry).
+- The OTLP HTTP receiver listens on `127.0.0.1:4318` for local apps (for example, Codex).
+- Loki, Tempo, and Mimir are exposed on the Tailscale network as `http://loki`, `http://tempo`, and `http://mimir`.
+- Loki OTLP ingestion is not enabled in this stack, so we send logs through the Loki push API at `http://loki/loki/api/v1/push`. Tempo expects OTLP traces at `/v1/traces`, and Mimir expects OTLP metrics at `/v1/metrics`.
+
+### Codex OTEL config (this host)
+
+Codex is configured to emit OTLP logs locally so Alloy can forward them to Loki. The config lives at `~/.codex/config.toml`:
+```toml
+[otel]
+log_user_prompt = true
+exporter = { otlp-http = { endpoint = "http://127.0.0.1:4318/v1/logs", protocol = "binary" } }
+```
+
+Keep the endpoint on `127.0.0.1:4318` to match the Alloy `otelcol.receiver.otlp` block.
+
+To label logs under `service="codex"` in Loki, set the originator override when launching Codex:
+```bash
+export CODEX_INTERNAL_ORIGINATOR_OVERRIDE=codex
+```
 
 ## Run
 
@@ -81,7 +111,7 @@ Start Alloy in the foreground:
 ```bash
 /opt/homebrew/opt/grafana-alloy/bin/alloy run \
   --storage.path=/opt/homebrew/var/lib/grafana-alloy/data \
-  ~/.config/alloy/config.river
+  /opt/homebrew/etc/grafana-alloy/config.alloy
 ```
 
 Or start it as a background service:
@@ -89,26 +119,24 @@ Or start it as a background service:
 brew services start grafana-alloy
 ```
 
-## Pointing to the cluster Loki gateway
+## Pointing to the cluster over Tailscale
 
-For local development, port-forward the Loki gateway so the `loki.write` endpoint is reachable:
-```bash
-kubectl -n observability get svc observability-loki-loki-distributed-gateway
-kubectl -n observability port-forward svc/observability-loki-loki-distributed-gateway 3100:<service-port>
-```
-
-Update the `loki.write` URL if you use a different local port.
+Make sure your machine is on Tailscale. The Tailscale load balancers publish the endpoints:
+- Loki logs: `http://loki/loki/api/v1/push`
+- Tempo traces: `http://tempo` (OTLP HTTP `/v1/traces`)
+- Mimir metrics: `http://mimir/otlp` (OTLP HTTP `/v1/metrics`)
 
 ## Verify
 
-- Alloy logs should show successful `POST /loki/api/v1/push` lines.
-- In Grafana, query by labels you set (`host`, `environment`, `job`).
+- Alloy logs should show successful sends to `http://loki/loki/api/v1/push` once logs flow.
+- Smoke-test Loki: `curl -s http://loki/loki/api/v1/status/buildinfo`.
+- Smoke-test Tempo: `curl -s http://tempo/api/status/buildinfo`.
+- Smoke-test Mimir: `curl -s http://mimir/api/v1/status/buildinfo`.
 
 ## Troubleshooting
 
-- **No logs arriving:** confirm the file paths exist and are readable; macOS system logs may require `sudo` or explicit file permissions.
-- **Crash on startup:** check for missing commas in `values {}` blocks; River is strict about commas.
-- **Permission errors reading /var/log:** run Alloy with elevated privileges or point it at log files you own.
+- **No logs arriving:** confirm your local app is exporting OTLP HTTP to `127.0.0.1:4318` and Alloy is running.
+- **Connection errors:** verify Tailscale is up and the `loki`, `tempo`, `mimir` hostnames resolve.
 
 ## Uninstall
 
