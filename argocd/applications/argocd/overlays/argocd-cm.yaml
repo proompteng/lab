@@ -9,6 +9,7 @@ data:
   kustomize.buildOptions: --enable-helm
   application.resourceTrackingMethod: annotation
   timeout.reconciliation: 180s
+  users.session.duration: "168h"
   dex.config: |
     issuer: https://argocd.proompteng.ai/api/dex
     storage:
