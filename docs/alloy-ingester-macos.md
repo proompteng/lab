@@ -4,17 +4,20 @@ This guide covers installing and running the Grafana Alloy ingester locally on m
 
 ## Version alignment
 
-Match the local binary to the cluster version. Current deployments use `grafana/alloy:v1.11.2` (see `argocd/applications/*/alloy-deployment.yaml`). If you upgrade locally, keep the cluster manifests in sync.
+Match the local binary to the cluster version. Current deployments use `grafana/alloy:v1.11.2` (see `argocd/applications/*/alloy-deployment.yaml`). If Homebrew is ahead, install the pinned tarball instead or upgrade the cluster manifests in sync.
 
 ## Install
 
 ### Option A: Homebrew (preferred when available)
 
-If your Homebrew catalog includes Alloy, install and confirm the binary:
+Install the Homebrew formula and confirm the binary:
 ```bash
-brew install grafana/alloy/alloy
-alloy --version
+brew install grafana-alloy
+/opt/homebrew/opt/grafana-alloy/bin/alloy --version
 ```
+
+Homebrew stores configuration in `/opt/homebrew/etc/grafana-alloy` and data in
+`/opt/homebrew/var/lib/grafana-alloy/data`.
 
 ### Option B: Download the macOS release tarball
 
@@ -76,7 +79,14 @@ Notes:
 
 Start Alloy in the foreground:
 ```bash
-alloy run ~/.config/alloy/config.river
+/opt/homebrew/opt/grafana-alloy/bin/alloy run \
+  --storage.path=/opt/homebrew/var/lib/grafana-alloy/data \
+  ~/.config/alloy/config.river
+```
+
+Or start it as a background service:
+```bash
+brew services start grafana-alloy
 ```
 
 ## Pointing to the cluster Loki gateway
@@ -102,5 +112,5 @@ Update the `loki.write` URL if you use a different local port.
 
 ## Uninstall
 
-- Homebrew: `brew uninstall grafana/alloy/alloy`
+- Homebrew: `brew uninstall grafana-alloy`
 - Manual install: remove `/usr/local/bin/alloy` and delete `~/.config/alloy` if no longer needed.
