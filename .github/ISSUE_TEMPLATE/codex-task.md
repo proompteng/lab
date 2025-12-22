@@ -33,10 +33,6 @@ assignees: ''
 
 ## Codex Prompt
 <!-- Provide the exact prompt Codex should use. Be explicit about scope and output format. -->
-<!-- If the task involves memories, instruct Codex to use: -->
-<!--   - bun run save-memory / retrieve-memory (from services/memories) -->
-<!--   - Default Jangar base URL is http://jangar (Tailscale). Override with MEMORIES_JANGAR_URL if needed. -->
-<!--   - Do not use kubectl port-forward or direct Postgres inserts. -->
 
 ## Additional Context
 <!-- Logs, screenshots, Argo workflow runs, or Discord threads that provide extra colour. -->
