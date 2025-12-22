@@ -12,5 +12,5 @@ spec:
     - kind: Rule
       match: Host(`auth.proompteng.ai`)
       services:
-        - name: keycloak-keycloakx-http
-          port: 80
+        - name: keycloak
+          port: 8080
