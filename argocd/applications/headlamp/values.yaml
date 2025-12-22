@@ -18,10 +18,10 @@ ingress:
   enabled: true
   ingressClassName: tailscale
   hosts:
-    - host: headlamp
+    - host: headlamp.ide-newton.ts.net
       paths:
         - path: /
           type: Prefix
   tls:
     - hosts:
-        - headlamp
+        - headlamp.ide-newton.ts.net
