@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: keycloak
+resources:
+  - keycloak-admin-sealedsecret.yaml
+  - postgres-cluster.yaml
+helmCharts:
+  - name: keycloakx
+    repo: https://codecentric.github.io/helm-charts
+    version: 7.1.5
+    releaseName: keycloak
+    namespace: keycloak
+    valuesFile: values.yaml

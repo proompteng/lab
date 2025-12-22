@@ -212,6 +212,13 @@ spec:
               argocd.argoproj.io/sync-wave: "4"
             automation: auto
             enabled: "false"
+          - name: keycloak
+            path: argocd/applications/keycloak
+            namespace: keycloak
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: auto
+            enabled: "true"
           - name: headlamp
             path: argocd/applications/headlamp
             namespace: headlamp
