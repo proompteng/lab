@@ -78,7 +78,8 @@ function updateManifests(options: ManifestUpdateOptions) {
 
   const servicePath = resolve(repoRoot, 'argocd/applications/registry/reestr-knative-service.yaml')
   const service = readFileSync(servicePath, 'utf8')
-  const updatedService = service.replace(/(deploy\.knative\.dev\/rollout:\\s*")[^"]*(")/, `$1${rolloutTimestamp}$2`)
+  const rolloutPattern = /deploy\.knative\.dev\/rollout:\s*("[^"]*"|'[^']*'|[^\n]*)/
+  const updatedService = service.replace(rolloutPattern, `deploy.knative.dev/rollout: "${rolloutTimestamp}"`)
   if (service === updatedService) {
     console.warn('Warning: Reestr service rollout annotation was not updated; pattern may have changed.')
   } else {
