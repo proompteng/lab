@@ -14,7 +14,6 @@ resources:
   - alloy-configmap.yaml
   - alloy-service.yaml
   - alloy-deployment.yaml
-  - codex-configmap.yaml
   - serviceaccount.yaml
   - clusterrolebinding.yaml
 
