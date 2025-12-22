@@ -17,6 +17,14 @@ type LokiStream = {
   values: [string, string][]
 }
 
+type BuildStreamsOptions = {
+  originator?: string
+  hostname?: string
+  includeInputs?: boolean
+  extraLabels?: Record<string, string>
+  now?: Date
+}
+
 const readStdin = async () => {
   const chunks: Uint8Array[] = []
   for await (const chunk of process.stdin) {
@@ -37,72 +45,48 @@ const compactObject = <T extends Record<string, unknown>>(input: T) => {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined && value !== null))
 }
 
-const splitByBytes = (value: string, maxBytes: number) => {
-  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return [value]
-  const chunks: string[] = []
-  let start = 0
-  while (start < value.length) {
-    let end = value.length
-    while (end > start) {
-      const slice = value.slice(start, end)
-      if (Buffer.byteLength(slice, 'utf8') <= maxBytes) {
-        chunks.push(slice)
-        start = end
-        break
-      }
-      end = start + Math.max(1, Math.floor((end - start) * 0.75))
-    }
+const parseExtraLabels = () => {
+  if (!process.env.CODEX_NOTIFY_LOKI_LABELS) return undefined
+  try {
+    return JSON.parse(process.env.CODEX_NOTIFY_LOKI_LABELS) as Record<string, string>
+  } catch (error) {
+    console.error('Invalid CODEX_NOTIFY_LOKI_LABELS JSON:', error)
+    return undefined
   }
-  return chunks
 }
 
-const buildStreams = (payload: NotifyPayload) => {
-  const originator = process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE || 'codex_cli_rs'
-  const includeInputs = process.env.CODEX_NOTIFY_INCLUDE_INPUTS === '1'
-  const maxBytes = Number.parseInt(process.env.CODEX_NOTIFY_MAX_LINE_BYTES || '120000', 10)
-  const assistantText = typeof payload['last-assistant-message'] === 'string' ? payload['last-assistant-message'] : ''
-  const chunks = splitByBytes(assistantText, Number.isFinite(maxBytes) ? maxBytes : 120000)
-  const nowNs = BigInt(Date.now()) * 1_000_000n
+export const buildStreams = (payload: NotifyPayload, options: BuildStreamsOptions = {}) => {
+  const originator = options.originator || process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE || 'codex_cli_rs'
+  const includeInputs = options.includeInputs ?? process.env.CODEX_NOTIFY_INCLUDE_INPUTS === '1'
+  const hostname = options.hostname || os.hostname()
+  const now = options.now ?? new Date()
+  const extraLabels = options.extraLabels ?? parseExtraLabels()
 
-  const baseEvent = compactObject({
+  const assistantText = typeof payload['last-assistant-message'] === 'string' ? payload['last-assistant-message'] : ''
+  const nowNs = BigInt(now.getTime()) * 1_000_000n
+
+  const event = compactObject({
     type: payload.type,
     thread_id: payload['thread-id'] || payload.thread_id,
     turn_id: payload['turn-id'] || payload.turn_id,
     cwd: payload.cwd,
     input_message_count: Array.isArray(payload['input-messages']) ? payload['input-messages'].length : undefined,
     input_messages: includeInputs ? payload['input-messages'] : undefined,
-    timestamp: new Date().toISOString(),
+    assistant_message: assistantText,
+    timestamp: now.toISOString(),
   })
 
-  const labels = compactObject({
+  const labels: Record<string, string> = {
     job: originator,
     service: originator,
     exporter: 'notify',
     level: 'INFO',
-    hostname: os.hostname(),
+    hostname,
     source: 'codex-notify',
-  })
-
-  if (process.env.CODEX_NOTIFY_LOKI_LABELS) {
-    try {
-      const extra = JSON.parse(process.env.CODEX_NOTIFY_LOKI_LABELS) as Record<string, string>
-      Object.assign(labels, extra)
-    } catch (error) {
-      console.error('Invalid CODEX_NOTIFY_LOKI_LABELS JSON:', error)
-    }
+    ...(extraLabels ?? {}),
   }
 
-  const values: [string, string][] = chunks.map((chunk, index) => {
-    const event = compactObject({
-      ...baseEvent,
-      assistant_chunk_index: index + 1,
-      assistant_chunk_total: chunks.length,
-      assistant_message: chunk,
-    })
-    const timestamp = (nowNs + BigInt(index)).toString()
-    return [timestamp, JSON.stringify(event)]
-  })
-
+  const values: [string, string][] = [[nowNs.toString(), JSON.stringify(event)]]
   const streams: LokiStream[] = [{ stream: labels, values }]
   return streams
 }
@@ -147,4 +131,6 @@ const main = async () => {
   }
 }
 
-await main()
+if (import.meta.main) {
+  await main()
+}

@@ -349,8 +349,8 @@ const waitForPortForwardReady = async (subprocess: Subprocess, options: Options)
   const decoder = new TextDecoder()
   let resolved = false
 
-  const createReadPromise = (stream: ReadableStream<Uint8Array> | null | undefined) => {
-    if (!stream) return null
+  const createReadPromise = (stream: ReadableStream<Uint8Array> | number | null | undefined) => {
+    if (!stream || typeof stream === 'number') return null
     const reader = stream.getReader()
 
     const read = (async () => {

@@ -22,8 +22,20 @@ jobs:
 
       - name: Install kubeconform
         run: |
-          KUBECONFORM_VERSION="v0.6.7"
-          curl -sSL -o kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          KUBECONFORM_VERSION="v0.7.0"
+          OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          ARCH="$(uname -m)"
+          case "${ARCH}" in
+            x86_64|amd64) ARCH="amd64" ;;
+            aarch64|arm64) ARCH="arm64" ;;
+            *)
+              echo "Unsupported architecture: ${ARCH}" >&2
+              exit 1
+              ;;
+          esac
+          TARBALL="kubeconform-${OS}-${ARCH}.tar.gz"
+          URL="https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/${TARBALL}"
+          curl -fsSL -o kubeconform.tar.gz "${URL}"
           tar -xzf kubeconform.tar.gz kubeconform
           chmod +x kubeconform
           sudo mv kubeconform /usr/local/bin/
