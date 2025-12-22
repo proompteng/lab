@@ -10,5 +10,3 @@ helmCharts:
     releaseName: headlamp
     namespace: headlamp
     valuesFile: values.yaml
-
-patches: []
