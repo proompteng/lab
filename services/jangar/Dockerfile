@@ -157,22 +157,35 @@ RUN set -eux; \
   install /tmp/gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh /usr/local/bin/gh; \
   rm -rf /tmp/gh.tar.gz /tmp/gh_${GH_VERSION}_linux_${GH_ARCH}
 
-# Install zoxide
+# Install zoxide (official installer script)
 RUN set -eux; \
-  ARCH="${TARGETARCH:-$(uname -m)}"; \
-  case "$ARCH" in \
-  amd64|x86_64) ZOXIDE_ARCH=x86_64-unknown-linux-musl ;; \
-  arm64|aarch64) ZOXIDE_ARCH=aarch64-unknown-linux-musl ;; \
-  *) echo "Unsupported arch for zoxide: $ARCH" >&2; exit 1 ;; \
-  esac; \
-  cd /tmp; \
-  TARBALL="zoxide-${ZOXIDE_VERSION}-${ZOXIDE_ARCH}.tar.gz"; \
-  BASE_URL="https://github.com/ajeetdsouza/zoxide/releases/download/v${ZOXIDE_VERSION}"; \
-  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "${BASE_URL}/${TARBALL}" -o "${TARBALL}"; \
-  tar -xzf "${TARBALL}" -C /tmp; \
-  install -o root -g root -m 0755 /tmp/zoxide /usr/local/bin/zoxide; \
-  rm -f "${TARBALL}" /tmp/zoxide; \
-  zoxide --version
+  curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | \
+    sh -s -- --bin-dir /usr/local/bin --man-dir /usr/local/share/man; \
+  zoxide --version; \
+  cat <<'PROFILE' > /etc/profile.d/zoxide.sh
+if command -v zoxide >/dev/null 2>&1; then
+  if [ -z "${__ZOXIDE_INIT_DONE-}" ]; then
+    __ZOXIDE_INIT_DONE=1
+    export __ZOXIDE_INIT_DONE
+    case "${SHELL-}" in
+      */zsh) eval "$(zoxide init zsh)" ;;
+      *) eval "$(zoxide init bash)" ;;
+    esac
+  fi
+fi
+PROFILE
+
+# Ensure interactive bash shells load zoxide (for `z` alias).
+RUN set -eux; \
+  if [ -f /etc/bash.bashrc ]; then \
+    cat <<'BASHRC' >> /etc/bash.bashrc
+
+# zoxide
+if [ -f /etc/profile.d/zoxide.sh ]; then
+  . /etc/profile.d/zoxide.sh
+fi
+BASHRC
+  fi
 
 # Install Node.js once for both Bun and tools that expect node
 RUN set -eux; \

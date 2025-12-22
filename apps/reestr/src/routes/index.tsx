@@ -305,7 +305,7 @@ function App() {
   }
 
   return (
-    <section className="bg-card text-card-foreground mx-auto mt-12 w-full max-w-5xl rounded-xl border p-6 shadow-sm">
+    <section className="mx-auto mt-12 w-full max-w-5xl px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">Registry images</h2>
