@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Effect, Layer, ManagedRuntime } from 'effect'
+import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import { Memories, MemoriesLive } from '~/server/memories'
 import { normalizeNamespace, parsePersistMemoryInput, parseRetrieveMemoryInput } from '~/server/memories-http'
@@ -33,46 +33,50 @@ const resolveServiceError = (message: string) => {
   return errorResponse(message, 500)
 }
 
-export const getMemoriesHandler = async (request: Request) => {
-  const url = new URL(request.url)
-  const payload = {
-    namespace: normalizeNamespace(url.searchParams.get('namespace')),
-    query: url.searchParams.get('query') ?? '',
-    limit: url.searchParams.get('limit') ?? undefined,
-  }
-
-  const parsed = parseRetrieveMemoryInput(payload)
-  if (!parsed.ok) return errorResponse(parsed.message, 400)
-
-  const result = await handlerRuntime.runPromise(
-    Effect.either(
-      Effect.gen(function* () {
-        const service = yield* Memories
-        return yield* service.retrieve(parsed.value)
-      }),
-    ),
-  )
-
-  if (result._tag === 'Left') return resolveServiceError(result.left.message)
-  return jsonResponse({ ok: true, memories: result.right })
+const resolveRequestError = (message: string) => {
+  if (message === 'invalid JSON body') return errorResponse(message, 400)
+  return resolveServiceError(message)
 }
 
-export const postMemoriesHandler = async (request: Request) => {
-  const payload: unknown = await request.json().catch(() => null)
-  if (!payload || typeof payload !== 'object') return errorResponse('invalid JSON body', 400)
+export const getMemoriesHandlerEffect = (request: Request) =>
+  pipe(
+    Effect.gen(function* () {
+      const url = new URL(request.url)
+      const payload = {
+        namespace: normalizeNamespace(url.searchParams.get('namespace')),
+        query: url.searchParams.get('query') ?? '',
+        limit: url.searchParams.get('limit') ?? undefined,
+      }
 
-  const parsed = parsePersistMemoryInput(payload as Record<string, unknown>)
-  if (!parsed.ok) return errorResponse(parsed.message, 400)
+      const parsed = parseRetrieveMemoryInput(payload)
+      if (!parsed.ok) return errorResponse(parsed.message, 400)
 
-  const result = await handlerRuntime.runPromise(
-    Effect.either(
-      Effect.gen(function* () {
-        const service = yield* Memories
-        return yield* service.persist(parsed.value)
-      }),
-    ),
+      const service = yield* Memories
+      const records = yield* service.retrieve(parsed.value)
+      return jsonResponse({ ok: true, memories: records })
+    }),
+    Effect.catchAll((error) => Effect.succeed(resolveServiceError(error.message))),
   )
 
-  if (result._tag === 'Left') return resolveServiceError(result.left.message)
-  return jsonResponse({ ok: true, memory: result.right }, 201)
-}
+export const postMemoriesHandlerEffect = (request: Request) =>
+  pipe(
+    Effect.gen(function* () {
+      const payload: unknown = yield* Effect.tryPromise({
+        try: () => request.json(),
+        catch: () => new Error('invalid JSON body'),
+      })
+      if (!payload || typeof payload !== 'object') return errorResponse('invalid JSON body', 400)
+
+      const parsed = parsePersistMemoryInput(payload as Record<string, unknown>)
+      if (!parsed.ok) return errorResponse(parsed.message, 400)
+
+      const service = yield* Memories
+      const record = yield* service.persist(parsed.value)
+      return jsonResponse({ ok: true, memory: record }, 201)
+    }),
+    Effect.catchAll((error) => Effect.succeed(resolveRequestError(error.message))),
+  )
+
+export const getMemoriesHandler = (request: Request) => handlerRuntime.runPromise(getMemoriesHandlerEffect(request))
+
+export const postMemoriesHandler = (request: Request) => handlerRuntime.runPromise(postMemoriesHandlerEffect(request))
