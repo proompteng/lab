@@ -206,6 +206,26 @@ func TestIngestCodexTask(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestIngestCodexTaskRejectsNilPayload(t *testing.T) {
+	store := knowledge.NewStore(nil)
+
+	_, _, _, err := store.IngestCodexTask(context.Background(), nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "payload is required")
+}
+
+func TestIngestCodexTaskRejectsMissingDeliveryID(t *testing.T) {
+	store := knowledge.NewStore(nil)
+
+	_, _, _, err := store.IngestCodexTask(context.Background(), &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
+		Repository:  "proompteng/lab",
+		IssueNumber: 1635,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing delivery_id")
+}
+
 func expectTaskLifecycle(mock sqlmock.Sqlmock, ideaID, stage, taskID, runID string, queuedAt time.Time, deliveryID string, created time.Time) {
 	mock.ExpectBegin()
 

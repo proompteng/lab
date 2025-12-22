@@ -274,6 +274,25 @@ func TestImplementer_RunnerFailure(t *testing.T) {
 	require.Equal(t, 2, runner.calls)
 }
 
+func TestImplementer_MissingDeliveryID(t *testing.T) {
+	store := &fakeStore{}
+	runner := &fakeRunner{}
+
+	implementerInstance, err := NewImplementer(store, runner, Config{})
+	require.NoError(t, err)
+
+	_, err = implementerInstance.Implement(context.Background(), &froussardpb.CodexTask{
+		Stage:       froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
+		Repository:  "proompteng/lab",
+		IssueNumber: 1636,
+		DeliveryId:  " ",
+	})
+	require.ErrorIs(t, err, ErrImplementationMissingDeliveryID)
+	require.Equal(t, 0, runner.calls)
+	require.Equal(t, 0, store.ideaCalls)
+	require.Equal(t, 0, store.lifecycleCalls)
+}
+
 func TestImplementer_UnsupportedStage(t *testing.T) {
 	store := &fakeStore{}
 	runner := &fakeRunner{}

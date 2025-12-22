@@ -193,6 +193,30 @@ func TestCodexTasksImplementationDisabled(t *testing.T) {
 	require.Equal(t, 503, resp.StatusCode)
 }
 
+func TestCodexTasksRejectsEmptyPayload(t *testing.T) {
+	srv, err := server.New(server.Options{})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(nil))
+	req.Header.Set("Content-Type", "application/x-protobuf")
+
+	resp, err := srv.App().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 400, resp.StatusCode)
+}
+
+func TestCodexTasksRejectsInvalidPayload(t *testing.T) {
+	srv, err := server.New(server.Options{})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader([]byte("not-proto")))
+	req.Header.Set("Content-Type", "application/x-protobuf")
+
+	resp, err := srv.App().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 400, resp.StatusCode)
+}
+
 func TestCodexTasksUnsupportedStage(t *testing.T) {
 	srv, err := server.New(server.Options{
 		Dispatcher: &stubDispatcher{},
