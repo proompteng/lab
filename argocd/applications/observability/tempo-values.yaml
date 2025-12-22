@@ -13,6 +13,8 @@ global:
         secretKeyRef:
           name: observability-minio-credentials
           key: tempoSecretKey
+  extraArgs:
+    - -config.expand-env=true
 
 tempo:
   traces:
