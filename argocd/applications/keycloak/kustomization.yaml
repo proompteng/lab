@@ -4,11 +4,5 @@ namespace: keycloak
 resources:
   - ingressroute.yaml
   - keycloak-admin-sealedsecret.yaml
+  - keycloak.yaml
   - postgres-cluster.yaml
-helmCharts:
-  - name: keycloakx
-    repo: oci://ghcr.io/codecentric/helm-charts
-    version: 7.1.5
-    releaseName: keycloak
-    namespace: keycloak
-    valuesFile: values.yaml

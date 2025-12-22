@@ -6,7 +6,7 @@ This runbook covers the in-cluster Keycloak deployment used for OIDC, plus the i
 
 - Argo CD app path: `argocd/applications/keycloak`
 - Namespace: `keycloak`
-- Helm chart: `codecentric/keycloakx`
+- Manifests: `argocd/applications/keycloak/keycloak.yaml`
 - Database: CloudNativePG cluster `keycloak-db` (Longhorn, 5Gi)
 - Public hostname: `auth.proompteng.ai`
 - Traefik route: `argocd/applications/keycloak/ingressroute.yaml`
@@ -77,9 +77,19 @@ kubectl create secret generic keycloak-admin \
 
 2) Commit the updated sealed secret and sync Argo CD.
 
+## Applying manifests locally
+
+This app uses plain YAML manifests (no Helm). To apply directly:
+
+```bash
+kubectl apply -f argocd/applications/keycloak/keycloak-admin-sealedsecret.yaml
+kubectl apply -f argocd/applications/keycloak/postgres-cluster.yaml
+kubectl apply -f argocd/applications/keycloak/keycloak.yaml
+kubectl apply -f argocd/applications/keycloak/ingressroute.yaml
+```
+
 ## Quick checks
 
 ```bash
 kubectl -n keycloak get pods,svc,ingressroute,cluster
 ```
-
