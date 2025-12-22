@@ -1,5 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { ScrollArea } from '~/components/ui/scroll-area'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '~/components/ui/table'
+import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
+
 type RegistryImage = {
   name: string
   tags: string[]
@@ -283,7 +287,7 @@ export const Route = createFileRoute('/')({
 
 function App() {
   const { images, error, fetchedAt } = Route.useLoaderData()
-  const formattedTime = new Intl.DateTimeFormat(undefined, {
+  const _formattedTime = new Intl.DateTimeFormat(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(fetchedAt))
@@ -305,90 +309,106 @@ function App() {
   }
 
   return (
-    <section className="mx-auto mt-12 w-full max-w-5xl px-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">Registry images</h2>
-          <p className="text-muted-foreground text-sm">Data source: {registryBaseUrl}</p>
+    <div className="flex h-dvh w-full justify-center">
+      <section className="flex h-dvh w-full max-w-6xl flex-col px-6 py-6 text-neutral-100">
+        <div className="flex min-h-0 flex-1 flex-col rounded-sm border border-neutral-800/80 bg-neutral-950 shadow-[0_0_0_1px_rgba(10,10,10,0.6)]">
+          {error ? (
+            <p role="alert" className="mt-4 px-6 text-sm text-rose-400">
+              {error}
+            </p>
+          ) : null}
+          <ScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:overflow-y-auto [&_[data-slot=scroll-area-viewport]]:overscroll-contain [&_[data-slot=table-container]]:overflow-x-visible">
+            <Table className="table-fixed text-sm">
+              <colgroup>
+                <col className="w-[24%]" />
+                <col className="w-[44%]" />
+                <col className="w-[14%]" />
+                <col className="w-[18%]" />
+              </colgroup>
+              <TableHeader>
+                <TableRow className="h-12 border-neutral-800/80 text-xs uppercase tracking-wide text-neutral-400">
+                  <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Repository</TableHead>
+                  <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Tags</TableHead>
+                  <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Size</TableHead>
+                  <TableHead className="sticky top-0 z-10 bg-neutral-950 px-4 py-0 font-semibold">Updated</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {images.length === 0 ? (
+                  <TableRow className="h-12 border-neutral-800/80">
+                    <TableCell colSpan={4} className="px-4 py-0 text-center text-sm text-neutral-300">
+                      No images found in the registry.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  images.map((image) => {
+                    const extraTags = Math.max(0, image.tags.length - 3)
+
+                    return (
+                      <TableRow key={image.name} className="h-12 border-neutral-800/80">
+                        <TableCell className="px-4 py-0 font-medium text-neutral-100">{image.name}</TableCell>
+                        <TableCell className="min-w-0 px-4 py-0">
+                          {image.tags.length ? (
+                            <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden">
+                              {image.tags.slice(0, 3).map((tag) => (
+                                <span
+                                  key={tag}
+                                  className="h-6 max-w-[120px] truncate whitespace-nowrap rounded-full border border-neutral-700/70 bg-neutral-900/70 px-2 py-0.5 text-xs text-neutral-200"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                              {extraTags > 0 ? (
+                                <>
+                                  <span className="text-xs text-neutral-500">…</span>
+                                  <Tooltip>
+                                    <TooltipTrigger
+                                      type="button"
+                                      aria-label={`Show ${extraTags} more tags`}
+                                      className="flex h-6 min-w-6 items-center justify-center rounded-full border border-neutral-700/70 bg-neutral-900/70 px-2 text-[11px] text-neutral-200"
+                                    >
+                                      +{extraTags}
+                                    </TooltipTrigger>
+                                    <TooltipContent
+                                      side="top"
+                                      align="start"
+                                      className="border border-neutral-700/80 bg-neutral-950 text-neutral-100 shadow-lg [&>*:last-child]:hidden"
+                                    >
+                                      <p className="max-w-xs text-xs text-neutral-100">
+                                        {image.tags.slice(3).join(', ')}
+                                      </p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-neutral-500">No tags</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="px-4 py-0 text-xs text-neutral-300">
+                          {image.sizeBytes ? (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-sm font-medium text-neutral-100">
+                                {formatSize(image.sizeBytes)}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-neutral-500">Unknown</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="px-4 py-0 text-xs text-neutral-300">
+                          {image.sizeTimestamp ? formatTimestamp(image.sizeTimestamp) : '—'}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </ScrollArea>
         </div>
-        <p className="text-muted-foreground text-xs">Fetched {formattedTime}</p>
-      </div>
-      {error ? (
-        <p role="alert" className="text-destructive mt-4 text-sm">
-          {error}
-        </p>
-      ) : null}
-      <div className="mt-4 overflow-x-auto">
-        <table className="w-full border-collapse text-left text-sm">
-          <caption className="text-muted-foreground mb-3 text-left text-xs">
-            Registry repositories and their available tags.
-          </caption>
-          <thead>
-            <tr className="border-b text-xs uppercase tracking-wide text-muted-foreground">
-              <th scope="col" className="px-2 py-2 font-semibold">
-                Repository
-              </th>
-              <th scope="col" className="px-2 py-2 font-semibold">
-                Tags
-              </th>
-              <th scope="col" className="px-2 py-2 font-semibold">
-                Size
-              </th>
-              <th scope="col" className="px-2 py-2 font-semibold">
-                Status
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {images.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="px-2 py-6 text-center text-sm">
-                  No images found in the registry.
-                </td>
-              </tr>
-            ) : (
-              images.map((image) => (
-                <tr key={image.name}>
-                  <td className="px-2 py-3 font-medium">{image.name}</td>
-                  <td className="px-2 py-3">
-                    {image.tags.length ? (
-                      <div className="flex flex-wrap gap-2">
-                        {image.tags.map((tag) => (
-                          <span key={tag} className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground text-xs">No tags</span>
-                    )}
-                  </td>
-                  <td className="px-2 py-3 text-xs">
-                    {image.sizeBytes ? (
-                      <div className="flex flex-col gap-1">
-                        <span className="text-sm font-medium">{formatSize(image.sizeBytes)}</span>
-                        <div className="text-muted-foreground flex flex-col text-xs">
-                          {image.sizeTag ? <span>Tag {image.sizeTag}</span> : null}
-                          {image.sizeTimestamp ? <span>Updated {formatTimestamp(image.sizeTimestamp)}</span> : null}
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground text-xs">Unknown</span>
-                    )}
-                  </td>
-                  <td className="px-2 py-3 text-xs">
-                    {image.error || image.sizeError ? (
-                      <span className="text-destructive">{image.error ?? image.sizeError}</span>
-                    ) : (
-                      <span className="text-emerald-600">OK</span>
-                    )}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </section>
+      </section>
+    </div>
   )
 }
