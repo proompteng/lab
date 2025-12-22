@@ -3,10 +3,135 @@ import { createFileRoute } from '@tanstack/react-router'
 type RegistryImage = {
   name: string
   tags: string[]
+  sizeBytes?: number
+  sizeTag?: string
   error?: string
+  sizeError?: string
 }
 
 const registryBaseUrl = 'https://registry.ide-newton.ts.net'
+const registryAcceptHeader = [
+  'application/vnd.oci.image.index.v1+json',
+  'application/vnd.docker.distribution.manifest.list.v2+json',
+  'application/vnd.oci.image.manifest.v1+json',
+  'application/vnd.docker.distribution.manifest.v2+json',
+].join(', ')
+
+type RegistryManifest = {
+  config?: { size?: number }
+  layers?: Array<{ size?: number }>
+}
+
+type ManifestDescriptor = {
+  digest: string
+  platform?: { architecture?: string; os?: string }
+}
+
+type ManifestList = {
+  manifests?: ManifestDescriptor[]
+}
+
+function pickManifestDescriptor(manifests: ManifestDescriptor[]): ManifestDescriptor | undefined {
+  const linuxArm64 = manifests.find(
+    (manifest) => manifest.platform?.os === 'linux' && manifest.platform?.architecture === 'arm64',
+  )
+  if (linuxArm64) {
+    return linuxArm64
+  }
+
+  const linuxAmd64 = manifests.find(
+    (manifest) => manifest.platform?.os === 'linux' && manifest.platform?.architecture === 'amd64',
+  )
+  if (linuxAmd64) {
+    return linuxAmd64
+  }
+
+  return manifests[0]
+}
+
+function isManifestList(payload: RegistryManifest | ManifestList): payload is ManifestList {
+  return Array.isArray((payload as ManifestList).manifests)
+}
+
+function calculateManifestSize(manifest: RegistryManifest): number {
+  const configSize = manifest.config?.size ?? 0
+  const layerSize = manifest.layers?.reduce((total, layer) => total + (layer.size ?? 0), 0) ?? 0
+
+  return configSize + layerSize
+}
+
+async function fetchManifest(
+  repository: string,
+  reference: string,
+): Promise<{ payload?: RegistryManifest | ManifestList; error?: string }> {
+  try {
+    const response = await fetch(new URL(`/v2/${repository}/manifests/${reference}`, registryBaseUrl), {
+      headers: {
+        Accept: registryAcceptHeader,
+      },
+    })
+    if (!response.ok) {
+      return { error: `Manifest request failed (${response.status})` }
+    }
+
+    return { payload: (await response.json()) as RegistryManifest | ManifestList }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Failed to load manifest' }
+  }
+}
+
+async function fetchRepositorySize(repository: string, tag: string): Promise<{ sizeBytes?: number; error?: string }> {
+  const manifestResult = await fetchManifest(repository, tag)
+  if (!manifestResult.payload) {
+    return { error: manifestResult.error }
+  }
+
+  if (isManifestList(manifestResult.payload)) {
+    const descriptor = pickManifestDescriptor(manifestResult.payload.manifests ?? [])
+    if (!descriptor) {
+      return { error: 'No manifest entries returned' }
+    }
+
+    const nestedManifestResult = await fetchManifest(repository, descriptor.digest)
+    if (!nestedManifestResult.payload || isManifestList(nestedManifestResult.payload)) {
+      return { error: nestedManifestResult.error ?? 'Manifest payload was not an image manifest' }
+    }
+
+    return { sizeBytes: calculateManifestSize(nestedManifestResult.payload) }
+  }
+
+  return { sizeBytes: calculateManifestSize(manifestResult.payload) }
+}
+
+function formatSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '0\u00A0B'
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let unitIndex = 0
+  let value = bytes
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+
+  const formatted = new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: unitIndex === 0 ? 0 : 1,
+  }).format(value)
+
+  return `${formatted}\u00A0${units[unitIndex]}`
+}
+
+function pickSizeTag(tags: string[]): string | undefined {
+  if (tags.includes('latest')) {
+    return 'latest'
+  }
+
+  const sorted = [...tags].sort()
+  return sorted[0]
+}
 
 async function fetchRegistryImages(): Promise<{
   images: RegistryImage[]
@@ -41,10 +166,23 @@ async function fetchRegistryImages(): Promise<{
           }
 
           const tagsPayload = (await tagsResponse.json()) as { tags?: string[] }
+          const tags = tagsPayload.tags ?? []
+          const sizeTag = pickSizeTag(tags)
+          let sizeBytes: number | undefined
+          let sizeError: string | undefined
+
+          if (sizeTag) {
+            const sizeResult = await fetchRepositorySize(repository, sizeTag)
+            sizeBytes = sizeResult.sizeBytes
+            sizeError = sizeResult.error
+          }
 
           return {
             name: repository,
-            tags: tagsPayload.tags ?? [],
+            tags,
+            sizeTag,
+            sizeBytes,
+            sizeError,
           }
         } catch (error) {
           return {
@@ -106,6 +244,9 @@ function App() {
                 Tags
               </th>
               <th scope="col" className="px-2 py-2 font-semibold">
+                Size
+              </th>
+              <th scope="col" className="px-2 py-2 font-semibold">
                 Status
               </th>
             </tr>
@@ -113,7 +254,7 @@ function App() {
           <tbody className="divide-y">
             {images.length === 0 ? (
               <tr>
-                <td colSpan={3} className="px-2 py-6 text-center text-sm">
+                <td colSpan={4} className="px-2 py-6 text-center text-sm">
                   No images found in the registry.
                 </td>
               </tr>
@@ -135,8 +276,20 @@ function App() {
                     )}
                   </td>
                   <td className="px-2 py-3 text-xs">
-                    {image.error ? (
-                      <span className="text-destructive">{image.error}</span>
+                    {image.sizeBytes ? (
+                      <div className="flex flex-col gap-1">
+                        <span className="text-sm font-medium">{formatSize(image.sizeBytes)}</span>
+                        {image.sizeTag ? (
+                          <span className="text-muted-foreground text-xs">Tag {image.sizeTag}</span>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">Unknown</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-3 text-xs">
+                    {image.error || image.sizeError ? (
+                      <span className="text-destructive">{image.error ?? image.sizeError}</span>
                     ) : (
                       <span className="text-emerald-600">OK</span>
                     )}
