@@ -1,17 +1,19 @@
 ---
 name: memories
-description: Use the memories MCP tools with the default namespace.
+description: Use the memories CLI helpers (Jangar REST) with concise task namespaces.
 ---
 
 ## Scope
-- Memories MCP tools: `persist_memory` and `retrieve_memory`.
-- Always store and query memories in the `default` namespace.
+- Use the CLI helpers from repo root: `bun run --filter memories save-memory` and `bun run --filter memories retrieve-memory`.
+- These call Jangar's REST endpoint (default base URL `http://jangar`); override with `MEMORIES_JANGAR_URL` if needed.
+- Prefer concise, stable task names (they become the namespace).
 
 ## Persisting Memories
-- Required fields: `{ namespace: 'default', content }`.
-- Optional fields: `summary`, `tags`.
-- Never write to any namespace other than `default`.
+- Required flags: `--task-name "<short>"` and `--content "<text>"` (or `--content-file`).
+- Optional flags: `--summary "<1 line>"`, `--tags "<comma,separated>"`.
+- Keep `--task-name` short and consistent for related changes.
 
 ## Retrieving Memories
-- Use `{ namespace: 'default', query, limit? }`.
+- Required: `--query "<search text>"` (or `--query-file`).
+- Optional: `--task-name "<short>"` to scope to a namespace, `--limit <n>`.
 - Prefer small `limit` values (e.g. 5–10) unless the task demands more.
