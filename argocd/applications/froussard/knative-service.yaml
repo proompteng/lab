@@ -20,7 +20,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: app
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:cf58d2162d02a4d11cff3492650ca52c36218687d37bf8e3439281844a13ad3f
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:c09217a5335d82d89005fbfa3faae5aee0e111461a7f293f776c75c5f56bc6e0
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -35,8 +35,6 @@ spec:
               value: kafka-kafka-bootstrap.kafka:9092
             - name: KAFKA_TOPIC
               value: github.webhook.events
-            - name: KAFKA_CODEX_TOPIC
-              value: github.codex.tasks
             - name: KAFKA_CODEX_TOPIC_STRUCTURED
               value: github.issues.codex.tasks
             - name: KAFKA_DISCORD_COMMAND_TOPIC
@@ -65,9 +63,9 @@ spec:
             - name: OTEL_SERVICE_NAMESPACE
               value: froussard
             - name: FROUSSARD_VERSION
-              value: v0.349.0-15-g511a2320
+              value: v0.351.0-1-gc29a103f
             - name: FROUSSARD_COMMIT
-              value: 511a2320aecf857e504267b9661d2250e69befe7
+              value: c29a103f4fae0823ed80350cec6576734d14704a
             - name: LGTM_TEMPO_TRACES_ENDPOINT
               value: http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces
             - name: LGTM_MIMIR_METRICS_ENDPOINT

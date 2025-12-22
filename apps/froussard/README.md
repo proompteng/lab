@@ -13,15 +13,13 @@ flowchart LR
   Discord[Discord interaction] --> Froussard
   subgraph Kafka Topics
     Raw[github.webhook.events]
-    Tasks[github.codex.tasks]
     Structured[github.issues.codex.tasks]
     DiscordTopic[discord.commands.incoming]
   end
   Froussard -->|raw body| Raw
-  Froussard -->|codex task JSON| Tasks
   Froussard -->|codex task structured| Structured
   Froussard -->|slash command| DiscordTopic
-  Tasks --> Facteur[Facteur orchestrator]
+  Structured --> Facteur[Facteur orchestrator]
   Facteur --> Implementation[Workflow github-codex-implementation]
 ```
 
@@ -31,7 +29,7 @@ The Argo CD application also provisions the `discord.commands.incoming` Kafka to
 
 - Validate GitHub `x-hub-signature-256` headers using `@octokit/webhooks`.
 - Validate Discord `x-signature-ed25519`/`x-signature-timestamp` headers using `discord-interactions` before parsing the payload.
-- Emit the original JSON event (`github.webhook.events`) and publish Codex task payloads in both JSON (`github.codex.tasks`) and structured (`github.issues.codex.tasks`) forms.
+- Emit the original JSON event (`github.webhook.events`) and publish Codex task payloads in structured (`github.issues.codex.tasks`) form.
 - Normalize Discord slash command payloads (command name, options, interaction token, user metadata) and publish them into `discord.commands.incoming`.
 - Provision and maintain the `discord.commands.incoming` Kafka topic for Facteur ingestion.
 - Surface health checks on `/health/liveness` and `/health/readiness`.
@@ -57,10 +55,10 @@ The local runtime exposes:
 - Kafka credentials are mirrored from the Strimzi-managed `KafkaUser/kafka-codex-credentials`
   (reflected into both `kafka` and `argo-workflows` namespaces); a companion secret
   `kafka-codex-username` in `argo-workflows` defines the SASL username consumed by
-  Argo Events. Strimzi surfaces the username only inside the `sasl.jaas.config`
-  field, so we persist a lightweight static secret to expose it under the `username`
-  key that `userSecret.key` consumers expect while leaving Strimzi in charge of
-  password rotation.
+  Argo Events workflow-completion sensors. Strimzi surfaces the username only inside
+  the `sasl.jaas.config` field, so we persist a lightweight static secret to expose it
+  under the `username` key that `userSecret.key` consumers expect while leaving Strimzi
+  in charge of password rotation.
 - Facteur consumes `github.issues.codex.tasks` and dispatches the `github-codex-implementation` WorkflowTemplate.
 - Discord slash command signature verification requires `DISCORD_PUBLIC_KEY`. Set
   `KAFKA_DISCORD_COMMAND_TOPIC` to control the output topic for normalized command events.

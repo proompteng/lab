@@ -153,15 +153,9 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
   const implementationCommand: ImplementationCommand = {
     stage: 'implementation',
     key: `issue-${issueNumber}-implementation`,
-    codexMessage,
     structuredMessage: codexStructuredMessage,
     topics: {
-      codex: config.topics.codex,
       codexStructured: config.topics.codexStructured,
-    },
-    jsonHeaders: {
-      ...headers,
-      'x-codex-task-stage': 'implementation',
     },
     structuredHeaders: {
       ...headers,
@@ -250,15 +244,9 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
   const implementationCommand: ImplementationCommand = {
     stage: 'implementation',
     key: `issue-${issueNumber}-implementation`,
-    codexMessage,
     structuredMessage: codexStructuredMessage,
     topics: {
-      codex: config.topics.codex,
       codexStructured: config.topics.codexStructured,
-    },
-    jsonHeaders: {
-      ...headers,
-      'x-codex-task-stage': 'implementation',
     },
     structuredHeaders: {
       ...headers,

@@ -4,8 +4,8 @@ This guide explains how the single-stage Codex implementation pipeline works and
 
 ## Architecture
 
-1. **Froussard** consumes GitHub webhooks and normalises them into Kafka topics (`github.codex.tasks`, `github.issues.codex.tasks`). It emits `stage=implementation` tasks immediately when an authorized login opens an issue, or when an authorized comment with `implement issue` is posted.
-2. **Facteur** subscribes to the structured mirror via Knative Eventing (`/codex/tasks`). When `codex_implementation_orchestrator.enabled` is `true` it persists implementation tasks into `codex_kb` and submits the `github-codex-implementation` WorkflowTemplate. If the flag is disabled, Facteur logs the delivery and no workflow is dispatched. You can re-enable a legacy Argo Events trigger with `argocd/applications/froussard/components/codex-implementation-argo-fallback/` if needed.
+1. **Froussard** consumes GitHub webhooks and normalises them into Kafka (`github.issues.codex.tasks`). It emits `stage=implementation` tasks immediately when an authorized login opens an issue, or when an authorized comment with `implement issue` is posted.
+2. **Facteur** subscribes to the structured stream via Knative Eventing (`/codex/tasks`). When `codex_implementation_orchestrator.enabled` is `true` it persists implementation tasks into `codex_kb` and submits the `github-codex-implementation` WorkflowTemplate. If the flag is disabled, Facteur logs the delivery and no workflow is dispatched.
 3. The **WorkflowTemplate** runs the Codex container (headless) via [Argo Workflows](https://argo-workflows.readthedocs.io/en/stable/).
    - `stage=implementation`: `codex-implement.ts` executes the implementation prompt, pushes the feature branch, opens a draft PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.ts`, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
 
@@ -15,11 +15,9 @@ flowchart LR
   Discord[Discord interaction] --> Froussard
   subgraph Kafka[Kafka Topics]
     Raw[github.webhook.events]
-    Tasks[github.codex.tasks]
     Structured[github.issues.codex.tasks]
   end
   Froussard -->|raw body| Raw
-  Froussard -->|codex task JSON| Tasks
   Froussard -->|codex task structured| Structured
   Structured --> Facteur[Facteur service]
   Facteur --> Implementation["Workflow github-codex-implementation"]
@@ -36,8 +34,8 @@ logs (`workflow submitted: stage=implementation`), and surface workflow metadata
 - Use the **Codex Task** GitHub issue template (`.github/ISSUE_TEMPLATE/codex-task.md`) when opening automation requests. The form keeps summary, scope guardrails, validation commands, and the Codex prompt structured so Froussard can forward them directly to the Argo workflows.
 - Secrets `github-token` and `codex-openai` in `argo-workflows` namespace.
 - Discord secrets regenerated in `argocd/applications/froussard/discord-secrets.yaml` (provides both `discord-bot` and `discord-codex-bot` sealed manifests).
-- Kafka topics `github.webhook.events`, `github.codex.tasks`, and `github.issues.codex.tasks` deployed via Strimzi.
-- Argo Events resources under `argocd/applications/froussard/` synced.
+- Kafka topics `github.webhook.events` and `github.issues.codex.tasks` deployed via Strimzi.
+- Argo Events resources for workflow completions synced (`argocd/applications/froussard/workflow-completions-*`).
 
 ## Manual End-to-End Test
 
@@ -92,7 +90,7 @@ Codex now mirrors implementation output into a per-run Discord channel when the 
   ```bash
   kubectl -n kafka run kafka-cli --rm -it --image=strimzi/kafka:0.47.0-kafka-3.7.0 -- /bin/bash
   bin/kafka-console-consumer.sh --bootstrap-server kafka-kafka-bootstrap:9092 \
-    --topic github.codex.tasks --from-beginning
+    --topic github.issues.codex.tasks --from-beginning
   ```
 
 ## Direct Workflow Smoke Tests

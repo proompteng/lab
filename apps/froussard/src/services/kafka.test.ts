@@ -37,7 +37,6 @@ describe('KafkaProducerLayer', () => {
       clientId: 'test-client',
       topics: {
         raw: 'raw-topic',
-        codex: 'codex-topic',
         codexStructured: 'github.issues.codex.tasks',
         discordCommands: 'discord-topic',
       },

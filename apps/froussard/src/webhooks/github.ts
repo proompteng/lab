@@ -144,7 +144,6 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
           userAgent: config.github.userAgent,
         },
         topics: {
-          codex: config.topics.codex,
           codexStructured: config.topics.codexStructured,
         },
       },
