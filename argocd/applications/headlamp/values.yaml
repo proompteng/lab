@@ -6,7 +6,7 @@ service:
 persistentVolumeClaim:
   enabled: true
   accessModes:
-  - ReadWriteOnce
+    - ReadWriteOnce
   size: 1Gi
   storageClassName: longhorn
 config:
