@@ -4,6 +4,7 @@ namespace: minio
 
 resources:
   - github.com/minio/operator?ref=v5.0.18
+  - argo-workflows-minio-secret.yaml
   - observability-minio-secret.yaml
   - observability-tenant.yaml
   - observability-minio-service.yaml
