@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: observability-mimir-tailscale
+  annotations:
+    tailscale.com/expose: "true"
+    tailscale.com/hostname: mimir
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app.kubernetes.io/component: nginx
+    app.kubernetes.io/instance: observability-mimir
+    app.kubernetes.io/name: mimir
+  ports:
+    - name: http
+      port: 80
+      targetPort: http-metric

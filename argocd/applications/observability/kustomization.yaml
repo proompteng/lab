@@ -5,6 +5,9 @@ namespace: observability
 resources:
   - minio-secret.yaml
   - minio-buckets-job.yaml
+  - loki-tailscale-service.yaml
+  - tempo-tailscale-service.yaml
+  - mimir-tailscale-service.yaml
   - graf-mimir-rules.yaml
   - graf-graf-dashboard-configmap.yaml
 
