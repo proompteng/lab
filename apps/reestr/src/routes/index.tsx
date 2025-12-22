@@ -5,6 +5,7 @@ type RegistryImage = {
   tags: string[]
   sizeBytes?: number
   sizeTag?: string
+  sizeTimestamp?: string
   error?: string
   sizeError?: string
 }
@@ -18,7 +19,7 @@ const registryAcceptHeader = [
 ].join(', ')
 
 type RegistryManifest = {
-  config?: { size?: number }
+  config?: { size?: number; digest?: string }
   layers?: Array<{ size?: number }>
 }
 
@@ -80,8 +81,11 @@ async function fetchManifest(
   }
 }
 
-async function fetchRepositorySize(repository: string, tag: string): Promise<{ sizeBytes?: number; error?: string }> {
-  const manifestResult = await fetchManifest(repository, tag)
+async function fetchRepositorySize(
+  repository: string,
+  reference: string,
+): Promise<{ sizeBytes?: number; manifest?: RegistryManifest; error?: string }> {
+  const manifestResult = await fetchManifest(repository, reference)
   if (!manifestResult.payload) {
     return { error: manifestResult.error }
   }
@@ -97,10 +101,16 @@ async function fetchRepositorySize(repository: string, tag: string): Promise<{ s
       return { error: nestedManifestResult.error ?? 'Manifest payload was not an image manifest' }
     }
 
-    return { sizeBytes: calculateManifestSize(nestedManifestResult.payload) }
+    return {
+      sizeBytes: calculateManifestSize(nestedManifestResult.payload),
+      manifest: nestedManifestResult.payload,
+    }
   }
 
-  return { sizeBytes: calculateManifestSize(manifestResult.payload) }
+  return {
+    sizeBytes: calculateManifestSize(manifestResult.payload),
+    manifest: manifestResult.payload,
+  }
 }
 
 function formatSize(bytes: number): string {
@@ -124,13 +134,66 @@ function formatSize(bytes: number): string {
   return `${formatted}\u00A0${units[unitIndex]}`
 }
 
-function pickSizeTag(tags: string[]): string | undefined {
-  if (tags.includes('latest')) {
-    return 'latest'
+type TagDetails = {
+  tag: string
+  sizeBytes?: number
+  createdAt?: string
+  error?: string
+}
+
+async function fetchTagCreatedAt(
+  repository: string,
+  configDigest: string,
+): Promise<{ createdAt?: string; error?: string }> {
+  try {
+    const response = await fetch(new URL(`/v2/${repository}/blobs/${configDigest}`, registryBaseUrl))
+    if (!response.ok) {
+      return { error: `Config request failed (${response.status})` }
+    }
+
+    const payload = (await response.json()) as { created?: string }
+    return { createdAt: payload.created }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Failed to load config' }
+  }
+}
+
+async function fetchTagDetails(repository: string, tag: string): Promise<TagDetails> {
+  const sizeResult = await fetchRepositorySize(repository, tag)
+  if (!sizeResult.manifest) {
+    return { tag, error: sizeResult.error ?? 'Manifest not available' }
   }
 
-  const sorted = [...tags].sort()
-  return sorted[0]
+  const configDigest = sizeResult.manifest.config?.digest
+  if (!configDigest) {
+    return {
+      tag,
+      sizeBytes: sizeResult.sizeBytes,
+      error: 'Manifest missing config digest',
+    }
+  }
+
+  const createdResult = await fetchTagCreatedAt(repository, configDigest)
+
+  return {
+    tag,
+    sizeBytes: sizeResult.sizeBytes,
+    createdAt: createdResult.createdAt,
+    error: createdResult.error,
+  }
+}
+
+function pickLatestTag(details: TagDetails[]): TagDetails | undefined {
+  const withDates = details.filter((detail) => detail.createdAt)
+  if (withDates.length) {
+    return withDates.slice().sort((left, right) => {
+      const leftTime = left.createdAt ? Date.parse(left.createdAt) : 0
+      const rightTime = right.createdAt ? Date.parse(right.createdAt) : 0
+      return rightTime - leftTime
+    })[0]
+  }
+
+  return details.find((detail) => detail.sizeBytes)
 }
 
 async function fetchRegistryImages(): Promise<{
@@ -167,14 +230,22 @@ async function fetchRegistryImages(): Promise<{
 
           const tagsPayload = (await tagsResponse.json()) as { tags?: string[] }
           const tags = tagsPayload.tags ?? []
-          const sizeTag = pickSizeTag(tags)
           let sizeBytes: number | undefined
+          let sizeTag: string | undefined
+          let sizeTimestamp: string | undefined
           let sizeError: string | undefined
 
-          if (sizeTag) {
-            const sizeResult = await fetchRepositorySize(repository, sizeTag)
-            sizeBytes = sizeResult.sizeBytes
-            sizeError = sizeResult.error
+          if (tags.length) {
+            const tagDetails = await Promise.all(tags.map((tag) => fetchTagDetails(repository, tag)))
+            const latestTag = pickLatestTag(tagDetails)
+            sizeBytes = latestTag?.sizeBytes
+            sizeTag = latestTag?.tag
+            sizeTimestamp = latestTag?.createdAt
+            if (!sizeBytes) {
+              sizeError = latestTag?.error ?? 'No valid manifest found'
+            }
+          } else {
+            sizeError = 'No tags available'
           }
 
           return {
@@ -182,6 +253,7 @@ async function fetchRegistryImages(): Promise<{
             tags,
             sizeTag,
             sizeBytes,
+            sizeTimestamp,
             sizeError,
           }
         } catch (error) {
@@ -215,6 +287,22 @@ function App() {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(fetchedAt))
+
+  const formatTimestamp = (value?: string) => {
+    if (!value) {
+      return null
+    }
+
+    const parsed = Date.parse(value)
+    if (Number.isNaN(parsed)) {
+      return value
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(new Date(parsed))
+  }
 
   return (
     <section className="bg-card text-card-foreground mx-auto mt-12 w-full max-w-5xl rounded-xl border p-6 shadow-sm">
@@ -279,9 +367,10 @@ function App() {
                     {image.sizeBytes ? (
                       <div className="flex flex-col gap-1">
                         <span className="text-sm font-medium">{formatSize(image.sizeBytes)}</span>
-                        {image.sizeTag ? (
-                          <span className="text-muted-foreground text-xs">Tag {image.sizeTag}</span>
-                        ) : null}
+                        <div className="text-muted-foreground flex flex-col text-xs">
+                          {image.sizeTag ? <span>Tag {image.sizeTag}</span> : null}
+                          {image.sizeTimestamp ? <span>Updated {formatTimestamp(image.sizeTimestamp)}</span> : null}
+                        </div>
                       </div>
                     ) : (
                       <span className="text-muted-foreground text-xs">Unknown</span>
