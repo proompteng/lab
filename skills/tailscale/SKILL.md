@@ -1,5 +1,5 @@
 ---
-name: tailscale-ops
+name: tailscale
 description: Operational guidance for Tailscale networking tasks, including checking tailnet status, DNS names, device tags, ACL/auth key usage, subnet routers, exit nodes, and Serve/Funnel. Use when requests mention Tailscale, ts.net, tailnet, MagicDNS, Tailscale CLI, or connectivity/troubleshooting in a Tailscale-managed network.
 ---
 
