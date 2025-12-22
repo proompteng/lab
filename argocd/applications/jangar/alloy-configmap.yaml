@@ -10,6 +10,28 @@ data:
       format = "logfmt"
     }
 
+    otelcol.receiver.otlp "codex" {
+      http {
+        endpoint = "0.0.0.0:4318"
+      }
+    }
+
+    otelcol.processor.batch "default" {}
+
+    otelcol.exporter.otlphttp "loki" {
+      endpoint = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/otlp"
+    }
+
+    otelcol.service "codex" {
+      pipelines {
+        logs = [
+          otelcol.receiver.otlp.codex.logs,
+          otelcol.processor.batch.default,
+          otelcol.exporter.otlphttp.loki,
+        ]
+      }
+    }
+
     // Jangar web app
     discovery.kubernetes "jangar" {
       role = "pod"

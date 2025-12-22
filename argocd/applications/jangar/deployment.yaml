@@ -47,6 +47,10 @@ spec:
               value: https://github.com/proompteng/lab.git
             - name: CODEX_BOOTSTRAP_REPO
               value: "1"
+            - name: CODEX_INTERNAL_ORIGINATOR_OVERRIDE
+              value: codex
+            - name: CODEX_CONFIG
+              value: /etc/codex/config.toml
             - name: JANGAR_REDIS_URL
               value: redis://jangar-openwebui-redis:6379/1
             - name: DATABASE_URL
@@ -96,6 +100,9 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspace
+            - name: codex-config
+              mountPath: /etc/codex
+              readOnly: true
             - name: docker-lib
               mountPath: /var/lib/docker
               readOnly: true
@@ -133,6 +140,12 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: jangar-workspace
+        - name: codex-config
+          configMap:
+            name: jangar-codex
+            items:
+              - key: config.toml
+                path: config.toml
         - name: docker-lib
           emptyDir: {}
         - name: docker-sock

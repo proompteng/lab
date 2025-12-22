@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jangar-codex
+  namespace: jangar
+data:
+  config.toml: |
+    [otel]
+    log_user_prompt = true
+    exporter = { otlp-http = { endpoint = "http://jangar-alloy.jangar.svc.cluster.local:4318/v1/logs", protocol = "binary" } }
