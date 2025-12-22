@@ -24,6 +24,7 @@ ENV PORT=4173
 
 COPY --from=builder /app/node_modules /app/node_modules
 COPY --from=builder /app/apps/reestr/.output ./.output
+COPY --from=builder /app/node_modules/@fontsource-variable/jetbrains-mono/files/ /app/apps/reestr/.output/public/assets/files/
 COPY --from=builder /app/apps/reestr/package.json ./package.json
 
 EXPOSE 4173
