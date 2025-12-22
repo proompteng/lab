@@ -2,11 +2,18 @@ service:
   type: LoadBalancer
   annotations:
     tailscale.com/hostname: headlamp
-    tailscale.com/expose: "true"
-
+    tailscale.com/expose: 'true'
 persistentVolumeClaim:
   enabled: true
   accessModes:
     - ReadWriteOnce
   size: 1Gi
   storageClassName: longhorn
+config:
+  oidc:
+    secret:
+      create: false
+    externalSecret:
+      enabled: true
+      name: headlamp-oidc
+    callbackURL: https://headlamp.ide-newton.ts.net/oidc-callback
