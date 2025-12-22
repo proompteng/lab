@@ -10,6 +10,5 @@ resources:
   - argo-workflows-completions-topic.yaml
   - github-webhook-topic.yaml
   - github-issues-codex-tasks-topic.yaml
-  - github-codex-implementation-workflow-template.yaml
   - coder-workspace-access.yaml
   - knative-service.yaml
