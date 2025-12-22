@@ -7,3 +7,8 @@ resources:
   - pvc.yaml
   - storageclass-longhorn-single.yaml
   - tailscale-ingress.yaml
+  - reestr-knative-service.yaml
+  - reestr-tailscale-service.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/reestr
+    newTag: latest
