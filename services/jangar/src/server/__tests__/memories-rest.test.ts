@@ -36,7 +36,7 @@ const makeService = (): { service: MemoriesService; saved: MemoryRecord[] } => {
   return { service, saved }
 }
 
-const run = <T>(effect: Effect.Effect<T, Error>, service: MemoriesService) =>
+const run = <T>(effect: Effect.Effect<T, unknown, Memories>, service: MemoriesService) =>
   Effect.runPromise(pipe(effect, Effect.provideService(Memories, service)))
 
 describe('memories REST handlers', () => {
