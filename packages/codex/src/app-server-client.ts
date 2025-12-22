@@ -4,6 +4,7 @@ import type { ClientInfo, ClientRequest, RequestId, ServerNotification } from '.
 import type { ReasoningEffort } from './app-server/ReasoningEffort'
 import type { JsonValue } from './app-server/serde_json/JsonValue'
 import type {
+  AccountRateLimitsUpdatedNotification,
   AgentMessageDeltaNotification,
   AskForApproval,
   CommandExecutionOutputDeltaNotification,
@@ -13,6 +14,7 @@ import type {
   ItemCompletedNotification,
   ItemStartedNotification,
   McpToolCallProgressNotification,
+  RateLimitSnapshot,
   SandboxMode,
   TerminalInteractionNotification,
   ThreadItem,
@@ -43,6 +45,7 @@ export type StreamDelta =
       explanation: string | null
       plan: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }>
     }
+  | { type: 'rate_limits'; rateLimits: RateLimitSnapshot }
   | {
       type: 'tool'
       toolKind: 'command' | 'file' | 'mcp' | 'webSearch'
@@ -1455,6 +1458,14 @@ export class CodexAppServerClient {
       case 'thread/compacted': {
         const params = notification.params as ContextCompactedNotification
         this.log('info', 'thread compacted notification received', { threadId: params.threadId, turnId: params.turnId })
+        break
+      }
+      case 'account/rateLimits/updated': {
+        const params = notification.params as AccountRateLimitsUpdatedNotification
+        routeToStream(params, (stream) => {
+          stream.push({ type: 'rate_limits', rateLimits: params.rateLimits })
+        })
+        this.log('info', 'account rate limits updated', { params })
         break
       }
       case 'codex/event/stream_error':

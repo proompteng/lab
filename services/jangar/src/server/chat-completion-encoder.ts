@@ -17,6 +17,26 @@ type PlanStep = {
   status: 'pending' | 'in_progress' | 'completed' | 'inProgress'
 }
 
+type RateLimitWindow = {
+  usedPercent?: number
+  windowDurationMins?: number | null
+  resetsAt?: number | null
+}
+
+type CreditsSnapshot = {
+  hasCredits?: boolean
+  unlimited?: boolean
+  balance?: string | null
+}
+
+type RateLimitSnapshot = {
+  primary?: RateLimitWindow | null
+  secondary?: RateLimitWindow | null
+  credits?: CreditsSnapshot | null
+  planType?: string | null
+  plan_type?: string | null
+}
+
 const sanitizePlanText = (value: string) => value.replaceAll('\n', ' ').trim()
 
 const toPlanMarkdown = (value: unknown): string | null => {
@@ -53,6 +73,92 @@ const toPlanMarkdown = (value: unknown): string | null => {
   if (explanation && explanation.length > 0) lines.push(explanation)
   lines.push(...steps)
   return lines.join('\n')
+}
+
+const formatPercent = (value: number) => {
+  if (!Number.isFinite(value)) return 'unknown'
+  const rounded = Math.round(value * 10) / 10
+  return Number.isInteger(rounded) ? `${rounded}%` : `${rounded}%`
+}
+
+const formatResetTime = (value: number) => {
+  if (!Number.isFinite(value)) return null
+  const ms = value < 1_000_000_000_000 ? value * 1000 : value
+  const date = new Date(ms)
+  if (Number.isNaN(date.getTime())) return null
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZoneName: 'short',
+    }).format(date)
+  } catch {
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(date)
+    } catch {
+      return date.toLocaleString()
+    }
+  }
+}
+
+const formatDurationHours = (minutes: number) => {
+  if (!Number.isFinite(minutes)) return 'window unknown'
+  const total = Math.max(0, Math.round(minutes))
+  const hours = Math.floor(total / 60)
+  const mins = total % 60
+  if (hours > 0 && mins > 0) return `${hours}h ${mins}m`
+  if (hours > 0) return `${hours}h`
+  return `${mins}m`
+}
+
+const toRateLimitMarkdown = (value: unknown): string | null => {
+  if (!value || typeof value !== 'object') return null
+  const record = value as RateLimitSnapshot
+  const lines: string[] = ['> **Rate limits**']
+
+  const planType =
+    typeof record.planType === 'string'
+      ? record.planType
+      : typeof record.plan_type === 'string'
+        ? record.plan_type
+        : null
+  if (planType) lines.push(`> Plan: ${planType}`)
+
+  const renderWindow = (label: string, window?: RateLimitWindow | null) => {
+    if (!window) return
+    const used = window.usedPercent
+    const usage = typeof used === 'number' ? `${formatPercent(used)} used` : 'usage unknown'
+    const duration =
+      typeof window.windowDurationMins === 'number'
+        ? `${formatDurationHours(window.windowDurationMins)} window`
+        : 'window unknown'
+    const reset = typeof window.resetsAt === 'number' ? formatResetTime(window.resetsAt) : null
+    const parts = [usage, duration]
+    if (reset) parts.push(`resets ${reset}`)
+    lines.push(`> ${label}: ${parts.join(' · ')}`)
+  }
+
+  renderWindow('Primary', record.primary)
+  renderWindow('Secondary', record.secondary)
+
+  if (record.credits) {
+    const credits = record.credits
+    const parts: string[] = []
+    if (credits.unlimited) {
+      parts.push('unlimited')
+    } else if (credits.hasCredits) {
+      parts.push('has credits')
+    } else {
+      parts.push('no credits')
+    }
+    if (credits.balance) parts.push(`balance ${credits.balance}`)
+    lines.push(`> Credits: ${parts.join(' · ')}`)
+  }
+
+  return lines.length > 1 ? lines.join('\n') : null
 }
 
 const pickNumber = (value: unknown, keys: string[]): number | undefined => {
@@ -226,6 +332,7 @@ const createSession = (args: {
   let nextAnonymousToolId = 0
   let hasEmittedAnyChunk = false
   let lastPlanMarkdown: string | null = null
+  let lastRateLimitsMarkdown: string | null = null
   let sawAnyMessageDelta = false
 
   const attachMeta = (chunk: Record<string, unknown>) => {
@@ -355,6 +462,15 @@ const createSession = (args: {
       if (!markdown || markdown === lastPlanMarkdown) return frames
       lastPlanMarkdown = markdown
       emitContentDelta(frames, `\n\n${markdown}\n\n\n`)
+      return frames
+    }
+
+    if (type === 'rate_limits') {
+      closeCommandFence(frames)
+      const markdown = toRateLimitMarkdown(record?.rateLimits)
+      if (!markdown || markdown === lastRateLimitsMarkdown) return frames
+      lastRateLimitsMarkdown = markdown
+      emitContentDelta(frames, `\n\n${markdown}\n\n`)
       return frames
     }
 
