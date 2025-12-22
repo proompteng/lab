@@ -23,8 +23,8 @@ ENV NODE_ENV=production
 ENV PORT=4173
 
 COPY --from=builder /app/node_modules /app/node_modules
-COPY --from=builder /app/apps/reestr/dist ./dist
+COPY --from=builder /app/apps/reestr/.output ./.output
 COPY --from=builder /app/apps/reestr/package.json ./package.json
 
 EXPOSE 4173
-CMD ["bun", "dist/server/server.js"]
+CMD ["bun", ".output/server/index.mjs"]
