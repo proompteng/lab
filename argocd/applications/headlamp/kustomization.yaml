@@ -10,15 +10,3 @@ helmCharts:
     releaseName: headlamp
     namespace: headlamp
     valuesFile: values.yaml
-
-patches:
-  - target:
-      kind: Service
-      name: headlamp
-    patch: |-
-      apiVersion: v1
-      kind: Service
-      metadata:
-        name: headlamp
-      spec:
-        loadBalancerClass: tailscale
