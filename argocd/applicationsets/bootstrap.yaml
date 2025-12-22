@@ -77,7 +77,7 @@ spec:
             namespace: registry
             annotations:
               argocd.argoproj.io/sync-wave: "1"
-            automation: auto
+            automation: manual
             enabled: true
       selector:
         matchExpressions:
