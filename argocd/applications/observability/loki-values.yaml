@@ -121,3 +121,33 @@ gateway:
         secretKeyRef:
           name: observability-minio-credentials
           key: lokiSecretKey
+
+compactor:
+  extraArgs:
+    - -config.expand-env=true
+  extraEnv:
+    - name: LOKI_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiAccessKey
+    - name: LOKI_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiSecretKey
+
+ruler:
+  extraArgs:
+    - -config.expand-env=true
+  extraEnv:
+    - name: LOKI_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiAccessKey
+    - name: LOKI_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiSecretKey
