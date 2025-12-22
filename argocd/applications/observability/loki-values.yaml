@@ -13,8 +13,8 @@ loki:
       s3: http://observability-minio.minio.svc.cluster.local:9000
       s3forcepathstyle: true
       bucketnames: loki-data
-      access_key_id: grafana-loki
-      secret_access_key: loki-supersecret
+      access_key_id: ${LOKI_ACCESS_KEY_ID}
+      secret_access_key: ${LOKI_SECRET_ACCESS_KEY}
       insecure: true
     boltdb_shipper:
       cache_location: /var/loki/index
@@ -46,3 +46,108 @@ loki:
       enabled: true
       size: 5Gi
       storageClass: longhorn
+
+distributor:
+  extraArgs:
+    - -config.expand-env=true
+  extraEnv:
+    - name: LOKI_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiAccessKey
+    - name: LOKI_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiSecretKey
+
+ingester:
+  extraArgs:
+    - -config.expand-env=true
+  extraEnv:
+    - name: LOKI_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiAccessKey
+    - name: LOKI_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiSecretKey
+
+querier:
+  extraArgs:
+    - -config.expand-env=true
+  extraEnv:
+    - name: LOKI_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiAccessKey
+    - name: LOKI_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiSecretKey
+
+queryFrontend:
+  extraArgs:
+    - -config.expand-env=true
+  extraEnv:
+    - name: LOKI_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiAccessKey
+    - name: LOKI_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiSecretKey
+
+gateway:
+  extraArgs:
+    - -config.expand-env=true
+  extraEnv:
+    - name: LOKI_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiAccessKey
+    - name: LOKI_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiSecretKey
+
+compactor:
+  extraArgs:
+    - -config.expand-env=true
+  extraEnv:
+    - name: LOKI_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiAccessKey
+    - name: LOKI_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiSecretKey
+
+ruler:
+  extraArgs:
+    - -config.expand-env=true
+  extraEnv:
+    - name: LOKI_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiAccessKey
+    - name: LOKI_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: lokiSecretKey

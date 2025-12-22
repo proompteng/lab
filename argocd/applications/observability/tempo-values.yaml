@@ -1,6 +1,21 @@
 gateway:
   enabled: true
 
+global:
+  extraEnv:
+    - name: TEMPO_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: tempoAccessKey
+    - name: TEMPO_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: tempoSecretKey
+  extraArgs:
+    - -config.expand-env=true
+
 tempo:
   traces:
     otlp:
@@ -32,7 +47,7 @@ tempo:
       s3:
         endpoint: http://observability-minio.minio.svc.cluster.local:9000
         bucket: tempo-traces
-        access_key: grafana-tempo
-        secret_key: tempo-supersecret
+        access_key: ${TEMPO_ACCESS_KEY}
+        secret_key: ${TEMPO_SECRET_KEY}
         insecure: true
         s3forcepathstyle: true

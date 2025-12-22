@@ -29,13 +29,13 @@ spec:
             - name: MINIO_ROOT_USER
               valueFrom:
                 secretKeyRef:
-                  name: observability-minio-credentials
-                  key: rootUser
+                  name: observability-minio-creds
+                  key: accesskey
             - name: MINIO_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: observability-minio-credentials
-                  key: rootPassword
+                  name: observability-minio-creds
+                  key: secretkey
             - name: LOKI_ACCESS_KEY
               valueFrom:
                 secretKeyRef:

@@ -5,7 +5,6 @@ resources:
   - codex-docker-policy.yaml
   - ingressroute.yaml
   - argo-workflows-sso-sealedsecret.yaml
-  - minio-secret.yaml
   - minio-bucket-job.yaml
   - minio-root-secret.yaml
   - alloy-rbac.yaml
