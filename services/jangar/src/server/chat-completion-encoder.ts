@@ -86,11 +86,22 @@ const formatResetTime = (value: number) => {
   const ms = value < 1_000_000_000_000 ? value * 1000 : value
   const date = new Date(ms)
   if (Number.isNaN(date.getTime())) return null
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZoneName: 'short',
-  }).format(date)
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZoneName: 'short',
+    }).format(date)
+  } catch {
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(date)
+    } catch {
+      return date.toLocaleString()
+    }
+  }
 }
 
 const formatDurationHours = (minutes: number) => {
