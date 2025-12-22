@@ -8,7 +8,7 @@ afterEach(() => {
 
 describe('inspectImageDigest', () => {
   it('prefers the locally cached repo digest when available', () => {
-    const spawnMock: typeof Bun.spawnSync = (command, args, _opts) => {
+    const spawnMock = ((command: Parameters<typeof Bun.spawnSync>[0], args, _opts) => {
       const commandString = typeof command === 'string' ? command : Array.prototype.join.call(command, ' ')
       const argString = Array.isArray(args) ? args.join(' ') : args ? String(args) : ''
       const joined = `${commandString} ${argString}`.trim()
@@ -20,7 +20,7 @@ describe('inspectImageDigest', () => {
         } as ReturnType<typeof Bun.spawnSync>
       }
       return { exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
-    }
+    }) as typeof Bun.spawnSync
 
     __private.setSpawnSync(spawnMock)
 
@@ -30,7 +30,7 @@ describe('inspectImageDigest', () => {
 
   it('falls back to docker imagetools when the local image is missing', () => {
     let imagetoolsCalled = false
-    const spawnMock: typeof Bun.spawnSync = (command, args, _opts) => {
+    const spawnMock = ((command: Parameters<typeof Bun.spawnSync>[0], args, _opts) => {
       const commandString = typeof command === 'string' ? command : Array.prototype.join.call(command, ' ')
       const argString = Array.isArray(args) ? args.join(' ') : args ? String(args) : ''
       const joined = `${commandString} ${argString}`.trim()
@@ -45,7 +45,7 @@ describe('inspectImageDigest', () => {
         >
       }
       return { exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() } as ReturnType<typeof Bun.spawnSync>
-    }
+    }) as typeof Bun.spawnSync
 
     __private.setSpawnSync(spawnMock)
 

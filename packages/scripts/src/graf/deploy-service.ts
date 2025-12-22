@@ -35,8 +35,9 @@ const updateManifestImage = (image: string, version: string, commit: string) => 
   const existing = readFileSync(manifestPath, 'utf8')
   const doc = YAML.parse(existing)
 
-  const containers: Array<{ name?: string; image?: string }> | undefined =
-    doc?.spec?.template?.spec?.containers ?? undefined
+  const containers:
+    | Array<{ name?: string; image?: string; env?: Array<{ name?: string; value?: string }> }>
+    | undefined = doc?.spec?.template?.spec?.containers ?? undefined
   if (!containers || containers.length === 0) {
     throw new Error('Unable to locate Graf container in knative-service manifest')
   }
