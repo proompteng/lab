@@ -84,6 +84,13 @@ Storage details:
 - Table is `memories.entries` (auto-created on first use; see `schemas/embeddings/memories.sql`) and requires `pgvector` + `pgcrypto` extensions.
 - No table migrations are performed; the store expects the current schema only. If `OPENAI_EMBEDDING_DIMENSION` does not match the existing `memories.entries.embedding` column dimension, MCP calls will fail with a schema mismatch error.
 
+## REST (memories)
+
+Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
+
+- `POST /api/memories` with `{ namespace?, content, summary?, tags? }` to persist a memory.
+- `GET /api/memories?query=...&namespace=...&limit=...` to retrieve matches.
+
 ## Environment
 
 - `JANGAR_MODELS` (comma-separated list; optional)

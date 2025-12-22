@@ -1,16 +1,4 @@
-import { SQL } from 'bun'
-import {
-  DEFAULT_OPENAI_API_BASE_URL,
-  getFlagValue,
-  parseCliFlags,
-  parseCommaList,
-  parseJson,
-  resolveDatabaseSession,
-  resolveEmbeddingApiKey,
-  resolveEmbeddingDefaults,
-  toPgTextArray,
-  vectorToPgArray,
-} from './cli'
+import { getFlagValue, parseCliFlags, parseCommaList, parseJson, resolveJangarBaseUrl } from './cli'
 
 const flags = parseCliFlags(process.argv.slice(2))
 
@@ -39,130 +27,46 @@ if (!content.trim()) {
 }
 
 const summary = getFlagValue(flags, 'summary') ?? content.trim().slice(0, 300)
-const taskDescription = getFlagValue(flags, 'description')
-const repositoryRef = getFlagValue(flags, 'repository-ref') ?? process.env.REPOSITORY_REF ?? 'main'
-const repositoryCommit = getFlagValue(flags, 'repository-commit')
-const repositoryPath = getFlagValue(flags, 'repository-path')
-const executionId = getFlagValue(flags, 'execution-id')
-const source = getFlagValue(flags, 'source') ?? 'codex-memory'
 const tags = parseCommaList(getFlagValue(flags, 'tags'))
 const metadata = parseJson(getFlagValue(flags, 'metadata'))
-const openAiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
-const embeddingDefaults = resolveEmbeddingDefaults(openAiBaseUrl)
-const encoderModel = getFlagValue(flags, 'model') ?? process.env.OPENAI_EMBEDDING_MODEL ?? embeddingDefaults.model
-const encoderVersion = getFlagValue(flags, 'encoder-version')
-const apiKey = resolveEmbeddingApiKey(openAiBaseUrl)
-const dimensionsRaw = process.env.OPENAI_EMBEDDING_DIMENSION
-const expectedDimension = parseInt(dimensionsRaw ?? String(embeddingDefaults.dimension), 10)
 
-const embedBody: Record<string, unknown> = {
-  model: encoderModel,
-  input: content,
-}
-
-if (dimensionsRaw) {
-  embedBody.dimensions = expectedDimension
-}
-
-const headers: Record<string, string> = {
-  'Content-Type': 'application/json',
-}
-if (apiKey) {
-  headers.Authorization = `Bearer ${apiKey}`
-}
-
-const embedResponse = await fetch(`${openAiBaseUrl}/embeddings`, {
-  method: 'POST',
-  headers,
-  body: JSON.stringify(embedBody),
-})
-
-if (!embedResponse.ok) {
-  const body = await embedResponse.text()
-  throw new Error(`OpenAI embedding request failed (${embedResponse.status}): ${body}`)
-}
-
-const embedJson = (await embedResponse.json()) as { data?: { embedding?: number[] }[] } & { model?: string }
-const embedding = embedJson.data?.[0]?.embedding
-if (!embedding || !Array.isArray(embedding)) {
-  throw new Error('OpenAI did not return an embedding')
-}
-
-if (embedding.length !== expectedDimension) {
-  throw new Error(
-    `embedding dimension mismatch: expected ${expectedDimension} but received ${embedding.length}.` +
-      ' Adjust OPENAI_EMBEDDING_DIMENSION or model to create embeddings with the matching dimension.',
-  )
-}
-
-const vectorString = vectorToPgArray(embedding)
-const metadataJson = JSON.stringify(metadata)
-const tagsArrayLiteral = toPgTextArray(tags)
-const databaseSession = await resolveDatabaseSession()
-const db = new SQL(databaseSession.databaseUrl)
-
-const insertParams = [
-  taskName,
-  taskDescription,
-  repositoryRef,
-  repositoryCommit,
-  repositoryPath,
-  summary,
-  content,
-  metadataJson,
-  tagsArrayLiteral,
-  source,
-  vectorString,
-  encoderModel,
-  encoderVersion,
-  executionId,
+const ignoredFlags: Array<[string, string | undefined]> = [
+  ['description', getFlagValue(flags, 'description')],
+  ['repository-ref', getFlagValue(flags, 'repository-ref')],
+  ['repository-commit', getFlagValue(flags, 'repository-commit')],
+  ['repository-path', getFlagValue(flags, 'repository-path')],
+  ['execution-id', getFlagValue(flags, 'execution-id')],
+  ['source', getFlagValue(flags, 'source')],
+  ['metadata', Object.keys(metadata).length ? 'provided' : undefined],
+  ['model', getFlagValue(flags, 'model')],
+  ['encoder-version', getFlagValue(flags, 'encoder-version')],
 ]
 
-try {
-  const inserted = await db.unsafe<Array<{ id: string; created_at: string }>>(
-    `
-      INSERT INTO memories.entries (
-        task_name,
-        task_description,
-        repository_ref,
-        repository_commit,
-        repository_path,
-        summary,
-        content,
-        metadata,
-        tags,
-        source,
-        embedding,
-        encoder_model,
-        encoder_version,
-        execution_id
-      ) VALUES (
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        $6,
-        $7,
-        $8::jsonb,
-        $9::text[],
-        $10,
-        $11::vector,
-        $12,
-        $13,
-        $14
-      )
-      RETURNING id, created_at;
-    `,
-    insertParams,
-  )
-
-  const memoryId = inserted[0]?.id
-  console.log(`saved memory ${memoryId} (${taskName})`)
-} finally {
-  try {
-    await db.close()
-  } finally {
-    await databaseSession.stop()
-  }
+const ignored = ignoredFlags.filter(([, value]) => value)
+if (ignored.length > 0) {
+  const names = ignored.map(([name]) => `--${name}`).join(', ')
+  console.warn(`Ignoring unused flags for Jangar REST: ${names}`)
 }
+
+const baseUrl = resolveJangarBaseUrl()
+const endpoint = new URL('/api/memories', baseUrl).toString()
+
+const response = await fetch(endpoint, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    namespace: taskName,
+    content,
+    summary,
+    tags,
+  }),
+})
+
+if (!response.ok) {
+  const body = await response.text()
+  throw new Error(`Jangar memory save failed (${response.status}): ${body}`)
+}
+
+const payload = (await response.json()) as { ok?: boolean; memory?: { id?: string } }
+const memoryId = payload.memory?.id ?? 'unknown'
+console.log(`saved memory ${memoryId} (${taskName})`)

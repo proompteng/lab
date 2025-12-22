@@ -1,30 +1,12 @@
-import { SQL } from 'bun'
-import {
-  DEFAULT_OPENAI_API_BASE_URL,
-  getFlagValue,
-  parseCliFlags,
-  parseCommaList,
-  resolveDatabaseSession,
-  resolveEmbeddingApiKey,
-  resolveEmbeddingDefaults,
-  toPgTextArray,
-  vectorToPgArray,
-} from './cli'
+import { getFlagValue, parseCliFlags, parseCommaList, resolveJangarBaseUrl } from './cli'
 
-type MemoryRow = {
+type MemoryRecord = {
   id: string
-  task_name: string
-  summary: string
+  namespace: string
+  summary: string | null
   content: string
-  metadata: Record<string, unknown>
   tags: string[]
-  source: string
-  repository_ref: string
-  repository_commit: string | null
-  repository_path: string | null
-  encoder_model: string
-  encoder_version: string | null
-  distance: number
+  distance?: number
 }
 
 const flags = parseCliFlags(process.argv.slice(2))
@@ -48,46 +30,6 @@ if (!queryText.trim()) {
   throw new Error('query text cannot be empty')
 }
 
-const openAiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
-const embeddingDefaults = resolveEmbeddingDefaults(openAiBaseUrl)
-const encoderModel = getFlagValue(flags, 'model') ?? process.env.OPENAI_EMBEDDING_MODEL ?? embeddingDefaults.model
-const apiKey = resolveEmbeddingApiKey(openAiBaseUrl)
-const expectedDimension = parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? String(embeddingDefaults.dimension), 10)
-
-const headers: Record<string, string> = {
-  'Content-Type': 'application/json',
-}
-if (apiKey) {
-  headers.Authorization = `Bearer ${apiKey}`
-}
-
-const embedResponse = await fetch(`${openAiBaseUrl}/embeddings`, {
-  method: 'POST',
-  headers,
-  body: JSON.stringify({ model: encoderModel, input: queryText }),
-})
-
-if (!embedResponse.ok) {
-  const body = await embedResponse.text()
-  throw new Error(`OpenAI embedding request failed (${embedResponse.status}): ${body}`)
-}
-
-const embedJson = (await embedResponse.json()) as { data?: { embedding?: number[] }[] } & {
-  model?: string
-}
-const embedding = embedJson.data?.[0]?.embedding
-if (!embedding || !Array.isArray(embedding)) {
-  throw new Error('OpenAI did not return an embedding')
-}
-
-if (embedding.length !== expectedDimension) {
-  throw new Error(
-    `embedding dimension mismatch: expected ${expectedDimension} but received ${embedding.length}.` +
-      ' Adjust OPENAI_EMBEDDING_DIMENSION or model to create embeddings with the matching dimension.',
-  )
-}
-
-const vectorString = vectorToPgArray(embedding)
 const repositoryRef = getFlagValue(flags, 'repository-ref')
 const source = getFlagValue(flags, 'source')
 const taskName = getFlagValue(flags, 'task-name')
@@ -98,80 +40,49 @@ if (Number.isNaN(limitRaw)) {
 }
 const limit = Math.max(1, Math.floor(limitRaw))
 
-const databaseSession = await resolveDatabaseSession()
-const db = new SQL(databaseSession.databaseUrl)
+const ignoredFlags: Array<[string, string | undefined]> = [
+  ['repository-ref', repositoryRef],
+  ['source', source],
+  ['tags', tags.length ? 'provided' : undefined],
+]
 
-const params: unknown[] = []
-const pushParam = (value: unknown) => {
-  params.push(value)
-  return `$${params.length}`
+const ignored = ignoredFlags.filter(([, value]) => value)
+if (ignored.length > 0) {
+  const names = ignored.map(([name]) => `--${name}`).join(', ')
+  console.warn(`Ignoring unused flags for Jangar REST: ${names}`)
 }
 
-const tagsArrayLiteral = tags.length ? toPgTextArray(tags) : undefined
-const conditions: string[] = ['TRUE']
-if (repositoryRef) {
-  conditions.push(`repository_ref = ${pushParam(repositoryRef)}`)
-}
-if (source) {
-  conditions.push(`source = ${pushParam(source)}`)
-}
+const baseUrl = resolveJangarBaseUrl()
+const endpoint = new URL('/api/memories', baseUrl)
+endpoint.searchParams.set('query', queryText)
 if (taskName) {
-  conditions.push(`task_name = ${pushParam(taskName)}`)
+  endpoint.searchParams.set('namespace', taskName)
 }
-if (tags.length && tagsArrayLiteral) {
-  conditions.push(`tags && ${pushParam(tagsArrayLiteral)}::text[]`)
+endpoint.searchParams.set('limit', String(limit))
+
+const response = await fetch(endpoint.toString(), {
+  method: 'GET',
+  headers: { accept: 'application/json' },
+})
+
+if (!response.ok) {
+  const body = await response.text()
+  throw new Error(`Jangar memory retrieve failed (${response.status}): ${body}`)
 }
-const vectorParam = pushParam(vectorString)
-const limitParam = pushParam(limit)
 
-const querySql = `
-  SELECT
-    id,
-    task_name,
-    summary,
-    content,
-    metadata,
-    tags,
-    source,
-    repository_ref,
-    repository_commit,
-    repository_path,
-    encoder_model,
-    encoder_version,
-    embedding <=> ${vectorParam}::vector AS distance
-  FROM memories.entries
-  WHERE ${conditions.join(' AND ')}
-  ORDER BY distance ASC
-  LIMIT ${limitParam};
-`
+const payload = (await response.json()) as { ok?: boolean; memories?: MemoryRecord[] }
+const rows = payload.memories ?? []
 
-try {
-  const rows = await db.unsafe<MemoryRow[]>(querySql, params)
-
-  if (!rows.length) {
-    console.log('no memories matched your query')
-  } else {
-    rows.forEach((row, index) => {
-      console.log(`\n[${index + 1}] ${row.task_name} (${row.id})`)
-      console.log(`  summary: ${row.summary}`)
-      console.log(`  source: ${row.source} repository_ref: ${row.repository_ref}`)
-      console.log(`  tags: ${Array.isArray(row.tags) ? row.tags.join(', ') : ''}`)
+if (!rows.length) {
+  console.log('no memories matched your query')
+} else {
+  rows.forEach((row, index) => {
+    console.log(`\n[${index + 1}] ${row.namespace} (${row.id})`)
+    console.log(`  summary: ${row.summary ?? ''}`)
+    console.log(`  tags: ${Array.isArray(row.tags) ? row.tags.join(', ') : ''}`)
+    if (row.distance != null) {
       console.log(`  distance: ${Number(row.distance).toFixed(4)}`)
-      console.log(`  content preview: ${String(row.content).slice(0, 200).replace(/\s+/g, ' ')}
-`)
-    })
-
-    const ids = rows.map((row) => row.id)
-    const idsArrayLiteral = toPgTextArray(ids)
-
-    await db.unsafe('UPDATE memories.entries SET last_accessed_at = now() WHERE id = ANY($1::uuid[])', [
-      idsArrayLiteral,
-    ])
-  }
-} finally {
-  try {
-    await db.close()
-  } finally {
-    await databaseSession.stop()
-  }
+    }
+    console.log(`  content preview: ${String(row.content).slice(0, 200).replace(/\s+/g, ' ')}\n`)
+  })
 }

@@ -15,6 +15,7 @@ import { Route as HealthRouteImport } from './routes/health'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
 import { Route as ApiModelsRouteImport } from './routes/api/models'
+import { Route as ApiMemoriesRouteImport } from './routes/api/memories'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
@@ -51,6 +52,11 @@ const ApiModelsRoute = ApiModelsRouteImport.update({
   path: '/api/models',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiMemoriesRoute = ApiMemoriesRouteImport.update({
+  id: '/api/memories',
+  path: '/api/memories',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiHealthRoute = ApiHealthRouteImport.update({
   id: '/api/health',
   path: '/api/health',
@@ -83,6 +89,7 @@ export interface FileRoutesByFullPath {
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/memories': typeof ApiMemoriesRoute
   '/api/models': typeof ApiModelsRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
@@ -96,6 +103,7 @@ export interface FileRoutesByTo {
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/memories': typeof ApiMemoriesRoute
   '/api/models': typeof ApiModelsRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
@@ -110,6 +118,7 @@ export interface FileRoutesById {
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/memories': typeof ApiMemoriesRoute
   '/api/models': typeof ApiModelsRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
@@ -125,6 +134,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memories'
     | '/api/health'
+    | '/api/memories'
     | '/api/models'
     | '/torghut/symbols'
     | '/api/torghut/symbols'
@@ -138,6 +148,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memories'
     | '/api/health'
+    | '/api/memories'
     | '/api/models'
     | '/torghut/symbols'
     | '/api/torghut/symbols'
@@ -151,6 +162,7 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memories'
     | '/api/health'
+    | '/api/memories'
     | '/api/models'
     | '/torghut/symbols'
     | '/api/torghut/symbols'
@@ -165,6 +177,7 @@ export interface RootRouteChildren {
   McpRoute: typeof McpRoute
   MemoriesRoute: typeof MemoriesRoute
   ApiHealthRoute: typeof ApiHealthRoute
+  ApiMemoriesRoute: typeof ApiMemoriesRoute
   ApiModelsRoute: typeof ApiModelsRoute
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
   ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
@@ -214,6 +227,13 @@ declare module '@tanstack/react-router' {
       path: '/api/models'
       fullPath: '/api/models'
       preLoaderRoute: typeof ApiModelsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/memories': {
+      id: '/api/memories'
+      path: '/api/memories'
+      fullPath: '/api/memories'
+      preLoaderRoute: typeof ApiMemoriesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/health': {
@@ -271,6 +291,7 @@ const rootRouteChildren: RootRouteChildren = {
   McpRoute: McpRoute,
   MemoriesRoute: MemoriesRoute,
   ApiHealthRoute: ApiHealthRoute,
+  ApiMemoriesRoute: ApiMemoriesRoute,
   ApiModelsRoute: ApiModelsRoute,
   TorghutSymbolsRoute: TorghutSymbolsRoute,
   ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,
