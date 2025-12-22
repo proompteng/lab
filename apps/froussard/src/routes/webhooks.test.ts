@@ -138,7 +138,6 @@ describe('createWebhookHandler', () => {
     codexImplementationTriggerPhrase: 'implement issue',
     topics: {
       raw: 'raw-topic',
-      codex: 'codex-topic',
       codexStructured: 'github.issues.codex.tasks',
       discordCommands: 'discord-topic',
     },
@@ -161,7 +160,6 @@ describe('createWebhookHandler', () => {
         clientId: 'froussard-webhook-producer',
         topics: {
           raw: baseConfig.topics.raw,
-          codex: baseConfig.topics.codex,
           codexStructured: baseConfig.topics.codexStructured,
           discordCommands: baseConfig.topics.discordCommands,
         },
@@ -313,9 +311,7 @@ describe('createWebhookHandler', () => {
       },
       assert: (body) => {
         expect(body).toMatchObject({ codexStageTriggered: 'implementation' })
-        expect(publishedMessages).toHaveLength(3)
-        const implementationJsonMessage = publishedMessages.find((message) => message.topic === 'codex-topic')
-        expect(implementationJsonMessage).toBeTruthy()
+        expect(publishedMessages).toHaveLength(2)
         const implementationStructuredMessage = publishedMessages.find(
           (message) => message.topic === 'github.issues.codex.tasks',
         )
@@ -347,7 +343,7 @@ describe('createWebhookHandler', () => {
       },
       assert: (body) => {
         expect(body).toMatchObject({ codexStageTriggered: 'implementation' })
-        expect(publishedMessages.filter((message) => message.topic === 'codex-topic')).toHaveLength(1)
+        expect(publishedMessages.filter((message) => message.topic === 'github.issues.codex.tasks')).toHaveLength(1)
         expect(mockBuildCodexPrompt).toHaveBeenCalledWith(expect.objectContaining({ issueNumber: 99 }))
       },
     },
@@ -537,13 +533,12 @@ describe('createWebhookHandler', () => {
     )
 
     expect(response.status).toBe(202)
-    expect(publishedMessages).toHaveLength(3)
-    const [implementationJsonMessage, implementationStructuredMessage, rawJsonMessage] = publishedMessages
+    expect(publishedMessages).toHaveLength(2)
+    const [implementationStructuredMessage, rawJsonMessage] = publishedMessages
     if (!implementationStructuredMessage) {
       throw new Error('missing structured message')
     }
 
-    expect(implementationJsonMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-1-implementation' })
     expect(implementationStructuredMessage).toMatchObject({
       topic: 'github.issues.codex.tasks',
       key: 'issue-1-implementation',
@@ -585,13 +580,12 @@ describe('createWebhookHandler', () => {
       'github',
     )
 
-    expect(publishedMessages).toHaveLength(3)
-    const [implementationJsonMessage, implementationStructuredMessage, rawJsonMessage] = publishedMessages
+    expect(publishedMessages).toHaveLength(2)
+    const [implementationStructuredMessage, rawJsonMessage] = publishedMessages
     if (!implementationStructuredMessage) {
       throw new Error('missing structured message')
     }
 
-    expect(implementationJsonMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-2-implementation' })
     expect(implementationStructuredMessage).toMatchObject({
       topic: 'github.issues.codex.tasks',
       key: 'issue-2-implementation',
@@ -781,7 +775,7 @@ describe('createWebhookHandler', () => {
     expect(body).toMatchObject({ codexStageTriggered: null })
 
     expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
-    expect(publishedMessages.some((message) => message.topic === 'codex-topic')).toBe(false)
+    expect(publishedMessages.some((message) => message.topic === 'github.issues.codex.tasks')).toBe(false)
   })
 
   it('does not post a ready comment for draft pull requests', async () => {

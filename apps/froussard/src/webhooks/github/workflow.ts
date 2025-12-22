@@ -42,7 +42,6 @@ export interface WorkflowExecutionContext {
       userAgent: string
     }
     topics: {
-      codex: string
       codexStructured: string
     }
   }
@@ -64,21 +63,8 @@ export const executeWorkflowCommands = async (
           { key: command.data.key, deliveryId: context.deliveryId },
           'publishing codex implementation message',
         )
-        const jsonHeaders = toHeaderRecord(command.data.jsonHeaders)
         const structuredHeaders = toHeaderRecord(command.data.structuredHeaders)
         const structuredMessage = command.data.structuredMessage as MessageShape<typeof CodexTaskSchema>
-        await context.runtime.runPromise(
-          publishKafkaMessage({
-            topic: command.data.topics.codex,
-            key: command.data.key,
-            value: JSON.stringify(command.data.codexMessage),
-            headers: {
-              ...jsonHeaders,
-              'x-codex-task-stage': 'implementation',
-            },
-          }),
-        )
-
         await context.runtime.runPromise(
           publishKafkaMessage({
             topic: command.data.topics.codexStructured,

@@ -3,13 +3,10 @@ import { Schema } from 'effect'
 export const ImplementationCommandSchema = Schema.Struct({
   stage: Schema.Literal('implementation'),
   key: Schema.String,
-  codexMessage: Schema.Unknown,
   structuredMessage: Schema.Unknown,
   topics: Schema.Struct({
-    codex: Schema.String,
     codexStructured: Schema.String,
   }),
-  jsonHeaders: Schema.Unknown,
   structuredHeaders: Schema.Unknown,
 })
 

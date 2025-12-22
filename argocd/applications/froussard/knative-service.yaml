@@ -35,8 +35,6 @@ spec:
               value: kafka-kafka-bootstrap.kafka:9092
             - name: KAFKA_TOPIC
               value: github.webhook.events
-            - name: KAFKA_CODEX_TOPIC
-              value: github.codex.tasks
             - name: KAFKA_CODEX_TOPIC_STRUCTURED
               value: github.issues.codex.tasks
             - name: KAFKA_DISCORD_COMMAND_TOPIC
