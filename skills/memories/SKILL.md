@@ -5,7 +5,6 @@ description: Use the memories CLI helpers (Jangar REST) with concise task namesp
 
 ## Scope
 - Use the CLI helpers from repo root: `bun run --filter memories save-memory` and `bun run --filter memories retrieve-memory`.
-- These call Jangar's REST endpoint (default base URL `http://jangar`); override with `MEMORIES_JANGAR_URL` if needed.
 - Prefer concise, stable task names (they become the namespace).
 
 ## Persisting Memories
