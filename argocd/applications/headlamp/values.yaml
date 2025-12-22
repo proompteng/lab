@@ -1,8 +1,5 @@
 service:
-  type: LoadBalancer
-  annotations:
-    tailscale.com/hostname: headlamp
-    tailscale.com/expose: 'true'
+  type: ClusterIP
 persistentVolumeClaim:
   enabled: true
   accessModes:
@@ -17,3 +14,14 @@ config:
       enabled: true
       name: headlamp-oidc
     callbackURL: https://headlamp.ide-newton.ts.net/oidc-callback
+ingress:
+  enabled: true
+  ingressClassName: tailscale
+  hosts:
+    - host: headlamp
+      paths:
+        - path: /
+          type: Prefix
+  tls:
+    - hosts:
+        - headlamp
