@@ -1,18 +1,18 @@
-import type { PlainMessage } from '@bufbuild/protobuf'
+import type { MessageInitShape } from '@bufbuild/protobuf'
 import { verifyKey } from 'discord-interactions'
 
 import { logger } from '@/logger'
 import type {
-  CommandEvent as FacteurCommandEventMessage,
-  DiscordMember as FacteurDiscordMemberMessage,
-  DiscordUser as FacteurDiscordUserMessage,
-  Response as FacteurResponseMessage,
+  CommandEventSchema,
+  DiscordMemberSchema,
+  DiscordUserSchema,
+  ResponseSchema,
 } from '@/proto/proompteng/facteur/v1/contract_pb'
 
-export type FacteurCommandEvent = PlainMessage<FacteurCommandEventMessage>
-export type FacteurDiscordMember = PlainMessage<FacteurDiscordMemberMessage>
-export type FacteurDiscordUser = PlainMessage<FacteurDiscordUserMessage>
-export type FacteurResponse = PlainMessage<FacteurResponseMessage>
+export type FacteurCommandEvent = MessageInitShape<typeof CommandEventSchema>
+export type FacteurDiscordMember = MessageInitShape<typeof DiscordMemberSchema>
+export type FacteurDiscordUser = MessageInitShape<typeof DiscordUserSchema>
+export type FacteurResponse = MessageInitShape<typeof ResponseSchema>
 export type DiscordCommandEvent = FacteurCommandEvent
 
 const SIGNATURE_HEADER = 'x-signature-ed25519'

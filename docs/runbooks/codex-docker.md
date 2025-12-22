@@ -42,7 +42,7 @@
 - If Pod Security Admission rejects the pod, confirm the namespace allows privileged pods for this service account before retrying.
 
 ## Rollout checklist (staging first)
-- [ ] Dry-run Argo submission succeeds for planning/implementation/review templates.
+- [ ] Dry-run Argo submission succeeds for the implementation template.
 - [ ] `docker run hello-world` and the sample `docker build` complete in staging workflow runs; store logs with the run ID.
 - [ ] Node pressure remains acceptable (check CPU/memory/ephemeral usage on the hosting node).
 - [ ] After promotion, trigger Argo CD sync of workflow templates and RBAC manifests.

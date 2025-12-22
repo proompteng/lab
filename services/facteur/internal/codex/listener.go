@@ -87,10 +87,11 @@ func (l *Listener) Run(ctx context.Context) error {
 			)
 		}
 
-		if task.GetStage() == froussardpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING {
+		if task.GetStage() != froussardpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION {
 			l.logger.Printf(
-				"codex listener: planning tasks ignored (orchestrator-only path) key=%s repo=%s issue=%d",
+				"codex listener: non-implementation task ignored key=%s stage=%s repo=%s issue=%d",
 				string(msg.Key),
+				stage,
 				task.GetRepository(),
 				task.GetIssueNumber(),
 			)

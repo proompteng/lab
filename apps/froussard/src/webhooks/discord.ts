@@ -88,14 +88,14 @@ export const createDiscordWebhookHandler =
         })
       }
 
-      const rawContent = (event.options.content ?? '').toString().trim()
-      const promptContent = rawContent.length > 0 ? rawContent : 'Provide a planning summary.'
+      const rawContent = (event.options?.content ?? '').toString().trim()
+      const promptContent = rawContent.length > 0 ? rawContent : 'Provide an implementation summary.'
       const firstLine = promptContent.split('\n')[0]?.trim() ?? ''
-      const derivedTitle = firstLine.length > 0 ? firstLine : 'Discord planning request'
+      const derivedTitle = firstLine.length > 0 ? firstLine : 'Discord implementation request'
       const planTitle = derivedTitle.length > 120 ? `${derivedTitle.slice(0, 119)}…` : derivedTitle
 
       const planPayload: Record<string, unknown> = {
-        stage: 'planning',
+        stage: 'implementation',
         prompt: promptContent,
         title: planTitle,
         repository: '',
@@ -150,7 +150,7 @@ export const createDiscordWebhookHandler =
       return jsonResponse({
         type: 4,
         data: {
-          content: 'Planning request received. Facteur will execute the workflow shortly.',
+          content: 'Implementation request received. Facteur will execute the workflow shortly.',
           ...(config.discord.response.ephemeral ? { flags: EPHEMERAL_FLAG } : {}),
         },
       })

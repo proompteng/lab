@@ -76,7 +76,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
         typeof env.CODEX_WORKFLOW_LOGIN === 'string' && env.CODEX_WORKFLOW_LOGIN.trim().length > 0
           ? env.CODEX_WORKFLOW_LOGIN.trim().toLowerCase()
           : 'github-actions[bot]',
-      implementationTriggerPhrase: (env.CODEX_IMPLEMENTATION_TRIGGER ?? 'execute plan').trim(),
+      implementationTriggerPhrase: (env.CODEX_IMPLEMENTATION_TRIGGER ?? 'implement issue').trim(),
     },
     discord: {
       publicKey: requireEnv(env, 'DISCORD_PUBLIC_KEY'),

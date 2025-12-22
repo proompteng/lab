@@ -2,9 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const transportMock = vi.fn(() => ({}))
 const multistreamMock = vi.fn((streams: unknown) => streams)
-const pinoFn = vi.fn((_options: unknown, _streams: unknown) => ({ info: vi.fn(), error: vi.fn() }))
-pinoFn.transport = transportMock
-pinoFn.stdTimeFunctions = { isoTime: vi.fn() }
+const pinoFn = Object.assign(
+  vi.fn((_options: unknown, _streams: unknown) => ({ info: vi.fn(), error: vi.fn() })),
+  {
+    transport: transportMock,
+    stdTimeFunctions: { isoTime: vi.fn() },
+  },
+)
 
 vi.mock('pino', () => ({
   __esModule: true,

@@ -63,8 +63,6 @@ server:
   listen_address: 127.0.0.1:0
 codex_listener:
   enabled: false
-codex_orchestrator:
-  enabled: false
 `)
 	require.NoError(t, os.WriteFile(configPath, data, 0o600))
 

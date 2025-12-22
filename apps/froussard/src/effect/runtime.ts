@@ -17,6 +17,6 @@ export type AppRuntimeLayer = typeof BaseAppLayer
 
 export const AppLayer = BaseAppLayer
 
-export type AppRuntime = ManagedRuntime<Layer.Success<AppRuntimeLayer>, Layer.Error<AppRuntimeLayer>>
+export type AppRuntime = ManagedRuntime<Layer.Layer.Success<AppRuntimeLayer>, Layer.Layer.Error<AppRuntimeLayer>>
 
 export const makeAppRuntime = (): AppRuntime => makeManagedRuntime(AppLayer)

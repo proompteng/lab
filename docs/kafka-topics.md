@@ -40,11 +40,6 @@ Add new rows whenever a topic is provisioned so downstream teams can reason abou
 
 ### Codex task payloads
 
-Messages published to both `github.codex.tasks` (JSON) and `github.issues.codex.tasks` (Protobuf) include a `stage` field so downstream workflows can distinguish planning from implementation runs:
+Messages published to both `github.codex.tasks` (JSON) and `github.issues.codex.tasks` (Protobuf) include a `stage` field, which is now always `implementation`. Tasks are emitted automatically when an authorized login opens a GitHub issue, with a manual override comment of `implement issue` for retries.
 
-- `planning` – triggered when `gregkonush` opens an issue. The Codex container is expected to comment an execution plan on the issue using the marker `<!-- codex:plan -->` and stop.
-- `implementation` – triggered automatically when the planning workflow posts a `<!-- codex:plan -->` comment (by `gregkonush`). The payload inlines that comment as the approved plan (`planCommentBody`) and still accepts a manual `execute plan` comment as a fallback.
-
-Both stages carry the common metadata (`repository`, `base`, `head`, `issueNumber`, etc.) to keep the workflows symmetric.
-
-The structured stream uses the `proompteng.froussard.v1.CodexTask` message and adds the GitHub delivery identifier for consumers that need typed payloads.
+The payloads carry the common metadata (`repository`, `base`, `head`, `issueNumber`, etc.) needed for implementation runs. The structured stream uses the `proompteng.froussard.v1.CodexTask` message and adds the GitHub delivery identifier for consumers that need typed payloads.

@@ -29,13 +29,6 @@ argo:
   service_account: facteur-workflow
   parameters:
     payload: '{}'
-codex_orchestrator:
-  enabled: true
-  namespace: planning
-  workflow_template: github-codex-planning
-  service_account: planner
-  parameters:
-    rawEvent: '{}'
 codex_implementation_orchestrator:
   enabled: true
   namespace: implementation
@@ -73,11 +66,6 @@ codex_listener:
 		require.Equal(t, "facteur-dispatch", cfg.Argo.WorkflowTemplate)
 		require.Equal(t, "facteur-workflow", cfg.Argo.ServiceAccount)
 		require.Equal(t, map[string]string{"payload": "{}"}, cfg.Argo.Parameters)
-		require.True(t, cfg.Planner.Enabled)
-		require.Equal(t, "planning", cfg.Planner.Namespace)
-		require.Equal(t, "github-codex-planning", cfg.Planner.WorkflowTemplate)
-		require.Equal(t, "planner", cfg.Planner.ServiceAccount)
-		require.Equal(t, map[string]string{"rawevent": "{}"}, cfg.Planner.Parameters)
 		require.True(t, cfg.Implementer.Enabled)
 		require.Equal(t, "implementation", cfg.Implementer.Namespace)
 		require.Equal(t, "github-codex-implementation", cfg.Implementer.WorkflowTemplate)
@@ -92,7 +80,6 @@ codex_listener:
 		require.Equal(t, []string{"kafka:9092"}, cfg.Codex.Brokers)
 		require.Equal(t, "github.issues.codex.tasks", cfg.Codex.Topic)
 		require.Equal(t, "facteur-codex", cfg.Codex.GroupID)
-		require.True(t, cfg.Planner.Enabled)
 	})
 
 	t.Run("env overrides file", func(t *testing.T) {
@@ -114,8 +101,6 @@ argo:
 		t.Setenv("FACTEUR_DISCORD_BOT_TOKEN", "env-token")
 		t.Setenv("FACTEUR_ARGO_WORKFLOW_TEMPLATE", "env-template")
 		t.Setenv("FACTEUR_POSTGRES_DSN", "postgres://override")
-		t.Setenv("FACTEUR_CODEX_ENABLE_PLANNING_ORCHESTRATION", "true")
-		t.Setenv("FACTEUR_CODEX_ORCHESTRATOR_WORKFLOW_TEMPLATE", "env-planning")
 		t.Setenv("FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION", "true")
 		t.Setenv("FACTEUR_CODEX_IMPLEMENTATION_ORCHESTRATOR_WORKFLOW_TEMPLATE", "env-implementation")
 
@@ -126,8 +111,6 @@ argo:
 		require.Equal(t, "postgres://override", cfg.Postgres.DSN)
 		require.Equal(t, ":8080", cfg.Server.ListenAddress)
 		require.False(t, cfg.Codex.Enabled)
-		require.True(t, cfg.Planner.Enabled)
-		require.Equal(t, "env-planning", cfg.Planner.WorkflowTemplate)
 		require.True(t, cfg.Implementer.Enabled)
 		require.Equal(t, "env-implementation", cfg.Implementer.WorkflowTemplate)
 	})
@@ -166,26 +149,9 @@ redis:
 		require.NotNil(t, cfg.RoleMap)
 		require.Empty(t, cfg.RoleMap)
 		require.False(t, cfg.Codex.Enabled)
-		require.False(t, cfg.Planner.Enabled)
 		require.False(t, cfg.Implementer.Enabled)
-		require.NotNil(t, cfg.Planner.Parameters)
-		require.Empty(t, cfg.Planner.Parameters)
 		require.NotNil(t, cfg.Implementer.Parameters)
 		require.Empty(t, cfg.Implementer.Parameters)
-	})
-
-	t.Run("env override preserves key casing", func(t *testing.T) {
-		t.Setenv("FACTEUR_DISCORD_BOT_TOKEN", "token")
-		t.Setenv("FACTEUR_DISCORD_APPLICATION_ID", "app")
-		t.Setenv("FACTEUR_REDIS_URL", "redis://localhost:6379/1")
-		t.Setenv("FACTEUR_ARGO_NAMESPACE", "argo-workflows")
-		t.Setenv("FACTEUR_ARGO_WORKFLOW_TEMPLATE", "template")
-		t.Setenv("FACTEUR_POSTGRES_DSN", "postgres://facteur:facteur@localhost:5432/facteur?sslmode=disable")
-		t.Setenv("FACTEUR_CODEX_ORCHESTRATOR_ENABLED", "true")
-
-		cfg, err := config.LoadWithOptions(config.Options{EnvPrefix: "FACTEUR"})
-		require.NoError(t, err)
-		require.True(t, cfg.Planner.Enabled)
 	})
 
 	t.Run("validates codex listener when enabled", func(t *testing.T) {

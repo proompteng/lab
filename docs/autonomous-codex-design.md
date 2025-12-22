@@ -1,5 +1,7 @@
 # Autonomous Codex Delivery System
 
+> Note: The production Codex pipeline is now implementation-only. Planning/review references below are historical design notes and should be treated as aspirational until reintroduced.
+
 ## 1. Background
 
 The current Codex automation stack is split across two services:

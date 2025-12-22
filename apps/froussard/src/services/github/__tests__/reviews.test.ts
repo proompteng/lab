@@ -17,7 +17,7 @@ describe('listPullRequestCheckFailures', () => {
   }
 
   it('aggregates failures from check runs and commit statuses', async () => {
-    const fetchStub = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchStub = vi.fn(async (input: string | URL) => {
       const url = String(input)
       if (url.includes('/check-runs')) {
         const page = new URL(url).searchParams.get('page')
@@ -71,7 +71,7 @@ describe('listPullRequestCheckFailures', () => {
   })
 
   it('propagates API errors as structured results', async () => {
-    const fetchStub = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchStub = vi.fn(async (input: string | URL) => {
       const url = String(input)
       if (url.includes('/check-runs')) {
         return new Response('nope', { status: 500, headers: { 'content-type': 'application/json' } })

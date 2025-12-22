@@ -16,7 +16,6 @@ type Config struct {
 	RoleMap     map[string][]string `mapstructure:"role_map"`
 	Server      ServerConfig        `mapstructure:"server"`
 	Codex       CodexListenerConfig `mapstructure:"codex_listener"`
-	Planner     PlannerConfig       `mapstructure:"codex_orchestrator"`
 	Implementer ImplementerConfig   `mapstructure:"codex_implementation_orchestrator"`
 	Postgres    DatabaseConfig      `mapstructure:"postgres"`
 }
@@ -36,15 +35,6 @@ type RedisConfig struct {
 
 // ArgoConfig contains the settings necessary to submit workflows.
 type ArgoConfig struct {
-	Namespace        string            `mapstructure:"namespace"`
-	WorkflowTemplate string            `mapstructure:"workflow_template"`
-	ServiceAccount   string            `mapstructure:"service_account"`
-	Parameters       map[string]string `mapstructure:"parameters"`
-}
-
-// PlannerConfig controls Facteur-led Codex orchestration behaviour.
-type PlannerConfig struct {
-	Enabled          bool              `mapstructure:"enabled"`
 	Namespace        string            `mapstructure:"namespace"`
 	WorkflowTemplate string            `mapstructure:"workflow_template"`
 	ServiceAccount   string            `mapstructure:"service_account"`
@@ -142,14 +132,6 @@ func LoadWithOptions(opts Options) (*Config, error) {
 		{key: "codex_listener.sasl.username"},
 		{key: "codex_listener.sasl.password"},
 		{
-			key:  "codex_orchestrator.enabled",
-			envs: []string{"FACTEUR_CODEX_ORCHESTRATOR_ENABLED", "FACTEUR_CODEX_ENABLE_PLANNING_ORCHESTRATION"},
-		},
-		{key: "codex_orchestrator.namespace"},
-		{key: "codex_orchestrator.workflow_template"},
-		{key: "codex_orchestrator.service_account"},
-		{key: "codex_orchestrator.parameters"},
-		{
 			key:  "codex_implementation_orchestrator.enabled",
 			envs: []string{"FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION"},
 		},
@@ -197,9 +179,6 @@ func normaliseConfig(cfg *Config) {
 	}
 	if cfg.Argo.Parameters == nil {
 		cfg.Argo.Parameters = map[string]string{}
-	}
-	if cfg.Planner.Parameters == nil {
-		cfg.Planner.Parameters = map[string]string{}
 	}
 	if cfg.Implementer.Parameters == nil {
 		cfg.Implementer.Parameters = map[string]string{}

@@ -1,10 +1,14 @@
+import type { MessageShape } from '@bufbuild/protobuf'
 import { toBinary } from '@bufbuild/protobuf'
 import type { Effect as EffectType } from 'effect/Effect'
 import type { WorkflowCommand } from '@/codex/workflow-machine'
+import type { AppConfigService } from '@/effect/config'
 import type { AppRuntime } from '@/effect/runtime'
-import { logger } from '@/logger'
+import { type AppLogger, logger } from '@/logger'
 import { CodexTaskSchema } from '@/proto/proompteng/froussard/v1/codex_task_pb'
+import type { GithubService } from '@/services/github/service'
 import type { GithubServiceDefinition } from '@/services/github/service.types'
+import type { KafkaProducer } from '@/services/kafka'
 import { publishKafkaMessage } from '@/webhooks/utils'
 import {
   CODEX_READY_COMMENT_MARKER,
@@ -13,12 +17,24 @@ import {
   PROTO_CONTENT_TYPE,
 } from './constants'
 
-export type WorkflowStage = 'planning' | 'implementation' | 'reviewRequested'
+const toHeaderRecord = (value: unknown): Record<string, string> => {
+  if (!value || typeof value !== 'object') {
+    return {}
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, entry]) => (typeof entry === 'string' ? [[key, entry]] : [])),
+  )
+}
+
+export type WorkflowStage = 'implementation'
+
+type GithubRuntimeEnv = AppLogger | AppConfigService | GithubService | KafkaProducer
 
 export interface WorkflowExecutionContext {
   runtime: AppRuntime
   githubService: GithubServiceDefinition
-  runGithub: <R, E, A>(factory: () => EffectType<R, E, A>) => Promise<A>
+  runGithub: <A, E>(factory: () => EffectType<A, E, GithubRuntimeEnv>) => Promise<A>
   config: {
     github: {
       token: string | null
@@ -42,75 +58,22 @@ export const executeWorkflowCommands = async (
 
   for (const command of commands) {
     switch (command.type) {
-      case 'publishPlanning': {
-        stage = 'planning'
-        logger.info({ key: command.data.key, deliveryId: context.deliveryId }, 'publishing codex planning message')
-        await context.runtime.runPromise(
-          publishKafkaMessage({
-            topic: command.data.topics.codex,
-            key: command.data.key,
-            value: JSON.stringify(command.data.codexMessage),
-            headers: {
-              ...command.data.jsonHeaders,
-              'x-codex-task-stage': 'planning',
-            },
-          }),
-        )
-
-        await context.runtime.runPromise(
-          publishKafkaMessage({
-            topic: command.data.topics.codexStructured,
-            key: command.data.key,
-            value: toBinary(CodexTaskSchema, command.data.structuredMessage),
-            headers: {
-              ...command.data.structuredHeaders,
-              'x-codex-task-stage': 'planning',
-              'content-type': PROTO_CONTENT_TYPE,
-              'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,
-              'x-protobuf-schema': PROTO_CODEX_TASK_SCHEMA,
-            },
-          }),
-        )
-
-        if (command.data.ack) {
-          const ackResult = await context.runGithub(() =>
-            context.githubService.postIssueReaction({
-              repositoryFullName: command.data.ack.repositoryFullName,
-              issueNumber: command.data.ack.issueNumber,
-              reactionContent: command.data.ack.reaction,
-              token: context.config.github.token,
-              apiBaseUrl: context.config.github.apiBaseUrl,
-              userAgent: context.config.github.userAgent,
-            }),
-          )
-
-          if (ackResult.ok) {
-            logger.info(
-              {
-                repository: command.data.ack.repositoryFullName,
-                issueNumber: command.data.ack.issueNumber,
-                deliveryId: context.deliveryId,
-                reaction: command.data.ack.reaction,
-              },
-              'acknowledged github issue',
-            )
-          }
-        }
-        break
-      }
       case 'publishImplementation': {
         stage = 'implementation'
         logger.info(
           { key: command.data.key, deliveryId: context.deliveryId },
           'publishing codex implementation message',
         )
+        const jsonHeaders = toHeaderRecord(command.data.jsonHeaders)
+        const structuredHeaders = toHeaderRecord(command.data.structuredHeaders)
+        const structuredMessage = command.data.structuredMessage as MessageShape<typeof CodexTaskSchema>
         await context.runtime.runPromise(
           publishKafkaMessage({
             topic: command.data.topics.codex,
             key: command.data.key,
             value: JSON.stringify(command.data.codexMessage),
             headers: {
-              ...command.data.jsonHeaders,
+              ...jsonHeaders,
               'x-codex-task-stage': 'implementation',
             },
           }),
@@ -120,9 +83,9 @@ export const executeWorkflowCommands = async (
           publishKafkaMessage({
             topic: command.data.topics.codexStructured,
             key: command.data.key,
-            value: toBinary(CodexTaskSchema, command.data.structuredMessage),
+            value: toBinary(CodexTaskSchema, structuredMessage),
             headers: {
-              ...command.data.structuredHeaders,
+              ...structuredHeaders,
               'x-codex-task-stage': 'implementation',
               'content-type': PROTO_CONTENT_TYPE,
               'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,
@@ -130,103 +93,6 @@ export const executeWorkflowCommands = async (
             },
           }),
         )
-        break
-      }
-      case 'publishReview': {
-        stage = 'reviewRequested'
-        logger.info({ key: command.data.key, deliveryId: context.deliveryId }, 'publishing codex review message')
-        await context.runtime.runPromise(
-          publishKafkaMessage({
-            topic: command.data.topics.codex,
-            key: command.data.key,
-            value: JSON.stringify(command.data.codexMessage),
-            headers: {
-              ...command.data.jsonHeaders,
-              'x-codex-task-stage': 'review',
-            },
-          }),
-        )
-
-        await context.runtime.runPromise(
-          publishKafkaMessage({
-            topic: command.data.topics.codexStructured,
-            key: command.data.key,
-            value: toBinary(CodexTaskSchema, command.data.structuredMessage),
-            headers: {
-              ...command.data.structuredHeaders,
-              'x-codex-task-stage': 'review',
-              'content-type': PROTO_CONTENT_TYPE,
-              'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,
-              'x-protobuf-schema': PROTO_CODEX_TASK_SCHEMA,
-            },
-          }),
-        )
-        break
-      }
-      case 'markReadyForReview': {
-        logger.info(
-          {
-            deliveryId: context.deliveryId,
-            repository: command.data.repositoryFullName,
-            pullNumber: command.data.pullNumber,
-          },
-          'converting codex pull request to ready state',
-        )
-        const result = await context.runGithub(() =>
-          context.githubService.markPullRequestReadyForReview({
-            repositoryFullName: command.data.repositoryFullName,
-            pullNumber: command.data.pullNumber,
-            token: context.config.github.token,
-            apiBaseUrl: context.config.github.apiBaseUrl,
-            userAgent: context.config.github.userAgent,
-          }),
-        )
-
-        if (result.ok) {
-          logger.info(
-            {
-              deliveryId: context.deliveryId,
-              repository: command.data.repositoryFullName,
-              pullNumber: command.data.pullNumber,
-            },
-            'marking codex pull request ready for review',
-          )
-
-          const commentResult = await context.runGithub(() =>
-            context.githubService.createPullRequestComment({
-              repositoryFullName: command.data.repositoryFullName,
-              pullNumber: command.data.pullNumber,
-              body: command.data.commentBody,
-              token: context.config.github.token,
-              apiBaseUrl: context.config.github.apiBaseUrl,
-              userAgent: context.config.github.userAgent,
-            }),
-          )
-
-          if (!commentResult.ok) {
-            logger.warn(
-              {
-                deliveryId: context.deliveryId,
-                repository: command.data.repositoryFullName,
-                pullNumber: command.data.pullNumber,
-                reason: commentResult.reason,
-                status: commentResult.status,
-              },
-              'failed to post codex review handoff comment',
-            )
-          }
-        } else {
-          logger.warn(
-            {
-              deliveryId: context.deliveryId,
-              repository: command.data.repositoryFullName,
-              pullNumber: command.data.pullNumber,
-              reason: result.reason,
-              status: result.status,
-            },
-            'failed to convert codex pull request to ready state',
-          )
-        }
         break
       }
       case 'postReadyComment': {

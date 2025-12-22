@@ -4,9 +4,17 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { pushCodexEventsToLoki, runCodexSession } from '../codex-runner'
 
+type BunProcess = {
+  stdin?: unknown
+  stdout?: unknown
+  stderr?: unknown
+  exited: Promise<number>
+  kill?: () => void
+}
+
 const bunGlobals = vi.hoisted(() => {
-  const spawn = vi.fn()
-  const file = vi.fn()
+  const spawn = vi.fn<(options: { cmd?: string[] }) => BunProcess>()
+  const file = vi.fn<(path: string) => { text: () => Promise<string> }>()
   ;(globalThis as unknown as { Bun?: unknown }).Bun = { spawn, file }
   return { spawn, file }
 })
@@ -79,7 +87,7 @@ describe('codex-runner', () => {
     const jsonOutputPath = join(workspace, 'events.jsonl')
     const agentOutputPath = join(workspace, 'agent.log')
     const result = await runCodexSession({
-      stage: 'planning',
+      stage: 'implementation',
       prompt: 'Plan please',
       outputPath,
       jsonOutputPath,
@@ -121,7 +129,9 @@ describe('codex-runner', () => {
     )
     expect(spawnArgs?.cmd).toContain('resume')
     const resumeIndex = spawnArgs?.cmd?.indexOf('resume')
-    expect(resumeIndex).toBeGreaterThan(-1)
+    if (resumeIndex === undefined || resumeIndex < 0) {
+      throw new Error('resume argument missing')
+    }
     expect(spawnArgs?.cmd?.[resumeIndex + 1]).toBe('resume-41')
     expect(result.sessionId).toBe('resume-42')
   })
@@ -174,7 +184,7 @@ describe('codex-runner', () => {
     const agentOutputPath = join(workspace, 'agent.log')
 
     const result = await runCodexSession({
-      stage: 'planning',
+      stage: 'implementation',
       prompt: 'Plan',
       outputPath,
       jsonOutputPath,
@@ -200,7 +210,7 @@ describe('codex-runner', () => {
     const agentOutputPath = join(workspace, 'agent.log')
 
     await runCodexSession({
-      stage: 'planning',
+      stage: 'implementation',
       prompt: 'Plan please',
       outputPath,
       jsonOutputPath,
@@ -210,6 +220,9 @@ describe('codex-runner', () => {
     const spawnArgs = spawnMock.mock.calls[0]?.[0]
     expect(spawnArgs?.cmd).toContain('-m')
     const modelIndex = spawnArgs?.cmd?.indexOf('-m')
+    if (modelIndex === undefined || modelIndex < 0) {
+      throw new Error('model flag missing')
+    }
     expect(spawnArgs?.cmd?.[modelIndex + 1]).toBe('gpt-5.2-codex')
 
     process.env.CODEX_MODEL = originalModel
@@ -258,11 +271,13 @@ describe('codex-runner', () => {
       'utf8',
     )
 
-    const fetchMock = vi.fn(async () => ({ ok: true }))
+    const fetchMock = vi.fn<(input: string | URL, init?: RequestInit) => Promise<{ ok: boolean }>>(async () => ({
+      ok: true,
+    }))
     global.fetch = fetchMock as unknown as typeof fetch
 
     await pushCodexEventsToLoki({
-      stage: 'planning',
+      stage: 'implementation',
       endpoint: 'https://loki.example.com/api/v1/push',
       jsonPath,
     })
@@ -272,7 +287,7 @@ describe('codex-runner', () => {
     expect(typeof body).toBe('string')
     const payload = JSON.parse(body as string)
     expect(Array.isArray(payload.streams)).toBe(true)
-    expect(payload.streams[0]?.stream).toMatchObject({ stage: 'planning', stream_type: 'json' })
+    expect(payload.streams[0]?.stream).toMatchObject({ stage: 'implementation', stream_type: 'json' })
   })
 
   it('pushes agent and runtime logs and applies tenant headers when provided', async () => {
@@ -284,7 +299,9 @@ describe('codex-runner', () => {
     await writeFile(agentPath, 'Agent says hello\nAnother line', 'utf8')
     await writeFile(runtimePath, 'runtime started\nruntime finished', 'utf8')
 
-    const fetchMock = vi.fn(async () => ({ ok: true }))
+    const fetchMock = vi.fn<(input: string | URL, init?: RequestInit) => Promise<{ ok: boolean }>>(async () => ({
+      ok: true,
+    }))
     global.fetch = fetchMock as unknown as typeof fetch
 
     await pushCodexEventsToLoki({
@@ -335,7 +352,7 @@ describe('codex-runner', () => {
 
     await expect(
       runCodexSession({
-        stage: 'planning',
+        stage: 'implementation',
         prompt: 'fail',
         outputPath: join(workspace, 'output.log'),
         jsonOutputPath: join(workspace, 'events.jsonl'),
@@ -389,7 +406,7 @@ describe('codex-runner', () => {
     const errorSpy = vi.fn()
 
     await runCodexSession({
-      stage: 'planning',
+      stage: 'implementation',
       prompt: 'channel',
       outputPath: join(workspace, 'output.log'),
       jsonOutputPath: join(workspace, 'events.jsonl'),
@@ -412,7 +429,7 @@ describe('codex-runner', () => {
     global.fetch = fetchMock as unknown as typeof fetch
 
     await pushCodexEventsToLoki({
-      stage: 'planning',
+      stage: 'implementation',
       endpoint: 'https://loki.example.com/api/v1/push',
       jsonPath: join(workspace, 'missing.jsonl'),
     })
@@ -446,7 +463,7 @@ describe('codex-runner', () => {
     process.env.CODEX_IDLE_TIMEOUT_MS = '5'
 
     const sessionPromise = runCodexSession({
-      stage: 'planning',
+      stage: 'implementation',
       prompt: 'hang',
       outputPath,
       jsonOutputPath,
@@ -536,7 +553,7 @@ describe('codex-runner', () => {
 
     await expect(
       runCodexSession({
-        stage: 'planning',
+        stage: 'implementation',
         prompt: 'hang-and-kill',
         outputPath,
         jsonOutputPath,

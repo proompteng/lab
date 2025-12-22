@@ -1,16 +1,16 @@
 import { fromBinary } from '@bufbuild/protobuf'
 import { Effect, Layer } from 'effect'
-import { type ManagedRuntime, make as makeManagedRuntime } from 'effect/ManagedRuntime'
+import { make as makeManagedRuntime } from 'effect/ManagedRuntime'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { PLAN_COMMENT_MARKER } from '@/codex'
+import { type AppConfig, AppConfigService } from '@/effect/config'
+import type { AppRuntime } from '@/effect/runtime'
 import { AppLogger } from '@/logger'
 import { CommandEventSchema as FacteurCommandEventSchema } from '@/proto/proompteng/facteur/v1/contract_pb'
 import { CodexTaskSchema, CodexTaskStage } from '@/proto/proompteng/froussard/v1/codex_task_pb'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 import { GithubService } from '@/services/github/service'
 import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
-import { clearReviewFingerprintCacheForTest } from '@/webhooks/github/review-fingerprint'
 
 const { mockVerifyDiscordRequest, mockBuildPlanModalResponse, mockToPlanModalEvent, mockBuildCodexPrompt } = vi.hoisted(
   () => ({
@@ -19,7 +19,7 @@ const { mockVerifyDiscordRequest, mockBuildPlanModalResponse, mockToPlanModalEve
       type: 9,
       data: {
         custom_id: 'plan:cmd-1',
-        title: 'Request Planning Run',
+        title: 'Request Implementation Run',
         components: [],
       },
     })),
@@ -104,7 +104,7 @@ const toBuffer = (value: KafkaMessage['value']): Buffer => {
 }
 
 describe('createWebhookHandler', () => {
-  let runtime: ManagedRuntime<unknown, never>
+  let runtime: AppRuntime
   let publishedMessages: KafkaMessage[]
   let githubServiceMock: {
     postIssueReaction: ReturnType<typeof vi.fn>
@@ -135,7 +135,7 @@ describe('createWebhookHandler', () => {
     },
     codexTriggerLogins: ['user'],
     codexWorkflowLogin: 'github-actions[bot]',
-    codexImplementationTriggerPhrase: 'execute plan',
+    codexImplementationTriggerPhrase: 'implement issue',
     topics: {
       raw: 'raw-topic',
       codex: 'codex-topic',
@@ -149,12 +149,47 @@ describe('createWebhookHandler', () => {
         ephemeral: true,
       },
     },
-    flags: {
-      skipPlanningPlaceholder: true,
-    },
   }
 
   const provideRuntime = () => {
+    const appConfig: AppConfig = {
+      githubWebhookSecret: 'secret',
+      kafka: {
+        brokers: ['localhost:9092'],
+        username: 'user',
+        password: 'pass',
+        clientId: 'froussard-webhook-producer',
+        topics: {
+          raw: baseConfig.topics.raw,
+          codex: baseConfig.topics.codex,
+          codexStructured: baseConfig.topics.codexStructured,
+          discordCommands: baseConfig.topics.discordCommands,
+        },
+      },
+      codebase: {
+        baseBranch: baseConfig.codebase.baseBranch,
+        branchPrefix: baseConfig.codebase.branchPrefix,
+      },
+      codex: {
+        triggerLogins: [...baseConfig.codexTriggerLogins],
+        workflowLogin: baseConfig.codexWorkflowLogin,
+        implementationTriggerPhrase: baseConfig.codexImplementationTriggerPhrase,
+      },
+      discord: {
+        publicKey: baseConfig.discord.publicKey,
+        defaultResponse: {
+          deferType: 'channel-message',
+          ephemeral: baseConfig.discord.response.ephemeral,
+        },
+      },
+      github: {
+        token: baseConfig.github.token,
+        ackReaction: baseConfig.github.ackReaction,
+        apiBaseUrl: baseConfig.github.apiBaseUrl,
+        userAgent: baseConfig.github.userAgent,
+      },
+    }
+    const configLayer = Layer.succeed(AppConfigService, appConfig)
     const kafkaLayer = Layer.succeed(KafkaProducer, {
       publish: (message: KafkaMessage) =>
         Effect.sync(() => {
@@ -182,7 +217,7 @@ describe('createWebhookHandler', () => {
       listPullRequestCheckFailures: githubServiceMock.listPullRequestCheckFailures,
     })
 
-    runtime = makeManagedRuntime(Layer.mergeAll(loggerLayer, kafkaLayer, githubLayer))
+    runtime = makeManagedRuntime(Layer.mergeAll(configLayer, loggerLayer, kafkaLayer, githubLayer))
   }
 
   beforeEach(() => {
@@ -194,7 +229,7 @@ describe('createWebhookHandler', () => {
       type: 9,
       data: {
         custom_id: 'plan:cmd-1',
-        title: 'Request Planning Run',
+        title: 'Request Implementation Run',
         components: [],
       },
     })
@@ -233,7 +268,6 @@ describe('createWebhookHandler', () => {
       listPullRequestCheckFailures: vi.fn(() => Effect.succeed({ ok: true as const, checks: [] })),
     }
     provideRuntime()
-    clearReviewFingerprintCacheForTest()
   })
 
   afterEach(async () => {
@@ -261,7 +295,7 @@ describe('createWebhookHandler', () => {
 
   const webhookScenarios: Scenario[] = [
     {
-      name: 'queues planning workflow when a Codex issue opens',
+      name: 'queues implementation workflow when a Codex issue opens',
       event: 'issues',
       action: 'opened',
       payload: {
@@ -278,88 +312,20 @@ describe('createWebhookHandler', () => {
         sender: { login: 'user' },
       },
       assert: (body) => {
-        expect(body).toMatchObject({ codexStageTriggered: 'planning' })
+        expect(body).toMatchObject({ codexStageTriggered: 'implementation' })
         expect(publishedMessages).toHaveLength(3)
-        const planningJsonMessage = publishedMessages.find((message) => message.topic === 'codex-topic')
-        expect(planningJsonMessage).toBeTruthy()
-        const planningStructuredMessage = publishedMessages.find(
+        const implementationJsonMessage = publishedMessages.find((message) => message.topic === 'codex-topic')
+        expect(implementationJsonMessage).toBeTruthy()
+        const implementationStructuredMessage = publishedMessages.find(
           (message) => message.topic === 'github.issues.codex.tasks',
         )
-        expect(planningStructuredMessage).toBeTruthy()
-        expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
-          expect.objectContaining({ repositoryFullName: 'owner/repo', issueNumber: 42 }),
-        )
-        expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
-          expect.objectContaining({ stage: 'planning', issueNumber: 42 }),
-        )
-      },
-    },
-    {
-      name: 'skips planning workflow when issue body already contains a plan comment',
-      event: 'issues',
-      action: 'opened',
-      payload: {
-        action: 'opened',
-        repository: { full_name: 'owner/repo', default_branch: 'main' },
-        issue: {
-          number: 73,
-          title: 'Existing plan',
-          body: `${PLAN_COMMENT_MARKER}\n### Objective\n- keep existing plan`,
-          html_url: 'https://github.com/owner/repo/issues/73',
-        },
-      },
-      assert: (body) => {
-        expect(body).toMatchObject({ codexStageTriggered: null })
+        expect(implementationStructuredMessage).toBeTruthy()
         expect(githubServiceMock.postIssueReaction).not.toHaveBeenCalled()
-        expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
-        expect(githubServiceMock.findLatestPlanComment).not.toHaveBeenCalled()
-        expect(publishedMessages).toHaveLength(1)
-        expect(publishedMessages[0].topic).toBe('raw-topic')
+        expect(mockBuildCodexPrompt).toHaveBeenCalledWith(expect.objectContaining({ issueNumber: 42 }))
       },
     },
     {
-      name: 'skips planning workflow when a plan comment already exists on the issue',
-      event: 'issues',
-      action: 'opened',
-      payload: {
-        action: 'opened',
-        repository: { full_name: 'owner/repo', default_branch: 'main' },
-        issue: {
-          number: 74,
-          title: 'Plan already published',
-          body: 'Initial request without plan',
-          html_url: 'https://github.com/owner/repo/issues/74',
-          user: { login: 'USER' },
-          repository_url: 'https://api.github.com/repos/owner/repo',
-        },
-        sender: { login: 'user' },
-      },
-      configOverride: {
-        flags: { skipPlanningPlaceholder: false },
-      },
-      setup: () => {
-        githubServiceMock.findLatestPlanComment.mockReturnValueOnce(
-          Effect.succeed({
-            ok: true as const,
-            comment: {
-              id: 123,
-              body: `${PLAN_COMMENT_MARKER}\n### Objective\n- manual plan`,
-              htmlUrl: 'https://github.com/owner/repo/issues/74#issuecomment-1',
-            },
-          }),
-        )
-      },
-      assert: (body) => {
-        expect(body).toMatchObject({ codexStageTriggered: null })
-        expect(githubServiceMock.postIssueReaction).not.toHaveBeenCalled()
-        expect(githubServiceMock.createIssueComment).not.toHaveBeenCalled()
-        expect(githubServiceMock.findLatestPlanComment).toHaveBeenCalled()
-        expect(publishedMessages).toHaveLength(1)
-        expect(publishedMessages[0].topic).toBe('raw-topic')
-      },
-    },
-    {
-      name: 'promotes implementation when plan comment arrives',
+      name: 'publishes implementation when manual override comment is received',
       event: 'issue_comment',
       action: 'created',
       payload: {
@@ -375,86 +341,14 @@ describe('createWebhookHandler', () => {
         comment: {
           id: 555,
           html_url: 'https://github.com/owner/repo/issues/99#issuecomment-555',
-          body: '<!-- codex:plan -->\n- step',
+          body: 'implement issue',
         },
         sender: { login: 'user' },
-      },
-      setup: () => {
-        githubServiceMock.findLatestPlanComment.mockResolvedValue({ ok: false, reason: 'not-found' })
       },
       assert: (body) => {
         expect(body).toMatchObject({ codexStageTriggered: 'implementation' })
         expect(publishedMessages.filter((message) => message.topic === 'codex-topic')).toHaveLength(1)
-        expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
-          expect.objectContaining({ stage: 'implementation', issueNumber: 99 }),
-        )
-      },
-    },
-    {
-      name: 'does not publish review message when outstanding feedback exists without comment trigger',
-      event: 'pull_request',
-      action: 'synchronize',
-      payload: {
-        action: 'synchronize',
-        repository: { full_name: 'owner/repo' },
-        sender: { login: 'user' },
-        pull_request: {
-          number: 5,
-          head: { ref: 'codex/issue-5-branch', sha: 'abc123' },
-          base: { ref: 'main', repo: { full_name: 'owner/repo' } },
-          user: { login: 'USER' },
-        },
-      },
-      setup: () => {
-        githubServiceMock.fetchPullRequest.mockReturnValueOnce(
-          Effect.succeed({
-            ok: true as const,
-            pullRequest: {
-              number: 5,
-              title: 'Update webhook handler',
-              body: 'Adds new logic',
-              htmlUrl: 'https://github.com/owner/repo/pull/5',
-              draft: false,
-              merged: false,
-              state: 'open',
-              headRef: 'codex/issue-5-branch',
-              headSha: 'abc123',
-              baseRef: 'main',
-              authorLogin: 'user',
-              mergeableState: 'blocked',
-            },
-          }),
-        )
-        githubServiceMock.listPullRequestReviewThreads.mockReturnValueOnce(
-          Effect.succeed({
-            ok: true as const,
-            threads: [
-              {
-                summary: 'Add unit tests for webhook logic',
-                url: 'https://github.com/owner/repo/pull/5#discussion-1',
-                author: 'octocat',
-              },
-            ],
-          }),
-        )
-        githubServiceMock.listPullRequestCheckFailures.mockReturnValueOnce(
-          Effect.succeed({
-            ok: true as const,
-            checks: [
-              {
-                name: 'ci / test',
-                conclusion: 'failure',
-                url: 'https://ci.example.com/run/1',
-                details: 'Integration tests are failing',
-              },
-            ],
-          }),
-        )
-      },
-      assert: (body) => {
-        expect(body).toMatchObject({ codexStageTriggered: null })
-        expect(publishedMessages.some((message) => message.topic === 'codex-topic')).toBe(false)
-        expect(mockBuildCodexPrompt).toHaveBeenCalledWith(expect.objectContaining({ stage: 'review', issueNumber: 5 }))
+        expect(mockBuildCodexPrompt).toHaveBeenCalledWith(expect.objectContaining({ issueNumber: 99 }))
       },
     },
     {
@@ -589,13 +483,8 @@ describe('createWebhookHandler', () => {
       github: { ...baseConfig.github, ...(configOverride?.github ?? {}) },
       topics: { ...baseConfig.topics, ...(configOverride?.topics ?? {}) },
       discord: { ...baseConfig.discord, ...(configOverride?.discord ?? {}) },
-      flags: configOverride?.flags ?? baseConfig.flags,
     }
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config })
-
-    if (configOverride?.flags) {
-      expect(config.flags?.skipPlanningPlaceholder).toBe(configOverride.flags.skipPlanningPlaceholder)
-    }
 
     const response = await handler(buildRequest(payload, scenarioHeaders(event, action)), 'github')
 
@@ -622,7 +511,7 @@ describe('createWebhookHandler', () => {
     expect(publishedMessages).toHaveLength(0)
   })
 
-  it('publishes planning message on issue opened', async () => {
+  it('publishes implementation message on issue opened', async () => {
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
     const payload = {
       action: 'opened',
@@ -649,32 +538,29 @@ describe('createWebhookHandler', () => {
 
     expect(response.status).toBe(202)
     expect(publishedMessages).toHaveLength(3)
-    const [planningJsonMessage, planningStructuredMessage, rawJsonMessage] = publishedMessages
+    const [implementationJsonMessage, implementationStructuredMessage, rawJsonMessage] = publishedMessages
+    if (!implementationStructuredMessage) {
+      throw new Error('missing structured message')
+    }
 
-    expect(planningJsonMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-1-planning' })
-    expect(planningStructuredMessage).toMatchObject({
+    expect(implementationJsonMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-1-implementation' })
+    expect(implementationStructuredMessage).toMatchObject({
       topic: 'github.issues.codex.tasks',
-      key: 'issue-1-planning',
+      key: 'issue-1-implementation',
     })
-    expect(planningStructuredMessage.headers?.['content-type']).toBe('application/x-protobuf')
+    expect(implementationStructuredMessage.headers?.['content-type']).toBe('application/x-protobuf')
 
-    const planningProto = fromBinary(CodexTaskSchema, toBuffer(planningStructuredMessage.value))
-    expect(planningProto.stage).toBe(CodexTaskStage.PLANNING)
-    expect(planningProto.repository).toBe('owner/repo')
-    expect(planningProto.issueNumber).toBe(BigInt(1))
-    expect(planningProto.deliveryId).toBe('delivery-123')
+    const implementationProto = fromBinary(CodexTaskSchema, toBuffer(implementationStructuredMessage.value))
+    expect(implementationProto.stage).toBe(CodexTaskStage.IMPLEMENTATION)
+    expect(implementationProto.repository).toBe('owner/repo')
+    expect(implementationProto.issueNumber).toBe(BigInt(1))
+    expect(implementationProto.deliveryId).toBe('delivery-123')
 
     expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-123' })
-    expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
-      expect.objectContaining({ repositoryFullName: 'owner/repo', issueNumber: 1 }),
-    )
+    expect(githubServiceMock.postIssueReaction).not.toHaveBeenCalled()
   })
 
   it('publishes implementation message when trigger comment is received', async () => {
-    githubServiceMock.findLatestPlanComment.mockReturnValueOnce(
-      Effect.succeed({ ok: true, comment: { id: 10, body: 'Plan', htmlUrl: 'https://comment' } }),
-    )
-
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
     const payload = {
       action: 'created',
@@ -686,7 +572,7 @@ describe('createWebhookHandler', () => {
       },
       repository: { default_branch: 'main' },
       sender: { login: 'USER' },
-      comment: { body: 'execute plan' },
+      comment: { body: 'implement issue' },
     }
 
     await handler(
@@ -699,9 +585,11 @@ describe('createWebhookHandler', () => {
       'github',
     )
 
-    expect(githubServiceMock.findLatestPlanComment).toHaveBeenCalled()
     expect(publishedMessages).toHaveLength(3)
     const [implementationJsonMessage, implementationStructuredMessage, rawJsonMessage] = publishedMessages
+    if (!implementationStructuredMessage) {
+      throw new Error('missing structured message')
+    }
 
     expect(implementationJsonMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-2-implementation' })
     expect(implementationStructuredMessage).toMatchObject({
@@ -713,365 +601,8 @@ describe('createWebhookHandler', () => {
     const implementationProto = fromBinary(CodexTaskSchema, toBuffer(implementationStructuredMessage.value))
     expect(implementationProto.stage).toBe(CodexTaskStage.IMPLEMENTATION)
     expect(implementationProto.deliveryId).toBe('delivery-999')
-    expect(implementationProto.planCommentId).toBe(BigInt(10))
-    expect(implementationProto.planCommentBody).toBe('Plan')
-    expect(implementationProto.planCommentUrl).toBe('https://comment')
 
     expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-999' })
-  })
-
-  it('publishes implementation message when plan comment marker is present', async () => {
-    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-    const payload = {
-      action: 'created',
-      issue: {
-        number: 3,
-        title: 'Implementation issue',
-        body: 'Body',
-        html_url: 'https://issue',
-      },
-      repository: { default_branch: 'main' },
-      sender: { login: 'github-actions[bot]' },
-      comment: {
-        id: 42,
-        body: '## Plan\n\n- Do something\n\n<!-- codex:plan -->',
-        html_url: 'https://comment/42',
-      },
-    }
-
-    await handler(
-      buildRequest(payload, {
-        'x-github-event': 'issue_comment',
-        'x-github-delivery': 'delivery-plan-marker',
-        'x-hub-signature-256': 'sig',
-        'content-type': 'application/json',
-      }),
-      'github',
-    )
-
-    expect(githubServiceMock.findLatestPlanComment).not.toHaveBeenCalled()
-    expect(publishedMessages).toHaveLength(3)
-    const [implementationJsonMessage, implementationStructuredMessage, rawJsonMessage] = publishedMessages
-
-    expect(implementationJsonMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-3-implementation' })
-    expect(implementationStructuredMessage).toMatchObject({
-      topic: 'github.issues.codex.tasks',
-      key: 'issue-3-implementation',
-    })
-    expect(implementationStructuredMessage.headers?.['content-type']).toBe('application/x-protobuf')
-
-    const implementationProto = fromBinary(CodexTaskSchema, toBuffer(implementationStructuredMessage.value))
-    expect(implementationProto.stage).toBe(CodexTaskStage.IMPLEMENTATION)
-    expect(implementationProto.issueNumber).toBe(BigInt(3))
-    expect(implementationProto.planCommentId).toBe(BigInt(42))
-    expect(implementationProto.planCommentBody).toContain('<!-- codex:plan -->')
-    expect(implementationProto.planCommentUrl).toBe('https://comment/42')
-    expect(implementationProto.deliveryId).toBe('delivery-plan-marker')
-
-    expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-plan-marker' })
-  })
-
-  describe('review comment trigger', () => {
-    it('publishes review message when an authorized collaborator requests review', async () => {
-      githubServiceMock.fetchPullRequest.mockReturnValueOnce(
-        Effect.succeed({
-          ok: true as const,
-          pullRequest: {
-            number: 5,
-            title: 'Review automation',
-            body: 'Ensure Codex keeps iterating.',
-            htmlUrl: 'https://github.com/owner/repo/pull/5',
-            draft: false,
-            merged: false,
-            state: 'open',
-            headRef: 'codex/issue-9-branch',
-            headSha: 'abc123',
-            baseRef: 'main',
-            authorLogin: 'user',
-            mergeableState: 'blocked',
-          },
-        }),
-      )
-
-      githubServiceMock.listPullRequestReviewThreads.mockReturnValueOnce(
-        Effect.succeed({
-          ok: true as const,
-          threads: [
-            {
-              summary: 'Add unit tests for webhook logic',
-              url: 'https://github.com/owner/repo/pull/5#discussion_r1',
-              author: 'octocat',
-            },
-          ],
-        }),
-      )
-
-      githubServiceMock.listPullRequestCheckFailures.mockReturnValueOnce(
-        Effect.succeed({
-          ok: true as const,
-          checks: [
-            {
-              name: 'ci / test',
-              conclusion: 'failure',
-              url: 'https://ci.example.com/run/1',
-              details: 'Integration tests are failing',
-            },
-          ],
-        }),
-      )
-
-      const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-      const payload = {
-        action: 'created',
-        issue: {
-          number: 5,
-          pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/5' },
-          repository_url: 'https://api.github.com/repos/owner/repo',
-        },
-        repository: { full_name: 'owner/repo' },
-        sender: { login: 'maintainer' },
-        comment: {
-          id: 101,
-          body: 'Please @tuslagch review this change.',
-          html_url: 'https://github.com/owner/repo/pull/5#issuecomment-101',
-          author_association: 'MEMBER',
-          updated_at: '2025-10-30T00:00:00Z',
-          user: { login: 'maintainer' },
-        },
-      }
-
-      const response = await handler(
-        buildRequest(payload, {
-          'x-github-event': 'issue_comment',
-          'x-github-delivery': 'delivery-review-comment',
-          'x-github-action': 'created',
-          'x-hub-signature-256': 'sig',
-          'content-type': 'application/json',
-        }),
-        'github',
-      )
-
-      expect(response.status).toBe(202)
-      await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: 'reviewRequested' })
-
-      expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
-        expect.objectContaining({
-          stage: 'review',
-          issueNumber: 9,
-          reviewContext: expect.objectContaining({
-            reviewThreads: expect.arrayContaining([
-              expect.objectContaining({ summary: 'Add unit tests for webhook logic' }),
-            ]),
-          }),
-        }),
-      )
-
-      const reviewJsonMessage = publishedMessages.find((message) => message.topic === 'codex-topic')
-      const reviewStructuredMessage = publishedMessages.find((message) => message.topic === 'github.issues.codex.tasks')
-      expect(reviewJsonMessage).toBeTruthy()
-      expect(reviewStructuredMessage).toBeTruthy()
-      if (!reviewJsonMessage || !reviewStructuredMessage) {
-        throw new Error('expected codex review messages to be published')
-      }
-
-      expect(reviewJsonMessage.headers?.['x-codex-review-fingerprint']).toMatch(/^[a-f0-9]{32}$/)
-      expect(reviewJsonMessage.headers?.['x-codex-review-head-sha']).toBe('abc123')
-      const reviewJsonPayload = JSON.parse(toBuffer(reviewJsonMessage.value).toString('utf8'))
-      expect(reviewJsonPayload.stage).toBe('review')
-      expect(reviewJsonPayload.issueNumber).toBe(9)
-      expect(reviewJsonPayload.reviewContext.failingChecks[0].name).toBe('ci / test')
-      expect(reviewJsonPayload.reviewContext.additionalNotes[0]).toContain('mergeable_state=blocked')
-      const reviewProto = fromBinary(CodexTaskSchema, toBuffer(reviewStructuredMessage.value))
-      expect(reviewProto.stage).toBe(CodexTaskStage.REVIEW)
-      expect(reviewProto.issueNumber).toBe(BigInt(9))
-    })
-
-    it('ignores @tuslagch review comments from unauthorized authors', async () => {
-      const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-      const payload = {
-        action: 'created',
-        issue: {
-          number: 8,
-          pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/8' },
-          repository_url: 'https://api.github.com/repos/owner/repo',
-        },
-        repository: { full_name: 'owner/repo' },
-        sender: { login: 'contributor' },
-        comment: {
-          id: 204,
-          body: '@tuslagch review when ready',
-          html_url: 'https://github.com/owner/repo/pull/8#issuecomment-204',
-          author_association: 'CONTRIBUTOR',
-          updated_at: '2025-10-30T01:00:00Z',
-          user: { login: 'contributor' },
-        },
-      }
-
-      const response = await handler(
-        buildRequest(payload, {
-          'x-github-event': 'issue_comment',
-          'x-github-delivery': 'delivery-review-comment-unauth',
-          'x-github-action': 'created',
-          'x-hub-signature-256': 'sig',
-          'content-type': 'application/json',
-        }),
-        'github',
-      )
-
-      expect(response.status).toBe(202)
-      await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
-      expect(publishedMessages).toHaveLength(1)
-      expect(publishedMessages[0]).toMatchObject({ topic: 'raw-topic', key: 'delivery-review-comment-unauth' })
-      expect(mockBuildCodexPrompt).not.toHaveBeenCalled()
-    })
-
-    it('dedupes repeated @tuslagch review comments while allowing edited timestamps to retrigger', async () => {
-      githubServiceMock.fetchPullRequest.mockReturnValue(
-        Effect.succeed({
-          ok: true as const,
-          pullRequest: {
-            number: 11,
-            title: 'Deduplication test',
-            body: 'Check comment dedupe.',
-            htmlUrl: 'https://github.com/owner/repo/pull/11',
-            draft: false,
-            merged: false,
-            state: 'open',
-            headRef: 'codex/issue-11',
-            headSha: 'dedupsha',
-            baseRef: 'main',
-            authorLogin: 'user',
-            mergeableState: 'clean',
-          },
-        }),
-      )
-      githubServiceMock.listPullRequestReviewThreads.mockReturnValue(Effect.succeed({ ok: true as const, threads: [] }))
-      githubServiceMock.listPullRequestCheckFailures.mockReturnValue(Effect.succeed({ ok: true as const, checks: [] }))
-
-      const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-      const basePayload = {
-        issue: {
-          number: 11,
-          pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/11' },
-          repository_url: 'https://api.github.com/repos/owner/repo',
-        },
-        repository: { full_name: 'owner/repo' },
-        sender: { login: 'maintainer' },
-        comment: {
-          id: 404,
-          body: '@tuslagch review please',
-          html_url: 'https://github.com/owner/repo/pull/11#issuecomment-404',
-          author_association: 'OWNER',
-          updated_at: '2025-10-30T02:00:00Z',
-          user: { login: 'maintainer' },
-        },
-      }
-
-      await handler(
-        buildRequest(
-          { ...basePayload, action: 'created' },
-          {
-            'x-github-event': 'issue_comment',
-            'x-github-delivery': 'review-dedupe-1',
-            'x-github-action': 'created',
-            'x-hub-signature-256': 'sig',
-            'content-type': 'application/json',
-          },
-        ),
-        'github',
-      )
-      expect(publishedMessages.some((message) => message.topic === 'codex-topic')).toBe(true)
-
-      publishedMessages = []
-
-      await handler(
-        buildRequest(
-          { ...basePayload, action: 'created' },
-          {
-            'x-github-event': 'issue_comment',
-            'x-github-delivery': 'review-dedupe-2',
-            'x-github-action': 'created',
-            'x-hub-signature-256': 'sig',
-            'content-type': 'application/json',
-          },
-        ),
-        'github',
-      )
-      expect(publishedMessages).toHaveLength(1)
-      expect(publishedMessages[0]).toMatchObject({ topic: 'raw-topic', key: 'review-dedupe-2' })
-
-      publishedMessages = []
-
-      await handler(
-        buildRequest(
-          {
-            ...basePayload,
-            action: 'edited',
-            comment: { ...basePayload.comment, updated_at: '2025-10-30T02:05:00Z' },
-          },
-          {
-            'x-github-event': 'issue_comment',
-            'x-github-delivery': 'review-dedupe-3',
-            'x-github-action': 'edited',
-            'x-hub-signature-256': 'sig',
-            'content-type': 'application/json',
-          },
-        ),
-        'github',
-      )
-      expect(publishedMessages.some((message) => message.topic === 'codex-topic')).toBe(true)
-    })
-  })
-
-  it('does not publish review messages for pull request events without explicit comment trigger', async () => {
-    githubServiceMock.fetchPullRequest.mockReturnValueOnce(
-      Effect.succeed({
-        ok: true as const,
-        pullRequest: {
-          number: 7,
-          title: 'Fresh PR',
-          body: 'Initial change set',
-          htmlUrl: 'https://github.com/owner/repo/pull/7',
-          draft: false,
-          merged: false,
-          state: 'open',
-          headRef: 'codex/issue-7-fresh',
-          headSha: 'ghi789',
-          baseRef: 'main',
-          authorLogin: 'user',
-          mergeableState: 'clean',
-        },
-      }),
-    )
-
-    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
-    const payload = {
-      action: 'opened',
-      repository: { full_name: 'owner/repo' },
-      sender: { login: 'user' },
-      pull_request: {
-        number: 7,
-        head: { ref: 'codex/issue-7-fresh', sha: 'ghi789' },
-        base: { ref: 'main', repo: { full_name: 'owner/repo' } },
-        user: { login: 'USER' },
-      },
-    }
-
-    const response = await handler(
-      buildRequest(payload, {
-        'x-github-event': 'pull_request',
-        'x-github-delivery': 'delivery-review-opened',
-        'x-github-action': 'opened',
-        'x-hub-signature-256': 'sig',
-        'content-type': 'application/json',
-      }),
-      'github',
-    )
-
-    expect(response.status).toBe(202)
-    await expect(response.json()).resolves.toMatchObject({ codexStageTriggered: null })
-    expect(publishedMessages).toHaveLength(1)
-    expect(publishedMessages[0]).toMatchObject({ topic: 'raw-topic', key: 'delivery-review-opened' })
   })
 
   it('posts a ready comment when a clean Codex pull request updates outside forced review actions', async () => {
@@ -1200,7 +731,7 @@ describe('createWebhookHandler', () => {
     expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
   })
 
-  it('publishes review message when merge conflicts are detected', async () => {
+  it('does not post a ready comment when merge conflicts are detected', async () => {
     githubServiceMock.fetchPullRequest.mockReturnValueOnce(
       Effect.succeed({
         ok: true as const,
@@ -1253,7 +784,7 @@ describe('createWebhookHandler', () => {
     expect(publishedMessages.some((message) => message.topic === 'codex-topic')).toBe(false)
   })
 
-  it('converts draft Codex pull requests to ready-for-review when clean', async () => {
+  it('does not post a ready comment for draft pull requests', async () => {
     githubServiceMock.fetchPullRequest.mockReturnValueOnce(
       Effect.succeed({
         ok: true as const,
@@ -1299,12 +830,7 @@ describe('createWebhookHandler', () => {
     )
 
     expect(response.status).toBe(202)
-    expect(githubServiceMock.markPullRequestReadyForReview).toHaveBeenCalledWith(
-      expect.objectContaining({ repositoryFullName: 'owner/repo', pullNumber: 6 }),
-    )
-    expect(githubServiceMock.createPullRequestComment).toHaveBeenCalledWith(
-      expect.objectContaining({ repositoryFullName: 'owner/repo', pullNumber: 6, body: '@codex review' }),
-    )
+    expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
     expect(publishedMessages).toHaveLength(1)
     expect(publishedMessages[0]).toMatchObject({ topic: 'raw-topic', key: 'delivery-undraft-1' })
   })
@@ -1330,7 +856,7 @@ describe('createWebhookHandler', () => {
     expect(publishedMessages).toHaveLength(0)
   })
 
-  it('returns plan modal response for slash command', async () => {
+  it('returns implementation modal response for slash command', async () => {
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
 
     const response = await handler(
@@ -1364,13 +890,13 @@ describe('createWebhookHandler', () => {
       type: 9,
       data: {
         custom_id: 'plan:cmd-1',
-        title: 'Request Planning Run',
+        title: 'Request Implementation Run',
         components: [],
       },
     })
   })
 
-  it('publishes plan modal submissions and returns acknowledgement', async () => {
+  it('publishes modal submissions and returns acknowledgement', async () => {
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
 
     const response = await handler(
@@ -1395,8 +921,12 @@ describe('createWebhookHandler', () => {
     expect(publishedMessages).toHaveLength(1)
 
     const [discordMessage] = publishedMessages
+    if (!discordMessage) {
+      throw new Error('missing discord message')
+    }
     expect(discordMessage).toMatchObject({ topic: 'discord-topic', key: 'interaction-123' })
-    expect(discordMessage.headers['content-type']).toBe('application/x-protobuf')
+    const headers = discordMessage.headers ?? {}
+    expect(headers['content-type']).toBe('application/x-protobuf')
 
     const protoEvent = fromBinary(FacteurCommandEventSchema, toBuffer(discordMessage.value))
     expect(protoEvent.options).toEqual(
@@ -1409,7 +939,7 @@ describe('createWebhookHandler', () => {
     const parsedPayload = JSON.parse(protoEvent.options.payload ?? '')
     expect(parsedPayload.prompt).toBe('Ship the release with QA gating')
     expect(parsedPayload.postToGithub).toBe(false)
-    expect(parsedPayload.stage).toBe('planning')
+    expect(parsedPayload.stage).toBe('implementation')
     expect(parsedPayload.runId).toBe('interaction-123')
 
     const payload = await response.json()
@@ -1417,7 +947,7 @@ describe('createWebhookHandler', () => {
     expect(payload).toEqual({
       type: 4,
       data: {
-        content: 'Planning request received. Facteur will execute the workflow shortly.',
+        content: 'Implementation request received. Facteur will execute the workflow shortly.',
         flags: 64,
       },
     })

@@ -10,7 +10,9 @@ import {
   trimTrailingSlash,
 } from './common'
 import type {
+  FetchInit,
   FetchLike,
+  FetchResponse,
   ListCheckFailuresOptions,
   ListCheckFailuresResult,
   ListReviewThreadsOptions,
@@ -163,7 +165,7 @@ const parseRepository = (fullName: string) =>
 const ensureFetch = (fetchFn: FetchLike | null | undefined) =>
   fetchFn ? Effect.succeed(fetchFn) : Effect.fail<ReviewApiError>({ type: 'no-fetch' })
 
-const readText = (response: Response) => readResponseText(response).pipe(Effect.mapError(toNetworkError))
+const readText = (response: FetchResponse) => readResponseText(response).pipe(Effect.mapError(toNetworkError))
 
 const parseJson = (text: string) =>
   Effect.try({
@@ -171,7 +173,7 @@ const parseJson = (text: string) =>
     catch: (error) => toInvalidJson(error),
   })
 
-const requestJson = (fetchFn: FetchLike, input: string, init: RequestInit): Effect.Effect<ReviewApiError, unknown> =>
+const requestJson = (fetchFn: FetchLike, input: string, init: FetchInit): Effect.Effect<unknown, ReviewApiError> =>
   Effect.tryPromise({
     try: () => fetchFn(input, init),
     catch: toError,
@@ -225,7 +227,7 @@ const mapCheckError = (error: ReviewApiError): ListCheckFailuresResult => {
   }
 }
 
-const threadsFromNodes = (nodes: Schema.Type<typeof ReviewThreadNodeSchema>[]): PullRequestReviewThread[] =>
+const threadsFromNodes = (nodes: Schema.Schema.Type<typeof ReviewThreadNodeSchema>[]): PullRequestReviewThread[] =>
   nodes
     .filter((node) => !node?.isResolved)
     .map((node) => {
@@ -249,17 +251,13 @@ const fetchThreadsPage = (
   url: string,
   headers: Record<string, string>,
   body: string,
-): Effect.Effect<ReviewApiError, { items: PullRequestReviewThread[]; nextCursor: string | null }> =>
+): Effect.Effect<{ items: PullRequestReviewThread[]; nextCursor: string | null }, ReviewApiError> =>
   requestJson(fetchFn, url, {
     method: 'POST',
     headers,
     body,
   }).pipe(
-    Effect.flatMap((parsed) =>
-      decodeReviewThreadsResponse(parsed).pipe(
-        Effect.mapError((error) => toInvalidJson(Schema.formatErrorSync(error))),
-      ),
-    ),
+    Effect.flatMap((parsed) => decodeReviewThreadsResponse(parsed).pipe(Effect.mapError(toInvalidJson))),
     Effect.flatMap((decoded) => {
       if (decoded.errors && decoded.errors.length > 0) {
         const message = decoded.errors[0]?.message ?? 'GitHub GraphQL returned errors'
@@ -284,13 +282,13 @@ const collectReviewThreads = (
   owner: string,
   repo: string,
   pullNumber: number,
-): Effect.Effect<ReviewApiError, PullRequestReviewThread[]> =>
+): Effect.Effect<PullRequestReviewThread[], ReviewApiError> =>
   Effect.gen(function* (_) {
     let cursor: string | null = null
     const accumulator: PullRequestReviewThread[] = []
 
     while (true) {
-      const { items, nextCursor } = yield* fetchThreadsPage(
+      const page: { items: PullRequestReviewThread[]; nextCursor: string | null } = yield* fetchThreadsPage(
         fetchFn,
         graphqlUrl,
         headers,
@@ -299,6 +297,7 @@ const collectReviewThreads = (
           variables: cursor ? { owner, repo, pullNumber, cursor } : { owner, repo, pullNumber },
         }),
       )
+      const { items, nextCursor } = page
 
       accumulator.push(...items)
 
@@ -365,14 +364,14 @@ const collectCheckFailures = (
   checkRunsUrl: string,
   commitStatusUrl: string,
   headers: Record<string, string>,
-): Effect.Effect<ReviewApiError, PullRequestCheckFailure[]> =>
+): Effect.Effect<PullRequestCheckFailure[], ReviewApiError> =>
   Effect.gen(function* (_) {
     const failureMap = new Map<string, PullRequestCheckFailure>()
     const recordFailure = (failure: PullRequestCheckFailure) => {
       failureMap.set(failure.name, failure)
     }
 
-    const fetchCheckRunsPage = (page: number): Effect.Effect<ReviewApiError, boolean> =>
+    const fetchCheckRunsPage = (page: number): Effect.Effect<boolean, ReviewApiError> =>
       requestJson(fetchFn, `${checkRunsUrl}${page}`, { method: 'GET', headers }).pipe(
         Effect.map((parsed) =>
           Array.isArray((parsed as { check_runs?: unknown }).check_runs)

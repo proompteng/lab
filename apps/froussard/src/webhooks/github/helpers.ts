@@ -23,18 +23,24 @@ export const parseIssueNumberFromBranch = (branch: string, prefix: string): numb
     const remainder = branch.slice(prefix.length)
     const match = remainder.match(/^(\d+)/)
     if (match) {
-      const parsed = Number.parseInt(match[1], 10)
-      if (Number.isFinite(parsed)) {
-        return parsed
+      const captured = match[1]
+      if (captured) {
+        const parsed = Number.parseInt(captured, 10)
+        if (Number.isFinite(parsed)) {
+          return parsed
+        }
       }
     }
   }
 
   const fallbackMatch = branch.match(/(\d+)/)
   if (fallbackMatch) {
-    const parsed = Number.parseInt(fallbackMatch[1], 10)
-    if (Number.isFinite(parsed)) {
-      return parsed
+    const captured = fallbackMatch[1]
+    if (captured) {
+      const parsed = Number.parseInt(captured, 10)
+      if (Number.isFinite(parsed)) {
+        return parsed
+      }
     }
   }
 

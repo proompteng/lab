@@ -21,9 +21,8 @@ flowchart LR
   Froussard -->|codex task JSON| Tasks
   Froussard -->|codex task structured| Structured
   Froussard -->|slash command| DiscordTopic
-  Tasks --> Sensor[Argo Events sensor]
-  Sensor --> Planning[Workflow github-codex-planning]
-  Sensor --> Implementation[Workflow github-codex-implementation]
+  Tasks --> Facteur[Facteur orchestrator]
+  Facteur --> Implementation[Workflow github-codex-implementation]
 ```
 
 The Argo CD application also provisions the `discord.commands.incoming` Kafka topic so Discord automation can publish into the shared cluster alongside GitHub event streams.
@@ -62,8 +61,7 @@ The local runtime exposes:
   field, so we persist a lightweight static secret to expose it under the `username`
   key that `userSecret.key` consumers expect while leaving Strimzi in charge of
   password rotation.
-- The Argo Events sensor in `argocd/applications/froussard/github-codex-sensor.yaml`
-  maps CloudEvent payloads into the `github-codex-planning` Workflow arguments.
+- Facteur consumes `github.issues.codex.tasks` and dispatches the `github-codex-implementation` WorkflowTemplate.
 - Discord slash command signature verification requires `DISCORD_PUBLIC_KEY`. Set
   `KAFKA_DISCORD_COMMAND_TOPIC` to control the output topic for normalized command events.
 - The structured stream is configured via `KAFKA_CODEX_TOPIC_STRUCTURED` (defaulting to `github.issues.codex.tasks`).
@@ -80,13 +78,13 @@ The local runtime exposes:
 ## Verification Checklist
 
 1. Create a GitHub issue in `proompteng/lab` as the Codex trigger user using the **Codex Task** issue template so summary, scope, and validation fields are present.
-2. Ensure Argo Events produces a Workflow named `github-codex-planning-*` in
+2. Ensure Argo Workflows produces a Workflow named `github-codex-implementation-*` in
    `argo-workflows` namespace.
-3. Inspect pod logs to confirm the payload mirrors the Kafka message.
+3. Inspect pod logs to confirm the payload mirrors the Kafka message and the implementation prompt.
 
 ## Codex Automation Image
 
-The Codex planning/implementation workflows use a derived container built from
+The Codex implementation workflow uses a derived container built from
 `apps/froussard/Dockerfile.codex`. The helper script below copies the local
 Codex auth (`~/.codex/auth.json`), Codex configuration (`~/.codex/config.toml`),
 and your GitHub CLI token into the image before pushing it to the shared

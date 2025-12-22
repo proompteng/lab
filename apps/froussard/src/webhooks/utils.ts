@@ -3,7 +3,7 @@ import { Effect } from 'effect'
 import { AppLogger } from '@/logger'
 import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
 
-export const publishKafkaMessage = (message: KafkaMessage): Effect.Effect<void> =>
+export const publishKafkaMessage = (message: KafkaMessage) =>
   Effect.gen(function* (_) {
     const kafka = yield* KafkaProducer
     const logger = yield* AppLogger

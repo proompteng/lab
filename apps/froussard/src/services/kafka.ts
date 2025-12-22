@@ -16,8 +16,8 @@ export interface KafkaMessage {
 }
 
 export interface KafkaProducerService {
-  readonly publish: (message: KafkaMessage) => Effect.Effect<void>
-  readonly ensureConnected: Effect.Effect<void>
+  readonly publish: (message: KafkaMessage) => Effect.Effect<void, unknown>
+  readonly ensureConnected: Effect.Effect<void, unknown>
   readonly isReady: Effect.Effect<boolean>
 }
 
@@ -25,7 +25,7 @@ export class KafkaProducer extends Effect.Tag('@froussard/KafkaProducer')<KafkaP
 
 interface QueuedMessage {
   readonly message: KafkaMessage
-  readonly deferred: Deferred.Deferred<void>
+  readonly deferred: Deferred.Deferred<void, unknown>
 }
 
 export const KafkaProducerLayer = Layer.scoped(
@@ -60,8 +60,16 @@ export const KafkaProducerLayer = Layer.scoped(
     )
 
     const disconnect = Effect.tryPromise(() => producer.disconnect()).pipe(
-      Effect.tap(() => Ref.set(readyRef, false)),
       Effect.tap(() => logger.info('Kafka producer disconnected', { clientId: config.kafka.clientId })),
+      Effect.catchAll((error) =>
+        logger
+          .warn('Kafka producer disconnect failed', {
+            clientId: config.kafka.clientId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+          .pipe(Effect.as(undefined)),
+      ),
+      Effect.tap(() => Ref.set(readyRef, false)),
     )
 
     const ensureConnected = Ref.get(readyRef).pipe(Effect.flatMap((ready) => (ready ? Effect.void : connect)))
@@ -135,7 +143,7 @@ export const KafkaProducerLayer = Layer.scoped(
 
     const publish = (message: KafkaMessage) =>
       Effect.gen(function* (_) {
-        const deferred = yield* Deferred.make<void>()
+        const deferred = yield* Deferred.make<void, unknown>()
         yield* queue.offer({ message, deferred })
         return yield* Deferred.await(deferred)
       })

@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runCodexProgressComment } from '../codex-progress-comment'
 
 const bunMocks = vi.hoisted(() => {
-  const execMock = vi.fn()
+  const execMock = vi.fn((_command: string) => undefined)
   const whichMock = vi.fn(async () => 'gh')
+  const isTemplateStringsArray = (value: unknown): value is TemplateStringsArray =>
+    Array.isArray(value) && Object.hasOwn(value, 'raw')
   const makeTagged =
     () =>
     (strings: TemplateStringsArray, ...exprs: unknown[]) => {
@@ -23,8 +25,8 @@ const bunMocks = vi.hoisted(() => {
     }
   const dollar = (...args: unknown[]) => {
     const first = args[0]
-    if (Array.isArray(first) && Object.hasOwn(first, 'raw')) {
-      return makeTagged()(first as TemplateStringsArray, ...(args.slice(1) as unknown[]))
+    if (isTemplateStringsArray(first)) {
+      return makeTagged()(first, ...(args.slice(1) as unknown[]))
     }
     if (typeof first === 'object' && first !== null) {
       return makeTagged()

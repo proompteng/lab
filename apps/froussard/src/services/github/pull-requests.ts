@@ -120,7 +120,15 @@ export const fetchPullRequest = (options: FetchPullRequestOptions): Effect.Effec
           let parsed: PullRequestSummary
           try {
             const raw = bodyResult.right.length === 0 ? {} : JSON.parse(bodyResult.right)
-            const decoded = yield* decodePullRequest(raw)
+            const decodedResult = yield* decodePullRequest(raw).pipe(Effect.either)
+            if (decodedResult._tag === 'Left') {
+              return {
+                ok: false as const,
+                reason: 'invalid-pull-request',
+                detail: String(decodedResult.left),
+              }
+            }
+            const decoded = decodedResult.right
             parsed = {
               number: decoded.number,
               title: decoded.title,
@@ -229,8 +237,15 @@ export const markPullRequestReadyForReview = (options: ReadyForReviewOptions): E
     let nodeId: string
     try {
       const raw = pullBodyResult.right.length === 0 ? {} : JSON.parse(pullBodyResult.right)
-      const decoded = yield* decodePullRequestNode(raw)
-      nodeId = decoded.node_id
+      const decodedResult = yield* decodePullRequestNode(raw).pipe(Effect.either)
+      if (decodedResult._tag === 'Left') {
+        return {
+          ok: false as const,
+          reason: 'network-error',
+          detail: String(decodedResult.left),
+        }
+      }
+      nodeId = decodedResult.right.node_id
     } catch (error) {
       return {
         ok: false as const,
@@ -355,7 +370,7 @@ export const createPullRequestComment = (
     Effect.flatMap((response) => {
       if (response.ok) {
         return readResponseText(response).pipe(
-          Effect.map((text) => {
+          Effect.map((text): CreatePullRequestCommentResult => {
             if (!text) {
               return { ok: true } as const
             }
@@ -365,13 +380,13 @@ export const createPullRequestComment = (
                 parsed && typeof parsed === 'object' && typeof parsed.html_url === 'string'
                   ? parsed.html_url
                   : undefined
-              return { ok: true, commentUrl }
+              return { ok: true, commentUrl } as const
             } catch (error) {
               return {
                 ok: false as const,
                 reason: 'invalid-json',
                 detail: error instanceof Error ? error.message : String(error),
-              }
+              } as const
             }
           }),
         )

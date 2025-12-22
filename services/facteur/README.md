@@ -104,9 +104,9 @@ When running locally, point these values at your observability environment to ke
 
 Cluster deployments rely on a namespace-scoped Grafana Alloy deployment (`argocd/applications/facteur/overlays/cluster/alloy-*.yaml`) to forward Knative pod logs to the observability Loki gateway (`observability-loki-loki-distributed-gateway`), since the Knative stack does not configure log shipping on its own.
 
-### Codex planning + implementation orchestration
+### Codex implementation orchestration
 
-Planning runs through the orchestrator (`codex_orchestrator.enabled=true`) and the `github-codex-planning` template, which forces `POST_TO_GITHUB=true`. Implementation uses the implementation orchestrator (`codex_implementation_orchestrator.enabled=true`, or the env alias `FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION`) to submit the `github-codex-implementation` workflow with the same persistence + idempotency guarantees. Review automation still runs through Argo Events.
+Implementation runs through the implementation orchestrator (`codex_implementation_orchestrator.enabled=true`, or the env alias `FACTEUR_CODEX_ENABLE_IMPLEMENTATION_ORCHESTRATION`) to submit the `github-codex-implementation` workflow with the same persistence + idempotency guarantees.
 
 ## Container image
 

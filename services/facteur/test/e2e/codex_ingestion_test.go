@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -61,6 +62,7 @@ func TestCodexIngestionEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 
 	first := postCodexTask(t, client, baseURL, payload)
+	require.False(t, first.Duplicate, "initial dispatch should not be marked as duplicate")
 
 	db, err := sql.Open("pgx", dsn)
 	require.NoError(t, err)
@@ -88,12 +90,12 @@ func TestCodexIngestionEndToEnd(t *testing.T) {
 		return queryErr == nil && persisted.RunID != "" && persisted.TaskID != "" && persisted.IdeaID != ""
 	}, 30*time.Second, time.Second)
 
-	require.Equal(t, first.TaskRunID, persisted.RunID)
-	require.Equal(t, first.TaskID, persisted.TaskID)
-	require.Equal(t, first.IdeaID, persisted.IdeaID)
-
 	second := postCodexTask(t, client, baseURL, payload)
-	require.Equal(t, first, second, "idempotent replay should return identical identifiers")
+	require.True(t, second.Duplicate, "idempotent replay should be marked as duplicate")
+	require.Equal(t, first.Stage, second.Stage)
+	require.Equal(t, first.Namespace, second.Namespace)
+	require.Equal(t, first.WorkflowName, second.WorkflowName)
+	require.Equal(t, first.SubmittedAt, second.SubmittedAt)
 
 	var runCount int
 	require.NoError(t, db.QueryRow(`
@@ -103,27 +105,70 @@ func TestCodexIngestionEndToEnd(t *testing.T) {
 }
 
 type codexResponse struct {
-	IdeaID    string `json:"ideaId"`
-	TaskID    string `json:"taskId"`
-	TaskRunID string `json:"taskRunId"`
+	Stage        string `json:"stage"`
+	Namespace    string `json:"namespace"`
+	WorkflowName string `json:"workflowName"`
+	SubmittedAt  string `json:"submittedAt"`
+	Duplicate    bool   `json:"duplicate"`
 }
 
 func postCodexTask(t *testing.T, client *http.Client, baseURL string, payload []byte) codexResponse {
 	t.Helper()
 
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/codex/tasks", bytes.NewReader(payload))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/x-protobuf")
+	deadline := time.Now().Add(30 * time.Second)
+	var lastStatus int
+	var lastBody []byte
+	var lastErr error
 
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	for {
+		req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/codex/tasks", bytes.NewReader(payload))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-protobuf")
 
-	var body codexResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	require.NotEmpty(t, body.IdeaID)
-	require.NotEmpty(t, body.TaskID)
-	require.NotEmpty(t, body.TaskRunID)
-	return body
+		resp, err := client.Do(req)
+		if err == nil {
+			bodyBytes, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			require.NoError(t, readErr)
+
+			if resp.StatusCode == http.StatusAccepted {
+				var body codexResponse
+				require.NoError(t, json.Unmarshal(bodyBytes, &body))
+				require.Equal(t, "implementation", body.Stage)
+				require.NotEmpty(t, body.Namespace)
+				require.NotEmpty(t, body.WorkflowName)
+				require.NotEmpty(t, body.SubmittedAt)
+				parsedAt, parseErr := time.Parse(time.RFC3339, body.SubmittedAt)
+				require.NoError(t, parseErr)
+				require.False(t, parsedAt.IsZero())
+				return body
+			}
+
+			if resp.StatusCode == http.StatusServiceUnavailable && bytes.Contains(bodyBytes, []byte("implementation orchestrator disabled")) {
+				t.Skip("implementation orchestrator disabled; enable codex implementation orchestrator to run this e2e test")
+			}
+
+			lastStatus = resp.StatusCode
+			lastBody = bodyBytes
+			lastErr = nil
+
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				require.Failf(t, "unexpected response", "status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+			}
+		} else {
+			lastErr = err
+		}
+
+		if time.Now().After(deadline) {
+			break
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
+	if lastErr != nil {
+		require.Failf(t, "request failed", "error=%v", lastErr)
+	}
+	require.Failf(t, "service unavailable", "status=%d body=%s", lastStatus, strings.TrimSpace(string(lastBody)))
+	return codexResponse{}
 }

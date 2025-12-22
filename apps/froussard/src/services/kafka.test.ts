@@ -41,11 +41,6 @@ describe('KafkaProducerLayer', () => {
         codexStructured: 'github.issues.codex.tasks',
         discordCommands: 'discord-topic',
       },
-      sasl: {
-        mechanism: 'scram-sha-512',
-        username: 'user',
-        password: 'pass',
-      },
     },
     codebase: {
       baseBranch: 'main',
@@ -54,7 +49,7 @@ describe('KafkaProducerLayer', () => {
     codex: {
       triggerLogins: ['user'],
       workflowLogin: 'github-actions[bot]',
-      implementationTriggerPhrase: 'execute plan',
+      implementationTriggerPhrase: 'implement issue',
     },
     discord: {
       publicKey: 'public',

@@ -1,7 +1,6 @@
 import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
-import { PLAN_COMMENT_MARKER } from '@/codex'
 import { findLatestPlanComment, postIssueReaction } from '@/services/github/issues'
 import {
   createPullRequestComment,
@@ -9,7 +8,9 @@ import {
   markPullRequestReadyForReview,
 } from '@/services/github/pull-requests'
 import { listPullRequestReviewThreads } from '@/services/github/reviews'
-import type { FetchLike, FetchResponse } from '@/services/github/types'
+import type { FetchLike } from '@/services/github/types'
+
+const READY_COMMENT_MARKER = '<!-- codex:ready -->'
 
 describe('postIssueReaction', () => {
   it('reports missing token when GITHUB_TOKEN is not configured', async () => {
@@ -356,10 +357,10 @@ describe('listPullRequestReviewThreads', () => {
 })
 
 describe('findLatestPlanComment', () => {
-  it('returns the latest comment containing the plan marker', async () => {
+  it('returns the latest comment containing the marker', async () => {
     const payload = [
       { id: 101, body: 'Regular comment' },
-      { id: 202, body: `${PLAN_COMMENT_MARKER}\nApproved steps`, html_url: 'https://example.com/comment/202' },
+      { id: 202, body: `${READY_COMMENT_MARKER}\nApproved steps`, html_url: 'https://example.com/comment/202' },
     ]
 
     const result = await Effect.runPromise(
@@ -383,7 +384,7 @@ describe('findLatestPlanComment', () => {
     expect(result.comment.htmlUrl).toBe('https://example.com/comment/202')
   })
 
-  it('returns not-found when no comment carries the plan marker', async () => {
+  it('returns not-found when no comment carries the marker', async () => {
     const payload = [{ id: 303, body: 'No marker here' }]
 
     const result = await Effect.runPromise(
@@ -435,7 +436,7 @@ describe('findLatestPlanComment', () => {
   })
 
   it('returns invalid-comment when id cannot be coerced to a number', async () => {
-    const payload = [{ id: 'abc', body: `${PLAN_COMMENT_MARKER} body` }]
+    const payload = [{ id: 'abc', body: `${READY_COMMENT_MARKER} body` }]
 
     const result = await Effect.runPromise(
       findLatestPlanComment({
@@ -639,7 +640,7 @@ describe('markPullRequestReadyForReview', () => {
 
   it('returns ok when GitHub accepts the mutation', async () => {
     const fetchSpy = vi
-      .fn<Parameters<FetchLike>, Promise<FetchResponse>>()
+      .fn<FetchLike>()
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -664,7 +665,7 @@ describe('markPullRequestReadyForReview', () => {
 
   it('returns http-error when GitHub rejects the request', async () => {
     const fetchSpy = vi
-      .fn<Parameters<FetchLike>, Promise<FetchResponse>>()
+      .fn<FetchLike>()
       .mockResolvedValueOnce({
         ok: true,
         status: 200,

@@ -12,7 +12,87 @@ import (
 
 	"github.com/proompteng/lab/services/facteur/internal/argo"
 	"github.com/proompteng/lab/services/facteur/internal/froussardpb"
+	"github.com/proompteng/lab/services/facteur/internal/knowledge"
 )
+
+type storeResponse struct {
+	upsertErr    error
+	lifecycleErr error
+}
+
+type fakeStore struct {
+	responses      []storeResponse
+	ideaCalls      int
+	lifecycleCalls int
+	lastIdea       knowledge.IdeaRecord
+	lastTask       knowledge.TaskRecord
+	lastRun        knowledge.TaskRunRecord
+}
+
+func (s *fakeStore) nextResponse() storeResponse {
+	if len(s.responses) == 0 {
+		return storeResponse{}
+	}
+	resp := s.responses[0]
+	s.responses = s.responses[1:]
+	return resp
+}
+
+func (s *fakeStore) UpsertIdea(_ context.Context, record knowledge.IdeaRecord) (string, error) {
+	s.ideaCalls++
+	s.lastIdea = record
+	resp := s.nextResponse()
+	if resp.upsertErr != nil {
+		return "", resp.upsertErr
+	}
+	return "idea-1", nil
+}
+
+func (s *fakeStore) RecordTaskLifecycle(
+	_ context.Context,
+	task knowledge.TaskRecord,
+	run knowledge.TaskRunRecord,
+) (knowledge.TaskRecord, knowledge.TaskRunRecord, error) {
+	s.lifecycleCalls++
+	s.lastTask = task
+	s.lastRun = run
+	resp := s.nextResponse()
+	if resp.lifecycleErr != nil {
+		return knowledge.TaskRecord{}, knowledge.TaskRunRecord{}, resp.lifecycleErr
+	}
+	return task, run, nil
+}
+
+type runnerResponse struct {
+	result argo.RunResult
+	err    error
+}
+
+type fakeRunner struct {
+	responses []runnerResponse
+	calls     int
+	inputs    []argo.RunInput
+	index     int
+}
+
+func (r *fakeRunner) Run(_ context.Context, input argo.RunInput) (argo.RunResult, error) {
+	r.calls++
+	r.inputs = append(r.inputs, input)
+	if r.index >= len(r.responses) {
+		return argo.RunResult{}, nil
+	}
+	resp := r.responses[r.index]
+	r.index++
+	return resp.result, resp.err
+}
+
+func (r *fakeRunner) TemplateStatus(
+	_ context.Context,
+	_ string,
+	_ string,
+) (argo.TemplateStatus, error) {
+	return argo.TemplateStatus{}, nil
+}
 
 func TestImplementer_Success(t *testing.T) {
 	store := &fakeStore{}

@@ -1,8 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# Optional fallback components (re-enable Argo Events triggers if Facteur orchestration is disabled):
+# Optional fallback component (re-enable Argo Events trigger if Facteur implementation orchestration is disabled):
 # components:
-#   - components/codex-planning-argo-fallback
 #   - components/codex-implementation-argo-fallback
 resources:
   - github-secrets.yaml
@@ -16,9 +15,6 @@ resources:
   - github-webhook-topic.yaml
   - github-codex-topic.yaml
   - github-issues-codex-tasks-topic.yaml
-  - github-codex-planning-workflow-template.yaml
   - github-codex-implementation-workflow-template.yaml
-  - github-codex-review-workflow-template.yaml
-  - github-codex-sensor.yaml
   - coder-workspace-access.yaml
   - knative-service.yaml

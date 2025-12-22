@@ -6,11 +6,11 @@ This plan operationalises the autonomous knowledge base, schema, and vector stra
 - [x] `TODO(codex-autonomy-step-01)`: Wire new `codex_kb` tables into the ORM/data layer (repositories for `ideas`, `tasks`, `task_runs`).
 - [x] `TODO(codex-autonomy-step-02)`: Capture Froussard webhook payloads in `ideas` when Facteur handles GitHub events.
 - [x] `TODO(codex-autonomy-step-03)`: Persist task lifecycle updates (`tasks`, `task_runs`, `run_events`) inside the orchestrator code paths.
-- [x] Routing consolidation: planning is orchestrator-only; Knative service is cluster-local with Tailscale exposure (legacy direct dispatch removed).
+- [x] Routing consolidation: implementation is orchestrator-only; Knative service is cluster-local with Tailscale exposure (legacy direct dispatch removed).
 
 ## Phase 2 – Reflection Memory & Retrieval
 - [ ] `TODO(codex-autonomy-step-04)`: Store agent reflections and register them with the vector index.
-- [ ] `TODO(codex-autonomy-step-05)`: Fetch top-N reflections during task planning/implementation and inject into prompts.
+- [ ] `TODO(codex-autonomy-step-05)`: Fetch top-N reflections during implementation and inject into prompts.
 
 ## Phase 3 – Router Feedback & Faithfulness Loop
 - [ ] `TODO(codex-autonomy-step-06)`: Log retrieval router decisions to `policy_checks` and `run_events`.
@@ -29,7 +29,7 @@ This plan operationalises the autonomous knowledge base, schema, and vector stra
 - Keep commits scoped to one or two TODO markers to simplify reviews and minimise merge conflicts.
 
 ## Rollout Checklist
-- Ship Issue #1635 (knowledge store persistence) before toggling `FACTEUR_CODEX_ENABLE_PLANNING_ORCHESTRATION` in production; the planner path currently fails fast while the store methods are stubbed.
-- Enable the planner flag in staging, replay a planning payload via the `protoc`/`curl` recipe in `docs/codex-workflow.md`, and confirm the OTEL spans (`facteur.server.codex_tasks`, `facteur.orchestrator.plan`) record the run metadata.
-- Keep the Argo fallback ready by referencing `components/codex-planning-argo-fallback/` only when you intentionally hand planning back to the sensor.
+- Ship Issue #1635 (knowledge store persistence) before enabling the implementation orchestrator in production; the store path currently fails fast while the methods are stubbed.
+- Replay an implementation payload via the `protoc`/`curl` recipe in `docs/codex-workflow.md`, and confirm the OTEL spans (`facteur.server.codex_tasks`, `facteur.orchestrator.implement`) record the run metadata.
+- Keep the Argo fallback ready by referencing `components/codex-implementation-argo-fallback/` only when you intentionally hand dispatch back to the sensor.
 - Run `scripts/argo-lint.sh argocd` and `go test ./services/facteur/...` before promoting changes so Argo CD and CI remain green after the switch.

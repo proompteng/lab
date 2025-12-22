@@ -24,7 +24,7 @@ describe('loadConfig', () => {
     expect(config.codebase.branchPrefix).toBe('codex/issue-')
     expect(config.codex.triggerLogins).toEqual(['gregkonush', 'tuslagch'])
     expect(config.codex.workflowLogin).toBe('github-actions[bot]')
-    expect(config.codex.implementationTriggerPhrase).toBe('execute plan')
+    expect(config.codex.implementationTriggerPhrase).toBe('implement issue')
     expect(config.discord.publicKey).toBe('public-key')
     expect(config.discord.defaultResponse.ephemeral).toBe(true)
   })

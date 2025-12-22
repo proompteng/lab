@@ -7,61 +7,48 @@ spec:
   dependencies:
     - eventName: github-codex-tasks
       eventSourceName: github-codex
-      name: review-event
+      name: implementation-event
       filters:
         data:
           - path: body.stage
             type: string
             value:
-              - review
+              - implementation
   eventBusName: default
   template:
     serviceAccountName: github-codex-sensor
   triggers:
     - template:
-        name: review-workflow
-        conditions: "review-event"
+        name: implementation-workflow
+        conditions: "implementation-event"
         k8s:
           group: argoproj.io
           version: v1alpha1
           operation: create
           parameters:
-            - dest: metadata.name
-              src:
-                dependencyName: review-event
-                dataTemplate: |
-                  {{- $headers := .Input.headers -}}
-                  {{- $fingerprint := default "" (index $headers "x-codex-review-fingerprint") -}}
-                  {{- if $fingerprint -}}
-                    {{- printf "github-codex-review-%s" (regexReplaceAll "[^a-z0-9-]" (lower $fingerprint) "-") -}}
-                  {{- else -}}
-                    {{- printf "github-codex-review-%s" (lower (randAlphaNum 10)) -}}
-                  {{- end -}}
-            - dest: metadata.labels.codex\.reviewFingerprint
-              src:
-                dependencyName: review-event
-                dataTemplate: |
-                  {{- default "" (index .Input.headers "x-codex-review-fingerprint") -}}
-            - dest: metadata.labels.codex\.headSha
-              src:
-                dependencyName: review-event
-                dataTemplate: |
-                  {{- default "" (index .Input.headers "x-codex-review-head-sha") -}}
             - dest: spec.arguments.parameters.0.value
               src:
-                dependencyName: review-event
+                dependencyName: implementation-event
                 dataTemplate: '{{ b64enc (.Input | toJson) }}'
             - dest: spec.arguments.parameters.1.value
               src:
-                dependencyName: review-event
+                dependencyName: implementation-event
                 dataTemplate: '{{ b64enc (.Input.body | toJson) }}'
+            - dest: spec.arguments.parameters.2.value
+              src:
+                dependencyName: implementation-event
+                dataTemplate: '{{ .Input.body.head }}'
+            - dest: spec.arguments.parameters.3.value
+              src:
+                dependencyName: implementation-event
+                dataTemplate: '{{ default "main" .Input.body.base }}'
           resource: workflows
           source:
             resource:
               apiVersion: argoproj.io/v1alpha1
               kind: Workflow
               metadata:
-                generateName: github-codex-review-
+                generateName: github-codex-implementation-
                 namespace: argo-workflows
               spec:
                 arguments:
@@ -70,5 +57,9 @@ spec:
                       value: '{}'
                     - name: eventBody
                       value: '{}'
+                    - name: head
+                      value: ''
+                    - name: base
+                      value: 'main'
                 workflowTemplateRef:
-                  name: github-codex-review
+                  name: github-codex-implementation

@@ -3,9 +3,6 @@ import { timestampFromDate } from '@bufbuild/protobuf/wkt'
 import type { CodexTaskMessage } from '@/codex'
 import {
   CodexTaskStage,
-  CodexFailingCheckSchema as GithubCodexFailingCheckSchema,
-  CodexReviewContextSchema as GithubCodexReviewContextSchema,
-  CodexReviewThreadSchema as GithubCodexReviewThreadSchema,
   type CodexTask as GithubCodexTaskMessage,
   CodexTaskSchema as GithubCodexTaskSchema,
 } from '@/proto/proompteng/froussard/v1/codex_task_pb'
@@ -21,42 +18,9 @@ const toTimestamp = (value: string | undefined) => {
   return timestampFromDate(date)
 }
 
-export const buildReviewContextProto = (context: CodexTaskMessage['reviewContext'] | undefined) => {
-  if (!context) {
-    return undefined
-  }
-
-  return create(GithubCodexReviewContextSchema, {
-    summary: context.summary,
-    reviewThreads: (context.reviewThreads ?? []).map((thread) =>
-      create(GithubCodexReviewThreadSchema, {
-        summary: thread.summary,
-        url: thread.url,
-        author: thread.author,
-      }),
-    ),
-    failingChecks: (context.failingChecks ?? []).map((check) =>
-      create(GithubCodexFailingCheckSchema, {
-        name: check.name,
-        conclusion: check.conclusion,
-        url: check.url,
-        details: check.details,
-      }),
-    ),
-    additionalNotes: context.additionalNotes ?? [],
-  })
-}
-
 export const toCodexTaskProto = (message: CodexTaskMessage, deliveryId: string): GithubCodexTaskMessage => {
-  const protoStage =
-    message.stage === 'planning'
-      ? CodexTaskStage.PLANNING
-      : message.stage === 'review'
-        ? CodexTaskStage.REVIEW
-        : CodexTaskStage.IMPLEMENTATION
-
   return create(GithubCodexTaskSchema, {
-    stage: protoStage,
+    stage: CodexTaskStage.IMPLEMENTATION,
     prompt: message.prompt,
     repository: message.repository,
     base: message.base,
@@ -71,6 +35,5 @@ export const toCodexTaskProto = (message: CodexTaskMessage, deliveryId: string):
     planCommentUrl: message.planCommentUrl,
     planCommentBody: message.planCommentBody,
     deliveryId,
-    reviewContext: buildReviewContextProto(message.reviewContext),
   })
 }
