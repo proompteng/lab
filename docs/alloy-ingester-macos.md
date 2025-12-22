@@ -17,7 +17,8 @@ brew install grafana-alloy
 ```
 
 Homebrew stores configuration in `/opt/homebrew/etc/grafana-alloy` and data in
-`/opt/homebrew/var/lib/grafana-alloy/data`.
+`/opt/homebrew/var/lib/grafana-alloy/data`. The service runs `alloy run /opt/homebrew/etc/grafana-alloy`,
+so only `*.alloy` files in that directory are loaded.
 
 ### Option B: Download the macOS release tarball
 
@@ -30,15 +31,15 @@ alloy --version
 
 ## Configure
 
-Homebrew runs Alloy from `/opt/homebrew/etc/grafana-alloy/config.river` (this is the file `brew services` uses). The current config on this host forwards OTLP logs to Loki over Tailscale and keeps trace/metric exporters commented out.
+Homebrew runs Alloy from `/opt/homebrew/etc/grafana-alloy/config.alloy` (this is the file `brew services` uses). The current config on this host forwards OTLP logs to Loki over Tailscale and keeps trace/metric exporters commented out.
 
 1) Ensure the config directory exists:
 ```bash
 mkdir -p /opt/homebrew/etc/grafana-alloy
 ```
 
-2) Save the config below to `/opt/homebrew/etc/grafana-alloy/config.river`:
-```river
+2) Save the config below to `/opt/homebrew/etc/grafana-alloy/config.alloy`:
+```alloy
 logging {
   level = "info"
 }
@@ -47,44 +48,36 @@ otelcol.receiver.otlp "codex" {
   http {
     endpoint = "127.0.0.1:4318"
   }
-}
 
-otelcol.processor.batch "default" {}
-
-otelcol.exporter.otlphttp "loki" {
-  endpoint = "http://loki/otlp"
-}
-
-# Uncomment if you want to forward traces/metrics from local apps too.
-# otelcol.exporter.otlphttp "tempo" {
-#   endpoint = "http://tempo"
-# }
-#
-# otelcol.exporter.otlphttp "mimir" {
-#   endpoint = "http://mimir/otlp"
-# }
-
-otelcol.service "codex" {
-  pipelines {
-    logs = [
-      otelcol.receiver.otlp.codex.logs,
-      otelcol.processor.batch.default,
-      otelcol.exporter.otlphttp.loki,
-    ]
-
-    # traces = [
-    #   otelcol.receiver.otlp.codex.traces,
-    #   otelcol.processor.batch.default,
-    #   otelcol.exporter.otlphttp.tempo,
-    # ]
-
-    # metrics = [
-    #   otelcol.receiver.otlp.codex.metrics,
-    #   otelcol.processor.batch.default,
-    #   otelcol.exporter.otlphttp.mimir,
-    # ]
+  output {
+    logs = [otelcol.processor.batch.default.input]
   }
 }
+
+otelcol.processor.batch "default" {
+  output {
+    logs = [otelcol.exporter.otlphttp.loki.input]
+  }
+}
+
+otelcol.exporter.otlphttp "loki" {
+  client {
+    endpoint = "http://loki/otlp"
+  }
+}
+
+// Uncomment if you want to forward traces/metrics from local apps too.
+// otelcol.exporter.otlphttp "tempo" {
+//   client {
+//     endpoint = "http://tempo"
+//   }
+// }
+//
+// otelcol.exporter.otlphttp "mimir" {
+//   client {
+//     endpoint = "http://mimir/otlp"
+//   }
+// }
 ```
 
 Notes:
@@ -114,7 +107,7 @@ Start Alloy in the foreground:
 ```bash
 /opt/homebrew/opt/grafana-alloy/bin/alloy run \
   --storage.path=/opt/homebrew/var/lib/grafana-alloy/data \
-  /opt/homebrew/etc/grafana-alloy/config.river
+  /opt/homebrew/etc/grafana-alloy/config.alloy
 ```
 
 Or start it as a background service:
