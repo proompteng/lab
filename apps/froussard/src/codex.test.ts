@@ -57,7 +57,7 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain('Do:')
     expect(prompt).toContain(`Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} current`)
     expect(prompt).toContain('Memory capture:')
-    expect(prompt).toContain('bun run save-memory')
+    expect(prompt).toContain('bun run --filter memories save-memory')
   })
 
   it('uses a default issue body when none is supplied', () => {

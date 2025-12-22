@@ -70,7 +70,7 @@ const buildImplementationPrompt = ({
     '',
     'Memory capture:',
     '- For each meaningful code or config change, save a memory in Jangar via the CLI helper.',
-    '- Use `bun run save-memory --task-name "<short>" --content "<what changed + why>" --summary "<1 line>" --tags "<comma,separated>"`.',
+    '- Use `bun run --filter memories save-memory --task-name "<short>" --content "<what changed + why>" --summary "<1 line>" --tags "<comma,separated>"`.',
     '',
     'Issue body for quick reference:',
     '"""',
