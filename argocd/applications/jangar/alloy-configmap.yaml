@@ -14,22 +14,20 @@ data:
       http {
         endpoint = "0.0.0.0:4318"
       }
-    }
 
-    otelcol.processor.batch "default" {}
-
-    otelcol.exporter.otlphttp "loki" {
-      endpoint = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/otlp"
-    }
-
-    otelcol.service "codex" {
-      pipelines {
-        logs = [
-          otelcol.receiver.otlp.codex.logs,
-          otelcol.processor.batch.default,
-          otelcol.exporter.otlphttp.loki,
-        ]
+      output {
+        logs = [otelcol.processor.batch.default.input]
       }
+    }
+
+    otelcol.processor.batch "default" {
+      output {
+        logs = [otelcol.exporter.loki.codex.input]
+      }
+    }
+
+    otelcol.exporter.loki "codex" {
+      forward_to = [loki.write.default.receiver]
     }
 
     // Jangar web app
