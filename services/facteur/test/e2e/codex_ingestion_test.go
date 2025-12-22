@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -111,19 +112,52 @@ type codexResponse struct {
 func postCodexTask(t *testing.T, client *http.Client, baseURL string, payload []byte) codexResponse {
 	t.Helper()
 
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/codex/tasks", bytes.NewReader(payload))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/x-protobuf")
+	deadline := time.Now().Add(30 * time.Second)
+	var lastStatus int
+	var lastBody []byte
+	var lastErr error
 
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	for {
+		req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/codex/tasks", bytes.NewReader(payload))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-protobuf")
 
-	var body codexResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	require.NotEmpty(t, body.IdeaID)
-	require.NotEmpty(t, body.TaskID)
-	require.NotEmpty(t, body.TaskRunID)
-	return body
+		resp, err := client.Do(req)
+		if err == nil {
+			bodyBytes, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			require.NoError(t, readErr)
+
+			if resp.StatusCode == http.StatusAccepted {
+				var body codexResponse
+				require.NoError(t, json.Unmarshal(bodyBytes, &body))
+				require.NotEmpty(t, body.IdeaID)
+				require.NotEmpty(t, body.TaskID)
+				require.NotEmpty(t, body.TaskRunID)
+				return body
+			}
+
+			lastStatus = resp.StatusCode
+			lastBody = bodyBytes
+			lastErr = nil
+
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				require.Failf(t, "unexpected response", "status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+			}
+		} else {
+			lastErr = err
+		}
+
+		if time.Now().After(deadline) {
+			break
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
+	if lastErr != nil {
+		require.Failf(t, "request failed", "error=%v", lastErr)
+	}
+	require.Failf(t, "service unavailable", "status=%d body=%s", lastStatus, strings.TrimSpace(string(lastBody)))
+	return codexResponse{}
 }
