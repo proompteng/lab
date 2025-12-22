@@ -62,6 +62,7 @@ func TestCodexIngestionEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 
 	first := postCodexTask(t, client, baseURL, payload)
+	require.False(t, first.Duplicate, "initial dispatch should not be marked as duplicate")
 
 	db, err := sql.Open("pgx", dsn)
 	require.NoError(t, err)
@@ -89,12 +90,12 @@ func TestCodexIngestionEndToEnd(t *testing.T) {
 		return queryErr == nil && persisted.RunID != "" && persisted.TaskID != "" && persisted.IdeaID != ""
 	}, 30*time.Second, time.Second)
 
-	require.Equal(t, first.TaskRunID, persisted.RunID)
-	require.Equal(t, first.TaskID, persisted.TaskID)
-	require.Equal(t, first.IdeaID, persisted.IdeaID)
-
 	second := postCodexTask(t, client, baseURL, payload)
-	require.Equal(t, first, second, "idempotent replay should return identical identifiers")
+	require.True(t, second.Duplicate, "idempotent replay should be marked as duplicate")
+	require.Equal(t, first.Stage, second.Stage)
+	require.Equal(t, first.Namespace, second.Namespace)
+	require.Equal(t, first.WorkflowName, second.WorkflowName)
+	require.Equal(t, first.SubmittedAt, second.SubmittedAt)
 
 	var runCount int
 	require.NoError(t, db.QueryRow(`
@@ -104,9 +105,11 @@ func TestCodexIngestionEndToEnd(t *testing.T) {
 }
 
 type codexResponse struct {
-	IdeaID    string `json:"ideaId"`
-	TaskID    string `json:"taskId"`
-	TaskRunID string `json:"taskRunId"`
+	Stage        string `json:"stage"`
+	Namespace    string `json:"namespace"`
+	WorkflowName string `json:"workflowName"`
+	SubmittedAt  string `json:"submittedAt"`
+	Duplicate    bool   `json:"duplicate"`
 }
 
 func postCodexTask(t *testing.T, client *http.Client, baseURL string, payload []byte) codexResponse {
@@ -131,9 +134,13 @@ func postCodexTask(t *testing.T, client *http.Client, baseURL string, payload []
 			if resp.StatusCode == http.StatusAccepted {
 				var body codexResponse
 				require.NoError(t, json.Unmarshal(bodyBytes, &body))
-				require.NotEmpty(t, body.IdeaID)
-				require.NotEmpty(t, body.TaskID)
-				require.NotEmpty(t, body.TaskRunID)
+				require.Equal(t, "implementation", body.Stage)
+				require.NotEmpty(t, body.Namespace)
+				require.NotEmpty(t, body.WorkflowName)
+				require.NotEmpty(t, body.SubmittedAt)
+				parsedAt, parseErr := time.Parse(time.RFC3339, body.SubmittedAt)
+				require.NoError(t, parseErr)
+				require.False(t, parsedAt.IsZero())
 				return body
 			}
 
