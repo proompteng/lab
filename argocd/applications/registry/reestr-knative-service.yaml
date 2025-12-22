@@ -1,0 +1,41 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: reestr
+  namespace: registry
+  labels:
+    app.kubernetes.io/name: reestr
+    app.kubernetes.io/part-of: lab
+    networking.knative.dev/visibility: cluster-local
+  annotations:
+    serving.knative.dev/rollout-duration: 10s
+    argocd.argoproj.io/tracking-id: registry:serving.knative.dev/Service:registry/reestr
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/target: "100"
+        deploy.knative.dev/rollout: "2025-12-22T00:00:00.000Z"
+    spec:
+      containerConcurrency: 0
+      timeoutSeconds: 60
+      containers:
+        - name: user-container
+          image: registry.ide-newton.ts.net/lab/reestr
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4173
+              name: http1
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: http1
+            successThreshold: 1
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
