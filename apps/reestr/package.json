@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite dev --host",
     "build": "vite build",
-    "start": "node dist/server/server.js",
+    "start": "bun .output/server/index.mjs",
     "gen:reestr": "bun scripts/gen.ts",
     "lint": "bunx biome check",
     "format": "bunx biome format --write"
