@@ -236,7 +236,7 @@ sequenceDiagram
 
 ## Tree‑sitter Extraction (per file)
 
-Tree‑sitter does not produce a universal AST. We normalize its output into a stable facts schema:
+We normalize Tree‑sitter output into a stable facts schema:
 
 - Parse file with the language grammar.
 - Walk the AST and emit facts like `{ node_type, match_text, start_line, end_line, metadata }`.
