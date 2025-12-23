@@ -11,6 +11,9 @@ COPY tsconfig.base.json ./
 RUN --mount=type=cache,target=/root/.cache/bun \
   bun install --no-save --frozen-lockfile --ignore-scripts --filter @proompteng/bumba
 
+FROM deps AS build
+COPY full/ .
+
 FROM oven/bun:${BUN_VERSION} AS deps-prod
 WORKDIR /app
 ENV HUSKY=0
@@ -23,6 +26,6 @@ FROM oven/bun:${BUN_VERSION} AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=deps-prod /app/node_modules ./node_modules
-COPY --from=deps /app/services/bumba ./services/bumba
-COPY --from=deps /app/tsconfig.base.json ./tsconfig.base.json
+COPY --from=build /app/services/bumba ./services/bumba
+COPY --from=build /app/tsconfig.base.json ./tsconfig.base.json
 CMD ["bun", "services/bumba/src/worker.ts"]
