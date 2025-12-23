@@ -49,6 +49,8 @@ flowchart LR
 - `file_edges`: explicit file‑to‑file relationships for traversal.
 - `github_events`: webhook delivery log for idempotency.
 - `ingestions`: workflow runs tied to webhook events.
+- `event_files`: map webhook events to file keys.
+- `ingestion_targets`: map workflow runs to indexed file versions.
 
 ```mermaid
 erDiagram
@@ -67,6 +69,10 @@ erDiagram
   FILE_VERSIONS ||--o{ FILE_EDGES : from_file
   FILE_VERSIONS ||--o{ FILE_EDGES : to_file
   GITHUB_EVENTS ||--o{ INGESTIONS : triggers
+  GITHUB_EVENTS ||--o{ EVENT_FILES : touches
+  FILE_KEYS ||--o{ EVENT_FILES : file_key
+  INGESTIONS ||--o{ INGESTION_TARGETS : indexes
+  FILE_VERSIONS ||--o{ INGESTION_TARGETS : file_version
 
   REPOSITORIES {
     uuid id
@@ -186,6 +192,7 @@ erDiagram
 
   GITHUB_EVENTS {
     uuid id
+    uuid repository_id
     text delivery_id
     text event_type
     text repository
@@ -204,6 +211,20 @@ erDiagram
     text error
     timestamptz started_at
     timestamptz finished_at
+  }
+
+  EVENT_FILES {
+    uuid id
+    uuid event_id
+    uuid file_key_id
+    text change_type
+  }
+
+  INGESTION_TARGETS {
+    uuid id
+    uuid ingestion_id
+    uuid file_version_id
+    text kind
   }
 ```
 
@@ -275,6 +296,7 @@ sequenceDiagram
 - Bumba workflows are reusable and activity‑based for future pipelines.
 - Webhook deliveries are idempotent via `github_events.delivery_id` and `ingestions` records.
 - Index updates are idempotent by `(file_key_id, repository_ref, repository_commit, content_hash)`.
+- Event and ingestion link tables provide traceability from webhook → files → indexed versions.
 - Graph traversal is supported by `symbol_defs`/`symbol_refs` (for symbol‑level joins) and `file_edges` (for direct file‑to‑file edges).
 
 ## Security Notes
