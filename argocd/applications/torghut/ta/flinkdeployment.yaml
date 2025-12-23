@@ -13,7 +13,7 @@ spec:
   flinkConfiguration:
     state.checkpoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/checkpoints
     state.savepoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/savepoints
-    taskmanager.numberOfTaskSlots: "8"
+    taskmanager.numberOfTaskSlots: "2"
     restart-strategy.type: fixed-delay
     restart-strategy.fixed-delay.attempts: "5"
     restart-strategy.fixed-delay.delay: 5 s
@@ -94,13 +94,13 @@ spec:
     replicas: 1
   taskManager:
     resource:
-      cpu: 1
-      memory: 3072m
+      cpu: 2
+      memory: 4096m
     podTemplate:
       metadata:
         labels:
           app: torghut-ta
-    replicas: 3
+    replicas: 4
   job:
     entryClass: ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJobKt
     jarURI: local:///opt/flink/usrlib/app.jar
