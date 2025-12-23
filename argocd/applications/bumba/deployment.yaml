@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bumba
+  namespace: jangar
+  labels:
+    app.kubernetes.io/name: bumba
+    app.kubernetes.io/part-of: lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bumba
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bumba
+        app.kubernetes.io/part-of: lab
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2025-12-23T00:00:00Z"
+    spec:
+      containers:
+        - name: bumba
+          image: registry.ide-newton.ts.net/lab/bumba
+          imagePullPolicy: Always
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: TEMPORAL_ADDRESS
+              value: temporal-frontend.temporal.svc.cluster.local:7233
+            - name: TEMPORAL_NAMESPACE
+              value: default
+            - name: TEMPORAL_TASK_QUEUE
+              value: bumba
+            - name: BUMBA_WORKSPACE_ROOT
+              value: /workspace/lab
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: jangar-db-app
+                  key: uri
+            - name: PGSSLMODE
+              value: require
+            - name: OPENAI_API_BASE_URL
+              value: http://192.168.1.190:11434/v1
+            - name: OPENAI_EMBEDDING_MODEL
+              value: qwen3-embedding:0.6b
+            - name: OPENAI_EMBEDDING_DIMENSION
+              value: "1024"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+              readOnly: true
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: jangar-workspace-rwx

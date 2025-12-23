@@ -94,6 +94,13 @@ spec:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
             enabled: true
+          - name: bumba
+            path: argocd/applications/bumba
+            namespace: jangar
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+            enabled: true
           - name: oirat
             path: argocd/applications/oirat
             namespace: oirat
