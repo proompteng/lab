@@ -9,6 +9,9 @@ resources:
   - serviceaccount.yaml
   - role.yaml
   - rolebinding.yaml
+  - alloy-rbac.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
   - clickhouse
   - ws
   - ta
