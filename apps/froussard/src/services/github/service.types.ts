@@ -15,6 +15,8 @@ import type {
   ListCheckFailuresResult,
   ListReviewThreadsOptions,
   ListReviewThreadsResult,
+  PostIssueCommentReactionOptions,
+  PostIssueCommentReactionResult,
   PostIssueReactionOptions,
   PostIssueReactionResult,
   ReadyForReviewOptions,
@@ -23,6 +25,9 @@ import type {
 
 export interface GithubServiceDefinition {
   readonly postIssueReaction: (options: PostIssueReactionOptions) => Effect.Effect<PostIssueReactionResult>
+  readonly postIssueCommentReaction: (
+    options: PostIssueCommentReactionOptions,
+  ) => Effect.Effect<PostIssueCommentReactionResult>
   readonly issueHasReaction: (options: IssueReactionPresenceOptions) => Effect.Effect<IssueReactionPresenceResult>
   readonly findLatestPlanComment: (options: FindPlanCommentOptions) => Effect.Effect<FindPlanCommentResult>
   readonly createIssueComment: (options: CreateIssueCommentOptions) => Effect.Effect<CreateIssueCommentResult>

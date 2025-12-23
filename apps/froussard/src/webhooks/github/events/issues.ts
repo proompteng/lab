@@ -4,6 +4,7 @@ import { buildCodexBranchName, buildCodexPrompt, type CodexTaskMessage, normaliz
 import type { ImplementationCommand } from '@/codex/workflow-machine'
 import { selectReactionRepository } from '@/codex-workflow'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent } from '@/github-payload'
+import { logger } from '@/logger'
 import type { WebhookConfig } from '../../types'
 import { PROTO_CODEX_TASK_FULL_NAME, PROTO_CODEX_TASK_SCHEMA, PROTO_CONTENT_TYPE } from '../constants'
 import { toCodexTaskProto } from '../payloads'
@@ -119,6 +120,32 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
     return null
   }
 
+  const isPullRequestIssue = Boolean(issue?.pull_request?.url ?? issue?.pull_request?.html_url)
+  if (!isPullRequestIssue) {
+    const reactionResult = await executionContext.runGithub(() =>
+      executionContext.githubService.postIssueReaction({
+        repositoryFullName,
+        issueNumber,
+        reactionContent: '+1',
+        token: config.github.token,
+        apiBaseUrl: config.github.apiBaseUrl,
+        userAgent: config.github.userAgent,
+      }),
+    )
+
+    if (!reactionResult.ok) {
+      logger.warn(
+        {
+          repositoryFullName,
+          issueNumber,
+          reason: reactionResult.reason,
+          status: reactionResult.status,
+        },
+        'failed to post thumbs up reaction on issue',
+      )
+    }
+  }
+
   const baseBranch = repository?.default_branch ?? config.codebase.baseBranch
   const headBranch = buildCodexBranchName(issueNumber, deliveryId, config.codebase.branchPrefix)
   const issueTitle = typeof issue?.title === 'string' && issue.title.length > 0 ? issue.title : `Issue #${issueNumber}`
@@ -204,9 +231,62 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
   const issueRepository = selectReactionRepository(issue, payload.repository)
   const repositoryFullName = deriveRepositoryFullName(issueRepository, issue?.repository_url)
   const issueNumber = typeof issue?.number === 'number' ? issue.number : undefined
+  const isPullRequestComment = Boolean(issue?.pull_request?.url ?? issue?.pull_request?.html_url)
+  const commentId = payload.comment?.id
 
   if (!issueNumber || !repositoryFullName) {
     return null
+  }
+
+  if (isPullRequestComment && typeof commentId === 'number') {
+    const reactionResult = await executionContext.runGithub(() =>
+      executionContext.githubService.postIssueCommentReaction({
+        repositoryFullName,
+        commentId,
+        reactionContent: 'eyes',
+        token: config.github.token,
+        apiBaseUrl: config.github.apiBaseUrl,
+        userAgent: config.github.userAgent,
+      }),
+    )
+
+    if (!reactionResult.ok) {
+      logger.warn(
+        {
+          repositoryFullName,
+          issueNumber,
+          commentId,
+          reason: reactionResult.reason,
+          status: reactionResult.status,
+        },
+        'failed to post eyes reaction on pull request comment',
+      )
+    }
+  }
+
+  if (!isPullRequestComment) {
+    const reactionResult = await executionContext.runGithub(() =>
+      executionContext.githubService.postIssueReaction({
+        repositoryFullName,
+        issueNumber,
+        reactionContent: '+1',
+        token: config.github.token,
+        apiBaseUrl: config.github.apiBaseUrl,
+        userAgent: config.github.userAgent,
+      }),
+    )
+
+    if (!reactionResult.ok) {
+      logger.warn(
+        {
+          repositoryFullName,
+          issueNumber,
+          reason: reactionResult.reason,
+          status: reactionResult.status,
+        },
+        'failed to post thumbs up reaction on issue',
+      )
+    }
   }
 
   const baseBranch = issueRepository?.default_branch ?? config.codebase.baseBranch

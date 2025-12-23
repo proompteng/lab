@@ -86,6 +86,7 @@ vi.mock('@/services/github/service', () => {
     GithubService,
     {
       postIssueReaction: (options: unknown) => ReturnType<typeof Effect.succeed>
+      postIssueCommentReaction: (options: unknown) => ReturnType<typeof Effect.succeed>
       issueHasReaction: (options: unknown) => ReturnType<typeof Effect.succeed>
       findLatestPlanComment: (options: unknown) => ReturnType<typeof Effect.succeed>
       fetchPullRequest: (options: unknown) => ReturnType<typeof Effect.succeed>
@@ -98,6 +99,7 @@ vi.mock('@/services/github/service', () => {
 
   const GithubServiceLayer = Layer.succeed(GithubService, {
     postIssueReaction: () => Effect.succeed({ ok: true }),
+    postIssueCommentReaction: () => Effect.succeed({ ok: true }),
     issueHasReaction: () => Effect.succeed({ ok: true, hasReaction: true }),
     findLatestPlanComment: () => Effect.succeed({ ok: false, reason: 'not-found' }),
     fetchPullRequest: () => Effect.succeed({ ok: false, reason: 'not-found' }),

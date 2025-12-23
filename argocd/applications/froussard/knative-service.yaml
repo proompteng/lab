@@ -20,7 +20,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: app
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:bb0ea176b0bd80f2761b206e3b29fd87ef52b6a271877bcfcb3e20a6f0be4575
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:419c735514b120d6e4ac3845f1324d51bf8d121538b7b461ec59b1d679e1711c
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -63,13 +63,15 @@ spec:
             - name: OTEL_SERVICE_NAMESPACE
               value: froussard
             - name: FROUSSARD_VERSION
-              value: v0.352.0-10-g929f459b
+              value: v0.356.2-4-gf5c73adb
             - name: FROUSSARD_COMMIT
-              value: 929f459bb70677479029ab5cec35b87c33e26f5e
+              value: f5c73adb39549fe86c2bc6dbb2461517fb0ab192
             - name: LGTM_TEMPO_TRACES_ENDPOINT
               value: http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces
             - name: LGTM_MIMIR_METRICS_ENDPOINT
               value: http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics
+            - name: OTEL_EXPORTER_OTLP_METRICS_TIMEOUT
+              value: "20000"
             - name: LGTM_LOKI_ENDPOINT
               value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
