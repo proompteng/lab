@@ -1,4 +1,4 @@
-import { IconBrain, IconHeart, IconHome, IconList, IconRobot } from '@tabler/icons-react'
+import { IconBrain, IconDatabase, IconHeart, IconHome, IconList, IconRobot } from '@tabler/icons-react'
 import { Link, useRouterState } from '@tanstack/react-router'
 
 import {
@@ -19,6 +19,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 const appNav = [
   { to: '/', label: 'Home', icon: IconHome },
   { to: '/memories', label: 'Memories', icon: IconBrain },
+  { to: '/atlas', label: 'Atlas', icon: IconDatabase },
 ] as const
 
 const apiNav = [

@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as MemoriesRouteImport } from './routes/memories'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as HealthRouteImport } from './routes/health'
+import { Route as AtlasRouteImport } from './routes/atlas'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
 import { Route as ApiModelsRouteImport } from './routes/api/models'
@@ -37,6 +38,11 @@ const McpRoute = McpRouteImport.update({
 const HealthRoute = HealthRouteImport.update({
   id: '/health',
   path: '/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AtlasRoute = AtlasRouteImport.update({
+  id: '/atlas',
+  path: '/atlas',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -97,6 +103,7 @@ const ApiTorghutSymbolsSymbolRoute = ApiTorghutSymbolsSymbolRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/atlas': typeof AtlasRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
@@ -113,6 +120,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/atlas': typeof AtlasRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
@@ -130,6 +138,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/atlas': typeof AtlasRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
@@ -148,6 +157,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/atlas'
     | '/health'
     | '/mcp'
     | '/memories'
@@ -164,6 +174,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/atlas'
     | '/health'
     | '/mcp'
     | '/memories'
@@ -180,6 +191,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/atlas'
     | '/health'
     | '/mcp'
     | '/memories'
@@ -197,6 +209,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AtlasRoute: typeof AtlasRoute
   HealthRoute: typeof HealthRoute
   McpRoute: typeof McpRoute
   MemoriesRoute: typeof MemoriesRoute
@@ -232,6 +245,13 @@ declare module '@tanstack/react-router' {
       path: '/health'
       fullPath: '/health'
       preLoaderRoute: typeof HealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/atlas': {
+      id: '/atlas'
+      path: '/atlas'
+      fullPath: '/atlas'
+      preLoaderRoute: typeof AtlasRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -327,6 +347,7 @@ const ApiTorghutSymbolsRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AtlasRoute: AtlasRoute,
   HealthRoute: HealthRoute,
   McpRoute: McpRoute,
   MemoriesRoute: MemoriesRoute,
@@ -343,12 +364,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}
