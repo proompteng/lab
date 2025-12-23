@@ -393,6 +393,7 @@
       "name": "@proompteng/scripts",
       "version": "0.1.0",
       "dependencies": {
+        "@proompteng/temporal-bun-sdk": "workspace:*",
         "yaml": "^2.8.0",
       },
       "devDependencies": {

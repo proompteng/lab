@@ -83,7 +83,8 @@ const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
 const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
 const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding:0.6b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
-const DEFAULT_COMPLETION_MODEL = 'gpt-5.2-codex'
+const DEFAULT_OPENAI_COMPLETION_MODEL = 'gpt-5.2-codex'
+const DEFAULT_SELF_HOSTED_COMPLETION_MODEL = 'qwen3-coder:30b-a3b-q4_K_M'
 
 const MAX_AST_BYTES = 200_000
 const MAX_FACTS = 300
@@ -138,6 +139,13 @@ const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
   return {
     model: hosted ? DEFAULT_OPENAI_EMBEDDING_MODEL : DEFAULT_SELF_HOSTED_EMBEDDING_MODEL,
     dimension: hosted ? DEFAULT_OPENAI_EMBEDDING_DIMENSION : DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION,
+  }
+}
+
+const resolveCompletionDefaults = (apiBaseUrl: string) => {
+  const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
+  return {
+    model: hosted ? DEFAULT_OPENAI_COMPLETION_MODEL : DEFAULT_SELF_HOSTED_COMPLETION_MODEL,
   }
 }
 
@@ -444,7 +452,8 @@ const loadCompletionConfig = () => {
     )
   }
 
-  const model = process.env.OPENAI_COMPLETION_MODEL ?? process.env.OPENAI_MODEL ?? DEFAULT_COMPLETION_MODEL
+  const defaults = resolveCompletionDefaults(apiBaseUrl)
+  const model = process.env.OPENAI_COMPLETION_MODEL ?? process.env.OPENAI_MODEL ?? defaults.model
   const timeoutMs = Number.parseInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS ?? '30000', 10)
   const maxInputChars = clampNumber(
     Number.parseInt(process.env.OPENAI_COMPLETION_MAX_INPUT_CHARS ?? '', 10),
@@ -750,9 +759,9 @@ export const activities = {
 
     const fileMeta = input.fileMetadata
     const repositoryName = fileMeta.repoName
-    const repositoryRef = fileMeta.repoRef
-    const repositoryCommit = fileMeta.repoCommit
-    const contentHash = fileMeta.contentHash
+    const repositoryRef = fileMeta.repoRef ?? 'main'
+    const repositoryCommit = fileMeta.repoCommit ?? ''
+    const contentHash = fileMeta.contentHash ?? ''
 
     const repositoryRows = (await db`
       INSERT INTO atlas.repositories (name, default_ref, metadata)
@@ -834,7 +843,7 @@ export const activities = {
         ${db.array([], 'text')}::text[],
         ${JSON.stringify(enrichmentMetadata)}::jsonb
       )
-      ON CONFLICT (file_version_id, kind, source) DO UPDATE
+      ON CONFLICT (file_version_id, kind, source) WHERE chunk_id IS NULL DO UPDATE
       SET content = EXCLUDED.content,
           summary = EXCLUDED.summary,
           metadata = EXCLUDED.metadata

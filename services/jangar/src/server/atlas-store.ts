@@ -535,20 +535,17 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
   const expectedEmbeddingDimension = loadEmbeddingDimension(defaults.dimension)
 
   const ensureEmbeddingDimensionMatches = async () => {
-    const rows = await db.unsafe<Array<{ embedding_type: string | null }>>(
-      `
-        SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS embedding_type
-        FROM pg_catalog.pg_attribute a
-        JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = $1
-          AND c.relname = 'embeddings'
-          AND a.attname = 'embedding'
-          AND a.attnum > 0
-          AND NOT a.attisdropped;
-      `,
-      [SCHEMA],
-    )
+    const rows = (await db`
+      SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS embedding_type
+      FROM pg_catalog.pg_attribute a
+      JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = ${SCHEMA}
+        AND c.relname = 'embeddings'
+        AND a.attname = 'embedding'
+        AND a.attnum > 0
+        AND NOT a.attisdropped;
+    `) as Array<{ embedding_type: string | null }>
 
     const embeddingType = rows[0]?.embedding_type ?? null
     if (!embeddingType) return
@@ -559,7 +556,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
 
     if (actualDimension !== expectedEmbeddingDimension) {
       throw new Error(
-        `embedding dimension mismatch in Postgres schema: ${SCHEMA}.embeddings.embedding is ${embeddingType} ` +
+        `embedding dimension mismatch in Postgres schema: atlas.embeddings.embedding is ${embeddingType} ` +
           `but OPENAI_EMBEDDING_DIMENSION is ${expectedEmbeddingDimension}. ` +
           'Update OPENAI_EMBEDDING_DIMENSION (and regenerate embeddings) or migrate the column type to match.',
       )
@@ -589,7 +586,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         }
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.repositories (
+          CREATE TABLE IF NOT EXISTS atlas.repositories (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             name TEXT NOT NULL,
             default_ref TEXT NOT NULL DEFAULT 'main',
@@ -601,9 +598,9 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.file_keys (
+          CREATE TABLE IF NOT EXISTS atlas.file_keys (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            repository_id UUID NOT NULL REFERENCES ${SCHEMA}.repositories(id) ON DELETE CASCADE,
+            repository_id UUID NOT NULL REFERENCES atlas.repositories(id) ON DELETE CASCADE,
             path TEXT NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (repository_id, path)
@@ -611,9 +608,9 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.file_versions (
+          CREATE TABLE IF NOT EXISTS atlas.file_versions (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            file_key_id UUID NOT NULL REFERENCES ${SCHEMA}.file_keys(id) ON DELETE CASCADE,
+            file_key_id UUID NOT NULL REFERENCES atlas.file_keys(id) ON DELETE CASCADE,
             repository_ref TEXT NOT NULL DEFAULT 'main',
             repository_commit TEXT NOT NULL DEFAULT '',
             content_hash TEXT NOT NULL DEFAULT '',
@@ -629,9 +626,9 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.file_chunks (
+          CREATE TABLE IF NOT EXISTS atlas.file_chunks (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            file_version_id UUID NOT NULL REFERENCES ${SCHEMA}.file_versions(id) ON DELETE CASCADE,
+            file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
             chunk_index INT NOT NULL,
             start_line INT,
             end_line INT,
@@ -644,10 +641,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.enrichments (
+          CREATE TABLE IF NOT EXISTS atlas.enrichments (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            file_version_id UUID NOT NULL REFERENCES ${SCHEMA}.file_versions(id) ON DELETE CASCADE,
-            chunk_id UUID REFERENCES ${SCHEMA}.file_chunks(id) ON DELETE SET NULL,
+            file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
+            chunk_id UUID REFERENCES atlas.file_chunks(id) ON DELETE SET NULL,
             kind TEXT NOT NULL,
             source TEXT NOT NULL,
             content TEXT NOT NULL,
@@ -660,9 +657,9 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.embeddings (
+          CREATE TABLE IF NOT EXISTS atlas.embeddings (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            enrichment_id UUID NOT NULL REFERENCES ${SCHEMA}.enrichments(id) ON DELETE CASCADE,
+            enrichment_id UUID NOT NULL REFERENCES atlas.enrichments(id) ON DELETE CASCADE,
             model TEXT NOT NULL,
             dimension INT NOT NULL,
             embedding vector(${expectedEmbeddingDimension}) NOT NULL,
@@ -672,9 +669,9 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.tree_sitter_facts (
+          CREATE TABLE IF NOT EXISTS atlas.tree_sitter_facts (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            file_version_id UUID NOT NULL REFERENCES ${SCHEMA}.file_versions(id) ON DELETE CASCADE,
+            file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
             node_type TEXT NOT NULL,
             match_text TEXT NOT NULL,
             start_line INT,
@@ -686,9 +683,9 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.symbols (
+          CREATE TABLE IF NOT EXISTS atlas.symbols (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            repository_id UUID NOT NULL REFERENCES ${SCHEMA}.repositories(id) ON DELETE CASCADE,
+            repository_id UUID NOT NULL REFERENCES atlas.repositories(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
             normalized_name TEXT NOT NULL,
             kind TEXT NOT NULL,
@@ -700,10 +697,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.symbol_defs (
+          CREATE TABLE IF NOT EXISTS atlas.symbol_defs (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            symbol_id UUID NOT NULL REFERENCES ${SCHEMA}.symbols(id) ON DELETE CASCADE,
-            file_version_id UUID NOT NULL REFERENCES ${SCHEMA}.file_versions(id) ON DELETE CASCADE,
+            symbol_id UUID NOT NULL REFERENCES atlas.symbols(id) ON DELETE CASCADE,
+            file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
             start_line INT,
             end_line INT,
             metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -713,10 +710,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.symbol_refs (
+          CREATE TABLE IF NOT EXISTS atlas.symbol_refs (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            symbol_id UUID NOT NULL REFERENCES ${SCHEMA}.symbols(id) ON DELETE CASCADE,
-            file_version_id UUID NOT NULL REFERENCES ${SCHEMA}.file_versions(id) ON DELETE CASCADE,
+            symbol_id UUID NOT NULL REFERENCES atlas.symbols(id) ON DELETE CASCADE,
+            file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
             start_line INT,
             end_line INT,
             metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -726,10 +723,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.file_edges (
+          CREATE TABLE IF NOT EXISTS atlas.file_edges (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            from_file_version_id UUID NOT NULL REFERENCES ${SCHEMA}.file_versions(id) ON DELETE CASCADE,
-            to_file_version_id UUID NOT NULL REFERENCES ${SCHEMA}.file_versions(id) ON DELETE CASCADE,
+            from_file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
+            to_file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
             kind TEXT NOT NULL,
             metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -738,9 +735,9 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.github_events (
+          CREATE TABLE IF NOT EXISTS atlas.github_events (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            repository_id UUID REFERENCES ${SCHEMA}.repositories(id) ON DELETE SET NULL,
+            repository_id UUID REFERENCES atlas.repositories(id) ON DELETE SET NULL,
             delivery_id TEXT NOT NULL,
             event_type TEXT NOT NULL,
             repository TEXT NOT NULL,
@@ -754,9 +751,9 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.ingestions (
+          CREATE TABLE IF NOT EXISTS atlas.ingestions (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            event_id UUID NOT NULL REFERENCES ${SCHEMA}.github_events(id) ON DELETE CASCADE,
+            event_id UUID NOT NULL REFERENCES atlas.github_events(id) ON DELETE CASCADE,
             workflow_id TEXT NOT NULL,
             status TEXT NOT NULL,
             error TEXT,
@@ -767,20 +764,20 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.event_files (
+          CREATE TABLE IF NOT EXISTS atlas.event_files (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            event_id UUID NOT NULL REFERENCES ${SCHEMA}.github_events(id) ON DELETE CASCADE,
-            file_key_id UUID NOT NULL REFERENCES ${SCHEMA}.file_keys(id) ON DELETE CASCADE,
+            event_id UUID NOT NULL REFERENCES atlas.github_events(id) ON DELETE CASCADE,
+            file_key_id UUID NOT NULL REFERENCES atlas.file_keys(id) ON DELETE CASCADE,
             change_type TEXT NOT NULL,
             UNIQUE (event_id, file_key_id)
           );
         `)
 
         await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS ${SCHEMA}.ingestion_targets (
+          CREATE TABLE IF NOT EXISTS atlas.ingestion_targets (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            ingestion_id UUID NOT NULL REFERENCES ${SCHEMA}.ingestions(id) ON DELETE CASCADE,
-            file_version_id UUID NOT NULL REFERENCES ${SCHEMA}.file_versions(id) ON DELETE CASCADE,
+            ingestion_id UUID NOT NULL REFERENCES atlas.ingestions(id) ON DELETE CASCADE,
+            file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
             kind TEXT NOT NULL,
             UNIQUE (ingestion_id, file_version_id, kind)
           );
@@ -790,70 +787,70 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
 
         await db.unsafe(`
           CREATE INDEX IF NOT EXISTS atlas_file_keys_path_idx
-          ON ${SCHEMA}.file_keys (path text_pattern_ops);
+          ON atlas.file_keys (path text_pattern_ops);
         `)
 
         await db.unsafe(`
           CREATE INDEX IF NOT EXISTS atlas_file_versions_ref_idx
-          ON ${SCHEMA}.file_versions (repository_ref, repository_commit);
+          ON atlas.file_versions (repository_ref, repository_commit);
         `)
 
         await db.unsafe(`
           CREATE INDEX IF NOT EXISTS atlas_file_versions_metadata_idx
-          ON ${SCHEMA}.file_versions USING GIN (metadata JSONB_PATH_OPS);
+          ON atlas.file_versions USING GIN (metadata JSONB_PATH_OPS);
         `)
 
         await db.unsafe(`
           CREATE UNIQUE INDEX IF NOT EXISTS atlas_enrichments_file_kind_source_null_chunk_idx
-          ON ${SCHEMA}.enrichments (file_version_id, kind, source)
+          ON atlas.enrichments (file_version_id, kind, source)
           WHERE chunk_id IS NULL;
         `)
 
         await db.unsafe(`
           CREATE INDEX IF NOT EXISTS atlas_enrichments_kind_idx
-          ON ${SCHEMA}.enrichments (kind);
+          ON atlas.enrichments (kind);
         `)
 
         await db.unsafe(`
           CREATE INDEX IF NOT EXISTS atlas_enrichments_tags_idx
-          ON ${SCHEMA}.enrichments USING GIN (tags);
+          ON atlas.enrichments USING GIN (tags);
         `)
 
         await db.unsafe(`
           CREATE INDEX IF NOT EXISTS atlas_enrichments_metadata_idx
-          ON ${SCHEMA}.enrichments USING GIN (metadata JSONB_PATH_OPS);
+          ON atlas.enrichments USING GIN (metadata JSONB_PATH_OPS);
         `)
 
         await db.unsafe(`
           CREATE INDEX IF NOT EXISTS atlas_embeddings_embedding_idx
-          ON ${SCHEMA}.embeddings
+          ON atlas.embeddings
           USING ivfflat (embedding vector_cosine_ops)
           WITH (lists = 100);
         `)
 
         await db.unsafe(`
           CREATE INDEX IF NOT EXISTS atlas_symbols_lookup_idx
-          ON ${SCHEMA}.symbols (normalized_name, kind);
+          ON atlas.symbols (normalized_name, kind);
         `)
 
         await db.unsafe(`
           CREATE INDEX IF NOT EXISTS atlas_symbol_defs_file_idx
-          ON ${SCHEMA}.symbol_defs (file_version_id);
+          ON atlas.symbol_defs (file_version_id);
         `)
 
         await db.unsafe(`
           CREATE INDEX IF NOT EXISTS atlas_symbol_refs_file_idx
-          ON ${SCHEMA}.symbol_refs (file_version_id);
+          ON atlas.symbol_refs (file_version_id);
         `)
 
         await db.unsafe(`
           CREATE INDEX IF NOT EXISTS atlas_file_edges_from_idx
-          ON ${SCHEMA}.file_edges (from_file_version_id, kind);
+          ON atlas.file_edges (from_file_version_id, kind);
         `)
 
         await db.unsafe(`
           CREATE INDEX IF NOT EXISTS atlas_file_edges_to_idx
-          ON ${SCHEMA}.file_edges (to_file_version_id, kind);
+          ON atlas.file_edges (to_file_version_id, kind);
         `)
       })()
     }
@@ -868,7 +865,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedMetadata = parseMetadata(metadata)
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.repositories (name, default_ref, metadata)
+      INSERT INTO atlas.repositories (name, default_ref, metadata)
       VALUES (${resolvedName}, ${resolvedDefaultRef}, ${resolvedMetadata}::jsonb)
       ON CONFLICT (name)
       DO UPDATE SET default_ref = EXCLUDED.default_ref, metadata = EXCLUDED.metadata, updated_at = now()
@@ -901,7 +898,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedName = normalizeText(name, 'repository name')
     const rows = (await db`
       SELECT id, name, default_ref, metadata, created_at, updated_at
-      FROM ${SCHEMA}.repositories
+      FROM atlas.repositories
       WHERE name = ${resolvedName}
       LIMIT 1;
     `) as Array<{
@@ -933,7 +930,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedPath = normalizeText(path, 'path')
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.file_keys (repository_id, path)
+      INSERT INTO atlas.file_keys (repository_id, path)
       VALUES (${resolvedRepoId}, ${resolvedPath})
       ON CONFLICT (repository_id, path)
       DO UPDATE SET path = EXCLUDED.path
@@ -959,7 +956,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
 
     const rows = (await db`
       SELECT id, repository_id, path, created_at
-      FROM ${SCHEMA}.file_keys
+      FROM atlas.file_keys
       WHERE repository_id = ${resolvedRepoId} AND path = ${resolvedPath}
       LIMIT 1;
     `) as Array<{ id: string; repository_id: string; path: string; created_at: string | Date }>
@@ -1001,7 +998,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedSourceTimestamp = parseDate(sourceTimestamp)
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.file_versions (
+      INSERT INTO atlas.file_versions (
         file_key_id,
         repository_ref,
         repository_commit,
@@ -1083,7 +1080,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const rows = (await db`
       SELECT id, file_key_id, repository_ref, repository_commit, content_hash, language, byte_size, line_count,
         metadata, source_timestamp, created_at, updated_at
-      FROM ${SCHEMA}.file_versions
+      FROM atlas.file_versions
       WHERE file_key_id = ${resolvedFileKeyId}
         AND repository_ref = ${resolvedRepositoryRef}
         AND repository_commit = ${resolvedCommit}
@@ -1140,7 +1137,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedMetadata = parseMetadata(metadata)
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.file_chunks (
+      INSERT INTO atlas.file_chunks (
         file_version_id,
         chunk_index,
         start_line,
@@ -1217,7 +1214,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
 
     const rows = resolvedChunkId
       ? ((await db`
-          INSERT INTO ${SCHEMA}.enrichments (
+          INSERT INTO atlas.enrichments (
             file_version_id,
             chunk_id,
             kind,
@@ -1257,7 +1254,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
           created_at: string | Date
         }>)
       : ((await db`
-          INSERT INTO ${SCHEMA}.enrichments (
+          INSERT INTO atlas.enrichments (
             file_version_id,
             chunk_id,
             kind,
@@ -1337,7 +1334,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const vectorString = vectorToPgArray(embedding)
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.embeddings (enrichment_id, model, dimension, embedding)
+      INSERT INTO atlas.embeddings (enrichment_id, model, dimension, embedding)
       VALUES (
         ${resolvedEnrichmentId},
         ${resolvedModel},
@@ -1377,7 +1374,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedMetadata = parseMetadata(metadata)
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.tree_sitter_facts (
+      INSERT INTO atlas.tree_sitter_facts (
         file_version_id,
         node_type,
         match_text,
@@ -1440,7 +1437,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedMetadata = parseMetadata(metadata)
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.symbols (repository_id, name, normalized_name, kind, signature, metadata)
+      INSERT INTO atlas.symbols (repository_id, name, normalized_name, kind, signature, metadata)
       VALUES (
         ${resolvedRepositoryId},
         ${resolvedName},
@@ -1492,7 +1489,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedMetadata = parseMetadata(metadata)
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.symbol_defs (symbol_id, file_version_id, start_line, end_line, metadata)
+      INSERT INTO atlas.symbol_defs (symbol_id, file_version_id, start_line, end_line, metadata)
       VALUES (
         ${resolvedSymbolId},
         ${resolvedFileVersionId},
@@ -1541,7 +1538,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedMetadata = parseMetadata(metadata)
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.symbol_refs (symbol_id, file_version_id, start_line, end_line, metadata)
+      INSERT INTO atlas.symbol_refs (symbol_id, file_version_id, start_line, end_line, metadata)
       VALUES (
         ${resolvedSymbolId},
         ${resolvedFileVersionId},
@@ -1590,7 +1587,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedMetadata = parseMetadata(metadata)
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.file_edges (from_file_version_id, to_file_version_id, kind, metadata)
+      INSERT INTO atlas.file_edges (from_file_version_id, to_file_version_id, kind, metadata)
       VALUES (${resolvedFrom}, ${resolvedTo}, ${resolvedKind}, ${resolvedMetadata}::jsonb)
       ON CONFLICT (from_file_version_id, to_file_version_id, kind)
       DO UPDATE SET metadata = EXCLUDED.metadata
@@ -1639,7 +1636,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedProcessedAt = parseDate(processedAt)
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.github_events (
+      INSERT INTO atlas.github_events (
         repository_id,
         delivery_id,
         event_type,
@@ -1669,7 +1666,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         installation_id = EXCLUDED.installation_id,
         sender_login = EXCLUDED.sender_login,
         payload = EXCLUDED.payload,
-        processed_at = COALESCE(EXCLUDED.processed_at, ${SCHEMA}.github_events.processed_at)
+        processed_at = COALESCE(EXCLUDED.processed_at, atlas.github_events.processed_at)
       RETURNING id, repository_id, delivery_id, event_type, repository, installation_id, sender_login, payload,
         received_at, processed_at;
     `) as Array<{
@@ -1720,7 +1717,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedFinishedAt = parseDate(finishedAt)
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.ingestions (event_id, workflow_id, status, error, started_at, finished_at)
+      INSERT INTO atlas.ingestions (event_id, workflow_id, status, error, started_at, finished_at)
       VALUES (
         ${resolvedEventId},
         ${resolvedWorkflowId},
@@ -1733,8 +1730,8 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
       DO UPDATE SET
         status = EXCLUDED.status,
         error = EXCLUDED.error,
-        started_at = COALESCE(EXCLUDED.started_at, ${SCHEMA}.ingestions.started_at),
-        finished_at = COALESCE(EXCLUDED.finished_at, ${SCHEMA}.ingestions.finished_at)
+        started_at = COALESCE(EXCLUDED.started_at, atlas.ingestions.started_at),
+        finished_at = COALESCE(EXCLUDED.finished_at, atlas.ingestions.finished_at)
       RETURNING id, event_id, workflow_id, status, error, started_at, finished_at;
     `) as Array<{
       id: string
@@ -1768,7 +1765,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedChangeType = normalizeText(changeType, 'changeType')
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.event_files (event_id, file_key_id, change_type)
+      INSERT INTO atlas.event_files (event_id, file_key_id, change_type)
       VALUES (${resolvedEventId}, ${resolvedFileKeyId}, ${resolvedChangeType})
       ON CONFLICT (event_id, file_key_id)
       DO UPDATE SET change_type = EXCLUDED.change_type
@@ -1794,7 +1791,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedKind = normalizeText(kind, 'kind')
 
     const rows = (await db`
-      INSERT INTO ${SCHEMA}.ingestion_targets (ingestion_id, file_version_id, kind)
+      INSERT INTO atlas.ingestion_targets (ingestion_id, file_version_id, kind)
       VALUES (${resolvedIngestionId}, ${resolvedFileVersionId}, ${resolvedKind})
       ON CONFLICT (ingestion_id, file_version_id, kind)
       DO UPDATE SET kind = EXCLUDED.kind
@@ -1925,14 +1922,14 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
           repositories.created_at AS repository_created_at,
           repositories.updated_at AS repository_updated_at,
           embeddings.embedding <=> $1::vector AS distance
-        FROM ${SCHEMA}.embeddings AS embeddings
-        JOIN ${SCHEMA}.enrichments AS enrichments
+        FROM atlas.embeddings AS embeddings
+        JOIN atlas.enrichments AS enrichments
           ON enrichments.id = embeddings.enrichment_id
-        JOIN ${SCHEMA}.file_versions AS file_versions
+        JOIN atlas.file_versions AS file_versions
           ON file_versions.id = enrichments.file_version_id
-        JOIN ${SCHEMA}.file_keys AS file_keys
+        JOIN atlas.file_keys AS file_keys
           ON file_keys.id = file_versions.file_key_id
-        JOIN ${SCHEMA}.repositories AS repositories
+        JOIN atlas.repositories AS repositories
           ON repositories.id = file_keys.repository_id
         WHERE ${conditions.join(' AND ')}
         ORDER BY embeddings.embedding <=> $1::vector
@@ -2023,11 +2020,11 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     >(
       `
         SELECT
-          (SELECT COUNT(*) FROM ${SCHEMA}.repositories) AS repositories,
-          (SELECT COUNT(*) FROM ${SCHEMA}.file_keys) AS file_keys,
-          (SELECT COUNT(*) FROM ${SCHEMA}.file_versions) AS file_versions,
-          (SELECT COUNT(*) FROM ${SCHEMA}.enrichments) AS enrichments,
-          (SELECT COUNT(*) FROM ${SCHEMA}.embeddings) AS embeddings;
+          (SELECT COUNT(*) FROM atlas.repositories) AS repositories,
+          (SELECT COUNT(*) FROM atlas.file_keys) AS file_keys,
+          (SELECT COUNT(*) FROM atlas.file_versions) AS file_versions,
+          (SELECT COUNT(*) FROM atlas.enrichments) AS enrichments,
+          (SELECT COUNT(*) FROM atlas.embeddings) AS embeddings;
       `,
     )
 
