@@ -119,13 +119,12 @@ const createWritableHandle = (stream: unknown): WritableHandle | undefined => {
   }
 
   if (typeof candidate.write === 'function') {
-    const write = candidate.write
     return {
       write: async (chunk: string) => {
-        write(chunk)
+        candidate.write?.call(candidate, chunk)
         if (typeof candidate.flush === 'function') {
           try {
-            await candidate.flush()
+            await candidate.flush.call(candidate)
           } catch {
             // ignore flush errors; fallback to best effort
           }
@@ -133,9 +132,9 @@ const createWritableHandle = (stream: unknown): WritableHandle | undefined => {
       },
       close: async () => {
         if (typeof candidate.end === 'function') {
-          candidate.end()
+          candidate.end.call(candidate)
         } else if (typeof candidate.close === 'function') {
-          await candidate.close()
+          await candidate.close.call(candidate)
         }
       },
     }
