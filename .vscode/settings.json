@@ -15,5 +15,6 @@
   },
   "[jsonc]": {
     "editor.defaultFormatter": "vscode.json-language-features"
-  }
+  },
+  "java.compile.nullAnalysis.mode": "automatic"
 }
