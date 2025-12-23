@@ -2,7 +2,7 @@ import { defineWorkflow } from '@proompteng/temporal-bun-sdk/workflow'
 import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
-import activities from '../activities/index.ts'
+import activities from '../activities/index'
 
 const EnrichFileInput = Schema.Struct({
   repoRoot: Schema.String,
