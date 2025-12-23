@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: discourse
+  labels:
+    app: discourse
+    app.kubernetes.io/name: discourse
+    app.kubernetes.io/part-of: lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: discourse
+  template:
+    metadata:
+      labels:
+        app: discourse
+        app.kubernetes.io/name: discourse
+        app.kubernetes.io/part-of: lab
+    spec:
+      containers:
+        - name: discourse
+          # TODO: replace with the site-specific Discourse image built via discourse_docker.
+          image: registry.ide-newton.ts.net/lab/discourse:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RAILS_ENV
+              value: production
+            - name: DISCOURSE_HOSTNAME
+              value: forum.<domain> # TODO: set base domain for forum.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: discourse-db-app
+                  key: uri
+            - name: REDIS_URL
+              value: redis://discourse-redis-leader:6379/0
+            - name: DISCOURSE_SMTP_ADDRESS
+              value: "" # TODO: set SMTP host.
+            - name: DISCOURSE_SMTP_PORT
+              value: "" # TODO: set SMTP port.
+            - name: DISCOURSE_SMTP_USER_NAME
+              value: "" # TODO: set SMTP username.
+            - name: DISCOURSE_SMTP_PASSWORD
+              value: "" # TODO: set SMTP password.
+            - name: DISCOURSE_SMTP_DOMAIN
+              value: "" # TODO: set SMTP domain/from.
+            - name: DISCOURSE_SMTP_ENABLE_START_TLS
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: discourse-shared

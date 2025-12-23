@@ -1,0 +1,30 @@
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: Redis
+metadata:
+  name: discourse-redis
+spec:
+  kubernetesConfig:
+    image: quay.io/opstree/redis:v7.0.15
+    imagePullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+  podSecurityContext:
+    fsGroup: 1000
+    fsGroupChangePolicy: Always
+  redisExporter:
+    enabled: true
+    image: quay.io/opstree/redis-exporter:v1.78.0@sha256:8edf2c77220a6e8fc290d13a4ec78bedcbdf08b8bf03a64119f448131f733d3f
+  storage:
+    volumeClaimTemplate:
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi
+        storageClassName: longhorn
