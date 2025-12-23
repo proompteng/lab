@@ -277,6 +277,31 @@ export type UpsertIngestionTargetInput = {
   kind: string
 }
 
+export type AtlasSearchInput = {
+  query: string
+  limit?: number
+  repository?: string
+  ref?: string
+  pathPrefix?: string
+  tags?: string[]
+  kinds?: string[]
+}
+
+export type AtlasSearchMatch = {
+  enrichment: EnrichmentRecord & { distance: number }
+  fileVersion: FileVersionRecord
+  fileKey: FileKeyRecord
+  repository: RepositoryRecord
+}
+
+export type AtlasStats = {
+  repositories: number
+  fileKeys: number
+  fileVersions: number
+  enrichments: number
+  embeddings: number
+}
+
 export type AtlasStore = {
   upsertRepository: (input: UpsertRepositoryInput) => Promise<RepositoryRecord>
   getRepositoryByName: (input: { name: string }) => Promise<RepositoryRecord | null>
@@ -301,6 +326,8 @@ export type AtlasStore = {
   upsertIngestion: (input: UpsertIngestionInput) => Promise<IngestionRecord>
   upsertEventFile: (input: UpsertEventFileInput) => Promise<EventFileRecord>
   upsertIngestionTarget: (input: UpsertIngestionTargetInput) => Promise<IngestionTargetRecord>
+  search: (input: AtlasSearchInput) => Promise<AtlasSearchMatch[]>
+  stats: () => Promise<AtlasStats>
   close: () => Promise<void>
 }
 
@@ -316,8 +343,11 @@ type PostgresAtlasStoreOptions = {
 
 const DEFAULT_SSLMODE = 'require'
 const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
+const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
 const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
+const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding:0.6b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
+const DEFAULT_SEARCH_LIMIT = 10
 
 const SCHEMA = 'atlas'
 
@@ -356,9 +386,26 @@ const loadEmbeddingDimension = (fallback: number) => {
   return dimension
 }
 
+const loadEmbeddingTimeoutMs = () => {
+  const timeoutMs = Number.parseInt(process.env.OPENAI_EMBEDDING_TIMEOUT_MS ?? '15000', 10)
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error('OPENAI_EMBEDDING_TIMEOUT_MS must be a positive integer')
+  }
+  return timeoutMs
+}
+
+const loadEmbeddingMaxInputChars = () => {
+  const maxInputChars = Number.parseInt(process.env.OPENAI_EMBEDDING_MAX_INPUT_CHARS ?? '60000', 10)
+  if (!Number.isFinite(maxInputChars) || maxInputChars <= 0) {
+    throw new Error('OPENAI_EMBEDDING_MAX_INPUT_CHARS must be a positive integer')
+  }
+  return maxInputChars
+}
+
 const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
   const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
   return {
+    model: hosted ? DEFAULT_OPENAI_EMBEDDING_MODEL : DEFAULT_SELF_HOSTED_EMBEDDING_MODEL,
     dimension: hosted ? DEFAULT_OPENAI_EMBEDDING_DIMENSION : DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION,
   }
 }
@@ -366,6 +413,75 @@ const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
 
 export const __private = { withDefaultSslMode }
+
+const loadEmbeddingConfig = () => {
+  const apiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
+  const apiKey = process.env.OPENAI_API_KEY?.trim() || null
+  if (!apiKey && isHostedOpenAiBaseUrl(apiBaseUrl)) {
+    throw new Error(
+      'missing OPENAI_API_KEY; set it or point OPENAI_API_BASE_URL at an OpenAI-compatible endpoint (e.g. Ollama)',
+    )
+  }
+  const defaults = resolveEmbeddingDefaults(apiBaseUrl)
+  const model = process.env.OPENAI_EMBEDDING_MODEL ?? defaults.model
+  const dimension = loadEmbeddingDimension(defaults.dimension)
+  const timeoutMs = loadEmbeddingTimeoutMs()
+  const maxInputChars = loadEmbeddingMaxInputChars()
+
+  return { apiKey, apiBaseUrl, model, dimension, timeoutMs, maxInputChars }
+}
+
+const embedText = async (
+  text: string,
+  config: ReturnType<typeof loadEmbeddingConfig> = loadEmbeddingConfig(),
+): Promise<number[]> => {
+  const { apiKey, apiBaseUrl, model, dimension, timeoutMs, maxInputChars } = config
+  if (text.length > maxInputChars) {
+    throw new Error(`embedding input too large (${text.length} chars; max ${maxInputChars})`)
+  }
+
+  const controller = new AbortController()
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+    }
+    if (apiKey) {
+      headers.authorization = `Bearer ${apiKey}`
+    }
+
+    const response = await fetch(`${apiBaseUrl}/embeddings`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ model, input: text }),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      const body = await response.text()
+      throw new Error(`embedding request failed (${response.status}): ${body}`)
+    }
+
+    const json = (await response.json()) as { data?: { embedding?: number[] }[] }
+    const embedding = json.data?.[0]?.embedding
+    if (!embedding || !Array.isArray(embedding)) {
+      throw new Error('embedding response missing data[0].embedding')
+    }
+    if (embedding.length !== dimension) {
+      throw new Error(`embedding dimension mismatch: expected ${dimension} but got ${embedding.length}`)
+    }
+
+    return embedding
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`embedding request timed out after ${timeoutMs}ms`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeoutHandle)
+  }
+}
 
 const normalizeText = (value: string, field: string, fallback?: string) => {
   const trimmed = value.trim()
@@ -1696,6 +1812,239 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     }
   }
 
+  const search: AtlasStore['search'] = async ({ query, limit, repository, ref, pathPrefix, tags, kinds }) => {
+    await ensureSchema()
+
+    const resolvedQuery = normalizeText(query, 'query')
+    const resolvedLimit = Math.max(1, Math.min(50, Math.floor(limit ?? DEFAULT_SEARCH_LIMIT)))
+    const resolvedRepository = typeof repository === 'string' ? repository.trim() : ''
+    const resolvedRef = typeof ref === 'string' ? ref.trim() : ''
+    const resolvedPathPrefix = typeof pathPrefix === 'string' ? pathPrefix.trim() : ''
+    const resolvedTags = normalizeTags(tags)
+    const resolvedKinds = normalizeTags(kinds)
+
+    const embeddingConfig = loadEmbeddingConfig()
+    const embedding = await embedText(resolvedQuery, embeddingConfig)
+    const vectorString = vectorToPgArray(embedding)
+
+    const conditions = ['embeddings.model = $2', 'embeddings.dimension = $3']
+    const params: unknown[] = [vectorString, embeddingConfig.model, embeddingConfig.dimension]
+
+    if (resolvedRepository) {
+      params.push(resolvedRepository)
+      conditions.push(`repositories.name = $${params.length}`)
+    }
+    if (resolvedRef) {
+      params.push(resolvedRef)
+      conditions.push(`file_versions.repository_ref = $${params.length}`)
+    }
+    if (resolvedPathPrefix) {
+      params.push(`${resolvedPathPrefix}%`)
+      conditions.push(`file_keys.path LIKE $${params.length}`)
+    }
+    if (resolvedTags.length > 0) {
+      params.push(resolvedTags)
+      conditions.push(`enrichments.tags && $${params.length}::text[]`)
+    }
+    if (resolvedKinds.length > 0) {
+      params.push(resolvedKinds)
+      conditions.push(`enrichments.kind = ANY($${params.length}::text[])`)
+    }
+
+    params.push(resolvedLimit)
+
+    const rows = await db.unsafe<
+      Array<{
+        enrichment_id: string
+        enrichment_file_version_id: string
+        enrichment_chunk_id: string | null
+        enrichment_kind: string
+        enrichment_source: string
+        enrichment_content: string
+        enrichment_summary: string | null
+        enrichment_tags: string[]
+        enrichment_metadata: Record<string, unknown>
+        enrichment_created_at: string | Date
+        file_version_id: string
+        file_version_file_key_id: string
+        file_version_repository_ref: string
+        file_version_repository_commit: string
+        file_version_content_hash: string
+        file_version_language: string | null
+        file_version_byte_size: number | null
+        file_version_line_count: number | null
+        file_version_metadata: Record<string, unknown>
+        file_version_source_timestamp: string | Date | null
+        file_version_created_at: string | Date
+        file_version_updated_at: string | Date
+        file_key_id: string
+        file_key_repository_id: string
+        file_key_path: string
+        file_key_created_at: string | Date
+        repository_id: string
+        repository_name: string
+        repository_default_ref: string
+        repository_metadata: Record<string, unknown>
+        repository_created_at: string | Date
+        repository_updated_at: string | Date
+        distance: number
+      }>
+    >(
+      `
+        SELECT
+          enrichments.id AS enrichment_id,
+          enrichments.file_version_id AS enrichment_file_version_id,
+          enrichments.chunk_id AS enrichment_chunk_id,
+          enrichments.kind AS enrichment_kind,
+          enrichments.source AS enrichment_source,
+          enrichments.content AS enrichment_content,
+          enrichments.summary AS enrichment_summary,
+          enrichments.tags AS enrichment_tags,
+          enrichments.metadata AS enrichment_metadata,
+          enrichments.created_at AS enrichment_created_at,
+          file_versions.id AS file_version_id,
+          file_versions.file_key_id AS file_version_file_key_id,
+          file_versions.repository_ref AS file_version_repository_ref,
+          file_versions.repository_commit AS file_version_repository_commit,
+          file_versions.content_hash AS file_version_content_hash,
+          file_versions.language AS file_version_language,
+          file_versions.byte_size AS file_version_byte_size,
+          file_versions.line_count AS file_version_line_count,
+          file_versions.metadata AS file_version_metadata,
+          file_versions.source_timestamp AS file_version_source_timestamp,
+          file_versions.created_at AS file_version_created_at,
+          file_versions.updated_at AS file_version_updated_at,
+          file_keys.id AS file_key_id,
+          file_keys.repository_id AS file_key_repository_id,
+          file_keys.path AS file_key_path,
+          file_keys.created_at AS file_key_created_at,
+          repositories.id AS repository_id,
+          repositories.name AS repository_name,
+          repositories.default_ref AS repository_default_ref,
+          repositories.metadata AS repository_metadata,
+          repositories.created_at AS repository_created_at,
+          repositories.updated_at AS repository_updated_at,
+          embeddings.embedding <=> $1::vector AS distance
+        FROM ${SCHEMA}.embeddings AS embeddings
+        JOIN ${SCHEMA}.enrichments AS enrichments
+          ON enrichments.id = embeddings.enrichment_id
+        JOIN ${SCHEMA}.file_versions AS file_versions
+          ON file_versions.id = enrichments.file_version_id
+        JOIN ${SCHEMA}.file_keys AS file_keys
+          ON file_keys.id = file_versions.file_key_id
+        JOIN ${SCHEMA}.repositories AS repositories
+          ON repositories.id = file_keys.repository_id
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY embeddings.embedding <=> $1::vector
+        LIMIT $${params.length};
+      `,
+      params,
+    )
+
+    return rows.map((row) => ({
+      enrichment: {
+        id: row.enrichment_id,
+        fileVersionId: row.enrichment_file_version_id,
+        chunkId: row.enrichment_chunk_id,
+        kind: row.enrichment_kind,
+        source: row.enrichment_source,
+        content: row.enrichment_content,
+        summary: row.enrichment_summary,
+        tags: row.enrichment_tags,
+        metadata: row.enrichment_metadata,
+        createdAt:
+          row.enrichment_created_at instanceof Date
+            ? row.enrichment_created_at.toISOString()
+            : String(row.enrichment_created_at),
+        distance: Number(row.distance),
+      },
+      fileVersion: {
+        id: row.file_version_id,
+        fileKeyId: row.file_version_file_key_id,
+        repositoryRef: row.file_version_repository_ref,
+        repositoryCommit: row.file_version_repository_commit,
+        contentHash: row.file_version_content_hash,
+        language: row.file_version_language,
+        byteSize: row.file_version_byte_size,
+        lineCount: row.file_version_line_count,
+        metadata: row.file_version_metadata,
+        sourceTimestamp:
+          row.file_version_source_timestamp instanceof Date
+            ? row.file_version_source_timestamp.toISOString()
+            : row.file_version_source_timestamp
+              ? String(row.file_version_source_timestamp)
+              : null,
+        createdAt:
+          row.file_version_created_at instanceof Date
+            ? row.file_version_created_at.toISOString()
+            : String(row.file_version_created_at),
+        updatedAt:
+          row.file_version_updated_at instanceof Date
+            ? row.file_version_updated_at.toISOString()
+            : String(row.file_version_updated_at),
+      },
+      fileKey: {
+        id: row.file_key_id,
+        repositoryId: row.file_key_repository_id,
+        path: row.file_key_path,
+        createdAt:
+          row.file_key_created_at instanceof Date
+            ? row.file_key_created_at.toISOString()
+            : String(row.file_key_created_at),
+      },
+      repository: {
+        id: row.repository_id,
+        name: row.repository_name,
+        defaultRef: row.repository_default_ref,
+        metadata: row.repository_metadata,
+        createdAt:
+          row.repository_created_at instanceof Date
+            ? row.repository_created_at.toISOString()
+            : String(row.repository_created_at),
+        updatedAt:
+          row.repository_updated_at instanceof Date
+            ? row.repository_updated_at.toISOString()
+            : String(row.repository_updated_at),
+      },
+    }))
+  }
+
+  const stats: AtlasStore['stats'] = async () => {
+    await ensureSchema()
+
+    const rows = await db.unsafe<
+      Array<{
+        repositories: string | number
+        file_keys: string | number
+        file_versions: string | number
+        enrichments: string | number
+        embeddings: string | number
+      }>
+    >(
+      `
+        SELECT
+          (SELECT COUNT(*) FROM ${SCHEMA}.repositories) AS repositories,
+          (SELECT COUNT(*) FROM ${SCHEMA}.file_keys) AS file_keys,
+          (SELECT COUNT(*) FROM ${SCHEMA}.file_versions) AS file_versions,
+          (SELECT COUNT(*) FROM ${SCHEMA}.enrichments) AS enrichments,
+          (SELECT COUNT(*) FROM ${SCHEMA}.embeddings) AS embeddings;
+      `,
+    )
+
+    const row = rows[0]
+    if (!row) {
+      return { repositories: 0, fileKeys: 0, fileVersions: 0, enrichments: 0, embeddings: 0 }
+    }
+
+    return {
+      repositories: Number(row.repositories) || 0,
+      fileKeys: Number(row.file_keys) || 0,
+      fileVersions: Number(row.file_versions) || 0,
+      enrichments: Number(row.enrichments) || 0,
+      embeddings: Number(row.embeddings) || 0,
+    }
+  }
+
   const close: AtlasStore['close'] = async () => {
     await db.close()
   }
@@ -1719,6 +2068,8 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     upsertIngestion,
     upsertEventFile,
     upsertIngestionTarget,
+    search,
+    stats,
     close,
   }
 }
