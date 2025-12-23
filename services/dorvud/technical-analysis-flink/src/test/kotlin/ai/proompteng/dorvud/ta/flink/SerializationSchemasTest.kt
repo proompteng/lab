@@ -1,15 +1,20 @@
 package ai.proompteng.dorvud.ta.flink
 
+import java.io.ByteArrayOutputStream
+import java.io.ObjectOutputStream
+import java.time.Instant
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+import org.apache.flink.api.common.ExecutionConfig
+import org.apache.flink.api.java.typeutils.runtime.kryo.KryoSerializer
+
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.producer.AvroSerde
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
-import java.io.ByteArrayOutputStream
-import java.io.ObjectOutputStream
-import java.time.Instant
-import kotlin.test.Test
-import kotlin.test.assertTrue
 
 class SerializationSchemasTest {
   private val serde = AvroSerde()
@@ -40,6 +45,15 @@ class SerializationSchemasTest {
   @Test
   fun `avro serde is java-serializable`() {
     assertSerializable(serde)
+  }
+
+  @Test
+  fun `session accumulator state supports kryo copy`() {
+    val serializer = KryoSerializer(SessionAccumulatorState::class.java, ExecutionConfig())
+    val original = SessionAccumulatorState(pv = 10.5, vol = 2.0)
+    val copy = serializer.copy(original)
+    assertEquals(original, copy)
+    assertTrue(original !== copy)
   }
 
   private fun assertSerializable(target: Any) {

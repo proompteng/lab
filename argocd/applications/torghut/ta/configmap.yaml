@@ -9,6 +9,7 @@ data:
   TA_KAFKA_BOOTSTRAP: "kafka-kafka-bootstrap.kafka:9092"
   TA_KAFKA_SECURITY: "SASL_PLAINTEXT"
   TA_KAFKA_SASL_MECH: "SCRAM-SHA-512"
+  TA_SCHEMA_REGISTRY_URL: "http://karapace.kafka:8081"
   TA_TRADES_TOPIC: "torghut.trades.v1"
   TA_QUOTES_TOPIC: "torghut.quotes.v1"
   TA_BARS1M_TOPIC: "torghut.bars.1m.v1"

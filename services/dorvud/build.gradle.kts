@@ -23,6 +23,7 @@ subprojects {
 
   repositories {
     mavenCentral()
+    maven { url = uri("https://packages.confluent.io/maven/") }
   }
 
   extensions.configure<KotlinJvmProjectExtension> {

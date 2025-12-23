@@ -3,6 +3,7 @@ package ai.proompteng.dorvud.ta.producer
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
+import io.confluent.kafka.serializers.KafkaAvroSerializer
 import org.apache.avro.Schema
 import org.apache.avro.generic.GenericData
 import org.apache.avro.generic.GenericDatumWriter
@@ -13,7 +14,9 @@ import java.io.Serializable
 import java.nio.charset.StandardCharsets
 
 /** Lightweight Avro helper to validate and encode payloads against the published schemas. */
-class AvroSerde : Serializable {
+class AvroSerde(
+  private val schemaRegistryUrl: String? = System.getenv("TA_SCHEMA_REGISTRY_URL"),
+) : Serializable {
   companion object {
     private const val serialVersionUID: Long = 1L
   }
@@ -21,9 +24,18 @@ class AvroSerde : Serializable {
   private val barsSchema: Schema = loadSchema("schemas/ta-bars-1s.avsc")
   private val signalsSchema: Schema = loadSchema("schemas/ta-signals.avsc")
 
-  fun encodeMicroBar(env: Envelope<MicroBarPayload>): ByteArray = encode(flattenBar(env), barsSchema)
+  @Transient
+  private var registrySerializer: KafkaAvroSerializer? = null
 
-  fun encodeSignals(env: Envelope<TaSignalsPayload>): ByteArray = encode(flattenSignal(env), signalsSchema)
+  fun encodeMicroBar(
+    env: Envelope<MicroBarPayload>,
+    topic: String,
+  ): ByteArray = encodeWithRegistryOrFallback(topic, flattenBar(env), barsSchema)
+
+  fun encodeSignals(
+    env: Envelope<TaSignalsPayload>,
+    topic: String,
+  ): ByteArray = encodeWithRegistryOrFallback(topic, flattenSignal(env), signalsSchema)
 
   fun toJson(env: Envelope<MicroBarPayload>): String = flattenBar(env).toString()
 
@@ -190,6 +202,30 @@ class AvroSerde : Serializable {
     writer.write(record, encoder)
     encoder.flush()
     return out.toByteArray()
+  }
+
+  private fun encodeWithRegistryOrFallback(
+    topic: String,
+    record: GenericData.Record,
+    schema: Schema,
+  ): ByteArray {
+    val url = schemaRegistryUrl?.trim()
+    if (!url.isNullOrBlank()) {
+      val serializer =
+        registrySerializer
+          ?: KafkaAvroSerializer().also { created ->
+            created.configure(
+              mapOf(
+                "schema.registry.url" to url,
+                "auto.register.schemas" to true,
+              ),
+              false,
+            )
+            registrySerializer = created
+          }
+      return serializer.serialize(topic, record)
+    }
+    return encode(record, schema)
   }
 
   fun pretty(record: GenericData.Record): String = record.toString()

@@ -253,7 +253,7 @@ internal class MicroBarSerializationSchema(
   ): ProducerRecord<ByteArray, ByteArray>? {
     if (element == null) return null
     val key = element.symbol.toByteArray(StandardCharsets.UTF_8)
-    val value = serde.encodeMicroBar(element)
+    val value = serde.encodeMicroBar(element, topic)
     return ProducerRecord(topic, null, timestamp ?: System.currentTimeMillis(), key, value)
   }
 }
@@ -274,7 +274,7 @@ internal class SignalSerializationSchema(
   ): ProducerRecord<ByteArray, ByteArray>? {
     if (element == null) return null
     val key = element.symbol.toByteArray(StandardCharsets.UTF_8)
-    val value = serde.encodeSignals(element)
+    val value = serde.encodeSignals(element, topic)
     return ProducerRecord(topic, null, timestamp ?: System.currentTimeMillis(), key, value)
   }
 }
@@ -644,7 +644,7 @@ private class TaSignalsFunction(
   }
 }
 
-private data class SessionAccumulatorState(
+data class SessionAccumulatorState(
   var pv: Double = 0.0,
   var vol: Double = 0.0,
 ) : Serializable {

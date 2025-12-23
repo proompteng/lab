@@ -45,7 +45,7 @@ class AvroSerdeTest {
         version = 1,
       )
 
-    val bytes = serde.encodeMicroBar(env)
+    val bytes = serde.encodeMicroBar(env, "torghut.ta.bars.1s.v1")
     val schemaStream = serde.javaClass.classLoader.getResourceAsStream("schemas/ta-bars-1s.avsc") ?: error("schema missing")
     val schema =
       schemaStream.use {
@@ -77,7 +77,7 @@ class AvroSerdeTest {
         version = 1,
       )
 
-    val bytes = serde.encodeSignals(env)
+    val bytes = serde.encodeSignals(env, "torghut.ta.signals.v1")
     val schemaStream = serde.javaClass.classLoader.getResourceAsStream("schemas/ta-signals.avsc") ?: error("schema missing")
     val schema =
       schemaStream.use {
