@@ -37,6 +37,14 @@ spec:
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/docs
             automation: auto
             enabled: true
+          - name: discourse
+            path: argocd/applications/discourse
+            namespace: discourse
+            renderWithLovely: false
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+            enabled: true
           - name: kitty-krew
             path: argocd/applications/kitty-krew
             namespace: kitty-krew
