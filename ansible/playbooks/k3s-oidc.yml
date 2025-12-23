@@ -9,8 +9,8 @@
     k3s_oidc_client_id: kubernetes
     k3s_oidc_username_claim: preferred_username
     k3s_oidc_groups_claim: groups
-    k3s_oidc_username_prefix: oidc:
-    k3s_oidc_groups_prefix: oidc:
+    k3s_oidc_username_prefix: 'oidc:'
+    k3s_oidc_groups_prefix: 'oidc:'
     k3s_oidc_ca_file: ''
     k3s_oidc_restart: true
   tasks:
@@ -22,7 +22,7 @@
 
     - name: Write k3s OIDC config
       ansible.builtin.template:
-        src: k3s-oidc.yaml.j2
+        src: "{{ playbook_dir }}/../templates/k3s-oidc.yaml.j2"
         dest: /etc/rancher/k3s/config.yaml.d/oidc.yaml
         owner: root
         group: root
