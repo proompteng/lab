@@ -364,6 +364,7 @@ describe('createWebhookHandler', () => {
             reactionContent: 'eyes',
           }),
         )
+        expect(githubServiceMock.postIssueReaction).not.toHaveBeenCalled()
         expect(mockBuildCodexPrompt).toHaveBeenCalledWith(expect.objectContaining({ issueNumber: 99 }))
       },
     },
