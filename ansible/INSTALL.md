@@ -75,3 +75,18 @@ The Tailscale playbooks are designed to take settings from environment variables
    ```
 
 The official collection handles bootstrapping the first server, joining the remaining control-plane nodes, and enrolling all agents while honoring the configuration defined in `k3s_cluster.yml`.
+
+## Updating K3s OIDC Settings (existing cluster)
+
+This repo includes a playbook to apply OIDC args to the k3s API servers via a config drop-in on control-plane nodes:
+
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/k3s-oidc.yml
+```
+
+Override defaults if needed:
+
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/k3s-oidc.yml \\
+  --extra-vars 'k3s_oidc_client_id=kubernetes k3s_oidc_issuer_url=https://auth.proompteng.ai/realms/master'
+```
