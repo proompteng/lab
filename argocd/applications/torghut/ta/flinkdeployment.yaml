@@ -100,10 +100,10 @@ spec:
       metadata:
         labels:
           app: torghut-ta
-    replicas: 1
+    replicas: 3
   job:
     entryClass: ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJobKt
     jarURI: local:///opt/flink/usrlib/app.jar
-    parallelism: 1
+    parallelism: 8
     upgradeMode: stateless
     state: running
