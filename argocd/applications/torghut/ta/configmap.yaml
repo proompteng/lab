@@ -15,7 +15,7 @@ data:
   TA_BARS1M_TOPIC: "torghut.bars.1m.v1"
   TA_MICROBARS_TOPIC: "torghut.ta.bars.1s.v1"
   TA_SIGNALS_TOPIC: "torghut.ta.signals.v1"
-  TA_GROUP_ID: "torghut-ta"
+  TA_GROUP_ID: "torghut-ta-2025-12-23"
   TA_CLIENT_ID: "torghut-ta"
   TA_AUTO_OFFSET_RESET: "latest"
   TA_CHECKPOINT_DIR: "s3a://flink-checkpoints/torghut/technical-analysis"
