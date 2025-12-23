@@ -6,14 +6,14 @@ metadata:
   labels:
     app: torghut-ta
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:1a0642ac504df51d7479fed6ebdc9f9e6868ea32f3de1defd3d23e23da84ff23
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:912efed85e3950f5c119e0865dbbcceede7e2e0b15cf5a937f2cbeca36c53c08
   imagePullPolicy: IfNotPresent
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
   flinkConfiguration:
     state.checkpoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/checkpoints
     state.savepoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/savepoints
-    taskmanager.numberOfTaskSlots: "2"
+    taskmanager.numberOfTaskSlots: "8"
     restart-strategy.type: fixed-delay
     restart-strategy.fixed-delay.attempts: "5"
     restart-strategy.fixed-delay.delay: 5 s
@@ -77,9 +77,9 @@ spec:
                   name: observability-minio-creds
                   key: secretkey
             - name: TORGHUT_TA_VERSION
-              value: v0.355.0-7-g6fd9b67b
+              value: v0.355.0-11-gc87e3a2f
             - name: TORGHUT_TA_COMMIT
-              value: 6fd9b67b6f9e5b0bbdac28449beb66aec8c0bea2
+              value: c87e3a2fba15d7adbdc2cf8c362262cf1ece9746
           ports:
             - containerPort: 9249
               name: metrics
