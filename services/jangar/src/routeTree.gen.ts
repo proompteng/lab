@@ -17,6 +17,8 @@ import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
 import { Route as ApiModelsRouteImport } from './routes/api/models'
 import { Route as ApiMemoriesRouteImport } from './routes/api/memories'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
+import { Route as ApiSearchRouteImport } from './routes/api/search'
+import { Route as ApiEnrichRouteImport } from './routes/api/enrich'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
@@ -62,6 +64,16 @@ const ApiHealthRoute = ApiHealthRouteImport.update({
   path: '/api/health',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiSearchRoute = ApiSearchRouteImport.update({
+  id: '/api/search',
+  path: '/api/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiEnrichRoute = ApiEnrichRouteImport.update({
+  id: '/api/enrich',
+  path: '/api/enrich',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OpenaiV1ModelsRoute = OpenaiV1ModelsRouteImport.update({
   id: '/openai/v1/models',
   path: '/openai/v1/models',
@@ -89,6 +101,8 @@ export interface FileRoutesByFullPath {
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/search': typeof ApiSearchRoute
+  '/api/enrich': typeof ApiEnrichRoute
   '/api/memories': typeof ApiMemoriesRoute
   '/api/models': typeof ApiModelsRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
@@ -103,6 +117,8 @@ export interface FileRoutesByTo {
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/search': typeof ApiSearchRoute
+  '/api/enrich': typeof ApiEnrichRoute
   '/api/memories': typeof ApiMemoriesRoute
   '/api/models': typeof ApiModelsRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
@@ -118,6 +134,8 @@ export interface FileRoutesById {
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/search': typeof ApiSearchRoute
+  '/api/enrich': typeof ApiEnrichRoute
   '/api/memories': typeof ApiMemoriesRoute
   '/api/models': typeof ApiModelsRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
@@ -134,6 +152,8 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memories'
     | '/api/health'
+    | '/api/search'
+    | '/api/enrich'
     | '/api/memories'
     | '/api/models'
     | '/torghut/symbols'
@@ -148,6 +168,8 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memories'
     | '/api/health'
+    | '/api/search'
+    | '/api/enrich'
     | '/api/memories'
     | '/api/models'
     | '/torghut/symbols'
@@ -162,6 +184,8 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memories'
     | '/api/health'
+    | '/api/search'
+    | '/api/enrich'
     | '/api/memories'
     | '/api/models'
     | '/torghut/symbols'
@@ -177,6 +201,8 @@ export interface RootRouteChildren {
   McpRoute: typeof McpRoute
   MemoriesRoute: typeof MemoriesRoute
   ApiHealthRoute: typeof ApiHealthRoute
+  ApiSearchRoute: typeof ApiSearchRoute
+  ApiEnrichRoute: typeof ApiEnrichRoute
   ApiMemoriesRoute: typeof ApiMemoriesRoute
   ApiModelsRoute: typeof ApiModelsRoute
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
@@ -243,6 +269,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/search': {
+      id: '/api/search'
+      path: '/api/search'
+      fullPath: '/api/search'
+      preLoaderRoute: typeof ApiSearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/enrich': {
+      id: '/api/enrich'
+      path: '/api/enrich'
+      fullPath: '/api/enrich'
+      preLoaderRoute: typeof ApiEnrichRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/openai/v1/models': {
       id: '/openai/v1/models'
       path: '/openai/v1/models'
@@ -291,6 +331,8 @@ const rootRouteChildren: RootRouteChildren = {
   McpRoute: McpRoute,
   MemoriesRoute: MemoriesRoute,
   ApiHealthRoute: ApiHealthRoute,
+  ApiSearchRoute: ApiSearchRoute,
+  ApiEnrichRoute: ApiEnrichRoute,
   ApiMemoriesRoute: ApiMemoriesRoute,
   ApiModelsRoute: ApiModelsRoute,
   TorghutSymbolsRoute: TorghutSymbolsRoute,

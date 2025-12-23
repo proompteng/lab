@@ -1,5 +1,7 @@
 import { Effect, Layer, ManagedRuntime } from 'effect'
 
+import { Atlas, AtlasLive } from './atlas'
+import { parseAtlasIndexInput, parseAtlasSearchInput } from './atlas-http'
 import { Memories, MemoriesLive } from './memories'
 
 type JsonRpcId = string | number | null
@@ -83,6 +85,50 @@ const toolsListResult = {
           limit: { type: 'integer', description: 'Max results (default 10, max 50)', minimum: 1, maximum: 50 },
         },
         required: ['query'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'atlas.index',
+      description: 'Request Atlas enrichment for a repository file path (indexed in Postgres).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          repository: { type: 'string', description: 'Repository name (required).' },
+          ref: { type: 'string', description: 'Git ref (default main).' },
+          commit: { type: 'string', description: 'Commit SHA for the file.' },
+          path: { type: 'string', description: 'Path within the repository (required).' },
+          contentHash: { type: 'string', description: 'Content hash for the file.' },
+          metadata: { type: 'object', description: 'Optional metadata to attach to the file version.' },
+        },
+        required: ['repository', 'path'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'atlas.search',
+      description: 'Search Atlas enrichments with semantic similarity and optional filters.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query (required).' },
+          limit: { type: 'integer', description: 'Max results (default 10, max 50).', minimum: 1, maximum: 50 },
+          repository: { type: 'string', description: 'Filter by repository name.' },
+          ref: { type: 'string', description: 'Filter by repository ref.' },
+          pathPrefix: { type: 'string', description: 'Filter by file path prefix.' },
+          tags: { type: 'array', items: { type: 'string' }, description: 'Filter by enrichment tags.' },
+          kinds: { type: 'array', items: { type: 'string' }, description: 'Filter by enrichment kinds.' },
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'atlas.stats',
+      description: 'Return Atlas table counts and ingestion stats.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
         additionalProperties: false,
       },
     },
@@ -233,6 +279,7 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
         }
 
         const memories = yield* Memories
+        const atlas = yield* Atlas
         const baseUrl = new URL(request.url)
         const toolName = parsed.name
         const args = parsed.args
@@ -308,6 +355,96 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
           )
         }
 
+        if (toolName === 'atlas.index') {
+          const parsed = parseAtlasIndexInput(args)
+          if (!parsed.ok) {
+            if (isNotification) return null
+            return invalidParams(id, parsed.message)
+          }
+
+          const indexResult = yield* Effect.either(
+            Effect.gen(function* () {
+              const repository = yield* atlas.upsertRepository({
+                name: parsed.value.repository,
+                defaultRef: parsed.value.ref,
+              })
+              const fileKey = yield* atlas.upsertFileKey({
+                repositoryId: repository.id,
+                path: parsed.value.path,
+              })
+              const fileVersion = yield* atlas.upsertFileVersion({
+                fileKeyId: fileKey.id,
+                repositoryRef: parsed.value.ref,
+                repositoryCommit: parsed.value.commit ?? null,
+                contentHash: parsed.value.contentHash ?? null,
+                metadata: parsed.value.metadata,
+              })
+
+              return { repository, fileKey, fileVersion }
+            }),
+          )
+
+          if (indexResult._tag === 'Left') {
+            if (isNotification) return null
+            return toolError(id, indexResult.left.message, { tool: toolName })
+          }
+          if (isNotification) return null
+          return asJsonRpcResponse(
+            id,
+            toTextToolResult(
+              JSON.stringify(
+                { ok: true, ...indexResult.right, mcp: { server: baseUrl.origin, tool: toolName } },
+                null,
+                2,
+              ),
+            ),
+          )
+        }
+
+        if (toolName === 'atlas.search') {
+          const parsed = parseAtlasSearchInput(args)
+          if (!parsed.ok) {
+            if (isNotification) return null
+            return invalidParams(id, parsed.message)
+          }
+
+          const matchesResult = yield* Effect.either(atlas.search(parsed.value))
+          if (matchesResult._tag === 'Left') {
+            if (isNotification) return null
+            return toolError(id, matchesResult.left.message, { tool: toolName })
+          }
+          if (isNotification) return null
+          return asJsonRpcResponse(
+            id,
+            toTextToolResult(
+              JSON.stringify(
+                { ok: true, matches: matchesResult.right, mcp: { server: baseUrl.origin, tool: toolName } },
+                null,
+                2,
+              ),
+            ),
+          )
+        }
+
+        if (toolName === 'atlas.stats') {
+          const statsResult = yield* Effect.either(atlas.stats())
+          if (statsResult._tag === 'Left') {
+            if (isNotification) return null
+            return toolError(id, statsResult.left.message, { tool: toolName })
+          }
+          if (isNotification) return null
+          return asJsonRpcResponse(
+            id,
+            toTextToolResult(
+              JSON.stringify(
+                { ok: true, stats: statsResult.right, mcp: { server: baseUrl.origin, tool: toolName } },
+                null,
+                2,
+              ),
+            ),
+          )
+        }
+
         if (isNotification) return null
         return asJsonRpcError(id, { code: -32601, message: `Unknown tool: ${toolName}` })
       }
@@ -354,7 +491,7 @@ export const handleMcpRequestEffect = (request: Request) =>
     return jsonResponse(response, withMcpSessionHeaders(request))
   })
 
-const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoriesLive))
+const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoriesLive, AtlasLive))
 
 export const handleMcpRequest = (request: Request): Promise<Response> =>
   handlerRuntime.runPromise(handleMcpRequestEffect(request))
