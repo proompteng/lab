@@ -10,6 +10,10 @@ const requireEnv = (env: NodeJS.ProcessEnv, name: string): string => {
 
 export interface AppConfig {
   githubWebhookSecret: string
+  atlas: {
+    baseUrl: string
+    apiKey: string | null
+  }
   kafka: {
     brokers: string[]
     username: string
@@ -51,8 +55,14 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
     throw new Error('KAFKA_BROKERS must include at least one broker host:port')
   }
 
+  const atlasBaseUrl = requireEnv(env, 'JANGAR_BASE_URL').replace(/\/+$/, '')
+
   return {
     githubWebhookSecret: requireEnv(env, 'GITHUB_WEBHOOK_SECRET'),
+    atlas: {
+      baseUrl: atlasBaseUrl,
+      apiKey: env.JANGAR_API_KEY?.trim() || null,
+    },
     kafka: {
       brokers,
       username: requireEnv(env, 'KAFKA_USERNAME'),

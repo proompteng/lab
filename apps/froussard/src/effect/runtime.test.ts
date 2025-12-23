@@ -29,6 +29,7 @@ describe('makeAppRuntime', () => {
     KAFKA_CODEX_TOPIC_STRUCTURED: 'codex-topic-structured',
     KAFKA_DISCORD_COMMAND_TOPIC: 'discord.commands.incoming',
     DISCORD_PUBLIC_KEY: 'public-key',
+    JANGAR_BASE_URL: 'http://jangar',
   }
   let producers: Array<ReturnType<typeof createProducer>>
 

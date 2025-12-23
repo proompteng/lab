@@ -12,6 +12,10 @@ vi.mock('@/effect/config', () => {
 
   const config: AppConfig = {
     githubWebhookSecret: 'secret',
+    atlas: {
+      baseUrl: 'http://jangar',
+      apiKey: null,
+    },
     kafka: {
       brokers: ['broker:9092'],
       username: 'user',
