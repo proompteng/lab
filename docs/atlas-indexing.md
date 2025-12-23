@@ -27,7 +27,7 @@ flowchart LR
   API --> TC[Temporal Client]
   TC --> WF[bumba workflow]
   WF --> ACT1[Read file + metadata]
-  WF --> ACT2[AST‑grep extraction]
+  WF --> ACT2[Tree‑sitter extraction]
   WF --> ACT3[Model enrichment]
   WF --> ACT4[Embedding]
   ACT4 --> DB[(Postgres: atlas schema)]
@@ -44,7 +44,7 @@ flowchart LR
 - `file_chunks`: optional chunk records (future‑proofing).
 - `enrichments`: semantic units (summary, AST facts, completion notes).
 - `embeddings`: vector storage by model + dimension.
-- `ast_grep_facts`: structured AST matches.
+- `tree_sitter_facts`: structured AST matches.
 - `github_events`: webhook delivery log for idempotency.
 - `ingestions`: workflow runs tied to webhook events.
 
@@ -56,7 +56,7 @@ erDiagram
   FILE_VERSIONS ||--o{ ENRICHMENTS : has
   FILE_CHUNKS ||--o{ ENRICHMENTS : has
   ENRICHMENTS ||--o{ EMBEDDINGS : embeds
-  FILE_VERSIONS ||--o{ AST_GREP_FACTS : matches
+  FILE_VERSIONS ||--o{ TREE_SITTER_FACTS : matches
   GITHUB_EVENTS ||--o{ INGESTIONS : triggers
 
   REPOSITORIES {
@@ -92,7 +92,7 @@ erDiagram
 
   FILE_CHUNKS {
     uuid id
-    uuid file_id
+    uuid file_version_id
     int chunk_index
     int start_line
     int end_line
@@ -124,21 +124,43 @@ erDiagram
     timestamptz created_at
   }
 
-  AST_GREP_FACTS {
+  TREE_SITTER_FACTS {
     uuid id
     uuid file_version_id
-    text rule_id
+    text node_type
     text match_text
     int start_line
     int end_line
     jsonb metadata
     timestamptz created_at
   }
+
+  GITHUB_EVENTS {
+    uuid id
+    text delivery_id
+    text event_type
+    text repository
+    text installation_id
+    text sender_login
+    jsonb payload
+    timestamptz received_at
+    timestamptz processed_at
+  }
+
+  INGESTIONS {
+    uuid id
+    uuid event_id
+    text workflow_id
+    text status
+    text error
+    timestamptz started_at
+    timestamptz finished_at
+  }
 ```
 
 ### Indexing Strategy
 
-- `atlas.files`:
+- `atlas.file_keys` + `atlas.file_versions`:
   - `path` index for prefix searches.
   - `(repository_ref, repository_commit)` for exact snapshots.
   - GIN index on `metadata` for filters.
@@ -166,7 +188,7 @@ sequenceDiagram
   API->>TC: Start workflow (file payload)
   TC->>WF: bumbaEnrichFile
   WF->>ACT: Read file + metadata
-  WF->>ACT: Run AST‑grep rules
+  WF->>ACT: Extract Tree‑sitter facts
   WF->>ACT: Call model (completion)
   WF->>ACT: Create embeddings
   ACT->>DB: Upsert repository, file_key, file_version, enrichment, embedding
@@ -187,9 +209,9 @@ sequenceDiagram
 
 ### MCP
 
-- `semantic.index`
-- `semantic.search`
-- `semantic.stats`
+- `atlas.index`
+- `atlas.search`
+- `atlas.stats`
 
 ## Operational Considerations
 
@@ -210,25 +232,32 @@ sequenceDiagram
 
 - Whether to chunk files immediately or only when size exceeds a threshold.
 - Backfill policy from existing `memories` content (likely no).
-- How to version AST‑grep rules and link them in metadata.
-  GITHUB_EVENTS {
-    uuid id
-    text delivery_id
-    text event_type
-    text repository
-    text installation_id
-    text sender_login
-    jsonb payload
-    timestamptz received_at
-    timestamptz processed_at
-  }
+- How to version Tree‑sitter grammars or extraction rules and link them in metadata.
 
-  INGESTIONS {
-    uuid id
-    uuid event_id
-    text workflow_id
-    text status
-    text error
-    timestamptz started_at
-    timestamptz finished_at
+## Tree‑sitter Extraction (per file)
+
+Tree‑sitter does not produce a universal AST. We normalize its output into a stable facts schema:
+
+- Parse file with the language grammar.
+- Walk the AST and emit facts like `{ node_type, match_text, start_line, end_line, metadata }`.
+- Store those facts in `atlas.tree_sitter_facts` and/or append to `enrichments` metadata.
+
+Pseudocode example (activity):
+
+```ts
+const parser = new Parser()
+parser.setLanguage(lang)
+const tree = parser.parse(source)
+const facts = []
+walk(tree.rootNode, (node) => {
+  if (isInteresting(node)) {
+    facts.push({
+      node_type: node.type,
+      match_text: source.slice(node.startIndex, node.endIndex),
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      metadata: { field: node.fieldName },
+    })
   }
+})
+```
