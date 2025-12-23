@@ -120,6 +120,32 @@ export const handleIssueOpened = async (params: BaseIssueParams): Promise<Workfl
     return null
   }
 
+  const isPullRequestIssue = Boolean(issue?.pull_request?.url ?? issue?.pull_request?.html_url)
+  if (!isPullRequestIssue) {
+    const reactionResult = await executionContext.runGithub(() =>
+      executionContext.githubService.postIssueReaction({
+        repositoryFullName,
+        issueNumber,
+        reactionContent: '+1',
+        token: config.github.token,
+        apiBaseUrl: config.github.apiBaseUrl,
+        userAgent: config.github.userAgent,
+      }),
+    )
+
+    if (!reactionResult.ok) {
+      logger.warn(
+        {
+          repositoryFullName,
+          issueNumber,
+          reason: reactionResult.reason,
+          status: reactionResult.status,
+        },
+        'failed to post thumbs up reaction on issue',
+      )
+    }
+  }
+
   const baseBranch = repository?.default_branch ?? config.codebase.baseBranch
   const headBranch = buildCodexBranchName(issueNumber, deliveryId, config.codebase.branchPrefix)
   const issueTitle = typeof issue?.title === 'string' && issue.title.length > 0 ? issue.title : `Issue #${issueNumber}`
@@ -234,6 +260,31 @@ export const handleIssueCommentCreated = async (params: BaseIssueParams): Promis
           status: reactionResult.status,
         },
         'failed to post eyes reaction on pull request comment',
+      )
+    }
+  }
+
+  if (!isPullRequestComment) {
+    const reactionResult = await executionContext.runGithub(() =>
+      executionContext.githubService.postIssueReaction({
+        repositoryFullName,
+        issueNumber,
+        reactionContent: '+1',
+        token: config.github.token,
+        apiBaseUrl: config.github.apiBaseUrl,
+        userAgent: config.github.userAgent,
+      }),
+    )
+
+    if (!reactionResult.ok) {
+      logger.warn(
+        {
+          repositoryFullName,
+          issueNumber,
+          reason: reactionResult.reason,
+          status: reactionResult.status,
+        },
+        'failed to post thumbs up reaction on issue',
       )
     }
   }

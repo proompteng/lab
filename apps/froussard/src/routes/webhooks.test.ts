@@ -319,7 +319,13 @@ describe('createWebhookHandler', () => {
           (message) => message.topic === 'github.issues.codex.tasks',
         )
         expect(implementationStructuredMessage).toBeTruthy()
-        expect(githubServiceMock.postIssueReaction).not.toHaveBeenCalled()
+        expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
+          expect.objectContaining({
+            repositoryFullName: 'owner/repo',
+            issueNumber: 42,
+            reactionContent: '+1',
+          }),
+        )
         expect(mockBuildCodexPrompt).toHaveBeenCalledWith(expect.objectContaining({ issueNumber: 42 }))
       },
     },
@@ -566,7 +572,13 @@ describe('createWebhookHandler', () => {
     expect(implementationProto.deliveryId).toBe('delivery-123')
 
     expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-123' })
-    expect(githubServiceMock.postIssueReaction).not.toHaveBeenCalled()
+    expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryFullName: 'owner/repo',
+        issueNumber: 1,
+        reactionContent: '+1',
+      }),
+    )
   })
 
   it('publishes implementation message when trigger comment is received', async () => {
@@ -611,6 +623,13 @@ describe('createWebhookHandler', () => {
     expect(implementationProto.deliveryId).toBe('delivery-999')
 
     expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-999' })
+    expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryFullName: 'owner/repo',
+        issueNumber: 2,
+        reactionContent: '+1',
+      }),
+    )
   })
 
   it('posts a ready comment when a clean Codex pull request updates outside forced review actions', async () => {
