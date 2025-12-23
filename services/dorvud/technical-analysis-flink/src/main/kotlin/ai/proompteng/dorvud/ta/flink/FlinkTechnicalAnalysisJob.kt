@@ -524,7 +524,17 @@ private class TaSignalsFunction(
     val series = BaseBarSeries("ta-${envelope.symbol}")
     bars.forEach { bar ->
       val barTime = ZonedDateTime.ofInstant(bar.t, ZoneOffset.UTC)
-      series.addBar(BaseBar(Duration.ofSeconds(1), barTime, bar.o, bar.h, bar.l, bar.c, bar.v))
+      val baseBar = BaseBar(Duration.ofSeconds(1), barTime, bar.o, bar.h, bar.l, bar.c, bar.v)
+      if (series.barCount == 0) {
+        series.addBar(baseBar)
+      } else {
+        val lastEndTime = series.getBar(series.endIndex).endTime
+        when {
+          barTime.isAfter(lastEndTime) -> series.addBar(baseBar)
+          barTime.isEqual(lastEndTime) -> series.addBar(baseBar, true)
+          else -> Unit
+        }
+      }
     }
 
     val close = ClosePriceIndicator(series)
