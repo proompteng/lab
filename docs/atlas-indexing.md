@@ -11,6 +11,7 @@ This document defines the `atlas` schema and indexing pipeline for file‑level 
 - Enable fast semantic search with filtering by repo/ref/path/tags.
 - Keep ingestion flexible (Temporal workflows + reusable activities).
 - Expose generic REST + MCP endpoints (no service‑specific names).
+- Ensure webhook‑driven workflows are idempotent and safe to retry.
 
 ## Non‑Goals
 
@@ -38,20 +39,25 @@ flowchart LR
 ### Entities
 
 - `repositories`: tracked repos + default refs.
-- `files`: file versions (ref/commit/path/hash).
+- `file_keys`: stable file identity per repo+path.
+- `file_versions`: versioned snapshots (ref/commit/hash).
 - `file_chunks`: optional chunk records (future‑proofing).
 - `enrichments`: semantic units (summary, AST facts, completion notes).
 - `embeddings`: vector storage by model + dimension.
 - `ast_grep_facts`: structured AST matches.
+- `github_events`: webhook delivery log for idempotency.
+- `ingestions`: workflow runs tied to webhook events.
 
 ```mermaid
 erDiagram
-  REPOSITORIES ||--o{ FILES : contains
-  FILES ||--o{ FILE_CHUNKS : splits
-  FILES ||--o{ ENRICHMENTS : has
+  REPOSITORIES ||--o{ FILE_KEYS : contains
+  FILE_KEYS ||--o{ FILE_VERSIONS : versions
+  FILE_VERSIONS ||--o{ FILE_CHUNKS : splits
+  FILE_VERSIONS ||--o{ ENRICHMENTS : has
   FILE_CHUNKS ||--o{ ENRICHMENTS : has
   ENRICHMENTS ||--o{ EMBEDDINGS : embeds
-  FILES ||--o{ AST_GREP_FACTS : matches
+  FILE_VERSIONS ||--o{ AST_GREP_FACTS : matches
+  GITHUB_EVENTS ||--o{ INGESTIONS : triggers
 
   REPOSITORIES {
     uuid id
@@ -62,17 +68,24 @@ erDiagram
     timestamptz updated_at
   }
 
-  FILES {
+  FILE_KEYS {
     uuid id
     uuid repository_id
+    text path
+    timestamptz created_at
+  }
+
+  FILE_VERSIONS {
+    uuid id
+    uuid file_key_id
     text repository_ref
     text repository_commit
-    text path
     text content_hash
     text language
     int byte_size
     int line_count
     jsonb metadata
+    timestamptz source_timestamp
     timestamptz created_at
     timestamptz updated_at
   }
@@ -91,7 +104,7 @@ erDiagram
 
   ENRICHMENTS {
     uuid id
-    uuid file_id
+    uuid file_version_id
     uuid chunk_id
     text kind
     text source
@@ -113,7 +126,7 @@ erDiagram
 
   AST_GREP_FACTS {
     uuid id
-    uuid file_id
+    uuid file_version_id
     text rule_id
     text match_text
     int start_line
@@ -156,7 +169,8 @@ sequenceDiagram
   WF->>ACT: Run AST‑grep rules
   WF->>ACT: Call model (completion)
   WF->>ACT: Create embeddings
-  ACT->>DB: Upsert repository, file, enrichment, embedding
+  ACT->>DB: Upsert repository, file_key, file_version, enrichment, embedding
+  ACT->>DB: Record webhook event + ingestion status (idempotent)
   API-->>UI: 202 Accepted + workflow id
 ```
 
@@ -183,6 +197,8 @@ sequenceDiagram
 - Embedding dimension mismatch causes a clear error until migrated.
 - Index build uses `ivfflat` lists = 100 (tunable).
 - Bumba workflows are reusable and activity‑based for future pipelines.
+- Webhook deliveries are idempotent via `github_events.delivery_id` and `ingestions` records.
+- Index updates are idempotent by `(file_key_id, repository_ref, repository_commit, content_hash)`.
 
 ## Security Notes
 
@@ -195,3 +211,24 @@ sequenceDiagram
 - Whether to chunk files immediately or only when size exceeds a threshold.
 - Backfill policy from existing `memories` content (likely no).
 - How to version AST‑grep rules and link them in metadata.
+  GITHUB_EVENTS {
+    uuid id
+    text delivery_id
+    text event_type
+    text repository
+    text installation_id
+    text sender_login
+    jsonb payload
+    timestamptz received_at
+    timestamptz processed_at
+  }
+
+  INGESTIONS {
+    uuid id
+    uuid event_id
+    text workflow_id
+    text status
+    text error
+    timestamptz started_at
+    timestamptz finished_at
+  }
