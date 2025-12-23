@@ -1,6 +1,7 @@
 import { Effect, pipe } from 'effect'
 import { describe, expect, it } from 'vitest'
 
+import { Atlas, type AtlasService } from '../atlas'
 import { handleMcpRequestEffect } from '../mcp'
 import { Memories, type MemoriesService } from '../memories'
 import type { MemoryRecord } from '../memories-store'
@@ -36,6 +37,33 @@ const makeService = (): { service: MemoriesService; saved: MemoryRecord[] } => {
   return { service, saved }
 }
 
+const makeAtlasService = (): AtlasService => {
+  const fail = <T>() => Effect.fail(new Error('atlas unavailable')) as Effect.Effect<T, Error>
+  return {
+    upsertRepository: () => fail(),
+    getRepositoryByName: () => fail(),
+    upsertFileKey: () => fail(),
+    getFileKeyByPath: () => fail(),
+    upsertFileVersion: () => fail(),
+    getFileVersionByKey: () => fail(),
+    upsertFileChunk: () => fail(),
+    upsertEnrichment: () => fail(),
+    upsertEmbedding: () => fail(),
+    upsertTreeSitterFact: () => fail(),
+    upsertSymbol: () => fail(),
+    upsertSymbolDef: () => fail(),
+    upsertSymbolRef: () => fail(),
+    upsertFileEdge: () => fail(),
+    upsertGithubEvent: () => fail(),
+    upsertIngestion: () => fail(),
+    upsertEventFile: () => fail(),
+    upsertIngestionTarget: () => fail(),
+    search: () => fail(),
+    stats: () => fail(),
+    close: () => Effect.void,
+  }
+}
+
 const post = async (service: MemoriesService, body: unknown, headers: Record<string, string> = {}) => {
   const request = new Request('http://localhost/mcp', {
     method: 'POST',
@@ -44,7 +72,11 @@ const post = async (service: MemoriesService, body: unknown, headers: Record<str
   })
 
   const response = await Effect.runPromise(
-    pipe(handleMcpRequestEffect(request), Effect.provideService(Memories, service)),
+    pipe(
+      handleMcpRequestEffect(request),
+      Effect.provideService(Memories, service),
+      Effect.provideService(Atlas, makeAtlasService()),
+    ),
   )
   const json = response.status === 202 || response.status === 204 ? null : await response.json()
   return { response, json }
