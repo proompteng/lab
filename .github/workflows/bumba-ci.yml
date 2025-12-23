@@ -1,0 +1,55 @@
+name: bumba
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/bumba/**'
+      - 'packages/scripts/src/bumba/**'
+      - 'argocd/applications/bumba/**'
+      - 'argocd/applicationsets/product.yaml'
+      - '.github/workflows/bumba-ci.yml'
+      - '.github/workflows/docker-build-common.yaml'
+      - 'package.json'
+      - 'bun.lock'
+  pull_request:
+    paths:
+      - 'services/bumba/**'
+      - 'packages/scripts/src/bumba/**'
+      - 'argocd/applications/bumba/**'
+      - 'argocd/applicationsets/product.yaml'
+      - '.github/workflows/bumba-ci.yml'
+      - '.github/workflows/docker-build-common.yaml'
+      - 'package.json'
+      - 'bun.lock'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-checks:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      bun-version: 1.3.5
+      node-version: 24.11.1
+      install-command: bun install --frozen-lockfile
+      lint-command: bunx biome check services/bumba packages/scripts/src/bumba argocd/applications/bumba
+      test-command: bun run --cwd services/bumba tsc
+    secrets: inherit
+
+  deploy-main:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: bumba
+      dockerfile: ./services/bumba/Dockerfile
+      context: .
+      new_tag: ${{ github.sha }}
+      turbo_scope: '@proompteng/bumba'
+      turbo_copy: 'tsconfig.base.json'
+      bun_version: 1.3.5
+    secrets: inherit

@@ -45,7 +45,9 @@
     "facteur:consume": "bun run packages/scripts/src/facteur/run-consumer.ts",
     "convex:reseal": "bun run packages/scripts/src/convex/reseal-secrets.ts",
     "build:torghut": "bun run packages/scripts/src/torghut/build-image.ts",
+    "build:bumba": "bun run packages/scripts/src/bumba/build-image.ts",
     "deploy:torghut": "bun run packages/scripts/src/torghut/deploy-service.ts",
+    "bumba:deploy": "bun run packages/scripts/src/bumba/deploy-service.ts",
     "flink:build": "bun run packages/scripts/src/dorvud/build-and-push.ts",
     "smoke:torghut-ws": "bun run packages/scripts/src/torghut/ws-smoke.ts"
   },

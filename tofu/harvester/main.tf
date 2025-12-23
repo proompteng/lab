@@ -204,6 +204,7 @@ packages:
   - curl
   - chrony
   - ethtool
+  - nfs-common
 write-files:
   - path: /etc/sysctl.d/60-k8s-perf.conf
     content: |
@@ -343,6 +344,7 @@ package_reboot_if_required: true
 packages:
   - qemu-guest-agent
   - curl
+  - nfs-common
 runcmd:
   - systemctl enable --now qemu-guest-agent
   - install -m 0755 -d /etc/apt/keyrings

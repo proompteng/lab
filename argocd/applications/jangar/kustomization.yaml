@@ -8,7 +8,7 @@ resources:
   - tailscale-service.yaml
   - postgres-cluster.yaml
   - openwebui-redis.yaml
-  - pvc.yaml
+  - pvc-rwx.yaml
   - vscode-tailscale-service.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml

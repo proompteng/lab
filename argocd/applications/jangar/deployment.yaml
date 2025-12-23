@@ -134,7 +134,7 @@ spec:
       volumes:
         - name: workspace
           persistentVolumeClaim:
-            claimName: jangar-workspace
+            claimName: jangar-workspace-rwx
         - name: docker-lib
           emptyDir: {}
         - name: docker-sock
