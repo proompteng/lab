@@ -17,7 +17,7 @@ data:
   TA_SIGNALS_TOPIC: "torghut.ta.signals.v1"
   TA_GROUP_ID: "torghut-ta-2025-12-23"
   TA_CLIENT_ID: "torghut-ta"
-  TA_AUTO_OFFSET_RESET: "latest"
+  TA_AUTO_OFFSET_RESET: "earliest"
   TA_CHECKPOINT_DIR: "s3a://flink-checkpoints/torghut/technical-analysis"
   TA_SAVEPOINT_DIR: "s3a://flink-checkpoints/torghut/technical-analysis/savepoints"
   TA_CHECKPOINT_INTERVAL_MS: "10000"
