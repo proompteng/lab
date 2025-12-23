@@ -4,7 +4,9 @@
     "target": "es2022",
     "moduleResolution": "bundler",
     "strict": true,
-    "noEmit": true
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["bun-types"]
   },
   "include": ["src"]
 }
