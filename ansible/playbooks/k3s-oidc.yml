@@ -1,6 +1,7 @@
 ---
 - name: Configure k3s API server OIDC settings
   hosts: kube_masters
+  remote_user: kalmyk
   become: true
   serial: 1
   vars:
