@@ -45,6 +45,8 @@ flowchart LR
 - `enrichments`: semantic units (summary, AST facts, completion notes).
 - `embeddings`: vector storage by model + dimension.
 - `tree_sitter_facts`: structured AST matches.
+- `symbols` + `symbol_defs` + `symbol_refs`: cross‑file definition/reference graph.
+- `file_edges`: explicit file‑to‑file relationships for traversal.
 - `github_events`: webhook delivery log for idempotency.
 - `ingestions`: workflow runs tied to webhook events.
 
@@ -57,6 +59,13 @@ erDiagram
   FILE_CHUNKS ||--o{ ENRICHMENTS : has
   ENRICHMENTS ||--o{ EMBEDDINGS : embeds
   FILE_VERSIONS ||--o{ TREE_SITTER_FACTS : matches
+  REPOSITORIES ||--o{ SYMBOLS : owns
+  SYMBOLS ||--o{ SYMBOL_DEFS : defines
+  SYMBOLS ||--o{ SYMBOL_REFS : references
+  FILE_VERSIONS ||--o{ SYMBOL_DEFS : in_file
+  FILE_VERSIONS ||--o{ SYMBOL_REFS : in_file
+  FILE_VERSIONS ||--o{ FILE_EDGES : from_file
+  FILE_VERSIONS ||--o{ FILE_EDGES : to_file
   GITHUB_EVENTS ||--o{ INGESTIONS : triggers
 
   REPOSITORIES {
@@ -135,6 +144,46 @@ erDiagram
     timestamptz created_at
   }
 
+  SYMBOLS {
+    uuid id
+    uuid repository_id
+    text name
+    text normalized_name
+    text kind
+    text signature
+    jsonb metadata
+    timestamptz created_at
+  }
+
+  SYMBOL_DEFS {
+    uuid id
+    uuid symbol_id
+    uuid file_version_id
+    int start_line
+    int end_line
+    jsonb metadata
+    timestamptz created_at
+  }
+
+  SYMBOL_REFS {
+    uuid id
+    uuid symbol_id
+    uuid file_version_id
+    int start_line
+    int end_line
+    jsonb metadata
+    timestamptz created_at
+  }
+
+  FILE_EDGES {
+    uuid id
+    uuid from_file_version_id
+    uuid to_file_version_id
+    text kind
+    jsonb metadata
+    timestamptz created_at
+  }
+
   GITHUB_EVENTS {
     uuid id
     text delivery_id
@@ -168,6 +217,11 @@ erDiagram
   - `kind`, `tags`, `metadata` indexes for filtering.
 - `atlas.embeddings`:
   - IVF‑Flat index on `embedding` with cosine ops.
+- `atlas.symbols` + `atlas.symbol_defs` + `atlas.symbol_refs`:
+  - `normalized_name` + `kind` for symbol lookups.
+  - `file_version_id` for traversal from a file.
+- `atlas.file_edges`:
+  - `(from_file_version_id, kind)` and `(to_file_version_id, kind)` for graph traversal.
 
 ### Embedding Dimension
 
@@ -221,6 +275,7 @@ sequenceDiagram
 - Bumba workflows are reusable and activity‑based for future pipelines.
 - Webhook deliveries are idempotent via `github_events.delivery_id` and `ingestions` records.
 - Index updates are idempotent by `(file_key_id, repository_ref, repository_commit, content_hash)`.
+- Graph traversal is supported by `symbol_defs`/`symbol_refs` (for symbol‑level joins) and `file_edges` (for direct file‑to‑file edges).
 
 ## Security Notes
 
@@ -233,6 +288,7 @@ sequenceDiagram
 - Whether to chunk files immediately or only when size exceeds a threshold.
 - Backfill policy from existing `memories` content (likely no).
 - How to version Tree‑sitter grammars or extraction rules and link them in metadata.
+- How to normalize symbols consistently across languages (e.g., module‑qualified names).
 
 ## Tree‑sitter Extraction (per file)
 
@@ -241,6 +297,7 @@ We normalize Tree‑sitter output into a stable facts schema:
 - Parse file with the language grammar.
 - Walk the AST and emit facts like `{ node_type, match_text, start_line, end_line, metadata }`.
 - Store those facts in `atlas.tree_sitter_facts` and/or append to `enrichments` metadata.
+- Emit symbols + refs + file edges for cross‑file navigation.
 
 Pseudocode example (activity):
 
@@ -258,6 +315,15 @@ walk(tree.rootNode, (node) => {
       end_line: node.endPosition.row + 1,
       metadata: { field: node.fieldName },
     })
+  }
+  if (isSymbolDef(node)) {
+    emitSymbolDef(node)
+  }
+  if (isSymbolRef(node)) {
+    emitSymbolRef(node)
+  }
+  if (isImportEdge(node)) {
+    emitFileEdge(node)
   }
 })
 ```
