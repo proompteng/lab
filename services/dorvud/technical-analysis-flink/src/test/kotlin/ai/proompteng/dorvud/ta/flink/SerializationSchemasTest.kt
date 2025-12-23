@@ -1,20 +1,18 @@
 package ai.proompteng.dorvud.ta.flink
 
+import ai.proompteng.dorvud.platform.Envelope
+import ai.proompteng.dorvud.ta.producer.AvroSerde
+import ai.proompteng.dorvud.ta.stream.MicroBarPayload
+import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
+import ai.proompteng.dorvud.ta.stream.TradePayload
+import org.apache.flink.api.common.ExecutionConfig
+import org.apache.flink.api.java.typeutils.runtime.kryo.KryoSerializer
 import java.io.ByteArrayOutputStream
 import java.io.ObjectOutputStream
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
-
-import org.apache.flink.api.common.ExecutionConfig
-import org.apache.flink.api.java.typeutils.runtime.kryo.KryoSerializer
-
-import ai.proompteng.dorvud.platform.Envelope
-import ai.proompteng.dorvud.ta.producer.AvroSerde
-import ai.proompteng.dorvud.ta.stream.MicroBarPayload
-import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
-import ai.proompteng.dorvud.ta.stream.TradePayload
 
 class SerializationSchemasTest {
   private val serde = AvroSerde()
