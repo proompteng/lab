@@ -123,7 +123,7 @@ class TechnicalAnalysisService(
   private fun emitMicroBar(env: ai.proompteng.dorvud.platform.Envelope<MicroBarPayload>) {
     val seq = seqTracker.next(env.symbol)
     val envWithSeq = env.copy(seq = seq)
-    val bytes = avro.encodeMicroBar(envWithSeq)
+    val bytes = avro.encodeMicroBar(envWithSeq, config.microBarsTopic)
     val record = ProducerRecord(config.microBarsTopic, env.symbol, bytes)
     producer.send(record)
     registry.counter("ta_microbars_emitted_total").increment()
@@ -131,7 +131,7 @@ class TechnicalAnalysisService(
   }
 
   private fun emitSignal(env: ai.proompteng.dorvud.platform.Envelope<TaSignalsPayload>) {
-    val bytes = avro.encodeSignals(env)
+    val bytes = avro.encodeSignals(env, config.signalsTopic)
     val record = ProducerRecord(config.signalsTopic, env.symbol, bytes)
     producer.send(record)
     registry.counter("ta_signals_emitted_total").increment()

@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-alloy
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-alloy
+    app.kubernetes.io/component: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: torghut-alloy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: torghut-alloy
+        app.kubernetes.io/component: observability
+    spec:
+      serviceAccountName: torghut-alloy
+      containers:
+        - name: alloy
+          image: grafana/alloy:v1.11.2
+          imagePullPolicy: IfNotPresent
+          args:
+            - run
+            - /etc/alloy/config.river
+          ports:
+            - name: http-metrics
+              containerPort: 12345
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+      volumes:
+        - name: config
+          configMap:
+            name: torghut-alloy
+            items:
+              - key: config.river
+                path: config.river

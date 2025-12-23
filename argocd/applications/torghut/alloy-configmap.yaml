@@ -1,0 +1,114 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-alloy
+  namespace: torghut
+data:
+  config.river: |
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+
+    discovery.kubernetes "torghut_pods" {
+      role = "pod"
+
+      namespaces {
+        names = ["torghut"]
+      }
+
+      selectors {
+        role  = "pod"
+        field = "metadata.namespace=torghut"
+      }
+    }
+
+    discovery.relabel "torghut_pod_logs" {
+      targets = discovery.kubernetes.torghut_pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        regex         = "chi-torghut-clickhouse-.*"
+        action        = "drop"
+      }
+    }
+
+    discovery.kubernetes "torghut_endpoints" {
+      role = "endpoints"
+
+      namespaces {
+        names = ["torghut"]
+      }
+
+      selectors {
+        role  = "endpoints"
+        field = "metadata.namespace=torghut"
+      }
+    }
+
+    discovery.relabel "torghut_metrics" {
+      targets = discovery.kubernetes.torghut_endpoints.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_endpoint_port_name"]
+        regex         = "(?i)metrics"
+        action        = "keep"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_service_name"]
+        target_label  = "service"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+    }
+
+    prometheus.remote_write "mimir" {
+      endpoint {
+        url = "http://observability-mimir-nginx.observability.svc.cluster.local/api/v1/push"
+      }
+    }
+
+    prometheus.scrape "torghut" {
+      job_name        = "torghut"
+      scrape_interval = "30s"
+      targets         = discovery.relabel.torghut_metrics.output
+      forward_to      = [prometheus.remote_write.mimir.receiver]
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"
+      }
+    }
+
+    loki.source.kubernetes "torghut_pod_logs" {
+      targets    = discovery.relabel.torghut_pod_logs.output
+      forward_to = [loki.process.torghut_pod_logs.receiver]
+    }
+
+    loki.process "torghut_pod_logs" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          job = "torghut",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }

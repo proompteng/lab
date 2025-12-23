@@ -253,7 +253,7 @@ internal class MicroBarSerializationSchema(
   ): ProducerRecord<ByteArray, ByteArray>? {
     if (element == null) return null
     val key = element.symbol.toByteArray(StandardCharsets.UTF_8)
-    val value = serde.encodeMicroBar(element)
+    val value = serde.encodeMicroBar(element, topic)
     return ProducerRecord(topic, null, timestamp ?: System.currentTimeMillis(), key, value)
   }
 }
@@ -274,7 +274,7 @@ internal class SignalSerializationSchema(
   ): ProducerRecord<ByteArray, ByteArray>? {
     if (element == null) return null
     val key = element.symbol.toByteArray(StandardCharsets.UTF_8)
-    val value = serde.encodeSignals(element)
+    val value = serde.encodeSignals(element, topic)
     return ProducerRecord(topic, null, timestamp ?: System.currentTimeMillis(), key, value)
   }
 }
@@ -524,7 +524,17 @@ private class TaSignalsFunction(
     val series = BaseBarSeries("ta-${envelope.symbol}")
     bars.forEach { bar ->
       val barTime = ZonedDateTime.ofInstant(bar.t, ZoneOffset.UTC)
-      series.addBar(BaseBar(Duration.ofSeconds(1), barTime, bar.o, bar.h, bar.l, bar.c, bar.v))
+      val baseBar = BaseBar(Duration.ofSeconds(1), barTime, bar.o, bar.h, bar.l, bar.c, bar.v)
+      if (series.barCount == 0) {
+        series.addBar(baseBar)
+      } else {
+        val lastEndTime = series.getBar(series.endIndex).endTime
+        when {
+          barTime.isAfter(lastEndTime) -> series.addBar(baseBar)
+          barTime.isEqual(lastEndTime) -> series.addBar(baseBar, true)
+          else -> Unit
+        }
+      }
     }
 
     val close = ClosePriceIndicator(series)
@@ -644,7 +654,7 @@ private class TaSignalsFunction(
   }
 }
 
-private data class SessionAccumulatorState(
+data class SessionAccumulatorState(
   var pv: Double = 0.0,
   var vol: Double = 0.0,
 ) : Serializable {

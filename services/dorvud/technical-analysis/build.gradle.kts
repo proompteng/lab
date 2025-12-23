@@ -23,6 +23,7 @@ dependencies {
   val logbackVersion = "1.5.12"
   val kotlinLoggingVersion = "6.0.4"
   val avroVersion = "1.11.3"
+  val confluentVersion = "7.5.4"
   val testcontainersVersion = "2.0.2"
   val kotestVersion = "5.9.1"
 
@@ -49,6 +50,7 @@ dependencies {
   implementation("io.github.oshai:kotlin-logging-jvm:$kotlinLoggingVersion")
   implementation("ch.qos.logback:logback-classic:$logbackVersion")
   implementation("org.apache.avro:avro:$avroVersion")
+  implementation("io.confluent:kafka-avro-serializer:$confluentVersion")
 
   testImplementation(kotlin("test"))
   testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion")

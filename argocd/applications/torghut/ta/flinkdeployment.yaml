@@ -6,10 +6,81 @@ metadata:
   labels:
     app: torghut-ta
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:89b7dd3adf708aa73976df2a1128d063a4d4fccc695f530f6f8aba5c7cc68285
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:912efed85e3950f5c119e0865dbbcceede7e2e0b15cf5a937f2cbeca36c53c08
   imagePullPolicy: IfNotPresent
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
+  logConfiguration:
+    log4j-console.properties: |-
+      ################################################################################
+      #  Licensed to the Apache Software Foundation (ASF) under one
+      #  or more contributor license agreements.  See the NOTICE file
+      #  distributed with this work for additional information
+      #  regarding copyright ownership.  The ASF licenses this file
+      #  to you under the Apache License, Version 2.0 (the
+      #  "License"); you may not use this file except in compliance
+      #  with the License.  You may obtain a copy of the License at
+      #
+      #      http://www.apache.org/licenses/LICENSE-2.0
+      #
+      #  Unless required by applicable law or agreed to in writing, software
+      #  distributed under the License is distributed on an "AS IS" BASIS,
+      #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+      #  See the License for the specific language governing permissions and
+      # limitations under the License.
+      ################################################################################
+
+      # This affects logging for both user code and Flink
+      rootLogger.level = INFO
+      rootLogger.appenderRef.console.ref = ConsoleAppender
+      rootLogger.appenderRef.rolling.ref = RollingFileAppender
+
+      # Uncomment this if you want to _only_ change Flink's logging
+      #logger.flink.name = org.apache.flink
+      #logger.flink.level = INFO
+
+      # The following lines keep the log level of common libraries/connectors on
+      # log level INFO. The root logger does not override this. You have to manually
+      # change the log levels here.
+      logger.akka.name = akka
+      logger.akka.level = INFO
+      logger.kafka.name= org.apache.kafka
+      logger.kafka.level = INFO
+      logger.hadoop.name = org.apache.hadoop
+      logger.hadoop.level = INFO
+      logger.zookeeper.name = org.apache.zookeeper
+      logger.zookeeper.level = INFO
+      logger.metrics.name = org.apache.flink.metrics.MetricGroup
+      logger.metrics.level = ERROR
+
+      # Log all infos to the console
+      appender.console.name = ConsoleAppender
+      appender.console.type = CONSOLE
+      appender.console.layout.type = PatternLayout
+      appender.console.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c %x - %m%n
+
+      # Log all infos in the given rolling file
+      appender.rolling.name = RollingFileAppender
+      appender.rolling.type = RollingFile
+      appender.rolling.append = false
+      appender.rolling.fileName = ${sys:log.file}
+      appender.rolling.filePattern = ${sys:log.file}.%i
+      appender.rolling.layout.type = PatternLayout
+      appender.rolling.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c %x - %m%n
+      appender.rolling.policies.type = Policies
+      appender.rolling.policies.size.type = SizeBasedTriggeringPolicy
+      appender.rolling.policies.size.size=100MB
+      appender.rolling.strategy.type = DefaultRolloverStrategy
+      appender.rolling.strategy.max = 10
+
+      # Suppress the irrelevant (wrong) warnings from the Netty channel handler
+      logger.netty.name = org.apache.flink.shaded.akka.org.jboss.netty.channel.DefaultChannelPipeline
+      logger.netty.level = OFF
+
+      # The monitor interval in seconds to enable log4j automatic reconfiguration
+      # monitorInterval = 30
+      # Flink Deployment Logging Overrides
+      # rootLogger.level = DEBUG
   flinkConfiguration:
     state.checkpoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/checkpoints
     state.savepoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/savepoints
@@ -77,9 +148,9 @@ spec:
                   name: observability-minio-creds
                   key: secretkey
             - name: TORGHUT_TA_VERSION
-              value: v0.347.0-2-g21f57a4a
+              value: v0.355.0-11-gc87e3a2f
             - name: TORGHUT_TA_COMMIT
-              value: 21f57a4ab035afd1cc99fd60ea3b5553ea977435
+              value: c87e3a2fba15d7adbdc2cf8c362262cf1ece9746
           ports:
             - containerPort: 9249
               name: metrics
@@ -94,16 +165,16 @@ spec:
     replicas: 1
   taskManager:
     resource:
-      cpu: 1
-      memory: 3072m
+      cpu: 2
+      memory: 4096m
     podTemplate:
       metadata:
         labels:
           app: torghut-ta
-    replicas: 1
+    replicas: 4
   job:
     entryClass: ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJobKt
     jarURI: local:///opt/flink/usrlib/app.jar
-    parallelism: 1
+    parallelism: 8
     upgradeMode: stateless
     state: running
