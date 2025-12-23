@@ -35,8 +35,14 @@ export const workflows = [
           summary: enriched.summary,
           content: fileResult.content,
           astSummary: astResult.astSummary,
+          enriched: enriched.enriched,
           embedding: embedding.embedding,
-          metadata: astResult.metadata,
+          metadata: {
+            ...astResult.metadata,
+            ...enriched.metadata,
+          },
+          fileMetadata: fileResult.metadata,
+          facts: astResult.facts,
         }),
       )
 

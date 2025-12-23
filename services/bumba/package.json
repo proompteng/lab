@@ -12,7 +12,14 @@
   "dependencies": {
     "@effect/schema": "^0.75.5",
     "@proompteng/temporal-bun-sdk": "workspace:*",
-    "effect": "^3.19.10"
+    "effect": "^3.19.10",
+    "tree-sitter-go": "^0.23.4",
+    "tree-sitter-javascript": "^0.23.1",
+    "tree-sitter-json": "^0.24.8",
+    "tree-sitter-python": "^0.23.6",
+    "tree-sitter-rust": "^0.24.0",
+    "tree-sitter-typescript": "^0.23.1",
+    "web-tree-sitter": "^0.26.3"
   },
   "devDependencies": {
     "@types/bun": "latest",
