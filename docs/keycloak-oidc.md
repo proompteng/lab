@@ -10,6 +10,9 @@ This runbook covers the in-cluster Keycloak deployment used for OIDC, plus the i
 - Database: CloudNativePG cluster `keycloak-db` (Longhorn, 5Gi)
 - Public hostname: `auth.proompteng.ai`
 - Traefik route: `argocd/applications/keycloak/ingressroute.yaml`
+- Uses plain manifests (no Helm) under `argocd/applications/keycloak/`.
+
+For Headlamp-specific wiring (OIDC secret, RBAC, control-plane OIDC args), see `docs/headlamp-setup.md`.
 
 ## Admin UI
 
@@ -28,6 +31,35 @@ Keycloak warns if you are still using the bootstrap admin. Create a permanent ad
 4) Delete the temporary bootstrap admin user.
 
 Note: In this Keycloak build, the realm-level admin role is named **admin** under Realm roles (not `realm-admin`).
+
+## OIDC client for Kubernetes/Headlamp
+
+Use a single confidential OIDC client for both the kube-apiserver and Headlamp (example client ID: `kubernetes`).
+
+Capabilities:
+- Client authentication: **On**
+- Standard flow: **On**
+- Direct access grants: Off
+- Implicit flow: Off
+- Service accounts roles: Off
+- PKCE: None
+
+Login settings (Headlamp):
+- Root URL: `https://headlamp.ide-newton.ts.net`
+- Home URL: `https://headlamp.ide-newton.ts.net`
+- Valid redirect URIs: `https://headlamp.ide-newton.ts.net/oidc-callback`
+- Web origins: `https://headlamp.ide-newton.ts.net`
+- Valid post logout redirect URIs: `https://headlamp.ide-newton.ts.net`
+
+Issuer and scopes:
+- Issuer: Realm → **Realm settings** → **Endpoints** → **OpenID Endpoint Configuration** (`issuer`)
+- Scopes: `openid profile email`
+
+Optional (recommended) group mapper:
+- Mapper type: **Group Membership**
+- Token claim name: `groups`
+- Add to ID token: On
+- Add to access token: On
 
 ## Proxy (Nginx Proxy Manager)
 
