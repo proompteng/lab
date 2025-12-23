@@ -31,6 +31,24 @@ const createWritable = (sink: string[]) =>
     },
   })
 
+const createCodexProcessWithStdin = (messages: string[], stdin: unknown) => {
+  const stdout = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const message of messages) {
+        controller.enqueue(encoder.encode(`${message}\n`))
+      }
+      controller.close()
+    },
+  })
+
+  return {
+    stdin,
+    stdout,
+    stderr: null,
+    exited: Promise.resolve(0),
+  }
+}
+
 const createCodexProcess = (messages: string[], promptSink: string[]) => {
   const stdout = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -226,6 +244,38 @@ describe('codex-runner', () => {
     expect(spawnArgs?.cmd?.[modelIndex + 1]).toBe('gpt-5.2-codex')
 
     process.env.CODEX_MODEL = originalModel
+  })
+
+  it('writes prompts to Bun FileSink-backed stdin without throwing', async () => {
+    const promptSink: string[] = []
+    const fileSinkStdin = {
+      write(this: { sink: string[] }, chunk: string) {
+        this.sink.push(chunk)
+      },
+      flush(this: { sink: string[] }) {
+        return Promise.resolve(this.sink.length)
+      },
+      end(this: { sink: string[] }) {
+        this.sink.push('<end>')
+      },
+      sink: promptSink,
+    }
+    const codexMessages = [
+      JSON.stringify({ type: 'session.created', session: { id: 'session-filesink' } }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok' } }),
+    ]
+
+    spawnMock.mockImplementation(() => createCodexProcessWithStdin(codexMessages, fileSinkStdin))
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'FileSink prompt',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+    })
+
+    expect(promptSink).toEqual(['FileSink prompt', '<end>'])
   })
 
   it('streams agent messages and tool calls to a Discord channel when configured', async () => {
