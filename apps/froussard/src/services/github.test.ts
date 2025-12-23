@@ -1,7 +1,7 @@
 import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
-import { findLatestPlanComment, postIssueReaction } from '@/services/github/issues'
+import { findLatestPlanComment, postIssueCommentReaction, postIssueReaction } from '@/services/github/issues'
 import {
   createPullRequestComment,
   fetchPullRequest,
@@ -170,6 +170,62 @@ describe('postIssueReaction', () => {
     }
     const [url] = trailingCall
     expect(url).toBe('https://example.test/api/repos/acme/widgets/issues/5/reactions')
+  })
+})
+
+describe('postIssueCommentReaction', () => {
+  it('reports missing token when GITHUB_TOKEN is not configured', async () => {
+    const result = await Effect.runPromise(
+      postIssueCommentReaction({
+        repositoryFullName: 'owner/repo',
+        commentId: 12,
+        token: null,
+        reactionContent: 'eyes',
+        fetchImplementation: null,
+      }),
+    )
+
+    expect(result).toEqual({ ok: false, reason: 'missing-token' })
+  })
+
+  it('posts reaction payload to the GitHub API for a comment', async () => {
+    const fetchSpy = vi.fn(async (_input: string, _init) => {
+      return {
+        ok: true,
+        status: 201,
+        text: async () => '',
+      }
+    })
+
+    const result = await Effect.runPromise(
+      postIssueCommentReaction({
+        repositoryFullName: 'acme/widgets',
+        commentId: 17,
+        token: 'secret-token',
+        reactionContent: 'eyes',
+        apiBaseUrl: 'https://example.test/api',
+        userAgent: 'custom-agent',
+        fetchImplementation: fetchSpy,
+      }),
+    )
+
+    expect(result).toEqual({ ok: true })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const firstCall = fetchSpy.mock.calls[0]
+    if (!firstCall) {
+      throw new Error('Expected fetch to be called')
+    }
+    const [url, init] = firstCall
+    expect(url).toBe('https://example.test/api/repos/acme/widgets/issues/comments/17/reactions')
+    expect(init?.method).toBe('POST')
+    expect(init?.headers).toMatchObject({
+      Accept: 'application/vnd.github+json',
+      Authorization: 'Bearer secret-token',
+      'Content-Type': 'application/json',
+      'User-Agent': 'custom-agent',
+      'X-GitHub-Api-Version': '2022-11-28',
+    })
+    expect(init?.body).toBe(JSON.stringify({ content: 'eyes' }))
   })
 })
 

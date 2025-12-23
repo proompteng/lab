@@ -16,6 +16,8 @@ import type {
   FindPlanCommentResult,
   IssueReactionPresenceOptions,
   IssueReactionPresenceResult,
+  PostIssueCommentReactionOptions,
+  PostIssueCommentReactionResult,
   PostIssueReactionOptions,
   PostIssueReactionResult,
 } from './types'
@@ -87,6 +89,80 @@ export const postIssueReaction = (options: PostIssueReactionOptions): Effect.Eff
     }),
     Effect.catchAll((error) =>
       Effect.succeed<PostIssueReactionResult>({
+        ok: false,
+        reason: 'network-error',
+        detail: error instanceof Error ? error.message : String(error),
+      }),
+    ),
+  )
+}
+
+export const postIssueCommentReaction = (
+  options: PostIssueCommentReactionOptions,
+): Effect.Effect<PostIssueCommentReactionResult> => {
+  const {
+    repositoryFullName,
+    commentId,
+    token,
+    reactionContent,
+    apiBaseUrl = DEFAULT_API_BASE_URL,
+    userAgent = DEFAULT_USER_AGENT,
+    fetchImplementation = globalFetch,
+  } = options
+
+  if (!token || token.trim().length === 0) {
+    return Effect.succeed({ ok: false, reason: 'missing-token' } as const)
+  }
+
+  const [owner, repo] = repositoryFullName.split('/')
+  if (!owner || !repo) {
+    return Effect.succeed({
+      ok: false,
+      reason: 'invalid-repository' as const,
+      detail: repositoryFullName,
+    })
+  }
+
+  const fetchFn = fetchImplementation
+  if (!fetchFn) {
+    return Effect.succeed({ ok: false, reason: 'no-fetch' } as const)
+  }
+
+  const url = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/issues/comments/${commentId}/reactions`
+
+  return Effect.tryPromise({
+    try: () =>
+      fetchFn(url, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          Authorization: `Bearer ${token}`,
+          'User-Agent': userAgent,
+        },
+        body: JSON.stringify({ content: reactionContent }),
+      }),
+    catch: toError,
+  }).pipe(
+    Effect.flatMap((response) => {
+      if (response.ok) {
+        return Effect.succeed<PostIssueCommentReactionResult>({ ok: true })
+      }
+
+      return readResponseText(response)
+        .pipe(Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)))
+        .pipe(
+          Effect.map((detail) => ({
+            ok: false as const,
+            reason: 'http-error' as const,
+            status: response.status,
+            detail,
+          })),
+        )
+    }),
+    Effect.catchAll((error) =>
+      Effect.succeed<PostIssueCommentReactionResult>({
         ok: false,
         reason: 'network-error',
         detail: error instanceof Error ? error.message : String(error),

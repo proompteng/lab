@@ -33,6 +33,27 @@ export type PostIssueReactionResult =
   | { ok: true }
   | { ok: false; reason: PostIssueReactionFailureReason; status?: number; detail?: string }
 
+export interface PostIssueCommentReactionOptions {
+  repositoryFullName: string
+  commentId: number
+  token?: string | null
+  reactionContent: string
+  apiBaseUrl?: string
+  userAgent?: string
+  fetchImplementation?: FetchLike | null
+}
+
+export type PostIssueCommentReactionFailureReason =
+  | 'missing-token'
+  | 'invalid-repository'
+  | 'no-fetch'
+  | 'http-error'
+  | 'network-error'
+
+export type PostIssueCommentReactionResult =
+  | { ok: true }
+  | { ok: false; reason: PostIssueCommentReactionFailureReason; status?: number; detail?: string }
+
 export interface IssueReactionPresenceOptions {
   repositoryFullName: string
   issueNumber: number
