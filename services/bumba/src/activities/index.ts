@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { basename, extname, relative, resolve, sep } from 'node:path'
 import { SQL } from 'bun'
 import { Language, Parser } from 'web-tree-sitter'
+import { isMap, isScalar, isSeq, LineCounter, parseAllDocuments } from 'yaml'
 
 export type ReadRepoFileInput = {
   repoRoot: string
@@ -265,8 +266,6 @@ const languageWasmByExtension = new Map<string, { name: string; wasmPath: string
   ['.mjs', { name: 'javascript', wasmPath: require.resolve('tree-sitter-javascript/tree-sitter-javascript.wasm') }],
   ['.cjs', { name: 'javascript', wasmPath: require.resolve('tree-sitter-javascript/tree-sitter-javascript.wasm') }],
   ['.json', { name: 'json', wasmPath: require.resolve('tree-sitter-json/tree-sitter-json.wasm') }],
-  ['.yaml', { name: 'yaml', wasmPath: require.resolve('tree-sitter-yaml/tree-sitter-yaml.wasm') }],
-  ['.yml', { name: 'yaml', wasmPath: require.resolve('tree-sitter-yaml/tree-sitter-yaml.wasm') }],
   ['.go', { name: 'go', wasmPath: require.resolve('tree-sitter-go/tree-sitter-go.wasm') }],
   ['.py', { name: 'python', wasmPath: require.resolve('tree-sitter-python/tree-sitter-python.wasm') }],
   ['.rs', { name: 'rust', wasmPath: require.resolve('tree-sitter-rust/tree-sitter-rust.wasm') }],
@@ -409,6 +408,130 @@ const collectFacts = (root: AstNode, source: string, maxFacts: number, maxFactCh
   return facts
 }
 
+const yamlExtensions = new Set(['.yaml', '.yml'])
+
+const resolveLineRange = (lineCounter: LineCounter, range?: [number, number, number]) => {
+  if (!range) return { startLine: 1, endLine: 1 }
+  const start = lineCounter.linePos(range[0])?.line ?? 0
+  const end = lineCounter.linePos(range[1])?.line ?? start
+  return { startLine: start + 1, endLine: end + 1 }
+}
+
+const formatYamlValue = (value: unknown, maxFactChars: number) => {
+  if (isScalar(value)) {
+    return safeSlice(String(value.value ?? ''), maxFactChars)
+  }
+  if (isMap(value)) return '{...}'
+  if (isSeq(value)) return '[...]'
+  return safeSlice(String(value ?? ''), maxFactChars)
+}
+
+const parseYamlAst = (
+  source: string,
+  maxFacts: number,
+  maxFactChars: number,
+  maxSummaryNodes: number,
+): AstSummaryOutput => {
+  const lineCounter = new LineCounter()
+
+  try {
+    const documents = parseAllDocuments(source, { lineCounter })
+    if (documents.length === 0) {
+      return {
+        astSummary: 'Empty YAML document.',
+        facts: [],
+        metadata: { skipped: true, reason: 'empty_document', language: 'yaml' },
+      }
+    }
+
+    const summaries: string[] = []
+    const facts: TreeSitterFact[] = []
+
+    for (const doc of documents) {
+      const root = doc.contents
+      if (!root) continue
+
+      const stack: Array<{ node: unknown; path: string }> = [{ node: root, path: '' }]
+
+      while (stack.length > 0 && (facts.length < maxFacts || summaries.length < maxSummaryNodes)) {
+        const current = stack.pop()
+        if (!current) continue
+
+        const { node, path } = current
+        if (isMap(node)) {
+          for (const item of node.items) {
+            const pair = item as { key?: unknown; value?: unknown; range?: [number, number, number] }
+            const keyText = isScalar(pair.key) ? String(pair.key.value ?? '') : 'key'
+            const nextPath = path ? `${path}.${keyText}` : keyText
+            const { startLine, endLine } = resolveLineRange(lineCounter, pair.range)
+            if (summaries.length < maxSummaryNodes) {
+              summaries.push(`${nextPath} (${startLine}-${endLine})`)
+            }
+            if (facts.length < maxFacts) {
+              facts.push({
+                nodeType: 'yaml-pair',
+                matchText: safeSlice(`${keyText}: ${formatYamlValue(pair.value, maxFactChars)}`, maxFactChars),
+                startLine,
+                endLine,
+                metadata: undefined,
+              })
+            }
+            if (pair.value) stack.push({ node: pair.value, path: nextPath })
+          }
+          continue
+        }
+
+        if (isSeq(node)) {
+          node.items.forEach((item, index) => {
+            const nextPath = `${path}${path ? '.' : ''}[${index}]`
+            const range = (item as { range?: [number, number, number] }).range
+            const { startLine, endLine } = resolveLineRange(lineCounter, range)
+            if (summaries.length < maxSummaryNodes) {
+              summaries.push(`${nextPath} (${startLine}-${endLine})`)
+            }
+            if (facts.length < maxFacts) {
+              facts.push({
+                nodeType: 'yaml-seq-item',
+                matchText: safeSlice(`${nextPath}: ${formatYamlValue(item, maxFactChars)}`, maxFactChars),
+                startLine,
+                endLine,
+                metadata: undefined,
+              })
+            }
+            stack.push({ node: item, path: nextPath })
+          })
+        }
+      }
+    }
+
+    if (summaries.length === 0) {
+      summaries.push('No structured YAML nodes detected.')
+    }
+
+    return {
+      astSummary: summaries.map((line) => safeSlice(line, maxFactChars)).join('\n'),
+      facts,
+      metadata: {
+        language: 'yaml',
+        parser: 'yaml',
+        factCount: facts.length,
+        documentCount: documents.length,
+      },
+    }
+  } catch (error) {
+    return {
+      astSummary: 'YAML parse failed.',
+      facts: [],
+      metadata: {
+        skipped: true,
+        reason: 'parse_failed',
+        language: 'yaml',
+        error: error instanceof Error ? error.message : 'unknown_error',
+      },
+    }
+  }
+}
+
 const parseAst = async (source: string, filePath: string): Promise<AstSummaryOutput> => {
   const { maxBytes, maxFacts, maxFactChars, maxSummaryNodes } = loadAstLimits()
   if (source.length > maxBytes) {
@@ -420,6 +543,9 @@ const parseAst = async (source: string, filePath: string): Promise<AstSummaryOut
   }
 
   const ext = extname(filePath).toLowerCase()
+  if (yamlExtensions.has(ext)) {
+    return parseYamlAst(source, maxFacts, maxFactChars, maxSummaryNodes)
+  }
   const entry = await loadLanguageForExtension(ext)
   if (!entry) {
     return {
