@@ -1,11 +1,31 @@
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { __test__ } from '~/server/bumba'
+
+type BunSpawnOptions = {
+  cwd?: string
+  stdout?: 'pipe'
+  stderr?: 'pipe'
+}
+
+type BunSpawnResult = {
+  stdout: ReadableStream
+  stderr: ReadableStream
+  exited: Promise<number>
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var Bun: {
+    spawn: (args: string[], options: BunSpawnOptions) => BunSpawnResult
+  }
+}
 
 const runGit = (args: string[], cwd: string) => {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
@@ -24,9 +44,11 @@ const commitAll = (cwd: string, message: string) => {
 
 describe('bumba worktree refresh', () => {
   const previousEnv: Partial<Record<'BUMBA_WORKSPACE_ROOT', string | undefined>> = {}
+  let previousBun: typeof globalThis.Bun | undefined
   let repoRoot: string | null = null
 
   beforeEach(async () => {
+    previousBun = globalThis.Bun
     previousEnv.BUMBA_WORKSPACE_ROOT = process.env.BUMBA_WORKSPACE_ROOT
     repoRoot = await mkdtemp(join(tmpdir(), 'bumba-worktree-'))
 
@@ -35,6 +57,23 @@ describe('bumba worktree refresh', () => {
     runGit(['config', 'user.name', 'Bumba Test'], repoRoot)
 
     process.env.BUMBA_WORKSPACE_ROOT = repoRoot
+
+    globalThis.Bun = {
+      spawn: (args, options) => {
+        const child = spawn(args[0], args.slice(1), {
+          cwd: options.cwd,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+
+        const stdout = Readable.toWeb(child.stdout ?? Readable.from([]))
+        const stderr = Readable.toWeb(child.stderr ?? Readable.from([]))
+        const exited = new Promise<number>((resolve) => {
+          child.on('close', (code) => resolve(code ?? 1))
+        })
+
+        return { stdout, stderr, exited }
+      },
+    }
   })
 
   afterEach(async () => {
@@ -47,6 +86,12 @@ describe('bumba worktree refresh', () => {
       delete process.env.BUMBA_WORKSPACE_ROOT
     } else {
       process.env.BUMBA_WORKSPACE_ROOT = previousEnv.BUMBA_WORKSPACE_ROOT
+    }
+
+    if (previousBun === undefined) {
+      delete globalThis.Bun
+    } else {
+      globalThis.Bun = previousBun
     }
   })
 
