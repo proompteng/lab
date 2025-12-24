@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto'
 
 import type { Webhooks } from '@octokit/webhooks'
-import { Effect } from 'effect'
+import { Effect, pipe } from 'effect'
 import type { Effect as EffectType } from 'effect/Effect'
+import * as Either from 'effect/Either'
+import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
 import * as TSemaphore from 'effect/TSemaphore'
 
 import type { AppConfigService } from '@/effect/config'
@@ -106,51 +109,89 @@ const extractRepositoryFromUrl = (repositoryUrl: string): string | undefined => 
   return undefined
 }
 
+const AtlasContextSchema = Schema.Struct({
+  repository: Schema.optionalWith(
+    Schema.Struct({
+      full_name: Schema.optionalWith(Schema.String, { nullable: true }),
+      default_branch: Schema.optionalWith(Schema.String, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  issue: Schema.optionalWith(
+    Schema.Struct({
+      repository_url: Schema.optionalWith(Schema.String, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  pull_request: Schema.optionalWith(
+    Schema.Struct({
+      base: Schema.optionalWith(
+        Schema.Struct({
+          ref: Schema.optionalWith(Schema.String, { nullable: true }),
+          repo: Schema.optionalWith(
+            Schema.Struct({
+              full_name: Schema.optionalWith(Schema.String, { nullable: true }),
+            }),
+            { nullable: true },
+          ),
+        }),
+        { nullable: true },
+      ),
+      head: Schema.optionalWith(
+        Schema.Struct({
+          sha: Schema.optionalWith(Schema.String, { nullable: true }),
+        }),
+        { nullable: true },
+      ),
+    }),
+    { nullable: true },
+  ),
+  ref: Schema.optionalWith(Schema.String, { nullable: true }),
+  after: Schema.optionalWith(Schema.String, { nullable: true }),
+  head_commit: Schema.optionalWith(
+    Schema.Struct({
+      id: Schema.optionalWith(Schema.String, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+})
+
+const toOptionalString = (value: unknown) =>
+  typeof value === 'string' && value.trim().length > 0 ? Option.some(value) : Option.none()
+
 const extractAtlasContext = (payload: unknown): { repository?: string; ref?: string; commit?: string } => {
-  if (!payload || typeof payload !== 'object') {
-    return {}
-  }
+  const decoded = Schema.decodeUnknownEither(AtlasContextSchema)(payload)
+  if (Either.isLeft(decoded)) return {}
+  const value = decoded.right
 
-  const repository =
-    typeof (payload as { repository?: { full_name?: unknown } }).repository?.full_name === 'string'
-      ? (payload as { repository: { full_name: string } }).repository.full_name
-      : undefined
+  const repository = pipe(
+    toOptionalString(value.repository?.full_name),
+    Option.orElse(() => toOptionalString(value.pull_request?.base?.repo?.full_name)),
+    Option.orElse(() =>
+      pipe(
+        toOptionalString(value.issue?.repository_url),
+        Option.map(extractRepositoryFromUrl),
+        Option.flatMap(Option.fromNullable),
+      ),
+    ),
+    Option.getOrElse(() => undefined),
+  )
 
-  const repositoryUrl =
-    typeof (payload as { issue?: { repository_url?: unknown } }).issue?.repository_url === 'string'
-      ? (payload as { issue: { repository_url: string } }).issue.repository_url
-      : undefined
+  const ref = pipe(
+    toOptionalString(value.ref),
+    Option.orElse(() => toOptionalString(value.pull_request?.base?.ref)),
+    Option.orElse(() => toOptionalString(value.repository?.default_branch)),
+    Option.getOrElse(() => undefined),
+  )
 
-  const fallbackRepository =
-    typeof (payload as { pull_request?: { base?: { repo?: { full_name?: unknown } } } }).pull_request?.base?.repo
-      ?.full_name === 'string'
-      ? (payload as { pull_request: { base: { repo: { full_name: string } } } }).pull_request.base.repo.full_name
-      : undefined
+  const commit = pipe(
+    toOptionalString(value.after),
+    Option.orElse(() => toOptionalString(value.pull_request?.head?.sha)),
+    Option.orElse(() => toOptionalString(value.head_commit?.id)),
+    Option.getOrElse(() => undefined),
+  )
 
-  const ref =
-    typeof (payload as { ref?: unknown }).ref === 'string'
-      ? (payload as { ref: string }).ref
-      : typeof (payload as { pull_request?: { base?: { ref?: unknown } } }).pull_request?.base?.ref === 'string'
-        ? (payload as { pull_request: { base: { ref: string } } }).pull_request.base.ref
-        : typeof (payload as { repository?: { default_branch?: unknown } }).repository?.default_branch === 'string'
-          ? (payload as { repository: { default_branch: string } }).repository.default_branch
-          : undefined
-
-  const commit =
-    typeof (payload as { after?: unknown }).after === 'string'
-      ? (payload as { after: string }).after
-      : typeof (payload as { pull_request?: { head?: { sha?: unknown } } }).pull_request?.head?.sha === 'string'
-        ? (payload as { pull_request: { head: { sha: string } } }).pull_request.head.sha
-        : typeof (payload as { head_commit?: { id?: unknown } }).head_commit?.id === 'string'
-          ? (payload as { head_commit: { id: string } }).head_commit.id
-          : undefined
-
-  return {
-    repository:
-      repository ?? fallbackRepository ?? (repositoryUrl ? extractRepositoryFromUrl(repositoryUrl) : undefined),
-    ref,
-    commit,
-  }
+  return { repository, ref, commit }
 }
 
 const buildAtlasPayload = (options: {
