@@ -17,6 +17,8 @@ existingSecret: pgadmin-auth
 envVarsExtra:
   - name: PGADMIN_SERVER_JSON_FILE
     value: /var/lib/pgadmin/servers/servers.json
+  - name: PGADMIN_CONFIG_ENABLE_SERVER_PASS_EXEC_CMD
+    value: "True"
 
 extraVolumes:
   - name: pgadmin-servers
