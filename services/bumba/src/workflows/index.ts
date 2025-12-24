@@ -47,6 +47,7 @@ const persistEnrichmentTimeouts = {
   scheduleToCloseTimeoutMs: 1_200_000,
 }
 
+const PARENT_CLOSE_POLICY_ABANDON = 2
 const MAX_CHILD_WORKFLOWS_PER_RUN = 500
 
 const EnrichFileInput = Schema.Struct({
@@ -181,16 +182,22 @@ export const workflows = [
       yield* Effect.forEach(
         batch,
         (filePath) =>
-          childWorkflows.start('enrichFile', [
+          childWorkflows.start(
+            'enrichFile',
+            [
+              {
+                repoRoot,
+                filePath,
+                repository,
+                ref,
+                commit,
+                context,
+              },
+            ],
             {
-              repoRoot,
-              filePath,
-              repository,
-              ref,
-              commit,
-              context,
+              parentClosePolicy: PARENT_CLOSE_POLICY_ABANDON,
             },
-          ]),
+          ),
         { concurrency: 10 },
       )
 

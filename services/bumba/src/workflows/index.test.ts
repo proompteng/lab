@@ -16,6 +16,8 @@ import {
 
 import { workflows } from './index'
 
+const PARENT_CLOSE_POLICY_ABANDON = 2
+
 type ExecuteOverrides = Partial<ExecuteWorkflowInput> & Pick<ExecuteWorkflowInput, 'workflowType' | 'arguments'>
 
 const makeExecutor = () => {
@@ -217,6 +219,11 @@ test('enrichRepository schedules listing and child workflows', async () => {
     (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
   )
   expect(childCommands).toHaveLength(2)
+  const childAttrs =
+    childCommands[0]?.attributes?.case === 'startChildWorkflowExecutionCommandAttributes'
+      ? childCommands[0].attributes.value
+      : undefined
+  expect(childAttrs?.parentClosePolicy).toBe(PARENT_CLOSE_POLICY_ABANDON)
   expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
   expect(output.completion).toBe('completed')
 })
