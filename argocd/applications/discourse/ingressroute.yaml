@@ -8,7 +8,7 @@ spec:
     - websecure
   routes:
     - kind: Rule
-      match: Host(`forum.<domain>`) # TODO: replace <domain>.
+      match: Host(`forum.proompteng.ai`)
       services:
         - name: discourse
           port: 80

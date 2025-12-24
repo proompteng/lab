@@ -1,0 +1,68 @@
+run:
+  - file:
+      path: /etc/runit/1.d/install-ssl
+      hook: ssl
+      chmod: "+x"
+      contents: |
+        #!/bin/bash
+        if [ -z "$DISCOURSE_HOSTNAME" ]; then
+          echo "DISCOURSE_HOSTNAME expected"
+          exit 1
+        fi
+        if [ -f /shared/ssl/ssl.crt ] && [ -f /shared/ssl/ssl.key ]; then
+          exec /usr/local/bin/configure-ssl
+          exit 0
+        else
+          echo "Skipping ssl setup: missing /shared/ssl/ssl.crt or /shared/ssl/ssl.key"
+        fi
+        # after ssl
+
+  - file:
+      path: "/usr/local/bin/configure-ssl"
+      chmod: "+x"
+      contents: |
+        #!/bin/bash
+        mkdir -p /shared/ssl/
+
+        cat << EOF > /etc/nginx/conf.d/outlets/before-server/20-redirect-http-to-https.conf
+        server {
+          listen 80;
+          listen [::]:80;
+
+          location ~ /.well-known {
+            root /var/www/discourse/public;
+            allow all;
+          }
+
+          return 301 https://${DISCOURSE_HOSTNAME}\$request_uri;
+        }
+        EOF
+
+        install /dev/null /etc/nginx/conf.d/outlets/server/10-http.conf
+
+        cat << EOF > /etc/nginx/conf.d/outlets/server/20-https.conf
+        listen 443 ssl;
+        listen [::]:443 ssl;
+        http2 on;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+        ssl_prefer_server_ciphers off;
+
+        ssl_certificate /shared/ssl/ssl.crt;
+        ssl_certificate_key /shared/ssl/ssl.key;
+
+        ssl_session_tickets off;
+        ssl_session_timeout 1d;
+        ssl_session_cache shared:SSL:1m;
+
+        add_header Strict-Transport-Security 'max-age=31536000';
+
+        if (\$http_host != ${DISCOURSE_HOSTNAME}) {
+          rewrite (.*) https://${DISCOURSE_HOSTNAME}\$1 permanent;
+        }
+        EOF
+
+        cat << EOF > /etc/nginx/conf.d/outlets/discourse/20-https.conf
+        add_header Strict-Transport-Security 'max-age=31536000';
+        EOF

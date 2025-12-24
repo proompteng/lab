@@ -21,32 +21,21 @@ spec:
       containers:
         - name: discourse
           # TODO: replace with the site-specific Discourse image built via discourse_docker.
-          image: registry.ide-newton.ts.net/lab/discourse:latest
+          image: registry.ide-newton.ts.net/lab/discourse@sha256:8fe18e20f528d0f5e7885f820d07f93b514b3225bd2069758f33ecbf99463dc3
           imagePullPolicy: IfNotPresent
+          command:
+            - /sbin/boot
+          envFrom:
+            - configMapRef:
+                name: discourse-config
+            - secretRef:
+                name: discourse-secrets
           env:
-            - name: RAILS_ENV
-              value: production
-            - name: DISCOURSE_HOSTNAME
-              value: forum.<domain> # TODO: set base domain for forum.
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: discourse-db-app
                   key: uri
-            - name: REDIS_URL
-              value: redis://discourse-redis-leader:6379/0
-            - name: DISCOURSE_SMTP_ADDRESS
-              value: "" # TODO: set SMTP host.
-            - name: DISCOURSE_SMTP_PORT
-              value: "" # TODO: set SMTP port.
-            - name: DISCOURSE_SMTP_USER_NAME
-              value: "" # TODO: set SMTP username.
-            - name: DISCOURSE_SMTP_PASSWORD
-              value: "" # TODO: set SMTP password.
-            - name: DISCOURSE_SMTP_DOMAIN
-              value: "" # TODO: set SMTP domain/from.
-            - name: DISCOURSE_SMTP_ENABLE_START_TLS
-              value: "true"
           ports:
             - name: http
               containerPort: 3000
