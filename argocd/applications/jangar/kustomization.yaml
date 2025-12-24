@@ -4,6 +4,7 @@ namespace: jangar
 resources:
   - deployment.yaml
   - service.yaml
+  - github-token.yaml
   - app-tailscale-service.yaml
   - tailscale-service.yaml
   - postgres-cluster.yaml

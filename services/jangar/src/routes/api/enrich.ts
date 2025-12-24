@@ -330,6 +330,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
         workflow = yield* bumbaWorkflows.startEnrichFile({
           filePath: parsed.value.path,
           commit: parsed.value.commit ?? null,
+          repository: parsed.value.repository,
           workflowId: workflowId ?? undefined,
           eventDeliveryId: eventInput?.deliveryId,
         })
@@ -344,6 +345,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
                 bumbaWorkflows.startEnrichFile({
                   filePath,
                   commit: eventInput.commit ?? null,
+                  repository: eventInput.repository,
                   workflowId: eventInput.workflowIdentifier ?? undefined,
                   eventDeliveryId: eventInput.deliveryId,
                 }),

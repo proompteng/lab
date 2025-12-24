@@ -36,6 +36,11 @@ spec:
               value: /workspace/lab
             - name: REPOSITORY
               value: proompteng/lab
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

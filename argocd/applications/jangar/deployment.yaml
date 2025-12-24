@@ -45,6 +45,11 @@ spec:
               value: proompteng/lab
             - name: CODEX_REPO_URL
               value: https://github.com/proompteng/lab.git
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
             - name: CODEX_BOOTSTRAP_REPO
               value: "1"
             - name: CODEX_INTERNAL_ORIGINATOR_OVERRIDE

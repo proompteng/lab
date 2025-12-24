@@ -16,6 +16,7 @@ export type StartEnrichFileInput = {
   filePath: string
   commit?: string | null
   context?: string
+  repository?: string
   workflowId?: string
   eventDeliveryId?: string
 }
@@ -38,6 +39,25 @@ const normalizeOptionalText = (value: unknown) => {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : undefined
+}
+
+const normalizeRepositorySlug = (value: string) =>
+  value
+    .trim()
+    .replace(/\.git$/, '')
+    .replace(/^git@github\.com:/, '')
+    .replace(/^ssh:\/\/git@github\.com\//, '')
+    .replace(/^https?:\/\/(www\.)?github\.com\//, '')
+    .replace(/^github\.com\//, '')
+
+const resolveRepositorySlug = (value?: string) => {
+  const candidate =
+    normalizeOptionalText(value) ??
+    normalizeOptionalText(process.env.CODEX_REPO_SLUG) ??
+    normalizeOptionalText(process.env.REPOSITORY) ??
+    normalizeOptionalText(process.env.CODEX_REPO_URL)
+  if (!candidate) return undefined
+  return normalizeRepositorySlug(candidate)
 }
 
 const resolveBaseRepoRoot = () =>
@@ -263,6 +283,7 @@ export const BumbaWorkflowsLive = Layer.scoped(
                 Effect.tryPromise({
                   try: async () => {
                     const workflowId = input.workflowId ?? buildWorkflowId(input.filePath, input.commit)
+                    const repository = resolveRepositorySlug(input.repository)
                     const taskQueue = resolveTaskQueue()
 
                     const startResult = await client.workflow.start({
@@ -274,6 +295,8 @@ export const BumbaWorkflowsLive = Layer.scoped(
                           repoRoot,
                           filePath: input.filePath,
                           context: input.context ?? '',
+                          repository,
+                          commit: input.commit ?? undefined,
                           eventDeliveryId: input.eventDeliveryId,
                         },
                       ],
