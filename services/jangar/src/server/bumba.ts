@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, stat } from 'node:fs/promises'
+import { mkdir, rm, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { createTemporalClient, loadTemporalConfig, type TemporalClient } from '@proompteng/temporal-bun-sdk'
 import { Context, Effect, Layer, pipe } from 'effect'
+import * as TSemaphore from 'effect/TSemaphore'
 
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
@@ -60,9 +61,24 @@ const runGitCommand = async (args: string[], cwd: string) => {
   }
 }
 
+const extractLockPath = (message: string) => {
+  const match = message.match(/Unable to create '([^']+\\.lock)'/i)
+  return match?.[1]
+}
+
 const runGitCommandOrThrow = async (args: string[], cwd: string) => {
   const result = await runGitCommand(args, cwd)
   if (result.exitCode === 0) return result.stdout
+
+  const lockPath = extractLockPath(result.stderr)
+  if (lockPath) {
+    await rm(lockPath, { force: true })
+    const retry = await runGitCommand(args, cwd)
+    if (retry.exitCode === 0) return retry.stdout
+    const retryDetail = [retry.stderr, retry.stdout].filter(Boolean).join(' | ')
+    throw new Error(retryDetail.length > 0 ? retryDetail : 'git command failed')
+  }
+
   const detail = [result.stderr, result.stdout].filter(Boolean).join(' | ')
   throw new Error(detail.length > 0 ? detail : 'git command failed')
 }
@@ -148,6 +164,7 @@ export const BumbaWorkflowsLive = Layer.scoped(
   BumbaWorkflows,
   Effect.gen(function* () {
     let clientPromise: Promise<TemporalClient> | null = null
+    const gitSemaphore = TSemaphore.unsafeMake(1)
 
     const createClient = async () => {
       const config = await loadTemporalConfig({
@@ -189,35 +206,47 @@ export const BumbaWorkflowsLive = Layer.scoped(
         pipe(
           getClient(),
           Effect.flatMap((client) =>
-            Effect.tryPromise({
-              try: async () => {
-                const repoRoot = await resolveRepoRootForCommit(input.commit)
-                const workflowId = input.workflowId ?? buildWorkflowId(input.filePath, input.commit)
-                const taskQueue = resolveTaskQueue()
+            pipe(
+              TSemaphore.withPermits(
+                gitSemaphore,
+                1,
+              )(
+                Effect.tryPromise({
+                  try: () => resolveRepoRootForCommit(input.commit),
+                  catch: (error) => normalizeError('start bumba workflow failed', error),
+                }),
+              ),
+              Effect.flatMap((repoRoot) =>
+                Effect.tryPromise({
+                  try: async () => {
+                    const workflowId = input.workflowId ?? buildWorkflowId(input.filePath, input.commit)
+                    const taskQueue = resolveTaskQueue()
 
-                const startResult = await client.workflow.start({
-                  workflowId,
-                  workflowType: 'enrichFile',
-                  taskQueue,
-                  args: [
-                    {
+                    const startResult = await client.workflow.start({
+                      workflowId,
+                      workflowType: 'enrichFile',
+                      taskQueue,
+                      args: [
+                        {
+                          repoRoot,
+                          filePath: input.filePath,
+                          context: input.context ?? '',
+                        },
+                      ],
+                    })
+
+                    return {
+                      workflowId: startResult.workflowId,
+                      runId: startResult.runId,
+                      taskQueue,
                       repoRoot,
                       filePath: input.filePath,
-                      context: input.context ?? '',
-                    },
-                  ],
-                })
-
-                return {
-                  workflowId: startResult.workflowId,
-                  runId: startResult.runId,
-                  taskQueue,
-                  repoRoot,
-                  filePath: input.filePath,
-                }
-              },
-              catch: (error) => normalizeError('start bumba workflow failed', error),
-            }),
+                    }
+                  },
+                  catch: (error) => normalizeError('start bumba workflow failed', error),
+                }),
+              ),
+            ),
           ),
         ),
     }
