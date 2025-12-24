@@ -197,7 +197,7 @@ export const workflows = [
       const queuedTotal = queuedSoFar + batch.length
 
       if (remaining.length > 0) {
-        return continueAsNew({
+        return yield* continueAsNew({
           workflowType: 'enrichRepository',
           input: [
             {

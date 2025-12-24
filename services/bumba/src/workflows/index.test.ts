@@ -220,3 +220,29 @@ test('enrichRepository schedules listing and child workflows', async () => {
   expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
   expect(output.completion).toBe('completed')
 })
+
+test('enrichRepository continues as new when file list exceeds batch size', async () => {
+  const { executor } = makeExecutor()
+  const files = Array.from({ length: 501 }, (_value, index) => `path/to/file-${index}.ts`)
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    repository: 'proompteng/lab',
+    files,
+  }
+
+  const output = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+  })
+
+  const continueCommands = output.commands.filter(
+    (command: Command) => command.commandType === CommandType.CONTINUE_AS_NEW_WORKFLOW_EXECUTION,
+  )
+  const childCommands = output.commands.filter(
+    (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
+  )
+
+  expect(output.completion).toBe('continued-as-new')
+  expect(continueCommands).toHaveLength(1)
+  expect(childCommands).toHaveLength(500)
+})
