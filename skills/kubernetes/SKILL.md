@@ -1,6 +1,6 @@
 ---
-name: kubectl-ops
-description: Kubernetes kubectl operations, debugging, inspection, and safe mutations (apply/patch/rollout), including PVC/VolumeAttachment triage in this repo. Use when running or suggesting kubectl commands, or when diagnosing cluster resource issues.
+name: kubernetes
+description: Kubernetes operations with kubectl and related CLIs (debugging, inspection, safe mutations, and storage triage) in this repo. Use when running or suggesting kubectl commands, diagnosing cluster resource issues, or handling CNPG/Postgres access.
 ---
 
 ## Baseline checks
@@ -37,3 +37,4 @@ description: Kubernetes kubectl operations, debugging, inspection, and safe muta
 - Prefer explicit namespaces (`-n <ns>`) and labels (`-l key=value`).
 - Use output formatting when needed: `-o json`, `-o yaml`, or `-o jsonpath=<template>`.
 - Use `--validate=false` only when API validation is temporarily unavailable.
+- CNPG access: use `kubectl cnpg psql -n <ns> <cluster> -- <psql args>` (the `-c` and other psql flags go after `--`).
