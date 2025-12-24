@@ -27,3 +27,25 @@ subjects:
   - kind: ServiceAccount
     name: jangar-alloy
     namespace: jangar
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: jangar-alloy
+rules:
+  - apiGroups: ['']
+    resources: ['pods', 'pods/log']
+    verbs: ['get', 'list', 'watch']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jangar-alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: jangar-alloy
+subjects:
+  - kind: ServiceAccount
+    name: jangar-alloy
+    namespace: jangar
