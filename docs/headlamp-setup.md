@@ -32,6 +32,7 @@ Login settings:
 OIDC values:
 - Issuer: `https://auth.proompteng.ai/realms/master`
 - Scopes: `openid profile email`
+  - For longer-lived Headlamp sessions, include `offline_access` and ensure it is assigned to the client (Default or Optional + requested).
 
 Optional (recommended) group mapper:
 - Mapper type: **Group Membership**
@@ -57,6 +58,25 @@ kubectl -n headlamp create secret generic headlamp-oidc \
 ```
 
 Commit and sync the Headlamp Argo CD app.
+
+## Session tuning (Keycloak)
+
+Headlamp relies on refresh tokens to avoid frequent logouts. Set realm and client session values in Keycloak:
+
+Balanced profile (recommended for Headlamp):
+- Realm settings → Sessions
+  - SSO Session Idle: 8 hours
+  - SSO Session Max: 1 day
+  - Client Session Idle: 8 hours
+  - Client Session Max: 1 day
+  - Offline Session Idle: 30 days
+  - Client Offline Session Idle: 30 days
+  - Offline Session Max Limited: Enabled
+  - Offline Session Max: 30 days
+  - Client Offline Session Max: 30 days
+
+Also ensure the client has the `offline_access` scope assigned (Clients → <client> → Client scopes).
+Log out/in to Headlamp after changes so it receives a new refresh token.
 
 ## Apply OIDC to the control plane (k3s)
 

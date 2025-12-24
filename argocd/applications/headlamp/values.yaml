@@ -14,6 +14,9 @@ config:
       enabled: true
       name: headlamp-oidc
     callbackURL: https://headlamp.ide-newton.ts.net/oidc-callback
+env:
+  - name: OIDC_SCOPES
+    value: 'openid profile email offline_access'
 ingress:
   enabled: true
   ingressClassName: tailscale
