@@ -10,6 +10,7 @@ const baseEnv = {
   KAFKA_TOPIC: 'raw-topic',
   KAFKA_CODEX_TOPIC_STRUCTURED: 'github.issues.codex.tasks',
   KAFKA_DISCORD_COMMAND_TOPIC: 'discord.commands.incoming',
+  JANGAR_BASE_URL: 'http://jangar',
   DISCORD_PUBLIC_KEY: 'public-key',
 }
 
@@ -66,5 +67,6 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...baseEnv, KAFKA_CODEX_TOPIC_STRUCTURED: undefined })).toThrow()
     expect(() => loadConfig({ ...baseEnv, KAFKA_DISCORD_COMMAND_TOPIC: undefined })).toThrow()
     expect(() => loadConfig({ ...baseEnv, DISCORD_PUBLIC_KEY: undefined })).toThrow()
+    expect(() => loadConfig({ ...baseEnv, JANGAR_BASE_URL: undefined })).toThrow()
   })
 })
