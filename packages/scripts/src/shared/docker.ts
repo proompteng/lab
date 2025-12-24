@@ -153,7 +153,7 @@ export const inspectImageDigest = (image: string): string => {
 }
 
 const inspectLocalImageDigest = (image: string): string | undefined => {
-  const inspect = spawnSyncImpl(['docker', 'image', 'inspect', '--format', '{{index .RepoDigests 0}}', image], {
+  const inspect = spawnSyncImpl(['docker', 'image', 'inspect', '--format', '{{json .RepoDigests}}', image], {
     cwd: repoRoot,
   })
 
@@ -161,8 +161,18 @@ const inspectLocalImageDigest = (image: string): string | undefined => {
     return undefined
   }
 
-  const digest = inspect.stdout.toString().trim()
-  return digest.length > 0 ? digest : undefined
+  try {
+    const digests = JSON.parse(inspect.stdout.toString()) as string[] | undefined
+    if (!digests || digests.length === 0) {
+      return undefined
+    }
+
+    const repository = getRepositoryFromReference(image)
+    const match = digests.find((digest) => digest.startsWith(`${repository}@`))
+    return match ?? digests[0]
+  } catch {
+    return undefined
+  }
 }
 
 const inspectRemoteImageDigest = (image: string): string | undefined => {

@@ -6,8 +6,9 @@ metadata:
   namespace: discourse
 data:
   RAILS_ENV: production
+  DISCOURSE_DEVELOPER_EMAILS: greg@proompteng.ai
   DISCOURSE_HOSTNAME: forum.proompteng.ai
-  REDIS_URL: redis://discourse-redis-leader:6379/0
+  REDIS_URL: redis://discourse-redis:6379/0
   DISCOURSE_SMTP_ADDRESS: smtp.resend.com
   DISCOURSE_SMTP_PORT: "587"
   DISCOURSE_SMTP_USER_NAME: resend

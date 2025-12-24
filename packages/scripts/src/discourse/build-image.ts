@@ -67,6 +67,33 @@ const ensurePathExists = (path: string, label: string) => {
   }
 }
 
+const normalizeRuntimeImage = async (localImage: string, cwd: string) => {
+  const containerName = `discourse-runtime-${Date.now()}`
+  const cleanup = async () => {
+    await run('docker', ['rm', '-f', containerName], { cwd }).catch(() => undefined)
+  }
+
+  const fixups = [
+    'rm -rf /etc/service/postgres /etc/service/redis',
+    "sed -i 's/^\\s*sv start postgres.*$/true/' /etc/service/unicorn/run",
+    "sed -i 's/^\\s*sv start redis.*$/true/' /etc/service/unicorn/run",
+    'rm -f /etc/runit/3.d/99-postgres /etc/runit/3.d/10-redis',
+  ].join(' && ')
+
+  try {
+    await run('docker', ['run', '--name', containerName, '--entrypoint', '/bin/bash', localImage, '-lc', fixups], {
+      cwd,
+    })
+    await run(
+      'docker',
+      ['commit', '--change', 'ENTRYPOINT []', '--change', 'CMD ["/sbin/boot"]', containerName, localImage],
+      { cwd },
+    )
+  } finally {
+    await cleanup()
+  }
+}
+
 const buildWithLauncher = async (options: ReturnType<typeof resolveDefaults>) => {
   const launcherPath = resolve(options.discourseRoot, 'launcher')
   const configPath = resolve(options.discourseRoot, 'containers', `${options.config}.yml`)
@@ -95,6 +122,7 @@ const buildWithLauncher = async (options: ReturnType<typeof resolveDefaults>) =>
   }
 
   await run(launcherPath, args, { cwd: options.discourseRoot })
+  await normalizeRuntimeImage(`local_discourse/${options.config}`, options.discourseRoot)
 }
 
 export const buildImage = async (options: BuildImageOptions = {}): Promise<BuildImageResult> => {

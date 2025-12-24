@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/part-of: lab
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: discourse
@@ -20,11 +22,8 @@ spec:
     spec:
       containers:
         - name: discourse
-          # TODO: replace with the site-specific Discourse image built via discourse_docker.
-          image: registry.ide-newton.ts.net/lab/discourse@sha256:8fe18e20f528d0f5e7885f820d07f93b514b3225bd2069758f33ecbf99463dc3
+          image: registry.ide-newton.ts.net/lab/discourse@sha256:1f0b79c1bd8bf817c1ebf9ede5599ea7d3072660723b28c0b59ca13075477823
           imagePullPolicy: IfNotPresent
-          command:
-            - /sbin/boot
           envFrom:
             - configMapRef:
                 name: discourse-config
