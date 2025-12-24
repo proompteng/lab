@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: bumba
     app.kubernetes.io/part-of: lab
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: bumba
@@ -17,7 +17,7 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2025-12-24T07:00:35.348Z"
+        kubectl.kubernetes.io/restartedAt: "2025-12-24T07:45:36.779Z"
     spec:
       containers:
         - name: bumba
