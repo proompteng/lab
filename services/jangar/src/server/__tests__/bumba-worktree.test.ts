@@ -28,13 +28,11 @@ const commitAll = (cwd: string, message: string) => {
 
 describe('bumba worktree refresh', () => {
   const previousEnv: Partial<Record<'BUMBA_WORKSPACE_ROOT', string | undefined>> = {}
-  let previousBunSpawn: typeof Bun.spawn | null = null
   let hadBun = false
   let repoRoot: string | null = null
 
   beforeEach(async () => {
     hadBun = 'Bun' in globalThis
-    previousBunSpawn = hadBun ? globalThis.Bun.spawn : null
     previousEnv.BUMBA_WORKSPACE_ROOT = process.env.BUMBA_WORKSPACE_ROOT
     repoRoot = await mkdtemp(join(tmpdir(), 'bumba-worktree-'))
 
@@ -67,9 +65,7 @@ describe('bumba worktree refresh', () => {
       return { stdout, stderr, exited } as BunSpawnResult
     }) as typeof Bun.spawn
 
-    if (hadBun) {
-      globalThis.Bun.spawn = spawnStub
-    } else {
+    if (!hadBun) {
       globalThis.Bun = { ...(globalThis.Bun ?? ({} as typeof Bun)), spawn: spawnStub }
     }
   })
@@ -86,11 +82,7 @@ describe('bumba worktree refresh', () => {
       process.env.BUMBA_WORKSPACE_ROOT = previousEnv.BUMBA_WORKSPACE_ROOT
     }
 
-    if (hadBun) {
-      if (previousBunSpawn) {
-        globalThis.Bun.spawn = previousBunSpawn
-      }
-    } else {
+    if (!hadBun) {
       delete (globalThis as Record<string, unknown>).Bun
     }
   })
