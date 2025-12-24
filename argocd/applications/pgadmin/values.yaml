@@ -6,9 +6,10 @@ service:
     tailscale.com/hostname: pgadmin
 
 env:
-  email: pgadmin@proompteng.ai
-  password: changeme
+  email: greg@proompteng.ai
   enhanced_cookie_protection: "False"
+
+existingSecret: pgadmin-auth
 
 envVarsExtra:
   - name: PGADMIN_SERVER_JSON_FILE
