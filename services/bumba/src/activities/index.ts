@@ -583,7 +583,9 @@ const parseAst = async (source: string, filePath: string): Promise<AstSummaryOut
 const dedupeFacts = (facts: TreeSitterFact[]) => {
   const seen = new Map<string, TreeSitterFact>()
   for (const fact of facts) {
-    const key = `${fact.nodeType}::${fact.matchText}`
+    const start = fact.startLine ?? -1
+    const end = fact.endLine ?? -1
+    const key = `${fact.nodeType}::${fact.matchText}::${start}::${end}`
     if (!seen.has(key)) {
       seen.set(key, fact)
     }
