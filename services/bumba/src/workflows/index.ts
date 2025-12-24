@@ -67,17 +67,12 @@ export const workflows = [
         },
         fileMetadata: fileResult.metadata,
         facts: astResult.facts,
+        eventDeliveryId: eventDeliveryId ?? undefined,
       }
 
       const persist = (yield* activities.schedule('persistEnrichment', [persistInput], {
         startToCloseTimeoutMs: 30_000,
       })) as { id: string }
-
-      if (eventDeliveryId) {
-        yield* activities.schedule('markEventProcessed', [{ deliveryId: eventDeliveryId }], {
-          startToCloseTimeoutMs: 10_000,
-        })
-      }
 
       return {
         id: persist.id,

@@ -78,6 +78,7 @@ export type PersistInput = {
   metadata: Record<string, unknown>
   fileMetadata: FileMetadata
   facts: TreeSitterFact[]
+  eventDeliveryId?: string
 }
 
 export type MarkEventProcessedInput = {
@@ -101,7 +102,6 @@ const MAX_FACTS = 300
 const MAX_FACT_CHARS = 200
 const MAX_SUMMARY_NODES = 80
 const MAX_COMPLETION_INPUT_CHARS = 12_000
-const DEFAULT_MARK_EVENT_TIMEOUT_MS = 3_000
 
 const normalizeOptionalText = (value: unknown) => {
   if (typeof value !== 'string') return null
@@ -162,17 +162,6 @@ const loadEmbeddingMaxInputChars = () => {
     throw new Error('OPENAI_EMBEDDING_MAX_INPUT_CHARS must be a positive integer')
   }
   return maxInputChars
-}
-
-const loadMarkEventTimeoutMs = () => {
-  const timeoutMs = Number.parseInt(
-    process.env.BUMBA_MARK_EVENT_TIMEOUT_MS ?? String(DEFAULT_MARK_EVENT_TIMEOUT_MS),
-    10,
-  )
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new Error('BUMBA_MARK_EVENT_TIMEOUT_MS must be a positive integer')
-  }
-  return timeoutMs
 }
 
 const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
@@ -1637,6 +1626,15 @@ export const activities = {
       }
     }
 
+    const deliveryId = input.eventDeliveryId?.trim()
+    if (deliveryId) {
+      await db`
+        UPDATE atlas.github_events
+        SET processed_at = now()
+        WHERE delivery_id = ${deliveryId};
+      `
+    }
+
     return { id: enrichmentId }
   },
 
@@ -1648,31 +1646,11 @@ export const activities = {
 
     const deliveryId = input.deliveryId.trim()
     if (deliveryId.length === 0) return
-    const timeoutMs = loadMarkEventTimeoutMs()
-    const timeoutToken = Symbol('markEventProcessedTimeout')
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null
-
-    const timeoutPromise = new Promise<typeof timeoutToken>((resolve) => {
-      timeoutHandle = setTimeout(() => resolve(timeoutToken), timeoutMs)
-    })
-
-    const updatePromise = db`
+    await db`
       UPDATE atlas.github_events
       SET processed_at = now()
       WHERE delivery_id = ${deliveryId};
     `
-
-    try {
-      const outcome = await Promise.race([updatePromise.then(() => 'ok'), timeoutPromise])
-      if (outcome === timeoutToken) {
-        console.warn(`[bumba] markEventProcessed timed out after ${timeoutMs}ms for ${deliveryId}`)
-        updatePromise.catch(() => undefined)
-      }
-    } catch (error) {
-      console.warn('[bumba] markEventProcessed failed:', error)
-    } finally {
-      if (timeoutHandle) clearTimeout(timeoutHandle)
-    }
   },
 }
 
