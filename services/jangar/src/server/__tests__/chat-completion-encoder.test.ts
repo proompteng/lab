@@ -164,8 +164,8 @@ describe('chat completion encoder', () => {
     const content = collectContent(frames)
     expect(content).toContain('> **Rate limits**')
     expect(content).toContain('> Plan: pro')
-    expect(content).toContain('> Primary: 42% used · 1h 30m window · resets')
-    expect(content).toContain('> Secondary: 10% used · 1h window · resets')
+    expect(content).toContain('> Primary: 58% left · 1h 30m window · resets')
+    expect(content).toContain('> Secondary: 90% left · 1h window · resets')
     expect(content).toContain('> Credits: has credits · balance 12.34')
   })
 

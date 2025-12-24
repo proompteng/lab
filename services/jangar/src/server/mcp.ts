@@ -56,6 +56,14 @@ const withMcpSessionHeaders = (request: Request, init: ResponseInit = {}): Respo
   }
 }
 
+const TOOL_NAME_ALIASES: Record<string, string> = {
+  'atlas.index': 'atlas_index',
+  'atlas.search': 'atlas_search',
+  'atlas.stats': 'atlas_stats',
+}
+
+const normalizeToolName = (name: string) => TOOL_NAME_ALIASES[name] ?? name
+
 const toolsListResult = {
   tools: [
     {
@@ -89,7 +97,7 @@ const toolsListResult = {
       },
     },
     {
-      name: 'atlas.index',
+      name: 'atlas_index',
       description: 'Request Atlas enrichment for a repository file path (indexed in Postgres).',
       inputSchema: {
         type: 'object',
@@ -106,7 +114,7 @@ const toolsListResult = {
       },
     },
     {
-      name: 'atlas.search',
+      name: 'atlas_search',
       description: 'Search Atlas enrichments with semantic similarity and optional filters.',
       inputSchema: {
         type: 'object',
@@ -124,7 +132,7 @@ const toolsListResult = {
       },
     },
     {
-      name: 'atlas.stats',
+      name: 'atlas_stats',
       description: 'Return Atlas table counts and ingestion stats.',
       inputSchema: {
         type: 'object',
@@ -281,7 +289,7 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
         const memories = yield* Memories
         const atlas = yield* Atlas
         const baseUrl = new URL(request.url)
-        const toolName = parsed.name
+        const toolName = normalizeToolName(parsed.name)
         const args = parsed.args
 
         if (toolName === 'persist_memory') {
@@ -355,7 +363,7 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
           )
         }
 
-        if (toolName === 'atlas.index') {
+        if (toolName === 'atlas_index') {
           const parsed = parseAtlasIndexInput(args)
           if (!parsed.ok) {
             if (isNotification) return null
@@ -401,7 +409,7 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
           )
         }
 
-        if (toolName === 'atlas.search') {
+        if (toolName === 'atlas_search') {
           const parsed = parseAtlasSearchInput(args)
           if (!parsed.ok) {
             if (isNotification) return null
@@ -426,7 +434,7 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
           )
         }
 
-        if (toolName === 'atlas.stats') {
+        if (toolName === 'atlas_stats') {
           const statsResult = yield* Effect.either(atlas.stats())
           if (statsResult._tag === 'Left') {
             if (isNotification) return null

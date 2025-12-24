@@ -81,6 +81,8 @@ const formatPercent = (value: number) => {
   return Number.isInteger(rounded) ? `${rounded}%` : `${rounded}%`
 }
 
+const clampPercent = (value: number) => Math.max(0, Math.min(100, value))
+
 const formatResetTime = (value: number) => {
   if (!Number.isFinite(value)) return null
   const ms = value < 1_000_000_000_000 ? value * 1000 : value
@@ -109,6 +111,13 @@ const formatDurationHours = (minutes: number) => {
   const total = Math.max(0, Math.round(minutes))
   const hours = Math.floor(total / 60)
   const mins = total % 60
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24)
+    const leftoverHours = hours % 24
+    if (leftoverHours === 0 && mins === 0) return `${days}d`
+    if (mins === 0) return `${days}d ${leftoverHours}h`
+    return `${days}d ${leftoverHours}h ${mins}m`
+  }
   if (hours > 0 && mins > 0) return `${hours}h ${mins}m`
   if (hours > 0) return `${hours}h`
   return `${mins}m`
@@ -130,7 +139,7 @@ const toRateLimitMarkdown = (value: unknown): string | null => {
   const renderWindow = (label: string, window?: RateLimitWindow | null) => {
     if (!window) return
     const used = window.usedPercent
-    const usage = typeof used === 'number' ? `${formatPercent(used)} used` : 'usage unknown'
+    const usage = typeof used === 'number' ? `${formatPercent(clampPercent(100 - used))} left` : 'usage unknown'
     const duration =
       typeof window.windowDurationMins === 'number'
         ? `${formatDurationHours(window.windowDurationMins)} window`
