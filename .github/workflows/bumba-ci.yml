@@ -38,7 +38,7 @@ jobs:
       node-version: 24.11.1
       install-command: bun install --frozen-lockfile
       lint-command: bunx biome check services/bumba packages/scripts/src/bumba argocd/applications/bumba
-      test-command: bun run --cwd services/bumba tsc
+      test-command: bun run --cwd services/bumba tsc && bun run --cwd services/bumba test
     secrets: inherit
 
   deploy-main:

@@ -30,6 +30,7 @@ export const createApp = () => {
   const health = createHealthHandlers({ runtime, kafka })
 
   const webhookConfig: WebhookConfig = {
+    atlas: config.atlas,
     codebase: config.codebase,
     github: config.github,
     codexTriggerLogins: config.codex.triggerLogins,

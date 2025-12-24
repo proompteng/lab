@@ -8,12 +8,13 @@ const EnrichFileInput = Schema.Struct({
   repoRoot: Schema.String,
   filePath: Schema.String,
   context: Schema.optional(Schema.String),
+  eventDeliveryId: Schema.optional(Schema.String),
 })
 
 export const workflows = [
   defineWorkflow('enrichFile', EnrichFileInput, ({ input }) =>
     Effect.gen(function* () {
-      const { repoRoot, filePath, context } = input
+      const { repoRoot, filePath, context, eventDeliveryId } = input
 
       const fileResult = yield* Effect.promise(() => activities.readRepoFile({ repoRoot, filePath }))
       const astResult = yield* Effect.promise(() => activities.extractAstSummary({ repoRoot, filePath }))
@@ -45,6 +46,10 @@ export const workflows = [
           facts: astResult.facts,
         }),
       )
+
+      if (eventDeliveryId) {
+        yield* Effect.promise(() => activities.markEventProcessed({ deliveryId: eventDeliveryId }))
+      }
 
       return {
         id: persist.id,

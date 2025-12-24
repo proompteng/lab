@@ -106,6 +106,7 @@ const toBuffer = (value: KafkaMessage['value']): Buffer => {
 describe('createWebhookHandler', () => {
   let runtime: AppRuntime
   let publishedMessages: KafkaMessage[]
+  let fetchMock: ReturnType<typeof vi.fn>
   let githubServiceMock: {
     postIssueReaction: ReturnType<typeof vi.fn>
     postIssueCommentReaction: ReturnType<typeof vi.fn>
@@ -124,6 +125,10 @@ describe('createWebhookHandler', () => {
   }
 
   const baseConfig: WebhookConfig = {
+    atlas: {
+      baseUrl: 'http://jangar',
+      apiKey: null,
+    },
     codebase: {
       baseBranch: 'main',
       branchPrefix: 'codex/issue-',
@@ -154,6 +159,10 @@ describe('createWebhookHandler', () => {
   const provideRuntime = () => {
     const appConfig: AppConfig = {
       githubWebhookSecret: 'secret',
+      atlas: {
+        baseUrl: baseConfig.atlas.baseUrl,
+        apiKey: baseConfig.atlas.apiKey,
+      },
       kafka: {
         brokers: ['localhost:9092'],
         username: 'user',
@@ -222,6 +231,8 @@ describe('createWebhookHandler', () => {
 
   beforeEach(() => {
     publishedMessages = []
+    fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: 'accepted' }), { status: 202 }))
+    vi.stubGlobal('fetch', fetchMock)
     mockVerifyDiscordRequest.mockReset()
     mockVerifyDiscordRequest.mockResolvedValue(true)
     mockBuildPlanModalResponse.mockReset()
@@ -274,6 +285,7 @@ describe('createWebhookHandler', () => {
   afterEach(async () => {
     await runtime.dispose()
     vi.clearAllMocks()
+    vi.unstubAllGlobals()
   })
 
   interface Scenario {
@@ -496,6 +508,7 @@ describe('createWebhookHandler', () => {
     const config: WebhookConfig = {
       ...baseConfig,
       ...(configOverride ?? {}),
+      atlas: { ...baseConfig.atlas, ...(configOverride?.atlas ?? {}) },
       codebase: { ...baseConfig.codebase, ...(configOverride?.codebase ?? {}) },
       github: { ...baseConfig.github, ...(configOverride?.github ?? {}) },
       topics: { ...baseConfig.topics, ...(configOverride?.topics ?? {}) },
@@ -508,6 +521,23 @@ describe('createWebhookHandler', () => {
     expect(response.status).toBe(202)
     const body = await response.json()
     await assert(body, response)
+    if (event === 'push') {
+      const expectedDeliveryId = `delivery-${event}-${action ?? 'none'}`
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${config.atlas.baseUrl}/api/enrich`,
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'content-type': 'application/json',
+            'x-github-delivery': expectedDeliveryId,
+            'x-idempotency-key': expectedDeliveryId,
+            'x-github-event': event,
+          }),
+        }),
+      )
+    } else {
+      expect(fetchMock).not.toHaveBeenCalled()
+    }
   })
 
   it('rejects unsupported providers', async () => {
@@ -519,6 +549,7 @@ describe('createWebhookHandler', () => {
     expect(response.status).toBe(400)
     expect(webhooks.verify).not.toHaveBeenCalled()
     expect(publishedMessages).toHaveLength(0)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('returns 401 when signature header missing', async () => {
@@ -526,6 +557,7 @@ describe('createWebhookHandler', () => {
     const response = await handler(buildRequest({}, {}), 'github')
     expect(response.status).toBe(401)
     expect(publishedMessages).toHaveLength(0)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('publishes implementation message on issue opened', async () => {
@@ -580,6 +612,7 @@ describe('createWebhookHandler', () => {
         reactionContent: '+1',
       }),
     )
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('publishes implementation message when trigger comment is received', async () => {
@@ -629,6 +662,47 @@ describe('createWebhookHandler', () => {
         repositoryFullName: 'owner/repo',
         issueNumber: 2,
         reactionContent: '+1',
+      }),
+    )
+  })
+
+  it('triggers atlas enrichment on push events', async () => {
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const payload = {
+      ref: 'refs/heads/main',
+      after: 'abc123',
+      repository: { full_name: 'owner/repo', default_branch: 'main' },
+      sender: { login: 'user' },
+      head_commit: {
+        id: 'abc123',
+        added: [],
+        modified: ['README.md'],
+        removed: [],
+      },
+      commits: [
+        {
+          id: 'abc123',
+          added: [],
+          modified: ['README.md'],
+          removed: [],
+        },
+      ],
+    }
+
+    const response = await handler(buildRequest(payload, scenarioHeaders('push')), 'github')
+
+    expect(response.status).toBe(202)
+    const expectedDeliveryId = 'delivery-push-none'
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${baseConfig.atlas.baseUrl}/api/enrich`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'content-type': 'application/json',
+          'x-github-delivery': expectedDeliveryId,
+          'x-idempotency-key': expectedDeliveryId,
+          'x-github-event': 'push',
+        }),
       }),
     )
   })
@@ -882,6 +956,7 @@ describe('createWebhookHandler', () => {
 
     expect(response.status).toBe(401)
     expect(publishedMessages).toHaveLength(0)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('returns implementation modal response for slash command', async () => {
@@ -911,6 +986,7 @@ describe('createWebhookHandler', () => {
     expect(mockBuildPlanModalResponse).toHaveBeenCalled()
     expect(mockToPlanModalEvent).not.toHaveBeenCalled()
     expect(publishedMessages).toHaveLength(0)
+    expect(fetchMock).not.toHaveBeenCalled()
 
     const payload = await response.json()
     expect(response.status).toBe(200)
@@ -947,6 +1023,7 @@ describe('createWebhookHandler', () => {
     expect(mockToPlanModalEvent).toHaveBeenCalled()
     expect(mockBuildPlanModalResponse).not.toHaveBeenCalled()
     expect(publishedMessages).toHaveLength(1)
+    expect(fetchMock).not.toHaveBeenCalled()
 
     const [discordMessage] = publishedMessages
     if (!discordMessage) {
@@ -1000,6 +1077,7 @@ describe('createWebhookHandler', () => {
     expect(mockBuildPlanModalResponse).not.toHaveBeenCalled()
     expect(mockToPlanModalEvent).not.toHaveBeenCalled()
     expect(publishedMessages).toHaveLength(0)
+    expect(fetchMock).not.toHaveBeenCalled()
     const payload = await response.json()
     expect(payload).toEqual({ type: 1 })
   })

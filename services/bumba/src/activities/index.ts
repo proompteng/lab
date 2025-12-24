@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { basename, extname, relative, resolve, sep } from 'node:path'
 import { SQL } from 'bun'
 import { Language, Parser } from 'web-tree-sitter'
+import { isMap, isScalar, isSeq, LineCounter, parseAllDocuments } from 'yaml'
 
 export type ReadRepoFileInput = {
   repoRoot: string
@@ -74,6 +75,10 @@ export type PersistInput = {
   metadata: Record<string, unknown>
   fileMetadata: FileMetadata
   facts: TreeSitterFact[]
+}
+
+export type MarkEventProcessedInput = {
+  deliveryId: string
 }
 
 export type BumbaActivities = typeof activities
@@ -239,29 +244,137 @@ const require = createRequire(import.meta.url)
 const runtimeWasmPath = require.resolve('web-tree-sitter/web-tree-sitter.wasm')
 
 const languageNameByExtension = new Map<string, string>([
-  ['.ts', 'typescript'],
-  ['.tsx', 'tsx'],
+  ['.avsc', 'json'],
+  ['.bash', 'bash'],
+  ['.c', 'c'],
+  ['.cfg', 'ini'],
+  ['.cjs', 'javascript'],
+  ['.conf', 'ini'],
+  ['.css', 'css'],
+  ['.erb', 'embedded-template'],
+  ['.example', 'text'],
+  ['.go', 'go'],
+  ['.h', 'c'],
+  ['.hcl', 'hcl'],
+  ['.html', 'html'],
+  ['.ini', 'ini'],
+  ['.j2', 'jinja2'],
+  ['.json', 'json'],
   ['.js', 'javascript'],
   ['.jsx', 'jsx'],
+  ['.key', 'text'],
+  ['.kt', 'kotlin'],
+  ['.kts', 'kotlin'],
+  ['.keep', 'text'],
+  ['.md', 'markdown'],
+  ['.mdx', 'mdx'],
   ['.mjs', 'javascript'],
-  ['.cjs', 'javascript'],
-  ['.json', 'json'],
-  ['.go', 'go'],
+  ['.mod', 'text'],
+  ['.pem', 'text'],
+  ['.proto', 'proto'],
+  ['.properties', 'properties'],
   ['.py', 'python'],
+  ['.rb', 'ruby'],
   ['.rs', 'rust'],
+  ['.ru', 'ruby'],
+  ['.sh', 'bash'],
+  ['.sql', 'sql'],
+  ['.sum', 'text'],
+  ['.svg', 'xml'],
+  ['.tf', 'terraform'],
+  ['.tmpl', 'embedded-template'],
+  ['.toml', 'toml'],
+  ['.ts', 'typescript'],
+  ['.tsx', 'tsx'],
+  ['.txt', 'text'],
+  ['.webmanifest', 'json'],
+  ['.xml', 'xml'],
+  ['.yaml', 'yaml'],
+  ['.yml', 'yaml'],
+  ['.zig', 'zig'],
+  ['.zsh', 'bash'],
 ])
 
 const languageWasmByExtension = new Map<string, { name: string; wasmPath: string }>([
-  ['.ts', { name: 'typescript', wasmPath: require.resolve('tree-sitter-typescript/tree-sitter-typescript.wasm') }],
-  ['.tsx', { name: 'tsx', wasmPath: require.resolve('tree-sitter-typescript/tree-sitter-tsx.wasm') }],
+  ['.avsc', { name: 'json', wasmPath: require.resolve('tree-sitter-json/tree-sitter-json.wasm') }],
+  ['.bash', { name: 'bash', wasmPath: require.resolve('tree-sitter-bash/tree-sitter-bash.wasm') }],
+  ['.c', { name: 'c', wasmPath: require.resolve('tree-sitter-c/tree-sitter-c.wasm') }],
+  ['.cjs', { name: 'javascript', wasmPath: require.resolve('tree-sitter-javascript/tree-sitter-javascript.wasm') }],
+  ['.css', { name: 'css', wasmPath: require.resolve('tree-sitter-css/tree-sitter-css.wasm') }],
+  [
+    '.erb',
+    {
+      name: 'embedded-template',
+      wasmPath: require.resolve('tree-sitter-embedded-template/tree-sitter-embedded_template.wasm'),
+    },
+  ],
+  [
+    '.tmpl',
+    {
+      name: 'embedded-template',
+      wasmPath: require.resolve('tree-sitter-embedded-template/tree-sitter-embedded_template.wasm'),
+    },
+  ],
+  ['.go', { name: 'go', wasmPath: require.resolve('tree-sitter-go/tree-sitter-go.wasm') }],
+  ['.h', { name: 'c', wasmPath: require.resolve('tree-sitter-c/tree-sitter-c.wasm') }],
+  ['.hcl', { name: 'hcl', wasmPath: require.resolve('@tree-sitter-grammars/tree-sitter-hcl/tree-sitter-hcl.wasm') }],
+  ['.html', { name: 'html', wasmPath: require.resolve('tree-sitter-html/tree-sitter-html.wasm') }],
+  ['.j2', { name: 'jinja2', wasmPath: require.resolve('tree-sitter-jinja2/tree-sitter-jinja2.wasm') }],
+  ['.json', { name: 'json', wasmPath: require.resolve('tree-sitter-json/tree-sitter-json.wasm') }],
   ['.js', { name: 'javascript', wasmPath: require.resolve('tree-sitter-javascript/tree-sitter-javascript.wasm') }],
   ['.jsx', { name: 'jsx', wasmPath: require.resolve('tree-sitter-javascript/tree-sitter-javascript.wasm') }],
+  [
+    '.kt',
+    {
+      name: 'kotlin',
+      wasmPath: require.resolve('@tree-sitter-grammars/tree-sitter-kotlin/tree-sitter-kotlin.wasm'),
+    },
+  ],
+  [
+    '.kts',
+    {
+      name: 'kotlin',
+      wasmPath: require.resolve('@tree-sitter-grammars/tree-sitter-kotlin/tree-sitter-kotlin.wasm'),
+    },
+  ],
   ['.mjs', { name: 'javascript', wasmPath: require.resolve('tree-sitter-javascript/tree-sitter-javascript.wasm') }],
-  ['.cjs', { name: 'javascript', wasmPath: require.resolve('tree-sitter-javascript/tree-sitter-javascript.wasm') }],
-  ['.json', { name: 'json', wasmPath: require.resolve('tree-sitter-json/tree-sitter-json.wasm') }],
-  ['.go', { name: 'go', wasmPath: require.resolve('tree-sitter-go/tree-sitter-go.wasm') }],
+  [
+    '.properties',
+    {
+      name: 'properties',
+      wasmPath: require.resolve('tree-sitter-properties/tree-sitter-properties.wasm'),
+    },
+  ],
   ['.py', { name: 'python', wasmPath: require.resolve('tree-sitter-python/tree-sitter-python.wasm') }],
+  ['.rb', { name: 'ruby', wasmPath: require.resolve('tree-sitter-ruby/tree-sitter-ruby.wasm') }],
   ['.rs', { name: 'rust', wasmPath: require.resolve('tree-sitter-rust/tree-sitter-rust.wasm') }],
+  ['.ru', { name: 'ruby', wasmPath: require.resolve('tree-sitter-ruby/tree-sitter-ruby.wasm') }],
+  ['.sh', { name: 'bash', wasmPath: require.resolve('tree-sitter-bash/tree-sitter-bash.wasm') }],
+  [
+    '.tf',
+    {
+      name: 'terraform',
+      wasmPath: require.resolve('@tree-sitter-grammars/tree-sitter-hcl/tree-sitter-terraform.wasm'),
+    },
+  ],
+  [
+    '.toml',
+    {
+      name: 'toml',
+      wasmPath: require.resolve('@tree-sitter-grammars/tree-sitter-toml/tree-sitter-toml.wasm'),
+    },
+  ],
+  ['.ts', { name: 'typescript', wasmPath: require.resolve('tree-sitter-typescript/tree-sitter-typescript.wasm') }],
+  ['.tsx', { name: 'tsx', wasmPath: require.resolve('tree-sitter-typescript/tree-sitter-tsx.wasm') }],
+  ['.webmanifest', { name: 'json', wasmPath: require.resolve('tree-sitter-json/tree-sitter-json.wasm') }],
+  [
+    '.zig',
+    {
+      name: 'zig',
+      wasmPath: require.resolve('@tree-sitter-grammars/tree-sitter-zig/tree-sitter-zig.wasm'),
+    },
+  ],
+  ['.zsh', { name: 'bash', wasmPath: require.resolve('tree-sitter-bash/tree-sitter-bash.wasm') }],
 ])
 
 let parserInitPromise: Promise<void> | null = null
@@ -305,6 +418,8 @@ const safeSlice = (value: string, maxChars: number) => {
   if (value.length <= maxChars) return value
   return `${value.slice(0, maxChars)}...`
 }
+
+const splitLines = (source: string) => source.split(/\r?\n/)
 
 const interestingNodeTypes = [
   'class',
@@ -401,6 +516,423 @@ const collectFacts = (root: AstNode, source: string, maxFacts: number, maxFactCh
   return facts
 }
 
+const resolveLineRange = (lineCounter: LineCounter, range?: [number, number, number]) => {
+  if (!range) return { startLine: 1, endLine: 1 }
+  const start = lineCounter.linePos(range[0])?.line ?? 0
+  const end = lineCounter.linePos(range[1])?.line ?? start
+  return { startLine: start + 1, endLine: end + 1 }
+}
+
+const formatYamlValue = (value: unknown, maxFactChars: number) => {
+  if (isScalar(value)) {
+    return safeSlice(String(value.value ?? ''), maxFactChars)
+  }
+  if (isMap(value)) return '{...}'
+  if (isSeq(value)) return '[...]'
+  return safeSlice(String(value ?? ''), maxFactChars)
+}
+
+const parseYamlAst = (
+  source: string,
+  maxFacts: number,
+  maxFactChars: number,
+  maxSummaryNodes: number,
+): AstSummaryOutput => {
+  const lineCounter = new LineCounter()
+
+  try {
+    const documents = parseAllDocuments(source, { lineCounter })
+    if (documents.length === 0) {
+      return {
+        astSummary: 'Empty YAML document.',
+        facts: [],
+        metadata: { skipped: true, reason: 'empty_document', language: 'yaml' },
+      }
+    }
+
+    const summaries: string[] = []
+    const facts: TreeSitterFact[] = []
+
+    for (const doc of documents) {
+      const root = doc.contents
+      if (!root) continue
+
+      const stack: Array<{ node: unknown; path: string }> = [{ node: root, path: '' }]
+
+      while (stack.length > 0 && (facts.length < maxFacts || summaries.length < maxSummaryNodes)) {
+        const current = stack.pop()
+        if (!current) continue
+
+        const { node, path } = current
+        if (isMap(node)) {
+          for (const item of node.items) {
+            const pair = item as { key?: unknown; value?: unknown; range?: [number, number, number] }
+            const keyText = isScalar(pair.key) ? String(pair.key.value ?? '') : 'key'
+            const nextPath = path ? `${path}.${keyText}` : keyText
+            const { startLine, endLine } = resolveLineRange(lineCounter, pair.range)
+            if (summaries.length < maxSummaryNodes) {
+              summaries.push(`${nextPath} (${startLine}-${endLine})`)
+            }
+            if (facts.length < maxFacts) {
+              facts.push({
+                nodeType: 'yaml-pair',
+                matchText: safeSlice(`${keyText}: ${formatYamlValue(pair.value, maxFactChars)}`, maxFactChars),
+                startLine,
+                endLine,
+                metadata: undefined,
+              })
+            }
+            if (pair.value) stack.push({ node: pair.value, path: nextPath })
+          }
+          continue
+        }
+
+        if (isSeq(node)) {
+          node.items.forEach((item, index) => {
+            const nextPath = `${path}${path ? '.' : ''}[${index}]`
+            const range = (item as { range?: [number, number, number] }).range
+            const { startLine, endLine } = resolveLineRange(lineCounter, range)
+            if (summaries.length < maxSummaryNodes) {
+              summaries.push(`${nextPath} (${startLine}-${endLine})`)
+            }
+            if (facts.length < maxFacts) {
+              facts.push({
+                nodeType: 'yaml-seq-item',
+                matchText: safeSlice(`${nextPath}: ${formatYamlValue(item, maxFactChars)}`, maxFactChars),
+                startLine,
+                endLine,
+                metadata: undefined,
+              })
+            }
+            stack.push({ node: item, path: nextPath })
+          })
+        }
+      }
+    }
+
+    if (summaries.length === 0) {
+      summaries.push('No structured YAML nodes detected.')
+    }
+
+    return {
+      astSummary: summaries.map((line) => safeSlice(line, maxFactChars)).join('\n'),
+      facts,
+      metadata: {
+        language: 'yaml',
+        parser: 'yaml',
+        factCount: facts.length,
+        documentCount: documents.length,
+      },
+    }
+  } catch (error) {
+    return {
+      astSummary: 'YAML parse failed.',
+      facts: [],
+      metadata: {
+        skipped: true,
+        reason: 'parse_failed',
+        language: 'yaml',
+        error: error instanceof Error ? error.message : 'unknown_error',
+      },
+    }
+  }
+}
+
+const parsePlainTextAst = (
+  source: string,
+  maxFacts: number,
+  maxFactChars: number,
+  maxSummaryNodes: number,
+  language: string,
+  parser = 'text',
+): AstSummaryOutput => {
+  const lines = splitLines(source)
+  const summaries: string[] = []
+  const facts: TreeSitterFact[] = []
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]?.trim()
+    if (!line) continue
+    const lineNumber = i + 1
+    if (summaries.length < maxSummaryNodes) {
+      summaries.push(`Line ${lineNumber}: ${safeSlice(line, maxFactChars)}`)
+    }
+    if (facts.length < maxFacts) {
+      facts.push({
+        nodeType: 'line',
+        matchText: safeSlice(line, maxFactChars),
+        startLine: lineNumber,
+        endLine: lineNumber,
+        metadata: undefined,
+      })
+    }
+    if (summaries.length >= maxSummaryNodes && facts.length >= maxFacts) break
+  }
+
+  return {
+    astSummary: summaries.length > 0 ? summaries.join('\n') : 'No non-empty lines detected.',
+    facts,
+    metadata: {
+      language,
+      parser,
+      factCount: facts.length,
+    },
+  }
+}
+
+const createPlainTextParser =
+  (language: string, parser = 'text') =>
+  (source: string, maxFacts: number, maxFactChars: number, maxSummaryNodes: number) =>
+    parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, language, parser)
+
+const parseMarkdownAst = (
+  source: string,
+  maxFacts: number,
+  maxFactChars: number,
+  maxSummaryNodes: number,
+): AstSummaryOutput => {
+  const lines = splitLines(source)
+  const summaries: string[] = []
+  const facts: TreeSitterFact[] = []
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? ''
+    const match = line.match(/^(#{1,6})\s+(.*)$/)
+    if (!match) continue
+    const level = match[1]?.length ?? 1
+    const text = (match[2] ?? '').trim()
+    const lineNumber = i + 1
+    if (summaries.length < maxSummaryNodes) {
+      summaries.push(`H${level} ${safeSlice(text, maxFactChars)} (${lineNumber})`)
+    }
+    if (facts.length < maxFacts) {
+      facts.push({
+        nodeType: 'heading',
+        matchText: safeSlice(text, maxFactChars),
+        startLine: lineNumber,
+        endLine: lineNumber,
+        metadata: { level },
+      })
+    }
+    if (summaries.length >= maxSummaryNodes && facts.length >= maxFacts) break
+  }
+
+  if (summaries.length === 0) {
+    return parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, 'markdown', 'markdown')
+  }
+
+  return {
+    astSummary: summaries.join('\n'),
+    facts,
+    metadata: {
+      language: 'markdown',
+      parser: 'markdown',
+      factCount: facts.length,
+    },
+  }
+}
+
+const parseProtoAst = (
+  source: string,
+  maxFacts: number,
+  maxFactChars: number,
+  maxSummaryNodes: number,
+): AstSummaryOutput => {
+  const lines = splitLines(source)
+  const summaries: string[] = []
+  const facts: TreeSitterFact[] = []
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? ''
+    const lineNumber = i + 1
+    const definition = line.match(/^\s*(message|enum|service)\s+([A-Za-z_][A-Za-z0-9_]*)/)
+    const rpc = line.match(/^\s*rpc\s+([A-Za-z_][A-Za-z0-9_]*)/)
+    if (definition) {
+      const [, kind, name] = definition
+      if (summaries.length < maxSummaryNodes) {
+        summaries.push(`${kind} ${safeSlice(name, maxFactChars)} (${lineNumber})`)
+      }
+      if (facts.length < maxFacts) {
+        facts.push({
+          nodeType: kind ?? 'definition',
+          matchText: safeSlice(name ?? '', maxFactChars),
+          startLine: lineNumber,
+          endLine: lineNumber,
+          metadata: undefined,
+        })
+      }
+    } else if (rpc) {
+      const name = rpc[1] ?? ''
+      if (summaries.length < maxSummaryNodes) {
+        summaries.push(`rpc ${safeSlice(name, maxFactChars)} (${lineNumber})`)
+      }
+      if (facts.length < maxFacts) {
+        facts.push({
+          nodeType: 'rpc',
+          matchText: safeSlice(name, maxFactChars),
+          startLine: lineNumber,
+          endLine: lineNumber,
+          metadata: undefined,
+        })
+      }
+    }
+    if (summaries.length >= maxSummaryNodes && facts.length >= maxFacts) break
+  }
+
+  if (summaries.length === 0) {
+    return parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, 'proto', 'proto')
+  }
+
+  return {
+    astSummary: summaries.join('\n'),
+    facts,
+    metadata: {
+      language: 'proto',
+      parser: 'proto',
+      factCount: facts.length,
+    },
+  }
+}
+
+const parseIniAst = (
+  source: string,
+  maxFacts: number,
+  maxFactChars: number,
+  maxSummaryNodes: number,
+): AstSummaryOutput => {
+  const lines = splitLines(source)
+  const summaries: string[] = []
+  const facts: TreeSitterFact[] = []
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const raw = lines[i] ?? ''
+    const line = raw.trim()
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue
+    const lineNumber = i + 1
+    const section = line.match(/^\[([^\]]+)\]$/)
+    if (section) {
+      const name = section[1] ?? ''
+      if (summaries.length < maxSummaryNodes) {
+        summaries.push(`[${safeSlice(name, maxFactChars)}] (${lineNumber})`)
+      }
+      if (facts.length < maxFacts) {
+        facts.push({
+          nodeType: 'section',
+          matchText: safeSlice(name, maxFactChars),
+          startLine: lineNumber,
+          endLine: lineNumber,
+          metadata: undefined,
+        })
+      }
+    } else {
+      const entry = line.match(/^([A-Za-z0-9_.-]+)\s*[:=]\s*(.*)$/)
+      if (!entry) continue
+      const key = entry[1] ?? ''
+      const value = entry[2] ?? ''
+      if (summaries.length < maxSummaryNodes) {
+        summaries.push(`${safeSlice(key, maxFactChars)} (${lineNumber})`)
+      }
+      if (facts.length < maxFacts) {
+        facts.push({
+          nodeType: 'entry',
+          matchText: safeSlice(`${key}=${value}`, maxFactChars),
+          startLine: lineNumber,
+          endLine: lineNumber,
+          metadata: undefined,
+        })
+      }
+    }
+    if (summaries.length >= maxSummaryNodes && facts.length >= maxFacts) break
+  }
+
+  if (summaries.length === 0) {
+    return parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, 'ini', 'ini')
+  }
+
+  return {
+    astSummary: summaries.join('\n'),
+    facts,
+    metadata: {
+      language: 'ini',
+      parser: 'ini',
+      factCount: facts.length,
+    },
+  }
+}
+
+const parseXmlAst = (
+  source: string,
+  maxFacts: number,
+  maxFactChars: number,
+  maxSummaryNodes: number,
+): AstSummaryOutput => {
+  const lines = splitLines(source)
+  const summaries: string[] = []
+  const facts: TreeSitterFact[] = []
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? ''
+    const lineNumber = i + 1
+    const matches = line.matchAll(/<([A-Za-z0-9:_-]+)(\s|>|\/)/g)
+    for (const match of matches) {
+      const tag = match[1] ?? ''
+      if (!tag || tag.startsWith('?') || tag.startsWith('!')) continue
+      if (summaries.length < maxSummaryNodes) {
+        summaries.push(`<${safeSlice(tag, maxFactChars)}> (${lineNumber})`)
+      }
+      if (facts.length < maxFacts) {
+        facts.push({
+          nodeType: 'tag',
+          matchText: safeSlice(tag, maxFactChars),
+          startLine: lineNumber,
+          endLine: lineNumber,
+          metadata: undefined,
+        })
+      }
+      if (summaries.length >= maxSummaryNodes && facts.length >= maxFacts) break
+    }
+    if (summaries.length >= maxSummaryNodes && facts.length >= maxFacts) break
+  }
+
+  if (summaries.length === 0) {
+    return parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, 'xml', 'xml')
+  }
+
+  return {
+    astSummary: summaries.join('\n'),
+    facts,
+    metadata: {
+      language: 'xml',
+      parser: 'xml',
+      factCount: facts.length,
+    },
+  }
+}
+
+const customAstParsers = new Map<
+  string,
+  (source: string, maxFacts: number, maxFactChars: number, maxSummaryNodes: number) => AstSummaryOutput
+>([
+  ['.cfg', parseIniAst],
+  ['.conf', parseIniAst],
+  ['.ini', parseIniAst],
+  ['.key', createPlainTextParser('text')],
+  ['.md', parseMarkdownAst],
+  ['.mdx', parseMarkdownAst],
+  ['.mod', createPlainTextParser('text')],
+  ['.pem', createPlainTextParser('text')],
+  ['.proto', parseProtoAst],
+  ['.sql', createPlainTextParser('sql', 'text')],
+  ['.sum', createPlainTextParser('text')],
+  ['.svg', parseXmlAst],
+  ['.txt', createPlainTextParser('text')],
+  ['.xml', parseXmlAst],
+  ['.yaml', parseYamlAst],
+  ['.yml', parseYamlAst],
+  ['.example', createPlainTextParser('text')],
+  ['.keep', createPlainTextParser('text')],
+])
+
 const parseAst = async (source: string, filePath: string): Promise<AstSummaryOutput> => {
   const { maxBytes, maxFacts, maxFactChars, maxSummaryNodes } = loadAstLimits()
   if (source.length > maxBytes) {
@@ -412,13 +944,14 @@ const parseAst = async (source: string, filePath: string): Promise<AstSummaryOut
   }
 
   const ext = extname(filePath).toLowerCase()
+  const customParser = customAstParsers.get(ext)
+  if (customParser) {
+    return customParser(source, maxFacts, maxFactChars, maxSummaryNodes)
+  }
   const entry = await loadLanguageForExtension(ext)
   if (!entry) {
-    return {
-      astSummary: `No Tree-sitter parser configured for ${ext || 'unknown'} files.`,
-      facts: [],
-      metadata: { skipped: true, reason: 'unsupported_extension', extension: ext || null },
-    }
+    const fallbackLanguage = languageNameByExtension.get(ext) ?? 'text'
+    return parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
   }
 
   const parser = new Parser()
@@ -444,6 +977,19 @@ const parseAst = async (source: string, filePath: string): Promise<AstSummaryOut
       factCount: facts.length,
     },
   }
+}
+
+const dedupeFacts = (facts: TreeSitterFact[]) => {
+  const seen = new Map<string, TreeSitterFact>()
+  for (const fact of facts) {
+    const start = fact.startLine ?? -1
+    const end = fact.endLine ?? -1
+    const key = `${fact.nodeType}::${fact.matchText}::${start}::${end}`
+    if (!seen.has(key)) {
+      seen.set(key, fact)
+    }
+  }
+  return Array.from(seen.values())
 }
 
 const loadCompletionConfig = () => {
@@ -911,8 +1457,9 @@ export const activities = {
     `
 
     if (input.facts.length > 0) {
+      const uniqueFacts = dedupeFacts(input.facts)
       await db`DELETE FROM atlas.tree_sitter_facts WHERE file_version_id = ${fileVersionId};`
-      for (const fact of input.facts) {
+      for (const fact of uniqueFacts) {
         await db`
           INSERT INTO atlas.tree_sitter_facts (
             file_version_id,
@@ -929,12 +1476,29 @@ export const activities = {
             ${fact.startLine},
             ${fact.endLine},
             ${JSON.stringify(fact.metadata ?? {})}::jsonb
-          );
+          )
+          ON CONFLICT DO NOTHING;
         `
       }
     }
 
     return { id: enrichmentId }
+  },
+
+  async markEventProcessed(input: MarkEventProcessedInput): Promise<void> {
+    const db = getAtlasDb()
+    if (!db) {
+      throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+    }
+
+    const deliveryId = input.deliveryId.trim()
+    if (deliveryId.length === 0) return
+
+    await db`
+      UPDATE atlas.github_events
+      SET processed_at = now()
+      WHERE delivery_id = ${deliveryId};
+    `
   },
 }
 

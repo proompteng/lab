@@ -1,6 +1,10 @@
 import type { DiscordResponseConfig } from '@/discord-commands'
 
 export interface WebhookConfig {
+  atlas: {
+    baseUrl: string
+    apiKey: string | null
+  }
   codebase: {
     baseBranch: string
     branchPrefix: string

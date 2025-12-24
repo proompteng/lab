@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto'
 
 import type { Webhooks } from '@octokit/webhooks'
-import { Effect } from 'effect'
+import { Effect, pipe } from 'effect'
 import type { Effect as EffectType } from 'effect/Effect'
+import * as Either from 'effect/Either'
+import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
 import * as TSemaphore from 'effect/TSemaphore'
 
 import type { AppConfigService } from '@/effect/config'
@@ -16,6 +19,9 @@ import { handlePullRequestEvent } from './github/events/pull-request'
 import type { WorkflowExecutionContext, WorkflowStage } from './github/workflow'
 import type { WebhookConfig } from './types'
 import { publishKafkaMessage } from './utils'
+
+const ATLAS_ENRICH_PATH = '/api/enrich'
+const MAX_ATLAS_ERROR_DETAIL = 500
 
 export interface GithubWebhookDependencies {
   runtime: AppRuntime
@@ -82,6 +88,224 @@ const extractEventIdentifiers = (payload: unknown) => {
     pullNumber,
     commentId,
     discussionId,
+  }
+}
+
+const extractRepositoryFromUrl = (repositoryUrl: string): string | undefined => {
+  try {
+    const parsed = new URL(repositoryUrl)
+    const segments = parsed.pathname.split('/').filter(Boolean)
+    if (segments.length >= 2) {
+      const owner = segments[segments.length - 2]
+      const repo = segments[segments.length - 1]
+      if (owner && repo) {
+        return `${owner}/${repo}`
+      }
+    }
+  } catch {
+    return undefined
+  }
+
+  return undefined
+}
+
+const AtlasContextSchema = Schema.Struct({
+  repository: Schema.optionalWith(
+    Schema.Struct({
+      full_name: Schema.optionalWith(Schema.String, { nullable: true }),
+      default_branch: Schema.optionalWith(Schema.String, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  issue: Schema.optionalWith(
+    Schema.Struct({
+      repository_url: Schema.optionalWith(Schema.String, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  pull_request: Schema.optionalWith(
+    Schema.Struct({
+      base: Schema.optionalWith(
+        Schema.Struct({
+          ref: Schema.optionalWith(Schema.String, { nullable: true }),
+          repo: Schema.optionalWith(
+            Schema.Struct({
+              full_name: Schema.optionalWith(Schema.String, { nullable: true }),
+            }),
+            { nullable: true },
+          ),
+        }),
+        { nullable: true },
+      ),
+      head: Schema.optionalWith(
+        Schema.Struct({
+          sha: Schema.optionalWith(Schema.String, { nullable: true }),
+        }),
+        { nullable: true },
+      ),
+    }),
+    { nullable: true },
+  ),
+  ref: Schema.optionalWith(Schema.String, { nullable: true }),
+  after: Schema.optionalWith(Schema.String, { nullable: true }),
+  head_commit: Schema.optionalWith(
+    Schema.Struct({
+      id: Schema.optionalWith(Schema.String, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+})
+
+const toOptionalString = (value: unknown) =>
+  typeof value === 'string' && value.trim().length > 0 ? Option.some(value) : Option.none()
+
+const extractAtlasContext = (payload: unknown): { repository?: string; ref?: string; commit?: string } => {
+  const decoded = Schema.decodeUnknownEither(AtlasContextSchema)(payload)
+  if (Either.isLeft(decoded)) return {}
+  const value = decoded.right
+
+  const repository = pipe(
+    toOptionalString(value.repository?.full_name),
+    Option.orElse(() => toOptionalString(value.pull_request?.base?.repo?.full_name)),
+    Option.orElse(() =>
+      pipe(
+        toOptionalString(value.issue?.repository_url),
+        Option.map(extractRepositoryFromUrl),
+        Option.flatMap(Option.fromNullable),
+      ),
+    ),
+    Option.getOrElse(() => undefined),
+  )
+
+  const ref = pipe(
+    toOptionalString(value.ref),
+    Option.orElse(() => toOptionalString(value.pull_request?.base?.ref)),
+    Option.orElse(() => toOptionalString(value.repository?.default_branch)),
+    Option.getOrElse(() => undefined),
+  )
+
+  const commit = pipe(
+    toOptionalString(value.after),
+    Option.orElse(() => toOptionalString(value.pull_request?.head?.sha)),
+    Option.orElse(() => toOptionalString(value.head_commit?.id)),
+    Option.getOrElse(() => undefined),
+  )
+
+  return { repository, ref, commit }
+}
+
+const buildAtlasPayload = (options: {
+  payload: unknown
+  deliveryId: string
+  eventName: string
+  actionValue?: string
+  hookId: string
+  senderLogin?: string
+  workflowIdentifier?: string | null
+  identifiers: ReturnType<typeof extractEventIdentifiers>
+}) => {
+  const context = extractAtlasContext(options.payload)
+
+  return {
+    repository: context.repository,
+    ref: context.ref,
+    commit: context.commit,
+    metadata: {
+      source: 'github',
+      deliveryId: options.deliveryId,
+      event: options.eventName,
+      action: options.actionValue ?? null,
+      hookId: options.hookId,
+      sender: options.senderLogin ?? null,
+      workflowIdentifier: options.workflowIdentifier ?? null,
+      identifiers: options.identifiers,
+      receivedAt: new Date().toISOString(),
+      payload: options.payload,
+    },
+  }
+}
+
+const triggerAtlasEnrichment = async (options: {
+  config: WebhookConfig['atlas']
+  payload: unknown
+  deliveryId: string
+  eventName: string
+  actionValue?: string
+  hookId: string
+  senderLogin?: string
+  workflowIdentifier?: string | null
+  identifiers: ReturnType<typeof extractEventIdentifiers>
+}): Promise<void> => {
+  const url = `${options.config.baseUrl}${ATLAS_ENRICH_PATH}`
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'x-idempotency-key': options.deliveryId,
+    'x-github-delivery': options.deliveryId,
+    'x-github-event': options.eventName,
+    'x-github-hook-id': options.hookId,
+  }
+
+  if (options.actionValue) {
+    headers['x-github-action'] = options.actionValue
+  }
+
+  if (options.config.apiKey) {
+    headers.authorization = `Bearer ${options.config.apiKey}`
+  }
+
+  const body = JSON.stringify(
+    buildAtlasPayload({
+      payload: options.payload,
+      deliveryId: options.deliveryId,
+      eventName: options.eventName,
+      actionValue: options.actionValue,
+      hookId: options.hookId,
+      senderLogin: options.senderLogin,
+      workflowIdentifier: options.workflowIdentifier,
+      identifiers: options.identifiers,
+    }),
+  )
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body,
+    })
+
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, MAX_ATLAS_ERROR_DETAIL)
+      logger.warn(
+        {
+          deliveryId: options.deliveryId,
+          eventName: options.eventName,
+          action: options.actionValue ?? null,
+          status: response.status,
+          detail,
+        },
+        'atlas enrichment request failed',
+      )
+    } else {
+      logger.debug(
+        {
+          deliveryId: options.deliveryId,
+          eventName: options.eventName,
+          action: options.actionValue ?? null,
+          status: response.status,
+        },
+        'atlas enrichment request accepted',
+      )
+    }
+  } catch (error) {
+    logger.warn(
+      {
+        deliveryId: options.deliveryId,
+        eventName: options.eventName,
+        action: options.actionValue ?? null,
+        err: error instanceof Error ? error.message : String(error),
+      },
+      'atlas enrichment request failed',
+    )
   }
 }
 
@@ -219,7 +443,22 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
         }
       }
 
-      await runtime.runPromise(
+      const atlasPromise =
+        eventName === 'push'
+          ? triggerAtlasEnrichment({
+              config: config.atlas,
+              payload: parsedPayload,
+              deliveryId,
+              eventName,
+              actionValue,
+              hookId,
+              senderLogin,
+              workflowIdentifier,
+              identifiers,
+            })
+          : Promise.resolve()
+
+      const publishPromise = runtime.runPromise(
         publishKafkaMessage({
           topic: config.topics.raw,
           key: deliveryId,
@@ -227,6 +466,12 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
           headers,
         }),
       )
+
+      const [, publishResult] = await Promise.allSettled([atlasPromise, publishPromise])
+
+      if (publishResult.status === 'rejected') {
+        throw publishResult.reason
+      }
 
       return new Response(
         JSON.stringify({

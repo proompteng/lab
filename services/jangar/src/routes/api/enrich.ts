@@ -1,8 +1,10 @@
+import { extname } from 'node:path'
 import { createFileRoute } from '@tanstack/react-router'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import { Atlas, AtlasLive } from '~/server/atlas'
-import { parseAtlasIndexInput } from '~/server/atlas-http'
+import { DEFAULT_REF, parseAtlasIndexInput } from '~/server/atlas-http'
+import { BumbaWorkflows, BumbaWorkflowsLive, type StartEnrichFileResult } from '~/server/bumba'
 
 export const Route = createFileRoute('/api/enrich')({
   server: {
@@ -13,7 +15,7 @@ export const Route = createFileRoute('/api/enrich')({
   },
 })
 
-const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(AtlasLive))
+const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(AtlasLive, BumbaWorkflowsLive))
 
 const jsonResponse = (payload: unknown, status = 200) => {
   const body = JSON.stringify(payload)
@@ -39,6 +41,199 @@ const resolveRequestError = (message: string) => {
   return resolveServiceError(message)
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+
+const MAX_EVENT_FILE_TARGETS = 200
+const LOCK_FILENAMES = new Set([
+  'bun.lock',
+  'composer.lock',
+  'cargo.lock',
+  'gemfile.lock',
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'pnpm-lock.yml',
+  'poetry.lock',
+  'pipfile.lock',
+  'yarn.lock',
+  'npm-shrinkwrap.json',
+])
+const BINARY_EXTENSIONS = new Set([
+  '.7z',
+  '.avi',
+  '.avif',
+  '.bmp',
+  '.bz2',
+  '.class',
+  '.db',
+  '.dll',
+  '.dylib',
+  '.eot',
+  '.exe',
+  '.flac',
+  '.gif',
+  '.gz',
+  '.ico',
+  '.icns',
+  '.jar',
+  '.jpeg',
+  '.jpg',
+  '.mkv',
+  '.mov',
+  '.mp3',
+  '.mp4',
+  '.ogg',
+  '.otf',
+  '.pdf',
+  '.png',
+  '.psd',
+  '.rar',
+  '.so',
+  '.sqlite',
+  '.sqlite3',
+  '.tar',
+  '.tgz',
+  '.ttf',
+  '.wav',
+  '.webp',
+  '.woff',
+  '.woff2',
+  '.xz',
+  '.zip',
+  '.wasm',
+  '.bin',
+])
+
+const normalizeOptionalText = (value: unknown) => {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+const normalizePathList = (value: unknown) => {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((entry) => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+}
+
+const shouldSkipFilePath = (filePath: string) => {
+  const normalized = filePath.trim()
+  if (normalized.length === 0) return true
+  const lower = normalized.toLowerCase()
+  const base = lower.split('/').pop() ?? lower
+  const extension = extname(base)
+
+  if (LOCK_FILENAMES.has(base)) return true
+  if (extension === '.lock') return true
+  if (BINARY_EXTENSIONS.has(extension)) return true
+
+  return false
+}
+
+const collectCommitPaths = (payload: Record<string, unknown>) => {
+  const paths = new Set<string>()
+  const commit = isRecord(payload) ? payload : null
+  if (!commit) return paths
+
+  for (const path of normalizePathList(commit.added)) {
+    if (!shouldSkipFilePath(path)) {
+      paths.add(path)
+    }
+  }
+  for (const path of normalizePathList(commit.modified)) {
+    if (!shouldSkipFilePath(path)) {
+      paths.add(path)
+    }
+  }
+
+  return paths
+}
+
+const extractEventFilePaths = (payload: Record<string, unknown>) => {
+  const paths = new Set<string>()
+  const headCommit = isRecord(payload.head_commit) ? payload.head_commit : null
+  if (headCommit) {
+    for (const path of collectCommitPaths(headCommit)) {
+      paths.add(path)
+    }
+  }
+
+  const commits = Array.isArray(payload.commits) ? payload.commits : []
+  for (const commit of commits) {
+    if (!isRecord(commit)) continue
+    for (const path of collectCommitPaths(commit)) {
+      paths.add(path)
+    }
+  }
+
+  return Array.from(paths).slice(0, MAX_EVENT_FILE_TARGETS)
+}
+
+const resolveAtlasEventInput = (payload: Record<string, unknown>) => {
+  const metadata = isRecord(payload.metadata) ? payload.metadata : undefined
+  const deliveryId = normalizeOptionalText(metadata?.deliveryId)
+  const eventType = normalizeOptionalText(metadata?.event)
+
+  const repository =
+    normalizeOptionalText(payload.repository) ??
+    normalizeOptionalText(
+      metadata?.identifiers && (metadata.identifiers as { repositoryFullName?: unknown })?.repositoryFullName,
+    ) ??
+    normalizeOptionalText(
+      metadata?.payload && (metadata.payload as { repository?: { full_name?: unknown } })?.repository?.full_name,
+    )
+
+  if (!deliveryId || !eventType || !repository) return null
+
+  const payloadValue = metadata?.payload
+  const webhookPayload = isRecord(payloadValue) ? payloadValue : payload
+  const installationIdRaw =
+    (payloadValue as { installation?: { id?: unknown } })?.installation?.id ??
+    (payload as { installation?: { id?: unknown } })?.installation?.id
+  const installationId =
+    typeof installationIdRaw === 'string'
+      ? installationIdRaw
+      : typeof installationIdRaw === 'number'
+        ? String(installationIdRaw)
+        : null
+
+  const senderLogin =
+    normalizeOptionalText(metadata?.sender) ??
+    normalizeOptionalText((payloadValue as { sender?: { login?: unknown } })?.sender?.login) ??
+    normalizeOptionalText((payload as { sender?: { login?: unknown } })?.sender?.login)
+
+  const ref =
+    normalizeOptionalText(payload.ref) ??
+    normalizeOptionalText(
+      (payloadValue as { repository?: { default_branch?: unknown } })?.repository?.default_branch,
+    ) ??
+    normalizeOptionalText((payloadValue as { pull_request?: { base?: { ref?: unknown } } })?.pull_request?.base?.ref)
+
+  const commit =
+    normalizeOptionalText(payload.commit) ??
+    normalizeOptionalText((payloadValue as { pull_request?: { head?: { sha?: unknown } } })?.pull_request?.head?.sha) ??
+    normalizeOptionalText((payloadValue as { after?: unknown })?.after) ??
+    normalizeOptionalText((payloadValue as { head_commit?: { id?: unknown } })?.head_commit?.id)
+
+  const workflowIdentifier = normalizeOptionalText(metadata?.workflowIdentifier)
+  const receivedAt = normalizeOptionalText(metadata?.receivedAt)
+
+  return {
+    repository,
+    ref: ref ?? DEFAULT_REF,
+    commit,
+    deliveryId,
+    eventType,
+    installationId,
+    senderLogin,
+    workflowIdentifier,
+    receivedAt,
+    payload: webhookPayload,
+  }
+}
+
 export const postEnrichHandlerEffect = (request: Request) =>
   pipe(
     Effect.gen(function* () {
@@ -48,27 +243,138 @@ export const postEnrichHandlerEffect = (request: Request) =>
       })
       if (!payload || typeof payload !== 'object') return errorResponse('invalid JSON body', 400)
 
-      const parsed = parseAtlasIndexInput(payload as Record<string, unknown>)
-      if (!parsed.ok) return errorResponse(parsed.message, 400)
+      const payloadRecord = payload as Record<string, unknown>
+      const parsed = parseAtlasIndexInput(payloadRecord)
+      const eventInput = resolveAtlasEventInput(payloadRecord)
+      if (!parsed.ok && !eventInput) return errorResponse(parsed.message, 400)
 
       const atlas = yield* Atlas
-      const repository = yield* atlas.upsertRepository({
-        name: parsed.value.repository,
-        defaultRef: parsed.value.ref,
-      })
-      const fileKey = yield* atlas.upsertFileKey({
-        repositoryId: repository.id,
-        path: parsed.value.path,
-      })
-      const fileVersion = yield* atlas.upsertFileVersion({
-        fileKeyId: fileKey.id,
-        repositoryRef: parsed.value.ref,
-        repositoryCommit: parsed.value.commit ?? null,
-        contentHash: parsed.value.contentHash ?? null,
-        metadata: parsed.value.metadata,
-      })
+      const bumbaWorkflows = yield* BumbaWorkflows
 
-      return jsonResponse({ ok: true, repository, fileKey, fileVersion }, 202)
+      let repository = null
+      if (parsed.ok || eventInput) {
+        const repositoryName = parsed.ok ? parsed.value.repository : eventInput?.repository
+        const repositoryRef = parsed.ok ? parsed.value.ref : eventInput?.ref
+        if (repositoryName) {
+          repository = yield* atlas.upsertRepository({
+            name: repositoryName,
+            defaultRef: repositoryRef,
+          })
+        }
+      }
+
+      const shouldSkipParsedPath = parsed.ok && shouldSkipFilePath(parsed.value.path)
+
+      let fileKey = null
+      let fileVersion = null
+      if (parsed.ok && repository && !shouldSkipParsedPath) {
+        fileKey = yield* atlas.upsertFileKey({
+          repositoryId: repository.id,
+          path: parsed.value.path,
+        })
+        fileVersion = yield* atlas.upsertFileVersion({
+          fileKeyId: fileKey.id,
+          repositoryRef: parsed.value.ref,
+          repositoryCommit: parsed.value.commit ?? null,
+          contentHash: parsed.value.contentHash ?? null,
+          metadata: parsed.value.metadata,
+        })
+      }
+
+      let githubEvent = null
+      let ingestion = null
+      let ingestionTarget = null
+      if (eventInput) {
+        githubEvent = yield* atlas.upsertGithubEvent({
+          repositoryId: repository?.id ?? null,
+          deliveryId: eventInput.deliveryId,
+          eventType: eventInput.eventType,
+          repository: eventInput.repository,
+          installationId: eventInput.installationId,
+          senderLogin: eventInput.senderLogin,
+          payload: eventInput.payload,
+          receivedAt: eventInput.receivedAt,
+        })
+
+        const workflowId = eventInput.workflowIdentifier ?? eventInput.deliveryId
+        ingestion = yield* atlas.upsertIngestion({
+          eventId: githubEvent.id,
+          workflowId,
+          status: 'accepted',
+          startedAt: eventInput.receivedAt,
+        })
+      }
+
+      let workflow = null
+      let workflows: StartEnrichFileResult[] = []
+      if (parsed.ok) {
+        if (shouldSkipParsedPath) {
+          return jsonResponse(
+            {
+              ok: true,
+              repository,
+              fileKey,
+              fileVersion,
+              githubEvent,
+              ingestion,
+              ingestionTarget,
+              workflow,
+              workflows,
+              skipped: true,
+              reason: 'excluded_file_type',
+            },
+            202,
+          )
+        }
+        const workflowId = eventInput?.workflowIdentifier ?? null
+        workflow = yield* bumbaWorkflows.startEnrichFile({
+          filePath: parsed.value.path,
+          commit: parsed.value.commit ?? null,
+          workflowId: workflowId ?? undefined,
+          eventDeliveryId: eventInput?.deliveryId,
+        })
+      } else if (eventInput?.eventType === 'push' && eventInput.commit) {
+        const eventPayload = eventInput.payload
+        if (isRecord(eventPayload)) {
+          const filePaths = extractEventFilePaths(eventPayload)
+          if (filePaths.length > 0) {
+            workflows = yield* Effect.forEach(
+              filePaths,
+              (filePath) =>
+                bumbaWorkflows.startEnrichFile({
+                  filePath,
+                  commit: eventInput.commit ?? null,
+                  workflowId: eventInput.workflowIdentifier ?? undefined,
+                  eventDeliveryId: eventInput.deliveryId,
+                }),
+              { concurrency: 6 },
+            )
+          }
+        }
+      }
+
+      if (ingestion && fileVersion) {
+        ingestionTarget = yield* atlas.upsertIngestionTarget({
+          ingestionId: ingestion.id,
+          fileVersionId: fileVersion.id,
+          kind: 'model_enrichment',
+        })
+      }
+
+      return jsonResponse(
+        {
+          ok: true,
+          repository,
+          fileKey,
+          fileVersion,
+          githubEvent,
+          ingestion,
+          ingestionTarget,
+          workflow,
+          workflows,
+        },
+        202,
+      )
     }),
     Effect.catchAll((error) => Effect.succeed(resolveRequestError(error.message))),
   )

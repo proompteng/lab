@@ -24,6 +24,7 @@
     "@tanstack/react-router-ssr-query": "^1.140.0",
     "@tanstack/react-start": "^1.140.0",
     "@tanstack/router-plugin": "^1.140.0",
+    "@proompteng/temporal-bun-sdk": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "effect": "^3.19.10",
