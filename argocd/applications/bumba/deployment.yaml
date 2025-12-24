@@ -49,6 +49,8 @@ spec:
               value: qwen3-embedding:0.6b
             - name: OPENAI_EMBEDDING_DIMENSION
               value: "1024"
+            - name: OPENAI_EMBEDDING_TIMEOUT_MS
+              value: "60000"
           resources:
             requests:
               cpu: 200m
