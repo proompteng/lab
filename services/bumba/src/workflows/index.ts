@@ -47,6 +47,8 @@ const persistEnrichmentTimeouts = {
   scheduleToCloseTimeoutMs: 1_200_000,
 }
 
+const MAX_CHILD_WORKFLOWS_PER_RUN = 500
+
 const EnrichFileInput = Schema.Struct({
   repoRoot: Schema.String,
   filePath: Schema.String,
@@ -65,6 +67,14 @@ const EnrichRepositoryInput = Schema.Struct({
   context: Schema.optional(Schema.String),
   pathPrefix: Schema.optional(Schema.String),
   maxFiles: Schema.optional(Schema.Number),
+  files: Schema.optional(Schema.Array(Schema.String)),
+  queuedCount: Schema.optional(Schema.Number),
+  stats: Schema.optional(
+    Schema.Struct({
+      total: Schema.Number,
+      skipped: Schema.Number,
+    }),
+  ),
 })
 
 export const workflows = [
@@ -143,22 +153,33 @@ export const workflows = [
       }
     }),
   ),
-  defineWorkflow('enrichRepository', EnrichRepositoryInput, ({ input, activities, childWorkflows }) =>
+  defineWorkflow('enrichRepository', EnrichRepositoryInput, ({ input, activities, childWorkflows, continueAsNew }) =>
     Effect.gen(function* () {
-      const { repoRoot, repository, ref, commit, context, pathPrefix, maxFiles } = input
+      const { repoRoot, repository, ref, commit, context, pathPrefix, maxFiles, queuedCount } = input
 
       const listRef = commit ?? ref
-      const listResult = (yield* activities.schedule(
-        'listRepoFiles',
-        [{ repoRoot, ref: listRef, pathPrefix, maxFiles }],
-        {
-          ...listRepoFilesTimeouts,
-          retry: activityRetry,
-        },
-      )) as ListRepoFilesOutput
+      let files = input.files
+      let stats = input.stats
 
-      const queued = yield* Effect.forEach(
-        listResult.files,
+      if (!files) {
+        const listResult = (yield* activities.schedule(
+          'listRepoFiles',
+          [{ repoRoot, ref: listRef, pathPrefix, maxFiles }],
+          {
+            ...listRepoFilesTimeouts,
+            retry: activityRetry,
+          },
+        )) as ListRepoFilesOutput
+        files = listResult.files
+        stats = { total: listResult.total, skipped: listResult.skipped }
+      }
+
+      const queuedSoFar = queuedCount ?? 0
+      const batch = files.slice(0, MAX_CHILD_WORKFLOWS_PER_RUN)
+      const remaining = files.slice(MAX_CHILD_WORKFLOWS_PER_RUN)
+
+      yield* Effect.forEach(
+        batch,
         (filePath) =>
           childWorkflows.start('enrichFile', [
             {
@@ -173,10 +194,32 @@ export const workflows = [
         { concurrency: 10 },
       )
 
+      const queuedTotal = queuedSoFar + batch.length
+
+      if (remaining.length > 0) {
+        return continueAsNew({
+          workflowType: 'enrichRepository',
+          input: [
+            {
+              repoRoot,
+              repository,
+              ref,
+              commit,
+              context,
+              pathPrefix,
+              maxFiles,
+              files: remaining,
+              queuedCount: queuedTotal,
+              stats,
+            },
+          ],
+        })
+      }
+
       return {
-        total: listResult.total,
-        skipped: listResult.skipped,
-        queued: queued.length,
+        total: stats?.total ?? files.length,
+        skipped: stats?.skipped ?? 0,
+        queued: queuedTotal,
       }
     }),
   ),
