@@ -17,6 +17,7 @@ export type StartEnrichFileInput = {
   commit?: string | null
   context?: string
   workflowId?: string
+  eventDeliveryId?: string
 }
 
 export type StartEnrichFileResult = {
@@ -231,6 +232,7 @@ export const BumbaWorkflowsLive = Layer.scoped(
                           repoRoot,
                           filePath: input.filePath,
                           context: input.context ?? '',
+                          eventDeliveryId: input.eventDeliveryId,
                         },
                       ],
                     })

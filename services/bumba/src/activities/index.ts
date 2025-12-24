@@ -76,6 +76,10 @@ export type PersistInput = {
   facts: TreeSitterFact[]
 }
 
+export type MarkEventProcessedInput = {
+  deliveryId: string
+}
+
 export type BumbaActivities = typeof activities
 
 const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
@@ -935,6 +939,22 @@ export const activities = {
     }
 
     return { id: enrichmentId }
+  },
+
+  async markEventProcessed(input: MarkEventProcessedInput): Promise<void> {
+    const db = getAtlasDb()
+    if (!db) {
+      throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+    }
+
+    const deliveryId = input.deliveryId.trim()
+    if (deliveryId.length === 0) return
+
+    await db`
+      UPDATE atlas.github_events
+      SET processed_at = now()
+      WHERE delivery_id = ${deliveryId};
+    `
   },
 }
 

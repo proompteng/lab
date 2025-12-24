@@ -234,6 +234,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
           filePath: parsed.value.path,
           commit: parsed.value.commit ?? null,
           workflowId: workflowId ?? undefined,
+          eventDeliveryId: eventInput?.deliveryId,
         })
       } else if (eventInput?.eventType === 'push' && eventInput.commit) {
         const eventPayload = eventInput.payload
@@ -247,6 +248,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
                   filePath,
                   commit: eventInput.commit ?? null,
                   workflowId: eventInput.workflowIdentifier ?? undefined,
+                  eventDeliveryId: eventInput.deliveryId,
                 }),
               { concurrency: 6 },
             )
