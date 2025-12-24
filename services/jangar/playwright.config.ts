@@ -8,7 +8,7 @@ const configDir = dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: ['**/*.spec.ts'],
+  testMatch: ['**/*.e2e.ts'],
   timeout: 30_000,
   expect: {
     timeout: 10_000,
