@@ -3,6 +3,7 @@ import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import { Atlas, AtlasLive } from '~/server/atlas'
 import { DEFAULT_REF, parseAtlasIndexInput } from '~/server/atlas-http'
+import { BumbaWorkflows, BumbaWorkflowsLive, type StartEnrichFileResult } from '~/server/bumba'
 
 export const Route = createFileRoute('/api/enrich')({
   server: {
@@ -13,7 +14,7 @@ export const Route = createFileRoute('/api/enrich')({
   },
 })
 
-const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(AtlasLive))
+const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(AtlasLive, BumbaWorkflowsLive))
 
 const jsonResponse = (payload: unknown, status = 200) => {
   const body = JSON.stringify(payload)
@@ -42,10 +43,55 @@ const resolveRequestError = (message: string) => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
+const MAX_EVENT_FILE_TARGETS = 200
+
 const normalizeOptionalText = (value: unknown) => {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : undefined
+}
+
+const normalizePathList = (value: unknown) => {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((entry) => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+}
+
+const collectCommitPaths = (payload: Record<string, unknown>) => {
+  const paths = new Set<string>()
+  const commit = isRecord(payload) ? payload : null
+  if (!commit) return paths
+
+  for (const path of normalizePathList(commit.added)) {
+    paths.add(path)
+  }
+  for (const path of normalizePathList(commit.modified)) {
+    paths.add(path)
+  }
+
+  return paths
+}
+
+const extractEventFilePaths = (payload: Record<string, unknown>) => {
+  const paths = new Set<string>()
+  const headCommit = isRecord(payload.head_commit) ? payload.head_commit : null
+  if (headCommit) {
+    for (const path of collectCommitPaths(headCommit)) {
+      paths.add(path)
+    }
+  }
+
+  const commits = Array.isArray(payload.commits) ? payload.commits : []
+  for (const commit of commits) {
+    if (!isRecord(commit)) continue
+    for (const path of collectCommitPaths(commit)) {
+      paths.add(path)
+    }
+  }
+
+  return Array.from(paths).slice(0, MAX_EVENT_FILE_TARGETS)
 }
 
 const resolveAtlasEventInput = (payload: Record<string, unknown>) => {
@@ -126,6 +172,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
       if (!parsed.ok && !eventInput) return errorResponse(parsed.message, 400)
 
       const atlas = yield* Atlas
+      const bumbaWorkflows = yield* BumbaWorkflows
 
       let repository = null
       if (parsed.ok || eventInput) {
@@ -157,6 +204,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
 
       let githubEvent = null
       let ingestion = null
+      let ingestionTarget = null
       if (eventInput) {
         githubEvent = yield* atlas.upsertGithubEvent({
           repositoryId: repository?.id ?? null,
@@ -178,6 +226,42 @@ export const postEnrichHandlerEffect = (request: Request) =>
         })
       }
 
+      let workflow = null
+      let workflows: StartEnrichFileResult[] = []
+      if (parsed.ok) {
+        const workflowId = eventInput?.workflowIdentifier ?? null
+        workflow = yield* bumbaWorkflows.startEnrichFile({
+          filePath: parsed.value.path,
+          commit: parsed.value.commit ?? null,
+          workflowId: workflowId ?? undefined,
+        })
+      } else if (eventInput?.eventType === 'push' && eventInput.commit) {
+        const eventPayload = eventInput.payload
+        if (isRecord(eventPayload)) {
+          const filePaths = extractEventFilePaths(eventPayload)
+          if (filePaths.length > 0) {
+            workflows = yield* Effect.forEach(
+              filePaths,
+              (filePath) =>
+                bumbaWorkflows.startEnrichFile({
+                  filePath,
+                  commit: eventInput.commit ?? null,
+                  workflowId: eventInput.workflowIdentifier ?? undefined,
+                }),
+              { concurrency: 6 },
+            )
+          }
+        }
+      }
+
+      if (ingestion && fileVersion) {
+        ingestionTarget = yield* atlas.upsertIngestionTarget({
+          ingestionId: ingestion.id,
+          fileVersionId: fileVersion.id,
+          kind: 'model_enrichment',
+        })
+      }
+
       return jsonResponse(
         {
           ok: true,
@@ -186,6 +270,9 @@ export const postEnrichHandlerEffect = (request: Request) =>
           fileVersion,
           githubEvent,
           ingestion,
+          ingestionTarget,
+          workflow,
+          workflows,
         },
         202,
       )
