@@ -186,23 +186,21 @@ const resolveRepositoryInfo = async (repoRoot: string) => {
   const envRef = process.env.REPOSITORY_REF?.trim()
   const envCommit = process.env.REPOSITORY_COMMIT?.trim()
 
-  if (envRepo && envRepo.length > 0) {
-    return {
-      repoName: envRepo,
-      repoRef: envRef && envRef.length > 0 ? envRef : null,
-      repoCommit: envCommit && envCommit.length > 0 ? envCommit : null,
-    }
-  }
-
   const fallbackName = basename(repoRoot)
   const defaultRepo =
     process.env.CODEX_REPO_SLUG?.trim() ||
     process.env.CODEX_REPO_URL?.trim() ||
     (await runCommand(['git', '-C', repoRoot, 'remote', 'get-url', 'origin'], repoRoot)) ||
     fallbackName
-  const repoName = defaultRepo
-  const repoRef = (await runCommand(['git', '-C', repoRoot, 'rev-parse', '--abbrev-ref', 'HEAD'], repoRoot)) ?? null
-  const repoCommit = (await runCommand(['git', '-C', repoRoot, 'rev-parse', 'HEAD'], repoRoot)) ?? null
+  const repoName = envRepo && envRepo.length > 0 ? envRepo : defaultRepo
+  const repoRef =
+    (envRef && envRef.length > 0 ? envRef : null) ??
+    (await runCommand(['git', '-C', repoRoot, 'rev-parse', '--abbrev-ref', 'HEAD'], repoRoot)) ??
+    null
+  const repoCommit =
+    (envCommit && envCommit.length > 0 ? envCommit : null) ??
+    (await runCommand(['git', '-C', repoRoot, 'rev-parse', 'HEAD'], repoRoot)) ??
+    null
 
   const normalizedRepoName = repoName
     .replace(/\s+/g, '')
