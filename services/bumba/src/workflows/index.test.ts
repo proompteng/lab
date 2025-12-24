@@ -3,6 +3,7 @@ import type {
   ActivityResolution,
   Command,
   ExecuteWorkflowInput,
+  WorkflowDefinitions,
   WorkflowExecutionOutput,
 } from '@proompteng/temporal-bun-sdk/workflow'
 import {
@@ -21,9 +22,7 @@ const makeExecutor = () => {
   const registry = new WorkflowRegistry()
   const dataConverter = createDefaultDataConverter()
   const executor = new WorkflowExecutor({ registry, dataConverter })
-  for (const workflow of workflows) {
-    registry.register(workflow)
-  }
+  registry.registerMany(workflows as WorkflowDefinitions)
   return { registry, executor, dataConverter }
 }
 
