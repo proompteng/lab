@@ -39,6 +39,16 @@ export type AtlasEnrichResult =
   | { ok: true; status: number; result: unknown }
   | { ok: false; status?: number; message: string }
 
+export type AtlasPathLookupParams = {
+  repository?: string
+  ref?: string
+  query?: string
+  limit?: number
+  signal?: AbortSignal
+}
+
+export type AtlasPathLookupResult = { ok: true; paths: string[] } | { ok: false; message: string }
+
 const parseString = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
 const parseNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined
@@ -190,4 +200,34 @@ export const enrichAtlas = async (input: AtlasEnrichInput): Promise<AtlasEnrichR
   }
 
   return { ok: true, status: response.status, result: payload }
+}
+
+export const listAtlasPaths = async (params: AtlasPathLookupParams): Promise<AtlasPathLookupResult> => {
+  const searchParams = new URLSearchParams()
+  if (params.repository) searchParams.set('repository', params.repository)
+  if (params.ref) searchParams.set('ref', params.ref)
+  if (params.query) searchParams.set('query', params.query)
+  if (params.limit) searchParams.set('limit', params.limit.toString())
+
+  const url = `/api/atlas/paths${searchParams.toString() ? `?${searchParams.toString()}` : ''}`
+  const response = await fetch(url, { signal: params.signal })
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    const message =
+      payload && typeof payload === 'object' && 'message' in payload ? String(payload.message) : 'Path lookup failed'
+    return { ok: false, message }
+  }
+
+  if (!payload || typeof payload !== 'object') return { ok: true, paths: [] }
+  const record = payload as Record<string, unknown>
+  const paths = Array.isArray(record.paths)
+    ? record.paths.filter((item): item is string => typeof item === 'string')
+    : []
+  return { ok: true, paths }
 }

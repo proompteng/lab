@@ -12,16 +12,20 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as MemoriesRouteImport } from './routes/memories'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as HealthRouteImport } from './routes/health'
-import { Route as AtlasRouteImport } from './routes/atlas'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AtlasIndexRouteImport } from './routes/atlas/index'
 import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
+import { Route as AtlasSearchRouteImport } from './routes/atlas/search'
+import { Route as AtlasIndexedRouteImport } from './routes/atlas/indexed'
+import { Route as AtlasEnrichRouteImport } from './routes/atlas/enrich'
+import { Route as ApiSearchRouteImport } from './routes/api/search'
 import { Route as ApiModelsRouteImport } from './routes/api/models'
 import { Route as ApiMemoriesRouteImport } from './routes/api/memories'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
-import { Route as ApiSearchRouteImport } from './routes/api/search'
 import { Route as ApiEnrichRouteImport } from './routes/api/enrich'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
+import { Route as ApiAtlasPathsRouteImport } from './routes/api/atlas/paths'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
 import { Route as ApiTorghutSymbolsSymbolRouteImport } from './routes/api/torghut/symbols/$symbol'
 
@@ -40,19 +44,39 @@ const HealthRoute = HealthRouteImport.update({
   path: '/health',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AtlasRoute = AtlasRouteImport.update({
-  id: '/atlas',
-  path: '/atlas',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AtlasIndexRoute = AtlasIndexRouteImport.update({
+  id: '/atlas/',
+  path: '/atlas/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TorghutSymbolsRoute = TorghutSymbolsRouteImport.update({
   id: '/torghut/symbols',
   path: '/torghut/symbols',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AtlasSearchRoute = AtlasSearchRouteImport.update({
+  id: '/atlas/search',
+  path: '/atlas/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AtlasIndexedRoute = AtlasIndexedRouteImport.update({
+  id: '/atlas/indexed',
+  path: '/atlas/indexed',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AtlasEnrichRoute = AtlasEnrichRouteImport.update({
+  id: '/atlas/enrich',
+  path: '/atlas/enrich',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiSearchRoute = ApiSearchRouteImport.update({
+  id: '/api/search',
+  path: '/api/search',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiModelsRoute = ApiModelsRouteImport.update({
@@ -70,11 +94,6 @@ const ApiHealthRoute = ApiHealthRouteImport.update({
   path: '/api/health',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiSearchRoute = ApiSearchRouteImport.update({
-  id: '/api/search',
-  path: '/api/search',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiEnrichRoute = ApiEnrichRouteImport.update({
   id: '/api/enrich',
   path: '/api/enrich',
@@ -90,6 +109,11 @@ const ApiTorghutSymbolsRoute = ApiTorghutSymbolsRouteImport.update({
   path: '/api/torghut/symbols',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAtlasPathsRoute = ApiAtlasPathsRouteImport.update({
+  id: '/api/atlas/paths',
+  path: '/api/atlas/paths',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OpenaiV1ChatCompletionsRoute = OpenaiV1ChatCompletionsRouteImport.update({
   id: '/openai/v1/chat/completions',
   path: '/openai/v1/chat/completions',
@@ -103,16 +127,20 @@ const ApiTorghutSymbolsSymbolRoute = ApiTorghutSymbolsSymbolRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/atlas': typeof AtlasRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
-  '/api/health': typeof ApiHealthRoute
-  '/api/search': typeof ApiSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
+  '/api/health': typeof ApiHealthRoute
   '/api/memories': typeof ApiMemoriesRoute
   '/api/models': typeof ApiModelsRoute
+  '/api/search': typeof ApiSearchRoute
+  '/atlas/enrich': typeof AtlasEnrichRoute
+  '/atlas/indexed': typeof AtlasIndexedRoute
+  '/atlas/search': typeof AtlasSearchRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
+  '/atlas': typeof AtlasIndexRoute
+  '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
@@ -120,16 +148,20 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/atlas': typeof AtlasRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
-  '/api/health': typeof ApiHealthRoute
-  '/api/search': typeof ApiSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
+  '/api/health': typeof ApiHealthRoute
   '/api/memories': typeof ApiMemoriesRoute
   '/api/models': typeof ApiModelsRoute
+  '/api/search': typeof ApiSearchRoute
+  '/atlas/enrich': typeof AtlasEnrichRoute
+  '/atlas/indexed': typeof AtlasIndexedRoute
+  '/atlas/search': typeof AtlasSearchRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
+  '/atlas': typeof AtlasIndexRoute
+  '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
@@ -138,16 +170,20 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/atlas': typeof AtlasRoute
   '/health': typeof HealthRoute
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
-  '/api/health': typeof ApiHealthRoute
-  '/api/search': typeof ApiSearchRoute
   '/api/enrich': typeof ApiEnrichRoute
+  '/api/health': typeof ApiHealthRoute
   '/api/memories': typeof ApiMemoriesRoute
   '/api/models': typeof ApiModelsRoute
+  '/api/search': typeof ApiSearchRoute
+  '/atlas/enrich': typeof AtlasEnrichRoute
+  '/atlas/indexed': typeof AtlasIndexedRoute
+  '/atlas/search': typeof AtlasSearchRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
+  '/atlas/': typeof AtlasIndexRoute
+  '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
@@ -157,16 +193,20 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/atlas'
     | '/health'
     | '/mcp'
     | '/memories'
-    | '/api/health'
-    | '/api/search'
     | '/api/enrich'
+    | '/api/health'
     | '/api/memories'
     | '/api/models'
+    | '/api/search'
+    | '/atlas/enrich'
+    | '/atlas/indexed'
+    | '/atlas/search'
     | '/torghut/symbols'
+    | '/atlas'
+    | '/api/atlas/paths'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
     | '/api/torghut/symbols/$symbol'
@@ -174,16 +214,20 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/atlas'
     | '/health'
     | '/mcp'
     | '/memories'
-    | '/api/health'
-    | '/api/search'
     | '/api/enrich'
+    | '/api/health'
     | '/api/memories'
     | '/api/models'
+    | '/api/search'
+    | '/atlas/enrich'
+    | '/atlas/indexed'
+    | '/atlas/search'
     | '/torghut/symbols'
+    | '/atlas'
+    | '/api/atlas/paths'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
     | '/api/torghut/symbols/$symbol'
@@ -191,16 +235,20 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
-    | '/atlas'
     | '/health'
     | '/mcp'
     | '/memories'
-    | '/api/health'
-    | '/api/search'
     | '/api/enrich'
+    | '/api/health'
     | '/api/memories'
     | '/api/models'
+    | '/api/search'
+    | '/atlas/enrich'
+    | '/atlas/indexed'
+    | '/atlas/search'
     | '/torghut/symbols'
+    | '/atlas/'
+    | '/api/atlas/paths'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
     | '/api/torghut/symbols/$symbol'
@@ -209,16 +257,20 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AtlasRoute: typeof AtlasRoute
   HealthRoute: typeof HealthRoute
   McpRoute: typeof McpRoute
   MemoriesRoute: typeof MemoriesRoute
-  ApiHealthRoute: typeof ApiHealthRoute
-  ApiSearchRoute: typeof ApiSearchRoute
   ApiEnrichRoute: typeof ApiEnrichRoute
+  ApiHealthRoute: typeof ApiHealthRoute
   ApiMemoriesRoute: typeof ApiMemoriesRoute
   ApiModelsRoute: typeof ApiModelsRoute
+  ApiSearchRoute: typeof ApiSearchRoute
+  AtlasEnrichRoute: typeof AtlasEnrichRoute
+  AtlasIndexedRoute: typeof AtlasIndexedRoute
+  AtlasSearchRoute: typeof AtlasSearchRoute
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
+  AtlasIndexRoute: typeof AtlasIndexRoute
+  ApiAtlasPathsRoute: typeof ApiAtlasPathsRoute
   ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
   OpenaiV1ChatCompletionsRoute: typeof OpenaiV1ChatCompletionsRoute
@@ -247,13 +299,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HealthRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/atlas': {
-      id: '/atlas'
-      path: '/atlas'
-      fullPath: '/atlas'
-      preLoaderRoute: typeof AtlasRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -261,11 +306,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/atlas/': {
+      id: '/atlas/'
+      path: '/atlas'
+      fullPath: '/atlas'
+      preLoaderRoute: typeof AtlasIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/torghut/symbols': {
       id: '/torghut/symbols'
       path: '/torghut/symbols'
       fullPath: '/torghut/symbols'
       preLoaderRoute: typeof TorghutSymbolsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/atlas/search': {
+      id: '/atlas/search'
+      path: '/atlas/search'
+      fullPath: '/atlas/search'
+      preLoaderRoute: typeof AtlasSearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/atlas/indexed': {
+      id: '/atlas/indexed'
+      path: '/atlas/indexed'
+      fullPath: '/atlas/indexed'
+      preLoaderRoute: typeof AtlasIndexedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/atlas/enrich': {
+      id: '/atlas/enrich'
+      path: '/atlas/enrich'
+      fullPath: '/atlas/enrich'
+      preLoaderRoute: typeof AtlasEnrichRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/search': {
+      id: '/api/search'
+      path: '/api/search'
+      fullPath: '/api/search'
+      preLoaderRoute: typeof ApiSearchRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/models': {
@@ -289,13 +369,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/search': {
-      id: '/api/search'
-      path: '/api/search'
-      fullPath: '/api/search'
-      preLoaderRoute: typeof ApiSearchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/enrich': {
       id: '/api/enrich'
       path: '/api/enrich'
@@ -315,6 +388,13 @@ declare module '@tanstack/react-router' {
       path: '/api/torghut/symbols'
       fullPath: '/api/torghut/symbols'
       preLoaderRoute: typeof ApiTorghutSymbolsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/atlas/paths': {
+      id: '/api/atlas/paths'
+      path: '/api/atlas/paths'
+      fullPath: '/api/atlas/paths'
+      preLoaderRoute: typeof ApiAtlasPathsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/openai/v1/chat/completions': {
@@ -347,16 +427,20 @@ const ApiTorghutSymbolsRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AtlasRoute: AtlasRoute,
   HealthRoute: HealthRoute,
   McpRoute: McpRoute,
   MemoriesRoute: MemoriesRoute,
-  ApiHealthRoute: ApiHealthRoute,
-  ApiSearchRoute: ApiSearchRoute,
   ApiEnrichRoute: ApiEnrichRoute,
+  ApiHealthRoute: ApiHealthRoute,
   ApiMemoriesRoute: ApiMemoriesRoute,
   ApiModelsRoute: ApiModelsRoute,
+  ApiSearchRoute: ApiSearchRoute,
+  AtlasEnrichRoute: AtlasEnrichRoute,
+  AtlasIndexedRoute: AtlasIndexedRoute,
+  AtlasSearchRoute: AtlasSearchRoute,
   TorghutSymbolsRoute: TorghutSymbolsRoute,
+  AtlasIndexRoute: AtlasIndexRoute,
+  ApiAtlasPathsRoute: ApiAtlasPathsRoute,
   ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,
   OpenaiV1ChatCompletionsRoute: OpenaiV1ChatCompletionsRoute,
@@ -364,3 +448,12 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+  }
+}

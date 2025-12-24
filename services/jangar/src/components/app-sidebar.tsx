@@ -11,16 +11,35 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
-const appNav = [
+type AppNavItem = {
+  to: string
+  label: string
+  icon: React.ComponentType
+  children?: { to: string; label: string }[]
+}
+
+const appNav: AppNavItem[] = [
   { to: '/', label: 'Home', icon: IconHome },
   { to: '/memories', label: 'Memories', icon: IconBrain },
-  { to: '/atlas', label: 'Atlas', icon: IconDatabase },
-] as const
+  {
+    to: '/atlas',
+    label: 'Atlas',
+    icon: IconDatabase,
+    children: [
+      { to: '/atlas/search', label: 'Search' },
+      { to: '/atlas/indexed', label: 'Indexed files' },
+      { to: '/atlas/enrich', label: 'Enrichment' },
+    ],
+  },
+]
 
 const apiNav = [
   { to: '/api/models', label: 'Models', icon: IconRobot },
@@ -51,17 +70,31 @@ export function AppSidebar() {
           <SidebarGroupLabel>App</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {appNav.map((item) => (
-                <SidebarMenuItem key={item.to}>
-                  <SidebarNavButton
-                    icon={item.icon}
-                    isActive={pathname === item.to}
-                    isCollapsed={isCollapsed}
-                    label={item.label}
-                    to={item.to}
-                  />
-                </SidebarMenuItem>
-              ))}
+              {appNav.map((item) => {
+                const isActive = pathname === item.to
+                return (
+                  <SidebarMenuItem key={item.to}>
+                    <SidebarNavButton
+                      icon={item.icon}
+                      isActive={isActive}
+                      isCollapsed={isCollapsed}
+                      label={item.label}
+                      to={item.to}
+                    />
+                    {item.children ? (
+                      <SidebarMenuSub>
+                        {item.children.map((child) => (
+                          <SidebarMenuSubItem key={child.to}>
+                            <SidebarMenuSubButton render={<Link to={child.to} />} isActive={pathname === child.to}>
+                              {child.label}
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        ))}
+                      </SidebarMenuSub>
+                    ) : null}
+                  </SidebarMenuItem>
+                )
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

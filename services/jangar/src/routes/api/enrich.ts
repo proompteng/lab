@@ -3,8 +3,29 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import { Atlas, AtlasLive } from '~/server/atlas'
-import { DEFAULT_REF, parseAtlasIndexInput } from '~/server/atlas-http'
+import { DEFAULT_REF, parseAtlasIndexInput, type AtlasIndexInput } from '~/server/atlas-http'
 import { BumbaWorkflows, BumbaWorkflowsLive, type StartEnrichFileResult } from '~/server/bumba'
+import {
+  DEFAULT_ATLAS_REF,
+  ensureFileAtRef,
+  ensureGitRef,
+  normalizeSearchParam,
+  resolveAtlasRepository,
+  runGitCommand,
+} from '~/server/git-utils'
+
+type EnrichPayload = {
+  repository?: string
+  ref?: string
+  path?: string
+  commit?: string
+  contentHash?: string
+  metadata?: Record<string, unknown>
+}
+
+type GitIndexResolution =
+  | { ok: true; value: AtlasIndexInput }
+  | { ok: false; message: string; status?: number }
 
 export const Route = createFileRoute('/api/enrich')({
   server: {
@@ -17,6 +38,8 @@ export const Route = createFileRoute('/api/enrich')({
 
 const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(AtlasLive, BumbaWorkflowsLive))
 
+const shouldUseLocalEnrich = () => process.env.ATLAS_LOCAL_MODE === 'true' || !process.env.DATABASE_URL
+
 const jsonResponse = (payload: unknown, status = 200) => {
   const body = JSON.stringify(payload)
   return new Response(body, {
@@ -28,7 +51,7 @@ const jsonResponse = (payload: unknown, status = 200) => {
   })
 }
 
-const errorResponse = (message: string, status = 500) => jsonResponse({ error: message }, status)
+const errorResponse = (message: string, status = 500) => jsonResponse({ ok: false, message, error: message }, status)
 
 const resolveServiceError = (message: string) => {
   if (message.includes('DATABASE_URL')) return errorResponse(message, 503)
@@ -234,6 +257,64 @@ const resolveAtlasEventInput = (payload: Record<string, unknown>) => {
   }
 }
 
+const resolveCommit = async (ref: string, path: string) => {
+  const result = await runGitCommand(['log', '-1', '--format=%H', ref, '--', path])
+  if (result.exitCode !== 0) return undefined
+  const commit = result.stdout.trim()
+  return commit || undefined
+}
+
+const resolveContentHash = async (ref: string, path: string) => {
+  const result = await runGitCommand(['rev-parse', `${ref}:${path}`])
+  if (result.exitCode !== 0) return undefined
+  const hash = result.stdout.trim()
+  return hash || undefined
+}
+
+const resolveGitIndexInput = async (payload: Record<string, unknown>): Promise<GitIndexResolution> => {
+  const repository = normalizeOptionalText(payload.repository)
+  const ref = normalizeOptionalText(payload.ref) ?? DEFAULT_REF
+  const path = normalizeOptionalText(payload.path)
+
+  if (!repository) return { ok: false, message: 'Repository is required.', status: 400 }
+  if (!path) return { ok: false, message: 'Path is required.', status: 400 }
+
+  const repoResult = resolveAtlasRepository(repository)
+  if (!repoResult.ok) {
+    return {
+      ok: false,
+      message: 'Commit or content hash is required for non-default repositories.',
+      status: 400,
+    }
+  }
+
+  const refResult = await ensureGitRef(ref)
+  if (!refResult.ok) return { ok: false, message: refResult.message, status: 404 }
+
+  const fileResult = await ensureFileAtRef(ref, path)
+  if (!fileResult.ok) return { ok: false, message: fileResult.message, status: 404 }
+
+  const commit = await resolveCommit(ref, path)
+  const contentHash = await resolveContentHash(ref, path)
+
+  if (!commit && !contentHash) {
+    return { ok: false, message: 'Commit or content hash is required.', status: 400 }
+  }
+
+  const parsed = parseAtlasIndexInput({
+    ...payload,
+    repository,
+    ref,
+    path,
+    commit,
+    contentHash,
+  })
+
+  if (!parsed.ok) return { ok: false, message: parsed.message, status: 400 }
+
+  return { ok: true, value: parsed.value }
+}
+
 export const postEnrichHandlerEffect = (request: Request) =>
   pipe(
     Effect.gen(function* () {
@@ -246,15 +327,31 @@ export const postEnrichHandlerEffect = (request: Request) =>
       const payloadRecord = payload as Record<string, unknown>
       const parsed = parseAtlasIndexInput(payloadRecord)
       const eventInput = resolveAtlasEventInput(payloadRecord)
-      if (!parsed.ok && !eventInput) return errorResponse(parsed.message, 400)
+
+      let parsedInput: AtlasIndexInput | null = null
+      if (parsed.ok) {
+        parsedInput = parsed.value
+      } else if (parsed.message === 'Commit or content hash is required.') {
+        const gitResolved = yield* Effect.tryPromise({
+          try: () => resolveGitIndexInput(payloadRecord),
+          catch: (error) => error as Error,
+        })
+        if (gitResolved.ok) {
+          parsedInput = gitResolved.value
+        } else if (!eventInput) {
+          return errorResponse(gitResolved.message, gitResolved.status ?? 400)
+        }
+      }
+
+      if (!parsedInput && !eventInput) return errorResponse(parsed.message, 400)
 
       const atlas = yield* Atlas
       const bumbaWorkflows = yield* BumbaWorkflows
 
       let repository = null
-      if (parsed.ok || eventInput) {
-        const repositoryName = parsed.ok ? parsed.value.repository : eventInput?.repository
-        const repositoryRef = parsed.ok ? parsed.value.ref : eventInput?.ref
+      if (parsedInput || eventInput) {
+        const repositoryName = parsedInput?.repository ?? eventInput?.repository
+        const repositoryRef = parsedInput?.ref ?? eventInput?.ref
         if (repositoryName) {
           repository = yield* atlas.upsertRepository({
             name: repositoryName,
@@ -263,21 +360,21 @@ export const postEnrichHandlerEffect = (request: Request) =>
         }
       }
 
-      const shouldSkipParsedPath = parsed.ok && shouldSkipFilePath(parsed.value.path)
+      const shouldSkipParsedPath = Boolean(parsedInput && shouldSkipFilePath(parsedInput.path))
 
       let fileKey = null
       let fileVersion = null
-      if (parsed.ok && repository && !shouldSkipParsedPath) {
+      if (parsedInput && repository && !shouldSkipParsedPath) {
         fileKey = yield* atlas.upsertFileKey({
           repositoryId: repository.id,
-          path: parsed.value.path,
+          path: parsedInput.path,
         })
         fileVersion = yield* atlas.upsertFileVersion({
           fileKeyId: fileKey.id,
-          repositoryRef: parsed.value.ref,
-          repositoryCommit: parsed.value.commit ?? null,
-          contentHash: parsed.value.contentHash ?? null,
-          metadata: parsed.value.metadata,
+          repositoryRef: parsedInput.ref,
+          repositoryCommit: parsedInput.commit ?? null,
+          contentHash: parsedInput.contentHash ?? null,
+          metadata: parsedInput.metadata,
         })
       }
 
@@ -307,7 +404,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
 
       let workflow = null
       let workflows: StartEnrichFileResult[] = []
-      if (parsed.ok) {
+      if (parsedInput) {
         if (shouldSkipParsedPath) {
           return jsonResponse(
             {
@@ -328,9 +425,9 @@ export const postEnrichHandlerEffect = (request: Request) =>
         }
         const workflowId = eventInput?.workflowIdentifier ?? null
         workflow = yield* bumbaWorkflows.startEnrichFile({
-          filePath: parsed.value.path,
-          commit: parsed.value.commit ?? null,
-          repository: parsed.value.repository,
+          filePath: parsedInput.path,
+          commit: parsedInput.commit ?? null,
+          repository: parsedInput.repository,
           workflowId: workflowId ?? undefined,
           eventDeliveryId: eventInput?.deliveryId,
         })
@@ -381,4 +478,49 @@ export const postEnrichHandlerEffect = (request: Request) =>
     Effect.catchAll((error) => Effect.succeed(resolveRequestError(error.message))),
   )
 
-export const postEnrichHandler = (request: Request) => handlerRuntime.runPromise(postEnrichHandlerEffect(request))
+const postLocalEnrichHandler = async (request: Request) => {
+  const payload: unknown = await request.json().catch(() => null)
+  if (!payload || typeof payload !== 'object') return errorResponse('invalid JSON body', 400)
+
+  const body = payload as EnrichPayload
+  const repositoryParam = normalizeSearchParam(body.repository ?? '')
+  const ref = normalizeSearchParam(body.ref ?? '') || DEFAULT_ATLAS_REF
+  const path = normalizeSearchParam(body.path ?? '')
+  const commitParam = normalizeSearchParam(body.commit ?? '')
+  const contentHashParam = normalizeSearchParam(body.contentHash ?? '')
+  const metadata = body.metadata
+
+  if (!path) return errorResponse('path is required', 400)
+
+  const repoResult = resolveAtlasRepository(repositoryParam)
+  if (!repoResult.ok) return errorResponse(repoResult.message, 400)
+
+  const refResult = await ensureGitRef(ref)
+  if (!refResult.ok) return errorResponse(refResult.message, 404)
+
+  const fileResult = await ensureFileAtRef(ref, path)
+  if (!fileResult.ok) return errorResponse(fileResult.message, 404)
+
+  const commit = commitParam || (await resolveCommit(ref, path))
+  const contentHash = contentHashParam || (await resolveContentHash(ref, path))
+
+  return jsonResponse(
+    {
+      ok: true,
+      status: 'queued',
+      request: {
+        repository: repoResult.repository,
+        ref,
+        path,
+        commit,
+        contentHash,
+        metadata: metadata && typeof metadata === 'object' ? metadata : undefined,
+        idempotencyKey: request.headers.get('idempotency-key') ?? undefined,
+      },
+    },
+    202,
+  )
+}
+
+export const postEnrichHandler = (request: Request) =>
+  shouldUseLocalEnrich() ? postLocalEnrichHandler(request) : handlerRuntime.runPromise(postEnrichHandlerEffect(request))
