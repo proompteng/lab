@@ -338,11 +338,13 @@ const buildStartChildWorkflowCommand = async (
   const payloads = (await encodeValuesToPayloads(options.dataConverter, intent.input)) ?? []
   const namespace =
     options.workflowInfo && intent.namespace === options.workflowInfo.namespace ? undefined : intent.namespace
+  const taskQueue =
+    options.workflowInfo && intent.taskQueue === options.workflowInfo.taskQueue ? undefined : intent.taskQueue
 
   const attributes = create(StartChildWorkflowExecutionCommandAttributesSchema, {
     workflowId: intent.workflowId,
     workflowType: buildWorkflowType(intent.workflowType),
-    taskQueue: create(TaskQueueSchema, { name: intent.taskQueue }),
+    ...(taskQueue ? { taskQueue: create(TaskQueueSchema, { name: taskQueue }) } : {}),
     ...(namespace ? { namespace } : {}),
     input: payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined,
     workflowExecutionTimeout: durationFromMillis(intent.timeouts.workflowExecutionTimeoutMs),
