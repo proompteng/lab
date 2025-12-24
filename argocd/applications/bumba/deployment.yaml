@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: bumba
     app.kubernetes.io/part-of: lab
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: bumba
@@ -32,6 +32,10 @@ spec:
               value: default
             - name: TEMPORAL_TASK_QUEUE
               value: bumba
+            - name: TEMPORAL_WORKFLOW_CONCURRENCY
+              value: "8"
+            - name: TEMPORAL_ACTIVITY_CONCURRENCY
+              value: "8"
             - name: BUMBA_WORKSPACE_ROOT
               value: /workspace/lab
             - name: REPOSITORY

@@ -4,6 +4,38 @@ import * as Schema from 'effect/Schema'
 
 import type { AstSummaryOutput, EnrichOutput, PersistInput, ReadRepoFileOutput } from '../activities/index'
 
+const activityRetry = {
+  initialIntervalMs: 2_000,
+  backoffCoefficient: 2,
+  maximumIntervalMs: 30_000,
+  maximumAttempts: 4,
+}
+
+const readRepoFileTimeouts = {
+  startToCloseTimeoutMs: 90_000,
+  scheduleToCloseTimeoutMs: 600_000,
+}
+
+const extractAstSummaryTimeouts = {
+  startToCloseTimeoutMs: 120_000,
+  scheduleToCloseTimeoutMs: 600_000,
+}
+
+const enrichWithModelTimeouts = {
+  startToCloseTimeoutMs: 360_000,
+  scheduleToCloseTimeoutMs: 1_800_000,
+}
+
+const createEmbeddingTimeouts = {
+  startToCloseTimeoutMs: 180_000,
+  scheduleToCloseTimeoutMs: 900_000,
+}
+
+const persistEnrichmentTimeouts = {
+  startToCloseTimeoutMs: 180_000,
+  scheduleToCloseTimeoutMs: 1_200_000,
+}
+
 const EnrichFileInput = Schema.Struct({
   repoRoot: Schema.String,
   filePath: Schema.String,
@@ -26,14 +58,16 @@ export const workflows = [
       if (commit) readRepoInput.commit = commit
 
       const fileResult = (yield* activities.schedule('readRepoFile', [readRepoInput], {
-        startToCloseTimeoutMs: 30_000,
+        ...readRepoFileTimeouts,
+        retry: activityRetry,
       })) as ReadRepoFileOutput
 
       const astResult = (yield* activities.schedule(
         'extractAstSummary',
         [{ repoRoot, filePath, content: fileResult.content }],
         {
-          startToCloseTimeoutMs: 60_000,
+          ...extractAstSummaryTimeouts,
+          retry: activityRetry,
         },
       )) as AstSummaryOutput
 
@@ -47,11 +81,15 @@ export const workflows = [
             context: context ?? '',
           },
         ],
-        { startToCloseTimeoutMs: 180_000 },
+        {
+          ...enrichWithModelTimeouts,
+          retry: activityRetry,
+        },
       )) as EnrichOutput
 
       const embedding = (yield* activities.schedule('createEmbedding', [{ text: enriched.enriched }], {
-        startToCloseTimeoutMs: 90_000,
+        ...createEmbeddingTimeouts,
+        retry: activityRetry,
       })) as { embedding: number[] }
 
       const persistInput: PersistInput = {
@@ -71,7 +109,8 @@ export const workflows = [
       }
 
       const persist = (yield* activities.schedule('persistEnrichment', [persistInput], {
-        startToCloseTimeoutMs: 30_000,
+        ...persistEnrichmentTimeouts,
+        retry: activityRetry,
       })) as { id: string }
 
       return {
