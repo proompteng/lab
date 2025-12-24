@@ -374,19 +374,28 @@ FROM tools AS codex-build
 WORKDIR /app
 COPY json/ .
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --frozen-lockfile --ignore-scripts --filter @proompteng/codex
+  bun install --no-save --ignore-scripts --filter @proompteng/codex
 COPY full/ .
 RUN bun --cwd=packages/codex run build
+
+FROM tools AS temporal-bun-sdk-build
+WORKDIR /app
+COPY json/ .
+RUN --mount=type=cache,target=/root/.cache/bun \
+  bun install --no-save --ignore-scripts --filter @proompteng/temporal-bun-sdk
+COPY full/ .
+RUN bun --cwd=packages/temporal-bun-sdk run build
 
 FROM tools AS jangar-deps-dev
 WORKDIR /app
 COPY json/ .
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --frozen-lockfile --ignore-scripts --filter @proompteng/jangar
+  bun install --no-save --ignore-scripts --filter @proompteng/jangar
 
 FROM jangar-deps-dev AS jangar-build
 WORKDIR /app
 COPY full/ .
+COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
 WORKDIR /app/services/jangar
 RUN bun run start:build
 
@@ -394,7 +403,7 @@ FROM tools AS jangar-deps-prod
 WORKDIR /app
 COPY json/ .
 RUN --mount=type=cache,target=/root/.cache/bun \
-  bun install --no-save --production --frozen-lockfile --ignore-scripts --filter @proompteng/jangar
+  bun install --no-save --ignore-scripts --filter @proompteng/jangar
 
 FROM tools AS runtime
 
@@ -402,6 +411,8 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 
 COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/package.json
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
+COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
+COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
 
 WORKDIR /app
 COPY --from=jangar-deps-prod /app/node_modules ./node_modules

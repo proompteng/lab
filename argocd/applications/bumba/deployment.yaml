@@ -59,7 +59,6 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspace
-              readOnly: true
       volumes:
         - name: workspace
           persistentVolumeClaim:

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { createTemporalClient, loadTemporalConfig, type TemporalClient } from '@proompteng/temporal-bun-sdk'
 import { Context, Effect, Layer, pipe } from 'effect'
 
@@ -8,7 +8,8 @@ const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
 const DEFAULT_TASK_QUEUE = 'bumba'
-const WORKTREE_ROOT_FALLBACK = 'lab-worktrees'
+const WORKTREE_DIR_NAME = '.worktrees'
+const BUMBA_WORKTREE_NAME = 'bumba'
 
 export type StartEnrichFileInput = {
   filePath: string
@@ -43,10 +44,7 @@ const resolveBaseRepoRoot = () =>
   normalizeOptionalText(process.env.VSCODE_DEFAULT_FOLDER) ??
   process.cwd()
 
-const resolveWorktreeRoot = (baseRepoRoot: string) =>
-  normalizeOptionalText(process.env.BUMBA_WORKTREE_ROOT) ?? resolve(baseRepoRoot, '..', WORKTREE_ROOT_FALLBACK)
-
-const normalizeWorktreeName = (commit: string) => commit.replace(/[^a-zA-Z0-9_.-]+/g, '-')
+const resolveWorktreePath = (baseRepoRoot: string) => resolve(baseRepoRoot, WORKTREE_DIR_NAME, BUMBA_WORKTREE_NAME)
 
 const runGitCommand = async (args: string[], cwd: string) => {
   const proc = Bun.spawn(args, { cwd, stdout: 'pipe', stderr: 'pipe' })
@@ -55,25 +53,39 @@ const runGitCommand = async (args: string[], cwd: string) => {
     new Response(proc.stderr).text(),
     proc.exited,
   ])
-  if (exitCode !== 0) {
-    const detail = [stderr.trim(), stdout.trim()].filter(Boolean).join(' | ')
-    throw new Error(detail.length > 0 ? detail : 'git command failed')
+  return {
+    exitCode,
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
   }
-  return stdout.trim()
 }
 
-const ensureCommitWorktree = async (baseRepoRoot: string, commit: string) => {
-  const worktreeRoot = resolveWorktreeRoot(baseRepoRoot)
-  const worktreeName = normalizeWorktreeName(commit)
-  const worktreePath = join(worktreeRoot, worktreeName)
+const runGitCommandOrThrow = async (args: string[], cwd: string) => {
+  const result = await runGitCommand(args, cwd)
+  if (result.exitCode === 0) return result.stdout
+  const detail = [result.stderr, result.stdout].filter(Boolean).join(' | ')
+  throw new Error(detail.length > 0 ? detail : 'git command failed')
+}
 
-  const existing = await stat(worktreePath).catch(() => null)
-  if (existing?.isDirectory()) return worktreePath
+const ensureBumbaWorktree = async (baseRepoRoot: string) => {
+  const worktreePath = resolveWorktreePath(baseRepoRoot)
+  const worktreeRoot = resolve(baseRepoRoot, WORKTREE_DIR_NAME)
 
   await mkdir(worktreeRoot, { recursive: true })
 
+  const existing = await stat(worktreePath).catch(() => null)
+  if (existing) {
+    if (!existing.isDirectory()) {
+      throw new Error(`Worktree path exists but is not a directory: ${worktreePath}`)
+    }
+    return worktreePath
+  }
+
   try {
-    await runGitCommand(['git', '-C', baseRepoRoot, 'worktree', 'add', '--detach', worktreePath, commit], baseRepoRoot)
+    await runGitCommandOrThrow(
+      ['git', '-C', baseRepoRoot, 'worktree', 'add', '--detach', worktreePath, 'HEAD'],
+      baseRepoRoot,
+    )
   } catch (error) {
     const after = await stat(worktreePath).catch(() => null)
     if (after?.isDirectory()) return worktreePath
@@ -83,11 +95,41 @@ const ensureCommitWorktree = async (baseRepoRoot: string, commit: string) => {
   return worktreePath
 }
 
+const commitExists = async (repoRoot: string, commit: string) => {
+  const result = await runGitCommand(['git', '-C', repoRoot, 'rev-parse', '--verify', `${commit}^{commit}`], repoRoot)
+  return result.exitCode === 0
+}
+
+const fetchRepo = async (repoRoot: string) => {
+  await runGitCommandOrThrow(['git', '-C', repoRoot, 'fetch', '--all', '--tags', '--prune'], repoRoot)
+}
+
+const resetWorktree = async (worktreePath: string, commit: string) => {
+  await runGitCommandOrThrow(['git', '-C', worktreePath, 'reset', '--hard', commit], worktreePath)
+}
+
 const resolveRepoRootForCommit = async (commit?: string | null) => {
   const baseRepoRoot = resolveBaseRepoRoot()
   const normalizedCommit = normalizeOptionalText(commit)
-  if (!normalizedCommit) return baseRepoRoot
-  return await ensureCommitWorktree(baseRepoRoot, normalizedCommit)
+  const worktreePath = await ensureBumbaWorktree(baseRepoRoot)
+
+  if (!normalizedCommit) return worktreePath
+
+  if (!(await commitExists(baseRepoRoot, normalizedCommit))) {
+    await fetchRepo(baseRepoRoot)
+    if (!(await commitExists(baseRepoRoot, normalizedCommit))) {
+      throw new Error(`Commit not found after fetch: ${normalizedCommit}`)
+    }
+  }
+
+  try {
+    await resetWorktree(worktreePath, normalizedCommit)
+  } catch (_error) {
+    await fetchRepo(baseRepoRoot)
+    await resetWorktree(worktreePath, normalizedCommit)
+  }
+
+  return worktreePath
 }
 
 const buildWorkflowId = (filePath: string, commit?: string | null) => {
