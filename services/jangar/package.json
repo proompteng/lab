@@ -9,6 +9,7 @@
     "start:build": "bun --bun vite build",
     "preview": "bun --bun vite preview",
     "test": "bunx vitest run --config vitest.config.ts",
+    "test:e2e": "playwright test --config playwright.config.ts",
     "tsc": "bunx tsc --noEmit",
     "lint": "bunx biome check --config-path ../../biome.json src"
   },
