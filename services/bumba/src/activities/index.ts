@@ -182,9 +182,9 @@ const runCommand = async (args: string[], cwd: string): Promise<string | null> =
 }
 
 const resolveRepositoryInfo = async (repoRoot: string) => {
-  const envRepo = process.env.BUMBA_REPOSITORY?.trim()
-  const envRef = process.env.BUMBA_REPOSITORY_REF?.trim()
-  const envCommit = process.env.BUMBA_REPOSITORY_COMMIT?.trim()
+  const envRepo = process.env.REPOSITORY?.trim()
+  const envRef = process.env.REPOSITORY_REF?.trim()
+  const envCommit = process.env.REPOSITORY_COMMIT?.trim()
 
   if (envRepo && envRepo.length > 0) {
     return {
@@ -195,7 +195,12 @@ const resolveRepositoryInfo = async (repoRoot: string) => {
   }
 
   const fallbackName = basename(repoRoot)
-  const repoName = (await runCommand(['git', '-C', repoRoot, 'remote', 'get-url', 'origin'], repoRoot)) ?? fallbackName
+  const defaultRepo =
+    process.env.CODEX_REPO_SLUG?.trim() ||
+    process.env.CODEX_REPO_URL?.trim() ||
+    (await runCommand(['git', '-C', repoRoot, 'remote', 'get-url', 'origin'], repoRoot)) ||
+    fallbackName
+  const repoName = defaultRepo
   const repoRef = (await runCommand(['git', '-C', repoRoot, 'rev-parse', '--abbrev-ref', 'HEAD'], repoRoot)) ?? null
   const repoCommit = (await runCommand(['git', '-C', repoRoot, 'rev-parse', 'HEAD'], repoRoot)) ?? null
 
