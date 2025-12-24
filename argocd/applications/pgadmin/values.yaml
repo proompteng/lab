@@ -1,5 +1,8 @@
 fullnameOverride: pgadmin
 
+image:
+  tag: "9.11"
+
 service:
   type: LoadBalancer
   annotations:
