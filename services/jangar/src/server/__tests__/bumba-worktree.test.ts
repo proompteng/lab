@@ -28,13 +28,13 @@ const commitAll = (cwd: string, message: string) => {
 
 describe('bumba worktree refresh', () => {
   const previousEnv: Partial<Record<'BUMBA_WORKSPACE_ROOT', string | undefined>> = {}
-  let previousBun: typeof Bun | null = null
+  let previousBunSpawn: typeof Bun.spawn | null = null
   let hadBun = false
   let repoRoot: string | null = null
 
   beforeEach(async () => {
     hadBun = 'Bun' in globalThis
-    previousBun = hadBun ? globalThis.Bun : null
+    previousBunSpawn = hadBun ? globalThis.Bun.spawn : null
     previousEnv.BUMBA_WORKSPACE_ROOT = process.env.BUMBA_WORKSPACE_ROOT
     repoRoot = await mkdtemp(join(tmpdir(), 'bumba-worktree-'))
 
@@ -60,7 +60,11 @@ describe('bumba worktree refresh', () => {
       return { stdout, stderr, exited } as BunSpawnResult
     }) as typeof Bun.spawn
 
-    globalThis.Bun = { ...(globalThis.Bun ?? ({} as typeof Bun)), spawn: spawnStub }
+    if (hadBun) {
+      globalThis.Bun.spawn = spawnStub
+    } else {
+      globalThis.Bun = { ...(globalThis.Bun ?? ({} as typeof Bun)), spawn: spawnStub }
+    }
   })
 
   afterEach(async () => {
@@ -75,9 +79,11 @@ describe('bumba worktree refresh', () => {
       process.env.BUMBA_WORKSPACE_ROOT = previousEnv.BUMBA_WORKSPACE_ROOT
     }
 
-    if (hadBun && previousBun) {
-      globalThis.Bun = previousBun
-    } else if (!hadBun) {
+    if (hadBun) {
+      if (previousBunSpawn) {
+        globalThis.Bun.spawn = previousBunSpawn
+      }
+    } else {
       delete (globalThis as Record<string, unknown>).Bun
     }
   })
