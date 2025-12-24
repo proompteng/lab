@@ -74,7 +74,7 @@ describe('bumba readRepoFile', () => {
     let requestedUrl: string | null = null
 
     process.env.GITHUB_TOKEN = 'token'
-    globalThis.fetch = async (input) => {
+    globalThis.fetch = (async (input) => {
       requestedUrl =
         typeof input === 'string'
           ? input
@@ -94,7 +94,7 @@ describe('bumba readRepoFile', () => {
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       )
-    }
+    }) as typeof fetch
 
     try {
       const result = await activities.readRepoFile({
