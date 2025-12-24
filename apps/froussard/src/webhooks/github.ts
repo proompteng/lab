@@ -467,7 +467,7 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
         })
       }
 
-      const publishResult = await runtime.runPromise(
+      await runtime.runPromise(
         publishKafkaMessage({
           topic: config.topics.raw,
           key: deliveryId,
@@ -475,10 +475,6 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
           headers,
         }),
       )
-
-      if (publishResult.status === 'rejected') {
-        throw publishResult.reason
-      }
 
       return new Response(
         JSON.stringify({
