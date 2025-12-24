@@ -684,13 +684,21 @@ export const activities = {
       input.content.length > maxInputChars ? input.content.slice(0, maxInputChars) : input.content
     const wasTruncated = truncatedContent.length !== input.content.length
 
-    const systemPrompt =
-      'You are an Atlas enrichment agent. Summarize the file and provide a concise enrichment. ' +
-      'Return JSON only with keys "summary" and "enriched". The enriched field should be short bullet points.'
+    const systemPrompt = [
+      'You are an Atlas enrichment agent.',
+      'Return a valid JSON object ONLY with keys "summary" and "enriched".',
+      'Do not include markdown, code fences, or extra keys.',
+      '"summary": 2-4 sentences (<= 400 chars) describing what the file does.',
+      '"enriched": a single string of 3-6 bullet lines, each starting with "- ". Each bullet <= 120 chars.',
+      'Bullets should cover: purpose, key APIs/entry points, data flow, side effects/IO, risks/edge cases.',
+      'If information is missing, say "Unknown" instead of guessing.',
+      'If input is truncated, include a bullet: "Input truncated; details may be missing."',
+    ].join(' ')
 
     const userSections = [
       `Filename: ${input.filename}`,
       input.context ? `Context: ${input.context}` : null,
+      `Input truncated: ${wasTruncated ? 'yes' : 'no'}`,
       `AST summary:\n${input.astSummary}`,
       `Content${wasTruncated ? ' (truncated)' : ''}:\n${truncatedContent}`,
     ].filter((section) => section && section.length > 0)
@@ -702,6 +710,10 @@ export const activities = {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userSections.join('\n\n') },
       ],
+    }
+    const payloadWithFormat = {
+      ...payload,
+      response_format: { type: 'json_object' },
     }
 
     const controller = new AbortController()
@@ -718,12 +730,43 @@ export const activities = {
       const response = await fetch(`${apiBaseUrl}/chat/completions`, {
         method: 'POST',
         headers,
-        body: JSON.stringify(payload),
+        body: JSON.stringify(payloadWithFormat),
         signal: controller.signal,
       })
 
       if (!response.ok) {
         const body = await response.text()
+        const lowerBody = body.toLowerCase()
+        const formatUnsupported =
+          lowerBody.includes('response_format') ||
+          lowerBody.includes('json_schema') ||
+          lowerBody.includes('json object') ||
+          lowerBody.includes('unsupported') ||
+          lowerBody.includes('unknown parameter')
+        if (formatUnsupported) {
+          const fallbackResponse = await fetch(`${apiBaseUrl}/chat/completions`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          })
+          if (!fallbackResponse.ok) {
+            const fallbackBody = await fallbackResponse.text()
+            throw new Error(`completion request failed (${fallbackResponse.status}): ${fallbackBody}`)
+          }
+          const output = await parseStreamingCompletion(fallbackResponse)
+          const parsed = parseCompletionOutput(output)
+          return {
+            summary: parsed.summary,
+            enriched: parsed.enriched,
+            metadata: {
+              model,
+              wasTruncated,
+              parsedJson: parsed.metadata.parsedJson,
+              responseFormat: 'none',
+            },
+          }
+        }
         throw new Error(`completion request failed (${response.status}): ${body}`)
       }
 
@@ -737,6 +780,7 @@ export const activities = {
           model,
           wasTruncated,
           parsedJson: parsed.metadata.parsedJson,
+          responseFormat: 'json_object',
         },
       }
     } catch (error) {
