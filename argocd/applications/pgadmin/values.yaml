@@ -13,7 +13,7 @@ existingSecret: pgadmin-auth
 
 envVarsExtra:
   - name: PGADMIN_SERVER_JSON_FILE
-    value: /pgadmin4/servers.json
+    value: /var/lib/pgadmin/servers/servers.json
 
 extraVolumes:
   - name: pgadmin-servers
@@ -80,7 +80,7 @@ extraVolumes:
 
 extraVolumeMounts:
   - name: pgadmin-servers
-    mountPath: /pgadmin4
+    mountPath: /var/lib/pgadmin/servers
   - name: cnpg-app-secrets
     mountPath: /etc/pgadmin/secrets
     readOnly: true
@@ -141,13 +141,14 @@ extraInitContainers: |
             }
             index += 1
 
-        Path('/pgadmin4').mkdir(parents=True, exist_ok=True)
-        with open('/pgadmin4/servers.json', 'w', encoding='utf-8') as handle:
-            json.dump({'Servers': servers}, handle, indent=2)
+        output_dir = Path('/var/lib/pgadmin/servers')
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with open(output_dir / 'servers.json', 'w', encoding='utf-8') as handle:
+          json.dump({'Servers': servers}, handle, indent=2)
         PY
     volumeMounts:
       - name: pgadmin-servers
-        mountPath: /pgadmin4
+        mountPath: /var/lib/pgadmin/servers
       - name: cnpg-app-secrets
         mountPath: /etc/pgadmin/secrets
         readOnly: true
