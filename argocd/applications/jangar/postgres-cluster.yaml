@@ -17,6 +17,12 @@ spec:
       postInitApplicationSQL:
         - CREATE EXTENSION IF NOT EXISTS pgcrypto;
         - CREATE EXTENSION IF NOT EXISTS vector;
+  inheritedMetadata:
+    annotations:
+      reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "pgadmin"
+      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "pgadmin"
   monitoring:
     enablePodMonitor: true
 # CNPG defaults generate application credentials in `jangar-db-app` (uri, user, password, host, port, dbname)

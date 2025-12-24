@@ -8,6 +8,12 @@ spec:
   imageName: registry.ide-newton.ts.net/lab/vecteur:18-trixie
   imagePullPolicy: Always
   instances: 3
+  inheritedMetadata:
+    annotations:
+      reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "pgadmin"
+      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "pgadmin"
   resources:
     requests:
       cpu: "1"

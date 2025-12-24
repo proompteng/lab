@@ -11,5 +11,11 @@ spec:
     initdb:
       database: convex_self_hosted
       owner: convex
+  inheritedMetadata:
+    annotations:
+      reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "pgadmin"
+      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "pgadmin"
   monitoring:
     enablePodMonitor: true

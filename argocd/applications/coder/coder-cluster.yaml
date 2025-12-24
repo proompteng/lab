@@ -5,6 +5,12 @@ metadata:
   namespace: coder
 spec:
   instances: 1
+  inheritedMetadata:
+    annotations:
+      reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "pgadmin"
+      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "pgadmin"
   storage:
     storageClass: longhorn
     size: 10Gi
