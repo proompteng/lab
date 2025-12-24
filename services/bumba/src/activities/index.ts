@@ -10,7 +10,21 @@ export type ReadRepoFileInput = {
   repoRoot: string
   filePath: string
   repository?: string
+  ref?: string | null
   commit?: string | null
+}
+
+export type ListRepoFilesInput = {
+  repoRoot: string
+  ref?: string | null
+  pathPrefix?: string | null
+  maxFiles?: number | null
+}
+
+export type ListRepoFilesOutput = {
+  files: string[]
+  total: number
+  skipped: number
 }
 
 export type FileMetadata = {
@@ -102,11 +116,105 @@ const MAX_FACTS = 300
 const MAX_FACT_CHARS = 200
 const MAX_SUMMARY_NODES = 80
 const MAX_COMPLETION_INPUT_CHARS = 12_000
+const DEFAULT_MAX_REPO_FILES = 5_000
+const MAX_REPO_FILES = 20_000
+
+const LOCK_FILENAMES = new Set([
+  'bun.lock',
+  'composer.lock',
+  'cargo.lock',
+  'gemfile.lock',
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'pnpm-lock.yml',
+  'poetry.lock',
+  'pipfile.lock',
+  'yarn.lock',
+  'npm-shrinkwrap.json',
+])
+
+const BINARY_EXTENSIONS = new Set([
+  '.7z',
+  '.avi',
+  '.avif',
+  '.bmp',
+  '.bz2',
+  '.class',
+  '.db',
+  '.dll',
+  '.dylib',
+  '.eot',
+  '.exe',
+  '.flac',
+  '.gif',
+  '.gz',
+  '.ico',
+  '.icns',
+  '.jar',
+  '.jpeg',
+  '.jpg',
+  '.mkv',
+  '.mov',
+  '.mp3',
+  '.mp4',
+  '.ogg',
+  '.otf',
+  '.pdf',
+  '.png',
+  '.psd',
+  '.rar',
+  '.so',
+  '.sqlite',
+  '.sqlite3',
+  '.tar',
+  '.tgz',
+  '.ttf',
+  '.wav',
+  '.webp',
+  '.woff',
+  '.woff2',
+  '.xz',
+  '.zip',
+  '.wasm',
+  '.bin',
+])
 
 const normalizeOptionalText = (value: unknown) => {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : null
+}
+
+const normalizeOptionalNumber = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+const shouldSkipRepoFile = (filePath: string) => {
+  const normalized = filePath.trim()
+  if (!normalized) return true
+  const lower = normalized.toLowerCase()
+  const base = lower.split('/').pop() ?? lower
+  const extension = extname(base)
+
+  if (LOCK_FILENAMES.has(base)) return true
+  if (extension === '.lock') return true
+  if (BINARY_EXTENSIONS.has(extension)) return true
+
+  return false
+}
+
+const normalizePathPrefix = (value: unknown) => {
+  const trimmed = normalizeOptionalText(value)
+  if (!trimmed) return null
+  if (trimmed.startsWith('/') || trimmed.includes('..')) {
+    throw new Error('pathPrefix must be repo-relative')
+  }
+  return trimmed.replace(/^\//, '')
 }
 
 const resolvePath = (repoRoot: string, filePath: string) => {
@@ -511,6 +619,13 @@ const loadLanguageForExtension = async (ext: string): Promise<LoadedLanguage | n
 }
 
 const clampNumber = (value: number, fallback: number) => (Number.isFinite(value) && value > 0 ? value : fallback)
+
+const loadRepoListLimit = (requested?: number | null) => {
+  const envLimit = clampNumber(Number.parseInt(process.env.BUMBA_MAX_REPO_FILES ?? '', 10), DEFAULT_MAX_REPO_FILES)
+  const raw = normalizeOptionalNumber(requested) ?? envLimit
+  const limited = clampNumber(raw, envLimit)
+  return Math.min(limited, MAX_REPO_FILES)
+}
 
 const loadAstLimits = () => {
   const maxBytes = clampNumber(Number.parseInt(process.env.BUMBA_MAX_AST_BYTES ?? '', 10), MAX_AST_BYTES)
@@ -1293,11 +1408,56 @@ const getAtlasDb = () => {
 }
 
 export const activities = {
+  async listRepoFiles(input: ListRepoFilesInput): Promise<ListRepoFilesOutput> {
+    const repoRoot = resolve(input.repoRoot)
+    const ref = normalizeOptionalText(input.ref) ?? 'HEAD'
+    const pathPrefix = normalizePathPrefix(input.pathPrefix)
+    const maxFiles = loadRepoListLimit(input.maxFiles)
+
+    const args = ['git', 'ls-tree', '-r', '--name-only', ref]
+    if (pathPrefix) {
+      args.push('--', pathPrefix)
+    }
+
+    const output = await runCommand(args, repoRoot)
+    if (output === null) {
+      throw new Error('Failed to list repository files')
+    }
+
+    const entries = output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+
+    const files: string[] = []
+    let skipped = 0
+
+    for (const entry of entries) {
+      if (shouldSkipRepoFile(entry)) {
+        skipped += 1
+        continue
+      }
+      if (files.length >= maxFiles) {
+        skipped += 1
+        continue
+      }
+      files.push(entry)
+    }
+
+    return {
+      files,
+      total: entries.length,
+      skipped,
+    }
+  },
+
   async readRepoFile(input: ReadRepoFileInput): Promise<ReadRepoFileOutput> {
+    const normalizedRef = normalizeOptionalText(input.ref)
     const normalizedCommit = normalizeOptionalText(input.commit)
     const fullPath = resolvePath(input.repoRoot, input.filePath)
     const repoInfo = await resolveRepositoryInfo(input.repoRoot, {
       repository: input.repository,
+      ref: normalizedRef,
       commit: normalizedCommit,
     })
 

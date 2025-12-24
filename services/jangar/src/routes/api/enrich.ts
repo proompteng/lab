@@ -21,6 +21,10 @@ type EnrichPayload = {
   commit?: string
   contentHash?: string
   metadata?: Record<string, unknown>
+  mode?: string
+  pathPrefix?: string
+  maxFiles?: number
+  context?: string
 }
 
 type GitIndexResolution = { ok: true; value: AtlasIndexInput } | { ok: false; message: string; status?: number }
@@ -132,6 +136,24 @@ const normalizeOptionalText = (value: unknown) => {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : undefined
+}
+
+const normalizeOptionalNumber = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
+const normalizePathPrefix = (value: unknown) => {
+  const trimmed = normalizeOptionalText(value)
+  if (!trimmed) return undefined
+  if (trimmed.startsWith('/') || trimmed.includes('..')) {
+    throw new Error('pathPrefix must be repo-relative')
+  }
+  return trimmed.replace(/^\//, '')
 }
 
 const normalizePathList = (value: unknown) => {
@@ -265,6 +287,13 @@ const resolveCommit = async (ref: string, path: string) => {
   return commit || undefined
 }
 
+const resolveRefCommit = async (ref: string) => {
+  const result = await runGitCommand(['rev-parse', ref])
+  if (result.exitCode !== 0) return undefined
+  const commit = result.stdout.trim()
+  return commit || undefined
+}
+
 const resolveContentHash = async (ref: string, path: string) => {
   const result = await runGitCommand(['rev-parse', `${ref}:${path}`])
   if (result.exitCode !== 0) return undefined
@@ -326,6 +355,80 @@ export const postEnrichHandlerEffect = (request: Request) =>
       if (!payload || typeof payload !== 'object') return errorResponse('invalid JSON body', 400)
 
       const payloadRecord = payload as Record<string, unknown>
+      const mode = normalizeOptionalText(payloadRecord.mode)
+      if (mode === 'repository') {
+        const repositoryParam = normalizeOptionalText(payloadRecord.repository)
+        if (!repositoryParam) return errorResponse('Repository is required.', 400)
+
+        const repoResult = resolveAtlasRepository(repositoryParam)
+        if (!repoResult.ok) return errorResponse(repoResult.message, 400)
+
+        const ref = normalizeOptionalText(payloadRecord.ref) ?? DEFAULT_REF
+        const refResult = yield* Effect.tryPromise({
+          try: () => ensureGitRef(ref),
+          catch: (error) => error as Error,
+        })
+        if (!refResult.ok) return errorResponse(refResult.message, 404)
+
+        const commit =
+          normalizeOptionalText(payloadRecord.commit) ??
+          (yield* Effect.tryPromise({
+            try: () => resolveRefCommit(ref),
+            catch: (error) => error as Error,
+          }))
+        if (!commit) return errorResponse('Commit not found for ref.', 404)
+
+        let pathPrefix: string | undefined
+        try {
+          pathPrefix = normalizePathPrefix(payloadRecord.pathPrefix)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Invalid path prefix.'
+          return errorResponse(message, 400)
+        }
+
+        const maxFiles = normalizeOptionalNumber(payloadRecord.maxFiles)
+        if (maxFiles !== undefined && maxFiles <= 0) {
+          return errorResponse('Max files must be a positive integer.', 400)
+        }
+
+        const context = normalizeOptionalText(payloadRecord.context)
+
+        const atlas = yield* Atlas
+        const bumbaWorkflows = yield* BumbaWorkflows
+
+        const repository = yield* atlas.upsertRepository({
+          name: repoResult.repository,
+          defaultRef: ref,
+        })
+
+        const workflow = yield* bumbaWorkflows.startEnrichRepository({
+          repository: repoResult.repository,
+          ref,
+          commit,
+          context,
+          pathPrefix: pathPrefix ?? null,
+          maxFiles: maxFiles ?? null,
+        })
+
+        return jsonResponse(
+          {
+            ok: true,
+            repository,
+            workflow,
+            request: {
+              repository: repoResult.repository,
+              ref,
+              commit,
+              pathPrefix,
+              maxFiles,
+              context: context ?? undefined,
+              idempotencyKey: request.headers.get('idempotency-key') ?? undefined,
+            },
+          },
+          202,
+        )
+      }
+
       const parsed = parseAtlasIndexInput(payloadRecord)
       const parsedMessage = parsed.ok ? null : parsed.message
       const eventInput = resolveAtlasEventInput(payloadRecord)
@@ -431,6 +534,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
             filePath: parsedInput.path,
             commit: parsedInput.commit ?? null,
             repository: parsedInput.repository,
+            ref: parsedInput.ref,
             workflowId: workflowId ?? undefined,
             eventDeliveryId: eventInput?.deliveryId,
           }),
@@ -460,6 +564,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
                     filePath,
                     commit: eventInput.commit ?? null,
                     repository: eventInput.repository,
+                    ref: eventInput.ref,
                     workflowId: eventInput.workflowIdentifier ?? undefined,
                     eventDeliveryId: eventInput.deliveryId,
                   }),
@@ -509,6 +614,54 @@ const postLocalEnrichHandler = async (request: Request) => {
   if (!payload || typeof payload !== 'object') return errorResponse('invalid JSON body', 400)
 
   const body = payload as EnrichPayload
+  const mode = normalizeOptionalText(body.mode)
+  if (mode === 'repository') {
+    const repositoryParam = normalizeSearchParam(body.repository ?? '')
+    if (!repositoryParam) return errorResponse('repository is required', 400)
+
+    const repoResult = resolveAtlasRepository(repositoryParam)
+    if (!repoResult.ok) return errorResponse(repoResult.message, 400)
+
+    const ref = normalizeSearchParam(body.ref ?? '') || DEFAULT_ATLAS_REF
+    const refResult = await ensureGitRef(ref)
+    if (!refResult.ok) return errorResponse(refResult.message, 404)
+
+    const commit = normalizeSearchParam(body.commit ?? '') || (await resolveRefCommit(ref))
+    if (!commit) return errorResponse('Commit not found for ref.', 404)
+
+    let pathPrefix: string | undefined
+    try {
+      pathPrefix = normalizePathPrefix(body.pathPrefix)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid path prefix.'
+      return errorResponse(message, 400)
+    }
+
+    const maxFiles = normalizeOptionalNumber(body.maxFiles)
+    if (maxFiles !== undefined && maxFiles <= 0) {
+      return errorResponse('Max files must be a positive integer.', 400)
+    }
+
+    const context = normalizeOptionalText(body.context)
+
+    return jsonResponse(
+      {
+        ok: true,
+        status: 'queued',
+        request: {
+          repository: repoResult.repository,
+          ref,
+          commit,
+          pathPrefix,
+          maxFiles,
+          context: context ?? undefined,
+          idempotencyKey: request.headers.get('idempotency-key') ?? undefined,
+        },
+      },
+      202,
+    )
+  }
+
   const repositoryParam = normalizeSearchParam(body.repository ?? '')
   const ref = normalizeSearchParam(body.ref ?? '') || DEFAULT_ATLAS_REF
   const path = normalizeSearchParam(body.path ?? '')

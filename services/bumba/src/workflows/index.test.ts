@@ -163,3 +163,61 @@ test('enrichFile completes when all activities are resolved', async () => {
   expect(output.completion).toBe('completed')
   expect(output.result).toEqual({ id: 'enrichment-id', filename: input.filePath })
 })
+
+test('enrichRepository schedules listing and child workflows', async () => {
+  const { executor, dataConverter } = makeExecutor()
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    repository: 'proompteng/lab',
+    ref: 'main',
+    commit: 'deadbeef',
+    pathPrefix: 'services',
+    maxFiles: 10,
+  }
+
+  const activityResults = new Map<string, ActivityResolution>([
+    [
+      'activity-0',
+      {
+        status: 'completed',
+        value: {
+          files: ['services/bumba/src/worker.ts', 'services/jangar/src/server/bumba.ts'],
+          total: 2,
+          skipped: 0,
+        },
+      },
+    ],
+  ])
+
+  const output = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    activityResults,
+  })
+
+  const scheduleCommands = output.commands.filter(
+    (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
+  )
+  expect(scheduleCommands).toHaveLength(1)
+  const schedule = scheduleCommands[0]
+  if (schedule.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
+    throw new Error('Expected schedule activity attributes for repository listing.')
+  }
+
+  const decoded = await decodePayloadsToValues(dataConverter, schedule.attributes.value.input?.payloads ?? [])
+  expect(decoded).toEqual([
+    {
+      repoRoot: input.repoRoot,
+      ref: input.commit,
+      pathPrefix: input.pathPrefix,
+      maxFiles: input.maxFiles,
+    },
+  ])
+
+  const childCommands = output.commands.filter(
+    (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
+  )
+  expect(childCommands).toHaveLength(2)
+  expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
+  expect(output.completion).toBe('completed')
+})

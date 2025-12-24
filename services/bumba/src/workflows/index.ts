@@ -2,7 +2,13 @@ import { defineWorkflow } from '@proompteng/temporal-bun-sdk/workflow'
 import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
-import type { AstSummaryOutput, EnrichOutput, PersistInput, ReadRepoFileOutput } from '../activities/index'
+import type {
+  AstSummaryOutput,
+  EnrichOutput,
+  ListRepoFilesOutput,
+  PersistInput,
+  ReadRepoFileOutput,
+} from '../activities/index'
 
 const activityRetry = {
   initialIntervalMs: 2_000,
@@ -12,6 +18,11 @@ const activityRetry = {
 }
 
 const readRepoFileTimeouts = {
+  startToCloseTimeoutMs: 90_000,
+  scheduleToCloseTimeoutMs: 600_000,
+}
+
+const listRepoFilesTimeouts = {
   startToCloseTimeoutMs: 90_000,
   scheduleToCloseTimeoutMs: 600_000,
 }
@@ -40,21 +51,34 @@ const EnrichFileInput = Schema.Struct({
   repoRoot: Schema.String,
   filePath: Schema.String,
   repository: Schema.optional(Schema.String),
+  ref: Schema.optional(Schema.String),
   commit: Schema.optional(Schema.String),
   context: Schema.optional(Schema.String),
   eventDeliveryId: Schema.optional(Schema.String),
 })
 
+const EnrichRepositoryInput = Schema.Struct({
+  repoRoot: Schema.String,
+  repository: Schema.optional(Schema.String),
+  ref: Schema.optional(Schema.String),
+  commit: Schema.optional(Schema.String),
+  context: Schema.optional(Schema.String),
+  pathPrefix: Schema.optional(Schema.String),
+  maxFiles: Schema.optional(Schema.Number),
+})
+
 export const workflows = [
   defineWorkflow('enrichFile', EnrichFileInput, ({ input, activities }) =>
     Effect.gen(function* () {
-      const { repoRoot, filePath, repository, commit, context, eventDeliveryId } = input
+      const { repoRoot, filePath, repository, ref, commit, context, eventDeliveryId } = input
 
-      const readRepoInput: { repoRoot: string; filePath: string; repository?: string; commit?: string } = {
-        repoRoot,
-        filePath,
-      }
+      const readRepoInput: { repoRoot: string; filePath: string; repository?: string; ref?: string; commit?: string } =
+        {
+          repoRoot,
+          filePath,
+        }
       if (repository) readRepoInput.repository = repository
+      if (ref) readRepoInput.ref = ref
       if (commit) readRepoInput.commit = commit
 
       const fileResult = (yield* activities.schedule('readRepoFile', [readRepoInput], {
@@ -116,6 +140,43 @@ export const workflows = [
       return {
         id: persist.id,
         filename: filePath,
+      }
+    }),
+  ),
+  defineWorkflow('enrichRepository', EnrichRepositoryInput, ({ input, activities, childWorkflows }) =>
+    Effect.gen(function* () {
+      const { repoRoot, repository, ref, commit, context, pathPrefix, maxFiles } = input
+
+      const listRef = commit ?? ref
+      const listResult = (yield* activities.schedule(
+        'listRepoFiles',
+        [{ repoRoot, ref: listRef, pathPrefix, maxFiles }],
+        {
+          ...listRepoFilesTimeouts,
+          retry: activityRetry,
+        },
+      )) as ListRepoFilesOutput
+
+      const queued = yield* Effect.forEach(
+        listResult.files,
+        (filePath) =>
+          childWorkflows.start('enrichFile', [
+            {
+              repoRoot,
+              filePath,
+              repository,
+              ref,
+              commit,
+              context,
+            },
+          ]),
+        { concurrency: 10 },
+      )
+
+      return {
+        total: listResult.total,
+        skipped: listResult.skipped,
+        queued: queued.length,
       }
     }),
   ),
