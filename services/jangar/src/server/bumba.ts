@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm, stat } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { relative, resolve, sep } from 'node:path'
 import { createTemporalClient, loadTemporalConfig, type TemporalClient } from '@proompteng/temporal-bun-sdk'
 import { Context, Effect, Layer, pipe } from 'effect'
 import * as TSemaphore from 'effect/TSemaphore'
@@ -47,6 +47,15 @@ const resolveBaseRepoRoot = () =>
   process.cwd()
 
 const resolveWorktreePath = (baseRepoRoot: string) => resolve(baseRepoRoot, WORKTREE_DIR_NAME, BUMBA_WORKTREE_NAME)
+
+const resolveWorktreeFilePath = (worktreePath: string, filePath: string) => {
+  const fullPath = resolve(worktreePath, filePath)
+  const relativePath = relative(worktreePath, fullPath)
+  if (relativePath.startsWith('..') || relativePath.includes(`..${sep}`)) {
+    throw new Error(`File path escapes worktree: ${filePath}`)
+  }
+  return fullPath
+}
 
 const runGitCommand = async (args: string[], cwd: string) => {
   const proc = Bun.spawn(args, { cwd, stdout: 'pipe', stderr: 'pipe' })
@@ -125,12 +134,39 @@ const resetWorktree = async (worktreePath: string, commit: string) => {
   await runGitCommandOrThrow(['git', '-C', worktreePath, 'reset', '--hard', commit], worktreePath)
 }
 
-const resolveRepoRootForCommit = async (commit?: string | null) => {
+const getHeadCommit = async (repoRoot: string) =>
+  runGitCommandOrThrow(['git', '-C', repoRoot, 'rev-parse', 'HEAD'], repoRoot)
+
+const resolveRepoRootForCommit = async (filePath: string, commit?: string | null) => {
   const baseRepoRoot = resolveBaseRepoRoot()
   const normalizedCommit = normalizeOptionalText(commit)
   const worktreePath = await ensureBumbaWorktree(baseRepoRoot)
 
-  if (!normalizedCommit) return worktreePath
+  const ensureCommit = async (targetCommit: string) => {
+    try {
+      await resetWorktree(worktreePath, targetCommit)
+    } catch (_error) {
+      await fetchRepo(baseRepoRoot)
+      await resetWorktree(worktreePath, targetCommit)
+    }
+  }
+
+  const fullPath = resolveWorktreeFilePath(worktreePath, filePath)
+
+  if (!normalizedCommit) {
+    const existing = await stat(fullPath).catch(() => null)
+    if (existing) return worktreePath
+
+    const headCommit = await getHeadCommit(baseRepoRoot)
+    await ensureCommit(headCommit)
+
+    const refreshed = await stat(fullPath).catch(() => null)
+    if (!refreshed) {
+      throw new Error(`File not found in worktree after refresh: ${filePath}`)
+    }
+
+    return worktreePath
+  }
 
   if (!(await commitExists(baseRepoRoot, normalizedCommit))) {
     await fetchRepo(baseRepoRoot)
@@ -139,11 +175,17 @@ const resolveRepoRootForCommit = async (commit?: string | null) => {
     }
   }
 
-  try {
-    await resetWorktree(worktreePath, normalizedCommit)
-  } catch (_error) {
-    await fetchRepo(baseRepoRoot)
-    await resetWorktree(worktreePath, normalizedCommit)
+  await ensureCommit(normalizedCommit)
+
+  const exists = await stat(fullPath).catch(() => null)
+  if (exists) return worktreePath
+
+  await fetchRepo(baseRepoRoot)
+  await ensureCommit(normalizedCommit)
+
+  const refreshed = await stat(fullPath).catch(() => null)
+  if (!refreshed) {
+    throw new Error(`File not found in worktree after refresh: ${filePath}`)
   }
 
   return worktreePath
@@ -213,7 +255,7 @@ export const BumbaWorkflowsLive = Layer.scoped(
                 1,
               )(
                 Effect.tryPromise({
-                  try: () => resolveRepoRootForCommit(input.commit),
+                  try: () => resolveRepoRootForCommit(input.filePath, input.commit),
                   catch: (error) => normalizeError('start bumba workflow failed', error),
                 }),
               ),
@@ -256,3 +298,7 @@ export const BumbaWorkflowsLive = Layer.scoped(
     return service
   }),
 )
+
+export const __test__ = {
+  resolveRepoRootForCommit,
+}
