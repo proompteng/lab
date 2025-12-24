@@ -29,6 +29,13 @@ extraVolumes:
               - key: password
                 path: keycloak-db-app/password
         - secret:
+            name: coder-cluster-app
+            items:
+              - key: uri
+                path: coder-cluster-app/uri
+              - key: password
+                path: coder-cluster-app/password
+        - secret:
             name: convex-db-app
             items:
               - key: uri
@@ -49,6 +56,13 @@ extraVolumes:
                 path: golink-db-app/uri
               - key: password
                 path: golink-db-app/password
+        - secret:
+            name: facteur-vector-cluster-app
+            items:
+              - key: uri
+                path: facteur-vector-cluster-app/uri
+              - key: password
+                path: facteur-vector-cluster-app/password
         - secret:
             name: dernier-db-app
             items:
@@ -86,9 +100,11 @@ extraInitContainers: |
 
         clusters = [
             {'secret': 'keycloak-db-app', 'name': 'keycloak-db'},
+            {'secret': 'coder-cluster-app', 'name': 'coder-cluster'},
             {'secret': 'convex-db-app', 'name': 'convex-db'},
             {'secret': 'jangar-db-app', 'name': 'jangar-db'},
             {'secret': 'golink-db-app', 'name': 'golink-db'},
+            {'secret': 'facteur-vector-cluster-app', 'name': 'facteur-vector-cluster'},
             {'secret': 'dernier-db-app', 'name': 'dernier-db'},
             {'secret': 'torghut-db-app', 'name': 'torghut-db'},
         ]
