@@ -44,10 +44,17 @@ describe('bumba worktree refresh', () => {
 
     process.env.BUMBA_WORKSPACE_ROOT = repoRoot
 
-    const spawnStub = ((args: string[], options?: BunSpawnOptions) => {
-      const resolvedOptions = options ?? {}
-      const child = spawn(args[0], args.slice(1), {
+    const spawnStub = ((rawArgs: unknown, options?: BunSpawnOptions) => {
+      const baseOptions =
+        rawArgs && typeof rawArgs === 'object' && 'cmd' in rawArgs
+          ? (rawArgs as BunSpawnOptions & { cmd?: string[] | string })
+          : undefined
+      const resolvedOptions = { ...baseOptions, ...(options ?? {}) }
+      const rawCmd = baseOptions?.cmd ?? rawArgs
+      const command = Array.isArray(rawCmd) ? rawCmd : typeof rawCmd === 'string' ? [rawCmd] : []
+      const child = spawn(command[0] ?? '', command.slice(1), {
         cwd: resolvedOptions.cwd,
+        env: resolvedOptions.env as NodeJS.ProcessEnv | undefined,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
 
