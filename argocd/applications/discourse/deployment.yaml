@@ -20,6 +20,7 @@ spec:
         app.kubernetes.io/name: discourse
         app.kubernetes.io/part-of: lab
     spec:
+      enableServiceLinks: false
       containers:
         - name: discourse
           image: registry.ide-newton.ts.net/lab/discourse@sha256:1f0b79c1bd8bf817c1ebf9ede5599ea7d3072660723b28c0b59ca13075477823
