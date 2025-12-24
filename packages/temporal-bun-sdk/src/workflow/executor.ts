@@ -625,15 +625,18 @@ export class WorkflowExecutor {
   }
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: Constructor args are irrelevant for instanceof checks.
-const unwrapWorkflowError = <T>(error: unknown, ctor: new (...args: any[]) => T): T | undefined => {
-  if (error instanceof ctor) {
-    return error
+const unwrapWorkflowError = <T>(error: unknown, ctor: unknown): T | undefined => {
+  if (typeof ctor !== 'function') {
+    return undefined
+  }
+  const ctorFn = ctor as new (...args: unknown[]) => T
+  if (error instanceof ctorFn) {
+    return error as T
   }
   if (error && typeof error === 'object' && 'cause' in error) {
     const cause = (error as { cause?: unknown }).cause
-    if (cause instanceof ctor) {
-      return cause
+    if (cause instanceof ctorFn) {
+      return cause as T
     }
   }
   return undefined

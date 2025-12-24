@@ -1,16 +1,17 @@
 import { expect, test } from 'bun:test'
-import {
-  createDefaultDataConverter,
-  decodePayloadsToValues,
-} from '../../../../packages/temporal-bun-sdk/src/common/payloads'
-import { CommandType } from '../../../../packages/temporal-bun-sdk/src/proto/temporal/api/enums/v1/command_type_pb'
-import type { ActivityResolution } from '../../../../packages/temporal-bun-sdk/src/workflow/context'
 import type {
+  ActivityResolution,
+  Command,
   ExecuteWorkflowInput,
   WorkflowExecutionOutput,
-} from '../../../../packages/temporal-bun-sdk/src/workflow/executor'
-import { WorkflowExecutor } from '../../../../packages/temporal-bun-sdk/src/workflow/executor'
-import { WorkflowRegistry } from '../../../../packages/temporal-bun-sdk/src/workflow/registry'
+} from '@proompteng/temporal-bun-sdk/workflow'
+import {
+  CommandType,
+  createDefaultDataConverter,
+  decodePayloadsToValues,
+  WorkflowExecutor,
+  WorkflowRegistry,
+} from '@proompteng/temporal-bun-sdk/workflow'
 
 import { workflows } from './index'
 
@@ -161,7 +162,7 @@ test('enrichFile completes when all activities are resolved', async () => {
   })
 
   const scheduleCommands = output.commands.filter(
-    (command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
+    (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
   )
 
   expect(scheduleCommands).toHaveLength(6)
