@@ -1,3 +1,4 @@
+import { extname } from 'node:path'
 import { createFileRoute } from '@tanstack/react-router'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
@@ -44,6 +45,64 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
 const MAX_EVENT_FILE_TARGETS = 200
+const LOCK_FILENAMES = new Set([
+  'bun.lock',
+  'composer.lock',
+  'cargo.lock',
+  'gemfile.lock',
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'pnpm-lock.yml',
+  'poetry.lock',
+  'pipfile.lock',
+  'yarn.lock',
+  'npm-shrinkwrap.json',
+])
+const BINARY_EXTENSIONS = new Set([
+  '.7z',
+  '.avi',
+  '.avif',
+  '.bmp',
+  '.bz2',
+  '.class',
+  '.db',
+  '.dll',
+  '.dylib',
+  '.eot',
+  '.exe',
+  '.flac',
+  '.gif',
+  '.gz',
+  '.ico',
+  '.icns',
+  '.jar',
+  '.jpeg',
+  '.jpg',
+  '.mkv',
+  '.mov',
+  '.mp3',
+  '.mp4',
+  '.ogg',
+  '.otf',
+  '.pdf',
+  '.png',
+  '.psd',
+  '.rar',
+  '.so',
+  '.sqlite',
+  '.sqlite3',
+  '.tar',
+  '.tgz',
+  '.ttf',
+  '.wav',
+  '.webp',
+  '.woff',
+  '.woff2',
+  '.xz',
+  '.zip',
+  '.wasm',
+  '.bin',
+])
 
 const normalizeOptionalText = (value: unknown) => {
   if (typeof value !== 'string') return undefined
@@ -59,16 +118,34 @@ const normalizePathList = (value: unknown) => {
     .filter((entry) => entry.length > 0)
 }
 
+const shouldSkipFilePath = (filePath: string) => {
+  const normalized = filePath.trim()
+  if (normalized.length === 0) return true
+  const lower = normalized.toLowerCase()
+  const base = lower.split('/').pop() ?? lower
+  const extension = extname(base)
+
+  if (LOCK_FILENAMES.has(base)) return true
+  if (extension === '.lock') return true
+  if (BINARY_EXTENSIONS.has(extension)) return true
+
+  return false
+}
+
 const collectCommitPaths = (payload: Record<string, unknown>) => {
   const paths = new Set<string>()
   const commit = isRecord(payload) ? payload : null
   if (!commit) return paths
 
   for (const path of normalizePathList(commit.added)) {
-    paths.add(path)
+    if (!shouldSkipFilePath(path)) {
+      paths.add(path)
+    }
   }
   for (const path of normalizePathList(commit.modified)) {
-    paths.add(path)
+    if (!shouldSkipFilePath(path)) {
+      paths.add(path)
+    }
   }
 
   return paths
@@ -186,9 +263,11 @@ export const postEnrichHandlerEffect = (request: Request) =>
         }
       }
 
+      const shouldSkipParsedPath = parsed.ok && shouldSkipFilePath(parsed.value.path)
+
       let fileKey = null
       let fileVersion = null
-      if (parsed.ok && repository) {
+      if (parsed.ok && repository && !shouldSkipParsedPath) {
         fileKey = yield* atlas.upsertFileKey({
           repositoryId: repository.id,
           path: parsed.value.path,
@@ -229,6 +308,24 @@ export const postEnrichHandlerEffect = (request: Request) =>
       let workflow = null
       let workflows: StartEnrichFileResult[] = []
       if (parsed.ok) {
+        if (shouldSkipParsedPath) {
+          return jsonResponse(
+            {
+              ok: true,
+              repository,
+              fileKey,
+              fileVersion,
+              githubEvent,
+              ingestion,
+              ingestionTarget,
+              workflow,
+              workflows,
+              skipped: true,
+              reason: 'excluded_file_type',
+            },
+            202,
+          )
+        }
         const workflowId = eventInput?.workflowIdentifier ?? null
         workflow = yield* bumbaWorkflows.startEnrichFile({
           filePath: parsed.value.path,
