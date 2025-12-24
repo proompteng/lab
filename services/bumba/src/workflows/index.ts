@@ -34,11 +34,11 @@ export const workflows = [
             context: context ?? '',
           },
         ],
-        { startToCloseTimeoutMs: 120_000 },
+        { startToCloseTimeoutMs: 180_000 },
       )) as EnrichOutput
 
       const embedding = (yield* activities.schedule('createEmbedding', [{ text: enriched.enriched }], {
-        startToCloseTimeoutMs: 30_000,
+        startToCloseTimeoutMs: 90_000,
       })) as { embedding: number[] }
 
       const persistInput: PersistInput = {
