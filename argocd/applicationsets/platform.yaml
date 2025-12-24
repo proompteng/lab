@@ -226,6 +226,13 @@ spec:
               argocd.argoproj.io/sync-wave: "4"
             automation: auto
             enabled: "true"
+          - name: pgadmin
+            path: argocd/applications/pgadmin
+            namespace: pgadmin
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+            enabled: "true"
           - name: graf
             path: argocd/applications/graf
             namespace: graf
