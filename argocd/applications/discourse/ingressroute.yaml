@@ -9,6 +9,8 @@ spec:
   routes:
     - kind: Rule
       match: Host(`forum.proompteng.ai`)
+      middlewares:
+        - name: discourse-forwarded-proto
       services:
         - name: discourse
           port: 80
