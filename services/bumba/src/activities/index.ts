@@ -580,6 +580,17 @@ const parseAst = async (source: string, filePath: string): Promise<AstSummaryOut
   }
 }
 
+const dedupeFacts = (facts: TreeSitterFact[]) => {
+  const seen = new Map<string, TreeSitterFact>()
+  for (const fact of facts) {
+    const key = `${fact.nodeType}::${fact.matchText}`
+    if (!seen.has(key)) {
+      seen.set(key, fact)
+    }
+  }
+  return Array.from(seen.values())
+}
+
 const loadCompletionConfig = () => {
   const apiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
   const apiKey = process.env.OPENAI_API_KEY?.trim() || null
@@ -1045,8 +1056,9 @@ export const activities = {
     `
 
     if (input.facts.length > 0) {
+      const uniqueFacts = dedupeFacts(input.facts)
       await db`DELETE FROM atlas.tree_sitter_facts WHERE file_version_id = ${fileVersionId};`
-      for (const fact of input.facts) {
+      for (const fact of uniqueFacts) {
         await db`
           INSERT INTO atlas.tree_sitter_facts (
             file_version_id,
@@ -1063,7 +1075,8 @@ export const activities = {
             ${fact.startLine},
             ${fact.endLine},
             ${JSON.stringify(fact.metadata ?? {})}::jsonb
-          );
+          )
+          ON CONFLICT DO NOTHING;
         `
       }
     }
