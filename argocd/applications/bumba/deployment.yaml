@@ -34,6 +34,8 @@ spec:
               value: bumba
             - name: BUMBA_WORKSPACE_ROOT
               value: /workspace/lab
+            - name: REPOSITORY
+              value: proompteng/lab
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
