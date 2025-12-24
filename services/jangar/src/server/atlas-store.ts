@@ -302,6 +302,15 @@ export type AtlasStats = {
   embeddings: number
 }
 
+export type AtlasIndexedFile = {
+  repository: string
+  ref: string
+  path: string
+  commit?: string | null
+  contentHash: string
+  updatedAt?: string | Date | null
+}
+
 export type AtlasStore = {
   upsertRepository: (input: UpsertRepositoryInput) => Promise<RepositoryRecord>
   getRepositoryByName: (input: { name: string }) => Promise<RepositoryRecord | null>
@@ -326,6 +335,12 @@ export type AtlasStore = {
   upsertIngestion: (input: UpsertIngestionInput) => Promise<IngestionRecord>
   upsertEventFile: (input: UpsertEventFileInput) => Promise<EventFileRecord>
   upsertIngestionTarget: (input: UpsertIngestionTargetInput) => Promise<IngestionTargetRecord>
+  listIndexedFiles: (input: {
+    limit?: number
+    repository?: string
+    ref?: string
+    pathPrefix?: string
+  }) => Promise<AtlasIndexedFile[]>
   search: (input: AtlasSearchInput) => Promise<AtlasSearchMatch[]>
   stats: () => Promise<AtlasStats>
   close: () => Promise<void>
@@ -347,6 +362,7 @@ const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
 const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
 const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding:0.6b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
+const DEFAULT_INDEX_LIMIT = 50
 const DEFAULT_SEARCH_LIMIT = 10
 
 const SCHEMA = 'atlas'
@@ -1816,6 +1832,81 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     }
   }
 
+  const listIndexedFiles: AtlasStore['listIndexedFiles'] = async ({ limit, repository, ref, pathPrefix }) => {
+    await ensureSchema()
+
+    const resolvedLimit = Math.max(1, Math.min(200, Math.floor(limit ?? DEFAULT_INDEX_LIMIT)))
+    const resolvedRepository = typeof repository === 'string' ? repository.trim() : ''
+    const resolvedRef = typeof ref === 'string' ? ref.trim() : ''
+    const resolvedPathPrefix = typeof pathPrefix === 'string' ? pathPrefix.trim() : ''
+
+    const conditions: string[] = []
+    const params: unknown[] = []
+
+    if (resolvedRepository) {
+      params.push(resolvedRepository)
+      conditions.push(`repositories.name = $${params.length}`)
+    }
+    if (resolvedRef) {
+      params.push(resolvedRef)
+      conditions.push(`file_versions.repository_ref = $${params.length}`)
+    }
+    if (resolvedPathPrefix) {
+      params.push(`${resolvedPathPrefix}%`)
+      conditions.push(`file_keys.path LIKE $${params.length}`)
+    }
+
+    params.push(resolvedLimit)
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+    const limitParam = `$${params.length}`
+
+    const rows = await db.unsafe<
+      Array<{
+        repository_name: string
+        repository_ref: string
+        path: string
+        repository_commit: string | null
+        content_hash: string
+        updated_at: string | Date | null
+      }>
+    >(
+      `
+        SELECT latest.repository_name,
+               latest.repository_ref,
+               latest.path,
+               latest.repository_commit,
+               latest.content_hash,
+               latest.updated_at
+        FROM (
+          SELECT DISTINCT ON (file_versions.file_key_id, file_versions.repository_ref)
+            repositories.name AS repository_name,
+            file_versions.repository_ref,
+            file_versions.repository_commit,
+            file_versions.content_hash,
+            file_versions.updated_at,
+            file_keys.path
+          FROM atlas.file_versions
+          JOIN atlas.file_keys ON file_keys.id = file_versions.file_key_id
+          JOIN atlas.repositories ON repositories.id = file_keys.repository_id
+          ${whereClause}
+          ORDER BY file_versions.file_key_id, file_versions.repository_ref, file_versions.updated_at DESC
+        ) AS latest
+        ORDER BY latest.updated_at DESC NULLS LAST
+        LIMIT ${limitParam};
+      `,
+      params,
+    )
+
+    return rows.map((row) => ({
+      repository: row.repository_name,
+      ref: row.repository_ref,
+      path: row.path,
+      commit: row.repository_commit,
+      contentHash: row.content_hash,
+      updatedAt: row.updated_at ?? undefined,
+    }))
+  }
+
   const search: AtlasStore['search'] = async ({ query, limit, repository, ref, pathPrefix, tags, kinds }) => {
     await ensureSchema()
 
@@ -2072,6 +2163,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     upsertIngestion,
     upsertEventFile,
     upsertIngestionTarget,
+    listIndexedFiles,
     search,
     stats,
     close,

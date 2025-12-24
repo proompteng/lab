@@ -3,11 +3,24 @@ import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import { Atlas, AtlasLive } from '~/server/atlas'
 import { parseAtlasSearchInput } from '~/server/atlas-http'
+import type { AtlasSearchMatch } from '~/server/atlas-store'
+
+type AtlasSearchItem = {
+  repository?: string
+  ref?: string
+  commit?: string
+  path?: string
+  contentHash?: string
+  updatedAt?: string
+  score?: number
+  summary?: string | null
+  tags?: string[]
+}
 
 export const Route = createFileRoute('/api/search')({
   server: {
     handlers: {
-      GET: async ({ request }) => getSearchHandler(request),
+      GET: async ({ request }) => getAtlasSearchHandler(request),
       POST: async () => new Response('Method Not Allowed', { status: 405 }),
     },
   },
@@ -26,7 +39,7 @@ const jsonResponse = (payload: unknown, status = 200) => {
   })
 }
 
-const errorResponse = (message: string, status = 500) => jsonResponse({ error: message }, status)
+const errorResponse = (message: string, status = 500) => jsonResponse({ ok: false, message, error: message }, status)
 
 const resolveServiceError = (message: string) => {
   if (message.includes('DATABASE_URL')) return errorResponse(message, 503)
@@ -39,6 +52,18 @@ const splitList = (values: string[]) =>
     .flatMap((value) => value.split(','))
     .map((value) => value.trim())
     .filter((value) => value.length > 0)
+
+const mapMatchToItem = (match: AtlasSearchMatch): AtlasSearchItem => ({
+  repository: match.repository.name,
+  ref: match.fileVersion.repositoryRef,
+  commit: match.fileVersion.repositoryCommit,
+  path: match.fileKey.path,
+  contentHash: match.fileVersion.contentHash,
+  updatedAt: match.fileVersion.updatedAt,
+  score: match.enrichment.distance,
+  summary: match.enrichment.summary,
+  tags: match.enrichment.tags.length ? match.enrichment.tags : undefined,
+})
 
 export const getSearchHandlerEffect = (request: Request) =>
   pipe(
@@ -59,9 +84,12 @@ export const getSearchHandlerEffect = (request: Request) =>
 
       const atlas = yield* Atlas
       const matches = yield* atlas.search(parsed.value)
-      return jsonResponse({ ok: true, matches })
+      const items = matches.map(mapMatchToItem)
+      return jsonResponse({ ok: true, matches, items })
     }),
     Effect.catchAll((error) => Effect.succeed(resolveServiceError(error.message))),
   )
 
-export const getSearchHandler = (request: Request) => handlerRuntime.runPromise(getSearchHandlerEffect(request))
+export const getAtlasSearchHandler = async (request: Request) => {
+  return handlerRuntime.runPromise(getSearchHandlerEffect(request))
+}

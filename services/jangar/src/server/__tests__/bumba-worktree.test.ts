@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -28,39 +28,47 @@ const commitAll = (cwd: string, message: string) => {
 
 describe('bumba worktree refresh', () => {
   const previousEnv: Partial<Record<'BUMBA_WORKSPACE_ROOT', string | undefined>> = {}
-  let previousBun: typeof Bun | null = null
   let hadBun = false
   let repoRoot: string | null = null
 
   beforeEach(async () => {
     hadBun = 'Bun' in globalThis
-    previousBun = hadBun ? globalThis.Bun : null
     previousEnv.BUMBA_WORKSPACE_ROOT = process.env.BUMBA_WORKSPACE_ROOT
     repoRoot = await mkdtemp(join(tmpdir(), 'bumba-worktree-'))
 
     runGit(['init'], repoRoot)
     runGit(['config', 'user.email', 'bumba@example.com'], repoRoot)
     runGit(['config', 'user.name', 'Bumba Test'], repoRoot)
+    runGit(['config', 'commit.gpgsign', 'false'], repoRoot)
 
     process.env.BUMBA_WORKSPACE_ROOT = repoRoot
 
-    const spawnStub = ((args: string[], options?: BunSpawnOptions) => {
-      const resolvedOptions = options ?? {}
-      const child = spawn(args[0], args.slice(1), {
+    const spawnStub = ((rawArgs: unknown, options?: BunSpawnOptions) => {
+      const baseOptions =
+        rawArgs && typeof rawArgs === 'object' && 'cmd' in rawArgs
+          ? (rawArgs as BunSpawnOptions & { cmd?: string[] | string })
+          : undefined
+      const resolvedOptions = { ...baseOptions, ...(options ?? {}) }
+      const rawCmd = baseOptions?.cmd ?? rawArgs
+      const command = Array.isArray(rawCmd) ? rawCmd : typeof rawCmd === 'string' ? [rawCmd] : []
+      const result = spawnSync(command[0] ?? '', command.slice(1), {
         cwd: resolvedOptions.cwd,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        env: resolvedOptions.env as NodeJS.ProcessEnv | undefined,
+        encoding: null,
       })
 
-      const stdout = Readable.toWeb(child.stdout ?? Readable.from([])) as unknown as ReadableStream<Uint8Array>
-      const stderr = Readable.toWeb(child.stderr ?? Readable.from([])) as unknown as ReadableStream<Uint8Array>
-      const exited = new Promise<number>((resolve) => {
-        child.on('close', (code) => resolve(code ?? 1))
-      })
+      const stdoutData = result.stdout ?? new Uint8Array()
+      const stderrData = result.stderr ?? new Uint8Array()
+      const stdout = Readable.toWeb(Readable.from([stdoutData])) as unknown as ReadableStream<Uint8Array>
+      const stderr = Readable.toWeb(Readable.from([stderrData])) as unknown as ReadableStream<Uint8Array>
+      const exited = Promise.resolve(result.status ?? 1)
 
       return { stdout, stderr, exited } as BunSpawnResult
     }) as typeof Bun.spawn
 
-    globalThis.Bun = { ...(globalThis.Bun ?? ({} as typeof Bun)), spawn: spawnStub }
+    if (!hadBun) {
+      globalThis.Bun = { ...(globalThis.Bun ?? ({} as typeof Bun)), spawn: spawnStub }
+    }
   })
 
   afterEach(async () => {
@@ -75,9 +83,7 @@ describe('bumba worktree refresh', () => {
       process.env.BUMBA_WORKSPACE_ROOT = previousEnv.BUMBA_WORKSPACE_ROOT
     }
 
-    if (hadBun && previousBun) {
-      globalThis.Bun = previousBun
-    } else if (!hadBun) {
+    if (!hadBun) {
       delete (globalThis as Record<string, unknown>).Bun
     }
   })

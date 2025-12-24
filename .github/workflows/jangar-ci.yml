@@ -15,11 +15,9 @@ concurrency:
 jobs:
   lint-and-typecheck:
     uses: ./.github/workflows/common-monorepo.yml
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     with:
       bun-version: 1.3.4
       node-version: 24.11.1
-      install-command: bun install --frozen-lockfile && cd services/jangar && bun install --frozen-lockfile
+      install-command: ELECTRON_SKIP_BINARY_DOWNLOAD=1 bun install --frozen-lockfile && cd services/jangar && bun install --frozen-lockfile
       lint-command: bunx biome check services/jangar packages/scripts/src/jangar argocd/applications/jangar
       test-command: cd services/jangar && bun test && bunx tsc --noEmit

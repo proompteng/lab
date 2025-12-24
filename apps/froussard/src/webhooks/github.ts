@@ -443,22 +443,31 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
         }
       }
 
-      const atlasPromise =
-        eventName === 'push'
-          ? triggerAtlasEnrichment({
-              config: config.atlas,
-              payload: parsedPayload,
+      if (eventName === 'push') {
+        void triggerAtlasEnrichment({
+          config: config.atlas,
+          payload: parsedPayload,
+          deliveryId,
+          eventName,
+          actionValue,
+          hookId,
+          senderLogin,
+          workflowIdentifier,
+          identifiers,
+        }).catch((error) => {
+          logger.warn(
+            {
               deliveryId,
               eventName,
-              actionValue,
-              hookId,
-              senderLogin,
-              workflowIdentifier,
-              identifiers,
-            })
-          : Promise.resolve()
+              action: actionValue ?? null,
+              err: error instanceof Error ? error.message : String(error),
+            },
+            'atlas enrichment request failed',
+          )
+        })
+      }
 
-      const publishPromise = runtime.runPromise(
+      await runtime.runPromise(
         publishKafkaMessage({
           topic: config.topics.raw,
           key: deliveryId,
@@ -466,12 +475,6 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
           headers,
         }),
       )
-
-      const [, publishResult] = await Promise.allSettled([atlasPromise, publishPromise])
-
-      if (publishResult.status === 'rejected') {
-        throw publishResult.reason
-      }
 
       return new Response(
         JSON.stringify({

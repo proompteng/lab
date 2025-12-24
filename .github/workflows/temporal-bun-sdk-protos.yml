@@ -55,8 +55,8 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           branch: chore/temporal-bun-sdk-proto-regen
-          title: chore: refresh temporal-bun-sdk protos
-          commit-message: chore: refresh temporal-bun-sdk protos
+          title: 'chore: refresh temporal-bun-sdk protos'
+          commit-message: 'chore: refresh temporal-bun-sdk protos'
           body: |
             ## Summary
             Automated Temporal proto regeneration for `@proompteng/temporal-bun-sdk`.
