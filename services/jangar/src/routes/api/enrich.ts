@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import { Atlas, AtlasLive } from '~/server/atlas'
-import { parseAtlasIndexInput } from '~/server/atlas-http'
+import { DEFAULT_REF, parseAtlasIndexInput } from '~/server/atlas-http'
 
 export const Route = createFileRoute('/api/enrich')({
   server: {
@@ -39,6 +39,78 @@ const resolveRequestError = (message: string) => {
   return resolveServiceError(message)
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+
+const normalizeOptionalText = (value: unknown) => {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+const resolveAtlasEventInput = (payload: Record<string, unknown>) => {
+  const metadata = isRecord(payload.metadata) ? payload.metadata : undefined
+  const deliveryId = normalizeOptionalText(metadata?.deliveryId)
+  const eventType = normalizeOptionalText(metadata?.event)
+
+  const repository =
+    normalizeOptionalText(payload.repository) ??
+    normalizeOptionalText(
+      metadata?.identifiers && (metadata.identifiers as { repositoryFullName?: unknown })?.repositoryFullName,
+    ) ??
+    normalizeOptionalText(
+      metadata?.payload && (metadata.payload as { repository?: { full_name?: unknown } })?.repository?.full_name,
+    )
+
+  if (!deliveryId || !eventType || !repository) return null
+
+  const payloadValue = metadata?.payload
+  const webhookPayload = isRecord(payloadValue) ? payloadValue : payload
+  const installationIdRaw =
+    (payloadValue as { installation?: { id?: unknown } })?.installation?.id ??
+    (payload as { installation?: { id?: unknown } })?.installation?.id
+  const installationId =
+    typeof installationIdRaw === 'string'
+      ? installationIdRaw
+      : typeof installationIdRaw === 'number'
+        ? String(installationIdRaw)
+        : null
+
+  const senderLogin =
+    normalizeOptionalText(metadata?.sender) ??
+    normalizeOptionalText((payloadValue as { sender?: { login?: unknown } })?.sender?.login) ??
+    normalizeOptionalText((payload as { sender?: { login?: unknown } })?.sender?.login)
+
+  const ref =
+    normalizeOptionalText(payload.ref) ??
+    normalizeOptionalText(
+      (payloadValue as { repository?: { default_branch?: unknown } })?.repository?.default_branch,
+    ) ??
+    normalizeOptionalText((payloadValue as { pull_request?: { base?: { ref?: unknown } } })?.pull_request?.base?.ref)
+
+  const commit =
+    normalizeOptionalText(payload.commit) ??
+    normalizeOptionalText((payloadValue as { pull_request?: { head?: { sha?: unknown } } })?.pull_request?.head?.sha) ??
+    normalizeOptionalText((payloadValue as { after?: unknown })?.after) ??
+    normalizeOptionalText((payloadValue as { head_commit?: { id?: unknown } })?.head_commit?.id)
+
+  const workflowIdentifier = normalizeOptionalText(metadata?.workflowIdentifier)
+  const receivedAt = normalizeOptionalText(metadata?.receivedAt)
+
+  return {
+    repository,
+    ref: ref ?? DEFAULT_REF,
+    commit,
+    deliveryId,
+    eventType,
+    installationId,
+    senderLogin,
+    workflowIdentifier,
+    receivedAt,
+    payload: webhookPayload,
+  }
+}
+
 export const postEnrichHandlerEffect = (request: Request) =>
   pipe(
     Effect.gen(function* () {
@@ -48,27 +120,75 @@ export const postEnrichHandlerEffect = (request: Request) =>
       })
       if (!payload || typeof payload !== 'object') return errorResponse('invalid JSON body', 400)
 
-      const parsed = parseAtlasIndexInput(payload as Record<string, unknown>)
-      if (!parsed.ok) return errorResponse(parsed.message, 400)
+      const payloadRecord = payload as Record<string, unknown>
+      const parsed = parseAtlasIndexInput(payloadRecord)
+      const eventInput = resolveAtlasEventInput(payloadRecord)
+      if (!parsed.ok && !eventInput) return errorResponse(parsed.message, 400)
 
       const atlas = yield* Atlas
-      const repository = yield* atlas.upsertRepository({
-        name: parsed.value.repository,
-        defaultRef: parsed.value.ref,
-      })
-      const fileKey = yield* atlas.upsertFileKey({
-        repositoryId: repository.id,
-        path: parsed.value.path,
-      })
-      const fileVersion = yield* atlas.upsertFileVersion({
-        fileKeyId: fileKey.id,
-        repositoryRef: parsed.value.ref,
-        repositoryCommit: parsed.value.commit ?? null,
-        contentHash: parsed.value.contentHash ?? null,
-        metadata: parsed.value.metadata,
-      })
 
-      return jsonResponse({ ok: true, repository, fileKey, fileVersion }, 202)
+      let repository = null
+      if (parsed.ok || eventInput) {
+        const repositoryName = parsed.ok ? parsed.value.repository : eventInput?.repository
+        const repositoryRef = parsed.ok ? parsed.value.ref : eventInput?.ref
+        if (repositoryName) {
+          repository = yield* atlas.upsertRepository({
+            name: repositoryName,
+            defaultRef: repositoryRef,
+          })
+        }
+      }
+
+      let fileKey = null
+      let fileVersion = null
+      if (parsed.ok && repository) {
+        fileKey = yield* atlas.upsertFileKey({
+          repositoryId: repository.id,
+          path: parsed.value.path,
+        })
+        fileVersion = yield* atlas.upsertFileVersion({
+          fileKeyId: fileKey.id,
+          repositoryRef: parsed.value.ref,
+          repositoryCommit: parsed.value.commit ?? null,
+          contentHash: parsed.value.contentHash ?? null,
+          metadata: parsed.value.metadata,
+        })
+      }
+
+      let githubEvent = null
+      let ingestion = null
+      if (eventInput) {
+        githubEvent = yield* atlas.upsertGithubEvent({
+          repositoryId: repository?.id ?? null,
+          deliveryId: eventInput.deliveryId,
+          eventType: eventInput.eventType,
+          repository: eventInput.repository,
+          installationId: eventInput.installationId,
+          senderLogin: eventInput.senderLogin,
+          payload: eventInput.payload,
+          receivedAt: eventInput.receivedAt,
+        })
+
+        const workflowId = eventInput.workflowIdentifier ?? eventInput.deliveryId
+        ingestion = yield* atlas.upsertIngestion({
+          eventId: githubEvent.id,
+          workflowId,
+          status: 'accepted',
+          startedAt: eventInput.receivedAt,
+        })
+      }
+
+      return jsonResponse(
+        {
+          ok: true,
+          repository,
+          fileKey,
+          fileVersion,
+          githubEvent,
+          ingestion,
+        },
+        202,
+      )
     }),
     Effect.catchAll((error) => Effect.succeed(resolveRequestError(error.message))),
   )
