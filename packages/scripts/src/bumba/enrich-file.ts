@@ -17,6 +17,8 @@ type Options = {
   namespace: string
   wait: boolean
   temporalAddress?: string
+  repository?: string
+  commit?: string
 }
 
 const DEFAULT_TASK_QUEUE = process.env.TEMPORAL_TASK_QUEUE ?? 'bumba'
@@ -33,6 +35,8 @@ Options:
   -f, --file <path>          File path to enrich (required; relative to repo root by default)
       --repo-root <path>     Repository root (default: $BUMBA_WORKSPACE_ROOT or repo root)
       --context <text>       Extra context passed to the enrichment model
+      --repository <slug>    Repository slug (owner/name) for GitHub fetch fallback
+      --commit <sha>         Commit SHA or ref to fetch when repoRoot is stale
       --task-queue <name>    Temporal task queue (default: $TEMPORAL_TASK_QUEUE or ${DEFAULT_TASK_QUEUE})
       --workflow-id <id>     Workflow ID override (defaults to auto-generated)
       --namespace <name>     Temporal namespace (default: $TEMPORAL_NAMESPACE or ${DEFAULT_NAMESPACE})
@@ -108,6 +112,28 @@ const parseArgs = (argv: string[]): Options => {
       continue
     }
 
+    if (arg === '--repository') {
+      options.repository = readValue(arg, argv, i)
+      i += 1
+      continue
+    }
+
+    if (arg.startsWith('--repository=')) {
+      options.repository = arg.slice('--repository='.length)
+      continue
+    }
+
+    if (arg === '--commit') {
+      options.commit = readValue(arg, argv, i)
+      i += 1
+      continue
+    }
+
+    if (arg.startsWith('--commit=')) {
+      options.commit = arg.slice('--commit='.length)
+      continue
+    }
+
     if (arg === '--task-queue') {
       options.taskQueue = readValue(arg, argv, i)
       i += 1
@@ -173,7 +199,11 @@ const resolveInputs = (options: Options) => {
 
   if (existsSync(repoRoot)) {
     if (!existsSync(resolvedFile)) {
-      fatal(`File not found: ${resolvedFile}`)
+      if (options.commit || options.repository) {
+        console.warn(`[bumba] file not found locally (${resolvedFile}); relying on remote fetch fallback.`)
+      } else {
+        fatal(`File not found: ${resolvedFile}`)
+      }
     }
   } else {
     console.warn(`[bumba] repo root not found locally (${repoRoot}); skipping local file check.`)
@@ -206,6 +236,8 @@ const main = async () => {
         repoRoot,
         filePath,
         context: options.context ?? '',
+        repository: options.repository,
+        commit: options.commit,
       },
     ],
   })
@@ -217,6 +249,8 @@ const main = async () => {
     taskQueue: options.taskQueue,
     repoRoot,
     filePath,
+    repository: options.repository,
+    commit: options.commit,
   }
 
   if (options.wait) {

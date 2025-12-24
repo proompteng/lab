@@ -146,13 +146,6 @@ test('enrichFile completes when all activities are resolved', async () => {
         },
       },
     ],
-    [
-      'activity-5',
-      {
-        status: 'completed',
-        value: null,
-      },
-    ],
   ])
 
   const output = await execute(executor, {
@@ -165,7 +158,7 @@ test('enrichFile completes when all activities are resolved', async () => {
     (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
   )
 
-  expect(scheduleCommands).toHaveLength(6)
+  expect(scheduleCommands).toHaveLength(5)
   expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
   expect(output.completion).toBe('completed')
   expect(output.result).toEqual({ id: 'enrichment-id', filename: input.filePath })

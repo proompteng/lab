@@ -7,6 +7,8 @@ import type { AstSummaryOutput, EnrichOutput, PersistInput, ReadRepoFileOutput }
 const EnrichFileInput = Schema.Struct({
   repoRoot: Schema.String,
   filePath: Schema.String,
+  repository: Schema.optional(Schema.String),
+  commit: Schema.optional(Schema.String),
   context: Schema.optional(Schema.String),
   eventDeliveryId: Schema.optional(Schema.String),
 })
@@ -14,15 +16,26 @@ const EnrichFileInput = Schema.Struct({
 export const workflows = [
   defineWorkflow('enrichFile', EnrichFileInput, ({ input, activities }) =>
     Effect.gen(function* () {
-      const { repoRoot, filePath, context, eventDeliveryId } = input
+      const { repoRoot, filePath, repository, commit, context, eventDeliveryId } = input
 
-      const fileResult = (yield* activities.schedule('readRepoFile', [{ repoRoot, filePath }], {
+      const readRepoInput: { repoRoot: string; filePath: string; repository?: string; commit?: string } = {
+        repoRoot,
+        filePath,
+      }
+      if (repository) readRepoInput.repository = repository
+      if (commit) readRepoInput.commit = commit
+
+      const fileResult = (yield* activities.schedule('readRepoFile', [readRepoInput], {
         startToCloseTimeoutMs: 30_000,
       })) as ReadRepoFileOutput
 
-      const astResult = (yield* activities.schedule('extractAstSummary', [{ repoRoot, filePath }], {
-        startToCloseTimeoutMs: 60_000,
-      })) as AstSummaryOutput
+      const astResult = (yield* activities.schedule(
+        'extractAstSummary',
+        [{ repoRoot, filePath, content: fileResult.content }],
+        {
+          startToCloseTimeoutMs: 60_000,
+        },
+      )) as AstSummaryOutput
 
       const enriched = (yield* activities.schedule(
         'enrichWithModel',
@@ -54,17 +67,12 @@ export const workflows = [
         },
         fileMetadata: fileResult.metadata,
         facts: astResult.facts,
+        eventDeliveryId: eventDeliveryId ?? undefined,
       }
 
       const persist = (yield* activities.schedule('persistEnrichment', [persistInput], {
         startToCloseTimeoutMs: 30_000,
       })) as { id: string }
-
-      if (eventDeliveryId) {
-        yield* activities.schedule('markEventProcessed', [{ deliveryId: eventDeliveryId }], {
-          startToCloseTimeoutMs: 10_000,
-        })
-      }
 
       return {
         id: persist.id,

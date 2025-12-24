@@ -9,6 +9,8 @@ import { isMap, isScalar, isSeq, LineCounter, parseAllDocuments } from 'yaml'
 export type ReadRepoFileInput = {
   repoRoot: string
   filePath: string
+  repository?: string
+  commit?: string | null
 }
 
 export type FileMetadata = {
@@ -40,6 +42,7 @@ export type ReadRepoFileOutput = {
 export type AstGrepInput = {
   repoRoot: string
   filePath: string
+  content?: string
 }
 
 export type AstSummaryOutput = {
@@ -75,6 +78,7 @@ export type PersistInput = {
   metadata: Record<string, unknown>
   fileMetadata: FileMetadata
   facts: TreeSitterFact[]
+  eventDeliveryId?: string
 }
 
 export type MarkEventProcessedInput = {
@@ -90,12 +94,20 @@ const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding:0.6b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
 const DEFAULT_OPENAI_COMPLETION_MODEL = 'gpt-5.2-codex'
 const DEFAULT_SELF_HOSTED_COMPLETION_MODEL = 'qwen3-coder:30b-a3b-q4_K_M'
+const DEFAULT_GITHUB_API_BASE_URL = 'https://api.github.com'
+const DEFAULT_GITHUB_API_VERSION = '2022-11-28'
 
 const MAX_AST_BYTES = 200_000
 const MAX_FACTS = 300
 const MAX_FACT_CHARS = 200
 const MAX_SUMMARY_NODES = 80
 const MAX_COMPLETION_INPUT_CHARS = 12_000
+
+const normalizeOptionalText = (value: unknown) => {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
 
 const resolvePath = (repoRoot: string, filePath: string) => {
   const root = resolve(repoRoot)
@@ -106,6 +118,19 @@ const resolvePath = (repoRoot: string, filePath: string) => {
   }
   return fullPath
 }
+
+const normalizeRepositorySlug = (value: string) => {
+  const trimmed = value.trim().replace(/\.git$/, '')
+  const withoutPrefix = trimmed
+    .replace(/^git@github\.com:/, '')
+    .replace(/^ssh:\/\/git@github\.com\//, '')
+    .replace(/^https?:\/\/(www\.)?github\.com\//, '')
+    .replace(/^github\.com\//, '')
+  return withoutPrefix
+}
+
+const resolveGithubToken = () =>
+  normalizeOptionalText(process.env.GITHUB_TOKEN) ?? normalizeOptionalText(process.env.GH_TOKEN)
 
 const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
   try {
@@ -186,26 +211,35 @@ const runCommand = async (args: string[], cwd: string): Promise<string | null> =
   }
 }
 
-const resolveRepositoryInfo = async (repoRoot: string) => {
-  const envRepo = process.env.REPOSITORY?.trim()
-  const envRef = process.env.REPOSITORY_REF?.trim()
-  const envCommit = process.env.REPOSITORY_COMMIT?.trim()
+type RepositoryOverrides = {
+  repository?: string | null
+  ref?: string | null
+  commit?: string | null
+}
+
+const resolveRepositoryInfo = async (repoRoot: string, overrides: RepositoryOverrides = {}) => {
+  const overrideRepo = normalizeOptionalText(overrides.repository)
+  const overrideRef = normalizeOptionalText(overrides.ref)
+  const overrideCommit = normalizeOptionalText(overrides.commit)
+  const envRepo = normalizeOptionalText(process.env.REPOSITORY)
+  const envRef = normalizeOptionalText(process.env.REPOSITORY_REF)
+  const envCommit = normalizeOptionalText(process.env.REPOSITORY_COMMIT)
 
   const fallbackName = basename(repoRoot)
   const defaultRepo =
-    process.env.CODEX_REPO_SLUG?.trim() ||
-    process.env.CODEX_REPO_URL?.trim() ||
-    (await runCommand(['git', '-C', repoRoot, 'remote', 'get-url', 'origin'], repoRoot)) ||
+    overrideRepo ??
+    normalizeOptionalText(process.env.CODEX_REPO_SLUG) ??
+    normalizeOptionalText(process.env.CODEX_REPO_URL) ??
+    (await runCommand(['git', '-C', repoRoot, 'remote', 'get-url', 'origin'], repoRoot)) ??
     fallbackName
-  const repoName = envRepo && envRepo.length > 0 ? envRepo : defaultRepo
+  const repoName = overrideRepo ?? envRepo ?? defaultRepo
   const repoRef =
-    (envRef && envRef.length > 0 ? envRef : null) ??
+    overrideRef ??
+    envRef ??
     (await runCommand(['git', '-C', repoRoot, 'rev-parse', '--abbrev-ref', 'HEAD'], repoRoot)) ??
     null
   const repoCommit =
-    (envCommit && envCommit.length > 0 ? envCommit : null) ??
-    (await runCommand(['git', '-C', repoRoot, 'rev-parse', 'HEAD'], repoRoot)) ??
-    null
+    overrideCommit ?? envCommit ?? (await runCommand(['git', '-C', repoRoot, 'rev-parse', 'HEAD'], repoRoot)) ?? null
 
   const normalizedRepoName = repoName
     .replace(/\s+/g, '')
@@ -217,6 +251,79 @@ const resolveRepositoryInfo = async (repoRoot: string) => {
     repoName: normalizedRepoName.length > 0 ? normalizedRepoName : fallbackName,
     repoRef,
     repoCommit,
+  }
+}
+
+type GithubFileResult = {
+  content: string
+  downloadUrl: string | null
+  apiUrl: string
+  sha: string | null
+  size: number | null
+}
+
+const buildGithubHeaders = (token: string | null) => {
+  const headers: Record<string, string> = {
+    accept: 'application/vnd.github+json',
+    'x-github-api-version': DEFAULT_GITHUB_API_VERSION,
+  }
+  if (token) {
+    headers.authorization = `Bearer ${token}`
+  }
+  return headers
+}
+
+const encodeGithubPath = (filePath: string) =>
+  filePath
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/')
+
+const fetchGithubFile = async (repository: string, filePath: string, ref: string | null): Promise<GithubFileResult> => {
+  const token = resolveGithubToken()
+  const apiBaseUrl = process.env.GITHUB_API_BASE_URL ?? DEFAULT_GITHUB_API_BASE_URL
+  const encodedPath = encodeGithubPath(filePath)
+  const url = new URL(`/repos/${repository}/contents/${encodedPath}`, apiBaseUrl)
+  if (ref) {
+    url.searchParams.set('ref', ref)
+  }
+
+  const response = await fetch(url, { headers: buildGithubHeaders(token) })
+
+  if (!response.ok) {
+    const body = await response.text()
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`GitHub auth failed; check GITHUB_TOKEN. ${response.status}: ${body}`)
+    }
+    throw new Error(`GitHub contents fetch failed (${response.status}): ${body}`)
+  }
+
+  const data = (await response.json()) as {
+    type?: string
+    content?: string
+    encoding?: string
+    sha?: string
+    size?: number
+    download_url?: string | null
+    url?: string
+    path?: string
+  }
+
+  if (!data || data.type !== 'file') {
+    throw new Error(`GitHub contents API returned non-file for ${filePath}`)
+  }
+  if (!data.content || data.encoding !== 'base64') {
+    throw new Error(`GitHub contents API returned unsupported encoding for ${filePath}`)
+  }
+
+  const content = Buffer.from(data.content.replace(/\r?\n/g, ''), 'base64').toString('utf8')
+
+  return {
+    content,
+    downloadUrl: data.download_url ?? null,
+    apiUrl: data.url ?? url.toString(),
+    sha: data.sha ?? null,
+    size: data.size ?? null,
   }
 }
 
@@ -1187,12 +1294,52 @@ const getAtlasDb = () => {
 
 export const activities = {
   async readRepoFile(input: ReadRepoFileInput): Promise<ReadRepoFileOutput> {
+    const normalizedCommit = normalizeOptionalText(input.commit)
     const fullPath = resolvePath(input.repoRoot, input.filePath)
-    const [content, stats, repoInfo] = await Promise.all([
-      readFile(fullPath, 'utf8'),
-      stat(fullPath),
-      resolveRepositoryInfo(input.repoRoot),
-    ])
+    const repoInfo = await resolveRepositoryInfo(input.repoRoot, {
+      repository: input.repository,
+      commit: normalizedCommit,
+    })
+
+    const repoRootStats = await stat(input.repoRoot).catch(() => null)
+    const fileStats = repoRootStats?.isDirectory() ? await stat(fullPath).catch(() => null) : null
+    let content: string
+    let stats = fileStats
+    let source: 'local' | 'github' = 'local'
+    let sourceMeta: Record<string, unknown> = { repoRoot: input.repoRoot }
+
+    if (fileStats) {
+      if (normalizedCommit) {
+        const headCommit = await runCommand(['git', '-C', input.repoRoot, 'rev-parse', 'HEAD'], input.repoRoot)
+        if (headCommit !== normalizedCommit) {
+          source = 'github'
+        }
+      }
+    } else {
+      source = 'github'
+    }
+
+    if (source === 'local') {
+      content = await readFile(fullPath, 'utf8')
+    } else {
+      const repoSlug = normalizeRepositorySlug(normalizeOptionalText(input.repository) ?? repoInfo.repoName ?? '')
+      if (!repoSlug.includes('/')) {
+        throw new Error('GitHub repository slug is required to fetch remote content')
+      }
+
+      const ref = normalizedCommit ?? repoInfo.repoCommit ?? repoInfo.repoRef
+      const fetched = await fetchGithubFile(repoSlug, input.filePath, ref)
+      content = fetched.content
+      stats = null
+      sourceMeta = {
+        repoRoot: input.repoRoot,
+        source: 'github',
+        githubApiUrl: fetched.apiUrl,
+        githubDownloadUrl: fetched.downloadUrl,
+        githubSha: fetched.sha,
+        githubRef: ref,
+      }
+    }
 
     const contentHash = createHash('sha256').update(content).digest('hex')
     const lineCount = content.split(/\r?\n/).length
@@ -1203,23 +1350,20 @@ export const activities = {
       metadata: {
         repoName: repoInfo.repoName,
         repoRef: repoInfo.repoRef,
-        repoCommit: repoInfo.repoCommit,
+        repoCommit: normalizedCommit ?? repoInfo.repoCommit,
         path: input.filePath,
         contentHash,
         language,
-        byteSize: stats.size,
+        byteSize: stats?.size ?? Buffer.byteLength(content, 'utf8'),
         lineCount,
-        sourceTimestamp: stats.mtime ? stats.mtime.toISOString() : null,
-        metadata: {
-          repoRoot: input.repoRoot,
-        },
+        sourceTimestamp: stats?.mtime ? stats.mtime.toISOString() : null,
+        metadata: sourceMeta,
       },
     }
   },
 
   async extractAstSummary(input: AstGrepInput): Promise<AstSummaryOutput> {
-    const fullPath = resolvePath(input.repoRoot, input.filePath)
-    const content = await readFile(fullPath, 'utf8')
+    const content = input.content ?? (await readFile(resolvePath(input.repoRoot, input.filePath), 'utf8'))
     return await parseAst(content, input.filePath)
   },
 
@@ -1482,6 +1626,15 @@ export const activities = {
       }
     }
 
+    const deliveryId = input.eventDeliveryId?.trim()
+    if (deliveryId) {
+      await db`
+        UPDATE atlas.github_events
+        SET processed_at = now()
+        WHERE delivery_id = ${deliveryId};
+      `
+    }
+
     return { id: enrichmentId }
   },
 
@@ -1493,7 +1646,6 @@ export const activities = {
 
     const deliveryId = input.deliveryId.trim()
     if (deliveryId.length === 0) return
-
     await db`
       UPDATE atlas.github_events
       SET processed_at = now()

@@ -60,3 +60,64 @@ describe('bumba ast extraction', () => {
     expect(result.metadata.language).toBe('text')
   })
 })
+
+describe('bumba readRepoFile', () => {
+  it('fetches from GitHub when local file is missing', async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))
+    const filePath = 'services/bumba/src/workflows/index.test.ts'
+    const commit = 'deadbeef'
+    const content = 'console.log("hello")'
+    const encoded = Buffer.from(content, 'utf8').toString('base64')
+
+    const previousToken = process.env.GITHUB_TOKEN
+    const previousFetch = globalThis.fetch
+    let requestedUrl: string | null = null
+
+    process.env.GITHUB_TOKEN = 'token'
+    globalThis.fetch = (async (input) => {
+      requestedUrl =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input instanceof Request
+              ? input.url
+              : null
+      return new Response(
+        JSON.stringify({
+          type: 'file',
+          encoding: 'base64',
+          content: encoded,
+          size: content.length,
+          download_url: 'https://raw.githubusercontent.com/proompteng/lab/deadbeef/file.ts',
+          url: 'https://api.github.com/repos/proompteng/lab/contents/file.ts',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    }) as typeof fetch
+
+    try {
+      const result = await activities.readRepoFile({
+        repoRoot,
+        filePath,
+        repository: 'proompteng/lab',
+        commit,
+      })
+
+      expect(result.content).toBe(content)
+      expect(result.metadata.repoCommit).toBe(commit)
+      expect(result.metadata.metadata.source).toBe('github')
+      expect(requestedUrl).not.toBeNull()
+      expect(String(requestedUrl)).toContain(`/repos/proompteng/lab/contents/${filePath}`)
+      expect(String(requestedUrl)).toContain(`ref=${commit}`)
+    } finally {
+      if (previousToken === undefined) {
+        delete process.env.GITHUB_TOKEN
+      } else {
+        process.env.GITHUB_TOKEN = previousToken
+      }
+      globalThis.fetch = previousFetch
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
+})

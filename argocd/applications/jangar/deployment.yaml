@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2025-12-24T05:05:20.918Z"
+    deploy.knative.dev/rollout: "2025-12-24T07:01:10.858Z"
 spec:
   replicas: 1
   strategy:
@@ -45,6 +45,11 @@ spec:
               value: proompteng/lab
             - name: CODEX_REPO_URL
               value: https://github.com/proompteng/lab.git
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
             - name: CODEX_BOOTSTRAP_REPO
               value: "1"
             - name: CODEX_INTERNAL_ORIGINATOR_OVERRIDE
