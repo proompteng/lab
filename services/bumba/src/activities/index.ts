@@ -83,7 +83,8 @@ const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
 const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
 const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding:0.6b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
-const DEFAULT_COMPLETION_MODEL = 'gpt-5.2-codex'
+const DEFAULT_OPENAI_COMPLETION_MODEL = 'gpt-5.2-codex'
+const DEFAULT_SELF_HOSTED_COMPLETION_MODEL = 'qwen3-coder:30b-a3b-q4_K_M'
 
 const MAX_AST_BYTES = 200_000
 const MAX_FACTS = 300
@@ -141,6 +142,13 @@ const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
   }
 }
 
+const resolveCompletionDefaults = (apiBaseUrl: string) => {
+  const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
+  return {
+    model: hosted ? DEFAULT_OPENAI_COMPLETION_MODEL : DEFAULT_SELF_HOSTED_COMPLETION_MODEL,
+  }
+}
+
 const loadEmbeddingConfig = () => {
   const apiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
   const apiKey = process.env.OPENAI_API_KEY?.trim() || null
@@ -174,22 +182,25 @@ const runCommand = async (args: string[], cwd: string): Promise<string | null> =
 }
 
 const resolveRepositoryInfo = async (repoRoot: string) => {
-  const envRepo = process.env.BUMBA_REPOSITORY?.trim()
-  const envRef = process.env.BUMBA_REPOSITORY_REF?.trim()
-  const envCommit = process.env.BUMBA_REPOSITORY_COMMIT?.trim()
-
-  if (envRepo && envRepo.length > 0) {
-    return {
-      repoName: envRepo,
-      repoRef: envRef && envRef.length > 0 ? envRef : null,
-      repoCommit: envCommit && envCommit.length > 0 ? envCommit : null,
-    }
-  }
+  const envRepo = process.env.REPOSITORY?.trim()
+  const envRef = process.env.REPOSITORY_REF?.trim()
+  const envCommit = process.env.REPOSITORY_COMMIT?.trim()
 
   const fallbackName = basename(repoRoot)
-  const repoName = (await runCommand(['git', '-C', repoRoot, 'remote', 'get-url', 'origin'], repoRoot)) ?? fallbackName
-  const repoRef = (await runCommand(['git', '-C', repoRoot, 'rev-parse', '--abbrev-ref', 'HEAD'], repoRoot)) ?? null
-  const repoCommit = (await runCommand(['git', '-C', repoRoot, 'rev-parse', 'HEAD'], repoRoot)) ?? null
+  const defaultRepo =
+    process.env.CODEX_REPO_SLUG?.trim() ||
+    process.env.CODEX_REPO_URL?.trim() ||
+    (await runCommand(['git', '-C', repoRoot, 'remote', 'get-url', 'origin'], repoRoot)) ||
+    fallbackName
+  const repoName = envRepo && envRepo.length > 0 ? envRepo : defaultRepo
+  const repoRef =
+    (envRef && envRef.length > 0 ? envRef : null) ??
+    (await runCommand(['git', '-C', repoRoot, 'rev-parse', '--abbrev-ref', 'HEAD'], repoRoot)) ??
+    null
+  const repoCommit =
+    (envCommit && envCommit.length > 0 ? envCommit : null) ??
+    (await runCommand(['git', '-C', repoRoot, 'rev-parse', 'HEAD'], repoRoot)) ??
+    null
 
   const normalizedRepoName = repoName
     .replace(/\s+/g, '')
@@ -444,7 +455,8 @@ const loadCompletionConfig = () => {
     )
   }
 
-  const model = process.env.OPENAI_COMPLETION_MODEL ?? process.env.OPENAI_MODEL ?? DEFAULT_COMPLETION_MODEL
+  const defaults = resolveCompletionDefaults(apiBaseUrl)
+  const model = process.env.OPENAI_COMPLETION_MODEL ?? process.env.OPENAI_MODEL ?? defaults.model
   const timeoutMs = Number.parseInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS ?? '30000', 10)
   const maxInputChars = clampNumber(
     Number.parseInt(process.env.OPENAI_COMPLETION_MAX_INPUT_CHARS ?? '', 10),
@@ -672,13 +684,21 @@ export const activities = {
       input.content.length > maxInputChars ? input.content.slice(0, maxInputChars) : input.content
     const wasTruncated = truncatedContent.length !== input.content.length
 
-    const systemPrompt =
-      'You are an Atlas enrichment agent. Summarize the file and provide a concise enrichment. ' +
-      'Return JSON only with keys "summary" and "enriched". The enriched field should be short bullet points.'
+    const systemPrompt = [
+      'You are an Atlas enrichment agent.',
+      'Return a valid JSON object ONLY with keys "summary" and "enriched".',
+      'Do not include markdown, code fences, or extra keys.',
+      '"summary": 2-4 sentences (<= 400 chars) describing what the file does.',
+      '"enriched": a single string of 3-6 bullet lines, each starting with "- ". Each bullet <= 120 chars.',
+      'Bullets should cover: purpose, key APIs/entry points, data flow, side effects/IO, risks/edge cases.',
+      'If information is missing, say "Unknown" instead of guessing.',
+      'If input is truncated, include a bullet: "Input truncated; details may be missing."',
+    ].join(' ')
 
     const userSections = [
       `Filename: ${input.filename}`,
       input.context ? `Context: ${input.context}` : null,
+      `Input truncated: ${wasTruncated ? 'yes' : 'no'}`,
       `AST summary:\n${input.astSummary}`,
       `Content${wasTruncated ? ' (truncated)' : ''}:\n${truncatedContent}`,
     ].filter((section) => section && section.length > 0)
@@ -690,6 +710,10 @@ export const activities = {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userSections.join('\n\n') },
       ],
+    }
+    const payloadWithFormat = {
+      ...payload,
+      response_format: { type: 'json_object' },
     }
 
     const controller = new AbortController()
@@ -706,12 +730,43 @@ export const activities = {
       const response = await fetch(`${apiBaseUrl}/chat/completions`, {
         method: 'POST',
         headers,
-        body: JSON.stringify(payload),
+        body: JSON.stringify(payloadWithFormat),
         signal: controller.signal,
       })
 
       if (!response.ok) {
         const body = await response.text()
+        const lowerBody = body.toLowerCase()
+        const formatUnsupported =
+          lowerBody.includes('response_format') ||
+          lowerBody.includes('json_schema') ||
+          lowerBody.includes('json object') ||
+          lowerBody.includes('unsupported') ||
+          lowerBody.includes('unknown parameter')
+        if (formatUnsupported) {
+          const fallbackResponse = await fetch(`${apiBaseUrl}/chat/completions`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          })
+          if (!fallbackResponse.ok) {
+            const fallbackBody = await fallbackResponse.text()
+            throw new Error(`completion request failed (${fallbackResponse.status}): ${fallbackBody}`)
+          }
+          const output = await parseStreamingCompletion(fallbackResponse)
+          const parsed = parseCompletionOutput(output)
+          return {
+            summary: parsed.summary,
+            enriched: parsed.enriched,
+            metadata: {
+              model,
+              wasTruncated,
+              parsedJson: parsed.metadata.parsedJson,
+              responseFormat: 'none',
+            },
+          }
+        }
         throw new Error(`completion request failed (${response.status}): ${body}`)
       }
 
@@ -725,6 +780,7 @@ export const activities = {
           model,
           wasTruncated,
           parsedJson: parsed.metadata.parsedJson,
+          responseFormat: 'json_object',
         },
       }
     } catch (error) {
@@ -750,9 +806,9 @@ export const activities = {
 
     const fileMeta = input.fileMetadata
     const repositoryName = fileMeta.repoName
-    const repositoryRef = fileMeta.repoRef
-    const repositoryCommit = fileMeta.repoCommit
-    const contentHash = fileMeta.contentHash
+    const repositoryRef = fileMeta.repoRef ?? 'main'
+    const repositoryCommit = fileMeta.repoCommit ?? null
+    const contentHash = fileMeta.contentHash ?? ''
 
     const repositoryRows = (await db`
       INSERT INTO atlas.repositories (name, default_ref, metadata)
@@ -834,7 +890,7 @@ export const activities = {
         ${db.array([], 'text')}::text[],
         ${JSON.stringify(enrichmentMetadata)}::jsonb
       )
-      ON CONFLICT (file_version_id, kind, source) DO UPDATE
+      ON CONFLICT (file_version_id, kind, source) WHERE chunk_id IS NULL DO UPDATE
       SET content = EXCLUDED.content,
           summary = EXCLUDED.summary,
           metadata = EXCLUDED.metadata

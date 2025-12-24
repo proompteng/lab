@@ -261,7 +261,7 @@ sequenceDiagram
 
   UI->>API: POST /api/enrich {file}
   API->>TC: Start workflow (file payload)
-  TC->>WF: bumbaEnrichFile
+  TC->>WF: enrichFile
   WF->>ACT: Read file + metadata
   WF->>ACT: Extract Tree‑sitter facts
   WF->>ACT: Call model (completion)

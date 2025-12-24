@@ -26,6 +26,12 @@ RUN --mount=type=cache,target=/root/.cache/bun \
 FROM oven/bun:${BUN_VERSION} AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+RUN --mount=type=cache,target=/var/cache/apt \
+  --mount=type=cache,target=/var/lib/apt/lists \
+  set -eux; \
+  apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
+  apt-get install -y --no-install-recommends git ca-certificates; \
+  rm -rf /var/lib/apt/lists/*
 COPY --from=deps-prod /app/node_modules ./node_modules
 COPY --from=build /app/services/bumba ./services/bumba
 COPY --from=build /app/tsconfig.base.json ./tsconfig.base.json
