@@ -1,9 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
-import type { AtlasSearchMatch } from '~/server/atlas-store'
 import { Atlas, AtlasLive } from '~/server/atlas'
 import { parseAtlasSearchInput } from '~/server/atlas-http'
+import type { AtlasSearchMatch } from '~/server/atlas-store'
 import {
   DEFAULT_ATLAS_REF,
   ensureGitRef,

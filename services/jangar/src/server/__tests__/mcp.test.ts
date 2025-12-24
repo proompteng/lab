@@ -95,6 +95,9 @@ describe('Memories MCP handler', () => {
     expect(list.json?.result?.tools?.map((tool: { name: string }) => tool.name)).toEqual([
       'persist_memory',
       'retrieve_memory',
+      'atlas.index',
+      'atlas.search',
+      'atlas.stats',
     ])
   })
 

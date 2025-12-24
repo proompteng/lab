@@ -95,6 +95,13 @@ const makeFakeDb = (options: { extensions?: string[]; embeddingType?: string | n
       ]
     }
 
+    if (query.includes('pg_catalog.pg_attribute') && query.includes("a.attname = 'embedding'")) {
+      if (options.embeddingType) {
+        return [{ embedding_type: options.embeddingType }]
+      }
+      return []
+    }
+
     return options.selectRows ?? []
   }) as FakeDb
 
@@ -103,12 +110,6 @@ const makeFakeDb = (options: { extensions?: string[]; embeddingType?: string | n
     if (query.includes("SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')")) {
       const extensions = options.extensions ?? ['vector', 'pgcrypto']
       return extensions.map((ext) => ({ extname: ext })) as unknown as T
-    }
-    if (query.includes('pg_catalog.pg_attribute') && query.includes("a.attname = 'embedding'")) {
-      if (options.embeddingType) {
-        return [{ embedding_type: options.embeddingType }] as unknown as T
-      }
-      return [] as unknown as T
     }
     return [] as unknown as T
   }

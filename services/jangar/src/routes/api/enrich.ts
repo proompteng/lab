@@ -3,7 +3,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import { Atlas, AtlasLive } from '~/server/atlas'
-import { DEFAULT_REF, parseAtlasIndexInput, type AtlasIndexInput } from '~/server/atlas-http'
+import { type AtlasIndexInput, DEFAULT_REF, parseAtlasIndexInput } from '~/server/atlas-http'
 import { BumbaWorkflows, BumbaWorkflowsLive, type StartEnrichFileResult } from '~/server/bumba'
 import {
   DEFAULT_ATLAS_REF,
@@ -23,9 +23,7 @@ type EnrichPayload = {
   metadata?: Record<string, unknown>
 }
 
-type GitIndexResolution =
-  | { ok: true; value: AtlasIndexInput }
-  | { ok: false; message: string; status?: number }
+type GitIndexResolution = { ok: true; value: AtlasIndexInput } | { ok: false; message: string; status?: number }
 
 export const Route = createFileRoute('/api/enrich')({
   server: {
@@ -326,12 +324,13 @@ export const postEnrichHandlerEffect = (request: Request) =>
 
       const payloadRecord = payload as Record<string, unknown>
       const parsed = parseAtlasIndexInput(payloadRecord)
+      const parsedMessage = parsed.ok ? null : parsed.message
       const eventInput = resolveAtlasEventInput(payloadRecord)
 
       let parsedInput: AtlasIndexInput | null = null
       if (parsed.ok) {
         parsedInput = parsed.value
-      } else if (parsed.message === 'Commit or content hash is required.') {
+      } else if (parsedMessage === 'Commit or content hash is required.') {
         const gitResolved = yield* Effect.tryPromise({
           try: () => resolveGitIndexInput(payloadRecord),
           catch: (error) => error as Error,
@@ -343,7 +342,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
         }
       }
 
-      if (!parsedInput && !eventInput) return errorResponse(parsed.message, 400)
+      if (!parsedInput && !eventInput) return errorResponse(parsedMessage ?? 'Invalid Atlas index input.', 400)
 
       const atlas = yield* Atlas
       const bumbaWorkflows = yield* BumbaWorkflows
