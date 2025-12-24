@@ -28,5 +28,5 @@ helmCharts:
 
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: 6ecf9971
-    digest: sha256:6d8c18ba8b8bd5c7c2a163abc18638f7f299e4acfb93815000eced73d3c6f047
+    newTag: f3d51af7
+    digest: sha256:67c8406d45e23805e2e6b5ff9986847bcd7046bb22daed7cba436feaaa3f921b
