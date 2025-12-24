@@ -26,6 +26,7 @@ import { Route as ApiEnrichRouteImport } from './routes/api/enrich'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
 import { Route as ApiAtlasPathsRouteImport } from './routes/api/atlas/paths'
+import { Route as ApiAtlasIndexedRouteImport } from './routes/api/atlas/indexed'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
 import { Route as ApiTorghutSymbolsSymbolRouteImport } from './routes/api/torghut/symbols/$symbol'
 
@@ -114,6 +115,11 @@ const ApiAtlasPathsRoute = ApiAtlasPathsRouteImport.update({
   path: '/api/atlas/paths',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAtlasIndexedRoute = ApiAtlasIndexedRouteImport.update({
+  id: '/api/atlas/indexed',
+  path: '/api/atlas/indexed',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OpenaiV1ChatCompletionsRoute = OpenaiV1ChatCompletionsRouteImport.update({
   id: '/openai/v1/chat/completions',
   path: '/openai/v1/chat/completions',
@@ -140,6 +146,7 @@ export interface FileRoutesByFullPath {
   '/atlas/search': typeof AtlasSearchRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/atlas': typeof AtlasIndexRoute
+  '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
@@ -161,6 +168,7 @@ export interface FileRoutesByTo {
   '/atlas/search': typeof AtlasSearchRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/atlas': typeof AtlasIndexRoute
+  '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
@@ -183,6 +191,7 @@ export interface FileRoutesById {
   '/atlas/search': typeof AtlasSearchRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/atlas/': typeof AtlasIndexRoute
+  '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
@@ -206,6 +215,7 @@ export interface FileRouteTypes {
     | '/atlas/search'
     | '/torghut/symbols'
     | '/atlas'
+    | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
@@ -227,6 +237,7 @@ export interface FileRouteTypes {
     | '/atlas/search'
     | '/torghut/symbols'
     | '/atlas'
+    | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
@@ -248,6 +259,7 @@ export interface FileRouteTypes {
     | '/atlas/search'
     | '/torghut/symbols'
     | '/atlas/'
+    | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
@@ -270,6 +282,7 @@ export interface RootRouteChildren {
   AtlasSearchRoute: typeof AtlasSearchRoute
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
   AtlasIndexRoute: typeof AtlasIndexRoute
+  ApiAtlasIndexedRoute: typeof ApiAtlasIndexedRoute
   ApiAtlasPathsRoute: typeof ApiAtlasPathsRoute
   ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
@@ -397,6 +410,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAtlasPathsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/atlas/indexed': {
+      id: '/api/atlas/indexed'
+      path: '/api/atlas/indexed'
+      fullPath: '/api/atlas/indexed'
+      preLoaderRoute: typeof ApiAtlasIndexedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/openai/v1/chat/completions': {
       id: '/openai/v1/chat/completions'
       path: '/openai/v1/chat/completions'
@@ -440,6 +460,7 @@ const rootRouteChildren: RootRouteChildren = {
   AtlasSearchRoute: AtlasSearchRoute,
   TorghutSymbolsRoute: TorghutSymbolsRoute,
   AtlasIndexRoute: AtlasIndexRoute,
+  ApiAtlasIndexedRoute: ApiAtlasIndexedRoute,
   ApiAtlasPathsRoute: ApiAtlasPathsRoute,
   ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,

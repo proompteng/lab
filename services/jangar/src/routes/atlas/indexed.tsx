@@ -4,7 +4,7 @@ import * as React from 'react'
 import { AtlasResultsTable, AtlasSectionHeader } from '@/components/atlas-results-table'
 import { Button } from '@/components/ui/button'
 import type { AtlasFileItem } from '@/data/atlas'
-import { searchAtlas } from '@/data/atlas'
+import { listAtlasIndexedFiles } from '@/data/atlas'
 
 export const Route = createFileRoute('/atlas/indexed')({
   component: AtlasIndexedPage,
@@ -19,7 +19,7 @@ function AtlasIndexedPage() {
     setIsLoadingIndex(true)
     setIndexedStatus(null)
     try {
-      const result = await searchAtlas({ query: '', limit: 50 })
+      const result = await listAtlasIndexedFiles({ limit: 50 })
       if (!result.ok) {
         setIndexedFiles(result.items ?? [])
         setIndexedStatus(result.message)

@@ -62,6 +62,9 @@ const resolveRequestError = (message: string) => {
   return resolveServiceError(message)
 }
 
+const isMissingWorktreeFile = (message: string) =>
+  message.includes('File not found in worktree after refresh') || message.includes('Commit not found after fetch')
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
@@ -423,30 +426,54 @@ export const postEnrichHandlerEffect = (request: Request) =>
           )
         }
         const workflowId = eventInput?.workflowIdentifier ?? null
-        workflow = yield* bumbaWorkflows.startEnrichFile({
-          filePath: parsedInput.path,
-          commit: parsedInput.commit ?? null,
-          repository: parsedInput.repository,
-          workflowId: workflowId ?? undefined,
-          eventDeliveryId: eventInput?.deliveryId,
-        })
+        const startResult = yield* pipe(
+          bumbaWorkflows.startEnrichFile({
+            filePath: parsedInput.path,
+            commit: parsedInput.commit ?? null,
+            repository: parsedInput.repository,
+            workflowId: workflowId ?? undefined,
+            eventDeliveryId: eventInput?.deliveryId,
+          }),
+          Effect.map((value) => ({ ok: true as const, value })),
+          Effect.catchAll((error) => {
+            const message = error instanceof Error ? error.message : String(error)
+            if (isMissingWorktreeFile(message)) {
+              return Effect.succeed({ ok: false as const, status: 404, message })
+            }
+            return Effect.fail(error)
+          }),
+        )
+        if (!startResult.ok) {
+          return errorResponse(startResult.message, startResult.status)
+        }
+        workflow = startResult.value
       } else if (eventInput?.eventType === 'push' && eventInput.commit) {
         const eventPayload = eventInput.payload
         if (isRecord(eventPayload)) {
           const filePaths = extractEventFilePaths(eventPayload)
           if (filePaths.length > 0) {
-            workflows = yield* Effect.forEach(
+            const results = yield* Effect.forEach(
               filePaths,
               (filePath) =>
-                bumbaWorkflows.startEnrichFile({
-                  filePath,
-                  commit: eventInput.commit ?? null,
-                  repository: eventInput.repository,
-                  workflowId: eventInput.workflowIdentifier ?? undefined,
-                  eventDeliveryId: eventInput.deliveryId,
-                }),
+                pipe(
+                  bumbaWorkflows.startEnrichFile({
+                    filePath,
+                    commit: eventInput.commit ?? null,
+                    repository: eventInput.repository,
+                    workflowId: eventInput.workflowIdentifier ?? undefined,
+                    eventDeliveryId: eventInput.deliveryId,
+                  }),
+                  Effect.catchAll((error) => {
+                    const message = error instanceof Error ? error.message : String(error)
+                    if (isMissingWorktreeFile(message)) {
+                      return Effect.succeed(null)
+                    }
+                    return Effect.fail(error)
+                  }),
+                ),
               { concurrency: 6 },
             )
+            workflows = results.filter((item): item is StartEnrichFileResult => Boolean(item))
           }
         }
       }

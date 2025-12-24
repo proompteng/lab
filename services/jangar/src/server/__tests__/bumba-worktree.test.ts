@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -39,6 +39,7 @@ describe('bumba worktree refresh', () => {
     runGit(['init'], repoRoot)
     runGit(['config', 'user.email', 'bumba@example.com'], repoRoot)
     runGit(['config', 'user.name', 'Bumba Test'], repoRoot)
+    runGit(['config', 'commit.gpgsign', 'false'], repoRoot)
 
     process.env.BUMBA_WORKSPACE_ROOT = repoRoot
 
@@ -50,17 +51,17 @@ describe('bumba worktree refresh', () => {
       const resolvedOptions = { ...baseOptions, ...(options ?? {}) }
       const rawCmd = baseOptions?.cmd ?? rawArgs
       const command = Array.isArray(rawCmd) ? rawCmd : typeof rawCmd === 'string' ? [rawCmd] : []
-      const child = spawn(command[0] ?? '', command.slice(1), {
+      const result = spawnSync(command[0] ?? '', command.slice(1), {
         cwd: resolvedOptions.cwd,
         env: resolvedOptions.env as NodeJS.ProcessEnv | undefined,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        encoding: null,
       })
 
-      const stdout = Readable.toWeb(child.stdout ?? Readable.from([])) as unknown as ReadableStream<Uint8Array>
-      const stderr = Readable.toWeb(child.stderr ?? Readable.from([])) as unknown as ReadableStream<Uint8Array>
-      const exited = new Promise<number>((resolve) => {
-        child.on('close', (code) => resolve(code ?? 1))
-      })
+      const stdoutData = result.stdout ?? new Uint8Array()
+      const stderrData = result.stderr ?? new Uint8Array()
+      const stdout = Readable.toWeb(Readable.from([stdoutData])) as unknown as ReadableStream<Uint8Array>
+      const stderr = Readable.toWeb(Readable.from([stderrData])) as unknown as ReadableStream<Uint8Array>
+      const exited = Promise.resolve(result.status ?? 1)
 
       return { stdout, stderr, exited } as BunSpawnResult
     }) as typeof Bun.spawn

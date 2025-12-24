@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, pipe } from 'effect'
 
 import {
+  type AtlasIndexedFile,
   type AtlasSearchInput,
   type AtlasSearchMatch,
   type AtlasStats,
@@ -62,6 +63,12 @@ export type AtlasService = {
   upsertIngestion: (input: UpsertIngestionInput) => Effect.Effect<IngestionRecord, Error>
   upsertEventFile: (input: UpsertEventFileInput) => Effect.Effect<EventFileRecord, Error>
   upsertIngestionTarget: (input: UpsertIngestionTargetInput) => Effect.Effect<IngestionTargetRecord, Error>
+  listIndexedFiles: (input: {
+    limit?: number
+    repository?: string
+    ref?: string
+    pathPrefix?: string
+  }) => Effect.Effect<AtlasIndexedFile[], Error>
   search: (input: AtlasSearchInput) => Effect.Effect<AtlasSearchMatch[], Error>
   stats: () => Effect.Effect<AtlasStats, Error>
   close: () => Effect.Effect<void, Error>
@@ -134,6 +141,8 @@ export const AtlasLive = Layer.scoped(
       upsertEventFile: (input) => wrap('upsert event file failed', (resolved) => resolved.upsertEventFile(input)),
       upsertIngestionTarget: (input) =>
         wrap('upsert ingestion target failed', (resolved) => resolved.upsertIngestionTarget(input)),
+      listIndexedFiles: (input) =>
+        wrap('atlas list indexed files failed', (resolved) => resolved.listIndexedFiles(input)),
       search: (input) => wrap('atlas search failed', (resolved) => resolved.search(input)),
       stats: () => wrap('atlas stats failed', (resolved) => resolved.stats()),
       close: () =>

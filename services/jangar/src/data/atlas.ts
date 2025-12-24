@@ -174,6 +174,36 @@ export const searchAtlas = async (params: AtlasSearchParams): Promise<AtlasSearc
   return { ok: true, items: extractAtlasItems(payload), raw: payload }
 }
 
+export const listAtlasIndexedFiles = async (
+  params: Pick<AtlasSearchParams, 'limit' | 'repository' | 'ref' | 'pathPrefix'> = {},
+): Promise<AtlasSearchResult> => {
+  const searchParams = new URLSearchParams()
+  if (params.limit !== undefined) searchParams.set('limit', params.limit.toString())
+  if (params.repository) searchParams.set('repository', params.repository)
+  if (params.ref) searchParams.set('ref', params.ref)
+  if (params.pathPrefix) searchParams.set('pathPrefix', params.pathPrefix)
+
+  const url = `/api/atlas/indexed${searchParams.toString() ? `?${searchParams.toString()}` : ''}`
+  const response = await fetch(url)
+  let payload: unknown = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      items: extractAtlasItems(payload),
+      raw: payload ?? undefined,
+      message: `Indexed files failed (${response.status})`,
+    }
+  }
+
+  return { ok: true, items: extractAtlasItems(payload), raw: payload }
+}
+
 export const enrichAtlas = async (input: AtlasEnrichInput): Promise<AtlasEnrichResult> => {
   const response = await fetch('/api/enrich', {
     method: 'POST',

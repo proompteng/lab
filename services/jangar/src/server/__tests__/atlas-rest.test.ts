@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { getAtlasIndexedHandler } from '~/routes/api/atlas/indexed'
 import { getAtlasPathsHandler } from '~/routes/api/atlas/paths'
 import { postEnrichHandler } from '~/routes/api/enrich'
 import { getAtlasSearchHandler } from '~/routes/api/search'
@@ -24,15 +25,16 @@ const initRepo = (cwd: string) => {
   }
   runGit(['config', 'user.email', 'atlas-tests@example.com'], cwd)
   runGit(['config', 'user.name', 'Atlas Tests'], cwd)
+  runGit(['config', 'commit.gpgsign', 'false'], cwd)
 }
 
 describe('atlas REST handlers', () => {
-  const previousEnv: Partial<Record<'CODEX_CWD' | 'ATLAS_LOCAL_MODE', string | undefined>> = {}
+  const previousEnv: Partial<Record<'CODEX_CWD' | 'DATABASE_URL', string | undefined>> = {}
   let repoRoot: string | null = null
 
   beforeEach(async () => {
     previousEnv.CODEX_CWD = process.env.CODEX_CWD
-    previousEnv.ATLAS_LOCAL_MODE = process.env.ATLAS_LOCAL_MODE
+    previousEnv.DATABASE_URL = process.env.DATABASE_URL
 
     repoRoot = await mkdtemp(join(tmpdir(), 'jangar-atlas-'))
     initRepo(repoRoot)
@@ -44,7 +46,7 @@ describe('atlas REST handlers', () => {
     runGit(['commit', '-m', 'init'], repoRoot)
 
     process.env.CODEX_CWD = repoRoot
-    process.env.ATLAS_LOCAL_MODE = 'true'
+    delete process.env.DATABASE_URL
   })
 
   afterEach(async () => {
@@ -59,43 +61,29 @@ describe('atlas REST handlers', () => {
       process.env.CODEX_CWD = previousEnv.CODEX_CWD
     }
 
-    if (previousEnv.ATLAS_LOCAL_MODE === undefined) {
-      delete process.env.ATLAS_LOCAL_MODE
+    if (previousEnv.DATABASE_URL === undefined) {
+      delete process.env.DATABASE_URL
     } else {
-      process.env.ATLAS_LOCAL_MODE = previousEnv.ATLAS_LOCAL_MODE
+      process.env.DATABASE_URL = previousEnv.DATABASE_URL
     }
   })
 
-  it('searches files with query', async () => {
-    const request = new Request('http://localhost/api/search?query=hello&limit=5&repository=proompteng/lab&ref=main')
-    const response = await getAtlasSearchHandler(request)
-    expect(response.status).toBe(200)
-
-    const json = await response.json()
-    expect(json.ok).toBe(true)
-    expect(json.items.length).toBeGreaterThan(0)
-    expect(json.items[0].path).toContain('README.md')
-    expect(json.items[0].repository).toBe('proompteng/lab')
-    expect(json.items[0].ref).toBe('main')
-  })
-
-  it('lists recent files when query is empty', async () => {
-    const request = new Request('http://localhost/api/search?limit=10&repository=proompteng/lab&ref=main')
-    const response = await getAtlasSearchHandler(request)
-    expect(response.status).toBe(200)
-
-    const json = await response.json()
-    expect(json.ok).toBe(true)
-    expect(json.items.length).toBeGreaterThan(0)
-  })
-
-  it('rejects unsupported repositories', async () => {
-    const request = new Request('http://localhost/api/search?query=hello&repository=other/repo')
+  it('requires a query for search', async () => {
+    const request = new Request('http://localhost/api/search?limit=5')
     const response = await getAtlasSearchHandler(request)
     expect(response.status).toBe(400)
 
     const json = await response.json()
-    expect(json.message).toContain('proompteng/lab')
+    expect(json.message).toContain('Query')
+  })
+
+  it('returns 503 when Atlas storage is unavailable', async () => {
+    const request = new Request('http://localhost/api/search?query=hello&limit=5&repository=proompteng/lab&ref=main')
+    const response = await getAtlasSearchHandler(request)
+    expect(response.status).toBe(503)
+
+    const json = await response.json()
+    expect(json.message).toContain('DATABASE_URL')
   })
 
   it('queues enrich requests', async () => {
@@ -158,5 +146,14 @@ describe('atlas REST handlers', () => {
     const json = await response.json()
     expect(json.ok).toBe(true)
     expect(json.paths).toEqual([])
+  })
+
+  it('returns 503 when indexed files are unavailable', async () => {
+    const request = new Request('http://localhost/api/atlas/indexed?limit=5')
+    const response = await getAtlasIndexedHandler(request)
+    expect(response.status).toBe(503)
+
+    const json = await response.json()
+    expect(json.message).toContain('DATABASE_URL')
   })
 })
