@@ -346,16 +346,13 @@ describeIntegration('Temporal worker runtime integration', () => {
       } else {
         expect(workerTaskQueue).toBe('')
       }
-      expect(request.deploymentOptions?.deploymentName).toBe(result.deploymentName)
-      expect(request.deploymentOptions?.buildId).toBe(result.buildId)
-      expect(request.deploymentOptions?.workerVersioningMode).toBe(WorkerVersioningMode.UNVERSIONED)
+      expect(request.deploymentOptions).toBeUndefined()
       expect(request.versioningBehavior).toBe(VersioningBehavior.UNSPECIFIED)
     }
 
     expect(result.polls.length).toBeGreaterThan(0)
     for (const poll of result.polls) {
-      expect(poll.deploymentOptions?.deploymentName).toBe(result.deploymentName)
-      expect(poll.deploymentOptions?.buildId).toBe(result.buildId)
+      expect(poll.deploymentOptions).toBeUndefined()
     }
   })
 })

@@ -125,6 +125,7 @@ test('schedules a child workflow command', async () => {
   const attrs = startChildCommand.attributes?.value
   expect(attrs?.workflowType?.name).toBe('childWorkflow')
   expect(attrs?.workflowId).toBe('child-1')
+  expect(attrs?.namespace).toBe('')
   expect(attrs?.taskQueue?.name).toBe('child-queue')
   const decoded = await decodePayloadsToValues(dataConverter, attrs?.input?.payloads ?? [])
   expect(decoded).toEqual(['payload'])

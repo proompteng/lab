@@ -223,7 +223,7 @@ export class WorkflowExecutor {
         }
       }
 
-      const commands = await this.#buildSuccessCommands(exit.value.commandContext, exit.value.result)
+      const commands = await this.#buildSuccessCommands(exit.value.commandContext, exit.value.result, info)
       return {
         commands,
         intents: exit.value.commandContext.intents,
@@ -244,7 +244,7 @@ export class WorkflowExecutor {
       }
       const rawSnapshot = guard.snapshot
       const intents = rawSnapshot.commandHistory.map((entry) => entry.intent)
-      const commands = await materializeCommands(intents, { dataConverter: this.#dataConverter })
+      const commands = await materializeCommands(intents, { dataConverter: this.#dataConverter, workflowInfo: info })
       return {
         commands,
         intents,
@@ -269,6 +269,7 @@ export class WorkflowExecutor {
         })()
       const pendingCommands = await materializeCommands(contextForPending.intents, {
         dataConverter: this.#dataConverter,
+        workflowInfo: info,
       })
       if (executionMode === 'query') {
         return {
@@ -516,9 +517,13 @@ export class WorkflowExecutor {
   async #buildSuccessCommands(
     commandContext: { intents: readonly WorkflowCommandIntent[] },
     result: unknown,
+    workflowInfo: WorkflowInfo,
   ): Promise<Command[]> {
     const commandIntents = commandContext.intents
-    const materialized = await materializeCommands(commandIntents, { dataConverter: this.#dataConverter })
+    const materialized = await materializeCommands(commandIntents, {
+      dataConverter: this.#dataConverter,
+      workflowInfo,
+    })
     const completionCommands = await this.#buildCompleteCommands(result)
     return [...materialized, ...completionCommands]
   }
