@@ -370,20 +370,26 @@ export const createMetricsExporter = (spec: MetricsExporterSpec): Effect.Effect<
         if (!spec.endpoint) {
           throw new Error('File metrics exporter requires an endpoint (file path)')
         }
-        yield* swallowMetricsFailure(
-          Effect.tryPromise(() => ensureDirectory(spec.endpoint)),
-          `prepare file metrics output ${spec.endpoint}`,
-        )
-        return new FileMetricsExporter(spec.endpoint)
+        {
+          const fileEndpoint = spec.endpoint
+          yield* swallowMetricsFailure(
+            Effect.tryPromise(() => ensureDirectory(fileEndpoint)),
+            `prepare file metrics output ${fileEndpoint}`,
+          )
+          return new FileMetricsExporter(fileEndpoint)
+        }
       case 'prometheus':
         if (!spec.endpoint) {
           throw new Error('Prometheus exporter requires a target endpoint to write to')
         }
-        yield* swallowMetricsFailure(
-          Effect.tryPromise(() => ensureDirectory(spec.endpoint)),
-          `prepare Prometheus metrics output ${spec.endpoint}`,
-        )
-        return new PrometheusMetricsExporter(spec.endpoint)
+        {
+          const prometheusEndpoint = spec.endpoint
+          yield* swallowMetricsFailure(
+            Effect.tryPromise(() => ensureDirectory(prometheusEndpoint)),
+            `prepare Prometheus metrics output ${prometheusEndpoint}`,
+          )
+          return new PrometheusMetricsExporter(prometheusEndpoint)
+        }
       case 'otlp':
         if (!spec.endpoint) {
           throw new Error('OTLP exporter requires an endpoint URL')

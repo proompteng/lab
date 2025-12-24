@@ -103,15 +103,10 @@ const buildTunnelPayload = (payload: Payload): Record<typeof PAYLOAD_TUNNEL_FIEL
 
 const tunnelToPayload = (envelope: PayloadTunnelEnvelope): Payload => {
   const metadataEntries = Object.entries(envelope.metadata ?? {})
-  const metadata =
-    metadataEntries.length === 0
-      ? undefined
-      : Object.fromEntries(
-          metadataEntries.map(([key, value]) => {
-            const decoded = base64Decode(value)
-            return decoded === undefined ? [key, undefined] : [key, decoded]
-          }),
-        )
+  const decodedEntries = metadataEntries
+    .map<[string, Uint8Array<ArrayBufferLike> | undefined]>(([key, value]) => [key, base64Decode(value)])
+    .filter((entry): entry is [string, Uint8Array<ArrayBufferLike>] => entry[1] !== undefined)
+  const metadata = decodedEntries.length === 0 ? undefined : Object.fromEntries(decodedEntries)
 
   const decodedData = base64Decode(envelope.data)
 

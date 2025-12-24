@@ -116,7 +116,7 @@ export function defineWorkflow<
     handler,
     decodeArgumentsAsArray,
     ...(extras?.updates ? { updates: extras.updates } : {}),
-  } as WorkflowDefinition<I, O, undefined, undefined>
+  } as WorkflowDefinition<I, O, S, Q>
 }
 
 export type WorkflowDefinitions = ReadonlyArray<WorkflowDefinition<unknown, unknown>>

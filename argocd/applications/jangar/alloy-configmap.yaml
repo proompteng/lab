@@ -106,6 +106,44 @@ data:
       forward_to = [loki.write.default.receiver]
     }
 
+    // Bumba worker
+    discovery.kubernetes "bumba" {
+      role = "pod"
+
+      namespaces {
+        names = ["jangar"]
+      }
+
+      selectors {
+        role  = "pod"
+        label = "app.kubernetes.io/name=bumba"
+      }
+    }
+
+    loki.source.kubernetes "bumba" {
+      targets    = discovery.kubernetes.bumba.targets
+      forward_to = [loki.process.bumba.receiver]
+    }
+
+    loki.process "bumba" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          app = "bumba",
+          job = "bumba",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
     loki.write "default" {
       endpoint {
         url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"

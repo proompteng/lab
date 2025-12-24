@@ -17,7 +17,7 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2025-12-24T03:38:29.016Z"
+        kubectl.kubernetes.io/restartedAt: "2025-12-24T05:20:26.907Z"
     spec:
       containers:
         - name: bumba
@@ -49,6 +49,8 @@ spec:
               value: qwen3-embedding:0.6b
             - name: OPENAI_EMBEDDING_DIMENSION
               value: "1024"
+            - name: OPENAI_EMBEDDING_TIMEOUT_MS
+              value: "60000"
           resources:
             requests:
               cpu: 200m

@@ -229,7 +229,7 @@ class DefaultFailureConverter implements FailureConverter {
           }
         : failure.failureInfo
 
-    return create(FailureSchema, { ...failure, cause, failureInfo })
+    return create(FailureSchema, { ...failure, cause: cause ?? undefined, failureInfo })
   }
 
   async failureToError(failure: Failure | null | undefined, converter: DataConverter): Promise<Error | undefined> {

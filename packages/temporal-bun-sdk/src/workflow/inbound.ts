@@ -21,11 +21,12 @@ export type WorkflowSignalsDefinition<T extends Record<string, RecordValue<unkno
   readonly [K in keyof T]: WorkflowSignalHandle<Schema.Schema.Type<ExtractSignalSchema<T[K]>>>
 }
 
-type ExtractSignalSchema<T> = T extends Schema.Schema<infer I>
-  ? Schema.Schema<I>
-  : T extends { schema?: Schema.Schema<infer I> }
+type ExtractSignalSchema<T> =
+  T extends Schema.Schema<infer I>
     ? Schema.Schema<I>
-    : typeof defaultSignalSchema
+    : T extends { schema?: Schema.Schema<infer I> }
+      ? Schema.Schema<I>
+      : typeof defaultSignalSchema
 
 export const defineWorkflowSignals = <T extends Record<string, RecordValue<unknown>>>(
   definitions: T,
@@ -99,11 +100,12 @@ export type WorkflowQueriesDefinition<T extends Record<string, QueryRecordValue<
   >
 }
 
-type ExtractQueryInputSchema<T> = T extends Schema.Schema<infer I>
-  ? Schema.Schema<I>
-  : T extends { input?: Schema.Schema<infer I> }
+type ExtractQueryInputSchema<T> =
+  T extends Schema.Schema<infer I>
     ? Schema.Schema<I>
-    : typeof defaultQueryInputSchema
+    : T extends { input?: Schema.Schema<infer I> }
+      ? Schema.Schema<I>
+      : typeof defaultQueryInputSchema
 
 type ExtractQueryOutputSchema<T> = T extends { output?: Schema.Schema<infer O> }
   ? Schema.Schema<O>

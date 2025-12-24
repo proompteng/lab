@@ -18,6 +18,8 @@
       "!**/build",
       "!**/.mastra",
       "!**/.venv",
+      "!**/.artifacts",
+      "!**/.artifacts/**",
       "!tmp",
       "!**/coverage",
       "!**/bun.lockb",
