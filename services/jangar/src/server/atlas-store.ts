@@ -612,7 +612,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             file_key_id UUID NOT NULL REFERENCES atlas.file_keys(id) ON DELETE CASCADE,
             repository_ref TEXT NOT NULL DEFAULT 'main',
-            repository_commit TEXT NOT NULL DEFAULT '',
+            repository_commit TEXT,
             content_hash TEXT NOT NULL DEFAULT '',
             language TEXT,
             byte_size INT,
@@ -621,6 +621,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
             source_timestamp TIMESTAMPTZ,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CHECK (repository_commit IS NULL OR repository_commit <> ''),
             UNIQUE (file_key_id, repository_ref, repository_commit, content_hash)
           );
         `)
@@ -793,6 +794,12 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         await db.unsafe(`
           CREATE INDEX IF NOT EXISTS atlas_file_versions_ref_idx
           ON atlas.file_versions (repository_ref, repository_commit);
+        `)
+
+        await db.unsafe(`
+          CREATE UNIQUE INDEX IF NOT EXISTS atlas_file_versions_hash_null_commit_idx
+          ON atlas.file_versions (file_key_id, repository_ref, content_hash)
+          WHERE repository_commit IS NULL;
         `)
 
         await db.unsafe(`

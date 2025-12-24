@@ -763,7 +763,7 @@ export const activities = {
     const fileMeta = input.fileMetadata
     const repositoryName = fileMeta.repoName
     const repositoryRef = fileMeta.repoRef ?? 'main'
-    const repositoryCommit = fileMeta.repoCommit ?? ''
+    const repositoryCommit = fileMeta.repoCommit ?? null
     const contentHash = fileMeta.contentHash ?? ''
 
     const repositoryRows = (await db`
