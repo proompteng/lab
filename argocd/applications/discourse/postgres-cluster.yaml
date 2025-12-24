@@ -1,0 +1,19 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: discourse-db
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  storage:
+    storageClass: longhorn
+    size: 5Gi
+  bootstrap:
+    initdb:
+      database: discourse
+      owner: discourse
+      encoding: "UTF8"
+      dataChecksums: true
+  monitoring:
+    enablePodMonitor: true
+# CNPG will emit application credentials in `discourse-db-app` (uri, user, password, host, port, dbname)

@@ -1,0 +1,23 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: discourse-config
+  namespace: discourse
+data:
+  RAILS_ENV: production
+  DISCOURSE_DEVELOPER_EMAILS: greg@proompteng.ai
+  DISCOURSE_HOSTNAME: forum.proompteng.ai
+  DISCOURSE_DB_HOST: discourse-db-rw
+  DISCOURSE_DB_PORT: "5432"
+  DISCOURSE_DB_SOCKET: ""
+  DISCOURSE_REDIS_HOST: discourse-redis
+  DISCOURSE_REDIS_PORT: "6379"
+  REDIS_URL: redis://discourse-redis:6379/0
+  DISCOURSE_SMTP_ADDRESS: smtp.resend.com
+  DISCOURSE_SMTP_PORT: "587"
+  DISCOURSE_SMTP_USER_NAME: resend
+  DISCOURSE_SMTP_DOMAIN: proompteng.ai
+  DISCOURSE_SMTP_ENABLE_START_TLS: "true"
+  UNICORN_BIND_ALL: "true"
+  DISCOURSE_SERVE_STATIC_ASSETS: "true"

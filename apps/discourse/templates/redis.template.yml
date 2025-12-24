@@ -1,0 +1,92 @@
+base_image: discourse/base:2.0.20251003-1437
+params:
+  redis_io_threads: "1"
+
+run:
+  - file:
+     path: /etc/service/redis/run
+     chmod: "+x"
+     contents: |
+        #!/bin/sh
+        exec 2>&1
+        install -d -m 0755 -o redis -g redis /shared/redis_data
+        exec thpoff chpst -u redis -U redis /usr/bin/redis-server /etc/redis/redis.conf
+  - file:
+     path: /etc/service/redis/log/run
+     chmod: "+x"
+     contents: |
+       #!/bin/sh
+       mkdir -p /var/log/redis
+       exec svlogd /var/log/redis
+  - file:
+     path: /etc/runit/3.d/10-redis
+     chmod: "+x"
+     contents: |
+       #!/bin/bash
+       sv stop redis
+
+  - replace:
+      filename: "/etc/redis/redis.conf"
+      from: "daemonize yes"
+      to: ""
+  - replace:
+      filename: "/etc/redis/redis.conf"
+      from: /^pidfile.*$/
+      to: ""
+
+  - exec:
+      tag: db
+      cmd:
+        - install -d -m 0755 -o redis -g redis /shared/redis_data
+
+  - replace:
+      filename: "/etc/redis/redis.conf"
+      from: /^logfile.*$/
+      to: "logfile \"\""
+
+  - replace:
+      filename: "/etc/redis/redis.conf"
+      from: /^bind .*$/
+      to: ""
+
+  - replace:
+      filename: "/etc/redis/redis.conf"
+      from: /^dir .*$/
+      to: "dir /shared/redis_data"
+
+  - replace:
+      filename: "/etc/redis/redis.conf"
+      from: /^protected-mode yes/
+      to: "protected-mode no"
+
+  - replace:
+      filename: "/etc/redis/redis.conf"
+      from: "# io-threads 4"
+      to: "io-threads $redis_io_threads"
+
+  - exec:
+      cmd: echo redis installed
+      hook: redis
+  - exec: cat /etc/redis/redis.conf | grep logfile
+
+  - exec:
+      background: true
+      tag: db
+      cmd: exec chpst -u redis -U redis /usr/bin/redis-server /etc/redis/redis.conf
+  - exec:
+      tag: db
+      cmd: sleep 10
+
+# we can not migrate without redis, launch it if needed
+hooks:
+  before_db_migrate:
+    - exec:
+        background: true
+        cmd: exec chpst -u redis -U redis /usr/bin/redis-server /etc/redis/redis.conf
+    - exec: sleep 10
+  after_code:
+    - replace:
+       filename: /etc/service/unicorn/run
+       from: "# redis"
+       to: |
+         sv start redis || exit 1

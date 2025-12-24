@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: discourse
+  labels:
+    app: discourse
+    app.kubernetes.io/name: discourse
+    app.kubernetes.io/part-of: lab
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: discourse
+  template:
+    metadata:
+      labels:
+        app: discourse
+        app.kubernetes.io/name: discourse
+        app.kubernetes.io/part-of: lab
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: discourse
+          image: registry.ide-newton.ts.net/lab/discourse@sha256:140a98d6e092ae577734df9d3cdf94c2b89a4cc904a095c8b23833f4e739fce8
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: discourse-config
+            - secretRef:
+                name: discourse-secrets
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: discourse-db-app
+                  key: uri
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: discourse-shared

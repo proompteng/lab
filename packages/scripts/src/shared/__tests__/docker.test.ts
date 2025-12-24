@@ -15,7 +15,7 @@ describe('inspectImageDigest', () => {
       if (joined.startsWith('docker image inspect')) {
         return {
           exitCode: 0,
-          stdout: Buffer.from('registry/repo@sha256:111\n'),
+          stdout: Buffer.from('["registry/repo@sha256:111"]'),
           stderr: new Uint8Array(),
         } as ReturnType<typeof Bun.spawnSync>
       }
