@@ -17,7 +17,7 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2025-12-24T21:06:36.516Z"
+        kubectl.kubernetes.io/restartedAt: "2025-12-24T21:41:53.567Z"
     spec:
       containers:
         - name: bumba
