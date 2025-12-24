@@ -625,7 +625,8 @@ export class WorkflowExecutor {
   }
 }
 
-const unwrapWorkflowError = <T>(error: unknown, ctor: new (...args: unknown[]) => T): T | undefined => {
+// biome-ignore lint/suspicious/noExplicitAny: Constructor args are irrelevant for instanceof checks.
+const unwrapWorkflowError = <T>(error: unknown, ctor: new (...args: any[]) => T): T | undefined => {
   if (error instanceof ctor) {
     return error
   }

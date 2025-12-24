@@ -262,7 +262,7 @@ const buildScheduleActivityCommand = async (
   intent: ScheduleActivityCommandIntent,
   options: WorkflowCommandMaterializationOptions,
 ): Promise<Command> => {
-  const payloads = await encodeValuesToPayloads(options.dataConverter, intent.input)
+  const payloads = (await encodeValuesToPayloads(options.dataConverter, intent.input)) ?? []
 
   const attributes = create(ScheduleActivityTaskCommandAttributesSchema, {
     activityId: intent.activityId,
@@ -334,7 +334,7 @@ const buildStartChildWorkflowCommand = async (
   intent: StartChildWorkflowCommandIntent,
   options: WorkflowCommandMaterializationOptions,
 ): Promise<Command> => {
-  const payloads = await encodeValuesToPayloads(options.dataConverter, intent.input)
+  const payloads = (await encodeValuesToPayloads(options.dataConverter, intent.input)) ?? []
 
   const attributes = create(StartChildWorkflowExecutionCommandAttributesSchema, {
     namespace: intent.namespace,
@@ -367,7 +367,7 @@ const buildSignalExternalWorkflowCommand = async (
   intent: SignalExternalWorkflowCommandIntent,
   options: WorkflowCommandMaterializationOptions,
 ): Promise<Command> => {
-  const payloads = await encodeValuesToPayloads(options.dataConverter, intent.input)
+  const payloads = (await encodeValuesToPayloads(options.dataConverter, intent.input)) ?? []
 
   const execution = create(WorkflowExecutionSchema, {
     workflowId: intent.workflowId,
@@ -416,7 +416,7 @@ const buildCancelWorkflowCommand = async (
   intent: CancelWorkflowCommandIntent,
   options: WorkflowCommandMaterializationOptions,
 ): Promise<Command> => {
-  const payloads = await encodeValuesToPayloads(options.dataConverter, intent.details ?? [])
+  const payloads = (await encodeValuesToPayloads(options.dataConverter, intent.details ?? [])) ?? []
   const detailsPayloads = payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined
   const attributes = create(CancelWorkflowExecutionCommandAttributesSchema, {
     details: detailsPayloads,
@@ -435,7 +435,7 @@ const buildContinueAsNewCommand = async (
   intent: ContinueAsNewWorkflowCommandIntent,
   options: WorkflowCommandMaterializationOptions,
 ): Promise<Command> => {
-  const payloads = await encodeValuesToPayloads(options.dataConverter, intent.input)
+  const payloads = (await encodeValuesToPayloads(options.dataConverter, intent.input)) ?? []
 
   const attributes = create(ContinueAsNewWorkflowExecutionCommandAttributesSchema, {
     workflowType: buildWorkflowType(intent.workflowType),

@@ -58,12 +58,20 @@ test('enrichFile schedules the first activity and blocks', async () => {
   expect(output.commands).toHaveLength(1)
   const schedule = output.commands[0]
   expect(schedule.commandType).toBe(CommandType.SCHEDULE_ACTIVITY_TASK)
-  const attrs = schedule.attributes?.value
+  if (schedule.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
+    throw new Error('Expected schedule activity attributes on first command.')
+  }
+  const attrs = schedule.attributes.value
   expect(attrs?.activityType?.name).toBe('readRepoFile')
   expect(attrs?.activityId).toBe('activity-0')
 
   const decoded = await decodePayloadsToValues(dataConverter, attrs?.input?.payloads ?? [])
-  expect(decoded).toEqual([input])
+  expect(decoded).toEqual([
+    {
+      repoRoot: input.repoRoot,
+      filePath: input.filePath,
+    },
+  ])
 })
 
 test('enrichFile completes when all activities are resolved', async () => {

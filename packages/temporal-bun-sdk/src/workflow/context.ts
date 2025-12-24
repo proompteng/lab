@@ -1194,11 +1194,15 @@ export class WorkflowQueryRegistry {
   }
 }
 
-const resolveHandlerName = (
-  configured: string | undefined,
-  handler: WorkflowSignalHandler<unknown, void> | undefined,
-  fallback: string,
-): string => configured ?? handler?.name ?? fallback
+const resolveHandlerName = (configured: string | undefined, handler: unknown, fallback: string): string => {
+  if (configured) {
+    return configured
+  }
+  if (typeof handler === 'function' && handler.name) {
+    return handler.name
+  }
+  return fallback
+}
 
 const runSequential = <A>(
   entries: readonly SignalQueueEntry[],
@@ -1217,5 +1221,5 @@ const runSequential = <A>(
           ),
         ),
       ),
-    Effect.succeed<readonly A[]>([]),
+    Effect.succeed<readonly A[]>([]) as Effect.Effect<readonly A[], WorkflowBlockedError | unknown, never>,
   )
