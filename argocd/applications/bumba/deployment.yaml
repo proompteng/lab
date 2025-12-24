@@ -17,7 +17,7 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2025-12-24T07:00:35.348Z"
+        kubectl.kubernetes.io/restartedAt: "2025-12-24T07:45:36.779Z"
     spec:
       containers:
         - name: bumba
@@ -32,6 +32,10 @@ spec:
               value: default
             - name: TEMPORAL_TASK_QUEUE
               value: bumba
+            - name: TEMPORAL_WORKFLOW_CONCURRENCY
+              value: "8"
+            - name: TEMPORAL_ACTIVITY_CONCURRENCY
+              value: "8"
             - name: BUMBA_WORKSPACE_ROOT
               value: /workspace/lab
             - name: REPOSITORY
