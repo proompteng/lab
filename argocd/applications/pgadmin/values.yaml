@@ -93,6 +93,9 @@ extraVolumeMounts:
 extraInitContainers: |
   - name: pgadmin-servers
     image: python:3.12-alpine
+    env:
+      - name: PGADMIN_USER_EMAIL
+        value: {{ .Values.env.email | quote }}
     command:
       - /bin/sh
       - -c
@@ -100,8 +103,16 @@ extraInitContainers: |
         set -eu
         python - <<'PY'
         import json
+        import os
         from pathlib import Path
         from urllib.parse import parse_qs, unquote, urlparse
+
+        def preprocess_username(value: str) -> str:
+            if not value:
+                return value
+            if value[0].isdigit():
+                value = f'pga_user_{value}'
+            return value.replace('@', '_').replace('/', 'slash').replace('\\', 'slash')
 
         clusters = [
             {'secret': 'keycloak-db-app', 'name': 'keycloak-db'},
@@ -116,6 +127,12 @@ extraInitContainers: |
 
         servers = {}
         index = 1
+        passfile_entries = []
+        passfile_name = 'pgpass'
+        user_email = os.environ.get('PGADMIN_USER_EMAIL', 'pgadmin@proompteng.ai')
+        storage_dir = Path('/var/lib/pgadmin/storage') / preprocess_username(user_email)
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        passfile_path = storage_dir / passfile_name
         for cluster in clusters:
             secret_dir = Path('/etc/pgadmin/secrets') / cluster['secret']
             uri_path = secret_dir / 'uri'
@@ -132,6 +149,11 @@ extraInitContainers: |
             dbname = (parsed.path or '').lstrip('/') or 'postgres'
             username = unquote(parsed.username or '')
             sslmode = parse_qs(parsed.query).get('sslmode', ['require'])[0]
+            password_path = secret_dir / 'password'
+            if password_path.exists():
+                password = password_path.read_text().strip()
+                if password:
+                    passfile_entries.append(f'{host}:{port}:{dbname}:{username}:{password}')
 
             servers[str(index)] = {
                 'Name': cluster['name'],
@@ -143,17 +165,38 @@ extraInitContainers: |
                 'SSLMode': sslmode,
                 'PasswordExecCommand': f'cat {secret_dir}/password',
                 'PasswordExecExpiration': 300,
+                'ConnectionParameters': {
+                    'passfile': passfile_name,
+                },
             }
             index += 1
+
+        if passfile_entries:
+            passfile_path.write_text('\n'.join(passfile_entries) + '\n')
+            passfile_path.chmod(0o600)
+
+        db_path = Path('/var/lib/pgadmin/pgadmin4.db')
+        if db_path.exists():
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute(
+                'update server set connection_params = ?',
+                (json.dumps({'passfile': passfile_name}),),
+            )
+            conn.commit()
+            conn.close()
 
         output_dir = Path('/var/lib/pgadmin/servers')
         output_dir.mkdir(parents=True, exist_ok=True)
         with open(output_dir / 'servers.json', 'w', encoding='utf-8') as handle:
-          json.dump({'Servers': servers}, handle, indent=2)
+            json.dump({'Servers': servers}, handle, indent=2)
         PY
     volumeMounts:
       - name: pgadmin-servers
         mountPath: /var/lib/pgadmin/servers
+      - name: pgadmin-data
+        mountPath: /var/lib/pgadmin
       - name: cnpg-app-secrets
         mountPath: /etc/pgadmin/secrets
         readOnly: true
