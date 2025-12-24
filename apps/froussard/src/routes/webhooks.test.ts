@@ -521,19 +521,23 @@ describe('createWebhookHandler', () => {
     expect(response.status).toBe(202)
     const body = await response.json()
     await assert(body, response)
-    const expectedDeliveryId = `delivery-${event}-${action ?? 'none'}`
-    expect(fetchMock).toHaveBeenCalledWith(
-      `${config.atlas.baseUrl}/api/enrich`,
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({
-          'content-type': 'application/json',
-          'x-github-delivery': expectedDeliveryId,
-          'x-idempotency-key': expectedDeliveryId,
-          'x-github-event': event,
+    if (event === 'push') {
+      const expectedDeliveryId = `delivery-${event}-${action ?? 'none'}`
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${config.atlas.baseUrl}/api/enrich`,
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'content-type': 'application/json',
+            'x-github-delivery': expectedDeliveryId,
+            'x-idempotency-key': expectedDeliveryId,
+            'x-github-event': event,
+          }),
         }),
-      }),
-    )
+      )
+    } else {
+      expect(fetchMock).not.toHaveBeenCalled()
+    }
   })
 
   it('rejects unsupported providers', async () => {
@@ -608,15 +612,7 @@ describe('createWebhookHandler', () => {
         reactionContent: '+1',
       }),
     )
-    expect(fetchMock).toHaveBeenCalledWith(
-      `${baseConfig.atlas.baseUrl}/api/enrich`,
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          'x-github-delivery': 'delivery-123',
-          'x-idempotency-key': 'delivery-123',
-        }),
-      }),
-    )
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('publishes implementation message when trigger comment is received', async () => {
@@ -666,6 +662,47 @@ describe('createWebhookHandler', () => {
         repositoryFullName: 'owner/repo',
         issueNumber: 2,
         reactionContent: '+1',
+      }),
+    )
+  })
+
+  it('triggers atlas enrichment on push events', async () => {
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const payload = {
+      ref: 'refs/heads/main',
+      after: 'abc123',
+      repository: { full_name: 'owner/repo', default_branch: 'main' },
+      sender: { login: 'user' },
+      head_commit: {
+        id: 'abc123',
+        added: [],
+        modified: ['README.md'],
+        removed: [],
+      },
+      commits: [
+        {
+          id: 'abc123',
+          added: [],
+          modified: ['README.md'],
+          removed: [],
+        },
+      ],
+    }
+
+    const response = await handler(buildRequest(payload, scenarioHeaders('push')), 'github')
+
+    expect(response.status).toBe(202)
+    const expectedDeliveryId = 'delivery-push-none'
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${baseConfig.atlas.baseUrl}/api/enrich`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'content-type': 'application/json',
+          'x-github-delivery': expectedDeliveryId,
+          'x-idempotency-key': expectedDeliveryId,
+          'x-github-event': 'push',
+        }),
       }),
     )
   })

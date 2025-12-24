@@ -443,17 +443,20 @@ export const createGithubWebhookHandler = ({ runtime, webhooks, config }: Github
         }
       }
 
-      const atlasPromise = triggerAtlasEnrichment({
-        config: config.atlas,
-        payload: parsedPayload,
-        deliveryId,
-        eventName,
-        actionValue,
-        hookId,
-        senderLogin,
-        workflowIdentifier,
-        identifiers,
-      })
+      const atlasPromise =
+        eventName === 'push'
+          ? triggerAtlasEnrichment({
+              config: config.atlas,
+              payload: parsedPayload,
+              deliveryId,
+              eventName,
+              actionValue,
+              hookId,
+              senderLogin,
+              workflowIdentifier,
+              identifiers,
+            })
+          : Promise.resolve()
 
       const publishPromise = runtime.runPromise(
         publishKafkaMessage({
