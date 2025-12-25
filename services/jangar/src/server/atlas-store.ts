@@ -1729,37 +1729,28 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedRef = typeof ref === 'string' ? ref.trim() : ''
     const resolvedPathPrefix = typeof pathPrefix === 'string' ? pathPrefix.trim() : ''
 
-    const conditions: string[] = []
-    const params: unknown[] = []
+    const conditions: Array<ReturnType<typeof sql>> = []
 
     if (resolvedRepository) {
-      params.push(resolvedRepository)
-      conditions.push(`repositories.name = $${params.length}`)
+      conditions.push(sql`repositories.name = ${resolvedRepository}`)
     }
     if (resolvedRef) {
-      params.push(resolvedRef)
-      conditions.push(`file_versions.repository_ref = $${params.length}`)
+      conditions.push(sql`file_versions.repository_ref = ${resolvedRef}`)
     }
     if (resolvedPathPrefix) {
-      params.push(`${resolvedPathPrefix}%`)
-      conditions.push(`file_keys.path LIKE $${params.length}`)
+      conditions.push(sql`file_keys.path LIKE ${`${resolvedPathPrefix}%`}`)
     }
 
-    params.push(resolvedLimit)
-    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-    const limitParam = `$${params.length}`
+    const whereClause = conditions.length ? sql`WHERE ${sql.join(conditions, sql` AND `)}` : sql``
 
-    const rows = await db.unsafe<
-      Array<{
-        repository_name: string
-        repository_ref: string
-        path: string
-        repository_commit: string | null
-        content_hash: string
-        updated_at: string | Date | null
-      }>
-    >(
-      `
+    const rows = await sql<{
+      repository_name: string
+      repository_ref: string
+      path: string
+      repository_commit: string | null
+      content_hash: string
+      updated_at: string | Date | null
+    }>`
         SELECT latest.repository_name,
                latest.repository_ref,
                latest.path,
@@ -1781,12 +1772,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
           ORDER BY file_versions.file_key_id, file_versions.repository_ref, file_versions.updated_at DESC
         ) AS latest
         ORDER BY latest.updated_at DESC NULLS LAST
-        LIMIT ${limitParam};
-      `,
-      params,
-    )
+        LIMIT ${resolvedLimit};
+      `.execute(db)
 
-    return rows.map((row) => ({
+    return rows.rows.map((row) => ({
       repository: row.repository_name,
       ref: row.repository_ref,
       path: row.path,
