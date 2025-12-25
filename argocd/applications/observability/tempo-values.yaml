@@ -29,9 +29,7 @@ distributor:
 ingester:
   replicas: 2
   persistence:
-    enabled: true
-    size: 20Gi
-    storageClass: longhorn
+    enabled: false
 
 compactor:
   replicas: 1
