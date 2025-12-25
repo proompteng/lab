@@ -1,26 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { __private, createPostgresAtlasStore } from '../atlas-store'
-
-type SqlCall =
-  | { kind: 'unsafe'; query: string; params: unknown[] | undefined }
-  | { kind: 'tag'; query: string; values: unknown[] }
-  | { kind: 'array'; values: unknown[]; elementType: string | undefined }
-
-type FakeDb = {
-  (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]>
-  unsafe: <T = unknown>(query: string, params?: unknown[]) => Promise<T>
-  array: (values: unknown[], elementType?: string) => unknown
-  close: () => Promise<void>
-}
+import { createTestDb } from './kysely-test-db'
 
 const makeFakeDb = (options: { extensions?: string[]; embeddingType?: string | null; selectRows?: unknown[] } = {}) => {
-  const calls: SqlCall[] = []
-
-  const db = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
-    const query = strings.reduce((acc, part, idx) => acc + part + (idx < values.length ? `$${idx + 1}` : ''), '')
-    calls.push({ kind: 'tag', query, values })
-
+  const { db, calls } = createTestDb((call) => {
+    const query = call.sql
     const now = new Date('2020-01-01T00:00:00.000Z')
 
     if (query.includes('INSERT INTO atlas.repositories')) {
@@ -102,24 +87,13 @@ const makeFakeDb = (options: { extensions?: string[]; embeddingType?: string | n
       return []
     }
 
-    return options.selectRows ?? []
-  }) as FakeDb
-
-  db.unsafe = async <T = unknown>(query: string, params?: unknown[]) => {
-    calls.push({ kind: 'unsafe', query, params })
     if (query.includes("SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')")) {
       const extensions = options.extensions ?? ['vector', 'pgcrypto']
-      return extensions.map((ext) => ({ extname: ext })) as unknown as T
+      return extensions.map((ext) => ({ extname: ext }))
     }
-    return [] as unknown as T
-  }
 
-  db.array = (values: unknown[], elementType?: string) => {
-    calls.push({ kind: 'array', values, elementType })
-    return { __kind: 'pg_array', values, elementType }
-  }
-
-  db.close = async () => {}
+    return options.selectRows ?? []
+  })
 
   return { db, calls }
 }
@@ -162,7 +136,7 @@ describe('atlas store', () => {
 
     await store.upsertRepository({ name: 'acme', defaultRef: 'main' })
 
-    const unsafeQueries = calls.filter((call) => call.kind === 'unsafe').map((call) => call.query)
+    const unsafeQueries = calls.map((call) => call.sql)
     expect(unsafeQueries.some((query) => query.includes('CREATE EXTENSION'))).toBe(false)
   })
 
@@ -181,10 +155,11 @@ describe('atlas store', () => {
       tags: ['smoke'],
     })
 
-    const arrays = calls.filter((call) => call.kind === 'array') as Array<Extract<SqlCall, { kind: 'array' }>>
-    expect(arrays).toEqual(
-      expect.arrayContaining([expect.objectContaining({ elementType: 'text', values: ['smoke'] })]),
+    const textArrayCall = calls.find(
+      (call) =>
+        call.sql.includes('::text[]') && call.parameters.some((param) => Array.isArray(param) && param[0] === 'smoke'),
     )
+    expect(textArrayCall).toBeTruthy()
   })
 
   it('fails fast when required extensions are missing', async () => {

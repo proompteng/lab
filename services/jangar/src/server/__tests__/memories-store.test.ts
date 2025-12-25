@@ -1,25 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { __private, createPostgresMemoriesStore } from '../memories-store'
-
-type SqlCall =
-  | { kind: 'unsafe'; query: string; params: unknown[] | undefined }
-  | { kind: 'tag'; query: string; values: unknown[] }
-  | { kind: 'array'; values: unknown[]; elementType: string | undefined }
-
-type FakeDb = {
-  (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]>
-  unsafe: <T = unknown>(query: string, params?: unknown[]) => Promise<T>
-  array: (values: unknown[], elementType?: string) => unknown
-  close: () => Promise<void>
-}
+import { createTestDb } from './kysely-test-db'
 
 const makeFakeDb = (options: { extensions?: string[]; selectRows?: unknown[] } = {}) => {
-  const calls: SqlCall[] = []
-
-  const db = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
-    const query = strings.reduce((acc, part, idx) => acc + part + (idx < values.length ? `$${idx + 1}` : ''), '')
-    calls.push({ kind: 'tag', query, values })
+  const { db, calls } = createTestDb((call) => {
+    const query = call.sql
 
     if (query.includes('INSERT INTO memories.entries')) {
       return [
@@ -50,27 +36,17 @@ const makeFakeDb = (options: { extensions?: string[]; selectRows?: unknown[] } =
       )
     }
 
-    return []
-  }) as FakeDb
-
-  db.unsafe = async <T = unknown>(query: string, params?: unknown[]) => {
-    calls.push({ kind: 'unsafe', query, params })
     if (query.includes("SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')")) {
       const extensions = options.extensions ?? ['vector', 'pgcrypto']
-      return extensions.map((ext) => ({ extname: ext })) as unknown as T
+      return extensions.map((ext) => ({ extname: ext }))
     }
+
     if (query.includes('format_type') && query.includes('pg_catalog.pg_attribute')) {
-      return [] as unknown as T
+      return []
     }
-    return [] as unknown as T
-  }
 
-  db.array = (values: unknown[], elementType?: string) => {
-    calls.push({ kind: 'array', values, elementType })
-    return { __kind: 'pg_array', values, elementType }
-  }
-
-  db.close = async () => {}
+    return []
+  })
 
   return { db, calls }
 }
@@ -114,7 +90,7 @@ describe('memories store', () => {
 
     await store.persist({ content: 'hello', summary: 'hi', tags: ['smoke'] })
 
-    const unsafeQueries = calls.filter((call) => call.kind === 'unsafe').map((call) => call.query)
+    const unsafeQueries = calls.map((call) => call.sql)
     expect(unsafeQueries.some((query) => query.includes('CREATE EXTENSION'))).toBe(false)
   })
 
@@ -129,13 +105,16 @@ describe('memories store', () => {
     await store.persist({ content: 'hello', summary: 'hi', tags: ['smoke'] })
     await store.retrieve({ query: 'hello', limit: 1 })
 
-    const arrays = calls.filter((call) => call.kind === 'array') as Array<Extract<SqlCall, { kind: 'array' }>>
-    expect(arrays).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ elementType: 'text', values: ['smoke'] }),
-        expect.objectContaining({ elementType: 'uuid', values: ['mem-1'] }),
-      ]),
+    const textArrayCall = calls.find(
+      (call) =>
+        call.sql.includes('::text[]') && call.parameters.some((param) => Array.isArray(param) && param[0] === 'smoke'),
     )
+    const uuidArrayCall = calls.find(
+      (call) =>
+        call.sql.includes('::uuid[]') && call.parameters.some((param) => Array.isArray(param) && param[0] === 'mem-1'),
+    )
+    expect(textArrayCall).toBeTruthy()
+    expect(uuidArrayCall).toBeTruthy()
   })
 
   it('fails fast when required extensions are missing', async () => {
