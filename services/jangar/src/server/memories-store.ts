@@ -1,4 +1,6 @@
-import { SQL } from 'bun'
+import { sql } from 'kysely'
+
+import { createKyselyDb, type Db } from './db'
 
 export type MemoryRecord = {
   id: string
@@ -33,12 +35,7 @@ export type MemoriesStore = {
 type PostgresMemoriesStoreOptions = {
   url?: string
   embedText?: (text: string) => Promise<number[]>
-  createDb?: (url: string) => {
-    (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]>
-    unsafe: <T = unknown>(query: string, params?: unknown[]) => Promise<T>
-    array: (values: unknown[], elementType?: string) => unknown
-    close: () => Promise<void>
-  }
+  createDb?: (url: string) => Db
 }
 
 const DEFAULT_NAMESPACE = 'default'
@@ -188,7 +185,7 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     throw new Error('DATABASE_URL is required for MCP memories storage')
   }
 
-  const db = (options.createDb ?? ((resolvedUrl: string) => new SQL(resolvedUrl)))(withDefaultSslMode(url))
+  const db = (options.createDb ?? createKyselyDb)(withDefaultSslMode(url))
   let schemaReady: Promise<void> | null = null
   const defaults = resolveEmbeddingDefaults(
     process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL,
@@ -197,20 +194,17 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
   const embed = options.embedText ?? embedText
 
   const ensureEmbeddingDimensionMatches = async () => {
-    const rows = await db.unsafe<Array<{ embedding_type: string | null }>>(
-      `
-        SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS embedding_type
-        FROM pg_catalog.pg_attribute a
-        JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = $1
-          AND c.relname = $2
-          AND a.attname = 'embedding'
-          AND a.attnum > 0
-          AND NOT a.attisdropped;
-      `,
-      [SCHEMA, TABLE],
-    )
+    const { rows } = await sql<{ embedding_type: string | null }>`
+      SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS embedding_type
+      FROM pg_catalog.pg_attribute a
+      JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = ${SCHEMA}
+        AND c.relname = ${TABLE}
+        AND a.attname = 'embedding'
+        AND a.attnum > 0
+        AND NOT a.attisdropped;
+    `.execute(db)
 
     const embeddingType = rows[0]?.embedding_type ?? null
     if (!embeddingType) return
@@ -231,14 +225,14 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     if (!schemaReady) {
       schemaReady = (async () => {
         try {
-          await db.unsafe('CREATE SCHEMA IF NOT EXISTS memories;')
+          await sql`CREATE SCHEMA IF NOT EXISTS memories;`.execute(db)
         } catch (error) {
           throw new Error(`failed to ensure Postgres prerequisites (schema). Original error: ${String(error)}`)
         }
 
-        const extensionRows = await db.unsafe<Array<{ extname: string }>>(
-          `SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')`,
-        )
+        const { rows: extensionRows } = await sql<{ extname: string }>`
+          SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')
+        `.execute(db)
         const installed = new Set(extensionRows.map((row) => row.extname))
         const missing = ['vector', 'pgcrypto'].filter((ext) => !installed.has(ext))
         if (missing.length > 0) {
@@ -249,10 +243,10 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
           )
         }
 
-        await db.unsafe(`
-	          CREATE TABLE IF NOT EXISTS ${SCHEMA}.${TABLE} (
-	            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-	            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.raw(`${SCHEMA}.${TABLE}`)} (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             execution_id UUID NULL,
             task_name TEXT NOT NULL,
@@ -265,42 +259,42 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
             metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
             tags TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
             source TEXT NOT NULL,
-            embedding vector(${expectedEmbeddingDimension}) NOT NULL,
+            embedding vector(${sql.raw(String(expectedEmbeddingDimension))}) NOT NULL,
             encoder_model TEXT NOT NULL,
             encoder_version TEXT,
             last_accessed_at TIMESTAMPTZ,
             next_review_at TIMESTAMPTZ
           );
-        `)
+        `.execute(db)
 
         await ensureEmbeddingDimensionMatches()
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS memories_entries_task_name_idx
-          ON ${SCHEMA}.${TABLE} (task_name);
-        `)
+          ON ${sql.raw(`${SCHEMA}.${TABLE}`)} (task_name);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS memories_entries_tags_idx
-          ON ${SCHEMA}.${TABLE} USING GIN (tags);
-        `)
+          ON ${sql.raw(`${SCHEMA}.${TABLE}`)} USING GIN (tags);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS memories_entries_metadata_idx
-          ON ${SCHEMA}.${TABLE} USING GIN (metadata JSONB_PATH_OPS);
-        `)
+          ON ${sql.raw(`${SCHEMA}.${TABLE}`)} USING GIN (metadata JSONB_PATH_OPS);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS memories_entries_encoder_idx
-          ON ${SCHEMA}.${TABLE} (encoder_model, encoder_version);
-        `)
+          ON ${sql.raw(`${SCHEMA}.${TABLE}`)} (encoder_model, encoder_version);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS memories_entries_embedding_idx
-          ON ${SCHEMA}.${TABLE}
+          ON ${sql.raw(`${SCHEMA}.${TABLE}`)}
           USING ivfflat (embedding vector_cosine_ops)
           WITH (lists = 100);
-        `)
+        `.execute(db)
       })()
     }
     await schemaReady
@@ -331,27 +325,27 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     const metadata = JSON.stringify({ namespace: resolvedNamespace })
     const source = 'memories.mcp'
 
-    const rows = (await db`
-	      INSERT INTO memories.entries (task_name, content, summary, tags, metadata, source, embedding, encoder_model)
-	      VALUES (
-	        ${resolvedNamespace},
-	        ${resolvedContent},
-	        ${derivedSummary},
-	        ${db.array(resolvedTags, 'text')}::text[],
-	        ${metadata}::jsonb,
-	        ${source},
-	        ${vectorString}::vector,
-	        ${encoderModel}
-	      )
-	      RETURNING id, task_name, content, summary, tags, created_at;
-	    `) as Array<{
+    const { rows } = await sql<{
       id: string
       task_name: string
       content: string
       summary: string
       tags: string[]
       created_at: string | Date
-    }>
+    }>`
+      INSERT INTO memories.entries (task_name, content, summary, tags, metadata, source, embedding, encoder_model)
+      VALUES (
+        ${resolvedNamespace},
+        ${resolvedContent},
+        ${derivedSummary},
+        ${resolvedTags}::text[],
+        ${metadata}::jsonb,
+        ${source},
+        ${vectorString}::vector,
+        ${encoderModel}
+      )
+      RETURNING id, task_name, content, summary, tags, created_at;
+    `.execute(db)
 
     const row = rows[0]
     if (!row) throw new Error('insert failed')
@@ -383,20 +377,7 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     const embedding = await embed(resolvedQuery)
     const vectorString = vectorToPgArray(embedding)
 
-    const rows = (await db`
-	      SELECT
-	        id,
-	        task_name,
-	        content,
-	        summary,
-	        tags,
-	        created_at,
-	        embedding <=> ${vectorString}::vector AS distance
-	      FROM memories.entries
-	      WHERE task_name = ${resolvedNamespace}
-	      ORDER BY distance ASC
-	      LIMIT ${resolvedLimit};
-	    `) as Array<{
+    const { rows } = await sql<{
       id: string
       task_name: string
       content: string
@@ -404,15 +385,28 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
       tags: string[]
       created_at: string | Date
       distance: number
-    }>
+    }>`
+      SELECT
+        id,
+        task_name,
+        content,
+        summary,
+        tags,
+        created_at,
+        embedding <=> ${vectorString}::vector AS distance
+      FROM memories.entries
+      WHERE task_name = ${resolvedNamespace}
+      ORDER BY distance ASC
+      LIMIT ${resolvedLimit};
+    `.execute(db)
 
     const ids = rows.map((row) => row.id)
     if (ids.length > 0) {
-      await db`
-	        UPDATE memories.entries
-	        SET last_accessed_at = now(), updated_at = now()
-	        WHERE id = ANY(${db.array(ids, 'uuid')}::uuid[])
-	      `
+      await sql`
+        UPDATE memories.entries
+        SET last_accessed_at = now(), updated_at = now()
+        WHERE id = ANY(${ids}::uuid[])
+      `.execute(db)
     }
 
     return rows.map((row) => ({
@@ -427,7 +421,7 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
   }
 
   const close: MemoriesStore['close'] = async () => {
-    await db.close()
+    await db.destroy()
   }
 
   const count: MemoriesStore['count'] = async (input = {}) => {
@@ -437,15 +431,19 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     const resolvedNamespace = rawNamespace.length > 0 ? rawNamespace.slice(0, 200) : null
 
     const rows = resolvedNamespace
-      ? ((await db`
-	          SELECT count(*)::bigint AS count
-	          FROM memories.entries
-	          WHERE task_name = ${resolvedNamespace};
-	        `) as Array<{ count: bigint | number | string }>)
-      : ((await db`
-	          SELECT count(*)::bigint AS count
-	          FROM memories.entries;
-	        `) as Array<{ count: bigint | number | string }>)
+      ? (
+          await sql<{ count: bigint | number | string }>`
+            SELECT count(*)::bigint AS count
+            FROM memories.entries
+            WHERE task_name = ${resolvedNamespace};
+          `.execute(db)
+        ).rows
+      : (
+          await sql<{ count: bigint | number | string }>`
+            SELECT count(*)::bigint AS count
+            FROM memories.entries;
+          `.execute(db)
+        ).rows
 
     const raw = rows[0]?.count ?? 0
     const parsed = typeof raw === 'bigint' ? Number(raw) : Number.parseInt(String(raw), 10)

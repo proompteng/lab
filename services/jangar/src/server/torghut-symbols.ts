@@ -1,3 +1,5 @@
+import { sql } from 'kysely'
+
 import type { Db } from '~/server/db'
 
 export type TorghutAssetClass = 'equity' | 'crypto'
@@ -14,16 +16,16 @@ let schemaEnsured = false
 const ensureSchema = async (db: Db) => {
   if (schemaEnsured) return
 
-  await db`
+  await sql`
     create table if not exists torghut_symbols (
       symbol text primary key,
       enabled boolean not null default true,
       asset_class text not null default 'equity',
       updated_at timestamptz not null default now()
     )
-  `
-  await db`create index if not exists torghut_symbols_enabled_idx on torghut_symbols (enabled)`
-  await db`create index if not exists torghut_symbols_asset_class_idx on torghut_symbols (asset_class)`
+  `.execute(db)
+  await sql`create index if not exists torghut_symbols_enabled_idx on torghut_symbols (enabled)`.execute(db)
+  await sql`create index if not exists torghut_symbols_asset_class_idx on torghut_symbols (asset_class)`.execute(db)
 
   schemaEnsured = true
 }
@@ -46,24 +48,33 @@ export const listTorghutSymbols = async ({
 }): Promise<TorghutSymbol[]> => {
   await ensureSchema(db)
 
-  const rows: Array<{
-    asset_class: string
-    enabled: boolean
-    symbol: string
-    updated_at: Date
-  }> = includeDisabled
-    ? await db`
-        select symbol, enabled, asset_class, updated_at
-        from torghut_symbols
-        where asset_class = ${assetClass}
-        order by symbol asc
-      `
-    : await db`
-        select symbol, enabled, asset_class, updated_at
-        from torghut_symbols
-        where asset_class = ${assetClass} and enabled = true
-        order by symbol asc
-      `
+  const rows = includeDisabled
+    ? (
+        await sql<{
+          asset_class: string
+          enabled: boolean
+          symbol: string
+          updated_at: Date
+        }>`
+          select symbol, enabled, asset_class, updated_at
+          from torghut_symbols
+          where asset_class = ${assetClass}
+          order by symbol asc
+        `.execute(db)
+      ).rows
+    : (
+        await sql<{
+          asset_class: string
+          enabled: boolean
+          symbol: string
+          updated_at: Date
+        }>`
+          select symbol, enabled, asset_class, updated_at
+          from torghut_symbols
+          where asset_class = ${assetClass} and enabled = true
+          order by symbol asc
+        `.execute(db)
+      ).rows
 
   return rows.map((row) => ({
     assetClass: normalizeAssetClass(row.asset_class),
@@ -91,8 +102,8 @@ export const upsertTorghutSymbols = async ({
   const deduped = [...new Set(normalizedSymbols)]
   if (deduped.length === 0) return { insertedOrUpdated: 0, symbols: [] }
 
-  const symbolsArray = db.array(deduped, 'TEXT')
-  await db`
+  const symbolsArray = sql`${deduped}::text[]`
+  await sql`
     insert into torghut_symbols (symbol, enabled, asset_class, updated_at)
     select symbol, ${enabled}, ${assetClass}, now()
     from unnest(${symbolsArray}) as symbols(symbol)
@@ -101,7 +112,7 @@ export const upsertTorghutSymbols = async ({
       enabled = excluded.enabled,
       asset_class = excluded.asset_class,
       updated_at = excluded.updated_at
-  `
+  `.execute(db)
 
   return { insertedOrUpdated: deduped.length, symbols: deduped }
 }
@@ -120,16 +131,18 @@ export const setTorghutSymbolEnabled = async ({
   await ensureSchema(db)
 
   const normalized = normalizeTorghutSymbol(symbol)
-  const updatedRows: Array<{ asset_class: string }> = await db`
-    update torghut_symbols
-    set enabled = ${enabled}, updated_at = now()
-    where symbol = ${normalized}
-    returning asset_class
-  `
+  const updatedRows = (
+    await sql<{ asset_class: string }>`
+      update torghut_symbols
+      set enabled = ${enabled}, updated_at = now()
+      where symbol = ${normalized}
+      returning asset_class
+    `.execute(db)
+  ).rows
   if (updatedRows.length > 0) return
 
-  await db`
+  await sql`
     insert into torghut_symbols (symbol, enabled, asset_class, updated_at)
     values (${normalized}, ${enabled}, ${assetClass ?? 'equity'}, now())
-  `
+  `.execute(db)
 }
