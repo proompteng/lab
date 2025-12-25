@@ -374,6 +374,7 @@ export class WorkerRuntime {
       buildId,
       workerVersioningMode,
     })
+    const rpcDeploymentOptions = workerVersioningMode === WorkerVersioningMode.VERSIONED ? deploymentOptions : undefined
 
     if (workerVersioningMode === WorkerVersioningMode.VERSIONED) {
       const capability = await checkWorkerVersioningCapability(workflowService, namespace, taskQueue)
@@ -465,6 +466,7 @@ export class WorkerRuntime {
       stickyQueue,
       stickyScheduleToStartTimeoutMs,
       deploymentOptions,
+      rpcDeploymentOptions,
       versioningBehavior,
       stickySchedulingEnabled,
       workflowPollerCount,
@@ -493,6 +495,7 @@ export class WorkerRuntime {
   readonly #stickySchedulingEnabled: boolean
   readonly #stickyAttributes: StickyExecutionAttributes
   readonly #deploymentOptions: WorkerDeploymentOptions
+  readonly #rpcDeploymentOptions: WorkerDeploymentOptions | undefined
   readonly #versioningBehavior: VersioningBehavior | null
   readonly #workflowPollerCount: number
   #running = false
@@ -521,6 +524,7 @@ export class WorkerRuntime {
     stickyQueue: string
     stickyScheduleToStartTimeoutMs: number
     deploymentOptions: WorkerDeploymentOptions
+    rpcDeploymentOptions: WorkerDeploymentOptions | undefined
     versioningBehavior: VersioningBehavior | null
     stickySchedulingEnabled: boolean
     workflowPollerCount: number
@@ -545,6 +549,7 @@ export class WorkerRuntime {
     this.#stickyQueue = params.stickyQueue
     this.#stickySchedulingEnabled = params.stickySchedulingEnabled
     this.#deploymentOptions = params.deploymentOptions
+    this.#rpcDeploymentOptions = params.rpcDeploymentOptions
     this.#versioningBehavior = params.versioningBehavior
     this.#workflowPollerCount = params.workflowPollerCount
     this.#stickyAttributes = create(StickyExecutionAttributesSchema, {
@@ -797,7 +802,7 @@ export class WorkerRuntime {
       namespace: this.#namespace,
       taskQueue: create(TaskQueueSchema, { name: queueName }),
       identity: this.#identity,
-      deploymentOptions: this.#deploymentOptions,
+      deploymentOptions: this.#rpcDeploymentOptions,
     })
 
     const pollOnce = this.#withRpcAbort(async (signal) => {
@@ -840,7 +845,7 @@ export class WorkerRuntime {
       namespace: this.#namespace,
       taskQueue: create(TaskQueueSchema, { name: this.#taskQueue }),
       identity: this.#identity,
-      deploymentOptions: this.#deploymentOptions,
+      deploymentOptions: this.#rpcDeploymentOptions,
     })
 
     const pollOnce = this.#withRpcAbort(async (signal) => {
@@ -1083,6 +1088,7 @@ export class WorkerRuntime {
       const { results: activityResults, scheduledEventIds: activityScheduleEventIds } =
         await this.#extractActivityResolutions(historyEvents)
       const timerResults = await this.#extractTimerResolutions(historyEvents)
+      const pendingChildWorkflows = await this.#extractPendingChildWorkflows(historyEvents)
 
       const replayUpdates = historyReplay?.updates ?? []
       const mergedUpdates = mergeUpdateInvocations(replayUpdates, collectedUpdates.invocations)
@@ -1096,6 +1102,7 @@ export class WorkerRuntime {
         determinismState: previousState,
         activityResults,
         activityScheduleEventIds,
+        pendingChildWorkflows,
         signalDeliveries,
         timerResults,
         queryRequests,
@@ -1199,7 +1206,7 @@ export class WorkerRuntime {
           commands: commandsForResponse,
           identity: this.#identity,
           namespace: this.#namespace,
-          deploymentOptions: this.#deploymentOptions,
+          deploymentOptions: this.#rpcDeploymentOptions,
           queryResults: multiQueryResults,
           ...(this.#stickySchedulingEnabled && !hasLegacyQueries ? { stickyAttributes: this.#stickyAttributes } : {}),
           ...(this.#versioningBehavior !== null ? { versioningBehavior: this.#versioningBehavior } : {}),
@@ -1514,6 +1521,60 @@ export class WorkerRuntime {
       }
     }
     return fired
+  }
+
+  async #extractPendingChildWorkflows(events: HistoryEvent[]): Promise<Set<string>> {
+    const pending = new Map<string, string>()
+
+    const normalizeEventId = (value: bigint | number | string | undefined | null): string | null => {
+      if (value === undefined || value === null) {
+        return null
+      }
+      if (typeof value === 'string') {
+        return value
+      }
+      return value.toString()
+    }
+
+    for (const event of events) {
+      switch (event.eventType) {
+        case EventType.START_CHILD_WORKFLOW_EXECUTION_INITIATED: {
+          if (event.attributes?.case !== 'startChildWorkflowExecutionInitiatedEventAttributes') {
+            break
+          }
+          const attrs = event.attributes.value
+          const initiatedId = normalizeEventId(event.eventId)
+          if (initiatedId && attrs.workflowId) {
+            pending.set(initiatedId, attrs.workflowId)
+          }
+          break
+        }
+        case EventType.CHILD_WORKFLOW_EXECUTION_STARTED: {
+          if (event.attributes?.case !== 'childWorkflowExecutionStartedEventAttributes') {
+            break
+          }
+          const initiatedId = normalizeEventId(event.attributes.value.initiatedEventId)
+          if (initiatedId) {
+            pending.delete(initiatedId)
+          }
+          break
+        }
+        case EventType.START_CHILD_WORKFLOW_EXECUTION_FAILED: {
+          if (event.attributes?.case !== 'startChildWorkflowExecutionFailedEventAttributes') {
+            break
+          }
+          const initiatedId = normalizeEventId(event.attributes.value.initiatedEventId)
+          if (initiatedId) {
+            pending.delete(initiatedId)
+          }
+          break
+        }
+        default:
+          break
+      }
+    }
+
+    return new Set(pending.values())
   }
 
   async #extractWorkflowQueryRequests(response: PollWorkflowTaskQueueResponse): Promise<WorkflowQueryRequest[]> {
@@ -1979,7 +2040,7 @@ export class WorkerRuntime {
       failure: encoded,
       identity: this.#identity,
       namespace: this.#namespace,
-      deploymentOptions: this.#deploymentOptions,
+      deploymentOptions: this.#rpcDeploymentOptions,
     })
 
     try {
@@ -2095,7 +2156,7 @@ export class WorkerRuntime {
             identity: this.#identity,
             namespace: this.#namespace,
             result: payloads && payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined,
-            deploymentOptions: this.#deploymentOptions,
+            deploymentOptions: this.#rpcDeploymentOptions,
           })
           await this.#workflowService.respondActivityTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
           break
@@ -2157,7 +2218,7 @@ export class WorkerRuntime {
       namespace: this.#namespace,
       failure: encoded,
       lastHeartbeatDetails,
-      deploymentOptions: this.#deploymentOptions,
+      deploymentOptions: this.#rpcDeploymentOptions,
     })
 
     await this.#workflowService.respondActivityTaskFailed(request, { timeoutMs: RESPOND_TIMEOUT_MS })
@@ -2174,7 +2235,7 @@ export class WorkerRuntime {
       identity: this.#identity,
       namespace: this.#namespace,
       details,
-      deploymentOptions: this.#deploymentOptions,
+      deploymentOptions: this.#rpcDeploymentOptions,
     })
 
     await this.#workflowService.respondActivityTaskCanceled(request, { timeoutMs: RESPOND_TIMEOUT_MS })

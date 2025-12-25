@@ -24,7 +24,7 @@
 
 ## Memories service helpers
 
-- Save new entries with `bun run save-memory --task-name … --content … --summary … --tags …` and query cached facts with `bun run retrieve-memory --query …`. Both helpers emit logs tied to the `memories` schema defined in `schemas/embeddings/memories.sql` and rely on the OpenAI embedding model (`OPENAI_API_KEY`, `OPENAI_EMBEDDING_MODEL`, `OPENAI_EMBEDDING_DIMENSION`, `OPENAI_API_BASE_URL`), so make sure the env vars are set before running them.
+- Save new entries with `bun run --filter memories save-memory --task-name … --content … --summary … --tags …` and query cached facts with `bun run --filter memories retrieve-memory --query …`. Both helpers emit logs tied to the `memories` schema defined in `schemas/embeddings/memories.sql`.
 
 ### Tooling Notes
 

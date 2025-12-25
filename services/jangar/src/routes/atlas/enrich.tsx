@@ -3,7 +3,7 @@ import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { enrichAtlas, listAtlasPaths } from '@/data/atlas'
+import { enrichAtlas, enrichAtlasRepository, listAtlasPaths } from '@/data/atlas'
 
 type AtlasEnrichState = {
   repository: string
@@ -35,6 +35,11 @@ function AtlasEnrichPage() {
   const [enrichStatus, setEnrichStatus] = React.useState<string | null>(null)
   const [enrichErrors, setEnrichErrors] = React.useState<{ repository?: string; ref?: string; path?: string }>({})
   const [isEnriching, setIsEnriching] = React.useState(false)
+  const [bulkPathPrefix, setBulkPathPrefix] = React.useState('')
+  const [bulkMaxFiles, setBulkMaxFiles] = React.useState('')
+  const [bulkStatus, setBulkStatus] = React.useState<string | null>(null)
+  const [bulkErrors, setBulkErrors] = React.useState<{ repository?: string; ref?: string; maxFiles?: string }>({})
+  const [isBulkEnriching, setIsBulkEnriching] = React.useState(false)
   const [pathSuggestions, setPathSuggestions] = React.useState<string[]>([])
   const [pathStatus, setPathStatus] = React.useState<string | null>(null)
   const [isLoadingPaths, setIsLoadingPaths] = React.useState(false)
@@ -52,6 +57,10 @@ function AtlasEnrichPage() {
     setEnrichContentHash(searchState.contentHash)
     setEnrichErrors({})
     setEnrichStatus(null)
+    setBulkErrors({})
+    setBulkStatus(null)
+    setBulkPathPrefix('')
+    setBulkMaxFiles('')
   }, [searchState.commit, searchState.contentHash, searchState.path, searchState.ref, searchState.repository])
 
   React.useEffect(() => {
@@ -151,7 +160,65 @@ function AtlasEnrichPage() {
     }
   }
 
+  const submitBulkEnrich = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setBulkStatus(null)
+
+    const trimmedRepository = enrichRepository.trim()
+    const trimmedRef = enrichRef.trim()
+    const trimmedPrefix = bulkPathPrefix.trim()
+    const trimmedMaxFiles = bulkMaxFiles.trim()
+
+    const nextErrors: { repository?: string; ref?: string; maxFiles?: string } = {}
+    if (!trimmedRepository) nextErrors.repository = 'Repository is required.'
+    if (!trimmedRef) nextErrors.ref = 'Ref is required.'
+
+    let maxFilesValue: number | undefined
+    if (trimmedMaxFiles) {
+      const parsed = Number.parseInt(trimmedMaxFiles, 10)
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        nextErrors.maxFiles = 'Max files must be a positive integer.'
+      } else {
+        maxFilesValue = parsed
+      }
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setBulkErrors(nextErrors)
+      const focusTarget = nextErrors.repository
+        ? enrichRepositoryRef.current
+        : nextErrors.ref
+          ? enrichRefRef.current
+          : null
+      focusTarget?.focus()
+      return
+    }
+
+    setBulkErrors({})
+    setIsBulkEnriching(true)
+    try {
+      const result = await enrichAtlasRepository({
+        repository: trimmedRepository,
+        ref: trimmedRef,
+        pathPrefix: trimmedPrefix || undefined,
+        maxFiles: maxFilesValue,
+      })
+      if (!result.ok) {
+        setBulkStatus(result.message)
+        return
+      }
+      setBulkStatus(`Repository enrichment requested (status ${result.status}).`)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      setBulkStatus(message)
+    } finally {
+      setIsBulkEnriching(false)
+    }
+  }
+
   const hasPrefill = Boolean(searchState.path || searchState.commit || searchState.contentHash)
+  const repositoryError = enrichErrors.repository ?? bulkErrors.repository
+  const refError = enrichErrors.ref ?? bulkErrors.ref
 
   return (
     <main className="mx-auto w-full max-w-6xl space-y-4 p-4">
@@ -178,11 +245,11 @@ function AtlasEnrichPage() {
                 placeholder="proompteng/lab…"
                 autoComplete="off"
                 spellCheck={false}
-                aria-invalid={Boolean(enrichErrors.repository)}
+                aria-invalid={Boolean(repositoryError)}
               />
-              {enrichErrors.repository ? (
+              {repositoryError ? (
                 <p className="text-xs text-destructive" role="alert">
-                  {enrichErrors.repository}
+                  {repositoryError}
                 </p>
               ) : null}
             </div>
@@ -199,11 +266,11 @@ function AtlasEnrichPage() {
                 placeholder="main…"
                 autoComplete="off"
                 spellCheck={false}
-                aria-invalid={Boolean(enrichErrors.ref)}
+                aria-invalid={Boolean(refError)}
               />
-              {enrichErrors.ref ? (
+              {refError ? (
                 <p className="text-xs text-destructive" role="alert">
-                  {enrichErrors.ref}
+                  {refError}
                 </p>
               ) : null}
             </div>
@@ -283,6 +350,78 @@ function AtlasEnrichPage() {
           {enrichStatus ? (
             <p aria-live="polite" className="text-xs text-muted-foreground">
               {enrichStatus}
+            </p>
+          ) : null}
+        </form>
+      </section>
+
+      <section className="rounded-none border bg-card p-4">
+        <header className="space-y-1">
+          <h2 className="text-sm font-semibold">Repository enrichment</h2>
+          <p className="text-xs text-muted-foreground">
+            Uses the repository and ref above. Optionally narrow the paths or cap the batch size.
+          </p>
+        </header>
+
+        <form className="space-y-3 pt-3" onSubmit={submitBulkEnrich}>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-1">
+              <label className="text-xs font-medium" htmlFor="atlas-enrich-prefix">
+                Path prefix (optional)
+              </label>
+              <Input
+                id="atlas-enrich-prefix"
+                name="pathPrefix"
+                value={bulkPathPrefix}
+                onChange={(event) => setBulkPathPrefix(event.target.value)}
+                placeholder="services/jangar/…"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium" htmlFor="atlas-enrich-max-files">
+                Max files (optional)
+              </label>
+              <Input
+                id="atlas-enrich-max-files"
+                name="maxFiles"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                value={bulkMaxFiles}
+                onChange={(event) => setBulkMaxFiles(event.target.value)}
+                placeholder="5000…"
+                autoComplete="off"
+                spellCheck={false}
+                aria-invalid={Boolean(bulkErrors.maxFiles)}
+              />
+              {bulkErrors.maxFiles ? (
+                <p className="text-xs text-destructive" role="alert">
+                  {bulkErrors.maxFiles}
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="submit" disabled={isBulkEnriching} aria-busy={isBulkEnriching}>
+              {isBulkEnriching ? (
+                <span className="mr-2 size-3 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none" />
+              ) : null}
+              <span>Enrich repository files</span>
+            </Button>
+          </div>
+
+          {bulkErrors.repository || bulkErrors.ref ? (
+            <p className="text-xs text-destructive" role="alert">
+              Repository and ref are required. Update them in the form above.
+            </p>
+          ) : null}
+
+          {bulkStatus ? (
+            <p aria-live="polite" className="text-xs text-muted-foreground">
+              {bulkStatus}
             </p>
           ) : null}
         </form>

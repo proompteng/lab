@@ -15,6 +15,7 @@ const BUMBA_WORKTREE_NAME = 'bumba'
 export type StartEnrichFileInput = {
   filePath: string
   commit?: string | null
+  ref?: string
   context?: string
   repository?: string
   workflowId?: string
@@ -29,8 +30,26 @@ export type StartEnrichFileResult = {
   filePath: string
 }
 
+export type StartEnrichRepositoryInput = {
+  repository?: string
+  ref?: string
+  commit?: string | null
+  context?: string
+  pathPrefix?: string | null
+  maxFiles?: number | null
+  workflowId?: string
+}
+
+export type StartEnrichRepositoryResult = {
+  workflowId: string
+  runId: string
+  taskQueue: string
+  repoRoot: string
+}
+
 export type BumbaWorkflowsService = {
   startEnrichFile: (input: StartEnrichFileInput) => Effect.Effect<StartEnrichFileResult, Error>
+  startEnrichRepository: (input: StartEnrichRepositoryInput) => Effect.Effect<StartEnrichRepositoryResult, Error>
 }
 
 export class BumbaWorkflows extends Context.Tag('BumbaWorkflows')<BumbaWorkflows, BumbaWorkflowsService>() {}
@@ -211,11 +230,47 @@ const resolveRepoRootForCommit = async (filePath: string, commit?: string | null
   return worktreePath
 }
 
+const resolveRepoRootForRepository = async (commit?: string | null) => {
+  const baseRepoRoot = resolveBaseRepoRoot()
+  const normalizedCommit = normalizeOptionalText(commit)
+  const worktreePath = await ensureBumbaWorktree(baseRepoRoot)
+
+  if (!normalizedCommit) {
+    return worktreePath
+  }
+
+  if (!(await commitExists(baseRepoRoot, normalizedCommit))) {
+    await fetchRepo(baseRepoRoot)
+    if (!(await commitExists(baseRepoRoot, normalizedCommit))) {
+      throw new Error(`Commit not found after fetch: ${normalizedCommit}`)
+    }
+  }
+
+  try {
+    await resetWorktree(worktreePath, normalizedCommit)
+  } catch (_error) {
+    await fetchRepo(baseRepoRoot)
+    await resetWorktree(worktreePath, normalizedCommit)
+  }
+
+  return worktreePath
+}
+
 const buildWorkflowId = (filePath: string, commit?: string | null) => {
   const normalizedFile = filePath.replace(/[^a-zA-Z0-9_.-]+/g, '-')
   const normalizedCommit = normalizeOptionalText(commit)
   const base = normalizedCommit ? `${normalizedCommit}-${normalizedFile}` : normalizedFile
   return `bumba-${base}-${randomUUID()}`
+}
+
+const buildRepositoryWorkflowId = (repository?: string, ref?: string, commit?: string | null) => {
+  const normalizedRepository = normalizeOptionalText(repository)?.replace(/[^a-zA-Z0-9_.-]+/g, '-') ?? 'repository'
+  const normalizedRef = normalizeOptionalText(ref)?.replace(/[^a-zA-Z0-9_.-]+/g, '-') ?? 'ref'
+  const normalizedCommit = normalizeOptionalText(commit)
+  const base = normalizedCommit
+    ? `${normalizedCommit}-${normalizedRepository}`
+    : `${normalizedRepository}-${normalizedRef}`
+  return `bumba-repo-${base}-${randomUUID()}`
 }
 
 const resolveTaskQueue = () => normalizeOptionalText(process.env.TEMPORAL_TASK_QUEUE) ?? DEFAULT_TASK_QUEUE
@@ -297,6 +352,7 @@ export const BumbaWorkflowsLive = Layer.scoped(
                           filePath: input.filePath,
                           context: input.context ?? '',
                           repository,
+                          ref: input.ref,
                           commit: input.commit ?? undefined,
                           eventDeliveryId: input.eventDeliveryId,
                         },
@@ -309,6 +365,58 @@ export const BumbaWorkflowsLive = Layer.scoped(
                       taskQueue,
                       repoRoot,
                       filePath: input.filePath,
+                    }
+                  },
+                  catch: (error) => normalizeError('start bumba workflow failed', error),
+                }),
+              ),
+            ),
+          ),
+        ),
+      startEnrichRepository: (input) =>
+        pipe(
+          getClient(),
+          Effect.flatMap((client) =>
+            pipe(
+              TSemaphore.withPermits(
+                gitSemaphore,
+                1,
+              )(
+                Effect.tryPromise({
+                  try: () => resolveRepoRootForRepository(input.commit),
+                  catch: (error) => normalizeError('start bumba workflow failed', error),
+                }),
+              ),
+              Effect.flatMap((repoRoot) =>
+                Effect.tryPromise({
+                  try: async () => {
+                    const workflowId =
+                      input.workflowId ?? buildRepositoryWorkflowId(input.repository, input.ref, input.commit)
+                    const repository = resolveRepositorySlug(input.repository)
+                    const taskQueue = resolveTaskQueue()
+
+                    const startResult = await client.workflow.start({
+                      workflowId,
+                      workflowType: 'enrichRepository',
+                      taskQueue,
+                      args: [
+                        {
+                          repoRoot,
+                          repository,
+                          ref: input.ref,
+                          commit: input.commit ?? undefined,
+                          context: input.context ?? '',
+                          pathPrefix: input.pathPrefix ?? undefined,
+                          maxFiles: input.maxFiles ?? undefined,
+                        },
+                      ],
+                    })
+
+                    return {
+                      workflowId: startResult.workflowId,
+                      runId: startResult.runId,
+                      taskQueue,
+                      repoRoot,
                     }
                   },
                   catch: (error) => normalizeError('start bumba workflow failed', error),

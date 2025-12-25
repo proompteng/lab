@@ -18,7 +18,7 @@ import { PayloadsSchema } from '../proto/temporal/api/common/v1/message_pb'
 import { CommandType } from '../proto/temporal/api/enums/v1/command_type_pb'
 import { QueryResultType } from '../proto/temporal/api/enums/v1/query_pb'
 import { type WorkflowQueryResult, WorkflowQueryResultSchema } from '../proto/temporal/api/query/v1/message_pb'
-import { materializeCommands, type WorkflowCommandIntent } from './commands'
+import { materializeCommands, type StartChildWorkflowCommandIntent, type WorkflowCommandIntent } from './commands'
 import {
   type ActivityResolution,
   createWorkflowContext,
@@ -96,6 +96,7 @@ export interface ExecuteWorkflowInput {
   readonly determinismState?: WorkflowDeterminismState
   readonly activityResults?: Map<string, ActivityResolution>
   readonly activityScheduleEventIds?: Map<string, string>
+  readonly pendingChildWorkflows?: ReadonlySet<string>
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
   readonly timerResults?: ReadonlySet<string>
   readonly queryRequests?: readonly WorkflowQueryRequest[]
@@ -223,7 +224,26 @@ export class WorkflowExecutor {
         }
       }
 
-      const commands = await this.#buildSuccessCommands(exit.value.commandContext, exit.value.result)
+      const pendingChildStarts = this.#resolvePendingChildStarts(
+        input.pendingChildWorkflows,
+        exit.value.commandContext.intents,
+      )
+      if (pendingChildStarts.size > 0) {
+        const commands = await materializeCommands(exit.value.commandContext.intents, {
+          dataConverter: this.#dataConverter,
+          workflowInfo: info,
+        })
+        return {
+          commands,
+          intents: exit.value.commandContext.intents,
+          determinismState,
+          completion: 'pending',
+          queryResults,
+          ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
+        }
+      }
+
+      const commands = await this.#buildSuccessCommands(exit.value.commandContext, exit.value.result, info)
       return {
         commands,
         intents: exit.value.commandContext.intents,
@@ -243,8 +263,30 @@ export class WorkflowExecutor {
         throw new WorkflowQueryViolationError('Workflow query cannot request continue-as-new')
       }
       const rawSnapshot = guard.snapshot
-      const intents = rawSnapshot.commandHistory.map((entry) => entry.intent)
-      const commands = await materializeCommands(intents, { dataConverter: this.#dataConverter })
+      const continueContext = lastCommandContext
+      const intents = continueContext?.intents ?? rawSnapshot.commandHistory.map((entry) => entry.intent)
+      const pendingChildStarts = this.#resolvePendingChildStarts(input.pendingChildWorkflows, intents)
+      if (pendingChildStarts.size > 0) {
+        const filteredIntents = intents.filter((intent) => intent.kind !== 'continue-as-new')
+        const commands = await materializeCommands(filteredIntents, {
+          dataConverter: this.#dataConverter,
+          workflowInfo: info,
+        })
+        const determinismState = filterDeterminismState(
+          snapshotToDeterminismState(rawSnapshot),
+          (intent) => intent.kind !== 'continue-as-new',
+        )
+        return {
+          commands,
+          intents: filteredIntents,
+          determinismState,
+          completion: 'pending',
+          queryResults,
+          ...(updateDispatches.length > 0 ? { updateDispatches } : {}),
+        }
+      }
+
+      const commands = await materializeCommands(intents, { dataConverter: this.#dataConverter, workflowInfo: info })
       return {
         commands,
         intents,
@@ -269,6 +311,7 @@ export class WorkflowExecutor {
         })()
       const pendingCommands = await materializeCommands(contextForPending.intents, {
         dataConverter: this.#dataConverter,
+        workflowInfo: info,
       })
       if (executionMode === 'query') {
         return {
@@ -516,9 +559,13 @@ export class WorkflowExecutor {
   async #buildSuccessCommands(
     commandContext: { intents: readonly WorkflowCommandIntent[] },
     result: unknown,
+    workflowInfo: WorkflowInfo,
   ): Promise<Command[]> {
     const commandIntents = commandContext.intents
-    const materialized = await materializeCommands(commandIntents, { dataConverter: this.#dataConverter })
+    const materialized = await materializeCommands(commandIntents, {
+      dataConverter: this.#dataConverter,
+      workflowInfo,
+    })
     const completionCommands = await this.#buildCompleteCommands(result)
     return [...materialized, ...completionCommands]
   }
@@ -623,7 +670,29 @@ export class WorkflowExecutor {
     }
     return raw
   }
+
+  #resolvePendingChildStarts(
+    pendingFromHistory: ReadonlySet<string> | undefined,
+    intents: readonly WorkflowCommandIntent[],
+  ): Set<string> {
+    const pending = new Set(pendingFromHistory ?? [])
+    for (const intent of intents) {
+      if (intent.kind !== 'start-child-workflow') {
+        continue
+      }
+      pending.add((intent as StartChildWorkflowCommandIntent).workflowId)
+    }
+    return pending
+  }
 }
+
+const filterDeterminismState = (
+  state: WorkflowDeterminismState,
+  predicate: (intent: WorkflowCommandIntent) => boolean,
+): WorkflowDeterminismState => ({
+  ...state,
+  commandHistory: state.commandHistory.filter((entry) => predicate(entry.intent)),
+})
 
 const unwrapWorkflowError = <T>(error: unknown, ctor: unknown): T | undefined => {
   if (typeof ctor !== 'function') {

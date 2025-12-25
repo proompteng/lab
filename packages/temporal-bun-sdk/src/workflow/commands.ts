@@ -35,7 +35,7 @@ import {
 } from '../proto/temporal/api/common/v1/message_pb'
 import { CommandType } from '../proto/temporal/api/enums/v1/command_type_pb'
 import { TaskQueueSchema } from '../proto/temporal/api/taskqueue/v1/message_pb'
-import type { WorkflowCommandIntentId } from './context'
+import type { WorkflowCommandIntentId, WorkflowInfo } from './context'
 import type { WorkflowRetryPolicyInput } from './determinism'
 
 export type WorkflowCommandKind =
@@ -189,6 +189,7 @@ export type WorkflowCommandIntent =
 
 export interface WorkflowCommandMaterializationOptions {
   readonly dataConverter: DataConverter
+  readonly workflowInfo?: WorkflowInfo
 }
 
 export const materializeCommands = async (
@@ -335,12 +336,16 @@ const buildStartChildWorkflowCommand = async (
   options: WorkflowCommandMaterializationOptions,
 ): Promise<Command> => {
   const payloads = (await encodeValuesToPayloads(options.dataConverter, intent.input)) ?? []
+  const namespace =
+    options.workflowInfo && intent.namespace === options.workflowInfo.namespace ? undefined : intent.namespace
+  const taskQueue =
+    options.workflowInfo && intent.taskQueue === options.workflowInfo.taskQueue ? undefined : intent.taskQueue
 
   const attributes = create(StartChildWorkflowExecutionCommandAttributesSchema, {
-    namespace: intent.namespace,
     workflowId: intent.workflowId,
     workflowType: buildWorkflowType(intent.workflowType),
-    taskQueue: create(TaskQueueSchema, { name: intent.taskQueue }),
+    ...(taskQueue ? { taskQueue: create(TaskQueueSchema, { name: taskQueue }) } : {}),
+    ...(namespace ? { namespace } : {}),
     input: payloads.length > 0 ? create(PayloadsSchema, { payloads }) : undefined,
     workflowExecutionTimeout: durationFromMillis(intent.timeouts.workflowExecutionTimeoutMs),
     workflowRunTimeout: durationFromMillis(intent.timeouts.workflowRunTimeoutMs),
