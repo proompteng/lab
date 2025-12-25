@@ -13,8 +13,6 @@ global:
         secretKeyRef:
           name: observability-minio-credentials
           key: tempoSecretKey
-  extraArgs:
-    - -config.expand-env=true
 
 traces:
   otlp:
@@ -25,11 +23,15 @@ traces:
 
 distributor:
   replicas: 1
+  extraArgs:
+    - -config.expand-env=true
 
 ingester:
   replicas: 2
   persistence:
     enabled: false
+  extraArgs:
+    - -config.expand-env=true
 
 compactor:
   replicas: 1
@@ -37,12 +39,18 @@ compactor:
     enabled: true
     size: 20Gi
     storageClass: longhorn
+  extraArgs:
+    - -config.expand-env=true
 
 querier:
   replicas: 1
+  extraArgs:
+    - -config.expand-env=true
 
 queryFrontend:
   replicas: 1
+  extraArgs:
+    - -config.expand-env=true
 
 storage:
   trace:
