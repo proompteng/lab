@@ -8,6 +8,8 @@ import {
   createMetricsRegistry,
   defaultMetricsExporterSpec,
 } from './metrics'
+import type { OpenTelemetryHandle } from './opentelemetry'
+import { registerOpenTelemetry } from './opentelemetry'
 
 export interface ObservabilityConfig {
   readonly logLevel: LogLevel
@@ -25,6 +27,7 @@ export interface ObservabilityServices {
   readonly logger: Logger
   readonly metricsRegistry: MetricsRegistry
   readonly metricsExporter: MetricsExporter
+  readonly openTelemetry?: OpenTelemetryHandle
 }
 
 export const createObservabilityServices = (
@@ -35,10 +38,14 @@ export const createObservabilityServices = (
     const logger = overrides.logger ?? makeLogger({ level: config.logLevel, format: config.logFormat })
     const exporter = overrides.metricsExporter ?? (yield* createMetricsExporter(config.metrics))
     const registry = overrides.metricsRegistry ?? createMetricsRegistry(exporter)
+    const openTelemetry = yield* Effect.promise(() => registerOpenTelemetry()).pipe(
+      Effect.catchAll(() => Effect.succeed(undefined)),
+    )
     return {
       logger,
       metricsRegistry: registry,
       metricsExporter: exporter,
+      openTelemetry,
     }
   })
 
@@ -47,3 +54,6 @@ export const defaultObservabilityConfig: ObservabilityConfig = {
   logFormat: 'pretty',
   metrics: cloneMetricsExporterSpec(defaultMetricsExporterSpec),
 }
+
+export type { OpenTelemetryConfig, OpenTelemetryHandle } from './opentelemetry'
+export { registerOpenTelemetry } from './opentelemetry'
