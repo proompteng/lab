@@ -1088,6 +1088,7 @@ export class WorkerRuntime {
       const { results: activityResults, scheduledEventIds: activityScheduleEventIds } =
         await this.#extractActivityResolutions(historyEvents)
       const timerResults = await this.#extractTimerResolutions(historyEvents)
+      const pendingChildWorkflows = await this.#extractPendingChildWorkflows(historyEvents)
 
       const replayUpdates = historyReplay?.updates ?? []
       const mergedUpdates = mergeUpdateInvocations(replayUpdates, collectedUpdates.invocations)
@@ -1101,6 +1102,7 @@ export class WorkerRuntime {
         determinismState: previousState,
         activityResults,
         activityScheduleEventIds,
+        pendingChildWorkflows,
         signalDeliveries,
         timerResults,
         queryRequests,
@@ -1519,6 +1521,60 @@ export class WorkerRuntime {
       }
     }
     return fired
+  }
+
+  async #extractPendingChildWorkflows(events: HistoryEvent[]): Promise<Set<string>> {
+    const pending = new Map<string, string>()
+
+    const normalizeEventId = (value: bigint | number | string | undefined | null): string | null => {
+      if (value === undefined || value === null) {
+        return null
+      }
+      if (typeof value === 'string') {
+        return value
+      }
+      return value.toString()
+    }
+
+    for (const event of events) {
+      switch (event.eventType) {
+        case EventType.START_CHILD_WORKFLOW_EXECUTION_INITIATED: {
+          if (event.attributes?.case !== 'startChildWorkflowExecutionInitiatedEventAttributes') {
+            break
+          }
+          const attrs = event.attributes.value
+          const initiatedId = normalizeEventId(event.eventId)
+          if (initiatedId && attrs.workflowId) {
+            pending.set(initiatedId, attrs.workflowId)
+          }
+          break
+        }
+        case EventType.CHILD_WORKFLOW_EXECUTION_STARTED: {
+          if (event.attributes?.case !== 'childWorkflowExecutionStartedEventAttributes') {
+            break
+          }
+          const initiatedId = normalizeEventId(event.attributes.value.initiatedEventId)
+          if (initiatedId) {
+            pending.delete(initiatedId)
+          }
+          break
+        }
+        case EventType.START_CHILD_WORKFLOW_EXECUTION_FAILED: {
+          if (event.attributes?.case !== 'startChildWorkflowExecutionFailedEventAttributes') {
+            break
+          }
+          const initiatedId = normalizeEventId(event.attributes.value.initiatedEventId)
+          if (initiatedId) {
+            pending.delete(initiatedId)
+          }
+          break
+        }
+        default:
+          break
+      }
+    }
+
+    return new Set(pending.values())
   }
 
   async #extractWorkflowQueryRequests(response: PollWorkflowTaskQueueResponse): Promise<WorkflowQueryRequest[]> {

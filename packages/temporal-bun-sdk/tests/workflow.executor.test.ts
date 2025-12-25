@@ -36,6 +36,7 @@ const execute = async (
     determinismState: overrides.determinismState,
     activityResults: overrides.activityResults,
     signalDeliveries: overrides.signalDeliveries,
+    pendingChildWorkflows: overrides.pendingChildWorkflows,
     queryRequests: overrides.queryRequests,
     updates: overrides.updates,
     mode: overrides.mode,
@@ -118,7 +119,8 @@ test('schedules a child workflow command', async () => {
 
   const output = await execute(executor, { workflowType: 'childStarter', arguments: ['payload'] })
 
-  expect(output.commands).toHaveLength(2)
+  expect(output.completion).toBe('pending')
+  expect(output.commands).toHaveLength(1)
   const startChildCommand = output.commands[0]
   expect(startChildCommand.commandType).toBe(CommandType.START_CHILD_WORKFLOW_EXECUTION)
   expect(startChildCommand.attributes?.case).toBe('startChildWorkflowExecutionCommandAttributes')

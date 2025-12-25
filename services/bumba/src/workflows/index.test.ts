@@ -4,6 +4,7 @@ import type {
   Command,
   ExecuteWorkflowInput,
   WorkflowDefinitions,
+  WorkflowDeterminismState,
   WorkflowExecutionOutput,
 } from '@proompteng/temporal-bun-sdk/workflow'
 import {
@@ -39,6 +40,7 @@ const execute = async (executor: WorkflowExecutor, overrides: ExecuteOverrides):
     determinismState: overrides.determinismState,
     activityResults: overrides.activityResults,
     activityScheduleEventIds: overrides.activityScheduleEventIds,
+    pendingChildWorkflows: overrides.pendingChildWorkflows,
     signalDeliveries: overrides.signalDeliveries,
     timerResults: overrides.timerResults,
     updates: overrides.updates,
@@ -224,8 +226,19 @@ test('enrichRepository schedules listing and child workflows', async () => {
       ? childCommands[0].attributes.value
       : undefined
   expect(childAttrs?.parentClosePolicy).toBe(PARENT_CLOSE_POLICY_ABANDON)
-  expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
-  expect(output.completion).toBe('completed')
+  expect(output.completion).toBe('pending')
+
+  const completionRun = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    determinismState: cloneState(output.determinismState),
+    activityResults,
+    pendingChildWorkflows: new Set(),
+  })
+
+  expect(completionRun.completion).toBe('completed')
+  expect(completionRun.commands).toHaveLength(1)
+  expect(completionRun.commands[0]?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
 })
 
 test('enrichRepository continues as new when file list exceeds batch size', async () => {
@@ -249,7 +262,38 @@ test('enrichRepository continues as new when file list exceeds batch size', asyn
     (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
   )
 
-  expect(output.completion).toBe('continued-as-new')
-  expect(continueCommands).toHaveLength(1)
+  expect(output.completion).toBe('pending')
+  expect(continueCommands).toHaveLength(0)
   expect(childCommands).toHaveLength(500)
+
+  const continuationRun = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    determinismState: cloneState(output.determinismState),
+    pendingChildWorkflows: new Set(),
+  })
+
+  const continuationCommands = continuationRun.commands.filter(
+    (command: Command) => command.commandType === CommandType.CONTINUE_AS_NEW_WORKFLOW_EXECUTION,
+  )
+  const continuationChildCommands = continuationRun.commands.filter(
+    (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
+  )
+
+  expect(continuationRun.completion).toBe('continued-as-new')
+  expect(continuationCommands).toHaveLength(1)
+  expect(continuationChildCommands).toHaveLength(0)
+})
+
+const cloneState = (state: WorkflowDeterminismState): WorkflowDeterminismState => ({
+  commandHistory: state.commandHistory.map((entry) => ({
+    intent: entry.intent,
+    metadata: entry.metadata ? { ...entry.metadata } : undefined,
+  })),
+  randomValues: [...state.randomValues],
+  timeValues: [...state.timeValues],
+  failureMetadata: state.failureMetadata ? { ...state.failureMetadata } : undefined,
+  signals: state.signals ? state.signals.map((record) => ({ ...record })) : [],
+  queries: state.queries ? state.queries.map((record) => ({ ...record })) : [],
+  ...(state.updates ? { updates: state.updates.map((entry) => ({ ...entry })) } : {}),
 })
