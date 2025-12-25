@@ -52,14 +52,12 @@ describe('buildCodexPrompt', () => {
       issueUrl: 'https://github.com/proompteng/lab/issues/77',
     })
 
-    expect(prompt).toContain('Implement this issue end to end.')
-    expect(prompt).toContain('Implementation branch: codex/issue-77-abc123')
-    expect(prompt).toContain('Do:')
+    expect(prompt).toContain('Implement this issue end to end and open a merge-ready PR.')
+    expect(prompt).toContain('Head branch: codex/issue-77-abc123')
+    expect(prompt).toContain('Requirements:')
     expect(prompt).toContain(`Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} current`)
-    expect(prompt).toContain('Runtime environment (from apps/froussard/Dockerfile.codex):')
-    expect(prompt).toContain('Node 24.11.1, Go 1.25.4, Bun 1.3.5')
-    expect(prompt).toContain('Memory capture:')
-    expect(prompt).toContain('bun run --filter memories save-memory')
+    expect(prompt).toContain('Memory:')
+    expect(prompt).toContain('Save a memory for every change made.')
   })
 
   it('uses a default issue body when none is supplied', () => {
