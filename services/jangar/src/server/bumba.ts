@@ -309,11 +309,11 @@ export const BumbaWorkflowsLive = Layer.scoped(
       })
 
     yield* Effect.addFinalizer(() => {
-      const activeClientPromise = clientPromise
-      if (!activeClientPromise) return Effect.void
+      const pendingClient = clientPromise
+      if (!pendingClient) return Effect.void
       return Effect.tryPromise({
         try: async () => {
-          const client = await activeClientPromise
+          const client = await pendingClient
           await client.shutdown()
         },
         catch: () => undefined,

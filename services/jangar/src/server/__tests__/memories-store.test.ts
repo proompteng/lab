@@ -1,76 +1,110 @@
+import {
+  type CompiledQuery,
+  type DatabaseConnection,
+  type Driver,
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+  type QueryResult,
+} from 'kysely'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { __private, createPostgresMemoriesStore } from '../memories-store'
+import type { Database } from '../db'
+import { createPostgresMemoriesStore } from '../memories-store'
 
-type SqlCall =
-  | { kind: 'unsafe'; query: string; params: unknown[] | undefined }
-  | { kind: 'tag'; query: string; values: unknown[] }
-  | { kind: 'array'; values: unknown[]; elementType: string | undefined }
+type SqlCall = { sql: string; params: readonly unknown[] }
 
-type FakeDb = {
-  (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]>
-  unsafe: <T = unknown>(query: string, params?: unknown[]) => Promise<T>
-  array: (values: unknown[], elementType?: string) => unknown
-  close: () => Promise<void>
-}
+type FakeDbOptions = { extensions?: string[]; selectRows?: unknown[] }
 
-const makeFakeDb = (options: { extensions?: string[]; selectRows?: unknown[] } = {}) => {
+const makeFakeDb = (options: FakeDbOptions = {}) => {
   const calls: SqlCall[] = []
 
-  const db = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
-    const query = strings.reduce((acc, part, idx) => acc + part + (idx < values.length ? `$${idx + 1}` : ''), '')
-    calls.push({ kind: 'tag', query, values })
+  class TestConnection implements DatabaseConnection {
+    async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
+      const params = (compiledQuery.parameters ?? []) as readonly unknown[]
+      calls.push({ sql: compiledQuery.sql, params })
 
-    if (query.includes('INSERT INTO memories.entries')) {
-      return [
-        {
-          id: 'mem-1',
-          task_name: 'default',
-          content: 'hello',
-          summary: 'hi',
-          tags: ['smoke'],
-          created_at: new Date('2020-01-01T00:00:00.000Z'),
-        },
-      ]
+      const normalized = compiledQuery.sql.toLowerCase()
+
+      if (normalized.includes('select extname from pg_extension')) {
+        const extensions = options.extensions ?? ['vector', 'pgcrypto']
+        return { rows: extensions.map((ext) => ({ extname: ext })) as R[] }
+      }
+
+      if (normalized.includes('pg_catalog.pg_attribute') && normalized.includes("a.attname = 'embedding'")) {
+        return { rows: [] as R[] }
+      }
+
+      if (normalized.includes('insert into "memories"."entries"')) {
+        return {
+          rows: [
+            {
+              id: 'mem-1',
+              task_name: 'default',
+              content: 'hello',
+              summary: 'hi',
+              tags: ['smoke'],
+              created_at: new Date('2020-01-01T00:00:00.000Z'),
+            },
+          ] as R[],
+        }
+      }
+
+      if (normalized.includes('from "memories"."entries"') && normalized.includes('embedding <=>')) {
+        return {
+          rows: (options.selectRows ?? [
+            {
+              id: 'mem-1',
+              task_name: 'default',
+              content: 'hello',
+              summary: 'hi',
+              tags: ['smoke'],
+              created_at: new Date('2020-01-01T00:00:00.000Z'),
+              distance: 0.123,
+            },
+          ]) as R[],
+        }
+      }
+
+      if (normalized.includes('count(*)::bigint') && normalized.includes('from "memories"."entries"')) {
+        return { rows: [{ count: '1' }] as R[] }
+      }
+
+      return { rows: [] as R[] }
     }
 
-    if (query.includes('FROM memories.entries') && query.includes('embedding <=>')) {
-      return (
-        options.selectRows ?? [
-          {
-            id: 'mem-1',
-            task_name: 'default',
-            content: 'hello',
-            summary: 'hi',
-            tags: ['smoke'],
-            created_at: new Date('2020-01-01T00:00:00.000Z'),
-            distance: 0.123,
-          },
-        ]
-      )
+    async *streamQuery<R>(): AsyncIterableIterator<QueryResult<R>> {
+      yield* []
     }
-
-    return []
-  }) as FakeDb
-
-  db.unsafe = async <T = unknown>(query: string, params?: unknown[]) => {
-    calls.push({ kind: 'unsafe', query, params })
-    if (query.includes("SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')")) {
-      const extensions = options.extensions ?? ['vector', 'pgcrypto']
-      return extensions.map((ext) => ({ extname: ext })) as unknown as T
-    }
-    if (query.includes('format_type') && query.includes('pg_catalog.pg_attribute')) {
-      return [] as unknown as T
-    }
-    return [] as unknown as T
   }
 
-  db.array = (values: unknown[], elementType?: string) => {
-    calls.push({ kind: 'array', values, elementType })
-    return { __kind: 'pg_array', values, elementType }
+  class TestDriver implements Driver {
+    async init() {}
+
+    async acquireConnection(): Promise<DatabaseConnection> {
+      return new TestConnection()
+    }
+
+    async beginTransaction() {}
+
+    async commitTransaction() {}
+
+    async rollbackTransaction() {}
+
+    async releaseConnection() {}
+
+    async destroy() {}
   }
 
-  db.close = async () => {}
+  const db = new Kysely<Database>({
+    dialect: {
+      createAdapter: () => new PostgresAdapter(),
+      createDriver: () => new TestDriver(),
+      createIntrospector: (dbInstance) => new PostgresIntrospector(dbInstance),
+      createQueryCompiler: () => new PostgresQueryCompiler(),
+    },
+  })
 
   return { db, calls }
 }
@@ -79,12 +113,10 @@ describe('memories store', () => {
   const previousEnv: Record<string, string | undefined> = {}
 
   beforeEach(() => {
-    for (const key of ['OPENAI_EMBEDDING_DIMENSION', 'PGSSLMODE', 'PGSSLROOTCERT']) {
+    for (const key of ['OPENAI_EMBEDDING_DIMENSION']) {
       previousEnv[key] = process.env[key]
     }
     process.env.OPENAI_EMBEDDING_DIMENSION = '3'
-    process.env.PGSSLMODE = 'require'
-    process.env.PGSSLROOTCERT = '/etc/ssl/certs/example/ca.crt'
   })
 
   afterEach(() => {
@@ -97,13 +129,6 @@ describe('memories store', () => {
     }
   })
 
-  it('does not inject sslrootcert into DATABASE_URL', () => {
-    const base = 'postgresql://user:pass@localhost:5432/db'
-    const updated = __private.withDefaultSslMode(base)
-    expect(updated).toContain('sslmode=require')
-    expect(updated).not.toContain('sslrootcert')
-  })
-
   it('does not attempt CREATE EXTENSION during schema bootstrap', async () => {
     const { db, calls } = makeFakeDb()
     const store = createPostgresMemoriesStore({
@@ -114,8 +139,8 @@ describe('memories store', () => {
 
     await store.persist({ content: 'hello', summary: 'hi', tags: ['smoke'] })
 
-    const unsafeQueries = calls.filter((call) => call.kind === 'unsafe').map((call) => call.query)
-    expect(unsafeQueries.some((query) => query.includes('CREATE EXTENSION'))).toBe(false)
+    const unsafeQueries = calls.map((call) => call.sql.toLowerCase())
+    expect(unsafeQueries.some((query) => query.includes('create extension'))).toBe(false)
   })
 
   it('uses typed Postgres arrays for tags and ids', async () => {
@@ -129,13 +154,9 @@ describe('memories store', () => {
     await store.persist({ content: 'hello', summary: 'hi', tags: ['smoke'] })
     await store.retrieve({ query: 'hello', limit: 1 })
 
-    const arrays = calls.filter((call) => call.kind === 'array') as Array<Extract<SqlCall, { kind: 'array' }>>
-    expect(arrays).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ elementType: 'text', values: ['smoke'] }),
-        expect.objectContaining({ elementType: 'uuid', values: ['mem-1'] }),
-      ]),
-    )
+    const sqlText = calls.map((call) => call.sql)
+    expect(sqlText.some((query) => query.includes('::text[]'))).toBe(true)
+    expect(sqlText.some((query) => query.includes('::uuid[]'))).toBe(true)
   })
 
   it('fails fast when required extensions are missing', async () => {
