@@ -114,6 +114,22 @@ Environment variables supported by the config loader:
 consume directly, so you never have to stitch addresses or TLS buffers together
 by hand.
 
+## OpenTelemetry export
+
+Set `TEMPORAL_OTEL_ENABLED=true` to start the OpenTelemetry SDK inside the worker
+process. Configure exporters with standard OTEL environment variables:
+
+- `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`
+  (or `OTEL_EXPORTER_OTLP_ENDPOINT` to share a base URL).
+- `OTEL_SERVICE_NAME`, `OTEL_SERVICE_NAMESPACE`, and `OTEL_SERVICE_INSTANCE_ID`
+  to label service identity.
+- `OTEL_RESOURCE_ATTRIBUTES` for additional resource tags.
+
+If you want the built-in metrics registry to mirror measurements into OTel
+alongside its configured exporter, set `TEMPORAL_OTEL_METRICS_BRIDGE=true`.
+Auto-instrumentation stays disabled by default; enable it explicitly with
+`TEMPORAL_OTEL_AUTO_INSTRUMENTATION=true`.
+
 ## WorkflowService client resilience
 
 `createTemporalClient()` automatically wraps WorkflowService RPCs with our retry helper and telemetry interceptors:

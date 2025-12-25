@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-
+import { SpanStatusCode, trace } from '@opentelemetry/api'
 import { Effect } from 'effect'
 import { defaultRetryPolicy, type TemporalRpcRetryPolicy, withTemporalRetry } from '../client/retries'
 import type { DataConverter } from '../common/payloads'
@@ -164,24 +164,43 @@ const tracingInterceptor = (logger: Logger): TemporalInterceptor => ({
   order: -5,
   outbound(context, next) {
     const traceId = randomUUID()
+    const tracer = trace.getTracer('temporal-bun-sdk')
+    const span = tracer.startSpan(`temporal.client.${context.kind}`, {
+      attributes: {
+        'temporal.kind': context.kind,
+        'temporal.namespace': context.namespace,
+        'temporal.task_queue': context.taskQueue ?? '',
+        'temporal.identity': context.identity ?? '',
+        'temporal.workflow_id': context.workflowId ?? '',
+        'temporal.run_id': context.runId ?? '',
+        'temporal.attempt': context.attempt ?? 0,
+      },
+    })
     if (context.headers) {
       context.headers['x-temporal-trace-id'] = traceId
     }
-    const start = Date.now()
     return Effect.gen(function* () {
       yield* logger.log('debug', 'trace start', { traceId, kind: context.kind })
       try {
         const result = yield* next()
-        yield* logger.log('debug', 'trace finish', { traceId, kind: context.kind, durationMs: Date.now() - start })
+        span.setStatus({ code: SpanStatusCode.OK })
+        yield* logger.log('debug', 'trace finish', { traceId, kind: context.kind })
+        span.end()
         return result
       } catch (error) {
+        span.recordException(error as Error)
+        span.setStatus({ code: SpanStatusCode.ERROR })
         yield* logger.log('error', 'trace error', {
           traceId,
           kind: context.kind,
-          durationMs: Date.now() - start,
           error: error instanceof Error ? error.message : String(error),
         })
+        span.end()
         throw error
+      } finally {
+        if (span.isRecording()) {
+          span.end()
+        }
       }
     })
   },

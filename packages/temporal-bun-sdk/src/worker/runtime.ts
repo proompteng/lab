@@ -30,7 +30,7 @@ import {
   runWorkerInterceptors,
   type WorkerInterceptorBuilder,
 } from '../interceptors/worker'
-import { createObservabilityServices } from '../observability'
+import { createObservabilityServices, type OpenTelemetryHandle } from '../observability'
 import type { LogFields, Logger, LogLevel } from '../observability/logger'
 import type { Counter, Histogram, MetricsExporter, MetricsRegistry } from '../observability/metrics'
 import {
@@ -277,7 +277,7 @@ export class WorkerRuntime {
         },
       ),
     )
-    const { logger, metricsRegistry, metricsExporter } = observability
+    const { logger, metricsRegistry, metricsExporter, openTelemetry } = observability
     const dataConverter =
       options.dataConverter ??
       createDefaultDataConverter({
@@ -457,6 +457,7 @@ export class WorkerRuntime {
       metricsRegistry,
       metricsExporter,
       metrics: runtimeMetrics,
+      openTelemetry,
       namespace,
       taskQueue,
       identity,
@@ -484,6 +485,7 @@ export class WorkerRuntime {
   readonly #metricsRegistry: MetricsRegistry
   readonly #metrics: WorkerRuntimeMetrics
   readonly #metricsExporter: MetricsExporter
+  readonly #openTelemetry?: OpenTelemetryHandle
   readonly #namespace: string
   readonly #taskQueue: string
   readonly #identity: string
@@ -514,6 +516,7 @@ export class WorkerRuntime {
     metricsRegistry: MetricsRegistry
     metrics: WorkerRuntimeMetrics
     metricsExporter: MetricsExporter
+    openTelemetry?: OpenTelemetryHandle
     namespace: string
     taskQueue: string
     identity: string
@@ -539,6 +542,7 @@ export class WorkerRuntime {
     this.#metricsRegistry = params.metricsRegistry
     this.#metrics = params.metrics
     this.#metricsExporter = params.metricsExporter
+    this.#openTelemetry = params.openTelemetry
     this.#namespace = params.namespace
     this.#taskQueue = params.taskQueue
     this.#identity = params.identity
@@ -706,6 +710,7 @@ export class WorkerRuntime {
     if (!runtimeFiber) {
       await this.#stopScheduler()
       await this.#flushMetrics()
+      await this.#shutdownOpenTelemetry()
       this.#running = false
       this.#log('info', 'temporal worker shutdown complete', this.#runtimeLogFields({ drained: false }))
       return
@@ -719,6 +724,7 @@ export class WorkerRuntime {
       this.#runFiber = null
       this.#running = false
     }
+    await this.#shutdownOpenTelemetry()
     this.#log('info', 'temporal worker shutdown complete', this.#runtimeLogFields({ drained: true }))
   }
 
@@ -754,10 +760,18 @@ export class WorkerRuntime {
         Effect.promise(async () => {
           await runtime.#stopScheduler()
           await runtime.#flushMetrics()
+          await runtime.#shutdownOpenTelemetry()
           runtime.#log('info', 'temporal worker runtime stopped', runtime.#runtimeLogFields())
         }),
       ),
     )
+  }
+
+  async #shutdownOpenTelemetry(): Promise<void> {
+    if (!this.#openTelemetry) {
+      return
+    }
+    await this.#openTelemetry.shutdown()
   }
 
   async #awaitRuntimeFiber(fiber: Fiber.RuntimeFiber<void, unknown>): Promise<void> {

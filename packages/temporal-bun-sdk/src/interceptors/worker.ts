@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-
+import { SpanStatusCode, trace } from '@opentelemetry/api'
 import { Effect } from 'effect'
 import type { DataConverter } from '../common/payloads'
 import type { Logger } from '../observability/logger'
@@ -182,25 +182,44 @@ const tracingInterceptor = (logger: Logger): TemporalInterceptor => ({
   order: -5,
   outbound(context, next) {
     const traceId = randomUUID()
+    const tracer = trace.getTracer('temporal-bun-sdk')
+    const span = tracer.startSpan(`temporal.worker.${context.kind}`, {
+      attributes: {
+        'temporal.kind': context.kind,
+        'temporal.namespace': context.namespace,
+        'temporal.task_queue': context.taskQueue ?? '',
+        'temporal.identity': context.identity ?? '',
+        'temporal.workflow_id': context.workflowId ?? '',
+        'temporal.run_id': context.runId ?? '',
+        'temporal.attempt': context.attempt ?? 0,
+        'temporal.build_id': context.buildId ?? '',
+      },
+    })
     return Effect.gen(function* () {
       yield* logger.log('debug', 'worker trace start', { traceId, kind: context.kind })
-      const start = Date.now()
       try {
         const result = yield* next()
+        span.setStatus({ code: SpanStatusCode.OK })
         yield* logger.log('debug', 'worker trace finish', {
           traceId,
           kind: context.kind,
-          durationMs: Date.now() - start,
         })
+        span.end()
         return result
       } catch (error) {
+        span.recordException(error as Error)
+        span.setStatus({ code: SpanStatusCode.ERROR })
         yield* logger.log('error', 'worker trace error', {
           traceId,
           kind: context.kind,
-          durationMs: Date.now() - start,
           error: error instanceof Error ? error.message : String(error),
         })
+        span.end()
         throw error
+      } finally {
+        if (span.isRecording()) {
+          span.end()
+        }
       }
     })
   },
