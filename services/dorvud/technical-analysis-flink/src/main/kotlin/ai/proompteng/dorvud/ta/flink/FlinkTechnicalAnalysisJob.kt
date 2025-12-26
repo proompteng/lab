@@ -52,6 +52,7 @@ import org.ta4j.core.indicators.bollinger.BollingerBandsUpperIndicator
 import org.ta4j.core.indicators.helpers.ClosePriceIndicator
 import org.ta4j.core.indicators.statistics.StandardDeviationIndicator
 import java.io.Serializable
+import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.sql.DriverManager
 import java.sql.PreparedStatement
@@ -62,7 +63,6 @@ import java.time.Instant
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
-import java.net.URI
 import java.util.Properties
 
 fun main() {
@@ -159,7 +159,9 @@ private fun ensureClickhouseSchema(config: FlinkTaConfig) {
   val url = requireNotNull(config.clickhouseUrl) { "TA_CLICKHOUSE_URL must be set when ClickHouse sinks are enabled." }
   val adminUrl = clickhouseAdminUrl(url)
   val schemaSql =
-    object {}.javaClass.getResourceAsStream("/ta-schema.sql")
+    object {}
+      .javaClass
+      .getResourceAsStream("/ta-schema.sql")
       ?.bufferedReader(StandardCharsets.UTF_8)
       ?.use { it.readText() }
 
@@ -235,7 +237,7 @@ private fun clickhouseAdminUrl(url: String): String {
           ?.filterNot { it.startsWith("database=") || it.startsWith("db=") }
           ?.joinToString("&")
           ?.takeIf { it.isNotBlank() }
-      val base = "jdbc:${scheme}://${host}${port}/default"
+      val base = "jdbc:$scheme://$host$port/default"
       if (filteredQuery != null) "$base?$filteredQuery" else base
     }
   } catch (_: Exception) {
@@ -355,26 +357,26 @@ private fun signalSink(
 private fun clickhouseMicrobarSink(config: FlinkTaConfig): JdbcSink<Envelope<MicroBarPayload>> {
   val sql =
     """
-      INSERT INTO ta_microbars (
-        symbol,
-        event_ts,
-        seq,
-        ingest_ts,
-        is_final,
-        source,
-        window_size,
-        window_step,
-        window_start,
-        window_end,
-        version,
-        o,
-        h,
-        l,
-        c,
-        v,
-        vwap,
-        count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO ta_microbars (
+      symbol,
+      event_ts,
+      seq,
+      ingest_ts,
+      is_final,
+      source,
+      window_size,
+      window_step,
+      window_start,
+      window_end,
+      version,
+      o,
+      h,
+      l,
+      c,
+      v,
+      vwap,
+      count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """.trimIndent()
 
   return JdbcSink
@@ -387,36 +389,36 @@ private fun clickhouseMicrobarSink(config: FlinkTaConfig): JdbcSink<Envelope<Mic
 private fun clickhouseSignalSink(config: FlinkTaConfig): JdbcSink<Envelope<TaSignalsPayload>> {
   val sql =
     """
-      INSERT INTO ta_signals (
-        symbol,
-        event_ts,
-        seq,
-        ingest_ts,
-        is_final,
-        source,
-        window_size,
-        window_step,
-        window_start,
-        window_end,
-        version,
-        macd,
-        macd_signal,
-        macd_hist,
-        ema12,
-        ema26,
-        rsi14,
-        boll_mid,
-        boll_upper,
-        boll_lower,
-        vwap_session,
-        vwap_w5m,
-        imbalance_spread,
-        imbalance_bid_px,
-        imbalance_ask_px,
-        imbalance_bid_sz,
-        imbalance_ask_sz,
-        vol_realized_w60s
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO ta_signals (
+      symbol,
+      event_ts,
+      seq,
+      ingest_ts,
+      is_final,
+      source,
+      window_size,
+      window_step,
+      window_start,
+      window_end,
+      version,
+      macd,
+      macd_signal,
+      macd_hist,
+      ema12,
+      ema26,
+      rsi14,
+      boll_mid,
+      boll_upper,
+      boll_lower,
+      vwap_session,
+      vwap_w5m,
+      imbalance_spread,
+      imbalance_bid_px,
+      imbalance_ask_px,
+      imbalance_bid_sz,
+      imbalance_ask_sz,
+      vol_realized_w60s
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """.trimIndent()
 
   return JdbcSink
@@ -510,8 +512,7 @@ private fun signalsStatementBuilder(): JdbcStatementBuilder<Envelope<TaSignalsPa
     setNullableDouble(statement, 28, payload.vol_realized?.w60s)
   }
 
-private fun parseInstant(value: String?): Instant? =
-  value?.let { runCatching { Instant.parse(it) }.getOrNull() }
+private fun parseInstant(value: String?): Instant? = value?.let { runCatching { Instant.parse(it) }.getOrNull() }
 
 private fun setNullableTimestamp(
   statement: PreparedStatement,
