@@ -308,12 +308,23 @@ export class CodexRunner {
     })
 
     let spawnError: Error | null = null
+    let readerClosedOnError = false
+    let resolveExit: (code: number) => void
+    let reader: ReturnType<typeof createInterface> | null = null
+    const exitPromise = new Promise<number>((resolve) => {
+      resolveExit = resolve
+      child.once('exit', (code) => resolve(code ?? -1))
+      child.once('close', (code) => resolve(code ?? -1))
+    })
     child.once('error', (error) => {
       spawnError = error instanceof Error ? error : new Error('failed to spawn codex process')
-    })
-
-    const exitPromise = new Promise<number>((resolve) => {
-      child.once('exit', (code) => resolve(code ?? -1))
+      readerClosedOnError = true
+      try {
+        reader?.close()
+      } catch {
+        // ignore close errors
+      }
+      resolveExit(-1)
     })
 
     if (!child.stdin) {
@@ -332,7 +343,10 @@ export class CodexRunner {
     const stderrChunks: Buffer[] = []
     child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk))
 
-    const reader = createInterface({ input: child.stdout, crlfDelay: Infinity })
+    reader = createInterface({ input: child.stdout, crlfDelay: Infinity })
+    if (readerClosedOnError) {
+      reader.close()
+    }
 
     const agentMessages: string[] = []
     let sessionId: string | undefined
