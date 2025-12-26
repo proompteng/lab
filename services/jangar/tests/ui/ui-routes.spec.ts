@@ -90,7 +90,7 @@ test.beforeEach(async ({ page }) => {
                 ? init.body.toString()
                 : undefined
           const isCount =
-            url.includes('countMemories') || (typeof rawBody === 'string' && rawBody.includes('countMemories'))
+            rawUrl.includes('countMemories') || (typeof rawBody === 'string' && rawBody.includes('countMemories'))
           const body = JSON.stringify(isCount ? { ok: true, count: memoryCountValue } : { ok: true, memories: [] })
           return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } })
         }
