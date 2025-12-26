@@ -4,7 +4,6 @@ import type {
   Command,
   ExecuteWorkflowInput,
   WorkflowDefinitions,
-  WorkflowDeterminismState,
   WorkflowExecutionOutput,
 } from '@proompteng/temporal-bun-sdk/workflow'
 import {
@@ -145,8 +144,33 @@ test('enrichFile completes when all activities are resolved', async () => {
       {
         status: 'completed',
         value: {
-          id: 'enrichment-id',
+          repositoryId: 'repo-id',
+          fileKeyId: 'file-key-id',
+          fileVersionId: 'file-version-id',
         },
+      },
+    ],
+    [
+      'activity-5',
+      {
+        status: 'completed',
+        value: {
+          enrichmentId: 'enrichment-id',
+        },
+      },
+    ],
+    [
+      'activity-6',
+      {
+        status: 'completed',
+        value: {},
+      },
+    ],
+    [
+      'activity-7',
+      {
+        status: 'completed',
+        value: {},
       },
     ],
   ])
@@ -161,7 +185,7 @@ test('enrichFile completes when all activities are resolved', async () => {
     (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
   )
 
-  expect(scheduleCommands).toHaveLength(5)
+  expect(scheduleCommands).toHaveLength(8)
   expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
   expect(output.completion).toBe('completed')
   expect(output.result).toEqual({ id: 'enrichment-id', filename: input.filePath })
@@ -247,8 +271,33 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       {
         status: 'completed',
         value: {
-          id: 'enrichment-id',
+          repositoryId: 'repo-id',
+          fileKeyId: 'file-key-id',
+          fileVersionId: 'file-version-id',
         },
+      },
+    ],
+    [
+      'activity-6',
+      {
+        status: 'completed',
+        value: {
+          enrichmentId: 'enrichment-id',
+        },
+      },
+    ],
+    [
+      'activity-7',
+      {
+        status: 'completed',
+        value: {},
+      },
+    ],
+    [
+      'activity-8',
+      {
+        status: 'completed',
+        value: {},
       },
     ],
   ])
@@ -263,7 +312,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
     (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
   )
 
-  expect(scheduleCommands).toHaveLength(6)
+  expect(scheduleCommands).toHaveLength(9)
   expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
   expect(output.completion).toBe('completed')
   expect(output.result).toEqual({ id: 'enrichment-id', filename: input.filePath })
@@ -277,8 +326,10 @@ test('enrichRepository schedules listing and child workflows', async () => {
     ref: 'main',
     commit: 'deadbeef',
     pathPrefix: 'services',
-    maxFiles: 10,
+    maxFiles: 12,
   }
+
+  const files = Array.from({ length: 12 }, (_value, index) => `services/file-${index}.ts`)
 
   const activityResults = new Map<string, ActivityResolution>([
     [
@@ -286,8 +337,8 @@ test('enrichRepository schedules listing and child workflows', async () => {
       {
         status: 'completed',
         value: {
-          files: ['services/bumba/src/worker.ts', 'services/jangar/src/server/bumba.ts'],
-          total: 2,
+          files,
+          total: files.length,
           skipped: 0,
         },
       },
@@ -322,81 +373,66 @@ test('enrichRepository schedules listing and child workflows', async () => {
   const childCommands = output.commands.filter(
     (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
   )
-  expect(childCommands).toHaveLength(2)
+  expect(childCommands).toHaveLength(files.length)
   const childAttrs =
     childCommands[0]?.attributes?.case === 'startChildWorkflowExecutionCommandAttributes'
       ? childCommands[0].attributes.value
       : undefined
   expect(childAttrs?.parentClosePolicy).toBe(PARENT_CLOSE_POLICY_ABANDON)
   expect(output.completion).toBe('pending')
-
-  const completionRun = await execute(executor, {
-    workflowType: 'enrichRepository',
-    arguments: input,
-    determinismState: cloneState(output.determinismState),
-    activityResults,
-    pendingChildWorkflows: new Set(),
-  })
-
-  expect(completionRun.completion).toBe('completed')
-  expect(completionRun.commands).toHaveLength(1)
-  expect(completionRun.commands[0]?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
 })
 
-test('enrichRepository continues as new when file list exceeds batch size', async () => {
+test('enrichRepository completes when child workflows signal completion', async () => {
   const { executor } = makeExecutor()
-  const batchSize = 50
-  const files = Array.from({ length: batchSize + 1 }, (_value, index) => `path/to/file-${index}.ts`)
+  const files = ['path/to/file-0.ts', 'path/to/file-1.ts', 'path/to/file-2.ts']
   const input = {
     repoRoot: '/workspace/lab/.worktrees/bumba',
     repository: 'proompteng/lab',
     files,
   }
+  const workflowId = 'repo-workflow'
+  const runId = 'run-1'
 
-  const output = await execute(executor, {
+  const initial = await execute(executor, {
     workflowType: 'enrichRepository',
     arguments: input,
+    workflowId,
+    runId,
   })
 
-  const continueCommands = output.commands.filter(
-    (command: Command) => command.commandType === CommandType.CONTINUE_AS_NEW_WORKFLOW_EXECUTION,
-  )
-  const childCommands = output.commands.filter(
+  const childCommands = initial.commands.filter(
     (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
   )
 
-  expect(output.completion).toBe('pending')
-  expect(continueCommands).toHaveLength(0)
-  expect(childCommands).toHaveLength(batchSize)
+  expect(childCommands).toHaveLength(files.length)
+  expect(initial.completion).toBe('pending')
 
-  const continuationRun = await execute(executor, {
+  const signalDeliveries = files.map((_filePath, index) => ({
+    name: '__childWorkflowCompleted',
+    args: [
+      {
+        workflowId: `${workflowId}-child-${runId}-${index}`,
+        status: 'completed',
+      },
+    ],
+  }))
+
+  const completion = await execute(executor, {
     workflowType: 'enrichRepository',
     arguments: input,
-    determinismState: cloneState(output.determinismState),
+    workflowId,
+    runId,
+    determinismState: initial.determinismState,
+    signalDeliveries,
     pendingChildWorkflows: new Set(),
   })
 
-  const continuationCommands = continuationRun.commands.filter(
-    (command: Command) => command.commandType === CommandType.CONTINUE_AS_NEW_WORKFLOW_EXECUTION,
-  )
-  const continuationChildCommands = continuationRun.commands.filter(
-    (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
-  )
-
-  expect(continuationRun.completion).toBe('continued-as-new')
-  expect(continuationCommands).toHaveLength(1)
-  expect(continuationChildCommands).toHaveLength(0)
-})
-
-const cloneState = (state: WorkflowDeterminismState): WorkflowDeterminismState => ({
-  commandHistory: state.commandHistory.map((entry) => ({
-    intent: entry.intent,
-    metadata: entry.metadata ? { ...entry.metadata } : undefined,
-  })),
-  randomValues: [...state.randomValues],
-  timeValues: [...state.timeValues],
-  failureMetadata: state.failureMetadata ? { ...state.failureMetadata } : undefined,
-  signals: state.signals ? state.signals.map((record) => ({ ...record })) : [],
-  queries: state.queries ? state.queries.map((record) => ({ ...record })) : [],
-  ...(state.updates ? { updates: state.updates.map((entry) => ({ ...entry })) } : {}),
+  expect(completion.completion).toBe('completed')
+  expect(completion.result).toEqual({
+    total: files.length,
+    skipped: 0,
+    queued: files.length,
+    completed: files.length,
+    failed: 0,
+  })
 })

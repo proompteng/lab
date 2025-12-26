@@ -17,7 +17,7 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2025-12-26T09:33:41.998Z"
+        kubectl.kubernetes.io/restartedAt: "2025-12-26T11:44:26.137Z"
     spec:
       containers:
         - name: bumba
@@ -44,9 +44,9 @@ spec:
             - name: TEMPORAL_TASK_QUEUE
               value: bumba
             - name: TEMPORAL_WORKFLOW_CONCURRENCY
-              value: "4"
+              value: "50"
             - name: TEMPORAL_ACTIVITY_CONCURRENCY
-              value: "4"
+              value: "100"
             - name: TEMPORAL_OTEL_ENABLED
               value: "true"
             - name: TEMPORAL_METRICS_EXPORTER

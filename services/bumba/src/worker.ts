@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
-import { createTemporalClient, temporalCallOptions, type TemporalConfig } from '@proompteng/temporal-bun-sdk'
+import { createTemporalClient, type TemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
 
 import activities from './activities/index'

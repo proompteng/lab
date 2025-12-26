@@ -1,4 +1,4 @@
-import { defineWorkflow } from '@proompteng/temporal-bun-sdk/workflow'
+import { defineWorkflow, defineWorkflowSignals } from '@proompteng/temporal-bun-sdk/workflow'
 import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
@@ -6,7 +6,8 @@ import type {
   AstSummaryOutput,
   EnrichOutput,
   ListRepoFilesOutput,
-  PersistInput,
+  PersistEnrichmentRecordOutput,
+  PersistFileVersionOutput,
   ReadRepoFileOutput,
 } from '../activities/index'
 
@@ -42,9 +43,29 @@ const createEmbeddingTimeouts = {
   scheduleToCloseTimeoutMs: 900_000,
 }
 
-const persistEnrichmentTimeouts = {
-  startToCloseTimeoutMs: 180_000,
-  scheduleToCloseTimeoutMs: 1_200_000,
+const persistFileVersionTimeouts = {
+  startToCloseTimeoutMs: 60_000,
+  scheduleToCloseTimeoutMs: 300_000,
+}
+
+const persistEnrichmentRecordTimeouts = {
+  startToCloseTimeoutMs: 60_000,
+  scheduleToCloseTimeoutMs: 300_000,
+}
+
+const persistEmbeddingTimeouts = {
+  startToCloseTimeoutMs: 60_000,
+  scheduleToCloseTimeoutMs: 300_000,
+}
+
+const persistFactsTimeouts = {
+  startToCloseTimeoutMs: 120_000,
+  scheduleToCloseTimeoutMs: 600_000,
+}
+
+const markEventProcessedTimeouts = {
+  startToCloseTimeoutMs: 30_000,
+  scheduleToCloseTimeoutMs: 120_000,
 }
 
 const cleanupEnrichmentTimeouts = {
@@ -53,7 +74,32 @@ const cleanupEnrichmentTimeouts = {
 }
 
 const PARENT_CLOSE_POLICY_ABANDON = 2
-const MAX_CHILD_WORKFLOWS_PER_RUN = 50
+const CHILD_WORKFLOW_BATCH_SIZE = 50
+const CHILD_WORKFLOW_COMPLETED_SIGNAL = '__childWorkflowCompleted'
+
+type ChildWorkflowCompletion = {
+  workflowId: string
+  runId?: string
+  status: 'completed' | 'failed' | 'canceled' | 'terminated' | 'timed_out'
+}
+
+const isChildWorkflowCompletion = (payload: unknown): payload is ChildWorkflowCompletion => {
+  if (!payload || typeof payload !== 'object') return false
+  const record = payload as Record<string, unknown>
+  const status = record.status
+  if (
+    status !== 'completed' &&
+    status !== 'failed' &&
+    status !== 'canceled' &&
+    status !== 'terminated' &&
+    status !== 'timed_out'
+  ) {
+    return false
+  }
+  if (typeof record.workflowId !== 'string') return false
+  if (record.runId !== undefined && typeof record.runId !== 'string') return false
+  return true
+}
 
 const EnrichFileInput = Schema.Struct({
   repoRoot: Schema.String,
@@ -64,6 +110,8 @@ const EnrichFileInput = Schema.Struct({
   context: Schema.optional(Schema.String),
   eventDeliveryId: Schema.optional(Schema.String),
   force: Schema.optional(Schema.Boolean),
+  parentWorkflowId: Schema.optional(Schema.String),
+  parentRunId: Schema.optional(Schema.String),
 })
 
 const EnrichRepositoryInput = Schema.Struct({
@@ -84,11 +132,27 @@ const EnrichRepositoryInput = Schema.Struct({
   ),
 })
 
-export const workflows = [
-  defineWorkflow('enrichFile', EnrichFileInput, ({ input, activities }) =>
-    Effect.gen(function* () {
-      const { repoRoot, filePath, repository, ref, commit, context, eventDeliveryId, force } = input
+const ChildWorkflowCompletionSignal = Schema.Struct({
+  workflowId: Schema.String,
+  runId: Schema.optional(Schema.String),
+  status: Schema.Union(
+    Schema.Literal('completed'),
+    Schema.Literal('failed'),
+    Schema.Literal('canceled'),
+    Schema.Literal('terminated'),
+    Schema.Literal('timed_out'),
+  ),
+}) as Schema.Schema<unknown>
 
+const enrichRepositorySignals = defineWorkflowSignals({
+  [CHILD_WORKFLOW_COMPLETED_SIGNAL]: ChildWorkflowCompletionSignal,
+})
+
+export const workflows = [
+  defineWorkflow('enrichFile', EnrichFileInput, ({ input, activities }) => {
+    const { repoRoot, filePath, repository, ref, commit, context, eventDeliveryId, force } = input
+
+    return Effect.gen(function* () {
       const readRepoInput: { repoRoot: string; filePath: string; repository?: string; ref?: string; commit?: string } =
         {
           repoRoot,
@@ -148,109 +212,190 @@ export const workflows = [
         retry: activityRetry,
       })) as { embedding: number[] }
 
-      const persistInput: PersistInput = {
-        filename: filePath,
-        summary: enriched.summary,
-        content: fileResult.content,
-        astSummary: astResult.astSummary,
-        enriched: enriched.enriched,
-        embedding: embedding.embedding,
-        metadata: {
-          ...astResult.metadata,
-          ...enriched.metadata,
-        },
-        fileMetadata: fileResult.metadata,
-        facts: astResult.facts,
-        eventDeliveryId: eventDeliveryId ?? undefined,
-      }
-
-      const persist = (yield* activities.schedule('persistEnrichment', [persistInput], {
-        ...persistEnrichmentTimeouts,
-        retry: activityRetry,
-      })) as { id: string }
-
-      return {
-        id: persist.id,
-        filename: filePath,
-      }
-    }),
-  ),
-  defineWorkflow('enrichRepository', EnrichRepositoryInput, ({ input, activities, childWorkflows, continueAsNew }) =>
-    Effect.gen(function* () {
-      const { repoRoot, repository, ref, commit, context, pathPrefix, maxFiles, queuedCount } = input
-
-      const listRef = commit ?? ref
-      let files = input.files
-      let stats = input.stats
-
-      if (!files) {
-        const listResult = (yield* activities.schedule(
-          'listRepoFiles',
-          [{ repoRoot, ref: listRef, pathPrefix, maxFiles }],
+      const fileVersion = (yield* activities.schedule(
+        'persistFileVersion',
+        [
           {
-            ...listRepoFilesTimeouts,
-            retry: activityRetry,
+            fileMetadata: fileResult.metadata,
           },
-        )) as ListRepoFilesOutput
-        files = listResult.files
-        stats = { total: listResult.total, skipped: listResult.skipped }
-      }
+        ],
+        {
+          ...persistFileVersionTimeouts,
+          retry: activityRetry,
+        },
+      )) as PersistFileVersionOutput
 
-      const queuedSoFar = queuedCount ?? 0
-      const batch = files.slice(0, MAX_CHILD_WORKFLOWS_PER_RUN)
-      const remaining = files.slice(MAX_CHILD_WORKFLOWS_PER_RUN)
-
-      yield* Effect.forEach(
-        batch,
-        (filePath) =>
-          childWorkflows.start(
-            'enrichFile',
-            [
-              {
-                repoRoot,
-                filePath,
-                repository,
-                ref,
-                commit,
-                context,
-              },
-            ],
-            {
-              parentClosePolicy: PARENT_CLOSE_POLICY_ABANDON,
+      const enrichmentRecord = (yield* activities.schedule(
+        'persistEnrichmentRecord',
+        [
+          {
+            fileVersionId: fileVersion.fileVersionId,
+            summary: enriched.summary,
+            enriched: enriched.enriched,
+            astSummary: astResult.astSummary,
+            contentHash: fileResult.metadata.contentHash,
+            metadata: {
+              ...astResult.metadata,
+              ...enriched.metadata,
             },
-          ),
-        { concurrency: 5 },
+          },
+        ],
+        {
+          ...persistEnrichmentRecordTimeouts,
+          retry: activityRetry,
+        },
+      )) as PersistEnrichmentRecordOutput
+
+      const persistEmbedding = activities.schedule(
+        'persistEmbedding',
+        [
+          {
+            enrichmentId: enrichmentRecord.enrichmentId,
+            embedding: embedding.embedding,
+          },
+        ],
+        {
+          ...persistEmbeddingTimeouts,
+          retry: activityRetry,
+        },
       )
 
-      const queuedTotal = queuedSoFar + batch.length
+      const persistFacts =
+        astResult.facts.length > 0
+          ? activities.schedule(
+              'persistFacts',
+              [
+                {
+                  fileVersionId: fileVersion.fileVersionId,
+                  facts: astResult.facts,
+                },
+              ],
+              {
+                ...persistFactsTimeouts,
+                retry: activityRetry,
+              },
+            )
+          : Effect.succeed({ inserted: 0 })
 
-      if (remaining.length > 0) {
-        return yield* continueAsNew({
-          workflowType: 'enrichRepository',
-          input: [
+      yield* Effect.all([persistEmbedding, persistFacts], { concurrency: 2 })
+
+      if (eventDeliveryId) {
+        yield* activities.schedule(
+          'markEventProcessed',
+          [
             {
-              repoRoot,
-              repository,
-              ref,
-              commit,
-              context,
-              pathPrefix,
-              maxFiles,
-              files: remaining,
-              queuedCount: queuedTotal,
-              stats,
+              deliveryId: eventDeliveryId,
             },
           ],
-        })
+          {
+            ...markEventProcessedTimeouts,
+            retry: activityRetry,
+          },
+        )
       }
 
       return {
-        total: stats?.total ?? files.length,
-        skipped: stats?.skipped ?? 0,
-        queued: queuedTotal,
+        id: enrichmentRecord.enrichmentId,
+        filename: filePath,
       }
-    }),
-  ),
+    })
+  }),
+  defineWorkflow({
+    name: 'enrichRepository',
+    schema: EnrichRepositoryInput,
+    signals: enrichRepositorySignals,
+    handler: ({ input, activities, childWorkflows, signals, info }) =>
+      Effect.gen(function* () {
+        const { repoRoot, repository, ref, commit, context, pathPrefix, maxFiles } = input
+
+        const listRef = commit ?? ref
+        let files = input.files
+        let stats = input.stats
+
+        if (!files) {
+          const listResult = (yield* activities.schedule(
+            'listRepoFiles',
+            [{ repoRoot, ref: listRef, pathPrefix, maxFiles }],
+            {
+              ...listRepoFilesTimeouts,
+              retry: activityRetry,
+            },
+          )) as ListRepoFilesOutput
+          files = listResult.files
+          stats = { total: listResult.total, skipped: listResult.skipped }
+        }
+
+        const total = stats?.total ?? files.length
+        const skipped = stats?.skipped ?? 0
+        let started = 0
+        let completed = 0
+        let failed = 0
+        let childSequence = 0
+        const completionSignal = enrichRepositorySignals[CHILD_WORKFLOW_COMPLETED_SIGNAL]
+
+        for (let offset = 0; offset < files.length; offset += CHILD_WORKFLOW_BATCH_SIZE) {
+          const batch = files.slice(offset, offset + CHILD_WORKFLOW_BATCH_SIZE)
+          const pending = new Set<string>()
+          const batchEntries: Array<{ filePath: string; childWorkflowId: string }> = []
+
+          for (const filePath of batch) {
+            const childWorkflowId = `${info.workflowId}-child-${info.runId}-${childSequence}`
+            childSequence += 1
+            pending.add(childWorkflowId)
+            batchEntries.push({ filePath, childWorkflowId })
+          }
+
+          if (batchEntries.length === 0) {
+            continue
+          }
+
+          started += batchEntries.length
+
+          for (const { filePath, childWorkflowId } of batchEntries) {
+            yield* childWorkflows.start(
+              'enrichFile',
+              [
+                {
+                  repoRoot,
+                  filePath,
+                  repository,
+                  ref,
+                  commit,
+                  context,
+                },
+              ],
+              {
+                parentClosePolicy: PARENT_CLOSE_POLICY_ABANDON,
+                workflowId: childWorkflowId,
+              },
+            )
+          }
+
+          while (pending.size > 0) {
+            const delivery = yield* signals.waitFor(completionSignal)
+            if (!isChildWorkflowCompletion(delivery.payload)) {
+              continue
+            }
+            if (!pending.delete(delivery.payload.workflowId)) {
+              continue
+            }
+            if (delivery.payload.status === 'completed') {
+              completed += 1
+            } else {
+              failed += 1
+            }
+          }
+        }
+
+        return {
+          total,
+          skipped,
+          queued: started,
+          completed,
+          failed,
+        }
+      }),
+  }),
 ]
 
 export default workflows

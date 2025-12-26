@@ -82,17 +82,37 @@ export type EmbeddingInput = {
   text: string
 }
 
-export type PersistInput = {
-  filename: string
-  summary: string
-  content: string
-  astSummary: string
-  enriched: string
-  embedding: number[]
-  metadata: Record<string, unknown>
+export type PersistFileVersionInput = {
   fileMetadata: FileMetadata
+}
+
+export type PersistFileVersionOutput = {
+  repositoryId: string
+  fileKeyId: string
+  fileVersionId: string
+}
+
+export type PersistEnrichmentRecordInput = {
+  fileVersionId: string
+  summary: string
+  enriched: string
+  astSummary: string
+  contentHash: string
+  metadata: Record<string, unknown>
+}
+
+export type PersistEnrichmentRecordOutput = {
+  enrichmentId: string
+}
+
+export type PersistEmbeddingInput = {
+  enrichmentId: string
+  embedding: number[]
+}
+
+export type PersistFactsInput = {
+  fileVersionId: string
   facts: TreeSitterFact[]
-  eventDeliveryId?: string
 }
 
 export type CleanupEnrichmentInput = {
@@ -1758,7 +1778,7 @@ export const activities = {
     }
   },
 
-  async persistEnrichment(input: PersistInput): Promise<{ id: string }> {
+  async persistFileVersion(input: PersistFileVersionInput): Promise<PersistFileVersionOutput> {
     const db = getAtlasDb()
     if (!db) {
       throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
@@ -1825,10 +1845,19 @@ export const activities = {
     const fileVersionId = fileVersionRows[0]?.id
     if (!fileVersionId) throw new Error('failed to upsert file version')
 
+    return { repositoryId, fileKeyId, fileVersionId }
+  },
+
+  async persistEnrichmentRecord(input: PersistEnrichmentRecordInput): Promise<PersistEnrichmentRecordOutput> {
+    const db = getAtlasDb()
+    if (!db) {
+      throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+    }
+
     const enrichmentMetadata = {
       ...input.metadata,
       astSummary: input.astSummary,
-      contentHash,
+      contentHash: input.contentHash,
     }
 
     const enrichmentRows = (await db`
@@ -1842,7 +1871,7 @@ export const activities = {
         metadata
       )
       VALUES (
-        ${fileVersionId},
+        ${input.fileVersionId},
         ${'model_enrichment'},
         ${'bumba'},
         ${input.enriched},
@@ -1860,52 +1889,76 @@ export const activities = {
     const enrichmentId = enrichmentRows[0]?.id
     if (!enrichmentId) throw new Error('failed to upsert enrichment')
 
+    return { enrichmentId }
+  },
+
+  async persistEmbedding(input: PersistEmbeddingInput): Promise<void> {
+    const db = getAtlasDb()
+    if (!db) {
+      throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+    }
+
     const { model, dimension } = loadEmbeddingConfig()
     const vectorString = vectorToPgArray(input.embedding)
 
     await db`
       INSERT INTO atlas.embeddings (enrichment_id, model, dimension, embedding)
-      VALUES (${enrichmentId}, ${model}, ${dimension}, ${vectorString}::vector)
+      VALUES (${input.enrichmentId}, ${model}, ${dimension}, ${vectorString}::vector)
       ON CONFLICT (enrichment_id, model, dimension) DO UPDATE
       SET embedding = EXCLUDED.embedding;
     `
+  },
 
-    if (input.facts.length > 0) {
-      const uniqueFacts = dedupeFacts(input.facts)
-      await db`DELETE FROM atlas.tree_sitter_facts WHERE file_version_id = ${fileVersionId};`
-      for (const fact of uniqueFacts) {
-        await db`
-          INSERT INTO atlas.tree_sitter_facts (
-            file_version_id,
-            node_type,
-            match_text,
-            start_line,
-            end_line,
-            metadata
-          )
-          VALUES (
-            ${fileVersionId},
-            ${fact.nodeType},
-            ${fact.matchText},
-            ${fact.startLine},
-            ${fact.endLine},
-            ${JSON.stringify(fact.metadata ?? {})}::jsonb
-          )
-          ON CONFLICT DO NOTHING;
-        `
-      }
+  async persistFacts(input: PersistFactsInput): Promise<{ inserted: number }> {
+    const db = getAtlasDb()
+    if (!db) {
+      throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
     }
 
-    const deliveryId = input.eventDeliveryId?.trim()
-    if (deliveryId) {
-      await db`
-        UPDATE atlas.github_events
-        SET processed_at = now()
-        WHERE delivery_id = ${deliveryId};
-      `
+    if (input.facts.length === 0) {
+      return { inserted: 0 }
     }
 
-    return { id: enrichmentId }
+    const uniqueFacts = dedupeFacts(input.facts)
+    if (uniqueFacts.length === 0) {
+      return { inserted: 0 }
+    }
+
+    await db`DELETE FROM atlas.tree_sitter_facts WHERE file_version_id = ${input.fileVersionId};`
+
+    const nodeTypes = uniqueFacts.map((fact) => fact.nodeType)
+    const matchTexts = uniqueFacts.map((fact) => fact.matchText)
+    const startLines = uniqueFacts.map((fact) => fact.startLine ?? null)
+    const endLines = uniqueFacts.map((fact) => fact.endLine ?? null)
+    const metadataValues = uniqueFacts.map((fact) => JSON.stringify(fact.metadata ?? {}))
+
+    await db`
+      INSERT INTO atlas.tree_sitter_facts (
+        file_version_id,
+        node_type,
+        match_text,
+        start_line,
+        end_line,
+        metadata
+      )
+      SELECT
+        ${input.fileVersionId},
+        node_type,
+        match_text,
+        start_line,
+        end_line,
+        metadata::jsonb
+      FROM UNNEST(
+        ${db.array(nodeTypes, 'text')},
+        ${db.array(matchTexts, 'text')},
+        ${db.array(startLines, 'int4')},
+        ${db.array(endLines, 'int4')},
+        ${db.array(metadataValues, 'text')}
+      ) AS fact(node_type, match_text, start_line, end_line, metadata)
+      ON CONFLICT DO NOTHING;
+    `
+
+    return { inserted: uniqueFacts.length }
   },
 
   async markEventProcessed(input: MarkEventProcessedInput): Promise<void> {
