@@ -81,7 +81,7 @@ S3A properties (example):
 ### ClickHouse sink (TA visualization)
 - Flink job writes microbars + signals to ClickHouse when `TA_CLICKHOUSE_URL` is set.
 - Tables: `torghut.ta_microbars` and `torghut.ta_signals` (ReplacingMergeTree dedup on `(symbol,event_ts,seq)`, TTL 30d).
-- Schema job lives under `argocd/applications/torghut/clickhouse/ta-schema-job.yaml` and runs on sync wave 3.
+- Schema init runs inside the torghut-ta Flink job using the DDL at `services/dorvud/technical-analysis-flink/src/main/resources/ta-schema.sql`.
 - Required env: `TA_CLICKHOUSE_URL`, `TA_CLICKHOUSE_USERNAME`, `TA_CLICKHOUSE_PASSWORD`, `TA_CLICKHOUSE_BATCH_SIZE`, `TA_CLICKHOUSE_FLUSH_MS`, `TA_CLICKHOUSE_MAX_RETRIES`, `TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS`.
 
 ## Observability

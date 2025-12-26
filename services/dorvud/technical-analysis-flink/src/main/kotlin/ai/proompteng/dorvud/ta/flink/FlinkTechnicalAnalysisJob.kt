@@ -53,6 +53,7 @@ import org.ta4j.core.indicators.helpers.ClosePriceIndicator
 import org.ta4j.core.indicators.statistics.StandardDeviationIndicator
 import java.io.Serializable
 import java.nio.charset.StandardCharsets
+import java.sql.DriverManager
 import java.sql.PreparedStatement
 import java.sql.Timestamp
 import java.sql.Types
@@ -61,6 +62,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
+import java.util.Properties
 
 fun main() {
   val config = FlinkTaConfig.fromEnv()
@@ -146,8 +148,67 @@ private fun applyClickhouseSinks(
     return
   }
 
+  ensureClickhouseSchema(config)
   microBars.sinkTo(clickhouseMicrobarSink(config)).name("sink-microbars-clickhouse")
   signals.sinkTo(clickhouseSignalSink(config)).name("sink-signals-clickhouse")
+}
+
+private fun ensureClickhouseSchema(config: FlinkTaConfig) {
+  val logger = LoggerFactory.getLogger("ta-clickhouse")
+  val url = requireNotNull(config.clickhouseUrl) { "TA_CLICKHOUSE_URL must be set when ClickHouse sinks are enabled." }
+  val schemaSql =
+    object {}.javaClass.getResourceAsStream("/ta-schema.sql")
+      ?.bufferedReader(StandardCharsets.UTF_8)
+      ?.use { it.readText() }
+
+  if (schemaSql.isNullOrBlank()) {
+    logger.warn("ClickHouse schema SQL resource not found; skipping schema init.")
+    return
+  }
+
+  val statements =
+    schemaSql
+      .splitToSequence(';')
+      .map { it.trim() }
+      .filter { it.isNotEmpty() }
+      .toList()
+
+  if (statements.isEmpty()) {
+    logger.warn("ClickHouse schema SQL resource is empty; skipping schema init.")
+    return
+  }
+
+  val maxAttempts = (config.clickhouseInsertMaxRetries.coerceAtLeast(0)) + 1
+  var attempt = 1
+  while (true) {
+    try {
+      val properties = Properties()
+      config.clickhouseUsername?.let { properties["user"] = it }
+      config.clickhousePassword?.let { properties["password"] = it }
+      val connection =
+        if (properties.isEmpty) {
+          DriverManager.getConnection(url)
+        } else {
+          DriverManager.getConnection(url, properties)
+        }
+
+      connection.use { conn ->
+        conn.createStatement().use { statement ->
+          statements.forEach { statement.execute(it) }
+        }
+      }
+      logger.info("ClickHouse schema ensured.")
+      return
+    } catch (ex: Exception) {
+      if (attempt >= maxAttempts) {
+        logger.error("Failed to ensure ClickHouse schema after $attempt attempts.", ex)
+        return
+      }
+      logger.warn("ClickHouse schema init failed (attempt $attempt/$maxAttempts); retrying in 2000ms.", ex)
+      Thread.sleep(2_000L)
+      attempt += 1
+    }
+  }
 }
 
 private fun configureEnvironment(
