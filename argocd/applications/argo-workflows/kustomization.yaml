@@ -12,6 +12,7 @@ resources:
   - alloy-deployment.yaml
   - codex-research-workflow.yaml
   - codex-research-rbac.yaml
+  - codex-cluster-admin.yaml
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm
