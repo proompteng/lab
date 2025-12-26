@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: torghut-clickhouse-ta-schema
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-clickhouse
+    app.kubernetes.io/part-of: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: clickhouse-client
+          image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+          env:
+            - name: CLICKHOUSE_HOST
+              value: torghut-clickhouse.torghut.svc.cluster.local
+            - name: CLICKHOUSE_PORT
+              value: "9000"
+            - name: CLICKHOUSE_DATABASE
+              value: torghut
+            - name: CLICKHOUSE_USERNAME
+              value: torghut
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+          volumeMounts:
+            - name: ta-schema
+              mountPath: /schema
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              for i in $(seq 1 30); do
+                if clickhouse-client \
+                  --host "$CLICKHOUSE_HOST" \
+                  --port "$CLICKHOUSE_PORT" \
+                  --user "$CLICKHOUSE_USERNAME" \
+                  --password "$CLICKHOUSE_PASSWORD" \
+                  --query "SELECT 1"; then
+                  break
+                fi
+                echo "ClickHouse not ready yet, retrying..."
+                sleep 5
+              done
+              clickhouse-client \
+                --host "$CLICKHOUSE_HOST" \
+                --port "$CLICKHOUSE_PORT" \
+                --user "$CLICKHOUSE_USERNAME" \
+                --password "$CLICKHOUSE_PASSWORD" \
+                --multiquery < /schema/ta-schema.sql
+      volumes:
+        - name: ta-schema
+          configMap:
+            name: torghut-clickhouse-ta-schema

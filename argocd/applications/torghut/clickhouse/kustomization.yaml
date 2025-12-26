@@ -8,3 +8,5 @@ resources:
   - clickhouse-cluster.yaml
   - clickhouse-pdb.yaml
   - clickhouse-service.yaml
+  - ta-schema-configmap.yaml
+  - ta-schema-job.yaml
