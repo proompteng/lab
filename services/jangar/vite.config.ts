@@ -17,16 +17,18 @@ const opentelemetryExternals = [
   '@opentelemetry/semantic-conventions',
 ]
 
+const ssrExternals = [...opentelemetryExternals, 'pg']
+
 const config = defineConfig({
   server: {
     allowedHosts: ['host.docker.internal'],
   },
   ssr: {
-    external: opentelemetryExternals,
+    external: ssrExternals,
   },
   build: {
     rollupOptions: {
-      external: opentelemetryExternals,
+      external: ssrExternals,
     },
   },
   plugins: [
