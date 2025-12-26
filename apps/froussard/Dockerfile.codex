@@ -25,7 +25,7 @@ RUN bash -lc 'source /root/.nvm/nvm.sh && nvm install ${CODEX_ENV_NODE_VERSION}'
 
 RUN set -eux; \
     apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Debug::Acquire::http=true \
-    && apt-get install -y -V --no-install-recommends ca-certificates curl gnupg git gh jq python3 xz-utils protobuf-compiler libprotobuf-dev \
+    && apt-get install -y -V --no-install-recommends ca-certificates curl gnupg git gh jq python3 xz-utils protobuf-compiler libprotobuf-dev build-essential pkg-config \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
     && chmod a+r /etc/apt/keyrings/docker.gpg \
