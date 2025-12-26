@@ -23,8 +23,6 @@ envVarsExtra:
 extraVolumes:
   - name: pgadmin-servers
     emptyDir: {}
-  - name: pgadmin-connection-overrides
-    emptyDir: {}
   - name: cnpg-app-secrets
     projected:
       sources:
@@ -84,19 +82,10 @@ extraVolumes:
                 path: torghut-db-app/uri
               - key: password
                 path: torghut-db-app/password
-        - secret:
-            name: torghut-clickhouse-auth
-            items:
-              - key: torghut_password
-                path: torghut-clickhouse-auth/password
 
 extraVolumeMounts:
   - name: pgadmin-servers
     mountPath: /var/lib/pgadmin/servers
-  - name: pgadmin-connection-overrides
-    mountPath: /pgadmin4/pgadmin/utils/driver/psycopg3/connection.py
-    subPath: connection.py
-    readOnly: true
   - name: cnpg-app-secrets
     mountPath: /etc/pgadmin/secrets
     readOnly: true
@@ -134,17 +123,6 @@ extraInitContainers: |
             {'secret': 'facteur-vector-cluster-app', 'name': 'facteur-vector-cluster'},
             {'secret': 'dernier-db-app', 'name': 'dernier-db'},
             {'secret': 'torghut-db-app', 'name': 'torghut-db'},
-            {
-                'secret': 'torghut-clickhouse-auth',
-                'name': 'torghut-clickhouse',
-                'group': 'ClickHouse',
-                'host': 'torghut-clickhouse.torghut.svc.cluster.local',
-                'port': 9005,
-                'dbname': 'torghut',
-                'username': 'torghut',
-                'sslmode': 'disable',
-                'password_key': 'password',
-            },
         ]
 
         servers = {}
@@ -157,31 +135,21 @@ extraInitContainers: |
         passfile_path = storage_dir / passfile_name
         for cluster in clusters:
             secret_dir = Path('/etc/pgadmin/secrets') / cluster['secret']
-            uri_key = cluster.get('uri_key', 'uri')
-            uri_path = secret_dir / uri_key
-            uri = ''
-            if uri_path.exists():
-                uri = uri_path.read_text().strip()
-            if uri:
-                parsed = urlparse(uri)
-                host = parsed.hostname or ''
-                if not host:
-                    continue
-                port = parsed.port or cluster.get('port', 5432)
-                dbname = (parsed.path or '').lstrip('/') or 'postgres'
-                username = unquote(parsed.username or '')
-                sslmode = parse_qs(parsed.query).get('sslmode', ['require'])[0]
-            else:
-                host = cluster.get('host', '')
-                if not host:
-                    continue
-                port = cluster.get('port', 5432)
-                dbname = cluster.get('dbname', 'postgres')
-                username = cluster.get('username', '')
-                sslmode = cluster.get('sslmode', 'require')
-
-            password_key = cluster.get('password_key', 'password')
-            password_path = secret_dir / password_key
+            uri_path = secret_dir / 'uri'
+            if not uri_path.exists():
+                continue
+            uri = uri_path.read_text().strip()
+            if not uri:
+                continue
+            parsed = urlparse(uri)
+            host = parsed.hostname or ''
+            if not host:
+                continue
+            port = parsed.port or 5432
+            dbname = (parsed.path or '').lstrip('/') or 'postgres'
+            username = unquote(parsed.username or '')
+            sslmode = parse_qs(parsed.query).get('sslmode', ['require'])[0]
+            password_path = secret_dir / 'password'
             if password_path.exists():
                 password = password_path.read_text().strip()
                 if password:
@@ -189,13 +157,13 @@ extraInitContainers: |
 
             servers[str(index)] = {
                 'Name': cluster['name'],
-                'Group': cluster.get('group', 'CNPG'),
+                'Group': 'CNPG',
                 'Host': host,
                 'Port': port,
                 'MaintenanceDB': dbname,
                 'Username': username,
                 'SSLMode': sslmode,
-                'PasswordExecCommand': f'cat {secret_dir}/{password_key}',
+                'PasswordExecCommand': f'cat {secret_dir}/password',
                 'PasswordExecExpiration': 300,
                 'ConnectionParameters': {
                     'passfile': passfile_name,
@@ -212,75 +180,10 @@ extraInitContainers: |
             import sqlite3
             conn = sqlite3.connect(db_path)
             cur = conn.cursor()
-            user_row = cur.execute(
-                'select id from user where email = ? or username = ? limit 1',
-                (user_email, user_email),
-            ).fetchone()
-            if user_row:
-                user_id = user_row[0]
-                group_rows = cur.execute(
-                    'select id, name from servergroup where user_id = ?',
-                    (user_id,),
-                ).fetchall()
-                group_ids = {name: group_id for group_id, name in group_rows}
-
-                for server in servers.values():
-                    group_name = server.get('Group', 'Servers') or 'Servers'
-                    group_id = group_ids.get(group_name)
-                    if group_id is None:
-                        cur.execute(
-                            'insert into servergroup (user_id, name) values (?, ?)',
-                            (user_id, group_name),
-                        )
-                        group_id = cur.lastrowid
-                        group_ids[group_name] = group_id
-
-                    connection_params = dict(server.get('ConnectionParameters', {}))
-                    sslmode = server.get('SSLMode')
-                    if sslmode:
-                        connection_params['sslmode'] = sslmode
-                    connection_params_json = json.dumps(connection_params)
-
-                    server_row = cur.execute(
-                        'select id from server where user_id = ? and name = ? limit 1',
-                        (user_id, server['Name']),
-                    ).fetchone()
-                    if server_row:
-                        cur.execute(
-                            'update server set servergroup_id = ?, host = ?, port = ?, '
-                            'maintenance_db = ?, username = ?, passexec_cmd = ?, '
-                            'passexec_expiration = ?, connection_params = ? '
-                            'where id = ?',
-                            (
-                                group_id,
-                                server.get('Host'),
-                                server.get('Port'),
-                                server.get('MaintenanceDB'),
-                                server.get('Username'),
-                                server.get('PasswordExecCommand'),
-                                server.get('PasswordExecExpiration'),
-                                connection_params_json,
-                                server_row[0],
-                            ),
-                        )
-                    else:
-                        cur.execute(
-                            'insert into server (user_id, servergroup_id, name, host, port, '
-                            'maintenance_db, username, passexec_cmd, passexec_expiration, connection_params) '
-                            'values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                            (
-                                user_id,
-                                group_id,
-                                server['Name'],
-                                server.get('Host'),
-                                server.get('Port'),
-                                server.get('MaintenanceDB'),
-                                server.get('Username'),
-                                server.get('PasswordExecCommand'),
-                                server.get('PasswordExecExpiration'),
-                                connection_params_json,
-                            ),
-                        )
+            cur.execute(
+                'update server set connection_params = ?',
+                (json.dumps({'passfile': passfile_name}),),
+            )
             conn.commit()
             conn.close()
 
@@ -297,58 +200,3 @@ extraInitContainers: |
       - name: cnpg-app-secrets
         mountPath: /etc/pgadmin/secrets
         readOnly: true
-  - name: pgadmin-clickhouse-compat
-    image: dpage/pgadmin4:9.11
-    command:
-      - /bin/sh
-      - -c
-      - |
-        set -eu
-        python - <<'PY'
-        from pathlib import Path
-
-        source = Path('/pgadmin4/pgadmin/utils/driver/psycopg3/connection.py')
-        target = Path('/overrides/connection.py')
-        text = source.read_text()
-
-        replacement_lines = [
-            "init_sql = (",
-            "    \"SET DateStyle=ISO; \"",
-            "    \"SET client_min_messages=notice; \"",
-            "    \"SELECT set_config('bytea_output','hex',false)\"",
-            "    \" FROM pg_show_all_settings()\"",
-            "    \" WHERE name = 'bytea_output'; \"",
-            "    \"SET client_encoding='{0}';\".format(postgres_encoding)",
-            ")",
-            "is_clickhouse = False",
-            "if manager:",
-            "    host = (manager.host or '').lower()",
-            "    name = (manager.name or '').lower()",
-            "    port = manager.port or 0",
-            "    is_clickhouse = port == 9005 or 'clickhouse' in host or 'clickhouse' in name",
-            "if is_clickhouse:",
-            "    status = None",
-            "else:",
-            "    status = self._execute(cur, init_sql)",
-        ]
-        marker = "# Note that we use 'UPDATE pg_settings' for setting bytea_output as a"
-        marker_index = text.find(marker)
-        if marker_index == -1:
-            raise SystemExit('pgadmin init SQL marker not found; aborting patch')
-        block_start = text.find("status = self._execute(", marker_index)
-        if block_start == -1:
-            raise SystemExit('pgadmin init SQL block start not found; aborting patch')
-        line_start = text.rfind("\n", 0, block_start) + 1
-        indent = text[line_start:block_start]
-        end_marker = "\n        )\n\n        if status is not None:"
-        block_end = text.find(end_marker, block_start)
-        if block_end == -1:
-            raise SystemExit('pgadmin init SQL block end not found; aborting patch')
-        block_end += len("\n        )\n")
-        replacement = "\n".join(f"{indent}{line}" for line in replacement_lines) + "\n"
-        text = text[:line_start] + replacement + text[block_end:]
-        target.write_text(text)
-        PY
-    volumeMounts:
-      - name: pgadmin-connection-overrides
-        mountPath: /overrides
