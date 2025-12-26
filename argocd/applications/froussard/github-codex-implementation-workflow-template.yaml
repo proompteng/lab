@@ -6,7 +6,7 @@ metadata:
   labels:
     codex.stage: implementation
 spec:
-  serviceAccountName: argo-workflows-workflow
+  serviceAccountName: codex-workflow
   entrypoint: implement
   arguments:
     parameters:

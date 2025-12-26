@@ -62,6 +62,9 @@
 - Flag infra changes in `argocd/`, `tofu/`, `kubernetes/`, or `ansible/` for rollout/impact notes.
 - Treat security issues (secrets, auth gaps, PII logging) as highest priority.
 
+## Merge Guidelines
+- Use squash merges for pull requests.
+
 ## Generated Artifacts & Safety
 - Do not edit generated directories (`dist/`, `build/`, `_generated`) or lockfiles (`bun.lock`, `bun.lockb`); regenerate via the owning tool.
 - Update GitOps state via manifests in `argocd/` rather than live clusters; prefer read-only `kubectl`.

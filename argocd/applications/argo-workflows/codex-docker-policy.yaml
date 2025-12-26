@@ -31,7 +31,7 @@ metadata:
     app.kubernetes.io/part-of: argo-workflows
 subjects:
   - kind: ServiceAccount
-    name: argo-workflows-workflow
+    name: codex-workflow
     namespace: argo-workflows
 roleRef:
   apiGroup: rbac.authorization.k8s.io

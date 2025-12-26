@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: graf
 spec:
-  serviceAccountName: graf
+  serviceAccountName: codex-workflow
   entrypoint: codex-research
   arguments:
     parameters:

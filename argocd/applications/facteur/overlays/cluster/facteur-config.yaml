@@ -15,7 +15,7 @@ data:
       enabled: true
       namespace: argo-workflows
       workflow_template: github-codex-implementation
-      service_account: argo-workflows-workflow
+      service_account: codex-workflow
       parameters:
         rawEvent: ''
         eventBody: ''
