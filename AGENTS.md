@@ -17,6 +17,10 @@
 - `bun run --filter <workspace> test`: run workspace tests (Vitest/Bun test).
 - `go test ./services/...` / `go build ./services/...`: test or build Go services.
 
+## Memories Service Helpers
+- Save entries with `bun run --filter memories save-memory --task-name … --content … --summary … --tags …`.
+- Retrieve entries with `bun run --filter memories retrieve-memory --query … --limit <n>`; uses `schemas/embeddings/memories.sql` and OpenAI embedding env vars.
+
 ## Coding Style & Naming Conventions
 - JS/TS: Biome (2-space indent, single quotes, trailing commas).
 - TSX: Tailwind CSS only; prefer responsive utilities and `cn()` for conditionals.
