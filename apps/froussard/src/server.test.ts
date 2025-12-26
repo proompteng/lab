@@ -21,7 +21,7 @@ vi.mock('@/effect/config', () => {
       username: 'user',
       password: 'pass',
       clientId: 'client',
-      topics: { raw: 'raw', codex: 'codex', codexStructured: 'codex-structured', discordCommands: 'discord' },
+      topics: { raw: 'raw', codexStructured: 'codex-structured', discordCommands: 'discord' },
     },
     codebase: {
       baseBranch: 'main',

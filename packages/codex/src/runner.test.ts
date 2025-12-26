@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -5,7 +6,6 @@ import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CodexRunner } from './runner'
-import { spawn } from 'node:child_process'
 
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }))
 
