@@ -5,7 +5,7 @@ import ai.proompteng.dorvud.ta.producer.AvroSerde
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
-import org.apache.flink.api.common.ExecutionConfig
+import org.apache.flink.api.common.serialization.SerializerConfigImpl
 import org.apache.flink.api.java.typeutils.runtime.kryo.KryoSerializer
 import java.io.ByteArrayOutputStream
 import java.io.ObjectOutputStream
@@ -47,7 +47,7 @@ class SerializationSchemasTest {
 
   @Test
   fun `session accumulator state supports kryo copy`() {
-    val serializer = KryoSerializer(SessionAccumulatorState::class.java, ExecutionConfig())
+    val serializer = KryoSerializer(SessionAccumulatorState::class.java, SerializerConfigImpl())
     val original = SessionAccumulatorState(pv = 10.5, vol = 2.0)
     val copy = serializer.copy(original)
     assertEquals(original, copy)

@@ -78,6 +78,12 @@ S3A properties (example):
 - `linger.ms` 20–50; `compression.type` lz4; `enable.idempotence` true
 - `acks=all`; `max.in.flight.requests.per.connection=5` (ok with idempotence)
 
+### ClickHouse sink (TA visualization)
+- Flink job writes microbars + signals to ClickHouse when `TA_CLICKHOUSE_URL` is set.
+- Tables: `torghut.ta_microbars` and `torghut.ta_signals` (ReplacingMergeTree dedup on `(symbol,event_ts,seq)`, TTL 30d).
+- Schema job lives under `argocd/applications/torghut/clickhouse/ta-schema-job.yaml` and runs on sync wave 3.
+- Required env: `TA_CLICKHOUSE_URL`, `TA_CLICKHOUSE_USERNAME`, `TA_CLICKHOUSE_PASSWORD`, `TA_CLICKHOUSE_BATCH_SIZE`, `TA_CLICKHOUSE_FLUSH_MS`, `TA_CLICKHOUSE_MAX_RETRIES`, `TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS`.
+
 ## Observability
 - Expose Prometheus-format metrics for scrape into Mimir (existing observability stack). Key: watermark lag, checkpoint age/duration, sink txn failures, restarts.
 - Logging to Loki: JSON; include symbol, channel, event_ts, watermark, lag_ms.

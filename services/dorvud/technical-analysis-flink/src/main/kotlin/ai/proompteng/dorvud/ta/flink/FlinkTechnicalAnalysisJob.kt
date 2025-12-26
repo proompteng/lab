@@ -22,6 +22,10 @@ import org.apache.flink.api.common.state.ValueStateDescriptor
 import org.apache.flink.api.common.typeinfo.TypeHint
 import org.apache.flink.api.common.typeinfo.TypeInformation
 import org.apache.flink.connector.base.DeliveryGuarantee
+import org.apache.flink.connector.jdbc.JdbcConnectionOptions
+import org.apache.flink.connector.jdbc.JdbcExecutionOptions
+import org.apache.flink.connector.jdbc.JdbcStatementBuilder
+import org.apache.flink.connector.jdbc.core.datastream.sink.JdbcSink
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema
 import org.apache.flink.connector.kafka.sink.KafkaSink
 import org.apache.flink.connector.kafka.sink.KafkaSinkBuilder
@@ -49,6 +53,9 @@ import org.ta4j.core.indicators.helpers.ClosePriceIndicator
 import org.ta4j.core.indicators.statistics.StandardDeviationIndicator
 import java.io.Serializable
 import java.nio.charset.StandardCharsets
+import java.sql.PreparedStatement
+import java.sql.Timestamp
+import java.sql.Types
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneOffset
@@ -124,8 +131,23 @@ fun main() {
 
   microBars.sinkTo(microBarSink(config, serde)).name("sink-microbars")
   signals.sinkTo(signalSink(config, serde)).name("sink-signals")
+  applyClickhouseSinks(config, microBars, signals)
 
   env.execute("torghut-technical-analysis-flink")
+}
+
+private fun applyClickhouseSinks(
+  config: FlinkTaConfig,
+  microBars: org.apache.flink.streaming.api.datastream.DataStream<Envelope<MicroBarPayload>>,
+  signals: org.apache.flink.streaming.api.datastream.DataStream<Envelope<TaSignalsPayload>>,
+) {
+  if (config.clickhouseUrl.isNullOrBlank()) {
+    LoggerFactory.getLogger("ta-clickhouse").info("ClickHouse sink disabled (TA_CLICKHOUSE_URL not set).")
+    return
+  }
+
+  microBars.sinkTo(clickhouseMicrobarSink(config)).name("sink-microbars-clickhouse")
+  signals.sinkTo(clickhouseSignalSink(config)).name("sink-signals-clickhouse")
 }
 
 private fun configureEnvironment(
@@ -235,6 +257,215 @@ private fun signalSink(
   sinkBuilder.setRecordSerializer(SignalSerializationSchema(config.signalsTopic, serde))
   sinkBuilder.setKafkaSecurity(config)
   return sinkBuilder.build()
+}
+
+private fun clickhouseMicrobarSink(config: FlinkTaConfig): JdbcSink<Envelope<MicroBarPayload>> {
+  val sql =
+    """
+      INSERT INTO ta_microbars (
+        symbol,
+        event_ts,
+        seq,
+        ingest_ts,
+        is_final,
+        source,
+        window_size,
+        window_step,
+        window_start,
+        window_end,
+        version,
+        o,
+        h,
+        l,
+        c,
+        v,
+        vwap,
+        count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """.trimIndent()
+
+  return JdbcSink
+    .builder<Envelope<MicroBarPayload>>()
+    .withQueryStatement(sql, microbarStatementBuilder())
+    .withExecutionOptions(clickhouseExecutionOptions(config))
+    .buildAtLeastOnce(clickhouseConnectionOptions(config))
+}
+
+private fun clickhouseSignalSink(config: FlinkTaConfig): JdbcSink<Envelope<TaSignalsPayload>> {
+  val sql =
+    """
+      INSERT INTO ta_signals (
+        symbol,
+        event_ts,
+        seq,
+        ingest_ts,
+        is_final,
+        source,
+        window_size,
+        window_step,
+        window_start,
+        window_end,
+        version,
+        macd,
+        macd_signal,
+        macd_hist,
+        ema12,
+        ema26,
+        rsi14,
+        boll_mid,
+        boll_upper,
+        boll_lower,
+        vwap_session,
+        vwap_w5m,
+        imbalance_spread,
+        imbalance_bid_px,
+        imbalance_ask_px,
+        imbalance_bid_sz,
+        imbalance_ask_sz,
+        vol_realized_w60s
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """.trimIndent()
+
+  return JdbcSink
+    .builder<Envelope<TaSignalsPayload>>()
+    .withQueryStatement(sql, signalsStatementBuilder())
+    .withExecutionOptions(clickhouseExecutionOptions(config))
+    .buildAtLeastOnce(clickhouseConnectionOptions(config))
+}
+
+private fun clickhouseConnectionOptions(config: FlinkTaConfig): JdbcConnectionOptions {
+  val url = requireNotNull(config.clickhouseUrl) { "TA_CLICKHOUSE_URL must be set when ClickHouse sinks are enabled." }
+  val builder =
+    JdbcConnectionOptions
+      .JdbcConnectionOptionsBuilder()
+      .withUrl(url)
+      .withDriverName("com.clickhouse.jdbc.ClickHouseDriver")
+      .withConnectionCheckTimeoutSeconds(config.clickhouseConnectionTimeoutSeconds)
+
+  config.clickhouseUsername?.let { builder.withUsername(it) }
+  config.clickhousePassword?.let { builder.withPassword(it) }
+
+  return builder.build()
+}
+
+private fun clickhouseExecutionOptions(config: FlinkTaConfig): JdbcExecutionOptions =
+  JdbcExecutionOptions
+    .builder()
+    .withBatchSize(config.clickhouseInsertBatchSize)
+    .withBatchIntervalMs(config.clickhouseInsertFlushMs)
+    .withMaxRetries(config.clickhouseInsertMaxRetries)
+    .build()
+
+private fun microbarStatementBuilder(): JdbcStatementBuilder<Envelope<MicroBarPayload>> =
+  JdbcStatementBuilder { statement, envelope ->
+    val payload = envelope.payload
+    val window = envelope.window
+
+    statement.setString(1, envelope.symbol)
+    statement.setTimestamp(2, Timestamp.from(envelope.eventTs))
+    statement.setLong(3, envelope.seq)
+    statement.setTimestamp(4, Timestamp.from(envelope.ingestTs))
+    statement.setInt(5, if (envelope.isFinal) 1 else 0)
+    setNullableString(statement, 6, envelope.source)
+    setNullableString(statement, 7, window?.size)
+    setNullableString(statement, 8, window?.step)
+    setNullableTimestamp(statement, 9, parseInstant(window?.start))
+    setNullableTimestamp(statement, 10, parseInstant(window?.end))
+    statement.setInt(11, envelope.version)
+    statement.setDouble(12, payload.o)
+    statement.setDouble(13, payload.h)
+    statement.setDouble(14, payload.l)
+    statement.setDouble(15, payload.c)
+    statement.setDouble(16, payload.v)
+    setNullableDouble(statement, 17, payload.vwap)
+    statement.setLong(18, payload.count)
+  }
+
+private fun signalsStatementBuilder(): JdbcStatementBuilder<Envelope<TaSignalsPayload>> =
+  JdbcStatementBuilder { statement, envelope ->
+    val payload = envelope.payload
+    val window = envelope.window
+
+    statement.setString(1, envelope.symbol)
+    statement.setTimestamp(2, Timestamp.from(envelope.eventTs))
+    statement.setLong(3, envelope.seq)
+    statement.setTimestamp(4, Timestamp.from(envelope.ingestTs))
+    statement.setInt(5, if (envelope.isFinal) 1 else 0)
+    setNullableString(statement, 6, envelope.source)
+    setNullableString(statement, 7, window?.size)
+    setNullableString(statement, 8, window?.step)
+    setNullableTimestamp(statement, 9, parseInstant(window?.start))
+    setNullableTimestamp(statement, 10, parseInstant(window?.end))
+    statement.setInt(11, envelope.version)
+
+    setNullableDouble(statement, 12, payload.macd?.macd)
+    setNullableDouble(statement, 13, payload.macd?.signal)
+    setNullableDouble(statement, 14, payload.macd?.hist)
+    setNullableDouble(statement, 15, payload.ema?.ema12)
+    setNullableDouble(statement, 16, payload.ema?.ema26)
+    setNullableDouble(statement, 17, payload.rsi14)
+    setNullableDouble(statement, 18, payload.boll?.mid)
+    setNullableDouble(statement, 19, payload.boll?.upper)
+    setNullableDouble(statement, 20, payload.boll?.lower)
+    setNullableDouble(statement, 21, payload.vwap?.session)
+    setNullableDouble(statement, 22, payload.vwap?.w5m)
+    setNullableDouble(statement, 23, payload.imbalance?.spread)
+    setNullableDouble(statement, 24, payload.imbalance?.bid_px)
+    setNullableDouble(statement, 25, payload.imbalance?.ask_px)
+    setNullableLong(statement, 26, payload.imbalance?.bid_sz)
+    setNullableLong(statement, 27, payload.imbalance?.ask_sz)
+    setNullableDouble(statement, 28, payload.vol_realized?.w60s)
+  }
+
+private fun parseInstant(value: String?): Instant? =
+  value?.let { runCatching { Instant.parse(it) }.getOrNull() }
+
+private fun setNullableTimestamp(
+  statement: PreparedStatement,
+  index: Int,
+  value: Instant?,
+) {
+  if (value == null) {
+    statement.setNull(index, Types.TIMESTAMP)
+  } else {
+    statement.setTimestamp(index, Timestamp.from(value))
+  }
+}
+
+private fun setNullableString(
+  statement: PreparedStatement,
+  index: Int,
+  value: String?,
+) {
+  if (value == null) {
+    statement.setNull(index, Types.VARCHAR)
+  } else {
+    statement.setString(index, value)
+  }
+}
+
+private fun setNullableDouble(
+  statement: PreparedStatement,
+  index: Int,
+  value: Double?,
+) {
+  if (value == null) {
+    statement.setNull(index, Types.DOUBLE)
+  } else {
+    statement.setDouble(index, value)
+  }
+}
+
+private fun setNullableLong(
+  statement: PreparedStatement,
+  index: Int,
+  value: Long?,
+) {
+  if (value == null) {
+    statement.setNull(index, Types.BIGINT)
+  } else {
+    statement.setLong(index, value)
+  }
 }
 
 internal class MicroBarSerializationSchema(

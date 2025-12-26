@@ -34,6 +34,13 @@ data class FlinkTaConfig(
   val s3SecretKey: String?,
   val deliveryGuarantee: DeliveryGuarantee,
   val transactionTimeoutMs: Long,
+  val clickhouseUrl: String?,
+  val clickhouseUsername: String?,
+  val clickhousePassword: String?,
+  val clickhouseInsertBatchSize: Int,
+  val clickhouseInsertFlushMs: Long,
+  val clickhouseInsertMaxRetries: Int,
+  val clickhouseConnectionTimeoutSeconds: Int,
 ) : Serializable {
   companion object {
     private const val serialVersionUID: Long = 1L
@@ -74,6 +81,7 @@ data class FlinkTaConfig(
         }
 
       val checkpointBase = env("TA_CHECKPOINT_DIR", "s3a://flink-checkpoints/torghut/technical-analysis")
+      val clickhouseUrl = env("TA_CLICKHOUSE_URL")?.takeIf { it.isNotBlank() }
 
       return FlinkTaConfig(
         bootstrapServers = env("TA_KAFKA_BOOTSTRAP", "kafka-kafka-bootstrap.kafka:9092"),
@@ -105,6 +113,13 @@ data class FlinkTaConfig(
         s3SecretKey = env("TA_S3_SECRET_KEY"),
         deliveryGuarantee = envDeliveryGuarantee("TA_KAFKA_DELIVERY_GUARANTEE", DeliveryGuarantee.EXACTLY_ONCE),
         transactionTimeoutMs = envLong("TA_KAFKA_TRANSACTION_TIMEOUT_MS", 120_000),
+        clickhouseUrl = clickhouseUrl,
+        clickhouseUsername = env("TA_CLICKHOUSE_USERNAME", "torghut"),
+        clickhousePassword = env("TA_CLICKHOUSE_PASSWORD"),
+        clickhouseInsertBatchSize = envInt("TA_CLICKHOUSE_BATCH_SIZE", 500),
+        clickhouseInsertFlushMs = envLong("TA_CLICKHOUSE_FLUSH_MS", 1_000),
+        clickhouseInsertMaxRetries = envInt("TA_CLICKHOUSE_MAX_RETRIES", 3),
+        clickhouseConnectionTimeoutSeconds = envInt("TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", 30),
       )
     }
   }
