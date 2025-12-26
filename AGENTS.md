@@ -41,7 +41,7 @@
 - Go: `gofmt -w <files>`; wrap errors with context (`fmt.Errorf("context: %w", err)`).
 - Kotlin: `ktlint`; Rails follows default Ruby style.
 
-## UI/UX (TSX)
+## UI/UX
 - Tailwind CSS only; class order layout → spacing → sizing → typography → colors; use `cn()` for conditionals.
 - Zinc palette (primary zinc-900/100, secondary zinc-700/300), responsive utilities, no hardcoded widths/heights.
 - Forms: Zod schemas in `schemas/` + `zodResolver`; validate after typing and keep errors inline.
@@ -50,14 +50,14 @@
 - Co-locate tests: `*.test.ts(x)`, `*_test.go`, `src/test/kotlin/*Test.kt`, `test/**`, `alchimie_tests/`.
 - Prefer fast unit tests; add integration tests when needed.
 
-## Agent Execution Guidelines (Performance)
+## Agent Execution Guidelines
 - Use precise code pointers (file paths, identifiers, stack traces) to narrow search.
 - Reproduce issues before changes; keep logs and failing commands.
 - Run the smallest relevant validation (single test, scoped lint, or targeted build).
 - Split large tasks; surface ambiguities early.
 - Agents perform best with configured dev environments and reliable tests—keep these instructions current.
 
-## Review Guidelines (for Codex GitHub reviews)
+## Review Guidelines
 - Focus on correctness regressions, error handling, and missing tests.
 - Flag infra changes in `argocd/`, `tofu/`, `kubernetes/`, or `ansible/` for rollout/impact notes.
 - Treat security issues (secrets, auth gaps, PII logging) as highest priority.
