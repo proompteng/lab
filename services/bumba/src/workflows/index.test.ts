@@ -345,7 +345,8 @@ test('enrichRepository schedules listing and child workflows', async () => {
 
 test('enrichRepository continues as new when file list exceeds batch size', async () => {
   const { executor } = makeExecutor()
-  const files = Array.from({ length: 501 }, (_value, index) => `path/to/file-${index}.ts`)
+  const batchSize = 50
+  const files = Array.from({ length: batchSize + 1 }, (_value, index) => `path/to/file-${index}.ts`)
   const input = {
     repoRoot: '/workspace/lab/.worktrees/bumba',
     repository: 'proompteng/lab',
@@ -366,7 +367,7 @@ test('enrichRepository continues as new when file list exceeds batch size', asyn
 
   expect(output.completion).toBe('pending')
   expect(continueCommands).toHaveLength(0)
-  expect(childCommands).toHaveLength(500)
+  expect(childCommands).toHaveLength(batchSize)
 
   const continuationRun = await execute(executor, {
     workflowType: 'enrichRepository',
