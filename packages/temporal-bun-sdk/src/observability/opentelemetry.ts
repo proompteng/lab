@@ -106,6 +106,7 @@ const startOpenTelemetry = async (options: OpenTelemetryConfig): Promise<OpenTel
     resolveEndpoint(process.env.OTEL_EXPORTER_OTLP_ENDPOINT, 'metrics') ??
     DEFAULT_METRICS_ENDPOINT
 
+  const metricsEnabled = shouldEnableMetrics(metricsEndpoint)
   const exportInterval = options.exportIntervalMs ?? parseNumber(process.env.OTEL_METRIC_EXPORT_INTERVAL) ?? 15000
   const tracesProtocol = resolveOtlpProtocol(
     process.env.OTEL_EXPORTER_OTLP_TRACES_PROTOCOL ?? process.env.OTEL_EXPORTER_OTLP_PROTOCOL,
@@ -161,29 +162,36 @@ const startOpenTelemetry = async (options: OpenTelemetryConfig): Promise<OpenTel
       }),
     )
 
-  const metricExporter = await loadMetricExporter(metricsProtocol, {
-    url: metricsEndpoint,
-    headers: metricHeaders,
-    ...(metricsTimeoutMs ? { timeoutMillis: metricsTimeoutMs } : {}),
-  })
   const traceExporter = await loadTraceExporter(tracesProtocol, {
     url: tracesEndpoint,
     headers: traceHeaders,
     ...(tracesTimeoutMs ? { timeoutMillis: tracesTimeoutMs } : {}),
   })
 
-  const metricReader = new otel.sdkMetrics.PeriodicExportingMetricReader({
-    exporter: metricExporter,
-    exportIntervalMillis,
-    ...(exportTimeoutMillis ? { exportTimeoutMillis } : {}),
-  })
+  let metricReader: InstanceType<typeof otel.sdkMetrics.PeriodicExportingMetricReader> | undefined
+  if (metricsEnabled) {
+    const metricExporter = await loadMetricExporter(metricsProtocol, {
+      url: metricsEndpoint,
+      headers: metricHeaders,
+      ...(metricsTimeoutMs ? { timeoutMillis: metricsTimeoutMs } : {}),
+    })
+    metricReader = new otel.sdkMetrics.PeriodicExportingMetricReader({
+      exporter: metricExporter,
+      exportIntervalMillis,
+      ...(exportTimeoutMillis ? { exportTimeoutMillis } : {}),
+    })
+  }
 
-  const sdk = new otel.sdkNode.NodeSDK({
+  const sdkConfig: Partial<NodeSDKConfiguration> = {
     resource,
     traceExporter,
-    metricReader,
     instrumentations: resolveInstrumentations(otel.autoInstrumentations.getNodeAutoInstrumentations),
-  })
+  }
+  if (metricReader) {
+    sdkConfig.metricReader = metricReader
+  }
+
+  const sdk = new otel.sdkNode.NodeSDK(sdkConfig)
 
   try {
     await sdk.start()
@@ -230,6 +238,17 @@ const shouldEnableOpenTelemetry = (options: OpenTelemetryConfig): boolean => {
       process.env.LGTM_TEMPO_TRACES_ENDPOINT ||
       process.env.LGTM_MIMIR_METRICS_ENDPOINT,
   )
+}
+
+const shouldEnableMetrics = (metricsEndpoint: string | undefined): boolean => {
+  const exporter = process.env.OTEL_METRICS_EXPORTER?.trim().toLowerCase()
+  if (exporter === 'none' || exporter === 'false') {
+    return false
+  }
+  if (exporter && exporter !== 'otlp') {
+    return true
+  }
+  return Boolean(metricsEndpoint)
 }
 
 const parseNumber = (value: string | undefined): number | undefined => {
