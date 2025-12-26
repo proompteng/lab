@@ -16,6 +16,7 @@ type Options = {
   workflowId?: string
   namespace: string
   wait: boolean
+  force: boolean
   temporalAddress?: string
   repository?: string
   commit?: string
@@ -41,6 +42,7 @@ Options:
       --workflow-id <id>     Workflow ID override (defaults to auto-generated)
       --namespace <name>     Temporal namespace (default: $TEMPORAL_NAMESPACE or ${DEFAULT_NAMESPACE})
       --temporal-address <addr> Override Temporal address (default: ${DEFAULT_TEMPORAL_ADDRESS})
+      --force               Clear existing enrichment entries before running
       --wait                Wait for workflow completion and print the result
   -h, --help                Show this help message
 
@@ -63,6 +65,7 @@ const parseArgs = (argv: string[]): Options => {
     namespace: DEFAULT_NAMESPACE,
     repoRoot: DEFAULT_REPO_ROOT,
     wait: false,
+    force: false,
   }
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -76,6 +79,11 @@ const parseArgs = (argv: string[]): Options => {
 
     if (arg === '--wait') {
       options.wait = true
+      continue
+    }
+
+    if (arg === '--force') {
+      options.force = true
       continue
     }
 
@@ -238,6 +246,7 @@ const main = async () => {
         context: options.context ?? '',
         repository: options.repository,
         commit: options.commit,
+        force: options.force,
       },
     ],
   })
@@ -251,6 +260,7 @@ const main = async () => {
     filePath,
     repository: options.repository,
     commit: options.commit,
+    force: options.force,
   }
 
   if (options.wait) {

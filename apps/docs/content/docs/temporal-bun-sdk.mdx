@@ -121,9 +121,17 @@ process. Configure exporters with standard OTEL environment variables:
 
 - `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`
   (or `OTEL_EXPORTER_OTLP_ENDPOINT` to share a base URL).
+- `OTEL_EXPORTER_OTLP_PROTOCOL` (or per-signal `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` /
+  `OTEL_EXPORTER_OTLP_METRICS_PROTOCOL`) to choose `http/json` (default) or
+  `http/protobuf`. The SDK will warn and fall back to HTTP if gRPC is requested.
 - `OTEL_SERVICE_NAME`, `OTEL_SERVICE_NAMESPACE`, and `OTEL_SERVICE_INSTANCE_ID`
   to label service identity.
 - `OTEL_RESOURCE_ATTRIBUTES` for additional resource tags.
+- `OTEL_EXPORTER_OTLP_TIMEOUT` (or per-signal `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` /
+  `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT`) to increase OTLP request timeouts.
+- `OTEL_METRIC_EXPORT_INTERVAL` and `OTEL_METRIC_EXPORT_TIMEOUT` to tune metric export cadence.
+- `OTEL_EXPORTER_OTLP_COMPRESSION` (or per-signal `OTEL_EXPORTER_OTLP_TRACES_COMPRESSION` /
+  `OTEL_EXPORTER_OTLP_METRICS_COMPRESSION`) to enable gzip payload compression.
 
 If you want the built-in metrics registry to mirror measurements into OTel
 alongside its configured exporter, set `TEMPORAL_OTEL_METRICS_BRIDGE=true`.

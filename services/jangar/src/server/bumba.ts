@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm, stat } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
-import { createTemporalClient, loadTemporalConfig, type TemporalClient } from '@proompteng/temporal-bun-sdk'
+import { createTemporalClient, type TemporalClient } from '@proompteng/temporal-bun-sdk/client'
+import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk/config'
 import { Context, Effect, Layer, pipe } from 'effect'
 import * as TSemaphore from 'effect/TSemaphore'
 
@@ -20,6 +21,7 @@ export type StartEnrichFileInput = {
   repository?: string
   workflowId?: string
   eventDeliveryId?: string
+  force?: boolean
 }
 
 export type StartEnrichFileResult = {
@@ -355,6 +357,7 @@ export const BumbaWorkflowsLive = Layer.scoped(
                           ref: input.ref,
                           commit: input.commit ?? undefined,
                           eventDeliveryId: input.eventDeliveryId,
+                          force: input.force ?? false,
                         },
                       ],
                     })
