@@ -17,7 +17,7 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2025-12-26T02:14:10.163Z"
+        kubectl.kubernetes.io/restartedAt: "2025-12-26T02:53:14.919Z"
     spec:
       containers:
         - name: bumba
@@ -46,8 +46,6 @@ spec:
               value: "8"
             - name: TEMPORAL_OTEL_ENABLED
               value: "true"
-            - name: TEMPORAL_OTEL_METRICS_BRIDGE
-              value: "false"
             - name: TEMPORAL_METRICS_EXPORTER
               value: otlp
             - name: TEMPORAL_METRICS_ENDPOINT

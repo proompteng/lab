@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2025-12-26T02:22:53.803Z"
+    deploy.knative.dev/rollout: "2025-12-26T02:53:53.960Z"
 spec:
   replicas: 1
   strategy:
@@ -39,8 +39,6 @@ spec:
               value: "0"
             - name: TEMPORAL_OTEL_ENABLED
               value: "true"
-            - name: TEMPORAL_OTEL_METRICS_BRIDGE
-              value: "false"
             - name: TEMPORAL_METRICS_EXPORTER
               value: otlp
             - name: TEMPORAL_METRICS_ENDPOINT
