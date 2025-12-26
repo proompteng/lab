@@ -10,8 +10,6 @@ metadata:
     argocd.argoproj.io/sync-wave: "1"
 spec:
   configuration:
-    settings:
-      postgresql_port: 9005
     zookeeper:
       nodes:
         - host: keeper-torghut-keeper
@@ -26,11 +24,11 @@ spec:
         - 10.0.0.0/8
         - 172.16.0.0/12
         - 192.168.0.0/16
-      torghut/password:
+      torghut/password_sha256_hex:
         valueFrom:
           secretKeyRef:
             name: torghut-clickhouse-auth
-            key: torghut_password
+            key: torghut_password_sha256_hex
       torghut/profile: default
       torghut/quota: default
       torghut/networks/ip:
