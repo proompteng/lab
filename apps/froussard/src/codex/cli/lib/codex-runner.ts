@@ -200,6 +200,50 @@ export const runCodexSession = async ({
     return trimmed.length > 0 ? trimmed : undefined
   }
 
+  const readNumber = (value: unknown): number | undefined => {
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+  }
+
+  const handleTurnCompleted = async (event: Record<string, unknown>) => {
+    const usage = event.usage as Record<string, unknown> | undefined
+    if (!usage) {
+      return
+    }
+
+    const inputTokens = readNumber(usage.input_tokens ?? usage.inputTokens ?? usage.input)
+    const cachedInputTokens = readNumber(usage.cached_input_tokens ?? usage.cachedInputTokens)
+    const outputTokens = readNumber(usage.output_tokens ?? usage.outputTokens ?? usage.output)
+    const reasoningTokens = readNumber(usage.reasoning_tokens ?? usage.reasoningTokens)
+
+    const hasUsage =
+      inputTokens !== undefined ||
+      cachedInputTokens !== undefined ||
+      outputTokens !== undefined ||
+      reasoningTokens !== undefined
+    if (!hasUsage) {
+      return
+    }
+
+    const parts: string[] = []
+    if (inputTokens !== undefined) {
+      const cachedSuffix = cachedInputTokens !== undefined ? ` (cached ${cachedInputTokens})` : ''
+      parts.push(`input: ${inputTokens}${cachedSuffix}`)
+    } else if (cachedInputTokens !== undefined) {
+      parts.push(`input cached: ${cachedInputTokens}`)
+    }
+    if (outputTokens !== undefined) {
+      parts.push(`output: ${outputTokens}`)
+    }
+    if (reasoningTokens !== undefined) {
+      parts.push(`reasoning: ${reasoningTokens}`)
+    }
+
+    if (parts.length === 0) {
+      return
+    }
+    await emitStreamLine(`Usage → ${parts.join(' | ')}`, 'Failed to write token usage to Discord channel:')
+  }
+
   const handleItemEvent = async (event: Record<string, unknown>, type: string) => {
     const item = event.item as Record<string, unknown> | undefined
     if (!item || typeof item !== 'object') {
@@ -268,6 +312,10 @@ export const runCodexSession = async ({
     },
     onEvent: async (event) => {
       const eventType = typeof event.type === 'string' ? event.type : ''
+      if (eventType === 'turn.completed') {
+        await handleTurnCompleted(event)
+        return
+      }
       if (eventType === 'item.started' || eventType === 'item.completed') {
         await handleItemEvent(event, eventType)
       }
