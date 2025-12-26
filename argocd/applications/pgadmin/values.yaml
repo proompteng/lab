@@ -206,10 +206,75 @@ extraInitContainers: |
             import sqlite3
             conn = sqlite3.connect(db_path)
             cur = conn.cursor()
-            cur.execute(
-                'update server set connection_params = ?',
-                (json.dumps({'passfile': passfile_name}),),
-            )
+            user_row = cur.execute(
+                'select id from user where email = ? or username = ? limit 1',
+                (user_email, user_email),
+            ).fetchone()
+            if user_row:
+                user_id = user_row[0]
+                group_rows = cur.execute(
+                    'select id, name from servergroup where user_id = ?',
+                    (user_id,),
+                ).fetchall()
+                group_ids = {name: group_id for group_id, name in group_rows}
+
+                for server in servers.values():
+                    group_name = server.get('Group', 'Servers') or 'Servers'
+                    group_id = group_ids.get(group_name)
+                    if group_id is None:
+                        cur.execute(
+                            'insert into servergroup (user_id, name) values (?, ?)',
+                            (user_id, group_name),
+                        )
+                        group_id = cur.lastrowid
+                        group_ids[group_name] = group_id
+
+                    connection_params = dict(server.get('ConnectionParameters', {}))
+                    sslmode = server.get('SSLMode')
+                    if sslmode:
+                        connection_params['sslmode'] = sslmode
+                    connection_params_json = json.dumps(connection_params)
+
+                    server_row = cur.execute(
+                        'select id from server where user_id = ? and name = ? limit 1',
+                        (user_id, server['Name']),
+                    ).fetchone()
+                    if server_row:
+                        cur.execute(
+                            'update server set servergroup_id = ?, host = ?, port = ?, '
+                            'maintenance_db = ?, username = ?, passexec_cmd = ?, '
+                            'passexec_expiration = ?, connection_params = ? '
+                            'where id = ?',
+                            (
+                                group_id,
+                                server.get('Host'),
+                                server.get('Port'),
+                                server.get('MaintenanceDB'),
+                                server.get('Username'),
+                                server.get('PasswordExecCommand'),
+                                server.get('PasswordExecExpiration'),
+                                connection_params_json,
+                                server_row[0],
+                            ),
+                        )
+                    else:
+                        cur.execute(
+                            'insert into server (user_id, servergroup_id, name, host, port, '
+                            'maintenance_db, username, passexec_cmd, passexec_expiration, connection_params) '
+                            'values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                            (
+                                user_id,
+                                group_id,
+                                server['Name'],
+                                server.get('Host'),
+                                server.get('Port'),
+                                server.get('MaintenanceDB'),
+                                server.get('Username'),
+                                server.get('PasswordExecCommand'),
+                                server.get('PasswordExecExpiration'),
+                                connection_params_json,
+                            ),
+                        )
             conn.commit()
             conn.close()
 
