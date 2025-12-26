@@ -5,6 +5,8 @@ const defaultSignalSchema: Schema.Schema<unknown> = Schema.Unknown
 const defaultQueryInputSchema: Schema.Schema<unknown> = Schema.Unknown
 const defaultQueryOutputSchema: Schema.Schema<unknown> = Schema.Unknown
 
+export const CHILD_WORKFLOW_COMPLETED_SIGNAL = '__childWorkflowCompleted'
+
 const shouldDecodeAsArray = (schema: Schema.Schema<unknown>): boolean => schema.ast._tag === 'TupleType'
 
 type RecordValue<T> = Schema.Schema<T> | { schema?: Schema.Schema<T>; description?: string }

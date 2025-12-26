@@ -55,6 +55,11 @@ import { WorkflowTaskFailedCause } from '../proto/temporal/api/enums/v1/failed_c
 import { QueryResultType } from '../proto/temporal/api/enums/v1/query_pb'
 import { HistoryEventFilterType, TimeoutType, VersioningBehavior } from '../proto/temporal/api/enums/v1/workflow_pb'
 import type {
+  ChildWorkflowExecutionCanceledEventAttributes,
+  ChildWorkflowExecutionCompletedEventAttributes,
+  ChildWorkflowExecutionFailedEventAttributes,
+  ChildWorkflowExecutionTerminatedEventAttributes,
+  ChildWorkflowExecutionTimedOutEventAttributes,
   HistoryEvent,
   WorkflowExecutionSignaledEventAttributes,
 } from '../proto/temporal/api/history/v1/message_pb'
@@ -92,7 +97,11 @@ import type {
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import type { WorkflowQueryEvaluationResult, WorkflowUpdateInvocation } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
-import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from '../workflow/inbound'
+import {
+  CHILD_WORKFLOW_COMPLETED_SIGNAL,
+  type WorkflowQueryRequest,
+  type WorkflowSignalDeliveryInput,
+} from '../workflow/inbound'
 import { WorkflowRegistry } from '../workflow/registry'
 import {
   DETERMINISM_MARKER_NAME,
@@ -303,6 +312,7 @@ export class WorkerRuntime {
     const executor = new WorkflowExecutor({
       registry,
       dataConverter,
+      logger,
     })
 
     const runtimeMetrics = await WorkerRuntime.#initMetrics(metricsRegistry)
@@ -1516,31 +1526,115 @@ export class WorkerRuntime {
       return value.toString()
     }
 
-    for (const event of events) {
-      if (event.eventType !== EventType.WORKFLOW_EXECUTION_SIGNALED) {
-        continue
+    const recordChildCompletion = (
+      event: HistoryEvent,
+      status: 'completed' | 'failed' | 'canceled' | 'terminated' | 'timed_out',
+      attrs:
+        | ChildWorkflowExecutionCompletedEventAttributes
+        | ChildWorkflowExecutionFailedEventAttributes
+        | ChildWorkflowExecutionCanceledEventAttributes
+        | ChildWorkflowExecutionTerminatedEventAttributes
+        | ChildWorkflowExecutionTimedOutEventAttributes,
+    ) => {
+      const workflowId = attrs.workflowExecution?.workflowId
+      if (!workflowId) {
+        return
       }
-      if (event.attributes?.case !== 'workflowExecutionSignaledEventAttributes') {
-        continue
-      }
-      const attrs = event.attributes.value as WorkflowExecutionSignaledEventAttributes
-      const args = await decodePayloadsToValues(this.#dataConverter, attrs.input?.payloads ?? [])
-      const workflowTaskCompletedEventId =
-        'workflowTaskCompletedEventId' in attrs
-          ? normalizeEventId(
-              (attrs as { workflowTaskCompletedEventId?: bigint | number | string | null })
-                .workflowTaskCompletedEventId,
-            )
-          : null
       deliveries.push({
-        name: attrs.signalName ?? 'unknown',
-        args,
+        name: CHILD_WORKFLOW_COMPLETED_SIGNAL,
+        args: [
+          {
+            workflowId,
+            ...(attrs.workflowExecution?.runId ? { runId: attrs.workflowExecution.runId } : {}),
+            status,
+          },
+        ],
         metadata: {
           eventId: normalizeEventId(event.eventId),
-          workflowTaskCompletedEventId,
-          identity: attrs.identity ?? null,
         },
       })
+    }
+
+    for (const event of events) {
+      switch (event.eventType) {
+        case EventType.WORKFLOW_EXECUTION_SIGNALED: {
+          if (event.attributes?.case !== 'workflowExecutionSignaledEventAttributes') {
+            break
+          }
+          const attrs = event.attributes.value as WorkflowExecutionSignaledEventAttributes
+          const args = await decodePayloadsToValues(this.#dataConverter, attrs.input?.payloads ?? [])
+          const workflowTaskCompletedEventId =
+            'workflowTaskCompletedEventId' in attrs
+              ? normalizeEventId(
+                  (attrs as { workflowTaskCompletedEventId?: bigint | number | string | null })
+                    .workflowTaskCompletedEventId,
+                )
+              : null
+          deliveries.push({
+            name: attrs.signalName ?? 'unknown',
+            args,
+            metadata: {
+              eventId: normalizeEventId(event.eventId),
+              workflowTaskCompletedEventId,
+              identity: attrs.identity ?? null,
+            },
+          })
+          break
+        }
+        case EventType.CHILD_WORKFLOW_EXECUTION_COMPLETED: {
+          if (event.attributes?.case !== 'childWorkflowExecutionCompletedEventAttributes') {
+            break
+          }
+          recordChildCompletion(
+            event,
+            'completed',
+            event.attributes.value as ChildWorkflowExecutionCompletedEventAttributes,
+          )
+          break
+        }
+        case EventType.CHILD_WORKFLOW_EXECUTION_FAILED: {
+          if (event.attributes?.case !== 'childWorkflowExecutionFailedEventAttributes') {
+            break
+          }
+          recordChildCompletion(event, 'failed', event.attributes.value as ChildWorkflowExecutionFailedEventAttributes)
+          break
+        }
+        case EventType.CHILD_WORKFLOW_EXECUTION_CANCELED: {
+          if (event.attributes?.case !== 'childWorkflowExecutionCanceledEventAttributes') {
+            break
+          }
+          recordChildCompletion(
+            event,
+            'canceled',
+            event.attributes.value as ChildWorkflowExecutionCanceledEventAttributes,
+          )
+          break
+        }
+        case EventType.CHILD_WORKFLOW_EXECUTION_TERMINATED: {
+          if (event.attributes?.case !== 'childWorkflowExecutionTerminatedEventAttributes') {
+            break
+          }
+          recordChildCompletion(
+            event,
+            'terminated',
+            event.attributes.value as ChildWorkflowExecutionTerminatedEventAttributes,
+          )
+          break
+        }
+        case EventType.CHILD_WORKFLOW_EXECUTION_TIMED_OUT: {
+          if (event.attributes?.case !== 'childWorkflowExecutionTimedOutEventAttributes') {
+            break
+          }
+          recordChildCompletion(
+            event,
+            'timed_out',
+            event.attributes.value as ChildWorkflowExecutionTimedOutEventAttributes,
+          )
+          break
+        }
+        default:
+          break
+      }
     }
 
     return deliveries

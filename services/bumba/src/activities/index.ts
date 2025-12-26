@@ -82,17 +82,37 @@ export type EmbeddingInput = {
   text: string
 }
 
-export type PersistInput = {
-  filename: string
-  summary: string
-  content: string
-  astSummary: string
-  enriched: string
-  embedding: number[]
-  metadata: Record<string, unknown>
+export type PersistFileVersionInput = {
   fileMetadata: FileMetadata
+}
+
+export type PersistFileVersionOutput = {
+  repositoryId: string
+  fileKeyId: string
+  fileVersionId: string
+}
+
+export type PersistEnrichmentRecordInput = {
+  fileVersionId: string
+  summary: string
+  enriched: string
+  astSummary: string
+  contentHash: string
+  metadata: Record<string, unknown>
+}
+
+export type PersistEnrichmentRecordOutput = {
+  enrichmentId: string
+}
+
+export type PersistEmbeddingInput = {
+  enrichmentId: string
+  embedding: number[]
+}
+
+export type PersistFactsInput = {
+  fileVersionId: string
   facts: TreeSitterFact[]
-  eventDeliveryId?: string
 }
 
 export type CleanupEnrichmentInput = {
@@ -129,6 +149,22 @@ const MAX_SUMMARY_NODES = 80
 const MAX_COMPLETION_INPUT_CHARS = 12_000
 const DEFAULT_MAX_REPO_FILES = 5_000
 const MAX_REPO_FILES = 20_000
+
+const logActivity = (
+  level: 'info' | 'error',
+  event: string,
+  activity: string,
+  fields: Record<string, unknown> = {},
+) => {
+  const payload = { event, activity, ...fields }
+  if (level === 'error') {
+    console.error('[bumba:activity]', payload)
+  } else {
+    console.log('[bumba:activity]', payload)
+  }
+}
+
+const formatActivityError = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
 const LOCK_FILENAMES = new Set([
   'bun.lock',
@@ -1424,122 +1460,233 @@ export const activities = {
     const ref = normalizeOptionalText(input.ref) ?? 'HEAD'
     const pathPrefix = normalizePathPrefix(input.pathPrefix)
     const maxFiles = loadRepoListLimit(input.maxFiles)
+    const startedAt = Date.now()
 
-    const args = ['git', 'ls-tree', '-r', '--name-only', ref]
-    if (pathPrefix) {
-      args.push('--', pathPrefix)
-    }
+    logActivity('info', 'started', 'listRepoFiles', {
+      repoRoot,
+      ref,
+      pathPrefix: pathPrefix ?? null,
+      maxFiles,
+    })
 
-    const output = await runCommand(args, repoRoot)
-    if (output === null) {
-      throw new Error('Failed to list repository files')
-    }
-
-    const entries = output
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-
-    const files: string[] = []
-    let skipped = 0
-
-    for (const entry of entries) {
-      if (shouldSkipRepoFile(entry)) {
-        skipped += 1
-        continue
+    try {
+      const args = ['git', 'ls-tree', '-r', '--name-only', ref]
+      if (pathPrefix) {
+        args.push('--', pathPrefix)
       }
-      if (files.length >= maxFiles) {
-        skipped += 1
-        continue
-      }
-      files.push(entry)
-    }
 
-    return {
-      files,
-      total: entries.length,
-      skipped,
+      const output = await runCommand(args, repoRoot)
+      if (output === null) {
+        throw new Error('Failed to list repository files')
+      }
+
+      const entries = output
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+
+      const files: string[] = []
+      let skipped = 0
+
+      for (const entry of entries) {
+        if (shouldSkipRepoFile(entry)) {
+          skipped += 1
+          continue
+        }
+        if (files.length >= maxFiles) {
+          skipped += 1
+          continue
+        }
+        files.push(entry)
+      }
+
+      const result = {
+        files,
+        total: entries.length,
+        skipped,
+      }
+
+      logActivity('info', 'completed', 'listRepoFiles', {
+        repoRoot,
+        ref,
+        pathPrefix: pathPrefix ?? null,
+        maxFiles,
+        durationMs: Date.now() - startedAt,
+        total: entries.length,
+        skipped,
+        returned: files.length,
+      })
+
+      return result
+    } catch (error) {
+      logActivity('error', 'failed', 'listRepoFiles', {
+        repoRoot,
+        ref,
+        pathPrefix: pathPrefix ?? null,
+        maxFiles,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
     }
   },
 
   async readRepoFile(input: ReadRepoFileInput): Promise<ReadRepoFileOutput> {
+    const startedAt = Date.now()
     const normalizedRef = normalizeOptionalText(input.ref)
     const normalizedCommit = normalizeOptionalText(input.commit)
-    const fullPath = resolvePath(input.repoRoot, input.filePath)
-    const repoInfo = await resolveRepositoryInfo(input.repoRoot, {
-      repository: input.repository,
-      ref: normalizedRef,
-      commit: normalizedCommit,
+
+    logActivity('info', 'started', 'readRepoFile', {
+      repoRoot: input.repoRoot,
+      filePath: input.filePath,
+      repository: input.repository ?? null,
+      ref: normalizedRef ?? null,
+      commit: normalizedCommit ?? null,
     })
 
-    const repoRootStats = await stat(input.repoRoot).catch(() => null)
-    const fileStats = repoRootStats?.isDirectory() ? await stat(fullPath).catch(() => null) : null
-    let content: string
-    let stats = fileStats
-    let source: 'local' | 'github' = 'local'
-    let sourceMeta: Record<string, unknown> = { repoRoot: input.repoRoot }
+    try {
+      const fullPath = resolvePath(input.repoRoot, input.filePath)
+      const repoInfo = await resolveRepositoryInfo(input.repoRoot, {
+        repository: input.repository,
+        ref: normalizedRef,
+        commit: normalizedCommit,
+      })
 
-    if (fileStats) {
-      if (normalizedCommit) {
-        const headCommit = await runCommand(['git', '-C', input.repoRoot, 'rev-parse', 'HEAD'], input.repoRoot)
-        if (headCommit !== normalizedCommit) {
-          source = 'github'
+      const repoRootStats = await stat(input.repoRoot).catch(() => null)
+      const fileStats = repoRootStats?.isDirectory() ? await stat(fullPath).catch(() => null) : null
+      let content: string
+      let stats = fileStats
+      let source: 'local' | 'github' = 'local'
+      let sourceMeta: Record<string, unknown> = { repoRoot: input.repoRoot }
+
+      if (fileStats) {
+        if (normalizedCommit) {
+          const headCommit = await runCommand(['git', '-C', input.repoRoot, 'rev-parse', 'HEAD'], input.repoRoot)
+          if (headCommit !== normalizedCommit) {
+            source = 'github'
+          }
+        }
+      } else {
+        source = 'github'
+      }
+
+      if (source === 'local') {
+        content = await readFile(fullPath, 'utf8')
+      } else {
+        const repoSlug = normalizeRepositorySlug(normalizeOptionalText(input.repository) ?? repoInfo.repoName ?? '')
+        if (!repoSlug.includes('/')) {
+          throw new Error('GitHub repository slug is required to fetch remote content')
+        }
+
+        const ref = normalizedCommit ?? repoInfo.repoCommit ?? repoInfo.repoRef
+        const fetched = await fetchGithubFile(repoSlug, input.filePath, ref)
+        content = fetched.content
+        stats = null
+        sourceMeta = {
+          repoRoot: input.repoRoot,
+          source: 'github',
+          githubApiUrl: fetched.apiUrl,
+          githubDownloadUrl: fetched.downloadUrl,
+          githubSha: fetched.sha,
+          githubRef: ref,
         }
       }
-    } else {
-      source = 'github'
-    }
 
-    if (source === 'local') {
-      content = await readFile(fullPath, 'utf8')
-    } else {
-      const repoSlug = normalizeRepositorySlug(normalizeOptionalText(input.repository) ?? repoInfo.repoName ?? '')
-      if (!repoSlug.includes('/')) {
-        throw new Error('GitHub repository slug is required to fetch remote content')
+      const contentHash = createHash('sha256').update(content).digest('hex')
+      const lineCount = content.split(/\r?\n/).length
+      const language = languageNameByExtension.get(extname(input.filePath).toLowerCase()) ?? null
+
+      const result = {
+        content,
+        metadata: {
+          repoName: repoInfo.repoName,
+          repoRef: repoInfo.repoRef,
+          repoCommit: normalizedCommit ?? repoInfo.repoCommit,
+          path: input.filePath,
+          contentHash,
+          language,
+          byteSize: stats?.size ?? Buffer.byteLength(content, 'utf8'),
+          lineCount,
+          sourceTimestamp: stats?.mtime ? stats.mtime.toISOString() : null,
+          metadata: sourceMeta,
+        },
       }
 
-      const ref = normalizedCommit ?? repoInfo.repoCommit ?? repoInfo.repoRef
-      const fetched = await fetchGithubFile(repoSlug, input.filePath, ref)
-      content = fetched.content
-      stats = null
-      sourceMeta = {
+      logActivity('info', 'completed', 'readRepoFile', {
         repoRoot: input.repoRoot,
-        source: 'github',
-        githubApiUrl: fetched.apiUrl,
-        githubDownloadUrl: fetched.downloadUrl,
-        githubSha: fetched.sha,
-        githubRef: ref,
-      }
-    }
-
-    const contentHash = createHash('sha256').update(content).digest('hex')
-    const lineCount = content.split(/\r?\n/).length
-    const language = languageNameByExtension.get(extname(input.filePath).toLowerCase()) ?? null
-
-    return {
-      content,
-      metadata: {
-        repoName: repoInfo.repoName,
-        repoRef: repoInfo.repoRef,
-        repoCommit: normalizedCommit ?? repoInfo.repoCommit,
-        path: input.filePath,
-        contentHash,
+        filePath: input.filePath,
+        repository: input.repository ?? null,
+        ref: normalizedRef ?? null,
+        commit: normalizedCommit ?? null,
+        source,
         language,
-        byteSize: stats?.size ?? Buffer.byteLength(content, 'utf8'),
-        lineCount,
-        sourceTimestamp: stats?.mtime ? stats.mtime.toISOString() : null,
-        metadata: sourceMeta,
-      },
+        byteSize: result.metadata.byteSize,
+        lineCount: result.metadata.lineCount,
+        contentHash: result.metadata.contentHash,
+        durationMs: Date.now() - startedAt,
+      })
+
+      return result
+    } catch (error) {
+      logActivity('error', 'failed', 'readRepoFile', {
+        repoRoot: input.repoRoot,
+        filePath: input.filePath,
+        repository: input.repository ?? null,
+        ref: normalizedRef ?? null,
+        commit: normalizedCommit ?? null,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
     }
   },
 
   async extractAstSummary(input: AstGrepInput): Promise<AstSummaryOutput> {
-    const content = input.content ?? (await readFile(resolvePath(input.repoRoot, input.filePath), 'utf8'))
-    return await parseAst(content, input.filePath)
+    const startedAt = Date.now()
+
+    logActivity('info', 'started', 'extractAstSummary', {
+      repoRoot: input.repoRoot,
+      filePath: input.filePath,
+      hasInlineContent: Boolean(input.content),
+    })
+
+    try {
+      const content = input.content ?? (await readFile(resolvePath(input.repoRoot, input.filePath), 'utf8'))
+      const result = await parseAst(content, input.filePath)
+
+      logActivity('info', 'completed', 'extractAstSummary', {
+        repoRoot: input.repoRoot,
+        filePath: input.filePath,
+        durationMs: Date.now() - startedAt,
+        facts: result.facts.length,
+        summaryChars: result.astSummary.length,
+      })
+
+      return result
+    } catch (error) {
+      logActivity('error', 'failed', 'extractAstSummary', {
+        repoRoot: input.repoRoot,
+        filePath: input.filePath,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
   },
 
   async enrichWithModel(input: EnrichInput): Promise<EnrichOutput> {
+    const startedAt = Date.now()
     const { apiBaseUrl, apiKey, model, timeoutMs, maxInputChars } = loadCompletionConfig()
+
+    logActivity('info', 'started', 'enrichWithModel', {
+      filename: input.filename,
+      model,
+      timeoutMs,
+      contentChars: input.content.length,
+      astSummaryChars: input.astSummary.length,
+      contextChars: input.context.length,
+      maxInputChars,
+    })
 
     const truncatedContent =
       input.content.length > maxInputChars ? input.content.slice(0, maxInputChars) : input.content
@@ -1580,6 +1727,18 @@ export const activities = {
     const controller = new AbortController()
     const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
 
+    const logCompletion = (responseFormat: 'json_object' | 'none', result: EnrichOutput) => {
+      logActivity('info', 'completed', 'enrichWithModel', {
+        filename: input.filename,
+        model,
+        responseFormat,
+        wasTruncated,
+        summaryChars: result.summary.length,
+        enrichedChars: result.enriched.length,
+        durationMs: Date.now() - startedAt,
+      })
+    }
+
     try {
       const headers: Record<string, string> = {
         'content-type': 'application/json',
@@ -1617,7 +1776,7 @@ export const activities = {
           }
           const output = await parseStreamingCompletion(fallbackResponse)
           const parsed = parseCompletionOutput(output)
-          return {
+          const result = {
             summary: parsed.summary,
             enriched: parsed.enriched,
             metadata: {
@@ -1627,14 +1786,15 @@ export const activities = {
               responseFormat: 'none',
             },
           }
+          logCompletion('none', result)
+          return result
         }
         throw new Error(`completion request failed (${response.status}): ${body}`)
       }
 
       const output = await parseStreamingCompletion(response)
       const parsed = parseCompletionOutput(output)
-
-      return {
+      const result = {
         summary: parsed.summary,
         enriched: parsed.enriched,
         metadata: {
@@ -1644,9 +1804,20 @@ export const activities = {
           responseFormat: 'json_object',
         },
       }
+      logCompletion('json_object', result)
+      return result
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error(`completion request timed out after ${timeoutMs}ms`)
+      const timeoutError = error instanceof Error && error.name === 'AbortError'
+      const message = timeoutError ? `completion request timed out after ${timeoutMs}ms` : formatActivityError(error)
+      logActivity('error', 'failed', 'enrichWithModel', {
+        filename: input.filename,
+        model,
+        wasTruncated,
+        durationMs: Date.now() - startedAt,
+        error: message,
+      })
+      if (timeoutError) {
+        throw new Error(message)
       }
       throw error
     } finally {
@@ -1655,272 +1826,508 @@ export const activities = {
   },
 
   async createEmbedding(input: EmbeddingInput): Promise<{ embedding: number[] }> {
-    const embedding = await embedText(input.text)
-    return { embedding }
+    const startedAt = Date.now()
+    const { model, dimension, maxInputChars } = loadEmbeddingConfig()
+
+    logActivity('info', 'started', 'createEmbedding', {
+      model,
+      dimension,
+      textChars: input.text.length,
+      maxInputChars,
+    })
+
+    try {
+      const embedding = await embedText(input.text)
+      const result = { embedding }
+
+      logActivity('info', 'completed', 'createEmbedding', {
+        model,
+        dimension,
+        textChars: input.text.length,
+        vectorLength: embedding.length,
+        durationMs: Date.now() - startedAt,
+      })
+
+      return result
+    } catch (error) {
+      logActivity('error', 'failed', 'createEmbedding', {
+        model,
+        dimension,
+        textChars: input.text.length,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
   },
 
   async cleanupEnrichment(input: CleanupEnrichmentInput): Promise<CleanupEnrichmentOutput> {
-    const db = getAtlasDb()
-    if (!db) {
-      throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
-    }
-
+    const startedAt = Date.now()
     const fileMeta = input.fileMetadata
     const repositoryName = fileMeta.repoName
     const repositoryRef = fileMeta.repoRef ?? 'main'
     const repositoryCommit = fileMeta.repoCommit ?? null
 
-    const repositoryRows = (await db`
-      SELECT id
-      FROM atlas.repositories
-      WHERE name = ${repositoryName};
-    `) as Array<{ id: string }>
+    logActivity('info', 'started', 'cleanupEnrichment', {
+      repository: repositoryName,
+      repositoryRef,
+      repositoryCommit,
+      path: fileMeta.path,
+    })
 
-    const repositoryId = repositoryRows[0]?.id
-    if (!repositoryId) {
-      return { fileVersions: 0, enrichments: 0, embeddings: 0, facts: 0 }
+    const logResult = (result: CleanupEnrichmentOutput) => {
+      logActivity('info', 'completed', 'cleanupEnrichment', {
+        repository: repositoryName,
+        repositoryRef,
+        repositoryCommit,
+        path: fileMeta.path,
+        durationMs: Date.now() - startedAt,
+        ...result,
+      })
+      return result
     }
 
-    const fileKeyRows = (await db`
-      SELECT id
-      FROM atlas.file_keys
-      WHERE repository_id = ${repositoryId}
-        AND path = ${fileMeta.path};
-    `) as Array<{ id: string }>
+    try {
+      const db = getAtlasDb()
+      if (!db) {
+        throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+      }
 
-    const fileKeyId = fileKeyRows[0]?.id
-    if (!fileKeyId) {
-      return { fileVersions: 0, enrichments: 0, embeddings: 0, facts: 0 }
-    }
-
-    let fileVersionRows: Array<{ id: string }>
-    if (repositoryCommit) {
-      fileVersionRows = (await db`
+      const repositoryRows = (await db`
         SELECT id
-        FROM atlas.file_versions
-        WHERE file_key_id = ${fileKeyId}
-          AND repository_commit = ${repositoryCommit};
+        FROM atlas.repositories
+        WHERE name = ${repositoryName};
       `) as Array<{ id: string }>
-    } else {
-      fileVersionRows = (await db`
+
+      const repositoryId = repositoryRows[0]?.id
+      if (!repositoryId) {
+        return logResult({ fileVersions: 0, enrichments: 0, embeddings: 0, facts: 0 })
+      }
+
+      const fileKeyRows = (await db`
         SELECT id
-        FROM atlas.file_versions
-        WHERE file_key_id = ${fileKeyId}
-          AND repository_ref = ${repositoryRef};
+        FROM atlas.file_keys
+        WHERE repository_id = ${repositoryId}
+          AND path = ${fileMeta.path};
       `) as Array<{ id: string }>
-    }
 
-    const fileVersionIds = [...new Set(fileVersionRows.map((row) => row.id))]
-    if (fileVersionIds.length === 0) {
-      return { fileVersions: 0, enrichments: 0, embeddings: 0, facts: 0 }
-    }
+      const fileKeyId = fileKeyRows[0]?.id
+      if (!fileKeyId) {
+        return logResult({ fileVersions: 0, enrichments: 0, embeddings: 0, facts: 0 })
+      }
 
-    const fileVersionArray = db.array(fileVersionIds, 'uuid')
+      let fileVersionRows: Array<{ id: string }>
+      if (repositoryCommit) {
+        fileVersionRows = (await db`
+          SELECT id
+          FROM atlas.file_versions
+          WHERE file_key_id = ${fileKeyId}
+            AND repository_commit = ${repositoryCommit};
+        `) as Array<{ id: string }>
+      } else {
+        fileVersionRows = (await db`
+          SELECT id
+          FROM atlas.file_versions
+          WHERE file_key_id = ${fileKeyId}
+            AND repository_ref = ${repositoryRef};
+        `) as Array<{ id: string }>
+      }
 
-    const enrichmentRows = (await db`
-      SELECT id
-      FROM atlas.enrichments
-      WHERE file_version_id = ANY(${fileVersionArray})
-        AND source = ${'bumba'}
-        AND kind = ${'model_enrichment'};
-    `) as Array<{ id: string }>
+      const fileVersionIds = [...new Set(fileVersionRows.map((row) => row.id))]
+      if (fileVersionIds.length === 0) {
+        return logResult({ fileVersions: 0, enrichments: 0, embeddings: 0, facts: 0 })
+      }
 
-    const enrichmentIds = [...new Set(enrichmentRows.map((row) => row.id))]
-    let embeddingsDeleted = 0
-    if (enrichmentIds.length > 0) {
-      const embeddingRows = (await db`
-        DELETE FROM atlas.embeddings
-        WHERE enrichment_id = ANY(${db.array(enrichmentIds, 'uuid')})
-        RETURNING enrichment_id;
-      `) as Array<{ enrichment_id: string }>
-      embeddingsDeleted = embeddingRows.length
-    }
+      const fileVersionArray = db.array(fileVersionIds, 'uuid')
 
-    const enrichmentsDeleted = (await db`
-      DELETE FROM atlas.enrichments
-      WHERE file_version_id = ANY(${fileVersionArray})
-        AND source = ${'bumba'}
-        AND kind = ${'model_enrichment'}
-      RETURNING id;
-    `) as Array<{ id: string }>
+      const enrichmentRows = (await db`
+        SELECT id
+        FROM atlas.enrichments
+        WHERE file_version_id = ANY(${fileVersionArray})
+          AND source = ${'bumba'}
+          AND kind = ${'model_enrichment'};
+      `) as Array<{ id: string }>
 
-    const factsDeleted = (await db`
-      DELETE FROM atlas.tree_sitter_facts
-      WHERE file_version_id = ANY(${fileVersionArray})
-      RETURNING file_version_id;
-    `) as Array<{ file_version_id: string }>
+      const enrichmentIds = [...new Set(enrichmentRows.map((row) => row.id))]
+      let embeddingsDeleted = 0
+      if (enrichmentIds.length > 0) {
+        const embeddingRows = (await db`
+          DELETE FROM atlas.embeddings
+          WHERE enrichment_id = ANY(${db.array(enrichmentIds, 'uuid')})
+          RETURNING enrichment_id;
+        `) as Array<{ enrichment_id: string }>
+        embeddingsDeleted = embeddingRows.length
+      }
 
-    return {
-      fileVersions: fileVersionIds.length,
-      enrichments: enrichmentsDeleted.length,
-      embeddings: embeddingsDeleted,
-      facts: factsDeleted.length,
+      const enrichmentsDeleted = (await db`
+        DELETE FROM atlas.enrichments
+        WHERE file_version_id = ANY(${fileVersionArray})
+          AND source = ${'bumba'}
+          AND kind = ${'model_enrichment'}
+        RETURNING id;
+      `) as Array<{ id: string }>
+
+      const factsDeleted = (await db`
+        DELETE FROM atlas.tree_sitter_facts
+        WHERE file_version_id = ANY(${fileVersionArray})
+        RETURNING file_version_id;
+      `) as Array<{ file_version_id: string }>
+
+      return logResult({
+        fileVersions: fileVersionIds.length,
+        enrichments: enrichmentsDeleted.length,
+        embeddings: embeddingsDeleted,
+        facts: factsDeleted.length,
+      })
+    } catch (error) {
+      logActivity('error', 'failed', 'cleanupEnrichment', {
+        repository: repositoryName,
+        repositoryRef,
+        repositoryCommit,
+        path: fileMeta.path,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
     }
   },
 
-  async persistEnrichment(input: PersistInput): Promise<{ id: string }> {
-    const db = getAtlasDb()
-    if (!db) {
-      throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
-    }
-
+  async persistFileVersion(input: PersistFileVersionInput): Promise<PersistFileVersionOutput> {
+    const startedAt = Date.now()
     const fileMeta = input.fileMetadata
     const repositoryName = fileMeta.repoName
     const repositoryRef = fileMeta.repoRef ?? 'main'
     const repositoryCommit = fileMeta.repoCommit ?? null
     const contentHash = fileMeta.contentHash ?? ''
 
-    const repositoryRows = (await db`
-      INSERT INTO atlas.repositories (name, default_ref, metadata)
-      VALUES (${repositoryName}, ${repositoryRef}, ${JSON.stringify({ source: 'bumba' })}::jsonb)
-      ON CONFLICT (name) DO UPDATE
-      SET default_ref = COALESCE(EXCLUDED.default_ref, atlas.repositories.default_ref),
-          updated_at = now()
-      RETURNING id;
-    `) as Array<{ id: string }>
-
-    const repositoryId = repositoryRows[0]?.id
-    if (!repositoryId) throw new Error('failed to upsert repository')
-
-    const fileKeyRows = (await db`
-      INSERT INTO atlas.file_keys (repository_id, path)
-      VALUES (${repositoryId}, ${fileMeta.path})
-      ON CONFLICT (repository_id, path) DO UPDATE
-      SET path = EXCLUDED.path
-      RETURNING id;
-    `) as Array<{ id: string }>
-
-    const fileKeyId = fileKeyRows[0]?.id
-    if (!fileKeyId) throw new Error('failed to upsert file key')
-
-    const fileVersionRows = (await db`
-      INSERT INTO atlas.file_versions (
-        file_key_id,
-        repository_ref,
-        repository_commit,
-        content_hash,
-        language,
-        byte_size,
-        line_count,
-        metadata,
-        source_timestamp
-      )
-      VALUES (
-        ${fileKeyId},
-        ${repositoryRef},
-        ${repositoryCommit},
-        ${contentHash},
-        ${fileMeta.language},
-        ${fileMeta.byteSize},
-        ${fileMeta.lineCount},
-        ${JSON.stringify(fileMeta.metadata)}::jsonb,
-        ${fileMeta.sourceTimestamp}
-      )
-      ON CONFLICT (file_key_id, repository_ref, repository_commit, content_hash) DO UPDATE
-      SET updated_at = now(),
-          metadata = EXCLUDED.metadata
-      RETURNING id;
-    `) as Array<{ id: string }>
-
-    const fileVersionId = fileVersionRows[0]?.id
-    if (!fileVersionId) throw new Error('failed to upsert file version')
-
-    const enrichmentMetadata = {
-      ...input.metadata,
-      astSummary: input.astSummary,
+    logActivity('info', 'started', 'persistFileVersion', {
+      repository: repositoryName,
+      repositoryRef,
+      repositoryCommit,
+      path: fileMeta.path,
       contentHash,
-    }
+    })
 
-    const enrichmentRows = (await db`
-      INSERT INTO atlas.enrichments (
-        file_version_id,
-        kind,
-        source,
-        content,
-        summary,
-        tags,
-        metadata
-      )
-      VALUES (
-        ${fileVersionId},
-        ${'model_enrichment'},
-        ${'bumba'},
-        ${input.enriched},
-        ${input.summary},
-        ${db.array([], 'text')}::text[],
-        ${JSON.stringify(enrichmentMetadata)}::jsonb
-      )
-      ON CONFLICT (file_version_id, kind, source) WHERE chunk_id IS NULL DO UPDATE
-      SET content = EXCLUDED.content,
-          summary = EXCLUDED.summary,
-          metadata = EXCLUDED.metadata
-      RETURNING id;
-    `) as Array<{ id: string }>
-
-    const enrichmentId = enrichmentRows[0]?.id
-    if (!enrichmentId) throw new Error('failed to upsert enrichment')
-
-    const { model, dimension } = loadEmbeddingConfig()
-    const vectorString = vectorToPgArray(input.embedding)
-
-    await db`
-      INSERT INTO atlas.embeddings (enrichment_id, model, dimension, embedding)
-      VALUES (${enrichmentId}, ${model}, ${dimension}, ${vectorString}::vector)
-      ON CONFLICT (enrichment_id, model, dimension) DO UPDATE
-      SET embedding = EXCLUDED.embedding;
-    `
-
-    if (input.facts.length > 0) {
-      const uniqueFacts = dedupeFacts(input.facts)
-      await db`DELETE FROM atlas.tree_sitter_facts WHERE file_version_id = ${fileVersionId};`
-      for (const fact of uniqueFacts) {
-        await db`
-          INSERT INTO atlas.tree_sitter_facts (
-            file_version_id,
-            node_type,
-            match_text,
-            start_line,
-            end_line,
-            metadata
-          )
-          VALUES (
-            ${fileVersionId},
-            ${fact.nodeType},
-            ${fact.matchText},
-            ${fact.startLine},
-            ${fact.endLine},
-            ${JSON.stringify(fact.metadata ?? {})}::jsonb
-          )
-          ON CONFLICT DO NOTHING;
-        `
+    try {
+      const db = getAtlasDb()
+      if (!db) {
+        throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
       }
+
+      const repositoryRows = (await db`
+        INSERT INTO atlas.repositories (name, default_ref, metadata)
+        VALUES (${repositoryName}, ${repositoryRef}, ${JSON.stringify({ source: 'bumba' })}::jsonb)
+        ON CONFLICT (name) DO UPDATE
+        SET default_ref = COALESCE(EXCLUDED.default_ref, atlas.repositories.default_ref),
+            updated_at = now()
+        RETURNING id;
+      `) as Array<{ id: string }>
+
+      const repositoryId = repositoryRows[0]?.id
+      if (!repositoryId) throw new Error('failed to upsert repository')
+
+      const fileKeyRows = (await db`
+        INSERT INTO atlas.file_keys (repository_id, path)
+        VALUES (${repositoryId}, ${fileMeta.path})
+        ON CONFLICT (repository_id, path) DO UPDATE
+        SET path = EXCLUDED.path
+        RETURNING id;
+      `) as Array<{ id: string }>
+
+      const fileKeyId = fileKeyRows[0]?.id
+      if (!fileKeyId) throw new Error('failed to upsert file key')
+
+      const fileVersionRows = (await db`
+        INSERT INTO atlas.file_versions (
+          file_key_id,
+          repository_ref,
+          repository_commit,
+          content_hash,
+          language,
+          byte_size,
+          line_count,
+          metadata,
+          source_timestamp
+        )
+        VALUES (
+          ${fileKeyId},
+          ${repositoryRef},
+          ${repositoryCommit},
+          ${contentHash},
+          ${fileMeta.language},
+          ${fileMeta.byteSize},
+          ${fileMeta.lineCount},
+          ${JSON.stringify(fileMeta.metadata)}::jsonb,
+          ${fileMeta.sourceTimestamp}
+        )
+        ON CONFLICT (file_key_id, repository_ref, repository_commit, content_hash) DO UPDATE
+        SET updated_at = now(),
+            metadata = EXCLUDED.metadata
+        RETURNING id;
+      `) as Array<{ id: string }>
+
+      const fileVersionId = fileVersionRows[0]?.id
+      if (!fileVersionId) throw new Error('failed to upsert file version')
+
+      const result = { repositoryId, fileKeyId, fileVersionId }
+      logActivity('info', 'completed', 'persistFileVersion', {
+        repository: repositoryName,
+        repositoryRef,
+        repositoryCommit,
+        path: fileMeta.path,
+        durationMs: Date.now() - startedAt,
+        ...result,
+      })
+
+      return result
+    } catch (error) {
+      logActivity('error', 'failed', 'persistFileVersion', {
+        repository: repositoryName,
+        repositoryRef,
+        repositoryCommit,
+        path: fileMeta.path,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
+  },
+
+  async persistEnrichmentRecord(input: PersistEnrichmentRecordInput): Promise<PersistEnrichmentRecordOutput> {
+    const startedAt = Date.now()
+
+    logActivity('info', 'started', 'persistEnrichmentRecord', {
+      fileVersionId: input.fileVersionId,
+      summaryChars: input.summary.length,
+      enrichedChars: input.enriched.length,
+      astSummaryChars: input.astSummary.length,
+      metadataKeys: Object.keys(input.metadata ?? {}).length,
+    })
+
+    try {
+      const db = getAtlasDb()
+      if (!db) {
+        throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+      }
+
+      const enrichmentMetadata = {
+        ...input.metadata,
+        astSummary: input.astSummary,
+        contentHash: input.contentHash,
+      }
+
+      const enrichmentRows = (await db`
+        INSERT INTO atlas.enrichments (
+          file_version_id,
+          kind,
+          source,
+          content,
+          summary,
+          tags,
+          metadata
+        )
+        VALUES (
+          ${input.fileVersionId},
+          ${'model_enrichment'},
+          ${'bumba'},
+          ${input.enriched},
+          ${input.summary},
+          ${db.array([], 'text')}::text[],
+          ${JSON.stringify(enrichmentMetadata)}::jsonb
+        )
+        ON CONFLICT (file_version_id, kind, source) WHERE chunk_id IS NULL DO UPDATE
+        SET content = EXCLUDED.content,
+            summary = EXCLUDED.summary,
+            metadata = EXCLUDED.metadata
+        RETURNING id;
+      `) as Array<{ id: string }>
+
+      const enrichmentId = enrichmentRows[0]?.id
+      if (!enrichmentId) throw new Error('failed to upsert enrichment')
+
+      const result = { enrichmentId }
+      logActivity('info', 'completed', 'persistEnrichmentRecord', {
+        fileVersionId: input.fileVersionId,
+        durationMs: Date.now() - startedAt,
+        ...result,
+      })
+
+      return result
+    } catch (error) {
+      logActivity('error', 'failed', 'persistEnrichmentRecord', {
+        fileVersionId: input.fileVersionId,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
+  },
+
+  async persistEmbedding(input: PersistEmbeddingInput): Promise<void> {
+    const startedAt = Date.now()
+    const { model, dimension } = loadEmbeddingConfig()
+
+    logActivity('info', 'started', 'persistEmbedding', {
+      enrichmentId: input.enrichmentId,
+      model,
+      dimension,
+      vectorLength: input.embedding.length,
+    })
+
+    try {
+      const db = getAtlasDb()
+      if (!db) {
+        throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+      }
+
+      const vectorString = vectorToPgArray(input.embedding)
+
+      await db`
+        INSERT INTO atlas.embeddings (enrichment_id, model, dimension, embedding)
+        VALUES (${input.enrichmentId}, ${model}, ${dimension}, ${vectorString}::vector)
+        ON CONFLICT (enrichment_id, model, dimension) DO UPDATE
+        SET embedding = EXCLUDED.embedding;
+      `
+
+      logActivity('info', 'completed', 'persistEmbedding', {
+        enrichmentId: input.enrichmentId,
+        model,
+        dimension,
+        vectorLength: input.embedding.length,
+        durationMs: Date.now() - startedAt,
+      })
+    } catch (error) {
+      logActivity('error', 'failed', 'persistEmbedding', {
+        enrichmentId: input.enrichmentId,
+        model,
+        dimension,
+        vectorLength: input.embedding.length,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
+  },
+
+  async persistFacts(input: PersistFactsInput): Promise<{ inserted: number }> {
+    const startedAt = Date.now()
+
+    logActivity('info', 'started', 'persistFacts', {
+      fileVersionId: input.fileVersionId,
+      requested: input.facts.length,
+    })
+
+    const logResult = (inserted: number) => {
+      logActivity('info', 'completed', 'persistFacts', {
+        fileVersionId: input.fileVersionId,
+        requested: input.facts.length,
+        inserted,
+        durationMs: Date.now() - startedAt,
+      })
+      return { inserted }
     }
 
-    const deliveryId = input.eventDeliveryId?.trim()
-    if (deliveryId) {
+    try {
+      const db = getAtlasDb()
+      if (!db) {
+        throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+      }
+
+      if (input.facts.length === 0) {
+        return logResult(0)
+      }
+
+      const uniqueFacts = dedupeFacts(input.facts)
+      if (uniqueFacts.length === 0) {
+        return logResult(0)
+      }
+
+      await db`DELETE FROM atlas.tree_sitter_facts WHERE file_version_id = ${input.fileVersionId};`
+
+      const nodeTypes = uniqueFacts.map((fact) => fact.nodeType)
+      const matchTexts = uniqueFacts.map((fact) => fact.matchText)
+      const startLines = uniqueFacts.map((fact) => fact.startLine ?? null)
+      const endLines = uniqueFacts.map((fact) => fact.endLine ?? null)
+      const metadataValues = uniqueFacts.map((fact) => JSON.stringify(fact.metadata ?? {}))
+
+      await db`
+        INSERT INTO atlas.tree_sitter_facts (
+          file_version_id,
+          node_type,
+          match_text,
+          start_line,
+          end_line,
+          metadata
+        )
+        SELECT
+          ${input.fileVersionId},
+          node_type,
+          match_text,
+          start_line,
+          end_line,
+          metadata::jsonb
+        FROM UNNEST(
+          ${db.array(nodeTypes, 'text')},
+          ${db.array(matchTexts, 'text')},
+          ${db.array(startLines, 'int4')},
+          ${db.array(endLines, 'int4')},
+          ${db.array(metadataValues, 'text')}
+        ) AS fact(node_type, match_text, start_line, end_line, metadata)
+        ON CONFLICT DO NOTHING;
+      `
+
+      return logResult(uniqueFacts.length)
+    } catch (error) {
+      logActivity('error', 'failed', 'persistFacts', {
+        fileVersionId: input.fileVersionId,
+        requested: input.facts.length,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
+  },
+
+  async markEventProcessed(input: MarkEventProcessedInput): Promise<void> {
+    const startedAt = Date.now()
+    const deliveryId = input.deliveryId.trim()
+
+    if (deliveryId.length === 0) {
+      logActivity('info', 'skipped', 'markEventProcessed', {
+        reason: 'empty_delivery_id',
+        durationMs: Date.now() - startedAt,
+      })
+      return
+    }
+
+    logActivity('info', 'started', 'markEventProcessed', {
+      deliveryId,
+    })
+
+    try {
+      const db = getAtlasDb()
+      if (!db) {
+        throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+      }
+
       await db`
         UPDATE atlas.github_events
         SET processed_at = now()
         WHERE delivery_id = ${deliveryId};
       `
+
+      logActivity('info', 'completed', 'markEventProcessed', {
+        deliveryId,
+        durationMs: Date.now() - startedAt,
+      })
+    } catch (error) {
+      logActivity('error', 'failed', 'markEventProcessed', {
+        deliveryId,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
     }
-
-    return { id: enrichmentId }
-  },
-
-  async markEventProcessed(input: MarkEventProcessedInput): Promise<void> {
-    const db = getAtlasDb()
-    if (!db) {
-      throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
-    }
-
-    const deliveryId = input.deliveryId.trim()
-    if (deliveryId.length === 0) return
-    await db`
-      UPDATE atlas.github_events
-      SET processed_at = now()
-      WHERE delivery_id = ${deliveryId};
-    `
   },
 }
 

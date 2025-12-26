@@ -3,22 +3,24 @@ import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import { createDefaultDataConverter, decodePayloadsToValues } from '../src/common/payloads'
-import type { ExecuteWorkflowInput, WorkflowExecutionOutput } from '../src/workflow/executor'
+import type { Logger } from '../src/observability/logger'
+import { CommandType } from '../src/proto/temporal/api/enums/v1/command_type_pb'
 import type { ActivityResolution } from '../src/workflow/context'
+import type { WorkflowDeterminismState } from '../src/workflow/determinism'
+import { WorkflowNondeterminismError } from '../src/workflow/errors'
+import type { ExecuteWorkflowInput, WorkflowExecutionOutput } from '../src/workflow/executor'
+import type { WorkflowUpdateInvocation } from '../src/workflow/executor'
 import { WorkflowExecutor } from '../src/workflow/executor'
 import { defineWorkflow, defineWorkflowUpdates } from '../src/workflow/definition'
-import { WorkflowRegistry } from '../src/workflow/registry'
-import { WorkflowNondeterminismError } from '../src/workflow/errors'
-import type { WorkflowDeterminismState } from '../src/workflow/determinism'
-import { CommandType } from '../src/proto/temporal/api/enums/v1/command_type_pb'
 import { defineWorkflowQueries } from '../src/workflow/inbound'
 import type { WorkflowQueryRequest } from '../src/workflow/inbound'
-import type { WorkflowUpdateInvocation } from '../src/workflow/executor'
+import { log } from '../src/workflow/log'
+import { WorkflowRegistry } from '../src/workflow/registry'
 
-const makeExecutor = () => {
+const makeExecutor = (logger?: Logger) => {
   const registry = new WorkflowRegistry()
   const dataConverter = createDefaultDataConverter()
-  const executor = new WorkflowExecutor({ registry, dataConverter })
+  const executor = new WorkflowExecutor({ registry, dataConverter, logger })
   return { registry, executor, dataConverter }
 }
 
@@ -221,6 +223,51 @@ test('replay with matching determinism state succeeds', async () => {
   expect(second.completion).toBe('completed')
 })
 
+test('workflow logs are emitted once on replay', async () => {
+  const logs: Array<{ level: string; message: string; fields?: Record<string, unknown> }> = []
+  const logger: Logger = {
+    log: (level, message, fields) =>
+      Effect.sync(() => {
+        logs.push({ level, message, fields: fields as Record<string, unknown> })
+      }),
+  }
+  const { registry, executor } = makeExecutor(logger)
+  registry.register(
+    defineWorkflow(
+      'logWorkflow',
+      Schema.Array(Schema.Unknown),
+      () =>
+        Effect.sync(() => {
+          log.info('first log', { step: 'one' })
+          log.warn('second log', { step: 'two' })
+          return 'done'
+        }),
+    ),
+  )
+
+  const first = await execute(executor, { workflowType: 'logWorkflow', arguments: [] })
+  expect(first.completion).toBe('completed')
+  expect(first.determinismState.logCount).toBe(2)
+  expect(logs).toHaveLength(2)
+  expect(logs[0]?.fields).toMatchObject({
+    namespace: 'default',
+    taskQueue: 'test-task-queue',
+    workflowId: 'test-workflow-id',
+    runId: 'test-run-id',
+    workflowType: 'logWorkflow',
+    sdkComponent: 'workflow',
+    step: 'one',
+  })
+
+  const second = await execute(executor, {
+    workflowType: 'logWorkflow',
+    arguments: [],
+    determinismState: cloneState(first.determinismState),
+  })
+  expect(second.completion).toBe('completed')
+  expect(logs).toHaveLength(2)
+})
+
 test('evaluates registered workflow queries with encoded results', async () => {
   const { registry, executor, dataConverter } = makeExecutor()
   const queries = defineWorkflowQueries({
@@ -260,7 +307,68 @@ test('evaluates registered workflow queries with encoded results', async () => {
   expect(output.determinismState.queries.length).toBeGreaterThan(0)
 })
 
+test('workflow query logs are emitted once on replay', async () => {
+  const logs: Array<{ level: string; message: string; fields?: Record<string, unknown> }> = []
+  const logger: Logger = {
+    log: (level, message, fields) =>
+      Effect.sync(() => {
+        logs.push({ level, message, fields: fields as Record<string, unknown> })
+      }),
+  }
+  const { registry, executor } = makeExecutor(logger)
+  const queries = defineWorkflowQueries({
+    status: {
+      input: Schema.Struct({}),
+      output: Schema.String,
+    },
+  })
+  registry.register(
+    defineWorkflow({
+      name: 'queryLogWorkflow',
+      queries,
+      handler: ({ queries: registryQueries }) =>
+        Effect.gen(function* () {
+          yield* registryQueries.register(queries.status, () =>
+            Effect.sync(() => {
+              log.info('query log', { query: 'status' })
+              return 'ready'
+            }),
+          )
+          return 'ready'
+        }),
+    }),
+  )
+
+  const first = await execute(executor, {
+    workflowType: 'queryLogWorkflow',
+    arguments: [],
+    queryRequests: [{ name: 'status', args: [{}], source: 'legacy' }],
+  })
+  expect(first.completion).toBe('completed')
+  expect(first.determinismState.logCount).toBe(1)
+  expect(logs).toHaveLength(1)
+  expect(logs[0]?.fields).toMatchObject({
+    namespace: 'default',
+    taskQueue: 'test-task-queue',
+    workflowId: 'test-workflow-id',
+    runId: 'test-run-id',
+    workflowType: 'queryLogWorkflow',
+    sdkComponent: 'workflow',
+    query: 'status',
+  })
+
+  const second = await execute(executor, {
+    workflowType: 'queryLogWorkflow',
+    arguments: [],
+    determinismState: cloneState(first.determinismState),
+    queryRequests: [{ name: 'status', args: [{}], source: 'legacy' }],
+  })
+  expect(second.completion).toBe('completed')
+  expect(logs).toHaveLength(1)
+})
+
 test('query execution mode returns answers without emitting commands', async () => {
+
   const { registry, executor, dataConverter } = makeExecutor()
   const queries = defineWorkflowQueries({
     status: {
@@ -430,7 +538,77 @@ test('workflow executor processes update invocations', async () => {
   ])
 })
 
+test('workflow update logs are emitted once on replay', async () => {
+  const logs: Array<{ level: string; message: string; fields?: Record<string, unknown> }> = []
+  const logger: Logger = {
+    log: (level, message, fields) =>
+      Effect.sync(() => {
+        logs.push({ level, message, fields: fields as Record<string, unknown> })
+      }),
+  }
+  const { registry, executor } = makeExecutor(logger)
+  const updateDefs = defineWorkflowUpdates([
+    {
+      name: 'emitLog',
+      input: Schema.String,
+      handler: (_ctx, value: string) =>
+        Effect.sync(() => {
+          log.info('update log', { value })
+          return value.toUpperCase()
+        }),
+    },
+  ])
+
+  registry.register(
+    defineWorkflow(
+      'updateLogWorkflow',
+      Schema.Array(Schema.Unknown),
+      () => Effect.sync(() => 'ok'),
+      { updates: updateDefs },
+    ),
+  )
+
+  const invocation = {
+    protocolInstanceId: 'proto-log',
+    requestMessageId: 'msg-log',
+    updateId: 'upd-log',
+    name: 'emitLog',
+    payload: 'hello',
+    identity: 'client',
+  } satisfies WorkflowUpdateInvocation
+
+  const first = await execute(executor, {
+    workflowType: 'updateLogWorkflow',
+    arguments: [],
+    updates: [invocation],
+  })
+
+  expect(first.completion).toBe('completed')
+  expect(first.determinismState.logCount).toBe(1)
+  expect(logs).toHaveLength(1)
+  expect(logs[0]?.fields).toMatchObject({
+    namespace: 'default',
+    taskQueue: 'test-task-queue',
+    workflowId: 'test-workflow-id',
+    runId: 'test-run-id',
+    workflowType: 'updateLogWorkflow',
+    sdkComponent: 'workflow',
+    value: 'hello',
+  })
+
+  const second = await execute(executor, {
+    workflowType: 'updateLogWorkflow',
+    arguments: [],
+    determinismState: cloneState(first.determinismState),
+    updates: [invocation],
+  })
+
+  expect(second.completion).toBe('completed')
+  expect(logs).toHaveLength(1)
+})
+
 test('workflow executor processes update invocations even when workflow pending', async () => {
+
   const { registry, executor } = makeExecutor()
   const updateDefs = defineWorkflowUpdates([
     {
@@ -573,7 +751,9 @@ const cloneState = (state: WorkflowDeterminismState): WorkflowDeterminismState =
   })),
   randomValues: [...state.randomValues],
   timeValues: [...state.timeValues],
+  ...(state.logCount !== undefined ? { logCount: state.logCount } : {}),
   failureMetadata: state.failureMetadata ? { ...state.failureMetadata } : undefined,
   signals: state.signals ? state.signals.map((record) => ({ ...record })) : [],
   queries: state.queries ? state.queries.map((record) => ({ ...record })) : [],
+  ...(state.updates ? { updates: state.updates.map((entry) => ({ ...entry })) } : {}),
 })

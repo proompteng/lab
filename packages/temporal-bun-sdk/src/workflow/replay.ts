@@ -422,6 +422,7 @@ export const cloneDeterminismState = (state: WorkflowDeterminismState): Workflow
   })),
   randomValues: [...state.randomValues],
   timeValues: [...state.timeValues],
+  ...(state.logCount !== undefined ? { logCount: state.logCount } : {}),
   failureMetadata: state.failureMetadata ? { ...state.failureMetadata } : undefined,
   signals: state.signals ? state.signals.map((record) => ({ ...record })) : [],
   queries: state.queries ? state.queries.map((record) => ({ ...record })) : [],
@@ -1494,6 +1495,7 @@ const sanitizeDeterminismState = (value: unknown): WorkflowDeterminismState => {
   const commandHistoryRaw = value.commandHistory
   const randomValuesRaw = value.randomValues
   const timeValuesRaw = value.timeValues
+  const logCountRaw = value.logCount
   const signalsRaw = Array.isArray(value.signals) ? value.signals : []
   const queriesRaw = Array.isArray(value.queries) ? value.queries : []
   const updatesRaw = value.updates
@@ -1515,6 +1517,7 @@ const sanitizeDeterminismState = (value: unknown): WorkflowDeterminismState => {
 
   const randomValues = randomValuesRaw.map((val, index) => coerceNumber(val, `determinism.randomValues[${index}]`))
   const timeValues = timeValuesRaw.map((val, index) => coerceNumber(val, `determinism.timeValues[${index}]`))
+  const logCount = coerceOptionalNumber(logCountRaw, 'determinism.logCount')
   const failureMetadata = sanitizeFailureMetadata(value.failureMetadata)
   const signals = signalsRaw.map((record, index) => sanitizeSignalRecord(record, index))
   const queries = queriesRaw.map((record, index) => sanitizeQueryRecord(record, index))
@@ -1524,6 +1527,7 @@ const sanitizeDeterminismState = (value: unknown): WorkflowDeterminismState => {
     commandHistory,
     randomValues,
     timeValues,
+    ...(logCount !== undefined ? { logCount } : {}),
     ...(failureMetadata ? { failureMetadata } : {}),
     signals,
     queries,

@@ -69,6 +69,7 @@ export interface WorkflowDeterminismState {
   readonly commandHistory: readonly WorkflowCommandHistoryEntry[]
   readonly randomValues: readonly number[]
   readonly timeValues: readonly number[]
+  readonly logCount?: number
   readonly failureMetadata?: WorkflowDeterminismFailureMetadata
   readonly signals: readonly WorkflowDeterminismSignalRecord[]
   readonly queries: readonly WorkflowDeterminismQueryRecord[]
@@ -85,6 +86,7 @@ export type DeterminismGuardSnapshot = {
   commandHistory: WorkflowCommandHistoryEntry[]
   randomValues: number[]
   timeValues: number[]
+  logCount?: number
   failureMetadata?: WorkflowDeterminismFailureMetadata
   signals: WorkflowDeterminismSignalRecord[]
   queries: WorkflowDeterminismQueryRecord[]
@@ -98,6 +100,7 @@ export const snapshotToDeterminismState = (snapshot: DeterminismGuardSnapshot): 
   })),
   randomValues: [...snapshot.randomValues],
   timeValues: [...snapshot.timeValues],
+  ...(snapshot.logCount !== undefined ? { logCount: snapshot.logCount } : {}),
   failureMetadata: snapshot.failureMetadata ? { ...snapshot.failureMetadata } : undefined,
   signals: snapshot.signals.map((record) => ({ ...record })),
   queries: snapshot.queries.map((record) => ({ ...record })),
@@ -114,6 +117,7 @@ export class DeterminismGuard {
   #commandIndex = 0
   #randomIndex = 0
   #timeIndex = 0
+  #logIndex = 0
   #signalIndex = 0
   #queryIndex = 0
 
@@ -254,6 +258,14 @@ export class DeterminismGuard {
     this.snapshot.timeValues.push(value)
     this.#timeIndex += 1
     return value
+  }
+
+  recordLog(): boolean {
+    const previousCount = !this.#allowBypass && this.#previous ? (this.#previous.logCount ?? 0) : 0
+    const shouldEmit = this.#mode !== 'query' && (!this.#previous || this.#logIndex >= previousCount)
+    this.#logIndex += 1
+    this.snapshot.logCount = this.#logIndex
+    return shouldEmit
   }
 
   recordSignalDelivery(entry: RecordSignalDeliveryInput): void {

@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: bumba
     app.kubernetes.io/part-of: lab
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: bumba
@@ -17,12 +17,15 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2025-12-26T04:43:51.118Z"
+        kubectl.kubernetes.io/restartedAt: "2025-12-26T22:49:02.374Z"
     spec:
       containers:
         - name: bumba
           image: registry.ide-newton.ts.net/lab/bumba
           imagePullPolicy: Always
+          ports:
+            - name: health
+              containerPort: 3001
           env:
             - name: NODE_ENV
               value: production
@@ -41,9 +44,9 @@ spec:
             - name: TEMPORAL_TASK_QUEUE
               value: bumba
             - name: TEMPORAL_WORKFLOW_CONCURRENCY
-              value: "8"
+              value: "50"
             - name: TEMPORAL_ACTIVITY_CONCURRENCY
-              value: "8"
+              value: "100"
             - name: TEMPORAL_OTEL_ENABLED
               value: "true"
             - name: TEMPORAL_METRICS_EXPORTER
@@ -74,6 +77,8 @@ spec:
               value: none
             - name: BUMBA_WORKSPACE_ROOT
               value: /workspace/lab
+            - name: BUMBA_HEALTH_PORT
+              value: "3001"
             - name: REPOSITORY
               value: proompteng/lab
             - name: GITHUB_TOKEN
@@ -96,6 +101,22 @@ spec:
               value: "1024"
             - name: OPENAI_EMBEDDING_TIMEOUT_MS
               value: "60000"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
           resources:
             requests:
               cpu: 200m
