@@ -333,25 +333,19 @@ export const workflows = [
         let childSequence = 0
         const completionSignal = enrichRepositorySignals[CHILD_WORKFLOW_COMPLETED_SIGNAL]
 
-        for (let offset = 0; offset < files.length; offset += CHILD_WORKFLOW_BATCH_SIZE) {
-          const batch = files.slice(offset, offset + CHILD_WORKFLOW_BATCH_SIZE)
-          const pending = new Set<string>()
-          const batchEntries: Array<{ filePath: string; childWorkflowId: string }> = []
+        // Maintain a sliding window of in-flight child workflows.
+        const pending = new Set<string>()
+        let nextIndex = 0
 
-          for (const filePath of batch) {
+        while (nextIndex < files.length || pending.size > 0) {
+          while (pending.size < CHILD_WORKFLOW_BATCH_SIZE && nextIndex < files.length) {
+            const filePath = files[nextIndex]
             const childWorkflowId = `${info.workflowId}-child-${info.runId}-${childSequence}`
             childSequence += 1
+            nextIndex += 1
             pending.add(childWorkflowId)
-            batchEntries.push({ filePath, childWorkflowId })
-          }
+            started += 1
 
-          if (batchEntries.length === 0) {
-            continue
-          }
-
-          started += batchEntries.length
-
-          for (const { filePath, childWorkflowId } of batchEntries) {
             yield* childWorkflows.start(
               'enrichFile',
               [
@@ -371,19 +365,21 @@ export const workflows = [
             )
           }
 
-          while (pending.size > 0) {
-            const delivery = yield* signals.waitFor(completionSignal)
-            if (!isChildWorkflowCompletion(delivery.payload)) {
-              continue
-            }
-            if (!pending.delete(delivery.payload.workflowId)) {
-              continue
-            }
-            if (delivery.payload.status === 'completed') {
-              completed += 1
-            } else {
-              failed += 1
-            }
+          if (pending.size === 0) {
+            break
+          }
+
+          const delivery = yield* signals.waitFor(completionSignal)
+          if (!isChildWorkflowCompletion(delivery.payload)) {
+            continue
+          }
+          if (!pending.delete(delivery.payload.workflowId)) {
+            continue
+          }
+          if (delivery.payload.status === 'completed') {
+            completed += 1
+          } else {
+            failed += 1
           }
         }
 

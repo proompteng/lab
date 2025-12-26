@@ -382,6 +382,63 @@ test('enrichRepository schedules listing and child workflows', async () => {
   expect(output.completion).toBe('pending')
 })
 
+test('enrichRepository keeps 50 child workflows in flight', async () => {
+  const { executor } = makeExecutor()
+  const files = Array.from({ length: 52 }, (_value, index) => `path/to/file-${index}.ts`)
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    repository: 'proompteng/lab',
+    files,
+  }
+  const workflowId = 'repo-workflow'
+  const runId = 'run-1'
+
+  const initial = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    workflowId,
+    runId,
+  })
+
+  const initialChildCommands = initial.commands.filter(
+    (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
+  )
+  expect(initialChildCommands).toHaveLength(50)
+  expect(initial.completion).toBe('pending')
+
+  const signalDeliveries = [
+    {
+      name: '__childWorkflowCompleted',
+      args: [
+        {
+          workflowId: `${workflowId}-child-${runId}-0`,
+          status: 'completed',
+        },
+      ],
+    },
+  ]
+
+  const next = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    workflowId,
+    runId,
+    determinismState: initial.determinismState,
+    signalDeliveries,
+  })
+
+  const nextChildCommands = next.commands.filter(
+    (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
+  )
+  expect(nextChildCommands).toHaveLength(1)
+  const nextChildAttrs =
+    nextChildCommands[0]?.attributes?.case === 'startChildWorkflowExecutionCommandAttributes'
+      ? nextChildCommands[0].attributes.value
+      : undefined
+  expect(nextChildAttrs?.workflowId).toBe(`${workflowId}-child-${runId}-50`)
+  expect(next.completion).toBe('pending')
+})
+
 test('enrichRepository completes when child workflows signal completion', async () => {
   const { executor } = makeExecutor()
   const files = ['path/to/file-0.ts', 'path/to/file-1.ts', 'path/to/file-2.ts']
