@@ -6,7 +6,7 @@ metadata:
   labels:
     app: torghut-ta
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:912efed85e3950f5c119e0865dbbcceede7e2e0b15cf5a937f2cbeca36c53c08
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:7aaac873eeeb37a9cd4124fb7150f4f42cef7fdc0c756b3bc383d088d0c8bd80
   imagePullPolicy: IfNotPresent
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
@@ -117,6 +117,11 @@ spec:
                 secretKeyRef:
                   name: torghut-ws
                   key: password
+            - name: TA_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
             - name: TA_S3_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
@@ -148,9 +153,9 @@ spec:
                   name: observability-minio-creds
                   key: secretkey
             - name: TORGHUT_TA_VERSION
-              value: v0.355.0-11-gc87e3a2f
+              value: v0.366.1-9-gcd746a45
             - name: TORGHUT_TA_COMMIT
-              value: c87e3a2fba15d7adbdc2cf8c362262cf1ece9746
+              value: cd746a45bdd06f88f2f902f964b995f8c68280a5
           ports:
             - containerPort: 9249
               name: metrics

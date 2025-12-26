@@ -24,11 +24,11 @@ spec:
         - 10.0.0.0/8
         - 172.16.0.0/12
         - 192.168.0.0/16
-      torghut/password_sha256_hex:
+      torghut/password:
         valueFrom:
           secretKeyRef:
             name: torghut-clickhouse-auth
-            key: torghut_password_sha256_hex
+            key: torghut_password
       torghut/profile: default
       torghut/quota: default
       torghut/networks/ip:
@@ -76,7 +76,7 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: 5Gi
+              storage: 20Gi
           storageClassName: longhorn
   defaults:
     templates:
