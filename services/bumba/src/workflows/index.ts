@@ -75,7 +75,12 @@ const cleanupEnrichmentTimeouts = {
 
 const PARENT_CLOSE_POLICY_ABANDON = 2
 const CHILD_WORKFLOW_BATCH_SIZE = 50
+const CHILD_WORKFLOW_PROGRESS_INTERVAL = 25
 const CHILD_WORKFLOW_COMPLETED_SIGNAL = '__childWorkflowCompleted'
+
+const logWorkflow = (event: string, fields: Record<string, unknown> = {}) => {
+  console.log('[bumba:workflow]', { event, ...fields })
+}
 
 type ChildWorkflowCompletion = {
   workflowId: string
@@ -149,10 +154,25 @@ const enrichRepositorySignals = defineWorkflowSignals({
 })
 
 export const workflows = [
-  defineWorkflow('enrichFile', EnrichFileInput, ({ input, activities }) => {
+  defineWorkflow('enrichFile', EnrichFileInput, ({ input, activities, info }) => {
     const { repoRoot, filePath, repository, ref, commit, context, eventDeliveryId, force } = input
 
     return Effect.gen(function* () {
+      logWorkflow('enrichFile.started', {
+        workflowId: info.workflowId,
+        runId: info.runId,
+        repoRoot,
+        filePath,
+        repository: repository ?? null,
+        ref: ref ?? null,
+        commit: commit ?? null,
+        context: context ?? null,
+        eventDeliveryId: eventDeliveryId ?? null,
+        force: force ?? false,
+        parentWorkflowId: input.parentWorkflowId ?? null,
+        parentRunId: input.parentRunId ?? null,
+      })
+
       const readRepoInput: { repoRoot: string; filePath: string; repository?: string; ref?: string; commit?: string } =
         {
           repoRoot,
@@ -168,6 +188,11 @@ export const workflows = [
       })) as ReadRepoFileOutput
 
       if (force) {
+        logWorkflow('enrichFile.cleanupRequested', {
+          workflowId: info.workflowId,
+          runId: info.runId,
+          filePath,
+        })
         yield* activities.schedule(
           'cleanupEnrichment',
           [
@@ -294,6 +319,18 @@ export const workflows = [
         )
       }
 
+      logWorkflow('enrichFile.completed', {
+        workflowId: info.workflowId,
+        runId: info.runId,
+        filePath,
+        enrichmentId: enrichmentRecord.enrichmentId,
+        fileVersionId: fileVersion.fileVersionId,
+        facts: astResult.facts.length,
+        summaryChars: enriched.summary.length,
+        enrichedChars: enriched.enriched.length,
+        eventDeliveryId: eventDeliveryId ?? null,
+      })
+
       return {
         id: enrichmentRecord.enrichmentId,
         filename: filePath,
@@ -307,6 +344,19 @@ export const workflows = [
     handler: ({ input, activities, childWorkflows, signals, info }) =>
       Effect.gen(function* () {
         const { repoRoot, repository, ref, commit, context, pathPrefix, maxFiles } = input
+
+        logWorkflow('enrichRepository.started', {
+          workflowId: info.workflowId,
+          runId: info.runId,
+          repoRoot,
+          repository: repository ?? null,
+          ref: ref ?? null,
+          commit: commit ?? null,
+          context: context ?? null,
+          pathPrefix: pathPrefix ?? null,
+          maxFiles: maxFiles ?? null,
+          providedFiles: input.files ? input.files.length : null,
+        })
 
         const listRef = commit ?? ref
         let files = input.files
@@ -327,6 +377,15 @@ export const workflows = [
 
         const total = stats?.total ?? files.length
         const skipped = stats?.skipped ?? 0
+
+        logWorkflow('enrichRepository.filesReady', {
+          workflowId: info.workflowId,
+          runId: info.runId,
+          fileCount: files.length,
+          total,
+          skipped,
+        })
+
         let started = 0
         let completed = 0
         let failed = 0
@@ -365,6 +424,18 @@ export const workflows = [
             )
           }
 
+          if (started > 0 && (started % CHILD_WORKFLOW_BATCH_SIZE === 0 || started === files.length)) {
+            logWorkflow('enrichRepository.childrenStarted', {
+              workflowId: info.workflowId,
+              runId: info.runId,
+              started,
+              pending: pending.size,
+              completed,
+              failed,
+              totalFiles: files.length,
+            })
+          }
+
           if (pending.size === 0) {
             break
           }
@@ -381,7 +452,31 @@ export const workflows = [
           } else {
             failed += 1
           }
+
+          const finished = completed + failed
+          if (finished % CHILD_WORKFLOW_PROGRESS_INTERVAL === 0 || finished === files.length) {
+            logWorkflow('enrichRepository.progress', {
+              workflowId: info.workflowId,
+              runId: info.runId,
+              started,
+              completed,
+              failed,
+              pending: pending.size,
+              totalFiles: files.length,
+              nextIndex,
+            })
+          }
         }
+
+        logWorkflow('enrichRepository.completed', {
+          workflowId: info.workflowId,
+          runId: info.runId,
+          total,
+          skipped,
+          queued: started,
+          completed,
+          failed,
+        })
 
         return {
           total,
