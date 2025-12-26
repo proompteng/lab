@@ -10,6 +10,7 @@ resources:
   - mimir-tailscale-service.yaml
   - graf-mimir-rules.yaml
   - graf-graf-dashboard-configmap.yaml
+  - graf-bumba-dashboard-configmap.yaml
 
 helmCharts:
   - name: mimir-distributed

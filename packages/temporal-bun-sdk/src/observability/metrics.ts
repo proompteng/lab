@@ -1,11 +1,5 @@
 import { appendFile, mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import {
-  type Meter,
-  type Counter as OTelCounter,
-  type Histogram as OTelHistogram,
-  metrics as otelMetrics,
-} from '@opentelemetry/api'
 import { Effect } from 'effect'
 
 export interface Counter {
@@ -50,20 +44,6 @@ const ensureDirectory = async (path: string): Promise<void> => {
 }
 
 const toUnixNanoString = (milliseconds: number): string => (BigInt(milliseconds) * 1_000_000n).toString()
-
-const coerceBoolean = (value: string | undefined): boolean | undefined => {
-  if (!value) {
-    return undefined
-  }
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 't', 'yes', 'y', 'on'].includes(normalized)) {
-    return true
-  }
-  if (['0', 'false', 'f', 'no', 'n', 'off'].includes(normalized)) {
-    return false
-  }
-  return undefined
-}
 
 const parseKeyValuePairs = (value?: string): Record<string, string> => {
   if (!value) {
@@ -121,50 +101,6 @@ const resolveOtelResourceAttributes = (): Array<{ key: string; value: { stringVa
     key,
     value: { stringValue: value },
   }))
-}
-
-const resolveOtelMetricsBridgeEnabled = (): boolean => {
-  const explicit = coerceBoolean(process.env.TEMPORAL_OTEL_METRICS_BRIDGE)
-  if (explicit !== undefined) {
-    return explicit
-  }
-  const enabled = coerceBoolean(process.env.TEMPORAL_OTEL_ENABLED)
-  if (enabled !== undefined) {
-    return enabled
-  }
-  return false
-}
-
-const otelBridgeEnabled = resolveOtelMetricsBridgeEnabled()
-const otelCounters = new Map<string, OTelCounter>()
-const otelHistograms = new Map<string, OTelHistogram>()
-
-const getOtelCounter = (name: string, description?: string): OTelCounter | undefined => {
-  if (!otelBridgeEnabled) {
-    return undefined
-  }
-  const existing = otelCounters.get(name)
-  if (existing) {
-    return existing
-  }
-  const meter: Meter = otelMetrics.getMeter('temporal-bun-sdk')
-  const counter = meter.createCounter(name, description ? { description } : undefined)
-  otelCounters.set(name, counter)
-  return counter
-}
-
-const getOtelHistogram = (name: string, description?: string): OTelHistogram | undefined => {
-  if (!otelBridgeEnabled) {
-    return undefined
-  }
-  const existing = otelHistograms.get(name)
-  if (existing) {
-    return existing
-  }
-  const meter: Meter = otelMetrics.getMeter('temporal-bun-sdk')
-  const histogram = meter.createHistogram(name, description ? { description } : undefined)
-  otelHistograms.set(name, histogram)
-  return histogram
 }
 
 const describeMetricsError = (error: unknown): string => {
@@ -475,23 +411,11 @@ class PrometheusMetricsExporter implements MetricsExporter {
 const buildMetricsRegistry = (exporter: MetricsExporter): MetricsRegistry => ({
   counter: (name: string, description?: string) =>
     Effect.sync(() => ({
-      inc: (value = 1) =>
-        Effect.sync(() => {
-          const counter = getOtelCounter(name, description)
-          if (counter) {
-            counter.add(value)
-          }
-        }).pipe(Effect.zipRight(exporter.recordCounter(name, value, description))),
+      inc: (value = 1) => exporter.recordCounter(name, value, description),
     })),
   histogram: (name: string, description?: string) =>
     Effect.sync(() => ({
-      observe: (value) =>
-        Effect.sync(() => {
-          const histogram = getOtelHistogram(name, description)
-          if (histogram) {
-            histogram.record(value)
-          }
-        }).pipe(Effect.zipRight(exporter.recordHistogram(name, value, description))),
+      observe: (value) => exporter.recordHistogram(name, value, description),
     })),
 })
 

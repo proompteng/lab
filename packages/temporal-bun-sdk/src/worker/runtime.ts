@@ -4,7 +4,7 @@ import { create } from '@bufbuild/protobuf'
 import type { Timestamp } from '@bufbuild/protobuf/wkt'
 import { Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
-import { Cause, Effect, Exit, Fiber } from 'effect'
+import { Cause, Duration, Effect, Exit, Fiber, Schedule } from 'effect'
 
 import {
   type ActivityHeartbeatRegistration,
@@ -182,11 +182,19 @@ type NondeterminismContext = {
 const POLL_TIMEOUT_MS = 60_000
 const RESPOND_TIMEOUT_MS = 15_000
 const HISTORY_FETCH_TIMEOUT_MS = 60_000
+const DEFAULT_METRICS_FLUSH_INTERVAL_MS = 10_000
 const HEARTBEAT_RETRY_INITIAL_DELAY_MS = 250
 const HEARTBEAT_RETRY_MAX_DELAY_MS = 5_000
 const HEARTBEAT_RETRY_MAX_ATTEMPTS = 5
 const HEARTBEAT_RETRY_BACKOFF = 2
 const HEARTBEAT_RETRY_JITTER = 0.2
+const parseMetricsFlushInterval = (value: string | undefined): number | undefined => {
+  if (!value) {
+    return undefined
+  }
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
 const STICKY_QUEUE_PREFIX = 'sticky'
 const COMPLETION_COMMAND_TYPES = new Set<CommandType>([
   CommandType.COMPLETE_WORKFLOW_EXECUTION,
@@ -232,6 +240,7 @@ export interface WorkerRuntimeOptions {
   logger?: Logger
   metrics?: MetricsRegistry
   metricsExporter?: MetricsExporter
+  metricsFlushIntervalMs?: number
   interceptors?: WorkerInterceptor[]
   interceptorBuilder?: WorkerInterceptorBuilder
   tracingEnabled?: boolean
@@ -278,6 +287,10 @@ export class WorkerRuntime {
       ),
     )
     const { logger, metricsRegistry, metricsExporter, openTelemetry } = observability
+    const metricsFlushIntervalMs =
+      options.metricsFlushIntervalMs ??
+      parseMetricsFlushInterval(process.env.TEMPORAL_METRICS_FLUSH_INTERVAL_MS) ??
+      DEFAULT_METRICS_FLUSH_INTERVAL_MS
     const dataConverter =
       options.dataConverter ??
       createDefaultDataConverter({
@@ -443,6 +456,7 @@ export class WorkerRuntime {
         logLevel: config.logLevel,
         logFormat: config.logFormat,
         metricsExporter: config.metricsExporter.type,
+        metricsFlushIntervalMs,
       }),
     )
 
@@ -456,6 +470,7 @@ export class WorkerRuntime {
       logger,
       metricsRegistry,
       metricsExporter,
+      metricsFlushIntervalMs,
       metrics: runtimeMetrics,
       openTelemetry,
       namespace,
@@ -485,6 +500,8 @@ export class WorkerRuntime {
   readonly #metricsRegistry: MetricsRegistry
   readonly #metrics: WorkerRuntimeMetrics
   readonly #metricsExporter: MetricsExporter
+  readonly #metricsFlushIntervalMs: number
+  #metricsFlushInFlight = false
   readonly #openTelemetry?: OpenTelemetryHandle
   readonly #namespace: string
   readonly #taskQueue: string
@@ -516,6 +533,7 @@ export class WorkerRuntime {
     metricsRegistry: MetricsRegistry
     metrics: WorkerRuntimeMetrics
     metricsExporter: MetricsExporter
+    metricsFlushIntervalMs: number
     openTelemetry?: OpenTelemetryHandle
     namespace: string
     taskQueue: string
@@ -542,6 +560,7 @@ export class WorkerRuntime {
     this.#metricsRegistry = params.metricsRegistry
     this.#metrics = params.metrics
     this.#metricsExporter = params.metricsExporter
+    this.#metricsFlushIntervalMs = Math.max(0, params.metricsFlushIntervalMs)
     this.#openTelemetry = params.openTelemetry
     this.#namespace = params.namespace
     this.#taskQueue = params.taskQueue
@@ -750,6 +769,13 @@ export class WorkerRuntime {
             stickySchedulingEnabled: runtime.#stickySchedulingEnabled,
           }),
         )
+        if (runtime.#metricsFlushIntervalMs > 0) {
+          const flushLoop = Effect.repeat(
+            Effect.promise(() => runtime.#flushMetrics()),
+            Schedule.spaced(Duration.millis(runtime.#metricsFlushIntervalMs)),
+          )
+          yield* Effect.forkScoped(flushLoop)
+        }
         if (pollerLoops.length > 0) {
           yield* Effect.forEach(pollerLoops, (loop) => Effect.forkScoped(loop), { concurrency: 'unbounded' })
         }
@@ -2385,12 +2411,18 @@ export class WorkerRuntime {
   }
 
   async #flushMetrics(): Promise<void> {
+    if (this.#metricsFlushInFlight) {
+      return
+    }
+    this.#metricsFlushInFlight = true
     try {
       await Effect.runPromise(this.#metricsExporter.flush())
     } catch (error) {
       this.#log('warn', 'failed to flush metrics exporter', {
         error: error instanceof Error ? error.message : String(error),
       })
+    } finally {
+      this.#metricsFlushInFlight = false
     }
   }
 

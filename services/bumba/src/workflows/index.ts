@@ -47,6 +47,11 @@ const persistEnrichmentTimeouts = {
   scheduleToCloseTimeoutMs: 1_200_000,
 }
 
+const cleanupEnrichmentTimeouts = {
+  startToCloseTimeoutMs: 120_000,
+  scheduleToCloseTimeoutMs: 600_000,
+}
+
 const PARENT_CLOSE_POLICY_ABANDON = 2
 const MAX_CHILD_WORKFLOWS_PER_RUN = 500
 
@@ -58,6 +63,7 @@ const EnrichFileInput = Schema.Struct({
   commit: Schema.optional(Schema.String),
   context: Schema.optional(Schema.String),
   eventDeliveryId: Schema.optional(Schema.String),
+  force: Schema.optional(Schema.Boolean),
 })
 
 const EnrichRepositoryInput = Schema.Struct({
@@ -81,7 +87,7 @@ const EnrichRepositoryInput = Schema.Struct({
 export const workflows = [
   defineWorkflow('enrichFile', EnrichFileInput, ({ input, activities }) =>
     Effect.gen(function* () {
-      const { repoRoot, filePath, repository, ref, commit, context, eventDeliveryId } = input
+      const { repoRoot, filePath, repository, ref, commit, context, eventDeliveryId, force } = input
 
       const readRepoInput: { repoRoot: string; filePath: string; repository?: string; ref?: string; commit?: string } =
         {
@@ -96,6 +102,21 @@ export const workflows = [
         ...readRepoFileTimeouts,
         retry: activityRetry,
       })) as ReadRepoFileOutput
+
+      if (force) {
+        yield* activities.schedule(
+          'cleanupEnrichment',
+          [
+            {
+              fileMetadata: fileResult.metadata,
+            },
+          ],
+          {
+            ...cleanupEnrichmentTimeouts,
+            retry: activityRetry,
+          },
+        )
+      }
 
       const astResult = (yield* activities.schedule(
         'extractAstSummary',

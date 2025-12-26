@@ -95,6 +95,17 @@ export type PersistInput = {
   eventDeliveryId?: string
 }
 
+export type CleanupEnrichmentInput = {
+  fileMetadata: FileMetadata
+}
+
+export type CleanupEnrichmentOutput = {
+  fileVersions: number
+  enrichments: number
+  embeddings: number
+  facts: number
+}
+
 export type MarkEventProcessedInput = {
   deliveryId: string
 }
@@ -1646,6 +1657,105 @@ export const activities = {
   async createEmbedding(input: EmbeddingInput): Promise<{ embedding: number[] }> {
     const embedding = await embedText(input.text)
     return { embedding }
+  },
+
+  async cleanupEnrichment(input: CleanupEnrichmentInput): Promise<CleanupEnrichmentOutput> {
+    const db = getAtlasDb()
+    if (!db) {
+      throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+    }
+
+    const fileMeta = input.fileMetadata
+    const repositoryName = fileMeta.repoName
+    const repositoryRef = fileMeta.repoRef ?? 'main'
+    const repositoryCommit = fileMeta.repoCommit ?? null
+
+    const repositoryRows = (await db`
+      SELECT id
+      FROM atlas.repositories
+      WHERE name = ${repositoryName};
+    `) as Array<{ id: string }>
+
+    const repositoryId = repositoryRows[0]?.id
+    if (!repositoryId) {
+      return { fileVersions: 0, enrichments: 0, embeddings: 0, facts: 0 }
+    }
+
+    const fileKeyRows = (await db`
+      SELECT id
+      FROM atlas.file_keys
+      WHERE repository_id = ${repositoryId}
+        AND path = ${fileMeta.path};
+    `) as Array<{ id: string }>
+
+    const fileKeyId = fileKeyRows[0]?.id
+    if (!fileKeyId) {
+      return { fileVersions: 0, enrichments: 0, embeddings: 0, facts: 0 }
+    }
+
+    let fileVersionRows: Array<{ id: string }>
+    if (repositoryCommit) {
+      fileVersionRows = (await db`
+        SELECT id
+        FROM atlas.file_versions
+        WHERE file_key_id = ${fileKeyId}
+          AND repository_commit = ${repositoryCommit};
+      `) as Array<{ id: string }>
+    } else {
+      fileVersionRows = (await db`
+        SELECT id
+        FROM atlas.file_versions
+        WHERE file_key_id = ${fileKeyId}
+          AND repository_ref = ${repositoryRef};
+      `) as Array<{ id: string }>
+    }
+
+    const fileVersionIds = [...new Set(fileVersionRows.map((row) => row.id))]
+    if (fileVersionIds.length === 0) {
+      return { fileVersions: 0, enrichments: 0, embeddings: 0, facts: 0 }
+    }
+
+    const fileVersionArray = db.array(fileVersionIds, 'uuid')
+
+    const enrichmentRows = (await db`
+      SELECT id
+      FROM atlas.enrichments
+      WHERE file_version_id = ANY(${fileVersionArray})
+        AND source = ${'bumba'}
+        AND kind = ${'model_enrichment'};
+    `) as Array<{ id: string }>
+
+    const enrichmentIds = [...new Set(enrichmentRows.map((row) => row.id))]
+    let embeddingsDeleted = 0
+    if (enrichmentIds.length > 0) {
+      const embeddingRows = (await db`
+        DELETE FROM atlas.embeddings
+        WHERE enrichment_id = ANY(${db.array(enrichmentIds, 'uuid')})
+        RETURNING enrichment_id;
+      `) as Array<{ enrichment_id: string }>
+      embeddingsDeleted = embeddingRows.length
+    }
+
+    const enrichmentsDeleted = (await db`
+      DELETE FROM atlas.enrichments
+      WHERE file_version_id = ANY(${fileVersionArray})
+        AND source = ${'bumba'}
+        AND kind = ${'model_enrichment'}
+      RETURNING id;
+    `) as Array<{ id: string }>
+
+    const factsDeleted = (await db`
+      DELETE FROM atlas.tree_sitter_facts
+      WHERE file_version_id = ANY(${fileVersionArray})
+      RETURNING file_version_id;
+    `) as Array<{ file_version_id: string }>
+
+    return {
+      fileVersions: fileVersionIds.length,
+      enrichments: enrichmentsDeleted.length,
+      embeddings: embeddingsDeleted,
+      facts: factsDeleted.length,
+    }
   },
 
   async persistEnrichment(input: PersistInput): Promise<{ id: string }> {

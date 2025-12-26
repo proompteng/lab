@@ -140,3 +140,7 @@ alertmanager:
 
 minio:
   enabled: false
+
+metaMonitoring:
+  dashboards:
+    enabled: false

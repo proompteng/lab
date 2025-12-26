@@ -10,14 +10,16 @@ const opentelemetryExternals = [
   '@opentelemetry/api',
   '@opentelemetry/auto-instrumentations-node',
   '@opentelemetry/exporter-metrics-otlp-http',
+  '@opentelemetry/exporter-metrics-otlp-proto',
   '@opentelemetry/exporter-trace-otlp-http',
+  '@opentelemetry/exporter-trace-otlp-proto',
   '@opentelemetry/resources',
   '@opentelemetry/sdk-metrics',
   '@opentelemetry/sdk-node',
   '@opentelemetry/semantic-conventions',
 ]
 
-const ssrExternals = [...opentelemetryExternals, 'pg']
+const ssrExternals = [...opentelemetryExternals, 'kysely', 'pg']
 
 const config = defineConfig({
   server: {
@@ -25,6 +27,9 @@ const config = defineConfig({
   },
   ssr: {
     external: ssrExternals,
+  },
+  optimizeDeps: {
+    exclude: opentelemetryExternals,
   },
   build: {
     rollupOptions: {

@@ -134,6 +134,12 @@ const indentBlock = (value: string, spaces: number) => {
     .join('\n')
 }
 
+const reflectorAnnotations = `  annotations:
+    reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+    reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "argo-workflows,graf,flink,torghut,observability"
+    reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+    reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "argo-workflows,graf,flink,torghut,observability"`
+
 const options = parseArgs()
 
 ensureCli('kubeseal')
@@ -166,6 +172,7 @@ kind: Secret
 metadata:
   name: observability-minio-creds
   namespace: minio
+${reflectorAnnotations}
 stringData:
   config.env: |
 ${indentBlock(configEnv, 4)}
@@ -179,6 +186,7 @@ kind: Secret
 metadata:
   name: observability-minio-credentials
   namespace: observability
+${reflectorAnnotations}
 stringData:
   rootUser: ${rootUser}
   rootPassword: ${rootPassword}

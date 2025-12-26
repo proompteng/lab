@@ -167,6 +167,108 @@ test('enrichFile completes when all activities are resolved', async () => {
   expect(output.result).toEqual({ id: 'enrichment-id', filename: input.filePath })
 })
 
+test('enrichFile schedules cleanup when force is enabled', async () => {
+  const { executor } = makeExecutor()
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    filePath: 'apps/froussard/src/webhooks/github.ts',
+    context: 'unit-test',
+    eventDeliveryId: 'delivery-1',
+    force: true,
+  }
+
+  const activityResults = new Map<string, ActivityResolution>([
+    [
+      'activity-0',
+      {
+        status: 'completed',
+        value: {
+          content: 'console.log("hi")',
+          metadata: {
+            repoName: 'lab',
+            repoRef: 'main',
+            repoCommit: 'deadbeef',
+            path: input.filePath,
+            contentHash: 'hash',
+            language: 'ts',
+            byteSize: 17,
+            lineCount: 1,
+            sourceTimestamp: null,
+            metadata: {},
+          },
+        },
+      },
+    ],
+    [
+      'activity-1',
+      {
+        status: 'completed',
+        value: {
+          fileVersions: 1,
+          enrichments: 1,
+          embeddings: 1,
+          facts: 0,
+        },
+      },
+    ],
+    [
+      'activity-2',
+      {
+        status: 'completed',
+        value: {
+          astSummary: 'summary',
+          facts: [],
+          metadata: {},
+        },
+      },
+    ],
+    [
+      'activity-3',
+      {
+        status: 'completed',
+        value: {
+          summary: 'short summary',
+          enriched: '- bullet',
+          metadata: {},
+        },
+      },
+    ],
+    [
+      'activity-4',
+      {
+        status: 'completed',
+        value: {
+          embedding: [0.1, 0.2, 0.3],
+        },
+      },
+    ],
+    [
+      'activity-5',
+      {
+        status: 'completed',
+        value: {
+          id: 'enrichment-id',
+        },
+      },
+    ],
+  ])
+
+  const output = await execute(executor, {
+    workflowType: 'enrichFile',
+    arguments: input,
+    activityResults,
+  })
+
+  const scheduleCommands = output.commands.filter(
+    (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
+  )
+
+  expect(scheduleCommands).toHaveLength(6)
+  expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
+  expect(output.completion).toBe('completed')
+  expect(output.result).toEqual({ id: 'enrichment-id', filename: input.filePath })
+})
+
 test('enrichRepository schedules listing and child workflows', async () => {
   const { executor, dataConverter } = makeExecutor()
   const input = {

@@ -51,3 +51,25 @@ testFramework:
 
 dashboardsConfigMaps:
   graf-graf-dashboard: graf-graf-dashboard
+  graf-bumba-dashboard: graf-bumba-dashboard
+
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: graf-graf-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/graf-graf-dashboard
+      - name: graf-bumba-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/graf-bumba-dashboard
