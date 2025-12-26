@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { Effect } from 'effect'
 
 import { createWorkflowContext } from '../../src/workflow/context'
 import { DeterminismGuard, type WorkflowDeterminismState } from '../../src/workflow/determinism'
@@ -73,5 +74,75 @@ test('determinism.getVersion records chosen version when absent', () => {
     expect(intent.markerName).toBe('temporal-bun-sdk/get-version')
     expect(intent.details?.changeId).toBe('feature-v1')
     expect(intent.details?.version).toBe(3)
+  }
+})
+
+test('child workflow defaults include runId for uniqueness', async () => {
+  const guardA = new DeterminismGuard()
+  const { context: contextA, commandContext: commandContextA } = createWorkflowContext({
+    input: [],
+    info: { ...baseInfo, workflowId: 'wf-child', runId: 'run-a' },
+    determinismGuard: guardA,
+  })
+
+  await Effect.runPromise(contextA.childWorkflows.start('childWorkflow'))
+  const intentA = commandContextA.intents[0]
+  expect(intentA.kind).toBe('start-child-workflow')
+  if (intentA.kind === 'start-child-workflow') {
+    expect(intentA.workflowId).toBe('wf-child-child-run-a-0')
+  }
+
+  const guardB = new DeterminismGuard()
+  const { context: contextB, commandContext: commandContextB } = createWorkflowContext({
+    input: [],
+    info: { ...baseInfo, workflowId: 'wf-child', runId: 'run-b' },
+    determinismGuard: guardB,
+  })
+
+  await Effect.runPromise(contextB.childWorkflows.start('childWorkflow'))
+  const intentB = commandContextB.intents[0]
+  expect(intentB.kind).toBe('start-child-workflow')
+  if (intentB.kind === 'start-child-workflow') {
+    expect(intentB.workflowId).toBe('wf-child-child-run-b-0')
+    if (intentA.kind === 'start-child-workflow') {
+      expect(intentB.workflowId).not.toBe(intentA.workflowId)
+    }
+  }
+})
+
+test('child workflow defaults reuse recorded ids on replay', async () => {
+  const previous: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          id: 'start-child-workflow-0',
+          kind: 'start-child-workflow',
+          sequence: 0,
+          workflowType: 'childWorkflow',
+          workflowId: 'wf-primitive-child-0',
+          namespace: baseInfo.namespace,
+          taskQueue: baseInfo.taskQueue,
+          input: [],
+          timeouts: {},
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+  const guard = new DeterminismGuard({ previousState: previous })
+  const { context } = createWorkflowContext({
+    input: [],
+    info: baseInfo,
+    determinismGuard: guard,
+  })
+
+  await Effect.runPromise(context.childWorkflows.start('childWorkflow'))
+  const intent = guard.snapshot.commandHistory[0]?.intent
+  expect(intent?.kind).toBe('start-child-workflow')
+  if (intent?.kind === 'start-child-workflow') {
+    expect(intent.workflowId).toBe('wf-primitive-child-0')
   }
 })
