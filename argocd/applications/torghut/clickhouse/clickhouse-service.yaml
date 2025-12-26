@@ -20,4 +20,6 @@ spec:
     - name: native
       port: 9000
       targetPort: 9000
-
+    - name: postgres
+      port: 9005
+      targetPort: 9005

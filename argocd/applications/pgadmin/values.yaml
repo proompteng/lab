@@ -82,6 +82,11 @@ extraVolumes:
                 path: torghut-db-app/uri
               - key: password
                 path: torghut-db-app/password
+        - secret:
+            name: torghut-clickhouse-auth
+            items:
+              - key: torghut_password
+                path: torghut-clickhouse-auth/password
 
 extraVolumeMounts:
   - name: pgadmin-servers
@@ -123,6 +128,17 @@ extraInitContainers: |
             {'secret': 'facteur-vector-cluster-app', 'name': 'facteur-vector-cluster'},
             {'secret': 'dernier-db-app', 'name': 'dernier-db'},
             {'secret': 'torghut-db-app', 'name': 'torghut-db'},
+            {
+                'secret': 'torghut-clickhouse-auth',
+                'name': 'torghut-clickhouse',
+                'group': 'ClickHouse',
+                'host': 'torghut-clickhouse.torghut.svc.cluster.local',
+                'port': 9005,
+                'dbname': 'torghut',
+                'username': 'torghut',
+                'sslmode': 'disable',
+                'password_key': 'password',
+            },
         ]
 
         servers = {}
@@ -135,21 +151,31 @@ extraInitContainers: |
         passfile_path = storage_dir / passfile_name
         for cluster in clusters:
             secret_dir = Path('/etc/pgadmin/secrets') / cluster['secret']
-            uri_path = secret_dir / 'uri'
-            if not uri_path.exists():
-                continue
-            uri = uri_path.read_text().strip()
-            if not uri:
-                continue
-            parsed = urlparse(uri)
-            host = parsed.hostname or ''
-            if not host:
-                continue
-            port = parsed.port or 5432
-            dbname = (parsed.path or '').lstrip('/') or 'postgres'
-            username = unquote(parsed.username or '')
-            sslmode = parse_qs(parsed.query).get('sslmode', ['require'])[0]
-            password_path = secret_dir / 'password'
+            uri_key = cluster.get('uri_key', 'uri')
+            uri_path = secret_dir / uri_key
+            uri = ''
+            if uri_path.exists():
+                uri = uri_path.read_text().strip()
+            if uri:
+                parsed = urlparse(uri)
+                host = parsed.hostname or ''
+                if not host:
+                    continue
+                port = parsed.port or cluster.get('port', 5432)
+                dbname = (parsed.path or '').lstrip('/') or 'postgres'
+                username = unquote(parsed.username or '')
+                sslmode = parse_qs(parsed.query).get('sslmode', ['require'])[0]
+            else:
+                host = cluster.get('host', '')
+                if not host:
+                    continue
+                port = cluster.get('port', 5432)
+                dbname = cluster.get('dbname', 'postgres')
+                username = cluster.get('username', '')
+                sslmode = cluster.get('sslmode', 'require')
+
+            password_key = cluster.get('password_key', 'password')
+            password_path = secret_dir / password_key
             if password_path.exists():
                 password = password_path.read_text().strip()
                 if password:
@@ -157,13 +183,13 @@ extraInitContainers: |
 
             servers[str(index)] = {
                 'Name': cluster['name'],
-                'Group': 'CNPG',
+                'Group': cluster.get('group', 'CNPG'),
                 'Host': host,
                 'Port': port,
                 'MaintenanceDB': dbname,
                 'Username': username,
                 'SSLMode': sslmode,
-                'PasswordExecCommand': f'cat {secret_dir}/password',
+                'PasswordExecCommand': f'cat {secret_dir}/{password_key}',
                 'PasswordExecExpiration': 300,
                 'ConnectionParameters': {
                     'passfile': passfile_name,
