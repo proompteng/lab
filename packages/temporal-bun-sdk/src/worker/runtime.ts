@@ -312,6 +312,7 @@ export class WorkerRuntime {
     const executor = new WorkflowExecutor({
       registry,
       dataConverter,
+      logger,
     })
 
     const runtimeMetrics = await WorkerRuntime.#initMetrics(metricsRegistry)

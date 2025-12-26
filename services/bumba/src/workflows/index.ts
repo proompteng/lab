@@ -1,4 +1,4 @@
-import { defineWorkflow, defineWorkflowSignals } from '@proompteng/temporal-bun-sdk/workflow'
+import { defineWorkflow, defineWorkflowSignals, log } from '@proompteng/temporal-bun-sdk/workflow'
 import { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
@@ -79,7 +79,7 @@ const CHILD_WORKFLOW_PROGRESS_INTERVAL = 25
 const CHILD_WORKFLOW_COMPLETED_SIGNAL = '__childWorkflowCompleted'
 
 const logWorkflow = (event: string, fields: Record<string, unknown> = {}) => {
-  console.log('[bumba:workflow]', { event, ...fields })
+  log.info('[bumba:workflow]', { event, ...fields })
 }
 
 type ChildWorkflowCompletion = {

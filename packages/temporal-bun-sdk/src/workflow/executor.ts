@@ -29,6 +29,7 @@ import {
   type WorkflowUpdateRegistry,
 } from './context'
 import { DeterminismGuard, snapshotToDeterminismState, type WorkflowDeterminismState } from './determinism'
+import { runWithWorkflowLogContext, type WorkflowLogContext, type WorkflowLogger } from './log'
 import {
   ContinueAsNewWorkflowError,
   WorkflowBlockedError,
@@ -37,6 +38,10 @@ import {
 } from './errors'
 import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from './inbound'
 import type { WorkflowRegistry } from './registry'
+
+const noopWorkflowLogger: WorkflowLogger = {
+  log: () => Effect.void,
+}
 
 export interface WorkflowUpdateInvocation {
   readonly protocolInstanceId: string
@@ -125,15 +130,18 @@ export interface WorkflowQueryEvaluationResult {
 export interface WorkflowExecutorOptions {
   registry: WorkflowRegistry
   dataConverter: DataConverter
+  logger?: WorkflowLogger
 }
 
 export class WorkflowExecutor {
   #registry: WorkflowRegistry
   #dataConverter: DataConverter
+  #logger: WorkflowLogger
 
   constructor(options: WorkflowExecutorOptions) {
     this.#registry = options.registry
     this.#dataConverter = options.dataConverter
+    this.#logger = options.logger ?? noopWorkflowLogger
   }
 
   async execute(input: ExecuteWorkflowInput): Promise<WorkflowExecutionOutput> {
@@ -151,6 +159,11 @@ export class WorkflowExecutor {
     const normalizedArguments = this.#normalizeArguments(input.arguments, definition.decodeArgumentsAsArray)
     const decodedEffect = Schema.decodeUnknown(definition.schema)(normalizedArguments)
     const guard = new DeterminismGuard({ previousState: input.determinismState, mode: executionMode })
+    const logContext: WorkflowLogContext = {
+      info,
+      guard,
+      logger: this.#logger,
+    }
 
     let lastCommandContext: WorkflowCommandContext | undefined
     let lastQueryRegistry: WorkflowQueryRegistry | undefined
@@ -183,7 +196,7 @@ export class WorkflowExecutor {
       )
     })
 
-    const exit = await Effect.runPromiseExit(workflowEffect)
+    const exit = await runWithWorkflowLogContext(logContext, async () => await Effect.runPromiseExit(workflowEffect))
     const updatesToProcess = input.updates ?? []
     let updateDispatches: WorkflowUpdateDispatch[] = []
 
@@ -194,12 +207,16 @@ export class WorkflowExecutor {
         throw new Error('Workflow update context unavailable after execution')
       }
       try {
-        updateDispatches = await this.#processWorkflowUpdates({
-          context: contextForUpdates,
-          registry: registryForUpdates,
-          updates: updatesToProcess,
-          guard,
-        })
+        updateDispatches = await runWithWorkflowLogContext(
+          logContext,
+          async () =>
+            await this.#processWorkflowUpdates({
+              context: contextForUpdates,
+              registry: registryForUpdates,
+              updates: updatesToProcess,
+              guard,
+            }),
+        )
       } catch (error) {
         if (error instanceof WorkflowBlockedError) {
           blockedFromUpdates = error
@@ -209,7 +226,10 @@ export class WorkflowExecutor {
       }
     }
 
-    const queryResults = await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests)
+    const queryResults = await runWithWorkflowLogContext(
+      logContext,
+      async () => await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests),
+    )
 
     if (Exit.isSuccess(exit)) {
       const determinismState = snapshotToDeterminismState(guard.snapshot)
