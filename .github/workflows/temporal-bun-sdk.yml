@@ -42,11 +42,7 @@ jobs:
     runs-on: arc-arm64
 
     env:
-      TEMPORAL_TEST_SERVER: '1'
-      TEMPORAL_TEST_TIMEOUT: '5000'
       TEMPORAL_INTEGRATION_TESTS: '1'
-      TEMPORAL_ADDRESS: temporal-grpc:7233
-      TEMPORAL_NAMESPACE: default
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
