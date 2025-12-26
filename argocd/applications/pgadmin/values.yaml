@@ -23,6 +23,8 @@ envVarsExtra:
 extraVolumes:
   - name: pgadmin-servers
     emptyDir: {}
+  - name: pgadmin-connection-overrides
+    emptyDir: {}
   - name: cnpg-app-secrets
     projected:
       sources:
@@ -91,6 +93,10 @@ extraVolumes:
 extraVolumeMounts:
   - name: pgadmin-servers
     mountPath: /var/lib/pgadmin/servers
+  - name: pgadmin-connection-overrides
+    mountPath: /pgadmin4/pgadmin/utils/driver/psycopg3/connection.py
+    subPath: connection.py
+    readOnly: true
   - name: cnpg-app-secrets
     mountPath: /etc/pgadmin/secrets
     readOnly: true
@@ -291,3 +297,58 @@ extraInitContainers: |
       - name: cnpg-app-secrets
         mountPath: /etc/pgadmin/secrets
         readOnly: true
+  - name: pgadmin-clickhouse-compat
+    image: dpage/pgadmin4:9.11
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        python - <<'PY'
+        from pathlib import Path
+
+        source = Path('/pgadmin4/pgadmin/utils/driver/psycopg3/connection.py')
+        target = Path('/overrides/connection.py')
+        text = source.read_text()
+
+        replacement_lines = [
+            "init_sql = (",
+            "    \"SET DateStyle=ISO; \"",
+            "    \"SET client_min_messages=notice; \"",
+            "    \"SELECT set_config('bytea_output','hex',false)\"",
+            "    \" FROM pg_show_all_settings()\"",
+            "    \" WHERE name = 'bytea_output'; \"",
+            "    \"SET client_encoding='{0}';\".format(postgres_encoding)",
+            ")",
+            "is_clickhouse = False",
+            "if manager:",
+            "    host = (manager.host or '').lower()",
+            "    name = (manager.name or '').lower()",
+            "    port = manager.port or 0",
+            "    is_clickhouse = port == 9005 or 'clickhouse' in host or 'clickhouse' in name",
+            "if is_clickhouse:",
+            "    status = None",
+            "else:",
+            "    status = self._execute(cur, init_sql)",
+        ]
+        marker = "# Note that we use 'UPDATE pg_settings' for setting bytea_output as a"
+        marker_index = text.find(marker)
+        if marker_index == -1:
+            raise SystemExit('pgadmin init SQL marker not found; aborting patch')
+        block_start = text.find("status = self._execute(", marker_index)
+        if block_start == -1:
+            raise SystemExit('pgadmin init SQL block start not found; aborting patch')
+        line_start = text.rfind("\n", 0, block_start) + 1
+        indent = text[line_start:block_start]
+        end_marker = "\n        )\n\n        if status is not None:"
+        block_end = text.find(end_marker, block_start)
+        if block_end == -1:
+            raise SystemExit('pgadmin init SQL block end not found; aborting patch')
+        block_end += len("\n        )\n")
+        replacement = "\n".join(f"{indent}{line}" for line in replacement_lines) + "\n"
+        text = text[:line_start] + replacement + text[block_end:]
+        target.write_text(text)
+        PY
+    volumeMounts:
+      - name: pgadmin-connection-overrides
+        mountPath: /overrides
