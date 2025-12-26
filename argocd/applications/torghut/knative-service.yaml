@@ -54,6 +54,23 @@ spec:
                   name: torghut-secrets
                   key: apca-api-base-url
                   optional: true
+            - name: CLICKHOUSE_HOST
+              value: torghut-clickhouse.torghut.svc.cluster.local
+            - name: CLICKHOUSE_PORT
+              value: "8123"
+            - name: CLICKHOUSE_DATABASE
+              value: torghut
+            - name: CLICKHOUSE_USERNAME
+              value: torghut
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+            - name: CLICKHOUSE_SECURE
+              value: "false"
+            - name: CLICKHOUSE_TIMEOUT_SECONDS
+              value: "10"
             - name: TORGHUT_VERSION
               value: v0.347.0-1-g96ad00d8
             - name: TORGHUT_COMMIT
