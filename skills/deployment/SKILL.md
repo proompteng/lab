@@ -1,5 +1,5 @@
 ---
-name: deployment-automation
+name: deployment
 description: Use the repo’s deployment scripts and infra workflows safely.
 ---
 
