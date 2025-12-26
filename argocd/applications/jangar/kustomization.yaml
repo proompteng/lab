@@ -5,6 +5,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - github-token.yaml
+  - clickhouse-auth.yaml
   - app-tailscale-service.yaml
   - tailscale-service.yaml
   - postgres-cluster.yaml
