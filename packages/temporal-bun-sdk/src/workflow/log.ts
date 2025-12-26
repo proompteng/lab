@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { Effect } from 'effect'
 
-import type { LogFields, LogLevel, Logger } from '../observability/logger'
+import type { LogFields, Logger, LogLevel } from '../observability/logger'
 import type { WorkflowInfo } from './context'
 import type { DeterminismGuard } from './determinism'
 

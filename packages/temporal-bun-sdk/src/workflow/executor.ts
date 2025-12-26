@@ -29,7 +29,6 @@ import {
   type WorkflowUpdateRegistry,
 } from './context'
 import { DeterminismGuard, snapshotToDeterminismState, type WorkflowDeterminismState } from './determinism'
-import { runWithWorkflowLogContext, type WorkflowLogContext, type WorkflowLogger } from './log'
 import {
   ContinueAsNewWorkflowError,
   WorkflowBlockedError,
@@ -37,6 +36,7 @@ import {
   WorkflowQueryViolationError,
 } from './errors'
 import type { WorkflowQueryRequest, WorkflowSignalDeliveryInput } from './inbound'
+import { runWithWorkflowLogContext, type WorkflowLogContext, type WorkflowLogger } from './log'
 import type { WorkflowRegistry } from './registry'
 
 const noopWorkflowLogger: WorkflowLogger = {
