@@ -14,6 +14,9 @@
 - Ruby 3.4.7 + Bundler 2.7+ for `services/dernier`.
 - Python 3.9–3.12 for `apps/alchimie`; 3.11–3.12 for `services/torghut`.
 
+## Tooling Versions (mise)
+- Use `mise` to pin tool versions when a specific major is required (e.g. `helm@3` for `kustomize --enable-helm`; helm v4 is not supported there yet).
+
 ## Build, Test, and Development Commands
 - `bun install`: dependencies.
 - `bun run dev:<app>` / `bun run build:<app>` / `bun run start:<app>`: run/build/serve a frontend.
