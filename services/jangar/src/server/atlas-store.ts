@@ -1,4 +1,6 @@
-import { SQL } from 'bun'
+import { sql } from 'kysely'
+
+import { createKyselyDb, type Db } from '~/server/db'
 
 export type RepositoryRecord = {
   id: string
@@ -20,7 +22,7 @@ export type FileVersionRecord = {
   id: string
   fileKeyId: string
   repositoryRef: string
-  repositoryCommit: string
+  repositoryCommit: string | null
   contentHash: string
   language: string | null
   byteSize: number | null
@@ -348,15 +350,9 @@ export type AtlasStore = {
 
 type PostgresAtlasStoreOptions = {
   url?: string
-  createDb?: (url: string) => {
-    (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]>
-    unsafe: <T = unknown>(query: string, params?: unknown[]) => Promise<T>
-    array: (values: unknown[], elementType?: string) => unknown
-    close: () => Promise<void>
-  }
+  createDb?: (url: string) => Db
 }
 
-const DEFAULT_SSLMODE = 'require'
 const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
 const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
 const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
@@ -366,25 +362,6 @@ const DEFAULT_INDEX_LIMIT = 50
 const DEFAULT_SEARCH_LIMIT = 10
 
 const SCHEMA = 'atlas'
-
-const withDefaultSslMode = (rawUrl: string): string => {
-  let url: URL
-  try {
-    url = new URL(rawUrl)
-  } catch {
-    return rawUrl
-  }
-
-  const params = url.searchParams
-  if (params.get('sslmode')) return rawUrl
-
-  const envMode = process.env.PGSSLMODE?.trim()
-  const sslmode = envMode && envMode.length > 0 ? envMode : DEFAULT_SSLMODE
-  params.set('sslmode', sslmode)
-
-  url.search = params.toString()
-  return url.toString()
-}
 
 const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
   try {
@@ -427,8 +404,6 @@ const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
 }
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
-
-export const __private = { withDefaultSslMode }
 
 const loadEmbeddingConfig = () => {
   const apiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
@@ -543,7 +518,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     throw new Error('DATABASE_URL is required for Atlas storage')
   }
 
-  const db = (options.createDb ?? ((resolvedUrl: string) => new SQL(resolvedUrl)))(withDefaultSslMode(url))
+  const db = (options.createDb ?? createKyselyDb)(url)
   let schemaReady: Promise<void> | null = null
   const defaults = resolveEmbeddingDefaults(
     process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL,
@@ -551,17 +526,17 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
   const expectedEmbeddingDimension = loadEmbeddingDimension(defaults.dimension)
 
   const ensureEmbeddingDimensionMatches = async () => {
-    const rows = (await db`
+    const { rows } = await sql<{ embedding_type: string | null }>`
       SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS embedding_type
       FROM pg_catalog.pg_attribute a
       JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = ${SCHEMA}
-        AND c.relname = 'embeddings'
+        AND c.relname = ${'embeddings'}
         AND a.attname = 'embedding'
         AND a.attnum > 0
         AND NOT a.attisdropped;
-    `) as Array<{ embedding_type: string | null }>
+    `.execute(db)
 
     const embeddingType = rows[0]?.embedding_type ?? null
     if (!embeddingType) return
@@ -583,14 +558,14 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     if (!schemaReady) {
       schemaReady = (async () => {
         try {
-          await db.unsafe('CREATE SCHEMA IF NOT EXISTS atlas;')
+          await sql`CREATE SCHEMA IF NOT EXISTS atlas;`.execute(db)
         } catch (error) {
           throw new Error(`failed to ensure Postgres prerequisites (schema). Original error: ${String(error)}`)
         }
 
-        const extensionRows = await db.unsafe<Array<{ extname: string }>>(
-          `SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')`,
-        )
+        const { rows: extensionRows } = await sql<{ extname: string }>`
+          SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')
+        `.execute(db)
         const installed = new Set(extensionRows.map((row) => row.extname))
         const missing = ['vector', 'pgcrypto'].filter((ext) => !installed.has(ext))
         if (missing.length > 0) {
@@ -601,8 +576,8 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
           )
         }
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.repositories (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.repositories')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             name TEXT NOT NULL,
             default_ref TEXT NOT NULL DEFAULT 'main',
@@ -611,20 +586,20 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (name)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.file_keys (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.file_keys')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             repository_id UUID NOT NULL REFERENCES atlas.repositories(id) ON DELETE CASCADE,
             path TEXT NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (repository_id, path)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.file_versions (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.file_versions')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             file_key_id UUID NOT NULL REFERENCES atlas.file_keys(id) ON DELETE CASCADE,
             repository_ref TEXT NOT NULL DEFAULT 'main',
@@ -640,10 +615,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
             CHECK (repository_commit IS NULL OR repository_commit <> ''),
             UNIQUE (file_key_id, repository_ref, repository_commit, content_hash)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.file_chunks (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.file_chunks')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
             chunk_index INT NOT NULL,
@@ -655,10 +630,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (file_version_id, chunk_index)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.enrichments (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.enrichments')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
             chunk_id UUID REFERENCES atlas.file_chunks(id) ON DELETE SET NULL,
@@ -671,22 +646,22 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (file_version_id, chunk_id, kind, source)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.embeddings (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.embeddings')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             enrichment_id UUID NOT NULL REFERENCES atlas.enrichments(id) ON DELETE CASCADE,
             model TEXT NOT NULL,
             dimension INT NOT NULL,
-            embedding vector(${expectedEmbeddingDimension}) NOT NULL,
+            embedding vector(${sql.raw(String(expectedEmbeddingDimension))}) NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (enrichment_id, model, dimension)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.tree_sitter_facts (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.tree_sitter_facts')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
             node_type TEXT NOT NULL,
@@ -697,10 +672,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (file_version_id, node_type, match_text, start_line, end_line)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.symbols (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.symbols')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             repository_id UUID NOT NULL REFERENCES atlas.repositories(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
@@ -711,10 +686,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (repository_id, normalized_name, kind, signature)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.symbol_defs (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.symbol_defs')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             symbol_id UUID NOT NULL REFERENCES atlas.symbols(id) ON DELETE CASCADE,
             file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
@@ -724,10 +699,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (symbol_id, file_version_id, start_line, end_line)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.symbol_refs (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.symbol_refs')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             symbol_id UUID NOT NULL REFERENCES atlas.symbols(id) ON DELETE CASCADE,
             file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
@@ -737,10 +712,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (symbol_id, file_version_id, start_line, end_line)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.file_edges (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.file_edges')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             from_file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
             to_file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
@@ -749,10 +724,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE (from_file_version_id, to_file_version_id, kind)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.github_events (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.github_events')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             repository_id UUID REFERENCES atlas.repositories(id) ON DELETE SET NULL,
             delivery_id TEXT NOT NULL,
@@ -765,10 +740,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
             processed_at TIMESTAMPTZ,
             UNIQUE (delivery_id)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.ingestions (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.ingestions')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             event_id UUID NOT NULL REFERENCES atlas.github_events(id) ON DELETE CASCADE,
             workflow_id TEXT NOT NULL,
@@ -778,103 +753,103 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
             finished_at TIMESTAMPTZ,
             UNIQUE (event_id, workflow_id)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.event_files (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.event_files')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             event_id UUID NOT NULL REFERENCES atlas.github_events(id) ON DELETE CASCADE,
             file_key_id UUID NOT NULL REFERENCES atlas.file_keys(id) ON DELETE CASCADE,
             change_type TEXT NOT NULL,
             UNIQUE (event_id, file_key_id)
           );
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
-          CREATE TABLE IF NOT EXISTS atlas.ingestion_targets (
+        await sql`
+          CREATE TABLE IF NOT EXISTS ${sql.ref('atlas.ingestion_targets')} (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             ingestion_id UUID NOT NULL REFERENCES atlas.ingestions(id) ON DELETE CASCADE,
             file_version_id UUID NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
             kind TEXT NOT NULL,
             UNIQUE (ingestion_id, file_version_id, kind)
           );
-        `)
+        `.execute(db)
 
         await ensureEmbeddingDimensionMatches()
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS atlas_file_keys_path_idx
-          ON atlas.file_keys (path text_pattern_ops);
-        `)
+          ON ${sql.ref('atlas.file_keys')} (path text_pattern_ops);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS atlas_file_versions_ref_idx
-          ON atlas.file_versions (repository_ref, repository_commit);
-        `)
+          ON ${sql.ref('atlas.file_versions')} (repository_ref, repository_commit);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE UNIQUE INDEX IF NOT EXISTS atlas_file_versions_hash_null_commit_idx
-          ON atlas.file_versions (file_key_id, repository_ref, content_hash)
+          ON ${sql.ref('atlas.file_versions')} (file_key_id, repository_ref, content_hash)
           WHERE repository_commit IS NULL;
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS atlas_file_versions_metadata_idx
-          ON atlas.file_versions USING GIN (metadata JSONB_PATH_OPS);
-        `)
+          ON ${sql.ref('atlas.file_versions')} USING GIN (metadata JSONB_PATH_OPS);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE UNIQUE INDEX IF NOT EXISTS atlas_enrichments_file_kind_source_null_chunk_idx
-          ON atlas.enrichments (file_version_id, kind, source)
+          ON ${sql.ref('atlas.enrichments')} (file_version_id, kind, source)
           WHERE chunk_id IS NULL;
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS atlas_enrichments_kind_idx
-          ON atlas.enrichments (kind);
-        `)
+          ON ${sql.ref('atlas.enrichments')} (kind);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS atlas_enrichments_tags_idx
-          ON atlas.enrichments USING GIN (tags);
-        `)
+          ON ${sql.ref('atlas.enrichments')} USING GIN (tags);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS atlas_enrichments_metadata_idx
-          ON atlas.enrichments USING GIN (metadata JSONB_PATH_OPS);
-        `)
+          ON ${sql.ref('atlas.enrichments')} USING GIN (metadata JSONB_PATH_OPS);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS atlas_embeddings_embedding_idx
-          ON atlas.embeddings
+          ON ${sql.ref('atlas.embeddings')}
           USING ivfflat (embedding vector_cosine_ops)
           WITH (lists = 100);
-        `)
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS atlas_symbols_lookup_idx
-          ON atlas.symbols (normalized_name, kind);
-        `)
+          ON ${sql.ref('atlas.symbols')} (normalized_name, kind);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS atlas_symbol_defs_file_idx
-          ON atlas.symbol_defs (file_version_id);
-        `)
+          ON ${sql.ref('atlas.symbol_defs')} (file_version_id);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS atlas_symbol_refs_file_idx
-          ON atlas.symbol_refs (file_version_id);
-        `)
+          ON ${sql.ref('atlas.symbol_refs')} (file_version_id);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS atlas_file_edges_from_idx
-          ON atlas.file_edges (from_file_version_id, kind);
-        `)
+          ON ${sql.ref('atlas.file_edges')} (from_file_version_id, kind);
+        `.execute(db)
 
-        await db.unsafe(`
+        await sql`
           CREATE INDEX IF NOT EXISTS atlas_file_edges_to_idx
-          ON atlas.file_edges (to_file_version_id, kind);
-        `)
+          ON ${sql.ref('atlas.file_edges')} (to_file_version_id, kind);
+        `.execute(db)
       })()
     }
     await schemaReady
@@ -887,22 +862,23 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedDefaultRef = normalizeText(defaultRef ?? 'main', 'repository default ref', 'main')
     const resolvedMetadata = parseMetadata(metadata)
 
-    const rows = (await db`
-      INSERT INTO atlas.repositories (name, default_ref, metadata)
-      VALUES (${resolvedName}, ${resolvedDefaultRef}, ${resolvedMetadata}::jsonb)
-      ON CONFLICT (name)
-      DO UPDATE SET default_ref = EXCLUDED.default_ref, metadata = EXCLUDED.metadata, updated_at = now()
-      RETURNING id, name, default_ref, metadata, created_at, updated_at;
-    `) as Array<{
-      id: string
-      name: string
-      default_ref: string
-      metadata: Record<string, unknown>
-      created_at: string | Date
-      updated_at: string | Date
-    }>
+    const row = await db
+      .insertInto('atlas.repositories')
+      .values({
+        name: resolvedName,
+        default_ref: resolvedDefaultRef,
+        metadata: sql`${resolvedMetadata}::jsonb`,
+      })
+      .onConflict((oc) =>
+        oc.column('name').doUpdateSet({
+          default_ref: sql`excluded.default_ref`,
+          metadata: sql`excluded.metadata`,
+          updated_at: sql`now()`,
+        }),
+      )
+      .returning(['id', 'name', 'default_ref', 'metadata', 'created_at', 'updated_at'])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('repository upsert failed')
 
     return {
@@ -919,21 +895,13 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     await ensureSchema()
 
     const resolvedName = normalizeText(name, 'repository name')
-    const rows = (await db`
-      SELECT id, name, default_ref, metadata, created_at, updated_at
-      FROM atlas.repositories
-      WHERE name = ${resolvedName}
-      LIMIT 1;
-    `) as Array<{
-      id: string
-      name: string
-      default_ref: string
-      metadata: Record<string, unknown>
-      created_at: string | Date
-      updated_at: string | Date
-    }>
+    const row = await db
+      .selectFrom('atlas.repositories')
+      .select(['id', 'name', 'default_ref', 'metadata', 'created_at', 'updated_at'])
+      .where('name', '=', resolvedName)
+      .limit(1)
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) return null
 
     return {
@@ -952,15 +920,20 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedRepoId = normalizeText(repositoryId, 'repositoryId')
     const resolvedPath = normalizeText(path, 'path')
 
-    const rows = (await db`
-      INSERT INTO atlas.file_keys (repository_id, path)
-      VALUES (${resolvedRepoId}, ${resolvedPath})
-      ON CONFLICT (repository_id, path)
-      DO UPDATE SET path = EXCLUDED.path
-      RETURNING id, repository_id, path, created_at;
-    `) as Array<{ id: string; repository_id: string; path: string; created_at: string | Date }>
+    const row = await db
+      .insertInto('atlas.file_keys')
+      .values({
+        repository_id: resolvedRepoId,
+        path: resolvedPath,
+      })
+      .onConflict((oc) =>
+        oc.columns(['repository_id', 'path']).doUpdateSet({
+          path: sql`excluded.path`,
+        }),
+      )
+      .returning(['id', 'repository_id', 'path', 'created_at'])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('file key upsert failed')
 
     return {
@@ -977,14 +950,14 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedRepoId = normalizeText(repositoryId, 'repositoryId')
     const resolvedPath = normalizeText(path, 'path')
 
-    const rows = (await db`
-      SELECT id, repository_id, path, created_at
-      FROM atlas.file_keys
-      WHERE repository_id = ${resolvedRepoId} AND path = ${resolvedPath}
-      LIMIT 1;
-    `) as Array<{ id: string; repository_id: string; path: string; created_at: string | Date }>
+    const row = await db
+      .selectFrom('atlas.file_keys')
+      .select(['id', 'repository_id', 'path', 'created_at'])
+      .where('repository_id', '=', resolvedRepoId)
+      .where('path', '=', resolvedPath)
+      .limit(1)
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) return null
 
     return {
@@ -1020,55 +993,45 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedMetadata = parseMetadata(metadata)
     const resolvedSourceTimestamp = parseDate(sourceTimestamp)
 
-    const rows = (await db`
-      INSERT INTO atlas.file_versions (
-        file_key_id,
-        repository_ref,
-        repository_commit,
-        content_hash,
-        language,
-        byte_size,
-        line_count,
-        metadata,
-        source_timestamp
+    const row = await db
+      .insertInto('atlas.file_versions')
+      .values({
+        file_key_id: resolvedFileKeyId,
+        repository_ref: resolvedRepositoryRef,
+        repository_commit: resolvedCommit,
+        content_hash: resolvedHash,
+        language: normalizeOptionalNullableText(language),
+        byte_size: byteSize ?? null,
+        line_count: lineCount ?? null,
+        metadata: sql`${resolvedMetadata}::jsonb`,
+        source_timestamp: resolvedSourceTimestamp,
+      })
+      .onConflict((oc) =>
+        oc.columns(['file_key_id', 'repository_ref', 'repository_commit', 'content_hash']).doUpdateSet({
+          language: sql`excluded.language`,
+          byte_size: sql`excluded.byte_size`,
+          line_count: sql`excluded.line_count`,
+          metadata: sql`excluded.metadata`,
+          source_timestamp: sql`excluded.source_timestamp`,
+          updated_at: sql`now()`,
+        }),
       )
-      VALUES (
-        ${resolvedFileKeyId},
-        ${resolvedRepositoryRef},
-        ${resolvedCommit},
-        ${resolvedHash},
-        ${normalizeOptionalNullableText(language)},
-        ${byteSize ?? null},
-        ${lineCount ?? null},
-        ${resolvedMetadata}::jsonb,
-        ${resolvedSourceTimestamp}
-      )
-      ON CONFLICT (file_key_id, repository_ref, repository_commit, content_hash)
-      DO UPDATE SET
-        language = EXCLUDED.language,
-        byte_size = EXCLUDED.byte_size,
-        line_count = EXCLUDED.line_count,
-        metadata = EXCLUDED.metadata,
-        source_timestamp = EXCLUDED.source_timestamp,
-        updated_at = now()
-      RETURNING id, file_key_id, repository_ref, repository_commit, content_hash, language, byte_size, line_count,
-        metadata, source_timestamp, created_at, updated_at;
-    `) as Array<{
-      id: string
-      file_key_id: string
-      repository_ref: string
-      repository_commit: string
-      content_hash: string
-      language: string | null
-      byte_size: number | null
-      line_count: number | null
-      metadata: Record<string, unknown>
-      source_timestamp: string | Date | null
-      created_at: string | Date
-      updated_at: string | Date
-    }>
+      .returning([
+        'id',
+        'file_key_id',
+        'repository_ref',
+        'repository_commit',
+        'content_hash',
+        'language',
+        'byte_size',
+        'line_count',
+        'metadata',
+        'source_timestamp',
+        'created_at',
+        'updated_at',
+      ])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('file version upsert failed')
 
     return {
@@ -1100,31 +1063,29 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedCommit = normalizeOptionalText(repositoryCommit)
     const resolvedHash = normalizeOptionalText(contentHash)
 
-    const rows = (await db`
-      SELECT id, file_key_id, repository_ref, repository_commit, content_hash, language, byte_size, line_count,
-        metadata, source_timestamp, created_at, updated_at
-      FROM atlas.file_versions
-      WHERE file_key_id = ${resolvedFileKeyId}
-        AND repository_ref = ${resolvedRepositoryRef}
-        AND repository_commit = ${resolvedCommit}
-        AND content_hash = ${resolvedHash}
-      LIMIT 1;
-    `) as Array<{
-      id: string
-      file_key_id: string
-      repository_ref: string
-      repository_commit: string
-      content_hash: string
-      language: string | null
-      byte_size: number | null
-      line_count: number | null
-      metadata: Record<string, unknown>
-      source_timestamp: string | Date | null
-      created_at: string | Date
-      updated_at: string | Date
-    }>
+    const row = await db
+      .selectFrom('atlas.file_versions')
+      .select([
+        'id',
+        'file_key_id',
+        'repository_ref',
+        'repository_commit',
+        'content_hash',
+        'language',
+        'byte_size',
+        'line_count',
+        'metadata',
+        'source_timestamp',
+        'created_at',
+        'updated_at',
+      ])
+      .where('file_key_id', '=', resolvedFileKeyId)
+      .where('repository_ref', '=', resolvedRepositoryRef)
+      .where('repository_commit', '=', resolvedCommit)
+      .where('content_hash', '=', resolvedHash)
+      .limit(1)
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) return null
 
     return {
@@ -1159,46 +1120,39 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
 
     const resolvedMetadata = parseMetadata(metadata)
 
-    const rows = (await db`
-      INSERT INTO atlas.file_chunks (
-        file_version_id,
-        chunk_index,
-        start_line,
-        end_line,
-        content,
-        token_count,
-        metadata
+    const row = await db
+      .insertInto('atlas.file_chunks')
+      .values({
+        file_version_id: resolvedFileVersionId,
+        chunk_index: Math.floor(chunkIndex),
+        start_line: startLine ?? null,
+        end_line: endLine ?? null,
+        content: content ?? null,
+        token_count: tokenCount ?? null,
+        metadata: sql`${resolvedMetadata}::jsonb`,
+      })
+      .onConflict((oc) =>
+        oc.columns(['file_version_id', 'chunk_index']).doUpdateSet({
+          start_line: sql`excluded.start_line`,
+          end_line: sql`excluded.end_line`,
+          content: sql`excluded.content`,
+          token_count: sql`excluded.token_count`,
+          metadata: sql`excluded.metadata`,
+        }),
       )
-      VALUES (
-        ${resolvedFileVersionId},
-        ${Math.floor(chunkIndex)},
-        ${startLine ?? null},
-        ${endLine ?? null},
-        ${content ?? null},
-        ${tokenCount ?? null},
-        ${resolvedMetadata}::jsonb
-      )
-      ON CONFLICT (file_version_id, chunk_index)
-      DO UPDATE SET
-        start_line = EXCLUDED.start_line,
-        end_line = EXCLUDED.end_line,
-        content = EXCLUDED.content,
-        token_count = EXCLUDED.token_count,
-        metadata = EXCLUDED.metadata
-      RETURNING id, file_version_id, chunk_index, start_line, end_line, content, token_count, metadata, created_at;
-    `) as Array<{
-      id: string
-      file_version_id: string
-      chunk_index: number
-      start_line: number | null
-      end_line: number | null
-      content: string | null
-      token_count: number | null
-      metadata: Record<string, unknown>
-      created_at: string | Date
-    }>
+      .returning([
+        'id',
+        'file_version_id',
+        'chunk_index',
+        'start_line',
+        'end_line',
+        'content',
+        'token_count',
+        'metadata',
+        'created_at',
+      ])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('file chunk upsert failed')
 
     return {
@@ -1235,89 +1189,50 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedTags = normalizeTags(tags)
     const resolvedMetadata = parseMetadata(metadata)
 
-    const rows = resolvedChunkId
-      ? ((await db`
-          INSERT INTO atlas.enrichments (
-            file_version_id,
-            chunk_id,
-            kind,
-            source,
-            content,
-            summary,
-            tags,
-            metadata
-          )
-          VALUES (
-            ${resolvedFileVersionId},
-            ${resolvedChunkId},
-            ${resolvedKind},
-            ${resolvedSource},
-            ${resolvedContent},
-            ${resolvedSummary},
-            ${db.array(resolvedTags, 'text')}::text[],
-            ${resolvedMetadata}::jsonb
-          )
-          ON CONFLICT (file_version_id, chunk_id, kind, source)
-          DO UPDATE SET
-            content = EXCLUDED.content,
-            summary = EXCLUDED.summary,
-            tags = EXCLUDED.tags,
-            metadata = EXCLUDED.metadata
-          RETURNING id, file_version_id, chunk_id, kind, source, content, summary, tags, metadata, created_at;
-        `) as Array<{
-          id: string
-          file_version_id: string
-          chunk_id: string | null
-          kind: string
-          source: string
-          content: string
-          summary: string | null
-          tags: string[]
-          metadata: Record<string, unknown>
-          created_at: string | Date
-        }>)
-      : ((await db`
-          INSERT INTO atlas.enrichments (
-            file_version_id,
-            chunk_id,
-            kind,
-            source,
-            content,
-            summary,
-            tags,
-            metadata
-          )
-          VALUES (
-            ${resolvedFileVersionId},
-            ${resolvedChunkId},
-            ${resolvedKind},
-            ${resolvedSource},
-            ${resolvedContent},
-            ${resolvedSummary},
-            ${db.array(resolvedTags, 'text')}::text[],
-            ${resolvedMetadata}::jsonb
-          )
-          ON CONFLICT (file_version_id, kind, source) WHERE chunk_id IS NULL
-          DO UPDATE SET
-            content = EXCLUDED.content,
-            summary = EXCLUDED.summary,
-            tags = EXCLUDED.tags,
-            metadata = EXCLUDED.metadata
-          RETURNING id, file_version_id, chunk_id, kind, source, content, summary, tags, metadata, created_at;
-        `) as Array<{
-          id: string
-          file_version_id: string
-          chunk_id: string | null
-          kind: string
-          source: string
-          content: string
-          summary: string | null
-          tags: string[]
-          metadata: Record<string, unknown>
-          created_at: string | Date
-        }>)
+    const insertQuery = db
+      .insertInto('atlas.enrichments')
+      .values({
+        file_version_id: resolvedFileVersionId,
+        chunk_id: resolvedChunkId,
+        kind: resolvedKind,
+        source: resolvedSource,
+        content: resolvedContent,
+        summary: resolvedSummary,
+        tags: sql`${sql.value(resolvedTags)}::text[]`,
+        metadata: sql`${resolvedMetadata}::jsonb`,
+      })
+      .returning([
+        'id',
+        'file_version_id',
+        'chunk_id',
+        'kind',
+        'source',
+        'content',
+        'summary',
+        'tags',
+        'metadata',
+        'created_at',
+      ])
 
-    const row = rows[0]
+    const row = await (resolvedChunkId
+      ? insertQuery.onConflict((oc) =>
+          oc.columns(['file_version_id', 'chunk_id', 'kind', 'source']).doUpdateSet({
+            content: sql`excluded.content`,
+            summary: sql`excluded.summary`,
+            tags: sql`excluded.tags`,
+            metadata: sql`excluded.metadata`,
+          }),
+        )
+      : insertQuery.onConflict((oc) =>
+          oc.columns(['file_version_id', 'kind', 'source']).where('chunk_id', 'is', null).doUpdateSet({
+            content: sql`excluded.content`,
+            summary: sql`excluded.summary`,
+            tags: sql`excluded.tags`,
+            metadata: sql`excluded.metadata`,
+          }),
+        )
+    ).executeTakeFirst()
+
     if (!row) throw new Error('enrichment upsert failed')
 
     return {
@@ -1356,20 +1271,22 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
 
     const vectorString = vectorToPgArray(embedding)
 
-    const rows = (await db`
-      INSERT INTO atlas.embeddings (enrichment_id, model, dimension, embedding)
-      VALUES (
-        ${resolvedEnrichmentId},
-        ${resolvedModel},
-        ${resolvedDimension},
-        ${vectorString}::vector
+    const row = await db
+      .insertInto('atlas.embeddings')
+      .values({
+        enrichment_id: resolvedEnrichmentId,
+        model: resolvedModel,
+        dimension: resolvedDimension,
+        embedding: sql`${vectorString}::vector`,
+      })
+      .onConflict((oc) =>
+        oc.columns(['enrichment_id', 'model', 'dimension']).doUpdateSet({
+          embedding: sql`excluded.embedding`,
+        }),
       )
-      ON CONFLICT (enrichment_id, model, dimension)
-      DO UPDATE SET embedding = EXCLUDED.embedding
-      RETURNING id, enrichment_id, model, dimension, created_at;
-    `) as Array<{ id: string; enrichment_id: string; model: string; dimension: number; created_at: string | Date }>
+      .returning(['id', 'enrichment_id', 'model', 'dimension', 'created_at'])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('embedding upsert failed')
 
     return {
@@ -1396,38 +1313,33 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedMatchText = normalizeText(matchText, 'matchText')
     const resolvedMetadata = parseMetadata(metadata)
 
-    const rows = (await db`
-      INSERT INTO atlas.tree_sitter_facts (
-        file_version_id,
-        node_type,
-        match_text,
-        start_line,
-        end_line,
-        metadata
+    const row = await db
+      .insertInto('atlas.tree_sitter_facts')
+      .values({
+        file_version_id: resolvedFileVersionId,
+        node_type: resolvedNodeType,
+        match_text: resolvedMatchText,
+        start_line: startLine ?? null,
+        end_line: endLine ?? null,
+        metadata: sql`${resolvedMetadata}::jsonb`,
+      })
+      .onConflict((oc) =>
+        oc.columns(['file_version_id', 'node_type', 'match_text', 'start_line', 'end_line']).doUpdateSet({
+          metadata: sql`excluded.metadata`,
+        }),
       )
-      VALUES (
-        ${resolvedFileVersionId},
-        ${resolvedNodeType},
-        ${resolvedMatchText},
-        ${startLine ?? null},
-        ${endLine ?? null},
-        ${resolvedMetadata}::jsonb
-      )
-      ON CONFLICT (file_version_id, node_type, match_text, start_line, end_line)
-      DO UPDATE SET metadata = EXCLUDED.metadata
-      RETURNING id, file_version_id, node_type, match_text, start_line, end_line, metadata, created_at;
-    `) as Array<{
-      id: string
-      file_version_id: string
-      node_type: string
-      match_text: string
-      start_line: number | null
-      end_line: number | null
-      metadata: Record<string, unknown>
-      created_at: string | Date
-    }>
+      .returning([
+        'id',
+        'file_version_id',
+        'node_type',
+        'match_text',
+        'start_line',
+        'end_line',
+        'metadata',
+        'created_at',
+      ])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('tree sitter fact upsert failed')
 
     return {
@@ -1459,31 +1371,25 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedSignature = normalizeOptionalText(signature)
     const resolvedMetadata = parseMetadata(metadata)
 
-    const rows = (await db`
-      INSERT INTO atlas.symbols (repository_id, name, normalized_name, kind, signature, metadata)
-      VALUES (
-        ${resolvedRepositoryId},
-        ${resolvedName},
-        ${resolvedNormalizedName},
-        ${resolvedKind},
-        ${resolvedSignature},
-        ${resolvedMetadata}::jsonb
+    const row = await db
+      .insertInto('atlas.symbols')
+      .values({
+        repository_id: resolvedRepositoryId,
+        name: resolvedName,
+        normalized_name: resolvedNormalizedName,
+        kind: resolvedKind,
+        signature: resolvedSignature,
+        metadata: sql`${resolvedMetadata}::jsonb`,
+      })
+      .onConflict((oc) =>
+        oc.columns(['repository_id', 'normalized_name', 'kind', 'signature']).doUpdateSet({
+          name: sql`excluded.name`,
+          metadata: sql`excluded.metadata`,
+        }),
       )
-      ON CONFLICT (repository_id, normalized_name, kind, signature)
-      DO UPDATE SET name = EXCLUDED.name, metadata = EXCLUDED.metadata
-      RETURNING id, repository_id, name, normalized_name, kind, signature, metadata, created_at;
-    `) as Array<{
-      id: string
-      repository_id: string
-      name: string
-      normalized_name: string
-      kind: string
-      signature: string
-      metadata: Record<string, unknown>
-      created_at: string | Date
-    }>
+      .returning(['id', 'repository_id', 'name', 'normalized_name', 'kind', 'signature', 'metadata', 'created_at'])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('symbol upsert failed')
 
     return {
@@ -1511,29 +1417,23 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedFileVersionId = normalizeText(fileVersionId, 'fileVersionId')
     const resolvedMetadata = parseMetadata(metadata)
 
-    const rows = (await db`
-      INSERT INTO atlas.symbol_defs (symbol_id, file_version_id, start_line, end_line, metadata)
-      VALUES (
-        ${resolvedSymbolId},
-        ${resolvedFileVersionId},
-        ${startLine ?? null},
-        ${endLine ?? null},
-        ${resolvedMetadata}::jsonb
+    const row = await db
+      .insertInto('atlas.symbol_defs')
+      .values({
+        symbol_id: resolvedSymbolId,
+        file_version_id: resolvedFileVersionId,
+        start_line: startLine ?? null,
+        end_line: endLine ?? null,
+        metadata: sql`${resolvedMetadata}::jsonb`,
+      })
+      .onConflict((oc) =>
+        oc.columns(['symbol_id', 'file_version_id', 'start_line', 'end_line']).doUpdateSet({
+          metadata: sql`excluded.metadata`,
+        }),
       )
-      ON CONFLICT (symbol_id, file_version_id, start_line, end_line)
-      DO UPDATE SET metadata = EXCLUDED.metadata
-      RETURNING id, symbol_id, file_version_id, start_line, end_line, metadata, created_at;
-    `) as Array<{
-      id: string
-      symbol_id: string
-      file_version_id: string
-      start_line: number | null
-      end_line: number | null
-      metadata: Record<string, unknown>
-      created_at: string | Date
-    }>
+      .returning(['id', 'symbol_id', 'file_version_id', 'start_line', 'end_line', 'metadata', 'created_at'])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('symbol def upsert failed')
 
     return {
@@ -1560,29 +1460,23 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedFileVersionId = normalizeText(fileVersionId, 'fileVersionId')
     const resolvedMetadata = parseMetadata(metadata)
 
-    const rows = (await db`
-      INSERT INTO atlas.symbol_refs (symbol_id, file_version_id, start_line, end_line, metadata)
-      VALUES (
-        ${resolvedSymbolId},
-        ${resolvedFileVersionId},
-        ${startLine ?? null},
-        ${endLine ?? null},
-        ${resolvedMetadata}::jsonb
+    const row = await db
+      .insertInto('atlas.symbol_refs')
+      .values({
+        symbol_id: resolvedSymbolId,
+        file_version_id: resolvedFileVersionId,
+        start_line: startLine ?? null,
+        end_line: endLine ?? null,
+        metadata: sql`${resolvedMetadata}::jsonb`,
+      })
+      .onConflict((oc) =>
+        oc.columns(['symbol_id', 'file_version_id', 'start_line', 'end_line']).doUpdateSet({
+          metadata: sql`excluded.metadata`,
+        }),
       )
-      ON CONFLICT (symbol_id, file_version_id, start_line, end_line)
-      DO UPDATE SET metadata = EXCLUDED.metadata
-      RETURNING id, symbol_id, file_version_id, start_line, end_line, metadata, created_at;
-    `) as Array<{
-      id: string
-      symbol_id: string
-      file_version_id: string
-      start_line: number | null
-      end_line: number | null
-      metadata: Record<string, unknown>
-      created_at: string | Date
-    }>
+      .returning(['id', 'symbol_id', 'file_version_id', 'start_line', 'end_line', 'metadata', 'created_at'])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('symbol ref upsert failed')
 
     return {
@@ -1609,22 +1503,22 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedKind = normalizeText(kind, 'kind')
     const resolvedMetadata = parseMetadata(metadata)
 
-    const rows = (await db`
-      INSERT INTO atlas.file_edges (from_file_version_id, to_file_version_id, kind, metadata)
-      VALUES (${resolvedFrom}, ${resolvedTo}, ${resolvedKind}, ${resolvedMetadata}::jsonb)
-      ON CONFLICT (from_file_version_id, to_file_version_id, kind)
-      DO UPDATE SET metadata = EXCLUDED.metadata
-      RETURNING id, from_file_version_id, to_file_version_id, kind, metadata, created_at;
-    `) as Array<{
-      id: string
-      from_file_version_id: string
-      to_file_version_id: string
-      kind: string
-      metadata: Record<string, unknown>
-      created_at: string | Date
-    }>
+    const row = await db
+      .insertInto('atlas.file_edges')
+      .values({
+        from_file_version_id: resolvedFrom,
+        to_file_version_id: resolvedTo,
+        kind: resolvedKind,
+        metadata: sql`${resolvedMetadata}::jsonb`,
+      })
+      .onConflict((oc) =>
+        oc.columns(['from_file_version_id', 'to_file_version_id', 'kind']).doUpdateSet({
+          metadata: sql`excluded.metadata`,
+        }),
+      )
+      .returning(['id', 'from_file_version_id', 'to_file_version_id', 'kind', 'metadata', 'created_at'])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('file edge upsert failed')
 
     return {
@@ -1658,54 +1552,44 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedReceivedAt = parseDate(receivedAt)
     const resolvedProcessedAt = parseDate(processedAt)
 
-    const rows = (await db`
-      INSERT INTO atlas.github_events (
-        repository_id,
-        delivery_id,
-        event_type,
-        repository,
-        installation_id,
-        sender_login,
-        payload,
-        received_at,
-        processed_at
+    const row = await db
+      .insertInto('atlas.github_events')
+      .values({
+        repository_id: repositoryId ?? null,
+        delivery_id: resolvedDeliveryId,
+        event_type: resolvedEventType,
+        repository: resolvedRepository,
+        installation_id: normalizeOptionalNullableText(installationId),
+        sender_login: normalizeOptionalNullableText(senderLogin),
+        payload: sql`${resolvedPayload}::jsonb`,
+        received_at: sql`COALESCE(${resolvedReceivedAt}, now())`,
+        processed_at: resolvedProcessedAt,
+      })
+      .onConflict((oc) =>
+        oc.column('delivery_id').doUpdateSet({
+          repository_id: sql`excluded.repository_id`,
+          event_type: sql`excluded.event_type`,
+          repository: sql`excluded.repository`,
+          installation_id: sql`excluded.installation_id`,
+          sender_login: sql`excluded.sender_login`,
+          payload: sql`excluded.payload`,
+          processed_at: sql`COALESCE(excluded.processed_at, atlas.github_events.processed_at)`,
+        }),
       )
-      VALUES (
-        ${repositoryId ?? null},
-        ${resolvedDeliveryId},
-        ${resolvedEventType},
-        ${resolvedRepository},
-        ${normalizeOptionalNullableText(installationId)},
-        ${normalizeOptionalNullableText(senderLogin)},
-        ${resolvedPayload}::jsonb,
-        COALESCE(${resolvedReceivedAt}, now()),
-        ${resolvedProcessedAt}
-      )
-      ON CONFLICT (delivery_id)
-      DO UPDATE SET
-        repository_id = EXCLUDED.repository_id,
-        event_type = EXCLUDED.event_type,
-        repository = EXCLUDED.repository,
-        installation_id = EXCLUDED.installation_id,
-        sender_login = EXCLUDED.sender_login,
-        payload = EXCLUDED.payload,
-        processed_at = COALESCE(EXCLUDED.processed_at, atlas.github_events.processed_at)
-      RETURNING id, repository_id, delivery_id, event_type, repository, installation_id, sender_login, payload,
-        received_at, processed_at;
-    `) as Array<{
-      id: string
-      repository_id: string | null
-      delivery_id: string
-      event_type: string
-      repository: string
-      installation_id: string | null
-      sender_login: string | null
-      payload: Record<string, unknown>
-      received_at: string | Date
-      processed_at: string | Date | null
-    }>
+      .returning([
+        'id',
+        'repository_id',
+        'delivery_id',
+        'event_type',
+        'repository',
+        'installation_id',
+        'sender_login',
+        'payload',
+        'received_at',
+        'processed_at',
+      ])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('github event upsert failed')
 
     return {
@@ -1739,34 +1623,27 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedStartedAt = parseDate(startedAt)
     const resolvedFinishedAt = parseDate(finishedAt)
 
-    const rows = (await db`
-      INSERT INTO atlas.ingestions (event_id, workflow_id, status, error, started_at, finished_at)
-      VALUES (
-        ${resolvedEventId},
-        ${resolvedWorkflowId},
-        ${resolvedStatus},
-        ${resolvedError},
-        COALESCE(${resolvedStartedAt}, now()),
-        ${resolvedFinishedAt}
+    const row = await db
+      .insertInto('atlas.ingestions')
+      .values({
+        event_id: resolvedEventId,
+        workflow_id: resolvedWorkflowId,
+        status: resolvedStatus,
+        error: resolvedError,
+        started_at: sql`COALESCE(${resolvedStartedAt}, now())`,
+        finished_at: resolvedFinishedAt,
+      })
+      .onConflict((oc) =>
+        oc.columns(['event_id', 'workflow_id']).doUpdateSet({
+          status: sql`excluded.status`,
+          error: sql`excluded.error`,
+          started_at: sql`COALESCE(excluded.started_at, atlas.ingestions.started_at)`,
+          finished_at: sql`COALESCE(excluded.finished_at, atlas.ingestions.finished_at)`,
+        }),
       )
-      ON CONFLICT (event_id, workflow_id)
-      DO UPDATE SET
-        status = EXCLUDED.status,
-        error = EXCLUDED.error,
-        started_at = COALESCE(EXCLUDED.started_at, atlas.ingestions.started_at),
-        finished_at = COALESCE(EXCLUDED.finished_at, atlas.ingestions.finished_at)
-      RETURNING id, event_id, workflow_id, status, error, started_at, finished_at;
-    `) as Array<{
-      id: string
-      event_id: string
-      workflow_id: string
-      status: string
-      error: string | null
-      started_at: string | Date
-      finished_at: string | Date | null
-    }>
+      .returning(['id', 'event_id', 'workflow_id', 'status', 'error', 'started_at', 'finished_at'])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('ingestion upsert failed')
 
     return {
@@ -1787,15 +1664,21 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedFileKeyId = normalizeText(fileKeyId, 'fileKeyId')
     const resolvedChangeType = normalizeText(changeType, 'changeType')
 
-    const rows = (await db`
-      INSERT INTO atlas.event_files (event_id, file_key_id, change_type)
-      VALUES (${resolvedEventId}, ${resolvedFileKeyId}, ${resolvedChangeType})
-      ON CONFLICT (event_id, file_key_id)
-      DO UPDATE SET change_type = EXCLUDED.change_type
-      RETURNING id, event_id, file_key_id, change_type;
-    `) as Array<{ id: string; event_id: string; file_key_id: string; change_type: string }>
+    const row = await db
+      .insertInto('atlas.event_files')
+      .values({
+        event_id: resolvedEventId,
+        file_key_id: resolvedFileKeyId,
+        change_type: resolvedChangeType,
+      })
+      .onConflict((oc) =>
+        oc.columns(['event_id', 'file_key_id']).doUpdateSet({
+          change_type: sql`excluded.change_type`,
+        }),
+      )
+      .returning(['id', 'event_id', 'file_key_id', 'change_type'])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('event file upsert failed')
 
     return {
@@ -1813,15 +1696,21 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedFileVersionId = normalizeText(fileVersionId, 'fileVersionId')
     const resolvedKind = normalizeText(kind, 'kind')
 
-    const rows = (await db`
-      INSERT INTO atlas.ingestion_targets (ingestion_id, file_version_id, kind)
-      VALUES (${resolvedIngestionId}, ${resolvedFileVersionId}, ${resolvedKind})
-      ON CONFLICT (ingestion_id, file_version_id, kind)
-      DO UPDATE SET kind = EXCLUDED.kind
-      RETURNING id, ingestion_id, file_version_id, kind;
-    `) as Array<{ id: string; ingestion_id: string; file_version_id: string; kind: string }>
+    const row = await db
+      .insertInto('atlas.ingestion_targets')
+      .values({
+        ingestion_id: resolvedIngestionId,
+        file_version_id: resolvedFileVersionId,
+        kind: resolvedKind,
+      })
+      .onConflict((oc) =>
+        oc.columns(['ingestion_id', 'file_version_id', 'kind']).doUpdateSet({
+          kind: sql`excluded.kind`,
+        }),
+      )
+      .returning(['id', 'ingestion_id', 'file_version_id', 'kind'])
+      .executeTakeFirst()
 
-    const row = rows[0]
     if (!row) throw new Error('ingestion target upsert failed')
 
     return {
@@ -1840,37 +1729,28 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedRef = typeof ref === 'string' ? ref.trim() : ''
     const resolvedPathPrefix = typeof pathPrefix === 'string' ? pathPrefix.trim() : ''
 
-    const conditions: string[] = []
-    const params: unknown[] = []
+    const conditions: Array<ReturnType<typeof sql>> = []
 
     if (resolvedRepository) {
-      params.push(resolvedRepository)
-      conditions.push(`repositories.name = $${params.length}`)
+      conditions.push(sql`repositories.name = ${resolvedRepository}`)
     }
     if (resolvedRef) {
-      params.push(resolvedRef)
-      conditions.push(`file_versions.repository_ref = $${params.length}`)
+      conditions.push(sql`file_versions.repository_ref = ${resolvedRef}`)
     }
     if (resolvedPathPrefix) {
-      params.push(`${resolvedPathPrefix}%`)
-      conditions.push(`file_keys.path LIKE $${params.length}`)
+      conditions.push(sql`file_keys.path LIKE ${`${resolvedPathPrefix}%`}`)
     }
 
-    params.push(resolvedLimit)
-    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-    const limitParam = `$${params.length}`
+    const whereClause = conditions.length ? sql`WHERE ${sql.join(conditions, sql` AND `)}` : sql``
 
-    const rows = await db.unsafe<
-      Array<{
-        repository_name: string
-        repository_ref: string
-        path: string
-        repository_commit: string | null
-        content_hash: string
-        updated_at: string | Date | null
-      }>
-    >(
-      `
+    const rows = await sql<{
+      repository_name: string
+      repository_ref: string
+      path: string
+      repository_commit: string | null
+      content_hash: string
+      updated_at: string | Date | null
+    }>`
         SELECT latest.repository_name,
                latest.repository_ref,
                latest.path,
@@ -1892,12 +1772,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
           ORDER BY file_versions.file_key_id, file_versions.repository_ref, file_versions.updated_at DESC
         ) AS latest
         ORDER BY latest.updated_at DESC NULLS LAST
-        LIMIT ${limitParam};
-      `,
-      params,
-    )
+        LIMIT ${resolvedLimit};
+      `.execute(db)
 
-    return rows.map((row) => ({
+    return rows.rows.map((row) => ({
       repository: row.repository_name,
       ref: row.repository_ref,
       path: row.path,
@@ -1922,119 +1800,69 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const embedding = await embedText(resolvedQuery, embeddingConfig)
     const vectorString = vectorToPgArray(embedding)
 
-    const conditions = ['embeddings.model = $2', 'embeddings.dimension = $3']
-    const params: unknown[] = [vectorString, embeddingConfig.model, embeddingConfig.dimension]
+    const distanceExpr = sql<number>`embeddings.embedding <=> ${vectorString}::vector`
+
+    let searchQuery = db
+      .selectFrom('atlas.embeddings as embeddings')
+      .innerJoin('atlas.enrichments as enrichments', 'enrichments.id', 'embeddings.enrichment_id')
+      .innerJoin('atlas.file_versions as file_versions', 'file_versions.id', 'enrichments.file_version_id')
+      .innerJoin('atlas.file_keys as file_keys', 'file_keys.id', 'file_versions.file_key_id')
+      .innerJoin('atlas.repositories as repositories', 'repositories.id', 'file_keys.repository_id')
+      .select([
+        'enrichments.id as enrichment_id',
+        'enrichments.file_version_id as enrichment_file_version_id',
+        'enrichments.chunk_id as enrichment_chunk_id',
+        'enrichments.kind as enrichment_kind',
+        'enrichments.source as enrichment_source',
+        'enrichments.content as enrichment_content',
+        'enrichments.summary as enrichment_summary',
+        'enrichments.tags as enrichment_tags',
+        'enrichments.metadata as enrichment_metadata',
+        'enrichments.created_at as enrichment_created_at',
+        'file_versions.id as file_version_id',
+        'file_versions.file_key_id as file_version_file_key_id',
+        'file_versions.repository_ref as file_version_repository_ref',
+        'file_versions.repository_commit as file_version_repository_commit',
+        'file_versions.content_hash as file_version_content_hash',
+        'file_versions.language as file_version_language',
+        'file_versions.byte_size as file_version_byte_size',
+        'file_versions.line_count as file_version_line_count',
+        'file_versions.metadata as file_version_metadata',
+        'file_versions.source_timestamp as file_version_source_timestamp',
+        'file_versions.created_at as file_version_created_at',
+        'file_versions.updated_at as file_version_updated_at',
+        'file_keys.id as file_key_id',
+        'file_keys.repository_id as file_key_repository_id',
+        'file_keys.path as file_key_path',
+        'file_keys.created_at as file_key_created_at',
+        'repositories.id as repository_id',
+        'repositories.name as repository_name',
+        'repositories.default_ref as repository_default_ref',
+        'repositories.metadata as repository_metadata',
+        'repositories.created_at as repository_created_at',
+        'repositories.updated_at as repository_updated_at',
+        distanceExpr.as('distance'),
+      ])
+      .where('embeddings.model', '=', embeddingConfig.model)
+      .where('embeddings.dimension', '=', embeddingConfig.dimension)
 
     if (resolvedRepository) {
-      params.push(resolvedRepository)
-      conditions.push(`repositories.name = $${params.length}`)
+      searchQuery = searchQuery.where('repositories.name', '=', resolvedRepository)
     }
     if (resolvedRef) {
-      params.push(resolvedRef)
-      conditions.push(`file_versions.repository_ref = $${params.length}`)
+      searchQuery = searchQuery.where('file_versions.repository_ref', '=', resolvedRef)
     }
     if (resolvedPathPrefix) {
-      params.push(`${resolvedPathPrefix}%`)
-      conditions.push(`file_keys.path LIKE $${params.length}`)
+      searchQuery = searchQuery.where('file_keys.path', 'like', `${resolvedPathPrefix}%`)
     }
     if (resolvedTags.length > 0) {
-      params.push(resolvedTags)
-      conditions.push(`enrichments.tags && $${params.length}::text[]`)
+      searchQuery = searchQuery.where(sql<boolean>`enrichments.tags && ${sql.value(resolvedTags)}::text[]`)
     }
     if (resolvedKinds.length > 0) {
-      params.push(resolvedKinds)
-      conditions.push(`enrichments.kind = ANY($${params.length}::text[])`)
+      searchQuery = searchQuery.where(sql<boolean>`enrichments.kind = ANY(${sql.value(resolvedKinds)}::text[])`)
     }
 
-    params.push(resolvedLimit)
-
-    const rows = await db.unsafe<
-      Array<{
-        enrichment_id: string
-        enrichment_file_version_id: string
-        enrichment_chunk_id: string | null
-        enrichment_kind: string
-        enrichment_source: string
-        enrichment_content: string
-        enrichment_summary: string | null
-        enrichment_tags: string[]
-        enrichment_metadata: Record<string, unknown>
-        enrichment_created_at: string | Date
-        file_version_id: string
-        file_version_file_key_id: string
-        file_version_repository_ref: string
-        file_version_repository_commit: string
-        file_version_content_hash: string
-        file_version_language: string | null
-        file_version_byte_size: number | null
-        file_version_line_count: number | null
-        file_version_metadata: Record<string, unknown>
-        file_version_source_timestamp: string | Date | null
-        file_version_created_at: string | Date
-        file_version_updated_at: string | Date
-        file_key_id: string
-        file_key_repository_id: string
-        file_key_path: string
-        file_key_created_at: string | Date
-        repository_id: string
-        repository_name: string
-        repository_default_ref: string
-        repository_metadata: Record<string, unknown>
-        repository_created_at: string | Date
-        repository_updated_at: string | Date
-        distance: number
-      }>
-    >(
-      `
-        SELECT
-          enrichments.id AS enrichment_id,
-          enrichments.file_version_id AS enrichment_file_version_id,
-          enrichments.chunk_id AS enrichment_chunk_id,
-          enrichments.kind AS enrichment_kind,
-          enrichments.source AS enrichment_source,
-          enrichments.content AS enrichment_content,
-          enrichments.summary AS enrichment_summary,
-          enrichments.tags AS enrichment_tags,
-          enrichments.metadata AS enrichment_metadata,
-          enrichments.created_at AS enrichment_created_at,
-          file_versions.id AS file_version_id,
-          file_versions.file_key_id AS file_version_file_key_id,
-          file_versions.repository_ref AS file_version_repository_ref,
-          file_versions.repository_commit AS file_version_repository_commit,
-          file_versions.content_hash AS file_version_content_hash,
-          file_versions.language AS file_version_language,
-          file_versions.byte_size AS file_version_byte_size,
-          file_versions.line_count AS file_version_line_count,
-          file_versions.metadata AS file_version_metadata,
-          file_versions.source_timestamp AS file_version_source_timestamp,
-          file_versions.created_at AS file_version_created_at,
-          file_versions.updated_at AS file_version_updated_at,
-          file_keys.id AS file_key_id,
-          file_keys.repository_id AS file_key_repository_id,
-          file_keys.path AS file_key_path,
-          file_keys.created_at AS file_key_created_at,
-          repositories.id AS repository_id,
-          repositories.name AS repository_name,
-          repositories.default_ref AS repository_default_ref,
-          repositories.metadata AS repository_metadata,
-          repositories.created_at AS repository_created_at,
-          repositories.updated_at AS repository_updated_at,
-          embeddings.embedding <=> $1::vector AS distance
-        FROM atlas.embeddings AS embeddings
-        JOIN atlas.enrichments AS enrichments
-          ON enrichments.id = embeddings.enrichment_id
-        JOIN atlas.file_versions AS file_versions
-          ON file_versions.id = enrichments.file_version_id
-        JOIN atlas.file_keys AS file_keys
-          ON file_keys.id = file_versions.file_key_id
-        JOIN atlas.repositories AS repositories
-          ON repositories.id = file_keys.repository_id
-        WHERE ${conditions.join(' AND ')}
-        ORDER BY embeddings.embedding <=> $1::vector
-        LIMIT $${params.length};
-      `,
-      params,
-    )
+    const rows = await searchQuery.orderBy(distanceExpr).limit(resolvedLimit).execute()
 
     return rows.map((row) => ({
       enrichment: {
@@ -2107,24 +1935,20 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
   const stats: AtlasStore['stats'] = async () => {
     await ensureSchema()
 
-    const rows = await db.unsafe<
-      Array<{
-        repositories: string | number
-        file_keys: string | number
-        file_versions: string | number
-        enrichments: string | number
-        embeddings: string | number
-      }>
-    >(
-      `
-        SELECT
-          (SELECT COUNT(*) FROM atlas.repositories) AS repositories,
-          (SELECT COUNT(*) FROM atlas.file_keys) AS file_keys,
-          (SELECT COUNT(*) FROM atlas.file_versions) AS file_versions,
-          (SELECT COUNT(*) FROM atlas.enrichments) AS enrichments,
-          (SELECT COUNT(*) FROM atlas.embeddings) AS embeddings;
-      `,
-    )
+    const { rows } = await sql<{
+      repositories: string | number
+      file_keys: string | number
+      file_versions: string | number
+      enrichments: string | number
+      embeddings: string | number
+    }>`
+      SELECT
+        (SELECT COUNT(*) FROM atlas.repositories) AS repositories,
+        (SELECT COUNT(*) FROM atlas.file_keys) AS file_keys,
+        (SELECT COUNT(*) FROM atlas.file_versions) AS file_versions,
+        (SELECT COUNT(*) FROM atlas.enrichments) AS enrichments,
+        (SELECT COUNT(*) FROM atlas.embeddings) AS embeddings;
+    `.execute(db)
 
     const row = rows[0]
     if (!row) {
@@ -2141,7 +1965,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
   }
 
   const close: AtlasStore['close'] = async () => {
-    await db.close()
+    await db.destroy()
   }
 
   return {

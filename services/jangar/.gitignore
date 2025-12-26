@@ -12,3 +12,5 @@ count.txt
 .vinxi
 todos.json
 .codex/auth.json
+playwright-report
+test-results

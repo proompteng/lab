@@ -149,7 +149,8 @@ const updateManifests = (
 ) => {
   const kustomization = readFileSync(kustomizePath, 'utf8')
   const imagePattern = new RegExp(`(name:\\s+${escapeRegExp(imageName)}\\s*\\n\\s*newTag:\\s*)(.+)`, 'm')
-  let updatedKustomization = kustomization.replace(imagePattern, (_, prefix) => `${prefix}${tag}`)
+  const quotedTag = JSON.stringify(tag)
+  let updatedKustomization = kustomization.replace(imagePattern, (_, prefix) => `${prefix}${quotedTag}`)
 
   if (digest) {
     const digestPattern = new RegExp(

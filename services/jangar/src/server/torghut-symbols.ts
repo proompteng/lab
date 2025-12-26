@@ -1,3 +1,5 @@
+import { sql } from 'kysely'
+
 import type { Db } from '~/server/db'
 
 export type TorghutAssetClass = 'equity' | 'crypto'
@@ -14,16 +16,16 @@ let schemaEnsured = false
 const ensureSchema = async (db: Db) => {
   if (schemaEnsured) return
 
-  await db`
+  await sql`
     create table if not exists torghut_symbols (
       symbol text primary key,
       enabled boolean not null default true,
       asset_class text not null default 'equity',
       updated_at timestamptz not null default now()
     )
-  `
-  await db`create index if not exists torghut_symbols_enabled_idx on torghut_symbols (enabled)`
-  await db`create index if not exists torghut_symbols_asset_class_idx on torghut_symbols (asset_class)`
+  `.execute(db)
+  await sql`create index if not exists torghut_symbols_enabled_idx on torghut_symbols (enabled)`.execute(db)
+  await sql`create index if not exists torghut_symbols_asset_class_idx on torghut_symbols (asset_class)`.execute(db)
 
   schemaEnsured = true
 }
@@ -46,30 +48,22 @@ export const listTorghutSymbols = async ({
 }): Promise<TorghutSymbol[]> => {
   await ensureSchema(db)
 
-  const rows: Array<{
-    asset_class: string
-    enabled: boolean
-    symbol: string
-    updated_at: Date
-  }> = includeDisabled
-    ? await db`
-        select symbol, enabled, asset_class, updated_at
-        from torghut_symbols
-        where asset_class = ${assetClass}
-        order by symbol asc
-      `
-    : await db`
-        select symbol, enabled, asset_class, updated_at
-        from torghut_symbols
-        where asset_class = ${assetClass} and enabled = true
-        order by symbol asc
-      `
+  let query = db
+    .selectFrom('torghut_symbols')
+    .select(['symbol', 'enabled', 'asset_class', 'updated_at'])
+    .where('asset_class', '=', assetClass)
+
+  if (!includeDisabled) {
+    query = query.where('enabled', '=', true)
+  }
+
+  const rows = await query.orderBy('symbol', 'asc').execute()
 
   return rows.map((row) => ({
     assetClass: normalizeAssetClass(row.asset_class),
     enabled: row.enabled,
     symbol: row.symbol,
-    updatedAt: row.updated_at.toISOString(),
+    updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
   }))
 }
 
@@ -91,17 +85,24 @@ export const upsertTorghutSymbols = async ({
   const deduped = [...new Set(normalizedSymbols)]
   if (deduped.length === 0) return { insertedOrUpdated: 0, symbols: [] }
 
-  const symbolsArray = db.array(deduped, 'TEXT')
-  await db`
-    insert into torghut_symbols (symbol, enabled, asset_class, updated_at)
-    select symbol, ${enabled}, ${assetClass}, now()
-    from unnest(${symbolsArray}) as symbols(symbol)
-    on conflict (symbol) do update
-    set
-      enabled = excluded.enabled,
-      asset_class = excluded.asset_class,
-      updated_at = excluded.updated_at
-  `
+  await db
+    .insertInto('torghut_symbols')
+    .values(
+      deduped.map((symbol) => ({
+        symbol,
+        enabled,
+        asset_class: assetClass,
+        updated_at: sql`now()`,
+      })),
+    )
+    .onConflict((oc) =>
+      oc.column('symbol').doUpdateSet({
+        enabled: sql`excluded.enabled`,
+        asset_class: sql`excluded.asset_class`,
+        updated_at: sql`excluded.updated_at`,
+      }),
+    )
+    .execute()
 
   return { insertedOrUpdated: deduped.length, symbols: deduped }
 }
@@ -120,16 +121,25 @@ export const setTorghutSymbolEnabled = async ({
   await ensureSchema(db)
 
   const normalized = normalizeTorghutSymbol(symbol)
-  const updatedRows: Array<{ asset_class: string }> = await db`
-    update torghut_symbols
-    set enabled = ${enabled}, updated_at = now()
-    where symbol = ${normalized}
-    returning asset_class
-  `
-  if (updatedRows.length > 0) return
+  const updatedRow = await db
+    .updateTable('torghut_symbols')
+    .set({
+      enabled,
+      updated_at: sql`now()`,
+    })
+    .where('symbol', '=', normalized)
+    .returning(['asset_class'])
+    .executeTakeFirst()
 
-  await db`
-    insert into torghut_symbols (symbol, enabled, asset_class, updated_at)
-    values (${normalized}, ${enabled}, ${assetClass ?? 'equity'}, now())
-  `
+  if (updatedRow) return
+
+  await db
+    .insertInto('torghut_symbols')
+    .values({
+      symbol: normalized,
+      enabled,
+      asset_class: assetClass ?? 'equity',
+      updated_at: sql`now()`,
+    })
+    .execute()
 }

@@ -56,7 +56,7 @@ const splitList = (values: string[]) =>
 const mapMatchToItem = (match: AtlasSearchMatch): AtlasSearchItem => ({
   repository: match.repository.name,
   ref: match.fileVersion.repositoryRef,
-  commit: match.fileVersion.repositoryCommit,
+  commit: match.fileVersion.repositoryCommit ?? undefined,
   path: match.fileKey.path,
   contentHash: match.fileVersion.contentHash,
   updatedAt: match.fileVersion.updatedAt,

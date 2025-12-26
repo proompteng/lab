@@ -10,6 +10,8 @@
     "preview": "bun --bun vite preview",
     "test": "bunx vitest run --config vitest.config.ts",
     "test:e2e": "playwright test --config playwright.config.ts",
+    "test:ui": "bunx playwright test",
+    "test:ui:update": "bunx playwright test --update-snapshots",
     "tsc": "bunx tsc --noEmit",
     "lint": "bunx biome check --config-path ../../biome.json src"
   },
@@ -29,8 +31,10 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "effect": "^3.19.10",
+    "kysely": "^0.28.8",
     "lucide-react": "^0.556.0",
     "nitro": "latest",
+    "pg": "^8.16.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "shadcn": "^3.6.1",
@@ -40,10 +44,12 @@
     "vite-tsconfig-paths": "^5.1.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@tanstack/devtools-vite": "^0.3.12",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.0",
     "@types/node": "^24.10.2",
+    "@types/pg": "^8.16.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.2",
