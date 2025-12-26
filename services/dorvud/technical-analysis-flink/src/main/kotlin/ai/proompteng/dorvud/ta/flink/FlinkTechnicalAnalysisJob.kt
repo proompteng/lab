@@ -62,6 +62,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
+import java.net.URI
 import java.util.Properties
 
 fun main() {
@@ -156,6 +157,7 @@ private fun applyClickhouseSinks(
 private fun ensureClickhouseSchema(config: FlinkTaConfig) {
   val logger = LoggerFactory.getLogger("ta-clickhouse")
   val url = requireNotNull(config.clickhouseUrl) { "TA_CLICKHOUSE_URL must be set when ClickHouse sinks are enabled." }
+  val adminUrl = clickhouseAdminUrl(url)
   val schemaSql =
     object {}.javaClass.getResourceAsStream("/ta-schema.sql")
       ?.bufferedReader(StandardCharsets.UTF_8)
@@ -187,9 +189,9 @@ private fun ensureClickhouseSchema(config: FlinkTaConfig) {
       config.clickhousePassword?.let { properties["password"] = it }
       val connection =
         if (properties.isEmpty) {
-          DriverManager.getConnection(url)
+          DriverManager.getConnection(adminUrl)
         } else {
-          DriverManager.getConnection(url, properties)
+          DriverManager.getConnection(adminUrl, properties)
         }
 
       connection.use { conn ->
@@ -208,6 +210,36 @@ private fun ensureClickhouseSchema(config: FlinkTaConfig) {
       Thread.sleep(2_000L)
       attempt += 1
     }
+  }
+}
+
+private fun clickhouseAdminUrl(url: String): String {
+  val jdbcPrefix = "jdbc:"
+  if (!url.startsWith(jdbcPrefix)) {
+    return url
+  }
+
+  val raw = url.removePrefix(jdbcPrefix)
+  return try {
+    val uri = URI(raw)
+    val scheme = uri.scheme
+    val host = uri.host
+    if (scheme == null || host == null) {
+      url
+    } else {
+      val port = if (uri.port == -1) "" else ":${uri.port}"
+      val filteredQuery =
+        uri.rawQuery
+          ?.split('&')
+          ?.filter { it.isNotBlank() }
+          ?.filterNot { it.startsWith("database=") || it.startsWith("db=") }
+          ?.joinToString("&")
+          ?.takeIf { it.isNotBlank() }
+      val base = "jdbc:${scheme}://${host}${port}/default"
+      if (filteredQuery != null) "$base?$filteredQuery" else base
+    }
+  } catch (_: Exception) {
+    url
   }
 }
 
