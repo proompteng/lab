@@ -53,7 +53,7 @@ const cleanupEnrichmentTimeouts = {
 }
 
 const PARENT_CLOSE_POLICY_ABANDON = 2
-const MAX_CHILD_WORKFLOWS_PER_RUN = 500
+const MAX_CHILD_WORKFLOWS_PER_RUN = 50
 
 const EnrichFileInput = Schema.Struct({
   repoRoot: Schema.String,
@@ -219,7 +219,7 @@ export const workflows = [
               parentClosePolicy: PARENT_CLOSE_POLICY_ABANDON,
             },
           ),
-        { concurrency: 10 },
+        { concurrency: 5 },
       )
 
       const queuedTotal = queuedSoFar + batch.length
