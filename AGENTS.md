@@ -2,9 +2,9 @@
 
 ## Project Structure & Module Organization
 - `apps/`: Next.js/TanStack frontends with tests.
-- `packages/`: TS libs plus the Convex backend (`packages/backend`).
+- `packages/`: shared TS libs plus the Convex backend (`packages/backend`).
 - `services/`: Go, Kotlin, Rails, and Python services.
-- `argocd/`, `kubernetes/`, `tofu/`, `ansible/`: infra + GitOps.
+- `argocd/`, `kubernetes/`, `tofu/`, `ansible/`: infra + GitOps manifests.
 - `scripts/`, `packages/scripts/`: build/deploy helpers.
 - `skills/`: agent skills; each skill includes a `SKILL.md`.
 
@@ -28,16 +28,17 @@
 - Co-locate tests: `*.test.ts(x)`, `*_test.go`, `src/test/kotlin/*Test.kt`, `test/**`, `alchimie_tests/`.
 - Prefer fast unit tests; add integration tests when needed.
 
-## Commit & Pull Request Guidelines
-- Conventional Commit messages (e.g., `feat(scope): summary`, `fix: summary`, `docs: summary`).
-- PRs: clear description, linked issues (e.g., `#1234`), test plan; add UI screenshots and infra rollout notes when relevant.
+## Agent Execution Guidelines (Performance)
+- Start with precise code pointers: use file paths, greppable identifiers, and stack traces to narrow search.
+- Reproduce issues before changing code; keep logs and failing commands in your notes.
+- Run the smallest relevant validation (single test, scoped lint, or targeted build) and record the exact command.
+- Split large requests into smaller steps; call out ambiguities early instead of guessing.
+- Follow the closest skill in `skills/<name>/SKILL.md` when a task matches its description.
 
-## Agent Workflow & Instruction Discovery
-- Agents read `AGENTS.md` from the repo root and the nearest directory; use nested files for subproject rules.
-- Keep prerequisites and test commands current; agents perform best with configured dev environments and reliable tests.
-- Use `AGENTS.override.md` in a subdirectory to replace parent guidance; keep instruction files under 32 KiB.
-- For best results, include file paths, error logs, and exact validation steps in requests; split large tasks into smaller ones.
-- If using Codex review in GitHub, add a `## Review guidelines` section to steer what the reviewer prioritizes.
+## Review Guidelines (for Codex GitHub reviews)
+- Focus on correctness regressions, error handling, and missing tests.
+- Flag infra changes that touch `argocd/`, `tofu/`, `kubernetes/`, or `ansible/` for rollout/impact notes.
+- Treat security issues (secrets, auth gaps, PII logging) as highest priority.
 
 ## Generated Artifacts & Safety
 - Do not edit generated directories (`dist/`, `build/`, `_generated/`) or lockfiles (`bun.lock`, `bun.lockb`).
