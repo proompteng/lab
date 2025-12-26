@@ -4,6 +4,8 @@ export { CodexAppServerClient } from './app-server-client'
 export { Codex } from './codex'
 export type { CodexExecArgs } from './codex-exec'
 export { CodexExec } from './codex-exec'
+export { CodexRunner } from './runner'
+export type { CodexEvent, CodexRunOptions, CodexRunResult, CodexRunnerLogger, CodexRunnerOptions } from './runner'
 export type {
   ApprovalMode,
   CodexOptions,

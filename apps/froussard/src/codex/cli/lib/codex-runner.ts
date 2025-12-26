@@ -1,7 +1,6 @@
-import { createWriteStream, type WriteStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import process from 'node:process'
-import { ensureFileDirectory } from './fs'
+import { CodexRunner } from '@proompteng/codex'
 import { type CodexLogger, consoleLogger } from './logger'
 
 export interface DiscordChannelOptions {
@@ -35,57 +34,6 @@ export interface PushCodexEventsToLokiOptions {
   tenant?: string
   basicAuth?: string
   logger?: CodexLogger
-}
-
-const decoder = new TextDecoder()
-const toolCallPattern = /codex_core::codex:\s+ToolCall:\s+(.*)$/
-const sessionConfiguredPattern =
-  /SessionConfiguredEvent\s*\{\s*session_id:\s*ConversationId\s*\{\s*uuid:\s*([0-9a-fA-F-]+)\s*}/
-
-const extractToolCallPayload = (line: string): string | undefined => {
-  const match = line.match(toolCallPattern)
-  if (!match) {
-    return undefined
-  }
-  const payload = match[1]?.trim()
-  return payload && payload.length > 0 ? payload : 'Tool call invoked'
-}
-
-const normalizeSessionCandidate = (value: unknown): string | undefined => {
-  if (typeof value !== 'string') {
-    return undefined
-  }
-  const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed : undefined
-}
-
-const extractSessionIdFromParsedEvent = (parsed: Record<string, unknown>): string | undefined => {
-  const direct =
-    normalizeSessionCandidate((parsed.session as Record<string, unknown> | undefined)?.id) ??
-    normalizeSessionCandidate(parsed.session_id) ??
-    normalizeSessionCandidate(parsed.sessionId)
-  if (direct) {
-    return direct
-  }
-
-  const item = parsed.item as Record<string, unknown> | undefined
-  const fromItem =
-    normalizeSessionCandidate((item?.session as Record<string, unknown> | undefined)?.id) ??
-    normalizeSessionCandidate(item?.session_id) ??
-    normalizeSessionCandidate(item?.sessionId)
-  if (fromItem) {
-    return fromItem
-  }
-
-  return normalizeSessionCandidate(parsed.conversation_id) ?? normalizeSessionCandidate(parsed.conversationId)
-}
-
-const extractSessionIdFromLogLine = (line: string): string | undefined => {
-  const match = line.match(sessionConfiguredPattern)
-  if (match?.[1]) {
-    return match[1].trim()
-  }
-  return undefined
 }
 
 interface WritableHandle {
@@ -143,30 +91,6 @@ const createWritableHandle = (stream: unknown): WritableHandle | undefined => {
   return undefined
 }
 
-const writeLine = (stream: WriteStream, content: string) => {
-  return new Promise<void>((resolve, reject) => {
-    stream.write(`${content}\n`, (error: Error | null | undefined) => {
-      if (error) {
-        reject(error)
-      } else {
-        resolve()
-      }
-    })
-  })
-}
-
-const closeStream = (stream: WriteStream) => {
-  return new Promise<void>((resolve, reject) => {
-    stream.end((error: Error | null | undefined) => {
-      if (error) {
-        reject(error)
-      } else {
-        resolve()
-      }
-    })
-  })
-}
-
 export const runCodexSession = async ({
   stage,
   prompt,
@@ -192,15 +116,6 @@ export const runCodexSession = async ({
   const idleTimeoutMs = parsePositiveMs(process.env.CODEX_IDLE_TIMEOUT_MS, 30 * 60 * 1000)
   // After the model reports turn completion, give a short grace period before forcing exit.
   const completedGraceMs = parsePositiveMs(process.env.CODEX_EXIT_GRACE_MS, 2 * 60 * 1000)
-
-  await Promise.all([
-    ensureFileDirectory(outputPath),
-    ensureFileDirectory(jsonOutputPath),
-    ensureFileDirectory(agentOutputPath),
-  ])
-
-  const jsonStream = createWriteStream(jsonOutputPath, { flags: 'w' })
-  const agentStream = createWriteStream(agentOutputPath, { flags: 'w' })
 
   let discordProcess: ReturnType<typeof Bun.spawn> | undefined
   let discordWriter: WritableHandle | undefined
@@ -232,225 +147,70 @@ export const runCodexSession = async ({
     }
   }
 
-  const codexCommand = [
-    'codex',
-    'exec',
-    '--dangerously-bypass-approvals-and-sandbox',
-    '--json',
-    '--output-last-message',
-    outputPath,
-  ]
+  const runner = new CodexRunner()
+  const agentMessages: string[] = []
+  let sessionId: string | undefined
+  let sawDelta = false
 
-  const envModel = process.env.CODEX_MODEL?.trim()
-  if (envModel) {
-    codexCommand.push('-m', envModel)
-  }
-
-  if (resumeArg && resumeArg.length > 0) {
-    codexCommand.push('resume')
-    if (resumeArg === '--last') {
-      codexCommand.push('--last')
-    } else {
-      codexCommand.push(resumeArg)
+  const closeDiscordWriter = async () => {
+    if (discordWriter && !discordClosed) {
+      discordClosed = true
+      await discordWriter.close().catch(() => {})
     }
   }
 
-  // For --last we must not pass any positional (clap treats it as session_id and errors).
-  // For all other cases, pass '-' so Codex reads the prompt from stdin.
-  const useStdinDash = !(resumeArg === '--last')
-  if (useStdinDash) {
-    codexCommand.push('-')
+  const writeDiscord = async (payload: string, errorLabel: string) => {
+    if (!discordWriter || discordClosed) {
+      return
+    }
+    try {
+      await discordWriter.write(payload)
+    } catch (error) {
+      await closeDiscordWriter()
+      if (discordChannel?.onError && error instanceof Error) {
+        discordChannel.onError(error)
+      } else {
+        log.error(errorLabel, error)
+      }
+    }
   }
 
-  const codexProcess = Bun.spawn({
-    cmd: codexCommand,
-    stdin: 'pipe',
-    stdout: 'pipe',
-    stderr: 'inherit',
-    env: {
-      ...process.env,
-      CODEX_STAGE: stage,
+  const runResult = await runner.run({
+    input: prompt,
+    model: process.env.CODEX_MODEL?.trim() || undefined,
+    jsonMode: 'json',
+    lastMessagePath: outputPath,
+    eventsPath: jsonOutputPath,
+    agentLogPath: agentOutputPath,
+    resumeSessionId: resumeArg === '--last' ? 'last' : resumeArg,
+    idleTimeoutMs,
+    completedGraceMs,
+    env: { CODEX_STAGE: stage },
+    allowEmptyEventsOnExitCode: 1,
+    logger: log,
+    onSessionId: (id) => {
+      sessionId = id
+    },
+    onToolCall: async (payload) => {
+      await writeDiscord(`ToolCall → ${payload}\n`, 'Failed to write tool call to Discord channel:')
+    },
+    onAgentMessageDelta: async (delta) => {
+      sawDelta = true
+      await writeDiscord(`${delta}\n`, 'Failed to write to Discord channel stream:')
+    },
+    onAgentMessage: async (message) => {
+      if (!sawDelta) {
+        await writeDiscord(`${message}\n`, 'Failed to write to Discord channel stream:')
+      }
     },
   })
 
-  const codexStdin = createWritableHandle(codexProcess.stdin)
-  if (!codexStdin) {
-    throw new Error('Codex subprocess is missing stdin')
+  agentMessages.push(...runResult.agentMessages)
+  if (!sessionId) {
+    sessionId = runResult.sessionId
   }
 
-  await codexStdin.write(prompt)
-  await codexStdin.close()
-
-  const agentMessages: string[] = []
-  const reader = codexProcess.stdout?.getReader()
-  let buffer = ''
-  let sessionId: string | undefined
-  let sawTurnCompleted = false
-  let forcedTermination = false
-  let lastActivity = Date.now()
-
-  if (!reader) {
-    throw new Error('Codex subprocess is missing stdout')
-  }
-
-  const flushLine = async (line: string) => {
-    if (!line.trim()) {
-      return
-    }
-
-    await writeLine(jsonStream, line)
-    lastActivity = Date.now()
-
-    const toolCallPayload = extractToolCallPayload(line)
-    const logLineSession = extractSessionIdFromLogLine(line)
-
-    if (!sessionId && logLineSession) {
-      sessionId = logLineSession
-    }
-
-    if (toolCallPayload && discordWriter && !discordClosed) {
-      try {
-        await discordWriter.write(`ToolCall → ${toolCallPayload}\n`)
-      } catch (error) {
-        discordClosed = true
-        await discordWriter.close().catch(() => {})
-        if (discordChannel?.onError && error instanceof Error) {
-          discordChannel.onError(error)
-        } else {
-          log.error('Failed to write tool call to Discord channel:', error)
-        }
-      }
-    }
-
-    try {
-      const parsed = JSON.parse(line)
-      const item = parsed?.item
-      if (!sessionId) {
-        const candidateSession = extractSessionIdFromParsedEvent(parsed)
-        if (candidateSession) {
-          sessionId = candidateSession
-        }
-      }
-      if (parsed?.type === 'turn.completed') {
-        sawTurnCompleted = true
-      }
-      if (parsed?.type === 'item.completed' && item?.type === 'agent_message' && typeof item?.text === 'string') {
-        const message = item.text
-        agentMessages.push(message)
-        await writeLine(agentStream, message)
-        if (discordWriter && !discordClosed) {
-          try {
-            await discordWriter.write(`${message}\n`)
-          } catch (error) {
-            discordClosed = true
-            await discordWriter.close().catch(() => {})
-            if (discordChannel?.onError && error instanceof Error) {
-              discordChannel.onError(error)
-            } else {
-              log.error('Failed to write to Discord channel stream:', error)
-            }
-          }
-        }
-      }
-    } catch (error) {
-      if (!toolCallPayload && !logLineSession) {
-        log.error('Failed to parse Codex event line as JSON:', error)
-      }
-    }
-  }
-
-  while (true) {
-    const timeoutMs = sawTurnCompleted ? completedGraceMs : idleTimeoutMs
-
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-    const readResult = await Promise.race([
-      reader.read(),
-      new Promise<{ timeout: true }>((resolve) => {
-        timeoutHandle = setTimeout(() => resolve({ timeout: true }), timeoutMs)
-        // Avoid keeping the event loop alive after a successful read.
-        if (typeof (timeoutHandle as unknown as { unref?: () => void }).unref === 'function') {
-          ;(timeoutHandle as unknown as { unref: () => void }).unref()
-        }
-      }),
-    ])
-
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle)
-    }
-
-    if ((readResult as { timeout?: boolean }).timeout) {
-      const idleFor = Date.now() - lastActivity
-      log.warn(
-        `Codex stdout idle for ${idleFor}ms (stage=${stage}); terminating child process after timeout ${timeoutMs}ms`,
-      )
-      forcedTermination = true
-      await reader.cancel().catch(() => {})
-      codexProcess.kill()
-      break
-    }
-
-    const { value, done } = readResult as { value?: Uint8Array; done?: boolean }
-    if (done) {
-      break
-    }
-    if (!value) {
-      continue
-    }
-    buffer += decoder.decode(value, { stream: true })
-
-    let newlineIndex = buffer.indexOf('\n')
-    while (newlineIndex !== -1) {
-      const line = buffer.slice(0, newlineIndex)
-      buffer = buffer.slice(newlineIndex + 1)
-      await flushLine(line)
-      newlineIndex = buffer.indexOf('\n')
-    }
-  }
-
-  const remaining = buffer.trim()
-  if (remaining) {
-    await flushLine(remaining)
-  }
-
-  await closeStream(jsonStream)
-  await closeStream(agentStream)
-
-  if (discordWriter && !discordClosed) {
-    await discordWriter.close()
-    discordClosed = true
-  }
-
-  const codexExitCode = await codexProcess.exited
-
-  if (forcedTermination) {
-    if (codexExitCode !== 0) {
-      log.warn(`Codex subprocess was terminated due to idle timeout (exit ${codexExitCode})`)
-    } else {
-      log.warn('Codex subprocess was terminated due to idle timeout')
-    }
-  } else if (codexExitCode !== 0) {
-    let eventsLogMissing = false
-    try {
-      const stats = await stat(jsonOutputPath)
-      eventsLogMissing = stats.size === 0
-    } catch (error) {
-      if (isNotFoundError(error)) {
-        eventsLogMissing = true
-      } else {
-        throw error
-      }
-    }
-
-    const allowArtifactCapture = eventsLogMissing && codexExitCode === 1
-
-    if (allowArtifactCapture) {
-      log.warn(
-        `Codex exited with status ${codexExitCode} but event log is missing/empty; continuing to allow artifact capture`,
-      )
-    } else {
-      throw new Error(`Codex exited with status ${codexExitCode}`)
-    }
-  }
+  await closeDiscordWriter()
 
   if (discordProcess) {
     const discordExit = await discordProcess.exited
