@@ -83,12 +83,10 @@ jobs:
         run: bunx biome check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
 
       - name: Run Temporal Bun SDK tests
-        run: |
-          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test
+        run: bun run --filter @proompteng/temporal-bun-sdk test
 
       - name: Run worker load suite
-        run: |
-          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load
+        run: bun run --filter @proompteng/temporal-bun-sdk test:load
 
       - name: Upload worker load artifacts
         if: always()
