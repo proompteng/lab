@@ -2,18 +2,20 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { pushCodexEventsToLoki, runCodexSession } from '../codex-runner'
 
-const runnerMocks = vi.hoisted(() => ({
+const runnerMocks = {
   run: vi.fn(),
-}))
+}
 
-vi.mock('@proompteng/codex', () => {
-  class CodexRunner {
-    run = runnerMocks.run
-  }
-  return { CodexRunner }
-})
+const spawnMock = vi.fn<(options: { cmd?: string[] }) => BunProcess>()
+const bunFileMock = vi.fn<(path: string) => { text: () => Promise<string> }>()
+let bunGlobal: Record<string, unknown> | undefined
+let originalSpawn: unknown
+let originalFile: unknown
+let hadBun = false
+
+let runCodexSession: typeof import('../codex-runner').runCodexSession
+let pushCodexEventsToLoki: typeof import('../codex-runner').pushCodexEventsToLoki
 
 type BunProcess = {
   stdin?: unknown
@@ -23,15 +25,19 @@ type BunProcess = {
   kill?: () => void
 }
 
-const bunGlobals = vi.hoisted(() => {
-  const spawn = vi.fn<(options: { cmd?: string[] }) => BunProcess>()
-  const file = vi.fn<(path: string) => { text: () => Promise<string> }>()
-  ;(globalThis as unknown as { Bun?: unknown }).Bun = { spawn, file }
-  return { spawn, file }
-})
-
-const spawnMock = bunGlobals.spawn
-const bunFileMock = bunGlobals.file
+const installBunMocks = () => {
+  const globalRef = globalThis as { Bun?: Record<string, unknown> }
+  bunGlobal = globalRef.Bun
+  hadBun = Boolean(bunGlobal)
+  if (!bunGlobal) {
+    bunGlobal = {}
+    globalRef.Bun = bunGlobal
+  }
+  originalSpawn = bunGlobal.spawn
+  originalFile = bunGlobal.file
+  bunGlobal.spawn = spawnMock
+  bunGlobal.file = bunFileMock
+}
 
 const createWritable = (sink: string[]) => ({
   write(chunk: string) {
@@ -65,11 +71,40 @@ describe('codex-runner', () => {
       text: () => readFile(path, 'utf8'),
     }))
     runnerMocks.run.mockReset()
+
+    installBunMocks()
+
+    vi.resetModules()
+    vi.doMock('@proompteng/codex', () => {
+      class CodexRunner {
+        run = runnerMocks.run
+      }
+      return { CodexRunner }
+    })
+
+    const module = await import('../codex-runner')
+    runCodexSession = module.runCodexSession
+    pushCodexEventsToLoki = module.pushCodexEventsToLoki
   })
 
   afterEach(async () => {
     await rm(workspace, { recursive: true, force: true })
     global.fetch = originalFetch
+    if (bunGlobal) {
+      if (originalSpawn !== undefined) {
+        bunGlobal.spawn = originalSpawn
+      } else {
+        delete bunGlobal.spawn
+      }
+      if (originalFile !== undefined) {
+        bunGlobal.file = originalFile
+      } else {
+        delete bunGlobal.file
+      }
+      if (!hadBun) {
+        delete (globalThis as { Bun?: Record<string, unknown> }).Bun
+      }
+    }
   })
 
   it('executes a Codex session and captures agent messages', async () => {
@@ -158,6 +193,57 @@ describe('codex-runner', () => {
 
     expect(channelSink.some((chunk) => chunk.includes('channel copy'))).toBe(true)
     expect(channelSink.some((chunk) => chunk.includes('ToolCall → shell'))).toBe(true)
+  })
+
+  it('streams command output and token usage to stdout and Discord', async () => {
+    const channelSink: string[] = []
+    const stdoutSink: string[] = []
+    const discordProcess = createDiscordProcess(channelSink)
+    spawnMock.mockImplementationOnce(() => discordProcess)
+
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdoutSink.push(String(chunk))
+      return true
+    })
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      options.onEvent?.({
+        type: 'item.started',
+        item: { type: 'command_execution', command: '/bin/bash -lc ls' },
+      })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: { type: 'command_execution', aggregated_output: 'lab', exit_code: 0 },
+      })
+      options.onEvent?.({
+        type: 'turn.completed',
+        usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 5, reasoning_tokens: 3 },
+      })
+      return { agentMessages: [], sessionId: 'session-2', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'List workspace',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+      discordChannel: {
+        command: ['bun', 'run', 'discord-channel.ts'],
+      },
+    })
+
+    stdoutSpy.mockRestore()
+
+    const stdoutText = stdoutSink.join('')
+    expect(stdoutText).toContain('$ /bin/bash -lc ls')
+    expect(stdoutText).toContain('lab')
+    expect(stdoutText).toContain('Usage → input: 10 (cached 2) | output: 5 | reasoning: 3')
+
+    const channelText = channelSink.join('')
+    expect(channelText).toContain('$ /bin/bash -lc ls')
+    expect(channelText).toContain('lab')
+    expect(channelText).toContain('Usage → input: 10 (cached 2) | output: 5 | reasoning: 3')
   })
 
   it('prioritizes delta streaming when provided', async () => {
