@@ -1,223 +1,152 @@
-# Repository Guidelines
+# Repository Guidelines for Agents
 
-## Project Structure & Module Organization
+This file guides agentic coding assistants working in this repo.
+Be surgical: change only what is needed and match existing patterns.
 
-- `apps/<app>` contains Next.js/Turbo UIs; keep UI fixtures and tests alongside components.
-- Shared TS utilities stay in `packages/backend`; CDK8s blueprints sit in `packages/cloutt`.
-- Go services live in `services/<service>` with `main.go` and adjacent `*_test.go` files.
-- Infra-as-code spans `tofu/harvester` (OpenTofu), bootstrap tooling under `kubernetes/`, GitOps application specs in `argocd/`, automation scripts in `packages/scripts` and `scripts/`, plus Ansible plays in `ansible/`.
+## Repo map
+- apps/*: Next.js/TanStack frontends with co-located tests.
+- packages/*: shared TS libs, Convex backend, tooling.
+- services/*: Go services, Kotlin/Quarkus service, Rails API, Python services.
+- argocd/, tofu/, ansible/, kubernetes/: infrastructure and GitOps.
+- scripts/, packages/scripts/: build and deploy helpers.
+- skills/: Codex Agent Skills—`SKILL.md` bundles with metadata + instructions (optional scripts/resources) for repeatable workflows.
 
-## Build, Test & Development Commands
+## Prereqs
+- Node 24.11.1 and Bun 1.3.5 (root package.json).
+- Go 1.24+ for services.
+- Ruby 3.4.7 + Bundler 2.7+ for `services/dernier`.
+- Python 3.9-3.12 for `apps/alchimie`, 3.11-3.12 for `services/torghut`.
 
-- Install dependencies with `bun install` (Node 24.11.1, Bun 1.3.5) and run `go mod tidy` inside each Go service.
-- Start UIs with `bun run dev:proompteng`; swap the suffix for sibling apps.
-- Build and smoke test via `bun run build:<app>` then `bun run start:<app>`.
-- Format and lint using `bun run format` and `bun run lint:<app>`.
-- Run backend workflows through `go test ./...` and `go build ./...`.
-- Regenerate Codex app-server TypeScript bindings when the protocol changes with `codex app-server generate-ts --out packages/codex/src/app-server`.
-- Infra flow: `bun run tf:plan` (review), `bun run tf:apply` (approved), and `bun run ansible` for playbooks. Use the deployment helper scripts when touching automation services:
-  - `bun apps/froussard/src/codex/cli/build-codex-image.ts` to rebuild/push the Codex runner image.
-    - Script defaults to the `tuslagch` GitHub CLI account; override with `GH_TOKEN_USER=<other>` if needed. Container git commits use `tuslagch@proompteng.ai`.
-  - `bun packages/scripts/src/froussard/deploy-service.ts` to build/push the Froussard Docker image (via `apps/froussard/Dockerfile`), stamp the Knative manifest with the new digest + `FROUSSARD_VERSION/FROUSSARD_COMMIT`, and `kubectl apply` the update.
-  - `bun packages/scripts/src/facteur/deploy-service.ts` to build, push, and redeploy Facteur (applies the kustomize overlay and `kn service apply`).
-- Whenever you change any TypeScript/JavaScript files, run the relevant Biome check command (e.g. `bunx biome check <paths>`) and resolve every diagnostic before pushing or opening a PR; mention the run in your PR description if manual fixes were required.
+## Install and global commands
+- Install JS deps: `bun install`.
+- Format all: `bun run format` (Biome).
+- Lint an app/package: `bun run lint:<name>` (e.g., `lint:proompteng`).
+- Build an app: `bun run build:<name>`; start: `bun run start:<name>`.
+- Generate protos: `bun run proto:generate`.
+- Go build/tests: `go build ./services/...`, `go test ./services/...`.
 
-## Memories service helpers
+## TypeScript/Bun workspaces
+- Dev server: `bun run dev:<app>` (e.g., `dev:proompteng`).
+- Vitest workspaces (apps/froussard, packages/codex, services/golink, etc.):
+- All tests: `bun run --filter <workspace> test`.
+- Single file: `bun run --filter <workspace> test -- path/to/test.ts`.
+- Single test: `bun run --filter <workspace> test -- -t "name"`.
+- Bun test workspaces (services/memories, services/bumba, packages/temporal-bun-sdk, etc.):
+- All tests: `bun run --filter <workspace> test`.
+- Single file: `bun run --filter <workspace> test -- tests/foo.test.ts`.
+- Single test: `bun test -t "name" tests/foo.test.ts`.
+- Lint JS/TS in scope: `bunx biome check <paths>`.
 
-- Save new entries with `bun run --filter memories save-memory --task-name … --content … --summary … --tags …` and query cached facts with `bun run --filter memories retrieve-memory --query …`. Both helpers emit logs tied to the `memories` schema defined in `schemas/embeddings/memories.sql`.
+## Convex backend (packages/backend)
+- Dev: `bun run dev:convex` (runs Convex locally).
+- Setup: `bun run dev:setup:convex`.
+- Codegen: `bun run --filter @proompteng/backend codegen`.
+- Seed models: `bun run seed:models`.
 
-### Tooling Notes
+## Go services
+- Run all tests: `go test ./services/...`.
+- Single package: `go test ./services/prt`.
+- Single test: `go test ./services/prt -run TestHandleRoot`.
+- Go formatting: `gofmt -w <files>` (also via lint-staged).
+- Run `go mod tidy` inside the specific service directory.
 
-- **kubectl**: the default kubeconfig on these hosts already targets the shared cluster. Avoid overriding `KUBECONFIG` unless you intentionally need another context; doing so can surface TLS or auth errors that do not occur with the default config.
-- **argocd CLI**: keep usage read-only by default—prefer `argocd app get <app>` or `argocd app list` to inspect state, and only run mutating operations (syncs, rollbacks, deletes) when the playbook explicitly calls for them.
-- **gh CLI**: when passing markdown in flags, wrap the entire value in single quotes or use `--body-file` with a heredoc. Backticks inside double-quoted arguments trigger shell command substitution and will break commands like `gh pr create`.
-- Never edit compiled or generated artifacts (e.g., `dist/`, bundles inside running containers); change source and rebuild instead.
+## Kotlin/Gradle (services/graf)
+- Tests: `./gradlew test`.
+- Single test class: `./gradlew test --tests "ai.proompteng.graf.services.GraphServiceTest"`.
+- Dev server: `./gradlew quarkusDev`.
+- Format/lint: `./gradlew ktlintCheck` (or `ktlintFormat`).
 
-## Coding Style & Naming Conventions
+## Rails (services/dernier)
+- Setup: `bundle install` then `bundle exec rails db:prepare`.
+- Tests: `bundle exec rails test` (requires test `DATABASE_URL`).
+- Single test file or line: `bundle exec rails test test/models/user_test.rb:42`.
+- Dev: `bundle exec rails server` or `bin/dev` (tailwind watch).
 
-- Run Biome before commits; it enforces two-space indentation, single quotes, trailing commas, and 120-character lines.
-- Name files in kebab-case (`dialog-panel.tsx`, `cron-worker.go`).
-- Order imports standard → third-party → internal with blank lines between groups.
-- Prefer explicit conditional statements over nested ternaries for readability.
-- Compose React UI with Tailwind utilities via `cn()` and keep schema validation in `schemas/` using Zod.
-- Wrap Go errors as `fmt.Errorf("operation failed: %w", err)`.
+## Python
+- apps/alchimie:
+- Install: `pip install -e ".[dev]"`.
+- Dev: `dagster dev`.
+- Tests: `pytest alchimie_tests`.
+- Single test: `pytest alchimie_tests/test_file.py -k "pattern"`.
+- services/torghut:
+- Dev: `uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8181`.
+- Type check: `uv run pyright`.
 
-## Testing Guidelines
+## Infra helpers
+- OpenTofu: `bun run tf:plan`, `bun run tf:apply`.
+- ArgoCD manifest lint: `bun run lint:argocd` (kubeconform).
+- Ansible playbook: `bun run ansible`.
 
-- Keep Go tests as `*_test.go` next to implementation; narrow runs with `go test ./services/prt -run TestHandleRoot`.
-- Write TypeScript tests as `*.test.ts`; trigger scoped runs with `bun run --filter cloutt test` or the appropriate workspace filter.
-- Target fast unit coverage first, then log manual QA steps in PR descriptions.
+## Single-test cheat sheet
+- Vitest: `bun run --filter <workspace> test -- path/to/test.ts -t "pattern"`.
+- Bun test: `bun test -t "pattern" tests/foo.test.ts`.
+- Go: `go test ./services/prt -run TestName`.
+- Kotlin: `./gradlew test --tests "ai.proompteng.graf.SomeTest"`.
+- Rails: `bundle exec rails test test/models/user_test.rb:42`.
+- Pytest: `pytest alchimie_tests/test_file.py -k "pattern"`.
 
-## Commit & Pull Request Guidelines
+## Workspace filtering tips
+- Use `bun run --filter <workspace> <script>` to target one package.
+- Multiple `--filter` flags are allowed when a task spans packages.
+- Scoped names keep the `@scope/name` (example: `@proompteng/golink`).
+- Use `turbo run <task> --filter <workspace>` if Turbo is already in use.
 
-- Adopt Conventional Commits (e.g. `feat: add prix cache`); use bodies for extra context or breaking notes.
-- Commits and PR titles MUST use the approved types (`build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`).
-- PRs should summarize the change, link issues, list verification (`go test`, `bun run lint:<app>`), and attach UI screenshots when visuals shift.
-- Always seed new PRs with the default template. Copy `.github/PULL_REQUEST_TEMPLATE.md` to a scratch file (e.g. `/tmp/pr.md`), fill in every section (Summary, Related Issues, Testing, Screenshots/None, Breaking Changes/None, Checklist), then run `gh pr create --body-file /tmp/pr.md`.
-- Merge with squash (merge commits are blocked): `gh pr merge <number> --squash --delete-branch`.
-- Keep scope tight, track follow-ups with TODOs, and document rollout or operational impacts.
-- NEVER edit lockfiles (e.g. `bun.lock`) by hand—regenerate them with the package manager instead.
+## Testing conventions
+- TS/TSX tests: `*.test.ts` / `*.test.tsx` next to code.
+- Go tests: `*_test.go` next to implementation.
+- Kotlin tests: `src/test/kotlin/**` with `*Test.kt`.
+- Rails tests: `test/**` (Minitest).
+- Keep fast unit tests first; add slower integration tests only when needed.
 
-## Cursor Agent CLI
+## Formatting and linting
+- Biome config in `biome.json` controls JS/TS formatting and lint rules.
+- Biome uses 2-space indent, single quotes, trailing commas, 120 char line width.
+- Biome auto-organizes imports; do not hand-sort into non-standard orders.
+- For Kotlin, use ktlint; for Go, use gofmt; for Ruby, follow Rails defaults.
 
-- Executable path: confirm with `which cursor-agent`; typically `~/.local/bin/cursor-agent`.
-- Invocation shape: `cursor-agent [options] [command] [prompt...]`.
-- Common workflow for Codex automation: `cursor-agent --print "<instruction>"` (non-interactive output to stdout).
-- Global options:
-  - `-v, --version` — print the version and exit.
-  - `--api-key <key>` — provide API key (otherwise read from `CURSOR_API_KEY`).
-  - `-p, --print` — stream agent responses to stdout (required for CLI scripts).
-  - `--output-format <text|json|stream-json>` — adjust payload (only with `--print`).
-  - `--stream-partial-output` — emit incremental deltas (requires `--print` + `stream-json`).
-  - `-b, --background` — start in background/composer mode.
-  - `--resume [chatId]` — reconnect to an existing session (omit ID to resume latest).
-  - `--model <name>` — pick model (e.g. `gpt-5`, `sonnet-4`).
-  - `-f, --force` — auto-approve commands unless explicitly denied.
-  - `-h, --help` — display help message.
-- Subcommands:
-  - `agent [prompt...]` — launch an interactive run with optional opening prompt.
-  - `create-chat` — start an empty chat and return its ID.
-  - `ls` — list resumable chat sessions.
-  - `resume [chatId]` — resume latest (or specific) chat session.
-  - `install-shell-integration` / `uninstall-shell-integration` — manage shell hooks.
-  - `login` / `logout` — manage authentication state.
-  - `mcp` — manage MCP servers.
-  - `status` or `whoami` — show authentication details.
-  - `sandbox` — inspect sandbox configuration.
-  - `update` / `upgrade` — update Cursor Agent.
-  - `help [command]` — show help for a subcommand.
-- Example (streaming JSON with force + sonnet-4.5):
-  ```bash
-  cursor-agent --print --output-format stream-json --stream-partial-output --force --model sonnet-4.5-thinking "Describe current workspace status"
-  ```
-- Non-zero exit codes indicate command failures; inspect stderr for details.
+## Code style and conventions
+- Imports: standard library -> third-party -> internal; blank lines between groups.
+- Naming: files in kebab-case; components/types in PascalCase; vars/functions in camelCase.
+- Avoid nested ternaries; prefer explicit if/else for clarity.
+- Prefer small, focused modules; keep tests close to the code they cover.
+- Types: keep public APIs explicit; use `z.infer` or `typeof` helpers for schema-driven types.
+- Error handling: never swallow errors; attach context and keep stack traces.
+- Go errors: wrap with `fmt.Errorf("context: %w", err)`.
+- Use `async`/`await` consistently; avoid mixing callbacks and promises.
 
-## Codex Progress Comment Flow
+## Cursor rules (from .cursor/rules/*.mdc, apply to *.tsx)
+- Styling: Tailwind CSS only; avoid custom CSS.
+- Class ordering: layout -> spacing -> sizing -> typography -> colors.
+- Color palette: zinc for backgrounds/text; primary zinc-900/100, secondary zinc-700/300.
+- Use `cn()` for conditional classNames.
+- Prefer responsive utilities; do not hardcode width/height.
+- Use CSS variables for dynamic values; use `theme()` for config access.
+- Animations: Framer Motion for complex, Tailwind transitions for simple.
+- Accessibility: add proper ARIA attributes; optimize for a11y/perf.
+- Component structure: separate view vs logic; prefer composition.
+- Schema validation: Zod for forms, APIs, and AI outputs.
+- Form schemas live in `schemas/`; use `zodResolver` with React Hook Form.
+- Validate with `.parse()`/`.safeParse()` and return formatted errors.
+- File naming: kebab-case.
 
-- Maintain exactly one implementation progress comment per issue, anchored by `<!-- codex:progress -->`.
-- Use `apps/froussard/src/codex/cli/codex-progress-comment.ts` to create or update that comment; provide the markdown via stdin or `--body-file`.
-- Required env vars: `ISSUE_REPO` and `ISSUE_NUMBER`. Optional overrides: `CODEX_PROGRESS_COMMENT_MARKER` and `CODEX_PROGRESS_COMMENT_LOG_PATH` (falls back to `.codex-implementation.log`).
-- Kickoff body should restate the approved plan as a checklist, flag the active step, and capture risks/tests so reviewers can track work in flight.
-- Update the comment after each milestone—reuse the same comment rather than adding new ones—and include links to validation where helpful.
-- At completion, mark the checklist done, replace the status block with the final summary/validation, and confirm the helper logs the resulting `comment_id`/`comment_url`.
-- Use `--dry-run` when validating locally; it prints the resolved action/body without mutating GitHub.
+## UI/UX checklist (when touching UI)
+- Preserve keyboard navigation and visible focus states.
+- Keep tap targets at least 24px (44px on mobile).
+- Do not block paste in inputs; validate after typing.
+- Keep submit enabled until request starts; show loading state.
+- Put errors inline and focus the first error on submit.
+- Use links for navigation to preserve browser behaviors.
+- Respect `prefers-reduced-motion`.
+- Confirm destructive actions or provide undo.
+- Use aria-live for toasts/inline validation.
 
-## Security & Operations Notes
+## Generated artifacts and safety
+- Do not edit generated code in `dist/`, `build/`, `_generated`, or vendored dirs.
+- Regenerate artifacts via the owning tool instead.
+- Never hand-edit lockfiles (`bun.lock`, `bun.lockb`).
+- Avoid touching ArgoCD live state; update manifests in `argocd/`.
+- Prefer read-only kubectl commands unless explicitly asked.
 
-- ArgoCD reconciles desired state; edit manifests in `argocd/` and let automation deploy.
-- Application directories under `argocd/applications/` must expose Kustomize or raw manifests only; the platform `ApplicationSet` owns the Argo CD `Application` objects (no nested `Application` manifests).
-- Pair Terraform plans from `bun run tf:plan` with review before `bun run tf:apply`; note outcomes after applies.
-- Prefer read-only `kubectl -n <namespace> get ...` for production checks and capture findings in runbooks.
-
-## Interactions
-
-- Keyboard
-  - MUST: Full keyboard support per [WAI-ARIA APG](https://wwww3org/WAI/ARIA/apg/patterns/)
-  - MUST: Visible focus rings (`:focus-visible`; group with `:focus-within`)
-  - MUST: Manage focus (trap, move, and return) per APG patterns
-- Targets & input
-  - MUST: Hit target ≥24px (mobile ≥44px) If visual <24px, expand hit area
-  - MUST: Mobile `<input>` font-size ≥16px or set:
-    ```html
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
-    ```
-  - NEVER: Disable browser zoom
-  - MUST: `touch-action: manipulation` to prevent double-tap zoom; set `-webkit-tap-highlight-color` to match design
-- Inputs & forms (behavior)
-  - MUST: Hydration-safe inputs (no lost focus/value)
-  - NEVER: Block paste in `<input>/<textarea>`
-  - MUST: Loading buttons show spinner and keep original label
-  - MUST: Enter submits focused text input In `<textarea>`, ⌘/Ctrl+Enter submits; Enter adds newline
-  - MUST: Keep submit enabled until request starts; then disable, show spinner, use idempotency key
-  - MUST: Don’t block typing; accept free text and validate after
-  - MUST: Allow submitting incomplete forms to surface validation
-  - MUST: Errors inline next to fields; on submit, focus first error
-  - MUST: `autocomplete` + meaningful `name`; correct `type` and `inputmode`
-  - SHOULD: Disable spellcheck for emails/codes/usernames
-  - SHOULD: Placeholders end with ellipsis and show example pattern (eg, `+1 (123) 456-7890`, `sk-012345…`)
-  - MUST: Warn on unsaved changes before navigation
-  - MUST: Compatible with password managers & 2FA; allow pasting one-time codes
-  - MUST: Trim values to handle text expansion trailing spaces
-  - MUST: No dead zones on checkboxes/radios; label+control share one generous hit target
-- State & navigation
-  - MUST: URL reflects state (deep-link filters/tabs/pagination/expanded panels) Prefer libs like [nuqs](https://nuqs47ngcom/)
-  - MUST: Back/Forward restores scroll
-  - MUST: Links are links—use `<a>/<Link>` for navigation (support Cmd/Ctrl/middle-click)
-- Feedback
-  - SHOULD: Optimistic UI; reconcile on response; on failure show error and rollback or offer Undo
-  - MUST: Confirm destructive actions or provide Undo window
-  - MUST: Use polite `aria-live` for toasts/inline validation
-  - SHOULD: Ellipsis (`…`) for options that open follow-ups (eg, “Rename…”)
-- Touch/drag/scroll
-  - MUST: Design forgiving interactions (generous targets, clear affordances; avoid finickiness)
-  - MUST: Delay first tooltip in a group; subsequent peers no delay
-  - MUST: Intentional `overscroll-behavior: contain` in modals/drawers
-  - MUST: During drag, disable text selection and set `inert` on dragged element/containers
-  - MUST: No “dead-looking” interactive zones—if it looks clickable, it is
-- Autofocus
-  - SHOULD: Autofocus on desktop when there’s a single primary input; rarely on mobile (to avoid layout shift)
-
-## Animation
-
-- MUST: Honor `prefers-reduced-motion` (provide reduced variant)
-- SHOULD: Prefer CSS > Web Animations API > JS libraries
-- MUST: Animate compositor-friendly props (`transform`, `opacity`); avoid layout/repaint props (`top/left/width/height`)
-- SHOULD: Animate only to clarify cause/effect or add deliberate delight
-- SHOULD: Choose easing to match the change (size/distance/trigger)
-- MUST: Animations are interruptible and input-driven (avoid autoplay)
-- MUST: Correct `transform-origin` (motion starts where it “physically” should)
-
-## Layout
-
-- SHOULD: Optical alignment; adjust by ±1px when perception beats geometry
-- MUST: Deliberate alignment to grid/baseline/edges/optical centers—no accidental placement
-- SHOULD: Balance icon/text lockups (stroke/weight/size/spacing/color)
-- MUST: Verify mobile, laptop, ultra-wide (simulate ultra-wide at 50% zoom)
-- MUST: Respect safe areas (use env(safe-area-inset-\*))
-- MUST: Avoid unwanted scrollbars; fix overflows
-
-## Content & Accessibility
-
-- SHOULD: Inline help first; tooltips last resort
-- MUST: Skeletons mirror final content to avoid layout shift
-- MUST: `<title>` matches current context
-- MUST: No dead ends; always offer next step/recovery
-- MUST: Design empty/sparse/dense/error states
-- SHOULD: Curly quotes (“ ”); avoid widows/orphans
-- MUST: Tabular numbers for comparisons (`font-variant-numeric: tabular-nums` or a mono like Geist Mono)
-- MUST: Redundant status cues (not color-only); icons have text labels
-- MUST: Don’t ship the schema—visuals may omit labels but accessible names still exist
-- MUST: Use the ellipsis character `…` (not ``)
-- MUST: `scroll-margin-top` on headings for anchored links; include a “Skip to content” link; hierarchical `<h1–h6>`
-- MUST: Resilient to user-generated content (short/avg/very long)
-- MUST: Locale-aware dates/times/numbers/currency
-- MUST: Accurate names (`aria-label`), decorative elements `aria-hidden`, verify in the Accessibility Tree
-- MUST: Icon-only buttons have descriptive `aria-label`
-- MUST: Prefer native semantics (`button`, `a`, `label`, `table`) before ARIA
-- SHOULD: Right-clicking the nav logo surfaces brand assets
-- MUST: Use non-breaking spaces to glue terms: `10&nbsp;MB`, `⌘&nbsp;+&nbsp;K`, `Vercel&nbsp;SDK`
-
-## Performance
-
-- SHOULD: Test iOS Low Power Mode and macOS Safari
-- MUST: Measure reliably (disable extensions that skew runtime)
-- MUST: Track and minimize re-renders (React DevTools/React Scan)
-- MUST: Profile with CPU/network throttling
-- MUST: Batch layout reads/writes; avoid unnecessary reflows/repaints
-- MUST: Mutations (`POST/PATCH/DELETE`) target <500 ms
-- SHOULD: Prefer uncontrolled inputs; make controlled loops cheap (keystroke cost)
-- MUST: Virtualize large lists (eg, `virtua`)
-- MUST: Preload only above-the-fold images; lazy-load the rest
-- MUST: Prevent CLS from images (explicit dimensions or reserved space)
-
-## Design
-
-- SHOULD: Layered shadows (ambient + direct)
-- SHOULD: Crisp edges via semi-transparent borders + shadows
-- SHOULD: Nested radii: child ≤ parent; concentric
-- SHOULD: Hue consistency: tint borders/shadows/text toward bg hue
-- MUST: Accessible charts (color-blind-friendly palettes)
-- MUST: Meet contrast—prefer [APCA](https://apcacontrastcom/) over WCAG 2
-- MUST: Increase contrast on `:hover/:active/:focus`
-- SHOULD: Match browser UI to bg
-- SHOULD: Avoid gradient banding (use masks when needed)
+## When in doubt
+- Check the nearest README for service-specific commands.
+- Prefer the smallest-scoped test that proves the change.
