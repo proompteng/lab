@@ -68,11 +68,11 @@ spec:
               value: gzip
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-gateway.observability.svc.cluster.local/otlp/v1/traces
-            - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
-              value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/otlp
             - name: OTEL_EXPORTER_OTLP_TRACES_TIMEOUT
               value: "20000"
             - name: OTEL_METRICS_EXPORTER
+              value: none
+            - name: OTEL_LOGS_EXPORTER
               value: none
             - name: BUMBA_WORKSPACE_ROOT
               value: /workspace/lab
