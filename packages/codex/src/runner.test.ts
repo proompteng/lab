@@ -113,4 +113,34 @@ describe('CodexRunner', () => {
 
     await rm(workdir, { recursive: true, force: true })
   })
+
+  it('rejects promptly when spawn emits an error', async () => {
+    const stdin = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback()
+      },
+    })
+    const stdout = new Readable({ read() {} })
+    const stderr = new Readable({ read() {} })
+    const proc = Object.assign(new EventEmitter(), {
+      stdin,
+      stdout,
+      stderr,
+      kill: vi.fn(),
+    }) as MockProcess
+
+    spawnMock.mockImplementation(() => {
+      setImmediate(() => proc.emit('error', new Error('spawn failed')))
+      return proc as never
+    })
+
+    const runner = new CodexRunner({ codexPathOverride: 'codex' })
+
+    await expect(
+      runner.run({
+        input: 'prompt',
+        lastMessagePath: join(await mkdtemp(join(tmpdir(), 'codex-runner-test-')), 'last.txt'),
+      }),
+    ).rejects.toThrow('spawn failed')
+  })
 })
