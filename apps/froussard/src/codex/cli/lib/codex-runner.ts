@@ -159,6 +159,14 @@ export const runCodexSession = async ({
     }
   }
 
+  const writeStdout = (payload: string) => {
+    try {
+      process.stdout.write(payload)
+    } catch {
+      // ignore stdout write errors; best-effort streaming
+    }
+  }
+
   const writeDiscord = async (payload: string, errorLabel: string) => {
     if (!discordWriter || discordClosed) {
       return
@@ -172,6 +180,69 @@ export const runCodexSession = async ({
       } else {
         log.error(errorLabel, error)
       }
+    }
+  }
+
+  const emitStreamLine = async (payload: string, errorLabel: string) => {
+    if (!payload) {
+      return
+    }
+    const normalized = payload.endsWith('\n') ? payload : `${payload}\n`
+    writeStdout(normalized)
+    await writeDiscord(normalized, errorLabel)
+  }
+
+  const readString = (value: unknown): string | undefined => {
+    if (typeof value !== 'string') {
+      return undefined
+    }
+    const trimmed = value.trimEnd()
+    return trimmed.length > 0 ? trimmed : undefined
+  }
+
+  const handleItemEvent = async (event: Record<string, unknown>, type: string) => {
+    const item = event.item as Record<string, unknown> | undefined
+    if (!item || typeof item !== 'object') {
+      return
+    }
+
+    const itemType = typeof item.type === 'string' ? item.type : ''
+    if (!itemType || itemType === 'agent_message' || itemType === 'reasoning') {
+      return
+    }
+
+    if (itemType === 'command_execution') {
+      if (type === 'item.started') {
+        const command = readString(item.command)
+        if (command) {
+          await emitStreamLine(`$ ${command}`, 'Failed to write command start to Discord channel:')
+        }
+        return
+      }
+
+      const aggregated = readString(item.aggregated_output)
+      const output = aggregated ?? readString(item.output)
+      if (output) {
+        await emitStreamLine(output, 'Failed to write command output to Discord channel:')
+      }
+      const exitCode = item.exit_code
+      if (typeof exitCode === 'number' && exitCode !== 0) {
+        await emitStreamLine(
+          `Command exited with status ${exitCode}`,
+          'Failed to write command exit status to Discord channel:',
+        )
+      }
+      return
+    }
+
+    const text =
+      readString(item.text) ??
+      readString(item.output) ??
+      readString(item.result) ??
+      readString(item.message) ??
+      readString(item.error)
+    if (text) {
+      await emitStreamLine(`[${itemType}] ${text}`, 'Failed to write tool output to Discord channel:')
     }
   }
 
@@ -193,15 +264,21 @@ export const runCodexSession = async ({
       sessionId = id
     },
     onToolCall: async (payload) => {
-      await writeDiscord(`ToolCall → ${payload}\n`, 'Failed to write tool call to Discord channel:')
+      await emitStreamLine(`ToolCall → ${payload}`, 'Failed to write tool call to Discord channel:')
+    },
+    onEvent: async (event) => {
+      const eventType = typeof event.type === 'string' ? event.type : ''
+      if (eventType === 'item.started' || eventType === 'item.completed') {
+        await handleItemEvent(event, eventType)
+      }
     },
     onAgentMessageDelta: async (delta) => {
       sawDelta = true
-      await writeDiscord(`${delta}\n`, 'Failed to write to Discord channel stream:')
+      await emitStreamLine(delta, 'Failed to write to Discord channel stream:')
     },
     onAgentMessage: async (message) => {
       if (!sawDelta) {
-        await writeDiscord(`${message}\n`, 'Failed to write to Discord channel stream:')
+        await emitStreamLine(message, 'Failed to write to Discord channel stream:')
       }
     },
   })
