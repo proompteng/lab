@@ -23,16 +23,6 @@ class Settings(BaseSettings):
     apca_api_secret_key: Optional[str] = Field(default=None, alias="APCA_API_SECRET_KEY")
     apca_api_base_url: Optional[str] = Field(default=None, alias="APCA_API_BASE_URL")
     apca_data_api_base_url: Optional[str] = Field(default=None, alias="APCA_DATA_API_BASE_URL")
-    clickhouse_host: str = Field(
-        default="torghut-clickhouse.torghut.svc.cluster.local",
-        alias="CLICKHOUSE_HOST",
-    )
-    clickhouse_port: int = Field(default=8123, alias="CLICKHOUSE_PORT")
-    clickhouse_database: str = Field(default="torghut", alias="CLICKHOUSE_DATABASE")
-    clickhouse_username: Optional[str] = Field(default="torghut", alias="CLICKHOUSE_USERNAME")
-    clickhouse_password: Optional[str] = Field(default=None, alias="CLICKHOUSE_PASSWORD")
-    clickhouse_secure: bool = Field(default=False, alias="CLICKHOUSE_SECURE")
-    clickhouse_timeout_seconds: int = Field(default=10, alias="CLICKHOUSE_TIMEOUT_SECONDS")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -55,13 +45,6 @@ class Settings(BaseSettings):
             return self.db_dsn.replace("postgresql://", "postgresql+psycopg://", 1)
 
         return self.db_dsn
-
-    @property
-    def clickhouse_http_url(self) -> str:
-        """Return the ClickHouse HTTP base URL."""
-
-        scheme = "https" if self.clickhouse_secure else "http"
-        return f"{scheme}://{self.clickhouse_host}:{self.clickhouse_port}"
 
 
 @lru_cache(maxsize=1)
