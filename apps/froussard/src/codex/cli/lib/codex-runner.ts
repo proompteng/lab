@@ -179,6 +179,7 @@ export const runCodexSession = async ({
     input: prompt,
     model: process.env.CODEX_MODEL?.trim() || undefined,
     jsonMode: 'json',
+    dangerouslyBypassApprovalsAndSandbox: true,
     lastMessagePath: outputPath,
     eventsPath: jsonOutputPath,
     agentLogPath: agentOutputPath,

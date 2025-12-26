@@ -91,6 +91,27 @@ describe('CodexRunner', () => {
     await rm(workdir, { recursive: true, force: true })
   })
 
+  it('adds --dangerously-bypass-approvals-and-sandbox when enabled', async () => {
+    const { proc } = createMockProcess([
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok' } }),
+    ])
+    spawnMock.mockReturnValue(proc as never)
+
+    const workdir = await mkdtemp(join(tmpdir(), 'codex-runner-test-'))
+    const runner = new CodexRunner({ codexPathOverride: 'codex' })
+
+    await runner.run({
+      input: 'prompt',
+      lastMessagePath: join(workdir, 'last.txt'),
+      dangerouslyBypassApprovalsAndSandbox: true,
+    })
+
+    const args = spawnMock.mock.calls[0]?.[1] as string[] | undefined
+    expect(args).toContain('--dangerously-bypass-approvals-and-sandbox')
+
+    await rm(workdir, { recursive: true, force: true })
+  })
+
   it('uses resume --last without stdin dash', async () => {
     const { proc } = createMockProcess([
       JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok' } }),

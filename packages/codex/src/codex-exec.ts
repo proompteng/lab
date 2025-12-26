@@ -9,6 +9,7 @@ export interface CodexExecArgs {
   images?: string[]
   model?: string
   jsonMode?: 'json' | 'experimental-json'
+  dangerouslyBypassApprovalsAndSandbox?: boolean
   outputSchemaPath?: string
   lastMessagePath?: string
   resumeLast?: boolean
@@ -38,7 +39,13 @@ export class CodexExec {
 
   async *run(args: CodexExecArgs): AsyncGenerator<string> {
     const jsonFlag = args.jsonMode === 'experimental-json' ? '--experimental-json' : '--json'
-    const commandArgs = ['exec', jsonFlag]
+    const commandArgs = ['exec']
+
+    if (args.dangerouslyBypassApprovalsAndSandbox) {
+      commandArgs.push('--dangerously-bypass-approvals-and-sandbox')
+    }
+
+    commandArgs.push(jsonFlag)
 
     if (args.model) {
       commandArgs.push('--model', args.model)

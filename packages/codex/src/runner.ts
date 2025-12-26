@@ -31,6 +31,7 @@ export interface CodexRunOptions {
   additionalDirectories?: string[]
   images?: string[]
   jsonMode?: 'json' | 'experimental-json'
+  dangerouslyBypassApprovalsAndSandbox?: boolean
   outputSchemaPath?: string
   lastMessagePath?: string
   resumeSessionId?: string | 'last'
@@ -215,6 +216,7 @@ export class CodexRunner {
       additionalDirectories,
       images,
       jsonMode = 'json',
+      dangerouslyBypassApprovalsAndSandbox,
       outputSchemaPath,
       lastMessagePath,
       resumeSessionId,
@@ -243,7 +245,13 @@ export class CodexRunner {
     const jsonStream = eventsPath ? createWriteStream(eventsPath, { flags: 'w' }) : undefined
     const agentStream = agentLogPath ? createWriteStream(agentLogPath, { flags: 'w' }) : undefined
 
-    const commandArgs = ['exec', jsonMode === 'experimental-json' ? '--experimental-json' : '--json']
+    const commandArgs = ['exec']
+
+    if (dangerouslyBypassApprovalsAndSandbox) {
+      commandArgs.push('--dangerously-bypass-approvals-and-sandbox')
+    }
+
+    commandArgs.push(jsonMode === 'experimental-json' ? '--experimental-json' : '--json')
 
     if (outputSchemaPath) {
       commandArgs.push('--output-schema', outputSchemaPath)
