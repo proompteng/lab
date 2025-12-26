@@ -617,12 +617,16 @@ const buildStartChildWorkflowIntent = (
   options: StartChildWorkflowOptions,
 ): StartChildWorkflowCommandIntent => {
   const sequence = ctx.nextSequence()
+  const previous = ctx.previousIntent(sequence)
+  const replayWorkflowId = previous && previous.kind === 'start-child-workflow' ? previous.workflowId : undefined
+  const workflowId =
+    options.workflowId ?? replayWorkflowId ?? `${ctx.info.workflowId}-child-${ctx.info.runId}-${sequence}`
   return {
     id: `start-child-workflow-${sequence}`,
     kind: 'start-child-workflow',
     sequence,
     workflowType,
-    workflowId: options.workflowId ?? `${ctx.info.workflowId}-child-${sequence}`,
+    workflowId,
     namespace: options.namespace ?? ctx.info.namespace,
     taskQueue: options.taskQueue ?? ctx.info.taskQueue,
     input: args,
