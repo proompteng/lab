@@ -282,6 +282,19 @@ sequenceDiagram
 
 These links allow full traceability from webhook event → workflow run → file keys → file versions.
 
+### Change Summary (Dec 2025)
+
+- Workflow inputs now accept an explicit `eventDeliveryId`, so webhook deliveries and workflow runs share the same
+  primary linkage key across Jangar and bumba.
+- Jangar records ingestions with the **actual Temporal workflow ID** returned by `startWorkflow`, and bumba updates
+  the ingestion row as it progresses (`running` → `completed`/`failed`/`skipped`) with `started_at`/`finished_at`.
+- `event_files` (event → file key) and `ingestion_targets` (ingestion → file version) are both written during
+  indexing so that any file can be traced back to a webhook delivery and a specific workflow run.
+- Repository refs are normalized before persistence to prevent duplicate `file_versions` for `refs/heads/*` vs `main`
+  or tag prefixes; this keeps dedupe logic stable across webhook sources.
+- When Tree-sitter yields no useful nodes, facts fall back to a plain-text scan to avoid empty `tree_sitter_facts`
+  for simple formats (notably JSON) while keeping deterministic output.
+
 ### Data Quality Guardrails
 
 - Repository refs are normalized before persistence (e.g., `refs/heads/main` → `main`) to avoid duplicate file_versions.
