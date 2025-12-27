@@ -9,6 +9,7 @@ import {
   decodeDeterminismMarkerEnvelope,
   diffDeterminismState,
   encodeDeterminismMarkerDetails,
+  encodeDeterminismMarkerDetailsWithSize,
   ingestWorkflowHistory,
   resolveHistoryLastEventId,
 } from '../../src/workflow/replay'
@@ -84,6 +85,72 @@ test('encodes and decodes determinism marker envelopes', async () => {
   expect(decoded?.determinismState).toEqual(determinismState)
   expect(decoded?.lastEventId).toBe('42')
   expect(decoded?.recordedAtIso).toBe('2025-01-01T00:00:00.000Z')
+})
+
+test('determinism marker size accounting grows with payload size', async () => {
+  const converter = createDefaultDataConverter()
+  const info: WorkflowInfo = {
+    namespace: 'default',
+    taskQueue: 'replay-fixtures',
+    workflowId: 'wf-size',
+    runId: 'run-size',
+    workflowType: 'sizeWorkflow',
+  }
+  const smallState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          kind: 'start-timer',
+          id: 'command-0',
+          sequence: 0,
+          timerId: 'timer-0',
+          timeoutMs: 1000,
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+  const largePayload = 'x'.repeat(10_000)
+  const largeState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          kind: 'start-timer',
+          id: 'command-1',
+          sequence: 0,
+          timerId: largePayload,
+          timeoutMs: 1000,
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+
+  const small = await Effect.runPromise(
+    encodeDeterminismMarkerDetailsWithSize(converter, {
+      info,
+      determinismState: smallState,
+      lastEventId: '1',
+      recordedAt: new Date('2025-01-01T00:00:00Z'),
+    }),
+  )
+  const large = await Effect.runPromise(
+    encodeDeterminismMarkerDetailsWithSize(converter, {
+      info,
+      determinismState: largeState,
+      lastEventId: '2',
+      recordedAt: new Date('2025-01-01T00:00:00Z'),
+    }),
+  )
+
+  expect(large.sizeBytes).toBeGreaterThan(small.sizeBytes)
+  expect(large.sizeBytes).toBeGreaterThan(1000)
 })
 
 test('encodes and decodes determinism delta marker envelopes', async () => {

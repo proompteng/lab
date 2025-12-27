@@ -46,13 +46,14 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS=10    # optional – record markers every N workflow tasks
    TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS=50  # optional – full snapshot cadence in delta mode
    TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED=1     # optional – skip identical determinism markers
+   TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES=1800000  # optional – skip markers exceeding size limit
    TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS=4000     # optional – heartbeat throttle interval in ms
    TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS=5000  # optional – heartbeat RPC timeout in ms
    TEMPORAL_WORKER_DEPLOYMENT_NAME=replay-worker      # optional – worker deployment metadata
    TEMPORAL_WORKER_BUILD_ID=git-sha                 # optional – build-id for versioning
 ```
 
-Defaults: determinism markers run in `delta` mode, record every 10 workflow tasks, take a full snapshot every 50 tasks, and skip unchanged snapshots. Override any value with the env vars above.
+Defaults: determinism markers run in `delta` mode, record every 10 workflow tasks, take a full snapshot every 50 tasks, skip unchanged snapshots, and avoid emitting markers whose payloads exceed 1.8MB. Override any value with the env vars above.
 
    > Running against `temporal server start-dev`? Omit TLS variables and set `TEMPORAL_ADDRESS=127.0.0.1:7233`. Set `TEMPORAL_ALLOW_INSECURE=1` when testing with self-signed certificates.
 

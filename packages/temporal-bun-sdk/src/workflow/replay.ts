@@ -228,6 +228,28 @@ export const encodeDeterminismMarkerDetails = (
     }
   })
 
+export const measurePayloadsByteSize = (details: Record<string, Payloads>): number => {
+  let total = 0
+  for (const payloads of Object.values(details)) {
+    for (const payload of payloads.payloads ?? []) {
+      total += payload.data?.byteLength ?? 0
+      const metadata = payload.metadata ?? {}
+      for (const value of Object.values(metadata)) {
+        total += value?.byteLength ?? 0
+      }
+    }
+  }
+  return total
+}
+
+export const encodeDeterminismMarkerDetailsWithSize = (
+  converter: DataConverter,
+  input: DeterminismMarkerInput,
+): Effect.Effect<{ details: Record<string, Payloads>; sizeBytes: number }, unknown, never> =>
+  encodeDeterminismMarkerDetails(converter, input).pipe(
+    Effect.map((details) => ({ details, sizeBytes: measurePayloadsByteSize(details) })),
+  )
+
 export interface DecodeDeterminismMarkerInput {
   readonly converter: DataConverter
   readonly details: Record<string, Payloads> | undefined

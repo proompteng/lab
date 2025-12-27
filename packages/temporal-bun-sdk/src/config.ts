@@ -34,6 +34,7 @@ const DEFAULT_DETERMINISM_MARKER_MODE: DeterminismMarkerMode = 'delta'
 const DEFAULT_DETERMINISM_MARKER_INTERVAL_TASKS = 10
 const DEFAULT_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS = 50
 const DEFAULT_DETERMINISM_MARKER_SKIP_UNCHANGED = true
+const DEFAULT_DETERMINISM_MARKER_MAX_DETAIL_BYTES = 1_800_000
 const DEFAULT_CLIENT_RETRY_MAX_ATTEMPTS = defaultRetryPolicy.maxAttempts
 const DEFAULT_CLIENT_RETRY_INITIAL_MS = defaultRetryPolicy.initialDelayMs
 const DEFAULT_CLIENT_RETRY_MAX_MS = defaultRetryPolicy.maxDelayMs
@@ -122,6 +123,7 @@ const TemporalConfigSchema = Schema.Struct({
   determinismMarkerIntervalTasks: Schema.Number,
   determinismMarkerFullSnapshotIntervalTasks: Schema.Number,
   determinismMarkerSkipUnchanged: Schema.Boolean,
+  determinismMarkerMaxDetailBytes: Schema.Number,
   activityHeartbeatIntervalMs: Schema.Number,
   activityHeartbeatRpcTimeoutMs: Schema.Number,
   workerDeploymentName: Schema.optional(Schema.String),
@@ -176,6 +178,7 @@ export interface TemporalEnvironment {
   TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS?: string
   TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS?: string
   TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED?: string
+  TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES?: string
   TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS?: string
   TEMPORAL_CLIENT_RETRY_INITIAL_MS?: string
   TEMPORAL_CLIENT_RETRY_MAX_MS?: string
@@ -280,6 +283,7 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
       'TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS',
     ),
     TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED: read('TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED'),
+    TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES: read('TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES'),
     TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS: read('TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS'),
     TEMPORAL_CLIENT_RETRY_INITIAL_MS: read('TEMPORAL_CLIENT_RETRY_INITIAL_MS'),
     TEMPORAL_CLIENT_RETRY_MAX_MS: read('TEMPORAL_CLIENT_RETRY_MAX_MS'),
@@ -477,6 +481,7 @@ export interface TemporalConfig {
   determinismMarkerIntervalTasks: number
   determinismMarkerFullSnapshotIntervalTasks: number
   determinismMarkerSkipUnchanged: boolean
+  determinismMarkerMaxDetailBytes: number
   activityHeartbeatIntervalMs: number
   activityHeartbeatRpcTimeoutMs: number
   workerDeploymentName?: string
@@ -738,6 +743,11 @@ export const loadTemporalConfigEffect = (
       coerceBoolean(env.TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED) ??
       defaults.determinismMarkerSkipUnchanged ??
       DEFAULT_DETERMINISM_MARKER_SKIP_UNCHANGED
+    const determinismMarkerMaxDetailBytes = parsePositiveInt(
+      env.TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES,
+      defaults.determinismMarkerMaxDetailBytes ?? DEFAULT_DETERMINISM_MARKER_MAX_DETAIL_BYTES,
+      'TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES',
+    )
     const fallbackHeartbeatInterval = defaults.activityHeartbeatIntervalMs ?? DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS
     const fallbackHeartbeatRpcTimeout =
       defaults.activityHeartbeatRpcTimeoutMs ?? DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS
@@ -801,6 +811,7 @@ export const loadTemporalConfigEffect = (
       determinismMarkerIntervalTasks,
       determinismMarkerFullSnapshotIntervalTasks,
       determinismMarkerSkipUnchanged,
+      determinismMarkerMaxDetailBytes,
       activityHeartbeatIntervalMs,
       activityHeartbeatRpcTimeoutMs,
       workerDeploymentName,
@@ -848,6 +859,7 @@ export const temporalDefaults = {
   determinismMarkerIntervalTasks: DEFAULT_DETERMINISM_MARKER_INTERVAL_TASKS,
   determinismMarkerFullSnapshotIntervalTasks: DEFAULT_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS,
   determinismMarkerSkipUnchanged: DEFAULT_DETERMINISM_MARKER_SKIP_UNCHANGED,
+  determinismMarkerMaxDetailBytes: DEFAULT_DETERMINISM_MARKER_MAX_DETAIL_BYTES,
   activityHeartbeatIntervalMs: DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS,
   activityHeartbeatRpcTimeoutMs: DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS,
   workerDeploymentName: undefined,
@@ -874,6 +886,7 @@ export const temporalDefaults = {
   | 'determinismMarkerIntervalTasks'
   | 'determinismMarkerFullSnapshotIntervalTasks'
   | 'determinismMarkerSkipUnchanged'
+  | 'determinismMarkerMaxDetailBytes'
   | 'activityHeartbeatIntervalMs'
   | 'activityHeartbeatRpcTimeoutMs'
   | 'workerDeploymentName'
