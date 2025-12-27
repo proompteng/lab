@@ -85,9 +85,10 @@ describe('bumba readRepoFile', () => {
       runGit(['commit', '-m', 'init'], repoRoot)
       const commit = runGit(['rev-parse', 'HEAD'], repoRoot)
 
-      globalThis.fetch = (() => {
+      const fetchStub = (async () => {
         throw new Error('unexpected fetch')
-      }) as typeof fetch
+      }) as unknown as typeof fetch
+      globalThis.fetch = fetchStub
 
       const result = await activities.readRepoFile({
         repoRoot,

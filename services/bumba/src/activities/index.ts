@@ -359,7 +359,7 @@ type CommandResult = {
   stderr: string
 }
 
-const runCommandResult = async (
+const runCommandRaw = async (
   args: string[],
   cwd: string,
   env?: Record<string, string | undefined>,
@@ -378,8 +378,8 @@ const runCommandResult = async (
     ])
     return {
       exitCode,
-      stdout: stdout.trim(),
-      stderr: stderr.trim(),
+      stdout,
+      stderr,
     }
   } catch (error) {
     return {
@@ -387,6 +387,19 @@ const runCommandResult = async (
       stdout: '',
       stderr: error instanceof Error ? error.message : String(error),
     }
+  }
+}
+
+const runCommandResult = async (
+  args: string[],
+  cwd: string,
+  env?: Record<string, string | undefined>,
+): Promise<CommandResult> => {
+  const result = await runCommandRaw(args, cwd, env)
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout.trim(),
+    stderr: result.stderr.trim(),
   }
 }
 
@@ -417,8 +430,13 @@ const fetchCommitFromOrigin = async (repoRoot: string, commit: string) => {
   return result.exitCode === 0
 }
 
-const readGitFile = async (repoRoot: string, ref: string, filePath: string) =>
-  runCommand(['git', '-C', repoRoot, 'show', `${ref}:${filePath}`], repoRoot, { GIT_TERMINAL_PROMPT: '0' })
+const readGitFile = async (repoRoot: string, ref: string, filePath: string) => {
+  const result = await runCommandRaw(['git', '-C', repoRoot, 'show', `${ref}:${filePath}`], repoRoot, {
+    GIT_TERMINAL_PROMPT: '0',
+  })
+  if (result.exitCode !== 0) return null
+  return result.stdout
+}
 
 type RepositoryOverrides = {
   repository?: string | null
@@ -1667,6 +1685,7 @@ export const activities = {
 
         const ref = normalizedCommit ?? repoInfo.repoCommit ?? repoInfo.repoRef
         const fetched = await fetchGithubFile(repoSlug, input.filePath, ref)
+        source = 'github'
         content = fetched.content
         stats = null
         sourceMeta = {
