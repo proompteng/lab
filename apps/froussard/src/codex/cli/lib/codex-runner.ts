@@ -198,12 +198,27 @@ export const runCodexSession = async ({
   let sessionId: string | undefined
   let sawDelta = false
   let discordStreamBuffer = ''
+  let discordWriteQueue = Promise.resolve()
+
+  const awaitDiscordQueueDrain = async () => {
+    try {
+      await discordWriteQueue
+    } catch {
+      // ignore queued write failures
+    }
+  }
 
   const closeDiscordWriter = async () => {
     if (discordWriter && !discordClosed) {
       discordClosed = true
       await discordWriter.close().catch(() => {})
     }
+  }
+
+  const enqueueDiscordWrite = async (task: () => Promise<void>) => {
+    const next = discordWriteQueue.then(task, task)
+    discordWriteQueue = next.catch(() => undefined)
+    return next
   }
 
   const writeStdout = (payload: string) => {
@@ -214,7 +229,7 @@ export const runCodexSession = async ({
     }
   }
 
-  const writeDiscord = async (payload: string, errorLabel: string) => {
+  const writeDiscordRaw = async (payload: string, errorLabel: string) => {
     if (!discordWriter || discordClosed) {
       return
     }
@@ -235,26 +250,38 @@ export const runCodexSession = async ({
       return
     }
     const framed = `${DISCORD_MESSAGE_SEPARATOR}${payload}${DISCORD_MESSAGE_SEPARATOR}`
-    await writeDiscord(framed, errorLabel)
+    await enqueueDiscordWrite(async () => {
+      await writeDiscordRaw(framed, errorLabel)
+    })
   }
 
   const flushDiscordStream = async () => {
-    if (!discordStreamBuffer) {
-      return
-    }
-    const payload = discordStreamBuffer
-    discordStreamBuffer = ''
-    await writeDiscordMessage(payload, 'Failed to write to Discord channel stream:')
+    await enqueueDiscordWrite(async () => {
+      if (!discordStreamBuffer) {
+        return
+      }
+      const payload = discordStreamBuffer
+      discordStreamBuffer = ''
+      const framed = `${DISCORD_MESSAGE_SEPARATOR}${payload}${DISCORD_MESSAGE_SEPARATOR}`
+      await writeDiscordRaw(framed, 'Failed to write to Discord channel stream:')
+    })
   }
 
   const queueDiscordStream = async (payload: string) => {
-    if (!payload || !discordWriter || discordClosed) {
+    if (!payload) {
       return
     }
-    discordStreamBuffer += payload
-    if (discordStreamBuffer.length >= DISCORD_STREAM_FLUSH_THRESHOLD || payload.includes('\n')) {
-      await flushDiscordStream()
-    }
+    await enqueueDiscordWrite(async () => {
+      if (!discordWriter || discordClosed) {
+        return
+      }
+      discordStreamBuffer += payload
+      if (discordStreamBuffer.length >= DISCORD_STREAM_FLUSH_THRESHOLD || payload.includes('\n')) {
+        const framed = `${DISCORD_MESSAGE_SEPARATOR}${discordStreamBuffer}${DISCORD_MESSAGE_SEPARATOR}`
+        discordStreamBuffer = ''
+        await writeDiscordRaw(framed, 'Failed to write to Discord channel stream:')
+      }
+    })
   }
 
   const emitStreamLine = async (payload: string, errorLabel: string) => {
@@ -591,6 +618,7 @@ export const runCodexSession = async ({
   }
 
   await flushDiscordStream()
+  await awaitDiscordQueueDrain()
   await closeDiscordWriter()
 
   if (discordProcess) {
