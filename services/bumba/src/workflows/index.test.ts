@@ -493,7 +493,7 @@ test('enrichRepository schedules listing and child workflows', async () => {
   const childCommands = output.commands.filter(
     (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
   )
-  expect(childCommands).toHaveLength(files.length)
+  expect(childCommands).toHaveLength(10)
   const childAttrs =
     childCommands[0]?.attributes?.case === 'startChildWorkflowExecutionCommandAttributes'
       ? childCommands[0].attributes.value
@@ -502,7 +502,7 @@ test('enrichRepository schedules listing and child workflows', async () => {
   expect(output.completion).toBe('pending')
 })
 
-test('enrichRepository keeps 50 child workflows in flight', async () => {
+test('enrichRepository keeps 10 child workflows in flight', async () => {
   const { executor } = makeExecutor()
   const files = Array.from({ length: 52 }, (_value, index) => `path/to/file-${index}.ts`)
   const input = {
@@ -523,7 +523,7 @@ test('enrichRepository keeps 50 child workflows in flight', async () => {
   const initialChildCommands = initial.commands.filter(
     (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
   )
-  expect(initialChildCommands).toHaveLength(50)
+  expect(initialChildCommands).toHaveLength(10)
   expect(initial.completion).toBe('pending')
 
   const signalDeliveries = [
@@ -555,7 +555,7 @@ test('enrichRepository keeps 50 child workflows in flight', async () => {
     nextChildCommands[0]?.attributes?.case === 'startChildWorkflowExecutionCommandAttributes'
       ? nextChildCommands[0].attributes.value
       : undefined
-  expect(nextChildAttrs?.workflowId).toBe(`${workflowId}-child-${runId}-50`)
+  expect(nextChildAttrs?.workflowId).toBe(`${workflowId}-child-${runId}-10`)
   expect(next.completion).toBe('pending')
 })
 

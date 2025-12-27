@@ -744,6 +744,7 @@ const languageWasmByExtension = new Map<string, { name: string; wasmPath: string
 
 let parserInitPromise: Promise<void> | null = null
 const loadedLanguages = new Map<string, Language>()
+const languageLoadPromises = new Map<string, Promise<Language>>()
 
 const ensureParserInit = async () => {
   if (!parserInitPromise) {
@@ -763,9 +764,21 @@ const loadLanguageForExtension = async (ext: string): Promise<LoadedLanguage | n
   const cached = loadedLanguages.get(entry.name)
   if (cached) return { name: entry.name, language: cached }
 
-  const language = await Language.load(entry.wasmPath)
-  loadedLanguages.set(entry.name, language)
-  return { name: entry.name, language }
+  let loadPromise = languageLoadPromises.get(entry.name)
+  if (!loadPromise) {
+    loadPromise = Language.load(entry.wasmPath)
+    languageLoadPromises.set(entry.name, loadPromise)
+  }
+
+  try {
+    const language = await loadPromise
+    loadedLanguages.set(entry.name, language)
+    languageLoadPromises.delete(entry.name)
+    return { name: entry.name, language }
+  } catch (error) {
+    languageLoadPromises.delete(entry.name)
+    throw error
+  }
 }
 
 const clampNumber = (value: number, fallback: number) => (Number.isFinite(value) && value > 0 ? value : fallback)
@@ -1320,34 +1333,72 @@ const parseAst = async (source: string, filePath: string): Promise<AstSummaryOut
   if (customParser) {
     return customParser(source, maxFacts, maxFactChars, maxSummaryNodes)
   }
-  const entry = await loadLanguageForExtension(ext)
-  if (!entry) {
-    const fallbackLanguage = languageNameByExtension.get(ext) ?? 'text'
-    return parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
-  }
+  const fallbackLanguage = languageNameByExtension.get(ext) ?? 'text'
+  let entry: LoadedLanguage | null
 
-  const parser = new Parser()
-  parser.setLanguage(entry.language)
-  const tree = parser.parse(source)
-  if (!tree) {
+  try {
+    entry = await loadLanguageForExtension(ext)
+  } catch (error) {
+    const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
     return {
-      astSummary: 'Tree-sitter parse failed.',
-      facts: [],
-      metadata: { skipped: true, reason: 'parse_failed', language: entry.name },
+      ...fallback,
+      metadata: {
+        ...fallback.metadata,
+        skipped: true,
+        reason: 'language_load_failed',
+        error: error instanceof Error ? error.message : 'unknown_error',
+      },
     }
   }
-  const root = tree.rootNode as AstNode
 
-  const facts = collectFacts(root, source, maxFacts, maxFactChars)
-  const astSummary = buildAstSummary(root, source, maxSummaryNodes, maxFactChars)
+  if (!entry) {
+    const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
+    return {
+      ...fallback,
+      metadata: {
+        ...fallback.metadata,
+        skipped: true,
+        reason: 'language_missing',
+      },
+    }
+  }
 
-  return {
-    astSummary,
-    facts,
-    metadata: {
-      language: entry.name,
-      factCount: facts.length,
-    },
+  try {
+    const parser = new Parser()
+    parser.setLanguage(entry.language)
+    const tree = parser.parse(source)
+    if (!tree) {
+      return {
+        astSummary: 'Tree-sitter parse failed.',
+        facts: [],
+        metadata: { skipped: true, reason: 'parse_failed', language: entry.name },
+      }
+    }
+    const root = tree.rootNode as AstNode
+
+    const facts = collectFacts(root, source, maxFacts, maxFactChars)
+    const astSummary = buildAstSummary(root, source, maxSummaryNodes, maxFactChars)
+
+    return {
+      astSummary,
+      facts,
+      metadata: {
+        language: entry.name,
+        factCount: facts.length,
+      },
+    }
+  } catch (error) {
+    const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
+    return {
+      ...fallback,
+      metadata: {
+        ...fallback.metadata,
+        skipped: true,
+        reason: 'parser_error',
+        language: entry.name,
+        error: error instanceof Error ? error.message : 'unknown_error',
+      },
+    }
   }
 }
 
