@@ -13,6 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     IMPLEMENTATION_OUTPUT_PATH=/workspace/lab/.codex-implementation.log \
     GIT_TERMINAL_PROMPT=0 \
     BUN_INSTALL=/usr/local \
+    BUN_INSTALL_CACHE_DIR=/opt/bun/install/cache \
     DOCKER_HOST=tcp://localhost:2375 \
     DOCKER_ENABLED=0
 
@@ -79,7 +80,7 @@ RUN set -eux; \
 
 RUN bash -lc 'source /root/.nvm/nvm.sh && npm install -g @openai/codex@latest && ln -sf "$(command -v codex)" /usr/local/bin/codex && ln -sf "$(command -v node)" /usr/local/bin/node && ln -sf "$(command -v npm)" /usr/local/bin/npm'
 
-RUN mkdir -p "$WORKSPACE" "$WORKTREE" /root/.codex
+RUN mkdir -p "$WORKSPACE" /root/.codex "$BUN_INSTALL_CACHE_DIR"
 
 # Copy Codex auth secret during build (requires BuildKit secret)
 RUN --mount=type=secret,id=codex_auth,target=/tmp/codex_auth.json \
@@ -96,6 +97,11 @@ RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
 
 RUN git config --global user.name "tuslagch" \
     && git config --global user.email "tuslagch@proompteng.ai"
+
+RUN rm -rf "$WORKTREE" \
+    && git clone --depth 1 https://github.com/proompteng/lab "$WORKTREE" \
+    && cd "$WORKTREE" \
+    && bun install --frozen-lockfile
 
 COPY apps/froussard/src/codex/cli/codex-bootstrap.ts /usr/local/bin/codex-bootstrap
 COPY apps/froussard/src/codex/cli/codex-implement.ts /usr/local/bin/codex-implement
