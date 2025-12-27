@@ -15,6 +15,8 @@ ARG GH_VERSION=2.65.0
 ARG ZOXIDE_VERSION=0.9.8
 ARG KUBECTL_VERSION=1.34.3
 ARG KN_VERSION=1.20.0
+ARG ARGO_VERSION=v3.7.4
+ARG ARGOCD_VERSION=v3.2.2
 ARG CNPG_VERSION=1.28.0
 ARG DOCKER_CLI_VERSION=29.1.2
 ARG BUILDX_VERSION=0.30.1
@@ -30,6 +32,8 @@ ARG GH_VERSION
 ARG ZOXIDE_VERSION
 ARG KUBECTL_VERSION
 ARG KN_VERSION
+ARG ARGO_VERSION
+ARG ARGOCD_VERSION
 ARG CNPG_VERSION
 ARG DOCKER_CLI_VERSION
 ARG BUILDX_VERSION
@@ -244,6 +248,37 @@ RUN set -eux; \
   install -o root -g root -m 0755 "${ASSET}" /usr/local/bin/kn; \
   rm -f "${ASSET}" checksums.txt; \
   kn version
+
+# Install Argo Workflows CLI (argo)
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) ARGO_ARCH=amd64 ;; \
+  arm64|aarch64) ARGO_ARCH=arm64 ;; \
+  *) echo "Unsupported arch for argo: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  ARGO_ARCHIVE="/tmp/argo-linux-${ARGO_ARCH}.gz"; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-linux-${ARGO_ARCH}.gz" \
+    -o "${ARGO_ARCHIVE}"; \
+  gunzip -c "${ARGO_ARCHIVE}" > /tmp/argo; \
+  install -o root -g root -m 0755 /tmp/argo /usr/local/bin/argo; \
+  rm -f "${ARGO_ARCHIVE}" /tmp/argo; \
+  argo version
+
+# Install Argo CD CLI (argocd)
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) ARGOCD_ARCH=amd64 ;; \
+  arm64|aarch64) ARGOCD_ARCH=arm64 ;; \
+  *) echo "Unsupported arch for argocd: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://github.com/argoproj/argo-cd/releases/download/${ARGOCD_VERSION}/argocd-linux-${ARGOCD_ARCH}" \
+    -o /usr/local/bin/argocd; \
+  chmod +x /usr/local/bin/argocd; \
+  argocd version --client
 
 # Install CloudNativePG kubectl plugin (`kubectl cnpg ...`)
 RUN set -eux; \
