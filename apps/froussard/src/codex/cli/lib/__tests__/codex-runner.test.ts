@@ -241,10 +241,10 @@ describe('codex-runner', () => {
     expect(stdoutText).toContain('Usage → input: 10 (cached 2) | output: 5 | reasoning: 3')
 
     const channelText = channelSink.join('')
-    expect(channelText).toContain('```ts')
+    expect(channelText).toContain('\n```ts\n')
     expect(channelText).toContain('$ /bin/bash -lc ls')
     expect(channelText).toContain('lab')
-    expect(channelText).toContain('```')
+    expect(channelText).toContain('\n```\n')
     expect(channelText).toContain('Usage → input: 10 (cached 2) | output: 5 | reasoning: 3')
   })
 
@@ -276,12 +276,12 @@ describe('codex-runner', () => {
     })
 
     const channelText = channelSink.join('')
-    expect(channelText).toContain('```ts')
+    expect(channelText).toContain('\n```ts\n')
     expect(channelText).toContain('$ echo lines')
     expect(channelText).toContain('line1')
     expect(channelText).toContain('line9')
     expect(channelText).toContain('... (truncated, 3 more lines)')
-    expect(channelText).toContain('```')
+    expect(channelText).toContain('\n```\n')
     expect(channelText).not.toContain('line10')
     expect(channelText).not.toContain('line11')
     expect(channelText).not.toContain('line12')

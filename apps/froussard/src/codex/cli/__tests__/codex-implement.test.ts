@@ -191,6 +191,22 @@ describe('runCodexImplementation', () => {
     expect(invocation?.discordChannel?.command).toEqual(['bun', 'run', 'channel.ts'])
   })
 
+  it('prefers the image discord-channel script when available', async () => {
+    process.env.DISCORD_BOT_TOKEN = 'token'
+    process.env.DISCORD_GUILD_ID = 'guild'
+    process.env.CHANNEL_SCRIPT = ''
+    utilMocks.pathExists.mockImplementation(async (path: string) => {
+      if (path === '/usr/local/bin/discord-channel.ts') {
+        return true
+      }
+      return !path.includes('missing')
+    })
+
+    await runCodexImplementation(eventPath)
+
+    expect(buildDiscordChannelCommandMock).toHaveBeenCalledWith('/usr/local/bin/discord-channel.ts', expect.any(Array))
+  })
+
   it('throws when repository is missing in the payload', async () => {
     await writeFile(eventPath, JSON.stringify({ prompt: 'hi', repository: '', issueNumber: 3 }), 'utf8')
 

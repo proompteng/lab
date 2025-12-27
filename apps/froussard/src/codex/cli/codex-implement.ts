@@ -798,7 +798,11 @@ export const runCodexImplementation = async (eventPath: string) => {
   process.env.RUST_LOG = process.env.RUST_LOG ?? 'codex_core=info,codex_exec=info'
   process.env.RUST_BACKTRACE = process.env.RUST_BACKTRACE ?? '1'
 
-  const channelScript = process.env.CHANNEL_SCRIPT ?? 'apps/froussard/scripts/discord-channel.ts'
+  const envChannelScript = sanitizeNullableString(process.env.CHANNEL_SCRIPT ?? '')
+  const imageChannelScript = '/usr/local/bin/discord-channel.ts'
+  const repoChannelScript = 'apps/froussard/scripts/discord-channel.ts'
+  const channelScript =
+    envChannelScript || ((await pathExists(imageChannelScript)) ? imageChannelScript : repoChannelScript)
   const channelTimestamp = timestampUtc()
   const channelRunIdSource =
     process.env.CODEX_CHANNEL_RUN_ID ?? process.env.ARGO_WORKFLOW_NAME ?? process.env.ARGO_WORKFLOW_UID ?? randomRunId()

@@ -107,6 +107,7 @@ COPY apps/froussard/src/codex/cli/codex-bootstrap.ts /usr/local/bin/codex-bootst
 COPY apps/froussard/src/codex/cli/codex-implement.ts /usr/local/bin/codex-implement
 COPY apps/froussard/src/codex/cli/codex-research.ts /usr/local/bin/codex-research
 COPY apps/froussard/src/codex/cli/codex-graf.ts /usr/local/bin/codex-graf
+COPY apps/froussard/scripts/discord-channel.ts /usr/local/bin/discord-channel.ts
 COPY apps/froussard/src/codex/cli/lib /usr/local/bin/lib
 # Provide @proompteng/codex for the CLI helpers at runtime.
 COPY packages/codex /opt/proompteng/packages/codex
@@ -117,7 +118,7 @@ RUN bash -lc 'cd /opt/proompteng/packages/discord && bun install --no-save && bu
 RUN mkdir -p /usr/local/node_modules/@proompteng \
     && cp -R /opt/proompteng/packages/codex /usr/local/node_modules/@proompteng/codex \
     && cp -R /opt/proompteng/packages/discord /usr/local/node_modules/@proompteng/discord
-RUN chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/codex-implement /usr/local/bin/codex-research /usr/local/bin/codex-graf
+RUN chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/codex-implement /usr/local/bin/codex-research /usr/local/bin/codex-graf /usr/local/bin/discord-channel.ts
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/codex-bootstrap"]
