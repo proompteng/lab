@@ -36,6 +36,21 @@ type OpenTelemetryCoreModules = {
   semantic: typeof import('@opentelemetry/semantic-conventions')
 }
 
+const applyBunNodeVersionShim = (): void => {
+  const versions = typeof process !== 'undefined' ? (process.versions as Record<string, string>) : undefined
+  const bunVersion = versions?.bun
+  const nodeVersion = versions?.node
+  if (!bunVersion || !nodeVersion) {
+    return
+  }
+  const [major] = nodeVersion.split('.')
+  const needsShim = Number.parseInt(major ?? '', 10) >= 14
+  if (!needsShim) {
+    return
+  }
+  versions.node = '12.0.0'
+}
+
 const loadOpenTelemetryCoreModules = async (): Promise<OpenTelemetryCoreModules> => {
   const [api, autoInstrumentations, resources, sdkMetrics, sdkNode, semantic] = await Promise.all([
     import('@opentelemetry/api'),
@@ -82,6 +97,7 @@ const startOpenTelemetry = async (options: OpenTelemetryConfig): Promise<OpenTel
     return undefined
   }
 
+  applyBunNodeVersionShim()
   const otel = await loadOpenTelemetryCoreModules()
   const { diag, DiagConsoleLogger, DiagLogLevel } = otel.api
 
