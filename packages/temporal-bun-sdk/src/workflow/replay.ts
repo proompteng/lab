@@ -271,12 +271,12 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
     let markerState: WorkflowDeterminismState | undefined
     let markerLastEventId: string | null = null
     let markerEventId: string | null = null
+    let markerEventIndex: number | null = null
     let markerInvalid = false
     let hasMarker = false
-    const updateEntries = collectWorkflowUpdateEntries(events)
 
     if (shouldUseDeterminismMarker) {
-      for (const event of events) {
+      for (const [index, event] of events.entries()) {
         if (event.eventType !== EventType.MARKER_RECORDED) {
           continue
         }
@@ -301,40 +301,71 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
           markerState = applied
           markerLastEventId = decoded.lastEventId
           markerEventId = normalizeEventId(event.eventId)
+          markerEventIndex = index
           hasMarker = true
         }
       }
     }
 
     const extractedFailureMetadata = extractFailureMetadata(events)
-    const replayUpdateInvocations = yield* Effect.tryPromise(async () =>
+    const historyLastEventId = resolveHistoryLastEventId(events) ?? null
+    const eventsAfterMarker =
+      shouldUseDeterminismMarker && hasMarker && markerEventIndex !== null ? events.slice(markerEventIndex + 1) : events
+    const replayUpdateInvocationsAfterMarker = yield* Effect.tryPromise(async () =>
+      collectWorkflowUpdateInvocations(eventsAfterMarker, intake.dataConverter),
+    )
+    const updateEntriesAfterMarker = collectWorkflowUpdateEntries(eventsAfterMarker)
+    const replayUpdateInvocationsFull = yield* Effect.tryPromise(async () =>
       collectWorkflowUpdateInvocations(events, intake.dataConverter),
     )
+    const updateEntriesFull = collectWorkflowUpdateEntries(events)
 
-    const historyLastEventId = resolveHistoryLastEventId(events) ?? null
     const markerCoversHistory = markerEventId !== null && markerEventId === historyLastEventId
 
-    if (shouldUseDeterminismMarker && hasMarker && !markerInvalid && markerState && markerCoversHistory) {
-      let determinismState = cloneDeterminismState(markerState)
-      if (!determinismState.failureMetadata && extractedFailureMetadata) {
-        determinismState = {
-          ...determinismState,
-          failureMetadata: extractedFailureMetadata,
+    if (shouldUseDeterminismMarker && hasMarker && !markerInvalid && markerState) {
+      if (markerCoversHistory || eventsAfterMarker.length === 0) {
+        let determinismState = cloneDeterminismState(markerState)
+        if (!determinismState.failureMetadata && extractedFailureMetadata) {
+          determinismState = {
+            ...determinismState,
+            failureMetadata: extractedFailureMetadata,
+          }
+        }
+        if (
+          (!determinismState.updates || determinismState.updates.length === 0) &&
+          updateEntriesAfterMarker.length > 0
+        ) {
+          determinismState = {
+            ...determinismState,
+            updates: updateEntriesAfterMarker,
+          }
+        }
+        determinismState = mergePendingQueryRequests(determinismState, intake.queries)
+        const latestEventId = historyLastEventId ?? markerLastEventId ?? null
+        return {
+          determinismState,
+          lastEventId: latestEventId,
+          hasDeterminismMarker: true,
+          ...(replayUpdateInvocationsAfterMarker.length > 0 ? { updates: replayUpdateInvocationsAfterMarker } : {}),
         }
       }
-      if ((!determinismState.updates || determinismState.updates.length === 0) && updateEntries.length > 0) {
-        determinismState = {
-          ...determinismState,
-          updates: updateEntries,
-        }
-      }
-      determinismState = mergePendingQueryRequests(determinismState, intake.queries)
-      const latestEventId = historyLastEventId ?? markerLastEventId ?? null
+
+      const replayed = yield* reconstructDeterminismState(
+        eventsAfterMarker,
+        intake,
+        extractedFailureMetadata,
+        updateEntriesAfterMarker,
+        replayUpdateInvocationsAfterMarker,
+        {
+          seedState: markerState,
+          historyLastEventId,
+          seedHistoryEvents: markerEventIndex !== null ? events.slice(0, markerEventIndex + 1) : undefined,
+        },
+      )
       return {
-        determinismState,
-        lastEventId: latestEventId,
+        ...replayed,
         hasDeterminismMarker: true,
-        ...(replayUpdateInvocations.length > 0 ? { updates: replayUpdateInvocations } : {}),
+        lastEventId: historyLastEventId ?? markerLastEventId ?? null,
       }
     }
 
@@ -342,8 +373,8 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
       events,
       intake,
       extractedFailureMetadata,
-      updateEntries,
-      replayUpdateInvocations,
+      updateEntriesFull,
+      replayUpdateInvocationsFull,
     )
   })
 
@@ -660,21 +691,102 @@ const resolveCommandMismatchMetadata = (
   }
 }
 
+type DeterminismReconstructionOptions = {
+  readonly seedState?: WorkflowDeterminismState
+  readonly historyLastEventId?: string | null
+  readonly seedHistoryEvents?: readonly HistoryEvent[]
+}
+
+const seedDeterminismEventMaps = (state?: WorkflowDeterminismState, seedEvents?: readonly HistoryEvent[]) => {
+  const scheduledActivities = new Map<string, string>()
+  const timersByStartEventId = new Map<string, string>()
+
+  if (!state) {
+    if (seedEvents) {
+      seedDeterminismEventMapsFromHistory(scheduledActivities, timersByStartEventId, seedEvents)
+    }
+    return { scheduledActivities, timersByStartEventId }
+  }
+
+  for (const entry of state.commandHistory) {
+    const eventId = entry.metadata?.eventId
+    if (!eventId) {
+      continue
+    }
+    if (entry.intent.kind === 'schedule-activity') {
+      scheduledActivities.set(eventId, entry.intent.activityId)
+      continue
+    }
+    if (entry.intent.kind === 'start-timer') {
+      timersByStartEventId.set(eventId, entry.intent.timerId)
+    }
+  }
+
+  if (seedEvents) {
+    seedDeterminismEventMapsFromHistory(scheduledActivities, timersByStartEventId, seedEvents)
+  }
+
+  return { scheduledActivities, timersByStartEventId }
+}
+
+const seedDeterminismEventMapsFromHistory = (
+  scheduledActivities: Map<string, string>,
+  timersByStartEventId: Map<string, string>,
+  events: readonly HistoryEvent[],
+) => {
+  for (const event of events) {
+    switch (event.eventType) {
+      case EventType.ACTIVITY_TASK_SCHEDULED: {
+        if (event.attributes?.case !== 'activityTaskScheduledEventAttributes') {
+          break
+        }
+        const activityId = event.attributes.value.activityId
+        const eventId = normalizeEventId(event.eventId)
+        if (activityId && eventId && !scheduledActivities.has(eventId)) {
+          scheduledActivities.set(eventId, activityId)
+        }
+        break
+      }
+      case EventType.TIMER_STARTED: {
+        if (event.attributes?.case !== 'timerStartedEventAttributes') {
+          break
+        }
+        const timerId = event.attributes.value.timerId
+        const eventId = normalizeEventId(event.eventId)
+        if (timerId && eventId && !timersByStartEventId.has(eventId)) {
+          timersByStartEventId.set(eventId, timerId)
+        }
+        break
+      }
+      default:
+        break
+    }
+  }
+}
+
 const reconstructDeterminismState = (
   events: HistoryEvent[],
   intake: ReplayIntake,
   failureMetadata?: WorkflowDeterminismFailureMetadata,
   precomputedUpdates?: WorkflowUpdateDeterminismEntry[],
   replayUpdateInvocations: WorkflowUpdateInvocation[] = [],
+  options?: DeterminismReconstructionOptions,
 ): Effect.Effect<ReplayResult, unknown, never> =>
   Effect.gen(function* () {
-    let sequence = 0
-    const commandHistory: WorkflowCommandHistoryEntry[] = []
-    const signalRecords: WorkflowDeterminismSignalRecord[] = []
-    const queryRecords: WorkflowDeterminismQueryRecord[] = []
-    const updates = precomputedUpdates ?? collectWorkflowUpdateEntries(events)
-    const scheduledActivities = new Map<string, string>()
-    const timersByStartEventId = new Map<string, string>()
+    const seededState = options?.seedState ? cloneDeterminismState(options.seedState) : undefined
+    let sequence = seededState?.commandHistory.length ?? 0
+    const commandHistory: WorkflowCommandHistoryEntry[] = seededState ? [...seededState.commandHistory] : []
+    const signalRecords: WorkflowDeterminismSignalRecord[] = seededState ? [...seededState.signals] : []
+    const queryRecords: WorkflowDeterminismQueryRecord[] = seededState ? [...seededState.queries] : []
+    const updateEntries = precomputedUpdates ?? collectWorkflowUpdateEntries(events)
+    const updates =
+      seededState?.updates && seededState.updates.length > 0
+        ? [...seededState.updates, ...updateEntries]
+        : updateEntries
+    const { scheduledActivities, timersByStartEventId } = seedDeterminismEventMaps(
+      seededState,
+      options?.seedHistoryEvents,
+    )
 
     for (const event of events) {
       switch (event.eventType) {
@@ -870,11 +982,12 @@ const reconstructDeterminismState = (
       }
     }
 
+    const resolvedFailureMetadata = failureMetadata ?? seededState?.failureMetadata
     let determinismState: WorkflowDeterminismState = {
       commandHistory,
-      randomValues: [],
-      timeValues: [],
-      ...(failureMetadata ? { failureMetadata } : {}),
+      randomValues: seededState?.randomValues ?? [],
+      timeValues: seededState?.timeValues ?? [],
+      ...(resolvedFailureMetadata ? { failureMetadata: resolvedFailureMetadata } : {}),
       signals: signalRecords,
       queries: queryRecords,
       ...(updates.length > 0 ? { updates } : {}),
@@ -883,7 +996,7 @@ const reconstructDeterminismState = (
 
     return {
       determinismState,
-      lastEventId: resolveHistoryLastEventId(events),
+      lastEventId: options?.historyLastEventId ?? resolveHistoryLastEventId(events),
       hasDeterminismMarker: false,
       ...(replayUpdateInvocations.length > 0 ? { updates: replayUpdateInvocations } : {}),
     }
