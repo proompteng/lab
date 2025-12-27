@@ -1,4 +1,4 @@
-import { IconBrain, IconDatabase, IconHeart, IconHome, IconList, IconRobot } from '@tabler/icons-react'
+import { IconBrain, IconChartCandle, IconDatabase, IconHeart, IconHome, IconList, IconRobot } from '@tabler/icons-react'
 import { Link, useRouterState } from '@tanstack/react-router'
 
 import {
@@ -46,7 +46,10 @@ const apiNav = [
   { to: '/api/health', label: 'Health', icon: IconHeart },
 ] as const
 
-const torghutNav = [{ to: '/torghut/symbols', label: 'Symbols', icon: IconList }] as const
+const torghutNav = [
+  { to: '/torghut/symbols', label: 'Symbols', icon: IconList },
+  { to: '/torghut/visuals', label: 'Visuals', icon: IconChartCandle },
+] as const
 
 export function AppSidebar() {
   const pathname = useRouterState({ select: (state) => state.location.pathname })

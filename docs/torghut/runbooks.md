@@ -41,3 +41,11 @@ Rollback:
 - Check kotlin-ws metric `ws_lag_ms` and Flink watermark lag.
 - Reconnect WS if kotlin-ws lagged; tune watermark/idle-timeout if Flink is blocking on idle partitions.
 - If Kafka is slow, check broker health and consumer lag.
+
+## Torghut TA visuals validation
+1) Ensure `VITE_TORGHUT_VISUALS_ENABLED=true` in Jangar and reload `/torghut/visuals`.
+2) Pick a known symbol with TA data and confirm candlesticks render from `/api/torghut/ta/bars`.
+3) Toggle indicators (EMA/Bollinger/VWAP/MACD/RSI) and confirm `/api/torghut/ta/signals` populates overlays.
+4) Verify lag pill updates from `/api/torghut/ta/latest` and stays under the target threshold.
+5) Force an empty state (symbol with no data) and confirm the UI shows the no-data message.
+6) Induce a failure (block API or bad symbol) and confirm the error banner is visible.

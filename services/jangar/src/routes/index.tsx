@@ -70,6 +70,11 @@ function Home() {
               /torghut/symbols
             </Link>
           </InfoCard>
+          <InfoCard title="Torghut visuals" detail="Candlestick + TA charts from ClickHouse">
+            <Link className="text-primary underline-offset-4 hover:underline" to="/torghut/visuals">
+              /torghut/visuals
+            </Link>
+          </InfoCard>
         </div>
       </section>
     </main>
