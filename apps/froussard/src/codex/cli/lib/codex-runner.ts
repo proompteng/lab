@@ -1,6 +1,7 @@
 import { stat } from 'node:fs/promises'
 import process from 'node:process'
 import { CodexRunner } from '@proompteng/codex'
+import { DISCORD_MESSAGE_SEPARATOR } from '@proompteng/discord'
 import { type CodexLogger, consoleLogger } from './logger'
 
 export interface DiscordChannelOptions {
@@ -92,6 +93,7 @@ const createWritableHandle = (stream: unknown): WritableHandle | undefined => {
 }
 
 const MAX_DISCORD_COMMAND_LINES = 10
+const DISCORD_STREAM_FLUSH_THRESHOLD = 900
 
 const normalizeLineBreaks = (value: string) => value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 
@@ -195,6 +197,7 @@ export const runCodexSession = async ({
   const agentMessages: string[] = []
   let sessionId: string | undefined
   let sawDelta = false
+  let discordStreamBuffer = ''
 
   const closeDiscordWriter = async () => {
     if (discordWriter && !discordClosed) {
@@ -227,13 +230,41 @@ export const runCodexSession = async ({
     }
   }
 
+  const writeDiscordMessage = async (payload: string, errorLabel: string) => {
+    if (!payload) {
+      return
+    }
+    const framed = `${DISCORD_MESSAGE_SEPARATOR}${payload}${DISCORD_MESSAGE_SEPARATOR}`
+    await writeDiscord(framed, errorLabel)
+  }
+
+  const flushDiscordStream = async () => {
+    if (!discordStreamBuffer) {
+      return
+    }
+    const payload = discordStreamBuffer
+    discordStreamBuffer = ''
+    await writeDiscordMessage(payload, 'Failed to write to Discord channel stream:')
+  }
+
+  const queueDiscordStream = async (payload: string) => {
+    if (!payload || !discordWriter || discordClosed) {
+      return
+    }
+    discordStreamBuffer += payload
+    if (discordStreamBuffer.length >= DISCORD_STREAM_FLUSH_THRESHOLD || payload.includes('\n')) {
+      await flushDiscordStream()
+    }
+  }
+
   const emitStreamLine = async (payload: string, errorLabel: string) => {
     if (!payload) {
       return
     }
     const normalized = payload.endsWith('\n') ? payload : `${payload}\n`
     writeStdout(normalized)
-    await writeDiscord(normalized, errorLabel)
+    await flushDiscordStream()
+    await writeDiscordMessage(normalized, errorLabel)
   }
 
   const emitStdoutLine = (payload: string) => {
@@ -405,7 +436,7 @@ export const runCodexSession = async ({
     if (itemType === 'reasoning') {
       const text = readString(item.text)
       if (text) {
-        await emitStreamLine(`Reasoning → ${text}`, 'Failed to write reasoning summary to Discord channel:')
+        await emitStreamLine(text, 'Failed to write reasoning summary to Discord channel:')
       }
       return
     }
@@ -432,7 +463,8 @@ export const runCodexSession = async ({
       const command = readString(item.command)
       const discordBlock = formatDiscordCommandBlock(command, output, exitCode)
       if (discordBlock) {
-        await writeDiscord(discordBlock, 'Failed to write command output to Discord channel:')
+        await flushDiscordStream()
+        await writeDiscordMessage(discordBlock, 'Failed to write command output to Discord channel:')
       }
       return
     }
@@ -540,7 +572,11 @@ export const runCodexSession = async ({
     },
     onAgentMessageDelta: async (delta) => {
       sawDelta = true
-      await emitStreamLine(delta, 'Failed to write to Discord channel stream:')
+      if (!delta) {
+        return
+      }
+      writeStdout(delta)
+      await queueDiscordStream(delta)
     },
     onAgentMessage: async (message) => {
       if (!sawDelta) {
@@ -554,6 +590,7 @@ export const runCodexSession = async ({
     sessionId = runResult.sessionId
   }
 
+  await flushDiscordStream()
   await closeDiscordWriter()
 
   if (discordProcess) {

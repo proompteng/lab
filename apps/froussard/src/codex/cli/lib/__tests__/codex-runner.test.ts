@@ -320,10 +320,10 @@ describe('codex-runner', () => {
     stdoutSpy.mockRestore()
 
     const stdoutText = stdoutSink.join('')
-    expect(stdoutText).toContain('Reasoning → Investigating repo layout.')
+    expect(stdoutText).toContain('Investigating repo layout.')
 
     const channelText = channelSink.join('')
-    expect(channelText).toContain('Reasoning → Investigating repo layout.')
+    expect(channelText).toContain('Investigating repo layout.')
   })
 
   it('streams thread and item events to stdout and Discord', async () => {
