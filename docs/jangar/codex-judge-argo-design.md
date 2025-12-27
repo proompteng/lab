@@ -149,12 +149,16 @@ Fail:
   - merge conflicts
   - repeated infra failure
   - repeated identical failure beyond threshold
+- For needs_iteration and needs_human, the judge must emit system-level improvement suggestions
+  (system prompt tuning and broader system changes) and open a PR with those recommendations.
 
 ## Prompt Auto-tuning
 - Aggregate failure reasons across runs.
 - Generate prompt improvements automatically.
 - Create PRs to update prompt templates.
 - Human reviews/merges PRs.
+ - For needs_iteration and needs_human outcomes, always produce a PR with system prompt and
+   system improvement suggestions.
 
 ## State Machine
 issue status: queued -> running -> notified -> judging -> completed | needs_iteration | needs_human

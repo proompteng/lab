@@ -223,7 +223,8 @@ Provide CI status for a branch or PR.
   "missing_items": ["..."],
   "suggested_fixes": ["..."],
   "next_prompt": "...",
-  "prompt_tuning_suggestions": ["..."]
+  "prompt_tuning_suggestions": ["..."],
+  "system_improvement_suggestions": ["..."]
 }
 
 ### Deliverables
@@ -297,6 +298,8 @@ Provide CI status for a branch or PR.
 - Modify prompt template
 - Create PR with summary and run references
 - Track PR status in Jangar
+ - For needs_iteration and needs_human outcomes, always create a PR with system prompt and
+   system-level improvement suggestions (not just prompt text edits).
 
 ### Deliverables
 - Prompt tuning job producing PRs.
@@ -307,6 +310,7 @@ Provide CI status for a branch or PR.
 - Generate patch from tuning suggestions.
 - Create PR branch and open PR automatically.
 - Track PR status and link to runs that caused change.
+ - Include system-level improvement suggestions in the PR description or companion doc.
 
 ### Acceptance criteria
 - PR created with minimal diff and clear rationale.
