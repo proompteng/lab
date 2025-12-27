@@ -182,10 +182,45 @@ export const workflows = [
       if (ref) readRepoInput.ref = ref
       if (commit) readRepoInput.commit = commit
 
-      const fileResult = (yield* activities.schedule('readRepoFile', [readRepoInput], {
-        ...readRepoFileTimeouts,
-        retry: activityRetry,
-      })) as ReadRepoFileOutput
+      const fileResult = (yield* Effect.catchAll(
+        activities.schedule('readRepoFile', [readRepoInput], {
+          ...readRepoFileTimeouts,
+          retry: activityRetry,
+        }),
+        (error: unknown) => {
+          if (error instanceof Error && error.name === 'DirectoryError') {
+            logWorkflow('enrichFile.skipped', {
+              workflowId: info.workflowId,
+              runId: info.runId,
+              filePath,
+              reason: 'directory',
+            })
+            return Effect.succeed<ReadRepoFileOutput | null>(null)
+          }
+          return Effect.fail(error)
+        },
+      )) as ReadRepoFileOutput | null
+
+      if (!fileResult) {
+        if (eventDeliveryId) {
+          yield* activities.schedule(
+            'markEventProcessed',
+            [
+              {
+                deliveryId: eventDeliveryId,
+              },
+            ],
+            {
+              ...markEventProcessedTimeouts,
+              retry: activityRetry,
+            },
+          )
+        }
+        return {
+          id: 'skipped-directory',
+          filename: filePath,
+        }
+      }
       const readSourceMeta = fileResult.metadata.metadata ?? {}
       const readSource = typeof readSourceMeta.source === 'string' ? readSourceMeta.source : null
 

@@ -537,6 +537,11 @@ const fetchGithubFile = async (repository: string, filePath: string, ref: string
   }
 
   if (!data || data.type !== 'file') {
+    if (data?.type === 'dir' || data?.type === 'submodule') {
+      const error = new Error(`GitHub contents API returned directory for ${filePath}`)
+      error.name = 'DirectoryError'
+      throw error
+    }
     throw new Error(`GitHub contents API returned non-file for ${filePath}`)
   }
 
@@ -1568,7 +1573,7 @@ export const activities = {
     })
 
     try {
-      const args = ['git', 'ls-tree', '-r', '--name-only', ref]
+      const args = ['git', 'ls-tree', '-r', '-z', ref]
       if (pathPrefix) {
         args.push('--', pathPrefix)
       }
@@ -1579,7 +1584,7 @@ export const activities = {
       }
 
       const entries = output
-        .split(/\r?\n/)
+        .split('\0')
         .map((line) => line.trim())
         .filter((line) => line.length > 0)
 
@@ -1587,7 +1592,17 @@ export const activities = {
       let skipped = 0
 
       for (const entry of entries) {
-        if (shouldSkipRepoFile(entry)) {
+        const [meta, path] = entry.split('\t')
+        if (!meta || !path) {
+          skipped += 1
+          continue
+        }
+        const type = meta.split(' ')[1]
+        if (type !== 'blob') {
+          skipped += 1
+          continue
+        }
+        if (shouldSkipRepoFile(path)) {
           skipped += 1
           continue
         }
@@ -1595,7 +1610,7 @@ export const activities = {
           skipped += 1
           continue
         }
-        files.push(entry)
+        files.push(path)
       }
 
       const result = {
@@ -1696,11 +1711,17 @@ export const activities = {
         }
       }
 
-      if (!content && !normalizedCommit && fileStats) {
+      if (!content && !normalizedCommit && fileStats && fileStats.isFile()) {
         content = await readFile(fullPath, 'utf8')
         source = 'local'
         stats = fileStats
         sourceMeta = { repoRoot: input.repoRoot, source: 'local' }
+      }
+
+      if (!content && fileStats && !fileStats.isFile()) {
+        const error = new Error(`Path is a directory: ${input.filePath}`)
+        error.name = 'DirectoryError'
+        throw error
       }
 
       if (!content) {
