@@ -1,5 +1,7 @@
 import { defineWorkflow, defineWorkflowSignals, log } from '@proompteng/temporal-bun-sdk/workflow'
 import { Effect } from 'effect'
+import * as Cause from 'effect/Cause'
+import * as Chunk from 'effect/Chunk'
 import * as Schema from 'effect/Schema'
 
 import type {
@@ -74,12 +76,27 @@ const cleanupEnrichmentTimeouts = {
 }
 
 const PARENT_CLOSE_POLICY_ABANDON = 2
-const CHILD_WORKFLOW_BATCH_SIZE = 50
-const CHILD_WORKFLOW_PROGRESS_INTERVAL = 25
+const CHILD_WORKFLOW_BATCH_SIZE = 10
+const CHILD_WORKFLOW_PROGRESS_INTERVAL = 10
 const CHILD_WORKFLOW_COMPLETED_SIGNAL = '__childWorkflowCompleted'
 
 const logWorkflow = (event: string, fields: Record<string, unknown> = {}) => {
   log.info('[bumba:workflow]', { event, ...fields })
+}
+
+const getCauseError = (cause: Cause.Cause<unknown>): Error | undefined => {
+  const failure = Cause.failureOption(cause)
+  if (failure._tag === 'Some' && failure.value instanceof Error) {
+    return failure.value
+  }
+  const defects = Cause.defects(cause)
+  if (Chunk.isNonEmpty(defects)) {
+    const defect = Chunk.unsafeHead(defects)
+    if (defect instanceof Error) {
+      return defect
+    }
+  }
+  return undefined
 }
 
 type ChildWorkflowCompletion = {
@@ -182,10 +199,46 @@ export const workflows = [
       if (ref) readRepoInput.ref = ref
       if (commit) readRepoInput.commit = commit
 
-      const fileResult = (yield* activities.schedule('readRepoFile', [readRepoInput], {
-        ...readRepoFileTimeouts,
-        retry: activityRetry,
-      })) as ReadRepoFileOutput
+      const fileResult = (yield* Effect.catchAllCause(
+        activities.schedule('readRepoFile', [readRepoInput], {
+          ...readRepoFileTimeouts,
+          retry: activityRetry,
+        }),
+        (cause) => {
+          const error = getCauseError(cause)
+          if (error?.name === 'DirectoryError') {
+            logWorkflow('enrichFile.skipped', {
+              workflowId: info.workflowId,
+              runId: info.runId,
+              filePath,
+              reason: 'directory',
+            })
+            return Effect.succeed<ReadRepoFileOutput | null>(null)
+          }
+          return Effect.failCause(cause)
+        },
+      )) as ReadRepoFileOutput | null
+
+      if (!fileResult) {
+        if (eventDeliveryId) {
+          yield* activities.schedule(
+            'markEventProcessed',
+            [
+              {
+                deliveryId: eventDeliveryId,
+              },
+            ],
+            {
+              ...markEventProcessedTimeouts,
+              retry: activityRetry,
+            },
+          )
+        }
+        return {
+          id: 'skipped-directory',
+          filename: filePath,
+        }
+      }
       const readSourceMeta = fileResult.metadata.metadata ?? {}
       const readSource = typeof readSourceMeta.source === 'string' ? readSourceMeta.source : null
 
@@ -229,19 +282,41 @@ export const workflows = [
         },
       )) as AstSummaryOutput
 
-      const enriched = (yield* activities.schedule(
-        'enrichWithModel',
-        [
+      const enriched = (yield* Effect.catchAllCause(
+        activities.schedule(
+          'enrichWithModel',
+          [
+            {
+              filename: filePath,
+              content: fileResult.content,
+              astSummary: astResult.astSummary,
+              context: context ?? '',
+            },
+          ],
           {
-            filename: filePath,
-            content: fileResult.content,
-            astSummary: astResult.astSummary,
-            context: context ?? '',
+            ...enrichWithModelTimeouts,
+            retry: activityRetry,
           },
-        ],
-        {
-          ...enrichWithModelTimeouts,
-          retry: activityRetry,
+        ),
+        (cause) => {
+          const error = getCauseError(cause)
+          if (error?.message.includes('completion request timed out')) {
+            logWorkflow('enrichFile.modelTimeout', {
+              workflowId: info.workflowId,
+              runId: info.runId,
+              filePath,
+              error: error.message,
+            })
+            return Effect.succeed<EnrichOutput>({
+              summary: 'Unknown (model timeout)',
+              enriched: '- Model enrichment timed out; output unavailable.',
+              metadata: {
+                modelTimeout: true,
+                error: error.message,
+              },
+            })
+          }
+          return Effect.failCause(cause)
         },
       )) as EnrichOutput
 
@@ -315,7 +390,8 @@ export const workflows = [
             )
           : Effect.succeed({ inserted: 0 })
 
-      yield* Effect.all([persistEmbedding, persistFacts], { concurrency: 2 })
+      yield* persistEmbedding
+      yield* persistFacts
 
       if (eventDeliveryId) {
         yield* activities.schedule(

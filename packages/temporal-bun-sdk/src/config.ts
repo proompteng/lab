@@ -30,6 +30,11 @@ const DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS = 5_000
 const DEFAULT_LOG_LEVEL: LogLevel = 'info'
 const DEFAULT_LOG_FORMAT: LogFormat = 'pretty'
 const DEFAULT_TRACING_INTERCEPTORS_ENABLED = true
+const DEFAULT_DETERMINISM_MARKER_MODE: DeterminismMarkerMode = 'delta'
+const DEFAULT_DETERMINISM_MARKER_INTERVAL_TASKS = 10
+const DEFAULT_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS = 50
+const DEFAULT_DETERMINISM_MARKER_SKIP_UNCHANGED = true
+const DEFAULT_DETERMINISM_MARKER_MAX_DETAIL_BYTES = 1_800_000
 const DEFAULT_CLIENT_RETRY_MAX_ATTEMPTS = defaultRetryPolicy.maxAttempts
 const DEFAULT_CLIENT_RETRY_INITIAL_MS = defaultRetryPolicy.initialDelayMs
 const DEFAULT_CLIENT_RETRY_MAX_MS = defaultRetryPolicy.maxDelayMs
@@ -69,6 +74,7 @@ const TLSConfigSchema = Schema.Struct({
 })
 const LogLevelSchema = Schema.Literal('debug', 'info', 'warn', 'error')
 const LogFormatSchema = Schema.Literal('json', 'pretty')
+const DeterminismMarkerModeSchema = Schema.Literal('always', 'interval', 'delta', 'never')
 const MetricsExporterTypeSchema = Schema.Literal('in-memory', 'file', 'otlp', 'prometheus')
 const MetricsExporterSpecSchema = Schema.Struct({
   type: MetricsExporterTypeSchema,
@@ -113,6 +119,11 @@ const TemporalConfigSchema = Schema.Struct({
   workerStickyCacheSize: Schema.Number,
   workerStickyTtlMs: Schema.Number,
   stickySchedulingEnabled: Schema.Boolean,
+  determinismMarkerMode: DeterminismMarkerModeSchema,
+  determinismMarkerIntervalTasks: Schema.Number,
+  determinismMarkerFullSnapshotIntervalTasks: Schema.Number,
+  determinismMarkerSkipUnchanged: Schema.Boolean,
+  determinismMarkerMaxDetailBytes: Schema.Number,
   activityHeartbeatIntervalMs: Schema.Number,
   activityHeartbeatRpcTimeoutMs: Schema.Number,
   workerDeploymentName: Schema.optional(Schema.String),
@@ -163,6 +174,11 @@ export interface TemporalEnvironment {
   TEMPORAL_WORKER_DEPLOYMENT_NAME?: string
   TEMPORAL_WORKER_BUILD_ID?: string
   TEMPORAL_STICKY_SCHEDULING_ENABLED?: string
+  TEMPORAL_DETERMINISM_MARKER_MODE?: string
+  TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS?: string
+  TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS?: string
+  TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED?: string
+  TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES?: string
   TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS?: string
   TEMPORAL_CLIENT_RETRY_INITIAL_MS?: string
   TEMPORAL_CLIENT_RETRY_MAX_MS?: string
@@ -178,6 +194,7 @@ const truthyValues = new Set(['1', 'true', 't', 'yes', 'y', 'on'])
 const falsyValues = new Set(['0', 'false', 'f', 'no', 'n', 'off'])
 const logLevelOptions = new Set<LogLevel>(['debug', 'info', 'warn', 'error'])
 const logFormatOptions = new Set<LogFormat>(['json', 'pretty'])
+const determinismMarkerModeOptions = new Set<DeterminismMarkerMode>(['always', 'interval', 'delta', 'never'])
 
 const parseLogLevel = (value: string | undefined): LogLevel | undefined => {
   if (!value) {
@@ -205,6 +222,20 @@ const parseLogFormat = (value: string | undefined): LogFormat | undefined => {
     return normalized as LogFormat
   }
   throw new TemporalConfigError(`Invalid TEMPORAL_LOG_FORMAT: ${value}`)
+}
+
+const parseDeterminismMarkerMode = (value: string | undefined): DeterminismMarkerMode | undefined => {
+  if (!value) {
+    return undefined
+  }
+  const normalized = value.trim().toLowerCase()
+  if (normalized.length === 0) {
+    return undefined
+  }
+  if (determinismMarkerModeOptions.has(normalized as DeterminismMarkerMode)) {
+    return normalized as DeterminismMarkerMode
+  }
+  throw new TemporalConfigError(`Invalid TEMPORAL_DETERMINISM_MARKER_MODE: ${value}`)
 }
 
 const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
@@ -246,6 +277,13 @@ const sanitizeEnvironment = (env: NodeJS.ProcessEnv): TemporalEnvironment => {
     TEMPORAL_WORKER_DEPLOYMENT_NAME: read('TEMPORAL_WORKER_DEPLOYMENT_NAME'),
     TEMPORAL_WORKER_BUILD_ID: read('TEMPORAL_WORKER_BUILD_ID'),
     TEMPORAL_STICKY_SCHEDULING_ENABLED: read('TEMPORAL_STICKY_SCHEDULING_ENABLED'),
+    TEMPORAL_DETERMINISM_MARKER_MODE: read('TEMPORAL_DETERMINISM_MARKER_MODE'),
+    TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS: read('TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS'),
+    TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS: read(
+      'TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS',
+    ),
+    TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED: read('TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED'),
+    TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES: read('TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES'),
     TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS: read('TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS'),
     TEMPORAL_CLIENT_RETRY_INITIAL_MS: read('TEMPORAL_CLIENT_RETRY_INITIAL_MS'),
     TEMPORAL_CLIENT_RETRY_MAX_MS: read('TEMPORAL_CLIENT_RETRY_MAX_MS'),
@@ -420,6 +458,8 @@ export interface LoadTemporalConfigOptions {
   defaults?: Partial<TemporalConfig>
 }
 
+export type DeterminismMarkerMode = 'always' | 'interval' | 'delta' | 'never'
+
 export interface TemporalConfig {
   host: string
   port: number
@@ -437,6 +477,11 @@ export interface TemporalConfig {
   workerStickyCacheSize: number
   workerStickyTtlMs: number
   stickySchedulingEnabled: boolean
+  determinismMarkerMode: DeterminismMarkerMode
+  determinismMarkerIntervalTasks: number
+  determinismMarkerFullSnapshotIntervalTasks: number
+  determinismMarkerSkipUnchanged: boolean
+  determinismMarkerMaxDetailBytes: number
   activityHeartbeatIntervalMs: number
   activityHeartbeatRpcTimeoutMs: number
   workerDeploymentName?: string
@@ -680,6 +725,29 @@ export const loadTemporalConfigEffect = (
       coerceBoolean(env.TEMPORAL_STICKY_SCHEDULING_ENABLED) ??
       defaults.stickySchedulingEnabled ??
       workerStickyCacheSize > 0
+    const determinismMarkerMode =
+      parseDeterminismMarkerMode(env.TEMPORAL_DETERMINISM_MARKER_MODE) ??
+      defaults.determinismMarkerMode ??
+      DEFAULT_DETERMINISM_MARKER_MODE
+    const determinismMarkerIntervalTasks = parsePositiveInt(
+      env.TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS,
+      defaults.determinismMarkerIntervalTasks ?? DEFAULT_DETERMINISM_MARKER_INTERVAL_TASKS,
+      'TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS',
+    )
+    const determinismMarkerFullSnapshotIntervalTasks = parsePositiveInt(
+      env.TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS,
+      defaults.determinismMarkerFullSnapshotIntervalTasks ?? DEFAULT_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS,
+      'TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS',
+    )
+    const determinismMarkerSkipUnchanged =
+      coerceBoolean(env.TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED) ??
+      defaults.determinismMarkerSkipUnchanged ??
+      DEFAULT_DETERMINISM_MARKER_SKIP_UNCHANGED
+    const determinismMarkerMaxDetailBytes = parsePositiveInt(
+      env.TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES,
+      defaults.determinismMarkerMaxDetailBytes ?? DEFAULT_DETERMINISM_MARKER_MAX_DETAIL_BYTES,
+      'TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES',
+    )
     const fallbackHeartbeatInterval = defaults.activityHeartbeatIntervalMs ?? DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS
     const fallbackHeartbeatRpcTimeout =
       defaults.activityHeartbeatRpcTimeoutMs ?? DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS
@@ -739,6 +807,11 @@ export const loadTemporalConfigEffect = (
       workerStickyCacheSize,
       workerStickyTtlMs,
       stickySchedulingEnabled,
+      determinismMarkerMode,
+      determinismMarkerIntervalTasks,
+      determinismMarkerFullSnapshotIntervalTasks,
+      determinismMarkerSkipUnchanged,
+      determinismMarkerMaxDetailBytes,
       activityHeartbeatIntervalMs,
       activityHeartbeatRpcTimeoutMs,
       workerDeploymentName,
@@ -782,6 +855,11 @@ export const temporalDefaults = {
   workerStickyCacheSize: DEFAULT_STICKY_CACHE_SIZE,
   workerStickyTtlMs: DEFAULT_STICKY_CACHE_TTL_MS,
   stickySchedulingEnabled: true,
+  determinismMarkerMode: DEFAULT_DETERMINISM_MARKER_MODE,
+  determinismMarkerIntervalTasks: DEFAULT_DETERMINISM_MARKER_INTERVAL_TASKS,
+  determinismMarkerFullSnapshotIntervalTasks: DEFAULT_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS,
+  determinismMarkerSkipUnchanged: DEFAULT_DETERMINISM_MARKER_SKIP_UNCHANGED,
+  determinismMarkerMaxDetailBytes: DEFAULT_DETERMINISM_MARKER_MAX_DETAIL_BYTES,
   activityHeartbeatIntervalMs: DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS,
   activityHeartbeatRpcTimeoutMs: DEFAULT_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS,
   workerDeploymentName: undefined,
@@ -804,6 +882,11 @@ export const temporalDefaults = {
   | 'workerStickyCacheSize'
   | 'workerStickyTtlMs'
   | 'stickySchedulingEnabled'
+  | 'determinismMarkerMode'
+  | 'determinismMarkerIntervalTasks'
+  | 'determinismMarkerFullSnapshotIntervalTasks'
+  | 'determinismMarkerSkipUnchanged'
+  | 'determinismMarkerMaxDetailBytes'
   | 'activityHeartbeatIntervalMs'
   | 'activityHeartbeatRpcTimeoutMs'
   | 'workerDeploymentName'

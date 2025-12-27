@@ -537,21 +537,52 @@ const fetchGithubFile = async (repository: string, filePath: string, ref: string
   }
 
   if (!data || data.type !== 'file') {
+    if (data?.type === 'dir' || data?.type === 'submodule') {
+      const error = new Error(`GitHub contents API returned directory for ${filePath}`)
+      error.name = 'DirectoryError'
+      throw error
+    }
     throw new Error(`GitHub contents API returned non-file for ${filePath}`)
   }
-  if (!data.content || data.encoding !== 'base64') {
-    throw new Error(`GitHub contents API returned unsupported encoding for ${filePath}`)
+
+  if ((data.size ?? 0) === 0 && (!data.content || data.content.length === 0)) {
+    return {
+      content: '',
+      downloadUrl: data.download_url ?? null,
+      apiUrl: data.url ?? url.toString(),
+      sha: data.sha ?? null,
+      size: data.size ?? 0,
+    }
   }
 
-  const content = Buffer.from(data.content.replace(/\r?\n/g, ''), 'base64').toString('utf8')
-
-  return {
-    content,
-    downloadUrl: data.download_url ?? null,
-    apiUrl: data.url ?? url.toString(),
-    sha: data.sha ?? null,
-    size: data.size ?? null,
+  if (data.content && data.encoding === 'base64') {
+    const content = Buffer.from(data.content.replace(/\r?\n/g, ''), 'base64').toString('utf8')
+    return {
+      content,
+      downloadUrl: data.download_url ?? null,
+      apiUrl: data.url ?? url.toString(),
+      sha: data.sha ?? null,
+      size: data.size ?? null,
+    }
   }
+
+  if (data.download_url) {
+    const rawResponse = await fetch(data.download_url)
+    if (!rawResponse.ok) {
+      const body = await rawResponse.text()
+      throw new Error(`GitHub raw fetch failed (${rawResponse.status}): ${body}`)
+    }
+    const content = await rawResponse.text()
+    return {
+      content,
+      downloadUrl: data.download_url ?? null,
+      apiUrl: data.url ?? url.toString(),
+      sha: data.sha ?? null,
+      size: data.size ?? null,
+    }
+  }
+
+  throw new Error(`GitHub contents API returned unsupported encoding for ${filePath}`)
 }
 
 type AstPoint = {
@@ -713,6 +744,7 @@ const languageWasmByExtension = new Map<string, { name: string; wasmPath: string
 
 let parserInitPromise: Promise<void> | null = null
 const loadedLanguages = new Map<string, Language>()
+const languageLoadPromises = new Map<string, Promise<Language>>()
 
 const ensureParserInit = async () => {
   if (!parserInitPromise) {
@@ -732,9 +764,21 @@ const loadLanguageForExtension = async (ext: string): Promise<LoadedLanguage | n
   const cached = loadedLanguages.get(entry.name)
   if (cached) return { name: entry.name, language: cached }
 
-  const language = await Language.load(entry.wasmPath)
-  loadedLanguages.set(entry.name, language)
-  return { name: entry.name, language }
+  let loadPromise = languageLoadPromises.get(entry.name)
+  if (!loadPromise) {
+    loadPromise = Language.load(entry.wasmPath)
+    languageLoadPromises.set(entry.name, loadPromise)
+  }
+
+  try {
+    const language = await loadPromise
+    loadedLanguages.set(entry.name, language)
+    languageLoadPromises.delete(entry.name)
+    return { name: entry.name, language }
+  } catch (error) {
+    languageLoadPromises.delete(entry.name)
+    throw error
+  }
 }
 
 const clampNumber = (value: number, fallback: number) => (Number.isFinite(value) && value > 0 ? value : fallback)
@@ -1289,34 +1333,72 @@ const parseAst = async (source: string, filePath: string): Promise<AstSummaryOut
   if (customParser) {
     return customParser(source, maxFacts, maxFactChars, maxSummaryNodes)
   }
-  const entry = await loadLanguageForExtension(ext)
-  if (!entry) {
-    const fallbackLanguage = languageNameByExtension.get(ext) ?? 'text'
-    return parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
-  }
+  const fallbackLanguage = languageNameByExtension.get(ext) ?? 'text'
+  let entry: LoadedLanguage | null
 
-  const parser = new Parser()
-  parser.setLanguage(entry.language)
-  const tree = parser.parse(source)
-  if (!tree) {
+  try {
+    entry = await loadLanguageForExtension(ext)
+  } catch (error) {
+    const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
     return {
-      astSummary: 'Tree-sitter parse failed.',
-      facts: [],
-      metadata: { skipped: true, reason: 'parse_failed', language: entry.name },
+      ...fallback,
+      metadata: {
+        ...fallback.metadata,
+        skipped: true,
+        reason: 'language_load_failed',
+        error: error instanceof Error ? error.message : 'unknown_error',
+      },
     }
   }
-  const root = tree.rootNode as AstNode
 
-  const facts = collectFacts(root, source, maxFacts, maxFactChars)
-  const astSummary = buildAstSummary(root, source, maxSummaryNodes, maxFactChars)
+  if (!entry) {
+    const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
+    return {
+      ...fallback,
+      metadata: {
+        ...fallback.metadata,
+        skipped: true,
+        reason: 'language_missing',
+      },
+    }
+  }
 
-  return {
-    astSummary,
-    facts,
-    metadata: {
-      language: entry.name,
-      factCount: facts.length,
-    },
+  try {
+    const parser = new Parser()
+    parser.setLanguage(entry.language)
+    const tree = parser.parse(source)
+    if (!tree) {
+      return {
+        astSummary: 'Tree-sitter parse failed.',
+        facts: [],
+        metadata: { skipped: true, reason: 'parse_failed', language: entry.name },
+      }
+    }
+    const root = tree.rootNode as AstNode
+
+    const facts = collectFacts(root, source, maxFacts, maxFactChars)
+    const astSummary = buildAstSummary(root, source, maxSummaryNodes, maxFactChars)
+
+    return {
+      astSummary,
+      facts,
+      metadata: {
+        language: entry.name,
+        factCount: facts.length,
+      },
+    }
+  } catch (error) {
+    const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
+    return {
+      ...fallback,
+      metadata: {
+        ...fallback.metadata,
+        skipped: true,
+        reason: 'parser_error',
+        language: entry.name,
+        error: error instanceof Error ? error.message : 'unknown_error',
+      },
+    }
   }
 }
 
@@ -1344,7 +1426,7 @@ const loadCompletionConfig = () => {
 
   const defaults = resolveCompletionDefaults(apiBaseUrl)
   const model = process.env.OPENAI_COMPLETION_MODEL ?? process.env.OPENAI_MODEL ?? defaults.model
-  const timeoutMs = Number.parseInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS ?? '30000', 10)
+  const timeoutMs = Number.parseInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS ?? '60000', 10)
   const maxInputChars = clampNumber(
     Number.parseInt(process.env.OPENAI_COMPLETION_MAX_INPUT_CHARS ?? '', 10),
     MAX_COMPLETION_INPUT_CHARS,
@@ -1542,7 +1624,7 @@ export const activities = {
     })
 
     try {
-      const args = ['git', 'ls-tree', '-r', '--name-only', ref]
+      const args = ['git', 'ls-tree', '-r', '-z', ref]
       if (pathPrefix) {
         args.push('--', pathPrefix)
       }
@@ -1553,7 +1635,7 @@ export const activities = {
       }
 
       const entries = output
-        .split(/\r?\n/)
+        .split('\0')
         .map((line) => line.trim())
         .filter((line) => line.length > 0)
 
@@ -1561,7 +1643,17 @@ export const activities = {
       let skipped = 0
 
       for (const entry of entries) {
-        if (shouldSkipRepoFile(entry)) {
+        const [meta, path] = entry.split('\t')
+        if (!meta || !path) {
+          skipped += 1
+          continue
+        }
+        const type = meta.split(' ')[1]
+        if (type !== 'blob') {
+          skipped += 1
+          continue
+        }
+        if (shouldSkipRepoFile(path)) {
           skipped += 1
           continue
         }
@@ -1569,7 +1661,7 @@ export const activities = {
           skipped += 1
           continue
         }
-        files.push(entry)
+        files.push(path)
       }
 
       const result = {
@@ -1670,11 +1762,17 @@ export const activities = {
         }
       }
 
-      if (!content && !normalizedCommit && fileStats) {
+      if (!content && !normalizedCommit && fileStats && fileStats.isFile()) {
         content = await readFile(fullPath, 'utf8')
         source = 'local'
         stats = fileStats
         sourceMeta = { repoRoot: input.repoRoot, source: 'local' }
+      }
+
+      if (!content && fileStats && !fileStats.isFile()) {
+        const error = new Error(`Path is a directory: ${input.filePath}`)
+        error.name = 'DirectoryError'
+        throw error
       }
 
       if (!content) {
@@ -1830,9 +1928,6 @@ export const activities = {
       response_format: { type: 'json_object' },
     }
 
-    const controller = new AbortController()
-    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
-
     const logCompletion = (responseFormat: 'json_object' | 'none', result: EnrichOutput) => {
       logActivity('info', 'completed', 'enrichWithModel', {
         filename: input.filename,
@@ -1845,7 +1940,7 @@ export const activities = {
       })
     }
 
-    try {
+    const requestCompletion = async (signal: AbortSignal) => {
       const headers: Record<string, string> = {
         'content-type': 'application/json',
       }
@@ -1857,7 +1952,7 @@ export const activities = {
         method: 'POST',
         headers,
         body: JSON.stringify(payloadWithFormat),
-        signal: controller.signal,
+        signal,
       })
 
       if (!response.ok) {
@@ -1874,7 +1969,7 @@ export const activities = {
             method: 'POST',
             headers,
             body: JSON.stringify(payload),
-            signal: controller.signal,
+            signal,
           })
           if (!fallbackResponse.ok) {
             const fallbackBody = await fallbackResponse.text()
@@ -1911,6 +2006,14 @@ export const activities = {
         },
       }
       logCompletion('json_object', result)
+      return result
+    }
+
+    const controller = new AbortController()
+    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+      const result = await requestCompletion(controller.signal)
       return result
     } catch (error) {
       const timeoutError = error instanceof Error && error.name === 'AbortError'

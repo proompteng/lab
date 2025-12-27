@@ -618,9 +618,18 @@ const buildStartChildWorkflowIntent = (
 ): StartChildWorkflowCommandIntent => {
   const sequence = ctx.nextSequence()
   const previous = ctx.previousIntent(sequence)
-  const replayWorkflowId = previous && previous.kind === 'start-child-workflow' ? previous.workflowId : undefined
+  const previousStartChild = previous && previous.kind === 'start-child-workflow' ? previous : undefined
+  const replayWorkflowId = previousStartChild?.workflowId
   const workflowId =
     options.workflowId ?? replayWorkflowId ?? `${ctx.info.workflowId}-child-${ctx.info.runId}-${sequence}`
+  const workflowExecutionTimeoutMs =
+    options.workflowExecutionTimeoutMs ?? previousStartChild?.timeouts.workflowExecutionTimeoutMs
+  const workflowRunTimeoutMs = options.workflowRunTimeoutMs ?? previousStartChild?.timeouts.workflowRunTimeoutMs
+  const workflowTaskTimeoutMs = options.workflowTaskTimeoutMs ?? previousStartChild?.timeouts.workflowTaskTimeoutMs
+  const parentClosePolicy = options.parentClosePolicy ?? previousStartChild?.parentClosePolicy
+  const workflowIdReusePolicy = options.workflowIdReusePolicy ?? previousStartChild?.workflowIdReusePolicy
+  const retry = options.retry ?? previousStartChild?.retry
+  const cronSchedule = options.cronSchedule ?? previousStartChild?.cronSchedule
   return {
     id: `start-child-workflow-${sequence}`,
     kind: 'start-child-workflow',
@@ -631,14 +640,14 @@ const buildStartChildWorkflowIntent = (
     taskQueue: options.taskQueue ?? ctx.info.taskQueue,
     input: args,
     timeouts: {
-      workflowExecutionTimeoutMs: options.workflowExecutionTimeoutMs,
-      workflowRunTimeoutMs: options.workflowRunTimeoutMs,
-      workflowTaskTimeoutMs: options.workflowTaskTimeoutMs,
+      workflowExecutionTimeoutMs,
+      workflowRunTimeoutMs,
+      workflowTaskTimeoutMs,
     },
-    parentClosePolicy: options.parentClosePolicy,
-    workflowIdReusePolicy: options.workflowIdReusePolicy,
-    retry: options.retry,
-    cronSchedule: options.cronSchedule,
+    parentClosePolicy,
+    workflowIdReusePolicy,
+    retry,
+    cronSchedule,
   }
 }
 
