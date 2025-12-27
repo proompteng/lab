@@ -17,7 +17,7 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2025-12-27T12:30:06.238Z"
+        kubectl.kubernetes.io/restartedAt: "2025-12-27T14:21:44.527Z"
     spec:
       containers:
         - name: bumba
@@ -47,6 +47,16 @@ spec:
               value: "20"
             - name: TEMPORAL_ACTIVITY_CONCURRENCY
               value: "20"
+            - name: TEMPORAL_DETERMINISM_MARKER_MODE
+              value: delta
+            - name: TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS
+              value: "10"
+            - name: TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS
+              value: "10000"
+            - name: TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED
+              value: "1"
+            - name: TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES
+              value: "1800000"
             - name: TEMPORAL_OTEL_ENABLED
               value: "true"
             - name: TEMPORAL_METRICS_EXPORTER
