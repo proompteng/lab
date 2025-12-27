@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -162,6 +162,24 @@ describe('bumba readRepoFile', () => {
         process.env.GITHUB_TOKEN = previousToken
       }
       globalThis.fetch = previousFetch
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('throws DirectoryError when file path is a directory', async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))
+    const filePath = 'some-dir'
+
+    try {
+      await mkdir(join(repoRoot, filePath), { recursive: true })
+      await writeFile(join(repoRoot, filePath, '.gitkeep'), '', 'utf8')
+      await expect(
+        activities.readRepoFile({
+          repoRoot,
+          filePath,
+        }),
+      ).rejects.toMatchObject({ name: 'DirectoryError' })
+    } finally {
       await rm(repoRoot, { recursive: true, force: true })
     }
   })
