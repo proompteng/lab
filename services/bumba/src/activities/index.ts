@@ -733,6 +733,11 @@ const languageWasmByExtension = new Map<string, { name: string; wasmPath: string
   ['.tsx', { name: 'tsx', wasmPath: require.resolve('tree-sitter-typescript/tree-sitter-tsx.wasm') }],
   ['.webmanifest', { name: 'json', wasmPath: require.resolve('tree-sitter-json/tree-sitter-json.wasm') }],
   [
+    '.yaml',
+    { name: 'yaml', wasmPath: require.resolve('@tree-sitter-grammars/tree-sitter-yaml/tree-sitter-yaml.wasm') },
+  ],
+  ['.yml', { name: 'yaml', wasmPath: require.resolve('@tree-sitter-grammars/tree-sitter-yaml/tree-sitter-yaml.wasm') }],
+  [
     '.zig',
     {
       name: 'zig',
@@ -1312,8 +1317,6 @@ const customAstParsers = new Map<
   ['.svg', parseXmlAst],
   ['.txt', createPlainTextParser('text')],
   ['.xml', parseXmlAst],
-  ['.yaml', parseYamlAst],
-  ['.yml', parseYamlAst],
   ['.example', createPlainTextParser('text')],
   ['.keep', createPlainTextParser('text')],
 ])
