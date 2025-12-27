@@ -51,7 +51,7 @@ flowchart LR
   J --> M
   J --> CI[GitHub Actions]
   J --> D[Discord]
-  J -->|rerun| A
+  J -->|rerun request| F
 ```
 
 ## Data Flow
@@ -87,7 +87,8 @@ sequenceDiagram
   alt pass
     J->>D: success message
   else fail
-    J->>A: submit rerun with next_prompt
+    J->>F: request rerun with next_prompt
+    F->>A: submit rerun workflow
   end
 ```
 
