@@ -94,8 +94,8 @@ import type {
   WorkflowDeterminismSignalRecord,
   WorkflowDeterminismState,
   WorkflowRetryPolicyInput,
-  stableStringify,
 } from '../workflow/determinism'
+import { stableStringify } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import type { WorkflowQueryEvaluationResult, WorkflowUpdateInvocation } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
