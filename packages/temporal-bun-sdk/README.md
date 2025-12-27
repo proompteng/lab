@@ -42,6 +42,10 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    TEMPORAL_STICKY_CACHE_SIZE=256                   # optional – determinism cache capacity
    TEMPORAL_STICKY_TTL_MS=300000                    # optional – eviction TTL in ms
    TEMPORAL_STICKY_SCHEDULING_ENABLED=1             # optional – disable to bypass sticky scheduling
+   TEMPORAL_DETERMINISM_MARKER_MODE=delta           # optional – always|interval|delta|never
+   TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS=10    # optional – record markers every N workflow tasks
+   TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS=50  # optional – full snapshot cadence in delta mode
+   TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED=1     # optional – skip identical determinism markers
    TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS=4000     # optional – heartbeat throttle interval in ms
    TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS=5000  # optional – heartbeat RPC timeout in ms
    TEMPORAL_WORKER_DEPLOYMENT_NAME=replay-worker      # optional – worker deployment metadata
@@ -255,7 +259,7 @@ export const workflows = [
 ]
 ```
 
-On each workflow task the executor compares newly emitted intents, random values, and logical timestamps against the stored determinism state. Mismatches raise `WorkflowNondeterminismError` and cause the worker to fail the task with `WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR`, mirroring Temporal’s official SDK behavior. Determinism snapshots are recorded as `temporal-bun-sdk/determinism` markers in workflow history and optionally cached via a sticky determinism cache. Tune cache behaviour with `TEMPORAL_STICKY_CACHE_SIZE` and `TEMPORAL_STICKY_TTL_MS`; the sticky worker queue inherits its schedule-to-start timeout from the TTL value.
+On each workflow task the executor compares newly emitted intents, random values, and logical timestamps against the stored determinism state. Mismatches raise `WorkflowNondeterminismError` and cause the worker to fail the task with `WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR`, mirroring Temporal’s official SDK behavior. Determinism snapshots are recorded as `temporal-bun-sdk/determinism` markers in workflow history and optionally cached via a sticky determinism cache. You can throttle or switch to delta markers via `TEMPORAL_DETERMINISM_MARKER_*` while tuning cache behaviour with `TEMPORAL_STICKY_CACHE_SIZE` and `TEMPORAL_STICKY_TTL_MS`; the sticky worker queue inherits its schedule-to-start timeout from the TTL value.
 
 ## Activity lifecycle
 
