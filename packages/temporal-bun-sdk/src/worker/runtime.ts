@@ -1075,9 +1075,13 @@ export class WorkerRuntime {
         : Array.isArray(response.queries)
           ? response.queries.length
           : 0
+    const hasHistoryEvents = (response.history?.events?.length ?? 0) > 0
+    const hasMoreHistory = (response.nextPageToken?.length ?? 0) > 0
+    const isLegacyQueryOnly = isLegacyQueryTask && !hasHistoryEvents && !hasMoreHistory
     const hasQueryPayloads = Boolean(response.query) || queryCount > 0
     const historyEvents = await this.#collectWorkflowHistory(execution, response, {
-      forceFullHistory: hasQueryPayloads,
+      forceFullHistory: hasQueryPayloads && !isLegacyQueryOnly,
+      skipFetchOnMissingStart: isLegacyQueryOnly,
     })
     const workflowType = this.#resolveWorkflowType(response, historyEvents)
     const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
@@ -1123,7 +1127,7 @@ export class WorkerRuntime {
       args = stickyEntry.workflowArguments
       argsSource = 'sticky'
     }
-    if (argsSource === 'unknown') {
+    if (argsSource === 'unknown' && !isLegacyQueryOnly) {
       const fetchedArgs = await this.#fetchWorkflowStartArguments(execution)
       if (fetchedArgs !== undefined) {
         args = fetchedArgs
@@ -1522,7 +1526,7 @@ export class WorkerRuntime {
   async #collectWorkflowHistory(
     execution: { workflowId: string; runId: string },
     response: PollWorkflowTaskQueueResponse,
-    options?: { forceFullHistory?: boolean },
+    options?: { forceFullHistory?: boolean; skipFetchOnMissingStart?: boolean },
   ): Promise<HistoryEvent[]> {
     const events: HistoryEvent[] = []
     const initialEvents = response.history?.events ?? []
@@ -1540,7 +1544,9 @@ export class WorkerRuntime {
     }
 
     let sorted = this.#sortHistoryEvents(events)
-    if (options?.forceFullHistory || !this.#findWorkflowStartedEvent(sorted)) {
+    const shouldFetchFullHistory =
+      options?.forceFullHistory || (!options?.skipFetchOnMissingStart && !this.#findWorkflowStartedEvent(sorted))
+    if (shouldFetchFullHistory) {
       const fullHistory = await this.#fetchWorkflowHistoryFromStart(execution)
       if (fullHistory.length > 0) {
         sorted = this.#sortHistoryEvents([...fullHistory, ...sorted])

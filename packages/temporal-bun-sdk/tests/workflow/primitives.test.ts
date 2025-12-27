@@ -123,7 +123,8 @@ test('child workflow defaults reuse recorded ids on replay', async () => {
           namespace: baseInfo.namespace,
           taskQueue: baseInfo.taskQueue,
           input: [],
-          timeouts: {},
+          timeouts: { workflowRunTimeoutMs: 0, workflowTaskTimeoutMs: 10_000 },
+          workflowIdReusePolicy: 1,
         },
       },
     ],
@@ -144,5 +145,8 @@ test('child workflow defaults reuse recorded ids on replay', async () => {
   expect(intent?.kind).toBe('start-child-workflow')
   if (intent?.kind === 'start-child-workflow') {
     expect(intent.workflowId).toBe('wf-primitive-child-0')
+    expect(intent.timeouts.workflowRunTimeoutMs).toBe(0)
+    expect(intent.timeouts.workflowTaskTimeoutMs).toBe(10_000)
+    expect(intent.workflowIdReusePolicy).toBe(1)
   }
 })
