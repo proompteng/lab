@@ -62,9 +62,7 @@
 ## Agent Execution Guidelines
 - Use precise code pointers (file paths, identifiers, stack traces) to narrow search.
 - Reproduce issues before changes; keep logs and failing commands.
-- Run the smallest relevant validation (single test, scoped lint, or targeted build).
-- Split large tasks; surface ambiguities early.
-- Agents perform best with configured dev environments and reliable tests—keep these instructions current.
+- Split large tasks; surface ambiguities early; use the planning tool `functions.update_plan` when appropriate.
 
 ## Review Guidelines
 - Focus on correctness regressions, error handling, and missing tests.
