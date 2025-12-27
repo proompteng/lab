@@ -241,10 +241,16 @@ describe('codex-runner', () => {
     expect(stdoutText).toContain('Usage → input: 10 (cached 2) | output: 5 | reasoning: 3')
 
     const channelText = channelSink.join('')
-    expect(channelText).toContain('\n```ts\n')
+    const fenceMatch = channelText.match(/\n(`{3,})ts\n/)
+    expect(fenceMatch).not.toBeNull()
+    if (!fenceMatch) {
+      throw new Error('Expected a code fence in the Discord payload')
+    }
+    const fence = fenceMatch[1]
+    expect(channelText).toContain(`\n${fence}ts\n`)
     expect(channelText).toContain('$ /bin/bash -lc ls')
     expect(channelText).toContain('lab')
-    expect(channelText).toContain('\n```\n')
+    expect(channelText).toContain(`\n${fence}\n`)
     expect(channelText).toContain('Usage → input: 10 (cached 2) | output: 5 | reasoning: 3')
   })
 
@@ -276,15 +282,62 @@ describe('codex-runner', () => {
     })
 
     const channelText = channelSink.join('')
-    expect(channelText).toContain('\n```ts\n')
+    const fenceMatch = channelText.match(/\n(`{3,})ts\n/)
+    expect(fenceMatch).not.toBeNull()
+    if (!fenceMatch) {
+      throw new Error('Expected a code fence in the Discord payload')
+    }
+    const fence = fenceMatch[1]
+    expect(channelText).toContain(`\n${fence}ts\n`)
     expect(channelText).toContain('$ echo lines')
     expect(channelText).toContain('line1')
     expect(channelText).toContain('line9')
     expect(channelText).toContain('... (truncated, 3 more lines)')
-    expect(channelText).toContain('\n```\n')
+    expect(channelText).toContain(`\n${fence}\n`)
     expect(channelText).not.toContain('line10')
     expect(channelText).not.toContain('line11')
     expect(channelText).not.toContain('line12')
+  })
+
+  it('uses a longer fence when output includes backticks', async () => {
+    const channelSink: string[] = []
+    const discordProcess = createDiscordProcess(channelSink)
+    spawnMock.mockImplementationOnce(() => discordProcess)
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      options.onEvent?.({
+        type: 'item.completed',
+        item: {
+          type: 'command_execution',
+          command: 'cat README.md',
+          aggregated_output: ['```', 'code', '```'].join('\n'),
+          exit_code: 0,
+        },
+      })
+      return { agentMessages: [], sessionId: 'session-6', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'Read file',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+      discordChannel: {
+        command: ['bun', 'run', 'discord-channel.ts'],
+      },
+    })
+
+    const channelText = channelSink.join('')
+    const fenceMatch = channelText.match(/\n(`{4,})ts\n/)
+    expect(fenceMatch).not.toBeNull()
+    if (!fenceMatch) {
+      throw new Error('Expected a longer code fence in the Discord payload')
+    }
+    const fence = fenceMatch[1]
+    expect(channelText).toContain(`\n${fence}ts\n`)
+    expect(channelText).toContain('```')
+    expect(channelText).toContain(`\n${fence}\n`)
   })
 
   it('streams reasoning summaries to stdout and Discord', async () => {

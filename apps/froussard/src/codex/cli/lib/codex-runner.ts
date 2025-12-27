@@ -119,6 +119,17 @@ const truncateCommandOutput = (output: string) => {
   return { lines: visibleLines, truncated: true, truncatedCount }
 }
 
+const createCodeFence = (content: string, language = 'ts') => {
+  const matches = content.match(/`+/g) ?? []
+  const longest = matches.reduce((max, segment) => Math.max(max, segment.length), 0)
+  const fenceLength = Math.max(3, longest + 1)
+  const fence = '`'.repeat(fenceLength)
+  return {
+    open: `\n${fence}${language}\n`,
+    close: `\n${fence}\n`,
+  }
+}
+
 const formatDiscordCommandBlock = (command?: string, output?: string, exitCode?: number) => {
   const lines: string[] = []
   if (command) {
@@ -134,7 +145,9 @@ const formatDiscordCommandBlock = (command?: string, output?: string, exitCode?:
   if (lines.length === 0) {
     return undefined
   }
-  return `\n\`\`\`ts\n${lines.join('\n')}\n\`\`\`\n`
+  const content = lines.join('\n')
+  const fence = createCodeFence(content, 'ts')
+  return `${fence.open}${content}${fence.close}`
 }
 
 export const runCodexSession = async ({
