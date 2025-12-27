@@ -17,7 +17,7 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2025-12-27T10:08:50.848Z"
+        kubectl.kubernetes.io/restartedAt: "2025-12-27T11:16:41.724Z"
     spec:
       containers:
         - name: bumba
@@ -95,6 +95,8 @@ spec:
               value: require
             - name: OPENAI_API_BASE_URL
               value: http://192.168.1.190:11434/v1
+            - name: OPENAI_COMPLETION_TIMEOUT_MS
+              value: "60000"
             - name: OPENAI_EMBEDDING_MODEL
               value: qwen3-embedding:0.6b
             - name: OPENAI_EMBEDDING_DIMENSION
