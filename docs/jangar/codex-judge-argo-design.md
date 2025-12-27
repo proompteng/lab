@@ -62,7 +62,7 @@ flowchart LR
 5) Jangar waits for GitHub Actions CI result
 6) Jangar gates + LLM judge
 7) If pass: create/update PR, mark complete, Discord success
-8) If fail: generate next prompt, trigger new Argo run on same branch
+8) If fail: generate next prompt, request Facteur to trigger new Argo run on same branch
 
 Sequence (happy path + rerun):
 ```mermaid
@@ -143,7 +143,7 @@ Pass:
 
 Fail:
 - Generate next_prompt with specific fixes.
-- Trigger new Argo run (same branch).
+- Request Facteur to trigger new Argo run (same branch).
 - Escalate to human only on hard failure:
   - merge conflicts
   - repeated infra failure

@@ -252,7 +252,7 @@ Provide CI status for a branch or PR.
 - Increment attempt
 
 ### Implementation
-- Jangar calls Facteur or Argo API directly
+- Jangar calls Facteur to submit the Argo workflow rerun
 - Include run metadata + prompt in submission
 
 ### Deliverables
@@ -261,11 +261,12 @@ Provide CI status for a branch or PR.
 
 ### Detailed tasks
 - Construct rerun payload with branch, prompt, attempt+1.
+- Implement Facteur API client and retries.
 - Prevent duplicate reruns (idempotency key).
 - Record link between run and rerun parent.
 
 ### Acceptance criteria
-- Rerun starts with correct branch and prompt.
+- Rerun starts with correct branch and prompt via Facteur.
 - Attempts are monotonic and capped by policy.
 
 ## G) Discord Notifications
