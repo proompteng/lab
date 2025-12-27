@@ -67,6 +67,9 @@ run:
         if [ "$PRECOMPILE_ON_BOOT" = "1" ]; then
           SKIP_EMBER_CLI_COMPILE=1 su discourse -c 'bundle exec rake assets:precompile' || exit 1
         fi
+        if [ "${UNICORN_STDOUT_PATH}" = "stdout" ] || [ "${UNICORN_STDERR_PATH}" = "stderr" ]; then
+          ruby -e 'path="/var/www/discourse/config/unicorn.conf.rb"; data=File.read(path); stdout=ENV["UNICORN_STDOUT_PATH"].to_s.strip.downcase; stderr=ENV["UNICORN_STDERR_PATH"].to_s.strip.downcase; data=data.gsub(/^  stdout_path unicorn_stdout_path$/, "# stdout_path unicorn_stdout_path") if stdout=="stdout"; data=data.gsub(/^  stderr_path unicorn_stderr_path$/, "# stderr_path unicorn_stderr_path") if stderr=="stderr"; File.write(path,data)'
+        fi
         LD_PRELOAD=$RUBY_ALLOCATOR HOME=/home/discourse USER=discourse exec thpoff chpst -u discourse:www-data -U discourse:www-data bundle exec config/unicorn_launcher -E production -c config/unicorn.conf.rb
 
   - file:
@@ -160,39 +163,6 @@ run:
       filename: "/etc/nginx/conf.d/discourse.conf"
       from: /client_max_body_size.+$/
       to: client_max_body_size $upload_size;
-
-  - replace:
-      filename: "/var/www/discourse/config/unicorn.conf.rb"
-      from: /unicorn_stderr_path = ".*"/
-      to: "unicorn_stderr_path = \"#{discourse_path}/log/unicorn.stderr.log\""
-
-  - replace:
-      filename: "/var/www/discourse/config/unicorn.conf.rb"
-      from: /unicorn_stdout_path = ".*"/
-      to: "unicorn_stdout_path = \"#{discourse_path}/log/unicorn.stdout.log\""
-
-  - replace:
-      filename: "/var/www/discourse/config/unicorn.conf.rb"
-      from: |
-        stderr_path unicorn_stderr_path
-        stdout_path unicorn_stdout_path
-      to: |
-        stdout_target = ENV["UNICORN_STDOUT_PATH"]
-        stderr_target = ENV["UNICORN_STDERR_PATH"]
-
-        if stdout_target
-          normalized = stdout_target.strip.downcase
-          stdout_path stdout_target unless normalized.empty? || normalized == "stdout"
-        else
-          stdout_path unicorn_stdout_path
-        end
-
-        if stderr_target
-          normalized = stderr_target.strip.downcase
-          stderr_path stderr_target unless normalized.empty? || normalized == "stderr"
-        else
-          stderr_path unicorn_stderr_path
-        end
 
   - exec:
       cmd:
