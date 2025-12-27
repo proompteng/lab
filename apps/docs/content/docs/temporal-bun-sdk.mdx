@@ -3,33 +3,27 @@ title: Temporal Bun SDK
 description: Learn how to build and operate Temporal workers with the Bun runtime using the @proompteng Temporal Bun SDK.
 ---
 
-`@proompteng/temporal-bun-sdk` is our Bun-first Temporal toolkit. It mirrors the
-`prix` Go worker defaults (namespace `default`, task queue `prix`, gRPC port
-`7233`) while layering on:
+`@proompteng/temporal-bun-sdk` is our Bun-first Temporal toolkit. It defaults to
+the same local dev assumptions as our services (namespace `default`, task queue
+`replay-fixtures`, gRPC port `7233`) while layering on:
 
-- Zod-backed environment parsing with TLS, API key, and insecure-mode support.
-- Factories for Temporal clients, workflow handles, and worker registration.
-- A `temporal-bun` CLI that scaffolds projects, checks connectivity, and builds
-  Docker images.
-- A `temporal-bun-worker` binary that boots a worker with sensible defaults.
-- Pure TypeScript/Effect runtimes so deployments never depend on native binaries;
-  legacy artifacts remain archived under `packages/temporal-bun-sdk/bruke` for
-  reference only.
+- Effect Schema-backed environment parsing with TLS, API key, and insecure-mode support.
+- Client and worker factories with built-in retries, payload codecs, and observability.
+- Effect Layer entry points for workers, clients, and CLI programs.
+- A `temporal-bun` CLI that scaffolds projects, validates config (`doctor`), builds Docker images, and replays histories.
+- A `temporal-bun-worker` binary that boots a worker with the SDK's default workflows/activities.
+- Pure TypeScript/Effect runtime; legacy Zig bridge assets remain archived under `packages/temporal-bun-sdk/bruke`.
 
 ## Documentation map
 
-This page is the top-level overview. The SDK now documents its feature-set in
-five logical sections so teams can deep-dive without wading through a single
+This page is the top-level overview. The SDK now documents its feature set in
+four logical sections so teams can deep dive without wading through a single
 monolith:
 
-- **Architecture overview** – explains how workflows, workers, clients, and the
-  CLI compose via Effect services and Bun runtime primitives.
-- **Configuration & operations** – covers `loadTemporalConfig`, observability
-  knobs, deployment defaults, and advanced TLS/retry tuning.
-- **Tutorials & recipes** – workflow/activity examples, proxy helpers, and
-  determinism guardrails.
-- **CLI & tooling** – usage for `temporal-bun init|doctor|docker-build|replay`
-  plus proto regeneration and CI guidance.
+- **Architecture overview** - how workflows, workers, clients, and the CLI compose.
+- **Configuration and operations** - `loadTemporalConfig`, worker tuning, build IDs, TLS, and retries.
+- **Tutorials and recipes** - workflow/activity examples, updates/queries, and determinism helpers.
+- **CLI and tooling** - usage for `temporal-bun init|doctor|docker-build|replay` and proto regeneration.
 
 As new sub-pages come online they will be linked from this section; until then,
 the corresponding deep dives live below on this page.
@@ -39,7 +33,7 @@ the corresponding deep dives live below on this page.
 - Bun **1.1.20 or newer** (matches the package engine requirement).
 - Access to a Temporal Cloud namespace or self-hosted cluster.
 - (Optional) The [`temporal`](https://docs.temporal.io/cli) CLI for namespace
-  administration.
+  administration and replaying live executions.
 - `docker` if you plan to build container images with the provided helpers.
 
 ## Install and scaffold
@@ -60,7 +54,7 @@ bun run dev # runs the worker locally
 ```
 
 The template includes example workflows, activities, and Docker packaging
-scripts that map one-to-one with the library’s defaults.
+scripts that map one-to-one with the library's defaults.
 
 ## Configure your Temporal connection
 
@@ -72,8 +66,10 @@ your worker project and tailor the defaults as needed:
 TEMPORAL_HOST=temporal.proompteng.local
 TEMPORAL_GRPC_PORT=7233
 TEMPORAL_NAMESPACE=default
-TEMPORAL_TASK_QUEUE=prix
+TEMPORAL_TASK_QUEUE=demo-worker
 TEMPORAL_API_KEY=your-cloud-api-key
+# Optional build-id override (otherwise derived automatically)
+# TEMPORAL_WORKER_BUILD_ID=demo-worker@1.2.3
 # Uncomment to enable mutual TLS
 # TEMPORAL_TLS_CERT_PATH=./certs/client.crt
 # TEMPORAL_TLS_KEY_PATH=./certs/client.key
@@ -88,31 +84,56 @@ Environment variables supported by the config loader:
 | `TEMPORAL_HOST` | `127.0.0.1` | Hostname used when `TEMPORAL_ADDRESS` is unset. |
 | `TEMPORAL_GRPC_PORT` | `7233` | Temporal gRPC port. |
 | `TEMPORAL_NAMESPACE` | `default` | Namespace passed to the worker and client. |
-| `TEMPORAL_TASK_QUEUE` | `prix` | Worker task queue. |
+| `TEMPORAL_TASK_QUEUE` | `replay-fixtures` | Worker task queue. |
 | `TEMPORAL_API_KEY` | _unset_ | Injected into connection metadata for Cloud/API auth. |
 | `TEMPORAL_TLS_CA_PATH` | _unset_ | Path to trusted CA bundle. |
-| `TEMPORAL_TLS_CERT_PATH` / `TEMPORAL_TLS_KEY_PATH` | _unset_ | mTLS client certificate & key (require both). |
+| `TEMPORAL_TLS_CERT_PATH` / `TEMPORAL_TLS_KEY_PATH` | _unset_ | mTLS client certificate and key (require both). |
 | `TEMPORAL_TLS_SERVER_NAME` | _unset_ | Overrides TLS server name verification. |
-| `TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS` | `5` | Default WorkflowService RPC attempt budget. |
+| `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS` | `false` | Accepts `1/true/on` to skip certificate verification. |
+| `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (host and PID are appended). |
+| `TEMPORAL_WORKER_DEPLOYMENT_NAME` | _unset_ | Optional worker deployment name (defaults to `<task-queue>-deployment`). |
+| `TEMPORAL_WORKER_BUILD_ID` | _unset_ | Worker build ID; auto-derived when unset. |
+| `TEMPORAL_WORKFLOW_CONCURRENCY` | `4` | Workflow poller concurrency. |
+| `TEMPORAL_ACTIVITY_CONCURRENCY` | `4` | Activity poller concurrency. |
+| `TEMPORAL_STICKY_CACHE_SIZE` | `128` | Sticky cache size for determinism snapshots. |
+| `TEMPORAL_STICKY_TTL_MS` | `300000` | Sticky cache TTL in milliseconds. |
+| `TEMPORAL_STICKY_SCHEDULING_ENABLED` | `true` when cache size > 0 | Enable sticky scheduling; set to `0/false` to disable. |
+| `TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS` | `5000` | Activity heartbeat throttle interval. |
+| `TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS` | `5000` | Activity heartbeat RPC timeout. |
+| `TEMPORAL_LOG_FORMAT` | `pretty` | Select `json` or `pretty` logging output for worker/client runs. |
+| `TEMPORAL_LOG_LEVEL` | `info` | Minimum log severity (`debug`, `info`, `warn`, `error`). |
+| `TEMPORAL_TRACING_INTERCEPTORS_ENABLED` | `true` | Set to `false` to disable tracing/audit interceptors. |
+| `TEMPORAL_SHOW_STACK_SOURCES` | `false` | Include stack trace source maps in errors. |
+| `TEMPORAL_METRICS_EXPORTER` | `in-memory` | Metrics sink: `in-memory`, `file`, `prometheus`, or `otlp`. |
+| `TEMPORAL_METRICS_ENDPOINT` | _unset_ | Path/URL for file, Prometheus, or OTLP exporters. |
+| `TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS` | `5` | WorkflowService RPC attempt budget. |
 | `TEMPORAL_CLIENT_RETRY_INITIAL_MS` | `200` | Initial retry delay (milliseconds). |
 | `TEMPORAL_CLIENT_RETRY_MAX_MS` | `5000` | Maximum retry delay (milliseconds). |
 | `TEMPORAL_CLIENT_RETRY_BACKOFF` | `2` | Exponential backoff multiplier applied per attempt. |
 | `TEMPORAL_CLIENT_RETRY_JITTER_FACTOR` | `0.2` | Decorrelated jitter factor between 0 and 1. |
-| `TEMPORAL_CLIENT_RETRY_STATUS_CODES` | `UNAVAILABLE,DEADLINE_EXCEEDED` | Comma-separated Connect codes that should be retried. |
-| `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS` | `false` | Accepts `1/true/on` to skip certificate verification. |
-| `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (host and PID are appended automatically). |
-| `TEMPORAL_LOG_FORMAT` | `pretty` | Select `json` or `pretty` logging output for worker/client runs. |
-| `TEMPORAL_LOG_LEVEL` | `info` | Minimum log severity (`debug`, `info`, `warn`, `error`). |
-| `TEMPORAL_TRACING_INTERCEPTORS_ENABLED` | `true` | Set to `false` to disable tracing/audit interceptors when environments forbid spans. |
-| `TEMPORAL_METRICS_EXPORTER` | `in-memory` | Choose metrics sink: `in-memory`, `file`, `prometheus`, or `otlp`. |
-| `TEMPORAL_METRICS_ENDPOINT` | _unset_ | Path or URL consumed by file/Prometheus/OTLP exporters. |
-| `TEMPORAL_PAYLOAD_CODECS` | _unset_ | Comma-separated payload codecs applied in order (e.g. `gzip,aes-gcm`). Defaults to JSON-only when omitted. |
+| `TEMPORAL_CLIENT_RETRY_STATUS_CODES` | `UNAVAILABLE,RESOURCE_EXHAUSTED,DEADLINE_EXCEEDED,INTERNAL` | Comma-separated Connect codes that should be retried. |
+| `TEMPORAL_PAYLOAD_CODECS` | _unset_ | Comma-separated payload codecs applied in order (e.g. `gzip,aes-gcm`). |
 | `TEMPORAL_CODEC_AES_KEY` | _unset_ | Base64 or hex AES key (128/192/256-bit) required when `aes-gcm` is enabled. |
 | `TEMPORAL_CODEC_AES_KEY_ID` | `default` | Optional key identifier recorded in payload metadata for rotation/diagnostics. |
 
 `loadTemporalConfig()` returns typed values that the client and worker factories
 consume directly, so you never have to stitch addresses or TLS buffers together
 by hand.
+
+## Worker build IDs and versioning
+
+Workers derive their build ID from `TEMPORAL_WORKER_BUILD_ID`, the package
+version, or the configured identity. When you enable worker versioning via
+`deployment.versioningMode` in `WorkerRuntimeOptions`, the runtime will:
+
+1. Probe worker-versioning support with `GetWorkerBuildIdCompatibility`.
+2. Register the build ID with `UpdateWorkerBuildIdCompatibility` before pollers start.
+3. Warn and continue when the server does not implement worker versioning
+   (for example, the Temporal CLI dev server), so local runs stay green.
+
+This behavior is wired into `createWorker`, `runWorkerApp`, and
+`WorkerRuntime.create()`, so your build IDs are registered automatically once
+versioning is enabled.
 
 ## OpenTelemetry export
 
@@ -123,7 +144,7 @@ process. Configure exporters with standard OTEL environment variables:
   (or `OTEL_EXPORTER_OTLP_ENDPOINT` to share a base URL).
 - `OTEL_EXPORTER_OTLP_PROTOCOL` (or per-signal `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` /
   `OTEL_EXPORTER_OTLP_METRICS_PROTOCOL`) to choose `http/json` (default) or
-  `http/protobuf`. The SDK will warn and fall back to HTTP if gRPC is requested.
+  `http/protobuf`. The SDK warns and falls back to HTTP if gRPC is requested.
 - `OTEL_SERVICE_NAME`, `OTEL_SERVICE_NAMESPACE`, and `OTEL_SERVICE_INSTANCE_ID`
   to label service identity.
 - `OTEL_RESOURCE_ATTRIBUTES` for additional resource tags.
@@ -138,25 +159,26 @@ Auto-instrumentation stays disabled by default; enable it explicitly with
 
 ## WorkflowService client resilience
 
-`createTemporalClient()` automatically wraps WorkflowService RPCs with our retry helper and telemetry interceptors:
+`createTemporalClient()` automatically wraps WorkflowService RPCs with our retry
+helper and telemetry interceptors:
 
-- **Configurable retries** – `config.rpcRetryPolicy` is populated from the `TEMPORAL_CLIENT_RETRY_*` env vars (or overrides passed to `loadTemporalConfig`). All client methods use the resulting jittered exponential backoff policy, and you can override per-call values via `TemporalClientCallOptions.retryPolicy`.
-- **Optional call options** – `startWorkflow`, `signalWorkflow`, `queryWorkflow`, `signalWithStart`, `terminateWorkflow`, and `describeNamespace` accept an optional trailing `callOptions` argument (headers, timeout, abort signal, retry policy). Use `temporalCallOptions()` to brand the object so payloads aren’t mistaken for options:
+- **Configurable retries** - `config.rpcRetryPolicy` is populated from the `TEMPORAL_CLIENT_RETRY_*` env vars (or overrides passed to `loadTemporalConfig`). All client methods use the resulting jittered exponential backoff policy, and you can override per-call values via `TemporalClientCallOptions.retryPolicy`.
+- **Optional call options** - `startWorkflow`, `signalWorkflow`, `queryWorkflow`, `signalWithStart`, `terminateWorkflow`, and `describeNamespace` accept an optional trailing `callOptions` argument (headers, timeout, abort signal, retry policy). Use `temporalCallOptions()` to brand the object so payloads are not mistaken for options:
   ```ts
   import { temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 
-  await client.signalWorkflow(handle, 'updateState', { payload: { signal: 'start' } }, temporalCallOptions({
+  await client.signalWorkflow(handle, 'updateState', { signal: 'start' }, temporalCallOptions({
     headers: { 'x-trace-id': traceId },
     timeoutMs: 5_000,
   }))
   ```
-- **Default interceptors** – inbound/outbound hooks wrap every workflow RPC and operation: namespace/identity headers are injected, retries use jittered backoff, and latency/error metrics flow through the configured registry/exporter. Tracing spans are opt-in via `TEMPORAL_TRACING_INTERCEPTORS_ENABLED` (or `tracingEnabled` in code). Append custom middleware with `clientInterceptors` (client) or `interceptors` (worker) to add auth headers, audit logs, or bespoke telemetry.
-- **Memo/search helpers** – `client.memo` and `client.searchAttributes` expose `encode`/`decode` helpers that reuse the client’s `DataConverter`, making it easy to prepare payloads for raw WorkflowService requests.
-- **TLS validation** – TLS buffers are checked up front (missing files, invalid PEMs, and mismatched cert/key pairs throw `TemporalTlsConfigurationError`) and transport failures surface as `TemporalTlsHandshakeError` with remediation hints.
+- **Default interceptors** - inbound/outbound hooks wrap every workflow RPC and operation: namespace/identity headers are injected, retries use jittered backoff, and latency/error metrics flow through the configured registry/exporter. Tracing spans are opt in via `TEMPORAL_TRACING_INTERCEPTORS_ENABLED` (or `tracingEnabled` in code). Append custom middleware with `clientInterceptors` (client) or `interceptors` (transport) to add auth headers, audit logs, or bespoke telemetry.
+- **Memo/search helpers** - `client.memo` and `client.searchAttributes` expose `encode`/`decode` helpers that reuse the client's `DataConverter`, making it easy to prepare payloads for raw WorkflowService requests.
+- **TLS validation** - TLS buffers are checked up front (missing files, invalid PEMs, and mismatched cert/key pairs throw `TemporalTlsConfigurationError`) and transport failures surface as `TemporalTlsHandshakeError` with remediation hints.
 
-## Payload codecs & failure conversion
+## Payload codecs and failure conversion
 
-The SDK’s `DataConverter` now supports an ordered codec chain so you can compress
+The SDK's `DataConverter` supports an ordered codec chain so you can compress
 and encrypt payloads without giving up deterministic replay:
 
 - Enable codecs with `TEMPORAL_PAYLOAD_CODECS` (e.g. `gzip,aes-gcm`); AES-GCM
@@ -170,21 +192,22 @@ and encrypt payloads without giving up deterministic replay:
 - The failure converter returns a structured `TemporalFailureError` that
   preserves `details` and `cause` payloads using the same codec chain, so
   workflow/activity/update/query errors decode cleanly on clients.
-- `temporal-bun doctor` now builds the codec chain from config and fails fast on
+- `temporal-bun doctor` builds the codec chain from config and fails fast on
   missing/invalid keys while printing the resolved codec list.
 
 ## Observability
 
 The Temporal Bun SDK ships with structured logging and metrics layers so you can
-treat Bun workers/clients like any other service in your stack. Configure the
+operate Bun workers/clients like any other service in your stack. Configure the
 behavior with the same environment variables listed above:
 
-- `TEMPORAL_LOG_FORMAT` – controls the log formatter (`pretty` or `json`).
-- `TEMPORAL_LOG_LEVEL` – sets the minimum log severity that makes it into the
+- `TEMPORAL_LOG_FORMAT` - controls the log formatter (`pretty` or `json`).
+- `TEMPORAL_LOG_LEVEL` - sets the minimum log severity that makes it into the
   sink.
-- `TEMPORAL_METRICS_EXPORTER` / `TEMPORAL_METRICS_ENDPOINT` – select a sink
-  (`in-memory`, `file`, `prometheus`, or `otlp`) and its path/URL (e.g.
-  `/tmp/metrics.json`).
+- `TEMPORAL_METRICS_EXPORTER` / `TEMPORAL_METRICS_ENDPOINT` - select a sink
+  (`in-memory`, `file`, `prometheus`, or `otlp`) and its path/URL.
+- `TEMPORAL_METRICS_FLUSH_INTERVAL_MS` - override the worker metrics flush cadence
+  (defaults to 10 seconds).
 
 Want to verify your configuration without running a worker? `temporal-bun`
 includes a `doctor` command that loads the shared config, builds the interceptor
@@ -199,85 +222,50 @@ The command prints a success summary (including active interceptors and the
 resolved retry policy) once the JSON log is emitted and the metrics file is
 written, so you can script it into CI or pre-deployment checks.
 
-## Layered bootstrap helpers
+## Effect layers and runtime helpers
 
-Temporal Bun now exposes first-class Effect `Layer`s so workers, clients, CLI
-tools, and tests can share the same managed dependencies without hand-wiring
-config or observability plumbing:
+Temporal Bun exposes Effect Layers so workers, clients, and CLI tools can share
+managed dependencies without hand-wiring config or observability plumbing:
 
-- `createConfigLayer()` resolves `TemporalConfigService` via
-  `loadTemporalConfigEffect` and accepts overrides/defaults for task queue,
-  namespace, TLS, and worker identity.
-- `createObservabilityLayer()` wires logger + metrics registries/exporters and
-  `createWorkflowServiceLayer()` constructs the gRPC transport + WorkflowService
-  client with automatic interceptor wiring.
-- `createWorkerRuntimeLayer()`/`runWorkerApp()` compose those services with the
-  worker runtime so Bun apps can start/stop workers via `Effect.scoped` without
-  `AbortController` plumbing.
+- `createTemporalClientLayer` / `TemporalClientLayer` - managed Temporal client
+  lifecycle (auto-shutdown on scope exit).
+- `createWorkerRuntimeLayer` / `WorkerRuntimeLayer` - run the worker runtime
+  inside an `Effect.scoped` program.
+- `createWorkerAppLayer` / `runWorkerApp` - compose config + observability +
+  WorkflowService + worker runtime in one call.
+- `createTemporalCliLayer` / `runTemporalCliEffect` - run Effect programs with
+  the same config/observability/workflow service stack used by the CLI.
 
-Example worker bootstrap with custom overrides:
+Example: run a one-off CLI task with the same layers used by `temporal-bun`:
 
 ```ts
-import { Effect, Layer } from 'effect'
-import {
-  createConfigLayer,
-  createObservabilityLayer,
-  createWorkflowServiceLayer,
-} from '@proompteng/temporal-bun-sdk/runtime/effect-layers'
-import { runWorkerEffect } from '@proompteng/temporal-bun-sdk/worker/layer'
+import { Effect } from 'effect'
+import { makeTemporalClientEffect, runTemporalCliEffect } from '@proompteng/temporal-bun-sdk'
 
-const configLayer = createConfigLayer({
-  defaults: { address: '10.0.0.5:7233', namespace: 'staging', taskQueue: 'staging-worker' },
-})
-const observabilityLayer = createObservabilityLayer().pipe(Layer.provide(configLayer))
-const workflowLayer = createWorkflowServiceLayer()
-  .pipe(Layer.provide(configLayer))
-  .pipe(Layer.provide(observabilityLayer))
-
-await Effect.runPromise(
-  Effect.scoped(
-    runWorkerEffect({ workflowsPath: new URL('./workflows/index.ts', import.meta.url).pathname })
-      .pipe(Layer.provide(configLayer))
-      .pipe(Layer.provide(observabilityLayer))
-      .pipe(Layer.provide(workflowLayer)),
+await runTemporalCliEffect(
+  makeTemporalClientEffect().pipe(
+    Effect.tap(({ client }) => Effect.promise(() => client.describeNamespace())),
+    Effect.tap(({ client }) => Effect.promise(() => client.shutdown())),
   ),
 )
 ```
 
-Prefer zero-boilerplate? `createWorker()` and `runWorkerApp()` wrap the same
-layers, discover workflows/activities from the default template, and derive
-worker build IDs automatically. For CLI tooling and smoke tests, use
-`runTemporalCliEffect(effect, options)` to execute an `Effect` program (doctor
-checks, replay helpers, diagnostics) against the shared config/observability
-stack:
-
-```ts
-import { Effect } from 'effect'
-import { runTemporalCliEffect } from '@proompteng/temporal-bun-sdk/runtime/cli-layer'
-import { TemporalConfigService } from '@proompteng/temporal-bun-sdk/runtime/effect-layers'
-
-await runTemporalCliEffect(
-  Effect.gen(function* () {
-    const config = yield* TemporalConfigService
-    console.log('Active namespace:', config.namespace)
-  }),
-  { config: { defaults: { namespace: 'qa' } } },
-)
-```
+Prefer the plain async helpers? `createWorker()` and `createTemporalClient()`
+wrap the same configuration and observability defaults without requiring Effect
+plumbing.
 
 ## Replay workflow histories
 
-`temporal-bun replay` lets you ingest workflow histories, diff the determinism
-state, and share diagnostics with incident responders without writing ad-hoc
+`temporal-bun replay` lets you ingest workflow histories, diff determinism
+state, and share diagnostics with incident responders without writing ad hoc
 scripts. It reuses `loadTemporalConfig`, the observability sinks, and the same
 ingestion pipeline that powers the worker sticky cache.
 
-- `--history-file <path>` – replay a JSON capture (`temporal workflow show
-  --history --output json` or the fixture format described in the replay
-  runbook).
-- `--execution <workflowId/runId>` – fetch live history via the Temporal CLI or
+- `--history-file <path>` - replay a JSON capture (`temporal workflow show
+  --history --output json`) or a fixture envelope with `history` + `info`.
+- `--execution <workflowId/runId>` - fetch live history via the Temporal CLI or
   WorkflowService RPC (`--source cli|service|auto`).
-- `--workflow-type`, `--namespace`, `--temporal-cli`, `--json` – supply workflow
+- `--workflow-type`, `--namespace`, `--temporal-cli`, `--json` - supply workflow
   metadata, namespace overrides, a custom CLI binary path, and machine-readable
   summaries respectively.
 - Exit codes: `0` success, `2` nondeterminism, `1` IO/configuration failures.
@@ -306,7 +294,7 @@ event counts, mismatch metadata, and writes a compact JSON summary when
 
 ## Author activities
 
-Activities are plain Bun functions. Keep them deterministic from Temporal’s
+Activities are plain Bun functions. Keep them deterministic from Temporal's
 perspective and delegate external side effects to this layer.
 
 ```ts title="workers/activities.ts"
@@ -315,32 +303,42 @@ export type Activities = {
   sleep(milliseconds: number): Promise<void>
 }
 
-export const echo: Activities['echo'] = async ({ message }) => {
-  return message
-}
+export const activities: Activities = {
+  async echo({ message }) {
+    return message
+  },
 
-export const sleep: Activities['sleep'] = async (milliseconds) => {
-  await Bun.sleep(milliseconds)
+  async sleep(milliseconds) {
+    await Bun.sleep(milliseconds)
+  },
 }
 ```
 
 ## Author workflows
 
-Import workflow primitives from the SDK so Bun can bundle Temporal’s deterministic
-runtime correctly.
+Import workflow primitives from the SDK so Bun can bundle Temporal's
+workflow runtime correctly.
 
 ```ts title="workers/workflows.ts"
-import { proxyActivities } from '@proompteng/temporal-bun-sdk'
-import type { Activities } from '../activities.ts'
+import { Effect } from 'effect'
+import * as Schema from 'effect/Schema'
+import { defineWorkflow } from '@proompteng/temporal-bun-sdk/workflow'
 
-const activities = proxyActivities<Activities>({
-  startToCloseTimeout: '1 minute',
-})
+export const workflows = [
+  defineWorkflow('helloWorkflow', Schema.Array(Schema.String), ({ input, activities, determinism }) =>
+    Effect.gen(function* () {
+      const [rawName] = input
+      const name = typeof rawName === 'string' && rawName.length > 0 ? rawName : 'Temporal'
 
-export async function helloWorkflow(name: string): Promise<string> {
-  await activities.sleep(10)
-  return await activities.echo({ message: `Hello, ${name}!` })
-}
+      yield* activities.schedule('sleep', [10])
+      yield* activities.schedule('echo', [{ message: `Hello, ${name}!` }])
+
+      return `Greeting queued at ${new Date(determinism.now()).toISOString()}`
+    }),
+  ),
+]
+
+export default workflows
 ```
 
 Export your workflows from an index file so the worker can register them all at
@@ -358,7 +356,7 @@ activities, and hands back both the worker instance and the resolved config.
 ```ts title="worker.ts"
 import { fileURLToPath } from 'node:url'
 import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
-import * as activities from './workers/activities.ts'
+import { activities } from './workers/activities.ts'
 
 const { worker } = await createWorker({
   activities,
@@ -366,7 +364,7 @@ const { worker } = await createWorker({
 })
 
 const shutdown = async (signal: string) => {
-  console.log(`Received ${signal}. Shutting down worker…`)
+  console.log(`Received ${signal}. Shutting down worker...`)
   await worker.shutdown()
   process.exit(0)
 }
@@ -400,7 +398,7 @@ const { client } = await createTemporalClient()
 const start = await client.startWorkflow({
   workflowId: `hello-${Date.now()}`,
   workflowType: 'helloWorkflow',
-  taskQueue: 'prix',
+  taskQueue: 'demo-worker',
   args: ['Proompteng'],
 })
 
@@ -416,18 +414,74 @@ All workflow operations (`startWorkflow`, `signalWorkflow`, `queryWorkflow`,
 handle structure, so you can persist it between processes without extra
 serialization code.
 
+## Workflow updates and queries
+
+The SDK supports workflow updates and queries with Effect Schema validators.
+Define handlers alongside workflows, then invoke them via the `client.workflow`
+helpers:
+
+```ts title="workers/updates.ts"
+import { Effect } from 'effect'
+import * as Schema from 'effect/Schema'
+import { defineWorkflow, defineWorkflowUpdates } from '@proompteng/temporal-bun-sdk/workflow'
+
+const updates = defineWorkflowUpdates([
+  {
+    name: 'setCounter',
+    input: Schema.Number,
+    handler: (_ctx, value: number) => Effect.sync(() => value),
+  },
+])
+
+export const counterWorkflow = defineWorkflow(
+  'counterWorkflow',
+  Schema.Number,
+  ({ input }) => Effect.sync(() => input),
+  { updates },
+)
+```
+
+```ts title="scripts/update-counter.ts"
+import { createTemporalClient } from '@proompteng/temporal-bun-sdk'
+
+const { client } = await createTemporalClient()
+const { handle } = await client.startWorkflow({
+  workflowId: `counter-${Date.now()}`,
+  workflowType: 'counterWorkflow',
+  taskQueue: 'demo-worker',
+  args: [0],
+})
+
+const result = await client.workflow.update(handle, {
+  updateName: 'setCounter',
+  args: [42],
+  waitForStage: 'completed',
+})
+
+if (result.outcome?.status === 'success') {
+  console.log('Counter updated to', result.outcome.result)
+}
+
+await client.shutdown()
+```
+
+Use `defineWorkflowQueries` and `client.queryWorkflow` for query handlers; query
+execution runs in read-only mode and rejects non-deterministic operations.
+
+
 ## CLI quick reference
 
 The `temporal-bun` CLI is available through `bunx temporal-bun <command>` once
 the package is installed.
 
-- `init [directory] [--force]` – scaffold a Bun worker project with example
+- `init [directory] [--force]` - scaffold a Bun worker project with example
   workflows, activities, Dockerfile, and scripts.
-- `doctor` – validate the SDK config, emit a JSON log, and flush the selected
+- `doctor` - validate the SDK config, emit a JSON log, and flush the selected
   metrics exporter.
-- `docker-build [--tag <name>]` – package the current directory into a worker
-  image using the provided Docker helper.
-- `help` – print the command reference.
+- `docker-build [--tag <name>] [--context <path>] [--file <path>]` - package the
+  current directory into a worker image.
+- `replay` - diff workflow determinism from JSON fixtures or live histories.
+- `help` - print the command reference.
 
 ## Legacy binary status
 
@@ -439,10 +493,10 @@ configuration rather than relying on retired flags.
 
 ## Local development and production tips
 
-- Use Bun’s `--watch` flag (`bun run --watch worker.ts`) to restart the worker on
+- Use Bun's `--watch` flag (`bun run --watch worker.ts`) to restart the worker on
   changes.
 - Keep activities free of Temporal SDK imports so they remain tree-shakeable and
-  easy to unit-test.
+  easy to unit test.
 - Expose Prometheus metrics via the worker runtime and forward them to your
   observability stack.
 - Prefer Temporal schedules to cron jobs for recurring workloads.
@@ -450,53 +504,53 @@ configuration rather than relying on retired flags.
   worker environment.
 
 With `@proompteng/temporal-bun-sdk`, you can reuse existing Temporal workflows
-while adopting Bun’s fast startup times and fully typed client/worker helpers.
+while adopting Bun's fast startup times and fully typed client/worker helpers.
 
 ## Architecture overview
 
-- **Workflow runtime** – executes deterministic workflows entirely inside Bun
-  with Effect fibers. Command intents (`schedule-activity`, timers, child
-  workflows, signals, continue-as-new) emit Temporal protobufs directly and are
-  guarded by a determinism snapshot that captures command order, random values,
-  and logical timestamps.
-- **Worker runtime** – wraps pollers, sticky cache routing, activity execution,
-  and build-id registration. It consumes the same `loadTemporalConfig`
+- **Workflow runtime** - executes deterministic workflows inside Bun with
+  Effect fibers. Command intents (schedule-activity, timers, child workflows,
+  signals, continue-as-new) emit Temporal protobufs directly and are guarded by
+  a determinism snapshot that captures command order, random values, and logical
+  timestamps.
+- **Worker runtime** - wraps pollers, sticky cache routing, activity execution,
+  and build ID registration. It consumes the same `loadTemporalConfig`
   environment contract as our Go worker and exposes concurrency knobs via
-  `TEMPORAL_WORKFLOW_CONCURRENCY`, `TEMPORAL_ACTIVITY_CONCURRENCY`, and
-  sticky-cache variables.
-- **Client** – a Connect transport with branded call options, memo/search helpers,
-  TLS diagnostics, and retry policies derived from environment variables. All
-  WorkflowService RPCs run through logging/metrics interceptors so Bun services
-  get observability parity with the worker runtime.
-- **CLI & tooling** – `temporal-bun` provides scaffolding, connectivity checks,
+  `TEMPORAL_WORKFLOW_CONCURRENCY`, `TEMPORAL_ACTIVITY_CONCURRENCY`, and sticky
+  cache variables.
+- **Client** - a Connect transport with branded call options, memo/search
+  helpers, TLS diagnostics, and retry policies derived from environment
+  variables. All WorkflowService RPCs run through logging/metrics interceptors
+  so Bun services get observability parity with the worker runtime.
+- **CLI and tooling** - `temporal-bun` provides scaffolding, config validation,
   Docker packaging, and deterministic replay. The CLI shares the same config and
   observability layers, ensuring every command fails fast with actionable logs.
 
-## Tutorials & recipes
+## Tutorials and recipes
 
 Follow the quickstart above to scaffold workflows/activities, then explore the
 example app in `packages/temporal-bun-sdk-example` for:
 
-- Activity heartbeats and cancellation propagation via
-  `activityContext.heartbeat()` and `activityContext.signal.aborted`.
-- Timer, signal, and child workflow orchestration patterns using
-  `proxyActivities` plus `defineWorkflow`.
-- Deterministic helpers (`determinism.now`, `determinism.random`) that make
-  replay diagnostics trivial.
+- Activity heartbeats and cancellation propagation via the runtime lifecycle
+  helpers.
+- Signals, queries, and updates using `defineWorkflowSignals`,
+  `defineWorkflowQueries`, and `defineWorkflowUpdates`.
+- Deterministic helpers (`determinism.now`, `determinism.random`,
+  `determinism.getVersion`) that make replay diagnostics trivial.
 
 We are actively porting these recipes into standalone guides (heartbeats,
 signals, updates, schedules). Each guide links back to runnable snippets so
 teams can copy/paste into new Bun workers.
 
-## CLI & tooling reference
+## CLI and tooling reference
 
 | Command | Purpose | Notes |
 | --- | --- | --- |
 | `temporal-bun init` | Scaffold a worker + Docker assets | Honors `--force` to overwrite existing files. |
-| `temporal-bun doctor` | Load config, emit log + metrics, verify TLS | Accepts `--log-format`, `--metrics`, `--metrics-exporter`, `--metrics-endpoint`. |
-| `temporal-bun docker-build` | Build worker image | Mirrors `docker build -t <tag> -f <file> <context>`. |
+| `temporal-bun doctor` | Load config, emit log + metrics, verify TLS | Accepts `--log-format`, `--log-level`, `--metrics`, `--metrics-exporter`, `--metrics-endpoint`. |
+| `temporal-bun docker-build` | Build worker image | Supports `--tag`, `--context`, and `--file`. |
 | `temporal-bun replay` | Diff workflow determinism from JSON or live histories | Supports `--history-file`, `--execution`, `--source cli|service|auto`, `--json`. |
 
-Proto regeneration now lives under `packages/temporal-bun-sdk/scripts/update-temporal-protos.ts`.
-Pass `--temporal-version <x.y.z>` (once implemented) to align with upstream
-Temporal drops, and run it before publishing a new SDK version.
+Proto regeneration lives under `packages/temporal-bun-sdk/scripts/update-temporal-protos.ts`.
+Pass `--version <tag>` (or omit to use the latest release) and optionally
+`--repo <owner/name>` before publishing a new SDK version.
