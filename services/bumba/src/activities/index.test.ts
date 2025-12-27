@@ -119,7 +119,7 @@ describe('bumba readRepoFile', () => {
     let requestedUrl: string | null = null
 
     process.env.GITHUB_TOKEN = 'token'
-    globalThis.fetch = (async (input) => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
       requestedUrl =
         typeof input === 'string'
           ? input
@@ -192,7 +192,7 @@ describe('bumba readRepoFile', () => {
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       )
-    }) as typeof fetch
+    }) as unknown as typeof fetch
 
     try {
       const result = await activities.readRepoFile({
@@ -228,7 +228,7 @@ describe('bumba readRepoFile', () => {
     let rawCalls = 0
 
     process.env.GITHUB_TOKEN = 'token'
-    globalThis.fetch = (async (input) => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url =
         typeof input === 'string'
           ? input
@@ -256,7 +256,7 @@ describe('bumba readRepoFile', () => {
         return new Response(rawContent, { status: 200 })
       }
       throw new Error(`unexpected fetch url: ${url}`)
-    }) as typeof fetch
+    }) as unknown as typeof fetch
 
     try {
       const result = await activities.readRepoFile({
