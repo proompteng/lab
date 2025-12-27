@@ -52,6 +52,8 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
    TEMPORAL_WORKER_BUILD_ID=git-sha                 # optional – build-id for versioning
 ```
 
+Defaults: determinism markers run in `delta` mode, record every 10 workflow tasks, take a full snapshot every 50 tasks, and skip unchanged snapshots. Override any value with the env vars above.
+
    > Running against `temporal server start-dev`? Omit TLS variables and set `TEMPORAL_ADDRESS=127.0.0.1:7233`. Set `TEMPORAL_ALLOW_INSECURE=1` when testing with self-signed certificates.
 
 3. **Build the SDK once**
