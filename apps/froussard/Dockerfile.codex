@@ -95,8 +95,8 @@ RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
     gh auth login --with-token < /tmp/gh_token \
     && gh auth setup-git
 
-RUN git config --global user.name "tuslagch" \
-    && git config --global user.email "tuslagch@proompteng.ai"
+RUN git config --global user.name "gregkonush" \
+    && git config --global user.email "12027037+gregkonush@users.noreply.github.com"
 
 RUN rm -rf "$WORKTREE" \
     && git clone --depth 1 https://github.com/proompteng/lab "$WORKTREE" \
