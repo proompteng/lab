@@ -1069,9 +1069,17 @@ export class WorkerRuntime {
     if (isLegacyQueryTask) {
       this.#incrementCounter(this.#metrics.queryTaskStarted)
     }
-    const historyEvents = await this.#collectWorkflowHistory(execution, response)
+    const queryCount =
+      response.queries && typeof response.queries === 'object' && !Array.isArray(response.queries)
+        ? Object.keys(response.queries).length
+        : Array.isArray(response.queries)
+          ? response.queries.length
+          : 0
+    const hasQueryPayloads = Boolean(response.query) || queryCount > 0
+    const historyEvents = await this.#collectWorkflowHistory(execution, response, {
+      forceFullHistory: hasQueryPayloads,
+    })
     const workflowType = this.#resolveWorkflowType(response, historyEvents)
-    const args = await this.#decodeWorkflowArgs(historyEvents)
     const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
     const collectedUpdates = await collectWorkflowUpdates({
       messages: response.messages ?? [],
@@ -1108,6 +1116,26 @@ export class WorkerRuntime {
     })
     const stickyKey = this.#buildStickyKey(execution.workflowId, execution.runId)
     const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
+    const decodedArgs = await this.#decodeWorkflowArgs(historyEvents)
+    let args = decodedArgs.args
+    let argsSource: 'history' | 'sticky' | 'fetch' | 'unknown' = decodedArgs.hasStartEvent ? 'history' : 'unknown'
+    if (argsSource === 'unknown' && stickyEntry?.workflowArguments !== undefined) {
+      args = stickyEntry.workflowArguments
+      argsSource = 'sticky'
+    }
+    if (argsSource === 'unknown') {
+      const fetchedArgs = await this.#fetchWorkflowStartArguments(execution)
+      if (fetchedArgs !== undefined) {
+        args = fetchedArgs
+        argsSource = 'fetch'
+      }
+    }
+    if (argsSource !== 'history') {
+      this.#log('debug', 'workflow arguments resolved from fallback source', {
+        ...baseLogFields,
+        argsSource,
+      })
+    }
     const historyReplay = await this.#ingestDeterminismState(workflowInfo, historyEvents, {
       queryRequests,
     })
@@ -1165,6 +1193,18 @@ export class WorkerRuntime {
       const { results: activityResults, scheduledEventIds: activityScheduleEventIds } =
         await this.#extractActivityResolutions(historyEvents)
       const timerResults = await this.#extractTimerResolutions(historyEvents)
+      const mergedActivityResults = new Map<string, ActivityResolution>(stickyEntry?.activityResults ?? [])
+      for (const [activityId, resolution] of activityResults.entries()) {
+        mergedActivityResults.set(activityId, resolution)
+      }
+      const mergedScheduleEventIds = new Map<string, string>(stickyEntry?.activityScheduleEventIds ?? [])
+      for (const [activityId, scheduleId] of activityScheduleEventIds.entries()) {
+        mergedScheduleEventIds.set(activityId, scheduleId)
+      }
+      const mergedTimerResults = new Set<string>(stickyEntry?.timerResults ?? [])
+      for (const timerId of timerResults) {
+        mergedTimerResults.add(timerId)
+      }
       const pendingChildWorkflows = await this.#extractPendingChildWorkflows(historyEvents)
 
       const replayUpdates = historyReplay?.updates ?? []
@@ -1177,11 +1217,11 @@ export class WorkerRuntime {
         taskQueue: this.#taskQueue,
         arguments: args,
         determinismState: previousState,
-        activityResults,
-        activityScheduleEventIds,
+        activityResults: mergedActivityResults,
+        activityScheduleEventIds: mergedScheduleEventIds,
         pendingChildWorkflows,
         signalDeliveries,
-        timerResults,
+        timerResults: mergedTimerResults,
         queryRequests,
         updates: mergedUpdates,
         mode: isLegacyQueryTask ? 'query' : 'workflow',
@@ -1298,26 +1338,38 @@ export class WorkerRuntime {
         }
       }
 
+      let pendingStickyUpdate: {
+        determinismState: WorkflowDeterminismState
+        cacheBaselineEventId: string | null
+        workflowType: string
+        metadata: Omit<StickyCacheEntry, 'key' | 'determinismState' | 'lastEventId' | 'lastAccessed' | 'workflowType'>
+      } | null = null
+      let shouldClearSticky = false
       if (stickyKey) {
         if (output.completion === 'pending') {
-          await this.#upsertStickyEntry(stickyKey, output.determinismState, cacheBaselineEventId, workflowType, {
-            workflowTaskCount,
-            lastDeterminismMarkerHash: markerHash,
-            lastDeterminismMarkerTask: lastMarkerTask,
-            lastDeterminismFullSnapshotTask: lastFullSnapshotTask,
-          })
-          this.#log('debug', 'sticky cache snapshot persisted', {
-            ...baseLogFields,
+          const resolvedWorkflowArgs = argsSource === 'unknown' ? stickyEntry?.workflowArguments : args
+          pendingStickyUpdate = {
+            determinismState: output.determinismState,
             cacheBaselineEventId,
-          })
+            workflowType,
+            metadata: {
+              workflowTaskCount,
+              lastDeterminismMarkerHash: markerHash,
+              lastDeterminismMarkerTask: lastMarkerTask,
+              lastDeterminismFullSnapshotTask: lastFullSnapshotTask,
+              ...(resolvedWorkflowArgs !== undefined ? { workflowArguments: resolvedWorkflowArgs } : {}),
+              activityResults: mergedActivityResults,
+              activityScheduleEventIds: mergedScheduleEventIds,
+              timerResults: mergedTimerResults,
+            },
+          }
         } else {
-          await this.#removeStickyEntry(stickyKey)
-          await this.#removeStickyEntriesForWorkflow(stickyKey.workflowId)
-          this.#log('debug', 'sticky cache entry cleared (workflow completed)', baseLogFields)
+          shouldClearSticky = true
         }
       }
 
       const shouldRespondWorkflowTask = hasMultiQueries || !hasLegacyQueries
+      let workflowTaskCommitted = false
       if (shouldRespondWorkflowTask) {
         const completion = create(RespondWorkflowTaskCompletedRequestSchema, {
           taskToken: response.taskToken,
@@ -1332,6 +1384,7 @@ export class WorkerRuntime {
         })
         try {
           await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
+          workflowTaskCommitted = true
         } catch (rpcError) {
           this.#log('error', 'debug: respondWorkflowTaskCompleted failed', {
             ...baseLogFields,
@@ -1339,6 +1392,10 @@ export class WorkerRuntime {
           })
           if (this.#isTaskNotFoundError(rpcError)) {
             this.#logWorkflowTaskNotFound('respondWorkflowTaskCompleted', execution)
+            if (stickyKey) {
+              await this.#removeStickyEntry(stickyKey)
+              await this.#removeStickyEntriesForWorkflow(stickyKey.workflowId)
+            }
             return
           }
           throw rpcError
@@ -1346,6 +1403,25 @@ export class WorkerRuntime {
       }
       if (legacyQueryResult) {
         await this.#respondLegacyQueryTask(response, legacyQueryResult)
+      }
+      if (stickyKey && workflowTaskCommitted) {
+        if (pendingStickyUpdate) {
+          await this.#upsertStickyEntry(
+            stickyKey,
+            pendingStickyUpdate.determinismState,
+            pendingStickyUpdate.cacheBaselineEventId,
+            pendingStickyUpdate.workflowType,
+            pendingStickyUpdate.metadata,
+          )
+          this.#log('debug', 'sticky cache snapshot persisted', {
+            ...baseLogFields,
+            cacheBaselineEventId: pendingStickyUpdate.cacheBaselineEventId,
+          })
+        } else if (shouldClearSticky) {
+          await this.#removeStickyEntry(stickyKey)
+          await this.#removeStickyEntriesForWorkflow(stickyKey.workflowId)
+          this.#log('debug', 'sticky cache entry cleared (workflow completed)', baseLogFields)
+        }
       }
     } catch (error) {
       let stickyEntryCleared = false
@@ -1446,6 +1522,7 @@ export class WorkerRuntime {
   async #collectWorkflowHistory(
     execution: { workflowId: string; runId: string },
     response: PollWorkflowTaskQueueResponse,
+    options?: { forceFullHistory?: boolean },
   ): Promise<HistoryEvent[]> {
     const events: HistoryEvent[] = []
     const initialEvents = response.history?.events ?? []
@@ -1462,7 +1539,13 @@ export class WorkerRuntime {
       token = page.nextPageToken && page.nextPageToken.length > 0 ? page.nextPageToken : undefined
     }
 
-    const sorted = this.#sortHistoryEvents(events)
+    let sorted = this.#sortHistoryEvents(events)
+    if (options?.forceFullHistory || !this.#findWorkflowStartedEvent(sorted)) {
+      const fullHistory = await this.#fetchWorkflowHistoryFromStart(execution)
+      if (fullHistory.length > 0) {
+        sorted = this.#sortHistoryEvents([...fullHistory, ...sorted])
+      }
+    }
     const bounded = this.#limitHistoryToStartedEvent(sorted, response.startedEventId)
     return this.#dedupeHistoryEvents(bounded)
   }
@@ -1981,6 +2064,19 @@ export class WorkerRuntime {
       events: historyResponse.history?.events ?? [],
       nextPageToken: historyResponse.nextPageToken ?? new Uint8Array(),
     }
+  }
+
+  async #fetchWorkflowHistoryFromStart(execution: { workflowId: string; runId: string }): Promise<HistoryEvent[]> {
+    const events: HistoryEvent[] = []
+    let token: Uint8Array | undefined
+    do {
+      const page = await this.#fetchWorkflowHistoryPage(execution, token)
+      if (page.events.length > 0) {
+        events.push(...page.events)
+      }
+      token = page.nextPageToken && page.nextPageToken.length > 0 ? page.nextPageToken : undefined
+    } while (token && token.length > 0)
+    return events
   }
 
   #buildWorkflowInfo(workflowType: string, execution: { workflowId: string; runId: string }): WorkflowInfo {
@@ -2759,20 +2855,37 @@ export class WorkerRuntime {
     }
   }
 
-  async #decodeWorkflowArgs(events: HistoryEvent[]): Promise<unknown[]> {
+  async #decodeWorkflowArgs(events: HistoryEvent[]): Promise<{
+    args: unknown[]
+    hasStartEvent: boolean
+  }> {
     const startEvent = this.#findWorkflowStartedEvent(events)
     if (!startEvent) {
-      return []
+      return { args: [], hasStartEvent: false }
     }
+    const args = (await this.#decodeWorkflowArgsFromStartEvent(startEvent)) ?? []
+    return { args, hasStartEvent: true }
+  }
+
+  async #decodeWorkflowArgsFromStartEvent(startEvent: HistoryEvent): Promise<unknown[] | undefined> {
     const attributes =
       startEvent.attributes?.case === 'workflowExecutionStartedEventAttributes'
         ? startEvent.attributes.value
         : undefined
     if (!attributes) {
-      return []
+      return undefined
     }
     const inputPayloads = attributes.input?.payloads ?? []
     return await decodePayloadsToValues(this.#dataConverter, inputPayloads)
+  }
+
+  async #fetchWorkflowStartArguments(execution: { workflowId: string; runId: string }): Promise<unknown[] | undefined> {
+    const page = await this.#fetchWorkflowHistoryPage(execution)
+    const startEvent = this.#findWorkflowStartedEvent(page.events)
+    if (!startEvent) {
+      return undefined
+    }
+    return await this.#decodeWorkflowArgsFromStartEvent(startEvent)
   }
 
   #resolveWorkflowType(response: PollWorkflowTaskQueueResponse, events: HistoryEvent[]): string {
