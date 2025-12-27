@@ -101,7 +101,7 @@ RUN git config --global user.name "tuslagch" \
 RUN rm -rf "$WORKTREE" \
     && git clone --depth 1 https://github.com/proompteng/lab "$WORKTREE" \
     && cd "$WORKTREE" \
-    && bun install --frozen-lockfile
+    && bun install --frozen-lockfile --ignore-scripts
 
 COPY apps/froussard/src/codex/cli/codex-bootstrap.ts /usr/local/bin/codex-bootstrap
 COPY apps/froussard/src/codex/cli/codex-implement.ts /usr/local/bin/codex-implement
