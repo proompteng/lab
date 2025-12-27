@@ -315,6 +315,84 @@ test('ingestWorkflowHistory applies determinism delta markers', async () => {
   expect(replay.determinismState.randomValues).toEqual([0.1, 0.2])
 })
 
+test('ingestWorkflowHistory ignores determinism markers that are not last in history', async () => {
+  const converter = createDefaultDataConverter()
+  const info: WorkflowInfo = {
+    namespace: 'default',
+    taskQueue: 'replay-fixtures',
+    workflowId: 'wf-marker-gap',
+    runId: 'run-marker-gap',
+    workflowType: 'markerGapWorkflow',
+  }
+  const determinismState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          kind: 'schedule-activity',
+          id: 'schedule-activity-0',
+          sequence: 0,
+          activityType: 'sendEmail',
+          activityId: 'send-0',
+          taskQueue: 'replay-fixtures',
+          input: ['hello@acme.test'],
+          timeouts: {},
+          retry: undefined,
+          requestEagerExecution: undefined,
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+
+  const details = await Effect.runPromise(
+    encodeDeterminismMarkerDetails(converter, {
+      info,
+      determinismState,
+      lastEventId: '10',
+      recordedAt: new Date('2025-01-01T00:00:00Z'),
+    }),
+  )
+
+  const markerEvent = create(HistoryEventSchema, {
+    eventId: 10n,
+    eventType: EventType.MARKER_RECORDED,
+    attributes: {
+      case: 'markerRecordedEventAttributes',
+      value: create(MarkerRecordedEventAttributesSchema, {
+        markerName: 'temporal-bun-sdk/determinism',
+        details,
+      }),
+    },
+  })
+
+  const timerEvent = create(HistoryEventSchema, {
+    eventId: 11n,
+    eventType: EventType.TIMER_STARTED,
+    attributes: {
+      case: 'timerStartedEventAttributes',
+      value: create(TimerStartedEventAttributesSchema, {
+        timerId: 'timeout-timer',
+        startToFireTimeout: { seconds: 3n, nanos: 0 },
+        workflowTaskCompletedEventId: 1n,
+      }),
+    },
+  })
+
+  const replay = await Effect.runPromise(
+    ingestWorkflowHistory({
+      info,
+      history: [markerEvent, timerEvent],
+      dataConverter: converter,
+    }),
+  )
+
+  expect(replay.determinismState.commandHistory).toHaveLength(1)
+  expect(replay.determinismState.commandHistory[0]?.intent.kind).toBe('start-timer')
+})
+
 test('ingestWorkflowHistory reconstructs command history from legacy events when marker missing', async () => {
   const converter = createDefaultDataConverter()
   const info: WorkflowInfo = {

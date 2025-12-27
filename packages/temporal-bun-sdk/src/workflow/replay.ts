@@ -270,6 +270,7 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
     const shouldUseDeterminismMarker = intake.ignoreDeterminismMarker !== true
     let markerState: WorkflowDeterminismState | undefined
     let markerLastEventId: string | null = null
+    let markerEventId: string | null = null
     let markerInvalid = false
     let hasMarker = false
     const updateEntries = collectWorkflowUpdateEntries(events)
@@ -299,6 +300,7 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
           }
           markerState = applied
           markerLastEventId = decoded.lastEventId
+          markerEventId = normalizeEventId(event.eventId)
           hasMarker = true
         }
       }
@@ -309,7 +311,10 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
       collectWorkflowUpdateInvocations(events, intake.dataConverter),
     )
 
-    if (shouldUseDeterminismMarker && hasMarker && !markerInvalid && markerState) {
+    const historyLastEventId = resolveHistoryLastEventId(events) ?? null
+    const markerCoversHistory = markerEventId !== null && markerEventId === historyLastEventId
+
+    if (shouldUseDeterminismMarker && hasMarker && !markerInvalid && markerState && markerCoversHistory) {
       let determinismState = cloneDeterminismState(markerState)
       if (!determinismState.failureMetadata && extractedFailureMetadata) {
         determinismState = {
@@ -324,7 +329,7 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
         }
       }
       determinismState = mergePendingQueryRequests(determinismState, intake.queries)
-      const latestEventId = resolveHistoryLastEventId(events) ?? markerLastEventId ?? null
+      const latestEventId = historyLastEventId ?? markerLastEventId ?? null
       return {
         determinismState,
         lastEventId: latestEventId,
