@@ -5,6 +5,14 @@ import { join } from 'node:path'
 
 import { activities } from './index'
 
+const runGit = (args: string[], cwd: string) => {
+  const result = Bun.spawnSync(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.toString().trim() || 'git command failed')
+  }
+  return result.stdout.toString().trim()
+}
+
 const runExtract = async (extension: string, content: string) => {
   const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))
   const filename = `sample${extension}`
@@ -62,6 +70,42 @@ describe('bumba ast extraction', () => {
 })
 
 describe('bumba readRepoFile', () => {
+  it('reads file content from git objects when commit is available', async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))
+    const filePath = 'README.md'
+    const content = 'hello from git\n'
+    const previousFetch = globalThis.fetch
+
+    try {
+      runGit(['init', '-b', 'main'], repoRoot)
+      runGit(['config', 'user.email', 'bumba-tests@example.com'], repoRoot)
+      runGit(['config', 'user.name', 'Bumba Tests'], repoRoot)
+      await writeFile(join(repoRoot, filePath), content, 'utf8')
+      runGit(['add', '.'], repoRoot)
+      runGit(['commit', '-m', 'init'], repoRoot)
+      const commit = runGit(['rev-parse', 'HEAD'], repoRoot)
+
+      const fetchStub = (async () => {
+        throw new Error('unexpected fetch')
+      }) as unknown as typeof fetch
+      globalThis.fetch = fetchStub
+
+      const result = await activities.readRepoFile({
+        repoRoot,
+        filePath,
+        repository: 'proompteng/lab',
+        commit,
+      })
+
+      expect(result.content).toBe(content)
+      expect(result.metadata.repoCommit).toBe(commit)
+      expect(result.metadata.metadata.source).toBe('git')
+    } finally {
+      globalThis.fetch = previousFetch
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
+
   it('fetches from GitHub when local file is missing', async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))
     const filePath = 'services/bumba/src/workflows/index.test.ts'

@@ -22,6 +22,7 @@ export type StartEnrichFileInput = {
   workflowId?: string
   eventDeliveryId?: string
   force?: boolean
+  validationMode?: 'full' | 'fast'
 }
 
 export type StartEnrichFileResult = {
@@ -232,6 +233,20 @@ const resolveRepoRootForCommit = async (filePath: string, commit?: string | null
   return worktreePath
 }
 
+const resolveRepoRootFast = async (filePath: string) => {
+  const baseRepoRoot = resolveBaseRepoRoot()
+  const worktreePath = await ensureBumbaWorktree(baseRepoRoot)
+  resolveWorktreeFilePath(worktreePath, filePath)
+  return worktreePath
+}
+
+const resolveRepoRootForStart = async (input: StartEnrichFileInput) => {
+  if (input.validationMode === 'fast') {
+    return resolveRepoRootFast(input.filePath)
+  }
+  return resolveRepoRootForCommit(input.filePath, input.commit)
+}
+
 const resolveRepoRootForRepository = async (commit?: string | null) => {
   const baseRepoRoot = resolveBaseRepoRoot()
   const normalizedCommit = normalizeOptionalText(commit)
@@ -333,7 +348,7 @@ export const BumbaWorkflowsLive = Layer.scoped(
                 1,
               )(
                 Effect.tryPromise({
-                  try: () => resolveRepoRootForCommit(input.filePath, input.commit),
+                  try: () => resolveRepoRootForStart(input),
                   catch: (error) => normalizeError('start bumba workflow failed', error),
                 }),
               ),

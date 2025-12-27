@@ -353,17 +353,89 @@ const loadEmbeddingConfig = () => {
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
 
-const runCommand = async (args: string[], cwd: string): Promise<string | null> => {
+type CommandResult = {
+  exitCode: number
+  stdout: string
+  stderr: string
+}
+
+const runCommandRaw = async (
+  args: string[],
+  cwd: string,
+  env?: Record<string, string | undefined>,
+): Promise<CommandResult> => {
   try {
-    const proc = Bun.spawn(args, { cwd, stdout: 'pipe', stderr: 'pipe' })
-    const output = await new Response(proc.stdout).text()
-    const exitCode = await proc.exited
-    if (exitCode !== 0) return null
-    const trimmed = output.trim()
-    return trimmed.length > 0 ? trimmed : null
-  } catch {
-    return null
+    const proc = Bun.spawn(args, {
+      cwd,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: env ? { ...process.env, ...env } : process.env,
+    })
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    return {
+      exitCode,
+      stdout,
+      stderr,
+    }
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: error instanceof Error ? error.message : String(error),
+    }
   }
+}
+
+const runCommandResult = async (
+  args: string[],
+  cwd: string,
+  env?: Record<string, string | undefined>,
+): Promise<CommandResult> => {
+  const result = await runCommandRaw(args, cwd, env)
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout.trim(),
+    stderr: result.stderr.trim(),
+  }
+}
+
+const runCommand = async (
+  args: string[],
+  cwd: string,
+  env?: Record<string, string | undefined>,
+): Promise<string | null> => {
+  const result = await runCommandResult(args, cwd, env)
+  if (result.exitCode !== 0) return null
+  return result.stdout.length > 0 ? result.stdout : null
+}
+
+const buildGitAuthArgs = (token: string | null) =>
+  token ? ['-c', `http.extraheader=Authorization: Bearer ${token}`] : []
+
+const commitExistsLocally = async (repoRoot: string, commit: string) => {
+  const result = await runCommandResult(['git', '-C', repoRoot, 'cat-file', '-e', `${commit}^{commit}`], repoRoot, {
+    GIT_TERMINAL_PROMPT: '0',
+  })
+  return result.exitCode === 0
+}
+
+const fetchCommitFromOrigin = async (repoRoot: string, commit: string) => {
+  const token = resolveGithubToken()
+  const args = ['git', '-C', repoRoot, ...buildGitAuthArgs(token), 'fetch', '--quiet', '--depth=1', 'origin', commit]
+  const result = await runCommandResult(args, repoRoot, { GIT_TERMINAL_PROMPT: '0' })
+  return result.exitCode === 0
+}
+
+const readGitFile = async (repoRoot: string, ref: string, filePath: string) => {
+  const result = await runCommandRaw(['git', '-C', repoRoot, 'show', `${ref}:${filePath}`], repoRoot, {
+    GIT_TERMINAL_PROMPT: '0',
+  })
+  if (result.exitCode !== 0) return null
+  return result.stdout
 }
 
 type RepositoryOverrides = {
@@ -1554,25 +1626,58 @@ export const activities = {
 
       const repoRootStats = await stat(input.repoRoot).catch(() => null)
       const fileStats = repoRootStats?.isDirectory() ? await stat(fullPath).catch(() => null) : null
-      let content: string
+      let content: string | null = null
       let stats = fileStats
-      let source: 'local' | 'github' = 'local'
-      let sourceMeta: Record<string, unknown> = { repoRoot: input.repoRoot }
+      let source: 'local' | 'github' | 'git' = 'local'
+      let sourceMeta: Record<string, unknown> = { repoRoot: input.repoRoot, source: 'local' }
 
-      if (fileStats) {
-        if (normalizedCommit) {
-          const headCommit = await runCommand(['git', '-C', input.repoRoot, 'rev-parse', 'HEAD'], input.repoRoot)
-          if (headCommit !== normalizedCommit) {
-            source = 'github'
-          }
+      const setGitSource = (ref: string, commit?: string | null) => {
+        source = 'git'
+        stats = null
+        sourceMeta = {
+          repoRoot: input.repoRoot,
+          source: 'git',
+          gitRef: ref,
+          gitCommit: commit ?? null,
         }
-      } else {
-        source = 'github'
       }
 
-      if (source === 'local') {
+      if (normalizedCommit) {
+        content = await readGitFile(input.repoRoot, normalizedCommit, input.filePath)
+        if (!content) {
+          const hasCommit = await commitExistsLocally(input.repoRoot, normalizedCommit)
+          if (!hasCommit) {
+            const fetched = await fetchCommitFromOrigin(input.repoRoot, normalizedCommit)
+            if (fetched) {
+              content = await readGitFile(input.repoRoot, normalizedCommit, input.filePath)
+            }
+          }
+        }
+        if (content) {
+          setGitSource(normalizedCommit, normalizedCommit)
+        }
+      }
+
+      if (!content) {
+        const fallbackRef =
+          normalizedRef ?? (!normalizedCommit ? (repoInfo.repoCommit ?? repoInfo.repoRef ?? null) : null)
+        if (fallbackRef) {
+          const fallbackContent = await readGitFile(input.repoRoot, fallbackRef, input.filePath)
+          if (fallbackContent) {
+            content = fallbackContent
+            setGitSource(fallbackRef, normalizedCommit ?? null)
+          }
+        }
+      }
+
+      if (!content && !normalizedCommit && fileStats) {
         content = await readFile(fullPath, 'utf8')
-      } else {
+        source = 'local'
+        stats = fileStats
+        sourceMeta = { repoRoot: input.repoRoot, source: 'local' }
+      }
+
+      if (!content) {
         const repoSlug = normalizeRepositorySlug(normalizeOptionalText(input.repository) ?? repoInfo.repoName ?? '')
         if (!repoSlug.includes('/')) {
           throw new Error('GitHub repository slug is required to fetch remote content')
@@ -1580,6 +1685,7 @@ export const activities = {
 
         const ref = normalizedCommit ?? repoInfo.repoCommit ?? repoInfo.repoRef
         const fetched = await fetchGithubFile(repoSlug, input.filePath, ref)
+        source = 'github'
         content = fetched.content
         stats = null
         sourceMeta = {

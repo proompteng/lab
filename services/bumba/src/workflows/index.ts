@@ -186,6 +186,19 @@ export const workflows = [
         ...readRepoFileTimeouts,
         retry: activityRetry,
       })) as ReadRepoFileOutput
+      const readSourceMeta = fileResult.metadata.metadata ?? {}
+      const readSource = typeof readSourceMeta.source === 'string' ? readSourceMeta.source : null
+
+      logWorkflow('enrichFile.readRepoFile', {
+        workflowId: info.workflowId,
+        runId: info.runId,
+        filePath,
+        repoRef: fileResult.metadata.repoRef,
+        repoCommit: fileResult.metadata.repoCommit,
+        readSource,
+        readSourceMeta,
+        contentHash: fileResult.metadata.contentHash,
+      })
 
       if (force) {
         logWorkflow('enrichFile.cleanupRequested', {
@@ -328,6 +341,7 @@ export const workflows = [
         facts: astResult.facts.length,
         summaryChars: enriched.summary.length,
         enrichedChars: enriched.enriched.length,
+        readSource,
         eventDeliveryId: eventDeliveryId ?? null,
       })
 

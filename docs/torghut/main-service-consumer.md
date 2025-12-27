@@ -4,8 +4,8 @@
 How the main torghut service should consume TA outputs and switch sources safely.
 
 ## Topics to consume
-- `torghut.<symbol>.ta.signals.v1` (primary)
-- `torghut.<symbol>.ta.bars.1s.v1` (optional for charts)
+- `torghut.ta.signals.v1` (primary)
+- `torghut.ta.bars.1s.v1` (optional for charts)
 
 ## Client config
 - `enable.idempotence=true` (producer, if writing responses) — not required for consumer.
@@ -29,4 +29,3 @@ How the main torghut service should consume TA outputs and switch sources safely
 
 ## Fallback path
 - If TA topics unavailable, fall back to raw bars/trades or disable TA features via flag.
-

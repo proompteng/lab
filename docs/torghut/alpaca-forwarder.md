@@ -6,7 +6,7 @@ Single-replica Kotlin/JVM service (Gradle multi-project) that ingests Alpaca mar
 ## Requirements
 - Streams: trades (`T=t`), quotes (`T=q`), 1m bars/updated bars (`T=b|u`), status; optional `trade_updates`.
 - One active WS per account (Alpaca constraint); reconnect with backoff and resubscribe.
-- Dedup keys: trades by `i`; quotes/bars by `(t,symbol)`; trade_updates by order id; maintain per-symbol monotonic `seq`.
+- Dedup keys: trades by `i`; quotes/bars by `(t,symbol)`; trade_updates by order id; maintain monotonic `seq` keyed by symbol.
 - Envelope: `ingest_ts`, Alpaca `event_ts` (`t`), `feed`, `channel`, `symbol`, `seq`, `payload`, `is_final?`, `source` (ws/rest), optional `window{}`.
 - Kafka producer: SASL/PLAIN over TLS using Strimzi KafkaUser secret; acks=all; linger 20–50 ms; compression lz4; idempotence on.
 - Optional startup backfill: last 100 1m bars via REST (`source: rest`, `is_final: true`).

@@ -14,8 +14,8 @@ Required configuration (env vars or Typesafe `application.conf`):
 
 - `TA_KAFKA_BOOTSTRAP` (e.g., `localhost:9092`)
 - `TA_TRADES_TOPIC`, `TA_QUOTES_TOPIC` (optional), `TA_BARS1M_TOPIC` (optional)
-- `TA_MICROBARS_TOPIC` (`torghut.<symbol>.ta.bars.1s.v1`)
-- `TA_SIGNALS_TOPIC` (`torghut.<symbol>.ta.signals.v1`)
+- `TA_MICROBARS_TOPIC` (`torghut.ta.bars.1s.v1`)
+- `TA_SIGNALS_TOPIC` (`torghut.ta.signals.v1`)
 - `TA_GROUP_ID`, `TA_CLIENT_ID`
 - Optional: `TA_KAFKA_SECURITY`, `TA_KAFKA_SASL_MECH`, `TA_KAFKA_USERNAME`, `TA_KAFKA_PASSWORD`
 - HTTP: `TA_HTTP_HOST`, `TA_HTTP_PORT`
