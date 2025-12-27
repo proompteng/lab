@@ -24,7 +24,7 @@ import {
 } from '../common/payloads/converter'
 import { encodeErrorToFailure, encodeFailurePayloads, failureToError } from '../common/payloads/failure'
 import { sleep } from '../common/sleep'
-import { loadTemporalConfig, type DeterminismMarkerMode, type TemporalConfig } from '../config'
+import { type DeterminismMarkerMode, loadTemporalConfig, type TemporalConfig } from '../config'
 import type { InterceptorKind, TemporalInterceptor as WorkerInterceptor } from '../interceptors/types'
 import {
   makeDefaultWorkerInterceptors,
@@ -107,8 +107,8 @@ import {
 import { WorkflowRegistry } from '../workflow/registry'
 import {
   DETERMINISM_MARKER_NAME,
-  type DeterminismStateDelta,
   type DeterminismMismatch,
+  type DeterminismStateDelta,
   diffDeterminismState,
   encodeDeterminismMarkerDetails,
   ingestWorkflowHistory,
