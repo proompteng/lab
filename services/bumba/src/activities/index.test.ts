@@ -80,6 +80,7 @@ describe('bumba readRepoFile', () => {
       runGit(['init', '-b', 'main'], repoRoot)
       runGit(['config', 'user.email', 'bumba-tests@example.com'], repoRoot)
       runGit(['config', 'user.name', 'Bumba Tests'], repoRoot)
+      runGit(['config', 'commit.gpgsign', 'false'], repoRoot)
       await writeFile(join(repoRoot, filePath), content, 'utf8')
       runGit(['add', '.'], repoRoot)
       runGit(['commit', '-m', 'init'], repoRoot)
