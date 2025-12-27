@@ -104,10 +104,13 @@ COPY apps/froussard/src/codex/cli/codex-graf.ts /usr/local/bin/codex-graf
 COPY apps/froussard/src/codex/cli/lib /usr/local/bin/lib
 # Provide @proompteng/codex for the CLI helpers at runtime.
 COPY packages/codex /opt/proompteng/packages/codex
+COPY packages/discord /opt/proompteng/packages/discord
 COPY tsconfig.base.json /opt/proompteng/tsconfig.base.json
 RUN bash -lc 'cd /opt/proompteng/packages/codex && bun install --no-save && bun run build'
+RUN bash -lc 'cd /opt/proompteng/packages/discord && bun install --no-save && bun run build'
 RUN mkdir -p /usr/local/node_modules/@proompteng \
-    && cp -R /opt/proompteng/packages/codex /usr/local/node_modules/@proompteng/codex
+    && cp -R /opt/proompteng/packages/codex /usr/local/node_modules/@proompteng/codex \
+    && cp -R /opt/proompteng/packages/discord /usr/local/node_modules/@proompteng/discord
 RUN chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/codex-implement /usr/local/bin/codex-research /usr/local/bin/codex-graf
 
 WORKDIR /workspace
