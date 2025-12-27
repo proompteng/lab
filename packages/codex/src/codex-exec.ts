@@ -8,6 +8,11 @@ export interface CodexExecArgs {
   threadId?: string | null
   images?: string[]
   model?: string
+  jsonMode?: 'json' | 'experimental-json'
+  dangerouslyBypassApprovalsAndSandbox?: boolean
+  outputSchemaPath?: string
+  lastMessagePath?: string
+  resumeLast?: boolean
   sandboxMode?: SandboxMode
   workingDirectory?: string
   skipGitRepoCheck?: boolean
@@ -33,10 +38,21 @@ export class CodexExec {
   }
 
   async *run(args: CodexExecArgs): AsyncGenerator<string> {
-    const commandArgs = ['exec', '--experimental-json']
+    const jsonFlag = args.jsonMode === 'experimental-json' ? '--experimental-json' : '--json'
+    const commandArgs = ['exec']
+
+    if (args.dangerouslyBypassApprovalsAndSandbox) {
+      commandArgs.push('--dangerously-bypass-approvals-and-sandbox')
+    }
+
+    commandArgs.push(jsonFlag)
 
     if (args.model) {
       commandArgs.push('--model', args.model)
+    }
+
+    if (args.outputSchemaPath) {
+      commandArgs.push('--output-schema', args.outputSchemaPath)
     }
 
     if (args.sandboxMode) {
@@ -79,7 +95,13 @@ export class CodexExec {
       }
     }
 
-    if (args.threadId) {
+    if (args.lastMessagePath) {
+      commandArgs.push('--output-last-message', args.lastMessagePath)
+    }
+
+    if (args.resumeLast) {
+      commandArgs.push('resume', '--last')
+    } else if (args.threadId) {
       commandArgs.push('resume', args.threadId)
     }
 

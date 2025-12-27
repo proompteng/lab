@@ -352,6 +352,33 @@ describe('streamChannel', () => {
     expect(payloads[1]?.content).toContain('x')
   })
 
+  it('flushes messages separated by the message separator', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    global.fetch = fetchMock as unknown as typeof global.fetch
+
+    const config = { botToken: 'token', guildId: 'guild' }
+    const channelContext = { channelId: 'channel-xyz', channelName: 'name', guildId: 'guild' }
+
+    async function* generator() {
+      yield `first${discord.DISCORD_MESSAGE_SEPARATOR}second`
+    }
+
+    await discord.streamChannel(config, channelContext, generator())
+
+    const payloads = (fetchMock.mock.calls as unknown as Array<[unknown, RequestInit]>).map(([, init]) =>
+      JSON.parse((init.body as string) ?? '{}'),
+    )
+    expect(payloads).toHaveLength(2)
+    expect(payloads[0]?.content).toContain('first')
+    expect(payloads[1]?.content).toContain('second')
+  })
+
   it('echoes output in dry-run mode without posting', async () => {
     const config = { botToken: 'token', guildId: 'guild' }
     const channelContext = { channelId: 'channel-xyz', channelName: 'name', guildId: 'guild' }

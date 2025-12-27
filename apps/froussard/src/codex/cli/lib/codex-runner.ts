@@ -1,7 +1,7 @@
-import { createWriteStream, type WriteStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import process from 'node:process'
-import { ensureFileDirectory } from './fs'
+import { CodexRunner } from '@proompteng/codex'
+import { DISCORD_MESSAGE_SEPARATOR } from '@proompteng/discord'
 import { type CodexLogger, consoleLogger } from './logger'
 
 export interface DiscordChannelOptions {
@@ -35,57 +35,6 @@ export interface PushCodexEventsToLokiOptions {
   tenant?: string
   basicAuth?: string
   logger?: CodexLogger
-}
-
-const decoder = new TextDecoder()
-const toolCallPattern = /codex_core::codex:\s+ToolCall:\s+(.*)$/
-const sessionConfiguredPattern =
-  /SessionConfiguredEvent\s*\{\s*session_id:\s*ConversationId\s*\{\s*uuid:\s*([0-9a-fA-F-]+)\s*}/
-
-const extractToolCallPayload = (line: string): string | undefined => {
-  const match = line.match(toolCallPattern)
-  if (!match) {
-    return undefined
-  }
-  const payload = match[1]?.trim()
-  return payload && payload.length > 0 ? payload : 'Tool call invoked'
-}
-
-const normalizeSessionCandidate = (value: unknown): string | undefined => {
-  if (typeof value !== 'string') {
-    return undefined
-  }
-  const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed : undefined
-}
-
-const extractSessionIdFromParsedEvent = (parsed: Record<string, unknown>): string | undefined => {
-  const direct =
-    normalizeSessionCandidate((parsed.session as Record<string, unknown> | undefined)?.id) ??
-    normalizeSessionCandidate(parsed.session_id) ??
-    normalizeSessionCandidate(parsed.sessionId)
-  if (direct) {
-    return direct
-  }
-
-  const item = parsed.item as Record<string, unknown> | undefined
-  const fromItem =
-    normalizeSessionCandidate((item?.session as Record<string, unknown> | undefined)?.id) ??
-    normalizeSessionCandidate(item?.session_id) ??
-    normalizeSessionCandidate(item?.sessionId)
-  if (fromItem) {
-    return fromItem
-  }
-
-  return normalizeSessionCandidate(parsed.conversation_id) ?? normalizeSessionCandidate(parsed.conversationId)
-}
-
-const extractSessionIdFromLogLine = (line: string): string | undefined => {
-  const match = line.match(sessionConfiguredPattern)
-  if (match?.[1]) {
-    return match[1].trim()
-  }
-  return undefined
 }
 
 interface WritableHandle {
@@ -143,28 +92,62 @@ const createWritableHandle = (stream: unknown): WritableHandle | undefined => {
   return undefined
 }
 
-const writeLine = (stream: WriteStream, content: string) => {
-  return new Promise<void>((resolve, reject) => {
-    stream.write(`${content}\n`, (error: Error | null | undefined) => {
-      if (error) {
-        reject(error)
-      } else {
-        resolve()
-      }
-    })
-  })
+const MAX_DISCORD_COMMAND_LINES = 10
+const DISCORD_STREAM_FLUSH_THRESHOLD = 900
+
+const normalizeLineBreaks = (value: string) => value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+
+const trimTrailingEmptyLines = (lines: string[]) => {
+  let trimmed = lines.slice()
+  while (trimmed.length > 0 && trimmed[trimmed.length - 1] === '') {
+    trimmed = trimmed.slice(0, -1)
+  }
+  return trimmed
 }
 
-const closeStream = (stream: WriteStream) => {
-  return new Promise<void>((resolve, reject) => {
-    stream.end((error: Error | null | undefined) => {
-      if (error) {
-        reject(error)
-      } else {
-        resolve()
-      }
-    })
-  })
+const truncateCommandOutput = (output: string) => {
+  const normalized = normalizeLineBreaks(output)
+  const lines = trimTrailingEmptyLines(normalized.split('\n'))
+  if (lines.length <= MAX_DISCORD_COMMAND_LINES) {
+    return { lines, truncated: false, truncatedCount: 0 }
+  }
+
+  const visibleLineCount = Math.max(0, MAX_DISCORD_COMMAND_LINES - 1)
+  const truncatedCount = lines.length - visibleLineCount
+  const visibleLines = lines.slice(0, visibleLineCount)
+  visibleLines.push(`... (truncated, ${truncatedCount} more line${truncatedCount === 1 ? '' : 's'})`)
+  return { lines: visibleLines, truncated: true, truncatedCount }
+}
+
+const createCodeFence = (content: string, language = 'ts') => {
+  const matches = content.match(/`+/g) ?? []
+  const longest = matches.reduce((max, segment) => Math.max(max, segment.length), 0)
+  const fenceLength = Math.max(3, longest + 1)
+  const fence = '`'.repeat(fenceLength)
+  return {
+    open: `\n${fence}${language}\n`,
+    close: `\n${fence}\n`,
+  }
+}
+
+const formatDiscordCommandBlock = (command?: string, output?: string, exitCode?: number) => {
+  const lines: string[] = []
+  if (command) {
+    lines.push(`$ ${command}`)
+  }
+  if (output) {
+    const { lines: outputLines } = truncateCommandOutput(output)
+    lines.push(...outputLines)
+  }
+  if (typeof exitCode === 'number' && exitCode !== 0) {
+    lines.push(`exit status: ${exitCode}`)
+  }
+  if (lines.length === 0) {
+    return undefined
+  }
+  const content = lines.join('\n')
+  const fence = createCodeFence(content, 'ts')
+  return `${fence.open}${content}${fence.close}`
 }
 
 export const runCodexSession = async ({
@@ -192,15 +175,6 @@ export const runCodexSession = async ({
   const idleTimeoutMs = parsePositiveMs(process.env.CODEX_IDLE_TIMEOUT_MS, 30 * 60 * 1000)
   // After the model reports turn completion, give a short grace period before forcing exit.
   const completedGraceMs = parsePositiveMs(process.env.CODEX_EXIT_GRACE_MS, 2 * 60 * 1000)
-
-  await Promise.all([
-    ensureFileDirectory(outputPath),
-    ensureFileDirectory(jsonOutputPath),
-    ensureFileDirectory(agentOutputPath),
-  ])
-
-  const jsonStream = createWriteStream(jsonOutputPath, { flags: 'w' })
-  const agentStream = createWriteStream(agentOutputPath, { flags: 'w' })
 
   let discordProcess: ReturnType<typeof Bun.spawn> | undefined
   let discordWriter: WritableHandle | undefined
@@ -232,225 +206,433 @@ export const runCodexSession = async ({
     }
   }
 
-  const codexCommand = [
-    'codex',
-    'exec',
-    '--dangerously-bypass-approvals-and-sandbox',
-    '--json',
-    '--output-last-message',
-    outputPath,
-  ]
+  const runner = new CodexRunner()
+  const agentMessages: string[] = []
+  let sessionId: string | undefined
+  let sawDelta = false
+  let discordStreamBuffer = ''
+  let discordWriteQueue = Promise.resolve()
 
-  const envModel = process.env.CODEX_MODEL?.trim()
-  if (envModel) {
-    codexCommand.push('-m', envModel)
-  }
-
-  if (resumeArg && resumeArg.length > 0) {
-    codexCommand.push('resume')
-    if (resumeArg === '--last') {
-      codexCommand.push('--last')
-    } else {
-      codexCommand.push(resumeArg)
+  const awaitDiscordQueueDrain = async () => {
+    try {
+      await discordWriteQueue
+    } catch {
+      // ignore queued write failures
     }
   }
 
-  // For --last we must not pass any positional (clap treats it as session_id and errors).
-  // For all other cases, pass '-' so Codex reads the prompt from stdin.
-  const useStdinDash = !(resumeArg === '--last')
-  if (useStdinDash) {
-    codexCommand.push('-')
+  const closeDiscordWriter = async () => {
+    if (discordWriter && !discordClosed) {
+      discordClosed = true
+      await discordWriter.close().catch(() => {})
+    }
   }
 
-  const codexProcess = Bun.spawn({
-    cmd: codexCommand,
-    stdin: 'pipe',
-    stdout: 'pipe',
-    stderr: 'inherit',
-    env: {
-      ...process.env,
-      CODEX_STAGE: stage,
-    },
-  })
-
-  const codexStdin = createWritableHandle(codexProcess.stdin)
-  if (!codexStdin) {
-    throw new Error('Codex subprocess is missing stdin')
+  const enqueueDiscordWrite = async (task: () => Promise<void>) => {
+    const next = discordWriteQueue.then(task, task)
+    discordWriteQueue = next.catch(() => undefined)
+    return next
   }
 
-  await codexStdin.write(prompt)
-  await codexStdin.close()
-
-  const agentMessages: string[] = []
-  const reader = codexProcess.stdout?.getReader()
-  let buffer = ''
-  let sessionId: string | undefined
-  let sawTurnCompleted = false
-  let forcedTermination = false
-  let lastActivity = Date.now()
-
-  if (!reader) {
-    throw new Error('Codex subprocess is missing stdout')
+  const writeStdout = (payload: string) => {
+    try {
+      process.stdout.write(payload)
+    } catch {
+      // ignore stdout write errors; best-effort streaming
+    }
   }
 
-  const flushLine = async (line: string) => {
-    if (!line.trim()) {
+  const writeDiscordRaw = async (payload: string, errorLabel: string) => {
+    if (!discordWriter || discordClosed) {
       return
     }
-
-    await writeLine(jsonStream, line)
-    lastActivity = Date.now()
-
-    const toolCallPayload = extractToolCallPayload(line)
-    const logLineSession = extractSessionIdFromLogLine(line)
-
-    if (!sessionId && logLineSession) {
-      sessionId = logLineSession
-    }
-
-    if (toolCallPayload && discordWriter && !discordClosed) {
-      try {
-        await discordWriter.write(`ToolCall → ${toolCallPayload}\n`)
-      } catch (error) {
-        discordClosed = true
-        await discordWriter.close().catch(() => {})
-        if (discordChannel?.onError && error instanceof Error) {
-          discordChannel.onError(error)
-        } else {
-          log.error('Failed to write tool call to Discord channel:', error)
-        }
-      }
-    }
-
     try {
-      const parsed = JSON.parse(line)
-      const item = parsed?.item
-      if (!sessionId) {
-        const candidateSession = extractSessionIdFromParsedEvent(parsed)
-        if (candidateSession) {
-          sessionId = candidateSession
+      await discordWriter.write(payload)
+    } catch (error) {
+      await closeDiscordWriter()
+      if (discordChannel?.onError && error instanceof Error) {
+        discordChannel.onError(error)
+      } else {
+        log.error(errorLabel, error)
+      }
+    }
+  }
+
+  const writeDiscordMessage = async (payload: string, errorLabel: string) => {
+    if (!payload) {
+      return
+    }
+    const framed = `${DISCORD_MESSAGE_SEPARATOR}${payload}${DISCORD_MESSAGE_SEPARATOR}`
+    await enqueueDiscordWrite(async () => {
+      await writeDiscordRaw(framed, errorLabel)
+    })
+  }
+
+  const flushDiscordStream = async () => {
+    await enqueueDiscordWrite(async () => {
+      if (!discordStreamBuffer) {
+        return
+      }
+      const payload = discordStreamBuffer
+      discordStreamBuffer = ''
+      const framed = `${DISCORD_MESSAGE_SEPARATOR}${payload}${DISCORD_MESSAGE_SEPARATOR}`
+      await writeDiscordRaw(framed, 'Failed to write to Discord channel stream:')
+    })
+  }
+
+  const queueDiscordStream = async (payload: string) => {
+    if (!payload) {
+      return
+    }
+    await enqueueDiscordWrite(async () => {
+      if (!discordWriter || discordClosed) {
+        return
+      }
+      discordStreamBuffer += payload
+      if (discordStreamBuffer.length >= DISCORD_STREAM_FLUSH_THRESHOLD || payload.includes('\n')) {
+        const framed = `${DISCORD_MESSAGE_SEPARATOR}${discordStreamBuffer}${DISCORD_MESSAGE_SEPARATOR}`
+        discordStreamBuffer = ''
+        await writeDiscordRaw(framed, 'Failed to write to Discord channel stream:')
+      }
+    })
+  }
+
+  const emitStreamLine = async (payload: string, errorLabel: string) => {
+    if (!payload) {
+      return
+    }
+    const normalized = payload.endsWith('\n') ? payload : `${payload}\n`
+    writeStdout(normalized)
+    await flushDiscordStream()
+    await writeDiscordMessage(normalized, errorLabel)
+  }
+
+  const emitStdoutLine = (payload: string) => {
+    if (!payload) {
+      return
+    }
+    const normalized = payload.endsWith('\n') ? payload : `${payload}\n`
+    writeStdout(normalized)
+  }
+
+  const readString = (value: unknown): string | undefined => {
+    if (typeof value !== 'string') {
+      return undefined
+    }
+    const trimmed = value.trimEnd()
+    return trimmed.length > 0 ? trimmed : undefined
+  }
+
+  const formatFileChangeSummary = (item: Record<string, unknown>) => {
+    const rawChanges = item.changes
+    const changes = Array.isArray(rawChanges)
+      ? rawChanges
+          .map((entry) => {
+            if (!entry || typeof entry !== 'object') {
+              return undefined
+            }
+            const path = readString((entry as { path?: unknown }).path)
+            const kind = readString((entry as { kind?: unknown }).kind)
+            if (!path && !kind) {
+              return undefined
+            }
+            return kind ? `${kind} ${path ?? ''}`.trim() : path
+          })
+          .filter((value): value is string => Boolean(value))
+      : []
+
+    const status = readString(item.status)
+    const prefix = status ? `Files changed (${status})` : 'Files changed'
+    if (changes.length === 0) {
+      return prefix
+    }
+    return `${prefix} → ${changes.join(', ')}`
+  }
+
+  const formatTodoList = (items: unknown) => {
+    if (!Array.isArray(items)) {
+      return []
+    }
+    return items
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') {
+          return undefined
+        }
+        const text = readString((entry as { text?: unknown }).text)
+        if (!text) {
+          return undefined
+        }
+        const completed = Boolean((entry as { completed?: unknown }).completed)
+        return `- [${completed ? 'x' : ' '}] ${text}`
+      })
+      .filter((value): value is string => Boolean(value))
+  }
+
+  const formatMcpToolCall = (item: Record<string, unknown>) => {
+    const server = readString(item.server) ?? 'mcp'
+    const tool = readString(item.tool) ?? 'call'
+    const status = readString(item.status)
+    const query = readString((item.arguments as Record<string, unknown> | undefined)?.query)
+    let header = `MCP → ${server}.${tool}`
+    if (status) {
+      header += ` (${status})`
+    }
+    if (query) {
+      header += ` query="${query}"`
+    }
+
+    const result = item.result as Record<string, unknown> | undefined
+    let resultText: string | undefined
+    if (result && typeof result === 'object') {
+      const content = result.content
+      if (Array.isArray(content)) {
+        const parts = content
+          .map((entry) => {
+            if (!entry || typeof entry !== 'object') {
+              return undefined
+            }
+            return readString((entry as { text?: unknown }).text)
+          })
+          .filter((value): value is string => Boolean(value))
+        if (parts.length > 0) {
+          resultText = parts.join(' ')
         }
       }
-      if (parsed?.type === 'turn.completed') {
-        sawTurnCompleted = true
-      }
-      if (parsed?.type === 'item.completed' && item?.type === 'agent_message' && typeof item?.text === 'string') {
-        const message = item.text
-        agentMessages.push(message)
-        await writeLine(agentStream, message)
-        if (discordWriter && !discordClosed) {
-          try {
-            await discordWriter.write(`${message}\n`)
-          } catch (error) {
-            discordClosed = true
-            await discordWriter.close().catch(() => {})
-            if (discordChannel?.onError && error instanceof Error) {
-              discordChannel.onError(error)
-            } else {
-              log.error('Failed to write to Discord channel stream:', error)
-            }
+      if (!resultText) {
+        const structured = result.structured_content ?? result.structuredContent
+        if (structured && typeof structured === 'object') {
+          const count = (structured as { count?: unknown }).count
+          if (typeof count === 'number') {
+            resultText = `result count: ${count}`
           }
         }
       }
-    } catch (error) {
-      if (!toolCallPayload && !logLineSession) {
-        log.error('Failed to parse Codex event line as JSON:', error)
-      }
+    }
+
+    const errorMessage = readString((item.error as Record<string, unknown> | undefined)?.message)
+
+    return {
+      header,
+      resultText,
+      errorMessage,
     }
   }
 
-  while (true) {
-    const timeoutMs = sawTurnCompleted ? completedGraceMs : idleTimeoutMs
+  const readNumber = (value: unknown): number | undefined => {
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+  }
 
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-    const readResult = await Promise.race([
-      reader.read(),
-      new Promise<{ timeout: true }>((resolve) => {
-        timeoutHandle = setTimeout(() => resolve({ timeout: true }), timeoutMs)
-        // Avoid keeping the event loop alive after a successful read.
-        if (typeof (timeoutHandle as unknown as { unref?: () => void }).unref === 'function') {
-          ;(timeoutHandle as unknown as { unref: () => void }).unref()
+  const handleTurnCompleted = async (event: Record<string, unknown>) => {
+    const usage = event.usage as Record<string, unknown> | undefined
+    if (!usage) {
+      return
+    }
+
+    const inputTokens = readNumber(usage.input_tokens ?? usage.inputTokens ?? usage.input)
+    const cachedInputTokens = readNumber(usage.cached_input_tokens ?? usage.cachedInputTokens)
+    const outputTokens = readNumber(usage.output_tokens ?? usage.outputTokens ?? usage.output)
+    const reasoningTokens = readNumber(usage.reasoning_tokens ?? usage.reasoningTokens)
+
+    const hasUsage =
+      inputTokens !== undefined ||
+      cachedInputTokens !== undefined ||
+      outputTokens !== undefined ||
+      reasoningTokens !== undefined
+    if (!hasUsage) {
+      return
+    }
+
+    const parts: string[] = []
+    if (inputTokens !== undefined) {
+      const cachedSuffix = cachedInputTokens !== undefined ? ` (cached ${cachedInputTokens})` : ''
+      parts.push(`input: ${inputTokens}${cachedSuffix}`)
+    } else if (cachedInputTokens !== undefined) {
+      parts.push(`input cached: ${cachedInputTokens}`)
+    }
+    if (outputTokens !== undefined) {
+      parts.push(`output: ${outputTokens}`)
+    }
+    if (reasoningTokens !== undefined) {
+      parts.push(`reasoning: ${reasoningTokens}`)
+    }
+
+    if (parts.length === 0) {
+      return
+    }
+    await emitStreamLine(`Usage → ${parts.join(' | ')}`, 'Failed to write token usage to Discord channel:')
+  }
+
+  const handleItemEvent = async (event: Record<string, unknown>, type: string) => {
+    const item = event.item as Record<string, unknown> | undefined
+    if (!item || typeof item !== 'object') {
+      return
+    }
+
+    const itemType = typeof item.type === 'string' ? item.type : ''
+    if (!itemType || itemType === 'agent_message') {
+      return
+    }
+
+    if (itemType === 'reasoning') {
+      const text = readString(item.text)
+      if (text) {
+        await emitStreamLine(text, 'Failed to write reasoning summary to Discord channel:')
+      }
+      return
+    }
+
+    if (itemType === 'command_execution') {
+      if (type === 'item.started') {
+        const command = readString(item.command)
+        if (command) {
+          emitStdoutLine(`$ ${command}`)
         }
-      }),
-    ])
-
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle)
-    }
-
-    if ((readResult as { timeout?: boolean }).timeout) {
-      const idleFor = Date.now() - lastActivity
-      log.warn(
-        `Codex stdout idle for ${idleFor}ms (stage=${stage}); terminating child process after timeout ${timeoutMs}ms`,
-      )
-      forcedTermination = true
-      await reader.cancel().catch(() => {})
-      codexProcess.kill()
-      break
-    }
-
-    const { value, done } = readResult as { value?: Uint8Array; done?: boolean }
-    if (done) {
-      break
-    }
-    if (!value) {
-      continue
-    }
-    buffer += decoder.decode(value, { stream: true })
-
-    let newlineIndex = buffer.indexOf('\n')
-    while (newlineIndex !== -1) {
-      const line = buffer.slice(0, newlineIndex)
-      buffer = buffer.slice(newlineIndex + 1)
-      await flushLine(line)
-      newlineIndex = buffer.indexOf('\n')
-    }
-  }
-
-  const remaining = buffer.trim()
-  if (remaining) {
-    await flushLine(remaining)
-  }
-
-  await closeStream(jsonStream)
-  await closeStream(agentStream)
-
-  if (discordWriter && !discordClosed) {
-    await discordWriter.close()
-    discordClosed = true
-  }
-
-  const codexExitCode = await codexProcess.exited
-
-  if (forcedTermination) {
-    if (codexExitCode !== 0) {
-      log.warn(`Codex subprocess was terminated due to idle timeout (exit ${codexExitCode})`)
-    } else {
-      log.warn('Codex subprocess was terminated due to idle timeout')
-    }
-  } else if (codexExitCode !== 0) {
-    let eventsLogMissing = false
-    try {
-      const stats = await stat(jsonOutputPath)
-      eventsLogMissing = stats.size === 0
-    } catch (error) {
-      if (isNotFoundError(error)) {
-        eventsLogMissing = true
-      } else {
-        throw error
+        return
       }
+
+      const aggregated = readString(item.aggregated_output)
+      const output = aggregated ?? readString(item.output)
+      if (output) {
+        emitStdoutLine(output)
+      }
+      const exitCode = typeof item.exit_code === 'number' ? item.exit_code : undefined
+      if (exitCode !== undefined && exitCode !== 0) {
+        emitStdoutLine(`Command exited with status ${exitCode}`)
+      }
+
+      const command = readString(item.command)
+      const discordBlock = formatDiscordCommandBlock(command, output, exitCode)
+      if (discordBlock) {
+        await flushDiscordStream()
+        await writeDiscordMessage(discordBlock, 'Failed to write command output to Discord channel:')
+      }
+      return
     }
 
-    const allowArtifactCapture = eventsLogMissing && codexExitCode === 1
+    if (itemType === 'file_change') {
+      await emitStreamLine(formatFileChangeSummary(item), 'Failed to write file change to Discord channel:')
+      return
+    }
 
-    if (allowArtifactCapture) {
-      log.warn(
-        `Codex exited with status ${codexExitCode} but event log is missing/empty; continuing to allow artifact capture`,
-      )
-    } else {
-      throw new Error(`Codex exited with status ${codexExitCode}`)
+    if (itemType === 'web_search') {
+      const query = readString(item.query) ?? readString(item.text)
+      if (query) {
+        await emitStreamLine(`Web search → ${query}`, 'Failed to write web search to Discord channel:')
+      }
+      return
+    }
+
+    if (itemType === 'todo_list') {
+      const statusLabel = type === 'item.started' ? 'started' : type === 'item.updated' ? 'updated' : 'completed'
+      const lines = formatTodoList(item.items)
+      const payload = [`Todo list (${statusLabel}):`, ...lines].join('\n')
+      await emitStreamLine(payload, 'Failed to write todo list to Discord channel:')
+      return
+    }
+
+    if (itemType === 'mcp_tool_call') {
+      const { header, resultText, errorMessage } = formatMcpToolCall(item)
+      const lines = [header]
+      if (resultText) {
+        lines.push(resultText)
+      }
+      if (errorMessage) {
+        lines.push(`Error → ${errorMessage}`)
+      }
+      await emitStreamLine(lines.join('\n'), 'Failed to write MCP tool call to Discord channel:')
+      return
+    }
+
+    if (itemType === 'error') {
+      const message = readString(item.message) ?? readString(item.text)
+      if (message) {
+        await emitStreamLine(`Error item → ${message}`, 'Failed to write error item to Discord channel:')
+      }
+      return
+    }
+
+    const text =
+      readString(item.text) ??
+      readString(item.output) ??
+      readString(item.result) ??
+      readString(item.message) ??
+      readString(item.error)
+    if (text) {
+      await emitStreamLine(`[${itemType}] ${text}`, 'Failed to write tool output to Discord channel:')
     }
   }
+
+  const runResult = await runner.run({
+    input: prompt,
+    model: process.env.CODEX_MODEL?.trim() || undefined,
+    jsonMode: 'json',
+    dangerouslyBypassApprovalsAndSandbox: true,
+    lastMessagePath: outputPath,
+    eventsPath: jsonOutputPath,
+    agentLogPath: agentOutputPath,
+    resumeSessionId: resumeArg === '--last' ? 'last' : resumeArg,
+    idleTimeoutMs,
+    completedGraceMs,
+    env: { CODEX_STAGE: stage },
+    allowEmptyEventsOnExitCode: 1,
+    logger: log,
+    onSessionId: (id) => {
+      sessionId = id
+    },
+    onToolCall: async (payload) => {
+      await emitStreamLine(`ToolCall → ${payload}`, 'Failed to write tool call to Discord channel:')
+    },
+    onEvent: async (event) => {
+      const eventType = typeof event.type === 'string' ? event.type : ''
+      if (eventType === 'turn.started') {
+        await emitStreamLine('Turn started', 'Failed to write turn started to Discord channel:')
+        return
+      }
+      if (eventType === 'turn.completed') {
+        await handleTurnCompleted(event)
+        return
+      }
+      if (eventType === 'turn.failed') {
+        const error = event.error as Record<string, unknown> | undefined
+        const message = readString(error?.message) ?? readString(event.message)
+        const payload = message ? `Turn failed → ${message}` : 'Turn failed'
+        await emitStreamLine(payload, 'Failed to write turn failure to Discord channel:')
+        return
+      }
+      if (eventType === 'error') {
+        const message =
+          readString(event.message) ?? readString((event.error as Record<string, unknown> | undefined)?.message)
+        const payload = message ? `Stream error → ${message}` : 'Stream error'
+        await emitStreamLine(payload, 'Failed to write stream error to Discord channel:')
+        return
+      }
+      if (eventType === 'item.started' || eventType === 'item.updated' || eventType === 'item.completed') {
+        await handleItemEvent(event, eventType)
+      }
+    },
+    onAgentMessageDelta: async (delta) => {
+      sawDelta = true
+      if (!delta) {
+        return
+      }
+      writeStdout(delta)
+      await queueDiscordStream(delta)
+    },
+    onAgentMessage: async (message) => {
+      if (!sawDelta) {
+        await emitStreamLine(message, 'Failed to write to Discord channel stream:')
+      }
+    },
+  })
+
+  agentMessages.push(...runResult.agentMessages)
+  if (!sessionId) {
+    sessionId = runResult.sessionId
+  }
+
+  await flushDiscordStream()
+  await awaitDiscordQueueDrain()
+  await closeDiscordWriter()
 
   if (discordProcess) {
     const discordExit = await discordProcess.exited

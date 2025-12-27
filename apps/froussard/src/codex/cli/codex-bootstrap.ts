@@ -64,6 +64,15 @@ const configureNonInteractiveEnvironment = () => {
   ensureLessFlags()
 }
 
+const configureBunCache = async (targetDir: string) => {
+  const workspaceRoot = process.env.WORKSPACE ?? dirname(targetDir)
+  const cacheDir = process.env.BUN_INSTALL_CACHE_DIR?.trim() || join(workspaceRoot, '.bun-install-cache')
+  if (!process.env.BUN_INSTALL_CACHE_DIR) {
+    process.env.BUN_INSTALL_CACHE_DIR = cacheDir
+  }
+  await mkdir(cacheDir, { recursive: true })
+}
+
 const bootstrapWorkspace = async () => {
   if (process.env.CODEX_SKIP_BOOTSTRAP === '1') {
     return
@@ -146,6 +155,8 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   }
 
   process.chdir(targetDir)
+
+  await configureBunCache(targetDir)
 
   if (headBranch && headBranch !== baseBranch) {
     const remoteHead = await $`git -C ${targetDir} rev-parse --verify --quiet origin/${headBranch}`.nothrow()

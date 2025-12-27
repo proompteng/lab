@@ -13,6 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     IMPLEMENTATION_OUTPUT_PATH=/workspace/lab/.codex-implementation.log \
     GIT_TERMINAL_PROMPT=0 \
     BUN_INSTALL=/usr/local \
+    BUN_INSTALL_CACHE_DIR=/opt/bun/install/cache \
     DOCKER_HOST=tcp://localhost:2375 \
     DOCKER_ENABLED=0
 
@@ -25,7 +26,7 @@ RUN bash -lc 'source /root/.nvm/nvm.sh && nvm install ${CODEX_ENV_NODE_VERSION}'
 
 RUN set -eux; \
     apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Debug::Acquire::http=true \
-    && apt-get install -y -V --no-install-recommends ca-certificates curl gnupg git gh jq python3 xz-utils protobuf-compiler libprotobuf-dev \
+    && apt-get install -y -V --no-install-recommends ca-certificates curl gnupg git gh jq python3 xz-utils protobuf-compiler libprotobuf-dev build-essential pkg-config \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
     && chmod a+r /etc/apt/keyrings/docker.gpg \
@@ -79,7 +80,7 @@ RUN set -eux; \
 
 RUN bash -lc 'source /root/.nvm/nvm.sh && npm install -g @openai/codex@latest && ln -sf "$(command -v codex)" /usr/local/bin/codex && ln -sf "$(command -v node)" /usr/local/bin/node && ln -sf "$(command -v npm)" /usr/local/bin/npm'
 
-RUN mkdir -p "$WORKSPACE" "$WORKTREE" /root/.codex
+RUN mkdir -p "$WORKSPACE" /root/.codex "$BUN_INSTALL_CACHE_DIR"
 
 # Copy Codex auth secret during build (requires BuildKit secret)
 RUN --mount=type=secret,id=codex_auth,target=/tmp/codex_auth.json \
@@ -94,15 +95,30 @@ RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
     gh auth login --with-token < /tmp/gh_token \
     && gh auth setup-git
 
-RUN git config --global user.name "tuslagch" \
-    && git config --global user.email "tuslagch@proompteng.ai"
+RUN git config --global user.name "gregkonush" \
+    && git config --global user.email "12027037+gregkonush@users.noreply.github.com"
+
+RUN rm -rf "$WORKTREE" \
+    && git clone --depth 1 https://github.com/proompteng/lab "$WORKTREE" \
+    && cd "$WORKTREE" \
+    && bun install --frozen-lockfile --ignore-scripts
 
 COPY apps/froussard/src/codex/cli/codex-bootstrap.ts /usr/local/bin/codex-bootstrap
 COPY apps/froussard/src/codex/cli/codex-implement.ts /usr/local/bin/codex-implement
 COPY apps/froussard/src/codex/cli/codex-research.ts /usr/local/bin/codex-research
 COPY apps/froussard/src/codex/cli/codex-graf.ts /usr/local/bin/codex-graf
+COPY apps/froussard/scripts/discord-channel.ts /usr/local/bin/discord-channel.ts
 COPY apps/froussard/src/codex/cli/lib /usr/local/bin/lib
-RUN chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/codex-implement /usr/local/bin/codex-research /usr/local/bin/codex-graf
+# Provide @proompteng/codex for the CLI helpers at runtime.
+COPY packages/codex /opt/proompteng/packages/codex
+COPY packages/discord /opt/proompteng/packages/discord
+COPY tsconfig.base.json /opt/proompteng/tsconfig.base.json
+RUN bash -lc 'cd /opt/proompteng/packages/codex && bun install --no-save && bun run build'
+RUN bash -lc 'cd /opt/proompteng/packages/discord && bun install --no-save && bun run build'
+RUN mkdir -p /usr/local/node_modules/@proompteng \
+    && cp -R /opt/proompteng/packages/codex /usr/local/node_modules/@proompteng/codex \
+    && cp -R /opt/proompteng/packages/discord /usr/local/node_modules/@proompteng/discord
+RUN chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/codex-implement /usr/local/bin/codex-research /usr/local/bin/codex-graf /usr/local/bin/discord-channel.ts
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/codex-bootstrap"]

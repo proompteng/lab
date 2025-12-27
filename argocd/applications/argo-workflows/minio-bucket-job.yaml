@@ -36,12 +36,12 @@ spec:
             - name: ARGO_WORKFLOWS_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: argo-workflows-minio
+                  name: observability-minio-creds
                   key: accesskey
             - name: ARGO_WORKFLOWS_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: argo-workflows-minio
+                  name: observability-minio-creds
                   key: secretkey
             - name: ARGO_WORKFLOWS_BUCKET
               value: argo-workflows

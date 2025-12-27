@@ -44,6 +44,11 @@
 - Go: `gofmt -w <files>`; wrap errors with context (`fmt.Errorf("context: %w", err)`).
 - Kotlin: `ktlint`; Rails follows default Ruby style.
 
+## Semantic Commit Conventions
+- Use Conventional Commits: `<type>(<scope>): <summary>` (scope optional).
+- Common types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `build`, `ci`, `perf`, `revert`.
+- PR titles must follow the same semantic convention.
+
 ## UI/UX
 - Tailwind CSS only; class order layout → spacing → sizing → typography → colors; use `cn()` for conditionals.
 - Zinc palette (primary zinc-900/100, secondary zinc-700/300), responsive utilities, no hardcoded widths/heights.

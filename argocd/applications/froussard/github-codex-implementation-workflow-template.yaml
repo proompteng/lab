@@ -18,17 +18,10 @@ spec:
         value: ''
       - name: base
         value: 'main'
-  volumeClaimTemplates:
-    - metadata:
-        name: workdir
-      spec:
-        accessModes:
-          - ReadWriteOnce
-        resources:
-          requests:
-            storage: 10Gi
-        storageClassName: longhorn
   volumes:
+    - name: workdir
+      emptyDir:
+        sizeLimit: 10Gi
     - name: docker-lib
       emptyDir: {}
   templates:

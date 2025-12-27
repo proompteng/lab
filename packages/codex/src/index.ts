@@ -12,6 +12,8 @@ export type {
   ThreadOptions,
   TurnOptions,
 } from './options'
+export type { CodexEvent, CodexRunnerLogger, CodexRunnerOptions, CodexRunOptions, CodexRunResult } from './runner'
+export { CodexRunner } from './runner'
 export type { RunResult, RunStreamedResult, UserInput } from './thread'
 export { Thread } from './thread'
 export type { ThreadError, ThreadEvent, ThreadItem, Usage } from './types'

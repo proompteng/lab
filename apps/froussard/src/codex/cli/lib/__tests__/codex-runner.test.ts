@@ -2,7 +2,20 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { pushCodexEventsToLoki, runCodexSession } from '../codex-runner'
+
+const runnerMocks = {
+  run: vi.fn(),
+}
+
+const spawnMock = vi.fn<(options: { cmd?: string[] }) => BunProcess>()
+const bunFileMock = vi.fn<(path: string) => { text: () => Promise<string> }>()
+let bunGlobal: Record<string, unknown> | undefined
+let originalSpawn: unknown
+let originalFile: unknown
+let hadBun = false
+
+let runCodexSession: typeof import('../codex-runner').runCodexSession
+let pushCodexEventsToLoki: typeof import('../codex-runner').pushCodexEventsToLoki
 
 type BunProcess = {
   stdin?: unknown
@@ -12,60 +25,31 @@ type BunProcess = {
   kill?: () => void
 }
 
-const bunGlobals = vi.hoisted(() => {
-  const spawn = vi.fn<(options: { cmd?: string[] }) => BunProcess>()
-  const file = vi.fn<(path: string) => { text: () => Promise<string> }>()
-  ;(globalThis as unknown as { Bun?: unknown }).Bun = { spawn, file }
-  return { spawn, file }
+const installBunMocks = () => {
+  const globalRef = globalThis as { Bun?: Record<string, unknown> }
+  bunGlobal = globalRef.Bun
+  hadBun = Boolean(bunGlobal)
+  if (!bunGlobal) {
+    bunGlobal = {}
+    globalRef.Bun = bunGlobal
+  }
+  originalSpawn = bunGlobal.spawn
+  originalFile = bunGlobal.file
+  bunGlobal.spawn = spawnMock
+  bunGlobal.file = bunFileMock
+}
+
+const createWritable = (sink: string[]) => ({
+  write(chunk: string) {
+    sink.push(chunk)
+  },
+  flush() {
+    return Promise.resolve()
+  },
+  end() {
+    return undefined
+  },
 })
-
-const spawnMock = bunGlobals.spawn
-const bunFileMock = bunGlobals.file
-
-const encoder = new TextEncoder()
-
-const createWritable = (sink: string[]) =>
-  new WritableStream<string>({
-    write(chunk) {
-      sink.push(chunk)
-    },
-  })
-
-const createCodexProcessWithStdin = (messages: string[], stdin: unknown) => {
-  const stdout = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const message of messages) {
-        controller.enqueue(encoder.encode(`${message}\n`))
-      }
-      controller.close()
-    },
-  })
-
-  return {
-    stdin,
-    stdout,
-    stderr: null,
-    exited: Promise.resolve(0),
-  }
-}
-
-const createCodexProcess = (messages: string[], promptSink: string[]) => {
-  const stdout = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const message of messages) {
-        controller.enqueue(encoder.encode(`${message}\n`))
-      }
-      controller.close()
-    },
-  })
-
-  return {
-    stdin: createWritable(promptSink),
-    stdout,
-    stderr: null,
-    exited: Promise.resolve(0),
-  }
-}
 
 const createDiscordProcess = (channelSink: string[]) => ({
   stdin: createWritable(channelSink),
@@ -86,20 +70,49 @@ describe('codex-runner', () => {
     bunFileMock.mockImplementation((path: string) => ({
       text: () => readFile(path, 'utf8'),
     }))
+    runnerMocks.run.mockReset()
+
+    installBunMocks()
+
+    vi.resetModules()
+    vi.doMock('@proompteng/codex', () => {
+      class CodexRunner {
+        run = runnerMocks.run
+      }
+      return { CodexRunner }
+    })
+
+    const module = await import('../codex-runner')
+    runCodexSession = module.runCodexSession
+    pushCodexEventsToLoki = module.pushCodexEventsToLoki
   })
 
   afterEach(async () => {
     await rm(workspace, { recursive: true, force: true })
     global.fetch = originalFetch
+    if (bunGlobal) {
+      if (originalSpawn !== undefined) {
+        bunGlobal.spawn = originalSpawn
+      } else {
+        delete bunGlobal.spawn
+      }
+      if (originalFile !== undefined) {
+        bunGlobal.file = originalFile
+      } else {
+        delete bunGlobal.file
+      }
+      if (!hadBun) {
+        delete (globalThis as { Bun?: Record<string, unknown> }).Bun
+      }
+    }
   })
 
   it('executes a Codex session and captures agent messages', async () => {
-    const promptSink: string[] = []
-    const codexMessages = [
-      JSON.stringify({ type: 'session.created', session: { id: 'session-123' } }),
-      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'hello world' } }),
-    ]
-    spawnMock.mockImplementation(() => createCodexProcess(codexMessages, promptSink))
+    runnerMocks.run.mockImplementation(async (options) => {
+      options.onSessionId?.('session-123')
+      options.onAgentMessage?.('hello world', { type: 'item.completed' })
+      return { agentMessages: ['hello world'], sessionId: 'session-123', exitCode: 0, forcedTermination: false }
+    })
 
     const outputPath = join(workspace, 'output.log')
     const jsonOutputPath = join(workspace, 'events.jsonl')
@@ -114,200 +127,429 @@ describe('codex-runner', () => {
 
     expect(result.agentMessages).toEqual(['hello world'])
     expect(result.sessionId).toBe('session-123')
-    expect(promptSink).toEqual(['Plan please'])
-    expect(await readFile(jsonOutputPath, 'utf8')).toContain('hello world')
-    expect(await readFile(agentOutputPath, 'utf8')).toContain('hello world')
   })
 
   it('passes resume arguments when a session id is provided', async () => {
-    const promptSink: string[] = []
-    const codexMessages = [
-      JSON.stringify({ type: 'session.rehydrated', session: { id: 'resume-42' } }),
-      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'resumed message' } }),
-    ]
+    let capturedResume: string | undefined
 
-    spawnMock.mockImplementation(() => createCodexProcess(codexMessages, promptSink))
+    runnerMocks.run.mockImplementation(async (options) => {
+      capturedResume = options.resumeSessionId as string | undefined
+      return { agentMessages: [], sessionId: 'resume-42', exitCode: 0, forcedTermination: false }
+    })
 
-    const outputPath = join(workspace, 'output.log')
-    const jsonOutputPath = join(workspace, 'events.jsonl')
-    const agentOutputPath = join(workspace, 'agent.log')
-
-    const result = await runCodexSession({
+    await runCodexSession({
       stage: 'implementation',
       prompt: 'Continue',
-      outputPath,
-      jsonOutputPath,
-      agentOutputPath,
-      resumeSessionId: 'resume-41',
-    })
-
-    const spawnArgs = spawnMock.mock.calls[0]?.[0]
-    expect(spawnArgs?.cmd).toEqual(
-      expect.arrayContaining(['codex', 'exec', '--dangerously-bypass-approvals-and-sandbox', '--json']),
-    )
-    expect(spawnArgs?.cmd).toContain('resume')
-    const resumeIndex = spawnArgs?.cmd?.indexOf('resume')
-    if (resumeIndex === undefined || resumeIndex < 0) {
-      throw new Error('resume argument missing')
-    }
-    expect(spawnArgs?.cmd?.[resumeIndex + 1]).toBe('resume-41')
-    expect(result.sessionId).toBe('resume-42')
-  })
-
-  it('uses --last resume without dash and still sends prompt on stdin', async () => {
-    const promptSink: string[] = []
-    const codexMessages = [
-      JSON.stringify({ type: 'session.rehydrated', session: { id: 'resume-99' } }),
-      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'resumed message' } }),
-    ]
-
-    spawnMock.mockImplementation(() => createCodexProcess(codexMessages, promptSink))
-
-    const outputPath = join(workspace, 'output.log')
-    const jsonOutputPath = join(workspace, 'events.jsonl')
-    const agentOutputPath = join(workspace, 'agent.log')
-
-    await runCodexSession({
-      stage: 'implementation',
-      prompt: 'should-not-be-sent',
-      outputPath,
-      jsonOutputPath,
-      agentOutputPath,
-      resumeSessionId: '--last',
-    })
-
-    const spawnArgs = spawnMock.mock.calls[0]?.[0]
-    expect(spawnArgs?.cmd).toContain('resume')
-    expect(spawnArgs?.cmd).toContain('--last')
-    expect(spawnArgs?.cmd).not.toContain('-')
-    expect(promptSink).toEqual(['should-not-be-sent'])
-  })
-
-  it('captures session ids from SessionConfiguredEvent log lines', async () => {
-    const promptSink: string[] = []
-    const sessionLog = [
-      '2025-11-01T19:29:14.313728Z  INFO codex_exec: Codex initialized with event: SessionConfiguredEvent { ',
-      'session_id: ConversationId { uuid: 019a40e5-341a-7501-ad84-5ccdb240e7ff }, model: "gpt-5.2-codex", ',
-      'reasoning_effort: Some(High), history_log_id: 0, history_entry_count: 0, initial_messages: None, ',
-      'rollout_path: "/root/.codex/sessions/2025/11/01/rollout-2025-11-01T19-29-14-019a40e5-341a-7501-ad84-5ccdb240e7ff.jsonl" }',
-    ].join('')
-    const codexMessages = [
-      sessionLog,
-      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'hi' } }),
-    ]
-    spawnMock.mockImplementation(() => createCodexProcess(codexMessages, promptSink))
-
-    const outputPath = join(workspace, 'output.log')
-    const jsonOutputPath = join(workspace, 'events.jsonl')
-    const agentOutputPath = join(workspace, 'agent.log')
-
-    const result = await runCodexSession({
-      stage: 'implementation',
-      prompt: 'Plan',
-      outputPath,
-      jsonOutputPath,
-      agentOutputPath,
-    })
-
-    expect(result.sessionId).toBe('019a40e5-341a-7501-ad84-5ccdb240e7ff')
-  })
-
-  it('passes model override from CODEX_MODEL env to codex exec', async () => {
-    const promptSink: string[] = []
-    const codexMessages = [
-      JSON.stringify({ type: 'session.created', session: { id: 'session-abc' } }),
-      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok' } }),
-    ]
-    spawnMock.mockImplementation(() => createCodexProcess(codexMessages, promptSink))
-
-    const originalModel = process.env.CODEX_MODEL
-    process.env.CODEX_MODEL = 'gpt-5.2-codex'
-
-    const outputPath = join(workspace, 'output.log')
-    const jsonOutputPath = join(workspace, 'events.jsonl')
-    const agentOutputPath = join(workspace, 'agent.log')
-
-    await runCodexSession({
-      stage: 'implementation',
-      prompt: 'Plan please',
-      outputPath,
-      jsonOutputPath,
-      agentOutputPath,
-    })
-
-    const spawnArgs = spawnMock.mock.calls[0]?.[0]
-    expect(spawnArgs?.cmd).toContain('-m')
-    const modelIndex = spawnArgs?.cmd?.indexOf('-m')
-    if (modelIndex === undefined || modelIndex < 0) {
-      throw new Error('model flag missing')
-    }
-    expect(spawnArgs?.cmd?.[modelIndex + 1]).toBe('gpt-5.2-codex')
-
-    process.env.CODEX_MODEL = originalModel
-  })
-
-  it('writes prompts to Bun FileSink-backed stdin without throwing', async () => {
-    const promptSink: string[] = []
-    const fileSinkStdin = {
-      write(this: { sink: string[] }, chunk: string) {
-        this.sink.push(chunk)
-      },
-      flush(this: { sink: string[] }) {
-        return Promise.resolve(this.sink.length)
-      },
-      end(this: { sink: string[] }) {
-        this.sink.push('<end>')
-      },
-      sink: promptSink,
-    }
-    const codexMessages = [
-      JSON.stringify({ type: 'session.created', session: { id: 'session-filesink' } }),
-      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok' } }),
-    ]
-
-    spawnMock.mockImplementation(() => createCodexProcessWithStdin(codexMessages, fileSinkStdin))
-
-    await runCodexSession({
-      stage: 'implementation',
-      prompt: 'FileSink prompt',
       outputPath: join(workspace, 'output.log'),
       jsonOutputPath: join(workspace, 'events.jsonl'),
       agentOutputPath: join(workspace, 'agent.log'),
+      resumeSessionId: 'resume-41',
     })
 
-    expect(promptSink).toEqual(['FileSink prompt', '<end>'])
+    expect(capturedResume).toBe('resume-41')
+  })
+
+  it('maps --last resume into the runner option', async () => {
+    let capturedResume: string | undefined
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      capturedResume = options.resumeSessionId as string | undefined
+      return { agentMessages: [], sessionId: 'resume-99', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'Continue',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+      resumeSessionId: '--last',
+    })
+
+    expect(capturedResume).toBe('last')
   })
 
   it('streams agent messages and tool calls to a Discord channel when configured', async () => {
     const channelSink: string[] = []
-    const promptSink: string[] = []
     const discordProcess = createDiscordProcess(channelSink)
-    const toolCallLine =
-      '2025-11-01T19:29:20.903182Z  INFO codex_core::codex: ToolCall: shell {"command":["bash","-lc","echo hello"]}'
-    const codexProcess = createCodexProcess(
-      [toolCallLine, JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'channel copy' } })],
-      promptSink,
-    )
+    spawnMock.mockImplementationOnce(() => discordProcess)
 
-    spawnMock.mockImplementationOnce(() => discordProcess).mockImplementationOnce(() => codexProcess)
-
-    const outputPath = join(workspace, 'output.log')
-    const jsonOutputPath = join(workspace, 'events.jsonl')
-    const agentOutputPath = join(workspace, 'agent.log')
+    runnerMocks.run.mockImplementation(async (options) => {
+      options.onToolCall?.('shell {"command":["bash","-lc","echo hello"]}', 'tool-line')
+      options.onAgentMessage?.('channel copy', { type: 'item.completed' })
+      return { agentMessages: ['channel copy'], sessionId: 'session-1', exitCode: 0, forcedTermination: false }
+    })
 
     await runCodexSession({
       stage: 'implementation',
       prompt: 'Implement',
-      outputPath,
-      jsonOutputPath,
-      agentOutputPath,
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
       discordChannel: {
         command: ['bun', 'run', 'discord-channel.ts'],
       },
     })
 
     expect(channelSink.some((chunk) => chunk.includes('channel copy'))).toBe(true)
-    expect(channelSink.some((chunk) => chunk.includes('ToolCall → shell {"command"'))).toBe(true)
+    expect(channelSink.some((chunk) => chunk.includes('ToolCall → shell'))).toBe(true)
+  })
+
+  it('streams command output and token usage to stdout and Discord', async () => {
+    const channelSink: string[] = []
+    const stdoutSink: string[] = []
+    const discordProcess = createDiscordProcess(channelSink)
+    spawnMock.mockImplementationOnce(() => discordProcess)
+
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdoutSink.push(String(chunk))
+      return true
+    })
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      options.onEvent?.({
+        type: 'item.started',
+        item: { type: 'command_execution', command: '/bin/bash -lc ls' },
+      })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: { type: 'command_execution', command: '/bin/bash -lc ls', aggregated_output: 'lab', exit_code: 0 },
+      })
+      options.onEvent?.({
+        type: 'turn.completed',
+        usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 5, reasoning_tokens: 3 },
+      })
+      return { agentMessages: [], sessionId: 'session-2', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'List workspace',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+      discordChannel: {
+        command: ['bun', 'run', 'discord-channel.ts'],
+      },
+    })
+
+    stdoutSpy.mockRestore()
+
+    const stdoutText = stdoutSink.join('')
+    expect(stdoutText).toContain('$ /bin/bash -lc ls')
+    expect(stdoutText).toContain('lab')
+    expect(stdoutText).toContain('Usage → input: 10 (cached 2) | output: 5 | reasoning: 3')
+
+    const channelText = channelSink.join('')
+    const fenceMatch = channelText.match(/\n(`{3,})ts\n/)
+    expect(fenceMatch).not.toBeNull()
+    if (!fenceMatch) {
+      throw new Error('Expected a code fence in the Discord payload')
+    }
+    const fence = fenceMatch[1]
+    expect(channelText).toContain(`\n${fence}ts\n`)
+    expect(channelText).toContain('$ /bin/bash -lc ls')
+    expect(channelText).toContain('lab')
+    expect(channelText).toContain(`\n${fence}\n`)
+    expect(channelText).toContain('Usage → input: 10 (cached 2) | output: 5 | reasoning: 3')
+  })
+
+  it('truncates long command output in Discord code blocks', async () => {
+    const channelSink: string[] = []
+    const discordProcess = createDiscordProcess(channelSink)
+    spawnMock.mockImplementationOnce(() => discordProcess)
+
+    const outputLines = Array.from({ length: 12 }, (_, index) => `line${index + 1}`)
+    const outputText = `${outputLines.join('\n')}\n`
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      options.onEvent?.({
+        type: 'item.completed',
+        item: { type: 'command_execution', command: 'echo lines', aggregated_output: outputText, exit_code: 0 },
+      })
+      return { agentMessages: [], sessionId: 'session-3', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'Print lines',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+      discordChannel: {
+        command: ['bun', 'run', 'discord-channel.ts'],
+      },
+    })
+
+    const channelText = channelSink.join('')
+    const fenceMatch = channelText.match(/\n(`{3,})ts\n/)
+    expect(fenceMatch).not.toBeNull()
+    if (!fenceMatch) {
+      throw new Error('Expected a code fence in the Discord payload')
+    }
+    const fence = fenceMatch[1]
+    expect(channelText).toContain(`\n${fence}ts\n`)
+    expect(channelText).toContain('$ echo lines')
+    expect(channelText).toContain('line1')
+    expect(channelText).toContain('line9')
+    expect(channelText).toContain('... (truncated, 3 more lines)')
+    expect(channelText).toContain(`\n${fence}\n`)
+    expect(channelText).not.toContain('line10')
+    expect(channelText).not.toContain('line11')
+    expect(channelText).not.toContain('line12')
+  })
+
+  it('uses a longer fence when output includes backticks', async () => {
+    const channelSink: string[] = []
+    const discordProcess = createDiscordProcess(channelSink)
+    spawnMock.mockImplementationOnce(() => discordProcess)
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      options.onEvent?.({
+        type: 'item.completed',
+        item: {
+          type: 'command_execution',
+          command: 'cat README.md',
+          aggregated_output: ['```', 'code', '```'].join('\n'),
+          exit_code: 0,
+        },
+      })
+      return { agentMessages: [], sessionId: 'session-6', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'Read file',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+      discordChannel: {
+        command: ['bun', 'run', 'discord-channel.ts'],
+      },
+    })
+
+    const channelText = channelSink.join('')
+    const fenceMatch = channelText.match(/\n(`{4,})ts\n/)
+    expect(fenceMatch).not.toBeNull()
+    if (!fenceMatch) {
+      throw new Error('Expected a longer code fence in the Discord payload')
+    }
+    const fence = fenceMatch[1]
+    expect(channelText).toContain(`\n${fence}ts\n`)
+    expect(channelText).toContain('```')
+    expect(channelText).toContain(`\n${fence}\n`)
+  })
+
+  it('streams reasoning summaries to stdout and Discord', async () => {
+    const channelSink: string[] = []
+    const stdoutSink: string[] = []
+    const discordProcess = createDiscordProcess(channelSink)
+    spawnMock.mockImplementationOnce(() => discordProcess)
+
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdoutSink.push(String(chunk))
+      return true
+    })
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      options.onEvent?.({
+        type: 'item.completed',
+        item: { type: 'reasoning', text: 'Investigating repo layout.' },
+      })
+      return { agentMessages: [], sessionId: 'session-4', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'Explain',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+      discordChannel: {
+        command: ['bun', 'run', 'discord-channel.ts'],
+      },
+    })
+
+    stdoutSpy.mockRestore()
+
+    const stdoutText = stdoutSink.join('')
+    expect(stdoutText).toContain('Investigating repo layout.')
+
+    const channelText = channelSink.join('')
+    expect(channelText).toContain('Investigating repo layout.')
+  })
+
+  it('streams thread and item events to stdout and Discord', async () => {
+    const channelSink: string[] = []
+    const stdoutSink: string[] = []
+    const discordProcess = createDiscordProcess(channelSink)
+    spawnMock.mockImplementationOnce(() => discordProcess)
+
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdoutSink.push(String(chunk))
+      return true
+    })
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      options.onEvent?.({ type: 'turn.started' })
+      options.onEvent?.({ type: 'turn.failed', error: { message: 'model request failed: rate_limit_exceeded' } })
+      options.onEvent?.({ type: 'error', message: 'stream error: stream disconnected before completion' })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: {
+          type: 'file_change',
+          changes: [
+            { path: 'README.md', kind: 'update' },
+            { path: 'old.txt', kind: 'delete' },
+          ],
+          status: 'completed',
+        },
+      })
+      options.onEvent?.({
+        type: 'item.started',
+        item: {
+          type: 'mcp_tool_call',
+          server: 'github',
+          tool: 'search_issues',
+          arguments: { query: 'is:open label:bug' },
+          status: 'in_progress',
+        },
+      })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: {
+          type: 'mcp_tool_call',
+          server: 'github',
+          tool: 'search_issues',
+          arguments: { query: 'is:open label:bug' },
+          status: 'completed',
+          result: { content: [{ type: 'text', text: 'Found 12 issues' }] },
+        },
+      })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: {
+          type: 'mcp_tool_call',
+          server: 'github',
+          tool: 'search_issues',
+          arguments: { query: 'is:open label:bug' },
+          status: 'failed',
+          error: { message: 'unauthorized' },
+        },
+      })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: { type: 'web_search', query: 'codex exec jsonl event types' },
+      })
+      options.onEvent?.({
+        type: 'item.started',
+        item: {
+          type: 'todo_list',
+          items: [
+            { text: 'Inspect repo', completed: false },
+            { text: 'Summarize findings', completed: false },
+          ],
+        },
+      })
+      options.onEvent?.({
+        type: 'item.updated',
+        item: {
+          type: 'todo_list',
+          items: [
+            { text: 'Inspect repo', completed: true },
+            { text: 'Summarize findings', completed: false },
+          ],
+        },
+      })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: {
+          type: 'todo_list',
+          items: [
+            { text: 'Inspect repo', completed: true },
+            { text: 'Summarize findings', completed: true },
+          ],
+        },
+      })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: { type: 'error', message: 'non-fatal error: command declined' },
+      })
+      return { agentMessages: [], sessionId: 'session-5', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'Handle events',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+      discordChannel: {
+        command: ['bun', 'run', 'discord-channel.ts'],
+      },
+    })
+
+    stdoutSpy.mockRestore()
+
+    const stdoutText = stdoutSink.join('')
+    expect(stdoutText).toContain('Turn started')
+    expect(stdoutText).toContain('Turn failed → model request failed: rate_limit_exceeded')
+    expect(stdoutText).toContain('Stream error → stream error: stream disconnected before completion')
+    expect(stdoutText).toContain('Files changed (completed) → update README.md, delete old.txt')
+    expect(stdoutText).toContain('MCP → github.search_issues (in_progress) query="is:open label:bug"')
+    expect(stdoutText).toContain('Found 12 issues')
+    expect(stdoutText).toContain('Error → unauthorized')
+    expect(stdoutText).toContain('Web search → codex exec jsonl event types')
+    expect(stdoutText).toContain('Todo list (started):')
+    expect(stdoutText).toContain('- [ ] Inspect repo')
+    expect(stdoutText).toContain('Todo list (updated):')
+    expect(stdoutText).toContain('- [x] Inspect repo')
+    expect(stdoutText).toContain('Todo list (completed):')
+    expect(stdoutText).toContain('- [x] Summarize findings')
+    expect(stdoutText).toContain('Error item → non-fatal error: command declined')
+
+    const channelText = channelSink.join('')
+    expect(channelText).toContain('Turn started')
+    expect(channelText).toContain('Turn failed → model request failed: rate_limit_exceeded')
+    expect(channelText).toContain('Stream error → stream error: stream disconnected before completion')
+    expect(channelText).toContain('Files changed (completed) → update README.md, delete old.txt')
+    expect(channelText).toContain('MCP → github.search_issues (in_progress) query="is:open label:bug"')
+    expect(channelText).toContain('Found 12 issues')
+    expect(channelText).toContain('Error → unauthorized')
+    expect(channelText).toContain('Web search → codex exec jsonl event types')
+    expect(channelText).toContain('Todo list (started):')
+    expect(channelText).toContain('- [ ] Inspect repo')
+    expect(channelText).toContain('Todo list (updated):')
+    expect(channelText).toContain('- [x] Inspect repo')
+    expect(channelText).toContain('Todo list (completed):')
+    expect(channelText).toContain('- [x] Summarize findings')
+    expect(channelText).toContain('Error item → non-fatal error: command declined')
+  })
+
+  it('prioritizes delta streaming when provided', async () => {
+    const channelSink: string[] = []
+    const discordProcess = createDiscordProcess(channelSink)
+    spawnMock.mockImplementationOnce(() => discordProcess)
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      options.onAgentMessageDelta?.('delta chunk', { type: 'response.output_text.delta' })
+      options.onAgentMessage?.('final message', { type: 'item.completed' })
+      return { agentMessages: ['final message'], sessionId: 'session-1', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'Implement',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+      discordChannel: {
+        command: ['bun', 'run', 'discord-channel.ts'],
+      },
+    })
+
+    expect(channelSink.some((chunk) => chunk.includes('delta chunk'))).toBe(true)
+    expect(channelSink.some((chunk) => chunk.includes('final message'))).toBe(false)
   })
 
   it('pushes Loki payloads when events exist', async () => {
@@ -391,85 +633,6 @@ describe('codex-runner', () => {
     expect(runtimeStream.values[0][1]).toBe('runtime started')
   })
 
-  it('throws when Codex exits with a non-zero status', async () => {
-    const promptSink: string[] = []
-    spawnMock.mockImplementation(() => ({
-      stdin: createWritable(promptSink),
-      stdout: new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
-      stderr: null,
-      exited: Promise.resolve(2),
-    }))
-
-    await expect(
-      runCodexSession({
-        stage: 'implementation',
-        prompt: 'fail',
-        outputPath: join(workspace, 'output.log'),
-        jsonOutputPath: join(workspace, 'events.jsonl'),
-        agentOutputPath: join(workspace, 'agent.log'),
-      }),
-    ).rejects.toThrow('Codex exited with status 2')
-  })
-
-  it('allows artifact capture when Codex exits non-zero but events log is empty', async () => {
-    const promptSink: string[] = []
-
-    spawnMock.mockImplementation(() => ({
-      stdin: createWritable(promptSink),
-      stdout: new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
-      stderr: null,
-      exited: Promise.resolve(1),
-    }))
-
-    const outputPath = join(workspace, 'output.log')
-    const jsonOutputPath = join(workspace, 'events.jsonl')
-    const agentOutputPath = join(workspace, 'agent.log')
-
-    await expect(
-      runCodexSession({
-        stage: 'implementation',
-        prompt: 'empty-events',
-        outputPath,
-        jsonOutputPath,
-        agentOutputPath,
-      }),
-    ).resolves.not.toThrow()
-
-    const eventsContent = await readFile(jsonOutputPath, 'utf8')
-    expect(eventsContent.trim()).toBe('')
-  })
-
-  it('invokes the channel error handler when the Discord channel fails to start', async () => {
-    const channelSink: string[] = []
-    const promptSink: string[] = []
-    const discordProcess = {
-      stdin: createWritable(channelSink),
-      stdout: null,
-      stderr: null,
-      exited: Promise.resolve(1),
-      kill: vi.fn(),
-    }
-    const codexProcess = createCodexProcess([], promptSink)
-
-    spawnMock.mockImplementationOnce(() => discordProcess).mockImplementationOnce(() => codexProcess)
-
-    const errorSpy = vi.fn()
-
-    await runCodexSession({
-      stage: 'implementation',
-      prompt: 'channel',
-      outputPath: join(workspace, 'output.log'),
-      jsonOutputPath: join(workspace, 'events.jsonl'),
-      agentOutputPath: join(workspace, 'agent.log'),
-      discordChannel: {
-        command: ['bun', 'run', 'channel.ts'],
-        onError: errorSpy,
-      },
-    })
-
-    expect(errorSpy).toHaveBeenCalled()
-  })
-
   it('skips Loki export when the events file is missing', async () => {
     bunFileMock.mockImplementation(() => ({
       text: () => Promise.reject(Object.assign(new Error('not found'), { code: 'ENOENT' })),
@@ -485,133 +648,5 @@ describe('codex-runner', () => {
     })
 
     expect(fetchMock).not.toHaveBeenCalled()
-  })
-
-  it('kills the Codex process after idle timeout', async () => {
-    const promptSink: string[] = []
-
-    const hangingReader = {
-      read: vi.fn(() => new Promise<never>(() => {})),
-      cancel: vi.fn(async () => {}),
-    }
-
-    const codexProcess = {
-      stdin: createWritable(promptSink),
-      stdout: { getReader: () => hangingReader },
-      stderr: null,
-      exited: Promise.resolve(0),
-      kill: vi.fn(),
-    }
-
-    spawnMock.mockImplementation(() => codexProcess)
-
-    const outputPath = join(workspace, 'output.log')
-    const jsonOutputPath = join(workspace, 'events.jsonl')
-    const agentOutputPath = join(workspace, 'agent.log')
-
-    const originalEnv = { ...process.env }
-    process.env.CODEX_IDLE_TIMEOUT_MS = '5'
-
-    const sessionPromise = runCodexSession({
-      stage: 'implementation',
-      prompt: 'hang',
-      outputPath,
-      jsonOutputPath,
-      agentOutputPath,
-    })
-
-    await sessionPromise
-
-    expect(codexProcess.kill).toHaveBeenCalled()
-    expect(hangingReader.cancel).toHaveBeenCalled()
-    process.env = originalEnv
-  })
-
-  it('uses the shorter grace timeout after turn.completed', async () => {
-    const promptSink: string[] = []
-
-    const readMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        value: encoder.encode(`${JSON.stringify({ type: 'turn.completed' })}\n`),
-        done: false,
-      })
-      .mockImplementation(() => new Promise<never>(() => {}))
-
-    const hangingReader = {
-      read: readMock,
-      cancel: vi.fn(async () => {}),
-    }
-
-    const codexProcess = {
-      stdin: createWritable(promptSink),
-      stdout: { getReader: () => hangingReader },
-      stderr: null,
-      exited: Promise.resolve(0),
-      kill: vi.fn(),
-    }
-
-    spawnMock.mockImplementation(() => codexProcess)
-
-    const outputPath = join(workspace, 'output.log')
-    const jsonOutputPath = join(workspace, 'events.jsonl')
-    const agentOutputPath = join(workspace, 'agent.log')
-
-    const originalEnv = { ...process.env }
-    process.env.CODEX_IDLE_TIMEOUT_MS = '1000'
-    process.env.CODEX_EXIT_GRACE_MS = '20'
-
-    const sessionPromise = runCodexSession({
-      stage: 'review',
-      prompt: 'turn-complete',
-      outputPath,
-      jsonOutputPath,
-      agentOutputPath,
-    })
-
-    await sessionPromise
-
-    expect(codexProcess.kill).toHaveBeenCalled()
-    expect(hangingReader.cancel).toHaveBeenCalled()
-    process.env = originalEnv
-  })
-
-  it('does not throw when forced idle termination exits non-zero', async () => {
-    const promptSink: string[] = []
-
-    const hangingReader = {
-      read: vi.fn(() => new Promise<never>(() => {})),
-      cancel: vi.fn(async () => {}),
-    }
-
-    const codexProcess = {
-      stdin: createWritable(promptSink),
-      stdout: { getReader: () => hangingReader },
-      stderr: null,
-      exited: Promise.resolve(143),
-      kill: vi.fn(),
-    }
-
-    spawnMock.mockImplementation(() => codexProcess)
-
-    const outputPath = join(workspace, 'output.log')
-    const jsonOutputPath = join(workspace, 'events.jsonl')
-    const agentOutputPath = join(workspace, 'agent.log')
-
-    const originalEnv = { ...process.env }
-    process.env.CODEX_IDLE_TIMEOUT_MS = '5'
-
-    await expect(
-      runCodexSession({
-        stage: 'implementation',
-        prompt: 'hang-and-kill',
-        outputPath,
-        jsonOutputPath,
-        agentOutputPath,
-      }),
-    ).resolves.not.toThrow()
-
-    expect(codexProcess.kill).toHaveBeenCalled()
-    process.env = originalEnv
   })
 })

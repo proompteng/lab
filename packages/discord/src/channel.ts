@@ -3,6 +3,7 @@ import * as Duration from 'effect/Duration'
 
 const DISCORD_API_BASE = 'https://discord.com/api/v10'
 export const DISCORD_MESSAGE_LIMIT = 1900
+export const DISCORD_MESSAGE_SEPARATOR = '\u0000'
 const CHANNEL_NAME_MAX_LENGTH = 95
 const DEFAULT_BACKOFF_MS = 500
 const MAX_BACKOFF_MS = 5_000
@@ -533,8 +534,22 @@ export const streamChannel = async (
   options: ChannelOptions = {},
 ) => {
   if (options.dryRun) {
+    let buffered = ''
     for await (const chunk of stream) {
-      options.echo?.(`[dry-run] ${chunk}`)
+      buffered += chunk
+      let separatorIndex = buffered.indexOf(DISCORD_MESSAGE_SEPARATOR)
+      while (separatorIndex !== -1) {
+        const segment = buffered.slice(0, separatorIndex)
+        buffered = buffered.slice(separatorIndex + 1)
+        if (segment) {
+          options.echo?.(`[dry-run] ${segment}`)
+        }
+        separatorIndex = buffered.indexOf(DISCORD_MESSAGE_SEPARATOR)
+      }
+      if (!buffered.includes(DISCORD_MESSAGE_SEPARATOR)) {
+        options.echo?.(`[dry-run] ${buffered}`)
+        buffered = ''
+      }
     }
     return
   }
@@ -542,13 +557,8 @@ export const streamChannel = async (
   let pending = ''
   let accumulator = ''
 
-  const flushAccumulator = async (force = false) => {
-    const content = force ? accumulator + pending : accumulator
+  const flushContent = async (content: string) => {
     if (!content || !content.trim()) {
-      if (force) {
-        pending = ''
-        accumulator = ''
-      }
       return
     }
 
@@ -562,6 +572,11 @@ export const streamChannel = async (
         await postMessage(config, channel.channelId, part)
       }
     }
+  }
+
+  const flushAccumulator = async (force = false) => {
+    const content = force ? accumulator + pending : accumulator
+    await flushContent(content)
     if (force) {
       pending = ''
     }
@@ -570,6 +585,17 @@ export const streamChannel = async (
 
   for await (const chunk of stream) {
     pending += chunk
+
+    let separatorIndex = pending.indexOf(DISCORD_MESSAGE_SEPARATOR)
+    while (separatorIndex !== -1) {
+      const segment = pending.slice(0, separatorIndex)
+      pending = pending.slice(separatorIndex + 1)
+      accumulator += segment
+      await flushContent(accumulator)
+      accumulator = ''
+      separatorIndex = pending.indexOf(DISCORD_MESSAGE_SEPARATOR)
+    }
+
     let newlineIndex = pending.indexOf('\n')
     while (newlineIndex !== -1) {
       const segment = pending.slice(0, newlineIndex + 1)
