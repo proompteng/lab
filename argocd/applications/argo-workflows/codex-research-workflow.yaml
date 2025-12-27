@@ -89,8 +89,8 @@ spec:
               region: "{{inputs.parameters.artifactRegion}}"
               insecure: true
               accessKeySecret:
-                name: argo-workflows-minio
+                name: observability-minio-creds
                 key: accesskey
               secretKeySecret:
-                name: argo-workflows-minio
+                name: observability-minio-creds
                 key: secretkey
