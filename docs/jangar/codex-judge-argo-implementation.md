@@ -182,6 +182,11 @@ Provide CI status for a branch or PR.
 - ci_status: pending | success | failure
 - ci_url
 - conclusion_time
+- commit_sha (must match attempt commit_sha)
+
+### Commit-scoped gating
+- Use the attempt commit SHA (from artifacts) as the key for CI checks.
+- Do not use branch-level status, because shared resumable branches can show stale green checks.
 
 ### Deliverables
 - CI status updater (webhook or polling).
@@ -200,7 +205,7 @@ Provide CI status for a branch or PR.
 ## E) Judge Engine
 
 ### Deterministic gates
-- ci_status must be success
+- ci_status must be success for the attempt commit_sha
 - merge conflict detection: check if patch apply failed or conflict markers present
 - diff non-empty (unless task allows no-op)
 

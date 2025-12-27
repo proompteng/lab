@@ -131,7 +131,8 @@ MinIO path convention:
 - Decide pass/fail and trigger next actions.
 
 ## CI Signal
-- CI is sourced from GitHub Actions status for the branch or PR.
+- CI is sourced from GitHub Actions status for the commit SHA produced by the current attempt.
+- Jangar must gate on the exact commit SHA (not branch-level status) to avoid stale green checks from prior attempts.
 - Jangar does not rely on Argo-local tests for completion.
 
 ## Decision Logic
@@ -184,6 +185,7 @@ stateDiagram-v2
 - Notify only on success: rely on onExit artifacts and Argo completion events.
 - CI lag: delay judge until CI completes; store pending state.
 - Prompt regressions: PR review required for prompt changes.
+- Stale CI status on shared branch: gate on commit SHA produced by the current attempt.
 
 ## Open Questions
 - Where prompt templates live in repo and how they are versioned.
