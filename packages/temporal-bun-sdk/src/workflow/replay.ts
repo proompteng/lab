@@ -79,6 +79,7 @@ export interface ReplayResult {
   readonly determinismState: WorkflowDeterminismState
   readonly lastEventId: string | null
   readonly hasDeterminismMarker: boolean
+  readonly markerState?: WorkflowDeterminismState
   readonly updates?: readonly WorkflowUpdateInvocation[]
 }
 
@@ -378,6 +379,7 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
           determinismState,
           lastEventId: latestEventId,
           hasDeterminismMarker: true,
+          markerState: cloneDeterminismState(markerState),
           ...(replayUpdateInvocationsAfterMarker.length > 0 ? { updates: replayUpdateInvocationsAfterMarker } : {}),
         }
       }
@@ -406,6 +408,7 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
       return {
         ...replayed,
         hasDeterminismMarker: true,
+        markerState: cloneDeterminismState(markerState),
         lastEventId: historyLastEventId ?? markerLastEventId ?? null,
       }
     }

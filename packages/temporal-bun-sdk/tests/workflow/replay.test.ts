@@ -1198,6 +1198,78 @@ test('ingestWorkflowHistory ingests record markers and search attribute upserts'
   }
 })
 
+test('ingestWorkflowHistory returns marker state for determinism markers', async () => {
+  const converter = createDefaultDataConverter()
+  const info: WorkflowInfo = {
+    namespace: 'default',
+    taskQueue: 'replay-fixtures',
+    workflowId: 'wf-marker-state',
+    runId: 'run-marker-state',
+    workflowType: 'markerStateWorkflow',
+  }
+  const determinismState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          kind: 'start-timer',
+          id: 'timer-0',
+          sequence: 0,
+          timerId: 'timer-0',
+          timeoutMs: 500,
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+
+  const details = await Effect.runPromise(
+    encodeDeterminismMarkerDetails(converter, {
+      info,
+      determinismState,
+      lastEventId: '10',
+      recordedAt: new Date('2025-01-01T00:00:00Z'),
+    }),
+  )
+
+  const markerEvent = create(HistoryEventSchema, {
+    eventId: 10n,
+    eventType: EventType.MARKER_RECORDED,
+    attributes: {
+      case: 'markerRecordedEventAttributes',
+      value: create(MarkerRecordedEventAttributesSchema, {
+        markerName: 'temporal-bun-sdk/determinism',
+        details,
+      }),
+    },
+  })
+
+  const timerEvent = create(HistoryEventSchema, {
+    eventId: 1n,
+    eventType: EventType.TIMER_STARTED,
+    attributes: {
+      case: 'timerStartedEventAttributes',
+      value: create(TimerStartedEventAttributesSchema, {
+        timerId: 'timer-0',
+        startToFireTimeout: { seconds: 0n, nanos: 500_000_000 },
+        workflowTaskCompletedEventId: 1n,
+      }),
+    },
+  })
+
+  const replay = await Effect.runPromise(
+    ingestWorkflowHistory({
+      info,
+      history: [timerEvent, markerEvent],
+      dataConverter: converter,
+    }),
+  )
+
+  expect(replay.markerState).toEqual(determinismState)
+})
+
 test('resolveHistoryLastEventId normalizes bigint identifiers', () => {
   const event = create(HistoryEventSchema, { eventId: 123n })
   expect(resolveHistoryLastEventId([event])).toBe('123')

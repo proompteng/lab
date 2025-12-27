@@ -24,6 +24,7 @@ export interface StickyCacheEntry {
   readonly lastDeterminismMarkerHash?: string
   readonly lastDeterminismMarkerTask?: number
   readonly lastDeterminismFullSnapshotTask?: number
+  readonly lastDeterminismMarkerState?: WorkflowDeterminismState
 }
 
 export interface StickyCacheConfig {

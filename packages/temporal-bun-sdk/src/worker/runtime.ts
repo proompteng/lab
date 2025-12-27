@@ -1286,10 +1286,12 @@ export class WorkerRuntime {
       let markerHash = stickyEntry?.lastDeterminismMarkerHash
       let lastMarkerTask = stickyEntry?.lastDeterminismMarkerTask
       let lastFullSnapshotTask = stickyEntry?.lastDeterminismFullSnapshotTask
+      let lastMarkerState = stickyEntry?.lastDeterminismMarkerState
       let markerType =
         output.completion === 'pending' ? this.#resolveDeterminismMarkerType(workflowTaskCount, stickyEntry) : null
       let determinismDelta: DeterminismStateDelta | undefined
       let markerLastEventId: string | null = null
+      const markerBaseState = historyReplay?.markerState ?? lastMarkerState
       const dispatchesForNewMessages = (output.updateDispatches ?? []).filter((dispatch) => {
         if (dispatch.type === 'acceptance' || dispatch.type === 'rejection') {
           return collectedUpdates.requestsByUpdateId.has(dispatch.updateId)
@@ -1306,7 +1308,14 @@ export class WorkerRuntime {
       })
 
       if (markerType === 'delta') {
-        determinismDelta = this.#buildDeterminismDelta(stickyEntry?.determinismState, output.determinismState)
+        if (!markerBaseState) {
+          this.#log('warn', 'determinism delta base unavailable; falling back to full snapshot', {
+            ...baseLogFields,
+          })
+          markerType = 'full'
+        } else {
+          determinismDelta = this.#buildDeterminismDelta(markerBaseState, output.determinismState)
+        }
         if (!determinismDelta) {
           markerType = 'full'
         } else if (this.#determinismMarkerSkipUnchanged && this.#isDeterminismDeltaEmpty(determinismDelta)) {
@@ -1401,6 +1410,7 @@ export class WorkerRuntime {
             if (resolvedMarkerType === 'full') {
               lastFullSnapshotTask = workflowTaskCount
             }
+            lastMarkerState = output.determinismState
             if (markerDetails) {
               this.#log('debug', 'determinism marker recorded', {
                 ...baseLogFields,
@@ -1433,6 +1443,7 @@ export class WorkerRuntime {
               lastDeterminismMarkerHash: markerHash,
               lastDeterminismMarkerTask: lastMarkerTask,
               lastDeterminismFullSnapshotTask: lastFullSnapshotTask,
+              ...(lastMarkerState ? { lastDeterminismMarkerState: lastMarkerState } : {}),
               ...(resolvedWorkflowArgs !== undefined ? { workflowArguments: resolvedWorkflowArgs } : {}),
               activityResults: mergedActivityResults,
               activityScheduleEventIds: mergedScheduleEventIds,
