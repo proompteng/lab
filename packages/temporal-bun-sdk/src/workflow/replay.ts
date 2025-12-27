@@ -321,6 +321,7 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
     const updateEntriesFull = collectWorkflowUpdateEntries(events)
 
     const markerCoversHistory = markerEventId !== null && markerEventId === historyLastEventId
+    const historyCommandCount = countHistoryCommandEvents(events)
 
     if (shouldUseDeterminismMarker && hasMarker && !markerInvalid && markerState) {
       if (markerCoversHistory || eventsAfterMarker.length === 0) {
@@ -342,6 +343,15 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
         }
         determinismState = mergePendingQueryRequests(determinismState, intake.queries)
         const latestEventId = historyLastEventId ?? markerLastEventId ?? null
+        if (determinismState.commandHistory.length !== historyCommandCount) {
+          return yield* reconstructDeterminismState(
+            events,
+            intake,
+            extractedFailureMetadata,
+            updateEntriesFull,
+            replayUpdateInvocationsFull,
+          )
+        }
         return {
           determinismState,
           lastEventId: latestEventId,
@@ -362,6 +372,15 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
           seedHistoryEvents: markerEventIndex !== null ? events.slice(0, markerEventIndex + 1) : undefined,
         },
       )
+      if (replayed.determinismState.commandHistory.length !== historyCommandCount) {
+        return yield* reconstructDeterminismState(
+          events,
+          intake,
+          extractedFailureMetadata,
+          updateEntriesFull,
+          replayUpdateInvocationsFull,
+        )
+      }
       return {
         ...replayed,
         hasDeterminismMarker: true,
@@ -762,6 +781,113 @@ const seedDeterminismEventMapsFromHistory = (
         break
     }
   }
+}
+
+const countHistoryCommandEvents = (events: readonly HistoryEvent[]): number => {
+  const { scheduledActivities, timersByStartEventId } = seedDeterminismEventMaps(undefined, events)
+  let count = 0
+
+  for (const event of events) {
+    switch (event.eventType) {
+      case EventType.ACTIVITY_TASK_SCHEDULED: {
+        if (event.attributes?.case !== 'activityTaskScheduledEventAttributes') {
+          break
+        }
+        if (event.attributes.value.activityType?.name) {
+          count += 1
+        }
+        break
+      }
+      case EventType.TIMER_STARTED: {
+        if (event.attributes?.case !== 'timerStartedEventAttributes') {
+          break
+        }
+        if (durationToMillis(event.attributes.value.startToFireTimeout) !== undefined) {
+          count += 1
+        }
+        break
+      }
+      case EventType.START_CHILD_WORKFLOW_EXECUTION_INITIATED: {
+        if (event.attributes?.case !== 'startChildWorkflowExecutionInitiatedEventAttributes') {
+          break
+        }
+        if (event.attributes.value.workflowType?.name) {
+          count += 1
+        }
+        break
+      }
+      case EventType.ACTIVITY_TASK_CANCEL_REQUESTED: {
+        if (event.attributes?.case !== 'activityTaskCancelRequestedEventAttributes') {
+          break
+        }
+        const scheduledEventId = normalizeBigintIdentifier(event.attributes.value.scheduledEventId)
+        if (scheduledEventId && scheduledActivities.has(scheduledEventId)) {
+          count += 1
+        }
+        break
+      }
+      case EventType.TIMER_CANCELED: {
+        if (event.attributes?.case !== 'timerCanceledEventAttributes') {
+          break
+        }
+        const startedEventId = normalizeBigintIdentifier(event.attributes.value.startedEventId)
+        if (startedEventId && timersByStartEventId.has(startedEventId)) {
+          count += 1
+        }
+        break
+      }
+      case EventType.SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: {
+        if (event.attributes?.case !== 'signalExternalWorkflowExecutionInitiatedEventAttributes') {
+          break
+        }
+        if (event.attributes.value.signalName) {
+          count += 1
+        }
+        break
+      }
+      case EventType.REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: {
+        if (event.attributes?.case !== 'requestCancelExternalWorkflowExecutionInitiatedEventAttributes') {
+          break
+        }
+        count += 1
+        break
+      }
+      case EventType.WORKFLOW_EXECUTION_CONTINUED_AS_NEW: {
+        if (event.attributes?.case !== 'workflowExecutionContinuedAsNewEventAttributes') {
+          break
+        }
+        count += 1
+        break
+      }
+      case EventType.MARKER_RECORDED: {
+        if (event.attributes?.case !== 'markerRecordedEventAttributes') {
+          break
+        }
+        if (event.attributes.value.markerName !== DETERMINISM_MARKER_NAME) {
+          count += 1
+        }
+        break
+      }
+      case EventType.UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: {
+        if (event.attributes?.case !== 'upsertWorkflowSearchAttributesEventAttributes') {
+          break
+        }
+        count += 1
+        break
+      }
+      case EventType.WORKFLOW_PROPERTIES_MODIFIED: {
+        if (event.attributes?.case !== 'workflowPropertiesModifiedEventAttributes') {
+          break
+        }
+        count += 1
+        break
+      }
+      default:
+        break
+    }
+  }
+
+  return count
 }
 
 const reconstructDeterminismState = (

@@ -1,5 +1,5 @@
 import type { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
-
+import { WorkflowIdReusePolicy } from '../proto/temporal/api/enums/v1/workflow_pb'
 import type { WorkflowCommandIntent } from './commands'
 import { WorkflowNondeterminismError, WorkflowQueryViolationError } from './errors'
 
@@ -334,9 +334,70 @@ export const intentsEqual = (a: WorkflowCommandIntent | undefined, b: WorkflowCo
   if (a.sequence !== b.sequence) {
     return false
   }
-  const signatureA = stableIntentSignature(a)
-  const signatureB = stableIntentSignature(b)
+  const signatureA = stableIntentSignature(normalizeIntentForComparison(a))
+  const signatureB = stableIntentSignature(normalizeIntentForComparison(b))
   return signatureA === signatureB
+}
+
+const DEFAULT_CHILD_WORKFLOW_TASK_TIMEOUT_MS = 10_000
+const DEFAULT_ACTIVITY_HEARTBEAT_TIMEOUT_MS = 0
+const DEFAULT_WORKFLOW_RUN_TIMEOUT_MS = 0
+const DEFAULT_WORKFLOW_EXECUTION_TIMEOUT_MS = 0
+const DEFAULT_WORKFLOW_ID_REUSE_POLICY = WorkflowIdReusePolicy.ALLOW_DUPLICATE
+
+const normalizeIntentForComparison = (intent: WorkflowCommandIntent): WorkflowCommandIntent => {
+  switch (intent.kind) {
+    case 'schedule-activity':
+      return normalizeScheduleActivityIntent(intent)
+    case 'start-child-workflow':
+      return normalizeStartChildWorkflowIntent(intent)
+    default:
+      return intent
+  }
+}
+
+const normalizeScheduleActivityIntent = (intent: WorkflowCommandIntent): WorkflowCommandIntent => {
+  if (intent.kind !== 'schedule-activity') {
+    return intent
+  }
+  const timeouts = { ...intent.timeouts }
+  const scheduleToCloseTimeoutMs = timeouts.scheduleToCloseTimeoutMs
+  const startToCloseTimeoutMs = timeouts.startToCloseTimeoutMs
+  if (timeouts.scheduleToStartTimeoutMs === undefined || timeouts.scheduleToStartTimeoutMs === null) {
+    if (scheduleToCloseTimeoutMs !== undefined && scheduleToCloseTimeoutMs !== null) {
+      timeouts.scheduleToStartTimeoutMs = scheduleToCloseTimeoutMs
+    } else if (startToCloseTimeoutMs !== undefined && startToCloseTimeoutMs !== null) {
+      timeouts.scheduleToStartTimeoutMs = startToCloseTimeoutMs
+    }
+  }
+  if (timeouts.heartbeatTimeoutMs === undefined || timeouts.heartbeatTimeoutMs === null) {
+    timeouts.heartbeatTimeoutMs = DEFAULT_ACTIVITY_HEARTBEAT_TIMEOUT_MS
+  }
+  return {
+    ...intent,
+    timeouts,
+  }
+}
+
+const normalizeStartChildWorkflowIntent = (intent: WorkflowCommandIntent): WorkflowCommandIntent => {
+  if (intent.kind !== 'start-child-workflow') {
+    return intent
+  }
+  const timeouts = { ...intent.timeouts }
+  if (timeouts.workflowExecutionTimeoutMs === undefined || timeouts.workflowExecutionTimeoutMs === null) {
+    timeouts.workflowExecutionTimeoutMs = DEFAULT_WORKFLOW_EXECUTION_TIMEOUT_MS
+  }
+  if (timeouts.workflowRunTimeoutMs === undefined || timeouts.workflowRunTimeoutMs === null) {
+    timeouts.workflowRunTimeoutMs = DEFAULT_WORKFLOW_RUN_TIMEOUT_MS
+  }
+  if (timeouts.workflowTaskTimeoutMs === undefined || timeouts.workflowTaskTimeoutMs === null) {
+    timeouts.workflowTaskTimeoutMs = DEFAULT_CHILD_WORKFLOW_TASK_TIMEOUT_MS
+  }
+  return {
+    ...intent,
+    timeouts,
+    workflowIdReusePolicy: intent.workflowIdReusePolicy ?? DEFAULT_WORKFLOW_ID_REUSE_POLICY,
+  }
 }
 
 const stableIntentSignature = (intent: WorkflowCommandIntent): string =>
