@@ -65,12 +65,14 @@ flowchart LR
 - Updated Argo workflow YAML with resumable branch-commit behavior.
 - onExit artifact capture + MinIO upload step.
 - Codex exec step configured with notify wrapper.
+ - onExit callback to Jangar run-complete endpoint.
 
 ### Detailed tasks
 - Define branch naming rule and implement create/checkout logic.
 - Ensure Codex exec step writes logs to known paths.
 - Add commit step that runs even on failure.
 - Add onExit step to collect artifacts and upload to MinIO.
+- Add onExit step to POST /codex/run-complete with status and artifact URLs.
 - Export artifact URLs as env for notify wrapper.
 - Record runtime_meta.json (versions, env, workflow metadata, attempt).
 
@@ -116,8 +118,9 @@ Codex notify only provides minimal payload. Wrapper enriches with workflow metad
 
 ## C) Jangar Ingestion + Persistence
 
-### Endpoint
-POST /codex/notify
+### Endpoints
+- POST /codex/notify
+- POST /codex/run-complete
 
 ### Payload schema (draft)
 {
@@ -132,6 +135,26 @@ POST /codex/notify
   "attempt": 1,
   "branch": "codex/issue-123",
   "repo": "org/repo",
+  "artifact_base_url": "s3://.../codex-artifacts/...",
+  "artifacts": {
+    "patch.diff": "...",
+    "git_status.txt": "...",
+    "git_diff_stat.txt": "...",
+    "commit_sha.txt": "...",
+    "codex.log": "...",
+    "runtime_meta.json": "..."
+  }
+}
+
+### run-complete payload (draft)
+{
+  "workflow_id": "...",
+  "attempt": 1,
+  "issue_id": "...",
+  "branch": "codex/issue-123",
+  "repo": "org/repo",
+  "status": "success" | "failed" | "aborted",
+  "commit_sha": "...",
   "artifact_base_url": "s3://.../codex-artifacts/...",
   "artifacts": {
     "patch.diff": "...",
@@ -161,6 +184,8 @@ Tables (or collections):
 ### Detailed tasks
 - Validate payload schema and reject malformed input.
 - Upsert run record; store artifacts metadata.
+- Create run record on run-complete even if notify never arrived.
+- If notify arrives first, attach it to the existing run created by run-complete.
 - Create state transitions: notified -> waiting_for_ci -> judging.
 - Persist raw notify payload for audit.
 - Expose internal API for judge pipeline to fetch run context.
@@ -168,6 +193,7 @@ Tables (or collections):
 ### Acceptance criteria
 - Duplicate notifications do not create duplicate runs.
 - Artifacts and run metadata are queryable by issue_id.
+ - Failed runs without notify are still recorded and retried.
 
 ## D) GitHub Actions Status Integration
 

@@ -47,6 +47,7 @@ flowchart LR
   A --> C[Codex Exec]
   C --> W[Notify Wrapper]
   W --> J[Jangar]
+  A -->|onExit run-complete| J
   A --> M[MinIO Artifacts]
   J --> M
   J --> CI[GitHub Actions]
@@ -59,10 +60,11 @@ flowchart LR
 2) Argo runs Codex exec
 3) Codex notify fires on successful turn completion
 4) Notify wrapper enriches payload and POSTs to Jangar
-5) Jangar waits for GitHub Actions CI result
-6) Jangar gates + LLM judge
-7) If pass: create/update PR, mark complete, Discord success
-8) If fail: generate next prompt, request Facteur to trigger new Argo run on same branch
+5) Argo onExit posts run-complete with status + artifact URLs (even if notify never fired)
+6) Jangar waits for GitHub Actions CI result
+7) Jangar gates + LLM judge
+8) If pass: create/update PR, mark complete, Discord success
+9) If fail: generate next prompt, request Facteur to trigger new Argo run on same branch
 
 Sequence (happy path + rerun):
 ```mermaid
@@ -81,7 +83,7 @@ sequenceDiagram
   A->>C: Run Codex exec
   C-->>W: notify(JSON)
   W->>J: POST /codex/notify
-  A-->>J: artifact URLs (onExit)
+  A-->>J: POST /codex/run-complete (onExit, includes artifacts + status)
   J->>CI: wait for status
   CI-->>J: success/failure
   alt pass
@@ -119,6 +121,13 @@ Required artifacts:
 
 MinIO path convention:
 - codex-artifacts/<issue_id>/<workflow_id>/<attempt>/
+
+## Failed-Run Ingestion (No Notify)
+- Codex notify only fires on successful turn completion.
+- Argo onExit must POST a run-complete payload to Jangar with status (success | failed | aborted)
+  and artifact URLs so Jangar can track failed attempts and trigger reruns/escalation.
+- Jangar must treat run-complete as the source of truth for attempt existence, and notify (if present)
+  as enrichment.
 
 ## Jangar Responsibilities
 - Ingest notifications and store runs + artifacts.
