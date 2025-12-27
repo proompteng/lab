@@ -252,6 +252,101 @@ export const runCodexSession = async ({
     return trimmed.length > 0 ? trimmed : undefined
   }
 
+  const formatFileChangeSummary = (item: Record<string, unknown>) => {
+    const rawChanges = item.changes
+    const changes = Array.isArray(rawChanges)
+      ? rawChanges
+          .map((entry) => {
+            if (!entry || typeof entry !== 'object') {
+              return undefined
+            }
+            const path = readString((entry as { path?: unknown }).path)
+            const kind = readString((entry as { kind?: unknown }).kind)
+            if (!path && !kind) {
+              return undefined
+            }
+            return kind ? `${kind} ${path ?? ''}`.trim() : path
+          })
+          .filter((value): value is string => Boolean(value))
+      : []
+
+    const status = readString(item.status)
+    const prefix = status ? `Files changed (${status})` : 'Files changed'
+    if (changes.length === 0) {
+      return prefix
+    }
+    return `${prefix} → ${changes.join(', ')}`
+  }
+
+  const formatTodoList = (items: unknown) => {
+    if (!Array.isArray(items)) {
+      return []
+    }
+    return items
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') {
+          return undefined
+        }
+        const text = readString((entry as { text?: unknown }).text)
+        if (!text) {
+          return undefined
+        }
+        const completed = Boolean((entry as { completed?: unknown }).completed)
+        return `- [${completed ? 'x' : ' '}] ${text}`
+      })
+      .filter((value): value is string => Boolean(value))
+  }
+
+  const formatMcpToolCall = (item: Record<string, unknown>) => {
+    const server = readString(item.server) ?? 'mcp'
+    const tool = readString(item.tool) ?? 'call'
+    const status = readString(item.status)
+    const query = readString((item.arguments as Record<string, unknown> | undefined)?.query)
+    let header = `MCP → ${server}.${tool}`
+    if (status) {
+      header += ` (${status})`
+    }
+    if (query) {
+      header += ` query="${query}"`
+    }
+
+    const result = item.result as Record<string, unknown> | undefined
+    let resultText: string | undefined
+    if (result && typeof result === 'object') {
+      const content = result.content
+      if (Array.isArray(content)) {
+        const parts = content
+          .map((entry) => {
+            if (!entry || typeof entry !== 'object') {
+              return undefined
+            }
+            return readString((entry as { text?: unknown }).text)
+          })
+          .filter((value): value is string => Boolean(value))
+        if (parts.length > 0) {
+          resultText = parts.join(' ')
+        }
+      }
+      if (!resultText) {
+        const structured = result.structured_content ?? result.structuredContent
+        if (structured && typeof structured === 'object') {
+          const count = (structured as { count?: unknown }).count
+          if (typeof count === 'number') {
+            resultText = `result count: ${count}`
+          }
+        }
+      }
+    }
+
+    const errorMessage = readString((item.error as Record<string, unknown> | undefined)?.message)
+
+    return {
+      header,
+      resultText,
+      errorMessage,
+    }
+  }
+
   const readNumber = (value: unknown): number | undefined => {
     return typeof value === 'number' && Number.isFinite(value) ? value : undefined
   }
@@ -342,6 +437,48 @@ export const runCodexSession = async ({
       return
     }
 
+    if (itemType === 'file_change') {
+      await emitStreamLine(formatFileChangeSummary(item), 'Failed to write file change to Discord channel:')
+      return
+    }
+
+    if (itemType === 'web_search') {
+      const query = readString(item.query) ?? readString(item.text)
+      if (query) {
+        await emitStreamLine(`Web search → ${query}`, 'Failed to write web search to Discord channel:')
+      }
+      return
+    }
+
+    if (itemType === 'todo_list') {
+      const statusLabel = type === 'item.started' ? 'started' : type === 'item.updated' ? 'updated' : 'completed'
+      const lines = formatTodoList(item.items)
+      const payload = [`Todo list (${statusLabel}):`, ...lines].join('\n')
+      await emitStreamLine(payload, 'Failed to write todo list to Discord channel:')
+      return
+    }
+
+    if (itemType === 'mcp_tool_call') {
+      const { header, resultText, errorMessage } = formatMcpToolCall(item)
+      const lines = [header]
+      if (resultText) {
+        lines.push(resultText)
+      }
+      if (errorMessage) {
+        lines.push(`Error → ${errorMessage}`)
+      }
+      await emitStreamLine(lines.join('\n'), 'Failed to write MCP tool call to Discord channel:')
+      return
+    }
+
+    if (itemType === 'error') {
+      const message = readString(item.message) ?? readString(item.text)
+      if (message) {
+        await emitStreamLine(`Error item → ${message}`, 'Failed to write error item to Discord channel:')
+      }
+      return
+    }
+
     const text =
       readString(item.text) ??
       readString(item.output) ??
@@ -375,11 +512,29 @@ export const runCodexSession = async ({
     },
     onEvent: async (event) => {
       const eventType = typeof event.type === 'string' ? event.type : ''
+      if (eventType === 'turn.started') {
+        await emitStreamLine('Turn started', 'Failed to write turn started to Discord channel:')
+        return
+      }
       if (eventType === 'turn.completed') {
         await handleTurnCompleted(event)
         return
       }
-      if (eventType === 'item.started' || eventType === 'item.completed') {
+      if (eventType === 'turn.failed') {
+        const error = event.error as Record<string, unknown> | undefined
+        const message = readString(error?.message) ?? readString(event.message)
+        const payload = message ? `Turn failed → ${message}` : 'Turn failed'
+        await emitStreamLine(payload, 'Failed to write turn failure to Discord channel:')
+        return
+      }
+      if (eventType === 'error') {
+        const message =
+          readString(event.message) ?? readString((event.error as Record<string, unknown> | undefined)?.message)
+        const payload = message ? `Stream error → ${message}` : 'Stream error'
+        await emitStreamLine(payload, 'Failed to write stream error to Discord channel:')
+        return
+      }
+      if (eventType === 'item.started' || eventType === 'item.updated' || eventType === 'item.completed') {
         await handleItemEvent(event, eventType)
       }
     },

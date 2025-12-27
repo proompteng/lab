@@ -326,6 +326,153 @@ describe('codex-runner', () => {
     expect(channelText).toContain('Reasoning → Investigating repo layout.')
   })
 
+  it('streams thread and item events to stdout and Discord', async () => {
+    const channelSink: string[] = []
+    const stdoutSink: string[] = []
+    const discordProcess = createDiscordProcess(channelSink)
+    spawnMock.mockImplementationOnce(() => discordProcess)
+
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdoutSink.push(String(chunk))
+      return true
+    })
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      options.onEvent?.({ type: 'turn.started' })
+      options.onEvent?.({ type: 'turn.failed', error: { message: 'model request failed: rate_limit_exceeded' } })
+      options.onEvent?.({ type: 'error', message: 'stream error: stream disconnected before completion' })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: {
+          type: 'file_change',
+          changes: [
+            { path: 'README.md', kind: 'update' },
+            { path: 'old.txt', kind: 'delete' },
+          ],
+          status: 'completed',
+        },
+      })
+      options.onEvent?.({
+        type: 'item.started',
+        item: {
+          type: 'mcp_tool_call',
+          server: 'github',
+          tool: 'search_issues',
+          arguments: { query: 'is:open label:bug' },
+          status: 'in_progress',
+        },
+      })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: {
+          type: 'mcp_tool_call',
+          server: 'github',
+          tool: 'search_issues',
+          arguments: { query: 'is:open label:bug' },
+          status: 'completed',
+          result: { content: [{ type: 'text', text: 'Found 12 issues' }] },
+        },
+      })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: {
+          type: 'mcp_tool_call',
+          server: 'github',
+          tool: 'search_issues',
+          arguments: { query: 'is:open label:bug' },
+          status: 'failed',
+          error: { message: 'unauthorized' },
+        },
+      })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: { type: 'web_search', query: 'codex exec jsonl event types' },
+      })
+      options.onEvent?.({
+        type: 'item.started',
+        item: {
+          type: 'todo_list',
+          items: [
+            { text: 'Inspect repo', completed: false },
+            { text: 'Summarize findings', completed: false },
+          ],
+        },
+      })
+      options.onEvent?.({
+        type: 'item.updated',
+        item: {
+          type: 'todo_list',
+          items: [
+            { text: 'Inspect repo', completed: true },
+            { text: 'Summarize findings', completed: false },
+          ],
+        },
+      })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: {
+          type: 'todo_list',
+          items: [
+            { text: 'Inspect repo', completed: true },
+            { text: 'Summarize findings', completed: true },
+          ],
+        },
+      })
+      options.onEvent?.({
+        type: 'item.completed',
+        item: { type: 'error', message: 'non-fatal error: command declined' },
+      })
+      return { agentMessages: [], sessionId: 'session-5', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'Handle events',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+      discordChannel: {
+        command: ['bun', 'run', 'discord-channel.ts'],
+      },
+    })
+
+    stdoutSpy.mockRestore()
+
+    const stdoutText = stdoutSink.join('')
+    expect(stdoutText).toContain('Turn started')
+    expect(stdoutText).toContain('Turn failed → model request failed: rate_limit_exceeded')
+    expect(stdoutText).toContain('Stream error → stream error: stream disconnected before completion')
+    expect(stdoutText).toContain('Files changed (completed) → update README.md, delete old.txt')
+    expect(stdoutText).toContain('MCP → github.search_issues (in_progress) query="is:open label:bug"')
+    expect(stdoutText).toContain('Found 12 issues')
+    expect(stdoutText).toContain('Error → unauthorized')
+    expect(stdoutText).toContain('Web search → codex exec jsonl event types')
+    expect(stdoutText).toContain('Todo list (started):')
+    expect(stdoutText).toContain('- [ ] Inspect repo')
+    expect(stdoutText).toContain('Todo list (updated):')
+    expect(stdoutText).toContain('- [x] Inspect repo')
+    expect(stdoutText).toContain('Todo list (completed):')
+    expect(stdoutText).toContain('- [x] Summarize findings')
+    expect(stdoutText).toContain('Error item → non-fatal error: command declined')
+
+    const channelText = channelSink.join('')
+    expect(channelText).toContain('Turn started')
+    expect(channelText).toContain('Turn failed → model request failed: rate_limit_exceeded')
+    expect(channelText).toContain('Stream error → stream error: stream disconnected before completion')
+    expect(channelText).toContain('Files changed (completed) → update README.md, delete old.txt')
+    expect(channelText).toContain('MCP → github.search_issues (in_progress) query="is:open label:bug"')
+    expect(channelText).toContain('Found 12 issues')
+    expect(channelText).toContain('Error → unauthorized')
+    expect(channelText).toContain('Web search → codex exec jsonl event types')
+    expect(channelText).toContain('Todo list (started):')
+    expect(channelText).toContain('- [ ] Inspect repo')
+    expect(channelText).toContain('Todo list (updated):')
+    expect(channelText).toContain('- [x] Inspect repo')
+    expect(channelText).toContain('Todo list (completed):')
+    expect(channelText).toContain('- [x] Summarize findings')
+    expect(channelText).toContain('Error item → non-fatal error: command declined')
+  })
+
   it('prioritizes delta streaming when provided', async () => {
     const channelSink: string[] = []
     const discordProcess = createDiscordProcess(channelSink)
