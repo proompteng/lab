@@ -161,6 +161,16 @@ run:
       from: /client_max_body_size.+$/
       to: client_max_body_size $upload_size;
 
+  - replace:
+      filename: "/var/www/discourse/config/unicorn.conf.rb"
+      from: /unicorn_stderr_path = ".*"/
+      to: "unicorn_stderr_path = ENV[\"UNICORN_STDERR_PATH\"] || \"#{discourse_path}/log/unicorn.stderr.log\""
+
+  - replace:
+      filename: "/var/www/discourse/config/unicorn.conf.rb"
+      from: /unicorn_stdout_path = ".*"/
+      to: "unicorn_stdout_path = ENV[\"UNICORN_STDOUT_PATH\"] || \"#{discourse_path}/log/unicorn.stdout.log\""
+
   - exec:
       cmd:
         # Move `listen 80` to an outlet
