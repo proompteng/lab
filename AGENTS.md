@@ -78,3 +78,4 @@
 
 ## When in Doubt
 - Check the nearest README for service-specific commands.
+- Search internet with correct keyword and questions containing context using web.run.
