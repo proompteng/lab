@@ -78,4 +78,3 @@
 
 ## When in Doubt
 - Check the nearest README for service-specific commands.
-- Prefer the smallest-scoped test that proves the change.
