@@ -130,6 +130,38 @@ export type MarkEventProcessedInput = {
   deliveryId: string
 }
 
+export type UpsertIngestionInput = {
+  deliveryId: string
+  workflowId: string
+  status: string
+  error?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+export type UpsertIngestionOutput = {
+  ingestionId: string
+  eventId: string
+} | null
+
+export type UpsertEventFileInput = {
+  deliveryId: string
+  fileKeyId: string
+  changeType: string
+}
+
+export type UpsertEventFileOutput = {
+  eventFileId: string
+  eventId: string
+  fileKeyId: string
+} | null
+
+export type UpsertIngestionTargetInput = {
+  ingestionId: string
+  fileVersionId: string
+  kind: string
+}
+
 export type BumbaActivities = typeof activities
 
 const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
@@ -282,6 +314,21 @@ const normalizeRepositorySlug = (value: string) => {
     .replace(/^https?:\/\/(www\.)?github\.com\//, '')
     .replace(/^github\.com\//, '')
   return withoutPrefix
+}
+
+const normalizeRepositoryRef = (value: string | null | undefined) => {
+  const trimmed = normalizeOptionalText(value)
+  if (!trimmed) return null
+  if (trimmed.startsWith('refs/heads/')) {
+    return trimmed.slice('refs/heads/'.length)
+  }
+  if (trimmed.startsWith('refs/tags/')) {
+    return `tags/${trimmed.slice('refs/tags/'.length)}`
+  }
+  if (trimmed.startsWith('refs/remotes/')) {
+    return trimmed.slice('refs/remotes/'.length)
+  }
+  return trimmed
 }
 
 const resolveGithubToken = () =>
@@ -476,7 +523,7 @@ const resolveRepositoryInfo = async (repoRoot: string, overrides: RepositoryOver
 
   return {
     repoName: normalizedRepoName.length > 0 ? normalizedRepoName : fallbackName,
-    repoRef,
+    repoRef: normalizeRepositoryRef(repoRef),
     repoCommit,
   }
 }
@@ -1381,6 +1428,19 @@ const parseAst = async (source: string, filePath: string): Promise<AstSummaryOut
 
     const facts = collectFacts(root, source, maxFacts, maxFactChars)
     const astSummary = buildAstSummary(root, source, maxSummaryNodes, maxFactChars)
+    if (facts.length === 0) {
+      const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
+      return {
+        astSummary,
+        facts: fallback.facts,
+        metadata: {
+          language: entry.name,
+          factCount: fallback.facts.length,
+          factsFallback: 'text',
+          factsFallbackLanguage: fallbackLanguage,
+        },
+      }
+    }
 
     return {
       astSummary,
@@ -1609,6 +1669,16 @@ const getAtlasDb = () => {
 
   atlasDb = new SQL(withDefaultSslMode(url))
   return atlasDb
+}
+
+const resolveGithubEventId = async (db: SQL, deliveryId: string) => {
+  const rows = (await db`
+    SELECT id
+    FROM atlas.github_events
+    WHERE delivery_id = ${deliveryId}
+    LIMIT 1;
+  `) as Array<{ id: string }>
+  return rows[0]?.id ?? null
 }
 
 export const activities = {
@@ -2077,7 +2147,7 @@ export const activities = {
     const startedAt = Date.now()
     const fileMeta = input.fileMetadata
     const repositoryName = fileMeta.repoName
-    const repositoryRef = fileMeta.repoRef ?? 'main'
+    const repositoryRef = normalizeRepositoryRef(fileMeta.repoRef) ?? 'main'
     const repositoryCommit = fileMeta.repoCommit ?? null
 
     logActivity('info', 'started', 'cleanupEnrichment', {
@@ -2208,7 +2278,7 @@ export const activities = {
     const startedAt = Date.now()
     const fileMeta = input.fileMetadata
     const repositoryName = fileMeta.repoName
-    const repositoryRef = fileMeta.repoRef ?? 'main'
+    const repositoryRef = normalizeRepositoryRef(fileMeta.repoRef) ?? 'main'
     const repositoryCommit = fileMeta.repoCommit ?? null
     const contentHash = fileMeta.contentHash ?? ''
 
@@ -2493,6 +2563,232 @@ export const activities = {
       logActivity('error', 'failed', 'persistFacts', {
         fileVersionId: input.fileVersionId,
         requested: input.facts.length,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
+  },
+
+  async upsertIngestion(input: UpsertIngestionInput): Promise<UpsertIngestionOutput> {
+    const startedAt = Date.now()
+    const deliveryId = input.deliveryId.trim()
+    const workflowId = input.workflowId.trim()
+    const status = input.status.trim()
+    const errorText = typeof input.error === 'string' ? input.error.trim() : ''
+    const error = errorText.length > 0 ? errorText : null
+
+    if (!deliveryId || !workflowId || !status) {
+      logActivity('info', 'skipped', 'upsertIngestion', {
+        reason: 'missing_required_fields',
+        deliveryId: deliveryId || null,
+        workflowId: workflowId || null,
+        status: status || null,
+        durationMs: Date.now() - startedAt,
+      })
+      return null
+    }
+
+    logActivity('info', 'started', 'upsertIngestion', {
+      deliveryId,
+      workflowId,
+      status,
+    })
+
+    try {
+      const db = getAtlasDb()
+      if (!db) {
+        throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+      }
+
+      const eventId = await resolveGithubEventId(db, deliveryId)
+      if (!eventId) {
+        logActivity('info', 'skipped', 'upsertIngestion', {
+          deliveryId,
+          workflowId,
+          status,
+          reason: 'event_not_found',
+          durationMs: Date.now() - startedAt,
+        })
+        return null
+      }
+
+      const startedAtValue = input.startedAt ? new Date(input.startedAt) : null
+      const finishedAtValue = input.finishedAt
+        ? new Date(input.finishedAt)
+        : status === 'completed' || status === 'failed' || status === 'skipped'
+          ? new Date()
+          : null
+
+      const rows = (await db`
+        INSERT INTO atlas.ingestions (event_id, workflow_id, status, error, started_at, finished_at)
+        VALUES (
+          ${eventId},
+          ${workflowId},
+          ${status},
+          ${error},
+          COALESCE(${startedAtValue}, now()),
+          ${finishedAtValue}
+        )
+        ON CONFLICT (event_id, workflow_id) DO UPDATE
+        SET status = CASE
+              WHEN atlas.ingestions.status IN ('completed', 'failed', 'skipped') THEN atlas.ingestions.status
+              ELSE EXCLUDED.status
+            END,
+            error = COALESCE(EXCLUDED.error, atlas.ingestions.error),
+            started_at = COALESCE(EXCLUDED.started_at, atlas.ingestions.started_at),
+            finished_at = COALESCE(EXCLUDED.finished_at, atlas.ingestions.finished_at)
+        RETURNING id, event_id;
+      `) as Array<{ id: string; event_id: string }>
+
+      const row = rows[0]
+      if (!row) {
+        throw new Error('ingestion upsert failed')
+      }
+
+      logActivity('info', 'completed', 'upsertIngestion', {
+        deliveryId,
+        workflowId,
+        status,
+        ingestionId: row.id,
+        durationMs: Date.now() - startedAt,
+      })
+
+      return { ingestionId: row.id, eventId: row.event_id }
+    } catch (error) {
+      logActivity('error', 'failed', 'upsertIngestion', {
+        deliveryId,
+        workflowId,
+        status,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
+  },
+
+  async upsertEventFile(input: UpsertEventFileInput): Promise<UpsertEventFileOutput> {
+    const startedAt = Date.now()
+    const deliveryId = input.deliveryId.trim()
+    const fileKeyId = input.fileKeyId.trim()
+    const changeType = input.changeType.trim()
+
+    if (!deliveryId || !fileKeyId || !changeType) {
+      logActivity('info', 'skipped', 'upsertEventFile', {
+        reason: 'missing_required_fields',
+        deliveryId: deliveryId || null,
+        fileKeyId: fileKeyId || null,
+        changeType: changeType || null,
+        durationMs: Date.now() - startedAt,
+      })
+      return null
+    }
+
+    logActivity('info', 'started', 'upsertEventFile', {
+      deliveryId,
+      fileKeyId,
+      changeType,
+    })
+
+    try {
+      const db = getAtlasDb()
+      if (!db) {
+        throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+      }
+
+      const eventId = await resolveGithubEventId(db, deliveryId)
+      if (!eventId) {
+        logActivity('info', 'skipped', 'upsertEventFile', {
+          deliveryId,
+          fileKeyId,
+          changeType,
+          reason: 'event_not_found',
+          durationMs: Date.now() - startedAt,
+        })
+        return null
+      }
+
+      const rows = (await db`
+        INSERT INTO atlas.event_files (event_id, file_key_id, change_type)
+        VALUES (${eventId}, ${fileKeyId}, ${changeType})
+        ON CONFLICT (event_id, file_key_id) DO UPDATE
+        SET change_type = EXCLUDED.change_type
+        RETURNING id;
+      `) as Array<{ id: string }>
+
+      const row = rows[0]
+      if (!row) {
+        throw new Error('event file upsert failed')
+      }
+
+      logActivity('info', 'completed', 'upsertEventFile', {
+        deliveryId,
+        fileKeyId,
+        changeType,
+        eventFileId: row.id,
+        durationMs: Date.now() - startedAt,
+      })
+
+      return { eventFileId: row.id, eventId, fileKeyId }
+    } catch (error) {
+      logActivity('error', 'failed', 'upsertEventFile', {
+        deliveryId,
+        fileKeyId,
+        changeType,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
+  },
+
+  async upsertIngestionTarget(input: UpsertIngestionTargetInput): Promise<void> {
+    const startedAt = Date.now()
+    const ingestionId = input.ingestionId.trim()
+    const fileVersionId = input.fileVersionId.trim()
+    const kind = input.kind.trim()
+
+    if (!ingestionId || !fileVersionId || !kind) {
+      logActivity('info', 'skipped', 'upsertIngestionTarget', {
+        reason: 'missing_required_fields',
+        ingestionId: ingestionId || null,
+        fileVersionId: fileVersionId || null,
+        kind: kind || null,
+        durationMs: Date.now() - startedAt,
+      })
+      return
+    }
+
+    logActivity('info', 'started', 'upsertIngestionTarget', {
+      ingestionId,
+      fileVersionId,
+      kind,
+    })
+
+    try {
+      const db = getAtlasDb()
+      if (!db) {
+        throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+      }
+
+      await db`
+        INSERT INTO atlas.ingestion_targets (ingestion_id, file_version_id, kind)
+        VALUES (${ingestionId}, ${fileVersionId}, ${kind})
+        ON CONFLICT (ingestion_id, file_version_id, kind) DO UPDATE
+        SET kind = EXCLUDED.kind;
+      `
+
+      logActivity('info', 'completed', 'upsertIngestionTarget', {
+        ingestionId,
+        fileVersionId,
+        kind,
+        durationMs: Date.now() - startedAt,
+      })
+    } catch (error) {
+      logActivity('error', 'failed', 'upsertIngestionTarget', {
+        ingestionId,
+        fileVersionId,
+        kind,
         durationMs: Date.now() - startedAt,
         error: formatActivityError(error),
       })

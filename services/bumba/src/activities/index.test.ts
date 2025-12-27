@@ -43,6 +43,13 @@ describe('bumba ast extraction', () => {
     expect(result.metadata.language).toBe('bash')
   })
 
+  it('falls back to text facts when tree-sitter yields no facts', async () => {
+    const result = await runExtract('.json', '{ "foo": "bar" }')
+    expect(result.metadata.language).toBe('json')
+    expect(result.metadata.factsFallback).toBe('text')
+    expect(result.facts.length).toBeGreaterThan(0)
+  })
+
   it('parses embedded template files', async () => {
     const result = await runExtract('.erb', '<%= user.name %>')
     expect(result.metadata.language).toBe('embedded-template')
@@ -122,6 +129,32 @@ describe('bumba readRepoFile', () => {
       expect(result.metadata.metadata.source).toBe('git')
     } finally {
       globalThis.fetch = previousFetch
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('normalizes refs/heads/* to branch name in metadata', async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))
+    const filePath = 'README.md'
+    const content = 'hello ref\n'
+
+    try {
+      runGit(['init', '-b', 'main'], repoRoot)
+      runGit(['config', 'user.email', 'bumba-tests@example.com'], repoRoot)
+      runGit(['config', 'user.name', 'Bumba Tests'], repoRoot)
+      runGit(['config', 'commit.gpgsign', 'false'], repoRoot)
+      await writeFile(join(repoRoot, filePath), content, 'utf8')
+      runGit(['add', '.'], repoRoot)
+      runGit(['commit', '-m', 'init'], repoRoot)
+
+      const result = await activities.readRepoFile({
+        repoRoot,
+        filePath,
+        ref: 'refs/heads/main',
+      })
+
+      expect(result.metadata.repoRef).toBe('main')
+    } finally {
       await rm(repoRoot, { recursive: true, force: true })
     }
   })
