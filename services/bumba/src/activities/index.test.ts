@@ -165,4 +165,119 @@ describe('bumba readRepoFile', () => {
       await rm(repoRoot, { recursive: true, force: true })
     }
   })
+
+  it('handles empty gitkeep files from GitHub contents API', async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))
+    const filePath = 'apps/discourse/cids/.gitkeep'
+    const commit = 'deadbeef'
+
+    const previousToken = process.env.GITHUB_TOKEN
+    const previousFetch = globalThis.fetch
+    let calls = 0
+
+    process.env.GITHUB_TOKEN = 'token'
+    globalThis.fetch = (async () => {
+      calls += 1
+      if (calls > 1) {
+        throw new Error('unexpected fetch')
+      }
+      return new Response(
+        JSON.stringify({
+          type: 'file',
+          encoding: 'none',
+          content: '',
+          size: 0,
+          download_url: 'https://raw.githubusercontent.com/proompteng/lab/deadbeef/.gitkeep',
+          url: 'https://api.github.com/repos/proompteng/lab/contents/.gitkeep',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    }) as typeof fetch
+
+    try {
+      const result = await activities.readRepoFile({
+        repoRoot,
+        filePath,
+        repository: 'proompteng/lab',
+        commit,
+      })
+
+      expect(result.content).toBe('')
+      expect(result.metadata.metadata.source).toBe('github')
+      expect(calls).toBe(1)
+    } finally {
+      if (previousToken === undefined) {
+        delete process.env.GITHUB_TOKEN
+      } else {
+        process.env.GITHUB_TOKEN = previousToken
+      }
+      globalThis.fetch = previousFetch
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to download_url when encoding is unsupported', async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))
+    const filePath = 'README.md'
+    const commit = 'deadbeef'
+
+    const previousToken = process.env.GITHUB_TOKEN
+    const previousFetch = globalThis.fetch
+    const rawContent = 'raw file contents'
+    let apiCalls = 0
+    let rawCalls = 0
+
+    process.env.GITHUB_TOKEN = 'token'
+    globalThis.fetch = (async (input) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input instanceof Request
+              ? input.url
+              : ''
+      if (url.includes('api.github.com')) {
+        apiCalls += 1
+        return new Response(
+          JSON.stringify({
+            type: 'file',
+            encoding: 'none',
+            content: null,
+            size: rawContent.length,
+            download_url: 'https://raw.githubusercontent.com/proompteng/lab/deadbeef/README.md',
+            url: 'https://api.github.com/repos/proompteng/lab/contents/README.md',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.includes('raw.githubusercontent.com')) {
+        rawCalls += 1
+        return new Response(rawContent, { status: 200 })
+      }
+      throw new Error(`unexpected fetch url: ${url}`)
+    }) as typeof fetch
+
+    try {
+      const result = await activities.readRepoFile({
+        repoRoot,
+        filePath,
+        repository: 'proompteng/lab',
+        commit,
+      })
+
+      expect(result.content).toBe(rawContent)
+      expect(result.metadata.metadata.source).toBe('github')
+      expect(apiCalls).toBe(1)
+      expect(rawCalls).toBe(1)
+    } finally {
+      if (previousToken === undefined) {
+        delete process.env.GITHUB_TOKEN
+      } else {
+        process.env.GITHUB_TOKEN = previousToken
+      }
+      globalThis.fetch = previousFetch
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
 })

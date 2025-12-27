@@ -539,19 +539,45 @@ const fetchGithubFile = async (repository: string, filePath: string, ref: string
   if (!data || data.type !== 'file') {
     throw new Error(`GitHub contents API returned non-file for ${filePath}`)
   }
-  if (!data.content || data.encoding !== 'base64') {
-    throw new Error(`GitHub contents API returned unsupported encoding for ${filePath}`)
+
+  if ((data.size ?? 0) === 0 && (!data.content || data.content.length === 0)) {
+    return {
+      content: '',
+      downloadUrl: data.download_url ?? null,
+      apiUrl: data.url ?? url.toString(),
+      sha: data.sha ?? null,
+      size: data.size ?? 0,
+    }
   }
 
-  const content = Buffer.from(data.content.replace(/\r?\n/g, ''), 'base64').toString('utf8')
-
-  return {
-    content,
-    downloadUrl: data.download_url ?? null,
-    apiUrl: data.url ?? url.toString(),
-    sha: data.sha ?? null,
-    size: data.size ?? null,
+  if (data.content && data.encoding === 'base64') {
+    const content = Buffer.from(data.content.replace(/\r?\n/g, ''), 'base64').toString('utf8')
+    return {
+      content,
+      downloadUrl: data.download_url ?? null,
+      apiUrl: data.url ?? url.toString(),
+      sha: data.sha ?? null,
+      size: data.size ?? null,
+    }
   }
+
+  if (data.download_url) {
+    const rawResponse = await fetch(data.download_url)
+    if (!rawResponse.ok) {
+      const body = await rawResponse.text()
+      throw new Error(`GitHub raw fetch failed (${rawResponse.status}): ${body}`)
+    }
+    const content = await rawResponse.text()
+    return {
+      content,
+      downloadUrl: data.download_url ?? null,
+      apiUrl: data.url ?? url.toString(),
+      sha: data.sha ?? null,
+      size: data.size ?? null,
+    }
+  }
+
+  throw new Error(`GitHub contents API returned unsupported encoding for ${filePath}`)
 }
 
 type AstPoint = {
