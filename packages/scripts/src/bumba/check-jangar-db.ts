@@ -10,6 +10,7 @@ type Options = {
   limit: number
   repository?: string
   workflowId?: string
+  commit?: string
 }
 
 const DEFAULT_NAMESPACE = process.env.JANGAR_DB_NAMESPACE ?? 'jangar'
@@ -31,6 +32,7 @@ Options:
   --limit <count>          Number of rows to show in recent lists (default: ${DEFAULT_LIMIT})
   --repository <slug>      Filter to a repository slug (e.g. proompteng/lab)
   --workflow-id <id>       Inspect a specific workflow id for deep checks
+  --commit <sha>           Filter by repository commit when workflow id is missing
   -h, --help               Show this help message
 
 Environment:
@@ -40,6 +42,7 @@ Examples:
   bun run packages/scripts/src/bumba/check-jangar-db.ts
   bun run packages/scripts/src/bumba/check-jangar-db.ts --repository proompteng/lab --since-hours 6
   bun run packages/scripts/src/bumba/check-jangar-db.ts --workflow-id bumba-repo-<id>
+  bun run packages/scripts/src/bumba/check-jangar-db.ts --commit <sha>
 `.trim()
 
 const readValue = (arg: string, argv: string[], index: number) => {
@@ -145,6 +148,17 @@ const parseArgs = (argv: string[]): Options => {
       continue
     }
 
+    if (arg === '--commit') {
+      options.commit = readValue(arg, argv, i)
+      i += 1
+      continue
+    }
+
+    if (arg.startsWith('--commit=')) {
+      options.commit = arg.slice('--commit='.length)
+      continue
+    }
+
     fatal(`Unknown option: ${arg}`)
   }
 
@@ -160,6 +174,14 @@ const parseArgs = (argv: string[]): Options => {
 }
 
 const sqlLiteral = (value: string) => `'${value.replace(/'/g, "''")}'`
+
+const extractCommitFromWorkflowId = (workflowId?: string) => {
+  if (!workflowId) return undefined
+  const match = workflowId.match(/bumba-repo-([a-f0-9]{40})/i)
+  if (match?.[1]) return match[1]
+  if (/^[a-f0-9]{40}$/i.test(workflowId)) return workflowId
+  return undefined
+}
 
 const capture = async (command: string, args: string[]) => {
   const subprocess = Bun.spawn([command, ...args], {
@@ -266,6 +288,39 @@ const pickLatestIngestion = async (options: Options) => {
   return { id, workflowId, status, startedAt, finishedAt, error }
 }
 
+const pickLatestIngestionByCommit = async (options: Options, commit: string) => {
+  const repoJoin = options.repository ? 'JOIN atlas.repositories r ON r.id = fk.repository_id' : ''
+  const repoFilter = options.repository ? `AND r.name = ${sqlLiteral(options.repository)}` : ''
+  const rows = await queryRows(
+    options,
+    `
+    WITH targets AS (
+      SELECT it.ingestion_id, COUNT(*) AS target_count
+      FROM atlas.ingestion_targets it
+      JOIN atlas.file_versions fv ON fv.id = it.file_version_id
+      JOIN atlas.file_keys fk ON fk.id = fv.file_key_id
+      ${repoJoin}
+      WHERE fv.repository_commit = ${sqlLiteral(commit)}
+        ${repoFilter}
+      GROUP BY it.ingestion_id
+    )
+    SELECT i.id, i.workflow_id, i.status, i.started_at, i.finished_at, COALESCE(i.error, ''), ge.repository, t.target_count
+    FROM targets t
+    JOIN atlas.ingestions i ON i.id = t.ingestion_id
+    JOIN atlas.github_events ge ON ge.id = i.event_id
+    ORDER BY i.started_at DESC
+    LIMIT 1;
+    `.trim(),
+  )
+
+  if (rows.length === 0) {
+    return null
+  }
+
+  const [id, workflowId, status, startedAt, finishedAt, error, repository, targetCount] = rows[0]
+  return { id, workflowId, status, startedAt, finishedAt, error, repository, targetCount }
+}
+
 const main = async () => {
   const options = parseArgs(Bun.argv.slice(2))
   ensureCli('kubectl')
@@ -333,10 +388,30 @@ const main = async () => {
   printTable(recentRows, ['workflow_id', 'status', 'started_at', 'finished_at'])
 
   printSection('Latest ingestion detail')
-  const latest = await pickLatestIngestion(options)
+  let latest = await pickLatestIngestion(options)
   if (!latest) {
-    console.log('  No ingestion rows found with the provided filters.')
-    return
+    const commit = options.commit ?? extractCommitFromWorkflowId(options.workflowId)
+    if (commit) {
+      const fallback = await pickLatestIngestionByCommit(options, commit)
+      if (fallback) {
+        console.log('  No ingestion rows matched workflow id; using commit-based match.')
+        console.log(`  commit:      ${commit}`)
+        if (fallback.repository) {
+          console.log(`  repository:  ${fallback.repository}`)
+        }
+        if (fallback.targetCount) {
+          console.log(`  targets:     ${fallback.targetCount}`)
+        }
+        latest = fallback
+      } else {
+        console.log('  No ingestion rows found with the provided filters.')
+        console.log(`  commit fallback attempted: ${commit}`)
+        return
+      }
+    } else {
+      console.log('  No ingestion rows found with the provided filters.')
+      return
+    }
   }
 
   console.log(`  workflow_id: ${latest.workflowId}`)
