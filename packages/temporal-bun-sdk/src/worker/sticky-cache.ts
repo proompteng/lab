@@ -15,6 +15,10 @@ export interface StickyCacheEntry {
   readonly lastEventId: string | null
   readonly lastAccessed: number
   readonly workflowType?: string
+  readonly workflowTaskCount?: number
+  readonly lastDeterminismMarkerHash?: string
+  readonly lastDeterminismMarkerTask?: number
+  readonly lastDeterminismFullSnapshotTask?: number
 }
 
 export interface StickyCacheConfig {

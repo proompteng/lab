@@ -85,17 +85,43 @@ export interface ReplayResult {
 export interface DeterminismMarkerInput {
   readonly info: WorkflowInfo
   readonly determinismState: WorkflowDeterminismState
+  readonly determinismDelta?: DeterminismStateDelta
+  readonly markerType?: DeterminismMarkerType
   readonly lastEventId: string | null
   readonly recordedAt?: Date
 }
 
-export interface DeterminismMarkerEnvelope {
-  readonly schemaVersion: number
+export type DeterminismMarkerType = 'full' | 'delta'
+
+export interface DeterminismStateDelta {
+  readonly commandHistory?: WorkflowDeterminismState['commandHistory']
+  readonly randomValues?: WorkflowDeterminismState['randomValues']
+  readonly timeValues?: WorkflowDeterminismState['timeValues']
+  readonly logCount?: number
+  readonly failureMetadata?: WorkflowDeterminismFailureMetadata
+  readonly signals?: WorkflowDeterminismState['signals']
+  readonly queries?: WorkflowDeterminismState['queries']
+  readonly updates?: WorkflowDeterminismState['updates']
+}
+
+export interface DeterminismMarkerEnvelopeV1 {
+  readonly schemaVersion: 1
   readonly workflow: WorkflowInfo
   readonly determinismState: WorkflowDeterminismState
   readonly lastEventId: string | null
   readonly recordedAtIso: string
 }
+
+export interface DeterminismMarkerEnvelopeV2 {
+  readonly schemaVersion: 2
+  readonly workflow: WorkflowInfo
+  readonly determinismState?: WorkflowDeterminismState
+  readonly determinismDelta?: DeterminismStateDelta
+  readonly lastEventId: string | null
+  readonly recordedAtIso: string
+}
+
+export type DeterminismMarkerEnvelope = DeterminismMarkerEnvelopeV1 | DeterminismMarkerEnvelopeV2
 
 export interface DeterminismDiffResult {
   readonly mismatches: DeterminismMismatch[]
@@ -157,7 +183,8 @@ export type DeterminismMismatch =
 
 export const DETERMINISM_MARKER_NAME = 'temporal-bun-sdk/determinism'
 
-const DETERMINISM_MARKER_SCHEMA_VERSION = 1
+const DETERMINISM_MARKER_SCHEMA_VERSION_V1 = 1
+const DETERMINISM_MARKER_SCHEMA_VERSION_V2 = 2
 const DETERMINISM_MARKER_DETAIL_KEY = 'snapshot'
 
 /**
@@ -170,13 +197,26 @@ export const encodeDeterminismMarkerDetails = (
 ): Effect.Effect<Record<string, Payloads>, unknown, never> =>
   Effect.tryPromise(async () => {
     const recordedAt = (input.recordedAt ?? new Date()).toISOString()
-    const envelope: DeterminismMarkerEnvelope = {
-      schemaVersion: DETERMINISM_MARKER_SCHEMA_VERSION,
-      workflow: input.info,
-      determinismState: input.determinismState,
-      lastEventId: normalizeEventId(input.lastEventId),
-      recordedAtIso: recordedAt,
+    const markerType: DeterminismMarkerType = input.markerType ?? 'full'
+    if (markerType === 'delta' && !input.determinismDelta) {
+      throw new Error('Determinism marker delta payload missing')
     }
+    const envelope: DeterminismMarkerEnvelope =
+      markerType === 'delta'
+        ? {
+            schemaVersion: DETERMINISM_MARKER_SCHEMA_VERSION_V2,
+            workflow: input.info,
+            determinismDelta: input.determinismDelta,
+            lastEventId: normalizeEventId(input.lastEventId),
+            recordedAtIso: recordedAt,
+          }
+        : {
+            schemaVersion: DETERMINISM_MARKER_SCHEMA_VERSION_V1,
+            workflow: input.info,
+            determinismState: input.determinismState,
+            lastEventId: normalizeEventId(input.lastEventId),
+            recordedAtIso: recordedAt,
+          }
 
     const payloads = await encodeValuesToPayloads(converter, [envelope])
     if (!payloads || payloads.length === 0) {
@@ -228,7 +268,10 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
   Effect.gen(function* () {
     const events = sortHistoryEvents(intake.history ?? [])
     const shouldUseDeterminismMarker = intake.ignoreDeterminismMarker !== true
-    let markerSnapshot: DeterminismMarkerEnvelope | undefined
+    let markerState: WorkflowDeterminismState | undefined
+    let markerLastEventId: string | null = null
+    let markerInvalid = false
+    let hasMarker = false
     const updateEntries = collectWorkflowUpdateEntries(events)
 
     if (shouldUseDeterminismMarker) {
@@ -249,7 +292,14 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
         )
 
         if (decoded) {
-          markerSnapshot = decoded
+          const applied = applyDeterminismMarker(markerState, decoded)
+          if (!applied) {
+            markerInvalid = true
+            break
+          }
+          markerState = applied
+          markerLastEventId = decoded.lastEventId
+          hasMarker = true
         }
       }
     }
@@ -259,8 +309,8 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
       collectWorkflowUpdateInvocations(events, intake.dataConverter),
     )
 
-    if (shouldUseDeterminismMarker && markerSnapshot) {
-      let determinismState = cloneDeterminismState(markerSnapshot.determinismState)
+    if (shouldUseDeterminismMarker && hasMarker && !markerInvalid && markerState) {
+      let determinismState = cloneDeterminismState(markerState)
       if (!determinismState.failureMetadata && extractedFailureMetadata) {
         determinismState = {
           ...determinismState,
@@ -274,7 +324,7 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
         }
       }
       determinismState = mergePendingQueryRequests(determinismState, intake.queries)
-      const latestEventId = resolveHistoryLastEventId(events) ?? markerSnapshot.lastEventId ?? null
+      const latestEventId = resolveHistoryLastEventId(events) ?? markerLastEventId ?? null
       return {
         determinismState,
         lastEventId: latestEventId,
@@ -1453,21 +1503,79 @@ const resolveOutcomeStatus = (outcome?: Outcome | null): 'success' | 'failure' |
   return undefined
 }
 
+const applyDeterminismDelta = (
+  state: WorkflowDeterminismState,
+  delta: DeterminismStateDelta,
+): WorkflowDeterminismState => ({
+  ...state,
+  commandHistory: [...state.commandHistory, ...(delta.commandHistory ?? [])],
+  randomValues: [...state.randomValues, ...(delta.randomValues ?? [])],
+  timeValues: [...state.timeValues, ...(delta.timeValues ?? [])],
+  signals: [...state.signals, ...(delta.signals ?? [])],
+  queries: [...state.queries, ...(delta.queries ?? [])],
+  ...(delta.updates
+    ? { updates: [...(state.updates ?? []), ...(delta.updates ?? [])] }
+    : state.updates
+      ? { updates: [...state.updates] }
+      : {}),
+  ...(delta.logCount !== undefined ? { logCount: delta.logCount } : {}),
+  ...(delta.failureMetadata ? { failureMetadata: delta.failureMetadata } : {}),
+})
+
+const applyDeterminismMarker = (
+  state: WorkflowDeterminismState | undefined,
+  marker: DeterminismMarkerEnvelope,
+): WorkflowDeterminismState | undefined => {
+  if (marker.schemaVersion === 1) {
+    return marker.determinismState
+  }
+  const base = marker.determinismState ?? state
+  if (!base) {
+    return undefined
+  }
+  if (!marker.determinismDelta) {
+    return base
+  }
+  return applyDeterminismDelta(base, marker.determinismDelta)
+}
+
 const sanitizeDeterminismMarkerEnvelope = (input: Record<string, unknown>): DeterminismMarkerEnvelope => {
   const schemaVersion = input.schemaVersion
-  if (schemaVersion !== DETERMINISM_MARKER_SCHEMA_VERSION) {
+  if (
+    schemaVersion !== DETERMINISM_MARKER_SCHEMA_VERSION_V1 &&
+    schemaVersion !== DETERMINISM_MARKER_SCHEMA_VERSION_V2
+  ) {
     throw new Error(`Unsupported determinism marker schema version: ${String(schemaVersion)}`)
   }
 
   const workflow = sanitizeWorkflowInfo(input.workflow)
-  const determinismState = sanitizeDeterminismState(input.determinismState)
   const lastEventId = normalizeEventId(input.lastEventId)
   const recordedAt = sanitizeRecordedAt(input.recordedAtIso)
 
+  if (schemaVersion === DETERMINISM_MARKER_SCHEMA_VERSION_V1) {
+    const determinismState = sanitizeDeterminismState(input.determinismState)
+    return {
+      schemaVersion: DETERMINISM_MARKER_SCHEMA_VERSION_V1,
+      workflow,
+      determinismState,
+      lastEventId,
+      recordedAtIso: recordedAt,
+    }
+  }
+
+  const determinismState =
+    input.determinismState !== undefined ? sanitizeDeterminismState(input.determinismState) : undefined
+  const determinismDelta =
+    input.determinismDelta !== undefined ? sanitizeDeterminismDelta(input.determinismDelta) : undefined
+  if (!determinismState && !determinismDelta) {
+    throw new Error('Determinism marker missing determinism state or delta')
+  }
+
   return {
-    schemaVersion: DETERMINISM_MARKER_SCHEMA_VERSION,
+    schemaVersion: DETERMINISM_MARKER_SCHEMA_VERSION_V2,
     workflow,
-    determinismState,
+    ...(determinismState ? { determinismState } : {}),
+    ...(determinismDelta ? { determinismDelta } : {}),
     lastEventId,
     recordedAtIso: recordedAt,
   }
@@ -1533,6 +1641,39 @@ const sanitizeDeterminismState = (value: unknown): WorkflowDeterminismState => {
     queries,
     ...(updates ? { updates } : {}),
   }
+}
+
+const sanitizeDeterminismDelta = (value: unknown): DeterminismStateDelta => {
+  if (!isRecord(value)) {
+    throw new Error('Determinism marker contained invalid determinism delta')
+  }
+
+  const commandHistoryRaw = value.commandHistory ?? []
+  const randomValuesRaw = value.randomValues ?? []
+  const timeValuesRaw = value.timeValues ?? []
+  const signalsRaw = value.signals ?? []
+  const queriesRaw = value.queries ?? []
+
+  if (
+    !Array.isArray(commandHistoryRaw) ||
+    !Array.isArray(randomValuesRaw) ||
+    !Array.isArray(timeValuesRaw) ||
+    !Array.isArray(signalsRaw) ||
+    !Array.isArray(queriesRaw)
+  ) {
+    throw new Error('Determinism marker contained invalid determinism delta shape')
+  }
+
+  return sanitizeDeterminismState({
+    commandHistory: commandHistoryRaw,
+    randomValues: randomValuesRaw,
+    timeValues: timeValuesRaw,
+    signals: signalsRaw,
+    queries: queriesRaw,
+    ...(value.updates !== undefined ? { updates: value.updates } : {}),
+    ...(value.logCount !== undefined ? { logCount: value.logCount } : {}),
+    ...(value.failureMetadata !== undefined ? { failureMetadata: value.failureMetadata } : {}),
+  })
 }
 
 const sanitizeCommandMetadata = (value: unknown, index: number): WorkflowCommandHistoryEntryMetadata | undefined => {

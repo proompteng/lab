@@ -12,7 +12,7 @@ import {
   ingestWorkflowHistory,
   resolveHistoryLastEventId,
 } from '../../src/workflow/replay'
-import type { DeterminismMismatchCommand } from '../../src/workflow/replay'
+import type { DeterminismMismatchCommand, DeterminismStateDelta } from '../../src/workflow/replay'
 import {
   ActivityTaskScheduledEventAttributesSchema,
   HistoryEventSchema,
@@ -80,6 +80,75 @@ test('encodes and decodes determinism marker envelopes', async () => {
   expect(decoded?.recordedAtIso).toBe('2025-01-01T00:00:00.000Z')
 })
 
+test('encodes and decodes determinism delta marker envelopes', async () => {
+  const converter = createDefaultDataConverter()
+  const info: WorkflowInfo = {
+    namespace: 'default',
+    taskQueue: 'replay-fixtures',
+    workflowId: 'wf-delta',
+    runId: 'run-delta',
+    workflowType: 'deltaWorkflow',
+  }
+  const determinismState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          kind: 'start-timer',
+          id: 'command-0',
+          sequence: 0,
+          timerId: 'timer-0',
+          timeoutMs: 1000,
+        },
+      },
+    ],
+    randomValues: [0.1],
+    timeValues: [1728000000],
+    signals: [],
+    queries: [],
+  }
+  const determinismDelta: DeterminismStateDelta = {
+    commandHistory: [
+      {
+        intent: {
+          kind: 'start-timer',
+          id: 'command-1',
+          sequence: 1,
+          timerId: 'timer-1',
+          timeoutMs: 500,
+        },
+      },
+    ],
+    randomValues: [0.2],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+
+  const details = await Effect.runPromise(
+    encodeDeterminismMarkerDetails(converter, {
+      info,
+      determinismState,
+      determinismDelta,
+      markerType: 'delta',
+      lastEventId: '99',
+      recordedAt: new Date('2025-01-01T00:00:00Z'),
+    }),
+  )
+
+  const decoded = await Effect.runPromise(
+    decodeDeterminismMarkerEnvelope({
+      converter,
+      details,
+    }),
+  )
+
+  expect(decoded).toBeDefined()
+  expect(decoded?.schemaVersion).toBe(2)
+  expect(decoded?.workflow).toEqual(info)
+  expect(decoded?.determinismDelta).toEqual(determinismDelta)
+  expect(decoded?.lastEventId).toBe('99')
+})
+
 test('ingestWorkflowHistory returns determinism marker snapshot when available', async () => {
   const converter = createDefaultDataConverter()
   const info: WorkflowInfo = {
@@ -145,6 +214,105 @@ test('ingestWorkflowHistory returns determinism marker snapshot when available',
   expect(replay.lastEventId).toBe('20')
   expect(replay.determinismState).toEqual(determinismState)
   expect(replay.hasDeterminismMarker).toBe(true)
+})
+
+test('ingestWorkflowHistory applies determinism delta markers', async () => {
+  const converter = createDefaultDataConverter()
+  const info: WorkflowInfo = {
+    namespace: 'default',
+    taskQueue: 'replay-fixtures',
+    workflowId: 'wf-delta-history',
+    runId: 'run-delta-history',
+    workflowType: 'deltaWorkflow',
+  }
+  const determinismState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          kind: 'start-timer',
+          id: 'timer-0',
+          sequence: 0,
+          timerId: 'timer-0',
+          timeoutMs: 500,
+        },
+      },
+    ],
+    randomValues: [0.1],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+  const determinismDelta: DeterminismStateDelta = {
+    commandHistory: [
+      {
+        intent: {
+          kind: 'start-timer',
+          id: 'timer-1',
+          sequence: 1,
+          timerId: 'timer-1',
+          timeoutMs: 1000,
+        },
+      },
+    ],
+    randomValues: [0.2],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+
+  const fullDetails = await Effect.runPromise(
+    encodeDeterminismMarkerDetails(converter, {
+      info,
+      determinismState,
+      lastEventId: '10',
+      recordedAt: new Date('2025-01-01T00:00:00Z'),
+    }),
+  )
+  const deltaDetails = await Effect.runPromise(
+    encodeDeterminismMarkerDetails(converter, {
+      info,
+      determinismState,
+      determinismDelta,
+      markerType: 'delta',
+      lastEventId: '11',
+      recordedAt: new Date('2025-01-01T00:00:01Z'),
+    }),
+  )
+
+  const markerEvent = create(HistoryEventSchema, {
+    eventId: 10n,
+    eventType: EventType.MARKER_RECORDED,
+    attributes: {
+      case: 'markerRecordedEventAttributes',
+      value: create(MarkerRecordedEventAttributesSchema, {
+        markerName: 'temporal-bun-sdk/determinism',
+        details: fullDetails,
+      }),
+    },
+  })
+  const deltaMarkerEvent = create(HistoryEventSchema, {
+    eventId: 11n,
+    eventType: EventType.MARKER_RECORDED,
+    attributes: {
+      case: 'markerRecordedEventAttributes',
+      value: create(MarkerRecordedEventAttributesSchema, {
+        markerName: 'temporal-bun-sdk/determinism',
+        details: deltaDetails,
+      }),
+    },
+  })
+
+  const replay = await Effect.runPromise(
+    ingestWorkflowHistory({
+      info,
+      history: [markerEvent, deltaMarkerEvent],
+      dataConverter: converter,
+    }),
+  )
+
+  expect(replay.hasDeterminismMarker).toBe(true)
+  expect(replay.determinismState.commandHistory).toHaveLength(2)
+  expect(replay.determinismState.randomValues).toEqual([0.1, 0.2])
 })
 
 test('ingestWorkflowHistory reconstructs command history from legacy events when marker missing', async () => {
