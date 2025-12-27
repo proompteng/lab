@@ -5,7 +5,7 @@ Owner: Jangar + Froussard + Facteur
 Scope: Codex exec runs in Argo, judge consumes completion notifications, decides pass/fail, triggers reruns, and posts success to Discord.
 
 ## Summary
-Codex runs inside Argo workflows triggered by Facteur from GitHub issue events. Codex emits a notification on turn completion. Jangar ingests the notification, waits for GitHub Actions CI results, evaluates whether work is complete, and either:
+Codex runs inside Argo workflows triggered by Facteur from GitHub issue events. Argo posts a run-complete event on exit (success or failure), and Codex may emit a notify event on successful turn completion. Jangar ingests run-complete as the source of truth, uses notify as enrichment, waits for GitHub Actions CI results, evaluates whether work is complete, and either:
 - marks success and posts to Discord, or
 - generates a follow-up prompt and triggers a new Argo run that resumes work from the last commit.
 
@@ -34,7 +34,7 @@ Components:
 - Froussard: stores Argo workflow YAML; executes Codex in exec mode.
 - Codex exec: runs agent; emits notify on completion.
 - Notify wrapper: enriches notify payload and POSTs to Jangar.
-- Jangar: persists run state, waits for CI, judges completion, and orchestrates reruns.
+- Jangar: persists run state, waits for CI, judges completion, and orchestrates reruns (triggered by run-complete).
 - MinIO: stores artifacts for each run.
 - GitHub Actions: CI signal for the branch.
 - Discord: success notification to general channel; escalation only on hard failure.
@@ -58,11 +58,11 @@ flowchart LR
 ## Data Flow
 1) GitHub issue -> Facteur -> Argo workflow
 2) Argo runs Codex exec
-3) Codex notify fires on successful turn completion
-4) Notify wrapper enriches payload and POSTs to Jangar
-5) Argo onExit posts run-complete with status + artifact URLs (even if notify never fired)
-6) Jangar waits for GitHub Actions CI result
-7) Jangar gates + LLM judge
+3) Argo onExit posts run-complete with status + artifact URLs (even if notify never fired)
+4) Codex notify fires on successful turn completion (optional enrichment)
+5) Notify wrapper enriches payload and POSTs to Jangar
+6) Jangar waits for GitHub Actions CI result for the attempt commit SHA
+7) Jangar gates + LLM judge (triggered by run-complete)
 8) If pass: create/update PR, mark complete, Discord success
 9) If fail: generate next prompt, request Facteur to trigger new Argo run on same branch
 
@@ -126,13 +126,14 @@ MinIO path convention:
 - Codex notify only fires on successful turn completion.
 - Argo onExit must POST a run-complete payload to Jangar with status (success | failed | aborted)
   and artifact URLs so Jangar can track failed attempts and trigger reruns/escalation.
-- Jangar must treat run-complete as the source of truth for attempt existence, and notify (if present)
-  as enrichment.
+- Jangar must treat run-complete as the source of truth for attempt existence and judge triggering.
+- Notify (if present) is enrichment only (assistant message + input context).
 
 ## Jangar Responsibilities
-- Ingest notifications and store runs + artifacts.
+- Ingest run-complete events as the primary record for each attempt.
+- Ingest notify events as enrichment only.
 - Correlate runs by issue_id, workflow_id, turn_id, attempt.
-- Wait for GitHub Actions CI status for the branch.
+- Wait for GitHub Actions CI status for the attempt commit SHA.
 - Run deterministic gates:
   - CI must be green.
   - No merge conflicts on resume.
@@ -166,11 +167,11 @@ Fail:
 - Generate prompt improvements automatically.
 - Create PRs to update prompt templates.
 - Human reviews/merges PRs.
- - For needs_iteration and needs_human outcomes, always produce a PR with system prompt and
-   system improvement suggestions.
+- For needs_iteration and needs_human outcomes, always produce a PR with system prompt and
+  system improvement suggestions.
 
 ## State Machine
-issue status: queued -> running -> notified -> judging -> completed | needs_iteration | needs_human
+issue status: queued -> running -> run_complete -> judging -> completed | needs_iteration | needs_human
 
 Constraints:
 - Only one active run per issue.
@@ -181,8 +182,8 @@ State diagram:
 stateDiagram-v2
   [*] --> queued
   queued --> running
-  running --> notified
-  notified --> judging
+  running --> run_complete
+  run_complete --> judging
   judging --> completed
   judging --> needs_iteration
   judging --> needs_human

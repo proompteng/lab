@@ -1,6 +1,7 @@
 # Implementation Details: Codex Judge + Resumable Argo
 
 This document splits the work into parallel tracks and provides concrete interfaces, schemas, and workflow steps.
+The judge pipeline is triggered by the Argo run-complete event; notify is enrichment only.
 
 ## Workstreams (Parallel)
 
@@ -122,6 +123,8 @@ Codex notify only provides minimal payload. Wrapper enriches with workflow metad
 - POST /codex/notify
 - POST /codex/run-complete
 
+Run-complete is the primary trigger for judging; notify only enriches the run context.
+
 ### Payload schema (draft)
 {
   "type": "agent-turn-complete",
@@ -185,15 +188,16 @@ Tables (or collections):
 - Validate payload schema and reject malformed input.
 - Upsert run record; store artifacts metadata.
 - Create run record on run-complete even if notify never arrived.
-- If notify arrives first, attach it to the existing run created by run-complete.
-- Create state transitions: notified -> waiting_for_ci -> judging.
+- If notify arrives first, attach it to the existing run once run-complete arrives.
+- Create state transitions: run_complete -> waiting_for_ci -> judging.
 - Persist raw notify payload for audit.
 - Expose internal API for judge pipeline to fetch run context.
 
 ### Acceptance criteria
 - Duplicate notifications do not create duplicate runs.
 - Artifacts and run metadata are queryable by issue_id.
- - Failed runs without notify are still recorded and retried.
+- Failed runs without notify are still recorded and retried.
+ - Judge starts only after run-complete exists (notify does not trigger judging).
 
 ## D) GitHub Actions Status Integration
 
