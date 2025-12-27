@@ -110,7 +110,7 @@ import {
   type DeterminismMismatch,
   type DeterminismStateDelta,
   diffDeterminismState,
-  encodeDeterminismMarkerDetails,
+  encodeDeterminismMarkerDetailsWithSize,
   ingestWorkflowHistory,
   type ReplayResult,
   resolveHistoryLastEventId,
@@ -390,6 +390,7 @@ export class WorkerRuntime {
     const determinismMarkerIntervalTasks = config.determinismMarkerIntervalTasks
     const determinismMarkerFullSnapshotIntervalTasks = config.determinismMarkerFullSnapshotIntervalTasks
     const determinismMarkerSkipUnchanged = config.determinismMarkerSkipUnchanged
+    const determinismMarkerMaxDetailBytes = config.determinismMarkerMaxDetailBytes
 
     const deploymentName =
       options.deployment?.name ?? config.workerDeploymentName ?? WorkerRuntime.#defaultDeploymentName(taskQueue)
@@ -472,6 +473,7 @@ export class WorkerRuntime {
         determinismMarkerIntervalTasks,
         determinismMarkerFullSnapshotIntervalTasks,
         determinismMarkerSkipUnchanged,
+        determinismMarkerMaxDetailBytes,
         deploymentName,
         buildId,
         logLevel: config.logLevel,
@@ -510,6 +512,7 @@ export class WorkerRuntime {
       determinismMarkerIntervalTasks,
       determinismMarkerFullSnapshotIntervalTasks,
       determinismMarkerSkipUnchanged,
+      determinismMarkerMaxDetailBytes,
       workflowPollerCount,
       interceptors: workerInterceptors,
     })
@@ -541,6 +544,7 @@ export class WorkerRuntime {
   readonly #determinismMarkerIntervalTasks: number
   readonly #determinismMarkerFullSnapshotIntervalTasks: number
   readonly #determinismMarkerSkipUnchanged: boolean
+  readonly #determinismMarkerMaxDetailBytes: number
   readonly #stickyAttributes: StickyExecutionAttributes
   readonly #deploymentOptions: WorkerDeploymentOptions
   readonly #rpcDeploymentOptions: WorkerDeploymentOptions | undefined
@@ -581,6 +585,7 @@ export class WorkerRuntime {
     determinismMarkerIntervalTasks: number
     determinismMarkerFullSnapshotIntervalTasks: number
     determinismMarkerSkipUnchanged: boolean
+    determinismMarkerMaxDetailBytes: number
     workflowPollerCount: number
   }) {
     this.#config = params.config
@@ -608,6 +613,7 @@ export class WorkerRuntime {
     this.#determinismMarkerIntervalTasks = Math.max(1, params.determinismMarkerIntervalTasks)
     this.#determinismMarkerFullSnapshotIntervalTasks = Math.max(1, params.determinismMarkerFullSnapshotIntervalTasks)
     this.#determinismMarkerSkipUnchanged = params.determinismMarkerSkipUnchanged
+    this.#determinismMarkerMaxDetailBytes = Math.max(0, params.determinismMarkerMaxDetailBytes)
     this.#deploymentOptions = params.deploymentOptions
     this.#rpcDeploymentOptions = params.rpcDeploymentOptions
     this.#versioningBehavior = params.versioningBehavior
@@ -1314,31 +1320,97 @@ export class WorkerRuntime {
           this.#resolveWorkflowHistoryLastEventId(response) ??
           stickyEntry?.lastEventId ??
           null
-        const markerHashCandidate = this.#hashDeterminismMarker({
-          markerType,
-          lastEventId: markerLastEventId,
-          determinismState: markerType === 'full' ? output.determinismState : undefined,
-          determinismDelta: markerType === 'delta' ? determinismDelta : undefined,
-        })
-        if (this.#determinismMarkerSkipUnchanged && markerHashCandidate === stickyEntry?.lastDeterminismMarkerHash) {
-          markerType = null
-        } else {
-          markerHash = markerHashCandidate
-          lastMarkerTask = workflowTaskCount
-          if (markerType === 'full') {
-            lastFullSnapshotTask = workflowTaskCount
-          }
-          const markerDetails = await Effect.runPromise(
-            encodeDeterminismMarkerDetails(this.#dataConverter, {
+        let resolvedMarkerType: 'full' | 'delta' | null = markerType
+        let markerDetails: Record<string, Payloads> | null = null
+        let markerSizeBytes = 0
+        const limitBytes = this.#determinismMarkerMaxDetailBytes
+
+        const buildMarkerDetails = async (targetType: 'full' | 'delta') =>
+          Effect.runPromise(
+            encodeDeterminismMarkerDetailsWithSize(this.#dataConverter, {
               info: workflowInfo,
               determinismState: output.determinismState,
-              determinismDelta,
-              markerType,
+              determinismDelta: targetType === 'delta' ? determinismDelta : undefined,
+              markerType: targetType,
               lastEventId: markerLastEventId,
             }),
           )
-          const markerCommand = this.#buildDeterminismMarkerCommand(markerDetails)
-          commandsForResponse = this.#injectDeterminismMarker(commandsForResponse, markerCommand)
+
+        if (resolvedMarkerType === 'full') {
+          const fullResult = await buildMarkerDetails('full')
+          if (fullResult.sizeBytes > limitBytes && determinismDelta) {
+            this.#log('debug', 'determinism full marker payload exceeds size limit; falling back to delta', {
+              ...baseLogFields,
+              sizeBytes: fullResult.sizeBytes,
+              limitBytes,
+            })
+            const deltaResult = await buildMarkerDetails('delta')
+            if (deltaResult.sizeBytes <= limitBytes) {
+              resolvedMarkerType = 'delta'
+              markerDetails = deltaResult.details
+              markerSizeBytes = deltaResult.sizeBytes
+            } else {
+              this.#log('warn', 'determinism marker payload exceeds size limit', {
+                ...baseLogFields,
+                markerType: 'delta',
+                sizeBytes: deltaResult.sizeBytes,
+                limitBytes,
+              })
+              resolvedMarkerType = null
+            }
+          } else if (fullResult.sizeBytes <= limitBytes) {
+            markerDetails = fullResult.details
+            markerSizeBytes = fullResult.sizeBytes
+          } else {
+            this.#log('warn', 'determinism marker payload exceeds size limit', {
+              ...baseLogFields,
+              markerType: 'full',
+              sizeBytes: fullResult.sizeBytes,
+              limitBytes,
+            })
+            resolvedMarkerType = null
+          }
+        } else if (resolvedMarkerType === 'delta') {
+          const deltaResult = await buildMarkerDetails('delta')
+          if (deltaResult.sizeBytes <= limitBytes) {
+            markerDetails = deltaResult.details
+            markerSizeBytes = deltaResult.sizeBytes
+          } else {
+            this.#log('warn', 'determinism marker payload exceeds size limit', {
+              ...baseLogFields,
+              markerType: 'delta',
+              sizeBytes: deltaResult.sizeBytes,
+              limitBytes,
+            })
+            resolvedMarkerType = null
+          }
+        }
+
+        if (resolvedMarkerType) {
+          const markerHashCandidate = this.#hashDeterminismMarker({
+            markerType: resolvedMarkerType,
+            lastEventId: markerLastEventId,
+            determinismState: resolvedMarkerType === 'full' ? output.determinismState : undefined,
+            determinismDelta: resolvedMarkerType === 'delta' ? determinismDelta : undefined,
+          })
+          if (this.#determinismMarkerSkipUnchanged && markerHashCandidate === stickyEntry?.lastDeterminismMarkerHash) {
+            resolvedMarkerType = null
+          } else {
+            markerHash = markerHashCandidate
+            lastMarkerTask = workflowTaskCount
+            if (resolvedMarkerType === 'full') {
+              lastFullSnapshotTask = workflowTaskCount
+            }
+            if (markerDetails) {
+              this.#log('debug', 'determinism marker recorded', {
+                ...baseLogFields,
+                markerType: resolvedMarkerType,
+                sizeBytes: markerSizeBytes,
+              })
+              const markerCommand = this.#buildDeterminismMarkerCommand(markerDetails)
+              commandsForResponse = this.#injectDeterminismMarker(commandsForResponse, markerCommand)
+            }
+          }
         }
       }
 
