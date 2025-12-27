@@ -250,21 +250,21 @@ RUN set -eux; \
   kn version
 
 # Install Argo Workflows CLI (argo)
-RUN set -eux; \
-  ARCH="${TARGETARCH:-$(uname -m)}"; \
-  case "$ARCH" in \
-  amd64|x86_64) ARGO_ARCH=amd64 ;; \
-  arm64|aarch64) ARGO_ARCH=arm64 ;; \
-  *) echo "Unsupported arch for argo: $ARCH" >&2; exit 1 ;; \
-  esac; \
-  ARGO_ARCHIVE="/tmp/argo-linux-${ARGO_ARCH}.gz"; \
-  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
-    "https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-linux-${ARGO_ARCH}.gz" \
-    -o "${ARGO_ARCHIVE}"; \
-  gunzip -c "${ARGO_ARCHIVE}" > /tmp/argo; \
-  install -o root -g root -m 0755 /tmp/argo /usr/local/bin/argo; \
-  rm -f "${ARGO_ARCHIVE}" /tmp/argo; \
-  argo version
+  RUN set -eux; \
+    ARCH="${TARGETARCH:-$(uname -m)}"; \
+    case "$ARCH" in \
+    amd64|x86_64) ARGO_ARCH=amd64 ;; \
+    arm64|aarch64) ARGO_ARCH=arm64 ;; \
+    *) echo "Unsupported arch for argo: $ARCH" >&2; exit 1 ;; \
+    esac; \
+    ARGO_ARCHIVE="/tmp/argo-linux-${ARGO_ARCH}.gz"; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+      "https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-linux-${ARGO_ARCH}.gz" \
+      -o "${ARGO_ARCHIVE}"; \
+    gunzip -c "${ARGO_ARCHIVE}" > /tmp/argo; \
+    install -o root -g root -m 0755 /tmp/argo /usr/local/bin/argo; \
+    rm -f "${ARGO_ARCHIVE}" /tmp/argo; \
+    argo version --client
 
 # Install Argo CD CLI (argocd)
 RUN set -eux; \
