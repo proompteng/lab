@@ -6,6 +6,7 @@ metadata:
   namespace: discourse
 data:
   RAILS_ENV: production
+  RAILS_LOG_TO_STDOUT: "true"
   DISCOURSE_DEVELOPER_EMAILS: greg@proompteng.ai
   DISCOURSE_HOSTNAME: forum.proompteng.ai
   DISCOURSE_DB_HOST: discourse-db-rw
