@@ -76,8 +76,8 @@ const cleanupEnrichmentTimeouts = {
 }
 
 const PARENT_CLOSE_POLICY_ABANDON = 2
-const CHILD_WORKFLOW_BATCH_SIZE = 50
-const CHILD_WORKFLOW_PROGRESS_INTERVAL = 25
+const CHILD_WORKFLOW_BATCH_SIZE = 10
+const CHILD_WORKFLOW_PROGRESS_INTERVAL = 10
 const CHILD_WORKFLOW_COMPLETED_SIGNAL = '__childWorkflowCompleted'
 
 const logWorkflow = (event: string, fields: Record<string, unknown> = {}) => {
