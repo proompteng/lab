@@ -102,12 +102,12 @@ flowchart LR
 - Consumers should set `isolation.level=read_committed` when sinks use transactions; fallback to at-least-once profile supported via config.
 
 ## Multi-symbol Scaling Plan
-- Short term: partitions=1 per symbol; add symbols by creating per-symbol topic set.
-- Medium term: shard symbols across partitions and use keyed operators; update Flink parallelism accordingly.
+- Short term: shared TA topics keyed by `symbol` with partitions=1; add symbols via forwarder/consumer config (no new topics).
+- Medium term: increase partitions, shard symbols across partitions, and update Flink parallelism accordingly.
 - Keep watermark/idle-timeout tuned to avoid stuck watermarks on sparse symbols.
 
 ## Data Quality & Monitoring
-- Track per-symbol last `event_ts`, message gaps, and count per window; alert on staleness.
+- Track last `event_ts` by symbol, message gaps, and count per window; alert on staleness.
 - Validate `seq` monotonicity per symbol; emit to status topic on violation.
 - Add canary consumer to compare TA output lag vs raw input lag.
 
