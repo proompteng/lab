@@ -567,6 +567,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
                     ref: eventInput.ref,
                     workflowId: eventInput.workflowIdentifier ?? undefined,
                     eventDeliveryId: eventInput.deliveryId,
+                    validationMode: 'fast',
                   }),
                   Effect.catchAll((error) => {
                     const message = error instanceof Error ? error.message : String(error)
