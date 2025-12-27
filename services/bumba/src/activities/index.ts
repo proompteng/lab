@@ -1629,7 +1629,7 @@ export const activities = {
       let content: string | null = null
       let stats = fileStats
       let source: 'local' | 'github' | 'git' = 'local'
-      let sourceMeta: Record<string, unknown> = { repoRoot: input.repoRoot }
+      let sourceMeta: Record<string, unknown> = { repoRoot: input.repoRoot, source: 'local' }
 
       const setGitSource = (ref: string, commit?: string | null) => {
         source = 'git'
@@ -1674,7 +1674,7 @@ export const activities = {
         content = await readFile(fullPath, 'utf8')
         source = 'local'
         stats = fileStats
-        sourceMeta = { repoRoot: input.repoRoot }
+        sourceMeta = { repoRoot: input.repoRoot, source: 'local' }
       }
 
       if (!content) {
