@@ -91,6 +91,50 @@ const createWritableHandle = (stream: unknown): WritableHandle | undefined => {
   return undefined
 }
 
+const MAX_DISCORD_COMMAND_LINES = 10
+
+const normalizeLineBreaks = (value: string) => value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+
+const trimTrailingEmptyLines = (lines: string[]) => {
+  let trimmed = lines.slice()
+  while (trimmed.length > 0 && trimmed[trimmed.length - 1] === '') {
+    trimmed = trimmed.slice(0, -1)
+  }
+  return trimmed
+}
+
+const truncateCommandOutput = (output: string) => {
+  const normalized = normalizeLineBreaks(output)
+  const lines = trimTrailingEmptyLines(normalized.split('\n'))
+  if (lines.length <= MAX_DISCORD_COMMAND_LINES) {
+    return { lines, truncated: false, truncatedCount: 0 }
+  }
+
+  const visibleLineCount = Math.max(0, MAX_DISCORD_COMMAND_LINES - 1)
+  const truncatedCount = lines.length - visibleLineCount
+  const visibleLines = lines.slice(0, visibleLineCount)
+  visibleLines.push(`... (truncated, ${truncatedCount} more line${truncatedCount === 1 ? '' : 's'})`)
+  return { lines: visibleLines, truncated: true, truncatedCount }
+}
+
+const formatDiscordCommandBlock = (command?: string, output?: string, exitCode?: number) => {
+  const lines: string[] = []
+  if (command) {
+    lines.push(`$ ${command}`)
+  }
+  if (output) {
+    const { lines: outputLines } = truncateCommandOutput(output)
+    lines.push(...outputLines)
+  }
+  if (typeof exitCode === 'number' && exitCode !== 0) {
+    lines.push(`exit status: ${exitCode}`)
+  }
+  if (lines.length === 0) {
+    return undefined
+  }
+  return `\n\`\`\`ts\n${lines.join('\n')}\n\`\`\`\n`
+}
+
 export const runCodexSession = async ({
   stage,
   prompt,
@@ -192,6 +236,14 @@ export const runCodexSession = async ({
     await writeDiscord(normalized, errorLabel)
   }
 
+  const emitStdoutLine = (payload: string) => {
+    if (!payload) {
+      return
+    }
+    const normalized = payload.endsWith('\n') ? payload : `${payload}\n`
+    writeStdout(normalized)
+  }
+
   const readString = (value: unknown): string | undefined => {
     if (typeof value !== 'string') {
       return undefined
@@ -251,7 +303,15 @@ export const runCodexSession = async ({
     }
 
     const itemType = typeof item.type === 'string' ? item.type : ''
-    if (!itemType || itemType === 'agent_message' || itemType === 'reasoning') {
+    if (!itemType || itemType === 'agent_message') {
+      return
+    }
+
+    if (itemType === 'reasoning') {
+      const text = readString(item.text)
+      if (text) {
+        await emitStreamLine(`Reasoning → ${text}`, 'Failed to write reasoning summary to Discord channel:')
+      }
       return
     }
 
@@ -259,7 +319,7 @@ export const runCodexSession = async ({
       if (type === 'item.started') {
         const command = readString(item.command)
         if (command) {
-          await emitStreamLine(`$ ${command}`, 'Failed to write command start to Discord channel:')
+          emitStdoutLine(`$ ${command}`)
         }
         return
       }
@@ -267,14 +327,17 @@ export const runCodexSession = async ({
       const aggregated = readString(item.aggregated_output)
       const output = aggregated ?? readString(item.output)
       if (output) {
-        await emitStreamLine(output, 'Failed to write command output to Discord channel:')
+        emitStdoutLine(output)
       }
-      const exitCode = item.exit_code
-      if (typeof exitCode === 'number' && exitCode !== 0) {
-        await emitStreamLine(
-          `Command exited with status ${exitCode}`,
-          'Failed to write command exit status to Discord channel:',
-        )
+      const exitCode = typeof item.exit_code === 'number' ? item.exit_code : undefined
+      if (exitCode !== undefined && exitCode !== 0) {
+        emitStdoutLine(`Command exited with status ${exitCode}`)
+      }
+
+      const command = readString(item.command)
+      const discordBlock = formatDiscordCommandBlock(command, output, exitCode)
+      if (discordBlock) {
+        await writeDiscord(discordBlock, 'Failed to write command output to Discord channel:')
       }
       return
     }

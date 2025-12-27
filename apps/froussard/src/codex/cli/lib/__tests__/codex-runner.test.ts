@@ -213,7 +213,7 @@ describe('codex-runner', () => {
       })
       options.onEvent?.({
         type: 'item.completed',
-        item: { type: 'command_execution', aggregated_output: 'lab', exit_code: 0 },
+        item: { type: 'command_execution', command: '/bin/bash -lc ls', aggregated_output: 'lab', exit_code: 0 },
       })
       options.onEvent?.({
         type: 'turn.completed',
@@ -241,9 +241,89 @@ describe('codex-runner', () => {
     expect(stdoutText).toContain('Usage → input: 10 (cached 2) | output: 5 | reasoning: 3')
 
     const channelText = channelSink.join('')
+    expect(channelText).toContain('```ts')
     expect(channelText).toContain('$ /bin/bash -lc ls')
     expect(channelText).toContain('lab')
+    expect(channelText).toContain('```')
     expect(channelText).toContain('Usage → input: 10 (cached 2) | output: 5 | reasoning: 3')
+  })
+
+  it('truncates long command output in Discord code blocks', async () => {
+    const channelSink: string[] = []
+    const discordProcess = createDiscordProcess(channelSink)
+    spawnMock.mockImplementationOnce(() => discordProcess)
+
+    const outputLines = Array.from({ length: 12 }, (_, index) => `line${index + 1}`)
+    const outputText = `${outputLines.join('\n')}\n`
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      options.onEvent?.({
+        type: 'item.completed',
+        item: { type: 'command_execution', command: 'echo lines', aggregated_output: outputText, exit_code: 0 },
+      })
+      return { agentMessages: [], sessionId: 'session-3', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'Print lines',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+      discordChannel: {
+        command: ['bun', 'run', 'discord-channel.ts'],
+      },
+    })
+
+    const channelText = channelSink.join('')
+    expect(channelText).toContain('```ts')
+    expect(channelText).toContain('$ echo lines')
+    expect(channelText).toContain('line1')
+    expect(channelText).toContain('line9')
+    expect(channelText).toContain('... (truncated, 3 more lines)')
+    expect(channelText).toContain('```')
+    expect(channelText).not.toContain('line10')
+    expect(channelText).not.toContain('line11')
+    expect(channelText).not.toContain('line12')
+  })
+
+  it('streams reasoning summaries to stdout and Discord', async () => {
+    const channelSink: string[] = []
+    const stdoutSink: string[] = []
+    const discordProcess = createDiscordProcess(channelSink)
+    spawnMock.mockImplementationOnce(() => discordProcess)
+
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdoutSink.push(String(chunk))
+      return true
+    })
+
+    runnerMocks.run.mockImplementation(async (options) => {
+      options.onEvent?.({
+        type: 'item.completed',
+        item: { type: 'reasoning', text: 'Investigating repo layout.' },
+      })
+      return { agentMessages: [], sessionId: 'session-4', exitCode: 0, forcedTermination: false }
+    })
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt: 'Explain',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+      discordChannel: {
+        command: ['bun', 'run', 'discord-channel.ts'],
+      },
+    })
+
+    stdoutSpy.mockRestore()
+
+    const stdoutText = stdoutSink.join('')
+    expect(stdoutText).toContain('Reasoning → Investigating repo layout.')
+
+    const channelText = channelSink.join('')
+    expect(channelText).toContain('Reasoning → Investigating repo layout.')
   })
 
   it('prioritizes delta streaming when provided', async () => {
