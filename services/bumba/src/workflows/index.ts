@@ -315,7 +315,8 @@ export const workflows = [
             )
           : Effect.succeed({ inserted: 0 })
 
-      yield* Effect.all([persistEmbedding, persistFacts], { concurrency: 2 })
+      yield* persistEmbedding
+      yield* persistFacts
 
       if (eventDeliveryId) {
         yield* activities.schedule(
