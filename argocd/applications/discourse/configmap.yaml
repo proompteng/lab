@@ -6,6 +6,7 @@ metadata:
   namespace: discourse
 data:
   RAILS_ENV: production
+  RAILS_LOG_TO_STDOUT: "true"
   DISCOURSE_DEVELOPER_EMAILS: greg@proompteng.ai
   DISCOURSE_HOSTNAME: forum.proompteng.ai
   DISCOURSE_DB_HOST: discourse-db-rw
@@ -20,4 +21,6 @@ data:
   DISCOURSE_SMTP_DOMAIN: proompteng.ai
   DISCOURSE_SMTP_ENABLE_START_TLS: "true"
   UNICORN_BIND_ALL: "true"
+  UNICORN_STDOUT_PATH: stdout
+  UNICORN_STDERR_PATH: stderr
   DISCOURSE_SERVE_STATIC_ASSETS: "true"
