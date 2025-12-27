@@ -48,6 +48,7 @@
 - Use Conventional Commits: `<type>(<scope>): <summary>` (scope optional).
 - Common types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `build`, `ci`, `perf`, `revert`.
 - PR titles must follow the same semantic convention.
+- Create PRs with `gh pr create` using `--body-file .github/PULL_REQUEST_TEMPLATE.md`.
 
 ## UI/UX
 - Tailwind CSS only; class order layout → spacing → sizing → typography → colors; use `cn()` for conditionals.
