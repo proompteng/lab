@@ -1445,21 +1445,95 @@ export class WorkerRuntime {
 
   async #collectWorkflowHistory(
     execution: { workflowId: string; runId: string },
-    _response: PollWorkflowTaskQueueResponse,
+    response: PollWorkflowTaskQueueResponse,
   ): Promise<HistoryEvent[]> {
     const events: HistoryEvent[] = []
-    let token: Uint8Array | undefined
-    while (true) {
+    const initialEvents = response.history?.events ?? []
+    if (initialEvents.length > 0) {
+      events.push(...initialEvents)
+    }
+
+    let token = response.nextPageToken && response.nextPageToken.length > 0 ? response.nextPageToken : undefined
+    while (token && token.length > 0) {
       const page = await this.#fetchWorkflowHistoryPage(execution, token)
       if (page.events.length > 0) {
         events.push(...page.events)
       }
-      if (!page.nextPageToken || page.nextPageToken.length === 0) {
+      token = page.nextPageToken && page.nextPageToken.length > 0 ? page.nextPageToken : undefined
+    }
+
+    const sorted = this.#sortHistoryEvents(events)
+    const bounded = this.#limitHistoryToStartedEvent(sorted, response.startedEventId)
+    return this.#dedupeHistoryEvents(bounded)
+  }
+
+  #sortHistoryEvents(events: HistoryEvent[]): HistoryEvent[] {
+    return events.slice().sort((left, right) => {
+      const leftId = this.#resolveEventIdForSort(left.eventId)
+      const rightId = this.#resolveEventIdForSort(right.eventId)
+      if (leftId === rightId) {
+        return 0
+      }
+      return leftId < rightId ? -1 : 1
+    })
+  }
+
+  #dedupeHistoryEvents(events: HistoryEvent[]): HistoryEvent[] {
+    if (events.length <= 1) {
+      return events
+    }
+    const deduped: HistoryEvent[] = []
+    let lastId: bigint | null = null
+    for (const event of events) {
+      const currentId = this.#resolveEventIdForSort(event.eventId)
+      if (currentId !== 0n) {
+        if (lastId !== null && currentId === lastId) {
+          continue
+        }
+        lastId = currentId
+      }
+      deduped.push(event)
+    }
+    return deduped
+  }
+
+  #limitHistoryToStartedEvent(
+    events: HistoryEvent[],
+    startedEventId: bigint | number | string | undefined | null,
+  ): HistoryEvent[] {
+    const limit = this.#resolveEventIdForSort(startedEventId)
+    if (limit <= 0n) {
+      return events
+    }
+    const bounded: HistoryEvent[] = []
+    for (const event of events) {
+      const currentId = this.#resolveEventIdForSort(event.eventId)
+      if (currentId !== 0n && currentId > limit) {
         break
       }
-      token = page.nextPageToken
+      bounded.push(event)
     }
-    return events
+    return bounded
+  }
+
+  #resolveEventIdForSort(value: bigint | number | string | undefined | null): bigint {
+    if (value === undefined || value === null) {
+      return 0n
+    }
+    if (typeof value === 'bigint') {
+      return value
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return BigInt(value)
+    }
+    if (typeof value === 'string' && value.length > 0) {
+      try {
+        return BigInt(value)
+      } catch {
+        return 0n
+      }
+    }
+    return 0n
   }
 
   async #extractActivityResolutions(events: HistoryEvent[]): Promise<{

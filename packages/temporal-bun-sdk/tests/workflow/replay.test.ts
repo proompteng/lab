@@ -15,6 +15,7 @@ import {
 import type { DeterminismMismatchCommand, DeterminismStateDelta } from '../../src/workflow/replay'
 import {
   ActivityTaskScheduledEventAttributesSchema,
+  ActivityTaskCancelRequestedEventAttributesSchema,
   HistoryEventSchema,
   MarkerRecordedEventAttributesSchema,
   SignalExternalWorkflowExecutionInitiatedEventAttributesSchema,
@@ -315,7 +316,7 @@ test('ingestWorkflowHistory applies determinism delta markers', async () => {
   expect(replay.determinismState.randomValues).toEqual([0.1, 0.2])
 })
 
-test('ingestWorkflowHistory ignores determinism markers that are not last in history', async () => {
+test('ingestWorkflowHistory applies determinism markers and replays trailing history', async () => {
   const converter = createDefaultDataConverter()
   const info: WorkflowInfo = {
     namespace: 'default',
@@ -389,8 +390,108 @@ test('ingestWorkflowHistory ignores determinism markers that are not last in his
     }),
   )
 
-  expect(replay.determinismState.commandHistory).toHaveLength(1)
-  expect(replay.determinismState.commandHistory[0]?.intent.kind).toBe('start-timer')
+  expect(replay.determinismState.commandHistory).toHaveLength(2)
+  expect(replay.determinismState.commandHistory[0]?.intent.kind).toBe('schedule-activity')
+  expect(replay.determinismState.commandHistory[1]?.intent.kind).toBe('start-timer')
+})
+
+test('ingestWorkflowHistory replays cancel intents after marker using pre-marker schedules', async () => {
+  const converter = createDefaultDataConverter()
+  const info: WorkflowInfo = {
+    namespace: 'default',
+    taskQueue: 'replay-fixtures',
+    workflowId: 'wf-marker-cancel',
+    runId: 'run-marker-cancel',
+    workflowType: 'markerCancelWorkflow',
+  }
+  const determinismState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          kind: 'schedule-activity',
+          id: 'schedule-activity-0',
+          sequence: 0,
+          activityType: 'sendEmail',
+          activityId: 'send-0',
+          taskQueue: 'replay-fixtures',
+          input: ['hello@acme.test'],
+          timeouts: {},
+          retry: undefined,
+          requestEagerExecution: undefined,
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+
+  const details = await Effect.runPromise(
+    encodeDeterminismMarkerDetails(converter, {
+      info,
+      determinismState,
+      lastEventId: '6',
+      recordedAt: new Date('2025-01-01T00:00:00Z'),
+    }),
+  )
+
+  const scheduledPayloads = (await encodeValuesToPayloads(converter, ['hello@acme.test'])) ?? []
+  const scheduleEvent = create(HistoryEventSchema, {
+    eventId: 5n,
+    eventType: EventType.ACTIVITY_TASK_SCHEDULED,
+    attributes: {
+      case: 'activityTaskScheduledEventAttributes',
+      value: create(ActivityTaskScheduledEventAttributesSchema, {
+        activityId: 'send-0',
+        activityType: { name: 'sendEmail' },
+        taskQueue: create(TaskQueueSchema, { name: 'replay-fixtures' }),
+        input: create(PayloadsSchema, { payloads: scheduledPayloads }),
+        workflowTaskCompletedEventId: 4n,
+      }),
+    },
+  })
+
+  const markerEvent = create(HistoryEventSchema, {
+    eventId: 6n,
+    eventType: EventType.MARKER_RECORDED,
+    attributes: {
+      case: 'markerRecordedEventAttributes',
+      value: create(MarkerRecordedEventAttributesSchema, {
+        markerName: 'temporal-bun-sdk/determinism',
+        details,
+        workflowTaskCompletedEventId: 5n,
+      }),
+    },
+  })
+
+  const cancelEvent = create(HistoryEventSchema, {
+    eventId: 7n,
+    eventType: EventType.ACTIVITY_TASK_CANCEL_REQUESTED,
+    attributes: {
+      case: 'activityTaskCancelRequestedEventAttributes',
+      value: create(ActivityTaskCancelRequestedEventAttributesSchema, {
+        scheduledEventId: 5n,
+        workflowTaskCompletedEventId: 6n,
+      }),
+    },
+  })
+
+  const replay = await Effect.runPromise(
+    ingestWorkflowHistory({
+      info,
+      history: [scheduleEvent, markerEvent, cancelEvent],
+      dataConverter: converter,
+    }),
+  )
+
+  expect(replay.determinismState.commandHistory).toHaveLength(2)
+  expect(replay.determinismState.commandHistory[1]?.intent.kind).toBe('request-cancel-activity')
+  expect(
+    replay.determinismState.commandHistory[1]?.intent.kind === 'request-cancel-activity'
+      ? replay.determinismState.commandHistory[1]?.intent.activityId
+      : null,
+  ).toBe('send-0')
 })
 
 test('ingestWorkflowHistory reconstructs command history from legacy events when marker missing', async () => {
