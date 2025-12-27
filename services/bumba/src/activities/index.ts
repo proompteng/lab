@@ -1344,7 +1344,7 @@ const loadCompletionConfig = () => {
 
   const defaults = resolveCompletionDefaults(apiBaseUrl)
   const model = process.env.OPENAI_COMPLETION_MODEL ?? process.env.OPENAI_MODEL ?? defaults.model
-  const timeoutMs = Number.parseInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS ?? '30000', 10)
+  const timeoutMs = Number.parseInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS ?? '60000', 10)
   const maxInputChars = clampNumber(
     Number.parseInt(process.env.OPENAI_COMPLETION_MAX_INPUT_CHARS ?? '', 10),
     MAX_COMPLETION_INPUT_CHARS,
@@ -1830,9 +1830,6 @@ export const activities = {
       response_format: { type: 'json_object' },
     }
 
-    const controller = new AbortController()
-    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
-
     const logCompletion = (responseFormat: 'json_object' | 'none', result: EnrichOutput) => {
       logActivity('info', 'completed', 'enrichWithModel', {
         filename: input.filename,
@@ -1845,7 +1842,7 @@ export const activities = {
       })
     }
 
-    try {
+    const requestCompletion = async (signal: AbortSignal) => {
       const headers: Record<string, string> = {
         'content-type': 'application/json',
       }
@@ -1857,7 +1854,7 @@ export const activities = {
         method: 'POST',
         headers,
         body: JSON.stringify(payloadWithFormat),
-        signal: controller.signal,
+        signal,
       })
 
       if (!response.ok) {
@@ -1874,7 +1871,7 @@ export const activities = {
             method: 'POST',
             headers,
             body: JSON.stringify(payload),
-            signal: controller.signal,
+            signal,
           })
           if (!fallbackResponse.ok) {
             const fallbackBody = await fallbackResponse.text()
@@ -1911,6 +1908,14 @@ export const activities = {
         },
       }
       logCompletion('json_object', result)
+      return result
+    }
+
+    const controller = new AbortController()
+    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+      const result = await requestCompletion(controller.signal)
       return result
     } catch (error) {
       const timeoutError = error instanceof Error && error.name === 'AbortError'
