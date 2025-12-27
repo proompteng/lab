@@ -268,8 +268,24 @@ sequenceDiagram
   WF->>ACT: Create embeddings
   ACT->>DB: Upsert repository, file_key, file_version, enrichment, embedding
   ACT->>DB: Record webhook event + ingestion status (idempotent)
+  ACT->>DB: Record event_files + ingestion_targets for file traceability
   API-->>UI: 202 Accepted + workflow id
 ```
+
+### Ingestion Tracking Details
+
+- Jangar records webhook deliveries in `atlas.github_events` and starts workflows with the actual Temporal workflow ID.
+- Bumba workflows create or update `atlas.ingestions` using that workflow ID and the GitHub delivery id.
+- `atlas.ingestions.status` is updated to `running` → `completed` (or `failed`/`skipped`) by the workflow itself.
+- `atlas.event_files` is populated when a file is indexed, keyed to the webhook delivery id + file key.
+- `atlas.ingestion_targets` is populated for each indexed file version with `kind = model_enrichment`.
+
+These links allow full traceability from webhook event → workflow run → file keys → file versions.
+
+### Data Quality Guardrails
+
+- Repository refs are normalized before persistence (e.g., `refs/heads/main` → `main`) to avoid duplicate file_versions.
+- When Tree‑sitter yields no interesting nodes, facts fall back to a plain‑text parser so `tree_sitter_facts` isn’t empty for simple formats (e.g., JSON).
 
 ## API Surface (generic)
 
