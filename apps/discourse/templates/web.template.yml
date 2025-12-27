@@ -164,12 +164,35 @@ run:
   - replace:
       filename: "/var/www/discourse/config/unicorn.conf.rb"
       from: /unicorn_stderr_path = ".*"/
-      to: "unicorn_stderr_path = ENV[\"UNICORN_STDERR_PATH\"] || \"#{discourse_path}/log/unicorn.stderr.log\""
+      to: "unicorn_stderr_path = \"#{discourse_path}/log/unicorn.stderr.log\""
 
   - replace:
       filename: "/var/www/discourse/config/unicorn.conf.rb"
       from: /unicorn_stdout_path = ".*"/
-      to: "unicorn_stdout_path = ENV[\"UNICORN_STDOUT_PATH\"] || \"#{discourse_path}/log/unicorn.stdout.log\""
+      to: "unicorn_stdout_path = \"#{discourse_path}/log/unicorn.stdout.log\""
+
+  - replace:
+      filename: "/var/www/discourse/config/unicorn.conf.rb"
+      from: |
+        stderr_path unicorn_stderr_path
+        stdout_path unicorn_stdout_path
+      to: |
+        stdout_target = ENV["UNICORN_STDOUT_PATH"]
+        stderr_target = ENV["UNICORN_STDERR_PATH"]
+
+        if stdout_target
+          normalized = stdout_target.strip.downcase
+          stdout_path stdout_target unless normalized.empty? || normalized == "stdout"
+        else
+          stdout_path unicorn_stdout_path
+        end
+
+        if stderr_target
+          normalized = stderr_target.strip.downcase
+          stderr_path stderr_target unless normalized.empty? || normalized == "stderr"
+        else
+          stderr_path unicorn_stderr_path
+        end
 
   - exec:
       cmd:

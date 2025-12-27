@@ -23,7 +23,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: discourse
-          image: registry.ide-newton.ts.net/lab/discourse@sha256:8b2ab48b816756b0414558ff8bf4539b4051822ba718b709a05785347adf7af6
+          image: registry.ide-newton.ts.net/lab/discourse@sha256:bd5e09c8b70656d7e140cc54411f102c9e6c735b9f64b406054c5e609cb41d83
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
