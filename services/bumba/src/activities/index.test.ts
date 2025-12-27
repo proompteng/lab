@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Language } from 'web-tree-sitter'
 
 import { activities } from './index'
 
@@ -66,6 +67,24 @@ describe('bumba ast extraction', () => {
     const result = await runExtract('.txt', 'Hello world')
     expect(result.metadata.parser).toBe('text')
     expect(result.metadata.language).toBe('text')
+  })
+
+  it('falls back to plain text when tree-sitter language load fails', async () => {
+    const loader = Language as unknown as { load: typeof Language.load }
+    const originalLoad = loader.load
+    loader.load = async () => {
+      throw new Error('load failed')
+    }
+
+    try {
+      const result = await runExtract('.ts', 'const example = 1')
+      expect(result.metadata.parser).toBe('text')
+      expect(result.metadata.language).toBe('typescript')
+      expect(result.metadata.skipped).toBe(true)
+      expect(result.metadata.reason).toBe('language_load_failed')
+    } finally {
+      loader.load = originalLoad
+    }
   })
 })
 
