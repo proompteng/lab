@@ -44,9 +44,9 @@ spec:
             - name: TEMPORAL_TASK_QUEUE
               value: bumba
             - name: TEMPORAL_WORKFLOW_CONCURRENCY
-              value: "50"
+              value: "20"
             - name: TEMPORAL_ACTIVITY_CONCURRENCY
-              value: "100"
+              value: "20"
             - name: TEMPORAL_OTEL_ENABLED
               value: "true"
             - name: TEMPORAL_METRICS_EXPORTER
