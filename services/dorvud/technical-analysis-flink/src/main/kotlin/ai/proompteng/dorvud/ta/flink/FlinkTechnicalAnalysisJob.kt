@@ -695,7 +695,8 @@ internal class ParseEnvelopeFlatMap<T>(
   }
 }
 
-internal class ParseMicroBarCompatFlatMap : RichFlatMapFunction<String, Envelope<MicroBarPayload>>(),
+internal class ParseMicroBarCompatFlatMap :
+  RichFlatMapFunction<String, Envelope<MicroBarPayload>>(),
   Serializable {
   companion object {
     private const val serialVersionUID: Long = 1L

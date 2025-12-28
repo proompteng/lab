@@ -3,8 +3,8 @@ package ai.proompteng.dorvud.ta
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.stream.AlpacaBarPayload
 import ai.proompteng.dorvud.ta.stream.toMicroBarPayload
-import java.time.Instant
 import kotlinx.serialization.json.Json
+import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

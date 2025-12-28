@@ -1,13 +1,11 @@
 package ai.proompteng.dorvud.ta.stream
 
-import java.time.Instant
-
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
-
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.platform.InstantIsoSerializer
 import ai.proompteng.dorvud.platform.Window
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import java.time.Instant
 
 @Serializable
 data class TradePayload(
