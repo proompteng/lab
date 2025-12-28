@@ -37,7 +37,6 @@ const ignoredFlags: Array<[string, string | undefined]> = [
   ['repository-path', getFlagValue(flags, 'repository-path')],
   ['execution-id', getFlagValue(flags, 'execution-id')],
   ['source', getFlagValue(flags, 'source')],
-  ['metadata', Object.keys(metadata).length ? 'provided' : undefined],
   ['model', getFlagValue(flags, 'model')],
   ['encoder-version', getFlagValue(flags, 'encoder-version')],
 ]
@@ -59,6 +58,7 @@ const response = await fetch(endpoint, {
     content,
     summary,
     tags,
+    metadata: Object.keys(metadata).length ? metadata : undefined,
   }),
 })
 

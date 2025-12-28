@@ -46,6 +46,13 @@ export const normalizeTags = (tags: unknown): string[] => {
     .slice(0, MAX_TAGS)
 }
 
+export const normalizeMetadata = (metadata: unknown): Record<string, unknown> | undefined => {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return undefined
+  }
+  return metadata as Record<string, unknown>
+}
+
 export const parsePersistMemoryInput = (payload: Record<string, unknown>): ValidationResult<PersistMemoryInput> => {
   const content = typeof payload.content === 'string' ? payload.content.trim() : ''
   if (!content) return { ok: false, message: 'Content is required.' }
@@ -60,6 +67,7 @@ export const parsePersistMemoryInput = (payload: Record<string, unknown>): Valid
 
   const namespace = normalizeNamespace(payload.namespace)
   const tags = normalizeTags(payload.tags)
+  const metadata = normalizeMetadata(payload.metadata)
 
   return {
     ok: true,
@@ -68,6 +76,7 @@ export const parsePersistMemoryInput = (payload: Record<string, unknown>): Valid
       content,
       summary,
       tags,
+      metadata,
     },
   }
 }

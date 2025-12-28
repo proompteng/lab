@@ -6,6 +6,7 @@ type MemoryRecord = {
   summary: string | null
   content: string
   tags: string[]
+  metadata?: Record<string, unknown>
   distance?: number
 }
 

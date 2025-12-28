@@ -1298,8 +1298,30 @@ const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRec
   try {
     memoryStore = createPostgresMemoriesStore()
     const namespace = `codex:${run.repository}:${run.issueNumber}`
-    const tags = ['codex', run.repository, `issue-${run.issueNumber}`, run.status]
+    const workflowTag = run.workflowName ? `workflow-${run.workflowName}` : 'workflow-unknown'
+    const stageTag = run.stage ? `stage-${run.stage}` : 'stage-unknown'
+    const tags = [
+      'codex',
+      run.repository,
+      `issue-${run.issueNumber}`,
+      workflowTag,
+      `attempt-${run.attempt}`,
+      run.status,
+      stageTag,
+    ].filter((tag) => tag.length > 0)
     const logExcerpt = extractLogExcerpt(run.notifyPayload)
+    const metadata = {
+      runId: run.id,
+      commitSha: run.commitSha,
+      ciUrl: run.ciUrl,
+      workflowName: run.workflowName,
+      workflowNamespace: run.workflowNamespace,
+      workflowUid: run.workflowUid,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+    }
 
     const snapshots = [
       {
@@ -1323,6 +1345,7 @@ const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRec
         content: snapshot.content || 'n/a',
         summary: snapshot.summary,
         tags,
+        metadata,
       })
     }
   } catch (error) {
@@ -1343,6 +1366,7 @@ export const __private = {
   findCommitShaInValue,
   normalizeBranchRef,
   resolveCiContext,
+  writeMemories,
 }
 
 export const handleRunComplete = async (payload: Record<string, unknown>) => {

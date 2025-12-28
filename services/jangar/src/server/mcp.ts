@@ -76,6 +76,7 @@ const toolsListResult = {
           content: { type: 'string', description: 'Memory content (required)' },
           summary: { type: 'string', description: 'Optional short summary' },
           tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags' },
+          metadata: { type: 'object', description: 'Optional metadata to attach to the memory record' },
         },
         required: ['content'],
         additionalProperties: false,
@@ -313,8 +314,9 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
           const tags = Array.isArray(args.tags)
             ? (args.tags.filter((t) => typeof t === 'string') as string[])
             : undefined
+          const metadata = isRecord(args.metadata) ? (args.metadata as Record<string, unknown>) : undefined
 
-          const recordResult = yield* Effect.either(memories.persist({ namespace, content, summary, tags }))
+          const recordResult = yield* Effect.either(memories.persist({ namespace, content, summary, tags, metadata }))
           if (recordResult._tag === 'Left') {
             if (isNotification) return null
             return toolError(id, recordResult.left.message, { tool: toolName })
