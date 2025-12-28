@@ -14,6 +14,7 @@ import { Route as McpRouteImport } from './routes/mcp'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AtlasIndexRouteImport } from './routes/atlas/index'
+import { Route as TorghutVisualsRouteImport } from './routes/torghut/visuals'
 import { Route as TorghutSymbolsRouteImport } from './routes/torghut/symbols'
 import { Route as AtlasSearchRouteImport } from './routes/atlas/search'
 import { Route as AtlasIndexedRouteImport } from './routes/atlas/indexed'
@@ -30,6 +31,9 @@ import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symb
 import { Route as ApiAtlasPathsRouteImport } from './routes/api/atlas/paths'
 import { Route as ApiAtlasIndexedRouteImport } from './routes/api/atlas/indexed'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
+import { Route as ApiTorghutTaSignalsRouteImport } from './routes/api/torghut/ta/signals'
+import { Route as ApiTorghutTaLatestRouteImport } from './routes/api/torghut/ta/latest'
+import { Route as ApiTorghutTaBarsRouteImport } from './routes/api/torghut/ta/bars'
 import { Route as ApiTorghutSymbolsSymbolRouteImport } from './routes/api/torghut/symbols/$symbol'
 
 const MemoriesRoute = MemoriesRouteImport.update({
@@ -55,6 +59,11 @@ const IndexRoute = IndexRouteImport.update({
 const AtlasIndexRoute = AtlasIndexRouteImport.update({
   id: '/atlas/',
   path: '/atlas/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TorghutVisualsRoute = TorghutVisualsRouteImport.update({
+  id: '/torghut/visuals',
+  path: '/torghut/visuals',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TorghutSymbolsRoute = TorghutSymbolsRouteImport.update({
@@ -137,6 +146,21 @@ const OpenaiV1ChatCompletionsRoute = OpenaiV1ChatCompletionsRouteImport.update({
   path: '/openai/v1/chat/completions',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTorghutTaSignalsRoute = ApiTorghutTaSignalsRouteImport.update({
+  id: '/api/torghut/ta/signals',
+  path: '/api/torghut/ta/signals',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiTorghutTaLatestRoute = ApiTorghutTaLatestRouteImport.update({
+  id: '/api/torghut/ta/latest',
+  path: '/api/torghut/ta/latest',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiTorghutTaBarsRoute = ApiTorghutTaBarsRouteImport.update({
+  id: '/api/torghut/ta/bars',
+  path: '/api/torghut/ta/bars',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiTorghutSymbolsSymbolRoute = ApiTorghutSymbolsSymbolRouteImport.update({
   id: '/$symbol',
   path: '/$symbol',
@@ -159,12 +183,16 @@ export interface FileRoutesByFullPath {
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
+  '/torghut/visuals': typeof TorghutVisualsRoute
   '/atlas': typeof AtlasIndexRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
+  '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
+  '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
+  '/api/torghut/ta/signals': typeof ApiTorghutTaSignalsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
 export interface FileRoutesByTo {
@@ -183,12 +211,16 @@ export interface FileRoutesByTo {
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
+  '/torghut/visuals': typeof TorghutVisualsRoute
   '/atlas': typeof AtlasIndexRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
+  '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
+  '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
+  '/api/torghut/ta/signals': typeof ApiTorghutTaSignalsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
 export interface FileRoutesById {
@@ -208,12 +240,16 @@ export interface FileRoutesById {
   '/atlas/indexed': typeof AtlasIndexedRoute
   '/atlas/search': typeof AtlasSearchRoute
   '/torghut/symbols': typeof TorghutSymbolsRoute
+  '/torghut/visuals': typeof TorghutVisualsRoute
   '/atlas/': typeof AtlasIndexRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/torghut/symbols': typeof ApiTorghutSymbolsRouteWithChildren
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
+  '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
+  '/api/torghut/ta/latest': typeof ApiTorghutTaLatestRoute
+  '/api/torghut/ta/signals': typeof ApiTorghutTaSignalsRoute
   '/openai/v1/chat/completions': typeof OpenaiV1ChatCompletionsRoute
 }
 export interface FileRouteTypes {
@@ -234,12 +270,16 @@ export interface FileRouteTypes {
     | '/atlas/indexed'
     | '/atlas/search'
     | '/torghut/symbols'
+    | '/torghut/visuals'
     | '/atlas'
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
     | '/api/torghut/symbols/$symbol'
+    | '/api/torghut/ta/bars'
+    | '/api/torghut/ta/latest'
+    | '/api/torghut/ta/signals'
     | '/openai/v1/chat/completions'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -258,12 +298,16 @@ export interface FileRouteTypes {
     | '/atlas/indexed'
     | '/atlas/search'
     | '/torghut/symbols'
+    | '/torghut/visuals'
     | '/atlas'
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
     | '/api/torghut/symbols/$symbol'
+    | '/api/torghut/ta/bars'
+    | '/api/torghut/ta/latest'
+    | '/api/torghut/ta/signals'
     | '/openai/v1/chat/completions'
   id:
     | '__root__'
@@ -282,12 +326,16 @@ export interface FileRouteTypes {
     | '/atlas/indexed'
     | '/atlas/search'
     | '/torghut/symbols'
+    | '/torghut/visuals'
     | '/atlas/'
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/torghut/symbols'
     | '/openai/v1/models'
     | '/api/torghut/symbols/$symbol'
+    | '/api/torghut/ta/bars'
+    | '/api/torghut/ta/latest'
+    | '/api/torghut/ta/signals'
     | '/openai/v1/chat/completions'
   fileRoutesById: FileRoutesById
 }
@@ -307,11 +355,15 @@ export interface RootRouteChildren {
   AtlasIndexedRoute: typeof AtlasIndexedRoute
   AtlasSearchRoute: typeof AtlasSearchRoute
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
+  TorghutVisualsRoute: typeof TorghutVisualsRoute
   AtlasIndexRoute: typeof AtlasIndexRoute
   ApiAtlasIndexedRoute: typeof ApiAtlasIndexedRoute
   ApiAtlasPathsRoute: typeof ApiAtlasPathsRoute
   ApiTorghutSymbolsRoute: typeof ApiTorghutSymbolsRouteWithChildren
   OpenaiV1ModelsRoute: typeof OpenaiV1ModelsRoute
+  ApiTorghutTaBarsRoute: typeof ApiTorghutTaBarsRoute
+  ApiTorghutTaLatestRoute: typeof ApiTorghutTaLatestRoute
+  ApiTorghutTaSignalsRoute: typeof ApiTorghutTaSignalsRoute
   OpenaiV1ChatCompletionsRoute: typeof OpenaiV1ChatCompletionsRoute
 }
 
@@ -350,6 +402,13 @@ declare module '@tanstack/react-router' {
       path: '/atlas'
       fullPath: '/atlas'
       preLoaderRoute: typeof AtlasIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/torghut/visuals': {
+      id: '/torghut/visuals'
+      path: '/torghut/visuals'
+      fullPath: '/torghut/visuals'
+      preLoaderRoute: typeof TorghutVisualsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/torghut/symbols': {
@@ -464,6 +523,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OpenaiV1ChatCompletionsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/torghut/ta/signals': {
+      id: '/api/torghut/ta/signals'
+      path: '/api/torghut/ta/signals'
+      fullPath: '/api/torghut/ta/signals'
+      preLoaderRoute: typeof ApiTorghutTaSignalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/torghut/ta/latest': {
+      id: '/api/torghut/ta/latest'
+      path: '/api/torghut/ta/latest'
+      fullPath: '/api/torghut/ta/latest'
+      preLoaderRoute: typeof ApiTorghutTaLatestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/torghut/ta/bars': {
+      id: '/api/torghut/ta/bars'
+      path: '/api/torghut/ta/bars'
+      fullPath: '/api/torghut/ta/bars'
+      preLoaderRoute: typeof ApiTorghutTaBarsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/torghut/symbols/$symbol': {
       id: '/api/torghut/symbols/$symbol'
       path: '/$symbol'
@@ -501,11 +581,15 @@ const rootRouteChildren: RootRouteChildren = {
   AtlasIndexedRoute: AtlasIndexedRoute,
   AtlasSearchRoute: AtlasSearchRoute,
   TorghutSymbolsRoute: TorghutSymbolsRoute,
+  TorghutVisualsRoute: TorghutVisualsRoute,
   AtlasIndexRoute: AtlasIndexRoute,
   ApiAtlasIndexedRoute: ApiAtlasIndexedRoute,
   ApiAtlasPathsRoute: ApiAtlasPathsRoute,
   ApiTorghutSymbolsRoute: ApiTorghutSymbolsRouteWithChildren,
   OpenaiV1ModelsRoute: OpenaiV1ModelsRoute,
+  ApiTorghutTaBarsRoute: ApiTorghutTaBarsRoute,
+  ApiTorghutTaLatestRoute: ApiTorghutTaLatestRoute,
+  ApiTorghutTaSignalsRoute: ApiTorghutTaSignalsRoute,
   OpenaiV1ChatCompletionsRoute: OpenaiV1ChatCompletionsRoute,
 }
 export const routeTree = rootRouteImport

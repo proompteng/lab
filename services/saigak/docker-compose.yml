@@ -1,0 +1,21 @@
+services:
+  ollama-proxy:
+    build:
+      context: ./proxy
+    container_name: saigak-ollama-proxy
+    network_mode: host
+    environment:
+      OLLAMA_PROXY_LISTEN: 0.0.0.0:11434
+      OLLAMA_PROXY_UPSTREAM: http://127.0.0.1:11435
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://127.0.0.1:4318
+      OTEL_SERVICE_NAME: ollama-proxy
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.11.2
+    container_name: saigak-alloy
+    network_mode: host
+    command: ["run", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./config/alloy:/etc/alloy:ro
+    restart: unless-stopped

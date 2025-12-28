@@ -65,10 +65,10 @@ command=$1
 config=$2
 
 # user_args_argv is assigned once when the argument vector is parsed.
-user_args_argv=""
-# user_args is mutable:  its value may change when templates are parsed.
+user_args_argv=()
+# user_args is mutable: its value may change when templates are parsed.
 # Superset of user_args_argv.
-user_args=""
+user_args=()
 
 user_run_image=""
 
@@ -88,8 +88,8 @@ while [ ${#} -gt 0 ]; do
     SKIP_MAC_ADDRESS="1"
     ;;
   --docker-args)
-    user_args_argv="$2"
-    user_args="$user_args_argv"
+    IFS=' ' read -r -a user_args_argv <<< "$2"
+    user_args=("${user_args_argv[@]}")
     shift
     ;;
   --run-image)
@@ -101,7 +101,7 @@ while [ ${#} -gt 0 ]; do
   shift 1
 done
 
-if [ -z "$command" -o -z "$config" -a "$command" != "cleanup" ]; then
+if [[ ( -z "$command" || -z "$config" ) && "$command" != "cleanup" ]]; then
   usage
 fi
 
@@ -115,7 +115,7 @@ if [[ $config =~ $re ]];
     exit 1
 fi
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 pups_version='v1.0.3'
 docker_min_version='20.10.0'
@@ -128,39 +128,44 @@ config_file=containers/"$config".yml
 cidbootstrap=cids/"$config"_bootstrap.cid
 local_discourse=local_discourse
 image="discourse/base:2.0.20251003-1437"
-docker_path=`which docker.io 2> /dev/null || which docker`
-git_path=`which git`
+docker_path=$(command -v docker.io 2>/dev/null || command -v docker)
+git_path=$(command -v git)
 
 if [ "${SUPERVISED}" = "true" ]; then
-  restart_policy="--restart=no"
-  attach_on_start="-a"
-  attach_on_run="-a stdout -a stderr"
+  restart_policy=(--restart=no)
+  attach_on_run=(-a stdout -a stderr)
 else
-  attach_on_run="-d"
+  attach_on_run=(-d)
 fi
 
 if [ -n "$DOCKER_HOST" ]; then
-  docker_ip=`sed -e 's/^tcp:\/\/\(.*\):.*$/\1/' <<< "$DOCKER_HOST"`
-elif [ -x "$(which ip 2>/dev/null)" ]; then
-  docker_ip=`ip addr show docker0 | \
+  docker_ip=$(sed -e 's/^tcp:\/\/\(.*\):.*$/\1/' <<< "$DOCKER_HOST")
+elif command -v ip >/dev/null 2>&1; then
+  docker_ip=$(ip addr show docker0 | \
                   grep 'inet ' | \
-                  awk '{ split($2,a,"/"); print a[1] }';`
+                  awk '{ split($2,a,"/"); print a[1] }')
 else
-  docker_ip=`ifconfig | \
+  docker_ip=$(ifconfig | \
                   grep -B1 "inet addr" | \
                   awk '{ if ( $1 == "inet" ) { print $2 } else if ( $2 == "Link" ) { printf "%s:" ,$1 } }' | \
                   grep docker0 | \
-                  awk -F: '{ print $3 }';`
+                  awk -F: '{ print $3 }')
 fi
 
 # From https://stackoverflow.com/a/44660519/702738
 compare_version() {
-    if [[ $1 == $2 ]]; then
+    if [[ $1 == "$2" ]]; then
         return 1
     fi
     local IFS=.
-    local i a=(${1%%[^0-9.]*}) b=(${2%%[^0-9.]*})
-    local arem=${1#${1%%[^0-9.]*}} brem=${2#${2%%[^0-9.]*}}
+    local i
+    local -a a b
+    read -r -a a <<< "${1%%[^0-9.]*}"
+    read -r -a b <<< "${2%%[^0-9.]*}"
+    local a_prefix="${1%%[^0-9.]*}"
+    local b_prefix="${2%%[^0-9.]*}"
+    local arem="${1#"$a_prefix"}"
+    local brem="${2#"$b_prefix"}"
     for ((i=0; i<${#a[@]} || i<${#b[@]}; i++)); do
         if ((10#${a[i]:-0} < 10#${b[i]:-0})); then
             return 1
@@ -168,9 +173,9 @@ compare_version() {
             return 0
         fi
     done
-    if [ "$arem" '<' "$brem" ]; then
+    if [[ "$arem" < "$brem" ]]; then
         return 1
-    elif [ "$arem" '>' "$brem" ]; then
+    elif [[ "$arem" > "$brem" ]]; then
         return 0
     fi
     return 1
@@ -189,26 +194,25 @@ install_docker() {
 
 pull_image() {
   # Add a single retry to work around dockerhub TLS errors
-  $docker_path pull $image || $docker_path pull $image
+  "$docker_path" pull "$image" || "$docker_path" pull "$image"
 }
 
 check_prereqs() {
 
-  if [ -z $docker_path ]; then
+  if [ -z "$docker_path" ]; then
     install_docker
   fi
 
   # 1. docker daemon running?
   # we send stderr to /dev/null cause we don't care about warnings,
   # it usually complains about swap which does not matter
-  test=`$docker_path info 2> /dev/null`
-  if [[ $? -ne 0 ]] ; then
+  if ! "$docker_path" info >/dev/null 2>&1; then
     echo "Cannot connect to the docker daemon - verify it is running and you have access"
     exit 1
   fi
 
   # 2. running an approved storage driver?
-  if ! $docker_path info 2> /dev/null | grep -E -q 'Storage Driver: (btrfs|aufs|zfs|overlay2|overlayfs)$'; then
+  if ! "$docker_path" info 2>/dev/null | grep -E -q 'Storage Driver: (btrfs|aufs|zfs|overlay2|overlayfs)$'; then
     echo "Your Docker installation is not using a supported storage driver.  If we were to proceed you may have a broken install."
     echo "overlay2 is the recommended storage driver, although zfs and aufs may work as well."
     echo "Other storage drivers are known to be problematic."
@@ -220,18 +224,17 @@ check_prereqs() {
   fi
 
   # 3. running recommended docker version
-  test=($($docker_path --version))  # Get docker version string
-  test=${test[2]//,/}  # Get version alone and strip comma if exists
+  docker_version=$("$docker_path" --version | awk '{print $3}' | tr -d ',')
 
   # At least minimum docker version
-  if compare_version "${docker_min_version}" "${test}"; then
-    echo "ERROR: Docker version ${test} not supported, please upgrade to at least ${docker_min_version}, or recommended ${docker_rec_version}"
+  if compare_version "${docker_min_version}" "${docker_version}"; then
+    echo "ERROR: Docker version ${docker_version} not supported, please upgrade to at least ${docker_min_version}, or recommended ${docker_rec_version}"
     exit 1
   fi
 
   # Recommend newer docker version
-  if compare_version "${docker_rec_version}" "${test}"; then
-    echo "WARNING: Docker version ${test} deprecated, recommend upgrade to ${docker_rec_version} or newer."
+  if compare_version "${docker_rec_version}" "${docker_version}"; then
+    echo "WARNING: Docker version ${docker_version} deprecated, recommend upgrade to ${docker_rec_version} or newer."
   fi
 
   case $(uname -m) in
@@ -253,9 +256,9 @@ check_prereqs() {
 
 
   # 4. discourse docker image is downloaded
-  test=`$docker_path images | awk '{print $1 ":" $2 }' | grep "$image"`
+  image_present=$("$docker_path" images | awk '{print $1 ":" $2 }' | grep -F "$image" || true)
 
-  if [ -z "$test" ]; then
+  if [[ -z "$image_present" ]]; then
     echo
     echo "WARNING: We are about to start downloading the Discourse base image"
     echo "This process may take anywhere between a few minutes to an hour, depending on your network speed"
@@ -267,32 +270,36 @@ check_prereqs() {
   fi
 
   # 5. running recommended git version
-  test=($($git_path --version))  # Get git version string
-  test=${test[2]//,/}  # Get version alone and strip comma if exists
+  git_version=$("$git_path" --version | awk '{print $3}' | tr -d ',')
 
   # At least minimum version
-  if compare_version "${git_min_version}" "${test}"; then
-    echo "ERROR: Git version ${test} not supported, please upgrade to at least ${git_min_version}, or recommended ${git_rec_version}"
+  if compare_version "${git_min_version}" "${git_version}"; then
+    echo "ERROR: Git version ${git_version} not supported, please upgrade to at least ${git_min_version}, or recommended ${git_rec_version}"
     exit 1
   fi
 
   # Recommend best version
-  if compare_version "${git_rec_version}" "${test}"; then
-    echo "WARNING: Git version ${test} deprecated, recommend upgrade to ${git_rec_version} or newer."
+  if compare_version "${git_rec_version}" "${git_version}"; then
+    echo "WARNING: Git version ${git_version} deprecated, recommend upgrade to ${git_rec_version} or newer."
   fi
 
   # Check minimum kernel version due to https://bugs.ruby-lang.org/issues/13885
-  test=($(uname -r))
+  kernel_version=$(uname -r)
 
   # At least minimum version
-  if compare_version "${kernel_min_version}" "${test}"; then
-    echo "ERROR: Kernel version ${test} not supported, please upgrade to at least ${kernel_min_version}"
+  if compare_version "${kernel_min_version}" "${kernel_version}"; then
+    echo "ERROR: Kernel version ${kernel_version} not supported, please upgrade to at least ${kernel_min_version}"
     exit 1
   fi
 
   # 6. able to attach stderr / out / tty
-  test=`$docker_path run $user_args -i --rm -a stdout -a stderr $image echo working`
-  if [[ "$test" =~ "working" ]] ; then : ; else
+  if ! docker_working=$("$docker_path" run "${user_args[@]}" -i --rm -a stdout -a stderr "$image" echo working); then
+    echo "Your Docker installation is not working correctly"
+    echo
+    echo "See: https://meta.discourse.org/t/docker-error-on-bootstrap/13657/18?u=sam"
+    exit 1
+  fi
+  if [[ $docker_working == *working* ]]; then : ; else
     echo "Your Docker installation is not working correctly"
     echo
     echo "See: https://meta.discourse.org/t/docker-error-on-bootstrap/13657/18?u=sam"
@@ -300,32 +307,36 @@ check_prereqs() {
   fi
 
   # 7. enough space for the bootstrap on docker folder
-  folder=`$docker_path info --format '{{.DockerRootDir}}'`
+  folder=$("$docker_path" info --format '{{.DockerRootDir}}')
   safe_folder=${folder:-/var/lib/docker}
-  if [[ -d $safe_folder && $(stat -f --format="%a*%S" $safe_folder)/1024**3 -lt 5 ]] ; then
-    echo "You have less than 5GB of free space on the disk where $safe_folder is located. You will need more space to continue"
-    df -h $safe_folder
-    echo
-    if tty >/dev/null; then
-      read -p "Would you like to attempt to recover space by cleaning docker images and containers in the system? (y/N)" -n 1 -r
+  if [[ -d "$safe_folder" ]]; then
+    free_bytes=$(( $(stat -f --format="%a*%S" "$safe_folder") ))
+    free_gb=$(( free_bytes / 1024**3 ))
+    if (( free_gb < 5 )); then
+      echo "You have less than 5GB of free space on the disk where $safe_folder is located. You will need more space to continue"
+      df -h "$safe_folder"
       echo
-      if [[ $REPLY =~ ^[Yy]$ ]]
-      then
-        $docker_path container prune --force --filter until=24h >/dev/null
-        $docker_path image prune --all --force --filter until=24h >/dev/null
-        echo "If the cleanup was successful, you may try again now"
+      if tty >/dev/null; then
+        read -p "Would you like to attempt to recover space by cleaning docker images and containers in the system? (y/N)" -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+          "$docker_path" container prune --force --filter until=24h >/dev/null
+          "$docker_path" image prune --all --force --filter until=24h >/dev/null
+          echo "If the cleanup was successful, you may try again now"
+        fi
       fi
+      exit 1
     fi
-    exit 1
   fi
 
   # 8. container definition file is accessible and is not insecure (world-readable)
   if [[ ! -e "$config_file" || ! -r "$config_file" ]]; then
     echo "ERROR: $config_file does not exist or is not readable."
     echo
-    echo "Available configs ( `cd containers && ls -dm *.yml | tr -s '\n' ' ' | awk '{ gsub(/\.yml/, ""); print }'`)"
+    available_configs=$(cd containers && printf '%s\n' *.yml 2>/dev/null | sed -e 's/\.yml$//' | paste -sd ' ' -)
+    echo "Available configs (${available_configs})"
     exit 1
-  elif [[ "$(find $config_file -perm -004)" ]]; then
+  elif [[ -n "$(find "$config_file" -perm -004)" ]]; then
     echo "WARNING: $config_file file is world-readable. You can secure this file by running: chmod o-rwx $config_file"
   fi
 }
@@ -336,41 +347,47 @@ if [ -z "$SKIP_PREREQS" ] && [ "$command" != "cleanup" ]; then
 fi
 
 set_volumes() {
-  volumes=`cat $config_file | $docker_path run $user_args --rm -i -a stdout -a stdin $image ruby -e \
-        "require 'yaml'; puts YAML.load(STDIN.readlines.join)['volumes'].map{|v| '-v ' << v['volume']['host'] << ':' << v['volume']['guest'] << ' '}.join"`
+  volumes=()
+  while IFS= read -r volume; do
+    [[ -z "$volume" ]] && continue
+    volumes+=("$volume")
+  done < <("$docker_path" run "${user_args[@]}" --rm -i -a stdout -a stdin "$image" ruby -e \
+        "require 'yaml'; volumes = (YAML.load(STDIN.readlines.join)['volumes'] || []); puts volumes.flat_map { |v| ['-v', \"#{v['volume']['host']}:#{v['volume']['guest']}\"] }.join(\"\\n\")" < "$config_file")
 }
 
 set_links() {
-    links=`cat $config_file | $docker_path run $user_args --rm -i -a stdout -a stdin $image ruby -e \
-        "require 'yaml'; puts YAML.load(STDIN.readlines.join)['links'].map{|l| '--link ' << l['link']['name'] << ':' << l['link']['alias'] << ' '}.join"`
+    links=()
+    while IFS= read -r link; do
+      [[ -z "$link" ]] && continue
+      links+=("$link")
+    done < <("$docker_path" run "${user_args[@]}" --rm -i -a stdout -a stdin "$image" ruby -e \
+        "require 'yaml'; links = (YAML.load(STDIN.readlines.join)['links'] || []); puts links.flat_map { |l| ['--link', \"#{l['link']['name']}:#{l['link']['alias']}\"] }.join(\"\\n\")" < "$config_file")
 }
 
 find_templates() {
-    local templates=`cat $1 | $docker_path run $user_args --rm -i -a stdin -a stdout $image ruby -e \
-      "require 'yaml'; puts YAML.load(STDIN.readlines.join)['templates']"`
+    local templates
+    templates=$("$docker_path" run "${user_args[@]}" --rm -i -a stdin -a stdout "$image" ruby -e \
+      "require 'yaml'; puts YAML.load(STDIN.readlines.join)['templates']" < "$1")
 
-    local arrTemplates=${templates// / }
-
-    if [ ! -z "$templates" ]; then
-      echo $templates
+    if [[ -n "$templates" ]]; then
+      echo "$templates"
     else
       echo ""
     fi
 }
 
 set_template_info() {
-    templates=$(find_templates $config_file)
+    templates=$(find_templates "$config_file")
 
-    arrTemplates=(${templates// / })
-    config_data=$(cat $config_file)
+    read -r -a arrTemplates <<< "$templates"
+    config_data=$(<"$config_file")
 
     input="hack: true"
 
-    for template in "${arrTemplates[@]}"
-    do
-      [ ! -z $template ] && {
-        input="$input _FILE_SEPERATOR_ $(cat $template)"
-      }
+    for template in "${arrTemplates[@]}"; do
+      if [[ -n "$template" ]]; then
+        input="$input _FILE_SEPERATOR_ $(<"$template")"
+      fi
     done
 
     # we always want our config file last so it takes priority
@@ -401,21 +418,21 @@ RUBY
     tmp_input_file=$(mktemp)
 
     echo "$input" > "$tmp_input_file"
-    raw=`exec cat "$tmp_input_file" | $docker_path run $user_args --rm -i -a stdin -a stdout $image ruby -e "$env_ruby"`
+    raw=$("$docker_path" run "${user_args[@]}" --rm -i -a stdin -a stdout "$image" ruby -e "$env_ruby" < "$tmp_input_file")
 
     rm -f "$tmp_input_file"
 
     env=()
     ok=1
-    while read i; do
-      if [ "$i" == "*ERROR." ]; then
+    while IFS= read -r i; do
+      if [[ "$i" == "*ERROR." ]]; then
         ok=0
-      elif [ -n "$i" ]; then
-        env[${#env[@]}]="${i//\{\{config\}\}/${config}}"
+      elif [[ -n "$i" ]]; then
+        env+=("${i//\{\{config\}\}/${config}}")
       fi
     done <<< "$raw"
 
-    if [ "$ok" -ne 1 ]; then
+    if [[ $ok -ne 1 ]]; then
       echo "${env[@]}"
       echo "YAML syntax error. Please check your containers/*.yml config files."
       exit 1
@@ -445,21 +462,21 @@ RUBY
     tmp_input_file=$(mktemp)
 
     echo "$input" > "$tmp_input_file"
-    raw=`exec cat "$tmp_input_file" | $docker_path run $user_args --rm -i -a stdin -a stdout $image ruby -e "$labels_ruby"`
+    raw=$("$docker_path" run "${user_args[@]}" --rm -i -a stdin -a stdout "$image" ruby -e "$labels_ruby" < "$tmp_input_file")
 
     rm -f "$tmp_input_file"
 
     labels=()
     ok=1
-    while read i; do
-      if [ "$i" == "*ERROR." ]; then
+    while IFS= read -r i; do
+      if [[ "$i" == "*ERROR." ]]; then
         ok=0
-      elif [ -n "$i" ]; then
-        labels[${#labels[@]}]=$(echo $i | sed s/{{config}}/${config}/g)
+      elif [[ -n "$i" ]]; then
+        labels+=("${i//\{\{config\}\}/${config}}")
       fi
     done <<< "$raw"
 
-    if [ "$ok" -ne 1 ]; then
+    if [[ $ok -ne 1 ]]; then
       echo "${labels[@]}"
       echo "YAML syntax error. Please check your containers/*.yml config files."
       exit 1
@@ -489,21 +506,21 @@ RUBY
     tmp_input_file=$(mktemp)
 
     echo "$input" > "$tmp_input_file"
-    raw=`exec cat "$tmp_input_file" | $docker_path run $user_args --rm -i -a stdin -a stdout $image ruby -e "$ports_ruby"`
+    raw=$("$docker_path" run "${user_args[@]}" --rm -i -a stdin -a stdout "$image" ruby -e "$ports_ruby" < "$tmp_input_file")
 
     rm -f "$tmp_input_file"
 
     ports=()
     ok=1
-    while read i; do
-      if [ "$i" == "*ERROR." ]; then
+    while IFS= read -r i; do
+      if [[ "$i" == "*ERROR." ]]; then
         ok=0
-      elif [ -n "$i" ]; then
-        ports[${#ports[@]}]=$i
+      elif [[ -n "$i" ]]; then
+        ports+=("$i")
       fi
     done <<< "$raw"
 
-    if [ "$ok" -ne 1 ]; then
+    if [[ $ok -ne 1 ]]; then
       echo "${ports[@]}"
       echo "YAML syntax error. Please check your containers/*.yml config files."
       exit 1
@@ -514,9 +531,9 @@ RUBY
 
 # Temporary helper to provide a more useful error message when a bundled plugin is still referenced in the config file.
 explain_bundled_plugin_error() {
-  config_data=$(cat $config_file)
+  config_data=$(<"$config_file")
   for plugin in "${BUNDLED_PLUGINS[@]}"; do
-    if [[ $config_data =~ "git clone https://github.com/discourse/$plugin" ]]; then
+    if [[ $config_data =~ git\ clone\ https://github.com/discourse/$plugin ]]; then
       echo "---"
       echo "HINT: The plugin '$plugin' is now bundled with Discourse and should not be included in your container configuration."
       echo "Remove the line 'git clone https://github.com/discourse/$plugin' from your $config_file file, then try again."
@@ -526,13 +543,13 @@ explain_bundled_plugin_error() {
   done
 }
 
-if [ -z $docker_path ]; then
+if [ -z "$docker_path" ]; then
   install_docker
 fi
 
-[ "$command" == "cleanup" ] && {
-  $docker_path container prune --filter until=1h
-  $docker_path image prune --all --filter until=1h
+if [[ "$command" == "cleanup" ]]; then
+  "$docker_path" container prune --filter until=1h
+  "$docker_path" image prune --all --filter until=1h
 
   if [ -d /var/discourse/shared/standalone/postgres_data_old ]; then
     echo
@@ -548,36 +565,35 @@ fi
   fi
 
   exit 0
-}
+fi
 
-docker_version=($($docker_path --version))
-docker_version=${test[2]//,/}
-restart_policy=${restart_policy:---restart=always}
+if [[ ${#restart_policy[@]} -eq 0 ]]; then
+  restart_policy=(--restart=always)
+fi
 
 set_existing_container(){
-  existing=`$docker_path ps -a | awk '{ print $1, $(NF) }' | grep " $config$" | awk '{ print $1 }'`
+  existing=$("$docker_path" ps -a | awk -v cfg="$config" '$NF == cfg { print $1 }')
 }
 
 run_stop() {
 
   set_existing_container
 
-  if [ ! -z $existing ]
-     then
-       (
-        set -x
-        $docker_path stop -t 600 $config
-       )
-     else
-       echo "$config was not started !"
-       echo "./discourse-doctor may help diagnose the problem."
-       exit 1
+  if [[ -n "$existing" ]]; then
+    (
+      set -x
+      "$docker_path" stop -t 600 "$config"
+    )
+  else
+    echo "$config was not started !"
+    echo "./discourse-doctor may help diagnose the problem."
+    exit 1
   fi
 }
 
 set_run_image() {
-  run_image=`cat $config_file | $docker_path run $user_args --rm -i -a stdin -a stdout $image ruby -e \
-    "require 'yaml'; puts YAML.load(STDIN.readlines.join)['run_image']"`
+  run_image=$("$docker_path" run "${user_args[@]}" --rm -i -a stdin -a stdout "$image" ruby -e \
+    "require 'yaml'; puts YAML.load(STDIN.readlines.join)['run_image']" < "$config_file")
 
   if [ -n "$user_run_image" ]; then
     run_image=$user_run_image
@@ -587,50 +603,53 @@ set_run_image() {
 }
 
 set_boot_command() {
-  boot_command=`cat $config_file | $docker_path run $user_args --rm -i -a stdin -a stdout $image ruby -e \
-    "require 'yaml'; puts YAML.load(STDIN.readlines.join)['boot_command']"`
+  boot_command=$("$docker_path" run "${user_args[@]}" --rm -i -a stdin -a stdout "$image" ruby -e \
+    "require 'yaml'; puts YAML.load(STDIN.readlines.join)['boot_command']" < "$config_file")
 
   if [ -z "$boot_command" ]; then
 
-    no_boot_command=`cat $config_file | $docker_path run $user_args --rm -i -a stdin -a stdout $image ruby -e \
-      "require 'yaml'; puts YAML.load(STDIN.readlines.join)['no_boot_command']"`
+    no_boot_command=$("$docker_path" run "${user_args[@]}" --rm -i -a stdin -a stdout "$image" ruby -e \
+      "require 'yaml'; puts YAML.load(STDIN.readlines.join)['no_boot_command']" < "$config_file")
 
     if [ -z "$no_boot_command" ]; then
       boot_command="/sbin/boot"
     fi
+  fi
+
+  boot_command_args=()
+  if [[ -n "$boot_command" ]]; then
+    read -r -a boot_command_args <<< "$boot_command"
   fi
 }
 
 merge_user_args() {
   local docker_args
 
-  docker_args=`cat $config_file | $docker_path run $user_args --rm -i -a stdout -a stdin $image ruby -e \
-          "require 'yaml'; puts YAML.load(STDIN.readlines.join)['docker_args']"`
+  docker_args=$("$docker_path" run "${user_args[@]}" --rm -i -a stdout -a stdin "$image" ruby -e \
+          "require 'yaml'; puts YAML.load(STDIN.readlines.join)['docker_args']" < "$config_file")
 
   if [[ -n "$docker_args" ]]; then
-    user_args="$user_args_argv $docker_args"
+    read -r -a docker_args_list <<< "$docker_args"
+    user_args+=("${docker_args_list[@]}")
   fi
 }
 
 run_start() {
 
-   if [ -z "$START_CMD_ONLY" ]
-   then
-     existing=`$docker_path ps | awk '{ print $1, $(NF) }' | grep " $config$" | awk '{ print $1 }'`
-     echo $existing
-     if [ ! -z $existing ]
-     then
+   if [[ -z "$START_CMD_ONLY" ]]; then
+     existing=$("$docker_path" ps | awk -v cfg="$config" '$NF == cfg { print $1 }')
+     echo "$existing"
+     if [[ -n "$existing" ]]; then
        echo "Nothing to do, your container has already started!"
        exit 0
      fi
 
-     existing=`$docker_path ps -a | awk '{ print $1, $(NF) }' | grep " $config$" | awk '{ print $1 }'`
-     if [ ! -z $existing ]
-     then
+     existing=$("$docker_path" ps -a | awk -v cfg="$config" '$NF == cfg { print $1 }')
+     if [[ -n "$existing" ]]; then
        echo "starting up existing container"
        (
          set -x
-         $docker_path start $config
+         "$docker_path" start "$config"
        )
        exit 0
      fi
@@ -643,23 +662,26 @@ run_start() {
    set_boot_command
 
    # get hostname and settings from container configuration
-   for envar in "${env[@]}"
-   do
-     if [[ $envar == DOCKER_USE_HOSTNAME* ]] || [[ $envar == DISCOURSE_HOSTNAME* ]]
-     then
+   for envar in "${env[@]}"; do
+     if [[ $envar == DOCKER_USE_HOSTNAME* ]] || [[ $envar == DISCOURSE_HOSTNAME* ]]; then
        # use as environment variable
-       eval $envar
+       eval "$envar"
      fi
    done
 
+   docker_cmd="$docker_path"
+   if [[ -n "$START_CMD_ONLY" ]]; then
+     docker_cmd="true"
+   fi
+
    (
-     hostname=`hostname -s`
+     hostname=$(hostname -s)
      # overwrite hostname
      if [ "$DOCKER_USE_HOSTNAME" = "true" ]
      then
-       hostname=$DISCOURSE_HOSTNAME
+       hostname="$DISCOURSE_HOSTNAME"
      else
-       hostname=$hostname-$config
+       hostname="${hostname}-${config}"
      fi
 
      # we got to normalize so we only have allowed strings, this is more comprehensive but lets see how bash does first
@@ -668,19 +690,17 @@ run_start() {
      hostname=${hostname//_/-}
 
 
-     if [ -z "$SKIP_MAC_ADDRESS" ] ; then
-      mac_address="--mac-address $($docker_path run $user_args -i --rm -a stdout -a stderr $image /bin/sh -c "echo $hostname | md5sum | sed 's/^\(..\)\(..\)\(..\)\(..\)\(..\).*$/02:\1:\2:\3:\4:\5/'")"
-     fi
-
-     if [ ! -z "$START_CMD_ONLY" ] ; then
-       docker_path="true"
+     mac_address=()
+     if [ -z "$SKIP_MAC_ADDRESS" ]; then
+      mac_value=$("$docker_path" run "${user_args[@]}" -i --rm -a stdout -a stderr "$image" /bin/sh -c "printf '%s' \"$hostname\" | md5sum | sed 's/^\\(..\\)\\(..\\)\\(..\\)\\(..\\)\\(..\\).*$/02:\\1:\\2:\\3:\\4:\\5/'")
+      mac_address=(--mac-address "$mac_value")
      fi
 
      set -x
 
-     $docker_path run --shm-size=512m $links $attach_on_run $restart_policy "${env[@]}" "${labels[@]}" -h "$hostname" \
-        -e DOCKER_HOST_IP="$docker_ip" --name $config -t "${ports[@]}" $volumes $mac_address $user_args \
-        $run_image $boot_command
+     "$docker_cmd" run --shm-size=512m "${links[@]}" "${attach_on_run[@]}" "${restart_policy[@]}" "${env[@]}" "${labels[@]}" -h "$hostname" \
+        -e DOCKER_HOST_IP="$docker_ip" --name "$config" -t "${ports[@]}" "${volumes[@]}" "${mac_address[@]}" "${user_args[@]}" \
+        "$run_image" "${boot_command_args[@]}"
 
    )
    exit 0
@@ -694,10 +714,10 @@ run_run() {
   set_run_image
 
   unset ERR
-  (exec $docker_path run --rm --shm-size=512m $user_args $links "${env[@]}" -e DOCKER_HOST_IP="$docker_ip" -i -a stdin -a stdout -a stderr $volumes $run_image \
+  (exec "$docker_path" run --rm --shm-size=512m "${user_args[@]}" "${links[@]}" "${env[@]}" -e DOCKER_HOST_IP="$docker_ip" -i -a stdin -a stdout -a stderr "${volumes[@]}" "$run_image" \
     /bin/bash -c "$run_command") || ERR=$?
 
-  if [[ $ERR > 0 ]]; then
+  if [[ ${ERR:-0} -gt 0 ]]; then
     exit 1
   fi
 }
@@ -705,14 +725,14 @@ run_run() {
 run_bootstrap() {
   set_template_info
 
-  base_image=`cat $config_file | $docker_path run $user_args --rm -i -a stdin -a stdout $image ruby -e \
-    "require 'yaml'; puts YAML.load(STDIN.readlines.join)['base_image']"`
+  base_image=$("$docker_path" run "${user_args[@]}" --rm -i -a stdin -a stdout "$image" ruby -e \
+    "require 'yaml'; puts YAML.load(STDIN.readlines.join)['base_image']" < "$config_file")
 
-  update_pups=`cat $config_file | $docker_path run $user_args --rm -i -a stdin -a stdout $image ruby -e \
-    "require 'yaml'; puts YAML.load(STDIN.readlines.join)['update_pups']"`
+  update_pups=$("$docker_path" run "${user_args[@]}" --rm -i -a stdin -a stdout "$image" ruby -e \
+    "require 'yaml'; puts YAML.load(STDIN.readlines.join)['update_pups']" < "$config_file")
 
-  if [[ ! X"" = X"$base_image" ]]; then
-    image=$base_image
+  if [[ -n "$base_image" ]]; then
+    image="$base_image"
   fi
 
   # the base_image may not always be discourse/base,
@@ -722,23 +742,23 @@ run_bootstrap() {
   set_volumes
   set_links
 
-  if $docker_path run $user_args --rm -i $image gem which pups; then
+  if "$docker_path" run "${user_args[@]}" --rm -i "$image" gem which pups; then
     pups_command="/usr/local/bin/pups --stdin"
   else
     # Fallback to git pull method here if `pups` was not installed by gem in base image
     pups_command="cd /pups &&"
-    if [[ ! "false" =  $update_pups ]]; then
+    if [[ "$update_pups" != "false" ]]; then
       pups_command="$pups_command git pull && git checkout $pups_version &&"
     fi
     pups_command="$pups_command /pups/bin/pups --stdin"
   fi
 
-  echo $pups_command
+  echo "$pups_command"
 
   declare -i BOOTSTRAP_EXITCODE
-  rm -f $cidbootstrap
+  rm -f "$cidbootstrap"
 
-  echo "$input" | $docker_path run --shm-size=512m $user_args $links "${env[@]}" -e DOCKER_HOST_IP="$docker_ip" --cidfile "$cidbootstrap" -i -a stdin -a stdout -a stderr $volumes $image \
+  echo "$input" | "$docker_path" run --shm-size=512m "${user_args[@]}" "${links[@]}" "${env[@]}" -e DOCKER_HOST_IP="$docker_ip" --cidfile "$cidbootstrap" -i -a stdin -a stdout -a stderr "${volumes[@]}" "$image" \
     /bin/bash -c "$pups_command"
   BOOTSTRAP_EXITCODE=$?
 
@@ -747,7 +767,7 @@ run_bootstrap() {
 
   # magic exit code that indicates a retry
   if [[ $BOOTSTRAP_EXITCODE -eq 77 ]]; then
-    $docker_path rm "$CONTAINER_ID"
+    "$docker_path" rm "$CONTAINER_ID"
     exit 77
   elif [[ $BOOTSTRAP_EXITCODE -gt 0 ]]; then
     echo "bootstrap failed with exit code $BOOTSTRAP_EXITCODE"
@@ -756,24 +776,24 @@ run_bootstrap() {
     echo "./discourse-doctor may help diagnose the problem."
 
     if [[ -n "$DEBUG" ]]; then
-      if $docker_path commit "$CONTAINER_ID" $local_discourse/$config-debug; then
+      if "$docker_path" commit "$CONTAINER_ID" "$local_discourse/$config-debug"; then
         echo "** DEBUG ** Maintaining image for diagnostics $local_discourse/$config-debug"
       else
         echo "** DEBUG ** Failed to commit container $CONTAINER_ID for diagnostics"
       fi
     fi
 
-    $docker_path rm "$CONTAINER_ID"
+    "$docker_path" rm "$CONTAINER_ID"
     exit 1
   fi
 
   sleep 5
 
-  $docker_path commit \
+  "$docker_path" commit \
     -c "LABEL org.opencontainers.image.created=\"$(TZ=UTC date -Iseconds)\"" \
     "$CONTAINER_ID" \
-    $local_discourse/$config || fatal "FAILED TO COMMIT $CONTAINER_ID"
-  $docker_path rm "$CONTAINER_ID"
+    "$local_discourse/$config" || fatal "FAILED TO COMMIT $CONTAINER_ID"
+  "$docker_path" rm "$CONTAINER_ID"
 }
 
 case "$command" in
@@ -789,7 +809,7 @@ case "$command" in
       ;;
 
   enter)
-      exec $docker_path exec -it $config /bin/bash --login
+      exec "$docker_path" exec -it "$config" /bin/bash --login
       ;;
 
   stop)
@@ -799,55 +819,52 @@ case "$command" in
 
   logs)
 
-      $docker_path logs $config
+      "$docker_path" logs "$config"
       exit 0
       ;;
 
   restart)
       run_stop
       run_start
-      exit 0
       ;;
 
   start-cmd)
     START_CMD_ONLY="1"
     run_start
-    exit 0;
     ;;
 
   start)
       run_start
-      exit 0
       ;;
 
   rebuild)
-      if [ "$(git symbolic-ref --short HEAD)" == "master" ]; then
+      if [[ $(git symbolic-ref --short HEAD) == "master" ]]; then
         git branch -m master main
         git fetch origin
         git branch -u origin/main main
         git remote set-head origin -a
       fi
 
-      if [ "$(git symbolic-ref --short HEAD)" == "main" ]; then
+      if [[ $(git symbolic-ref --short HEAD) == "main" ]]; then
         echo "Ensuring launcher is up to date"
 
         git remote update
 
         LOCAL=$(git rev-parse HEAD)
-        REMOTE=$(git rev-parse @{u})
-        BASE=$(git merge-base HEAD @{u})
+        REMOTE=$(git rev-parse '@{u}')
+        BASE=$(git merge-base HEAD '@{u}')
 
-        if [ $LOCAL = $REMOTE ]; then
+        if [[ "$LOCAL" == "$REMOTE" ]]; then
           echo "Launcher is up-to-date"
 
-        elif [ $LOCAL = $BASE ]; then
+        elif [[ "$LOCAL" == "$BASE" ]]; then
           echo "Updating Launcher..."
           git pull || (echo 'failed to update' && exit 1)
 
           echo "Launcher updated, restarting..."
           exec "$0" "${SAVED_ARGV[@]}"
 
-        elif [ $REMOTE = $BASE ]; then
+        elif [[ "$REMOTE" == "$BASE" ]]; then
           echo "Your version of Launcher is ahead of origin"
 
         else
@@ -858,33 +875,30 @@ case "$command" in
 
       set_existing_container
 
-      if [ ! -z $existing ]
-        then
+      if [[ -n "$existing" ]]; then
           echo "Stopping old container"
           (
             set -x
-            $docker_path stop -t 600 $config
+            "$docker_path" stop -t 600 "$config"
           )
       fi
 
       run_bootstrap
 
-      if [ ! -z $existing ]
-        then
+      if [[ -n "$existing" ]]; then
           echo "Removing old container"
           (
             set -x
-            $docker_path rm $config
+            "$docker_path" rm "$config"
           )
       fi
 
       run_start
-      exit 0
       ;;
 
 
   destroy)
-      (set -x; $docker_path stop -t 600 $config && $docker_path rm $config) || (echo "$config was not found" && exit 0)
+      (set -x; "$docker_path" stop -t 600 "$config" && "$docker_path" rm "$config") || (echo "$config was not found" && exit 0)
       exit 0
       ;;
 esac
