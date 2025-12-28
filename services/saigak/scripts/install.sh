@@ -41,12 +41,18 @@ sudo systemctl enable --now ollama
 sudo systemctl restart ollama
 
 log "waiting for ollama to become ready"
+ollama_ready=0
 for ((attempt = 1; attempt <= 30; attempt++)); do
   if OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama list >/dev/null 2>&1; then
+    ollama_ready=1
     break
   fi
   sleep 1
 done
+if [[ $ollama_ready -ne 1 ]]; then
+  echo "[saigak] ollama did not become ready after 30 seconds" >&2
+  exit 1
+fi
 
 if [[ "${SAIGAK_SKIP_MODELS:-}" != "1" ]]; then
   models="${SAIGAK_MODELS:-qwen3-coder:30b-a3b-q4_K_M,qwen3-embedding:0.6b}"

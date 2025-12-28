@@ -141,3 +141,44 @@ func TestWrapResponseBodyNilMeta(t *testing.T) {
 		t.Fatalf("expected finalize called once, got %d", called)
 	}
 }
+
+func TestParseOTLPEndpoint(t *testing.T) {
+	cases := []struct {
+		name      string
+		endpoint  string
+		wantHost  string
+		wantPath  string
+		wantInsec bool
+		wantErr   bool
+	}{
+		{"http", "http://collector:4318", "collector:4318", "", true, false},
+		{"https", "https://collector:4318", "collector:4318", "", false, false},
+		{"httpsPath", "https://collector:4318/otlp", "collector:4318", "/otlp", false, false},
+		{"plain", "collector:4318", "collector:4318", "", true, false},
+		{"empty", "", "", "", false, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			host, path, insecure, err := parseOTLPEndpoint(tc.endpoint)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if host != tc.wantHost {
+				t.Fatalf("expected host %q, got %q", tc.wantHost, host)
+			}
+			if path != tc.wantPath {
+				t.Fatalf("expected path %q, got %q", tc.wantPath, path)
+			}
+			if insecure != tc.wantInsec {
+				t.Fatalf("expected insecure %v, got %v", tc.wantInsec, insecure)
+			}
+		})
+	}
+}

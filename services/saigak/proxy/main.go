@@ -433,7 +433,19 @@ func setupOTel(ctx context.Context, serviceName, endpoint string) (*sdktrace.Tra
 		),
 	)
 
-	traceExp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpoint(strings.TrimPrefix(endpoint, "http://")), otlptracehttp.WithInsecure())
+	otlpEndpoint, otlpPath, otlpInsecure, err := parseOTLPEndpoint(endpoint)
+	if err != nil {
+		log.Fatalf("invalid OTLP endpoint: %v", err)
+	}
+
+	traceOpts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(otlpEndpoint)}
+	if otlpPath != "" {
+		traceOpts = append(traceOpts, otlptracehttp.WithURLPath(otlpPath))
+	}
+	if otlpInsecure {
+		traceOpts = append(traceOpts, otlptracehttp.WithInsecure())
+	}
+	traceExp, err := otlptracehttp.New(ctx, traceOpts...)
 	if err != nil {
 		log.Fatalf("trace exporter: %v", err)
 	}
@@ -442,7 +454,14 @@ func setupOTel(ctx context.Context, serviceName, endpoint string) (*sdktrace.Tra
 		sdktrace.WithResource(res),
 	)
 
-	metricExp, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpoint(strings.TrimPrefix(endpoint, "http://")), otlpmetrichttp.WithInsecure())
+	metricOpts := []otlpmetrichttp.Option{otlpmetrichttp.WithEndpoint(otlpEndpoint)}
+	if otlpPath != "" {
+		metricOpts = append(metricOpts, otlpmetrichttp.WithURLPath(otlpPath))
+	}
+	if otlpInsecure {
+		metricOpts = append(metricOpts, otlpmetrichttp.WithInsecure())
+	}
+	metricExp, err := otlpmetrichttp.New(ctx, metricOpts...)
 	if err != nil {
 		log.Fatalf("metric exporter: %v", err)
 	}
@@ -463,6 +482,29 @@ func setupOTel(ctx context.Context, serviceName, endpoint string) (*sdktrace.Tra
 	}
 
 	return tp, mp, shutdown
+}
+
+func parseOTLPEndpoint(endpoint string) (string, string, bool, error) {
+	if strings.Contains(endpoint, "://") {
+		parsed, err := url.Parse(endpoint)
+		if err != nil {
+			return "", "", false, err
+		}
+		if parsed.Host == "" {
+			return "", "", false, fmt.Errorf("missing host in %q", endpoint)
+		}
+		insecure := parsed.Scheme == "http"
+		path := strings.TrimSpace(parsed.Path)
+		if path == "/" {
+			path = ""
+		}
+		return parsed.Host, path, insecure, nil
+	}
+
+	if endpoint == "" {
+		return "", "", false, fmt.Errorf("endpoint is empty")
+	}
+	return endpoint, "", true, nil
 }
 
 func envOrDefault(key, def string) string {
