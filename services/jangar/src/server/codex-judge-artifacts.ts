@@ -177,6 +177,20 @@ export const extractTextFromArchive = async (archive: Buffer, entryHints: string
   const archivePath = join(tempDir, 'artifact.tgz')
   try {
     await writeFile(archivePath, archive)
+
+    for (const hint of entryHints) {
+      const direct = await extractTarEntry(archivePath, hint)
+      if (direct) return direct
+      const normalized = normalizeTarEntry(hint)
+      if (normalized !== hint) {
+        const normalizedResult = await extractTarEntry(archivePath, normalized)
+        if (normalizedResult) return normalizedResult
+      }
+      const dotted = `./${normalized}`
+      const dottedResult = await extractTarEntry(archivePath, dotted)
+      if (dottedResult) return dottedResult
+    }
+
     const entries = await listTarEntries(archivePath)
     const selected = selectTarEntry(entries, entryHints)
     if (!selected) return null
