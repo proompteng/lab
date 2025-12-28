@@ -6,7 +6,7 @@ import * as Either from 'effect/Either'
 
 import { getCodexClient } from '~/server/codex-client'
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
-import { createCodexJudgeStore, type CodexEvaluationRecord, type CodexRunRecord } from '~/server/codex-judge-store'
+import { type CodexEvaluationRecord, type CodexRunRecord, createCodexJudgeStore } from '~/server/codex-judge-store'
 import { createGitHubClient, type ReviewSummary } from '~/server/github-client'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
 
@@ -298,7 +298,7 @@ const extractLogExcerpt = (payload?: Record<string, unknown> | null) => {
       status: null,
     }
   }
-  const raw = payload['log_excerpt']
+  const raw = payload.log_excerpt
   if (!raw || typeof raw !== 'object') {
     return {
       output: null,
@@ -530,8 +530,8 @@ const evaluateRun = async (runId: string) => {
   const { owner, repo } = parseRepositoryParts(run.repository)
   const diff = await github.getPullRequestDiff(owner, repo, pr.number)
 
-  const issueTitle = (run.runCompletePayload?.['issueTitle'] as string | undefined) ?? pr.title
-  const issueBody = (run.runCompletePayload?.['issueBody'] as string | undefined) ?? ''
+  const issueTitle = (run.runCompletePayload?.issueTitle as string | undefined) ?? pr.title
+  const issueBody = (run.runCompletePayload?.issueBody as string | undefined) ?? ''
   const logExcerpt = extractLogExcerpt(run.notifyPayload)
 
   const judgePrompt = buildJudgePrompt({
@@ -540,7 +540,7 @@ const evaluateRun = async (runId: string) => {
     prTitle: pr.title,
     prBody: pr.body,
     diff,
-    summary: (run.notifyPayload?.['last_assistant_message'] as string | null) ?? null,
+    summary: (run.notifyPayload?.last_assistant_message as string | null) ?? null,
     ciStatus: ci.status,
     reviewStatus: review.status,
     logExcerpt,
@@ -663,19 +663,19 @@ const submitRerun = async (
     stage: CodexTaskStage.IMPLEMENTATION,
     prompt,
     repository: run.repository,
-    base: typeof run.runCompletePayload?.['base'] === 'string' ? String(run.runCompletePayload['base']) : 'main',
+    base: typeof run.runCompletePayload?.base === 'string' ? String(run.runCompletePayload.base) : 'main',
     head: run.branch,
     issueNumber: BigInt(run.issueNumber),
     issueUrl:
-      typeof run.runCompletePayload?.['issueUrl'] === 'string'
-        ? String(run.runCompletePayload['issueUrl'])
+      typeof run.runCompletePayload?.issueUrl === 'string'
+        ? String(run.runCompletePayload.issueUrl)
         : `https://github.com/${run.repository}/issues/${run.issueNumber}`,
     issueTitle:
-      typeof run.runCompletePayload?.['issueTitle'] === 'string'
-        ? String(run.runCompletePayload['issueTitle'])
+      typeof run.runCompletePayload?.issueTitle === 'string'
+        ? String(run.runCompletePayload.issueTitle)
         : `Issue #${run.issueNumber}`,
     issueBody:
-      typeof run.runCompletePayload?.['issueBody'] === 'string' ? String(run.runCompletePayload['issueBody']) : prompt,
+      typeof run.runCompletePayload?.issueBody === 'string' ? String(run.runCompletePayload.issueBody) : prompt,
     sender: 'jangar',
     issuedAt: Timestamp.fromDate(new Date()),
     deliveryId,

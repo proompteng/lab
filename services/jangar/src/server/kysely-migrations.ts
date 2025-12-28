@@ -1,4 +1,4 @@
-import { Migrator, type Migration, type MigrationProvider, sql } from 'kysely'
+import { type Migration, type MigrationProvider, Migrator, sql } from 'kysely'
 
 import type { Db } from '~/server/db'
 import * as initMigration from '~/server/migrations/20251228_init'

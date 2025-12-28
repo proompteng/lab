@@ -2,11 +2,11 @@
 // @generated from file proompteng/froussard/v1/codex_task.proto (package proompteng.froussard.v1, syntax proto3)
 /* eslint-disable */
 
+import type { Message } from '@bufbuild/protobuf'
 import type { GenEnum, GenFile, GenMessage } from '@bufbuild/protobuf/codegenv2'
 import { enumDesc, fileDesc, messageDesc } from '@bufbuild/protobuf/codegenv2'
 import type { Timestamp } from '@bufbuild/protobuf/wkt'
 import { file_google_protobuf_timestamp } from '@bufbuild/protobuf/wkt'
-import type { Message } from '@bufbuild/protobuf'
 
 /**
  * Describes the file proompteng/froussard/v1/codex_task.proto.
