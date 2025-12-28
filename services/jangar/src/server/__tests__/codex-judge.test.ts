@@ -424,3 +424,21 @@ describe('codex judge guardrails', () => {
     expect(harness.github.getPullRequestByHead).not.toHaveBeenCalled()
   })
 })
+
+describe('codex judge ordering', () => {
+  it('runs deterministic gates before CI/review checks', async () => {
+    harness.github.getPullRequestDiff.mockResolvedValue(`<<<<<<< HEAD
+conflict
+=======
+resolved
+>>>>>>> branch`)
+
+    await __private!.evaluateRun('run-1')
+
+    expect(harness.github.getCheckRuns).not.toHaveBeenCalled()
+    expect(harness.github.getReviewSummary).not.toHaveBeenCalled()
+    expect(harness.store.updateCiStatus).not.toHaveBeenCalled()
+    expect(harness.store.updateReviewStatus).not.toHaveBeenCalled()
+    expect(harness.store.updateDecision).toHaveBeenCalledWith(expect.objectContaining({ decision: 'needs_human' }))
+  })
+})
