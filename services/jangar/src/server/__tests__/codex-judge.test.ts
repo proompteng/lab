@@ -55,6 +55,8 @@ if (!globalState.__codexJudgeStoreMock) {
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
+    listRunHistory: vi.fn(),
+    getRunStats: vi.fn(),
     createPromptTuning: vi.fn(),
     close: vi.fn(),
   }
@@ -101,6 +103,21 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
     close: vi.fn(),
   }
 }
+
+const requireMock = <T>(value: T | undefined, name: string): T => {
+  if (!value) {
+    throw new Error(`${name} is required`)
+  }
+  return value
+}
+
+const getConfigMock = () => requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock')
+const getStoreMock = () => requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock')
+const getGithubMock = () => requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock')
+const getMemoriesStoreMock = () =>
+  requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memories store mock')
+const getClientMock = () => requireMock(globalState.__codexJudgeClientMock, 'codex judge client mock')
+const getPrivateHelpers = () => requireMock(__private, 'codex judge private helpers')
 
 const harness = (() => {
   const now = new Date('2025-12-28T00:00:00.000Z').toISOString()
@@ -299,10 +316,10 @@ const harness = (() => {
     close: vi.fn(async () => {}),
   }
 
-  Object.assign(globalState.__codexJudgeStoreMock!, store)
-  Object.assign(globalState.__codexJudgeGithubMock!, github)
-  Object.assign(globalState.__codexJudgeConfigMock!, config)
-  Object.assign(globalState.__codexJudgeMemoryStoreMock!, memoriesStore)
+  Object.assign(getStoreMock(), store)
+  Object.assign(getGithubMock(), github)
+  Object.assign(getConfigMock(), config)
+  Object.assign(getMemoriesStoreMock(), memoriesStore)
   globalState.__codexJudgeClientMock = codexClient
 
   const setJudgeResponses = (responses: string[]) => {
@@ -324,23 +341,23 @@ const harness = (() => {
 
 vi.mock('~/server/codex-judge-store', () => ({
   __private: storePrivate,
-  createCodexJudgeStore: () => globalState.__codexJudgeStoreMock!,
+  createCodexJudgeStore: () => getStoreMock(),
 }))
 
 vi.mock('~/server/codex-judge-config', () => ({
-  loadCodexJudgeConfig: () => globalState.__codexJudgeConfigMock!,
+  loadCodexJudgeConfig: () => getConfigMock(),
 }))
 
 vi.mock('~/server/github-client', () => ({
-  createGitHubClient: () => globalState.__codexJudgeGithubMock!,
+  createGitHubClient: () => getGithubMock(),
 }))
 
 vi.mock('~/server/codex-client', () => ({
-  getCodexClient: () => Effect.sync(() => globalState.__codexJudgeClientMock!),
+  getCodexClient: () => Effect.sync(() => getClientMock()),
 }))
 
 vi.mock('~/server/memories-store', () => ({
-  createPostgresMemoriesStore: () => globalState.__codexJudgeMemoryStoreMock!,
+  createPostgresMemoriesStore: () => getMemoriesStoreMock(),
 }))
 
 const ORIGINAL_FETCH = global.fetch
@@ -381,7 +398,7 @@ describe('codex judge guardrails', () => {
       }),
     ])
 
-    await __private!.evaluateRun('run-1')
+    await getPrivateHelpers().evaluateRun('run-1')
 
     expect(harness.codexClient.runTurn).toHaveBeenCalledTimes(2)
     expect(harness.judgePrompts[1]).toContain('JSON object only')
@@ -401,7 +418,7 @@ describe('codex judge guardrails', () => {
 
     harness.setJudgeResponses(['nope', 'still nope', 'no json here'])
 
-    await __private!.evaluateRun('run-1')
+    await getPrivateHelpers().evaluateRun('run-1')
 
     expect(harness.codexClient.runTurn).toHaveBeenCalledTimes(3)
     expect(harness.store.updateDecision).toHaveBeenCalledWith(
@@ -417,7 +434,7 @@ describe('codex judge guardrails', () => {
   it('does not re-enter judging for completed runs', async () => {
     harness.setRun({ status: 'completed' })
 
-    await __private!.evaluateRun('run-1')
+    await getPrivateHelpers().evaluateRun('run-1')
 
     expect(harness.store.updateRunStatus).not.toHaveBeenCalled()
     expect(harness.codexClient.runTurn).not.toHaveBeenCalled()
@@ -433,7 +450,7 @@ conflict
 resolved
 >>>>>>> branch`)
 
-    await __private!.evaluateRun('run-1')
+    await getPrivateHelpers().evaluateRun('run-1')
 
     expect(harness.github.getCheckRuns).not.toHaveBeenCalled()
     expect(harness.github.getReviewSummary).not.toHaveBeenCalled()

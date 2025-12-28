@@ -55,6 +55,8 @@ if (!globalState.__codexJudgeStoreMock) {
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
+    listRunHistory: vi.fn(),
+    getRunStats: vi.fn(),
     createPromptTuning: vi.fn(),
     close: vi.fn(),
   }
@@ -102,21 +104,34 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
   }
 }
 
+const requireMock = <T>(value: T | undefined, name: string): T => {
+  if (!value) {
+    throw new Error(`${name} is required`)
+  }
+  return value
+}
+
+const getConfigMock = () => requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock')
+const getStoreMock = () => requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock')
+const getGithubMock = () => requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock')
+const getMemoriesStoreMock = () =>
+  requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memories store mock')
+
 vi.mock('../codex-judge-config', () => ({
-  loadCodexJudgeConfig: () => globalState.__codexJudgeConfigMock!,
+  loadCodexJudgeConfig: () => getConfigMock(),
 }))
 
 vi.mock('../codex-judge-store', () => ({
   __private: storePrivate,
-  createCodexJudgeStore: () => globalState.__codexJudgeStoreMock!,
+  createCodexJudgeStore: () => getStoreMock(),
 }))
 
 vi.mock('../github-client', () => ({
-  createGitHubClient: () => globalState.__codexJudgeGithubMock!,
+  createGitHubClient: () => getGithubMock(),
 }))
 
 vi.mock('../memories-store', () => ({
-  createPostgresMemoriesStore: () => globalState.__codexJudgeMemoryStoreMock!,
+  createPostgresMemoriesStore: () => getMemoriesStoreMock(),
 }))
 
 let handleRunComplete: Awaited<typeof import('../codex-judge')>['handleRunComplete'] | null = null
@@ -173,10 +188,10 @@ const memoriesStore = {
 beforeEach(async () => {
   upsertRunComplete.mockReset()
   upsertArtifacts.mockReset()
-  Object.assign(globalState.__codexJudgeStoreMock!, store)
-  Object.assign(globalState.__codexJudgeGithubMock!, github)
-  Object.assign(globalState.__codexJudgeConfigMock!, config)
-  Object.assign(globalState.__codexJudgeMemoryStoreMock!, memoriesStore)
+  Object.assign(getStoreMock(), store)
+  Object.assign(getGithubMock(), github)
+  Object.assign(getConfigMock(), config)
+  Object.assign(getMemoriesStoreMock(), memoriesStore)
   if (!handleRunComplete) {
     handleRunComplete = (await import('../codex-judge')).handleRunComplete
   }
@@ -248,7 +263,10 @@ describe('codex judge superseded runs', () => {
     upsertArtifacts.mockResolvedValueOnce([])
 
     const timeoutSpy = vi.spyOn(global, 'setTimeout')
-    const result = await handleRunComplete!(buildPayload())
+    if (!handleRunComplete) {
+      throw new Error('codex judge handler not loaded')
+    }
+    const result = await handleRunComplete(buildPayload())
 
     expect(result?.status).toBe('superseded')
     expect(timeoutSpy).not.toHaveBeenCalled()

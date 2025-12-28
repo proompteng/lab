@@ -68,6 +68,8 @@ if (!globalState.__codexJudgeStoreMock) {
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
+    listRunHistory: vi.fn(),
+    getRunStats: vi.fn(),
     createPromptTuning: vi.fn(),
     close: vi.fn(),
   }
@@ -128,21 +130,34 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
   }
 }
 
+const requireMock = <T>(value: T | undefined, name: string): T => {
+  if (!value) {
+    throw new Error(`${name} is required`)
+  }
+  return value
+}
+
+const getConfigMock = () => requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock')
+const getStoreMock = () => requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock')
+const getGithubMock = () => requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock')
+const getMemoriesStoreMock = () =>
+  requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memories store mock')
+
 vi.mock('../codex-judge-config', () => ({
-  loadCodexJudgeConfig: () => globalState.__codexJudgeConfigMock!,
+  loadCodexJudgeConfig: () => getConfigMock(),
 }))
 
 vi.mock('../codex-judge-store', () => ({
   __private: storePrivate,
-  createCodexJudgeStore: () => globalState.__codexJudgeStoreMock!,
+  createCodexJudgeStore: () => getStoreMock(),
 }))
 
 vi.mock('../github-client', () => ({
-  createGitHubClient: () => globalState.__codexJudgeGithubMock!,
+  createGitHubClient: () => getGithubMock(),
 }))
 
 vi.mock('../memories-store', () => ({
-  createPostgresMemoriesStore: () => globalState.__codexJudgeMemoryStoreMock!,
+  createPostgresMemoriesStore: () => getMemoriesStoreMock(),
 }))
 
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
@@ -210,10 +225,10 @@ const memoriesStore = {
 }
 
 beforeEach(async () => {
-  Object.assign(globalState.__codexJudgeStoreMock!, store)
-  Object.assign(globalState.__codexJudgeGithubMock!, github)
-  Object.assign(globalState.__codexJudgeConfigMock!, config)
-  Object.assign(globalState.__codexJudgeMemoryStoreMock!, memoriesStore)
+  Object.assign(getStoreMock(), store)
+  Object.assign(getGithubMock(), github)
+  Object.assign(getConfigMock(), config)
+  Object.assign(getMemoriesStoreMock(), memoriesStore)
   if (!__private) {
     __private = (await import('../codex-judge')).__private
   }
@@ -266,7 +281,10 @@ describe('codex-judge memory snapshots', () => {
       createdAt: '2025-01-01T01:00:00Z',
     }
 
-    await __private!.writeMemories(run, evaluation)
+    if (!__private) {
+      throw new Error('codex judge private helpers not loaded')
+    }
+    await __private.writeMemories(run, evaluation)
 
     expect(persistCalls).toHaveLength(10)
 

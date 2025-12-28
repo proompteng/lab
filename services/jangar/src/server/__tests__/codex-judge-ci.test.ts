@@ -55,6 +55,8 @@ if (!globalState.__codexJudgeStoreMock) {
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
+    listRunHistory: vi.fn(),
+    getRunStats: vi.fn(),
     createPromptTuning: vi.fn(),
     close: vi.fn(),
   }
@@ -102,21 +104,34 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
   }
 }
 
+const requireMock = <T>(value: T | undefined, name: string): T => {
+  if (!value) {
+    throw new Error(`${name} is required`)
+  }
+  return value
+}
+
+const getConfigMock = () => requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock')
+const getStoreMock = () => requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock')
+const getGithubMock = () => requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock')
+const getMemoriesStoreMock = () =>
+  requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memories store mock')
+
 vi.mock('../codex-judge-config', () => ({
-  loadCodexJudgeConfig: () => globalState.__codexJudgeConfigMock!,
+  loadCodexJudgeConfig: () => getConfigMock(),
 }))
 
 vi.mock('../codex-judge-store', () => ({
   __private: storePrivate,
-  createCodexJudgeStore: () => globalState.__codexJudgeStoreMock!,
+  createCodexJudgeStore: () => getStoreMock(),
 }))
 
 vi.mock('../github-client', () => ({
-  createGitHubClient: () => globalState.__codexJudgeGithubMock!,
+  createGitHubClient: () => getGithubMock(),
 }))
 
 vi.mock('../memories-store', () => ({
-  createPostgresMemoriesStore: () => globalState.__codexJudgeMemoryStoreMock!,
+  createPostgresMemoriesStore: () => getMemoriesStoreMock(),
 }))
 
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
@@ -184,8 +199,8 @@ describe('codex-judge CI fallback', () => {
   beforeEach(async () => {
     getRefSha.mockReset()
     getCheckRuns.mockReset()
-    Object.assign(globalState.__codexJudgeGithubMock!, github)
-    Object.assign(globalState.__codexJudgeConfigMock!, config)
+    Object.assign(getGithubMock(), github)
+    Object.assign(getConfigMock(), config)
     if (!__private) {
       __private = (await import('../codex-judge')).__private
     }
@@ -196,7 +211,10 @@ describe('codex-judge CI fallback', () => {
     getCheckRuns.mockResolvedValueOnce({ status: 'pending' })
 
     const run = buildRun()
-    const result = await __private!.resolveCiContext(run, null)
+    if (!__private) {
+      throw new Error('codex judge private helpers not loaded')
+    }
+    const result = await __private.resolveCiContext(run, null)
 
     expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', 'branchsha1234567890')
@@ -222,7 +240,10 @@ describe('codex-judge CI fallback', () => {
       },
     })
 
-    const result = await __private!.resolveCiContext(run, null)
+    if (!__private) {
+      throw new Error('codex judge private helpers not loaded')
+    }
+    const result = await __private.resolveCiContext(run, null)
 
     expect(getRefSha).not.toHaveBeenCalled()
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', manifestSha)
@@ -242,7 +263,10 @@ describe('codex-judge CI fallback', () => {
       },
     })
 
-    const result = await __private!.resolveCiContext(run, null)
+    if (!__private) {
+      throw new Error('codex judge private helpers not loaded')
+    }
+    const result = await __private.resolveCiContext(run, null)
 
     expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', branchSha)
@@ -256,7 +280,10 @@ describe('codex-judge CI fallback', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     const run = buildRun()
-    const result = await __private!.resolveCiContext(run, null)
+    if (!__private) {
+      throw new Error('codex judge private helpers not loaded')
+    }
+    const result = await __private.resolveCiContext(run, null)
 
     expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', branchSha)
