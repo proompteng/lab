@@ -4,6 +4,8 @@ export type CodexJudgeConfig = {
   codexReviewers: string[]
   ciPollIntervalMs: number
   reviewPollIntervalMs: number
+  ciMaxWaitMs: number
+  reviewMaxWaitMs: number
   maxAttempts: number
   backoffScheduleMs: number[]
   facteurBaseUrl: string
@@ -41,6 +43,8 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const codexReviewers = parseList(process.env.JANGAR_CODEX_REVIEWERS ?? process.env.CODEX_REVIEWERS)
   const ciPollIntervalMs = parseNumber(process.env.JANGAR_CI_POLL_INTERVAL_MS, 30_000)
   const reviewPollIntervalMs = parseNumber(process.env.JANGAR_REVIEW_POLL_INTERVAL_MS, 30_000)
+  const ciMaxWaitMs = parseNumber(process.env.JANGAR_CI_MAX_WAIT_MS, 60 * 60_000)
+  const reviewMaxWaitMs = parseNumber(process.env.JANGAR_REVIEW_MAX_WAIT_MS, 60 * 60_000)
   const maxAttempts = parseNumber(process.env.JANGAR_CODEX_MAX_ATTEMPTS, 3)
   const backoffScheduleMs = parseList(process.env.JANGAR_CODEX_BACKOFF_SCHEDULE_MS).map((value) =>
     parseNumber(value, 0),
@@ -66,6 +70,8 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     codexReviewers,
     ciPollIntervalMs,
     reviewPollIntervalMs,
+    ciMaxWaitMs,
+    reviewMaxWaitMs,
     maxAttempts,
     backoffScheduleMs: resolvedBackoff,
     facteurBaseUrl,

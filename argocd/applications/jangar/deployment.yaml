@@ -84,6 +84,10 @@ spec:
               value: "30000"
             - name: JANGAR_REVIEW_POLL_INTERVAL_MS
               value: "30000"
+            - name: JANGAR_CI_MAX_WAIT_MS
+              value: "3600000"
+            - name: JANGAR_REVIEW_MAX_WAIT_MS
+              value: "3600000"
             - name: JANGAR_CODEX_MAX_ATTEMPTS
               value: "3"
             - name: JANGAR_CODEX_BACKOFF_SCHEDULE_MS

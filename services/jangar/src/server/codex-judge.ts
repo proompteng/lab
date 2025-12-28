@@ -964,6 +964,25 @@ const normalizeJudgeDecision = (value: string) => {
   return normalized
 }
 
+const parseTimestampMs = (value: string | null | undefined) => {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+const getElapsedMs = (value: string | null | undefined) => {
+  const startMs = parseTimestampMs(value)
+  if (startMs == null) return null
+  return Math.max(0, Date.now() - startMs)
+}
+
+const hasWaitTimedOut = (since: string | null | undefined, maxWaitMs: number) => {
+  if (maxWaitMs <= 0) return false
+  const elapsedMs = getElapsedMs(since)
+  if (elapsedMs == null) return false
+  return elapsedMs >= maxWaitMs
+}
+
 const evaluateRun = async (runId: string) => {
   if (activeEvaluations.has(runId)) return
   activeEvaluations.add(runId)
@@ -1062,9 +1081,31 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
-    await store.updateCiStatus({ runId: run.id, status: ci.status, url: ci.url, commitSha })
+    const ciRun = (await store.updateCiStatus({ runId: run.id, status: ci.status, url: ci.url, commitSha })) ?? run
 
     if (ci.status === 'pending') {
+      if (hasWaitTimedOut(ciRun.ciStatusUpdatedAt, config.ciMaxWaitMs)) {
+        const elapsedMs = getElapsedMs(ciRun.ciStatusUpdatedAt)
+        const evaluation = await store.updateDecision({
+          runId: run.id,
+          decision: 'needs_iteration',
+          reasons: {
+            error: 'ci_timeout',
+            url: ci.url,
+            pending_since: ciRun.ciStatusUpdatedAt,
+            elapsed_ms: elapsedMs,
+            max_wait_ms: config.ciMaxWaitMs,
+          },
+          suggestedFixes: { fix: 'Investigate CI delays and re-run checks if needed.' },
+          nextPrompt: 'CI checks did not complete in time. Re-run CI and ensure all checks finish.',
+          promptTuning: {},
+          systemSuggestions: {},
+        })
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, evaluation)
+        await triggerRerun(run, 'ci_timeout', evaluation)
+        return
+      }
       scheduleEvaluation(run.id, config.ciPollIntervalMs, { reschedule: true })
       return
     }
@@ -1102,17 +1143,39 @@ const evaluateRun = async (runId: string) => {
     }
 
     const review = await fetchReviewStatus(run, pr.number)
-    await store.updateReviewStatus({
-      runId: run.id,
-      status: review.status,
-      summary: {
-        unresolvedThreads: review.unresolvedThreads,
-        requestedChanges: review.requestedChanges,
-        issueComments: review.issueComments,
-      },
-    })
+    const reviewRun =
+      (await store.updateReviewStatus({
+        runId: run.id,
+        status: review.status,
+        summary: {
+          unresolvedThreads: review.unresolvedThreads,
+          requestedChanges: review.requestedChanges,
+          issueComments: review.issueComments,
+        },
+      })) ?? run
 
     if (review.status === 'pending') {
+      if (hasWaitTimedOut(reviewRun.reviewStatusUpdatedAt, config.reviewMaxWaitMs)) {
+        const elapsedMs = getElapsedMs(reviewRun.reviewStatusUpdatedAt)
+        const evaluation = await store.updateDecision({
+          runId: run.id,
+          decision: 'needs_iteration',
+          reasons: {
+            error: 'review_timeout',
+            pending_since: reviewRun.reviewStatusUpdatedAt,
+            elapsed_ms: elapsedMs,
+            max_wait_ms: config.reviewMaxWaitMs,
+          },
+          suggestedFixes: { fix: 'Follow up on Codex review or re-request review to unblock.' },
+          nextPrompt: 'Codex review did not complete in time. Re-request review and resolve feedback.',
+          promptTuning: {},
+          systemSuggestions: {},
+        })
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, evaluation)
+        await triggerRerun(run, 'review_timeout', evaluation)
+        return
+      }
       scheduleEvaluation(run.id, config.reviewPollIntervalMs, { reschedule: true })
       return
     }
