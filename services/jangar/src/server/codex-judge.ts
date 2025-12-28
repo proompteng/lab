@@ -1349,15 +1349,206 @@ const createPromptTuningPr = async (
   }
 }
 
+const DISCORD_MESSAGE_LIMIT = 1900
+const DISCORD_SUMMARY_FALLBACK = 'No summary available.'
+const DISCORD_SUMMARY_HEADERS = new Set(['summary'])
+const DISCORD_SECTION_HEADERS = new Set([
+  'summary',
+  'tests',
+  'testing',
+  'pr link',
+  'pr',
+  'blockers',
+  'screenshots',
+  'breaking changes',
+])
+const DISCORD_ARTIFACT_PREFERENCE = [
+  'implementation-log',
+  'implementation-status',
+  'implementation-events',
+  'implementation-agent-log',
+  'implementation-runtime-log',
+  'implementation-changes',
+  'implementation-patch',
+]
+
+const normalizeDiscordHeader = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/^[#>*-]+\s*/, '')
+    .replace(/[*_`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+const isDiscordHeader = (value: string, headers: Set<string>) => {
+  const normalized = normalizeDiscordHeader(value)
+  if (!normalized) return false
+  if (headers.has(normalized)) return true
+  for (const header of headers) {
+    if (normalized.startsWith(`${header} `) || normalized.startsWith(`${header}:`)) {
+      return true
+    }
+  }
+  return false
+}
+
+const normalizeDiscordSummary = (value: string) => value.replace(/\s+/g, ' ').trim()
+
+const extractSummaryFromAssistantMessage = (value: string | null | undefined) => {
+  if (!value) return null
+  const lines = value
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trim())
+  const summaryIndex = lines.findIndex((line) => isDiscordHeader(line, DISCORD_SUMMARY_HEADERS))
+
+  if (summaryIndex >= 0) {
+    const bullets: string[] = []
+    for (let i = summaryIndex + 1; i < lines.length; i += 1) {
+      const line = lines[i]
+      if (!line) {
+        if (bullets.length > 0) break
+        continue
+      }
+      if (isDiscordHeader(line, DISCORD_SECTION_HEADERS)) break
+      const bulletMatch = line.match(/^[-*\u2022]\s+(.*)$/)
+      if (bulletMatch) {
+        const content = bulletMatch[1]?.trim()
+        if (content) {
+          bullets.push(content)
+        }
+        if (bullets.length >= 2) break
+        continue
+      }
+      if (bullets.length === 0) {
+        const normalized = normalizeDiscordSummary(line)
+        return normalized || null
+      }
+      break
+    }
+    if (bullets.length > 0) {
+      return normalizeDiscordSummary(bullets.join('; '))
+    }
+  }
+
+  const firstLine = lines.find((line) => line.length > 0)
+  return firstLine ? normalizeDiscordSummary(firstLine) : null
+}
+
+const resolveIssueUrl = (run: CodexRunRecord) => {
+  const runPayload = run.runCompletePayload ?? {}
+  const rawIssueUrl =
+    (typeof runPayload.issueUrl === 'string' && runPayload.issueUrl.trim()) ||
+    (typeof runPayload.issue_url === 'string' && runPayload.issue_url.trim())
+  if (rawIssueUrl) return rawIssueUrl.trim()
+  if (!run.repository || !run.issueNumber) return null
+  return `https://github.com/${run.repository}/issues/${run.issueNumber}`
+}
+
+const resolvePrUrl = (run: CodexRunRecord, prUrl?: string) => {
+  if (prUrl && prUrl.trim().length > 0) return prUrl.trim()
+  if (run.prUrl && run.prUrl.trim().length > 0) return run.prUrl.trim()
+  if (run.prNumber && run.repository) {
+    return `https://github.com/${run.repository}/pull/${run.prNumber}`
+  }
+  return null
+}
+
+const resolveCiUrl = (run: CodexRunRecord, ciUrl?: string) => {
+  if (ciUrl && ciUrl.trim().length > 0) return ciUrl.trim()
+  if (run.ciUrl && run.ciUrl.trim().length > 0) return run.ciUrl.trim()
+  if (run.commitSha && run.repository) {
+    return `https://github.com/${run.repository}/commit/${run.commitSha}/checks`
+  }
+  return null
+}
+
+const extractArtifactUrl = (run: CodexRunRecord) => {
+  const payload = run.runCompletePayload
+  if (!payload || typeof payload !== 'object') return null
+  const artifacts = Array.isArray(payload.artifacts)
+    ? payload.artifacts
+    : isRecord(payload.data) && Array.isArray(payload.data.artifacts)
+      ? payload.data.artifacts
+      : []
+
+  if (artifacts.length === 0) return null
+
+  const findUrl = (name: string) => {
+    const match = artifacts.find(
+      (artifact) =>
+        isRecord(artifact) && artifact.name === name && typeof artifact.url === 'string' && artifact.url.trim().length,
+    )
+    return match && typeof match.url === 'string' ? match.url.trim() : null
+  }
+
+  for (const name of DISCORD_ARTIFACT_PREFERENCE) {
+    const url = findUrl(name)
+    if (url) return url
+  }
+
+  const fallback = artifacts.find(
+    (artifact) => isRecord(artifact) && typeof artifact.url === 'string' && artifact.url.trim().length,
+  )
+  return fallback && typeof fallback.url === 'string' ? fallback.url.trim() : null
+}
+
+const truncateDiscordText = (value: string, maxLength: number) => {
+  if (maxLength <= 0) return ''
+  if (value.length <= maxLength) return value
+  const suffix = '...'
+  const sliceLength = Math.max(0, maxLength - suffix.length)
+  if (sliceLength === 0) return suffix.slice(0, maxLength)
+  return `${value.slice(0, sliceLength)}${suffix}`
+}
+
+const buildDiscordSuccessMessage = (run: CodexRunRecord, prUrl?: string, ciUrl?: string) => {
+  const issueUrl = resolveIssueUrl(run)
+  const resolvedPrUrl = resolvePrUrl(run, prUrl)
+  const resolvedCiUrl = resolveCiUrl(run, ciUrl)
+  const artifactUrl = extractArtifactUrl(run)
+  const summaryRaw = extractSummaryFromAssistantMessage(
+    typeof run.notifyPayload?.last_assistant_message === 'string' ? run.notifyPayload.last_assistant_message : null,
+  )
+  const summary = summaryRaw || DISCORD_SUMMARY_FALLBACK
+
+  const statusLine = `✅ Codex completed ${run.repository}#${run.issueNumber}.`
+  const summaryPrefix = 'Summary: '
+  const linkLines = [
+    issueUrl ? `Issue: ${issueUrl}` : null,
+    resolvedPrUrl ? `PR: ${resolvedPrUrl}` : null,
+    resolvedCiUrl ? `CI: ${resolvedCiUrl}` : null,
+    artifactUrl ? `Artifacts: ${artifactUrl}` : null,
+  ].filter(Boolean) as string[]
+
+  const buildLines = (links: string[]) => {
+    const fixedLines = [statusLine, ...links]
+    const fixedLength = fixedLines.join('\n').length
+    const maxSummary = DISCORD_MESSAGE_LIMIT - fixedLength - summaryPrefix.length - 1
+    const trimmedSummary = truncateDiscordText(summary, maxSummary)
+    return [statusLine, `${summaryPrefix}${trimmedSummary || DISCORD_SUMMARY_FALLBACK}`, ...links]
+  }
+
+  let lines = buildLines(linkLines)
+  if (lines.join('\n').length > DISCORD_MESSAGE_LIMIT && artifactUrl) {
+    lines = buildLines(linkLines.filter((line) => !line.startsWith('Artifacts:')))
+  }
+
+  const content = lines.join('\n')
+  if (content.length <= DISCORD_MESSAGE_LIMIT) return content
+
+  const tightenedSummary = truncateDiscordText(
+    summary,
+    Math.max(1, DISCORD_MESSAGE_LIMIT - content.length + summary.length),
+  )
+  return [statusLine, `${summaryPrefix}${tightenedSummary || '...'}`, ...linkLines]
+    .join('\n')
+    .slice(0, DISCORD_MESSAGE_LIMIT)
+}
+
 const sendDiscordSuccess = async (run: CodexRunRecord, prUrl?: string, ciUrl?: string) => {
   if (!config.discordBotToken || !config.discordChannelId) return
-  const content = [
-    `✅ Codex completed ${run.repository}#${run.issueNumber}.`,
-    prUrl ? `PR: ${prUrl}` : null,
-    ciUrl ? `CI: ${ciUrl}` : null,
-  ]
-    .filter(Boolean)
-    .join('\n')
+  const content = buildDiscordSuccessMessage(run, prUrl, ciUrl)
 
   await fetch(`${config.discordApiBaseUrl}/channels/${config.discordChannelId}/messages`, {
     method: 'POST',
