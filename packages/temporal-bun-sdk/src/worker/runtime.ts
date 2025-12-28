@@ -1097,7 +1097,7 @@ export class WorkerRuntime {
     const isLegacyQueryOnly = isLegacyQueryTask && !hasHistoryEvents && !hasMoreHistory
     const hasQueryPayloads = Boolean(response.query) || queryCount > 0
     const historyEvents = await this.#collectWorkflowHistory(execution, response, {
-      forceFullHistory: hasQueryPayloads && !isLegacyQueryOnly,
+      forceFullHistory: (hasQueryPayloads && !isLegacyQueryOnly) || nondeterminismRetry > 0,
       skipFetchOnMissingStart: isLegacyQueryOnly,
     })
     const workflowType = this.#resolveWorkflowType(response, historyEvents)
