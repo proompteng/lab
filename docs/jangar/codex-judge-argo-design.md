@@ -36,6 +36,7 @@ Components:
 - Codex exec: runs agent; emits notify on completion (optional enrichment).
 - Notify wrapper: enriches notify payload and POSTs to Jangar.
 - Jangar: persists run state, waits for CI, judges completion, and orchestrates reruns (triggered by run-complete).
+- Jangar Memories: stores semantic memories (pgvector) for judge snapshots.
 - MinIO: stores artifacts for each run.
 - Argo Events: publishes workflow completion events to Kafka.
 - Kafka: carries `github.issues.codex.tasks` and `argo.workflows.completions`.
@@ -59,6 +60,7 @@ flowchart LR
   J --> M
   J --> CI[GitHub Actions]
   J --> D[Discord]
+  J --> MEM[Memories (Postgres + pgvector)]
   J -->|rerun request| F
 ```
 
@@ -73,6 +75,7 @@ flowchart LR
 8) Jangar gates + LLM judge (triggered by run-complete).
 9) If pass: create/update PR, mark complete, Discord success.
 10) If fail: generate next prompt, request Facteur to trigger new Argo run on same branch.
+11) Jangar writes 10 memory snapshots from logs/output into the memories store.
 
 ## Current Production Wiring (Argo CD Sources of Truth)
 - Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
@@ -181,6 +184,7 @@ Artifact access:
   - Non-empty change set (unless explicitly expected).
 - Run LLM judge for requirement coverage and quality.
 - Decide pass/fail and trigger next actions.
+- Create 10 memory snapshots per run (logs + outputs), stored via Jangar memories.
 
 ## CI Signal
 - CI is sourced from GitHub Actions status for the commit SHA produced by the current attempt.
@@ -239,6 +243,7 @@ stateDiagram-v2
 ## Observability
 - Metrics: completion rate, avg attempts, failure reasons, CI duration, judge confidence.
 - Run history per issue with artifact links.
+- Memory snapshots per run (10 entries) for retrieval and prompt tuning.
 
 ## Risks and Mitigations
 - Notify only on success: rely on onExit artifacts and Argo completion events.

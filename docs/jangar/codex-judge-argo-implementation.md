@@ -19,6 +19,7 @@ E) Judge engine (gates + LLM)
 F) Orchestration (rerun trigger)
 G) Discord notifications
 H) Prompt auto-tuning PRs
+I) Memory snapshots (10 per run)
 
 Blocking chain:
 - A, B, C, D can start immediately.
@@ -36,6 +37,7 @@ flowchart LR
   E --> F[Rerun orchestration]
   E --> G[Discord notify]
   E --> H[Prompt auto-tuning]
+  E --> I[Memory snapshots]
 ```
 
 ## A) Argo Workflow Updates (Froussard)
@@ -264,6 +266,14 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
   "system_improvement_suggestions": ["..."]
 }
 
+### Memory snapshot output (post-judge)
+- Create 10 memory records per run using Jangar memories storage.
+- Each snapshot should include:
+  - summary: 1-2 sentence distilled insight
+  - content: longer detail from logs/artifacts (e.g., failures, fixes, tests)
+  - tags: issue, repo, workflow, attempt, status, stage
+  - metadata: commit SHA, CI url, workflow name, timestamps
+
 ### Deliverables
 - Gate evaluator with deterministic checks.
 - LLM judge with JSON schema validation.
@@ -356,6 +366,29 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
 ### Acceptance criteria
 - PR created with minimal diff and clear rationale.
 - Prompt version updated only via PR merge.
+
+## I) Memory Snapshots (10 per run)
+
+### Purpose
+Persist structured learning from each run so future prompts and judge decisions can use semantic recall.
+
+### Implementation
+- Use Jangar memories endpoint (`POST /api/memories`) or direct store.
+- Namespace: `codex:<repo>:<issue_number>` (or equivalent).
+- Create exactly 10 entries per run; fill missing slots with generalized observations
+  (e.g., environment, CI status, run timing).
+
+### Embeddings
+- Jangar creates embeddings internally on persist (see `services/jangar/src/server/memories-store.ts`).
+- Embedding provider is controlled by:
+  - `OPENAI_API_BASE_URL` / `OPENAI_API_KEY`
+  - `OPENAI_EMBEDDING_MODEL` / `OPENAI_EMBEDDING_DIMENSION`
+  - Self-hosted defaults: `qwen3-embedding:0.6b`, dimension `1024`
+  - OpenAI defaults: `text-embedding-3-small`, dimension `1536`
+
+### Acceptance criteria
+- 10 memories written for each run (success or failure).
+- Entries are retrievable by namespace and query.
 
 ## Parallel Execution Plan (Agent Split)
 
