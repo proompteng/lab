@@ -72,6 +72,27 @@ spec:
                 dataTemplate: |
                   {{- $spec := coalesce (index .Input.body "spec") (dict) -}}
                   {{- toJson (coalesce (index $spec "arguments") (dict)) }}
+            - dest: artifacts
+              src:
+                dependencyName: workflow-completion
+                useRawData: true
+                dataTemplate: |
+                  {{- $nodes := coalesce (index .Input.body "status" "nodes") (dict) -}}
+                  {{- $artifacts := list -}}
+                  {{- range $nodeName, $node := $nodes -}}
+                    {{- $outputs := coalesce (index $node "outputs") (dict) -}}
+                    {{- $nodeArtifacts := coalesce (index $outputs "artifacts") (list) -}}
+                    {{- range $artifact := $nodeArtifacts -}}
+                      {{- $s3 := coalesce (index $artifact "s3") (dict) -}}
+                      {{- $entry := dict
+                            "name" (default "" (index $artifact "name"))
+                            "key" (default "" (index $s3 "key"))
+                            "bucket" (default "" (index $s3 "bucket"))
+                            "url" (default "" (index $s3 "endpoint")) -}}
+                      {{- $artifacts = append $artifacts $entry -}}
+                    {{- end -}}
+                  {{- end -}}
+                  {{- toJson $artifacts -}}
             - dest: stage
               src:
                 dependencyName: workflow-completion

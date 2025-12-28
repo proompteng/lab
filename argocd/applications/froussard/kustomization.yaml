@@ -4,7 +4,6 @@ resources:
   - github-secrets.yaml
   - discord-secrets.yaml
   - event-bus.yaml
-  - kafka-username-secret.yaml
   - workflow-completions-eventsource.yaml
   - workflow-completions-sensor.yaml
   - argo-workflows-completions-topic.yaml

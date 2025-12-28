@@ -17,6 +17,18 @@ spec:
       postInitApplicationSQL:
         - CREATE EXTENSION IF NOT EXISTS pgcrypto;
         - CREATE EXTENSION IF NOT EXISTS vector;
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://argo-workflows/cnpg/jangar
+      endpointURL: http://observability-minio.minio.svc.cluster.local:9000
+      s3Credentials:
+        accessKeyId:
+          name: observability-minio-creds
+          key: accesskey
+        secretAccessKey:
+          name: observability-minio-creds
+          key: secretkey
+    retentionPolicy: "14d"
   inheritedMetadata:
     annotations:
       reflector.v1.k8s.emberstack.com/reflection-allowed: "true"

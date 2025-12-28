@@ -170,3 +170,5 @@ spec:
             path: /workspace/lab/.codex-implementation-runtime.log
           - name: implementation-resume
             path: /workspace/lab/.codex/implementation-resume.json
+          - name: implementation-notify
+            path: /workspace/lab/.codex-implementation-notify.json

@@ -5,10 +5,14 @@ resources:
   - deployment.yaml
   - service.yaml
   - github-token.yaml
+  - discord-codex-bot-sealedsecret.yaml
+  - discord-success-channel-sealedsecret.yaml
+  - codex-run-complete-kafkasource.yaml
   - clickhouse-auth.yaml
   - app-tailscale-service.yaml
   - tailscale-service.yaml
   - postgres-cluster.yaml
+  - postgres-scheduled-backup.yaml
   - openwebui-redis.yaml
   - pvc-rwx.yaml
   - vscode-tailscale-service.yaml

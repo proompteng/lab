@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.0.0",
+    "@bufbuild/protobuf": "^2.1.0",
     "@effect/schema": "^0.75.5",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@proompteng/codex": "workspace:*",

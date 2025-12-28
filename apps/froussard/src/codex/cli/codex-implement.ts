@@ -14,7 +14,7 @@ import {
   timestampUtc,
 } from './lib/codex-utils'
 import { ensureFileDirectory } from './lib/fs'
-import { type CodexLogger, createCodexLogger } from './lib/logger'
+import { type CodexLogger, consoleLogger, createCodexLogger } from './lib/logger'
 
 interface ImplementationEventPayload {
   prompt?: string
@@ -44,6 +44,188 @@ const sanitizeNullableString = (value: string | null | undefined) => {
     return ''
   }
   return value
+}
+
+type CodexNotifyLogExcerpt = {
+  output?: string | null
+  events?: string | null
+  agent?: string | null
+  runtime?: string | null
+  status?: string | null
+}
+
+type CodexNotifyPayload = {
+  type: 'agent-turn-complete'
+  repository: string
+  issue_number: string
+  base_branch: string
+  head_branch: string
+  workflow_name: string | null
+  workflow_namespace: string | null
+  session_id: string | null
+  prompt: string
+  input_messages: string[]
+  last_assistant_message: string | null
+  output_paths: Record<string, string>
+  log_excerpt?: CodexNotifyLogExcerpt
+  issued_at: string
+}
+
+const MAX_NOTIFY_LOG_CHARS = 12_000
+
+const truncateLogContent = (content: string) => {
+  if (content.length <= MAX_NOTIFY_LOG_CHARS) {
+    return content
+  }
+  const truncatedCount = content.length - MAX_NOTIFY_LOG_CHARS
+  return `...[truncated ${truncatedCount} chars]\n${content.slice(-MAX_NOTIFY_LOG_CHARS)}`
+}
+
+const readLogExcerpt = async (path: string, logger?: CodexLogger) => {
+  try {
+    if (!(await pathExists(path))) {
+      return null
+    }
+    const content = await readFile(path, 'utf8')
+    if (!content) {
+      return ''
+    }
+    return truncateLogContent(content)
+  } catch (error) {
+    logger?.warn(`Failed to read log excerpt from ${path}`, error)
+    return null
+  }
+}
+
+const collectLogExcerpts = async (
+  {
+    outputPath,
+    jsonOutputPath,
+    agentOutputPath,
+    runtimeLogPath,
+    statusPath,
+  }: {
+    outputPath: string
+    jsonOutputPath: string
+    agentOutputPath: string
+    runtimeLogPath: string
+    statusPath: string
+  },
+  logger?: CodexLogger,
+): Promise<CodexNotifyLogExcerpt> => {
+  const [output, events, agent, runtime, status] = await Promise.all([
+    readLogExcerpt(outputPath, logger),
+    readLogExcerpt(jsonOutputPath, logger),
+    readLogExcerpt(agentOutputPath, logger),
+    readLogExcerpt(runtimeLogPath, logger),
+    readLogExcerpt(statusPath, logger),
+  ])
+  return {
+    output,
+    events,
+    agent,
+    runtime,
+    status,
+  }
+}
+
+const initializeOutputFiles = async (paths: string[], logger: CodexLogger) => {
+  await Promise.all(
+    paths.map(async (path) => {
+      try {
+        await ensureFileDirectory(path)
+        await writeFile(path, '', 'utf8')
+      } catch (error) {
+        logger.warn(`Failed to initialize output file at ${path}`, error)
+      }
+    }),
+  )
+}
+
+const buildNotifyPayload = ({
+  repository,
+  issueNumber,
+  baseBranch,
+  headBranch,
+  prompt,
+  outputPath,
+  jsonOutputPath,
+  agentOutputPath,
+  runtimeLogPath,
+  statusPath,
+  patchPath,
+  archivePath,
+  notifyPath,
+  sessionId,
+  lastAssistantMessage,
+  logExcerpt,
+}: {
+  repository: string
+  issueNumber: string
+  baseBranch: string
+  headBranch: string
+  prompt: string
+  outputPath: string
+  jsonOutputPath: string
+  agentOutputPath: string
+  runtimeLogPath: string
+  statusPath: string
+  patchPath: string
+  archivePath: string
+  notifyPath: string
+  sessionId?: string
+  lastAssistantMessage?: string | null
+  logExcerpt?: CodexNotifyLogExcerpt
+}): CodexNotifyPayload => {
+  return {
+    type: 'agent-turn-complete',
+    repository,
+    issue_number: issueNumber,
+    base_branch: baseBranch,
+    head_branch: headBranch,
+    workflow_name: process.env.ARGO_WORKFLOW_NAME ?? null,
+    workflow_namespace: process.env.ARGO_WORKFLOW_NAMESPACE ?? null,
+    session_id: sessionId ?? null,
+    prompt,
+    input_messages: [prompt],
+    last_assistant_message: lastAssistantMessage ?? null,
+    output_paths: {
+      output: outputPath,
+      events: jsonOutputPath,
+      agent: agentOutputPath,
+      runtime: runtimeLogPath,
+      status: statusPath,
+      patch: patchPath,
+      changes: archivePath,
+      notify: notifyPath,
+    },
+    log_excerpt: logExcerpt,
+    issued_at: new Date().toISOString(),
+  }
+}
+
+const postNotifyPayload = async (payload: CodexNotifyPayload, logger: CodexLogger) => {
+  const baseUrl = sanitizeNullableString(process.env.CODEX_NOTIFY_URL ?? process.env.JANGAR_BASE_URL ?? '')
+  if (!baseUrl) {
+    logger.warn('Notify disabled: missing CODEX_NOTIFY_URL or JANGAR_BASE_URL')
+    return
+  }
+
+  const notifyUrl = baseUrl.endsWith('/api/codex/notify') ? baseUrl : `${baseUrl.replace(/\/$/, '')}/api/codex/notify`
+
+  try {
+    const response = await fetch(notifyUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!response.ok) {
+      const body = await response.text()
+      logger.warn(`Notify failed (${response.status}): ${body}`)
+    }
+  } catch (error) {
+    logger.warn('Notify request failed', error)
+  }
 }
 
 interface CommandResult {
@@ -336,7 +518,6 @@ const ensureEmptyFile = async (path: string) => {
   await ensureFileDirectory(path)
   await writeFile(path, '', 'utf8')
 }
-
 const extractArchiveTo = async (archivePath: string, destination: string) => {
   await new Promise<void>((resolve, reject) => {
     const tarProcess = spawnChild('tar', ['-xzf', archivePath, '-C', destination], {
@@ -709,6 +890,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   const statusPath = process.env.IMPLEMENTATION_STATUS_PATH ?? `${worktree}/.codex-implementation-status.txt`
   const archivePath =
     process.env.IMPLEMENTATION_CHANGES_ARCHIVE_PATH ?? `${worktree}/.codex-implementation-changes.tar.gz`
+  const notifyPath = process.env.IMPLEMENTATION_NOTIFY_PATH ?? `${worktree}/.codex-implementation-notify.json`
   const resumeMetadataPath = getResumeMetadataPath(worktree)
   const lokiEndpoint =
     process.env.LGTM_LOKI_ENDPOINT ??
@@ -789,6 +971,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   process.env.IMPLEMENTATION_PATCH_PATH = patchPath
   process.env.IMPLEMENTATION_STATUS_PATH = statusPath
   process.env.IMPLEMENTATION_CHANGES_ARCHIVE_PATH = archivePath
+  process.env.IMPLEMENTATION_NOTIFY_PATH = notifyPath
 
   process.env.CODEX_STAGE = process.env.CODEX_STAGE ?? 'implementation'
   process.env.RUST_LOG = process.env.RUST_LOG ?? 'codex_core=info,codex_exec=info'
@@ -803,6 +986,8 @@ export const runCodexImplementation = async (eventPath: string) => {
   const channelRunIdSource =
     process.env.CODEX_CHANNEL_RUN_ID ?? process.env.ARGO_WORKFLOW_NAME ?? process.env.ARGO_WORKFLOW_UID ?? randomRunId()
   const channelRunId = channelRunIdSource.slice(0, 24).toLowerCase()
+
+  await initializeOutputFiles([outputPath, jsonOutputPath, agentOutputPath, runtimeLogPath, notifyPath], consoleLogger)
 
   const logger = await createCodexLogger({
     logPath: runtimeLogPath,
@@ -935,6 +1120,47 @@ export const runCodexImplementation = async (eventPath: string) => {
       basicAuth: lokiBasicAuth,
       logger,
     })
+
+    const logExcerpt = await collectLogExcerpts(
+      {
+        outputPath,
+        jsonOutputPath,
+        agentOutputPath,
+        runtimeLogPath,
+        statusPath,
+      },
+      logger,
+    )
+
+    const lastAssistantMessage =
+      sessionResult.agentMessages.length > 0
+        ? sessionResult.agentMessages[sessionResult.agentMessages.length - 1]
+        : null
+    const notifyPayload = buildNotifyPayload({
+      repository,
+      issueNumber,
+      baseBranch,
+      headBranch,
+      prompt,
+      outputPath,
+      jsonOutputPath,
+      agentOutputPath,
+      runtimeLogPath,
+      statusPath,
+      patchPath,
+      archivePath,
+      notifyPath,
+      sessionId: capturedSessionId,
+      lastAssistantMessage,
+      logExcerpt,
+    })
+    try {
+      await ensureFileDirectory(notifyPath)
+      await writeFile(notifyPath, JSON.stringify(notifyPayload, null, 2), 'utf8')
+    } catch (error) {
+      logger.warn('Failed to persist notify payload for artifacts', error)
+    }
+    await postNotifyPayload(notifyPayload, logger)
 
     console.log(`Codex execution logged to ${outputPath}`)
     try {

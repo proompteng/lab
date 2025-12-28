@@ -24,6 +24,8 @@ import { Route as ApiModelsRouteImport } from './routes/api/models'
 import { Route as ApiMemoriesRouteImport } from './routes/api/memories'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiEnrichRouteImport } from './routes/api/enrich'
+import { Route as ApiCodexNotifyRouteImport } from './routes/api/codex/notify'
+import { Route as ApiCodexRunCompleteRouteImport } from './routes/api/codex/run-complete'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
 import { Route as ApiTorghutSymbolsRouteImport } from './routes/api/torghut/symbols'
 import { Route as ApiAtlasPathsRouteImport } from './routes/api/atlas/paths'
@@ -109,6 +111,16 @@ const ApiEnrichRoute = ApiEnrichRouteImport.update({
   path: '/api/enrich',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCodexNotifyRoute = ApiCodexNotifyRouteImport.update({
+  id: '/api/codex/notify',
+  path: '/api/codex/notify',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCodexRunCompleteRoute = ApiCodexRunCompleteRouteImport.update({
+  id: '/api/codex/run-complete',
+  path: '/api/codex/run-complete',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OpenaiV1ModelsRoute = OpenaiV1ModelsRouteImport.update({
   id: '/openai/v1/models',
   path: '/openai/v1/models',
@@ -161,6 +173,8 @@ export interface FileRoutesByFullPath {
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
   '/api/enrich': typeof ApiEnrichRoute
+  '/api/codex/notify': typeof ApiCodexNotifyRoute
+  '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/health': typeof ApiHealthRoute
   '/api/memories': typeof ApiMemoriesRoute
   '/api/models': typeof ApiModelsRoute
@@ -187,6 +201,8 @@ export interface FileRoutesByTo {
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
   '/api/enrich': typeof ApiEnrichRoute
+  '/api/codex/notify': typeof ApiCodexNotifyRoute
+  '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/health': typeof ApiHealthRoute
   '/api/memories': typeof ApiMemoriesRoute
   '/api/models': typeof ApiModelsRoute
@@ -214,6 +230,8 @@ export interface FileRoutesById {
   '/mcp': typeof McpRoute
   '/memories': typeof MemoriesRoute
   '/api/enrich': typeof ApiEnrichRoute
+  '/api/codex/notify': typeof ApiCodexNotifyRoute
+  '/api/codex/run-complete': typeof ApiCodexRunCompleteRoute
   '/api/health': typeof ApiHealthRoute
   '/api/memories': typeof ApiMemoriesRoute
   '/api/models': typeof ApiModelsRoute
@@ -242,6 +260,8 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memories'
     | '/api/enrich'
+    | '/api/codex/notify'
+    | '/api/codex/run-complete'
     | '/api/health'
     | '/api/memories'
     | '/api/models'
@@ -268,6 +288,8 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memories'
     | '/api/enrich'
+    | '/api/codex/notify'
+    | '/api/codex/run-complete'
     | '/api/health'
     | '/api/memories'
     | '/api/models'
@@ -294,6 +316,8 @@ export interface FileRouteTypes {
     | '/mcp'
     | '/memories'
     | '/api/enrich'
+    | '/api/codex/notify'
+    | '/api/codex/run-complete'
     | '/api/health'
     | '/api/memories'
     | '/api/models'
@@ -321,6 +345,8 @@ export interface RootRouteChildren {
   McpRoute: typeof McpRoute
   MemoriesRoute: typeof MemoriesRoute
   ApiEnrichRoute: typeof ApiEnrichRoute
+  ApiCodexNotifyRoute: typeof ApiCodexNotifyRoute
+  ApiCodexRunCompleteRoute: typeof ApiCodexRunCompleteRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiMemoriesRoute: typeof ApiMemoriesRoute
   ApiModelsRoute: typeof ApiModelsRoute
@@ -448,6 +474,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiEnrichRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/codex/notify': {
+      id: '/api/codex/notify'
+      path: '/api/codex/notify'
+      fullPath: '/api/codex/notify'
+      preLoaderRoute: typeof ApiCodexNotifyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/codex/run-complete': {
+      id: '/api/codex/run-complete'
+      path: '/api/codex/run-complete'
+      fullPath: '/api/codex/run-complete'
+      preLoaderRoute: typeof ApiCodexRunCompleteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/openai/v1/models': {
       id: '/openai/v1/models'
       path: '/openai/v1/models'
@@ -531,6 +571,8 @@ const rootRouteChildren: RootRouteChildren = {
   McpRoute: McpRoute,
   MemoriesRoute: MemoriesRoute,
   ApiEnrichRoute: ApiEnrichRoute,
+  ApiCodexNotifyRoute: ApiCodexNotifyRoute,
+  ApiCodexRunCompleteRoute: ApiCodexRunCompleteRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiMemoriesRoute: ApiMemoriesRoute,
   ApiModelsRoute: ApiModelsRoute,

@@ -1,11 +1,11 @@
 # Codex Exec Notifications -> Jangar Judge -> Resumable Argo Iteration
 
-Status: Draft
+Status: Complete (ready for implementation)
 Owner: Jangar + Froussard + Facteur
 Scope: Codex exec runs in Argo, judge consumes completion notifications, decides pass/fail, triggers reruns, and posts success to Discord.
 
 ## Summary
-Codex runs inside Argo workflows triggered by Facteur from GitHub issue events. Argo Events publishes workflow completions to Kafka, and Codex may emit a notify event on successful turn completion. Jangar ingests run-complete events from the Kafka completions topic as the source of truth, uses notify as enrichment, waits for GitHub Actions CI results and Codex review completion, evaluates whether work is complete, and either:
+Codex runs inside Argo workflows triggered by Facteur from GitHub issue events. Argo Events publishes workflow completions to Kafka (success or failure), and Codex may emit a notify event on successful turn completion. Jangar ingests run-complete events from the Kafka completions topic as the source of truth, uses notify as enrichment, waits for GitHub Actions CI results and Codex PR review completion, evaluates whether work is complete, and either:
 - marks success and posts to Discord, or
 - generates a follow-up prompt and triggers a new Argo run that resumes work from the last commit.
 
@@ -24,6 +24,7 @@ All runs are resumable via a per-issue branch. Artifacts are stored in MinIO. Pr
 
 ## Definitions
 - Turn completion: Codex emits notify only after a successful turn with no follow-up needed.
+- Completion: CI green for the attempt commit SHA + Codex review completed + all Codex PR review threads resolved + judge pass.
 - Run: One Argo workflow attempt for a given issue.
 - Attempt: A numbered iteration of a run (1..N) on the same branch.
 
@@ -59,9 +60,11 @@ flowchart LR
   A --> M[Argo Artifacts MinIO]
   J --> M
   J --> CI[GitHub Actions]
+  J --> PR[GitHub PR Reviews]
   J --> D[Discord]
   J --> MEM[Memories Postgres pgvector]
   J -->|rerun request| F
+  J --> PT[Prompt Tuning PRs]
 ```
 
 ## Data Flow
@@ -72,11 +75,13 @@ flowchart LR
 5) Codex notify fires on successful turn completion (optional enrichment).
 6) Notify wrapper enriches payload and POSTs to Jangar.
 7) Jangar waits for GitHub Actions CI result for the attempt commit SHA.
-8) Jangar waits for Codex review completion and aggregates Codex PR review comments.
-9) Jangar gates + LLM judge (triggered by run-complete) with CI + Codex review inputs.
-10) If pass: create/update PR, mark complete, Discord success.
-10) If fail: generate next prompt, request Facteur to trigger new Argo run on same branch.
-11) Jangar writes 10 memory snapshots from logs/output into the memories store.
+8) Jangar waits for Codex PR review completion and resolved review threads.
+9) If Codex review has unresolved threads or requested changes, Jangar generates a next prompt that
+   addresses every comment and triggers a rerun on the same branch.
+10) Jangar gates + LLM judge (triggered by run-complete).
+11) If pass: create/update PR, mark complete, Discord success.
+12) If fail: generate next prompt, request Facteur to trigger new Argo run on same branch.
+13) Jangar writes 10 memory snapshots from logs/output into the memories store.
 
 ## Current Production Wiring (Argo CD Sources of Truth)
 - Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
@@ -95,14 +100,15 @@ Sequence (happy path + rerun):
 sequenceDiagram
   participant GH as GitHub
   participant FR as Froussard
-  participant KT as Kafka (tasks)
+  participant KT as Kafka tasks
   participant F as Facteur
   participant A as Argo
   participant C as Codex
   participant W as Notify Wrapper
-  participant KC as Kafka (completions)
+  participant KC as Kafka completions
   participant J as Jangar
   participant CI as GitHub Actions
+  participant PR as GitHub PR Reviews
   participant D as Discord
 
   GH->>FR: Issue event
@@ -116,6 +122,8 @@ sequenceDiagram
   KC->>J: run-complete
   J->>CI: wait for status
   CI-->>J: success/failure
+  J->>PR: wait for Codex review + resolved threads
+  PR-->>J: review status
   alt pass
     J->>D: success message
   else fail
@@ -158,6 +166,7 @@ Add the following artifacts to support judging and resumability:
 - `.codex/implementation-resume.json` (resume metadata)
 
 Artifact access:
+- The workflow completion payload includes artifact name/key metadata when available.
 - Prefer querying the Argo Workflow API for `status.outputs.artifacts` to retrieve keys and S3 metadata.
 - Fall back to direct S3 access in MinIO using the artifact keys.
  - The changes archive contains `metadata/manifest.json` with repo/issue/prompt/session metadata
@@ -178,16 +187,20 @@ Artifact access:
 - Correlate runs by issue_id, workflow_name, workflow_uid, turn_id, attempt.
 - Decode workflow arguments (base64 `eventBody`) to recover repository/issue metadata.
 - Query Argo Workflow API for outputs/artifact keys when needed.
+- Use notify log excerpts (output/agent/runtime/events/status) for judge context and memory snapshots; fall back to artifacts when notify is missing.
 - Wait for GitHub Actions CI status for the attempt commit SHA.
-- Wait for Codex review completion on the PR, and ensure all Codex review comments are addressed.
+- Wait for Codex PR review completion and ensure all Codex review threads are resolved.
+- Parse Codex review comments and embed them into `next_prompt` when reruns are required.
 - Run deterministic gates:
   - CI must be green.
+  - Codex review must be completed and resolved.
   - No merge conflicts on resume.
   - Non-empty change set (unless explicitly expected).
 - Codex review must be complete with no unresolved Codex review threads or open “changes requested”.
 - Run LLM judge for requirement coverage and quality.
 - Decide pass/fail and trigger next actions.
 - Create 10 memory snapshots per run (logs + outputs), stored via Jangar memories.
+- Submit reruns through Facteur (`/codex/tasks`) with updated prompt + attempt metadata.
 
 ## CI Signal
 - CI is sourced from GitHub Actions status for the commit SHA produced by the current attempt.
@@ -195,13 +208,13 @@ Artifact access:
 - Jangar does not rely on Argo-local tests for completion.
  - Commit SHA source order: PR head SHA (preferred) -> head branch SHA -> fallback to status artifact/manifest.
 
-## Codex Review Signal
-- Codex review is required before marking a run complete.
-- Jangar waits for the Codex PR review to finish (e.g., a review by the Codex bot/user).
-- If Codex review requests changes or has unresolved threads, classify as needs_iteration and generate
-  a follow-up prompt that explicitly addresses each Codex review comment.
-- Jangar re-checks that every Codex review comment is resolved (or superseded by a newer Codex review)
-  before declaring success.
+## PR Review Gate (Codex Review)
+- Jangar must wait for the Codex review to complete on the PR (review by `codex`/`codex[bot]` or the configured reviewer identity).
+- All Codex review threads must be resolved before marking completion.
+- If Codex review requests changes or has unresolved threads, treat as `needs_iteration` and generate a new prompt that
+  enumerates each comment and the required fix. Threads must be resolved before success.
+- If Codex only posts PR issue comments (no formal review objects), treat the latest Codex comment as review completion
+  and proceed once comment content is captured.
 
 ## Decision Logic
 Pass:
@@ -219,8 +232,9 @@ Fail:
   - repeated identical failure beyond threshold
 - For needs_iteration and needs_human, the judge must emit system-level improvement suggestions
   (system prompt tuning and broader system changes) and open a PR with those recommendations.
- - If the workflow failed before producing artifacts or a commit SHA, classify as infra failure and
-   rerun automatically until the infra-failure threshold is exceeded.
+- Review-driven iterations must include Codex comment summaries in `next_prompt`.
+- If the workflow failed before producing artifacts or a commit SHA, classify as infra failure and
+  rerun automatically until the infra-failure threshold is exceeded.
 
 ## Prompt Auto-tuning
 - Aggregate failure reasons across runs.
@@ -229,6 +243,7 @@ Fail:
 - Human reviews/merges PRs.
 - For needs_iteration and needs_human outcomes, always produce a PR with system prompt and
   system improvement suggestions.
+- Use the repository PR template for auto-tuning PRs.
 
 ## State Machine
 issue status: queued -> running -> run_complete -> judging -> completed | needs_iteration | needs_human
@@ -257,13 +272,18 @@ stateDiagram-v2
 - Run history per issue with artifact links.
 - Memory snapshots per run (10 entries) for retrieval and prompt tuning.
 
+## Memories + Embeddings
+- Jangar persists 10 memory snapshots per run and generates embeddings on write.
+- Embedding configuration is driven by `OPENAI_API_BASE_URL`, `OPENAI_API_KEY`,
+  `OPENAI_EMBEDDING_MODEL`, and `OPENAI_EMBEDDING_DIMENSION` (defaults managed by Jangar).
+
 ## Risks and Mitigations
 - Notify only on success: rely on onExit artifacts and Argo completion events.
 - CI lag: delay judge until CI completes; store pending state.
 - Prompt regressions: PR review required for prompt changes.
 - Stale CI status on shared branch: gate on commit SHA produced by the current attempt.
 
-## Open Questions
-- Where prompt templates live in repo and how they are versioned.
-- Max attempts threshold and backoff policy.
-- GitHub Actions integration method (webhook vs polling).
+## Default Policy Decisions
+- Prompt template location: `apps/froussard/src/codex.ts` (`buildImplementationPrompt`).
+- Max attempts: 3 (configurable); backoff: exponential (5m, 15m, 45m) with max cap 60m.
+- CI integration: polling GitHub checks/check-runs by commit SHA (webhook optional).
