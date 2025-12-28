@@ -168,7 +168,9 @@ describe('runCodexImplementation', () => {
     await expect(stat(result.statusPath)).resolves.toEqual(expect.objectContaining({ size: expect.any(Number) }))
     await expect(stat(result.archivePath)).resolves.toEqual(expect.objectContaining({ size: expect.any(Number) }))
     const resumeMetadataPath = join(workdir, '.codex', 'implementation-resume.json')
-    await expect(stat(resumeMetadataPath)).rejects.toThrow()
+    const resumeMetadataRaw = await readFile(resumeMetadataPath, 'utf8')
+    const resumeMetadata = JSON.parse(resumeMetadataRaw) as Record<string, unknown>
+    expect(resumeMetadata.state).toBe('cleared')
   })
 
   it('throws when the event file is missing', async () => {
@@ -307,7 +309,9 @@ describe('runCodexImplementation', () => {
       expect(linkStats.isSymbolicLink()).toBe(true)
       expect(await readlink(restoredLink)).toBe('./real.ts')
       await expect(readFile(restoredFile, 'utf8')).resolves.toBe(resumeRealContent)
-      await expect(stat(resumeMetadataPath)).rejects.toThrow()
+      const resumeMetadataRaw = await readFile(resumeMetadataPath, 'utf8')
+      const resumeMetadata = JSON.parse(resumeMetadataRaw) as Record<string, unknown>
+      expect(resumeMetadata.state).toBe('cleared')
     } finally {
       await rm(resumeSourceDir, { recursive: true, force: true })
     }
