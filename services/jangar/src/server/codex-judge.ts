@@ -3,8 +3,9 @@ import { Buffer } from 'node:buffer'
 import * as S from '@effect/schema/Schema'
 import { Effect } from 'effect'
 import * as Either from 'effect/Either'
-
+import { createArgoClient } from '~/server/argo-client'
 import { getCodexClient } from '~/server/codex-client'
+import { extractImplementationManifestFromArchive, extractTextFromArchive } from '~/server/codex-judge-artifacts'
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 import { evaluateDeterministicGates } from '~/server/codex-judge-gates'
 import { type CodexEvaluationRecord, type CodexRunRecord, createCodexJudgeStore } from '~/server/codex-judge-store'
@@ -14,6 +15,7 @@ import { createPostgresMemoriesStore } from '~/server/memories-store'
 const store = createCodexJudgeStore()
 const config = loadCodexJudgeConfig()
 const github = createGitHubClient({ token: config.githubToken, apiBaseUrl: config.githubApiBaseUrl })
+const argo = config.argoServerUrl ? createArgoClient({ baseUrl: config.argoServerUrl }) : null
 
 const scheduledRuns = new Map<string, NodeJS.Timeout>()
 
@@ -308,6 +310,59 @@ const scheduleEvaluation = (runId: string, delayMs: number) => {
   scheduledRuns.set(runId, timeout)
 }
 
+const DEFAULT_ARTIFACT_BUCKET = 'argo-workflows'
+const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
+const MAX_LOG_CHARS = 20_000
+
+const FALLBACK_ARTIFACTS = [
+  { name: 'implementation-changes', suffix: 'implementation-changes.tgz' },
+  { name: 'implementation-patch', suffix: 'implementation-patch.tgz' },
+  { name: 'implementation-status', suffix: 'implementation-status.tgz' },
+  { name: 'implementation-log', suffix: 'implementation-log.tgz' },
+  { name: 'implementation-events', suffix: 'implementation-events.tgz' },
+  { name: 'implementation-agent-log', suffix: 'implementation-agent-log.tgz' },
+  { name: 'implementation-runtime-log', suffix: 'implementation-runtime-log.tgz' },
+  { name: 'implementation-resume', suffix: 'implementation-resume.tgz' },
+  { name: 'implementation-notify', suffix: 'implementation-notify.tgz' },
+]
+
+const ARTIFACT_TEXT_HINTS: Record<string, string[]> = {
+  'implementation-log': ['.codex-implementation.log', 'codex-implementation.log'],
+  'implementation-events': ['.codex-implementation-events.jsonl', 'codex-implementation-events.jsonl'],
+  'implementation-agent-log': ['.codex-implementation-agent.log', 'codex-implementation-agent.log'],
+  'implementation-runtime-log': ['.codex-implementation-runtime.log', 'codex-implementation-runtime.log'],
+  'implementation-status': ['.codex-implementation-status.txt', 'codex-implementation-status.txt'],
+  'implementation-notify': ['.codex-implementation-notify.json', 'codex-implementation-notify.json'],
+}
+
+const getArtifactTextHints = (name: string) => ARTIFACT_TEXT_HINTS[name] ?? []
+
+type ResolvedArtifact = {
+  name: string
+  key: string | null
+  bucket: string | null
+  url: string | null
+  metadata: Record<string, unknown>
+}
+
+const coalesceString = (value: string | null | undefined) => (value && value.trim().length > 0 ? value : null)
+
+const mergeArtifactEntry = (existing: ResolvedArtifact | undefined, incoming: ResolvedArtifact) => {
+  if (!existing) return incoming
+  return {
+    name: existing.name,
+    key: coalesceString(incoming.key) ?? existing.key,
+    bucket: incoming.bucket ?? existing.bucket,
+    url: incoming.url ?? existing.url,
+    metadata: { ...existing.metadata, ...incoming.metadata },
+  }
+}
+
+const addArtifactEntry = (map: Map<string, ResolvedArtifact>, incoming: ResolvedArtifact) => {
+  const existing = map.get(incoming.name)
+  map.set(incoming.name, mergeArtifactEntry(existing, incoming))
+}
+
 const updateArtifactsFromWorkflow = async (
   run: CodexRunRecord,
   artifactsOverride?: Array<{
@@ -320,45 +375,72 @@ const updateArtifactsFromWorkflow = async (
 ) => {
   const workflowName = run.workflowName
   if (!workflowName) return []
+  const workflowNamespace = run.workflowNamespace ?? 'argo-workflows'
 
-  const artifacts =
-    artifactsOverride && artifactsOverride.length > 0
-      ? artifactsOverride
-      : [
-          { name: 'implementation-changes', suffix: 'implementation-changes.tgz' },
-          { name: 'implementation-patch', suffix: 'implementation-patch.tgz' },
-          { name: 'implementation-status', suffix: 'implementation-status.tgz' },
-          { name: 'implementation-log', suffix: 'implementation-log.tgz' },
-          { name: 'implementation-events', suffix: 'implementation-events.tgz' },
-          { name: 'implementation-agent-log', suffix: 'implementation-agent-log.tgz' },
-          { name: 'implementation-runtime-log', suffix: 'implementation-runtime-log.tgz' },
-          { name: 'implementation-resume', suffix: 'implementation-resume.tgz' },
-          { name: 'implementation-notify', suffix: 'implementation-notify.tgz' },
-        ]
-
-  const bucket = 'argo-workflows'
+  const artifactMap = new Map<string, ResolvedArtifact>()
   const baseKey = `${workflowName}/${workflowName}`
 
-  return store.upsertArtifacts({
-    runId: run.id,
-    artifacts: artifacts.map((artifact) =>
-      'suffix' in artifact
-        ? {
-            name: artifact.name,
-            key: `${baseKey}/${artifact.suffix}`,
-            bucket,
-            url: null,
-            metadata: {},
-          }
-        : {
+  for (const artifact of FALLBACK_ARTIFACTS) {
+    addArtifactEntry(artifactMap, {
+      name: artifact.name,
+      key: `${baseKey}/${artifact.suffix}`,
+      bucket: DEFAULT_ARTIFACT_BUCKET,
+      url: null,
+      metadata: { source: 'static' },
+    })
+  }
+
+  if (artifactsOverride && artifactsOverride.length > 0) {
+    for (const artifact of artifactsOverride) {
+      addArtifactEntry(artifactMap, {
+        name: artifact.name,
+        key: artifact.key,
+        bucket: artifact.bucket ?? DEFAULT_ARTIFACT_BUCKET,
+        url: artifact.url ?? null,
+        metadata: { ...(artifact.metadata ?? {}), source: 'run-complete' },
+      })
+    }
+  }
+
+  if (argo && workflowNamespace) {
+    try {
+      const argoArtifacts = await argo.getWorkflowArtifacts(workflowNamespace, workflowName)
+      if (argoArtifacts?.artifacts?.length) {
+        for (const artifact of argoArtifacts.artifacts) {
+          addArtifactEntry(artifactMap, {
             name: artifact.name,
             key: artifact.key,
-            bucket: artifact.bucket ?? bucket,
+            bucket: artifact.bucket ?? DEFAULT_ARTIFACT_BUCKET,
             url: artifact.url ?? null,
-            metadata: artifact.metadata ?? {},
-          },
-    ),
+            metadata: {
+              ...artifact.metadata,
+              nodeId: artifact.nodeId ?? null,
+              source: 'argo',
+            },
+          })
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to fetch Argo workflow artifacts', error)
+    }
+  }
+
+  const resolved = Array.from(artifactMap.values())
+
+  await store.upsertArtifacts({
+    runId: run.id,
+    artifacts: resolved
+      .filter((artifact) => Boolean(artifact.key))
+      .map((artifact) => ({
+        name: artifact.name,
+        key: artifact.key ?? '',
+        bucket: artifact.bucket ?? DEFAULT_ARTIFACT_BUCKET,
+        url: artifact.url,
+        metadata: artifact.metadata,
+      })),
   })
+
+  return resolved
 }
 
 const fetchPullRequest = async (run: CodexRunRecord) => {
@@ -428,6 +510,196 @@ const extractLogExcerpt = (payload?: Record<string, unknown> | null) => {
     runtime: typeof logExcerpt.runtime === 'string' ? logExcerpt.runtime : null,
     status: typeof logExcerpt.status === 'string' ? logExcerpt.status : null,
   }
+}
+
+const hasLogExcerpt = (logExcerpt: ReturnType<typeof extractLogExcerpt>) =>
+  Object.values(logExcerpt).some((value) => typeof value === 'string' && value.length > 0)
+
+const mergeLogExcerpt = (
+  primary: ReturnType<typeof extractLogExcerpt>,
+  fallback: ReturnType<typeof extractLogExcerpt>,
+) => ({
+  output: primary.output ?? fallback.output,
+  events: primary.events ?? fallback.events,
+  agent: primary.agent ?? fallback.agent,
+  runtime: primary.runtime ?? fallback.runtime,
+  status: primary.status ?? fallback.status,
+})
+
+const normalizeSha = (value: unknown) => {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  return /^[a-f0-9]{7,40}$/i.test(trimmed) ? trimmed : null
+}
+
+const extractSessionIdFromPayload = (payload: Record<string, unknown>) => {
+  const candidates = [payload.session_id, payload.sessionId, isRecord(payload.session) ? payload.session.id : null]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim().length > 0) return candidate
+  }
+  return null
+}
+
+const extractCommitShaFromPayload = (payload: Record<string, unknown>) => {
+  const candidates = [payload.commit_sha, payload.commitSha, payload.sha, payload.commit]
+  for (const candidate of candidates) {
+    const normalized = normalizeSha(candidate)
+    if (normalized) return normalized
+  }
+  return null
+}
+
+const fetchArtifactBuffer = async (artifact: ResolvedArtifact, maxBytes = MAX_ARTIFACT_BYTES) => {
+  if (!artifact.url) return null
+  try {
+    const response = await fetch(artifact.url)
+    if (!response.ok) return null
+    const contentLength = Number(response.headers.get('content-length') ?? 0)
+    if (contentLength > maxBytes) return null
+    const buffer = Buffer.from(await response.arrayBuffer())
+    if (buffer.byteLength > maxBytes) return null
+    return buffer
+  } catch {
+    return null
+  }
+}
+
+const fetchArtifactText = async (artifact: ResolvedArtifact, maxBytes = MAX_ARTIFACT_BYTES) => {
+  const buffer = await fetchArtifactBuffer(artifact, maxBytes)
+  if (!buffer) return null
+  const extracted = await extractTextFromArchive(buffer, getArtifactTextHints(artifact.name))
+  const text = extracted ?? buffer.toString('utf8')
+  if (text.length > MAX_LOG_CHARS) {
+    return text.slice(-MAX_LOG_CHARS)
+  }
+  return text
+}
+
+const buildArtifactIndex = (artifacts: ResolvedArtifact[]) =>
+  new Map(artifacts.map((artifact) => [artifact.name, artifact]))
+
+const extractNotifyPayloadFromArtifacts = async (artifactMap: Map<string, ResolvedArtifact>) => {
+  const artifact = artifactMap.get('implementation-notify')
+  if (!artifact) return null
+  const text = await fetchArtifactText(artifact)
+  if (!text) return null
+  const parsed = safeParseJson(text)
+  return isRecord(parsed) ? parsed : null
+}
+
+const extractLogExcerptFromArtifacts = async (artifactMap: Map<string, ResolvedArtifact>) => {
+  const logArtifacts = [
+    { name: 'implementation-log', field: 'output' },
+    { name: 'implementation-events', field: 'events' },
+    { name: 'implementation-agent-log', field: 'agent' },
+    { name: 'implementation-runtime-log', field: 'runtime' },
+    { name: 'implementation-status', field: 'status' },
+  ] as const
+
+  const logExcerpt: ReturnType<typeof extractLogExcerpt> = {
+    output: null,
+    events: null,
+    agent: null,
+    runtime: null,
+    status: null,
+  }
+
+  for (const entry of logArtifacts) {
+    const artifact = artifactMap.get(entry.name)
+    if (!artifact) continue
+    const text = await fetchArtifactText(artifact)
+    if (!text) continue
+    logExcerpt[entry.field] = text
+  }
+
+  return logExcerpt
+}
+
+const extractManifestFromArtifacts = async (artifactMap: Map<string, ResolvedArtifact>) => {
+  const artifact = artifactMap.get('implementation-changes')
+  if (!artifact) return null
+  const buffer = await fetchArtifactBuffer(artifact)
+  if (!buffer) return null
+  return extractImplementationManifestFromArchive(buffer)
+}
+
+const resolveCommitSha = async (run: CodexRunRecord, fallbackCommitSha: string | null) => {
+  if (run.commitSha) return run.commitSha
+  const commitSha = fallbackCommitSha ?? null
+  if (commitSha) {
+    await store.updateCiStatus({ runId: run.id, status: run.ciStatus ?? 'pending', commitSha })
+    return commitSha
+  }
+  if (!run.repository || !run.branch) return null
+  const sha = await fetchBranchHeadSha(run.repository, run.branch)
+  if (!sha) return null
+  await store.updateCiStatus({ runId: run.id, status: run.ciStatus ?? 'pending', commitSha: sha })
+  return sha
+}
+
+const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArtifact[]) => {
+  if (!run.workflowName) return
+
+  const existingLogExcerpt = extractLogExcerpt(run.notifyPayload)
+  const existingSessionId = run.notifyPayload ? extractSessionIdFromPayload(run.notifyPayload) : null
+  const existingCommitSha = run.commitSha ?? (run.notifyPayload ? extractCommitShaFromPayload(run.notifyPayload) : null)
+  const needsFallback =
+    !run.notifyPayload || !hasLogExcerpt(existingLogExcerpt) || !run.prompt || !existingSessionId || !existingCommitSha
+  if (!needsFallback) return
+
+  const artifactMap = buildArtifactIndex(artifacts)
+  const [notifyPayload, manifest, logExcerptFromArtifacts] = await Promise.all([
+    extractNotifyPayloadFromArtifacts(artifactMap),
+    extractManifestFromArtifacts(artifactMap),
+    extractLogExcerptFromArtifacts(artifactMap),
+  ])
+
+  const logExcerptFromNotify = notifyPayload ? extractLogExcerpt(notifyPayload) : existingLogExcerpt
+  const logExcerpt = mergeLogExcerpt(logExcerptFromNotify, logExcerptFromArtifacts)
+
+  const prompt =
+    run.prompt ??
+    (notifyPayload && typeof notifyPayload.prompt === 'string' ? notifyPayload.prompt : null) ??
+    manifest?.prompt ??
+    null
+  const repository = manifest?.repository ?? run.repository
+  const issueNumber = manifest?.issueNumber ?? run.issueNumber
+  const sessionId = notifyPayload ? extractSessionIdFromPayload(notifyPayload) : (manifest?.sessionId ?? null)
+  const commitSha = (notifyPayload ? extractCommitShaFromPayload(notifyPayload) : null) ?? manifest?.commitSha ?? null
+
+  if (!run.prompt && prompt) {
+    await store.updateRunPrompt(run.id, prompt)
+  }
+
+  const resolvedCommitSha = await resolveCommitSha(run, commitSha)
+
+  if (!hasLogExcerpt(logExcerpt) && !prompt && !sessionId && !resolvedCommitSha) return
+
+  const fallbackPayload = {
+    ...(isRecord(run.notifyPayload) ? run.notifyPayload : {}),
+    workflow_name: run.workflowName,
+    workflow_namespace: run.workflowNamespace,
+    repository,
+    issue_number: issueNumber,
+    head_branch: run.branch,
+    prompt: prompt ?? null,
+    session_id: sessionId ?? null,
+    commit_sha: resolvedCommitSha ?? commitSha ?? null,
+    log_excerpt: logExcerpt,
+    source: 'artifact-fallback',
+    issued_at: new Date().toISOString(),
+  }
+
+  await store.attachNotify({
+    workflowName: run.workflowName,
+    workflowNamespace: run.workflowNamespace,
+    notifyPayload: fallbackPayload,
+    repository,
+    issueNumber,
+    branch: run.branch,
+    prompt: run.prompt ?? prompt ?? null,
+  })
 }
 
 const normalizeReviewBody = (value: string) => value.replace(/\s+/g, ' ').trim()
@@ -1059,7 +1331,8 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
     finishedAt: parsed.finishedAt,
   })
 
-  await updateArtifactsFromWorkflow(run, parsed.artifacts)
+  const resolvedArtifacts = await updateArtifactsFromWorkflow(run, parsed.artifacts)
+  await applyArtifactFallback(run, resolvedArtifacts)
   scheduleEvaluation(run.id, 1000)
 
   return run
