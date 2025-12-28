@@ -497,14 +497,6 @@ export const postEnrichHandlerEffect = (request: Request) =>
           payload: eventInput.payload,
           receivedAt: eventInput.receivedAt,
         })
-
-        const workflowId = eventInput.workflowIdentifier ?? eventInput.deliveryId
-        ingestion = yield* atlas.upsertIngestion({
-          eventId: githubEvent.id,
-          workflowId,
-          status: 'accepted',
-          startedAt: eventInput.receivedAt,
-        })
       }
 
       let workflow = null
@@ -528,14 +520,13 @@ export const postEnrichHandlerEffect = (request: Request) =>
             202,
           )
         }
-        const workflowId = eventInput?.workflowIdentifier ?? null
         const startResult = yield* pipe(
           bumbaWorkflows.startEnrichFile({
             filePath: parsedInput.path,
             commit: parsedInput.commit ?? null,
             repository: parsedInput.repository,
             ref: parsedInput.ref,
-            workflowId: workflowId ?? undefined,
+            workflowId: eventInput?.workflowIdentifier ?? undefined,
             eventDeliveryId: eventInput?.deliveryId,
           }),
           Effect.map((value) => ({ ok: true as const, value })),
@@ -551,6 +542,15 @@ export const postEnrichHandlerEffect = (request: Request) =>
           return errorResponse(startResult.message, startResult.status)
         }
         workflow = startResult.value
+
+        if (githubEvent) {
+          ingestion = yield* atlas.upsertIngestion({
+            eventId: githubEvent.id,
+            workflowId: workflow.workflowId,
+            status: 'accepted',
+            startedAt: eventInput?.receivedAt,
+          })
+        }
       } else if (eventInput?.eventType === 'push' && eventInput.commit) {
         const eventPayload = eventInput.payload
         if (isRecord(eventPayload)) {
@@ -568,6 +568,18 @@ export const postEnrichHandlerEffect = (request: Request) =>
                     workflowId: eventInput.workflowIdentifier ?? undefined,
                     eventDeliveryId: eventInput.deliveryId,
                     validationMode: 'fast',
+                  }),
+                  Effect.flatMap((workflowResult) => {
+                    if (!githubEvent) return Effect.succeed(workflowResult)
+                    return pipe(
+                      atlas.upsertIngestion({
+                        eventId: githubEvent.id,
+                        workflowId: workflowResult.workflowId,
+                        status: 'accepted',
+                        startedAt: eventInput.receivedAt,
+                      }),
+                      Effect.as(workflowResult),
+                    )
                   }),
                   Effect.catchAll((error) => {
                     const message = error instanceof Error ? error.message : String(error)

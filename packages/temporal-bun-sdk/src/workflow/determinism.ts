@@ -1,5 +1,5 @@
 import type { EventType } from '../proto/temporal/api/enums/v1/event_type_pb'
-
+import { WorkflowIdReusePolicy } from '../proto/temporal/api/enums/v1/workflow_pb'
 import type { WorkflowCommandIntent } from './commands'
 import { WorkflowNondeterminismError, WorkflowQueryViolationError } from './errors'
 
@@ -207,14 +207,11 @@ export class DeterminismGuard {
 
     if (!this.#allowBypass && this.#previous) {
       const expected = this.#previous.randomValues[this.#randomIndex]
-      if (expected === undefined) {
-        throw new WorkflowNondeterminismError('Workflow generated new random value during replay', {
-          hint: `randomIndex=${this.#randomIndex}`,
-        })
+      if (expected !== undefined) {
+        this.snapshot.randomValues.push(expected)
+        this.#randomIndex += 1
+        return expected
       }
-      this.snapshot.randomValues.push(expected)
-      this.#randomIndex += 1
-      return expected
     }
     const value = generate()
     if (!Number.isFinite(value)) {
@@ -240,14 +237,11 @@ export class DeterminismGuard {
 
     if (!this.#allowBypass && this.#previous) {
       const expected = this.#previous.timeValues[this.#timeIndex]
-      if (expected === undefined) {
-        throw new WorkflowNondeterminismError('Workflow generated new time value during replay', {
-          hint: `timeIndex=${this.#timeIndex}`,
-        })
+      if (expected !== undefined) {
+        this.snapshot.timeValues.push(expected)
+        this.#timeIndex += 1
+        return expected
       }
-      this.snapshot.timeValues.push(expected)
-      this.#timeIndex += 1
-      return expected
     }
     const value = generate()
     if (!Number.isFinite(value)) {
@@ -322,6 +316,36 @@ export class DeterminismGuard {
   recordUpdate(entry: WorkflowUpdateDeterminismEntry): void {
     this.snapshot.updates.push(entry)
   }
+
+  assertReplayComplete(): void {
+    if (this.#allowBypass || !this.#previous) {
+      return
+    }
+    const expectedCommands = this.#previous.commandHistory.length
+    const expectedRandom = this.#previous.randomValues.length
+    const expectedTime = this.#previous.timeValues.length
+    const missingCommands = expectedCommands - this.#commandIndex
+    const missingRandom = expectedRandom - this.#randomIndex
+    const missingTime = expectedTime - this.#timeIndex
+    if (missingCommands <= 0 && missingRandom <= 0 && missingTime <= 0) {
+      return
+    }
+    throw new WorkflowNondeterminismError('Workflow did not replay all history entries', {
+      hint: `missingCommands=${Math.max(0, missingCommands)} missingRandom=${Math.max(0, missingRandom)} missingTime=${Math.max(0, missingTime)}`,
+    })
+  }
+}
+
+const intentSignatureCache = new WeakMap<WorkflowCommandIntent, string>()
+
+const getIntentSignature = (intent: WorkflowCommandIntent): string => {
+  const cached = intentSignatureCache.get(intent)
+  if (cached) {
+    return cached
+  }
+  const signature = stableIntentSignature(normalizeIntentForComparison(intent))
+  intentSignatureCache.set(intent, signature)
+  return signature
 }
 
 export const intentsEqual = (a: WorkflowCommandIntent | undefined, b: WorkflowCommandIntent | undefined): boolean => {
@@ -334,9 +358,68 @@ export const intentsEqual = (a: WorkflowCommandIntent | undefined, b: WorkflowCo
   if (a.sequence !== b.sequence) {
     return false
   }
-  const signatureA = stableIntentSignature(a)
-  const signatureB = stableIntentSignature(b)
-  return signatureA === signatureB
+  return getIntentSignature(a) === getIntentSignature(b)
+}
+
+const DEFAULT_CHILD_WORKFLOW_TASK_TIMEOUT_MS = 10_000
+const DEFAULT_ACTIVITY_HEARTBEAT_TIMEOUT_MS = 0
+const DEFAULT_WORKFLOW_RUN_TIMEOUT_MS = 0
+const DEFAULT_WORKFLOW_EXECUTION_TIMEOUT_MS = 0
+const DEFAULT_WORKFLOW_ID_REUSE_POLICY = WorkflowIdReusePolicy.ALLOW_DUPLICATE
+
+const normalizeIntentForComparison = (intent: WorkflowCommandIntent): WorkflowCommandIntent => {
+  switch (intent.kind) {
+    case 'schedule-activity':
+      return normalizeScheduleActivityIntent(intent)
+    case 'start-child-workflow':
+      return normalizeStartChildWorkflowIntent(intent)
+    default:
+      return intent
+  }
+}
+
+const normalizeScheduleActivityIntent = (intent: WorkflowCommandIntent): WorkflowCommandIntent => {
+  if (intent.kind !== 'schedule-activity') {
+    return intent
+  }
+  const timeouts = { ...intent.timeouts }
+  const scheduleToCloseTimeoutMs = timeouts.scheduleToCloseTimeoutMs
+  const startToCloseTimeoutMs = timeouts.startToCloseTimeoutMs
+  if (timeouts.scheduleToStartTimeoutMs === undefined || timeouts.scheduleToStartTimeoutMs === null) {
+    if (scheduleToCloseTimeoutMs !== undefined && scheduleToCloseTimeoutMs !== null) {
+      timeouts.scheduleToStartTimeoutMs = scheduleToCloseTimeoutMs
+    } else if (startToCloseTimeoutMs !== undefined && startToCloseTimeoutMs !== null) {
+      timeouts.scheduleToStartTimeoutMs = startToCloseTimeoutMs
+    }
+  }
+  if (timeouts.heartbeatTimeoutMs === undefined || timeouts.heartbeatTimeoutMs === null) {
+    timeouts.heartbeatTimeoutMs = DEFAULT_ACTIVITY_HEARTBEAT_TIMEOUT_MS
+  }
+  return {
+    ...intent,
+    timeouts,
+  }
+}
+
+const normalizeStartChildWorkflowIntent = (intent: WorkflowCommandIntent): WorkflowCommandIntent => {
+  if (intent.kind !== 'start-child-workflow') {
+    return intent
+  }
+  const timeouts = { ...intent.timeouts }
+  if (timeouts.workflowExecutionTimeoutMs === undefined || timeouts.workflowExecutionTimeoutMs === null) {
+    timeouts.workflowExecutionTimeoutMs = DEFAULT_WORKFLOW_EXECUTION_TIMEOUT_MS
+  }
+  if (timeouts.workflowRunTimeoutMs === undefined || timeouts.workflowRunTimeoutMs === null) {
+    timeouts.workflowRunTimeoutMs = DEFAULT_WORKFLOW_RUN_TIMEOUT_MS
+  }
+  if (timeouts.workflowTaskTimeoutMs === undefined || timeouts.workflowTaskTimeoutMs === null) {
+    timeouts.workflowTaskTimeoutMs = DEFAULT_CHILD_WORKFLOW_TASK_TIMEOUT_MS
+  }
+  return {
+    ...intent,
+    timeouts,
+    workflowIdReusePolicy: intent.workflowIdReusePolicy ?? DEFAULT_WORKFLOW_ID_REUSE_POLICY,
+  }
 }
 
 const stableIntentSignature = (intent: WorkflowCommandIntent): string =>

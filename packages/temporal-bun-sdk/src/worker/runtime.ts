@@ -23,7 +23,7 @@ import {
 } from '../common/payloads/converter'
 import { encodeErrorToFailure, encodeFailurePayloads, failureToError } from '../common/payloads/failure'
 import { sleep } from '../common/sleep'
-import { loadTemporalConfig, type TemporalConfig } from '../config'
+import { type DeterminismMarkerMode, loadTemporalConfig, type TemporalConfig } from '../config'
 import type { InterceptorKind, TemporalInterceptor as WorkerInterceptor } from '../interceptors/types'
 import {
   makeDefaultWorkerInterceptors,
@@ -93,7 +93,9 @@ import type {
   WorkflowDeterminismSignalRecord,
   WorkflowDeterminismState,
   WorkflowRetryPolicyInput,
+  WorkflowUpdateDeterminismEntry,
 } from '../workflow/determinism'
+import { intentsEqual, stableStringify } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import type { WorkflowQueryEvaluationResult, WorkflowUpdateInvocation } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
@@ -106,8 +108,9 @@ import { WorkflowRegistry } from '../workflow/registry'
 import {
   DETERMINISM_MARKER_NAME,
   type DeterminismMismatch,
+  type DeterminismStateDelta,
   diffDeterminismState,
-  encodeDeterminismMarkerDetails,
+  encodeDeterminismMarkerDetailsWithSize,
   ingestWorkflowHistory,
   type ReplayResult,
   resolveHistoryLastEventId,
@@ -186,6 +189,17 @@ type NondeterminismContext = {
   readonly stickyLastEventId?: string | null
   readonly historyLastEventId?: string | null
   readonly workflowTaskAttempt?: number
+}
+
+type DeterminismMarkerSignature = {
+  readonly commandHistoryLength: number
+  readonly randomValuesLength: number
+  readonly timeValuesLength: number
+  readonly signalsLength: number
+  readonly queriesLength: number
+  readonly updatesLength: number
+  readonly logCount: number
+  readonly failureMetadataHash?: string
 }
 
 const POLL_TIMEOUT_MS = 60_000
@@ -383,6 +397,11 @@ export class WorkerRuntime {
       options.stickyScheduling ??
       (config.stickySchedulingEnabled &&
         (hasStickyCacheInstance ? config.workerStickyCacheSize > 0 : stickyCacheSize > 0))
+    const determinismMarkerMode = config.determinismMarkerMode
+    const determinismMarkerIntervalTasks = config.determinismMarkerIntervalTasks
+    const determinismMarkerFullSnapshotIntervalTasks = config.determinismMarkerFullSnapshotIntervalTasks
+    const determinismMarkerSkipUnchanged = config.determinismMarkerSkipUnchanged
+    const determinismMarkerMaxDetailBytes = config.determinismMarkerMaxDetailBytes
 
     const deploymentName =
       options.deployment?.name ?? config.workerDeploymentName ?? WorkerRuntime.#defaultDeploymentName(taskQueue)
@@ -461,6 +480,11 @@ export class WorkerRuntime {
         workflowConcurrency,
         activityConcurrency,
         stickySchedulingEnabled,
+        determinismMarkerMode,
+        determinismMarkerIntervalTasks,
+        determinismMarkerFullSnapshotIntervalTasks,
+        determinismMarkerSkipUnchanged,
+        determinismMarkerMaxDetailBytes,
         deploymentName,
         buildId,
         logLevel: config.logLevel,
@@ -495,6 +519,11 @@ export class WorkerRuntime {
       rpcDeploymentOptions,
       versioningBehavior,
       stickySchedulingEnabled,
+      determinismMarkerMode,
+      determinismMarkerIntervalTasks,
+      determinismMarkerFullSnapshotIntervalTasks,
+      determinismMarkerSkipUnchanged,
+      determinismMarkerMaxDetailBytes,
       workflowPollerCount,
       interceptors: workerInterceptors,
     })
@@ -522,6 +551,11 @@ export class WorkerRuntime {
   readonly #stickyCache: StickyCache
   readonly #stickyQueue: string
   readonly #stickySchedulingEnabled: boolean
+  readonly #determinismMarkerMode: DeterminismMarkerMode
+  readonly #determinismMarkerIntervalTasks: number
+  readonly #determinismMarkerFullSnapshotIntervalTasks: number
+  readonly #determinismMarkerSkipUnchanged: boolean
+  readonly #determinismMarkerMaxDetailBytes: number
   readonly #stickyAttributes: StickyExecutionAttributes
   readonly #deploymentOptions: WorkerDeploymentOptions
   readonly #rpcDeploymentOptions: WorkerDeploymentOptions | undefined
@@ -558,6 +592,11 @@ export class WorkerRuntime {
     rpcDeploymentOptions: WorkerDeploymentOptions | undefined
     versioningBehavior: VersioningBehavior | null
     stickySchedulingEnabled: boolean
+    determinismMarkerMode: DeterminismMarkerMode
+    determinismMarkerIntervalTasks: number
+    determinismMarkerFullSnapshotIntervalTasks: number
+    determinismMarkerSkipUnchanged: boolean
+    determinismMarkerMaxDetailBytes: number
     workflowPollerCount: number
   }) {
     this.#config = params.config
@@ -581,6 +620,11 @@ export class WorkerRuntime {
     this.#stickyCache = params.stickyCache
     this.#stickyQueue = params.stickyQueue
     this.#stickySchedulingEnabled = params.stickySchedulingEnabled
+    this.#determinismMarkerMode = params.determinismMarkerMode
+    this.#determinismMarkerIntervalTasks = Math.max(1, params.determinismMarkerIntervalTasks)
+    this.#determinismMarkerFullSnapshotIntervalTasks = Math.max(1, params.determinismMarkerFullSnapshotIntervalTasks)
+    this.#determinismMarkerSkipUnchanged = params.determinismMarkerSkipUnchanged
+    this.#determinismMarkerMaxDetailBytes = Math.max(0, params.determinismMarkerMaxDetailBytes)
     this.#deploymentOptions = params.deploymentOptions
     this.#rpcDeploymentOptions = params.rpcDeploymentOptions
     this.#versioningBehavior = params.versioningBehavior
@@ -1042,9 +1086,21 @@ export class WorkerRuntime {
     if (isLegacyQueryTask) {
       this.#incrementCounter(this.#metrics.queryTaskStarted)
     }
-    const historyEvents = await this.#collectWorkflowHistory(execution, response)
+    const queryCount =
+      response.queries && typeof response.queries === 'object' && !Array.isArray(response.queries)
+        ? Object.keys(response.queries).length
+        : Array.isArray(response.queries)
+          ? response.queries.length
+          : 0
+    const hasHistoryEvents = (response.history?.events?.length ?? 0) > 0
+    const hasMoreHistory = (response.nextPageToken?.length ?? 0) > 0
+    const isLegacyQueryOnly = isLegacyQueryTask && !hasHistoryEvents && !hasMoreHistory
+    const hasQueryPayloads = Boolean(response.query) || queryCount > 0
+    const historyEvents = await this.#collectWorkflowHistory(execution, response, {
+      forceFullHistory: (hasQueryPayloads && !isLegacyQueryOnly) || nondeterminismRetry > 0,
+      skipFetchOnMissingStart: isLegacyQueryOnly,
+    })
     const workflowType = this.#resolveWorkflowType(response, historyEvents)
-    const args = await this.#decodeWorkflowArgs(historyEvents)
     const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
     const collectedUpdates = await collectWorkflowUpdates({
       messages: response.messages ?? [],
@@ -1081,6 +1137,26 @@ export class WorkerRuntime {
     })
     const stickyKey = this.#buildStickyKey(execution.workflowId, execution.runId)
     const stickyEntry = stickyKey ? await this.#getStickyEntry(stickyKey) : undefined
+    const decodedArgs = await this.#decodeWorkflowArgs(historyEvents)
+    let args = decodedArgs.args
+    let argsSource: 'history' | 'sticky' | 'fetch' | 'unknown' = decodedArgs.hasStartEvent ? 'history' : 'unknown'
+    if (argsSource === 'unknown' && stickyEntry?.workflowArguments !== undefined) {
+      args = stickyEntry.workflowArguments
+      argsSource = 'sticky'
+    }
+    if (argsSource === 'unknown' && !isLegacyQueryOnly) {
+      const fetchedArgs = await this.#fetchWorkflowStartArguments(execution)
+      if (fetchedArgs !== undefined) {
+        args = fetchedArgs
+        argsSource = 'fetch'
+      }
+    }
+    if (argsSource !== 'history') {
+      this.#log('debug', 'workflow arguments resolved from fallback source', {
+        ...baseLogFields,
+        argsSource,
+      })
+    }
     const historyReplay = await this.#ingestDeterminismState(workflowInfo, historyEvents, {
       queryRequests,
     })
@@ -1138,6 +1214,18 @@ export class WorkerRuntime {
       const { results: activityResults, scheduledEventIds: activityScheduleEventIds } =
         await this.#extractActivityResolutions(historyEvents)
       const timerResults = await this.#extractTimerResolutions(historyEvents)
+      const mergedActivityResults = new Map<string, ActivityResolution>(stickyEntry?.activityResults ?? [])
+      for (const [activityId, resolution] of activityResults.entries()) {
+        mergedActivityResults.set(activityId, resolution)
+      }
+      const mergedScheduleEventIds = new Map<string, string>(stickyEntry?.activityScheduleEventIds ?? [])
+      for (const [activityId, scheduleId] of activityScheduleEventIds.entries()) {
+        mergedScheduleEventIds.set(activityId, scheduleId)
+      }
+      const mergedTimerResults = new Set<string>(stickyEntry?.timerResults ?? [])
+      for (const timerId of timerResults) {
+        mergedTimerResults.add(timerId)
+      }
       const pendingChildWorkflows = await this.#extractPendingChildWorkflows(historyEvents)
 
       const replayUpdates = historyReplay?.updates ?? []
@@ -1150,11 +1238,11 @@ export class WorkerRuntime {
         taskQueue: this.#taskQueue,
         arguments: args,
         determinismState: previousState,
-        activityResults,
-        activityScheduleEventIds,
+        activityResults: mergedActivityResults,
+        activityScheduleEventIds: mergedScheduleEventIds,
         pendingChildWorkflows,
         signalDeliveries,
-        timerResults,
+        timerResults: mergedTimerResults,
         queryRequests,
         updates: mergedUpdates,
         mode: isLegacyQueryTask ? 'query' : 'workflow',
@@ -1201,8 +1289,20 @@ export class WorkerRuntime {
       }
 
       const cacheBaselineEventId = this.#resolveCurrentStartedEventId(response) ?? historyReplay?.lastEventId ?? null
-      const shouldRecordMarker = output.completion === 'pending'
       let commandsForResponse = output.commands
+      const workflowTaskCount =
+        output.completion === 'pending'
+          ? (stickyEntry?.workflowTaskCount ?? 0) + 1
+          : (stickyEntry?.workflowTaskCount ?? 0)
+      let markerHash = stickyEntry?.lastDeterminismMarkerHash
+      let lastMarkerTask = stickyEntry?.lastDeterminismMarkerTask
+      let lastFullSnapshotTask = stickyEntry?.lastDeterminismFullSnapshotTask
+      let lastMarkerState = stickyEntry?.lastDeterminismMarkerState
+      let markerType =
+        output.completion === 'pending' ? this.#resolveDeterminismMarkerType(workflowTaskCount, stickyEntry) : null
+      let determinismDelta: DeterminismStateDelta | undefined
+      let markerLastEventId: string | null = null
+      const markerBaseState = historyReplay?.markerState ?? lastMarkerState
       const dispatchesForNewMessages = (output.updateDispatches ?? []).filter((dispatch) => {
         if (dispatch.type === 'acceptance' || dispatch.type === 'rejection') {
           return collectedUpdates.requestsByUpdateId.has(dispatch.updateId)
@@ -1218,38 +1318,155 @@ export class WorkerRuntime {
         log: (level, message, fields) => this.#log(level, message, fields),
       })
 
-      if (stickyKey) {
-        if (output.completion === 'pending') {
-          await this.#upsertStickyEntry(stickyKey, output.determinismState, cacheBaselineEventId, workflowType)
-          this.#log('debug', 'sticky cache snapshot persisted', {
+      if (markerType === 'delta') {
+        if (!markerBaseState) {
+          this.#log('warn', 'determinism delta base unavailable; falling back to full snapshot', {
             ...baseLogFields,
-            cacheBaselineEventId,
           })
+          markerType = 'full'
         } else {
-          await this.#removeStickyEntry(stickyKey)
-          await this.#removeStickyEntriesForWorkflow(stickyKey.workflowId)
-          this.#log('debug', 'sticky cache entry cleared (workflow completed)', baseLogFields)
+          determinismDelta = this.#buildDeterminismDelta(markerBaseState, output.determinismState)
+        }
+        if (!determinismDelta) {
+          markerType = 'full'
+        } else if (this.#determinismMarkerSkipUnchanged && this.#isDeterminismDeltaEmpty(determinismDelta)) {
+          markerType = null
         }
       }
 
-      if (shouldRecordMarker) {
-        const lastEventId =
+      if (markerType) {
+        markerLastEventId =
           historyReplay?.lastEventId ??
           this.#resolveWorkflowHistoryLastEventId(response) ??
           stickyEntry?.lastEventId ??
           null
-        const markerDetails = await Effect.runPromise(
-          encodeDeterminismMarkerDetails(this.#dataConverter, {
-            info: workflowInfo,
-            determinismState: output.determinismState,
-            lastEventId,
-          }),
+        let resolvedMarkerType: 'full' | 'delta' | null = markerType
+        let markerDetails: Record<string, Payloads> | null = null
+        let markerSizeBytes = 0
+        const limitBytes = this.#determinismMarkerMaxDetailBytes
+        const markerHashCandidate = this.#hashDeterminismMarker(
+          this.#buildDeterminismMarkerSignature(output.determinismState),
         )
-        const markerCommand = this.#buildDeterminismMarkerCommand(markerDetails)
-        commandsForResponse = this.#injectDeterminismMarker(commandsForResponse, markerCommand)
+
+        if (this.#determinismMarkerSkipUnchanged && markerHashCandidate === stickyEntry?.lastDeterminismMarkerHash) {
+          resolvedMarkerType = null
+        }
+
+        if (resolvedMarkerType) {
+          const buildMarkerDetails = async (targetType: 'full' | 'delta') =>
+            Effect.runPromise(
+              encodeDeterminismMarkerDetailsWithSize(this.#dataConverter, {
+                info: workflowInfo,
+                determinismState: output.determinismState,
+                determinismDelta: targetType === 'delta' ? determinismDelta : undefined,
+                markerType: targetType,
+                lastEventId: markerLastEventId,
+              }),
+            )
+
+          if (resolvedMarkerType === 'full') {
+            const fullResult = await buildMarkerDetails('full')
+            if (fullResult.sizeBytes > limitBytes && determinismDelta) {
+              this.#log('debug', 'determinism full marker payload exceeds size limit; falling back to delta', {
+                ...baseLogFields,
+                sizeBytes: fullResult.sizeBytes,
+                limitBytes,
+              })
+              const deltaResult = await buildMarkerDetails('delta')
+              if (deltaResult.sizeBytes <= limitBytes) {
+                resolvedMarkerType = 'delta'
+                markerDetails = deltaResult.details
+                markerSizeBytes = deltaResult.sizeBytes
+              } else {
+                this.#log('warn', 'determinism marker payload exceeds size limit', {
+                  ...baseLogFields,
+                  markerType: 'delta',
+                  sizeBytes: deltaResult.sizeBytes,
+                  limitBytes,
+                })
+                resolvedMarkerType = null
+              }
+            } else if (fullResult.sizeBytes <= limitBytes) {
+              markerDetails = fullResult.details
+              markerSizeBytes = fullResult.sizeBytes
+            } else {
+              this.#log('warn', 'determinism marker payload exceeds size limit', {
+                ...baseLogFields,
+                markerType: 'full',
+                sizeBytes: fullResult.sizeBytes,
+                limitBytes,
+              })
+              resolvedMarkerType = null
+            }
+          } else if (resolvedMarkerType === 'delta') {
+            const deltaResult = await buildMarkerDetails('delta')
+            if (deltaResult.sizeBytes <= limitBytes) {
+              markerDetails = deltaResult.details
+              markerSizeBytes = deltaResult.sizeBytes
+            } else {
+              this.#log('warn', 'determinism marker payload exceeds size limit', {
+                ...baseLogFields,
+                markerType: 'delta',
+                sizeBytes: deltaResult.sizeBytes,
+                limitBytes,
+              })
+              resolvedMarkerType = null
+            }
+          }
+        }
+
+        if (resolvedMarkerType) {
+          markerHash = markerHashCandidate
+          lastMarkerTask = workflowTaskCount
+          if (resolvedMarkerType === 'full') {
+            lastFullSnapshotTask = workflowTaskCount
+          }
+          lastMarkerState = output.determinismState
+          if (markerDetails) {
+            this.#log('debug', 'determinism marker recorded', {
+              ...baseLogFields,
+              markerType: resolvedMarkerType,
+              sizeBytes: markerSizeBytes,
+            })
+            const markerCommand = this.#buildDeterminismMarkerCommand(markerDetails)
+            commandsForResponse = this.#injectDeterminismMarker(commandsForResponse, markerCommand)
+          }
+        }
+      }
+
+      let pendingStickyUpdate: {
+        determinismState: WorkflowDeterminismState
+        cacheBaselineEventId: string | null
+        workflowType: string
+        metadata: Omit<StickyCacheEntry, 'key' | 'determinismState' | 'lastEventId' | 'lastAccessed' | 'workflowType'>
+      } | null = null
+      let shouldClearSticky = false
+      if (stickyKey) {
+        if (output.completion === 'pending') {
+          const resolvedWorkflowArgs = argsSource === 'unknown' ? stickyEntry?.workflowArguments : args
+          pendingStickyUpdate = {
+            determinismState: output.determinismState,
+            cacheBaselineEventId,
+            workflowType,
+            metadata: {
+              workflowTaskCount,
+              lastDeterminismMarkerHash: markerHash,
+              lastDeterminismMarkerTask: lastMarkerTask,
+              lastDeterminismFullSnapshotTask: lastFullSnapshotTask,
+              ...(lastMarkerState ? { lastDeterminismMarkerState: lastMarkerState } : {}),
+              ...(resolvedWorkflowArgs !== undefined ? { workflowArguments: resolvedWorkflowArgs } : {}),
+              activityResults: mergedActivityResults,
+              activityScheduleEventIds: mergedScheduleEventIds,
+              timerResults: mergedTimerResults,
+            },
+          }
+        } else {
+          shouldClearSticky = true
+        }
       }
 
       const shouldRespondWorkflowTask = hasMultiQueries || !hasLegacyQueries
+      let workflowTaskCommitted = false
       if (shouldRespondWorkflowTask) {
         const completion = create(RespondWorkflowTaskCompletedRequestSchema, {
           taskToken: response.taskToken,
@@ -1264,6 +1481,7 @@ export class WorkerRuntime {
         })
         try {
           await this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS })
+          workflowTaskCommitted = true
         } catch (rpcError) {
           this.#log('error', 'debug: respondWorkflowTaskCompleted failed', {
             ...baseLogFields,
@@ -1271,6 +1489,10 @@ export class WorkerRuntime {
           })
           if (this.#isTaskNotFoundError(rpcError)) {
             this.#logWorkflowTaskNotFound('respondWorkflowTaskCompleted', execution)
+            if (stickyKey) {
+              await this.#removeStickyEntry(stickyKey)
+              await this.#removeStickyEntriesForWorkflow(stickyKey.workflowId)
+            }
             return
           }
           throw rpcError
@@ -1278,6 +1500,25 @@ export class WorkerRuntime {
       }
       if (legacyQueryResult) {
         await this.#respondLegacyQueryTask(response, legacyQueryResult)
+      }
+      if (stickyKey && workflowTaskCommitted) {
+        if (pendingStickyUpdate) {
+          await this.#upsertStickyEntry(
+            stickyKey,
+            pendingStickyUpdate.determinismState,
+            pendingStickyUpdate.cacheBaselineEventId,
+            pendingStickyUpdate.workflowType,
+            pendingStickyUpdate.metadata,
+          )
+          this.#log('debug', 'sticky cache snapshot persisted', {
+            ...baseLogFields,
+            cacheBaselineEventId: pendingStickyUpdate.cacheBaselineEventId,
+          })
+        } else if (shouldClearSticky) {
+          await this.#removeStickyEntry(stickyKey)
+          await this.#removeStickyEntriesForWorkflow(stickyKey.workflowId)
+          this.#log('debug', 'sticky cache entry cleared (workflow completed)', baseLogFields)
+        }
       }
     } catch (error) {
       let stickyEntryCleared = false
@@ -1377,21 +1618,104 @@ export class WorkerRuntime {
 
   async #collectWorkflowHistory(
     execution: { workflowId: string; runId: string },
-    _response: PollWorkflowTaskQueueResponse,
+    response: PollWorkflowTaskQueueResponse,
+    options?: { forceFullHistory?: boolean; skipFetchOnMissingStart?: boolean },
   ): Promise<HistoryEvent[]> {
     const events: HistoryEvent[] = []
-    let token: Uint8Array | undefined
-    while (true) {
+    const initialEvents = response.history?.events ?? []
+    if (initialEvents.length > 0) {
+      events.push(...initialEvents)
+    }
+
+    let token = response.nextPageToken && response.nextPageToken.length > 0 ? response.nextPageToken : undefined
+    while (token && token.length > 0) {
       const page = await this.#fetchWorkflowHistoryPage(execution, token)
       if (page.events.length > 0) {
         events.push(...page.events)
       }
-      if (!page.nextPageToken || page.nextPageToken.length === 0) {
+      token = page.nextPageToken && page.nextPageToken.length > 0 ? page.nextPageToken : undefined
+    }
+
+    let sorted = this.#sortHistoryEvents(events)
+    const shouldFetchFullHistory =
+      options?.forceFullHistory || (!options?.skipFetchOnMissingStart && !this.#findWorkflowStartedEvent(sorted))
+    if (shouldFetchFullHistory) {
+      const fullHistory = await this.#fetchWorkflowHistoryFromStart(execution)
+      if (fullHistory.length > 0) {
+        sorted = this.#sortHistoryEvents([...fullHistory, ...sorted])
+      }
+    }
+    const bounded = this.#limitHistoryToStartedEvent(sorted, response.startedEventId)
+    return this.#dedupeHistoryEvents(bounded)
+  }
+
+  #sortHistoryEvents(events: HistoryEvent[]): HistoryEvent[] {
+    return events.slice().sort((left, right) => {
+      const leftId = this.#resolveEventIdForSort(left.eventId)
+      const rightId = this.#resolveEventIdForSort(right.eventId)
+      if (leftId === rightId) {
+        return 0
+      }
+      return leftId < rightId ? -1 : 1
+    })
+  }
+
+  #dedupeHistoryEvents(events: HistoryEvent[]): HistoryEvent[] {
+    if (events.length <= 1) {
+      return events
+    }
+    const deduped: HistoryEvent[] = []
+    let lastId: bigint | null = null
+    for (const event of events) {
+      const currentId = this.#resolveEventIdForSort(event.eventId)
+      if (currentId !== 0n) {
+        if (lastId !== null && currentId === lastId) {
+          continue
+        }
+        lastId = currentId
+      }
+      deduped.push(event)
+    }
+    return deduped
+  }
+
+  #limitHistoryToStartedEvent(
+    events: HistoryEvent[],
+    startedEventId: bigint | number | string | undefined | null,
+  ): HistoryEvent[] {
+    const limit = this.#resolveEventIdForSort(startedEventId)
+    if (limit <= 0n) {
+      return events
+    }
+    const bounded: HistoryEvent[] = []
+    for (const event of events) {
+      const currentId = this.#resolveEventIdForSort(event.eventId)
+      if (currentId !== 0n && currentId > limit) {
         break
       }
-      token = page.nextPageToken
+      bounded.push(event)
     }
-    return events
+    return bounded
+  }
+
+  #resolveEventIdForSort(value: bigint | number | string | undefined | null): bigint {
+    if (value === undefined || value === null) {
+      return 0n
+    }
+    if (typeof value === 'bigint') {
+      return value
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return BigInt(value)
+    }
+    if (typeof value === 'string' && value.length > 0) {
+      try {
+        return BigInt(value)
+      } catch {
+        return 0n
+      }
+    }
+    return 0n
   }
 
   async #extractActivityResolutions(events: HistoryEvent[]): Promise<{
@@ -1841,6 +2165,19 @@ export class WorkerRuntime {
     }
   }
 
+  async #fetchWorkflowHistoryFromStart(execution: { workflowId: string; runId: string }): Promise<HistoryEvent[]> {
+    const events: HistoryEvent[] = []
+    let token: Uint8Array | undefined
+    do {
+      const page = await this.#fetchWorkflowHistoryPage(execution, token)
+      if (page.events.length > 0) {
+        events.push(...page.events)
+      }
+      token = page.nextPageToken && page.nextPageToken.length > 0 ? page.nextPageToken : undefined
+    } while (token && token.length > 0)
+    return events
+  }
+
   #buildWorkflowInfo(workflowType: string, execution: { workflowId: string; runId: string }): WorkflowInfo {
     return {
       namespace: this.#namespace,
@@ -1860,6 +2197,9 @@ export class WorkerRuntime {
     state: WorkflowDeterminismState,
     lastEventId: string | null,
     workflowType: string,
+    metadata?: Partial<
+      Omit<StickyCacheEntry, 'key' | 'determinismState' | 'lastEventId' | 'lastAccessed' | 'workflowType'>
+    >,
   ): Promise<void> {
     const entry: StickyCacheEntry = {
       key,
@@ -1867,12 +2207,164 @@ export class WorkerRuntime {
       lastEventId,
       lastAccessed: Date.now(),
       workflowType,
+      ...metadata,
     }
     await Effect.runPromise(this.#stickyCache.upsert(entry))
   }
 
   #resolveWorkflowHistoryLastEventId(response: PollWorkflowTaskQueueResponse): string | null {
     return resolveHistoryLastEventId(response.history?.events ?? [])
+  }
+
+  #resolveDeterminismMarkerType(taskIndex: number, stickyEntry?: StickyCacheEntry): 'full' | 'delta' | null {
+    if (this.#determinismMarkerMode === 'never') {
+      return null
+    }
+    if (this.#determinismMarkerMode === 'always') {
+      return 'full'
+    }
+    const interval = Math.max(1, this.#determinismMarkerIntervalTasks)
+    const shouldRecord = taskIndex === 1 || interval === 1 || taskIndex % interval === 0
+    if (!shouldRecord) {
+      return null
+    }
+    if (this.#determinismMarkerMode === 'delta') {
+      const lastFullSnapshot = stickyEntry?.lastDeterminismFullSnapshotTask ?? 0
+      const fullInterval = Math.max(1, this.#determinismMarkerFullSnapshotIntervalTasks)
+      const fullDue = taskIndex === 1 || fullInterval === 1 || taskIndex - lastFullSnapshot >= fullInterval
+      return fullDue ? 'full' : 'delta'
+    }
+    return 'full'
+  }
+
+  #buildDeterminismDelta(
+    previous: WorkflowDeterminismState | undefined,
+    current: WorkflowDeterminismState,
+  ): DeterminismStateDelta | undefined {
+    if (!previous) {
+      return undefined
+    }
+    const normalizeOptional = <T>(value: T | null | undefined): T | null => (value === undefined ? null : value)
+    const optionalEquals = <T>(left: T | null | undefined, right: T | null | undefined): boolean =>
+      normalizeOptional(left) === normalizeOptional(right)
+    const signalsEqual = (left: WorkflowDeterminismSignalRecord, right: WorkflowDeterminismSignalRecord): boolean =>
+      left.signalName === right.signalName &&
+      left.handlerName === right.handlerName &&
+      left.payloadHash === right.payloadHash &&
+      optionalEquals(left.eventId, right.eventId) &&
+      optionalEquals(left.workflowTaskCompletedEventId, right.workflowTaskCompletedEventId) &&
+      optionalEquals(left.identity, right.identity)
+    const queriesEqual = (left: WorkflowDeterminismQueryRecord, right: WorkflowDeterminismQueryRecord): boolean =>
+      left.queryName === right.queryName &&
+      left.handlerName === right.handlerName &&
+      left.requestHash === right.requestHash &&
+      optionalEquals(left.identity, right.identity) &&
+      optionalEquals(left.queryId, right.queryId) &&
+      left.resultHash === right.resultHash &&
+      left.failureHash === right.failureHash
+    const updatesEqual = (left: WorkflowUpdateDeterminismEntry, right: WorkflowUpdateDeterminismEntry): boolean =>
+      left.updateId === right.updateId &&
+      left.stage === right.stage &&
+      left.handlerName === right.handlerName &&
+      left.identity === right.identity &&
+      left.sequencingEventId === right.sequencingEventId &&
+      left.messageId === right.messageId &&
+      left.acceptedEventId === right.acceptedEventId &&
+      left.outcome === right.outcome &&
+      left.failureMessage === right.failureMessage &&
+      left.historyEventId === right.historyEventId
+
+    const sliceAppend = <T>(
+      currentList: readonly T[],
+      previousList: readonly T[],
+      equals: (left: T, right: T) => boolean = Object.is,
+    ): T[] | undefined => {
+      if (currentList.length < previousList.length) {
+        return undefined
+      }
+      for (let index = 0; index < previousList.length; index += 1) {
+        if (!equals(previousList[index] as T, currentList[index] as T)) {
+          return undefined
+        }
+      }
+      return currentList.slice(previousList.length)
+    }
+
+    const commandHistory = sliceAppend(current.commandHistory, previous.commandHistory, (left, right) =>
+      intentsEqual(left?.intent, right?.intent),
+    )
+    const randomValues = sliceAppend(current.randomValues, previous.randomValues)
+    const timeValues = sliceAppend(current.timeValues, previous.timeValues)
+    const signals = sliceAppend(current.signals, previous.signals, signalsEqual)
+    const queries = sliceAppend(current.queries, previous.queries, queriesEqual)
+    if (!commandHistory || !randomValues || !timeValues || !signals || !queries) {
+      return undefined
+    }
+
+    const updatesPrev = previous.updates ?? []
+    const updatesNext = current.updates ?? []
+    if (updatesNext.length < updatesPrev.length) {
+      return undefined
+    }
+    const updates = sliceAppend(updatesNext, updatesPrev, updatesEqual)
+    if (!updates) {
+      return undefined
+    }
+    const logCount =
+      current.logCount !== undefined && current.logCount !== previous.logCount ? current.logCount : undefined
+    const failureMetadata =
+      current.failureMetadata && previous.failureMetadata
+        ? current.failureMetadata.eventId !== previous.failureMetadata.eventId ||
+          current.failureMetadata.eventType !== previous.failureMetadata.eventType ||
+          current.failureMetadata.failureType !== previous.failureMetadata.failureType ||
+          current.failureMetadata.failureMessage !== previous.failureMetadata.failureMessage ||
+          current.failureMetadata.retryState !== previous.failureMetadata.retryState
+          ? current.failureMetadata
+          : undefined
+        : (current.failureMetadata ?? undefined)
+
+    return {
+      commandHistory,
+      randomValues,
+      timeValues,
+      signals,
+      queries,
+      ...(updates.length > 0 ? { updates } : {}),
+      ...(logCount !== undefined ? { logCount } : {}),
+      ...(failureMetadata ? { failureMetadata } : {}),
+    }
+  }
+
+  #isDeterminismDeltaEmpty(delta: DeterminismStateDelta): boolean {
+    const updatesCount = delta.updates ? delta.updates.length : 0
+    return (
+      (delta.commandHistory?.length ?? 0) === 0 &&
+      (delta.randomValues?.length ?? 0) === 0 &&
+      (delta.timeValues?.length ?? 0) === 0 &&
+      (delta.signals?.length ?? 0) === 0 &&
+      (delta.queries?.length ?? 0) === 0 &&
+      updatesCount === 0 &&
+      delta.logCount === undefined &&
+      delta.failureMetadata === undefined
+    )
+  }
+
+  #buildDeterminismMarkerSignature(state: WorkflowDeterminismState): DeterminismMarkerSignature {
+    const failureMetadataHash = state.failureMetadata ? stableStringify(state.failureMetadata) : undefined
+    return {
+      commandHistoryLength: state.commandHistory.length,
+      randomValuesLength: state.randomValues.length,
+      timeValuesLength: state.timeValues.length,
+      signalsLength: state.signals.length,
+      queriesLength: state.queries.length,
+      updatesLength: state.updates?.length ?? 0,
+      logCount: state.logCount ?? 0,
+      ...(failureMetadataHash ? { failureMetadataHash } : {}),
+    }
+  }
+
+  #hashDeterminismMarker(signature: DeterminismMarkerSignature): string {
+    return stableStringify(signature)
   }
 
   #isTaskNotFoundError(error: unknown): boolean {
@@ -2520,20 +3012,37 @@ export class WorkerRuntime {
     }
   }
 
-  async #decodeWorkflowArgs(events: HistoryEvent[]): Promise<unknown[]> {
+  async #decodeWorkflowArgs(events: HistoryEvent[]): Promise<{
+    args: unknown[]
+    hasStartEvent: boolean
+  }> {
     const startEvent = this.#findWorkflowStartedEvent(events)
     if (!startEvent) {
-      return []
+      return { args: [], hasStartEvent: false }
     }
+    const args = (await this.#decodeWorkflowArgsFromStartEvent(startEvent)) ?? []
+    return { args, hasStartEvent: true }
+  }
+
+  async #decodeWorkflowArgsFromStartEvent(startEvent: HistoryEvent): Promise<unknown[] | undefined> {
     const attributes =
       startEvent.attributes?.case === 'workflowExecutionStartedEventAttributes'
         ? startEvent.attributes.value
         : undefined
     if (!attributes) {
-      return []
+      return undefined
     }
     const inputPayloads = attributes.input?.payloads ?? []
     return await decodePayloadsToValues(this.#dataConverter, inputPayloads)
+  }
+
+  async #fetchWorkflowStartArguments(execution: { workflowId: string; runId: string }): Promise<unknown[] | undefined> {
+    const page = await this.#fetchWorkflowHistoryPage(execution)
+    const startEvent = this.#findWorkflowStartedEvent(page.events)
+    if (!startEvent) {
+      return undefined
+    }
+    return await this.#decodeWorkflowArgsFromStartEvent(startEvent)
   }
 
   #resolveWorkflowType(response: PollWorkflowTaskQueueResponse, events: HistoryEvent[]): string {

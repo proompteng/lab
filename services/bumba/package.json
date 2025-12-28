@@ -16,6 +16,7 @@
     "@tree-sitter-grammars/tree-sitter-hcl": "^1.2.0",
     "@tree-sitter-grammars/tree-sitter-kotlin": "^1.1.0",
     "@tree-sitter-grammars/tree-sitter-toml": "^0.7.0",
+    "@tree-sitter-grammars/tree-sitter-yaml": "^0.7.1",
     "@tree-sitter-grammars/tree-sitter-zig": "^1.1.2",
     "effect": "^3.19.10",
     "tree-sitter-bash": "^0.25.1",

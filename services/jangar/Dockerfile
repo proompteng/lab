@@ -264,7 +264,7 @@ RUN set -eux; \
     gunzip -c "${ARGO_ARCHIVE}" > /tmp/argo; \
     install -o root -g root -m 0755 /tmp/argo /usr/local/bin/argo; \
     rm -f "${ARGO_ARCHIVE}" /tmp/argo; \
-    argo version --client
+    argo version --short
 
 # Install Argo CD CLI (argocd)
 RUN set -eux; \

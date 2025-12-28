@@ -50,6 +50,7 @@ import type {
   StartTimerCommandIntent,
   UpsertSearchAttributesCommandIntent,
   WorkflowCommandIntent,
+  WorkflowCommandKind,
 } from './commands'
 import type { WorkflowInfo } from './context'
 import type {
@@ -79,23 +80,50 @@ export interface ReplayResult {
   readonly determinismState: WorkflowDeterminismState
   readonly lastEventId: string | null
   readonly hasDeterminismMarker: boolean
+  readonly markerState?: WorkflowDeterminismState
   readonly updates?: readonly WorkflowUpdateInvocation[]
 }
 
 export interface DeterminismMarkerInput {
   readonly info: WorkflowInfo
   readonly determinismState: WorkflowDeterminismState
+  readonly determinismDelta?: DeterminismStateDelta
+  readonly markerType?: DeterminismMarkerType
   readonly lastEventId: string | null
   readonly recordedAt?: Date
 }
 
-export interface DeterminismMarkerEnvelope {
-  readonly schemaVersion: number
+export type DeterminismMarkerType = 'full' | 'delta'
+
+export interface DeterminismStateDelta {
+  readonly commandHistory?: WorkflowDeterminismState['commandHistory']
+  readonly randomValues?: WorkflowDeterminismState['randomValues']
+  readonly timeValues?: WorkflowDeterminismState['timeValues']
+  readonly logCount?: number
+  readonly failureMetadata?: WorkflowDeterminismFailureMetadata
+  readonly signals?: WorkflowDeterminismState['signals']
+  readonly queries?: WorkflowDeterminismState['queries']
+  readonly updates?: WorkflowDeterminismState['updates']
+}
+
+export interface DeterminismMarkerEnvelopeV1 {
+  readonly schemaVersion: 1
   readonly workflow: WorkflowInfo
   readonly determinismState: WorkflowDeterminismState
   readonly lastEventId: string | null
   readonly recordedAtIso: string
 }
+
+export interface DeterminismMarkerEnvelopeV2 {
+  readonly schemaVersion: 2
+  readonly workflow: WorkflowInfo
+  readonly determinismState?: WorkflowDeterminismState
+  readonly determinismDelta?: DeterminismStateDelta
+  readonly lastEventId: string | null
+  readonly recordedAtIso: string
+}
+
+export type DeterminismMarkerEnvelope = DeterminismMarkerEnvelopeV1 | DeterminismMarkerEnvelopeV2
 
 export interface DeterminismDiffResult {
   readonly mismatches: DeterminismMismatch[]
@@ -157,7 +185,8 @@ export type DeterminismMismatch =
 
 export const DETERMINISM_MARKER_NAME = 'temporal-bun-sdk/determinism'
 
-const DETERMINISM_MARKER_SCHEMA_VERSION = 1
+const DETERMINISM_MARKER_SCHEMA_VERSION_V1 = 1
+const DETERMINISM_MARKER_SCHEMA_VERSION_V2 = 2
 const DETERMINISM_MARKER_DETAIL_KEY = 'snapshot'
 
 /**
@@ -170,13 +199,26 @@ export const encodeDeterminismMarkerDetails = (
 ): Effect.Effect<Record<string, Payloads>, unknown, never> =>
   Effect.tryPromise(async () => {
     const recordedAt = (input.recordedAt ?? new Date()).toISOString()
-    const envelope: DeterminismMarkerEnvelope = {
-      schemaVersion: DETERMINISM_MARKER_SCHEMA_VERSION,
-      workflow: input.info,
-      determinismState: input.determinismState,
-      lastEventId: normalizeEventId(input.lastEventId),
-      recordedAtIso: recordedAt,
+    const markerType: DeterminismMarkerType = input.markerType ?? 'full'
+    if (markerType === 'delta' && !input.determinismDelta) {
+      throw new Error('Determinism marker delta payload missing')
     }
+    const envelope: DeterminismMarkerEnvelope =
+      markerType === 'delta'
+        ? {
+            schemaVersion: DETERMINISM_MARKER_SCHEMA_VERSION_V2,
+            workflow: input.info,
+            determinismDelta: input.determinismDelta,
+            lastEventId: normalizeEventId(input.lastEventId),
+            recordedAtIso: recordedAt,
+          }
+        : {
+            schemaVersion: DETERMINISM_MARKER_SCHEMA_VERSION_V1,
+            workflow: input.info,
+            determinismState: input.determinismState,
+            lastEventId: normalizeEventId(input.lastEventId),
+            recordedAtIso: recordedAt,
+          }
 
     const payloads = await encodeValuesToPayloads(converter, [envelope])
     if (!payloads || payloads.length === 0) {
@@ -187,6 +229,28 @@ export const encodeDeterminismMarkerDetails = (
       [DETERMINISM_MARKER_DETAIL_KEY]: create(PayloadsSchema, { payloads }),
     }
   })
+
+export const measurePayloadsByteSize = (details: Record<string, Payloads>): number => {
+  let total = 0
+  for (const payloads of Object.values(details)) {
+    for (const payload of payloads.payloads ?? []) {
+      total += payload.data?.byteLength ?? 0
+      const metadata = payload.metadata ?? {}
+      for (const value of Object.values(metadata)) {
+        total += value?.byteLength ?? 0
+      }
+    }
+  }
+  return total
+}
+
+export const encodeDeterminismMarkerDetailsWithSize = (
+  converter: DataConverter,
+  input: DeterminismMarkerInput,
+): Effect.Effect<{ details: Record<string, Payloads>; sizeBytes: number }, unknown, never> =>
+  encodeDeterminismMarkerDetails(converter, input).pipe(
+    Effect.map((details) => ({ details, sizeBytes: measurePayloadsByteSize(details) })),
+  )
 
 export interface DecodeDeterminismMarkerInput {
   readonly converter: DataConverter
@@ -228,11 +292,15 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
   Effect.gen(function* () {
     const events = sortHistoryEvents(intake.history ?? [])
     const shouldUseDeterminismMarker = intake.ignoreDeterminismMarker !== true
-    let markerSnapshot: DeterminismMarkerEnvelope | undefined
-    const updateEntries = collectWorkflowUpdateEntries(events)
+    let markerState: WorkflowDeterminismState | undefined
+    let markerLastEventId: string | null = null
+    let markerEventId: string | null = null
+    let markerEventIndex: number | null = null
+    let markerInvalid = false
+    let hasMarker = false
 
     if (shouldUseDeterminismMarker) {
-      for (const event of events) {
+      for (const [index, event] of events.entries()) {
         if (event.eventType !== EventType.MARKER_RECORDED) {
           continue
         }
@@ -249,37 +317,109 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
         )
 
         if (decoded) {
-          markerSnapshot = decoded
+          const applied = applyDeterminismMarker(markerState, decoded)
+          if (!applied) {
+            markerInvalid = true
+            break
+          }
+          markerState = applied
+          markerLastEventId = decoded.lastEventId
+          markerEventId = normalizeEventId(event.eventId)
+          markerEventIndex = index
+          hasMarker = true
         }
       }
     }
 
     const extractedFailureMetadata = extractFailureMetadata(events)
-    const replayUpdateInvocations = yield* Effect.tryPromise(async () =>
+    const historyLastEventId = resolveHistoryLastEventId(events) ?? null
+    if (shouldUseDeterminismMarker && hasMarker && !markerInvalid && markerState && markerEventIndex !== null) {
+      const historyKinds = collectCommandKinds(events.slice(0, markerEventIndex + 1))
+      const markerKinds = markerState.commandHistory.map((entry) => entry.intent.kind)
+      if (!commandKindsMatch(markerKinds, historyKinds)) {
+        markerInvalid = true
+        markerState = undefined
+      }
+    }
+    const eventsAfterMarker =
+      shouldUseDeterminismMarker && hasMarker && markerEventIndex !== null ? events.slice(markerEventIndex + 1) : events
+    const replayUpdateInvocationsAfterMarker = yield* Effect.tryPromise(async () =>
+      collectWorkflowUpdateInvocations(eventsAfterMarker, intake.dataConverter),
+    )
+    const updateEntriesAfterMarker = collectWorkflowUpdateEntries(eventsAfterMarker)
+    const replayUpdateInvocationsFull = yield* Effect.tryPromise(async () =>
       collectWorkflowUpdateInvocations(events, intake.dataConverter),
     )
+    const updateEntriesFull = collectWorkflowUpdateEntries(events)
 
-    if (shouldUseDeterminismMarker && markerSnapshot) {
-      let determinismState = cloneDeterminismState(markerSnapshot.determinismState)
-      if (!determinismState.failureMetadata && extractedFailureMetadata) {
-        determinismState = {
-          ...determinismState,
-          failureMetadata: extractedFailureMetadata,
+    const markerCoversHistory = markerEventId !== null && markerEventId === historyLastEventId
+    const historyCommandCount = countHistoryCommandEvents(events)
+
+    if (shouldUseDeterminismMarker && hasMarker && !markerInvalid && markerState) {
+      if (markerCoversHistory || eventsAfterMarker.length === 0) {
+        let determinismState = cloneDeterminismState(markerState)
+        if (!determinismState.failureMetadata && extractedFailureMetadata) {
+          determinismState = {
+            ...determinismState,
+            failureMetadata: extractedFailureMetadata,
+          }
+        }
+        if (
+          (!determinismState.updates || determinismState.updates.length === 0) &&
+          updateEntriesAfterMarker.length > 0
+        ) {
+          determinismState = {
+            ...determinismState,
+            updates: updateEntriesAfterMarker,
+          }
+        }
+        determinismState = mergePendingQueryRequests(determinismState, intake.queries)
+        const latestEventId = historyLastEventId ?? markerLastEventId ?? null
+        if (determinismState.commandHistory.length !== historyCommandCount) {
+          return yield* reconstructDeterminismState(
+            events,
+            intake,
+            extractedFailureMetadata,
+            updateEntriesFull,
+            replayUpdateInvocationsFull,
+          )
+        }
+        return {
+          determinismState,
+          lastEventId: latestEventId,
+          hasDeterminismMarker: true,
+          markerState: cloneDeterminismState(markerState),
+          ...(replayUpdateInvocationsFull.length > 0 ? { updates: replayUpdateInvocationsFull } : {}),
         }
       }
-      if ((!determinismState.updates || determinismState.updates.length === 0) && updateEntries.length > 0) {
-        determinismState = {
-          ...determinismState,
-          updates: updateEntries,
-        }
+
+      const replayed = yield* reconstructDeterminismState(
+        eventsAfterMarker,
+        intake,
+        extractedFailureMetadata,
+        updateEntriesAfterMarker,
+        replayUpdateInvocationsAfterMarker,
+        {
+          seedState: markerState,
+          historyLastEventId,
+          seedHistoryEvents: markerEventIndex !== null ? events.slice(0, markerEventIndex + 1) : undefined,
+        },
+      )
+      if (replayed.determinismState.commandHistory.length !== historyCommandCount) {
+        return yield* reconstructDeterminismState(
+          events,
+          intake,
+          extractedFailureMetadata,
+          updateEntriesFull,
+          replayUpdateInvocationsFull,
+        )
       }
-      determinismState = mergePendingQueryRequests(determinismState, intake.queries)
-      const latestEventId = resolveHistoryLastEventId(events) ?? markerSnapshot.lastEventId ?? null
       return {
-        determinismState,
-        lastEventId: latestEventId,
+        ...replayed,
         hasDeterminismMarker: true,
-        ...(replayUpdateInvocations.length > 0 ? { updates: replayUpdateInvocations } : {}),
+        markerState: cloneDeterminismState(markerState),
+        lastEventId: historyLastEventId ?? markerLastEventId ?? null,
+        ...(replayUpdateInvocationsFull.length > 0 ? { updates: replayUpdateInvocationsFull } : {}),
       }
     }
 
@@ -287,8 +427,8 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
       events,
       intake,
       extractedFailureMetadata,
-      updateEntries,
-      replayUpdateInvocations,
+      updateEntriesFull,
+      replayUpdateInvocationsFull,
     )
   })
 
@@ -605,21 +745,333 @@ const resolveCommandMismatchMetadata = (
   }
 }
 
+type DeterminismReconstructionOptions = {
+  readonly seedState?: WorkflowDeterminismState
+  readonly historyLastEventId?: string | null
+  readonly seedHistoryEvents?: readonly HistoryEvent[]
+}
+
+const seedDeterminismEventMaps = (state?: WorkflowDeterminismState, seedEvents?: readonly HistoryEvent[]) => {
+  const scheduledActivities = new Map<string, string>()
+  const timersByStartEventId = new Map<string, string>()
+
+  if (!state) {
+    if (seedEvents) {
+      seedDeterminismEventMapsFromHistory(scheduledActivities, timersByStartEventId, seedEvents)
+    }
+    return { scheduledActivities, timersByStartEventId }
+  }
+
+  for (const entry of state.commandHistory) {
+    const eventId = entry.metadata?.eventId
+    if (!eventId) {
+      continue
+    }
+    if (entry.intent.kind === 'schedule-activity') {
+      scheduledActivities.set(eventId, entry.intent.activityId)
+      continue
+    }
+    if (entry.intent.kind === 'start-timer') {
+      timersByStartEventId.set(eventId, entry.intent.timerId)
+    }
+  }
+
+  if (seedEvents) {
+    seedDeterminismEventMapsFromHistory(scheduledActivities, timersByStartEventId, seedEvents)
+  }
+
+  return { scheduledActivities, timersByStartEventId }
+}
+
+const seedDeterminismEventMapsFromHistory = (
+  scheduledActivities: Map<string, string>,
+  timersByStartEventId: Map<string, string>,
+  events: readonly HistoryEvent[],
+) => {
+  for (const event of events) {
+    switch (event.eventType) {
+      case EventType.ACTIVITY_TASK_SCHEDULED: {
+        if (event.attributes?.case !== 'activityTaskScheduledEventAttributes') {
+          break
+        }
+        const activityId = event.attributes.value.activityId
+        const eventId = normalizeEventId(event.eventId)
+        if (activityId && eventId && !scheduledActivities.has(eventId)) {
+          scheduledActivities.set(eventId, activityId)
+        }
+        break
+      }
+      case EventType.TIMER_STARTED: {
+        if (event.attributes?.case !== 'timerStartedEventAttributes') {
+          break
+        }
+        const timerId = event.attributes.value.timerId
+        const eventId = normalizeEventId(event.eventId)
+        if (timerId && eventId && !timersByStartEventId.has(eventId)) {
+          timersByStartEventId.set(eventId, timerId)
+        }
+        break
+      }
+      default:
+        break
+    }
+  }
+}
+
+const countHistoryCommandEvents = (events: readonly HistoryEvent[]): number => {
+  const { scheduledActivities, timersByStartEventId } = seedDeterminismEventMaps(undefined, events)
+  let count = 0
+
+  for (const event of events) {
+    switch (event.eventType) {
+      case EventType.ACTIVITY_TASK_SCHEDULED: {
+        if (event.attributes?.case !== 'activityTaskScheduledEventAttributes') {
+          break
+        }
+        if (event.attributes.value.activityType?.name) {
+          count += 1
+        }
+        break
+      }
+      case EventType.TIMER_STARTED: {
+        if (event.attributes?.case !== 'timerStartedEventAttributes') {
+          break
+        }
+        if (durationToMillis(event.attributes.value.startToFireTimeout) !== undefined) {
+          count += 1
+        }
+        break
+      }
+      case EventType.START_CHILD_WORKFLOW_EXECUTION_INITIATED: {
+        if (event.attributes?.case !== 'startChildWorkflowExecutionInitiatedEventAttributes') {
+          break
+        }
+        if (event.attributes.value.workflowType?.name) {
+          count += 1
+        }
+        break
+      }
+      case EventType.ACTIVITY_TASK_CANCEL_REQUESTED: {
+        if (event.attributes?.case !== 'activityTaskCancelRequestedEventAttributes') {
+          break
+        }
+        const scheduledEventId = normalizeBigintIdentifier(event.attributes.value.scheduledEventId)
+        if (scheduledEventId && scheduledActivities.has(scheduledEventId)) {
+          count += 1
+        }
+        break
+      }
+      case EventType.TIMER_CANCELED: {
+        if (event.attributes?.case !== 'timerCanceledEventAttributes') {
+          break
+        }
+        const startedEventId = normalizeBigintIdentifier(event.attributes.value.startedEventId)
+        if (startedEventId && timersByStartEventId.has(startedEventId)) {
+          count += 1
+        }
+        break
+      }
+      case EventType.SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: {
+        if (event.attributes?.case !== 'signalExternalWorkflowExecutionInitiatedEventAttributes') {
+          break
+        }
+        if (event.attributes.value.signalName) {
+          count += 1
+        }
+        break
+      }
+      case EventType.REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: {
+        if (event.attributes?.case !== 'requestCancelExternalWorkflowExecutionInitiatedEventAttributes') {
+          break
+        }
+        count += 1
+        break
+      }
+      case EventType.WORKFLOW_EXECUTION_CONTINUED_AS_NEW: {
+        if (event.attributes?.case !== 'workflowExecutionContinuedAsNewEventAttributes') {
+          break
+        }
+        count += 1
+        break
+      }
+      case EventType.MARKER_RECORDED: {
+        if (event.attributes?.case !== 'markerRecordedEventAttributes') {
+          break
+        }
+        if (event.attributes.value.markerName !== DETERMINISM_MARKER_NAME) {
+          count += 1
+        }
+        break
+      }
+      case EventType.UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: {
+        if (event.attributes?.case !== 'upsertWorkflowSearchAttributesEventAttributes') {
+          break
+        }
+        count += 1
+        break
+      }
+      case EventType.WORKFLOW_PROPERTIES_MODIFIED: {
+        if (event.attributes?.case !== 'workflowPropertiesModifiedEventAttributes') {
+          break
+        }
+        count += 1
+        break
+      }
+      default:
+        break
+    }
+  }
+
+  return count
+}
+
+const commandKindsMatch = (
+  expected: readonly WorkflowCommandKind[],
+  actual: readonly WorkflowCommandKind[],
+): boolean => {
+  if (expected.length !== actual.length) {
+    return false
+  }
+  for (let index = 0; index < expected.length; index += 1) {
+    if (expected[index] !== actual[index]) {
+      return false
+    }
+  }
+  return true
+}
+
+const collectCommandKinds = (events: readonly HistoryEvent[]): WorkflowCommandKind[] => {
+  const { scheduledActivities, timersByStartEventId } = seedDeterminismEventMaps(undefined, events)
+  const kinds: WorkflowCommandKind[] = []
+
+  for (const event of events) {
+    switch (event.eventType) {
+      case EventType.ACTIVITY_TASK_SCHEDULED: {
+        if (event.attributes?.case !== 'activityTaskScheduledEventAttributes') {
+          break
+        }
+        if (event.attributes.value.activityType?.name) {
+          kinds.push('schedule-activity')
+        }
+        break
+      }
+      case EventType.TIMER_STARTED: {
+        if (event.attributes?.case !== 'timerStartedEventAttributes') {
+          break
+        }
+        if (event.attributes.value.timerId) {
+          kinds.push('start-timer')
+        }
+        break
+      }
+      case EventType.START_CHILD_WORKFLOW_EXECUTION_INITIATED: {
+        if (event.attributes?.case !== 'startChildWorkflowExecutionInitiatedEventAttributes') {
+          break
+        }
+        if (event.attributes.value.workflowType?.name) {
+          kinds.push('start-child-workflow')
+        }
+        break
+      }
+      case EventType.ACTIVITY_TASK_CANCEL_REQUESTED: {
+        if (event.attributes?.case !== 'activityTaskCancelRequestedEventAttributes') {
+          break
+        }
+        const scheduledKey = normalizeEventId(event.attributes.value.scheduledEventId)
+        if (scheduledKey && scheduledActivities.has(scheduledKey)) {
+          kinds.push('request-cancel-activity')
+        }
+        break
+      }
+      case EventType.TIMER_CANCELED: {
+        if (event.attributes?.case !== 'timerCanceledEventAttributes') {
+          break
+        }
+        const startedKey = normalizeEventId(event.attributes.value.startedEventId)
+        if (startedKey && timersByStartEventId.has(startedKey)) {
+          kinds.push('cancel-timer')
+        }
+        break
+      }
+      case EventType.SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: {
+        if (event.attributes?.case !== 'signalExternalWorkflowExecutionInitiatedEventAttributes') {
+          break
+        }
+        if (event.attributes.value.signalName) {
+          kinds.push('signal-external-workflow')
+        }
+        break
+      }
+      case EventType.REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: {
+        if (event.attributes?.case !== 'requestCancelExternalWorkflowExecutionInitiatedEventAttributes') {
+          break
+        }
+        if (event.attributes.value.workflowExecution?.workflowId) {
+          kinds.push('request-cancel-external-workflow')
+        }
+        break
+      }
+      case EventType.WORKFLOW_EXECUTION_CONTINUED_AS_NEW: {
+        if (event.attributes?.case !== 'workflowExecutionContinuedAsNewEventAttributes') {
+          break
+        }
+        kinds.push('continue-as-new')
+        break
+      }
+      case EventType.MARKER_RECORDED: {
+        if (event.attributes?.case !== 'markerRecordedEventAttributes') {
+          break
+        }
+        if (event.attributes.value.markerName !== DETERMINISM_MARKER_NAME) {
+          kinds.push('record-marker')
+        }
+        break
+      }
+      case EventType.UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: {
+        if (event.attributes?.case !== 'upsertWorkflowSearchAttributesEventAttributes') {
+          break
+        }
+        kinds.push('upsert-search-attributes')
+        break
+      }
+      case EventType.WORKFLOW_PROPERTIES_MODIFIED: {
+        if (event.attributes?.case !== 'workflowPropertiesModifiedEventAttributes') {
+          break
+        }
+        kinds.push('modify-workflow-properties')
+        break
+      }
+      default:
+        break
+    }
+  }
+
+  return kinds
+}
+
 const reconstructDeterminismState = (
   events: HistoryEvent[],
   intake: ReplayIntake,
   failureMetadata?: WorkflowDeterminismFailureMetadata,
   precomputedUpdates?: WorkflowUpdateDeterminismEntry[],
   replayUpdateInvocations: WorkflowUpdateInvocation[] = [],
+  options?: DeterminismReconstructionOptions,
 ): Effect.Effect<ReplayResult, unknown, never> =>
   Effect.gen(function* () {
-    let sequence = 0
-    const commandHistory: WorkflowCommandHistoryEntry[] = []
-    const signalRecords: WorkflowDeterminismSignalRecord[] = []
-    const queryRecords: WorkflowDeterminismQueryRecord[] = []
-    const updates = precomputedUpdates ?? collectWorkflowUpdateEntries(events)
-    const scheduledActivities = new Map<string, string>()
-    const timersByStartEventId = new Map<string, string>()
+    const seededState = options?.seedState ? cloneDeterminismState(options.seedState) : undefined
+    let sequence = seededState?.commandHistory.length ?? 0
+    const commandHistory: WorkflowCommandHistoryEntry[] = seededState ? [...seededState.commandHistory] : []
+    const signalRecords: WorkflowDeterminismSignalRecord[] = seededState ? [...seededState.signals] : []
+    const queryRecords: WorkflowDeterminismQueryRecord[] = seededState ? [...seededState.queries] : []
+    const updateEntries = precomputedUpdates ?? collectWorkflowUpdateEntries(events)
+    const updates =
+      seededState?.updates && seededState.updates.length > 0
+        ? [...seededState.updates, ...updateEntries]
+        : updateEntries
+    const { scheduledActivities, timersByStartEventId } = seedDeterminismEventMaps(
+      seededState,
+      options?.seedHistoryEvents,
+    )
 
     for (const event of events) {
       switch (event.eventType) {
@@ -815,11 +1267,12 @@ const reconstructDeterminismState = (
       }
     }
 
+    const resolvedFailureMetadata = failureMetadata ?? seededState?.failureMetadata
     let determinismState: WorkflowDeterminismState = {
       commandHistory,
-      randomValues: [],
-      timeValues: [],
-      ...(failureMetadata ? { failureMetadata } : {}),
+      randomValues: seededState?.randomValues ?? [],
+      timeValues: seededState?.timeValues ?? [],
+      ...(resolvedFailureMetadata ? { failureMetadata: resolvedFailureMetadata } : {}),
       signals: signalRecords,
       queries: queryRecords,
       ...(updates.length > 0 ? { updates } : {}),
@@ -828,7 +1281,7 @@ const reconstructDeterminismState = (
 
     return {
       determinismState,
-      lastEventId: resolveHistoryLastEventId(events),
+      lastEventId: options?.historyLastEventId ?? resolveHistoryLastEventId(events),
       hasDeterminismMarker: false,
       ...(replayUpdateInvocations.length > 0 ? { updates: replayUpdateInvocations } : {}),
     }
@@ -1207,7 +1660,23 @@ const collectWorkflowUpdateInvocations = async (
   events: HistoryEvent[],
   dataConverter: DataConverter,
 ): Promise<WorkflowUpdateInvocation[]> => {
-  const invocations: WorkflowUpdateInvocation[] = []
+  const candidates: Array<{
+    invocation: WorkflowUpdateInvocation
+    sequencing?: bigint
+    order: number
+  }> = []
+  let order = 0
+
+  const parseSequencing = (value: string | undefined): bigint | undefined => {
+    if (!value) {
+      return undefined
+    }
+    try {
+      return BigInt(value)
+    } catch {
+      return undefined
+    }
+  }
 
   for (const event of events) {
     if (event.eventType === EventType.WORKFLOW_EXECUTION_UPDATE_ACCEPTED) {
@@ -1224,26 +1693,8 @@ const collectWorkflowUpdateInvocations = async (
         dataConverter,
       })
       if (invocation) {
-        invocations.push(invocation)
-      }
-      continue
-    }
-
-    if (event.eventType === EventType.WORKFLOW_EXECUTION_UPDATE_REJECTED) {
-      if (event.attributes.case !== 'workflowExecutionUpdateRejectedEventAttributes') {
-        continue
-      }
-      const attrs = event.attributes.value as WorkflowExecutionUpdateRejectedEventAttributes
-      const invocation = await buildUpdateInvocationFromRequest({
-        request: attrs.rejectedRequest,
-        protocolInstanceId: attrs.protocolInstanceId,
-        requestMessageId: attrs.rejectedRequestMessageId,
-        sequencingEventId: attrs.rejectedRequestSequencingEventId,
-        fallbackEventId: event.eventId,
-        dataConverter,
-      })
-      if (invocation) {
-        invocations.push(invocation)
+        candidates.push({ invocation, sequencing: parseSequencing(invocation.sequencingEventId), order })
+        order += 1
       }
       continue
     }
@@ -1262,12 +1713,59 @@ const collectWorkflowUpdateInvocations = async (
         dataConverter,
       })
       if (invocation) {
-        invocations.push(invocation)
+        candidates.push({ invocation, sequencing: parseSequencing(invocation.sequencingEventId), order })
+        order += 1
       }
     }
   }
 
-  return invocations
+  const byUpdateId = new Map<string, { invocation: WorkflowUpdateInvocation; sequencing?: bigint; order: number }>()
+  for (const candidate of candidates) {
+    const updateId = candidate.invocation.updateId
+    const existing = byUpdateId.get(updateId)
+    if (!existing) {
+      byUpdateId.set(updateId, candidate)
+      continue
+    }
+    const existingSeq = existing.sequencing
+    const candidateSeq = candidate.sequencing
+    if (candidateSeq !== undefined && existingSeq !== undefined) {
+      if (candidateSeq < existingSeq) {
+        byUpdateId.set(updateId, candidate)
+      }
+      continue
+    }
+    if (candidateSeq !== undefined && existingSeq === undefined) {
+      byUpdateId.set(updateId, candidate)
+      continue
+    }
+    if (candidateSeq === undefined && existingSeq !== undefined) {
+      continue
+    }
+    if (candidate.order < existing.order) {
+      byUpdateId.set(updateId, candidate)
+    }
+  }
+
+  return [...byUpdateId.values()]
+    .sort((left, right) => {
+      const leftSeq = left.sequencing
+      const rightSeq = right.sequencing
+      if (leftSeq !== undefined && rightSeq !== undefined) {
+        if (leftSeq < rightSeq) {
+          return -1
+        }
+        if (leftSeq > rightSeq) {
+          return 1
+        }
+      } else if (leftSeq !== undefined) {
+        return -1
+      } else if (rightSeq !== undefined) {
+        return 1
+      }
+      return left.order - right.order
+    })
+    .map((entry) => entry.invocation)
 }
 
 const buildUpdateInvocationFromRequest = async (input: {
@@ -1453,21 +1951,79 @@ const resolveOutcomeStatus = (outcome?: Outcome | null): 'success' | 'failure' |
   return undefined
 }
 
+const applyDeterminismDelta = (
+  state: WorkflowDeterminismState,
+  delta: DeterminismStateDelta,
+): WorkflowDeterminismState => ({
+  ...state,
+  commandHistory: [...state.commandHistory, ...(delta.commandHistory ?? [])],
+  randomValues: [...state.randomValues, ...(delta.randomValues ?? [])],
+  timeValues: [...state.timeValues, ...(delta.timeValues ?? [])],
+  signals: [...state.signals, ...(delta.signals ?? [])],
+  queries: [...state.queries, ...(delta.queries ?? [])],
+  ...(delta.updates
+    ? { updates: [...(state.updates ?? []), ...(delta.updates ?? [])] }
+    : state.updates
+      ? { updates: [...state.updates] }
+      : {}),
+  ...(delta.logCount !== undefined ? { logCount: delta.logCount } : {}),
+  ...(delta.failureMetadata ? { failureMetadata: delta.failureMetadata } : {}),
+})
+
+const applyDeterminismMarker = (
+  state: WorkflowDeterminismState | undefined,
+  marker: DeterminismMarkerEnvelope,
+): WorkflowDeterminismState | undefined => {
+  if (marker.schemaVersion === 1) {
+    return marker.determinismState
+  }
+  const base = marker.determinismState ?? state
+  if (!base) {
+    return undefined
+  }
+  if (!marker.determinismDelta) {
+    return base
+  }
+  return applyDeterminismDelta(base, marker.determinismDelta)
+}
+
 const sanitizeDeterminismMarkerEnvelope = (input: Record<string, unknown>): DeterminismMarkerEnvelope => {
   const schemaVersion = input.schemaVersion
-  if (schemaVersion !== DETERMINISM_MARKER_SCHEMA_VERSION) {
+  if (
+    schemaVersion !== DETERMINISM_MARKER_SCHEMA_VERSION_V1 &&
+    schemaVersion !== DETERMINISM_MARKER_SCHEMA_VERSION_V2
+  ) {
     throw new Error(`Unsupported determinism marker schema version: ${String(schemaVersion)}`)
   }
 
   const workflow = sanitizeWorkflowInfo(input.workflow)
-  const determinismState = sanitizeDeterminismState(input.determinismState)
   const lastEventId = normalizeEventId(input.lastEventId)
   const recordedAt = sanitizeRecordedAt(input.recordedAtIso)
 
+  if (schemaVersion === DETERMINISM_MARKER_SCHEMA_VERSION_V1) {
+    const determinismState = sanitizeDeterminismState(input.determinismState)
+    return {
+      schemaVersion: DETERMINISM_MARKER_SCHEMA_VERSION_V1,
+      workflow,
+      determinismState,
+      lastEventId,
+      recordedAtIso: recordedAt,
+    }
+  }
+
+  const determinismState =
+    input.determinismState !== undefined ? sanitizeDeterminismState(input.determinismState) : undefined
+  const determinismDelta =
+    input.determinismDelta !== undefined ? sanitizeDeterminismDelta(input.determinismDelta) : undefined
+  if (!determinismState && !determinismDelta) {
+    throw new Error('Determinism marker missing determinism state or delta')
+  }
+
   return {
-    schemaVersion: DETERMINISM_MARKER_SCHEMA_VERSION,
+    schemaVersion: DETERMINISM_MARKER_SCHEMA_VERSION_V2,
     workflow,
-    determinismState,
+    ...(determinismState ? { determinismState } : {}),
+    ...(determinismDelta ? { determinismDelta } : {}),
     lastEventId,
     recordedAtIso: recordedAt,
   }
@@ -1533,6 +2089,39 @@ const sanitizeDeterminismState = (value: unknown): WorkflowDeterminismState => {
     queries,
     ...(updates ? { updates } : {}),
   }
+}
+
+const sanitizeDeterminismDelta = (value: unknown): DeterminismStateDelta => {
+  if (!isRecord(value)) {
+    throw new Error('Determinism marker contained invalid determinism delta')
+  }
+
+  const commandHistoryRaw = value.commandHistory ?? []
+  const randomValuesRaw = value.randomValues ?? []
+  const timeValuesRaw = value.timeValues ?? []
+  const signalsRaw = value.signals ?? []
+  const queriesRaw = value.queries ?? []
+
+  if (
+    !Array.isArray(commandHistoryRaw) ||
+    !Array.isArray(randomValuesRaw) ||
+    !Array.isArray(timeValuesRaw) ||
+    !Array.isArray(signalsRaw) ||
+    !Array.isArray(queriesRaw)
+  ) {
+    throw new Error('Determinism marker contained invalid determinism delta shape')
+  }
+
+  return sanitizeDeterminismState({
+    commandHistory: commandHistoryRaw,
+    randomValues: randomValuesRaw,
+    timeValues: timeValuesRaw,
+    signals: signalsRaw,
+    queries: queriesRaw,
+    ...(value.updates !== undefined ? { updates: value.updates } : {}),
+    ...(value.logCount !== undefined ? { logCount: value.logCount } : {}),
+    ...(value.failureMetadata !== undefined ? { failureMetadata: value.failureMetadata } : {}),
+  })
 }
 
 const sanitizeCommandMetadata = (value: unknown, index: number): WorkflowCommandHistoryEntryMetadata | undefined => {
