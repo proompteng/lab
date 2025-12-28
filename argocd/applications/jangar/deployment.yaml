@@ -136,13 +136,11 @@ spec:
                 secretKeyRef:
                   name: jangar-clickhouse-auth
                   key: username
-                  optional: true
             - name: CH_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: jangar-clickhouse-auth
                   key: password
-                  optional: true
             - name: VSCODE_DATA_DIR
               value: /workspace/.ovscode
             - name: VSCODE_DEFAULT_FOLDER
