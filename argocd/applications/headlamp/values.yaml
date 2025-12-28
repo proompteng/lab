@@ -1,7 +1,11 @@
 service:
   type: ClusterIP
 persistentVolumeClaim:
-  enabled: false
+  enabled: true
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  storageClassName: longhorn
 config:
   oidc:
     secret:
