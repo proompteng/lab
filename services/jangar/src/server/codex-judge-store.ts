@@ -339,6 +339,7 @@ export const createCodexJudgeStore = (
         status: 'run_complete',
         phase: input.phase,
         prompt: input.prompt,
+        review_summary: {},
         run_complete_payload: input.runCompletePayload,
         started_at: input.startedAt ? new Date(input.startedAt) : null,
         finished_at: input.finishedAt ? new Date(input.finishedAt) : null,
@@ -382,6 +383,7 @@ export const createCodexJudgeStore = (
           workflow_namespace: input.workflowNamespace ?? null,
           status: 'notified',
           prompt: input.prompt ?? null,
+          review_summary: {},
           notify_payload: input.notifyPayload,
         })
         .returningAll()

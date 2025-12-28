@@ -36,7 +36,7 @@ const decodeBase64Json = (value: string) => {
   }
 }
 
-const getParamValue = (params: Array<{ name?: string; value?: string }>, name: string) => {
+const getParamValue = (params: ReadonlyArray<{ name?: string; value?: string }>, name: string) => {
   const match = params.find((param) => param.name === name)
   return match?.value ?? ''
 }
@@ -92,11 +92,12 @@ const RunCompletePayloadSchema = S.Struct({
   stage: S.optional(S.String),
 })
 
-const decodeSchema = <A>(schema: unknown, input: unknown, fallback: A): A => {
-  const decoded = S.decodeUnknownEither(schema as Parameters<typeof S.decodeUnknownEither>[0])(input) as Either.Either<
-    unknown,
-    A
-  >
+const decodeSchema = <SchemaT extends S.Schema.AnyNoContext>(
+  schema: SchemaT,
+  input: unknown,
+  fallback: S.Schema.Type<SchemaT>,
+): S.Schema.Type<SchemaT> => {
+  const decoded = S.decodeUnknownEither(schema)(input)
   return Either.isLeft(decoded) ? fallback : decoded.right
 }
 
@@ -142,7 +143,7 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
   const issueBody = typeof eventBody.issueBody === 'string' ? eventBody.issueBody : null
   const issueUrl = typeof eventBody.issueUrl === 'string' ? eventBody.issueUrl : null
   const artifacts = (Array.isArray(data.artifacts) ? data.artifacts : (decodedPayload.artifacts ?? []))
-    .map((artifact) => {
+    .map((artifact: unknown) => {
       const decoded = decodeSchema(ArtifactSchema, artifact, {})
       const name = decoded.name ?? ''
       const key = decoded.key ?? ''
@@ -657,7 +658,8 @@ const submitRerun = async (
   const deliveryId = `jangar-${run.issueNumber}-attempt-${attempt}`
 
   const { CodexTaskSchema, CodexTaskStage } = await import('./proto/codex_task_pb')
-  const { create, toBinary, Timestamp } = await import('@bufbuild/protobuf')
+  const { create, toBinary } = await import('@bufbuild/protobuf')
+  const { timestampFromDate } = await import('@bufbuild/protobuf/wkt')
 
   const message = create(CodexTaskSchema, {
     stage: CodexTaskStage.IMPLEMENTATION,
@@ -677,7 +679,7 @@ const submitRerun = async (
     issueBody:
       typeof run.runCompletePayload?.issueBody === 'string' ? String(run.runCompletePayload.issueBody) : prompt,
     sender: 'jangar',
-    issuedAt: Timestamp.fromDate(new Date()),
+    issuedAt: timestampFromDate(new Date()),
     deliveryId,
   })
 

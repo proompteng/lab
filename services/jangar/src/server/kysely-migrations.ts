@@ -49,12 +49,13 @@ const runMigrations = async (db: Db) => {
   const { error, results } = await migrator.migrateToLatest()
 
   if (error) {
-    throw new Error(`failed to run database migrations: ${error.message}`)
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`failed to run database migrations: ${message}`)
   }
 
   const failed = results?.find((result) => result.status === 'Error')
   if (failed) {
-    throw failed.error ?? new Error(`migration ${failed.migrationName} failed`)
+    throw new Error(`migration ${failed.migrationName} failed`)
   }
 }
 
