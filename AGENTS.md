@@ -74,7 +74,7 @@
 
 ## Generated Artifacts & Safety
 - Do not edit generated directories (`dist/`, `build/`, `_generated`) or lockfiles (`bun.lock`, `bun.lockb`); regenerate via the owning tool.
-- Update GitOps state via manifests in `argocd/` rather than live clusters; prefer read-only `kubectl`.
+- Default to GitOps (edit `argocd/` manifests and let Argo CD sync). Only apply directly to the cluster when explicitly asked or in an emergency, and document the deviation.
 
 ## When in Doubt
 - Check the nearest README for service-specific commands.
