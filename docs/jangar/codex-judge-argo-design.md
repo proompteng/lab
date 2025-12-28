@@ -46,22 +46,22 @@ Components:
 System overview:
 ```mermaid
 flowchart LR
-  GH[GitHub Issue] --> FR[Froussard]
-  FR --> KT[Kafka: github.issues.codex.tasks]
-  KT --> F[Facteur]
-  F --> A[Argo Workflow]
-  A --> C[Codex Exec]
-  C --> W[Notify Wrapper]
-  W --> J[Jangar]
-  A --> AE[Argo Events]
-  AE --> KC[Kafka: argo.workflows.completions]
-  KC --> J
-  A --> M[Argo Artifacts (MinIO)]
-  J --> M
-  J --> CI[GitHub Actions]
-  J --> D[Discord]
-  J --> MEM[Memories (Postgres + pgvector)]
-  J -->|rerun request| F
+  GH[GitHub Issue] --> FR[Froussard];
+  FR --> KT[Kafka: github.issues.codex.tasks];
+  KT --> F[Facteur];
+  F --> A[Argo Workflow];
+  A --> C[Codex Exec];
+  C --> W[Notify Wrapper];
+  W --> J[Jangar];
+  A --> AE[Argo Events];
+  AE --> KC[Kafka: argo.workflows.completions];
+  KC --> J;
+  A --> M[Argo Artifacts (MinIO)];
+  J --> M;
+  J --> CI[GitHub Actions];
+  J --> D[Discord];
+  J --> MEM[Memories (Postgres + pgvector)];
+  J -->|rerun request| F;
 ```
 
 ## Data Flow
