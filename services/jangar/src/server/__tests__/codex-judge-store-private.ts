@@ -52,10 +52,71 @@ const planSupersession = (runs: CodexRunRecord[]) => {
   return { activeRun, supersededIds }
 }
 
+const computeRunStats = (
+  runs: CodexRunRecord[],
+  evaluations: Map<string, { decision: string; confidence: number | null; reasons: Record<string, unknown> } | null>,
+) => {
+  if (runs.length === 0) {
+    return {
+      completionRate: null,
+      avgAttemptsPerIssue: null,
+      failureReasonCounts: {},
+      avgCiDurationSeconds: null,
+      avgJudgeConfidence: null,
+    }
+  }
+
+  const completedCount = runs.filter((run) => run.status === 'completed').length
+  const attemptsByIssue = new Map<string, number>()
+  for (const run of runs) {
+    const key = `${run.repository}#${run.issueNumber}`
+    const current = attemptsByIssue.get(key) ?? 0
+    attemptsByIssue.set(key, Math.max(current, run.attempt))
+  }
+
+  const avgAttemptsPerIssue =
+    attemptsByIssue.size === 0
+      ? null
+      : [...attemptsByIssue.values()].reduce((sum, value) => sum + value, 0) / attemptsByIssue.size
+
+  const failureReasonCounts: Record<string, number> = {}
+  const confidences: number[] = []
+  for (const evaluation of evaluations.values()) {
+    if (!evaluation) continue
+    if (typeof evaluation.confidence === 'number') {
+      confidences.push(evaluation.confidence)
+    }
+    const error = typeof evaluation.reasons.error === 'string' ? evaluation.reasons.error : null
+    if (error && evaluation.decision !== 'pass') {
+      failureReasonCounts[error] = (failureReasonCounts[error] ?? 0) + 1
+    }
+  }
+
+  const ciDurations: number[] = []
+  for (const run of runs) {
+    const started = parseTimestamp(run.startedAt)
+    const finished = parseTimestamp(run.finishedAt)
+    if (started != null && finished != null && finished >= started) {
+      ciDurations.push((finished - started) / 1000)
+    }
+  }
+
+  return {
+    completionRate: runs.length > 0 ? completedCount / runs.length : null,
+    avgAttemptsPerIssue,
+    failureReasonCounts,
+    avgCiDurationSeconds:
+      ciDurations.length > 0 ? ciDurations.reduce((sum, value) => sum + value, 0) / ciDurations.length : null,
+    avgJudgeConfidence:
+      confidences.length > 0 ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length : null,
+  }
+}
+
 export const storePrivate = {
   isTerminalRunStatus,
   selectActiveRun,
   planSupersession,
+  computeRunStats,
 }
 
 export { planSupersession }
