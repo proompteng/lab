@@ -119,4 +119,40 @@ describe('codex-judge CI fallback', () => {
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', manifestSha)
     expect(result.commitSha).toBe(manifestSha)
   })
+
+  it('ignores short hex values under unrelated keys', async () => {
+    const branchSha = 'b'.repeat(40)
+    getRefSha.mockResolvedValueOnce(branchSha)
+    getCheckRuns.mockResolvedValueOnce({ status: 'pending' })
+
+    const run = buildRun({
+      runCompletePayload: {
+        metadata: {
+          digest: 'deadbee',
+        },
+      },
+    })
+
+    const result = await __private.resolveCiContext(run, null)
+
+    expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
+    expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', branchSha)
+    expect(result.commitSha).toBe(branchSha)
+  })
+
+  it('treats CI lookup errors as pending', async () => {
+    const branchSha = 'c'.repeat(40)
+    getRefSha.mockResolvedValueOnce(branchSha)
+    getCheckRuns.mockRejectedValueOnce(new Error('boom'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const run = buildRun()
+    const result = await __private.resolveCiContext(run, null)
+
+    expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
+    expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', branchSha)
+    expect(result.ci.status).toBe('pending')
+
+    warn.mockRestore()
+  })
 })

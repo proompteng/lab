@@ -202,19 +202,45 @@ const parseRepositoryParts = (repository: string) => {
   return { owner, repo }
 }
 
-const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i
+const FULL_COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i
+const SHORT_COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i
 
-const isCommitSha = (value: string) => COMMIT_SHA_PATTERN.test(value.trim())
+const isCommitSha = (value: string, allowShort = false) => {
+  const trimmed = value.trim()
+  return allowShort ? SHORT_COMMIT_SHA_PATTERN.test(trimmed) : FULL_COMMIT_SHA_PATTERN.test(trimmed)
+}
 
 const isCommitKey = (key: string) => {
   const normalized = key.toLowerCase()
-  return (
-    normalized.includes('commit') ||
-    normalized === 'sha' ||
-    normalized.endsWith('sha') ||
-    normalized === 'revision' ||
-    normalized === 'rev'
-  )
+  if (normalized.includes('commit')) return true
+  return normalized === 'git_sha' || normalized === 'gitsha' || normalized === 'head_sha' || normalized === 'headsha'
+}
+
+const MANIFEST_SHA_PATHS = [
+  ['metadata', 'manifest', 'commit_sha'],
+  ['metadata', 'manifest', 'commitSha'],
+  ['manifest', 'commit_sha'],
+  ['manifest', 'commitSha'],
+]
+
+const getStringAtPath = (value: unknown, path: ReadonlyArray<string>) => {
+  let current: unknown = value
+  for (const key of path) {
+    if (!isRecord(current)) return null
+    current = current[key]
+  }
+  return typeof current === 'string' ? current : null
+}
+
+const findManifestCommitSha = (value: unknown) => {
+  if (!value || typeof value !== 'object') return null
+  for (const path of MANIFEST_SHA_PATHS) {
+    const candidate = getStringAtPath(value, path)
+    if (candidate && isCommitSha(candidate, true)) {
+      return candidate.trim()
+    }
+  }
+  return null
 }
 
 const findCommitShaInValue = (value: unknown, depth = 0, seen = new Set<object>()): string | null => {
@@ -257,6 +283,16 @@ const extractArtifactsFromPayload = (payload: Record<string, unknown> | null) =>
     : []
 }
 
+const extractManifestCommitShaFromPayload = (payload: Record<string, unknown> | null) => {
+  if (!payload) return null
+  const artifacts = extractArtifactsFromPayload(payload)
+  for (const artifact of artifacts) {
+    const match = findManifestCommitSha(artifact)
+    if (match) return match
+  }
+  return findManifestCommitSha(payload)
+}
+
 const extractCommitShaFromArtifacts = (payload: Record<string, unknown> | null) => {
   const artifacts = extractArtifactsFromPayload(payload)
   for (const artifact of artifacts) {
@@ -267,10 +303,12 @@ const extractCommitShaFromArtifacts = (payload: Record<string, unknown> | null) 
 }
 
 const extractCommitShaFromRun = (run: CodexRunRecord) => {
-  const fromArtifacts = extractCommitShaFromArtifacts(run.runCompletePayload)
-  if (fromArtifacts) return fromArtifacts
+  const fromManifest = extractManifestCommitShaFromPayload(run.runCompletePayload)
+  if (fromManifest) return fromManifest
   const fromRunComplete = findCommitShaInValue(run.runCompletePayload)
   if (fromRunComplete) return fromRunComplete
+  const fromNotifyManifest = extractManifestCommitShaFromPayload(run.notifyPayload)
+  if (fromNotifyManifest) return fromNotifyManifest
   return findCommitShaInValue(run.notifyPayload)
 }
 
@@ -459,7 +497,12 @@ const fetchCiStatus = async (run: CodexRunRecord, commitSha?: string | null) => 
   const { owner, repo } = parseRepositoryParts(run.repository)
   const sha = commitSha ?? run.commitSha
   if (!sha) return { status: 'pending' as const, url: undefined }
-  return github.getCheckRuns(owner, repo, sha)
+  try {
+    return await github.getCheckRuns(owner, repo, sha)
+  } catch (error) {
+    console.warn('Failed to fetch CI check runs', { repository: run.repository, sha, error })
+    return { status: 'pending' as const, url: undefined }
+  }
 }
 
 const resolveCiContext = async (run: CodexRunRecord, pr: PullRequest | null) => {
