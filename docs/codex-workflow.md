@@ -37,6 +37,13 @@ logs (`workflow submitted: stage=implementation`), and surface workflow metadata
 - Kafka topics `github.webhook.events` and `github.issues.codex.tasks` deployed via Strimzi.
 - Argo Events resources for workflow completions synced (`argocd/applications/froussard/workflow-completions-*`).
 
+### Database migrations (Jangar)
+
+Jangar boots its schema using Kysely migrations stored in `services/jangar/src/server/migrations`. The service applies pending
+migrations automatically at startup, so operators do not need to run manual SQL. Migration state lives in the
+`kysely_migration` and `kysely_migration_lock` tables in the Jangar database. When debugging bootstrap issues, check those
+tables to confirm the latest applied migration and whether a lock is held.
+
 ## Manual End-to-End Test
 
 ### Discord Channel Integration
