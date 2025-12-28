@@ -1415,13 +1415,13 @@ const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRec
 }
 
 export const __private = {
+  evaluateRun,
   extractCommitShaFromArtifacts,
   findCommitShaInValue,
   normalizeBranchRef,
   resolveCiContext,
   writeMemories,
 }
-
 export const handleRunComplete = async (payload: Record<string, unknown>) => {
   const parsed = parseRunCompletePayload(payload)
   if (!parsed.repository || !parsed.issueNumber || !parsed.head) {
@@ -1481,8 +1481,4 @@ export const handleNotify = async (payload: Record<string, unknown>) => {
   }
 
   return run
-}
-
-export const __private = {
-  evaluateRun,
 }
