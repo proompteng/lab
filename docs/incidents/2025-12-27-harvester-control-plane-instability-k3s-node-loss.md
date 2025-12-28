@@ -15,10 +15,12 @@ Harvester control plane instability on the single-node Harvester cluster (node `
 - Harvester API returned 502/503 at the time of investigation.
 
 ## Timeline (PST)
+- **2025-12-27 16:45:32**: Harvester host `altra` rke2 logged repeated HTTP 502s proxying to `10.52.0.30:9443` and `10.52.0.36:9443` (service endpoints refused connections). (00:45:32Z)
 - **2025-12-27 16:48:04**: `virt-controller` lost leader lease (leaderelection timeout). (00:48:04Z)
 - **16:51:24**: `kube-vip` reacquired leadership for `plndr-svcs-lock`. (00:51:24Z)
 - **16:51:28**: Harvester controllers reacquired leader lease. (00:51:28Z)
 - **16:51:29 - 16:51:46**: Harvester controller reported `steve` aggregation connection refused and stale API discovery errors. (00:51:29Z - 00:51:46Z)
+- **16:51:59 - 16:52:07**: Host kernel logged multiple `device offline` and `Buffer I/O error` events across several disks, followed by SCSI device resets/reattaches. (00:51:59Z - 00:52:07Z)
 - **16:52:06 - 16:52:12**: `virt-handler` failed to reach VMI command sockets for `kube-worker-08` and `kube-worker-13`. (00:52:06Z - 00:52:12Z)
 - **16:52:21 - 16:52:30**: `virt-controller`/`virt-api` reported TLS certificate mismatch errors. (00:52:21Z - 00:52:30Z)
 - **16:58:00**: `virt-controller` marked VMIs failed and applied start backoff. (00:58:00Z)
@@ -28,7 +30,7 @@ Harvester control plane instability on the single-node Harvester cluster (node `
 ## Root Cause (Hypothesis)
 Harvester control plane instability (leader election churn, API timeouts) on the single-node Harvester cluster caused KubeVirt/Harvester components to restart and recreate VMIs. During the restart window, the Harvester CSI driver was not registered, so VMIs for `kube-worker-08` and `kube-worker-13` failed to start. Those k3s nodes stayed NotReady, Longhorn replicas were unavailable, and Kafka volumes faulted.
 
-The underlying trigger for the Harvester control plane instability is still unknown. Potential suspects include control-plane resource pressure, etcd latency, or storage I/O stalls on `altra`.
+The underlying trigger for the Harvester control plane instability is still unknown, but host-level logs show a burst of disk I/O errors and device resets at **16:51:59–16:52:07 PST**, which strongly suggests a storage subsystem disruption on `altra` (likely causing API timeouts and controller churn).
 
 ## Contributing Factors
 - Single-node Harvester control plane (no HA).
@@ -70,6 +72,9 @@ The underlying trigger for the Harvester control plane instability is still unkn
   - `virt-controller` failed to renew leader lease.
   - `virt-controller`/`virt-api` TLS cert mismatch: `private key does not match public key`.
   - `virt-handler` failed to reach VMI launcher sockets for `kube-worker-08` and `kube-worker-13`.
+- Host-level evidence (journal/kernel on `altra`):
+  - rke2 proxy 502s to `10.52.0.30:9443` and `10.52.0.36:9443` at **16:45:32 PST**.
+  - Kernel `device offline` + `Buffer I/O error` events on multiple disks, followed by SCSI device resets/reattachments at **16:51:59–16:52:07 PST**.
 
 ## Follow-ups
 - Pull host-level logs from `altra` (journal/syslog) around **16:45–16:55 PST** to identify the initial trigger.
@@ -77,4 +82,3 @@ The underlying trigger for the Harvester control plane instability is still unkn
 - Add alerting for Harvester API latency and KubeVirt leader election churn.
 - Increase Longhorn replica count and configure backups for Kafka volumes.
 - Validate k3s API VIP (`192.168.1.200`) health monitoring.
-
