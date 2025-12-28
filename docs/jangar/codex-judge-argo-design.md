@@ -5,7 +5,7 @@ Owner: Jangar + Froussard + Facteur
 Scope: Codex exec runs in Argo, judge consumes completion notifications, decides pass/fail, triggers reruns, and posts success to Discord.
 
 ## Summary
-Codex runs inside Argo workflows triggered by Facteur from GitHub issue events. Argo Events publishes workflow completions to Kafka, and Codex may emit a notify event on successful turn completion. Jangar ingests run-complete events from the Kafka completions topic as the source of truth, uses notify as enrichment, waits for GitHub Actions CI results, evaluates whether work is complete, and either:
+Codex runs inside Argo workflows triggered by Facteur from GitHub issue events. Argo Events publishes workflow completions to Kafka, and Codex may emit a notify event on successful turn completion. Jangar ingests run-complete events from the Kafka completions topic as the source of truth, uses notify as enrichment, waits for GitHub Actions CI results and Codex review completion, evaluates whether work is complete, and either:
 - marks success and posts to Discord, or
 - generates a follow-up prompt and triggers a new Argo run that resumes work from the last commit.
 
@@ -19,7 +19,7 @@ All runs are resumable via a per-issue branch. Artifacts are stored in MinIO. Pr
 
 ## Non-goals
 - Replacing GitHub Actions CI.
-- Manual review flows.
+- Manual (human) review flows beyond automated Codex review gating.
 - Deep security/auth design (assume existing trusted service-to-service network).
 
 ## Definitions
@@ -72,8 +72,9 @@ flowchart LR
 5) Codex notify fires on successful turn completion (optional enrichment).
 6) Notify wrapper enriches payload and POSTs to Jangar.
 7) Jangar waits for GitHub Actions CI result for the attempt commit SHA.
-8) Jangar gates + LLM judge (triggered by run-complete).
-9) If pass: create/update PR, mark complete, Discord success.
+8) Jangar waits for Codex review completion and aggregates Codex PR review comments.
+9) Jangar gates + LLM judge (triggered by run-complete) with CI + Codex review inputs.
+10) If pass: create/update PR, mark complete, Discord success.
 10) If fail: generate next prompt, request Facteur to trigger new Argo run on same branch.
 11) Jangar writes 10 memory snapshots from logs/output into the memories store.
 
@@ -178,10 +179,12 @@ Artifact access:
 - Decode workflow arguments (base64 `eventBody`) to recover repository/issue metadata.
 - Query Argo Workflow API for outputs/artifact keys when needed.
 - Wait for GitHub Actions CI status for the attempt commit SHA.
+- Wait for Codex review completion on the PR, and ensure all Codex review comments are addressed.
 - Run deterministic gates:
   - CI must be green.
   - No merge conflicts on resume.
   - Non-empty change set (unless explicitly expected).
+- Codex review must be complete with no unresolved Codex review threads or open “changes requested”.
 - Run LLM judge for requirement coverage and quality.
 - Decide pass/fail and trigger next actions.
 - Create 10 memory snapshots per run (logs + outputs), stored via Jangar memories.
@@ -192,6 +195,14 @@ Artifact access:
 - Jangar does not rely on Argo-local tests for completion.
  - Commit SHA source order: PR head SHA (preferred) -> head branch SHA -> fallback to status artifact/manifest.
 
+## Codex Review Signal
+- Codex review is required before marking a run complete.
+- Jangar waits for the Codex PR review to finish (e.g., a review by the Codex bot/user).
+- If Codex review requests changes or has unresolved threads, classify as needs_iteration and generate
+  a follow-up prompt that explicitly addresses each Codex review comment.
+- Jangar re-checks that every Codex review comment is resolved (or superseded by a newer Codex review)
+  before declaring success.
+
 ## Decision Logic
 Pass:
 - Update run + issue state: completed.
@@ -201,6 +212,7 @@ Pass:
 Fail:
 - Generate next_prompt with specific fixes.
 - Request Facteur to trigger new Argo run (same branch).
+- If Codex review requested changes, include a checklist of Codex comments to address in the rerun prompt.
 - Escalate to human only on hard failure:
   - merge conflicts
   - repeated infra failure
