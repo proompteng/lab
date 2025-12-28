@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 
 import { create } from '@bufbuild/protobuf'
@@ -189,6 +188,17 @@ type NondeterminismContext = {
   readonly stickyLastEventId?: string | null
   readonly historyLastEventId?: string | null
   readonly workflowTaskAttempt?: number
+}
+
+type DeterminismMarkerSignature = {
+  readonly commandHistoryLength: number
+  readonly randomValuesLength: number
+  readonly timeValuesLength: number
+  readonly signalsLength: number
+  readonly queriesLength: number
+  readonly updatesLength: number
+  readonly logCount: number
+  readonly failureMetadataHash?: string
 }
 
 const POLL_TIMEOUT_MS = 60_000
@@ -1333,29 +1343,63 @@ export class WorkerRuntime {
         let markerDetails: Record<string, Payloads> | null = null
         let markerSizeBytes = 0
         const limitBytes = this.#determinismMarkerMaxDetailBytes
+        const markerHashCandidate = this.#hashDeterminismMarker(
+          this.#buildDeterminismMarkerSignature(output.determinismState),
+        )
 
-        const buildMarkerDetails = async (targetType: 'full' | 'delta') =>
-          Effect.runPromise(
-            encodeDeterminismMarkerDetailsWithSize(this.#dataConverter, {
-              info: workflowInfo,
-              determinismState: output.determinismState,
-              determinismDelta: targetType === 'delta' ? determinismDelta : undefined,
-              markerType: targetType,
-              lastEventId: markerLastEventId,
-            }),
-          )
+        if (this.#determinismMarkerSkipUnchanged && markerHashCandidate === stickyEntry?.lastDeterminismMarkerHash) {
+          resolvedMarkerType = null
+        }
 
-        if (resolvedMarkerType === 'full') {
-          const fullResult = await buildMarkerDetails('full')
-          if (fullResult.sizeBytes > limitBytes && determinismDelta) {
-            this.#log('debug', 'determinism full marker payload exceeds size limit; falling back to delta', {
-              ...baseLogFields,
-              sizeBytes: fullResult.sizeBytes,
-              limitBytes,
-            })
+        if (resolvedMarkerType) {
+          const buildMarkerDetails = async (targetType: 'full' | 'delta') =>
+            Effect.runPromise(
+              encodeDeterminismMarkerDetailsWithSize(this.#dataConverter, {
+                info: workflowInfo,
+                determinismState: output.determinismState,
+                determinismDelta: targetType === 'delta' ? determinismDelta : undefined,
+                markerType: targetType,
+                lastEventId: markerLastEventId,
+              }),
+            )
+
+          if (resolvedMarkerType === 'full') {
+            const fullResult = await buildMarkerDetails('full')
+            if (fullResult.sizeBytes > limitBytes && determinismDelta) {
+              this.#log('debug', 'determinism full marker payload exceeds size limit; falling back to delta', {
+                ...baseLogFields,
+                sizeBytes: fullResult.sizeBytes,
+                limitBytes,
+              })
+              const deltaResult = await buildMarkerDetails('delta')
+              if (deltaResult.sizeBytes <= limitBytes) {
+                resolvedMarkerType = 'delta'
+                markerDetails = deltaResult.details
+                markerSizeBytes = deltaResult.sizeBytes
+              } else {
+                this.#log('warn', 'determinism marker payload exceeds size limit', {
+                  ...baseLogFields,
+                  markerType: 'delta',
+                  sizeBytes: deltaResult.sizeBytes,
+                  limitBytes,
+                })
+                resolvedMarkerType = null
+              }
+            } else if (fullResult.sizeBytes <= limitBytes) {
+              markerDetails = fullResult.details
+              markerSizeBytes = fullResult.sizeBytes
+            } else {
+              this.#log('warn', 'determinism marker payload exceeds size limit', {
+                ...baseLogFields,
+                markerType: 'full',
+                sizeBytes: fullResult.sizeBytes,
+                limitBytes,
+              })
+              resolvedMarkerType = null
+            }
+          } else if (resolvedMarkerType === 'delta') {
             const deltaResult = await buildMarkerDetails('delta')
             if (deltaResult.sizeBytes <= limitBytes) {
-              resolvedMarkerType = 'delta'
               markerDetails = deltaResult.details
               markerSizeBytes = deltaResult.sizeBytes
             } else {
@@ -1367,59 +1411,24 @@ export class WorkerRuntime {
               })
               resolvedMarkerType = null
             }
-          } else if (fullResult.sizeBytes <= limitBytes) {
-            markerDetails = fullResult.details
-            markerSizeBytes = fullResult.sizeBytes
-          } else {
-            this.#log('warn', 'determinism marker payload exceeds size limit', {
-              ...baseLogFields,
-              markerType: 'full',
-              sizeBytes: fullResult.sizeBytes,
-              limitBytes,
-            })
-            resolvedMarkerType = null
-          }
-        } else if (resolvedMarkerType === 'delta') {
-          const deltaResult = await buildMarkerDetails('delta')
-          if (deltaResult.sizeBytes <= limitBytes) {
-            markerDetails = deltaResult.details
-            markerSizeBytes = deltaResult.sizeBytes
-          } else {
-            this.#log('warn', 'determinism marker payload exceeds size limit', {
-              ...baseLogFields,
-              markerType: 'delta',
-              sizeBytes: deltaResult.sizeBytes,
-              limitBytes,
-            })
-            resolvedMarkerType = null
           }
         }
 
         if (resolvedMarkerType) {
-          const markerHashCandidate = this.#hashDeterminismMarker({
-            markerType: resolvedMarkerType,
-            lastEventId: markerLastEventId,
-            determinismState: resolvedMarkerType === 'full' ? output.determinismState : undefined,
-            determinismDelta: resolvedMarkerType === 'delta' ? determinismDelta : undefined,
-          })
-          if (this.#determinismMarkerSkipUnchanged && markerHashCandidate === stickyEntry?.lastDeterminismMarkerHash) {
-            resolvedMarkerType = null
-          } else {
-            markerHash = markerHashCandidate
-            lastMarkerTask = workflowTaskCount
-            if (resolvedMarkerType === 'full') {
-              lastFullSnapshotTask = workflowTaskCount
-            }
-            lastMarkerState = output.determinismState
-            if (markerDetails) {
-              this.#log('debug', 'determinism marker recorded', {
-                ...baseLogFields,
-                markerType: resolvedMarkerType,
-                sizeBytes: markerSizeBytes,
-              })
-              const markerCommand = this.#buildDeterminismMarkerCommand(markerDetails)
-              commandsForResponse = this.#injectDeterminismMarker(commandsForResponse, markerCommand)
-            }
+          markerHash = markerHashCandidate
+          lastMarkerTask = workflowTaskCount
+          if (resolvedMarkerType === 'full') {
+            lastFullSnapshotTask = workflowTaskCount
+          }
+          lastMarkerState = output.determinismState
+          if (markerDetails) {
+            this.#log('debug', 'determinism marker recorded', {
+              ...baseLogFields,
+              markerType: resolvedMarkerType,
+              sizeBytes: markerSizeBytes,
+            })
+            const markerCommand = this.#buildDeterminismMarkerCommand(markerDetails)
+            commandsForResponse = this.#injectDeterminismMarker(commandsForResponse, markerCommand)
           }
         }
       }
@@ -2289,14 +2298,22 @@ export class WorkerRuntime {
     )
   }
 
-  #hashDeterminismMarker(input: {
-    markerType: 'full' | 'delta'
-    lastEventId: string | null
-    determinismState?: WorkflowDeterminismState
-    determinismDelta?: DeterminismStateDelta
-  }): string {
-    const payload = stableStringify(input)
-    return createHash('sha256').update(payload).digest('hex')
+  #buildDeterminismMarkerSignature(state: WorkflowDeterminismState): DeterminismMarkerSignature {
+    const failureMetadataHash = state.failureMetadata ? stableStringify(state.failureMetadata) : undefined
+    return {
+      commandHistoryLength: state.commandHistory.length,
+      randomValuesLength: state.randomValues.length,
+      timeValuesLength: state.timeValues.length,
+      signalsLength: state.signals.length,
+      queriesLength: state.queries.length,
+      updatesLength: state.updates?.length ?? 0,
+      logCount: state.logCount ?? 0,
+      ...(failureMetadataHash ? { failureMetadataHash } : {}),
+    }
+  }
+
+  #hashDeterminismMarker(signature: DeterminismMarkerSignature): string {
+    return stableStringify(signature)
   }
 
   #isTaskNotFoundError(error: unknown): boolean {
