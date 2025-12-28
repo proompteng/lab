@@ -41,7 +41,7 @@ sudo systemctl enable --now ollama
 sudo systemctl restart ollama
 
 log "waiting for ollama to become ready"
-for _ in $(seq 1 30); do
+for ((attempt = 1; attempt <= 30; attempt++)); do
   if OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama list >/dev/null 2>&1; then
     break
   fi
@@ -51,7 +51,8 @@ done
 if [[ "${SAIGAK_SKIP_MODELS:-}" != "1" ]]; then
   models="${SAIGAK_MODELS:-qwen3-coder:30b-a3b-q4_K_M,qwen3-embedding:0.6b}"
   log "pulling models: ${models}"
-  for model in ${models//,/ }; do
+  IFS=',' read -r -a model_list <<< "${models}"
+  for model in "${model_list[@]}"; do
     sudo -u ollama OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama pull "${model}"
   done
 fi
@@ -75,11 +76,16 @@ if [[ -n "${SAIGAK_GRAFANA_URL:-}" ]]; then
   grafana_url="${SAIGAK_GRAFANA_URL}"
   grafana_user="${SAIGAK_GRAFANA_USER:-admin}"
   grafana_password="${SAIGAK_GRAFANA_PASSWORD:-changeme}"
-  log "importing grafana dashboard into ${grafana_url}"
-  curl -fsS -u "${grafana_user}:${grafana_password}" \
-    -H "Content-Type: application/json" \
-    -d "@${SERVICE_DIR}/grafana/ollama-throughput-proof.json" \
-    "${grafana_url%/}/api/dashboards/db"
+  dashboard_json="${SAIGAK_GRAFANA_DASHBOARD_JSON:-${SERVICE_DIR}/grafana/ollama-throughput-proof.json}"
+  if [[ -f "${dashboard_json}" ]]; then
+    log "importing grafana dashboard into ${grafana_url}"
+    curl -fsS -u "${grafana_user}:${grafana_password}" \
+      -H "Content-Type: application/json" \
+      -d "@${dashboard_json}" \
+      "${grafana_url%/}/api/dashboards/db"
+  else
+    log "grafana dashboard json not found at ${dashboard_json}, skipping import"
+  fi
 else
   log "skipping grafana import (set SAIGAK_GRAFANA_URL to enable)"
 fi

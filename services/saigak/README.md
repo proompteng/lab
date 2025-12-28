@@ -48,10 +48,8 @@ Systemd drop-in installed at:
 
 ## Grafana dashboard
 
-The dashboard JSON is stored at:
-- `services/saigak/grafana/ollama-throughput-proof.json`
-
-The install script imports it when `SAIGAK_GRAFANA_URL` is set.
+The install script can import a dashboard when `SAIGAK_GRAFANA_URL` is set.
+Provide the dashboard JSON path via `SAIGAK_GRAFANA_DASHBOARD_JSON`.
 
 ## Load test
 
