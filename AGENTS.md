@@ -48,7 +48,16 @@
 - Use Conventional Commits: `<type>(<scope>): <summary>` (scope optional).
 - Common types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `build`, `ci`, `perf`, `revert`.
 - PR titles must follow the same semantic convention.
-- Create PRs with `gh pr create` using `--body-file .github/PULL_REQUEST_TEMPLATE.md`.
+- Create PRs by first copying `.github/PULL_REQUEST_TEMPLATE.md` to a temp file, filling it out, then running `gh pr create --body-file <temp-file>`.
+
+## Pull Request Template Hygiene
+- Never submit a PR with empty bullets or placeholder lines in the template.
+- **Summary** must contain at least one concrete bullet describing the change.
+- **Related Issues** must be a link or the literal `None`.
+- **Testing** must list exact commands run, or `Not run — <reason>`.
+- **Screenshots**: include if UI changed; otherwise write `N/A`.
+- **Breaking Changes**: describe clearly or write `None`.
+- If a section is not applicable, replace it with an explicit `N/A`/`None` line; do not leave blank bullets.
 
 ## UI/UX
 - Tailwind CSS only; class order layout → spacing → sizing → typography → colors; use `cn()` for conditionals.
