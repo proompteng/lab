@@ -82,6 +82,8 @@ spec:
             value: ""
           - name: DOCKER_ENABLED
             value: "1"
+          - name: DOCKER_WAIT_ATTEMPTS
+            value: "12"
         command: ["/usr/local/bin/codex-bootstrap"]
         args:
           - "/bin/bash"
@@ -125,11 +127,10 @@ spec:
             memory: 12Gi
       sidecars:
         - name: docker
-          image: docker:25.0-dind
+          image: docker:25.0-dind-rootless
           command: ["dockerd-entrypoint.sh"]
           args:
             - "--host=tcp://0.0.0.0:2375"
-            - "--host=unix:///var/run/docker.sock"
           env:
             - name: DOCKER_TLS_CERTDIR
               value: ""

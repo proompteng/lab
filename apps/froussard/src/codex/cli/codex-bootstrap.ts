@@ -28,6 +28,11 @@ const setDefaultEnv = (key: string, value: string) => {
   }
 }
 
+const parsePositiveInt = (value: string | undefined, fallback: number) => {
+  const parsed = Number.parseInt(value ?? '', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
 const ensureLessFlags = () => {
   const requiredFlags = new Set(['F', 'R', 'S', 'X'])
   const current = process.env.LESS ?? ''
@@ -62,6 +67,13 @@ const configureNonInteractiveEnvironment = () => {
   setDefaultEnv('KUBECTL_PAGER', 'cat')
   setDefaultEnv('BAT_PAGER', 'cat')
   ensureLessFlags()
+}
+
+const normalizeDockerEnv = () => {
+  const tlsVerify = process.env.DOCKER_TLS_VERIFY?.trim().toLowerCase()
+  if (tlsVerify === '0' || tlsVerify === 'false' || tlsVerify === 'no') {
+    delete process.env.DOCKER_TLS_VERIFY
+  }
 }
 
 const configureBunCache = async (targetDir: string) => {
@@ -100,7 +112,9 @@ const waitForDocker = async () => {
     return
   }
 
-  const maxAttempts = 6
+  const maxAttempts = parsePositiveInt(process.env.DOCKER_WAIT_ATTEMPTS, 12)
+  const baseDelayMs = parsePositiveInt(process.env.DOCKER_WAIT_BASE_DELAY_MS, 1000)
+  const maxDelayMs = parsePositiveInt(process.env.DOCKER_WAIT_MAX_DELAY_MS, 10000)
   let lastError: unknown
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -109,7 +123,7 @@ const waitForDocker = async () => {
       return
     } catch (error) {
       lastError = error
-      const delayMs = 1000 * attempt
+      const delayMs = Math.min(baseDelayMs * attempt, maxDelayMs)
       console.warn(`Waiting for Docker daemon at ${dockerHost} (attempt ${attempt}/${maxAttempts})...`)
       await new Promise((resolve) => setTimeout(resolve, delayMs))
     }
@@ -117,7 +131,7 @@ const waitForDocker = async () => {
 
   const message =
     `Docker is not reachable via ${dockerHost}. Ensure the sidecar is healthy and port 2375 is exposed.\n` +
-    'Hint: check sidecar logs and confirm DOCKER_TLS_VERIFY=0 when using the in-pod daemon.'
+    'Hint: check sidecar logs and ensure DOCKER_TLS_VERIFY is unset (0/false is treated as unset) when using the in-pod daemon.'
 
   if (lastError instanceof Error) {
     lastError.message = `${message}\nLast error: ${lastError.message}`
@@ -135,6 +149,7 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   const headBranch = process.env.HEAD_BRANCH ?? ''
 
   configureNonInteractiveEnvironment()
+  normalizeDockerEnv()
 
   process.env.WORKTREE = worktreeDefault
   process.env.TARGET_DIR = targetDir
