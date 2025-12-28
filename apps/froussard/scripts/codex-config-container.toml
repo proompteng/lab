@@ -12,7 +12,6 @@ apply_patch_freeform = true
 rmcp_client = true
 shell_snapshot = true
 skills = true
-tui2 = true
 
 [shell_environment_policy]
 ignore_default_excludes = true
