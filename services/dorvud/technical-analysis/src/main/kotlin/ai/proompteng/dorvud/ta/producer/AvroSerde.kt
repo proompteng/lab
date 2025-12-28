@@ -3,6 +3,7 @@ package ai.proompteng.dorvud.ta.producer
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
+import ai.proompteng.dorvud.ta.stream.TaStatusPayload
 import io.confluent.kafka.serializers.KafkaAvroSerializer
 import org.apache.avro.Schema
 import org.apache.avro.generic.GenericData
@@ -23,6 +24,7 @@ class AvroSerde(
 
   private val barsSchema: Schema = loadSchema("schemas/ta-bars-1s.avsc")
   private val signalsSchema: Schema = loadSchema("schemas/ta-signals.avsc")
+  private val statusSchema: Schema = loadSchema("schemas/ta-status.avsc")
 
   @Transient
   private var registrySerializer: KafkaAvroSerializer? = null
@@ -37,9 +39,16 @@ class AvroSerde(
     topic: String,
   ): ByteArray = encodeWithRegistryOrFallback(topic, flattenSignal(env), signalsSchema)
 
+  fun encodeStatus(
+    env: Envelope<TaStatusPayload>,
+    topic: String,
+  ): ByteArray = encodeWithRegistryOrFallback(topic, flattenStatus(env), statusSchema)
+
   fun toJson(env: Envelope<MicroBarPayload>): String = flattenBar(env).toString()
 
   fun signalJson(env: Envelope<TaSignalsPayload>): String = flattenSignal(env).toString()
+
+  fun statusJson(env: Envelope<TaStatusPayload>): String = flattenStatus(env).toString()
 
   private fun loadSchema(resourcePath: String): Schema {
     val stream =
@@ -188,6 +197,37 @@ class AvroSerde(
       record.put("vol_realized", r)
     }
 
+    record.put("version", env.version)
+    return record
+  }
+
+  private fun flattenStatus(env: Envelope<TaStatusPayload>): GenericData.Record {
+    val record = GenericData.Record(statusSchema)
+    record.put("ingest_ts", env.ingestTs.toString())
+    record.put("event_ts", env.eventTs.toString())
+    record.put("symbol", env.symbol)
+    record.put("seq", env.seq)
+    record.put("is_final", env.isFinal)
+    record.put("source", env.source)
+    env.window?.let { window ->
+      val windowSchema =
+        statusSchema
+          .getField("window")
+          .schema()
+          .types
+          .first { it.type == Schema.Type.RECORD }
+      val winRecord = GenericData.Record(windowSchema)
+      winRecord.put("size", window.size)
+      winRecord.put("step", window.step)
+      winRecord.put("start", window.start)
+      winRecord.put("end", window.end)
+      record.put("window", winRecord)
+    }
+
+    record.put("watermark_lag_ms", env.payload.watermarkLagMs)
+    record.put("last_event_ts", env.payload.lastEventTs)
+    record.put("status", env.payload.status)
+    record.put("heartbeat", env.payload.heartbeat)
     record.put("version", env.version)
     return record
   }

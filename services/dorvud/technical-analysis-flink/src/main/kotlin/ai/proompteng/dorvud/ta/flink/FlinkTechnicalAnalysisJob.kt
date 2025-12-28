@@ -7,6 +7,7 @@ import ai.proompteng.dorvud.ta.stream.AlpacaBarPayload
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.QuotePayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
+import ai.proompteng.dorvud.ta.stream.TaStatusPayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
 import ai.proompteng.dorvud.ta.stream.toMicroBarPayload
 import ai.proompteng.dorvud.ta.stream.withPayload
@@ -134,12 +135,25 @@ fun main() {
       .name("ta-signals")
       .uid("ta-signals")
 
+  if (config.statusTopic != null) {
+    val statusIntervalMs = config.checkpointIntervalMs.coerceAtLeast(1_000)
+    microBarsForSignals
+      .keyBy { STATUS_SYMBOL }
+      .process(StatusHeartbeatProcessFunction(statusIntervalMs))
+      .name("ta-status")
+      .uid("ta-status")
+      .sinkTo(statusSink(config, serde))
+      .name("sink-status")
+  }
+
   microBars.sinkTo(microBarSink(config, serde)).name("sink-microbars")
   signals.sinkTo(signalSink(config, serde)).name("sink-signals")
   applyClickhouseSinks(config, microBars, signals)
 
   env.execute("torghut-technical-analysis-flink")
 }
+
+private const val STATUS_SYMBOL = "ta"
 
 private fun applyClickhouseSinks(
   config: FlinkTaConfig,
@@ -352,6 +366,27 @@ private fun signalSink(
   }
 
   sinkBuilder.setRecordSerializer(SignalSerializationSchema(config.signalsTopic, serde))
+  sinkBuilder.setKafkaSecurity(config)
+  return sinkBuilder.build()
+}
+
+private fun statusSink(
+  config: FlinkTaConfig,
+  serde: AvroSerde,
+): KafkaSink<Envelope<TaStatusPayload>> {
+  val topic = requireNotNull(config.statusTopic) { "TA_STATUS_TOPIC must be set to enable status sink." }
+  val sinkBuilder =
+    KafkaSink
+      .builder<Envelope<TaStatusPayload>>()
+      .setBootstrapServers(config.bootstrapServers)
+      .setDeliveryGuarantee(config.deliveryGuarantee)
+
+  if (config.deliveryGuarantee == DeliveryGuarantee.EXACTLY_ONCE) {
+    sinkBuilder.setTransactionalIdPrefix("${config.clientId}-status")
+    sinkBuilder.setProperty("transaction.timeout.ms", config.transactionTimeoutMs.toString())
+  }
+
+  sinkBuilder.setRecordSerializer(StatusSerializationSchema(topic, serde))
   sinkBuilder.setKafkaSecurity(config)
   return sinkBuilder.build()
 }
@@ -606,6 +641,27 @@ internal class SignalSerializationSchema(
   }
 }
 
+internal class StatusSerializationSchema(
+  private val topic: String,
+  private val serde: AvroSerde,
+) : KafkaRecordSerializationSchema<Envelope<TaStatusPayload>>,
+  Serializable {
+  companion object {
+    private const val serialVersionUID: Long = 1L
+  }
+
+  override fun serialize(
+    element: Envelope<TaStatusPayload>?,
+    context: KafkaRecordSerializationSchema.KafkaSinkContext,
+    timestamp: Long?,
+  ): ProducerRecord<ByteArray, ByteArray>? {
+    if (element == null) return null
+    val key = element.symbol.toByteArray(StandardCharsets.UTF_8)
+    val value = serde.encodeStatus(element, topic)
+    return ProducerRecord(topic, null, timestamp ?: System.currentTimeMillis(), key, value)
+  }
+}
+
 internal fun interface SerializerFactory<T> : Serializable {
   fun serializer(): KSerializer<T>
 }
@@ -796,6 +852,86 @@ private class MicrobarProcessFunction : KeyedProcessFunction<String, Envelope<Tr
         version = 1,
       )
     out.collect(envelope)
+  }
+}
+
+private class StatusHeartbeatProcessFunction(
+  private val intervalMs: Long,
+) : KeyedProcessFunction<String, Envelope<MicroBarPayload>, Envelope<TaStatusPayload>>() {
+  private lateinit var lastEventMsState: ValueState<Long>
+  private lateinit var seqState: ValueState<Long>
+  private lateinit var nextTimerState: ValueState<Long>
+
+  override fun open(openContext: OpenContext) {
+    lastEventMsState = runtimeContext.getState(ValueStateDescriptor("status-last-event-ms", Long::class.javaObjectType))
+    seqState = runtimeContext.getState(ValueStateDescriptor("status-seq", Long::class.javaObjectType))
+    nextTimerState = runtimeContext.getState(ValueStateDescriptor("status-next-timer-ms", Long::class.javaObjectType))
+  }
+
+  override fun processElement(
+    value: Envelope<MicroBarPayload>,
+    ctx: Context,
+    out: Collector<Envelope<TaStatusPayload>>,
+  ) {
+    val eventMs = value.eventTs.toEpochMilli()
+    val last = lastEventMsState.value()
+    if (last == null || eventMs > last) {
+      lastEventMsState.update(eventMs)
+    }
+    scheduleTimerIfNeeded(ctx)
+  }
+
+  override fun onTimer(
+    timestamp: Long,
+    ctx: OnTimerContext,
+    out: Collector<Envelope<TaStatusPayload>>,
+  ) {
+    val now = Instant.now()
+    val watermark = ctx.timerService().currentWatermark()
+    val lagMs =
+      if (watermark == Long.MIN_VALUE) {
+        null
+      } else {
+        (now.toEpochMilli() - watermark).coerceAtLeast(0)
+      }
+    val lastEventMs = lastEventMsState.value()
+    val payload =
+      TaStatusPayload(
+        watermarkLagMs = lagMs,
+        lastEventTs = lastEventMs?.let { Instant.ofEpochMilli(it).toString() },
+        status = "ok",
+        heartbeat = true,
+      )
+    val seq = (seqState.value() ?: 0L) + 1
+    seqState.update(seq)
+    val envelope =
+      Envelope(
+        ingestTs = now,
+        eventTs = now,
+        feed = "ta",
+        channel = "status",
+        symbol = ctx.currentKey,
+        seq = seq,
+        payload = payload,
+        isFinal = true,
+        source = "ta",
+        window = null,
+        version = 1,
+      )
+    out.collect(envelope)
+    val next = timestamp + intervalMs
+    ctx.timerService().registerProcessingTimeTimer(next)
+    nextTimerState.update(next)
+  }
+
+  private fun scheduleTimerIfNeeded(ctx: Context) {
+    val current = nextTimerState.value()
+    val now = ctx.timerService().currentProcessingTime()
+    if (current == null || current <= now) {
+      val next = now + intervalMs
+      ctx.timerService().registerProcessingTimeTimer(next)
+      nextTimerState.update(next)
+    }
   }
 }
 

@@ -72,6 +72,16 @@ data class TaSignalsPayload(
 )
 
 @Serializable
+data class TaStatusPayload(
+  @SerialName("watermark_lag_ms")
+  val watermarkLagMs: Long? = null,
+  @SerialName("last_event_ts")
+  val lastEventTs: String? = null,
+  val status: String = "ok",
+  val heartbeat: Boolean = true,
+)
+
+@Serializable
 data class Macd(
   val macd: Double,
   val signal: Double,

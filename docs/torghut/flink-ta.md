@@ -17,7 +17,7 @@ Recommended connector settings (Table API/SQL notation):
 ## Outputs
 - `ta.bars.1s.v1`: micro-bars (O/H/L/C/V, vwap1s, count); `is_final=true`.
 - `ta.signals.v1`: EMA12/26, MACD+signal/hist, RSI14, Bollinger20/2, VWAP (session & rolling), spread/imbalance, realized vol.
-- `ta.status.v1` (optional): watermark lag, restart reason, checkpoint age.
+- `ta.status.v1` (optional): heartbeat with watermark lag and last event time (set `TA_STATUS_TOPIC` to enable).
 
 ## Envelope / Schema
 Common fields: `ingest_ts`, `event_ts`, `feed`, `channel`, `symbol`, `seq`, `payload`, `is_final?`, `source`, `window{size,step,start,end}`, `version`.
@@ -87,6 +87,13 @@ S3A properties (example):
 ## Observability
 - Expose Prometheus-format metrics for scrape into Mimir (existing observability stack). Key: watermark lag, checkpoint age/duration, sink txn failures, restarts.
 - Logging to Loki: JSON; include symbol, channel, event_ts, watermark, lag_ms.
+
+Status topic payload (flattened Avro/JSON):
+- `watermark_lag_ms`: processing-time lag vs current watermark.
+- `last_event_ts`: last observed event timestamp from micro-bars/bars1m.
+- `status`: string (default `ok`).
+- `heartbeat`: boolean (true when emitted).
+- Emission interval: uses the checkpoint interval (override by adjusting `TA_CHECKPOINT_INTERVAL_MS`).
 
 Alert suggestions (Mimir/Alertmanager):
 - Checkpoint age > 2× interval
