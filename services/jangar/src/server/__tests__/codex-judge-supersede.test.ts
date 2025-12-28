@@ -1,12 +1,82 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { CodexRunRecord } from '../codex-judge-store'
+import type { CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
+
+import { storePrivate } from './codex-judge-store-private'
 
 const upsertRunComplete = vi.fn()
 const upsertArtifacts = vi.fn()
 
-vi.mock('../codex-judge-config', () => ({
-  loadCodexJudgeConfig: () => ({
+const globalState = globalThis as typeof globalThis & {
+  __codexJudgeStoreMock?: CodexJudgeStore
+  __codexJudgeGithubMock?: {
+    getRefSha: ReturnType<typeof vi.fn>
+    getCheckRuns: ReturnType<typeof vi.fn>
+    getPullRequestByHead: ReturnType<typeof vi.fn>
+    getPullRequest: ReturnType<typeof vi.fn>
+    getPullRequestDiff: ReturnType<typeof vi.fn>
+    getReviewSummary: ReturnType<typeof vi.fn>
+    getFile: ReturnType<typeof vi.fn>
+    updateFile: ReturnType<typeof vi.fn>
+    createBranch: ReturnType<typeof vi.fn>
+    createPullRequest: ReturnType<typeof vi.fn>
+  }
+  __codexJudgeConfigMock?: {
+    githubToken: string | null
+    githubApiBaseUrl: string
+    codexReviewers: string[]
+    ciPollIntervalMs: number
+    reviewPollIntervalMs: number
+    maxAttempts: number
+    backoffScheduleMs: number[]
+    facteurBaseUrl: string
+    argoServerUrl: string | null
+    discordBotToken: string | null
+    discordChannelId: string | null
+    discordApiBaseUrl: string
+    judgeModel: string
+    promptTuningEnabled: boolean
+    promptTuningRepo: string | null
+  }
+  __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
+}
+
+if (!globalState.__codexJudgeStoreMock) {
+  globalState.__codexJudgeStoreMock = {
+    upsertRunComplete: vi.fn(),
+    attachNotify: vi.fn(),
+    updateCiStatus: vi.fn(),
+    updateReviewStatus: vi.fn(),
+    updateDecision: vi.fn(),
+    updateRunStatus: vi.fn(),
+    updateRunPrompt: vi.fn(),
+    updateRunPrInfo: vi.fn(),
+    upsertArtifacts: vi.fn(),
+    getRunByWorkflow: vi.fn(),
+    getRunById: vi.fn(),
+    listRunsByIssue: vi.fn(),
+    createPromptTuning: vi.fn(),
+    close: vi.fn(),
+  }
+}
+
+if (!globalState.__codexJudgeGithubMock) {
+  globalState.__codexJudgeGithubMock = {
+    getRefSha: vi.fn(),
+    getCheckRuns: vi.fn(),
+    getPullRequestByHead: vi.fn(),
+    getPullRequest: vi.fn(),
+    getPullRequestDiff: vi.fn(),
+    getReviewSummary: vi.fn(),
+    getFile: vi.fn(),
+    updateFile: vi.fn(),
+    createBranch: vi.fn(),
+    createPullRequest: vi.fn(),
+  }
+}
+
+if (!globalState.__codexJudgeConfigMock) {
+  globalState.__codexJudgeConfigMock = {
     githubToken: null,
     githubApiBaseUrl: 'https://api.github.com',
     codexReviewers: [],
@@ -22,44 +92,95 @@ vi.mock('../codex-judge-config', () => ({
     judgeModel: 'gpt-5.2-codex',
     promptTuningEnabled: false,
     promptTuningRepo: null,
-  }),
+  }
+}
+
+if (!globalState.__codexJudgeMemoryStoreMock) {
+  globalState.__codexJudgeMemoryStoreMock = {
+    persist: vi.fn(),
+    close: vi.fn(),
+  }
+}
+
+vi.mock('../codex-judge-config', () => ({
+  loadCodexJudgeConfig: () => globalState.__codexJudgeConfigMock!,
 }))
 
 vi.mock('../codex-judge-store', () => ({
-  createCodexJudgeStore: () => ({
-    upsertRunComplete,
-    attachNotify: vi.fn(),
-    updateCiStatus: vi.fn(),
-    updateReviewStatus: vi.fn(),
-    updateDecision: vi.fn(),
-    updateRunStatus: vi.fn(),
-    updateRunPrompt: vi.fn(),
-    updateRunPrInfo: vi.fn(),
-    upsertArtifacts,
-    getRunByWorkflow: vi.fn(),
-    getRunById: vi.fn(),
-    listRunsByIssue: vi.fn(),
-    createPromptTuning: vi.fn(),
-    close: vi.fn(),
-  }),
+  __private: storePrivate,
+  createCodexJudgeStore: () => globalState.__codexJudgeStoreMock!,
 }))
 
 vi.mock('../github-client', () => ({
-  createGitHubClient: () => ({
-    getRefSha: vi.fn(),
-    getCheckRuns: vi.fn(),
-    getPullRequestByHead: vi.fn(),
-    getPullRequest: vi.fn(),
-    getPullRequestDiff: vi.fn(),
-    getReviewSummary: vi.fn(),
-    getFile: vi.fn(),
-    updateFile: vi.fn(),
-    createBranch: vi.fn(),
-    createPullRequest: vi.fn(),
-  }),
+  createGitHubClient: () => globalState.__codexJudgeGithubMock!,
 }))
 
-const { handleRunComplete } = await import('../codex-judge')
+vi.mock('../memories-store', () => ({
+  createPostgresMemoriesStore: () => globalState.__codexJudgeMemoryStoreMock!,
+}))
+
+let handleRunComplete: Awaited<typeof import('../codex-judge')>['handleRunComplete'] | null = null
+const store = {
+  upsertRunComplete,
+  attachNotify: vi.fn(),
+  updateCiStatus: vi.fn(),
+  updateReviewStatus: vi.fn(),
+  updateDecision: vi.fn(),
+  updateRunStatus: vi.fn(),
+  updateRunPrompt: vi.fn(),
+  updateRunPrInfo: vi.fn(),
+  upsertArtifacts,
+  getRunByWorkflow: vi.fn(),
+  getRunById: vi.fn(),
+  listRunsByIssue: vi.fn(),
+  createPromptTuning: vi.fn(),
+  close: vi.fn(),
+}
+const github = {
+  getRefSha: vi.fn(),
+  getCheckRuns: vi.fn(),
+  getPullRequestByHead: vi.fn(),
+  getPullRequest: vi.fn(),
+  getPullRequestDiff: vi.fn(),
+  getReviewSummary: vi.fn(),
+  getFile: vi.fn(),
+  updateFile: vi.fn(),
+  createBranch: vi.fn(),
+  createPullRequest: vi.fn(),
+}
+const config = {
+  githubToken: null,
+  githubApiBaseUrl: 'https://api.github.com',
+  codexReviewers: [],
+  ciPollIntervalMs: 1000,
+  reviewPollIntervalMs: 1000,
+  maxAttempts: 3,
+  backoffScheduleMs: [1000],
+  facteurBaseUrl: 'http://facteur',
+  argoServerUrl: null,
+  discordBotToken: null,
+  discordChannelId: null,
+  discordApiBaseUrl: 'https://discord.com/api/v10',
+  judgeModel: 'gpt-5.2-codex',
+  promptTuningEnabled: false,
+  promptTuningRepo: null,
+}
+const memoriesStore = {
+  persist: vi.fn(),
+  close: vi.fn(),
+}
+
+beforeEach(async () => {
+  upsertRunComplete.mockReset()
+  upsertArtifacts.mockReset()
+  Object.assign(globalState.__codexJudgeStoreMock!, store)
+  Object.assign(globalState.__codexJudgeGithubMock!, github)
+  Object.assign(globalState.__codexJudgeConfigMock!, config)
+  Object.assign(globalState.__codexJudgeMemoryStoreMock!, memoriesStore)
+  if (!handleRunComplete) {
+    handleRunComplete = (await import('../codex-judge')).handleRunComplete
+  }
+})
 
 const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   id: 'run-1',
@@ -127,7 +248,7 @@ describe('codex judge superseded runs', () => {
     upsertArtifacts.mockResolvedValueOnce([])
 
     const timeoutSpy = vi.spyOn(global, 'setTimeout')
-    const result = await handleRunComplete(buildPayload())
+    const result = await handleRunComplete!(buildPayload())
 
     expect(result?.status).toBe('superseded')
     expect(timeoutSpy).not.toHaveBeenCalled()

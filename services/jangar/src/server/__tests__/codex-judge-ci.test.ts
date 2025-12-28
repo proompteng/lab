@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
+import { storePrivate } from './codex-judge-store-private'
+
 const getRefSha = vi.fn()
 const getCheckRuns = vi.fn()
 
@@ -105,6 +107,7 @@ vi.mock('../codex-judge-config', () => ({
 }))
 
 vi.mock('../codex-judge-store', () => ({
+  __private: storePrivate,
   createCodexJudgeStore: () => globalState.__codexJudgeStoreMock!,
 }))
 
