@@ -33,6 +33,7 @@ resources:
   - strimzi-operator-watched-crb.yaml
   - load-balancer.yaml
   - strimzi-kafka-cluster.yaml
+  - kafka-codex-username-secret.yaml
   - karapace.yaml
   - torghut-ws-kafkauser.yaml
   - torghut-topics.yaml

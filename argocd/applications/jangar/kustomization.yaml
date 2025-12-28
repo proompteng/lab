@@ -7,8 +7,6 @@ resources:
   - github-token.yaml
   - discord-codex-bot-sealedsecret.yaml
   - discord-success-channel-sealedsecret.yaml
-  - kafka-username-secret.yaml
-  - kafka-credentials-sealedsecret.yaml
   - codex-run-complete-kafkasource.yaml
   - app-tailscale-service.yaml
   - tailscale-service.yaml
