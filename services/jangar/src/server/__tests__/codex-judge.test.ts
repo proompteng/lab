@@ -55,6 +55,7 @@ if (!globalState.__codexJudgeStoreMock) {
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
+    getRunHistory: vi.fn(),
     createPromptTuning: vi.fn(),
     close: vi.fn(),
   }
@@ -231,6 +232,16 @@ const harness = (() => {
       },
     ),
     listRunsByIssue: vi.fn(async () => [run]),
+    getRunHistory: vi.fn(async () => ({
+      runs: [],
+      stats: {
+        completionRate: null,
+        avgAttemptsPerIssue: null,
+        failureReasonCounts: {},
+        avgCiDurationSeconds: null,
+        avgJudgeConfidence: null,
+      },
+    })),
     createPromptTuning: vi.fn(async () => ({
       id: 'prompt-1',
       runId: run.id,

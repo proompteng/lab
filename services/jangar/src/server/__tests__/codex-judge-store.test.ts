@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { CodexRunRecord } from '../codex-judge-store'
+import type { CodexEvaluationRecord, CodexRunRecord } from '../codex-judge-store'
 import { __private } from '../codex-judge-store'
 
 const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
@@ -74,5 +74,95 @@ describe('codex judge run supersession', () => {
 
     expect(plan.activeRun?.id).toBe('run-active')
     expect(plan.supersededIds).not.toContain('run-completed')
+  })
+})
+
+describe('codex judge run stats', () => {
+  it('computes summary metrics from runs and evaluations', () => {
+    const runs: CodexRunRecord[] = [
+      buildRun({
+        id: 'run-1',
+        issueNumber: 123,
+        attempt: 1,
+        status: 'completed',
+        startedAt: '2025-01-01T00:00:00Z',
+        finishedAt: '2025-01-01T00:01:00Z',
+      }),
+      buildRun({
+        id: 'run-2',
+        issueNumber: 123,
+        attempt: 2,
+        status: 'needs_iteration',
+        startedAt: '2025-01-01T01:00:00Z',
+        finishedAt: '2025-01-01T01:03:00Z',
+      }),
+      buildRun({
+        id: 'run-3',
+        issueNumber: 456,
+        attempt: 1,
+        status: 'completed',
+        startedAt: '2025-01-02T00:00:00Z',
+        finishedAt: '2025-01-02T00:02:00Z',
+      }),
+    ]
+
+    const evaluations = new Map<string, CodexEvaluationRecord | null>([
+      [
+        'run-1',
+        {
+          id: 'eval-1',
+          runId: 'run-1',
+          decision: 'pass',
+          confidence: 0.92,
+          reasons: {},
+          missingItems: {},
+          suggestedFixes: {},
+          nextPrompt: null,
+          promptTuning: {},
+          systemSuggestions: {},
+          createdAt: '2025-01-01T00:02:00Z',
+        },
+      ],
+      [
+        'run-2',
+        {
+          id: 'eval-2',
+          runId: 'run-2',
+          decision: 'needs_iteration',
+          confidence: 0.4,
+          reasons: { error: 'ci_failed' },
+          missingItems: {},
+          suggestedFixes: {},
+          nextPrompt: 'fix',
+          promptTuning: {},
+          systemSuggestions: {},
+          createdAt: '2025-01-01T01:04:00Z',
+        },
+      ],
+      [
+        'run-3',
+        {
+          id: 'eval-3',
+          runId: 'run-3',
+          decision: 'pass',
+          confidence: null,
+          reasons: {},
+          missingItems: {},
+          suggestedFixes: {},
+          nextPrompt: null,
+          promptTuning: {},
+          systemSuggestions: {},
+          createdAt: '2025-01-02T00:03:00Z',
+        },
+      ],
+    ])
+
+    const stats = __private.computeRunStats(runs, evaluations)
+
+    expect(stats.completionRate).toBeCloseTo(2 / 3)
+    expect(stats.avgAttemptsPerIssue).toBeCloseTo(1.5)
+    expect(stats.failureReasonCounts).toEqual({ ci_failed: 1 })
+    expect(stats.avgCiDurationSeconds).toBeCloseTo((60 + 180 + 120) / 3)
+    expect(stats.avgJudgeConfidence).toBeCloseTo((0.92 + 0.4) / 2)
   })
 })

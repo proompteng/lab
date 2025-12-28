@@ -55,6 +55,7 @@ if (!globalState.__codexJudgeStoreMock) {
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
+    getRunHistory: vi.fn(),
     createPromptTuning: vi.fn(),
     close: vi.fn(),
   }
@@ -133,6 +134,7 @@ const store = {
   getRunByWorkflow: vi.fn(),
   getRunById: vi.fn(),
   listRunsByIssue: vi.fn(),
+  getRunHistory: vi.fn(),
   createPromptTuning: vi.fn(),
   close: vi.fn(),
 }
