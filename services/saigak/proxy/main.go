@@ -135,7 +135,8 @@ func main() {
 			})
 		}
 
-		proxy.ModifyResponse = func(resp *http.Response) error {
+		requestProxy := *proxy
+		requestProxy.ModifyResponse = func(resp *http.Response) error {
 			if resp == nil || resp.Body == nil {
 				finalize(nil)
 				return nil
@@ -145,13 +146,13 @@ func main() {
 			return nil
 		}
 
-		proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, e error) {
+		requestProxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, e error) {
 			rr.status = http.StatusBadGateway
 			finalize(nil)
 			http.Error(rw, "upstream error", http.StatusBadGateway)
 		}
 
-		proxy.ServeHTTP(rr, r.WithContext(spanCtx))
+		requestProxy.ServeHTTP(rr, r.WithContext(spanCtx))
 	})
 
 	server := &http.Server{
