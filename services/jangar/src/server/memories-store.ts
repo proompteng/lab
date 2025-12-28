@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 
 import { createKyselyDb, type Db } from '~/server/db'
+import { ensureMigrations } from '~/server/kysely-migrations'
 
 export type MemoryRecord = {
   id: string
@@ -202,77 +203,8 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
   const ensureSchema = async () => {
     if (!schemaReady) {
       schemaReady = (async () => {
-        try {
-          await sql`CREATE SCHEMA IF NOT EXISTS memories;`.execute(db)
-        } catch (error) {
-          throw new Error(`failed to ensure Postgres prerequisites (schema). Original error: ${String(error)}`)
-        }
-
-        const { rows: extensionRows } = await sql<{ extname: string }>`
-          SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')
-        `.execute(db)
-        const installed = new Set(extensionRows.map((row) => row.extname))
-        const missing = ['vector', 'pgcrypto'].filter((ext) => !installed.has(ext))
-        if (missing.length > 0) {
-          throw new Error(
-            `missing required Postgres extensions: ${missing.join(', ')}. ` +
-              'Install them as a privileged user (e.g. `CREATE EXTENSION vector; CREATE EXTENSION pgcrypto;`) ' +
-              'or configure CNPG bootstrap.initdb.postInitApplicationSQL to create them at cluster init.',
-          )
-        }
-
-        await sql`
-          CREATE TABLE IF NOT EXISTS ${sql.ref(`${SCHEMA}.${TABLE}`)} (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            execution_id UUID NULL,
-            task_name TEXT NOT NULL,
-            task_description TEXT,
-            repository_ref TEXT NOT NULL DEFAULT 'main',
-            repository_commit TEXT,
-            repository_path TEXT,
-            content TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
-            tags TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
-            source TEXT NOT NULL,
-            embedding vector(${sql.raw(String(expectedEmbeddingDimension))}) NOT NULL,
-            encoder_model TEXT NOT NULL,
-            encoder_version TEXT,
-            last_accessed_at TIMESTAMPTZ,
-            next_review_at TIMESTAMPTZ
-          );
-        `.execute(db)
-
+        await ensureMigrations(db)
         await ensureEmbeddingDimensionMatches()
-
-        await sql`
-          CREATE INDEX IF NOT EXISTS memories_entries_task_name_idx
-          ON ${sql.ref(`${SCHEMA}.${TABLE}`)} (task_name);
-        `.execute(db)
-
-        await sql`
-          CREATE INDEX IF NOT EXISTS memories_entries_tags_idx
-          ON ${sql.ref(`${SCHEMA}.${TABLE}`)} USING GIN (tags);
-        `.execute(db)
-
-        await sql`
-          CREATE INDEX IF NOT EXISTS memories_entries_metadata_idx
-          ON ${sql.ref(`${SCHEMA}.${TABLE}`)} USING GIN (metadata JSONB_PATH_OPS);
-        `.execute(db)
-
-        await sql`
-          CREATE INDEX IF NOT EXISTS memories_entries_encoder_idx
-          ON ${sql.ref(`${SCHEMA}.${TABLE}`)} (encoder_model, encoder_version);
-        `.execute(db)
-
-        await sql`
-          CREATE INDEX IF NOT EXISTS memories_entries_embedding_idx
-          ON ${sql.ref(`${SCHEMA}.${TABLE}`)}
-          USING ivfflat (embedding vector_cosine_ops)
-          WITH (lists = 100);
-        `.execute(db)
       })()
     }
     await schemaReady

@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 
 import type { Db } from '~/server/db'
+import { ensureMigrations } from '~/server/kysely-migrations'
 
 export type TorghutAssetClass = 'equity' | 'crypto'
 
@@ -11,23 +12,8 @@ export type TorghutSymbol = {
   updatedAt: string
 }
 
-let schemaEnsured = false
-
 const ensureSchema = async (db: Db) => {
-  if (schemaEnsured) return
-
-  await sql`
-    create table if not exists torghut_symbols (
-      symbol text primary key,
-      enabled boolean not null default true,
-      asset_class text not null default 'equity',
-      updated_at timestamptz not null default now()
-    )
-  `.execute(db)
-  await sql`create index if not exists torghut_symbols_enabled_idx on torghut_symbols (enabled)`.execute(db)
-  await sql`create index if not exists torghut_symbols_asset_class_idx on torghut_symbols (asset_class)`.execute(db)
-
-  schemaEnsured = true
+  await ensureMigrations(db)
 }
 
 export const normalizeTorghutSymbol = (raw: string) => raw.trim().toUpperCase()

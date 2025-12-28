@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 
 import { createKyselyDb, type Db } from '~/server/db'
+import { ensureMigrations } from '~/server/kysely-migrations'
 
 export type CodexRunRecord = {
   id: string
@@ -154,97 +155,8 @@ export type CodexJudgeStore = {
   close: () => Promise<void>
 }
 
-const SCHEMA = 'codex_judge'
-
 const ensureSchema = async (db: Db) => {
-  await sql`CREATE SCHEMA IF NOT EXISTS ${sql.ref(SCHEMA)};`.execute(db)
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS ${sql.ref(`${SCHEMA}.runs`)} (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      repository TEXT NOT NULL,
-      issue_number BIGINT NOT NULL,
-      branch TEXT NOT NULL,
-      attempt INT NOT NULL,
-      workflow_name TEXT NOT NULL,
-      workflow_uid TEXT,
-      workflow_namespace TEXT,
-      stage TEXT,
-      status TEXT NOT NULL,
-      phase TEXT,
-      prompt TEXT,
-      next_prompt TEXT,
-      commit_sha TEXT,
-      pr_number INT,
-      pr_url TEXT,
-      ci_status TEXT,
-      ci_url TEXT,
-      review_status TEXT,
-      review_summary JSONB NOT NULL DEFAULT '{}'::JSONB,
-      notify_payload JSONB,
-      run_complete_payload JSONB,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      started_at TIMESTAMPTZ,
-      finished_at TIMESTAMPTZ
-    );
-  `.execute(db)
-
-  await sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS codex_judge_runs_workflow_uid_idx
-    ON ${sql.ref(`${SCHEMA}.runs`)} (workflow_uid)
-    WHERE workflow_uid IS NOT NULL;
-  `.execute(db)
-
-  await sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS codex_judge_runs_workflow_name_idx
-    ON ${sql.ref(`${SCHEMA}.runs`)} (workflow_name, workflow_namespace);
-  `.execute(db)
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS ${sql.ref(`${SCHEMA}.artifacts`)} (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      run_id UUID NOT NULL REFERENCES ${sql.ref(`${SCHEMA}.runs`)}(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      key TEXT NOT NULL,
-      bucket TEXT,
-      url TEXT,
-      metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `.execute(db)
-
-  await sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS codex_judge_artifacts_run_name_idx
-    ON ${sql.ref(`${SCHEMA}.artifacts`)} (run_id, name);
-  `.execute(db)
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS ${sql.ref(`${SCHEMA}.evaluations`)} (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      run_id UUID NOT NULL REFERENCES ${sql.ref(`${SCHEMA}.runs`)}(id) ON DELETE CASCADE,
-      decision TEXT NOT NULL,
-      confidence DOUBLE PRECISION,
-      reasons JSONB NOT NULL DEFAULT '{}'::JSONB,
-      missing_items JSONB NOT NULL DEFAULT '{}'::JSONB,
-      suggested_fixes JSONB NOT NULL DEFAULT '{}'::JSONB,
-      next_prompt TEXT,
-      prompt_tuning JSONB NOT NULL DEFAULT '{}'::JSONB,
-      system_suggestions JSONB NOT NULL DEFAULT '{}'::JSONB,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `.execute(db)
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS ${sql.ref(`${SCHEMA}.prompt_tuning`)} (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      run_id UUID NOT NULL REFERENCES ${sql.ref(`${SCHEMA}.runs`)}(id) ON DELETE CASCADE,
-      pr_url TEXT NOT NULL,
-      status TEXT NOT NULL,
-      metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `.execute(db)
+  await ensureMigrations(db)
 }
 
 const rowToRun = (row: Record<string, unknown>): CodexRunRecord => {
