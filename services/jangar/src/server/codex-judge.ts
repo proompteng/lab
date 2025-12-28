@@ -6,6 +6,7 @@ import * as Either from 'effect/Either'
 
 import { getCodexClient } from '~/server/codex-client'
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
+import { evaluateDeterministicGates } from '~/server/codex-judge-gates'
 import { type CodexEvaluationRecord, type CodexRunRecord, createCodexJudgeStore } from '~/server/codex-judge-store'
 import { createGitHubClient, type ReviewSummary } from '~/server/github-client'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
@@ -534,6 +535,40 @@ const evaluateRun = async (runId: string) => {
   const issueTitle = (run.runCompletePayload?.issueTitle as string | undefined) ?? pr.title
   const issueBody = (run.runCompletePayload?.issueBody as string | undefined) ?? ''
   const logExcerpt = extractLogExcerpt(run.notifyPayload)
+  const gateFailure = evaluateDeterministicGates({
+    diff,
+    logExcerpt,
+    issueTitle,
+    issueBody,
+    prompt: run.nextPrompt ?? run.prompt,
+    runCompletePayload: run.runCompletePayload,
+  })
+
+  if (gateFailure) {
+    const evaluation = await store.updateDecision({
+      runId: run.id,
+      decision: gateFailure.decision,
+      reasons: { error: gateFailure.reason, detail: gateFailure.detail },
+      suggestedFixes: { fix: gateFailure.suggestedFix },
+      nextPrompt: gateFailure.nextPrompt,
+      promptTuning: {},
+      systemSuggestions: {},
+    })
+    const refreshedRun = (await store.getRunById(run.id)) ?? run
+    await writeMemories(refreshedRun, evaluation)
+
+    if (gateFailure.decision === 'needs_human') {
+      if (config.promptTuningEnabled && config.promptTuningRepo) {
+        const suggestions = buildSuggestionsFromEvaluation(evaluation)
+        await createPromptTuningPr(run, evaluation.nextPrompt ?? '', suggestions)
+      }
+      await sendDiscordEscalation(run, gateFailure.reason)
+      return
+    }
+
+    await triggerRerun(run, gateFailure.reason, evaluation)
+    return
+  }
 
   const judgePrompt = buildJudgePrompt({
     issueTitle,
