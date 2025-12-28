@@ -5,7 +5,7 @@ import { Effect } from 'effect'
 import * as Either from 'effect/Either'
 import { createArgoClient } from '~/server/argo-client'
 import { getCodexClient } from '~/server/codex-client'
-import { extractImplementationManifestFromArchive } from '~/server/codex-judge-artifacts'
+import { extractImplementationManifestFromArchive, extractTextFromArchive } from '~/server/codex-judge-artifacts'
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 import { evaluateDeterministicGates } from '~/server/codex-judge-gates'
 import { type CodexEvaluationRecord, type CodexRunRecord, createCodexJudgeStore } from '~/server/codex-judge-store'
@@ -326,6 +326,17 @@ const FALLBACK_ARTIFACTS = [
   { name: 'implementation-notify', suffix: 'implementation-notify.tgz' },
 ]
 
+const ARTIFACT_TEXT_HINTS: Record<string, string[]> = {
+  'implementation-log': ['.codex-implementation.log', 'codex-implementation.log'],
+  'implementation-events': ['.codex-implementation-events.jsonl', 'codex-implementation-events.jsonl'],
+  'implementation-agent-log': ['.codex-implementation-agent.log', 'codex-implementation-agent.log'],
+  'implementation-runtime-log': ['.codex-implementation-runtime.log', 'codex-implementation-runtime.log'],
+  'implementation-status': ['.codex-implementation-status.txt', 'codex-implementation-status.txt'],
+  'implementation-notify': ['.codex-implementation-notify.json', 'codex-implementation-notify.json'],
+}
+
+const getArtifactTextHints = (name: string) => ARTIFACT_TEXT_HINTS[name] ?? []
+
 type ResolvedArtifact = {
   name: string
   key: string | null
@@ -557,7 +568,8 @@ const fetchArtifactBuffer = async (artifact: ResolvedArtifact, maxBytes = MAX_AR
 const fetchArtifactText = async (artifact: ResolvedArtifact, maxBytes = MAX_ARTIFACT_BYTES) => {
   const buffer = await fetchArtifactBuffer(artifact, maxBytes)
   if (!buffer) return null
-  const text = buffer.toString('utf8')
+  const extracted = await extractTextFromArchive(buffer, getArtifactTextHints(artifact.name))
+  const text = extracted ?? buffer.toString('utf8')
   if (text.length > MAX_LOG_CHARS) {
     return text.slice(-MAX_LOG_CHARS)
   }
@@ -620,14 +632,10 @@ const resolveCommitSha = async (run: CodexRunRecord, fallbackCommitSha: string |
     return commitSha
   }
   if (!run.repository || !run.branch) return null
-  try {
-    const { owner, repo } = parseRepositoryParts(run.repository)
-    const sha = await github.getRefSha(owner, repo, `heads/${run.branch}`)
-    await store.updateCiStatus({ runId: run.id, status: run.ciStatus ?? 'pending', commitSha: sha })
-    return sha
-  } catch {
-    return null
-  }
+  const sha = await fetchBranchHeadSha(run.repository, run.branch)
+  if (!sha) return null
+  await store.updateCiStatus({ runId: run.id, status: run.ciStatus ?? 'pending', commitSha: sha })
+  return sha
 }
 
 const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArtifact[]) => {

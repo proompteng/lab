@@ -108,6 +108,53 @@ const extractTarEntry = async (archivePath: string, entryPath: string) => {
   })
 }
 
+const listTarEntries = async (archivePath: string) => {
+  return new Promise<string[]>((resolve, reject) => {
+    const child = spawn('tar', ['-tzf', archivePath], { stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk instanceof Buffer ? chunk.toString('utf8') : String(chunk)
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk instanceof Buffer ? chunk.toString('utf8') : String(chunk)
+    })
+    child.on('error', (error) => reject(error))
+    child.on('close', (code) => {
+      if (code !== 0) {
+        resolve([])
+        return
+      }
+      const entries = stdout
+        .split('\n')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0)
+      resolve(entries)
+    })
+  })
+}
+
+const normalizeTarEntry = (entry: string) => entry.replace(/^\.\/+/, '')
+
+const selectTarEntry = (entries: string[], hints: string[]) => {
+  if (entries.length === 0) return null
+  const normalizedEntries = entries.map((entry) => ({
+    original: entry,
+    normalized: normalizeTarEntry(entry),
+  }))
+
+  for (const hint of hints) {
+    const normalizedHint = normalizeTarEntry(hint)
+    const directMatch = normalizedEntries.find((entry) => entry.normalized === normalizedHint)
+    if (directMatch) return directMatch.original
+    const suffixMatch = normalizedEntries.find((entry) => entry.normalized.endsWith(`/${normalizedHint}`))
+    if (suffixMatch) return suffixMatch.original
+  }
+
+  const firstFile = normalizedEntries.find((entry) => !entry.normalized.endsWith('/'))
+  return (firstFile ?? normalizedEntries[0]).original
+}
+
 export const extractImplementationManifestFromArchive = async (archive: Buffer) => {
   const tempDir = await mkdtemp(join(tmpdir(), 'codex-judge-archive-'))
   const archivePath = join(tempDir, 'implementation-changes.tgz')
@@ -120,6 +167,20 @@ export const extractImplementationManifestFromArchive = async (archive: Buffer) 
       return parseImplementationManifest(manifestRaw)
     }
     return null
+  } finally {
+    await rm(tempDir, { recursive: true, force: true })
+  }
+}
+
+export const extractTextFromArchive = async (archive: Buffer, entryHints: string[] = []) => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'codex-judge-archive-'))
+  const archivePath = join(tempDir, 'artifact.tgz')
+  try {
+    await writeFile(archivePath, archive)
+    const entries = await listTarEntries(archivePath)
+    const selected = selectTarEntry(entries, entryHints)
+    if (!selected) return null
+    return extractTarEntry(archivePath, selected)
   } finally {
     await rm(tempDir, { recursive: true, force: true })
   }

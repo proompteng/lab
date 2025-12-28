@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { extractImplementationManifestFromArchive } from '~/server/codex-judge-artifacts'
+import { extractImplementationManifestFromArchive, extractTextFromArchive } from '~/server/codex-judge-artifacts'
 
 const createArchive = async (bundleDir: string, archivePath: string) => {
   await new Promise<void>((resolve, reject) => {
@@ -51,6 +51,28 @@ describe('extractImplementationManifestFromArchive', () => {
         sessionId: 'session-abc',
         commitSha: 'abc1234',
       })
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('extractTextFromArchive', () => {
+  it('extracts text content from a log artifact archive', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'codex-judge-log-'))
+    try {
+      const bundleDir = join(tempDir, 'bundle')
+      await mkdir(bundleDir, { recursive: true })
+      const logContent = 'log line 1\nlog line 2'
+      await writeFile(join(bundleDir, '.codex-implementation.log'), logContent, 'utf8')
+
+      const archivePath = join(tempDir, 'implementation-log.tgz')
+      await createArchive(bundleDir, archivePath)
+      const archiveBuffer = await readFile(archivePath)
+
+      const extracted = await extractTextFromArchive(archiveBuffer, ['.codex-implementation.log'])
+
+      expect(extracted).toBe(logContent)
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }
