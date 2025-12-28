@@ -279,6 +279,8 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
   - No open review threads authored by Codex.
 - If Codex review requested changes or has unresolved threads, treat as `needs_iteration` and build
   `next_prompt` that enumerates each review comment with the required fix.
+- If no formal Codex reviews exist but Codex posted PR issue comments, treat the latest Codex comment
+  as a `commented` review state and continue.
 
 ### Deliverables
 - PR review poller keyed by PR number + commit SHA.

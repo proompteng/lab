@@ -212,6 +212,8 @@ Artifact access:
 - All Codex review threads must be resolved before marking completion.
 - If Codex review requests changes or has unresolved threads, treat as `needs_iteration` and generate a new prompt that
   enumerates each comment and the required fix. Threads must be resolved before success.
+- If Codex only posts PR issue comments (no formal review objects), treat the latest Codex comment as review completion
+  and proceed once comment content is captured.
 
 ## Decision Logic
 Pass:

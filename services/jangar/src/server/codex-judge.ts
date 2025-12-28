@@ -405,6 +405,7 @@ const evaluateRun = async (runId: string) => {
     summary: {
       unresolvedThreads: review.unresolvedThreads,
       requestedChanges: review.requestedChanges,
+      issueComments: review.issueComments,
     },
   })
 

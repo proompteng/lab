@@ -35,6 +35,7 @@ export type ReviewSummary = {
   status: 'pending' | 'approved' | 'changes_requested' | 'commented'
   unresolvedThreads: Array<{ id: string; author: string | null; comments: ReviewThreadComment[] }>
   requestedChanges: boolean
+  issueComments: Array<{ author: string | null; body: string | null; createdAt: string | null; url: string | null }>
 }
 
 export type FileContent = {
@@ -252,6 +253,26 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
       ? ((pr?.reviewThreads as Record<string, unknown>).nodes as Array<Record<string, unknown>>)
       : []
 
+    const rawComments = (await rest(`/repos/${owner}/${repo}/issues/${number}/comments?per_page=100`)) as Array<
+      Record<string, unknown>
+    >
+    const issueComments = rawComments
+      .map((comment) => {
+        const author = (comment.user as Record<string, unknown> | undefined)?.login
+        const login = typeof author === 'string' ? author.toLowerCase() : null
+        return {
+          author: login,
+          body: typeof comment.body === 'string' ? comment.body : null,
+          createdAt: typeof comment.created_at === 'string' ? comment.created_at : null,
+          url: typeof comment.html_url === 'string' ? comment.html_url : null,
+        }
+      })
+      .filter((comment) => {
+        if (reviewers.length === 0) return true
+        if (!comment.author) return false
+        return reviewers.includes(comment.author)
+      })
+
     const unresolvedThreads = threads
       .filter((thread) => !thread.isResolved)
       .map((thread) => {
@@ -288,6 +309,8 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
       status = 'changes_requested'
     } else if (unresolvedThreads.length > 0) {
       status = 'commented'
+    } else if (status === 'pending' && reviews.length === 0 && issueComments.length > 0) {
+      status = 'commented'
     } else if (status === 'commented') {
       status = 'commented'
     } else if (status === 'approved') {
@@ -296,7 +319,7 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
       status = 'pending'
     }
 
-    return { status, unresolvedThreads, requestedChanges }
+    return { status, unresolvedThreads, requestedChanges, issueComments }
   }
 
   const getRefSha = async (owner: string, repo: string, ref: string) => {
