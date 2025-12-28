@@ -104,6 +104,7 @@ from JSON event logs) rather than relying on CLI config alone.
 - Add a post-run hook in `codex-implement.ts` that emits a notify payload derived from
   `runCodexSession` results and/or the JSON event log.
 - Merge workflow metadata (repo/issue/head/base/workflow name).
+- Capture log excerpts (output/agent/runtime/events/status) and include them in the notify payload.
 - POST to Jangar with timeout + retry.
 - Log failures to stderr for Argo log capture.
 - Persist notify payload to a local file so it can be uploaded as an Argo artifact.
@@ -123,19 +124,34 @@ Run-complete is the primary trigger for judging; notify only enriches the run co
 ### notify payload (draft)
 {
   "type": "agent-turn-complete",
-  "thread-id": "...",
-  "turn-id": "...",
-  "cwd": "...",
-  "input-messages": ["..."],
-  "last-assistant-message": "...",
-  "issue_id": "...",
-  "workflow_id": "...",
-  "attempt": 1,
-  "branch": "codex/issue-123",
-  "repo": "org/repo",
+  "repository": "org/repo",
+  "issue_number": "123",
+  "base_branch": "main",
+  "head_branch": "codex/issue-123",
   "workflow_name": "github-codex-implementation-abc123",
   "workflow_namespace": "argo-workflows",
-  "artifact_refs": ["implementation-changes", "implementation-patch", "implementation-status"]
+  "session_id": "session-123",
+  "prompt": "...",
+  "input_messages": ["..."],
+  "last_assistant_message": "...",
+  "log_excerpt": {
+    "output": "...",
+    "events": "...",
+    "agent": "...",
+    "runtime": "...",
+    "status": "..."
+  },
+  "output_paths": {
+    "output": "/workspace/lab/.codex-implementation.log",
+    "events": "/workspace/lab/.codex-implementation-events.jsonl",
+    "agent": "/workspace/lab/.codex-implementation-agent.log",
+    "runtime": "/workspace/lab/.codex-implementation-runtime.log",
+    "status": "/workspace/lab/.codex-implementation-status.txt",
+    "patch": "/workspace/lab/.codex-implementation.patch",
+    "changes": "/workspace/lab/.codex-implementation-changes.tar.gz",
+    "notify": "/workspace/lab/.codex-implementation-notify.json"
+  },
+  "issued_at": "2025-12-28T00:00:00Z"
 }
 
 ### run-complete payload (draft, from `argo.workflows.completions` sensor)
@@ -160,6 +176,9 @@ Run-complete is the primary trigger for judging; notify only enriches the run co
       { "name": "base", "value": "main" }
     ]
   },
+  "artifacts": [
+    { "name": "implementation-log", "key": "...", "bucket": "argo-workflows" }
+  ],
   "stage": "implementation"
 }
 
@@ -373,6 +392,7 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
 - Compose message with links + short summary.
 - Only send on success, unless escalation conditions met.
 - Rate limit and error handling.
+- Configure `DISCORD_SUCCESS_CHANNEL_ID` secret in the `jangar` namespace for the general channel.
 
 ### Acceptance criteria
 - Success notifications appear in general channel with correct links.

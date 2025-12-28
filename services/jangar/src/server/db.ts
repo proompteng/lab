@@ -191,6 +191,69 @@ type TorghutSymbols = {
   updated_at: Generated<Timestamp>
 }
 
+type CodexJudgeRuns = {
+  id: Generated<string>
+  repository: string
+  issue_number: number
+  branch: string
+  attempt: number
+  workflow_name: string
+  workflow_uid: string | null
+  workflow_namespace: string | null
+  stage: string | null
+  status: string
+  phase: string | null
+  prompt: string | null
+  next_prompt: string | null
+  commit_sha: string | null
+  pr_number: number | null
+  pr_url: string | null
+  ci_status: string | null
+  ci_url: string | null
+  review_status: string | null
+  review_summary: JsonValue
+  notify_payload: JsonValue | null
+  run_complete_payload: JsonValue | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+  started_at: Timestamp | null
+  finished_at: Timestamp | null
+}
+
+type CodexJudgeArtifacts = {
+  id: Generated<string>
+  run_id: string
+  name: string
+  key: string
+  bucket: string | null
+  url: string | null
+  metadata: JsonValue
+  created_at: Generated<Timestamp>
+}
+
+type CodexJudgeEvaluations = {
+  id: Generated<string>
+  run_id: string
+  decision: string
+  confidence: number | null
+  reasons: JsonValue
+  missing_items: JsonValue
+  suggested_fixes: JsonValue
+  next_prompt: string | null
+  prompt_tuning: JsonValue
+  system_suggestions: JsonValue
+  created_at: Generated<Timestamp>
+}
+
+type CodexJudgePromptTuning = {
+  id: Generated<string>
+  run_id: string
+  pr_url: string
+  status: string
+  metadata: JsonValue
+  created_at: Generated<Timestamp>
+}
+
 export type Database = {
   'atlas.repositories': AtlasRepositories
   'atlas.file_keys': AtlasFileKeys
@@ -209,6 +272,10 @@ export type Database = {
   'atlas.ingestion_targets': AtlasIngestionTargets
   'memories.entries': MemoriesEntries
   torghut_symbols: TorghutSymbols
+  'codex_judge.runs': CodexJudgeRuns
+  'codex_judge.artifacts': CodexJudgeArtifacts
+  'codex_judge.evaluations': CodexJudgeEvaluations
+  'codex_judge.prompt_tuning': CodexJudgePromptTuning
 }
 
 let db: Db | null | undefined

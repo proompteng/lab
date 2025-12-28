@@ -307,7 +307,9 @@ describe('runCodexImplementation', () => {
       expect(linkStats.isSymbolicLink()).toBe(true)
       expect(await readlink(restoredLink)).toBe('./real.ts')
       await expect(readFile(restoredFile, 'utf8')).resolves.toBe(resumeRealContent)
-      await expect(stat(resumeMetadataPath)).rejects.toThrow()
+      const clearedMetadataRaw = await readFile(resumeMetadataPath, 'utf8')
+      const clearedMetadata = JSON.parse(clearedMetadataRaw) as Record<string, unknown>
+      expect(clearedMetadata.state).toBe('cleared')
     } finally {
       await rm(resumeSourceDir, { recursive: true, force: true })
     }
@@ -330,6 +332,14 @@ describe('runCodexImplementation', () => {
     await expect(stat(patchPath)).resolves.toEqual(expect.objectContaining({ size: expect.any(Number) }))
     await expect(stat(statusPath)).resolves.toEqual(expect.objectContaining({ size: expect.any(Number) }))
     await expect(stat(archivePath)).resolves.toEqual(expect.objectContaining({ size: expect.any(Number) }))
+    const outputLogPath = join(workdir, '.codex-implementation.log')
+    const agentLogPath = join(workdir, '.codex-implementation-agent.log')
+    const runtimeLogPath = join(workdir, '.codex-implementation-runtime.log')
+    const notifyLogPath = join(workdir, '.codex-implementation-notify.json')
+    await expect(stat(outputLogPath)).resolves.toEqual(expect.objectContaining({ size: expect.any(Number) }))
+    await expect(stat(agentLogPath)).resolves.toEqual(expect.objectContaining({ size: expect.any(Number) }))
+    await expect(stat(runtimeLogPath)).resolves.toEqual(expect.objectContaining({ size: expect.any(Number) }))
+    await expect(stat(notifyLogPath)).resolves.toEqual(expect.objectContaining({ size: expect.any(Number) }))
     const resumeMetadataPath = join(workdir, '.codex', 'implementation-resume.json')
     const resumeMetadataRaw = await readFile(resumeMetadataPath, 'utf8')
     const resumeMetadata = JSON.parse(resumeMetadataRaw) as Record<string, unknown>

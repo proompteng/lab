@@ -78,6 +78,34 @@ spec:
                 secretKeyRef:
                   name: github-token
                   key: token
+            - name: JANGAR_CODEX_REVIEWERS
+              value: codex,codex[bot]
+            - name: JANGAR_CI_POLL_INTERVAL_MS
+              value: "30000"
+            - name: JANGAR_REVIEW_POLL_INTERVAL_MS
+              value: "30000"
+            - name: JANGAR_CODEX_MAX_ATTEMPTS
+              value: "3"
+            - name: JANGAR_CODEX_BACKOFF_SCHEDULE_MS
+              value: "300000,900000,2700000"
+            - name: FACTEUR_INTERNAL_URL
+              value: http://facteur-internal.facteur.svc.cluster.local
+            - name: JANGAR_PROMPT_TUNING_ENABLED
+              value: "true"
+            - name: JANGAR_PROMPT_TUNING_REPO
+              value: proompteng/lab
+            - name: DISCORD_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: discord-codex-bot
+                  key: bot-token
+                  optional: true
+            - name: DISCORD_SUCCESS_CHANNEL_ID
+              valueFrom:
+                secretKeyRef:
+                  name: discord-success-channel
+                  key: channel-id
+                  optional: true
             - name: CODEX_BOOTSTRAP_REPO
               value: "1"
             - name: CODEX_INTERNAL_ORIGINATOR_OVERRIDE

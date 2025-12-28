@@ -164,6 +164,7 @@ Add the following artifacts to support judging and resumability:
 - `.codex/implementation-resume.json` (resume metadata)
 
 Artifact access:
+- The workflow completion payload includes artifact name/key metadata when available.
 - Prefer querying the Argo Workflow API for `status.outputs.artifacts` to retrieve keys and S3 metadata.
 - Fall back to direct S3 access in MinIO using the artifact keys.
  - The changes archive contains `metadata/manifest.json` with repo/issue/prompt/session metadata
@@ -184,6 +185,7 @@ Artifact access:
 - Correlate runs by issue_id, workflow_name, workflow_uid, turn_id, attempt.
 - Decode workflow arguments (base64 `eventBody`) to recover repository/issue metadata.
 - Query Argo Workflow API for outputs/artifact keys when needed.
+- Use notify log excerpts (output/agent/runtime/events/status) for judge context and memory snapshots; fall back to artifacts when notify is missing.
 - Wait for GitHub Actions CI status for the attempt commit SHA.
 - Wait for Codex PR review completion and ensure all Codex review threads are resolved.
 - Run deterministic gates:
