@@ -22,29 +22,12 @@ require_cmd sudo
 if ! command -v curl >/dev/null 2>&1; then
   log "installing curl"
   sudo apt-get update -y
-  sudo apt-get install -y curl ca-certificates gnupg lsb-release
+  sudo apt-get install -y curl ca-certificates
 fi
-
-install_docker() {
-  log "installing docker + compose plugin"
-  sudo apt-get update -y
-  sudo apt-get install -y ca-certificates curl gnupg lsb-release
-  sudo install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-  sudo chmod a+r /etc/apt/keyrings/docker.gpg
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-  sudo apt-get update -y
-  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  sudo systemctl enable --now docker
-}
 
 if ! command -v ollama >/dev/null 2>&1; then
   log "ollama not found, installing"
   curl -fsSL https://ollama.com/install.sh | sh
-fi
-
-if ! command -v docker >/dev/null 2>&1; then
-  install_docker
 fi
 
 log "installing systemd override and ollama env"
@@ -73,6 +56,7 @@ if [[ "${SAIGAK_SKIP_MODELS:-}" != "1" ]]; then
   done
 fi
 
+require_cmd docker
 if ! docker compose version >/dev/null 2>&1; then
   echo "[saigak] docker compose plugin is required" >&2
   exit 1

@@ -29,10 +29,10 @@ Default models: `qwen3-coder:30b-a3b-q4_K_M`, `qwen3-embedding:0.6b` (set `SAIGA
 
 ## Requirements
 
-- Docker with the compose plugin
+- Docker with the compose plugin (the Harvester `ubuntu-docker` cloud-init already installs this)
 - systemd
 - network access to LGTM endpoints (Tailscale DNS names `mimir`, `tempo`, and `grafana`)
-If Docker is missing, the install script will install it via the official Docker apt repo.
+If Docker is missing, install it first or use the `ubuntu-docker` cloud-init profile.
 
 ## Configuration
 
