@@ -37,9 +37,11 @@ const parseLimit = (value: string | null) => {
   return Math.min(Math.floor(parsed), 100)
 }
 
+type CodexRunsStore = Pick<CodexJudgeStore, 'getRunHistory' | 'close'>
+
 export const getCodexRunsHandler = async (
   request: Request,
-  storeFactory: () => CodexJudgeStore = createCodexJudgeStore,
+  storeFactory: () => CodexRunsStore = createCodexJudgeStore,
 ) => {
   const url = new URL(request.url)
   const repository = url.searchParams.get('repository')?.trim() ?? ''
