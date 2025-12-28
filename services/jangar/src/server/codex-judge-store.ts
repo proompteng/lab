@@ -66,6 +66,32 @@ export type CodexPromptTuningRecord = {
   createdAt: string
 }
 
+export type CodexRunHistoryEntry = {
+  run: CodexRunRecord
+  artifacts: CodexArtifactRecord[]
+  evaluation: CodexEvaluationRecord | null
+}
+
+export type CodexRunStats = {
+  completionRate: number | null
+  avgAttemptsPerIssue: number | null
+  failureReasonCounts: Record<string, number>
+  avgCiDurationSeconds: number | null
+  avgJudgeConfidence: number | null
+}
+
+export type CodexRunHistory = {
+  runs: CodexRunHistoryEntry[]
+  stats: CodexRunStats
+}
+
+export type GetRunHistoryInput = {
+  repository: string
+  issueNumber: number
+  branch?: string | null
+  limit?: number
+}
+
 export type UpsertRunCompleteInput = {
   repository: string
   issueNumber: number
@@ -146,6 +172,7 @@ export type CodexJudgeStore = {
   getRunByWorkflow: (workflowName: string, namespace?: string | null) => Promise<CodexRunRecord | null>
   getRunById: (runId: string) => Promise<CodexRunRecord | null>
   listRunsByIssue: (repository: string, issueNumber: number, branch: string) => Promise<CodexRunRecord[]>
+  getRunHistory: (input: GetRunHistoryInput) => Promise<CodexRunHistory>
   createPromptTuning: (
     runId: string,
     prUrl: string,
@@ -177,6 +204,68 @@ const getRunSortKey = (run: CodexRunRecord) => {
   const created = parseTimestamp(run.createdAt) ?? 0
   const primary = finished ?? started ?? created
   return { primary, created, attempt: run.attempt }
+}
+
+const computeRunStats = (
+  runs: CodexRunRecord[],
+  evaluations: Map<string, CodexEvaluationRecord | null>,
+): CodexRunStats => {
+  if (runs.length === 0) {
+    return {
+      completionRate: null,
+      avgAttemptsPerIssue: null,
+      failureReasonCounts: {},
+      avgCiDurationSeconds: null,
+      avgJudgeConfidence: null,
+    }
+  }
+
+  const completedCount = runs.filter((run) => run.status === 'completed').length
+
+  const attemptsByIssue = new Map<string, number>()
+  for (const run of runs) {
+    const key = `${run.repository}#${run.issueNumber}`
+    const current = attemptsByIssue.get(key) ?? 0
+    attemptsByIssue.set(key, Math.max(current, run.attempt))
+  }
+
+  const avgAttemptsPerIssue =
+    attemptsByIssue.size === 0
+      ? null
+      : [...attemptsByIssue.values()].reduce((sum, value) => sum + value, 0) / attemptsByIssue.size
+
+  const failureReasonCounts: Record<string, number> = {}
+  const confidences: number[] = []
+  for (const evaluation of evaluations.values()) {
+    if (!evaluation) continue
+    if (typeof evaluation.confidence === 'number') {
+      confidences.push(evaluation.confidence)
+    }
+    const reasons = evaluation.reasons as Record<string, unknown>
+    const error = typeof reasons?.error === 'string' ? reasons.error : null
+    if (error && evaluation.decision !== 'pass') {
+      failureReasonCounts[error] = (failureReasonCounts[error] ?? 0) + 1
+    }
+  }
+
+  const ciDurations: number[] = []
+  for (const run of runs) {
+    const started = parseTimestamp(run.startedAt)
+    const finished = parseTimestamp(run.finishedAt)
+    if (started != null && finished != null && finished >= started) {
+      ciDurations.push((finished - started) / 1000)
+    }
+  }
+
+  return {
+    completionRate: runs.length > 0 ? completedCount / runs.length : null,
+    avgAttemptsPerIssue,
+    failureReasonCounts,
+    avgCiDurationSeconds:
+      ciDurations.length > 0 ? ciDurations.reduce((sum, value) => sum + value, 0) / ciDurations.length : null,
+    avgJudgeConfidence:
+      confidences.length > 0 ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length : null,
+  }
 }
 
 const selectActiveRun = (runs: CodexRunRecord[]) => {
@@ -323,6 +412,74 @@ export const createCodexJudgeStore = (
       .orderBy('created_at desc')
       .execute()
     return rows.map((row) => rowToRun(row as Record<string, unknown>))
+  }
+
+  const getRunHistory = async (input: GetRunHistoryInput): Promise<CodexRunHistory> => {
+    await ensureReady()
+    let query = db
+      .selectFrom('codex_judge.runs')
+      .selectAll()
+      .where('repository', '=', input.repository)
+      .where('issue_number', '=', input.issueNumber)
+
+    if (input.branch) {
+      query = query.where('branch', '=', input.branch)
+    }
+
+    const runRows = await query.orderBy('attempt asc').orderBy('created_at asc').execute()
+    const runs = runRows.map((row) => rowToRun(row as Record<string, unknown>))
+
+    const runIds = runs.map((run) => run.id)
+    const artifactsByRun = new Map<string, CodexArtifactRecord[]>()
+    const evaluationsByRun = new Map<string, CodexEvaluationRecord | null>()
+
+    if (runIds.length > 0) {
+      const artifactRows = await db
+        .selectFrom('codex_judge.artifacts')
+        .selectAll()
+        .where('run_id', 'in', runIds)
+        .orderBy('created_at asc')
+        .execute()
+      for (const row of artifactRows) {
+        const artifact = rowToArtifact(row as Record<string, unknown>)
+        const bucket = artifactsByRun.get(artifact.runId) ?? []
+        bucket.push(artifact)
+        artifactsByRun.set(artifact.runId, bucket)
+      }
+
+      const evaluationRows = await db
+        .selectFrom('codex_judge.evaluations')
+        .selectAll()
+        .where('run_id', 'in', runIds)
+        .orderBy('run_id')
+        .orderBy('created_at desc')
+        .execute()
+      for (const row of evaluationRows) {
+        const evaluation = rowToEvaluation(row as Record<string, unknown>)
+        if (!evaluationsByRun.has(evaluation.runId)) {
+          evaluationsByRun.set(evaluation.runId, evaluation)
+        }
+      }
+    }
+
+    for (const runId of runIds) {
+      if (!evaluationsByRun.has(runId)) {
+        evaluationsByRun.set(runId, null)
+      }
+    }
+
+    const stats = computeRunStats(runs, evaluationsByRun)
+    const limit = input.limit && input.limit > 0 ? input.limit : null
+    const visibleRuns = limit ? runs.slice(Math.max(runs.length - limit, 0)) : runs
+
+    return {
+      runs: visibleRuns.map((run) => ({
+        run,
+        artifacts: artifactsByRun.get(run.id) ?? [],
+        evaluation: evaluationsByRun.get(run.id) ?? null,
+      })),
+      stats,
+    }
   }
 
   const enforceSingleActiveRun = async (run: CodexRunRecord) => {
@@ -688,6 +845,7 @@ export const createCodexJudgeStore = (
     getRunByWorkflow,
     getRunById,
     listRunsByIssue,
+    getRunHistory,
     createPromptTuning,
     close,
   }
@@ -697,4 +855,5 @@ export const __private = {
   isTerminalRunStatus,
   selectActiveRun,
   planSupersession,
+  computeRunStats,
 }
