@@ -296,11 +296,11 @@ function TorghutVisuals() {
             Charts powered by{' '}
             <a
               className="text-primary underline-offset-4 hover:underline"
-              href="https://github.com/tradingview/lightweight-charts"
+              href="https://echarts.apache.org/en/index.html"
               target="_blank"
               rel="noreferrer"
             >
-              TradingView Lightweight Charts
+              Apache ECharts
             </a>
             .
           </section>

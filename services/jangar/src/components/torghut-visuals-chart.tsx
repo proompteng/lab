@@ -1,8 +1,10 @@
-import type { CandlestickData, IChartApi, ISeriesApi, LineData, UTCTimestamp } from 'lightweight-charts'
 import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 import type { IndicatorState, TorghutBar, TorghutSignal } from './torghut-visuals-types'
+
+type EChartsModule = typeof import('echarts')
+type EChartsInstance = ReturnType<EChartsModule['init']>
 
 type TorghutVisualsChartProps = {
   bars: TorghutBar[]
@@ -12,19 +14,32 @@ type TorghutVisualsChartProps = {
 }
 
 type OverlaySeriesData = {
-  ema12: LineData[]
-  ema26: LineData[]
-  bollUpper: LineData[]
-  bollMid: LineData[]
-  bollLower: LineData[]
-  vwapSession: LineData[]
-  vwapW5m: LineData[]
+  ema12: LinePoint[]
+  ema26: LinePoint[]
+  bollUpper: LinePoint[]
+  bollMid: LinePoint[]
+  bollLower: LinePoint[]
+  vwapSession: LinePoint[]
+  vwapW5m: LinePoint[]
 }
 
 type OscillatorSeriesData = {
-  macd: LineData[]
-  macdSignal: LineData[]
-  rsi: LineData[]
+  macd: LinePoint[]
+  macdSignal: LinePoint[]
+  rsi: LinePoint[]
+}
+
+type CandlePoint = {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+}
+
+type LinePoint = {
+  time: number
+  value: number
 }
 
 export function TorghutVisualsChart({ bars, signals, indicators, className }: TorghutVisualsChartProps) {
@@ -73,108 +88,46 @@ function PriceChart({
   overlays,
   indicators,
 }: {
-  candles: CandlestickData[]
+  candles: CandlePoint[]
   overlays: OverlaySeriesData
   indicators: IndicatorState
 }) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
-  const chartRef = React.useRef<IChartApi | null>(null)
-  const seriesRef = React.useRef<{
-    candles: ISeriesApi<'Candlestick'>
-    ema12: ISeriesApi<'Line'>
-    ema26: ISeriesApi<'Line'>
-    bollUpper: ISeriesApi<'Line'>
-    bollMid: ISeriesApi<'Line'>
-    bollLower: ISeriesApi<'Line'>
-    vwapSession: ISeriesApi<'Line'>
-    vwapW5m: ISeriesApi<'Line'>
-  } | null>(null)
+  const chartRef = React.useRef<EChartsInstance | null>(null)
+  const resizeRef = React.useRef<ResizeObserver | null>(null)
+  const option = React.useMemo(() => buildPriceOption(candles, overlays, indicators), [candles, overlays, indicators])
 
   React.useEffect(() => {
     let active = true
     const setup = async () => {
       if (!containerRef.current) return
-      const { createChart, ColorType } = await import('lightweight-charts')
+      const echarts = (await import('echarts')) as EChartsModule
       if (!active || !containerRef.current) return
 
-      const chart = createChart(containerRef.current, {
-        autoSize: true,
-        layout: {
-          background: { type: ColorType.Solid, color: 'transparent' },
-          textColor: '#a1a1aa',
-          fontSize: 12,
-        },
-        grid: {
-          vertLines: { color: 'rgba(63, 63, 70, 0.2)' },
-          horzLines: { color: 'rgba(63, 63, 70, 0.2)' },
-        },
-        crosshair: {
-          vertLine: { color: 'rgba(148, 163, 184, 0.4)' },
-          horzLine: { color: 'rgba(148, 163, 184, 0.4)' },
-        },
-        timeScale: {
-          timeVisible: true,
-          secondsVisible: true,
-        },
-        rightPriceScale: {
-          borderVisible: false,
-        },
-      })
-
-      const candlesSeries = chart.addCandlestickSeries({
-        upColor: '#16a34a',
-        downColor: '#dc2626',
-        wickUpColor: '#16a34a',
-        wickDownColor: '#dc2626',
-        borderUpColor: '#16a34a',
-        borderDownColor: '#dc2626',
-      })
-      const ema12Series = chart.addLineSeries({ color: '#0ea5e9', lineWidth: 1 })
-      const ema26Series = chart.addLineSeries({ color: '#f97316', lineWidth: 1 })
-      const bollUpperSeries = chart.addLineSeries({ color: '#facc15', lineWidth: 1 })
-      const bollMidSeries = chart.addLineSeries({ color: '#a855f7', lineWidth: 1 })
-      const bollLowerSeries = chart.addLineSeries({ color: '#facc15', lineWidth: 1 })
-      const vwapSessionSeries = chart.addLineSeries({ color: '#22c55e', lineWidth: 1 })
-      const vwapW5mSeries = chart.addLineSeries({ color: '#84cc16', lineWidth: 1 })
-
+      const chart = echarts.init(containerRef.current, undefined, { renderer: 'canvas' })
+      chart.setOption(option, { notMerge: true, lazyUpdate: true })
       chartRef.current = chart
-      seriesRef.current = {
-        candles: candlesSeries,
-        ema12: ema12Series,
-        ema26: ema26Series,
-        bollUpper: bollUpperSeries,
-        bollMid: bollMidSeries,
-        bollLower: bollLowerSeries,
-        vwapSession: vwapSessionSeries,
-        vwapW5m: vwapW5mSeries,
-      }
+
+      const observer = new ResizeObserver(() => chart.resize())
+      observer.observe(containerRef.current)
+      resizeRef.current = observer
     }
 
     void setup()
 
     return () => {
       active = false
-      chartRef.current?.remove()
+      resizeRef.current?.disconnect()
+      resizeRef.current = null
+      chartRef.current?.dispose()
       chartRef.current = null
-      seriesRef.current = null
     }
-  }, [])
+  }, [option])
 
   React.useEffect(() => {
-    if (!seriesRef.current) return
-    seriesRef.current.candles.setData(candles)
-    seriesRef.current.ema12.setData(indicators.ema ? overlays.ema12 : [])
-    seriesRef.current.ema26.setData(indicators.ema ? overlays.ema26 : [])
-    seriesRef.current.bollUpper.setData(indicators.boll ? overlays.bollUpper : [])
-    seriesRef.current.bollMid.setData(indicators.boll ? overlays.bollMid : [])
-    seriesRef.current.bollLower.setData(indicators.boll ? overlays.bollLower : [])
-    seriesRef.current.vwapSession.setData(indicators.vwap ? overlays.vwapSession : [])
-    seriesRef.current.vwapW5m.setData(indicators.vwap ? overlays.vwapW5m : [])
-
-    if (candles.length > 0) {
-      chartRef.current?.timeScale().fitContent()
-    }
-  }, [candles, overlays, indicators])
+    if (!chartRef.current) return
+    chartRef.current.setOption(option, { notMerge: true, lazyUpdate: true })
+  }, [option])
 
   return (
     <div
@@ -188,84 +141,49 @@ function PriceChart({
 
 function SignalChart({ oscillators, indicators }: { oscillators: OscillatorSeriesData; indicators: IndicatorState }) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
-  const chartRef = React.useRef<IChartApi | null>(null)
-  const seriesRef = React.useRef<{
-    macd: ISeriesApi<'Line'>
-    macdSignal: ISeriesApi<'Line'>
-    rsi: ISeriesApi<'Line'>
-  } | null>(null)
+  const chartRef = React.useRef<EChartsInstance | null>(null)
+  const resizeRef = React.useRef<ResizeObserver | null>(null)
+  const option = React.useMemo(() => buildSignalOption(oscillators, indicators), [oscillators, indicators])
 
   React.useEffect(() => {
     let active = true
     const setup = async () => {
       if (!containerRef.current) return
-      const { createChart, ColorType } = await import('lightweight-charts')
+      const echarts = (await import('echarts')) as EChartsModule
       if (!active || !containerRef.current) return
 
-      const chart = createChart(containerRef.current, {
-        autoSize: true,
-        layout: {
-          background: { type: ColorType.Solid, color: 'transparent' },
-          textColor: '#a1a1aa',
-          fontSize: 12,
-        },
-        grid: {
-          vertLines: { color: 'rgba(63, 63, 70, 0.2)' },
-          horzLines: { color: 'rgba(63, 63, 70, 0.2)' },
-        },
-        timeScale: {
-          timeVisible: true,
-          secondsVisible: true,
-        },
-        leftPriceScale: {
-          borderVisible: false,
-        },
-        rightPriceScale: {
-          borderVisible: false,
-        },
-      })
-
-      const macdSeries = chart.addLineSeries({ color: '#f97316', lineWidth: 1, priceScaleId: 'left' })
-      const macdSignalSeries = chart.addLineSeries({ color: '#facc15', lineWidth: 1, priceScaleId: 'left' })
-      const rsiSeries = chart.addLineSeries({ color: '#0ea5e9', lineWidth: 1, priceScaleId: 'right' })
-
+      const chart = echarts.init(containerRef.current, undefined, { renderer: 'canvas' })
+      chart.setOption(option, { notMerge: true, lazyUpdate: true })
       chartRef.current = chart
-      seriesRef.current = {
-        macd: macdSeries,
-        macdSignal: macdSignalSeries,
-        rsi: rsiSeries,
-      }
+
+      const observer = new ResizeObserver(() => chart.resize())
+      observer.observe(containerRef.current)
+      resizeRef.current = observer
     }
 
     void setup()
 
     return () => {
       active = false
-      chartRef.current?.remove()
+      resizeRef.current?.disconnect()
+      resizeRef.current = null
+      chartRef.current?.dispose()
       chartRef.current = null
-      seriesRef.current = null
     }
-  }, [])
+  }, [option])
 
   React.useEffect(() => {
-    if (!seriesRef.current) return
-    seriesRef.current.macd.setData(indicators.macd ? oscillators.macd : [])
-    seriesRef.current.macdSignal.setData(indicators.macd ? oscillators.macdSignal : [])
-    seriesRef.current.rsi.setData(indicators.rsi ? oscillators.rsi : [])
-
-    const any = indicators.macd ? oscillators.macd.length > 0 : indicators.rsi ? oscillators.rsi.length > 0 : false
-    if (any) {
-      chartRef.current?.timeScale().fitContent()
-    }
-  }, [oscillators, indicators])
+    if (!chartRef.current) return
+    chartRef.current.setOption(option, { notMerge: true, lazyUpdate: true })
+  }, [option])
 
   return (
     <div ref={containerRef} className="min-h-[14rem] w-full" role="img" aria-label="Indicator chart for MACD and RSI" />
   )
 }
 
-const buildCandles = (bars: TorghutBar[]): CandlestickData[] => {
-  const points: CandlestickData[] = []
+const buildCandles = (bars: TorghutBar[]): CandlePoint[] => {
+  const points: CandlePoint[] = []
   for (const bar of bars) {
     const time = toTimestamp(bar.event_ts ?? bar.eventTs ?? bar.ts ?? bar.time)
     if (!time) continue
@@ -280,13 +198,13 @@ const buildCandles = (bars: TorghutBar[]): CandlestickData[] => {
 }
 
 const buildOverlays = (signals: TorghutSignal[]): OverlaySeriesData => {
-  const ema12: LineData[] = []
-  const ema26: LineData[] = []
-  const bollUpper: LineData[] = []
-  const bollMid: LineData[] = []
-  const bollLower: LineData[] = []
-  const vwapSession: LineData[] = []
-  const vwapW5m: LineData[] = []
+  const ema12: LinePoint[] = []
+  const ema26: LinePoint[] = []
+  const bollUpper: LinePoint[] = []
+  const bollMid: LinePoint[] = []
+  const bollLower: LinePoint[] = []
+  const vwapSession: LinePoint[] = []
+  const vwapW5m: LinePoint[] = []
 
   for (const signal of signals) {
     const time = toTimestamp(signal.event_ts ?? signal.eventTs ?? signal.ts ?? signal.time)
@@ -328,9 +246,9 @@ const buildOverlays = (signals: TorghutSignal[]): OverlaySeriesData => {
 }
 
 const buildOscillators = (signals: TorghutSignal[]): OscillatorSeriesData => {
-  const macd: LineData[] = []
-  const macdSignal: LineData[] = []
-  const rsi: LineData[] = []
+  const macd: LinePoint[] = []
+  const macdSignal: LinePoint[] = []
+  const rsi: LinePoint[] = []
 
   for (const signal of signals) {
     const time = toTimestamp(signal.event_ts ?? signal.eventTs ?? signal.ts ?? signal.time)
@@ -363,11 +281,152 @@ const toNumber = (value: unknown): number | null => {
   return null
 }
 
-const toTimestamp = (value: string | undefined): UTCTimestamp | null => {
+const toTimestamp = (value: string | undefined): number | null => {
   if (!value) return null
   const parsed = Date.parse(value)
   if (Number.isNaN(parsed)) return null
-  return Math.floor(parsed / 1000) as UTCTimestamp
+  return parsed
 }
 
-const sortByTime = <T extends { time: UTCTimestamp }>(a: T, b: T) => a.time - b.time
+const sortByTime = <T extends { time: number }>(a: T, b: T) => a.time - b.time
+
+const buildPriceOption = (candles: CandlePoint[], overlays: OverlaySeriesData, indicators: IndicatorState) => {
+  const series = [
+    {
+      name: 'Candles',
+      type: 'candlestick',
+      data: candles.map((point) => [point.time, point.open, point.close, point.low, point.high]),
+      itemStyle: {
+        color: '#16a34a',
+        color0: '#dc2626',
+        borderColor: '#16a34a',
+        borderColor0: '#dc2626',
+      },
+    },
+    {
+      name: 'EMA 12',
+      type: 'line',
+      data: indicators.ema ? overlays.ema12.map((point) => [point.time, point.value]) : [],
+      showSymbol: false,
+      lineStyle: { width: 1, color: '#0ea5e9' },
+    },
+    {
+      name: 'EMA 26',
+      type: 'line',
+      data: indicators.ema ? overlays.ema26.map((point) => [point.time, point.value]) : [],
+      showSymbol: false,
+      lineStyle: { width: 1, color: '#f97316' },
+    },
+    {
+      name: 'Boll Upper',
+      type: 'line',
+      data: indicators.boll ? overlays.bollUpper.map((point) => [point.time, point.value]) : [],
+      showSymbol: false,
+      lineStyle: { width: 1, color: '#facc15' },
+    },
+    {
+      name: 'Boll Mid',
+      type: 'line',
+      data: indicators.boll ? overlays.bollMid.map((point) => [point.time, point.value]) : [],
+      showSymbol: false,
+      lineStyle: { width: 1, color: '#a855f7' },
+    },
+    {
+      name: 'Boll Lower',
+      type: 'line',
+      data: indicators.boll ? overlays.bollLower.map((point) => [point.time, point.value]) : [],
+      showSymbol: false,
+      lineStyle: { width: 1, color: '#facc15' },
+    },
+    {
+      name: 'VWAP Session',
+      type: 'line',
+      data: indicators.vwap ? overlays.vwapSession.map((point) => [point.time, point.value]) : [],
+      showSymbol: false,
+      lineStyle: { width: 1, color: '#22c55e' },
+    },
+    {
+      name: 'VWAP 5m',
+      type: 'line',
+      data: indicators.vwap ? overlays.vwapW5m.map((point) => [point.time, point.value]) : [],
+      showSymbol: false,
+      lineStyle: { width: 1, color: '#84cc16' },
+    },
+  ]
+
+  return {
+    animation: false,
+    backgroundColor: 'transparent',
+    grid: { left: 48, right: 24, top: 24, bottom: 32 },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    xAxis: {
+      type: 'time',
+      axisLabel: { color: '#a1a1aa' },
+      axisLine: { lineStyle: { color: 'rgba(63, 63, 70, 0.4)' } },
+      splitLine: { lineStyle: { color: 'rgba(63, 63, 70, 0.2)' } },
+    },
+    yAxis: {
+      scale: true,
+      axisLabel: { color: '#a1a1aa' },
+      splitLine: { lineStyle: { color: 'rgba(63, 63, 70, 0.2)' } },
+    },
+    series,
+  }
+}
+
+const buildSignalOption = (oscillators: OscillatorSeriesData, indicators: IndicatorState) => {
+  const macdData = indicators.macd ? oscillators.macd.map((point) => [point.time, point.value]) : []
+  const macdSignalData = indicators.macd ? oscillators.macdSignal.map((point) => [point.time, point.value]) : []
+  const rsiData = indicators.rsi ? oscillators.rsi.map((point) => [point.time, point.value]) : []
+
+  return {
+    animation: false,
+    backgroundColor: 'transparent',
+    grid: { left: 48, right: 48, top: 24, bottom: 32 },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'line' } },
+    xAxis: {
+      type: 'time',
+      axisLabel: { color: '#a1a1aa' },
+      axisLine: { lineStyle: { color: 'rgba(63, 63, 70, 0.4)' } },
+      splitLine: { lineStyle: { color: 'rgba(63, 63, 70, 0.2)' } },
+    },
+    yAxis: [
+      {
+        scale: true,
+        axisLabel: { color: '#a1a1aa' },
+        splitLine: { lineStyle: { color: 'rgba(63, 63, 70, 0.2)' } },
+      },
+      {
+        scale: true,
+        axisLabel: { color: '#a1a1aa' },
+        splitLine: { show: false },
+      },
+    ],
+    series: [
+      {
+        name: 'MACD',
+        type: 'line',
+        data: macdData,
+        showSymbol: false,
+        lineStyle: { width: 1, color: '#f97316' },
+        yAxisIndex: 0,
+      },
+      {
+        name: 'MACD Signal',
+        type: 'line',
+        data: macdSignalData,
+        showSymbol: false,
+        lineStyle: { width: 1, color: '#facc15' },
+        yAxisIndex: 0,
+      },
+      {
+        name: 'RSI',
+        type: 'line',
+        data: rsiData,
+        showSymbol: false,
+        lineStyle: { width: 1, color: '#0ea5e9' },
+        yAxisIndex: 1,
+      },
+    ],
+  }
+}
