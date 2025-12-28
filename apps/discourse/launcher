@@ -697,7 +697,7 @@ run_run() {
   (exec $docker_path run --rm --shm-size=512m $user_args $links "${env[@]}" -e DOCKER_HOST_IP="$docker_ip" -i -a stdin -a stdout -a stderr $volumes $run_image \
     /bin/bash -c "$run_command") || ERR=$?
 
-  if [[ $ERR > 0 ]]; then
+  if [[ ${ERR:-0} -gt 0 ]]; then
     exit 1
   fi
 }
