@@ -432,25 +432,62 @@ test('tampered determinism state throws WorkflowNondeterminismError', async () =
   const { registry, executor } = makeExecutor()
   registry.register(
     defineWorkflow(
-      'randomWorkflow',
+      'activityWorkflow',
       Schema.Array(Schema.Unknown),
-      ({ determinism }) =>
-        Effect.sync(() => determinism.random()),
+      ({ activities }) => activities.schedule('sendEmail', ['hi'], { activityId: 'send-1', startToCloseTimeoutMs: 1000 }),
     ),
   )
 
-  const first = await execute(executor, { workflowType: 'randomWorkflow', arguments: [] })
-  expect(first.completion).toBe('completed')
-  expect(first.determinismState.randomValues.length).toBe(1)
+  const first = await execute(executor, { workflowType: 'activityWorkflow', arguments: [] })
+  expect(first.completion).toBe('pending')
+  expect(first.determinismState.commandHistory.length).toBe(1)
 
   const tampered = cloneState(first.determinismState)
-  tampered.randomValues = []
+  const entry = tampered.commandHistory[0]
+  if (entry?.intent.kind === 'schedule-activity') {
+    tampered.commandHistory = [
+      {
+        ...entry,
+        intent: {
+          ...entry.intent,
+          activityId: `${entry.intent.activityId}-tampered`,
+        },
+      },
+    ]
+  }
 
   await expect(
     execute(executor, {
-      workflowType: 'randomWorkflow',
+      workflowType: 'activityWorkflow',
       arguments: [],
       determinismState: tampered,
+    }),
+  ).rejects.toBeInstanceOf(WorkflowNondeterminismError)
+})
+
+test('missing replay commands throws WorkflowNondeterminismError', async () => {
+  const { registry, executor } = makeExecutor()
+  registry.register(
+    defineWorkflow(
+      'timerWorkflow',
+      Schema.Array(Schema.Unknown),
+      ({ timers }) =>
+        Effect.flatMap(
+          timers.start({ timerId: 'timer-1', timeoutMs: 250 }),
+          () => Effect.sync(() => 'ok'),
+        ),
+    ),
+  )
+  registry.register(
+    defineWorkflow('noopWorkflow', Schema.Array(Schema.Unknown), () => Effect.sync(() => 'noop')),
+  )
+
+  const first = await execute(executor, { workflowType: 'timerWorkflow', arguments: [] })
+  await expect(
+    execute(executor, {
+      workflowType: 'noopWorkflow',
+      arguments: [],
+      determinismState: cloneState(first.determinismState),
     }),
   ).rejects.toBeInstanceOf(WorkflowNondeterminismError)
 })

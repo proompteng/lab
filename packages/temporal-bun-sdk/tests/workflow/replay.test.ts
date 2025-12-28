@@ -242,7 +242,10 @@ test('ingestWorkflowHistory returns determinism marker snapshot when available',
           activityId: 'send-0',
           taskQueue: 'replay-fixtures',
           input: ['hello@acme.test'],
-          timeouts: {},
+          timeouts: {
+            scheduleToCloseTimeoutMs: 30_000,
+            startToCloseTimeoutMs: 5_000,
+          },
           retry: undefined,
           requestEagerExecution: undefined,
         },
@@ -276,6 +279,7 @@ test('ingestWorkflowHistory returns determinism marker snapshot when available',
     },
   })
 
+  const activityInput = await encodeValuesToPayloads(converter, ['hello@acme.test'])
   const activityEvent = create(HistoryEventSchema, {
     eventId: 1n,
     eventType: EventType.ACTIVITY_TASK_SCHEDULED,
@@ -285,6 +289,7 @@ test('ingestWorkflowHistory returns determinism marker snapshot when available',
         activityId: 'send-0',
         activityType: create(ActivityTypeSchema, { name: 'sendEmail' }),
         taskQueue: create(TaskQueueSchema, { name: 'replay-fixtures' }),
+        input: create(PayloadsSchema, { payloads: activityInput ?? [] }),
         scheduleToCloseTimeout: { seconds: 30n, nanos: 0 },
         startToCloseTimeout: { seconds: 5n, nanos: 0 },
         workflowTaskCompletedEventId: 1n,
@@ -319,7 +324,7 @@ test('ingestWorkflowHistory applies determinism delta markers', async () => {
       {
         intent: {
           kind: 'start-timer',
-          id: 'timer-0',
+          id: 'start-timer-0',
           sequence: 0,
           timerId: 'timer-0',
           timeoutMs: 500,
@@ -336,7 +341,7 @@ test('ingestWorkflowHistory applies determinism delta markers', async () => {
       {
         intent: {
           kind: 'start-timer',
-          id: 'timer-1',
+          id: 'start-timer-1',
           sequence: 1,
           timerId: 'timer-1',
           timeoutMs: 1000,
@@ -428,6 +433,84 @@ test('ingestWorkflowHistory applies determinism delta markers', async () => {
   expect(replay.hasDeterminismMarker).toBe(true)
   expect(replay.determinismState.commandHistory).toHaveLength(2)
   expect(replay.determinismState.randomValues).toEqual([0.1, 0.2])
+})
+
+test('ingestWorkflowHistory ignores invalid determinism marker snapshots', async () => {
+  const converter = createDefaultDataConverter()
+  const info: WorkflowInfo = {
+    namespace: 'default',
+    taskQueue: 'replay-fixtures',
+    workflowId: 'wf-marker-invalid',
+    runId: 'run-marker-invalid',
+    workflowType: 'markerInvalidWorkflow',
+  }
+
+  const determinismState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          kind: 'start-timer',
+          id: 'start-timer-0',
+          sequence: 0,
+          timerId: 'timer-0',
+          timeoutMs: 250,
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+
+  const details = await Effect.runPromise(
+    encodeDeterminismMarkerDetails(converter, {
+      info,
+      determinismState,
+      lastEventId: '10',
+      recordedAt: new Date('2025-01-01T00:00:00Z'),
+    }),
+  )
+
+  const activityEvent = create(HistoryEventSchema, {
+    eventId: 1n,
+    eventType: EventType.ACTIVITY_TASK_SCHEDULED,
+    attributes: {
+      case: 'activityTaskScheduledEventAttributes',
+      value: create(ActivityTaskScheduledEventAttributesSchema, {
+        activityId: 'send-0',
+        activityType: create(ActivityTypeSchema, { name: 'sendEmail' }),
+        taskQueue: create(TaskQueueSchema, { name: 'replay-fixtures' }),
+        scheduleToCloseTimeout: { seconds: 30n, nanos: 0 },
+        startToCloseTimeout: { seconds: 5n, nanos: 0 },
+        workflowTaskCompletedEventId: 1n,
+      }),
+    },
+  })
+
+  const markerEvent = create(HistoryEventSchema, {
+    eventId: 10n,
+    eventType: EventType.MARKER_RECORDED,
+    attributes: {
+      case: 'markerRecordedEventAttributes',
+      value: create(MarkerRecordedEventAttributesSchema, {
+        markerName: 'temporal-bun-sdk/determinism',
+        details,
+      }),
+    },
+  })
+
+  const replay = await Effect.runPromise(
+    ingestWorkflowHistory({
+      info,
+      history: [activityEvent, markerEvent],
+      dataConverter: converter,
+    }),
+  )
+
+  expect(replay.hasDeterminismMarker).toBe(false)
+  expect(replay.determinismState.commandHistory).toHaveLength(1)
+  expect(replay.determinismState.commandHistory[0]?.intent.kind).toBe('schedule-activity')
 })
 
 test('ingestWorkflowHistory applies determinism markers and replays trailing history', async () => {
@@ -1212,7 +1295,7 @@ test('ingestWorkflowHistory returns marker state for determinism markers', async
       {
         intent: {
           kind: 'start-timer',
-          id: 'timer-0',
+          id: 'start-timer-0',
           sequence: 0,
           timerId: 'timer-0',
           timeoutMs: 500,

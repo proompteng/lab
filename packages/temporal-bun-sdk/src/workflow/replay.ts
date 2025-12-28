@@ -332,6 +332,21 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
 
     const extractedFailureMetadata = extractFailureMetadata(events)
     const historyLastEventId = resolveHistoryLastEventId(events) ?? null
+    if (shouldUseDeterminismMarker && hasMarker && !markerInvalid && markerState && markerEventIndex !== null) {
+      const seedEvents = events.slice(0, markerEventIndex + 1)
+      const seedReplay = yield* reconstructDeterminismState(
+        seedEvents,
+        intake,
+        extractedFailureMetadata,
+        collectWorkflowUpdateEntries(seedEvents),
+        [],
+        { historyLastEventId: markerEventId ?? null },
+      )
+      if (!commandHistoriesMatch(markerState.commandHistory, seedReplay.determinismState.commandHistory)) {
+        markerInvalid = true
+        markerState = undefined
+      }
+    }
     const eventsAfterMarker =
       shouldUseDeterminismMarker && hasMarker && markerEventIndex !== null ? events.slice(markerEventIndex + 1) : events
     const replayUpdateInvocationsAfterMarker = yield* Effect.tryPromise(async () =>
@@ -526,6 +541,23 @@ export const diffDeterminismState = (
 
     return { mismatches }
   })
+
+const commandHistoriesMatch = (
+  expected: readonly WorkflowCommandHistoryEntry[],
+  actual: readonly WorkflowCommandHistoryEntry[],
+): boolean => {
+  if (expected.length !== actual.length) {
+    return false
+  }
+  for (let index = 0; index < expected.length; index += 1) {
+    const expectedIntent = expected[index]?.intent
+    const actualIntent = actual[index]?.intent
+    if (!intentsEqual(expectedIntent, actualIntent)) {
+      return false
+    }
+  }
+  return true
+}
 
 export const resolveHistoryLastEventId = (events: HistoryEvent[]): string | null => {
   if (!events || events.length === 0) {

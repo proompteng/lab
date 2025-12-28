@@ -1,4 +1,4 @@
-import { defineWorkflow, defineWorkflowSignals, log } from '@proompteng/temporal-bun-sdk/workflow'
+import { WorkflowBlockedError, defineWorkflow, defineWorkflowSignals, log } from '@proompteng/temporal-bun-sdk/workflow'
 import { Effect } from 'effect'
 import * as Cause from 'effect/Cause'
 import * as Chunk from 'effect/Chunk'
@@ -113,6 +113,11 @@ const getCauseError = (cause: Cause.Cause<unknown>): Error | undefined => {
     }
   }
   return undefined
+}
+
+const isWorkflowBlocked = (cause: Cause.Cause<unknown>): boolean => {
+  const error = getCauseError(cause)
+  return error instanceof WorkflowBlockedError
 }
 
 type ChildWorkflowCompletion = {
@@ -535,6 +540,9 @@ export const workflows = [
 
       return yield* Effect.catchAllCause(run, (cause) =>
         Effect.gen(function* () {
+          if (isWorkflowBlocked(cause)) {
+            return yield* Effect.failCause(cause)
+          }
           const error = getCauseError(cause)
           if (error) {
             yield* finalizeIngestion('failed', error.message)
@@ -741,6 +749,9 @@ export const workflows = [
 
         return yield* Effect.catchAllCause(run, (cause) =>
           Effect.gen(function* () {
+            if (isWorkflowBlocked(cause)) {
+              return yield* Effect.failCause(cause)
+            }
             if (eventDeliveryId && ingestionId) {
               const error = getCauseError(cause)
               yield* activities.schedule(

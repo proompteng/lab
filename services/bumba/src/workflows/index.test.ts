@@ -3,6 +3,7 @@ import type {
   ActivityResolution,
   Command,
   ExecuteWorkflowInput,
+  WorkflowDeterminismState,
   WorkflowDefinitions,
   WorkflowExecutionOutput,
 } from '@proompteng/temporal-bun-sdk/workflow'
@@ -105,6 +106,81 @@ test('enrichFile schedules ingestion when event delivery is provided', async () 
       status: 'running',
     },
   ])
+})
+
+test('enrichFile does not mark ingestion failed when blocked on readRepoFile', async () => {
+  const { executor } = makeExecutor()
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    filePath: 'apps/froussard/src/webhooks/github.ts',
+    context: 'unit-test',
+    eventDeliveryId: 'delivery-1',
+  }
+
+  const determinismState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          id: 'schedule-activity-0',
+          kind: 'schedule-activity',
+          sequence: 0,
+          activityType: 'upsertIngestion',
+          activityId: 'activity-0',
+          taskQueue: 'bumba',
+          input: [
+            {
+              deliveryId: input.eventDeliveryId,
+              workflowId: 'test-workflow-id',
+              status: 'running',
+            },
+          ],
+          timeouts: {
+            scheduleToCloseTimeoutMs: 120_000,
+            startToCloseTimeoutMs: 30_000,
+          },
+          retry: {
+            initialIntervalMs: 2_000,
+            backoffCoefficient: 2,
+            maximumIntervalMs: 30_000,
+            maximumAttempts: 4,
+          },
+          requestEagerExecution: undefined,
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+
+  const activityResults = new Map<string, ActivityResolution>([
+    [
+      'activity-0',
+      {
+        status: 'completed',
+        value: {
+          ingestionId: 'ingestion-id',
+        },
+      },
+    ],
+  ])
+
+  const output = await execute(executor, {
+    workflowType: 'enrichFile',
+    arguments: input,
+    determinismState,
+    activityResults,
+  })
+
+  expect(output.completion).toBe('pending')
+  expect(output.commands).toHaveLength(1)
+  const schedule = output.commands[0]
+  expect(schedule.commandType).toBe(CommandType.SCHEDULE_ACTIVITY_TASK)
+  if (schedule.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
+    throw new Error('Expected schedule activity attributes on readRepoFile command.')
+  }
+  expect(schedule.attributes.value.activityType?.name).toBe('readRepoFile')
 })
 
 test('enrichFile completes when all activities are resolved', async () => {

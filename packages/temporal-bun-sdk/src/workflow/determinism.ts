@@ -207,14 +207,11 @@ export class DeterminismGuard {
 
     if (!this.#allowBypass && this.#previous) {
       const expected = this.#previous.randomValues[this.#randomIndex]
-      if (expected === undefined) {
-        throw new WorkflowNondeterminismError('Workflow generated new random value during replay', {
-          hint: `randomIndex=${this.#randomIndex}`,
-        })
+      if (expected !== undefined) {
+        this.snapshot.randomValues.push(expected)
+        this.#randomIndex += 1
+        return expected
       }
-      this.snapshot.randomValues.push(expected)
-      this.#randomIndex += 1
-      return expected
     }
     const value = generate()
     if (!Number.isFinite(value)) {
@@ -240,14 +237,11 @@ export class DeterminismGuard {
 
     if (!this.#allowBypass && this.#previous) {
       const expected = this.#previous.timeValues[this.#timeIndex]
-      if (expected === undefined) {
-        throw new WorkflowNondeterminismError('Workflow generated new time value during replay', {
-          hint: `timeIndex=${this.#timeIndex}`,
-        })
+      if (expected !== undefined) {
+        this.snapshot.timeValues.push(expected)
+        this.#timeIndex += 1
+        return expected
       }
-      this.snapshot.timeValues.push(expected)
-      this.#timeIndex += 1
-      return expected
     }
     const value = generate()
     if (!Number.isFinite(value)) {
@@ -321,6 +315,24 @@ export class DeterminismGuard {
 
   recordUpdate(entry: WorkflowUpdateDeterminismEntry): void {
     this.snapshot.updates.push(entry)
+  }
+
+  assertReplayComplete(): void {
+    if (this.#allowBypass || !this.#previous) {
+      return
+    }
+    const expectedCommands = this.#previous.commandHistory.length
+    const expectedRandom = this.#previous.randomValues.length
+    const expectedTime = this.#previous.timeValues.length
+    const missingCommands = expectedCommands - this.#commandIndex
+    const missingRandom = expectedRandom - this.#randomIndex
+    const missingTime = expectedTime - this.#timeIndex
+    if (missingCommands <= 0 && missingRandom <= 0 && missingTime <= 0) {
+      return
+    }
+    throw new WorkflowNondeterminismError('Workflow did not replay all history entries', {
+      hint: `missingCommands=${Math.max(0, missingCommands)} missingRandom=${Math.max(0, missingRandom)} missingTime=${Math.max(0, missingTime)}`,
+    })
   }
 }
 
