@@ -293,6 +293,10 @@ export const createCodexJudgeStore = (
     const existing = existingByUid ?? existingByName
 
     if (existing) {
+      const existingStatus = String(existing.status)
+      const nextStatus =
+        existingStatus === 'run_complete' || existingStatus === 'notified' ? 'run_complete' : existingStatus
+
       const updated = await db
         .updateTable('codex_judge.runs')
         .set({
@@ -302,7 +306,7 @@ export const createCodexJudgeStore = (
           workflow_name: input.workflowName,
           workflow_namespace: input.workflowNamespace ?? null,
           stage: input.stage,
-          status: 'run_complete',
+          status: nextStatus,
           phase: input.phase,
           prompt: input.prompt,
           run_complete_payload: input.runCompletePayload,

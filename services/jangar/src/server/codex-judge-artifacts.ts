@@ -86,12 +86,12 @@ const extractTarEntry = async (archivePath: string, entryPath: string) => {
   return new Promise<string | null>((resolve, reject) => {
     const child = spawn('tar', ['-xOzf', archivePath, entryPath], { stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
-    let stderr = ''
+    let _stderr = ''
     child.stdout.on('data', (chunk) => {
       stdout += chunk instanceof Buffer ? chunk.toString('utf8') : String(chunk)
     })
     child.stderr.on('data', (chunk) => {
-      stderr += chunk instanceof Buffer ? chunk.toString('utf8') : String(chunk)
+      _stderr += chunk instanceof Buffer ? chunk.toString('utf8') : String(chunk)
     })
     child.on('error', (error) => reject(error))
     child.on('close', (code) => {
@@ -99,7 +99,7 @@ const extractTarEntry = async (archivePath: string, entryPath: string) => {
         resolve(stdout)
         return
       }
-      if (stderr.trim().length > 0) {
+      if (_stderr.trim().length > 0) {
         resolve(null)
         return
       }
@@ -112,12 +112,12 @@ const listTarEntries = async (archivePath: string) => {
   return new Promise<string[]>((resolve, reject) => {
     const child = spawn('tar', ['-tzf', archivePath], { stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
-    let stderr = ''
+    let _stderr = ''
     child.stdout.on('data', (chunk) => {
       stdout += chunk instanceof Buffer ? chunk.toString('utf8') : String(chunk)
     })
     child.stderr.on('data', (chunk) => {
-      stderr += chunk instanceof Buffer ? chunk.toString('utf8') : String(chunk)
+      _stderr += chunk instanceof Buffer ? chunk.toString('utf8') : String(chunk)
     })
     child.on('error', (error) => reject(error))
     child.on('close', (code) => {
