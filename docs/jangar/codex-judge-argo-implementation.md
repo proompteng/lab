@@ -273,11 +273,12 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
 - Review thread resolution status (no unresolved threads authored by Codex)
 
 ### Implementation notes
-- Use GitHub GraphQL to fetch PR review threads (`reviewThreads { isResolved, comments { author } }`) and reviews.
+- Use GitHub GraphQL to fetch PR review threads (include comment body/path/line) and reviews.
 - Gate on:
   - Latest Codex review state is `APPROVED` or `COMMENTED` with all threads resolved.
   - No open review threads authored by Codex.
-- If Codex review requested changes, treat as `needs_iteration` and roll into `next_prompt`.
+- If Codex review requested changes or has unresolved threads, treat as `needs_iteration` and build
+  `next_prompt` that enumerates each review comment with the required fix.
 
 ### Deliverables
 - PR review poller keyed by PR number + commit SHA.
@@ -285,13 +286,15 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
 
 ### Detailed tasks
 - Add config `JANGAR_CODEX_REVIEWERS` (comma-separated GitHub logins).
-- Query PR metadata + reviews + review threads.
+- Query PR metadata + reviews + review threads (including comment bodies).
 - Map review threads to unresolved items; store in run record.
+- Build a `next_prompt` that lists each unresolved comment (path/line/body) when reruns are required.
 - Block judge completion until resolved; if unresolved after timeout, classify as needs_iteration.
 
 ### Acceptance criteria
 - Jangar does not mark success until Codex review is complete and threads are resolved.
 - Codex review comments are surfaced in the failure reasons and next_prompt.
+- Review-comment iterations always include a prompt section enumerating the Codex review comments.
 
 ## F) Judge Engine
 

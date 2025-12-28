@@ -5,7 +5,7 @@ import { Effect } from 'effect'
 import { getCodexClient } from '~/server/codex-client'
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 import { createCodexJudgeStore, type CodexEvaluationRecord, type CodexRunRecord } from '~/server/codex-judge-store'
-import { createGitHubClient } from '~/server/github-client'
+import { createGitHubClient, type ReviewSummary } from '~/server/github-client'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
 
 const store = createCodexJudgeStore()
@@ -236,6 +236,43 @@ const extractLogExcerpt = (payload?: Record<string, unknown> | null) => {
   }
 }
 
+const normalizeReviewBody = (value: string) => value.replace(/\s+/g, ' ').trim()
+
+const formatReviewThreads = (threads: ReviewSummary['unresolvedThreads']) => {
+  if (threads.length === 0) return 'None.'
+
+  return threads
+    .map((thread, index) => {
+      const author = thread.author ?? 'unknown'
+      const comments =
+        thread.comments.length > 0
+          ? thread.comments
+              .map((comment) => {
+                const location = comment.path
+                  ? `${comment.path}${comment.line ? `:${comment.line}` : ''}`
+                  : 'location not provided'
+                const body = comment.body ? normalizeReviewBody(comment.body) : 'no comment body provided'
+                const truncated = body.length > 240 ? `${body.slice(0, 237)}...` : body
+                return `- ${location}: ${truncated}`
+              })
+              .join('\n')
+          : '- no comment text captured'
+      return `Thread ${index + 1} (author: ${author})\n${comments}`
+    })
+    .join('\n\n')
+}
+
+const buildReviewNextPrompt = (threads: ReviewSummary['unresolvedThreads']) => {
+  const threadSummary = formatReviewThreads(threads)
+  return [
+    'Address all Codex review comments and resolve every open review thread.',
+    'Make the requested code changes, update the PR description if needed, and reply on each thread with what changed.',
+    '',
+    'Open Codex review threads:',
+    threadSummary,
+  ].join('\n')
+}
+
 const buildJudgePrompt = (input: {
   issueTitle: string
   issueBody: string
@@ -371,22 +408,27 @@ const evaluateRun = async (runId: string) => {
     },
   })
 
-  if (review.requestedChanges || review.unresolvedThreads.length > 0 || review.status === 'pending') {
+  if (review.status === 'pending') {
     scheduleEvaluation(run.id, config.reviewPollIntervalMs)
-    if (review.requestedChanges) {
-      const evaluation = await store.updateDecision({
-        runId: run.id,
-        decision: 'needs_iteration',
-        reasons: { error: 'codex_review_changes_requested', unresolved: review.unresolvedThreads },
-        suggestedFixes: { fix: 'Address Codex review comments and resolve all threads.' },
-        nextPrompt: 'Address Codex review comments and resolve all outstanding review threads.',
-        promptTuning: {},
-        systemSuggestions: {},
-      })
-      const refreshedRun = (await store.getRunById(run.id)) ?? run
-      await writeMemories(refreshedRun, evaluation)
-      await triggerRerun(run, 'codex_review_changes', evaluation)
-    }
+    return
+  }
+
+  if (review.requestedChanges || review.unresolvedThreads.length > 0) {
+    const evaluation = await store.updateDecision({
+      runId: run.id,
+      decision: 'needs_iteration',
+      reasons: {
+        error: review.requestedChanges ? 'codex_review_changes_requested' : 'codex_review_unresolved_threads',
+        unresolved: review.unresolvedThreads,
+      },
+      suggestedFixes: { fix: 'Address Codex review comments and resolve all threads.' },
+      nextPrompt: buildReviewNextPrompt(review.unresolvedThreads),
+      promptTuning: {},
+      systemSuggestions: {},
+    })
+    const refreshedRun = (await store.getRunById(run.id)) ?? run
+    await writeMemories(refreshedRun, evaluation)
+    await triggerRerun(run, 'codex_review_changes', evaluation)
     return
   }
 

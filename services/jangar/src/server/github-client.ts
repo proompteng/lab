@@ -24,9 +24,16 @@ export type CheckRunSummary = {
   url?: string
 }
 
+export type ReviewThreadComment = {
+  author: string | null
+  body: string | null
+  path: string | null
+  line: number | null
+}
+
 export type ReviewSummary = {
   status: 'pending' | 'approved' | 'changes_requested' | 'commented'
-  unresolvedThreads: Array<{ id: string; author: string | null }>
+  unresolvedThreads: Array<{ id: string; author: string | null; comments: ReviewThreadComment[] }>
   requestedChanges: boolean
 }
 
@@ -207,7 +214,7 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
             nodes {
               id
               isResolved
-              comments(last: 10) { nodes { author { login } } }
+              comments(last: 10) { nodes { author { login } body path line } }
             }
           }
         }
@@ -215,9 +222,9 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
     }`
 
     const response = (await graphql(query, { owner, repo, number })) as Record<string, unknown>
-    const pr = (response.data as Record<string, unknown> | undefined)?.repository?.(
-      response.data as Record<string, unknown>,
-    ).repository?.pullRequest as Record<string, unknown> | undefined
+    const pr = (
+      (response.data as Record<string, unknown> | undefined)?.repository as Record<string, unknown> | undefined
+    )?.pullRequest as Record<string, unknown> | undefined
 
     const reviewNodes = (pr?.reviews as Record<string, unknown> | undefined)?.nodes
     const reviews = Array.isArray(reviewNodes) ? reviewNodes : []
@@ -248,23 +255,33 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
     const unresolvedThreads = threads
       .filter((thread) => !thread.isResolved)
       .map((thread) => {
-        const comments = Array.isArray((thread.comments as Record<string, unknown> | undefined)?.nodes)
+        const commentNodes = Array.isArray((thread.comments as Record<string, unknown> | undefined)?.nodes)
           ? ((thread.comments as Record<string, unknown>).nodes as Array<Record<string, unknown>>)
           : []
-        const authorLogin = comments
-          .map((comment) => (comment.author as Record<string, unknown> | undefined)?.login)
-          .filter((login) => typeof login === 'string')
-          .map((login) => String(login).toLowerCase())
-          .find((login) => login)
+        const comments = commentNodes.map((comment) => {
+          const author = (comment.author as Record<string, unknown> | undefined)?.login
+          const login = typeof author === 'string' ? author.toLowerCase() : null
+          return {
+            author: login,
+            body: typeof comment.body === 'string' ? comment.body : null,
+            path: typeof comment.path === 'string' ? comment.path : null,
+            line: typeof comment.line === 'number' ? comment.line : null,
+          }
+        })
+        const relevantComments =
+          reviewers.length === 0
+            ? comments
+            : comments.filter((comment) => comment.author && reviewers.includes(comment.author))
+        const authorLogin = relevantComments.find((comment) => comment.author)?.author ?? comments[0]?.author ?? null
         return {
           id: String(thread.id),
-          author: authorLogin ?? null,
+          author: authorLogin,
+          comments: relevantComments,
         }
       })
       .filter((thread) => {
         if (reviewers.length === 0) return true
-        if (!thread.author) return false
-        return reviewers.includes(thread.author)
+        return thread.comments.length > 0
       })
 
     if (requestedChanges) {

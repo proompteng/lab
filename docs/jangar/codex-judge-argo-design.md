@@ -76,10 +76,12 @@ flowchart LR
 6) Notify wrapper enriches payload and POSTs to Jangar.
 7) Jangar waits for GitHub Actions CI result for the attempt commit SHA.
 8) Jangar waits for Codex PR review completion and resolved review threads.
-9) Jangar gates + LLM judge (triggered by run-complete).
-10) If pass: create/update PR, mark complete, Discord success.
-11) If fail: generate next prompt, request Facteur to trigger new Argo run on same branch.
-12) Jangar writes 10 memory snapshots from logs/output into the memories store.
+9) If Codex review has unresolved threads or requested changes, Jangar generates a next prompt that
+   addresses every comment and triggers a rerun on the same branch.
+10) Jangar gates + LLM judge (triggered by run-complete).
+11) If pass: create/update PR, mark complete, Discord success.
+12) If fail: generate next prompt, request Facteur to trigger new Argo run on same branch.
+13) Jangar writes 10 memory snapshots from logs/output into the memories store.
 
 ## Current Production Wiring (Argo CD Sources of Truth)
 - Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
@@ -188,6 +190,7 @@ Artifact access:
 - Use notify log excerpts (output/agent/runtime/events/status) for judge context and memory snapshots; fall back to artifacts when notify is missing.
 - Wait for GitHub Actions CI status for the attempt commit SHA.
 - Wait for Codex PR review completion and ensure all Codex review threads are resolved.
+- Parse Codex review comments and embed them into `next_prompt` when reruns are required.
 - Run deterministic gates:
   - CI must be green.
   - Codex review must be completed and resolved.
@@ -207,7 +210,8 @@ Artifact access:
 ## PR Review Gate (Codex Review)
 - Jangar must wait for the Codex review to complete on the PR (review by `codex`/`codex[bot]` or the configured reviewer identity).
 - All Codex review threads must be resolved before marking completion.
-- If Codex review requests changes, treat as `needs_iteration` and generate a new prompt that addresses those comments.
+- If Codex review requests changes or has unresolved threads, treat as `needs_iteration` and generate a new prompt that
+  enumerates each comment and the required fix. Threads must be resolved before success.
 
 ## Decision Logic
 Pass:
@@ -224,8 +228,9 @@ Fail:
   - repeated identical failure beyond threshold
 - For needs_iteration and needs_human, the judge must emit system-level improvement suggestions
   (system prompt tuning and broader system changes) and open a PR with those recommendations.
- - If the workflow failed before producing artifacts or a commit SHA, classify as infra failure and
-   rerun automatically until the infra-failure threshold is exceeded.
+- Review-driven iterations must include Codex comment summaries in `next_prompt`.
+- If the workflow failed before producing artifacts or a commit SHA, classify as infra failure and
+  rerun automatically until the infra-failure threshold is exceeded.
 
 ## Prompt Auto-tuning
 - Aggregate failure reasons across runs.
