@@ -45,6 +45,7 @@ const makeFakeDb = (options: FakeDbOptions = {}) => {
               content: 'hello',
               summary: 'hi',
               tags: ['smoke'],
+              metadata: {},
               created_at: new Date('2020-01-01T00:00:00.000Z'),
             },
           ] as R[],
@@ -60,6 +61,7 @@ const makeFakeDb = (options: FakeDbOptions = {}) => {
               content: 'hello',
               summary: 'hi',
               tags: ['smoke'],
+              metadata: {},
               created_at: new Date('2020-01-01T00:00:00.000Z'),
               distance: 0.123,
             },
@@ -168,5 +170,40 @@ describe('memories store', () => {
     })
 
     await expect(store.retrieve({ query: 'hello', limit: 1 })).rejects.toThrow(/missing required Postgres extensions/i)
+  })
+
+  it('stores metadata and returns it on retrieval', async () => {
+    const { db, calls } = makeFakeDb({
+      selectRows: [
+        {
+          id: 'mem-1',
+          task_name: 'default',
+          content: 'hello',
+          summary: 'hi',
+          tags: ['smoke'],
+          metadata: { foo: 'bar' },
+          created_at: new Date('2020-01-01T00:00:00.000Z'),
+          distance: 0.42,
+        },
+      ],
+    })
+    const store = createPostgresMemoriesStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+      embedText: async () => [0, 0, 0],
+    })
+
+    await store.persist({ content: 'hello', summary: 'hi', tags: ['smoke'], metadata: { foo: 'bar' } })
+
+    const insertCall = calls.find((call) => call.sql.toLowerCase().includes('insert into "memories"."entries"'))
+    const metadataParam = insertCall?.params.find(
+      (param) => typeof param === 'string' && param.trim().startsWith('{') && param.includes('"namespace"'),
+    )
+    expect(metadataParam).toBeDefined()
+    const parsedMetadata = JSON.parse(metadataParam as string) as Record<string, unknown>
+    expect(parsedMetadata).toMatchObject({ namespace: 'default', foo: 'bar' })
+
+    const records = await store.retrieve({ query: 'hello', limit: 1 })
+    expect(records[0]?.metadata).toEqual({ foo: 'bar' })
   })
 })

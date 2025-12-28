@@ -18,6 +18,7 @@ const makeService = (): { service: MemoriesService; saved: MemoryRecord[] } => {
           content,
           summary: summary ?? null,
           tags: tags ?? [],
+          metadata: {},
           createdAt: new Date().toISOString(),
         }
         saved.push(record)
