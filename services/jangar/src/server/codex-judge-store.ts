@@ -173,6 +173,7 @@ export type CodexJudgeStore = {
   getRunById: (runId: string) => Promise<CodexRunRecord | null>
   listRunsByIssue: (repository: string, issueNumber: number, branch: string) => Promise<CodexRunRecord[]>
   getRunHistory: (input: GetRunHistoryInput) => Promise<CodexRunHistory>
+  getLatestPromptTuningByIssue: (repository: string, issueNumber: number) => Promise<CodexPromptTuningRecord | null>
   createPromptTuning: (
     runId: string,
     prUrl: string,
@@ -480,6 +481,19 @@ export const createCodexJudgeStore = (
       })),
       stats,
     }
+  }
+
+  const getLatestPromptTuningByIssue = async (repository: string, issueNumber: number) => {
+    await ensureReady()
+    const row = await db
+      .selectFrom('codex_judge.prompt_tuning')
+      .innerJoin('codex_judge.runs', 'codex_judge.prompt_tuning.run_id', 'codex_judge.runs.id')
+      .selectAll('codex_judge.prompt_tuning')
+      .where('codex_judge.runs.repository', '=', repository)
+      .where('codex_judge.runs.issue_number', '=', issueNumber)
+      .orderBy('codex_judge.prompt_tuning.created_at desc')
+      .executeTakeFirst()
+    return row ? rowToPromptTuning(row as Record<string, unknown>) : null
   }
 
   const enforceSingleActiveRun = async (run: CodexRunRecord) => {
@@ -846,6 +860,7 @@ export const createCodexJudgeStore = (
     getRunById,
     listRunsByIssue,
     getRunHistory,
+    getLatestPromptTuningByIssue,
     createPromptTuning,
     close,
   }

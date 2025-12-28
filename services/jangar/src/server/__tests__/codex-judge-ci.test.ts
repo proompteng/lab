@@ -7,6 +7,13 @@ import { storePrivate } from './codex-judge-store-private'
 const getRefSha = vi.fn()
 const getCheckRuns = vi.fn()
 
+const requireMock = <T>(value: T | null | undefined, label: string): T => {
+  if (!value) {
+    throw new Error(`${label} was not initialized`)
+  }
+  return value
+}
+
 const globalState = globalThis as typeof globalThis & {
   __codexJudgeStoreMock?: CodexJudgeStore
   __codexJudgeGithubMock?: {
@@ -37,6 +44,9 @@ const globalState = globalThis as typeof globalThis & {
     judgeModel: string
     promptTuningEnabled: boolean
     promptTuningRepo: string | null
+    promptTuningFailureThreshold: number
+    promptTuningWindowHours: number
+    promptTuningCooldownHours: number
   }
   __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
 }
@@ -56,6 +66,7 @@ if (!globalState.__codexJudgeStoreMock) {
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
     getRunHistory: vi.fn(),
+    getLatestPromptTuningByIssue: vi.fn(),
     createPromptTuning: vi.fn(),
     close: vi.fn(),
   }
@@ -93,6 +104,9 @@ if (!globalState.__codexJudgeConfigMock) {
     judgeModel: 'gpt-5.2-codex',
     promptTuningEnabled: false,
     promptTuningRepo: null,
+    promptTuningFailureThreshold: 3,
+    promptTuningWindowHours: 24,
+    promptTuningCooldownHours: 6,
   }
 }
 
@@ -104,20 +118,21 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
 }
 
 vi.mock('../codex-judge-config', () => ({
-  loadCodexJudgeConfig: () => globalState.__codexJudgeConfigMock!,
+  loadCodexJudgeConfig: () => requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock'),
 }))
 
 vi.mock('../codex-judge-store', () => ({
   __private: storePrivate,
-  createCodexJudgeStore: () => globalState.__codexJudgeStoreMock!,
+  createCodexJudgeStore: () => requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock'),
 }))
 
 vi.mock('../github-client', () => ({
-  createGitHubClient: () => globalState.__codexJudgeGithubMock!,
+  createGitHubClient: () => requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock'),
 }))
 
 vi.mock('../memories-store', () => ({
-  createPostgresMemoriesStore: () => globalState.__codexJudgeMemoryStoreMock!,
+  createPostgresMemoriesStore: () =>
+    requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memory store mock'),
 }))
 
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
@@ -149,6 +164,9 @@ const config = {
   judgeModel: 'gpt-5.2-codex',
   promptTuningEnabled: false,
   promptTuningRepo: null,
+  promptTuningFailureThreshold: 3,
+  promptTuningWindowHours: 24,
+  promptTuningCooldownHours: 6,
 }
 
 const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
@@ -185,8 +203,8 @@ describe('codex-judge CI fallback', () => {
   beforeEach(async () => {
     getRefSha.mockReset()
     getCheckRuns.mockReset()
-    Object.assign(globalState.__codexJudgeGithubMock!, github)
-    Object.assign(globalState.__codexJudgeConfigMock!, config)
+    Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock'), github)
+    Object.assign(requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock'), config)
     if (!__private) {
       __private = (await import('../codex-judge')).__private
     }
@@ -197,7 +215,7 @@ describe('codex-judge CI fallback', () => {
     getCheckRuns.mockResolvedValueOnce({ status: 'pending' })
 
     const run = buildRun()
-    const result = await __private!.resolveCiContext(run, null)
+    const result = await requireMock(__private, 'codex judge private').resolveCiContext(run, null)
 
     expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', 'branchsha1234567890')
@@ -223,7 +241,7 @@ describe('codex-judge CI fallback', () => {
       },
     })
 
-    const result = await __private!.resolveCiContext(run, null)
+    const result = await requireMock(__private, 'codex judge private').resolveCiContext(run, null)
 
     expect(getRefSha).not.toHaveBeenCalled()
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', manifestSha)
@@ -243,7 +261,7 @@ describe('codex-judge CI fallback', () => {
       },
     })
 
-    const result = await __private!.resolveCiContext(run, null)
+    const result = await requireMock(__private, 'codex judge private').resolveCiContext(run, null)
 
     expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', branchSha)
@@ -257,7 +275,7 @@ describe('codex-judge CI fallback', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     const run = buildRun()
-    const result = await __private!.resolveCiContext(run, null)
+    const result = await requireMock(__private, 'codex judge private').resolveCiContext(run, null)
 
     expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', branchSha)

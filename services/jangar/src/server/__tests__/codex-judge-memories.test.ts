@@ -7,6 +7,13 @@ import { storePrivate } from './codex-judge-store-private'
 
 const persistCalls: PersistMemoryInput[] = []
 
+const requireMock = <T>(value: T | null | undefined, label: string): T => {
+  if (!value) {
+    throw new Error(`${label} was not initialized`)
+  }
+  return value
+}
+
 const globalState = globalThis as typeof globalThis & {
   __codexJudgeStoreMock?: CodexJudgeStore
   __codexJudgeGithubMock?: {
@@ -37,6 +44,9 @@ const globalState = globalThis as typeof globalThis & {
     judgeModel: string
     promptTuningEnabled: boolean
     promptTuningRepo: string | null
+    promptTuningFailureThreshold: number
+    promptTuningWindowHours: number
+    promptTuningCooldownHours: number
   }
   __codexJudgeMemoryStoreMock?: {
     persist: (input: PersistMemoryInput) => Promise<{
@@ -69,6 +79,7 @@ if (!globalState.__codexJudgeStoreMock) {
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
     getRunHistory: vi.fn(),
+    getLatestPromptTuningByIssue: vi.fn(),
     createPromptTuning: vi.fn(),
     close: vi.fn(),
   }
@@ -106,6 +117,9 @@ if (!globalState.__codexJudgeConfigMock) {
     judgeModel: 'gpt-5.2-codex',
     promptTuningEnabled: false,
     promptTuningRepo: null,
+    promptTuningFailureThreshold: 3,
+    promptTuningWindowHours: 24,
+    promptTuningCooldownHours: 6,
   }
 }
 
@@ -130,20 +144,21 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
 }
 
 vi.mock('../codex-judge-config', () => ({
-  loadCodexJudgeConfig: () => globalState.__codexJudgeConfigMock!,
+  loadCodexJudgeConfig: () => requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock'),
 }))
 
 vi.mock('../codex-judge-store', () => ({
   __private: storePrivate,
-  createCodexJudgeStore: () => globalState.__codexJudgeStoreMock!,
+  createCodexJudgeStore: () => requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock'),
 }))
 
 vi.mock('../github-client', () => ({
-  createGitHubClient: () => globalState.__codexJudgeGithubMock!,
+  createGitHubClient: () => requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock'),
 }))
 
 vi.mock('../memories-store', () => ({
-  createPostgresMemoriesStore: () => globalState.__codexJudgeMemoryStoreMock!,
+  createPostgresMemoriesStore: () =>
+    requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memory store mock'),
 }))
 
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
@@ -161,6 +176,7 @@ const store = {
   getRunById: vi.fn(),
   listRunsByIssue: vi.fn(),
   getRunHistory: vi.fn(),
+  getLatestPromptTuningByIssue: vi.fn(),
   createPromptTuning: vi.fn(),
   close: vi.fn(),
 }
@@ -192,6 +208,9 @@ const config = {
   judgeModel: 'gpt-5.2-codex',
   promptTuningEnabled: false,
   promptTuningRepo: null,
+  promptTuningFailureThreshold: 3,
+  promptTuningWindowHours: 24,
+  promptTuningCooldownHours: 6,
 }
 const memoriesStore = {
   persist: async (input: PersistMemoryInput) => {
@@ -212,10 +231,10 @@ const memoriesStore = {
 }
 
 beforeEach(async () => {
-  Object.assign(globalState.__codexJudgeStoreMock!, store)
-  Object.assign(globalState.__codexJudgeGithubMock!, github)
-  Object.assign(globalState.__codexJudgeConfigMock!, config)
-  Object.assign(globalState.__codexJudgeMemoryStoreMock!, memoriesStore)
+  Object.assign(requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock'), store)
+  Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock'), github)
+  Object.assign(requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock'), config)
+  Object.assign(requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memory store mock'), memoriesStore)
   if (!__private) {
     __private = (await import('../codex-judge')).__private
   }
@@ -268,7 +287,7 @@ describe('codex-judge memory snapshots', () => {
       createdAt: '2025-01-01T01:00:00Z',
     }
 
-    await __private!.writeMemories(run, evaluation)
+    await requireMock(__private, 'codex judge private').writeMemories(run, evaluation)
 
     expect(persistCalls).toHaveLength(10)
 
