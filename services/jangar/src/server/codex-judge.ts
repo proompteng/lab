@@ -295,6 +295,7 @@ const buildJudgePrompt = (input: {
   return [
     'You are the Codex judge. Evaluate whether the implementation satisfies the issue requirements.',
     'Return JSON only with fields: decision, confidence, requirements_coverage, missing_items, suggested_fixes, next_prompt, prompt_tuning_suggestions, system_improvement_suggestions.',
+    "Use decision = 'pass' when requirements are satisfied, otherwise 'fail'.",
     '',
     `CI status: ${input.ciStatus}`,
     `Codex review status: ${input.reviewStatus}`,
@@ -323,6 +324,17 @@ const parseJudgeOutput = (raw: string) => {
     throw new Error('judge output missing JSON object')
   }
   return JSON.parse(match[0]) as Record<string, unknown>
+}
+
+const normalizeJudgeDecision = (value: string) => {
+  const normalized = value.trim().toLowerCase()
+  if (['pass', 'approve', 'approved', 'success', 'complete', 'completed'].includes(normalized)) {
+    return 'pass'
+  }
+  if (['fail', 'failed', 'reject', 'rejected'].includes(normalized)) {
+    return 'fail'
+  }
+  return normalized
 }
 
 const evaluateRun = async (runId: string) => {
@@ -474,7 +486,8 @@ const evaluateRun = async (runId: string) => {
     return
   }
 
-  const decision = typeof judgeOutput.decision === 'string' ? judgeOutput.decision : 'fail'
+  const decisionRaw = typeof judgeOutput.decision === 'string' ? judgeOutput.decision : 'fail'
+  const decision = normalizeJudgeDecision(decisionRaw)
   const nextPrompt = typeof judgeOutput.next_prompt === 'string' ? judgeOutput.next_prompt : null
 
   const evaluation = await store.updateDecision({
