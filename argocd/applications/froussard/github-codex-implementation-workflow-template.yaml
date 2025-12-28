@@ -160,3 +160,13 @@ spec:
             path: /workspace/lab/.codex-implementation.patch
           - name: implementation-status
             path: /workspace/lab/.codex-implementation-status.txt
+          - name: implementation-log
+            path: /workspace/lab/.codex-implementation.log
+          - name: implementation-events
+            path: /workspace/lab/.codex-implementation-events.jsonl
+          - name: implementation-agent-log
+            path: /workspace/lab/.codex-implementation-agent.log
+          - name: implementation-runtime-log
+            path: /workspace/lab/.codex-implementation-runtime.log
+          - name: implementation-resume
+            path: /workspace/lab/.codex/implementation-resume.json
