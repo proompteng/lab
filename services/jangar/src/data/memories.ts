@@ -23,11 +23,18 @@ export type CountMemoriesInput = {
   namespace?: string
 }
 
-export type PersistNoteResult = { ok: true; memory: MemoryRecord } | { ok: false; message: string }
-export type RetrieveNotesResult = { ok: true; memories: MemoryRecord[] } | { ok: false; message: string }
+type MemoryRecordJson = Omit<MemoryRecord, 'metadata'> & { metadata: Record<string, {}> }
+
+export type PersistNoteResult = { ok: true; memory: MemoryRecordJson } | { ok: false; message: string }
+export type RetrieveNotesResult = { ok: true; memories: MemoryRecordJson[] } | { ok: false; message: string }
 export type CountMemoriesResult = { ok: true; count: number } | { ok: false; message: string }
 
 const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoriesLive))
+
+const toJsonMemoryRecord = (record: MemoryRecord): MemoryRecordJson => ({
+  ...record,
+  metadata: record.metadata as Record<string, {}>,
+})
 
 const persistNoteServer = createServerFn({ method: 'POST' })
   .inputValidator((input) => (input ?? {}) as PersistNoteInput)
@@ -46,7 +53,7 @@ const persistNoteServer = createServerFn({ method: 'POST' })
     )
 
     if (memoryResult._tag === 'Left') return { ok: false, message: memoryResult.left.message }
-    return { ok: true, memory: memoryResult.right }
+    return { ok: true, memory: toJsonMemoryRecord(memoryResult.right) }
   })
 
 const retrieveNotesServer = createServerFn({ method: 'POST' })
@@ -66,7 +73,7 @@ const retrieveNotesServer = createServerFn({ method: 'POST' })
     )
 
     if (memoriesResult._tag === 'Left') return { ok: false, message: memoriesResult.left.message }
-    return { ok: true, memories: memoriesResult.right }
+    return { ok: true, memories: memoriesResult.right.map(toJsonMemoryRecord) }
   })
 
 const countMemoriesServer = createServerFn({ method: 'POST' })
