@@ -6,6 +6,15 @@ persistentVolumeClaim:
     - ReadWriteOnce
   size: 1Gi
   storageClassName: longhorn
+podSecurityContext:
+  fsGroup: 101
+volumeMounts:
+  - name: headlamp-data
+    mountPath: /home/headlamp
+volumes:
+  - name: headlamp-data
+    persistentVolumeClaim:
+      claimName: headlamp
 config:
   oidc:
     secret:
