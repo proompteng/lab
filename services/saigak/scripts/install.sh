@@ -17,12 +17,34 @@ SERVICE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 log "installing saigak from ${SERVICE_DIR}"
 
-require_cmd curl
 require_cmd sudo
+
+if ! command -v curl >/dev/null 2>&1; then
+  log "installing curl"
+  sudo apt-get update -y
+  sudo apt-get install -y curl ca-certificates gnupg lsb-release
+fi
+
+install_docker() {
+  log "installing docker + compose plugin"
+  sudo apt-get update -y
+  sudo apt-get install -y ca-certificates curl gnupg lsb-release
+  sudo install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  sudo chmod a+r /etc/apt/keyrings/docker.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+  sudo apt-get update -y
+  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  sudo systemctl enable --now docker
+}
 
 if ! command -v ollama >/dev/null 2>&1; then
   log "ollama not found, installing"
   curl -fsSL https://ollama.com/install.sh | sh
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+  install_docker
 fi
 
 log "installing systemd override and ollama env"
@@ -35,14 +57,22 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now ollama
 sudo systemctl restart ollama
 
-if [[ -n "${SAIGAK_MODELS:-}" ]]; then
-  log "pulling models: ${SAIGAK_MODELS}"
-  for model in ${SAIGAK_MODELS//,/ }; do
-    sudo -u ollama /usr/local/bin/ollama pull "${model}"
+log "waiting for ollama to become ready"
+for _ in $(seq 1 30); do
+  if OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama list >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+if [[ "${SAIGAK_SKIP_MODELS:-}" != "1" ]]; then
+  models="${SAIGAK_MODELS:-qwen3-coder:30b-a3b-q4_K_M,qwen3-embedding:0.6b}"
+  log "pulling models: ${models}"
+  for model in ${models//,/ }; do
+    sudo -u ollama OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama pull "${model}"
   done
 fi
 
-require_cmd docker
 if ! docker compose version >/dev/null 2>&1; then
   echo "[saigak] docker compose plugin is required" >&2
   exit 1

@@ -25,12 +25,14 @@ SAIGAK_GRAFANA_PASSWORD=changeme \
 
 Optional: enable Nginx by setting `SAIGAK_ENABLE_NGINX=1`.
 Optional: pre-pull models by setting `SAIGAK_MODELS` (comma-separated).
+Default models: `qwen3-coder:30b-a3b-q4_K_M`, `qwen3-embedding:0.6b` (set `SAIGAK_SKIP_MODELS=1` to skip).
 
 ## Requirements
 
 - Docker with the compose plugin
 - systemd
 - network access to LGTM endpoints (Tailscale DNS names `mimir`, `tempo`, and `grafana`)
+If Docker is missing, the install script will install it via the official Docker apt repo.
 
 ## Configuration
 
