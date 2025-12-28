@@ -336,6 +336,18 @@ export class DeterminismGuard {
   }
 }
 
+const intentSignatureCache = new WeakMap<WorkflowCommandIntent, string>()
+
+const getIntentSignature = (intent: WorkflowCommandIntent): string => {
+  const cached = intentSignatureCache.get(intent)
+  if (cached) {
+    return cached
+  }
+  const signature = stableIntentSignature(normalizeIntentForComparison(intent))
+  intentSignatureCache.set(intent, signature)
+  return signature
+}
+
 export const intentsEqual = (a: WorkflowCommandIntent | undefined, b: WorkflowCommandIntent | undefined): boolean => {
   if (!a || !b) {
     return a === b
@@ -346,9 +358,7 @@ export const intentsEqual = (a: WorkflowCommandIntent | undefined, b: WorkflowCo
   if (a.sequence !== b.sequence) {
     return false
   }
-  const signatureA = stableIntentSignature(normalizeIntentForComparison(a))
-  const signatureB = stableIntentSignature(normalizeIntentForComparison(b))
-  return signatureA === signatureB
+  return getIntentSignature(a) === getIntentSignature(b)
 }
 
 const DEFAULT_CHILD_WORKFLOW_TASK_TIMEOUT_MS = 10_000

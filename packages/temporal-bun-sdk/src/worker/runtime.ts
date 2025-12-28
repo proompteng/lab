@@ -93,8 +93,9 @@ import type {
   WorkflowDeterminismSignalRecord,
   WorkflowDeterminismState,
   WorkflowRetryPolicyInput,
+  WorkflowUpdateDeterminismEntry,
 } from '../workflow/determinism'
-import { stableStringify } from '../workflow/determinism'
+import { intentsEqual, stableStringify } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import type { WorkflowQueryEvaluationResult, WorkflowUpdateInvocation } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
@@ -2243,18 +2244,59 @@ export class WorkerRuntime {
     if (!previous) {
       return undefined
     }
-    const sliceAppend = <T>(currentList: readonly T[], previousList: readonly T[]): T[] | undefined => {
+    const normalizeOptional = <T>(value: T | null | undefined): T | null => (value === undefined ? null : value)
+    const optionalEquals = <T>(left: T | null | undefined, right: T | null | undefined): boolean =>
+      normalizeOptional(left) === normalizeOptional(right)
+    const signalsEqual = (left: WorkflowDeterminismSignalRecord, right: WorkflowDeterminismSignalRecord): boolean =>
+      left.signalName === right.signalName &&
+      left.handlerName === right.handlerName &&
+      left.payloadHash === right.payloadHash &&
+      optionalEquals(left.eventId, right.eventId) &&
+      optionalEquals(left.workflowTaskCompletedEventId, right.workflowTaskCompletedEventId) &&
+      optionalEquals(left.identity, right.identity)
+    const queriesEqual = (left: WorkflowDeterminismQueryRecord, right: WorkflowDeterminismQueryRecord): boolean =>
+      left.queryName === right.queryName &&
+      left.handlerName === right.handlerName &&
+      left.requestHash === right.requestHash &&
+      optionalEquals(left.identity, right.identity) &&
+      optionalEquals(left.queryId, right.queryId) &&
+      left.resultHash === right.resultHash &&
+      left.failureHash === right.failureHash
+    const updatesEqual = (left: WorkflowUpdateDeterminismEntry, right: WorkflowUpdateDeterminismEntry): boolean =>
+      left.updateId === right.updateId &&
+      left.stage === right.stage &&
+      left.handlerName === right.handlerName &&
+      left.identity === right.identity &&
+      left.sequencingEventId === right.sequencingEventId &&
+      left.messageId === right.messageId &&
+      left.acceptedEventId === right.acceptedEventId &&
+      left.outcome === right.outcome &&
+      left.failureMessage === right.failureMessage &&
+      left.historyEventId === right.historyEventId
+
+    const sliceAppend = <T>(
+      currentList: readonly T[],
+      previousList: readonly T[],
+      equals: (left: T, right: T) => boolean = Object.is,
+    ): T[] | undefined => {
       if (currentList.length < previousList.length) {
         return undefined
+      }
+      for (let index = 0; index < previousList.length; index += 1) {
+        if (!equals(previousList[index] as T, currentList[index] as T)) {
+          return undefined
+        }
       }
       return currentList.slice(previousList.length)
     }
 
-    const commandHistory = sliceAppend(current.commandHistory, previous.commandHistory)
+    const commandHistory = sliceAppend(current.commandHistory, previous.commandHistory, (left, right) =>
+      intentsEqual(left?.intent, right?.intent),
+    )
     const randomValues = sliceAppend(current.randomValues, previous.randomValues)
     const timeValues = sliceAppend(current.timeValues, previous.timeValues)
-    const signals = sliceAppend(current.signals, previous.signals)
-    const queries = sliceAppend(current.queries, previous.queries)
+    const signals = sliceAppend(current.signals, previous.signals, signalsEqual)
+    const queries = sliceAppend(current.queries, previous.queries, queriesEqual)
     if (!commandHistory || !randomValues || !timeValues || !signals || !queries) {
       return undefined
     }
@@ -2264,13 +2306,22 @@ export class WorkerRuntime {
     if (updatesNext.length < updatesPrev.length) {
       return undefined
     }
-    const updates = updatesNext.slice(updatesPrev.length)
+    const updates = sliceAppend(updatesNext, updatesPrev, updatesEqual)
+    if (!updates) {
+      return undefined
+    }
     const logCount =
       current.logCount !== undefined && current.logCount !== previous.logCount ? current.logCount : undefined
     const failureMetadata =
-      current.failureMetadata && stableStringify(current.failureMetadata) !== stableStringify(previous.failureMetadata)
-        ? current.failureMetadata
-        : undefined
+      current.failureMetadata && previous.failureMetadata
+        ? current.failureMetadata.eventId !== previous.failureMetadata.eventId ||
+          current.failureMetadata.eventType !== previous.failureMetadata.eventType ||
+          current.failureMetadata.failureType !== previous.failureMetadata.failureType ||
+          current.failureMetadata.failureMessage !== previous.failureMetadata.failureMessage ||
+          current.failureMetadata.retryState !== previous.failureMetadata.retryState
+          ? current.failureMetadata
+          : undefined
+        : (current.failureMetadata ?? undefined)
 
     return {
       commandHistory,
