@@ -45,6 +45,8 @@ const globalState = globalThis as typeof globalThis & {
     codexReviewers: string[]
     ciPollIntervalMs: number
     reviewPollIntervalMs: number
+    ciMaxWaitMs: number
+    reviewMaxWaitMs: number
     maxAttempts: number
     backoffScheduleMs: number[]
     facteurBaseUrl: string
@@ -119,6 +121,8 @@ if (!globalState.__codexJudgeConfigMock) {
     codexReviewers: [],
     ciPollIntervalMs: 1000,
     reviewPollIntervalMs: 1000,
+    ciMaxWaitMs: 10_000,
+    reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [1000],
     facteurBaseUrl: 'http://facteur',
@@ -211,6 +215,8 @@ const config = {
   codexReviewers: [],
   ciPollIntervalMs: 1000,
   reviewPollIntervalMs: 1000,
+  ciMaxWaitMs: 10_000,
+  reviewMaxWaitMs: 10_000,
   maxAttempts: 3,
   backoffScheduleMs: [1000],
   facteurBaseUrl: 'http://facteur',
@@ -281,8 +287,10 @@ describe('codex-judge memory snapshots', () => {
       prUrl: 'https://github.com/proompteng/lab/pull/42',
       ciStatus: 'success',
       ciUrl: 'https://github.com/proompteng/lab/actions/runs/1',
+      ciStatusUpdatedAt: '2025-01-01T00:10:00Z',
       reviewStatus: null,
       reviewSummary: {},
+      reviewStatusUpdatedAt: null,
       notifyPayload: null,
       runCompletePayload: null,
       createdAt: '2025-01-01T00:00:00Z',

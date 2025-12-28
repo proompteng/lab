@@ -47,6 +47,8 @@ const globalState = globalThis as typeof globalThis & {
     codexReviewers: string[]
     ciPollIntervalMs: number
     reviewPollIntervalMs: number
+    ciMaxWaitMs: number
+    reviewMaxWaitMs: number
     maxAttempts: number
     backoffScheduleMs: number[]
     facteurBaseUrl: string
@@ -108,6 +110,8 @@ if (!globalState.__codexJudgeConfigMock) {
     codexReviewers: [],
     ciPollIntervalMs: 1000,
     reviewPollIntervalMs: 1000,
+    ciMaxWaitMs: 10_000,
+    reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [0],
     facteurBaseUrl: 'http://facteur.test',
@@ -163,8 +167,10 @@ const harness = (() => {
     prUrl: null,
     ciStatus: null,
     ciUrl: null,
+    ciStatusUpdatedAt: null,
     reviewStatus: null,
     reviewSummary: {},
+    reviewStatusUpdatedAt: null,
     notifyPayload: {},
     runCompletePayload: {
       issueTitle: 'Issue title',
@@ -340,6 +346,8 @@ const harness = (() => {
     codexReviewers: [],
     ciPollIntervalMs: 1000,
     reviewPollIntervalMs: 1000,
+    ciMaxWaitMs: 10_000,
+    reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [0],
     facteurBaseUrl: 'http://facteur.test',
