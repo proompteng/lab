@@ -193,7 +193,7 @@ describe('codex-judge CI fallback', () => {
     getCheckRuns.mockResolvedValueOnce({ status: 'pending' })
 
     const run = buildRun()
-    const result = await __private.resolveCiContext(run, null)
+    const result = await __private!.resolveCiContext(run, null)
 
     expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', 'branchsha1234567890')
@@ -219,7 +219,7 @@ describe('codex-judge CI fallback', () => {
       },
     })
 
-    const result = await __private.resolveCiContext(run, null)
+    const result = await __private!.resolveCiContext(run, null)
 
     expect(getRefSha).not.toHaveBeenCalled()
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', manifestSha)
@@ -239,7 +239,7 @@ describe('codex-judge CI fallback', () => {
       },
     })
 
-    const result = await __private.resolveCiContext(run, null)
+    const result = await __private!.resolveCiContext(run, null)
 
     expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', branchSha)
@@ -253,7 +253,7 @@ describe('codex-judge CI fallback', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     const run = buildRun()
-    const result = await __private.resolveCiContext(run, null)
+    const result = await __private!.resolveCiContext(run, null)
 
     expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', branchSha)

@@ -378,7 +378,7 @@ describe('codex judge guardrails', () => {
       }),
     ])
 
-    await __private.evaluateRun('run-1')
+    await __private!.evaluateRun('run-1')
 
     expect(harness.codexClient.runTurn).toHaveBeenCalledTimes(2)
     expect(harness.judgePrompts[1]).toContain('JSON object only')
@@ -398,7 +398,7 @@ describe('codex judge guardrails', () => {
 
     harness.setJudgeResponses(['nope', 'still nope', 'no json here'])
 
-    await __private.evaluateRun('run-1')
+    await __private!.evaluateRun('run-1')
 
     expect(harness.codexClient.runTurn).toHaveBeenCalledTimes(3)
     expect(harness.store.updateDecision).toHaveBeenCalledWith(
@@ -414,7 +414,7 @@ describe('codex judge guardrails', () => {
   it('does not re-enter judging for completed runs', async () => {
     harness.setRun({ status: 'completed' })
 
-    await __private.evaluateRun('run-1')
+    await __private!.evaluateRun('run-1')
 
     expect(harness.store.updateRunStatus).not.toHaveBeenCalled()
     expect(harness.codexClient.runTurn).not.toHaveBeenCalled()
