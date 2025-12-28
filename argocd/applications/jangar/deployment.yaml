@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2025-12-28T05:14:02.3NZ"
+    deploy.knative.dev/rollout: "2025-12-28T05:17:58.3NZ"
 spec:
   replicas: 1
   strategy:
@@ -79,7 +79,7 @@ spec:
                   name: github-token
                   key: token
             - name: JANGAR_CODEX_REVIEWERS
-              value: codex,codex[bot],chatgpt-codex-connector
+              value: codex,codex[bot],chatgpt-codex-connector,chatgpt-codex-connector[bot]
             - name: JANGAR_CI_POLL_INTERVAL_MS
               value: "30000"
             - name: JANGAR_REVIEW_POLL_INTERVAL_MS
