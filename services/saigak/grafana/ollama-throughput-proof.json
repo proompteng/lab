@@ -1,0 +1,82 @@
+{
+  "dashboard": {
+    "uid": "ollama-throughput-proof",
+    "title": "Ollama Throughput Proof",
+    "schemaVersion": 39,
+    "version": 1,
+    "time": {
+      "from": "now-30m",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "type": "timeseries",
+        "title": "Completion Tokens/sec (rate)",
+        "datasource": {"uid": "prom"},
+        "targets": [
+          {
+            "expr": "rate(ollama_completion_tokens_total[30s])",
+            "legendFormat": "{{model}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 7, "w": 24, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "type": "timeseries",
+        "title": "Requests/sec (rate)",
+        "datasource": {"uid": "prom"},
+        "targets": [
+          {
+            "expr": "rate(ollama_requests_total[30s])",
+            "legendFormat": "{{endpoint}}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 7, "w": 24, "x": 0, "y": 7}
+      },
+      {
+        "id": 3,
+        "type": "stat",
+        "title": "Avg Completion TPS last 5m",
+        "datasource": {"uid": "prom"},
+        "targets": [
+          {
+            "expr": "avg_over_time(rate(ollama_completion_tokens_total[30s])[5m:])",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 8, "x": 0, "y": 14}
+      },
+      {
+        "id": 4,
+        "type": "stat",
+        "title": "Avg Requests/sec last 5m",
+        "datasource": {"uid": "prom"},
+        "targets": [
+          {
+            "expr": "avg_over_time(rate(ollama_requests_total[30s])[5m:])",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 8, "x": 8, "y": 14}
+      },
+      {
+        "id": 5,
+        "type": "stat",
+        "title": "Avg Tokens/request last 5m",
+        "datasource": {"uid": "prom"},
+        "targets": [
+          {
+            "expr": "avg_over_time(ollama_total_tokens_total[5m]) / avg_over_time(ollama_requests_total[5m])",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 8, "x": 16, "y": 14}
+      }
+    ]
+  },
+  "overwrite": true
+}
