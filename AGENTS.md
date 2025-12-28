@@ -48,7 +48,7 @@
 - Use Conventional Commits: `<type>(<scope>): <summary>` (scope optional).
 - Common types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `build`, `ci`, `perf`, `revert`.
 - PR titles must follow the same semantic convention.
-- Create PRs by first copying `.github/PULL_REQUEST_TEMPLATE.md` to a temp file, filling it out, then running `gh pr create --body-file <temp-file>`.
+- Create PRs with `gh pr create` using `--body-file .github/PULL_REQUEST_TEMPLATE.md`.
 
 ## Pull Request Template Hygiene
 - Never submit a PR with empty bullets or placeholder lines in the template.
