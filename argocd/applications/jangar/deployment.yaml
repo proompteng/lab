@@ -79,7 +79,7 @@ spec:
                   name: github-token
                   key: token
             - name: JANGAR_CODEX_REVIEWERS
-              value: codex,codex[bot],chatgpt-codex-connector,chatgpt-codex-connector[bot]
+              value: codex,codex[bot],chatgpt-codex-connector,chatgpt-codex-connector[bot],gregkonush
             - name: JANGAR_CI_POLL_INTERVAL_MS
               value: "30000"
             - name: JANGAR_REVIEW_POLL_INTERVAL_MS
