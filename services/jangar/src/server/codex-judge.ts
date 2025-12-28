@@ -18,6 +18,14 @@ const github = createGitHubClient({ token: config.githubToken, apiBaseUrl: confi
 const argo = config.argoServerUrl ? createArgoClient({ baseUrl: config.argoServerUrl }) : null
 
 const scheduledRuns = new Map<string, NodeJS.Timeout>()
+const activeEvaluations = new Set<string>()
+const terminalStatuses = new Set(['completed', 'needs_human', 'needs_iteration'])
+const isTerminalStatus = (status: string | null | undefined) => (status ? terminalStatuses.has(status) : false)
+const MAX_JUDGE_JSON_RETRIES = 2
+const JSON_ONLY_REMINDER = [
+  'IMPORTANT: Return a single JSON object only.',
+  'Do not include markdown, code fences, or extra text.',
+].join('\n')
 
 const safeParseJson = (value: string) => {
   try {
@@ -336,9 +344,10 @@ const fetchBranchHeadSha = async (repository: string, branch: string) => {
   }
 }
 
-const scheduleEvaluation = (runId: string, delayMs: number) => {
+const scheduleEvaluation = (runId: string, delayMs: number, options: { reschedule?: boolean } = {}) => {
   const existing = scheduledRuns.get(runId)
   if (existing) {
+    if (!options.reschedule) return
     clearTimeout(existing)
   }
   const timeout = setTimeout(() => {
@@ -835,6 +844,34 @@ const parseJudgeOutput = (raw: string) => {
   return JSON.parse(match[0]) as Record<string, unknown>
 }
 
+const buildJudgeRetryPrompt = (prompt: string, attempt: number) => {
+  const retryNote = `Retry ${attempt} of ${MAX_JUDGE_JSON_RETRIES}.`
+  return `${prompt}\n\n${JSON_ONLY_REMINDER}\n${retryNote}`
+}
+
+const runJudgeWithRetries = async (
+  client: { runTurn: (prompt: string) => Promise<{ text: string }> },
+  prompt: string,
+  maxRetries: number,
+) => {
+  let lastError: unknown
+
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const attemptPrompt = attempt === 0 ? prompt : buildJudgeRetryPrompt(prompt, attempt)
+    const { text } = await client.runTurn(attemptPrompt)
+    try {
+      return { output: parseJudgeOutput(text), attempts: attempt + 1 }
+    } catch (error) {
+      lastError = error
+      if (attempt >= maxRetries) {
+        throw error
+      }
+    }
+  }
+
+  throw lastError ?? new Error('judge output missing JSON object')
+}
+
 const normalizeJudgeDecision = (value: string) => {
   const normalized = value.trim().toLowerCase()
   if (['pass', 'approve', 'approved', 'success', 'complete', 'completed'].includes(normalized)) {
@@ -847,232 +884,248 @@ const normalizeJudgeDecision = (value: string) => {
 }
 
 const evaluateRun = async (runId: string) => {
-  const run = await store.getRunById(runId)
-  if (!run) return
+  if (activeEvaluations.has(runId)) return
+  activeEvaluations.add(runId)
 
-  if (run.status === 'completed' || run.status === 'needs_human') return
+  try {
+    const run = await store.getRunById(runId)
+    if (!run) return
 
-  await store.updateRunStatus(run.id, 'judging')
+    if (isTerminalStatus(run.status) || run.status === 'superseded') return
 
-  const pr = await fetchPullRequest(run)
-  if (pr) {
-    await store.updateRunPrInfo(run.id, pr.number, pr.htmlUrl, pr.headSha)
-  }
-
-  await store.updateRunPrompt(run.id, run.prompt, run.nextPrompt)
-
-  if (pr?.mergeableState === 'dirty') {
-    const evaluation = await store.updateDecision({
-      runId: run.id,
-      decision: 'needs_human',
-      reasons: { error: 'merge_conflict' },
-      suggestedFixes: { fix: 'Resolve merge conflicts on the branch before resuming.' },
-      nextPrompt: 'Resolve merge conflicts on the branch and update the PR.',
-      promptTuning: {},
-      systemSuggestions: {},
-    })
-    const refreshedRun = (await store.getRunById(run.id)) ?? run
-    await writeMemories(refreshedRun, evaluation)
-    if (config.promptTuningEnabled && config.promptTuningRepo) {
-      const suggestions = buildSuggestionsFromEvaluation(evaluation)
-      await createPromptTuningPr(run, evaluation.nextPrompt ?? '', suggestions)
+    if (run.status !== 'judging') {
+      const updated = await store.updateRunStatus(run.id, 'judging')
+      if (!updated) return
     }
-    await sendDiscordEscalation(run, 'merge_conflict')
-    return
-  }
 
-  const { commitSha, ci } = await resolveCiContext(run, pr)
-  if (!commitSha && !pr) {
-    const evaluation = await store.updateDecision({
-      runId: run.id,
-      decision: 'needs_iteration',
-      reasons: { error: 'missing_pull_request' },
-      suggestedFixes: { fix: 'Ensure PR exists for branch before completion.' },
-      nextPrompt: 'Open a PR for the current branch and ensure all required checks run.',
-      promptTuning: {},
-      systemSuggestions: {},
-    })
-    const refreshedRun = (await store.getRunById(run.id)) ?? run
-    await writeMemories(refreshedRun, evaluation)
-    await triggerRerun(run, 'missing_pull_request', evaluation)
-    return
-  }
+    const pr = await fetchPullRequest(run)
+    if (pr) {
+      await store.updateRunPrInfo(run.id, pr.number, pr.htmlUrl, pr.headSha)
+    }
 
-  await store.updateCiStatus({ runId: run.id, status: ci.status, url: ci.url, commitSha })
+    await store.updateRunPrompt(run.id, run.prompt, run.nextPrompt)
 
-  if (ci.status === 'pending') {
-    scheduleEvaluation(run.id, config.ciPollIntervalMs)
-    return
-  }
-
-  if (ci.status === 'failure') {
-    const evaluation = await store.updateDecision({
-      runId: run.id,
-      decision: 'needs_iteration',
-      reasons: { error: 'ci_failed', url: ci.url },
-      suggestedFixes: { fix: 'Fix CI failures and re-run tests.' },
-      nextPrompt: 'Fix CI failures for this PR and ensure all checks are green.',
-      promptTuning: {},
-      systemSuggestions: {},
-    })
-    const refreshedRun = (await store.getRunById(run.id)) ?? run
-    await writeMemories(refreshedRun, evaluation)
-    await triggerRerun(run, 'ci_failed', evaluation)
-    return
-  }
-
-  if (!pr) {
-    const evaluation = await store.updateDecision({
-      runId: run.id,
-      decision: 'needs_iteration',
-      reasons: { error: 'missing_pull_request' },
-      suggestedFixes: { fix: 'Ensure PR exists for branch before completion.' },
-      nextPrompt: 'Open a PR for the current branch and ensure all required checks run.',
-      promptTuning: {},
-      systemSuggestions: {},
-    })
-    const refreshedRun = (await store.getRunById(run.id)) ?? run
-    await writeMemories(refreshedRun, evaluation)
-    await triggerRerun(run, 'missing_pull_request', evaluation)
-    return
-  }
-
-  const review = await fetchReviewStatus(run, pr.number)
-  await store.updateReviewStatus({
-    runId: run.id,
-    status: review.status,
-    summary: {
-      unresolvedThreads: review.unresolvedThreads,
-      requestedChanges: review.requestedChanges,
-      issueComments: review.issueComments,
-    },
-  })
-
-  if (review.status === 'pending') {
-    scheduleEvaluation(run.id, config.reviewPollIntervalMs)
-    return
-  }
-
-  if (review.requestedChanges || review.unresolvedThreads.length > 0) {
-    const evaluation = await store.updateDecision({
-      runId: run.id,
-      decision: 'needs_iteration',
-      reasons: {
-        error: review.requestedChanges ? 'codex_review_changes_requested' : 'codex_review_unresolved_threads',
-        unresolved: review.unresolvedThreads,
-      },
-      suggestedFixes: { fix: 'Address Codex review comments and resolve all threads.' },
-      nextPrompt: buildReviewNextPrompt(review.unresolvedThreads),
-      promptTuning: {},
-      systemSuggestions: {},
-    })
-    const refreshedRun = (await store.getRunById(run.id)) ?? run
-    await writeMemories(refreshedRun, evaluation)
-    await triggerRerun(run, 'codex_review_changes', evaluation)
-    return
-  }
-
-  const { owner, repo } = parseRepositoryParts(run.repository)
-  const diff = await github.getPullRequestDiff(owner, repo, pr.number)
-
-  const issueTitle = (run.runCompletePayload?.issueTitle as string | undefined) ?? pr.title
-  const issueBody = (run.runCompletePayload?.issueBody as string | undefined) ?? ''
-  const logExcerpt = extractLogExcerpt(run.notifyPayload)
-  const gateFailure = evaluateDeterministicGates({
-    diff,
-    logExcerpt,
-    issueTitle,
-    issueBody,
-    prompt: run.nextPrompt ?? run.prompt,
-    runCompletePayload: run.runCompletePayload,
-  })
-
-  if (gateFailure) {
-    const evaluation = await store.updateDecision({
-      runId: run.id,
-      decision: gateFailure.decision,
-      reasons: { error: gateFailure.reason, detail: gateFailure.detail },
-      suggestedFixes: { fix: gateFailure.suggestedFix },
-      nextPrompt: gateFailure.nextPrompt,
-      promptTuning: {},
-      systemSuggestions: {},
-    })
-    const refreshedRun = (await store.getRunById(run.id)) ?? run
-    await writeMemories(refreshedRun, evaluation)
-
-    if (gateFailure.decision === 'needs_human') {
+    if (pr?.mergeableState === 'dirty') {
+      const evaluation = await store.updateDecision({
+        runId: run.id,
+        decision: 'needs_human',
+        reasons: { error: 'merge_conflict' },
+        suggestedFixes: { fix: 'Resolve merge conflicts on the branch before resuming.' },
+        nextPrompt: 'Resolve merge conflicts on the branch and update the PR.',
+        promptTuning: {},
+        systemSuggestions: {},
+      })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
       if (config.promptTuningEnabled && config.promptTuningRepo) {
         const suggestions = buildSuggestionsFromEvaluation(evaluation)
         await createPromptTuningPr(run, evaluation.nextPrompt ?? '', suggestions)
       }
-      await sendDiscordEscalation(run, gateFailure.reason)
+      await sendDiscordEscalation(run, 'merge_conflict')
       return
     }
 
-    await triggerRerun(run, gateFailure.reason, evaluation)
-    return
-  }
+    const { commitSha, ci } = await resolveCiContext(run, pr)
+    if (!commitSha && !pr) {
+      const evaluation = await store.updateDecision({
+        runId: run.id,
+        decision: 'needs_iteration',
+        reasons: { error: 'missing_pull_request' },
+        suggestedFixes: { fix: 'Ensure PR exists for branch before completion.' },
+        nextPrompt: 'Open a PR for the current branch and ensure all required checks run.',
+        promptTuning: {},
+        systemSuggestions: {},
+      })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+      await triggerRerun(run, 'missing_pull_request', evaluation)
+      return
+    }
 
-  const judgePrompt = buildJudgePrompt({
-    issueTitle,
-    issueBody,
-    prTitle: pr.title,
-    prBody: pr.body,
-    diff,
-    summary: (run.notifyPayload?.last_assistant_message as string | null) ?? null,
-    ciStatus: ci.status,
-    reviewStatus: review.status,
-    logExcerpt,
-  })
+    await store.updateCiStatus({ runId: run.id, status: ci.status, url: ci.url, commitSha })
 
-  const client = await Effect.runPromise(getCodexClient({ defaultModel: config.judgeModel }))
-  const { text } = await client.runTurn(judgePrompt)
+    if (ci.status === 'pending') {
+      scheduleEvaluation(run.id, config.ciPollIntervalMs, { reschedule: true })
+      return
+    }
 
-  let judgeOutput: Record<string, unknown>
-  try {
-    judgeOutput = parseJudgeOutput(text)
-  } catch (error) {
+    if (ci.status === 'failure') {
+      const evaluation = await store.updateDecision({
+        runId: run.id,
+        decision: 'needs_iteration',
+        reasons: { error: 'ci_failed', url: ci.url },
+        suggestedFixes: { fix: 'Fix CI failures and re-run tests.' },
+        nextPrompt: 'Fix CI failures for this PR and ensure all checks are green.',
+        promptTuning: {},
+        systemSuggestions: {},
+      })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+      await triggerRerun(run, 'ci_failed', evaluation)
+      return
+    }
+
+    if (!pr) {
+      const evaluation = await store.updateDecision({
+        runId: run.id,
+        decision: 'needs_iteration',
+        reasons: { error: 'missing_pull_request' },
+        suggestedFixes: { fix: 'Ensure PR exists for branch before completion.' },
+        nextPrompt: 'Open a PR for the current branch and ensure all required checks run.',
+        promptTuning: {},
+        systemSuggestions: {},
+      })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+      await triggerRerun(run, 'missing_pull_request', evaluation)
+      return
+    }
+
+    const review = await fetchReviewStatus(run, pr.number)
+    await store.updateReviewStatus({
+      runId: run.id,
+      status: review.status,
+      summary: {
+        unresolvedThreads: review.unresolvedThreads,
+        requestedChanges: review.requestedChanges,
+        issueComments: review.issueComments,
+      },
+    })
+
+    if (review.status === 'pending') {
+      scheduleEvaluation(run.id, config.reviewPollIntervalMs, { reschedule: true })
+      return
+    }
+
+    if (review.requestedChanges || review.unresolvedThreads.length > 0) {
+      const evaluation = await store.updateDecision({
+        runId: run.id,
+        decision: 'needs_iteration',
+        reasons: {
+          error: review.requestedChanges ? 'codex_review_changes_requested' : 'codex_review_unresolved_threads',
+          unresolved: review.unresolvedThreads,
+        },
+        suggestedFixes: { fix: 'Address Codex review comments and resolve all threads.' },
+        nextPrompt: buildReviewNextPrompt(review.unresolvedThreads),
+        promptTuning: {},
+        systemSuggestions: {},
+      })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+      await triggerRerun(run, 'codex_review_changes', evaluation)
+      return
+    }
+
+    const { owner, repo } = parseRepositoryParts(run.repository)
+    const diff = await github.getPullRequestDiff(owner, repo, pr.number)
+
+    const issueTitle = (run.runCompletePayload?.issueTitle as string | undefined) ?? pr.title
+    const issueBody = (run.runCompletePayload?.issueBody as string | undefined) ?? ''
+    const logExcerpt = extractLogExcerpt(run.notifyPayload)
+    const gateFailure = evaluateDeterministicGates({
+      diff,
+      logExcerpt,
+      issueTitle,
+      issueBody,
+      prompt: run.nextPrompt ?? run.prompt,
+      runCompletePayload: run.runCompletePayload,
+    })
+
+    if (gateFailure) {
+      const evaluation = await store.updateDecision({
+        runId: run.id,
+        decision: gateFailure.decision,
+        reasons: { error: gateFailure.reason, detail: gateFailure.detail },
+        suggestedFixes: { fix: gateFailure.suggestedFix },
+        nextPrompt: gateFailure.nextPrompt,
+        promptTuning: {},
+        systemSuggestions: {},
+      })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+
+      if (gateFailure.decision === 'needs_human') {
+        if (config.promptTuningEnabled && config.promptTuningRepo) {
+          const suggestions = buildSuggestionsFromEvaluation(evaluation)
+          await createPromptTuningPr(run, evaluation.nextPrompt ?? '', suggestions)
+        }
+        await sendDiscordEscalation(run, gateFailure.reason)
+        return
+      }
+
+      await triggerRerun(run, gateFailure.reason, evaluation)
+      return
+    }
+
+    const judgePrompt = buildJudgePrompt({
+      issueTitle,
+      issueBody,
+      prTitle: pr.title,
+      prBody: pr.body,
+      diff,
+      summary: (run.notifyPayload?.last_assistant_message as string | null) ?? null,
+      ciStatus: ci.status,
+      reviewStatus: review.status,
+      logExcerpt,
+    })
+
+    const client = await Effect.runPromise(getCodexClient({ defaultModel: config.judgeModel }))
+
+    let judgeOutput: Record<string, unknown>
+    let judgeAttempts = 0
+    try {
+      const result = await runJudgeWithRetries(client, judgePrompt, MAX_JUDGE_JSON_RETRIES)
+      judgeOutput = result.output
+      judgeAttempts = result.attempts
+    } catch (error) {
+      const evaluation = await store.updateDecision({
+        runId: run.id,
+        decision: 'needs_iteration',
+        reasons: {
+          error: 'judge_invalid_json',
+          detail: String(error),
+          attempts: judgeAttempts || MAX_JUDGE_JSON_RETRIES + 1,
+        },
+        suggestedFixes: { fix: 'Retry judge output formatting.' },
+        nextPrompt: 'Re-run judge with valid JSON output.',
+        promptTuning: {},
+        systemSuggestions: {},
+      })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+      await triggerRerun(run, 'judge_invalid_json', evaluation)
+      return
+    }
+
+    const decisionRaw = typeof judgeOutput.decision === 'string' ? judgeOutput.decision : 'fail'
+    const decision = normalizeJudgeDecision(decisionRaw)
+    const nextPrompt = typeof judgeOutput.next_prompt === 'string' ? judgeOutput.next_prompt : null
+
     const evaluation = await store.updateDecision({
       runId: run.id,
-      decision: 'needs_iteration',
-      reasons: { error: 'judge_invalid_json', detail: String(error) },
-      suggestedFixes: { fix: 'Retry judge output formatting.' },
-      nextPrompt: 'Re-run judge with valid JSON output.',
-      promptTuning: {},
-      systemSuggestions: {},
+      decision: decision === 'pass' ? 'pass' : 'needs_iteration',
+      confidence: typeof judgeOutput.confidence === 'number' ? judgeOutput.confidence : null,
+      reasons: { requirements_coverage: judgeOutput.requirements_coverage ?? [], decision },
+      missingItems: { missing_items: judgeOutput.missing_items ?? [] },
+      suggestedFixes: { suggested_fixes: judgeOutput.suggested_fixes ?? [] },
+      nextPrompt,
+      promptTuning: { suggestions: judgeOutput.prompt_tuning_suggestions ?? [] },
+      systemSuggestions: { suggestions: judgeOutput.system_improvement_suggestions ?? [] },
     })
+
+    if (decision === 'pass') {
+      const updatedRun = (await store.updateRunStatus(run.id, 'completed')) ?? run
+      await sendDiscordSuccess(run, pr.htmlUrl, ci.url)
+      await writeMemories(updatedRun, evaluation)
+      return
+    }
+
     const refreshedRun = (await store.getRunById(run.id)) ?? run
     await writeMemories(refreshedRun, evaluation)
-    await triggerRerun(run, 'judge_invalid_json', evaluation)
-    return
+    await triggerRerun(run, 'judge_failed', evaluation)
+  } finally {
+    activeEvaluations.delete(runId)
   }
-
-  const decisionRaw = typeof judgeOutput.decision === 'string' ? judgeOutput.decision : 'fail'
-  const decision = normalizeJudgeDecision(decisionRaw)
-  const nextPrompt = typeof judgeOutput.next_prompt === 'string' ? judgeOutput.next_prompt : null
-
-  const evaluation = await store.updateDecision({
-    runId: run.id,
-    decision: decision === 'pass' ? 'pass' : 'needs_iteration',
-    confidence: typeof judgeOutput.confidence === 'number' ? judgeOutput.confidence : null,
-    reasons: { requirements_coverage: judgeOutput.requirements_coverage ?? [], decision },
-    missingItems: { missing_items: judgeOutput.missing_items ?? [] },
-    suggestedFixes: { suggested_fixes: judgeOutput.suggested_fixes ?? [] },
-    nextPrompt,
-    promptTuning: { suggestions: judgeOutput.prompt_tuning_suggestions ?? [] },
-    systemSuggestions: { suggestions: judgeOutput.system_improvement_suggestions ?? [] },
-  })
-
-  if (decision === 'pass') {
-    const updatedRun = (await store.updateRunStatus(run.id, 'completed')) ?? run
-    await sendDiscordSuccess(run, pr.htmlUrl, ci.url)
-    await writeMemories(updatedRun, evaluation)
-    return
-  }
-
-  const refreshedRun = (await store.getRunById(run.id)) ?? run
-  await writeMemories(refreshedRun, evaluation)
-  await triggerRerun(run, 'judge_failed', evaluation)
 }
 
 const buildSuggestionsFromEvaluation = (evaluation?: CodexEvaluationRecord) => {
@@ -1400,7 +1453,9 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
 
   const resolvedArtifacts = await updateArtifactsFromWorkflow(run, parsed.artifacts)
   await applyArtifactFallback(run, resolvedArtifacts)
-  scheduleEvaluation(run.id, 1000)
+  if (run.status === 'run_complete') {
+    scheduleEvaluation(run.id, 1000)
+  }
 
   return run
 }
@@ -1426,4 +1481,8 @@ export const handleNotify = async (payload: Record<string, unknown>) => {
   }
 
   return run
+}
+
+export const __private = {
+  evaluateRun,
 }
