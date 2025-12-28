@@ -117,9 +117,19 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
   const rawData = (payload.data as Record<string, unknown> | string | undefined) ?? payload
   const data = typeof rawData === 'string' ? safeParseJson(rawData) : isRecord(rawData) ? rawData : {}
   const decodedPayload = decodeSchema(RunCompletePayloadSchema, data, {})
-  const metadata = decodedPayload.metadata ?? {}
-  const status = decodedPayload.status ?? {}
-  const params = decodeSchema(ParametersSchema, decodedPayload.arguments?.parameters ?? [], [])
+  const rawMetadata = isRecord(data.metadata) ? data.metadata : (decodedPayload.metadata ?? {})
+  const rawStatus = isRecord(data.status) ? data.status : (decodedPayload.status ?? {})
+  const rawArguments = (() => {
+    if (isRecord(data.arguments)) return data.arguments
+    if (typeof data.arguments === 'string') return safeParseJson(data.arguments)
+    return decodedPayload.arguments ?? {}
+  })()
+  const argumentsRecord = isRecord(rawArguments) ? rawArguments : {}
+  const params = decodeSchema(
+    ParametersSchema,
+    argumentsRecord.parameters ?? decodedPayload.arguments?.parameters ?? [],
+    [],
+  )
 
   const eventBodyRaw = getParamValue(params, 'eventBody')
   const eventBody = decodeSchema(EventBodySchema, eventBodyRaw ? decodeBase64Json(eventBodyRaw) : {}, {})
@@ -131,7 +141,7 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
   const issueTitle = typeof eventBody.issueTitle === 'string' ? eventBody.issueTitle : null
   const issueBody = typeof eventBody.issueBody === 'string' ? eventBody.issueBody : null
   const issueUrl = typeof eventBody.issueUrl === 'string' ? eventBody.issueUrl : null
-  const artifacts = (decodedPayload.artifacts ?? [])
+  const artifacts = (Array.isArray(data.artifacts) ? data.artifacts : (decodedPayload.artifacts ?? []))
     .map((artifact) => {
       const decoded = decodeSchema(ArtifactSchema, artifact, {})
       const name = decoded.name ?? ''
@@ -156,13 +166,13 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     issueTitle,
     issueBody,
     issueUrl,
-    workflowName: String(metadata.name ?? ''),
-    workflowUid: typeof metadata.uid === 'string' ? metadata.uid : null,
-    workflowNamespace: typeof metadata.namespace === 'string' ? metadata.namespace : null,
+    workflowName: String(rawMetadata.name ?? ''),
+    workflowUid: typeof rawMetadata.uid === 'string' ? rawMetadata.uid : null,
+    workflowNamespace: typeof rawMetadata.namespace === 'string' ? rawMetadata.namespace : null,
     stage: typeof decodedPayload.stage === 'string' ? decodedPayload.stage : null,
-    phase: typeof status.phase === 'string' ? status.phase : null,
-    startedAt: typeof status.startedAt === 'string' ? status.startedAt : null,
-    finishedAt: typeof status.finishedAt === 'string' ? status.finishedAt : null,
+    phase: typeof rawStatus.phase === 'string' ? rawStatus.phase : null,
+    startedAt: typeof rawStatus.startedAt === 'string' ? rawStatus.startedAt : null,
+    finishedAt: typeof rawStatus.finishedAt === 'string' ? rawStatus.finishedAt : null,
     artifacts,
     runCompletePayload: data,
   }
