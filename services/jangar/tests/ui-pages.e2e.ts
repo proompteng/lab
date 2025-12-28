@@ -34,4 +34,9 @@ test.describe('ui pages', () => {
     await page.goto('/torghut/symbols')
     await expect(page.getByRole('heading', { name: 'Symbols', level: 1 })).toBeVisible()
   })
+
+  test('torghut visuals', async ({ page }) => {
+    await page.goto('/torghut/visuals')
+    await expect(page.getByRole('heading', { name: 'Visuals', level: 1 })).toBeVisible()
+  })
 })
