@@ -329,12 +329,12 @@ const loadResumeMetadata = async ({
   return context
 }
 
-const clearResumeMetadata = async (path: string, logger: CodexLogger) => {
-  try {
-    await rm(path, { force: true })
-  } catch (error) {
-    logger.warn(`Failed to clear resume metadata at ${path}`, error)
+const ensureEmptyFile = async (path: string) => {
+  if (await pathExists(path)) {
+    return
   }
+  await ensureFileDirectory(path)
+  await writeFile(path, '', 'utf8')
 }
 
 const extractArchiveTo = async (archivePath: string, destination: string) => {
@@ -655,12 +655,8 @@ const captureImplementationArtifacts = async ({
       resumedFromSessionId: resumedSessionId,
     }
 
-    if (markForResume) {
-      await ensureFileDirectory(resumeMetadataPath)
-      await writeFile(resumeMetadataPath, JSON.stringify(resumeMetadata, null, 2), 'utf8')
-    } else {
-      await clearResumeMetadata(resumeMetadataPath, logger)
-    }
+    await ensureFileDirectory(resumeMetadataPath)
+    await writeFile(resumeMetadataPath, JSON.stringify(resumeMetadata, null, 2), 'utf8')
   } catch (error) {
     logger.error('Failed to capture implementation change artifacts', error)
     try {
@@ -819,6 +815,11 @@ export const runCodexImplementation = async (eventPath: string) => {
       run_id: channelRunId || undefined,
     },
   })
+
+  await ensureEmptyFile(outputPath)
+  await ensureEmptyFile(jsonOutputPath)
+  await ensureEmptyFile(agentOutputPath)
+  await ensureEmptyFile(runtimeLogPath)
 
   const normalizedIssueNumber = issueNumber
   let resumeContext: ResumeContext | undefined
