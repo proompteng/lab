@@ -1,7 +1,7 @@
 # Implementation Details: Codex Judge + Resumable Argo
 
 This document splits the work into parallel tracks and provides concrete interfaces, schemas, and workflow steps.
-The judge pipeline is triggered by the Argo run-complete event; notify is enrichment only.
+The judge pipeline is triggered by the Argo run-complete event (success or failure); notify is enrichment only.
 
 Current production context (see `docs/codex-workflow.md`):
 - Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
@@ -15,29 +15,32 @@ A) Argo workflow updates (Froussard)
 B) Notify wrapper
 C) Jangar ingestion + persistence
 D) GitHub Actions status integration
-E) Judge engine (gates + LLM)
-F) Orchestration (rerun trigger)
-G) Discord notifications
-H) Prompt auto-tuning PRs
-I) Memory snapshots (10 per run)
+E) PR review gate (Codex review)
+F) Judge engine (gates + LLM)
+G) Orchestration (rerun trigger)
+H) Discord notifications
+I) Prompt auto-tuning PRs
+J) Memory snapshots (10 per run)
 
 Blocking chain:
-- A, B, C, D can start immediately.
-- E depends on C and D.
-- F and G depend on E.
-- H depends on E.
+- A, B, C, D, E can start immediately.
+- F depends on C, D, E.
+- G and H depend on F.
+- I depends on F.
+- J depends on F.
 
 Dependency graph:
 ```mermaid
 flowchart LR
-  A[Argo workflow] --> E[Judge engine]
+  A[Argo workflow] --> F[Judge engine]
   B[Notify wrapper] --> C[Jangar ingest]
-  C --> E
-  D[CI integration] --> E
-  E --> F[Rerun orchestration]
-  E --> G[Discord notify]
-  E --> H[Prompt auto-tuning]
-  E --> I[Memory snapshots]
+  C --> F
+  D[CI integration] --> F
+  E[PR review gate] --> F
+  F --> G[Rerun orchestration]
+  F --> H[Discord notify]
+  F --> I[Prompt auto-tuning]
+  F --> J[Memory snapshots]
 ```
 
 ## A) Argo Workflow Updates (Froussard)
@@ -241,10 +244,41 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
 - Judge runs only after CI conclusion is success or failure.
 - CI URLs are stored and surfaced in Discord messages.
 
-## E) Judge Engine
+## E) PR Review Gate (Codex Review)
+
+### Goal
+Ensure the Codex review is complete and all Codex review threads are resolved before completion.
+
+### Signals
+- PR reviews by configured reviewers (`codex`, `codex[bot]`, or configured list)
+- Review thread resolution status (no unresolved threads authored by Codex)
+
+### Implementation notes
+- Use GitHub GraphQL to fetch PR review threads (`reviewThreads { isResolved, comments { author } }`) and reviews.
+- Gate on:
+  - Latest Codex review state is `APPROVED` or `COMMENTED` with all threads resolved.
+  - No open review threads authored by Codex.
+- If Codex review requested changes, treat as `needs_iteration` and roll into `next_prompt`.
+
+### Deliverables
+- PR review poller keyed by PR number + commit SHA.
+- Configuration for Codex reviewer identities.
+
+### Detailed tasks
+- Add config `JANGAR_CODEX_REVIEWERS` (comma-separated GitHub logins).
+- Query PR metadata + reviews + review threads.
+- Map review threads to unresolved items; store in run record.
+- Block judge completion until resolved; if unresolved after timeout, classify as needs_iteration.
+
+### Acceptance criteria
+- Jangar does not mark success until Codex review is complete and threads are resolved.
+- Codex review comments are surfaced in the failure reasons and next_prompt.
+
+## F) Judge Engine
 
 ### Deterministic gates
 - ci_status must be success for the attempt commit_sha
+- Codex PR review completed and all Codex review threads resolved
 - merge conflict detection: check if patch apply failed or conflict markers present
 - diff non-empty (unless task allows no-op)
 
@@ -281,17 +315,19 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
 
 ### Detailed tasks
 - Implement CI gate (block until success, fail on failure).
+- Implement PR review gate integration (block until Codex review resolved).
 - Merge conflict detection using diff/markers.
 - Define rubric prompt template and schema.
 - Validate LLM output and handle retries on invalid JSON.
 - Generate next_prompt for reruns when failing.
+ - If `needs_iteration` or `needs_human`, include system prompt improvements + system-level suggestions in the output.
 
 ### Acceptance criteria
 - Deterministic gates block incomplete work before LLM.
 - LLM output is always valid JSON or retried.
 - Decision is persisted and correlated to run.
 
-## F) Orchestration (Rerun Trigger)
+## G) Orchestration (Rerun Trigger)
 
 ### Behavior
 - If decision == fail: trigger new Argo run
@@ -321,7 +357,7 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
 - Rerun starts with correct branch and prompt via Facteur.
 - Attempts are monotonic and capped by policy.
 
-## G) Discord Notifications
+## H) Discord Notifications
 
 ### Success only (general channel)
 - Include issue link, PR link, CI link, summary, artifacts
@@ -342,7 +378,7 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
 - Success notifications appear in general channel with correct links.
 - Escalations are rare and only for defined hard failures.
 
-## H) Prompt Auto-tuning PRs
+## I) Prompt Auto-tuning PRs
 
 ### Pipeline
 - Aggregate repeated failure reasons
@@ -357,9 +393,10 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
 - Prompt version metadata stored in Jangar.
 
 ### Detailed tasks
-- Define prompt template location and edit strategy.
+- Prompt template location: `apps/froussard/src/codex.ts` (`buildImplementationPrompt`).
+- Define edit strategy that keeps scope minimal and preserves existing constraints.
 - Generate patch from tuning suggestions.
-- Create PR branch and open PR automatically.
+- Create PR branch and open PR automatically using the repo PR template.
 - Track PR status and link to runs that caused change.
  - Include system-level improvement suggestions in the PR description or companion doc.
 
@@ -367,7 +404,7 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
 - PR created with minimal diff and clear rationale.
 - Prompt version updated only via PR merge.
 
-## I) Memory Snapshots (10 per run)
+## J) Memory Snapshots (10 per run)
 
 ### Purpose
 Persist structured learning from each run so future prompts and judge decisions can use semantic recall.
@@ -396,20 +433,24 @@ Agent 1: Argo workflow updates (Workstream A)
 Agent 2: Notify wrapper (Workstream B)
 Agent 3: Jangar ingestion + persistence (Workstream C)
 Agent 4: GitHub Actions integration (Workstream D)
-Agent 5: Judge engine (Workstream E)
-Agent 6: Orchestration (Workstream F)
-Agent 7: Discord integration (Workstream G)
-Agent 8: Prompt auto-tuning PRs (Workstream H)
+Agent 5: PR review gate (Workstream E)
+Agent 6: Judge engine (Workstream F)
+Agent 7: Orchestration (Workstream G)
+Agent 8: Discord integration (Workstream H)
+Agent 9: Prompt auto-tuning PRs (Workstream I)
+Agent 10: Memory snapshots (Workstream J)
 
 ## Minimal Blocking Sequence
-1) Complete A, B, C, D in parallel.
-2) Once C + D complete, implement E.
-3) F + G depend on E.
-4) H depends on E (optional if prompt tuning is deferred).
+1) Complete A, B, C, D, E in parallel.
+2) Once C + D + E complete, implement F.
+3) G + H depend on F.
+4) I depends on F (optional if prompt tuning is deferred).
+5) J depends on F.
 
 ## Validation Checklist
 - Argo runs produce artifacts even on failure.
 - Notify wrapper posts to Jangar with expected schema.
 - Jangar waits for CI and stores judge output.
+- Jangar waits for Codex review completion and resolved threads.
 - Rerun triggers resume from branch.
 - Discord notifications only on success unless hard failure escalation.
