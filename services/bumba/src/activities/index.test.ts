@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Language } from 'web-tree-sitter'
 
 import { activities } from './index'
 
@@ -42,6 +43,13 @@ describe('bumba ast extraction', () => {
     expect(result.metadata.language).toBe('bash')
   })
 
+  it('falls back to text facts when tree-sitter yields no facts', async () => {
+    const result = await runExtract('.json', '{ "foo": "bar" }')
+    expect(result.metadata.language).toBe('json')
+    expect(result.metadata.factsFallback).toBe('text')
+    expect(result.facts.length).toBeGreaterThan(0)
+  })
+
   it('parses embedded template files', async () => {
     const result = await runExtract('.erb', '<%= user.name %>')
     expect(result.metadata.language).toBe('embedded-template')
@@ -67,6 +75,24 @@ describe('bumba ast extraction', () => {
     expect(result.metadata.parser).toBe('text')
     expect(result.metadata.language).toBe('text')
   })
+
+  it('falls back to plain text when tree-sitter language load fails', async () => {
+    const loader = Language as unknown as { load: typeof Language.load }
+    const originalLoad = loader.load
+    loader.load = async () => {
+      throw new Error('load failed')
+    }
+
+    try {
+      const result = await runExtract('.ts', 'const example = 1')
+      expect(result.metadata.parser).toBe('text')
+      expect(result.metadata.language).toBe('typescript')
+      expect(result.metadata.skipped).toBe(true)
+      expect(result.metadata.reason).toBe('language_load_failed')
+    } finally {
+      loader.load = originalLoad
+    }
+  })
 })
 
 describe('bumba readRepoFile', () => {
@@ -80,6 +106,7 @@ describe('bumba readRepoFile', () => {
       runGit(['init', '-b', 'main'], repoRoot)
       runGit(['config', 'user.email', 'bumba-tests@example.com'], repoRoot)
       runGit(['config', 'user.name', 'Bumba Tests'], repoRoot)
+      runGit(['config', 'commit.gpgsign', 'false'], repoRoot)
       await writeFile(join(repoRoot, filePath), content, 'utf8')
       runGit(['add', '.'], repoRoot)
       runGit(['commit', '-m', 'init'], repoRoot)
@@ -106,6 +133,32 @@ describe('bumba readRepoFile', () => {
     }
   })
 
+  it('normalizes refs/heads/* to branch name in metadata', async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))
+    const filePath = 'README.md'
+    const content = 'hello ref\n'
+
+    try {
+      runGit(['init', '-b', 'main'], repoRoot)
+      runGit(['config', 'user.email', 'bumba-tests@example.com'], repoRoot)
+      runGit(['config', 'user.name', 'Bumba Tests'], repoRoot)
+      runGit(['config', 'commit.gpgsign', 'false'], repoRoot)
+      await writeFile(join(repoRoot, filePath), content, 'utf8')
+      runGit(['add', '.'], repoRoot)
+      runGit(['commit', '-m', 'init'], repoRoot)
+
+      const result = await activities.readRepoFile({
+        repoRoot,
+        filePath,
+        ref: 'refs/heads/main',
+      })
+
+      expect(result.metadata.repoRef).toBe('main')
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
+
   it('fetches from GitHub when local file is missing', async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))
     const filePath = 'services/bumba/src/workflows/index.test.ts'
@@ -118,7 +171,7 @@ describe('bumba readRepoFile', () => {
     let requestedUrl: string | null = null
 
     process.env.GITHUB_TOKEN = 'token'
-    globalThis.fetch = (async (input) => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
       requestedUrl =
         typeof input === 'string'
           ? input
@@ -154,6 +207,139 @@ describe('bumba readRepoFile', () => {
       expect(requestedUrl).not.toBeNull()
       expect(String(requestedUrl)).toContain(`/repos/proompteng/lab/contents/${filePath}`)
       expect(String(requestedUrl)).toContain(`ref=${commit}`)
+    } finally {
+      if (previousToken === undefined) {
+        delete process.env.GITHUB_TOKEN
+      } else {
+        process.env.GITHUB_TOKEN = previousToken
+      }
+      globalThis.fetch = previousFetch
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('throws DirectoryError when file path is a directory', async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))
+    const filePath = 'some-dir'
+
+    try {
+      await mkdir(join(repoRoot, filePath), { recursive: true })
+      await writeFile(join(repoRoot, filePath, '.gitkeep'), '', 'utf8')
+      await expect(
+        activities.readRepoFile({
+          repoRoot,
+          filePath,
+        }),
+      ).rejects.toMatchObject({ name: 'DirectoryError' })
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('handles empty gitkeep files from GitHub contents API', async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))
+    const filePath = 'apps/discourse/cids/.gitkeep'
+    const commit = 'deadbeef'
+
+    const previousToken = process.env.GITHUB_TOKEN
+    const previousFetch = globalThis.fetch
+    let calls = 0
+
+    process.env.GITHUB_TOKEN = 'token'
+    globalThis.fetch = (async () => {
+      calls += 1
+      if (calls > 1) {
+        throw new Error('unexpected fetch')
+      }
+      return new Response(
+        JSON.stringify({
+          type: 'file',
+          encoding: 'none',
+          content: '',
+          size: 0,
+          download_url: 'https://raw.githubusercontent.com/proompteng/lab/deadbeef/.gitkeep',
+          url: 'https://api.github.com/repos/proompteng/lab/contents/.gitkeep',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    }) as unknown as typeof fetch
+
+    try {
+      const result = await activities.readRepoFile({
+        repoRoot,
+        filePath,
+        repository: 'proompteng/lab',
+        commit,
+      })
+
+      expect(result.content).toBe('')
+      expect(result.metadata.metadata.source).toBe('github')
+      expect(calls).toBe(1)
+    } finally {
+      if (previousToken === undefined) {
+        delete process.env.GITHUB_TOKEN
+      } else {
+        process.env.GITHUB_TOKEN = previousToken
+      }
+      globalThis.fetch = previousFetch
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to download_url when encoding is unsupported', async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))
+    const filePath = 'README.md'
+    const commit = 'deadbeef'
+
+    const previousToken = process.env.GITHUB_TOKEN
+    const previousFetch = globalThis.fetch
+    const rawContent = 'raw file contents'
+    let apiCalls = 0
+    let rawCalls = 0
+
+    process.env.GITHUB_TOKEN = 'token'
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input instanceof Request
+              ? input.url
+              : ''
+      if (url.includes('api.github.com')) {
+        apiCalls += 1
+        return new Response(
+          JSON.stringify({
+            type: 'file',
+            encoding: 'none',
+            content: null,
+            size: rawContent.length,
+            download_url: 'https://raw.githubusercontent.com/proompteng/lab/deadbeef/README.md',
+            url: 'https://api.github.com/repos/proompteng/lab/contents/README.md',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.includes('raw.githubusercontent.com')) {
+        rawCalls += 1
+        return new Response(rawContent, { status: 200 })
+      }
+      throw new Error(`unexpected fetch url: ${url}`)
+    }) as unknown as typeof fetch
+
+    try {
+      const result = await activities.readRepoFile({
+        repoRoot,
+        filePath,
+        repository: 'proompteng/lab',
+        commit,
+      })
+
+      expect(result.content).toBe(rawContent)
+      expect(result.metadata.metadata.source).toBe('github')
+      expect(apiCalls).toBe(1)
+      expect(rawCalls).toBe(1)
     } finally {
       if (previousToken === undefined) {
         delete process.env.GITHUB_TOKEN

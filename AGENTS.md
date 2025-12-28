@@ -48,6 +48,7 @@
 - Use Conventional Commits: `<type>(<scope>): <summary>` (scope optional).
 - Common types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `build`, `ci`, `perf`, `revert`.
 - PR titles must follow the same semantic convention.
+- Create PRs with `gh pr create` using `--body-file .github/PULL_REQUEST_TEMPLATE.md`.
 
 ## UI/UX
 - Tailwind CSS only; class order layout → spacing → sizing → typography → colors; use `cn()` for conditionals.
@@ -61,9 +62,7 @@
 ## Agent Execution Guidelines
 - Use precise code pointers (file paths, identifiers, stack traces) to narrow search.
 - Reproduce issues before changes; keep logs and failing commands.
-- Run the smallest relevant validation (single test, scoped lint, or targeted build).
-- Split large tasks; surface ambiguities early.
-- Agents perform best with configured dev environments and reliable tests—keep these instructions current.
+- Split large tasks; surface ambiguities early; use the planning tool `functions.update_plan` when appropriate.
 
 ## Review Guidelines
 - Focus on correctness regressions, error handling, and missing tests.
@@ -79,4 +78,4 @@
 
 ## When in Doubt
 - Check the nearest README for service-specific commands.
-- Prefer the smallest-scoped test that proves the change.
+- Search internet with correct keyword and questions containing context using web.run.

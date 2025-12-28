@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Effect } from 'effect'
 
 import { createWorkflowContext } from '../../src/workflow/context'
-import { DeterminismGuard, type WorkflowDeterminismState } from '../../src/workflow/determinism'
+import { DeterminismGuard, intentsEqual, type WorkflowDeterminismState } from '../../src/workflow/determinism'
 
 const baseInfo = {
   namespace: 'default',
@@ -123,7 +123,8 @@ test('child workflow defaults reuse recorded ids on replay', async () => {
           namespace: baseInfo.namespace,
           taskQueue: baseInfo.taskQueue,
           input: [],
-          timeouts: {},
+          timeouts: { workflowRunTimeoutMs: 0, workflowTaskTimeoutMs: 10_000 },
+          workflowIdReusePolicy: 1,
         },
       },
     ],
@@ -144,5 +145,68 @@ test('child workflow defaults reuse recorded ids on replay', async () => {
   expect(intent?.kind).toBe('start-child-workflow')
   if (intent?.kind === 'start-child-workflow') {
     expect(intent.workflowId).toBe('wf-primitive-child-0')
+    expect(intent.timeouts.workflowRunTimeoutMs).toBe(0)
+    expect(intent.timeouts.workflowTaskTimeoutMs).toBe(10_000)
+    expect(intent.workflowIdReusePolicy).toBe(1)
   }
+})
+
+test('intentsEqual normalizes activity timeout defaults', () => {
+  const expected = {
+    id: 'schedule-activity-0',
+    kind: 'schedule-activity',
+    sequence: 0,
+    activityType: 'listRepoFiles',
+    activityId: 'activity-0',
+    taskQueue: baseInfo.taskQueue,
+    input: [{ repoRoot: '/workspace/lab/.worktrees/bumba', ref: 'main' }],
+    timeouts: {
+      scheduleToCloseTimeoutMs: 600_000,
+      startToCloseTimeoutMs: 90_000,
+    },
+    retry: {
+      initialIntervalMs: 2_000,
+      backoffCoefficient: 2,
+      maximumIntervalMs: 30_000,
+      maximumAttempts: 4,
+    },
+  } as const
+
+  const actual = {
+    ...expected,
+    timeouts: {
+      ...expected.timeouts,
+      scheduleToStartTimeoutMs: 600_000,
+      heartbeatTimeoutMs: 0,
+    },
+  }
+
+  expect(intentsEqual(expected, actual)).toBe(true)
+})
+
+test('intentsEqual normalizes child workflow defaults', () => {
+  const expected = {
+    id: 'start-child-workflow-0',
+    kind: 'start-child-workflow',
+    sequence: 0,
+    workflowType: 'childWorkflow',
+    workflowId: 'wf-primitive-child-0',
+    namespace: baseInfo.namespace,
+    taskQueue: baseInfo.taskQueue,
+    input: [],
+    timeouts: {},
+    parentClosePolicy: 2,
+  } as const
+
+  const actual = {
+    ...expected,
+    timeouts: {
+      workflowExecutionTimeoutMs: 0,
+      workflowRunTimeoutMs: 0,
+      workflowTaskTimeoutMs: 10_000,
+    },
+    workflowIdReusePolicy: 1,
+  }
+
+  expect(intentsEqual(expected, actual)).toBe(true)
 })

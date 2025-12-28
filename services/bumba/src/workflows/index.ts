@@ -1,5 +1,7 @@
-import { defineWorkflow, defineWorkflowSignals, log } from '@proompteng/temporal-bun-sdk/workflow'
+import { defineWorkflow, defineWorkflowSignals, log, WorkflowBlockedError } from '@proompteng/temporal-bun-sdk/workflow'
 import { Effect } from 'effect'
+import * as Cause from 'effect/Cause'
+import * as Chunk from 'effect/Chunk'
 import * as Schema from 'effect/Schema'
 
 import type {
@@ -9,6 +11,7 @@ import type {
   PersistEnrichmentRecordOutput,
   PersistFileVersionOutput,
   ReadRepoFileOutput,
+  UpsertIngestionOutput,
 } from '../activities/index'
 
 const activityRetry = {
@@ -63,6 +66,21 @@ const persistFactsTimeouts = {
   scheduleToCloseTimeoutMs: 600_000,
 }
 
+const upsertIngestionTimeouts = {
+  startToCloseTimeoutMs: 30_000,
+  scheduleToCloseTimeoutMs: 120_000,
+}
+
+const upsertEventFileTimeouts = {
+  startToCloseTimeoutMs: 30_000,
+  scheduleToCloseTimeoutMs: 120_000,
+}
+
+const upsertIngestionTargetTimeouts = {
+  startToCloseTimeoutMs: 30_000,
+  scheduleToCloseTimeoutMs: 120_000,
+}
+
 const markEventProcessedTimeouts = {
   startToCloseTimeoutMs: 30_000,
   scheduleToCloseTimeoutMs: 120_000,
@@ -74,12 +92,32 @@ const cleanupEnrichmentTimeouts = {
 }
 
 const PARENT_CLOSE_POLICY_ABANDON = 2
-const CHILD_WORKFLOW_BATCH_SIZE = 50
-const CHILD_WORKFLOW_PROGRESS_INTERVAL = 25
+const CHILD_WORKFLOW_BATCH_SIZE = 10
+const CHILD_WORKFLOW_PROGRESS_INTERVAL = 10
 const CHILD_WORKFLOW_COMPLETED_SIGNAL = '__childWorkflowCompleted'
 
 const logWorkflow = (event: string, fields: Record<string, unknown> = {}) => {
   log.info('[bumba:workflow]', { event, ...fields })
+}
+
+const getCauseError = (cause: Cause.Cause<unknown>): Error | undefined => {
+  const failure = Cause.failureOption(cause)
+  if (failure._tag === 'Some' && failure.value instanceof Error) {
+    return failure.value
+  }
+  const defects = Cause.defects(cause)
+  if (Chunk.isNonEmpty(defects)) {
+    const defect = Chunk.unsafeHead(defects)
+    if (defect instanceof Error) {
+      return defect
+    }
+  }
+  return undefined
+}
+
+const isWorkflowBlocked = (cause: Cause.Cause<unknown>): boolean => {
+  const error = getCauseError(cause)
+  return error instanceof WorkflowBlockedError
 }
 
 type ChildWorkflowCompletion = {
@@ -117,6 +155,7 @@ const EnrichFileInput = Schema.Struct({
   force: Schema.optional(Schema.Boolean),
   parentWorkflowId: Schema.optional(Schema.String),
   parentRunId: Schema.optional(Schema.String),
+  ingestionId: Schema.optional(Schema.String),
 })
 
 const EnrichRepositoryInput = Schema.Struct({
@@ -125,6 +164,7 @@ const EnrichRepositoryInput = Schema.Struct({
   ref: Schema.optional(Schema.String),
   commit: Schema.optional(Schema.String),
   context: Schema.optional(Schema.String),
+  eventDeliveryId: Schema.optional(Schema.String),
   pathPrefix: Schema.optional(Schema.String),
   maxFiles: Schema.optional(Schema.Number),
   files: Schema.optional(Schema.Array(Schema.String)),
@@ -173,182 +213,345 @@ export const workflows = [
         parentRunId: input.parentRunId ?? null,
       })
 
-      const readRepoInput: { repoRoot: string; filePath: string; repository?: string; ref?: string; commit?: string } =
-        {
+      let ingestionId = input.ingestionId ?? null
+      let managesIngestion = false
+
+      if (eventDeliveryId && !ingestionId) {
+        const ingestion = (yield* activities.schedule(
+          'upsertIngestion',
+          [
+            {
+              deliveryId: eventDeliveryId,
+              workflowId: info.workflowId,
+              status: 'running',
+            },
+          ],
+          {
+            ...upsertIngestionTimeouts,
+            retry: activityRetry,
+          },
+        )) as UpsertIngestionOutput
+        if (ingestion) {
+          ingestionId = ingestion.ingestionId
+          managesIngestion = true
+        }
+      }
+
+      const finalizeIngestion = (status: string, error?: string) => {
+        if (!managesIngestion || !eventDeliveryId) {
+          return Effect.succeed<UpsertIngestionOutput | null>(null)
+        }
+        return activities.schedule(
+          'upsertIngestion',
+          [
+            {
+              deliveryId: eventDeliveryId,
+              workflowId: info.workflowId,
+              status,
+              error,
+            },
+          ],
+          {
+            ...upsertIngestionTimeouts,
+            retry: activityRetry,
+          },
+        )
+      }
+
+      const run = Effect.gen(function* () {
+        const readRepoInput: {
+          repoRoot: string
+          filePath: string
+          repository?: string
+          ref?: string
+          commit?: string
+        } = {
           repoRoot,
           filePath,
         }
-      if (repository) readRepoInput.repository = repository
-      if (ref) readRepoInput.ref = ref
-      if (commit) readRepoInput.commit = commit
+        if (repository) readRepoInput.repository = repository
+        if (ref) readRepoInput.ref = ref
+        if (commit) readRepoInput.commit = commit
 
-      const fileResult = (yield* activities.schedule('readRepoFile', [readRepoInput], {
-        ...readRepoFileTimeouts,
-        retry: activityRetry,
-      })) as ReadRepoFileOutput
-      const readSourceMeta = fileResult.metadata.metadata ?? {}
-      const readSource = typeof readSourceMeta.source === 'string' ? readSourceMeta.source : null
+        const fileResult = (yield* Effect.catchAllCause(
+          activities.schedule('readRepoFile', [readRepoInput], {
+            ...readRepoFileTimeouts,
+            retry: activityRetry,
+          }),
+          (cause) => {
+            const error = getCauseError(cause)
+            if (error?.name === 'DirectoryError') {
+              logWorkflow('enrichFile.skipped', {
+                workflowId: info.workflowId,
+                runId: info.runId,
+                filePath,
+                reason: 'directory',
+              })
+              return Effect.succeed<ReadRepoFileOutput | null>(null)
+            }
+            return Effect.failCause(cause)
+          },
+        )) as ReadRepoFileOutput | null
 
-      logWorkflow('enrichFile.readRepoFile', {
-        workflowId: info.workflowId,
-        runId: info.runId,
-        filePath,
-        repoRef: fileResult.metadata.repoRef,
-        repoCommit: fileResult.metadata.repoCommit,
-        readSource,
-        readSourceMeta,
-        contentHash: fileResult.metadata.contentHash,
-      })
+        if (!fileResult) {
+          if (eventDeliveryId) {
+            yield* activities.schedule(
+              'markEventProcessed',
+              [
+                {
+                  deliveryId: eventDeliveryId,
+                },
+              ],
+              {
+                ...markEventProcessedTimeouts,
+                retry: activityRetry,
+              },
+            )
+          }
+          yield* finalizeIngestion('skipped', 'directory')
+          return {
+            id: 'skipped-directory',
+            filename: filePath,
+          }
+        }
+        const readSourceMeta = fileResult.metadata.metadata ?? {}
+        const readSource = typeof readSourceMeta.source === 'string' ? readSourceMeta.source : null
 
-      if (force) {
-        logWorkflow('enrichFile.cleanupRequested', {
+        logWorkflow('enrichFile.readRepoFile', {
           workflowId: info.workflowId,
           runId: info.runId,
           filePath,
+          repoRef: fileResult.metadata.repoRef,
+          repoCommit: fileResult.metadata.repoCommit,
+          readSource,
+          readSourceMeta,
+          contentHash: fileResult.metadata.contentHash,
         })
-        yield* activities.schedule(
-          'cleanupEnrichment',
+
+        if (force) {
+          logWorkflow('enrichFile.cleanupRequested', {
+            workflowId: info.workflowId,
+            runId: info.runId,
+            filePath,
+          })
+          yield* activities.schedule(
+            'cleanupEnrichment',
+            [
+              {
+                fileMetadata: fileResult.metadata,
+              },
+            ],
+            {
+              ...cleanupEnrichmentTimeouts,
+              retry: activityRetry,
+            },
+          )
+        }
+
+        const astResult = (yield* activities.schedule(
+          'extractAstSummary',
+          [{ repoRoot, filePath, content: fileResult.content }],
+          {
+            ...extractAstSummaryTimeouts,
+            retry: activityRetry,
+          },
+        )) as AstSummaryOutput
+
+        const enriched = (yield* Effect.catchAllCause(
+          activities.schedule(
+            'enrichWithModel',
+            [
+              {
+                filename: filePath,
+                content: fileResult.content,
+                astSummary: astResult.astSummary,
+                context: context ?? '',
+              },
+            ],
+            {
+              ...enrichWithModelTimeouts,
+              retry: activityRetry,
+            },
+          ),
+          (cause) => {
+            const error = getCauseError(cause)
+            if (error?.message.includes('completion request timed out')) {
+              logWorkflow('enrichFile.modelTimeout', {
+                workflowId: info.workflowId,
+                runId: info.runId,
+                filePath,
+                error: error.message,
+              })
+              return Effect.succeed<EnrichOutput>({
+                summary: 'Unknown (model timeout)',
+                enriched: '- Model enrichment timed out; output unavailable.',
+                metadata: {
+                  modelTimeout: true,
+                  error: error.message,
+                },
+              })
+            }
+            return Effect.failCause(cause)
+          },
+        )) as EnrichOutput
+
+        const embedding = (yield* activities.schedule('createEmbedding', [{ text: enriched.enriched }], {
+          ...createEmbeddingTimeouts,
+          retry: activityRetry,
+        })) as { embedding: number[] }
+
+        const fileVersion = (yield* activities.schedule(
+          'persistFileVersion',
           [
             {
               fileMetadata: fileResult.metadata,
             },
           ],
           {
-            ...cleanupEnrichmentTimeouts,
+            ...persistFileVersionTimeouts,
             retry: activityRetry,
           },
-        )
-      }
+        )) as PersistFileVersionOutput
 
-      const astResult = (yield* activities.schedule(
-        'extractAstSummary',
-        [{ repoRoot, filePath, content: fileResult.content }],
-        {
-          ...extractAstSummaryTimeouts,
-          retry: activityRetry,
-        },
-      )) as AstSummaryOutput
-
-      const enriched = (yield* activities.schedule(
-        'enrichWithModel',
-        [
-          {
-            filename: filePath,
-            content: fileResult.content,
-            astSummary: astResult.astSummary,
-            context: context ?? '',
-          },
-        ],
-        {
-          ...enrichWithModelTimeouts,
-          retry: activityRetry,
-        },
-      )) as EnrichOutput
-
-      const embedding = (yield* activities.schedule('createEmbedding', [{ text: enriched.enriched }], {
-        ...createEmbeddingTimeouts,
-        retry: activityRetry,
-      })) as { embedding: number[] }
-
-      const fileVersion = (yield* activities.schedule(
-        'persistFileVersion',
-        [
-          {
-            fileMetadata: fileResult.metadata,
-          },
-        ],
-        {
-          ...persistFileVersionTimeouts,
-          retry: activityRetry,
-        },
-      )) as PersistFileVersionOutput
-
-      const enrichmentRecord = (yield* activities.schedule(
-        'persistEnrichmentRecord',
-        [
-          {
-            fileVersionId: fileVersion.fileVersionId,
-            summary: enriched.summary,
-            enriched: enriched.enriched,
-            astSummary: astResult.astSummary,
-            contentHash: fileResult.metadata.contentHash,
-            metadata: {
-              ...astResult.metadata,
-              ...enriched.metadata,
-            },
-          },
-        ],
-        {
-          ...persistEnrichmentRecordTimeouts,
-          retry: activityRetry,
-        },
-      )) as PersistEnrichmentRecordOutput
-
-      const persistEmbedding = activities.schedule(
-        'persistEmbedding',
-        [
-          {
-            enrichmentId: enrichmentRecord.enrichmentId,
-            embedding: embedding.embedding,
-          },
-        ],
-        {
-          ...persistEmbeddingTimeouts,
-          retry: activityRetry,
-        },
-      )
-
-      const persistFacts =
-        astResult.facts.length > 0
-          ? activities.schedule(
-              'persistFacts',
-              [
-                {
-                  fileVersionId: fileVersion.fileVersionId,
-                  facts: astResult.facts,
-                },
-              ],
+        if (eventDeliveryId) {
+          yield* activities.schedule(
+            'upsertEventFile',
+            [
               {
-                ...persistFactsTimeouts,
-                retry: activityRetry,
+                deliveryId: eventDeliveryId,
+                fileKeyId: fileVersion.fileKeyId,
+                changeType: 'indexed',
               },
-            )
-          : Effect.succeed({ inserted: 0 })
+            ],
+            {
+              ...upsertEventFileTimeouts,
+              retry: activityRetry,
+            },
+          )
+        }
 
-      yield* Effect.all([persistEmbedding, persistFacts], { concurrency: 2 })
+        if (ingestionId) {
+          yield* activities.schedule(
+            'upsertIngestionTarget',
+            [
+              {
+                ingestionId,
+                fileVersionId: fileVersion.fileVersionId,
+                kind: 'model_enrichment',
+              },
+            ],
+            {
+              ...upsertIngestionTargetTimeouts,
+              retry: activityRetry,
+            },
+          )
+        }
 
-      if (eventDeliveryId) {
-        yield* activities.schedule(
-          'markEventProcessed',
+        const enrichmentRecord = (yield* activities.schedule(
+          'persistEnrichmentRecord',
           [
             {
-              deliveryId: eventDeliveryId,
+              fileVersionId: fileVersion.fileVersionId,
+              summary: enriched.summary,
+              enriched: enriched.enriched,
+              astSummary: astResult.astSummary,
+              contentHash: fileResult.metadata.contentHash,
+              metadata: {
+                ...astResult.metadata,
+                ...enriched.metadata,
+              },
             },
           ],
           {
-            ...markEventProcessedTimeouts,
+            ...persistEnrichmentRecordTimeouts,
+            retry: activityRetry,
+          },
+        )) as PersistEnrichmentRecordOutput
+
+        const persistEmbedding = activities.schedule(
+          'persistEmbedding',
+          [
+            {
+              enrichmentId: enrichmentRecord.enrichmentId,
+              embedding: embedding.embedding,
+            },
+          ],
+          {
+            ...persistEmbeddingTimeouts,
             retry: activityRetry,
           },
         )
-      }
 
-      logWorkflow('enrichFile.completed', {
-        workflowId: info.workflowId,
-        runId: info.runId,
-        filePath,
-        enrichmentId: enrichmentRecord.enrichmentId,
-        fileVersionId: fileVersion.fileVersionId,
-        facts: astResult.facts.length,
-        summaryChars: enriched.summary.length,
-        enrichedChars: enriched.enriched.length,
-        readSource,
-        eventDeliveryId: eventDeliveryId ?? null,
+        const persistFacts =
+          astResult.facts.length > 0
+            ? activities.schedule(
+                'persistFacts',
+                [
+                  {
+                    fileVersionId: fileVersion.fileVersionId,
+                    facts: astResult.facts,
+                  },
+                ],
+                {
+                  ...persistFactsTimeouts,
+                  retry: activityRetry,
+                },
+              )
+            : Effect.succeed({ inserted: 0 })
+
+        yield* persistEmbedding
+        yield* persistFacts
+
+        if (eventDeliveryId) {
+          yield* activities.schedule(
+            'markEventProcessed',
+            [
+              {
+                deliveryId: eventDeliveryId,
+              },
+            ],
+            {
+              ...markEventProcessedTimeouts,
+              retry: activityRetry,
+            },
+          )
+        }
+
+        yield* finalizeIngestion('completed')
+
+        logWorkflow('enrichFile.completed', {
+          workflowId: info.workflowId,
+          runId: info.runId,
+          filePath,
+          enrichmentId: enrichmentRecord.enrichmentId,
+          fileVersionId: fileVersion.fileVersionId,
+          facts: astResult.facts.length,
+          summaryChars: enriched.summary.length,
+          enrichedChars: enriched.enriched.length,
+          readSource,
+          eventDeliveryId: eventDeliveryId ?? null,
+        })
+
+        return {
+          id: enrichmentRecord.enrichmentId,
+          filename: filePath,
+        }
       })
 
-      return {
-        id: enrichmentRecord.enrichmentId,
-        filename: filePath,
-      }
+      return yield* Effect.catchAllCause(run, (cause) =>
+        Effect.gen(function* () {
+          if (isWorkflowBlocked(cause)) {
+            return yield* Effect.failCause(cause)
+          }
+          const error = getCauseError(cause)
+          if (error) {
+            yield* finalizeIngestion('failed', error.message)
+          } else {
+            yield* finalizeIngestion('failed')
+          }
+          return yield* Effect.failCause(cause)
+        }),
+      )
     })
   }),
   defineWorkflow({
@@ -357,7 +560,7 @@ export const workflows = [
     signals: enrichRepositorySignals,
     handler: ({ input, activities, childWorkflows, signals, info }) =>
       Effect.gen(function* () {
-        const { repoRoot, repository, ref, commit, context, pathPrefix, maxFiles } = input
+        const { repoRoot, repository, ref, commit, context, pathPrefix, maxFiles, eventDeliveryId } = input
 
         logWorkflow('enrichRepository.started', {
           workflowId: info.workflowId,
@@ -367,10 +570,29 @@ export const workflows = [
           ref: ref ?? null,
           commit: commit ?? null,
           context: context ?? null,
+          eventDeliveryId: eventDeliveryId ?? null,
           pathPrefix: pathPrefix ?? null,
           maxFiles: maxFiles ?? null,
           providedFiles: input.files ? input.files.length : null,
         })
+
+        const ingestion = eventDeliveryId
+          ? ((yield* activities.schedule(
+              'upsertIngestion',
+              [
+                {
+                  deliveryId: eventDeliveryId,
+                  workflowId: info.workflowId,
+                  status: 'running',
+                },
+              ],
+              {
+                ...upsertIngestionTimeouts,
+                retry: activityRetry,
+              },
+            )) as UpsertIngestionOutput)
+          : null
+        const ingestionId = ingestion?.ingestionId ?? null
 
         const listRef = commit ?? ref
         let files = input.files
@@ -410,95 +632,147 @@ export const workflows = [
         const pending = new Set<string>()
         let nextIndex = 0
 
-        while (nextIndex < files.length || pending.size > 0) {
-          while (pending.size < CHILD_WORKFLOW_BATCH_SIZE && nextIndex < files.length) {
-            const filePath = files[nextIndex]
-            const childWorkflowId = `${info.workflowId}-child-${info.runId}-${childSequence}`
-            childSequence += 1
-            nextIndex += 1
-            pending.add(childWorkflowId)
-            started += 1
+        const run = Effect.gen(function* () {
+          while (nextIndex < files.length || pending.size > 0) {
+            while (pending.size < CHILD_WORKFLOW_BATCH_SIZE && nextIndex < files.length) {
+              const filePath = files[nextIndex]
+              const childWorkflowId = `${info.workflowId}-child-${info.runId}-${childSequence}`
+              childSequence += 1
+              nextIndex += 1
+              pending.add(childWorkflowId)
+              started += 1
 
-            yield* childWorkflows.start(
-              'enrichFile',
+              yield* childWorkflows.start(
+                'enrichFile',
+                [
+                  {
+                    repoRoot,
+                    filePath,
+                    repository,
+                    ref,
+                    commit,
+                    context,
+                    eventDeliveryId,
+                    parentWorkflowId: info.workflowId,
+                    parentRunId: info.runId,
+                    ingestionId: ingestionId ?? undefined,
+                  },
+                ],
+                {
+                  parentClosePolicy: PARENT_CLOSE_POLICY_ABANDON,
+                  workflowId: childWorkflowId,
+                },
+              )
+            }
+
+            if (started > 0 && (started % CHILD_WORKFLOW_BATCH_SIZE === 0 || started === files.length)) {
+              logWorkflow('enrichRepository.childrenStarted', {
+                workflowId: info.workflowId,
+                runId: info.runId,
+                started,
+                pending: pending.size,
+                completed,
+                failed,
+                totalFiles: files.length,
+              })
+            }
+
+            if (pending.size === 0) {
+              break
+            }
+
+            const delivery = yield* signals.waitFor(completionSignal)
+            if (!isChildWorkflowCompletion(delivery.payload)) {
+              continue
+            }
+            if (!pending.delete(delivery.payload.workflowId)) {
+              continue
+            }
+            if (delivery.payload.status === 'completed') {
+              completed += 1
+            } else {
+              failed += 1
+            }
+
+            const finished = completed + failed
+            if (finished % CHILD_WORKFLOW_PROGRESS_INTERVAL === 0 || finished === files.length) {
+              logWorkflow('enrichRepository.progress', {
+                workflowId: info.workflowId,
+                runId: info.runId,
+                started,
+                completed,
+                failed,
+                pending: pending.size,
+                totalFiles: files.length,
+                nextIndex,
+              })
+            }
+          }
+
+          const finalStatus = failed > 0 ? 'failed' : 'completed'
+          if (eventDeliveryId && ingestionId) {
+            yield* activities.schedule(
+              'upsertIngestion',
               [
                 {
-                  repoRoot,
-                  filePath,
-                  repository,
-                  ref,
-                  commit,
-                  context,
+                  deliveryId: eventDeliveryId,
+                  workflowId: info.workflowId,
+                  status: finalStatus,
+                  error: failed > 0 ? `${failed} child workflows failed` : undefined,
                 },
               ],
               {
-                parentClosePolicy: PARENT_CLOSE_POLICY_ABANDON,
-                workflowId: childWorkflowId,
+                ...upsertIngestionTimeouts,
+                retry: activityRetry,
               },
             )
           }
 
-          if (started > 0 && (started % CHILD_WORKFLOW_BATCH_SIZE === 0 || started === files.length)) {
-            logWorkflow('enrichRepository.childrenStarted', {
-              workflowId: info.workflowId,
-              runId: info.runId,
-              started,
-              pending: pending.size,
-              completed,
-              failed,
-              totalFiles: files.length,
-            })
-          }
+          logWorkflow('enrichRepository.completed', {
+            workflowId: info.workflowId,
+            runId: info.runId,
+            total,
+            skipped,
+            queued: started,
+            completed,
+            failed,
+          })
 
-          if (pending.size === 0) {
-            break
+          return {
+            total,
+            skipped,
+            queued: started,
+            completed,
+            failed,
           }
-
-          const delivery = yield* signals.waitFor(completionSignal)
-          if (!isChildWorkflowCompletion(delivery.payload)) {
-            continue
-          }
-          if (!pending.delete(delivery.payload.workflowId)) {
-            continue
-          }
-          if (delivery.payload.status === 'completed') {
-            completed += 1
-          } else {
-            failed += 1
-          }
-
-          const finished = completed + failed
-          if (finished % CHILD_WORKFLOW_PROGRESS_INTERVAL === 0 || finished === files.length) {
-            logWorkflow('enrichRepository.progress', {
-              workflowId: info.workflowId,
-              runId: info.runId,
-              started,
-              completed,
-              failed,
-              pending: pending.size,
-              totalFiles: files.length,
-              nextIndex,
-            })
-          }
-        }
-
-        logWorkflow('enrichRepository.completed', {
-          workflowId: info.workflowId,
-          runId: info.runId,
-          total,
-          skipped,
-          queued: started,
-          completed,
-          failed,
         })
 
-        return {
-          total,
-          skipped,
-          queued: started,
-          completed,
-          failed,
-        }
+        return yield* Effect.catchAllCause(run, (cause) =>
+          Effect.gen(function* () {
+            if (isWorkflowBlocked(cause)) {
+              return yield* Effect.failCause(cause)
+            }
+            if (eventDeliveryId && ingestionId) {
+              const error = getCauseError(cause)
+              yield* activities.schedule(
+                'upsertIngestion',
+                [
+                  {
+                    deliveryId: eventDeliveryId,
+                    workflowId: info.workflowId,
+                    status: 'failed',
+                    error: error?.message,
+                  },
+                ],
+                {
+                  ...upsertIngestionTimeouts,
+                  retry: activityRetry,
+                },
+              )
+            }
+            return yield* Effect.failCause(cause)
+          }),
+        )
       }),
   }),
 ]

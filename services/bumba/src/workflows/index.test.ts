@@ -4,6 +4,7 @@ import type {
   Command,
   ExecuteWorkflowInput,
   WorkflowDefinitions,
+  WorkflowDeterminismState,
   WorkflowExecutionOutput,
 } from '@proompteng/temporal-bun-sdk/workflow'
 import {
@@ -52,7 +53,6 @@ test('enrichFile schedules the first activity and blocks', async () => {
     repoRoot: '/workspace/lab/.worktrees/bumba',
     filePath: 'apps/froussard/src/webhooks/github.ts',
     context: 'unit-test',
-    eventDeliveryId: 'delivery-1',
   }
 
   const output = await execute(executor, { workflowType: 'enrichFile', arguments: input })
@@ -77,6 +77,112 @@ test('enrichFile schedules the first activity and blocks', async () => {
   ])
 })
 
+test('enrichFile schedules ingestion when event delivery is provided', async () => {
+  const { executor, dataConverter } = makeExecutor()
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    filePath: 'apps/froussard/src/webhooks/github.ts',
+    context: 'unit-test',
+    eventDeliveryId: 'delivery-1',
+  }
+
+  const output = await execute(executor, { workflowType: 'enrichFile', arguments: input })
+
+  expect(output.completion).toBe('pending')
+  expect(output.commands).toHaveLength(1)
+  const schedule = output.commands[0]
+  expect(schedule.commandType).toBe(CommandType.SCHEDULE_ACTIVITY_TASK)
+  if (schedule.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
+    throw new Error('Expected schedule activity attributes on first command.')
+  }
+  const attrs = schedule.attributes.value
+  expect(attrs?.activityType?.name).toBe('upsertIngestion')
+
+  const decoded = await decodePayloadsToValues(dataConverter, attrs?.input?.payloads ?? [])
+  expect(decoded).toEqual([
+    {
+      deliveryId: input.eventDeliveryId,
+      workflowId: 'test-workflow-id',
+      status: 'running',
+    },
+  ])
+})
+
+test('enrichFile does not mark ingestion failed when blocked on readRepoFile', async () => {
+  const { executor } = makeExecutor()
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    filePath: 'apps/froussard/src/webhooks/github.ts',
+    context: 'unit-test',
+    eventDeliveryId: 'delivery-1',
+  }
+
+  const determinismState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          id: 'schedule-activity-0',
+          kind: 'schedule-activity',
+          sequence: 0,
+          activityType: 'upsertIngestion',
+          activityId: 'activity-0',
+          taskQueue: 'bumba',
+          input: [
+            {
+              deliveryId: input.eventDeliveryId,
+              workflowId: 'test-workflow-id',
+              status: 'running',
+            },
+          ],
+          timeouts: {
+            scheduleToCloseTimeoutMs: 120_000,
+            startToCloseTimeoutMs: 30_000,
+          },
+          retry: {
+            initialIntervalMs: 2_000,
+            backoffCoefficient: 2,
+            maximumIntervalMs: 30_000,
+            maximumAttempts: 4,
+          },
+          requestEagerExecution: undefined,
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+
+  const activityResults = new Map<string, ActivityResolution>([
+    [
+      'activity-0',
+      {
+        status: 'completed',
+        value: {
+          ingestionId: 'ingestion-id',
+        },
+      },
+    ],
+  ])
+
+  const output = await execute(executor, {
+    workflowType: 'enrichFile',
+    arguments: input,
+    determinismState,
+    activityResults,
+  })
+
+  expect(output.completion).toBe('pending')
+  expect(output.commands).toHaveLength(1)
+  const schedule = output.commands[0]
+  expect(schedule.commandType).toBe(CommandType.SCHEDULE_ACTIVITY_TASK)
+  if (schedule.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
+    throw new Error('Expected schedule activity attributes on readRepoFile command.')
+  }
+  expect(schedule.attributes.value.activityType?.name).toBe('readRepoFile')
+})
+
 test('enrichFile completes when all activities are resolved', async () => {
   const { executor } = makeExecutor()
   const input = {
@@ -89,6 +195,16 @@ test('enrichFile completes when all activities are resolved', async () => {
   const activityResults = new Map<string, ActivityResolution>([
     [
       'activity-0',
+      {
+        status: 'completed',
+        value: {
+          ingestionId: 'ingestion-id',
+          eventId: 'event-id',
+        },
+      },
+    ],
+    [
+      'activity-1',
       {
         status: 'completed',
         value: {
@@ -109,7 +225,7 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-1',
+      'activity-2',
       {
         status: 'completed',
         value: {
@@ -120,7 +236,7 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-2',
+      'activity-3',
       {
         status: 'completed',
         value: {
@@ -131,7 +247,7 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-3',
+      'activity-4',
       {
         status: 'completed',
         value: {
@@ -140,7 +256,7 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-4',
+      'activity-5',
       {
         status: 'completed',
         value: {
@@ -151,7 +267,25 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-5',
+      'activity-6',
+      {
+        status: 'completed',
+        value: {
+          eventFileId: 'event-file-id',
+          eventId: 'event-id',
+          fileKeyId: 'file-key-id',
+        },
+      },
+    ],
+    [
+      'activity-7',
+      {
+        status: 'completed',
+        value: {},
+      },
+    ],
+    [
+      'activity-8',
       {
         status: 'completed',
         value: {
@@ -160,17 +294,27 @@ test('enrichFile completes when all activities are resolved', async () => {
       },
     ],
     [
-      'activity-6',
+      'activity-9',
       {
         status: 'completed',
         value: {},
       },
     ],
     [
-      'activity-7',
+      'activity-10',
       {
         status: 'completed',
         value: {},
+      },
+    ],
+    [
+      'activity-11',
+      {
+        status: 'completed',
+        value: {
+          ingestionId: 'ingestion-id',
+          eventId: 'event-id',
+        },
       },
     ],
   ])
@@ -185,10 +329,168 @@ test('enrichFile completes when all activities are resolved', async () => {
     (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
   )
 
-  expect(scheduleCommands).toHaveLength(8)
+  expect(scheduleCommands).toHaveLength(12)
   expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
   expect(output.completion).toBe('completed')
   expect(output.result).toEqual({ id: 'enrichment-id', filename: input.filePath })
+})
+
+test('enrichFile falls back when enrichWithModel times out', async () => {
+  const { executor, dataConverter } = makeExecutor()
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    filePath: 'apps/froussard/src/webhooks/github.ts',
+    context: 'unit-test',
+    eventDeliveryId: 'delivery-1',
+  }
+
+  const activityResults = new Map<string, ActivityResolution>([
+    [
+      'activity-0',
+      {
+        status: 'completed',
+        value: {
+          ingestionId: 'ingestion-id',
+          eventId: 'event-id',
+        },
+      },
+    ],
+    [
+      'activity-1',
+      {
+        status: 'completed',
+        value: {
+          content: 'console.log("hi")',
+          metadata: {
+            repoName: 'lab',
+            repoRef: 'main',
+            repoCommit: 'deadbeef',
+            path: input.filePath,
+            contentHash: 'hash',
+            language: 'ts',
+            byteSize: 17,
+            lineCount: 1,
+            sourceTimestamp: null,
+            metadata: {},
+          },
+        },
+      },
+    ],
+    [
+      'activity-2',
+      {
+        status: 'completed',
+        value: {
+          astSummary: 'summary',
+          facts: [],
+          metadata: {},
+        },
+      },
+    ],
+    [
+      'activity-3',
+      {
+        status: 'failed',
+        error: new Error('completion request timed out after 60000ms'),
+      },
+    ],
+    [
+      'activity-4',
+      {
+        status: 'completed',
+        value: {
+          embedding: [0.1, 0.2, 0.3],
+        },
+      },
+    ],
+    [
+      'activity-5',
+      {
+        status: 'completed',
+        value: {
+          repositoryId: 'repo-id',
+          fileKeyId: 'file-key-id',
+          fileVersionId: 'file-version-id',
+        },
+      },
+    ],
+    [
+      'activity-6',
+      {
+        status: 'completed',
+        value: {
+          eventFileId: 'event-file-id',
+          eventId: 'event-id',
+          fileKeyId: 'file-key-id',
+        },
+      },
+    ],
+    [
+      'activity-7',
+      {
+        status: 'completed',
+        value: {},
+      },
+    ],
+    [
+      'activity-8',
+      {
+        status: 'completed',
+        value: {
+          enrichmentId: 'enrichment-id',
+        },
+      },
+    ],
+    [
+      'activity-9',
+      {
+        status: 'completed',
+        value: {},
+      },
+    ],
+    [
+      'activity-10',
+      {
+        status: 'completed',
+        value: {},
+      },
+    ],
+    [
+      'activity-11',
+      {
+        status: 'completed',
+        value: {
+          ingestionId: 'ingestion-id',
+          eventId: 'event-id',
+        },
+      },
+    ],
+  ])
+
+  const output = await execute(executor, {
+    workflowType: 'enrichFile',
+    arguments: input,
+    activityResults,
+  })
+
+  const scheduleCommands = output.commands.filter(
+    (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
+  )
+  const persistCommand = scheduleCommands.find((command) => {
+    if (command.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
+      return false
+    }
+    return command.attributes.value.activityType?.name === 'persistEnrichmentRecord'
+  })
+
+  expect(output.completion).toBe('completed')
+  expect(persistCommand).toBeDefined()
+  if (persistCommand?.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
+    throw new Error('Expected persistEnrichmentRecord command attributes.')
+  }
+  const decoded = await decodePayloadsToValues(dataConverter, persistCommand.attributes.value.input?.payloads ?? [])
+  const record = decoded?.[0] as { summary?: string } | undefined
+  expect(record?.summary ?? '').toContain('model timeout')
 })
 
 test('enrichFile schedules cleanup when force is enabled', async () => {
@@ -207,6 +509,16 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       {
         status: 'completed',
         value: {
+          ingestionId: 'ingestion-id',
+          eventId: 'event-id',
+        },
+      },
+    ],
+    [
+      'activity-1',
+      {
+        status: 'completed',
+        value: {
           content: 'console.log("hi")',
           metadata: {
             repoName: 'lab',
@@ -224,7 +536,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-1',
+      'activity-2',
       {
         status: 'completed',
         value: {
@@ -236,7 +548,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-2',
+      'activity-3',
       {
         status: 'completed',
         value: {
@@ -247,7 +559,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-3',
+      'activity-4',
       {
         status: 'completed',
         value: {
@@ -258,7 +570,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-4',
+      'activity-5',
       {
         status: 'completed',
         value: {
@@ -267,7 +579,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-5',
+      'activity-6',
       {
         status: 'completed',
         value: {
@@ -278,7 +590,25 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-6',
+      'activity-7',
+      {
+        status: 'completed',
+        value: {
+          eventFileId: 'event-file-id',
+          eventId: 'event-id',
+          fileKeyId: 'file-key-id',
+        },
+      },
+    ],
+    [
+      'activity-8',
+      {
+        status: 'completed',
+        value: {},
+      },
+    ],
+    [
+      'activity-9',
       {
         status: 'completed',
         value: {
@@ -287,17 +617,27 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
       },
     ],
     [
-      'activity-7',
+      'activity-10',
       {
         status: 'completed',
         value: {},
       },
     ],
     [
-      'activity-8',
+      'activity-11',
       {
         status: 'completed',
         value: {},
+      },
+    ],
+    [
+      'activity-12',
+      {
+        status: 'completed',
+        value: {
+          ingestionId: 'ingestion-id',
+          eventId: 'event-id',
+        },
       },
     ],
   ])
@@ -312,7 +652,7 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
     (command: Command) => command.commandType === CommandType.SCHEDULE_ACTIVITY_TASK,
   )
 
-  expect(scheduleCommands).toHaveLength(9)
+  expect(scheduleCommands).toHaveLength(13)
   expect(output.commands.at(-1)?.commandType).toBe(CommandType.COMPLETE_WORKFLOW_EXECUTION)
   expect(output.completion).toBe('completed')
   expect(output.result).toEqual({ id: 'enrichment-id', filename: input.filePath })
@@ -373,7 +713,7 @@ test('enrichRepository schedules listing and child workflows', async () => {
   const childCommands = output.commands.filter(
     (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
   )
-  expect(childCommands).toHaveLength(files.length)
+  expect(childCommands).toHaveLength(10)
   const childAttrs =
     childCommands[0]?.attributes?.case === 'startChildWorkflowExecutionCommandAttributes'
       ? childCommands[0].attributes.value
@@ -382,7 +722,7 @@ test('enrichRepository schedules listing and child workflows', async () => {
   expect(output.completion).toBe('pending')
 })
 
-test('enrichRepository keeps 50 child workflows in flight', async () => {
+test('enrichRepository keeps 10 child workflows in flight', async () => {
   const { executor } = makeExecutor()
   const files = Array.from({ length: 52 }, (_value, index) => `path/to/file-${index}.ts`)
   const input = {
@@ -403,7 +743,7 @@ test('enrichRepository keeps 50 child workflows in flight', async () => {
   const initialChildCommands = initial.commands.filter(
     (command: Command) => command.commandType === CommandType.START_CHILD_WORKFLOW_EXECUTION,
   )
-  expect(initialChildCommands).toHaveLength(50)
+  expect(initialChildCommands).toHaveLength(10)
   expect(initial.completion).toBe('pending')
 
   const signalDeliveries = [
@@ -435,7 +775,7 @@ test('enrichRepository keeps 50 child workflows in flight', async () => {
     nextChildCommands[0]?.attributes?.case === 'startChildWorkflowExecutionCommandAttributes'
       ? nextChildCommands[0].attributes.value
       : undefined
-  expect(nextChildAttrs?.workflowId).toBe(`${workflowId}-child-${runId}-50`)
+  expect(nextChildAttrs?.workflowId).toBe(`${workflowId}-child-${runId}-10`)
   expect(next.completion).toBe('pending')
 })
 

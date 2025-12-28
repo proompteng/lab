@@ -116,7 +116,7 @@ test('worker runtime responds to legacy query-only tasks with query completion R
   await runPromise
 
   expect(respondWorkflowTaskCompletedCalls).toBe(0)
-  expect(historyCalls).toBeGreaterThanOrEqual(1)
+  expect(historyCalls).toBe(0)
   expect(respondQueryCalls).toHaveLength(1)
   const [request] = respondQueryCalls
   expect(request.completedType).toBe(QueryResultType.ANSWERED)

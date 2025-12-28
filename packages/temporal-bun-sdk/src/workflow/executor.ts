@@ -231,6 +231,10 @@ export class WorkflowExecutor {
       async () => await this.#evaluateQueryRequests(lastQueryRegistry, input.queryRequests),
     )
 
+    if (executionMode !== 'query') {
+      guard.assertReplayComplete()
+    }
+
     if (Exit.isSuccess(exit)) {
       const determinismState = snapshotToDeterminismState(guard.snapshot)
       if (executionMode === 'query') {

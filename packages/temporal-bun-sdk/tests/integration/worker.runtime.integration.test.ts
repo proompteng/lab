@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
 import { Effect } from 'effect'
+import * as Schema from 'effect/Schema'
 
 import { buildTransportOptions, createTemporalClient, normalizeTemporalAddress } from '../../src/client'
 import { loadTemporalConfig, type TemporalConfig } from '../../src/config'
@@ -354,6 +355,77 @@ describeIntegration('Temporal worker runtime integration', () => {
     for (const poll of result.polls) {
       expect(poll.deploymentOptions).toBeUndefined()
     }
+  })
+
+  test('replays with sticky cache when workflow history omits start event', { timeout: 15_000 }, async () => {
+    await Effect.runPromise(
+      harness.runScenario('sticky cache workflow args', () =>
+        Effect.tryPromise(async () => {
+          const taskQueue = `codex-sticky-args-${Date.now()}-${Math.round(Math.random() * 1000)}`
+          const workflowDefinition = defineWorkflow({
+            name: 'stickyArgsWorkflow',
+            schema: Schema.Struct({ initial: Schema.String }),
+            handler: ({ input, activities }) =>
+              activities
+                .schedule('stickyArgs.echo', [input.initial])
+                .pipe(Effect.map((value) => `${value}:done`)),
+          })
+
+          const config = await loadTemporalConfig({
+            defaults: {
+              address: harnessConfig.address,
+              namespace: harnessConfig.namespace,
+              taskQueue,
+              workerWorkflowConcurrency: 2,
+              workerActivityConcurrency: 1,
+              workerStickyCacheSize: 4,
+              workerStickyTtlMs: 60_000,
+            },
+          })
+
+          const runtime = await WorkerRuntime.create({
+            config,
+            workflows: [workflowDefinition],
+            activities: {
+              'stickyArgs.echo': async (value: string) => value,
+            },
+            taskQueue,
+            namespace: config.namespace,
+            stickyScheduling: true,
+            deployment: {
+              versioningMode: WorkerVersioningMode.UNVERSIONED,
+              versioningBehavior: VersioningBehavior.UNSPECIFIED,
+            },
+          })
+
+          let runPromise: Promise<void> | null = null
+          try {
+            const { client: temporalClient } = await createTemporalClient({ config, taskQueue })
+            runPromise = runtime.run().catch((error) => {
+              console.error('[temporal-bun-sdk:test] worker runtime exited with error', error)
+              throw error
+            })
+
+            const started = await temporalClient.startWorkflow({
+              workflowId: `${taskQueue}-wf`,
+              workflowType: 'stickyArgsWorkflow',
+              taskQueue,
+              args: [{ initial: 'boot' }],
+            })
+
+            const result = await temporalClient.workflow.result(started.handle)
+            expect(result).toBe('boot:done')
+
+            await temporalClient.shutdown()
+          } finally {
+            await runtime.shutdown()
+            if (runPromise) {
+              await runPromise
+            }
+          }
+        }),
+      ),
+    )
   })
 })
 

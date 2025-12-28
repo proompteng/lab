@@ -19,7 +19,7 @@ All runs are resumable via a per-issue branch. Artifacts are stored in MinIO. Pr
 
 ## Non-goals
 - Replacing GitHub Actions CI.
-- Manual review flows.
+- Manual (human) review flows beyond automated Codex review gating.
 - Deep security/auth design (assume existing trusted service-to-service network).
 
 ## Definitions
@@ -196,6 +196,7 @@ Artifact access:
   - Codex review must be completed and resolved.
   - No merge conflicts on resume.
   - Non-empty change set (unless explicitly expected).
+- Codex review must be complete with no unresolved Codex review threads or open “changes requested”.
 - Run LLM judge for requirement coverage and quality.
 - Decide pass/fail and trigger next actions.
 - Create 10 memory snapshots per run (logs + outputs), stored via Jangar memories.
@@ -224,6 +225,7 @@ Pass:
 Fail:
 - Generate next_prompt with specific fixes.
 - Request Facteur to trigger new Argo run (same branch).
+- If Codex review requested changes, include a checklist of Codex comments to address in the rerun prompt.
 - Escalate to human only on hard failure:
   - merge conflicts
   - repeated infra failure

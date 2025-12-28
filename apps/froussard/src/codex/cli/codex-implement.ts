@@ -511,6 +511,13 @@ const loadResumeMetadata = async ({
   return context
 }
 
+const ensureEmptyFile = async (path: string) => {
+  if (await pathExists(path)) {
+    return
+  }
+  await ensureFileDirectory(path)
+  await writeFile(path, '', 'utf8')
+}
 const extractArchiveTo = async (archivePath: string, destination: string) => {
   await new Promise<void>((resolve, reject) => {
     const tarProcess = spawnChild('tar', ['-xzf', archivePath, '-C', destination], {
@@ -993,6 +1000,11 @@ export const runCodexImplementation = async (eventPath: string) => {
       run_id: channelRunId || undefined,
     },
   })
+
+  await ensureEmptyFile(outputPath)
+  await ensureEmptyFile(jsonOutputPath)
+  await ensureEmptyFile(agentOutputPath)
+  await ensureEmptyFile(runtimeLogPath)
 
   const normalizedIssueNumber = issueNumber
   let resumeContext: ResumeContext | undefined

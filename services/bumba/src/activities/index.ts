@@ -130,6 +130,38 @@ export type MarkEventProcessedInput = {
   deliveryId: string
 }
 
+export type UpsertIngestionInput = {
+  deliveryId: string
+  workflowId: string
+  status: string
+  error?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+export type UpsertIngestionOutput = {
+  ingestionId: string
+  eventId: string
+} | null
+
+export type UpsertEventFileInput = {
+  deliveryId: string
+  fileKeyId: string
+  changeType: string
+}
+
+export type UpsertEventFileOutput = {
+  eventFileId: string
+  eventId: string
+  fileKeyId: string
+} | null
+
+export type UpsertIngestionTargetInput = {
+  ingestionId: string
+  fileVersionId: string
+  kind: string
+}
+
 export type BumbaActivities = typeof activities
 
 const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
@@ -282,6 +314,21 @@ const normalizeRepositorySlug = (value: string) => {
     .replace(/^https?:\/\/(www\.)?github\.com\//, '')
     .replace(/^github\.com\//, '')
   return withoutPrefix
+}
+
+const normalizeRepositoryRef = (value: string | null | undefined) => {
+  const trimmed = normalizeOptionalText(value)
+  if (!trimmed) return null
+  if (trimmed.startsWith('refs/heads/')) {
+    return trimmed.slice('refs/heads/'.length)
+  }
+  if (trimmed.startsWith('refs/tags/')) {
+    return `tags/${trimmed.slice('refs/tags/'.length)}`
+  }
+  if (trimmed.startsWith('refs/remotes/')) {
+    return trimmed.slice('refs/remotes/'.length)
+  }
+  return trimmed
 }
 
 const resolveGithubToken = () =>
@@ -476,7 +523,7 @@ const resolveRepositoryInfo = async (repoRoot: string, overrides: RepositoryOver
 
   return {
     repoName: normalizedRepoName.length > 0 ? normalizedRepoName : fallbackName,
-    repoRef,
+    repoRef: normalizeRepositoryRef(repoRef),
     repoCommit,
   }
 }
@@ -537,21 +584,52 @@ const fetchGithubFile = async (repository: string, filePath: string, ref: string
   }
 
   if (!data || data.type !== 'file') {
+    if (data?.type === 'dir' || data?.type === 'submodule') {
+      const error = new Error(`GitHub contents API returned directory for ${filePath}`)
+      error.name = 'DirectoryError'
+      throw error
+    }
     throw new Error(`GitHub contents API returned non-file for ${filePath}`)
   }
-  if (!data.content || data.encoding !== 'base64') {
-    throw new Error(`GitHub contents API returned unsupported encoding for ${filePath}`)
+
+  if ((data.size ?? 0) === 0 && (!data.content || data.content.length === 0)) {
+    return {
+      content: '',
+      downloadUrl: data.download_url ?? null,
+      apiUrl: data.url ?? url.toString(),
+      sha: data.sha ?? null,
+      size: data.size ?? 0,
+    }
   }
 
-  const content = Buffer.from(data.content.replace(/\r?\n/g, ''), 'base64').toString('utf8')
-
-  return {
-    content,
-    downloadUrl: data.download_url ?? null,
-    apiUrl: data.url ?? url.toString(),
-    sha: data.sha ?? null,
-    size: data.size ?? null,
+  if (data.content && data.encoding === 'base64') {
+    const content = Buffer.from(data.content.replace(/\r?\n/g, ''), 'base64').toString('utf8')
+    return {
+      content,
+      downloadUrl: data.download_url ?? null,
+      apiUrl: data.url ?? url.toString(),
+      sha: data.sha ?? null,
+      size: data.size ?? null,
+    }
   }
+
+  if (data.download_url) {
+    const rawResponse = await fetch(data.download_url)
+    if (!rawResponse.ok) {
+      const body = await rawResponse.text()
+      throw new Error(`GitHub raw fetch failed (${rawResponse.status}): ${body}`)
+    }
+    const content = await rawResponse.text()
+    return {
+      content,
+      downloadUrl: data.download_url ?? null,
+      apiUrl: data.url ?? url.toString(),
+      sha: data.sha ?? null,
+      size: data.size ?? null,
+    }
+  }
+
+  throw new Error(`GitHub contents API returned unsupported encoding for ${filePath}`)
 }
 
 type AstPoint = {
@@ -702,6 +780,11 @@ const languageWasmByExtension = new Map<string, { name: string; wasmPath: string
   ['.tsx', { name: 'tsx', wasmPath: require.resolve('tree-sitter-typescript/tree-sitter-tsx.wasm') }],
   ['.webmanifest', { name: 'json', wasmPath: require.resolve('tree-sitter-json/tree-sitter-json.wasm') }],
   [
+    '.yaml',
+    { name: 'yaml', wasmPath: require.resolve('@tree-sitter-grammars/tree-sitter-yaml/tree-sitter-yaml.wasm') },
+  ],
+  ['.yml', { name: 'yaml', wasmPath: require.resolve('@tree-sitter-grammars/tree-sitter-yaml/tree-sitter-yaml.wasm') }],
+  [
     '.zig',
     {
       name: 'zig',
@@ -713,6 +796,7 @@ const languageWasmByExtension = new Map<string, { name: string; wasmPath: string
 
 let parserInitPromise: Promise<void> | null = null
 const loadedLanguages = new Map<string, Language>()
+const languageLoadPromises = new Map<string, Promise<Language>>()
 
 const ensureParserInit = async () => {
   if (!parserInitPromise) {
@@ -732,9 +816,21 @@ const loadLanguageForExtension = async (ext: string): Promise<LoadedLanguage | n
   const cached = loadedLanguages.get(entry.name)
   if (cached) return { name: entry.name, language: cached }
 
-  const language = await Language.load(entry.wasmPath)
-  loadedLanguages.set(entry.name, language)
-  return { name: entry.name, language }
+  let loadPromise = languageLoadPromises.get(entry.name)
+  if (!loadPromise) {
+    loadPromise = Language.load(entry.wasmPath)
+    languageLoadPromises.set(entry.name, loadPromise)
+  }
+
+  try {
+    const language = await loadPromise
+    loadedLanguages.set(entry.name, language)
+    languageLoadPromises.delete(entry.name)
+    return { name: entry.name, language }
+  } catch (error) {
+    languageLoadPromises.delete(entry.name)
+    throw error
+  }
 }
 
 const clampNumber = (value: number, fallback: number) => (Number.isFinite(value) && value > 0 ? value : fallback)
@@ -873,7 +969,7 @@ const formatYamlValue = (value: unknown, maxFactChars: number) => {
   return safeSlice(String(value ?? ''), maxFactChars)
 }
 
-const parseYamlAst = (
+const _parseYamlAst = (
   source: string,
   maxFacts: number,
   maxFactChars: number,
@@ -1268,8 +1364,6 @@ const customAstParsers = new Map<
   ['.svg', parseXmlAst],
   ['.txt', createPlainTextParser('text')],
   ['.xml', parseXmlAst],
-  ['.yaml', parseYamlAst],
-  ['.yml', parseYamlAst],
   ['.example', createPlainTextParser('text')],
   ['.keep', createPlainTextParser('text')],
 ])
@@ -1289,34 +1383,85 @@ const parseAst = async (source: string, filePath: string): Promise<AstSummaryOut
   if (customParser) {
     return customParser(source, maxFacts, maxFactChars, maxSummaryNodes)
   }
-  const entry = await loadLanguageForExtension(ext)
-  if (!entry) {
-    const fallbackLanguage = languageNameByExtension.get(ext) ?? 'text'
-    return parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
-  }
+  const fallbackLanguage = languageNameByExtension.get(ext) ?? 'text'
+  let entry: LoadedLanguage | null
 
-  const parser = new Parser()
-  parser.setLanguage(entry.language)
-  const tree = parser.parse(source)
-  if (!tree) {
+  try {
+    entry = await loadLanguageForExtension(ext)
+  } catch (error) {
+    const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
     return {
-      astSummary: 'Tree-sitter parse failed.',
-      facts: [],
-      metadata: { skipped: true, reason: 'parse_failed', language: entry.name },
+      ...fallback,
+      metadata: {
+        ...fallback.metadata,
+        skipped: true,
+        reason: 'language_load_failed',
+        error: error instanceof Error ? error.message : 'unknown_error',
+      },
     }
   }
-  const root = tree.rootNode as AstNode
 
-  const facts = collectFacts(root, source, maxFacts, maxFactChars)
-  const astSummary = buildAstSummary(root, source, maxSummaryNodes, maxFactChars)
+  if (!entry) {
+    const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
+    return {
+      ...fallback,
+      metadata: {
+        ...fallback.metadata,
+        skipped: true,
+        reason: 'language_missing',
+      },
+    }
+  }
 
-  return {
-    astSummary,
-    facts,
-    metadata: {
-      language: entry.name,
-      factCount: facts.length,
-    },
+  try {
+    const parser = new Parser()
+    parser.setLanguage(entry.language)
+    const tree = parser.parse(source)
+    if (!tree) {
+      return {
+        astSummary: 'Tree-sitter parse failed.',
+        facts: [],
+        metadata: { skipped: true, reason: 'parse_failed', language: entry.name },
+      }
+    }
+    const root = tree.rootNode as AstNode
+
+    const facts = collectFacts(root, source, maxFacts, maxFactChars)
+    const astSummary = buildAstSummary(root, source, maxSummaryNodes, maxFactChars)
+    if (facts.length === 0) {
+      const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
+      return {
+        astSummary,
+        facts: fallback.facts,
+        metadata: {
+          language: entry.name,
+          factCount: fallback.facts.length,
+          factsFallback: 'text',
+          factsFallbackLanguage: fallbackLanguage,
+        },
+      }
+    }
+
+    return {
+      astSummary,
+      facts,
+      metadata: {
+        language: entry.name,
+        factCount: facts.length,
+      },
+    }
+  } catch (error) {
+    const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
+    return {
+      ...fallback,
+      metadata: {
+        ...fallback.metadata,
+        skipped: true,
+        reason: 'parser_error',
+        language: entry.name,
+        error: error instanceof Error ? error.message : 'unknown_error',
+      },
+    }
   }
 }
 
@@ -1344,7 +1489,7 @@ const loadCompletionConfig = () => {
 
   const defaults = resolveCompletionDefaults(apiBaseUrl)
   const model = process.env.OPENAI_COMPLETION_MODEL ?? process.env.OPENAI_MODEL ?? defaults.model
-  const timeoutMs = Number.parseInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS ?? '30000', 10)
+  const timeoutMs = Number.parseInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS ?? '60000', 10)
   const maxInputChars = clampNumber(
     Number.parseInt(process.env.OPENAI_COMPLETION_MAX_INPUT_CHARS ?? '', 10),
     MAX_COMPLETION_INPUT_CHARS,
@@ -1526,6 +1671,16 @@ const getAtlasDb = () => {
   return atlasDb
 }
 
+const resolveGithubEventId = async (db: SQL, deliveryId: string) => {
+  const rows = (await db`
+    SELECT id
+    FROM atlas.github_events
+    WHERE delivery_id = ${deliveryId}
+    LIMIT 1;
+  `) as Array<{ id: string }>
+  return rows[0]?.id ?? null
+}
+
 export const activities = {
   async listRepoFiles(input: ListRepoFilesInput): Promise<ListRepoFilesOutput> {
     const repoRoot = resolve(input.repoRoot)
@@ -1542,7 +1697,7 @@ export const activities = {
     })
 
     try {
-      const args = ['git', 'ls-tree', '-r', '--name-only', ref]
+      const args = ['git', 'ls-tree', '-r', '-z', ref]
       if (pathPrefix) {
         args.push('--', pathPrefix)
       }
@@ -1553,7 +1708,7 @@ export const activities = {
       }
 
       const entries = output
-        .split(/\r?\n/)
+        .split('\0')
         .map((line) => line.trim())
         .filter((line) => line.length > 0)
 
@@ -1561,7 +1716,17 @@ export const activities = {
       let skipped = 0
 
       for (const entry of entries) {
-        if (shouldSkipRepoFile(entry)) {
+        const [meta, path] = entry.split('\t')
+        if (!meta || !path) {
+          skipped += 1
+          continue
+        }
+        const type = meta.split(' ')[1]
+        if (type !== 'blob') {
+          skipped += 1
+          continue
+        }
+        if (shouldSkipRepoFile(path)) {
           skipped += 1
           continue
         }
@@ -1569,7 +1734,7 @@ export const activities = {
           skipped += 1
           continue
         }
-        files.push(entry)
+        files.push(path)
       }
 
       const result = {
@@ -1670,11 +1835,17 @@ export const activities = {
         }
       }
 
-      if (!content && !normalizedCommit && fileStats) {
+      if (!content && !normalizedCommit && fileStats && fileStats.isFile()) {
         content = await readFile(fullPath, 'utf8')
         source = 'local'
         stats = fileStats
         sourceMeta = { repoRoot: input.repoRoot, source: 'local' }
+      }
+
+      if (!content && fileStats && !fileStats.isFile()) {
+        const error = new Error(`Path is a directory: ${input.filePath}`)
+        error.name = 'DirectoryError'
+        throw error
       }
 
       if (!content) {
@@ -1830,9 +2001,6 @@ export const activities = {
       response_format: { type: 'json_object' },
     }
 
-    const controller = new AbortController()
-    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
-
     const logCompletion = (responseFormat: 'json_object' | 'none', result: EnrichOutput) => {
       logActivity('info', 'completed', 'enrichWithModel', {
         filename: input.filename,
@@ -1845,7 +2013,7 @@ export const activities = {
       })
     }
 
-    try {
+    const requestCompletion = async (signal: AbortSignal) => {
       const headers: Record<string, string> = {
         'content-type': 'application/json',
       }
@@ -1857,7 +2025,7 @@ export const activities = {
         method: 'POST',
         headers,
         body: JSON.stringify(payloadWithFormat),
-        signal: controller.signal,
+        signal,
       })
 
       if (!response.ok) {
@@ -1874,7 +2042,7 @@ export const activities = {
             method: 'POST',
             headers,
             body: JSON.stringify(payload),
-            signal: controller.signal,
+            signal,
           })
           if (!fallbackResponse.ok) {
             const fallbackBody = await fallbackResponse.text()
@@ -1911,6 +2079,14 @@ export const activities = {
         },
       }
       logCompletion('json_object', result)
+      return result
+    }
+
+    const controller = new AbortController()
+    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+      const result = await requestCompletion(controller.signal)
       return result
     } catch (error) {
       const timeoutError = error instanceof Error && error.name === 'AbortError'
@@ -1971,7 +2147,7 @@ export const activities = {
     const startedAt = Date.now()
     const fileMeta = input.fileMetadata
     const repositoryName = fileMeta.repoName
-    const repositoryRef = fileMeta.repoRef ?? 'main'
+    const repositoryRef = normalizeRepositoryRef(fileMeta.repoRef) ?? 'main'
     const repositoryCommit = fileMeta.repoCommit ?? null
 
     logActivity('info', 'started', 'cleanupEnrichment', {
@@ -2102,7 +2278,7 @@ export const activities = {
     const startedAt = Date.now()
     const fileMeta = input.fileMetadata
     const repositoryName = fileMeta.repoName
-    const repositoryRef = fileMeta.repoRef ?? 'main'
+    const repositoryRef = normalizeRepositoryRef(fileMeta.repoRef) ?? 'main'
     const repositoryCommit = fileMeta.repoCommit ?? null
     const contentHash = fileMeta.contentHash ?? ''
 
@@ -2387,6 +2563,232 @@ export const activities = {
       logActivity('error', 'failed', 'persistFacts', {
         fileVersionId: input.fileVersionId,
         requested: input.facts.length,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
+  },
+
+  async upsertIngestion(input: UpsertIngestionInput): Promise<UpsertIngestionOutput> {
+    const startedAt = Date.now()
+    const deliveryId = input.deliveryId.trim()
+    const workflowId = input.workflowId.trim()
+    const status = input.status.trim()
+    const errorText = typeof input.error === 'string' ? input.error.trim() : ''
+    const error = errorText.length > 0 ? errorText : null
+
+    if (!deliveryId || !workflowId || !status) {
+      logActivity('info', 'skipped', 'upsertIngestion', {
+        reason: 'missing_required_fields',
+        deliveryId: deliveryId || null,
+        workflowId: workflowId || null,
+        status: status || null,
+        durationMs: Date.now() - startedAt,
+      })
+      return null
+    }
+
+    logActivity('info', 'started', 'upsertIngestion', {
+      deliveryId,
+      workflowId,
+      status,
+    })
+
+    try {
+      const db = getAtlasDb()
+      if (!db) {
+        throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+      }
+
+      const eventId = await resolveGithubEventId(db, deliveryId)
+      if (!eventId) {
+        logActivity('info', 'skipped', 'upsertIngestion', {
+          deliveryId,
+          workflowId,
+          status,
+          reason: 'event_not_found',
+          durationMs: Date.now() - startedAt,
+        })
+        return null
+      }
+
+      const startedAtValue = input.startedAt ? new Date(input.startedAt) : null
+      const finishedAtValue = input.finishedAt
+        ? new Date(input.finishedAt)
+        : status === 'completed' || status === 'failed' || status === 'skipped'
+          ? new Date()
+          : null
+
+      const rows = (await db`
+        INSERT INTO atlas.ingestions (event_id, workflow_id, status, error, started_at, finished_at)
+        VALUES (
+          ${eventId},
+          ${workflowId},
+          ${status},
+          ${error},
+          COALESCE(${startedAtValue}, now()),
+          ${finishedAtValue}
+        )
+        ON CONFLICT (event_id, workflow_id) DO UPDATE
+        SET status = CASE
+              WHEN atlas.ingestions.status IN ('completed', 'failed', 'skipped') THEN atlas.ingestions.status
+              ELSE EXCLUDED.status
+            END,
+            error = COALESCE(EXCLUDED.error, atlas.ingestions.error),
+            started_at = COALESCE(EXCLUDED.started_at, atlas.ingestions.started_at),
+            finished_at = COALESCE(EXCLUDED.finished_at, atlas.ingestions.finished_at)
+        RETURNING id, event_id;
+      `) as Array<{ id: string; event_id: string }>
+
+      const row = rows[0]
+      if (!row) {
+        throw new Error('ingestion upsert failed')
+      }
+
+      logActivity('info', 'completed', 'upsertIngestion', {
+        deliveryId,
+        workflowId,
+        status,
+        ingestionId: row.id,
+        durationMs: Date.now() - startedAt,
+      })
+
+      return { ingestionId: row.id, eventId: row.event_id }
+    } catch (error) {
+      logActivity('error', 'failed', 'upsertIngestion', {
+        deliveryId,
+        workflowId,
+        status,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
+  },
+
+  async upsertEventFile(input: UpsertEventFileInput): Promise<UpsertEventFileOutput> {
+    const startedAt = Date.now()
+    const deliveryId = input.deliveryId.trim()
+    const fileKeyId = input.fileKeyId.trim()
+    const changeType = input.changeType.trim()
+
+    if (!deliveryId || !fileKeyId || !changeType) {
+      logActivity('info', 'skipped', 'upsertEventFile', {
+        reason: 'missing_required_fields',
+        deliveryId: deliveryId || null,
+        fileKeyId: fileKeyId || null,
+        changeType: changeType || null,
+        durationMs: Date.now() - startedAt,
+      })
+      return null
+    }
+
+    logActivity('info', 'started', 'upsertEventFile', {
+      deliveryId,
+      fileKeyId,
+      changeType,
+    })
+
+    try {
+      const db = getAtlasDb()
+      if (!db) {
+        throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+      }
+
+      const eventId = await resolveGithubEventId(db, deliveryId)
+      if (!eventId) {
+        logActivity('info', 'skipped', 'upsertEventFile', {
+          deliveryId,
+          fileKeyId,
+          changeType,
+          reason: 'event_not_found',
+          durationMs: Date.now() - startedAt,
+        })
+        return null
+      }
+
+      const rows = (await db`
+        INSERT INTO atlas.event_files (event_id, file_key_id, change_type)
+        VALUES (${eventId}, ${fileKeyId}, ${changeType})
+        ON CONFLICT (event_id, file_key_id) DO UPDATE
+        SET change_type = EXCLUDED.change_type
+        RETURNING id;
+      `) as Array<{ id: string }>
+
+      const row = rows[0]
+      if (!row) {
+        throw new Error('event file upsert failed')
+      }
+
+      logActivity('info', 'completed', 'upsertEventFile', {
+        deliveryId,
+        fileKeyId,
+        changeType,
+        eventFileId: row.id,
+        durationMs: Date.now() - startedAt,
+      })
+
+      return { eventFileId: row.id, eventId, fileKeyId }
+    } catch (error) {
+      logActivity('error', 'failed', 'upsertEventFile', {
+        deliveryId,
+        fileKeyId,
+        changeType,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
+  },
+
+  async upsertIngestionTarget(input: UpsertIngestionTargetInput): Promise<void> {
+    const startedAt = Date.now()
+    const ingestionId = input.ingestionId.trim()
+    const fileVersionId = input.fileVersionId.trim()
+    const kind = input.kind.trim()
+
+    if (!ingestionId || !fileVersionId || !kind) {
+      logActivity('info', 'skipped', 'upsertIngestionTarget', {
+        reason: 'missing_required_fields',
+        ingestionId: ingestionId || null,
+        fileVersionId: fileVersionId || null,
+        kind: kind || null,
+        durationMs: Date.now() - startedAt,
+      })
+      return
+    }
+
+    logActivity('info', 'started', 'upsertIngestionTarget', {
+      ingestionId,
+      fileVersionId,
+      kind,
+    })
+
+    try {
+      const db = getAtlasDb()
+      if (!db) {
+        throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
+      }
+
+      await db`
+        INSERT INTO atlas.ingestion_targets (ingestion_id, file_version_id, kind)
+        VALUES (${ingestionId}, ${fileVersionId}, ${kind})
+        ON CONFLICT (ingestion_id, file_version_id, kind) DO UPDATE
+        SET kind = EXCLUDED.kind;
+      `
+
+      logActivity('info', 'completed', 'upsertIngestionTarget', {
+        ingestionId,
+        fileVersionId,
+        kind,
+        durationMs: Date.now() - startedAt,
+      })
+    } catch (error) {
+      logActivity('error', 'failed', 'upsertIngestionTarget', {
+        ingestionId,
+        fileVersionId,
+        kind,
         durationMs: Date.now() - startedAt,
         error: formatActivityError(error),
       })
