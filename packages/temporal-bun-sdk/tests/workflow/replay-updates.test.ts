@@ -4,7 +4,8 @@ import { Effect } from 'effect'
 
 import { createDefaultDataConverter } from '../../src/common/payloads'
 import type { WorkflowInfo } from '../../src/workflow/context'
-import { ingestWorkflowHistory } from '../../src/workflow/replay'
+import { encodeDeterminismMarkerDetails, ingestWorkflowHistory } from '../../src/workflow/replay'
+import type { WorkflowDeterminismState } from '../../src/workflow/determinism'
 import { EventType } from '../../src/proto/temporal/api/enums/v1/event_type_pb'
 import { UpdateAdmittedEventOrigin } from '../../src/proto/temporal/api/enums/v1/update_pb'
 import {
@@ -12,6 +13,7 @@ import {
 } from '../../src/proto/temporal/api/failure/v1/message_pb'
 import {
   HistoryEventSchema,
+  MarkerRecordedEventAttributesSchema,
   WorkflowExecutionUpdateAcceptedEventAttributesSchema,
   WorkflowExecutionUpdateAdmittedEventAttributesSchema,
   WorkflowExecutionUpdateCompletedEventAttributesSchema,
@@ -245,6 +247,91 @@ test('ingestWorkflowHistory dedupes update invocations and orders by sequencing 
       payload: undefined,
       identity: 'client-sdk',
       sequencingEventId: '3',
+    },
+  ])
+})
+
+test('ingestWorkflowHistory retains update invocations when marker covers history', async () => {
+  const determinismState: WorkflowDeterminismState = {
+    commandHistory: [],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+    updates: [
+      {
+        updateId: 'upd-marker',
+        stage: 'admitted',
+        handlerName: 'setTitle',
+        identity: 'client-sdk',
+        historyEventId: '1',
+      },
+    ],
+  }
+  const markerDetails = await Effect.runPromise(
+    encodeDeterminismMarkerDetails(dataConverter, {
+      info: WORKFLOW_INFO,
+      determinismState,
+      lastEventId: '3',
+      recordedAt: new Date('2025-01-01T00:00:00Z'),
+    }),
+  )
+
+  const events = [
+    create(HistoryEventSchema, {
+      eventId: 1n,
+      eventType: EventType.WORKFLOW_EXECUTION_UPDATE_ADMITTED,
+      attributes: {
+        case: 'workflowExecutionUpdateAdmittedEventAttributes',
+        value: create(WorkflowExecutionUpdateAdmittedEventAttributesSchema, {
+          request: makeUpdateRequest('upd-marker', 'setTitle'),
+          origin: UpdateAdmittedEventOrigin.UPDATE_ADMITTED_EVENT_ORIGIN_CLIENT,
+        }),
+      },
+    }),
+    create(HistoryEventSchema, {
+      eventId: 2n,
+      eventType: EventType.WORKFLOW_EXECUTION_UPDATE_ACCEPTED,
+      attributes: {
+        case: 'workflowExecutionUpdateAcceptedEventAttributes',
+        value: create(WorkflowExecutionUpdateAcceptedEventAttributesSchema, {
+          acceptedRequest: makeUpdateRequest('upd-marker', 'setTitle'),
+          acceptedRequestMessageId: 'message-marker',
+          acceptedRequestSequencingEventId: 1n,
+        }),
+      },
+    }),
+    create(HistoryEventSchema, {
+      eventId: 3n,
+      eventType: EventType.MARKER_RECORDED,
+      attributes: {
+        case: 'markerRecordedEventAttributes',
+        value: create(MarkerRecordedEventAttributesSchema, {
+          markerName: 'temporal-bun-sdk/determinism',
+          details: markerDetails,
+          workflowTaskCompletedEventId: 2n,
+        }),
+      },
+    }),
+  ]
+
+  const replay = await Effect.runPromise(
+    ingestWorkflowHistory({
+      info: WORKFLOW_INFO,
+      history: events,
+      dataConverter,
+    }),
+  )
+
+  expect(replay.updates).toEqual([
+    {
+      protocolInstanceId: 'history-admitted',
+      requestMessageId: 'history-1',
+      updateId: 'upd-marker',
+      name: 'setTitle',
+      payload: undefined,
+      identity: 'client-sdk',
+      sequencingEventId: '1',
     },
   ])
 })

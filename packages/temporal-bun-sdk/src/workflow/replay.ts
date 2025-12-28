@@ -389,7 +389,7 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
           lastEventId: latestEventId,
           hasDeterminismMarker: true,
           markerState: cloneDeterminismState(markerState),
-          ...(replayUpdateInvocationsAfterMarker.length > 0 ? { updates: replayUpdateInvocationsAfterMarker } : {}),
+          ...(replayUpdateInvocationsFull.length > 0 ? { updates: replayUpdateInvocationsFull } : {}),
         }
       }
 
@@ -419,6 +419,7 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
         hasDeterminismMarker: true,
         markerState: cloneDeterminismState(markerState),
         lastEventId: historyLastEventId ?? markerLastEventId ?? null,
+        ...(replayUpdateInvocationsFull.length > 0 ? { updates: replayUpdateInvocationsFull } : {}),
       }
     }
 
