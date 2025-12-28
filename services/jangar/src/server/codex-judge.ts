@@ -7,7 +7,7 @@ import * as Either from 'effect/Either'
 import { getCodexClient } from '~/server/codex-client'
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 import { type CodexEvaluationRecord, type CodexRunRecord, createCodexJudgeStore } from '~/server/codex-judge-store'
-import { createGitHubClient, type ReviewSummary } from '~/server/github-client'
+import { createGitHubClient, type PullRequest, type ReviewSummary } from '~/server/github-client'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
 
 const store = createCodexJudgeStore()
@@ -199,6 +199,102 @@ const parseRepositoryParts = (repository: string) => {
   return { owner, repo }
 }
 
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i
+
+const isCommitSha = (value: string) => COMMIT_SHA_PATTERN.test(value.trim())
+
+const isCommitKey = (key: string) => {
+  const normalized = key.toLowerCase()
+  return (
+    normalized.includes('commit') ||
+    normalized === 'sha' ||
+    normalized.endsWith('sha') ||
+    normalized === 'revision' ||
+    normalized === 'rev'
+  )
+}
+
+const findCommitShaInValue = (value: unknown, depth = 0, seen = new Set<object>()): string | null => {
+  if (!value || depth > 6) return null
+  if (typeof value !== 'object') return null
+  if (seen.has(value as object)) return null
+  seen.add(value as object)
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const match = findCommitShaInValue(entry, depth + 1, seen)
+      if (match) return match
+    }
+    return null
+  }
+
+  const record = value as Record<string, unknown>
+  for (const [key, entry] of Object.entries(record)) {
+    if (typeof entry === 'string' && isCommitKey(key) && isCommitSha(entry)) {
+      return entry.trim()
+    }
+  }
+
+  for (const entry of Object.values(record)) {
+    if (entry && typeof entry === 'object') {
+      const match = findCommitShaInValue(entry, depth + 1, seen)
+      if (match) return match
+    }
+  }
+
+  return null
+}
+
+const extractArtifactsFromPayload = (payload: Record<string, unknown> | null) => {
+  if (!payload) return []
+  const rawData = payload.data
+  const data = typeof rawData === 'string' ? safeParseJson(rawData) : isRecord(rawData) ? rawData : payload
+  return Array.isArray((data as Record<string, unknown>).artifacts)
+    ? ((data as Record<string, unknown>).artifacts as unknown[])
+    : []
+}
+
+const extractCommitShaFromArtifacts = (payload: Record<string, unknown> | null) => {
+  const artifacts = extractArtifactsFromPayload(payload)
+  for (const artifact of artifacts) {
+    const match = findCommitShaInValue(artifact)
+    if (match) return match
+  }
+  return null
+}
+
+const extractCommitShaFromRun = (run: CodexRunRecord) => {
+  const fromArtifacts = extractCommitShaFromArtifacts(run.runCompletePayload)
+  if (fromArtifacts) return fromArtifacts
+  const fromRunComplete = findCommitShaInValue(run.runCompletePayload)
+  if (fromRunComplete) return fromRunComplete
+  return findCommitShaInValue(run.notifyPayload)
+}
+
+const normalizeBranchRef = (branch: string) => {
+  const trimmed = branch.trim()
+  if (!trimmed) return ''
+  if (trimmed.startsWith('refs/')) {
+    return trimmed.replace(/^refs\//, '')
+  }
+  if (trimmed.startsWith('heads/')) {
+    return trimmed
+  }
+  return `heads/${trimmed}`
+}
+
+const fetchBranchHeadSha = async (repository: string, branch: string) => {
+  if (!branch) return null
+  const ref = normalizeBranchRef(branch)
+  if (!ref) return null
+  const { owner, repo } = parseRepositoryParts(repository)
+  try {
+    return await github.getRefSha(owner, repo, ref)
+  } catch {
+    return null
+  }
+}
+
 const scheduleEvaluation = (runId: string, delayMs: number) => {
   const existing = scheduledRuns.get(runId)
   if (existing) {
@@ -276,11 +372,25 @@ const fetchPullRequest = async (run: CodexRunRecord) => {
   }
 }
 
-const fetchCiStatus = async (run: CodexRunRecord, prSha?: string | null) => {
+const fetchCiStatus = async (run: CodexRunRecord, commitSha?: string | null) => {
   const { owner, repo } = parseRepositoryParts(run.repository)
-  const sha = prSha ?? run.commitSha
+  const sha = commitSha ?? run.commitSha
   if (!sha) return { status: 'pending' as const, url: undefined }
   return github.getCheckRuns(owner, repo, sha)
+}
+
+const resolveCiContext = async (run: CodexRunRecord, pr: PullRequest | null) => {
+  const prSha = pr?.headSha ?? null
+  const artifactSha = prSha ? null : extractCommitShaFromRun(run)
+  const existingSha = prSha ? null : run.commitSha
+  let commitSha = prSha ?? artifactSha ?? existingSha ?? null
+
+  if (!commitSha && !prSha) {
+    commitSha = await fetchBranchHeadSha(run.repository, run.branch)
+  }
+
+  const ci = await fetchCiStatus(run, commitSha)
+  return { commitSha, ci }
 }
 
 const fetchReviewStatus = async (run: CodexRunRecord, prNumber: number) => {
@@ -429,27 +539,13 @@ const evaluateRun = async (runId: string) => {
   await store.updateRunStatus(run.id, 'judging')
 
   const pr = await fetchPullRequest(run)
-  if (!pr) {
-    const evaluation = await store.updateDecision({
-      runId: run.id,
-      decision: 'needs_iteration',
-      reasons: { error: 'missing_pull_request' },
-      suggestedFixes: { fix: 'Ensure PR exists for branch before completion.' },
-      nextPrompt: 'Open a PR for the current branch and ensure all required checks run.',
-      promptTuning: {},
-      systemSuggestions: {},
-    })
-    const refreshedRun = (await store.getRunById(run.id)) ?? run
-    await writeMemories(refreshedRun, evaluation)
-    await triggerRerun(run, 'missing_pull_request', evaluation)
-    return
+  if (pr) {
+    await store.updateRunPrInfo(run.id, pr.number, pr.htmlUrl, pr.headSha)
   }
-
-  await store.updateRunPrInfo(run.id, pr.number, pr.htmlUrl, pr.headSha)
 
   await store.updateRunPrompt(run.id, run.prompt, run.nextPrompt)
 
-  if (pr.mergeableState === 'dirty') {
+  if (pr?.mergeableState === 'dirty') {
     const evaluation = await store.updateDecision({
       runId: run.id,
       decision: 'needs_human',
@@ -469,8 +565,24 @@ const evaluateRun = async (runId: string) => {
     return
   }
 
-  const ci = await fetchCiStatus(run, pr.headSha)
-  await store.updateCiStatus({ runId: run.id, status: ci.status, url: ci.url, commitSha: pr.headSha })
+  const { commitSha, ci } = await resolveCiContext(run, pr)
+  if (!commitSha && !pr) {
+    const evaluation = await store.updateDecision({
+      runId: run.id,
+      decision: 'needs_iteration',
+      reasons: { error: 'missing_pull_request' },
+      suggestedFixes: { fix: 'Ensure PR exists for branch before completion.' },
+      nextPrompt: 'Open a PR for the current branch and ensure all required checks run.',
+      promptTuning: {},
+      systemSuggestions: {},
+    })
+    const refreshedRun = (await store.getRunById(run.id)) ?? run
+    await writeMemories(refreshedRun, evaluation)
+    await triggerRerun(run, 'missing_pull_request', evaluation)
+    return
+  }
+
+  await store.updateCiStatus({ runId: run.id, status: ci.status, url: ci.url, commitSha })
 
   if (ci.status === 'pending') {
     scheduleEvaluation(run.id, config.ciPollIntervalMs)
@@ -490,6 +602,22 @@ const evaluateRun = async (runId: string) => {
     const refreshedRun = (await store.getRunById(run.id)) ?? run
     await writeMemories(refreshedRun, evaluation)
     await triggerRerun(run, 'ci_failed', evaluation)
+    return
+  }
+
+  if (!pr) {
+    const evaluation = await store.updateDecision({
+      runId: run.id,
+      decision: 'needs_iteration',
+      reasons: { error: 'missing_pull_request' },
+      suggestedFixes: { fix: 'Ensure PR exists for branch before completion.' },
+      nextPrompt: 'Open a PR for the current branch and ensure all required checks run.',
+      promptTuning: {},
+      systemSuggestions: {},
+    })
+    const refreshedRun = (await store.getRunById(run.id)) ?? run
+    await writeMemories(refreshedRun, evaluation)
+    await triggerRerun(run, 'missing_pull_request', evaluation)
     return
   }
 
@@ -858,6 +986,13 @@ const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRec
       }
     }
   }
+}
+
+export const __private = {
+  extractCommitShaFromArtifacts,
+  findCommitShaInValue,
+  normalizeBranchRef,
+  resolveCiContext,
 }
 
 export const handleRunComplete = async (payload: Record<string, unknown>) => {
