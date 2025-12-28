@@ -3,7 +3,7 @@
 ## Overview
 - Codex workflow pods now ship with a rootless Docker sidecar (`docker:25.0-dind-rootless`) exposing `tcp://localhost:2375` with TLS disabled.
 - The sidecar owns `/var/lib/docker` on an `emptyDir` volume; the main Codex container mounts it read-only to reuse layers without permitting mutation.
-- `DOCKER_HOST=tcp://localhost:2375` and `DOCKER_TLS_VERIFY=0` are baked into the Codex image; `DOCKER_ENABLED=1` is set by the docker-enabled WorkflowTemplates so bootstrap waits for the sidecar. Image default for `DOCKER_ENABLED` remains `0` to avoid blocking workflows without a daemon.
+- `DOCKER_HOST=tcp://localhost:2375` is baked into the Codex image; `DOCKER_TLS_VERIFY` should be unset for the in-pod daemon (bootstrap treats `0`/`false` as unset). `DOCKER_ENABLED=1` is set by the docker-enabled WorkflowTemplates so bootstrap waits for the sidecar. Image default for `DOCKER_ENABLED` remains `0` to avoid blocking workflows without a daemon.
 
 ## Validate the daemon
 1) Confirm connectivity:
