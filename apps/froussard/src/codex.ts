@@ -69,6 +69,7 @@ const buildImplementationPrompt = ({
     '- Run all required formatters/linters/tests per repo instructions; fix and rerun until green.',
     `- Commit in logical units referencing #${issueNumber}; push the branch.`,
     '- Open the PR using the default template per repo instructions; link the issue.',
+    '- Finish only when required CI is green; fix failures and re-run the smallest necessary checks until it is.',
     '- Do not stop until the PR is opened and all required checks are green.',
     '- Use relevant repo skills in `skills/` when applicable; do not restate their instructions.',
     '',
