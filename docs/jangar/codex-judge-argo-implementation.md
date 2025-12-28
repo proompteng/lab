@@ -3,6 +3,12 @@
 This document splits the work into parallel tracks and provides concrete interfaces, schemas, and workflow steps.
 The judge pipeline is triggered by the Argo run-complete event; notify is enrichment only.
 
+Current production context (see `docs/codex-workflow.md`):
+- Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
+- Workflow outputs: `.codex-implementation-changes.tar.gz`, `.codex-implementation.patch`, `.codex-implementation-status.txt`
+- Argo Events -> Kafka completions: `argocd/applications/froussard/workflow-completions-*.yaml`
+- Kafka topics: `github.issues.codex.tasks`, `argo.workflows.completions`
+
 ## Workstreams (Parallel)
 
 A) Argo workflow updates (Froussard)
@@ -34,69 +40,52 @@ flowchart LR
 
 ## A) Argo Workflow Updates (Froussard)
 
-### Required env inputs
-- ISSUE_ID
-- REPO_URL
-- DEFAULT_BRANCH
-- WORKFLOW_ID (Argo metadata)
-- ATTEMPT (start at 1)
-- PROMPT (current prompt text)
+### Required inputs (already in the template)
+- `eventBody` (base64 JSON), `rawEvent`, `head`, `base`
 
-### Steps (high level)
-1) checkout
-   - clone repo
-   - create or checkout branch codex/issue-<ISSUE_ID>
-2) run codex exec
-   - configure ~/.codex/config.toml to use notify wrapper
-   - run Codex exec with PROMPT
-   - capture codex log
-3) commit+push
-   - git add -A
-   - if changes, git commit -m "codex: issue <id> attempt <n>"
-   - git push
-4) onExit: capture artifacts
-   - git status --porcelain
-   - git diff (patch)
-   - git diff --stat
-   - git rev-parse HEAD
-   - package logs
-   - upload to MinIO
+### What already exists
+- Workflow `github-codex-implementation` runs `codex-implement.ts` and uploads three artifacts:
+  `.codex-implementation-changes.tar.gz`, `.codex-implementation.patch`, `.codex-implementation-status.txt`.
+
+### Additions needed
+- Extend workflow outputs to include:
+  - `.codex-implementation.log`
+  - `.codex-implementation-events.jsonl`
+  - `.codex-implementation-agent.log`
+  - `.codex-implementation-runtime.log`
+  - `.codex/implementation-resume.json`
+- Add labels/annotations on the workflow for repo/issue/head/base to ease correlation
+  (these can be derived from `eventBody` during submission).
+- Ensure Argo artifact repository is used consistently (already configured in
+  `argocd/applications/argo-workflows/kustomization.yaml`).
 
 ### Deliverables
-- Updated Argo workflow YAML with resumable branch-commit behavior.
-- onExit artifact capture + MinIO upload step.
-- Codex exec step configured with notify wrapper.
- - onExit callback to Jangar run-complete endpoint.
+- Updated workflow template artifact outputs.
+- Optional: workflow labels/annotations for repo/issue/head/base.
 
 ### Detailed tasks
-- Define branch naming rule and implement create/checkout logic.
-- Ensure Codex exec step writes logs to known paths.
-- Add commit step that runs even on failure.
-- Add onExit step to collect artifacts and upload to MinIO.
-- Add onExit step to POST /codex/run-complete with status and artifact URLs.
-- Export artifact URLs as env for notify wrapper.
-- Record runtime_meta.json (versions, env, workflow metadata, attempt).
+- Update `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
+  `outputs.artifacts` to include new log/resume files.
+- Verify `codex-implement.ts` writes the log paths used by the workflow outputs.
+- Validate Argo artifact repository is reachable in the workflow namespace.
 
 ### Acceptance criteria
-- Run resumes from branch codex/issue-<ISSUE_ID> across attempts.
-- Artifacts exist in MinIO for both success and failure.
-- Codex notify payload includes artifact URLs and workflow metadata.
-
-### Notes
-- Always run onExit, even if Codex fails.
-- If no changes, still record artifacts and mark empty diff.
+- New artifacts appear in MinIO for each run.
+- Jangar can fetch outputs via the Argo Workflow API.
 
 ## B) Notify Wrapper
 
 ### Purpose
-Codex notify only provides minimal payload. Wrapper enriches with workflow metadata + artifact URLs and posts to Jangar.
+Codex notify only provides minimal payload. In the current implementation, Codex runs via
+`CodexRunner` inside `codex-implement.ts`, so notify must be invoked from the runner (or derived
+from JSON event logs) rather than relying on CLI config alone.
 
 ### Inputs
-- Raw notify JSON from Codex (last CLI arg)
-- Env: ISSUE_ID, WORKFLOW_ID, ATTEMPT, BRANCH, ARTIFACT_BASE_URL, REPO, PR_ID (optional)
+- Raw notify JSON from Codex (if emitted), or parsed summary from `.codex-implementation-events.jsonl`
+- Workflow metadata from the event payload (repo, issue, head/base, workflow name)
 
 ### Output
-- POST /codex/notify to Jangar
+- POST /api/codex/notify to Jangar
 
 ### Retry
 - Simple retry with backoff for transient errors (5xx, network).
@@ -107,25 +96,26 @@ Codex notify only provides minimal payload. Wrapper enriches with workflow metad
 - Config docs for Codex exec container.
 
 ### Detailed tasks
-- Parse JSON from last CLI arg.
-- Merge workflow metadata and artifact URLs.
+- Add a post-run hook in `codex-implement.ts` that emits a notify payload derived from
+  `runCodexSession` results and/or the JSON event log.
+- Merge workflow metadata (repo/issue/head/base/workflow name).
 - POST to Jangar with timeout + retry.
 - Log failures to stderr for Argo log capture.
-- Optionally persist notify payload to local file (for onExit artifact).
+- Persist notify payload to a local file so it can be uploaded as an Argo artifact.
 
 ### Acceptance criteria
-- Jangar receives enriched payload with artifacts.
-- Wrapper does not block Codex exec completion.
+- Jangar receives an enrichment payload even when CLI notify is unavailable.
+- Notify emission does not block workflow completion.
 
 ## C) Jangar Ingestion + Persistence
 
 ### Endpoints
-- POST /codex/notify
-- POST /codex/run-complete
+- POST /api/codex/notify
+- POST /api/codex/run-complete (CloudEvent from KafkaSource)
 
 Run-complete is the primary trigger for judging; notify only enriches the run context.
 
-### Payload schema (draft)
+### notify payload (draft)
 {
   "type": "agent-turn-complete",
   "thread-id": "...",
@@ -138,36 +128,38 @@ Run-complete is the primary trigger for judging; notify only enriches the run co
   "attempt": 1,
   "branch": "codex/issue-123",
   "repo": "org/repo",
-  "artifact_base_url": "s3://.../codex-artifacts/...",
-  "artifacts": {
-    "patch.diff": "...",
-    "git_status.txt": "...",
-    "git_diff_stat.txt": "...",
-    "commit_sha.txt": "...",
-    "codex.log": "...",
-    "runtime_meta.json": "..."
-  }
+  "workflow_name": "github-codex-implementation-abc123",
+  "workflow_namespace": "argo-workflows",
+  "artifact_refs": ["implementation-changes", "implementation-patch", "implementation-status"]
 }
 
-### run-complete payload (draft)
+### run-complete payload (draft, from `argo.workflows.completions` sensor)
 {
-  "workflow_id": "...",
-  "attempt": 1,
-  "issue_id": "...",
-  "branch": "codex/issue-123",
-  "repo": "org/repo",
-  "status": "success" | "failed" | "aborted",
-  "commit_sha": "...",
-  "artifact_base_url": "s3://.../codex-artifacts/...",
-  "artifacts": {
-    "patch.diff": "...",
-    "git_status.txt": "...",
-    "git_diff_stat.txt": "...",
-    "commit_sha.txt": "...",
-    "codex.log": "...",
-    "runtime_meta.json": "..."
-  }
+  "metadata": {
+    "name": "github-codex-implementation-abc123",
+    "namespace": "argo-workflows",
+    "uid": "...",
+    "labels": { "codex.stage": "implementation" },
+    "annotations": {}
+  },
+  "status": {
+    "phase": "Succeeded" | "Failed" | "Error",
+    "startedAt": "...",
+    "finishedAt": "..."
+  },
+  "arguments": {
+    "parameters": [
+      { "name": "eventBody", "value": "<base64 JSON>" },
+      { "name": "rawEvent", "value": "<base64 JSON>" },
+      { "name": "head", "value": "codex/issue-123" },
+      { "name": "base", "value": "main" }
+    ]
+  },
+  "stage": "implementation"
 }
+
+Note: KafkaSource delivers the payload as a CloudEvent. Jangar should read the JSON body
+from the CloudEvent `data` field (or directly if the source is configured to pass raw data).
 
 ### Storage
 Tables (or collections):
@@ -176,13 +168,17 @@ Tables (or collections):
 - judge_evaluations(run_id, decision, confidence, reasons, missing_items, next_prompt)
 - prompt_tuning(id, source_run_id, diff, pr_url, status)
 
+Use the existing Postgres wiring in `services/jangar/src/server/db.ts` (jangar-db).
+
 ### Idempotency
-- Unique key: workflow_id + attempt + turn_id
+- Unique key: workflow name + workflow uid (from run-complete); attach notify by workflow name.
 
 ### Deliverables
 - Ingestion endpoint with validation.
 - DB migrations for new tables.
 - Run state machine implementation.
+- Knative KafkaSource to deliver `argo.workflows.completions` to Jangar
+  (new manifest under `argocd/applications/jangar`).
 
 ### Detailed tasks
 - Validate payload schema and reject malformed input.
@@ -192,21 +188,27 @@ Tables (or collections):
 - Create state transitions: run_complete -> waiting_for_ci -> judging.
 - Persist raw notify payload for audit.
 - Expose internal API for judge pipeline to fetch run context.
+- Decode `eventBody` from workflow arguments to recover repo/issue/head/base.
+- Query Argo Workflow API for artifact outputs (or extend the sensor payload).
+ - Unpack `implementation-changes` archive and read `metadata/manifest.json` for prompt/session details.
+- Add `services/jangar/src/routes/api/codex/run-complete.ts` and
+  `services/jangar/src/routes/api/codex/notify.ts` (TanStack router).
+- Configure KafkaSource sink to `jangar` service with `uri: /api/codex/run-complete`.
 
 ### Acceptance criteria
 - Duplicate notifications do not create duplicate runs.
 - Artifacts and run metadata are queryable by issue_id.
 - Failed runs without notify are still recorded and retried.
- - Judge starts only after run-complete exists (notify does not trigger judging).
+- Judge starts only after run-complete exists (notify does not trigger judging).
 
 ## D) GitHub Actions Status Integration
 
 ### Goal
-Provide CI status for a branch or PR.
+Provide CI status for the attempt commit SHA (prefer PR head SHA).
 
 ### Options
 - Webhook receiver in Jangar, or
-- Polling GitHub API for workflow runs by branch.
+- Polling GitHub API for workflow runs by commit SHA.
 
 ### Expected fields
 - ci_status: pending | success | failure
@@ -218,6 +220,11 @@ Provide CI status for a branch or PR.
 - Use the attempt commit SHA (from artifacts) as the key for CI checks.
 - Do not use branch-level status, because shared resumable branches can show stale green checks.
 
+### Implementation notes
+- Jangar already has `GITHUB_TOKEN` in `argocd/applications/jangar/deployment.yaml`; use it to
+  query check-runs or workflow runs by commit SHA.
+- Prefer PR head SHA (from GitHub API) over branch head to avoid stale results.
+
 ### Deliverables
 - CI status updater (webhook or polling).
 - Mapping of CI status to run records.
@@ -225,7 +232,7 @@ Provide CI status for a branch or PR.
 ### Detailed tasks
 - Decide integration mode (webhook preferred if available).
 - Implement GitHub API client with rate limiting.
-- Map branch -> workflow run -> conclusion.
+- Map commit SHA -> workflow run -> conclusion.
 - Store CI status in run record; trigger judge once final.
 
 ### Acceptance criteria
@@ -283,7 +290,7 @@ Provide CI status for a branch or PR.
 - Increment attempt
 
 ### Implementation
-- Jangar calls Facteur to submit the Argo workflow rerun
+- Jangar calls Facteur `/codex/tasks` to submit the Argo workflow rerun
 - Include run metadata + prompt in submission
 
 ### Deliverables
@@ -291,7 +298,11 @@ Provide CI status for a branch or PR.
 - Attempt counter stored per issue.
 
 ### Detailed tasks
-- Construct rerun payload with branch, prompt, attempt+1.
+- Construct a `CodexTask` protobuf payload with the same repo/issue/head/base and updated prompt.
+- Use schema from `proto/proompteng/froussard/v1/codex_task.proto`.
+- Use `delivery_id` derived from issue + attempt for idempotency.
+- POST to `facteur-internal` (`argocd/applications/facteur/overlays/cluster/facteur-internal-service.yaml`)
+  with `Content-Type: application/x-protobuf`.
 - Implement Facteur API client and retries.
 - Prevent duplicate reruns (idempotency key).
 - Record link between run and rerun parent.

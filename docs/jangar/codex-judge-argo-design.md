@@ -5,7 +5,7 @@ Owner: Jangar + Froussard + Facteur
 Scope: Codex exec runs in Argo, judge consumes completion notifications, decides pass/fail, triggers reruns, and posts success to Discord.
 
 ## Summary
-Codex runs inside Argo workflows triggered by Facteur from GitHub issue events. Argo posts a run-complete event on exit (success or failure), and Codex may emit a notify event on successful turn completion. Jangar ingests run-complete as the source of truth, uses notify as enrichment, waits for GitHub Actions CI results, evaluates whether work is complete, and either:
+Codex runs inside Argo workflows triggered by Facteur from GitHub issue events. Argo Events publishes workflow completions to Kafka, and Codex may emit a notify event on successful turn completion. Jangar ingests run-complete events from the Kafka completions topic as the source of truth, uses notify as enrichment, waits for GitHub Actions CI results, evaluates whether work is complete, and either:
 - marks success and posts to Discord, or
 - generates a follow-up prompt and triggers a new Argo run that resumes work from the last commit.
 
@@ -30,25 +30,32 @@ All runs are resumable via a per-issue branch. Artifacts are stored in MinIO. Pr
 ## Architecture
 
 Components:
-- Facteur: receives GitHub issue events; submits Argo workflows.
-- Froussard: stores Argo workflow YAML; executes Codex in exec mode.
-- Codex exec: runs agent; emits notify on completion.
+- Froussard: receives GitHub webhooks, publishes Codex tasks to Kafka, and owns the workflow template manifests.
+- Facteur: consumes Codex tasks and submits Argo workflows.
+- Argo Workflows: executes Codex in exec mode.
+- Codex exec: runs agent; emits notify on completion (optional enrichment).
 - Notify wrapper: enriches notify payload and POSTs to Jangar.
 - Jangar: persists run state, waits for CI, judges completion, and orchestrates reruns (triggered by run-complete).
 - MinIO: stores artifacts for each run.
-- GitHub Actions: CI signal for the branch.
+- Argo Events: publishes workflow completion events to Kafka.
+- Kafka: carries `github.issues.codex.tasks` and `argo.workflows.completions`.
+- GitHub Actions: CI signal for the attempt commit SHA.
 - Discord: success notification to general channel; escalation only on hard failure.
 
 System overview:
 ```mermaid
 flowchart LR
-  GH[GitHub Issue] --> F[Facteur]
+  GH[GitHub Issue] --> FR[Froussard]
+  FR --> KT[Kafka: github.issues.codex.tasks]
+  KT --> F[Facteur]
   F --> A[Argo Workflow]
   A --> C[Codex Exec]
   C --> W[Notify Wrapper]
   W --> J[Jangar]
-  A -->|onExit run-complete| J
-  A --> M[MinIO Artifacts]
+  A --> AE[Argo Events]
+  AE --> KC[Kafka: argo.workflows.completions]
+  KC --> J
+  A --> M[Argo Artifacts (MinIO)]
   J --> M
   J --> CI[GitHub Actions]
   J --> D[Discord]
@@ -56,34 +63,53 @@ flowchart LR
 ```
 
 ## Data Flow
-1) GitHub issue -> Facteur -> Argo workflow
-2) Argo runs Codex exec
-3) Argo onExit posts run-complete with status + artifact URLs (even if notify never fired)
-4) Codex notify fires on successful turn completion (optional enrichment)
-5) Notify wrapper enriches payload and POSTs to Jangar
-6) Jangar waits for GitHub Actions CI result for the attempt commit SHA
-7) Jangar gates + LLM judge (triggered by run-complete)
-8) If pass: create/update PR, mark complete, Discord success
-9) If fail: generate next prompt, request Facteur to trigger new Argo run on same branch
+1) GitHub issue -> Froussard -> Kafka (`github.issues.codex.tasks`) -> Facteur -> Argo workflow
+2) Argo runs Codex exec (`github-codex-implementation`).
+3) Argo Events emits workflow completion -> Kafka (`argo.workflows.completions`).
+4) Jangar ingests run-complete from Kafka (primary attempt record).
+5) Codex notify fires on successful turn completion (optional enrichment).
+6) Notify wrapper enriches payload and POSTs to Jangar.
+7) Jangar waits for GitHub Actions CI result for the attempt commit SHA.
+8) Jangar gates + LLM judge (triggered by run-complete).
+9) If pass: create/update PR, mark complete, Discord success.
+10) If fail: generate next prompt, request Facteur to trigger new Argo run on same branch.
+
+## Current Production Wiring (Argo CD Sources of Truth)
+- Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
+- Argo artifact repository: `argocd/applications/argo-workflows/kustomization.yaml`
+  (bucket `argo-workflows` on `observability-minio.minio.svc.cluster.local:9000`)
+- Workflow completions -> Kafka: `argocd/applications/froussard/workflow-completions-eventsource.yaml`
+  and `argocd/applications/froussard/workflow-completions-sensor.yaml`
+- Kafka topic: `argo.workflows.completions` (`argocd/applications/froussard/argo-workflows-completions-topic.yaml`)
+- Facteur KafkaSource: `argocd/applications/facteur/overlays/cluster/facteur-codex-kafkasource.yaml`
+- Facteur internal service: `argocd/applications/facteur/overlays/cluster/facteur-internal-service.yaml`
+- Jangar service/deployment/DB/Redis: `argocd/applications/jangar/service.yaml`,
+  `argocd/applications/jangar/deployment.yaml`
 
 Sequence (happy path + rerun):
 ```mermaid
 sequenceDiagram
   participant GH as GitHub
+  participant FR as Froussard
+  participant KT as Kafka (tasks)
   participant F as Facteur
   participant A as Argo
   participant C as Codex
   participant W as Notify Wrapper
+  participant KC as Kafka (completions)
   participant J as Jangar
   participant CI as GitHub Actions
   participant D as Discord
 
-  GH->>F: Issue event
-  F->>A: Submit workflow
-  A->>C: Run Codex exec
+  GH->>FR: Issue event
+  FR->>KT: publish codex task
+  KT->>F: deliver task
+  F->>A: submit workflow
+  A->>C: run Codex exec
   C-->>W: notify(JSON)
-  W->>J: POST /codex/notify
-  A-->>J: POST /codex/run-complete (onExit, includes artifacts + status)
+  W->>J: POST /api/codex/notify (enrichment)
+  A->>KC: completion event
+  KC->>J: run-complete
   J->>CI: wait for status
   CI-->>J: success/failure
   alt pass
@@ -95,44 +121,59 @@ sequenceDiagram
 ```
 
 ## Resumable Workflow (Branch-Commit)
-- Branch name: codex/issue-<issue_id>
-- Each attempt commits all changes and pushes to remote.
-- Next run checks out this branch and continues from last commit.
+- Use the existing head branch from the Codex task payload (today typically `codex/issue-<issue_id>-<suffix>`).
+- Each attempt commits all changes and pushes to remote (handled by the implementation runner).
+- Next run reuses the same head branch to continue from the last commit.
 
 Notes:
 - If branch does not exist, create it from default branch.
 - Ensure all changes are committed even on failure (WIP commit allowed).
 - Merge conflicts on resume trigger human escalation.
 
-## Artifact Capture (MinIO)
-All runs capture artifacts in an onExit/finally step (regardless of Codex success). 
+## Resume State (Codex Implementation)
+The implementation runner (`apps/froussard/src/codex/cli/codex-implement.ts`) persists resume
+metadata at `.codex/implementation-resume.json` and bundles changed files in
+`.codex-implementation-changes.tar.gz`. On the next run, Codex attempts to restore those changes
+before resuming the session (or falls back to a fresh session). Jangar should treat the presence
+of resume metadata as a signal to continue the same attempt lineage.
 
-Required artifacts:
-- patch.diff
-- git_status.txt
-- git_diff_stat.txt
-- commit_sha.txt
-- codex.log
-- build.log (if applicable)
-- lint.log (if applicable)
-- test.log (if applicable)
-- runtime_meta.json (versions, env, workflow metadata)
-- notify_payload.json (raw notify input)
+## Artifact Capture (Argo Artifact Repository on MinIO)
+Argo Workflows already ships artifacts to the cluster-wide artifact repository configured in
+`argocd/applications/argo-workflows/kustomization.yaml` (bucket `argo-workflows` on
+`observability-minio.minio.svc.cluster.local:9000`). The `github-codex-implementation` template
+currently uploads:
+- `.codex-implementation-changes.tar.gz` (implementation-changes)
+- `.codex-implementation.patch` (implementation-patch)
+- `.codex-implementation-status.txt` (implementation-status)
 
-MinIO path convention:
-- codex-artifacts/<issue_id>/<workflow_id>/<attempt>/
+Add the following artifacts to support judging and resumability:
+- `.codex-implementation.log`
+- `.codex-implementation-events.jsonl`
+- `.codex-implementation-agent.log`
+- `.codex-implementation-runtime.log`
+- `.codex/implementation-resume.json` (resume metadata)
+
+Artifact access:
+- Prefer querying the Argo Workflow API for `status.outputs.artifacts` to retrieve keys and S3 metadata.
+- Fall back to direct S3 access in MinIO using the artifact keys.
+ - The changes archive contains `metadata/manifest.json` with repo/issue/prompt/session metadata
+   and the list of changed files.
 
 ## Failed-Run Ingestion (No Notify)
 - Codex notify only fires on successful turn completion.
-- Argo onExit must POST a run-complete payload to Jangar with status (success | failed | aborted)
-  and artifact URLs so Jangar can track failed attempts and trigger reruns/escalation.
+- Argo Events publishes workflow completions to Kafka (`argo.workflows.completions`) for both success
+  and failure, so Jangar can track failed attempts even when notify never fires.
+- Deliver completions to Jangar via a Knative KafkaSource in the `jangar` namespace
+  targeting `/api/codex/run-complete`.
 - Jangar must treat run-complete as the source of truth for attempt existence and judge triggering.
 - Notify (if present) is enrichment only (assistant message + input context).
 
 ## Jangar Responsibilities
-- Ingest run-complete events as the primary record for each attempt.
+- Ingest run-complete events from Kafka (`argo.workflows.completions`) as the primary record.
 - Ingest notify events as enrichment only.
-- Correlate runs by issue_id, workflow_id, turn_id, attempt.
+- Correlate runs by issue_id, workflow_name, workflow_uid, turn_id, attempt.
+- Decode workflow arguments (base64 `eventBody`) to recover repository/issue metadata.
+- Query Argo Workflow API for outputs/artifact keys when needed.
 - Wait for GitHub Actions CI status for the attempt commit SHA.
 - Run deterministic gates:
   - CI must be green.
@@ -145,6 +186,7 @@ MinIO path convention:
 - CI is sourced from GitHub Actions status for the commit SHA produced by the current attempt.
 - Jangar must gate on the exact commit SHA (not branch-level status) to avoid stale green checks from prior attempts.
 - Jangar does not rely on Argo-local tests for completion.
+ - Commit SHA source order: PR head SHA (preferred) -> head branch SHA -> fallback to status artifact/manifest.
 
 ## Decision Logic
 Pass:
@@ -161,6 +203,8 @@ Fail:
   - repeated identical failure beyond threshold
 - For needs_iteration and needs_human, the judge must emit system-level improvement suggestions
   (system prompt tuning and broader system changes) and open a PR with those recommendations.
+ - If the workflow failed before producing artifacts or a commit SHA, classify as infra failure and
+   rerun automatically until the infra-failure threshold is exceeded.
 
 ## Prompt Auto-tuning
 - Aggregate failure reasons across runs.
