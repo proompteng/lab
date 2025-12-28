@@ -68,6 +68,8 @@ spec:
               secretKeyRef:
                 name: github-token
                 key: token
+          - name: JANGAR_BASE_URL
+            value: http://jangar.jangar.svc.cluster.local
           - name: CODEX_GRAF_BEARER_TOKEN
             valueFrom:
               secretKeyRef:

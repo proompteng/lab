@@ -204,6 +204,11 @@ const buildNotifyPayload = ({
   }
 }
 
+const sleep = async (durationMs: number) =>
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, durationMs)
+  })
+
 const postNotifyPayload = async (payload: CodexNotifyPayload, logger: CodexLogger) => {
   const baseUrl = sanitizeNullableString(process.env.CODEX_NOTIFY_URL ?? process.env.JANGAR_BASE_URL ?? '')
   if (!baseUrl) {
@@ -212,19 +217,43 @@ const postNotifyPayload = async (payload: CodexNotifyPayload, logger: CodexLogge
   }
 
   const notifyUrl = baseUrl.endsWith('/api/codex/notify') ? baseUrl : `${baseUrl.replace(/\/$/, '')}/api/codex/notify`
+  const maxAttempts = 4
+  const baseDelayMs = 1000
+  const maxDelayMs = 10000
+  let lastError: Error | undefined
 
-  try {
-    const response = await fetch(notifyUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-    if (!response.ok) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(notifyUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (response.ok) {
+        if (attempt > 1) {
+          logger.info(`Notify delivered after ${attempt} attempts`)
+        }
+        return
+      }
+
       const body = await response.text()
-      logger.warn(`Notify failed (${response.status}): ${body}`)
+      const bodySuffix = body ? `: ${body}` : ''
+      lastError = new Error(`Notify failed (${response.status})${bodySuffix}`)
+      logger.warn(`Notify failed (attempt ${attempt}/${maxAttempts}, status ${response.status})${bodySuffix}`)
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Notify request failed')
+      logger.warn(`Notify request failed (attempt ${attempt}/${maxAttempts})`, error)
     }
-  } catch (error) {
-    logger.warn('Notify request failed', error)
+
+    if (attempt < maxAttempts) {
+      const delayMs = Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs)
+      logger.debug(`Retrying notify in ${delayMs}ms`, { attempt, maxAttempts })
+      await sleep(delayMs)
+    }
+  }
+
+  if (lastError) {
+    logger.warn('Notify failed after retries', lastError)
   }
 }
 
@@ -233,11 +262,6 @@ interface CommandResult {
   stdout: string
   stderr: string
 }
-
-const sleep = async (durationMs: number) =>
-  await new Promise((resolve) => {
-    setTimeout(resolve, durationMs)
-  })
 
 export const ensurePullRequestExists = async (repository: string, headBranch: string, logger: CodexLogger) => {
   if (process.env.CODEX_SKIP_PR_CHECK === '1') {
