@@ -771,7 +771,7 @@ const formatReviewThreads = (threads: ReviewSummary['unresolvedThreads']) => {
                   : 'location not provided'
                 const body = comment.body ? normalizeReviewBody(comment.body) : 'no comment body provided'
                 const truncated = body.length > 240 ? `${body.slice(0, 237)}...` : body
-                return `- ${location}: ${truncated}`
+                return `- ${location}: Required fix: ${truncated}`
               })
               .join('\n')
           : '- no comment text captured'
@@ -780,15 +780,38 @@ const formatReviewThreads = (threads: ReviewSummary['unresolvedThreads']) => {
     .join('\n\n')
 }
 
-const buildReviewNextPrompt = (threads: ReviewSummary['unresolvedThreads']) => {
-  const threadSummary = formatReviewThreads(threads)
-  return [
-    'Address all Codex review comments and resolve every open review thread.',
+const formatIssueComments = (comments: ReviewSummary['issueComments']) => {
+  if (comments.length === 0) return 'None.'
+  return comments
+    .map((comment, index) => {
+      const author = comment.author ?? 'unknown'
+      const body = comment.body ? normalizeReviewBody(comment.body) : 'no comment body provided'
+      const truncated = body.length > 240 ? `${body.slice(0, 237)}...` : body
+      return `Comment ${index + 1} (author: ${author})\n- Required fix: ${truncated}`
+    })
+    .join('\n\n')
+}
+
+const buildReviewNextPrompt = (review: ReviewSummary) => {
+  const threadSummary = formatReviewThreads(review.unresolvedThreads)
+  const issueSummary = formatIssueComments(review.issueComments)
+  const lines = [
+    'Address every Codex review comment. Each item below is required before completion.',
     'Make the requested code changes, update the PR description if needed, and reply on each thread with what changed.',
     '',
     'Open Codex review threads:',
     threadSummary,
-  ].join('\n')
+  ]
+  if (review.issueComments.length > 0) {
+    lines.push(
+      '',
+      review.unresolvedThreads.length === 0
+        ? 'Codex issue comments (no formal review threads detected):'
+        : 'Additional Codex issue comments:',
+      issueSummary,
+    )
+  }
+  return lines.join('\n')
 }
 
 const buildJudgePrompt = (input: {
@@ -1051,7 +1074,7 @@ const evaluateRun = async (runId: string) => {
           unresolved: review.unresolvedThreads,
         },
         suggestedFixes: { fix: 'Address Codex review comments and resolve all threads.' },
-        nextPrompt: buildReviewNextPrompt(review.unresolvedThreads),
+        nextPrompt: buildReviewNextPrompt(review),
         promptTuning: {},
         systemSuggestions: {},
       })

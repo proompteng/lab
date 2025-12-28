@@ -207,35 +207,141 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
     number: number,
     reviewers: string[],
   ): Promise<ReviewSummary> => {
-    const query = `query($owner: String!, $repo: String!, $number: Int!) {
+    const normalizeLogin = (value: unknown) => {
+      if (typeof value !== 'string') return null
+      const trimmed = value.trim()
+      if (!trimmed) return null
+      return trimmed.toLowerCase().replace(/^@/, '')
+    }
+
+    const reviewerSet = new Set(reviewers.map((value) => normalizeLogin(value)).filter(Boolean) as string[])
+    const includeAll = reviewerSet.size === 0
+
+    const getPullRequestFromResponse = (response: Record<string, unknown>) =>
+      ((response.data as Record<string, unknown> | undefined)?.repository as Record<string, unknown> | undefined)
+        ?.pullRequest as Record<string, unknown> | undefined
+
+    const reviewNodes: Array<Record<string, unknown>> = []
+    const reviewQuery = `query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
       repository(owner: $owner, name: $repo) {
         pullRequest(number: $number) {
-          reviews(last: 20) { nodes { author { login } state submittedAt } }
-          reviewThreads(first: 50) {
-            nodes {
-              id
-              isResolved
-              comments(last: 10) { nodes { author { login } body path line } }
-            }
+          reviews(first: 50, after: $cursor) {
+            nodes { author { login } state submittedAt body }
+            pageInfo { hasNextPage endCursor }
           }
         }
       }
     }`
 
-    const response = (await graphql(query, { owner, repo, number })) as Record<string, unknown>
-    const pr = (
-      (response.data as Record<string, unknown> | undefined)?.repository as Record<string, unknown> | undefined
-    )?.pullRequest as Record<string, unknown> | undefined
+    let reviewCursor: string | null = null
+    let reviewHasNext = true
+    while (reviewHasNext) {
+      const response = (await graphql(reviewQuery, { owner, repo, number, cursor: reviewCursor })) as Record<
+        string,
+        unknown
+      >
+      const pr = getPullRequestFromResponse(response)
+      const reviewConnection = pr?.reviews as Record<string, unknown> | undefined
+      const nodes = Array.isArray(reviewConnection?.nodes)
+        ? (reviewConnection?.nodes as Array<Record<string, unknown>>)
+        : []
+      reviewNodes.push(...nodes)
+      const pageInfo = reviewConnection?.pageInfo as Record<string, unknown> | undefined
+      reviewHasNext = Boolean(pageInfo?.hasNextPage)
+      reviewCursor = typeof pageInfo?.endCursor === 'string' ? pageInfo.endCursor : null
+      if (!reviewHasNext || !reviewCursor) break
+    }
 
-    const reviewNodes = (pr?.reviews as Record<string, unknown> | undefined)?.nodes
-    const reviews = Array.isArray(reviewNodes) ? reviewNodes : []
+    const threadQuery = `query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 50, after: $cursor) {
+            nodes {
+              id
+              isResolved
+              comments(first: 50) {
+                nodes { author { login } body path line originalLine }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }`
+
+    const threadCommentsQuery = `query($id: ID!, $cursor: String) {
+      node(id: $id) {
+        ... on PullRequestReviewThread {
+          comments(first: 50, after: $cursor) {
+            nodes { author { login } body path line originalLine }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }`
+
+    const threadNodes: Array<{ id: string; isResolved: boolean; comments: Array<Record<string, unknown>> }> = []
+    let threadCursor: string | null = null
+    let threadHasNext = true
+    while (threadHasNext) {
+      const response = (await graphql(threadQuery, { owner, repo, number, cursor: threadCursor })) as Record<
+        string,
+        unknown
+      >
+      const pr = getPullRequestFromResponse(response)
+      const threadConnection = pr?.reviewThreads as Record<string, unknown> | undefined
+      const nodes = Array.isArray(threadConnection?.nodes)
+        ? (threadConnection?.nodes as Array<Record<string, unknown>>)
+        : []
+      for (const thread of nodes) {
+        const threadId = typeof thread.id === 'string' ? thread.id : String(thread.id ?? '')
+        if (!threadId) continue
+        const isResolved = Boolean(thread.isResolved)
+        if (isResolved) continue
+        const commentsConnection = thread.comments as Record<string, unknown> | undefined
+        const commentNodes = Array.isArray(commentsConnection?.nodes)
+          ? (commentsConnection?.nodes as Array<Record<string, unknown>>)
+          : []
+        const comments = [...commentNodes]
+        const commentPageInfo = commentsConnection?.pageInfo as Record<string, unknown> | undefined
+        let commentHasNext = Boolean(commentPageInfo?.hasNextPage)
+        let commentCursor = typeof commentPageInfo?.endCursor === 'string' ? commentPageInfo.endCursor : null
+        while (commentHasNext && commentCursor) {
+          const commentResponse = (await graphql(threadCommentsQuery, {
+            id: threadId,
+            cursor: commentCursor,
+          })) as Record<string, unknown>
+          const node = (commentResponse.data as Record<string, unknown> | undefined)?.node as
+            | Record<string, unknown>
+            | undefined
+          const connection = node?.comments as Record<string, unknown> | undefined
+          const extraNodes = Array.isArray(connection?.nodes)
+            ? (connection?.nodes as Array<Record<string, unknown>>)
+            : []
+          comments.push(...extraNodes)
+          const pageInfo = connection?.pageInfo as Record<string, unknown> | undefined
+          commentHasNext = Boolean(pageInfo?.hasNextPage)
+          commentCursor = typeof pageInfo?.endCursor === 'string' ? pageInfo.endCursor : null
+          if (!commentHasNext) break
+        }
+        threadNodes.push({ id: threadId, isResolved, comments })
+      }
+
+      const pageInfo = threadConnection?.pageInfo as Record<string, unknown> | undefined
+      threadHasNext = Boolean(pageInfo?.hasNextPage)
+      threadCursor = typeof pageInfo?.endCursor === 'string' ? pageInfo.endCursor : null
+      if (!threadHasNext || !threadCursor) break
+    }
+
+    const reviews = reviewNodes
 
     let requestedChanges = false
     let status: ReviewSummary['status'] = 'pending'
     for (const review of reviews) {
       const author = (review as Record<string, unknown>).author as Record<string, unknown> | null
-      const login = author?.login ? String(author.login).toLowerCase() : null
-      if (reviewers.length > 0 && login && !reviewers.includes(login)) {
+      const login = normalizeLogin(author?.login ?? null)
+      if (!includeAll && login && !reviewerSet.has(login)) {
         continue
       }
       const state = String((review as Record<string, unknown>).state ?? '').toUpperCase()
@@ -249,17 +355,19 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
       }
     }
 
-    const threads = Array.isArray((pr?.reviewThreads as Record<string, unknown> | undefined)?.nodes)
-      ? ((pr?.reviewThreads as Record<string, unknown>).nodes as Array<Record<string, unknown>>)
-      : []
-
-    const rawComments = (await rest(`/repos/${owner}/${repo}/issues/${number}/comments?per_page=100`)) as Array<
-      Record<string, unknown>
-    >
+    const rawComments: Array<Record<string, unknown>> = []
+    for (let page = 1; page <= 10; page += 1) {
+      const pageComments = (await rest(
+        `/repos/${owner}/${repo}/issues/${number}/comments?per_page=100&page=${page}`,
+      )) as Array<Record<string, unknown>>
+      if (!Array.isArray(pageComments) || pageComments.length === 0) break
+      rawComments.push(...pageComments)
+      if (pageComments.length < 100) break
+    }
     const issueComments = rawComments
       .map((comment) => {
         const author = (comment.user as Record<string, unknown> | undefined)?.login
-        const login = typeof author === 'string' ? author.toLowerCase() : null
+        const login = normalizeLogin(author ?? null)
         return {
           author: login,
           body: typeof comment.body === 'string' ? comment.body : null,
@@ -268,31 +376,32 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
         }
       })
       .filter((comment) => {
-        if (reviewers.length === 0) return true
+        if (includeAll) return true
         if (!comment.author) return false
-        return reviewers.includes(comment.author)
+        return reviewerSet.has(comment.author)
       })
 
-    const unresolvedThreads = threads
-      .filter((thread) => !thread.isResolved)
+    const unresolvedThreads = threadNodes
       .map((thread) => {
-        const commentNodes = Array.isArray((thread.comments as Record<string, unknown> | undefined)?.nodes)
-          ? ((thread.comments as Record<string, unknown>).nodes as Array<Record<string, unknown>>)
-          : []
-        const comments = commentNodes.map((comment) => {
+        const comments = thread.comments.map((comment) => {
           const author = (comment.author as Record<string, unknown> | undefined)?.login
-          const login = typeof author === 'string' ? author.toLowerCase() : null
+          const login = normalizeLogin(author ?? null)
+          const lineValue =
+            typeof comment.line === 'number'
+              ? comment.line
+              : typeof comment.originalLine === 'number'
+                ? comment.originalLine
+                : null
           return {
             author: login,
             body: typeof comment.body === 'string' ? comment.body : null,
             path: typeof comment.path === 'string' ? comment.path : null,
-            line: typeof comment.line === 'number' ? comment.line : null,
+            line: lineValue,
           }
         })
-        const relevantComments =
-          reviewers.length === 0
-            ? comments
-            : comments.filter((comment) => comment.author && reviewers.includes(comment.author))
+        const relevantComments = includeAll
+          ? comments
+          : comments.filter((comment) => comment.author && reviewerSet.has(comment.author))
         const authorLogin = relevantComments.find((comment) => comment.author)?.author ?? comments[0]?.author ?? null
         return {
           id: String(thread.id),
@@ -301,7 +410,7 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
         }
       })
       .filter((thread) => {
-        if (reviewers.length === 0) return true
+        if (includeAll) return true
         return thread.comments.length > 0
       })
 
