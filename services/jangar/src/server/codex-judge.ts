@@ -1,6 +1,8 @@
 import { Buffer } from 'node:buffer'
 
+import * as S from '@effect/schema/Schema'
 import { Effect } from 'effect'
+import * as Either from 'effect/Either'
 
 import { getCodexClient } from '~/server/codex-client'
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
@@ -22,6 +24,9 @@ const safeParseJson = (value: string) => {
   }
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value)
+
 const decodeBase64Json = (value: string) => {
   try {
     const decoded = Buffer.from(value, 'base64').toString('utf8')
@@ -36,44 +41,111 @@ const getParamValue = (params: Array<{ name?: string; value?: string }>, name: s
   return match?.value ?? ''
 }
 
+const ParameterSchema = S.Struct({
+  name: S.optional(S.String),
+  value: S.optional(S.String),
+})
+
+const ParametersSchema = S.Array(ParameterSchema)
+
+const ArtifactSchema = S.Struct({
+  name: S.optional(S.String),
+  key: S.optional(S.String),
+  bucket: S.optional(S.String),
+  url: S.optional(S.String),
+})
+
+const EventBodySchema = S.Struct({
+  repository: S.optional(S.String),
+  repo: S.optional(S.String),
+  issueNumber: S.optional(S.Union(S.String, S.Number)),
+  issue_number: S.optional(S.Union(S.String, S.Number)),
+  head: S.optional(S.String),
+  base: S.optional(S.String),
+  prompt: S.optional(S.String),
+  issueTitle: S.optional(S.String),
+  issueBody: S.optional(S.String),
+  issueUrl: S.optional(S.String),
+})
+
+const RunCompletePayloadSchema = S.Struct({
+  metadata: S.optional(
+    S.Struct({
+      name: S.optional(S.String),
+      uid: S.optional(S.String),
+      namespace: S.optional(S.String),
+    }),
+  ),
+  status: S.optional(
+    S.Struct({
+      phase: S.optional(S.String),
+      startedAt: S.optional(S.String),
+      finishedAt: S.optional(S.String),
+    }),
+  ),
+  arguments: S.optional(
+    S.Struct({
+      parameters: S.optional(ParametersSchema),
+    }),
+  ),
+  artifacts: S.optional(S.Array(S.Unknown)),
+  stage: S.optional(S.String),
+})
+
+const decodeSchema = <A>(schema: unknown, input: unknown, fallback: A): A => {
+  const decoded = S.decodeUnknownEither(schema as Parameters<typeof S.decodeUnknownEither>[0])(input) as Either.Either<
+    unknown,
+    A
+  >
+  return Either.isLeft(decoded) ? fallback : decoded.right
+}
+
 const normalizeRepo = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
+
+const normalizeNumber = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return 0
+    const parsed = Number(trimmed)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
 
 const parseRunCompletePayload = (payload: Record<string, unknown>) => {
   const rawData = (payload.data as Record<string, unknown> | string | undefined) ?? payload
-  const data = typeof rawData === 'string' ? safeParseJson(rawData) : rawData
-  const metadata = (data.metadata as Record<string, unknown>) ?? {}
-  const status = (data.status as Record<string, unknown>) ?? {}
-  const argumentsBlock = (data.arguments as Record<string, unknown>) ?? {}
-  const parameters = Array.isArray(argumentsBlock.parameters)
-    ? (argumentsBlock.parameters as Array<Record<string, unknown>>)
-    : []
-
-  const params = parameters.map((entry) => ({
-    name: typeof entry.name === 'string' ? entry.name : undefined,
-    value: typeof entry.value === 'string' ? entry.value : undefined,
-  }))
+  const data = typeof rawData === 'string' ? safeParseJson(rawData) : isRecord(rawData) ? rawData : {}
+  const decodedPayload = decodeSchema(RunCompletePayloadSchema, data, {})
+  const metadata = decodedPayload.metadata ?? {}
+  const status = decodedPayload.status ?? {}
+  const params = decodeSchema(ParametersSchema, decodedPayload.arguments?.parameters ?? [], [])
 
   const eventBodyRaw = getParamValue(params, 'eventBody')
-  const eventBody = eventBodyRaw ? decodeBase64Json(eventBodyRaw) : {}
+  const eventBody = decodeSchema(EventBodySchema, eventBodyRaw ? decodeBase64Json(eventBodyRaw) : {}, {})
   const repository = normalizeRepo(eventBody.repository ?? eventBody.repo)
-  const issueNumber = Number(eventBody.issueNumber ?? eventBody.issue_number ?? 0)
+  const issueNumber = normalizeNumber(eventBody.issueNumber ?? eventBody.issue_number ?? 0)
   const head = normalizeRepo(eventBody.head) || normalizeRepo(getParamValue(params, 'head'))
   const base = normalizeRepo(eventBody.base) || normalizeRepo(getParamValue(params, 'base'))
   const prompt = typeof eventBody.prompt === 'string' ? eventBody.prompt.trim() : null
   const issueTitle = typeof eventBody.issueTitle === 'string' ? eventBody.issueTitle : null
   const issueBody = typeof eventBody.issueBody === 'string' ? eventBody.issueBody : null
   const issueUrl = typeof eventBody.issueUrl === 'string' ? eventBody.issueUrl : null
-  const artifacts = Array.isArray(data.artifacts)
-    ? (data.artifacts as Array<Record<string, unknown>>)
-        .map((artifact) => ({
-          name: typeof artifact.name === 'string' ? artifact.name : '',
-          key: typeof artifact.key === 'string' ? artifact.key : '',
-          bucket: typeof artifact.bucket === 'string' ? artifact.bucket : null,
-          url: typeof artifact.url === 'string' ? artifact.url : null,
-          metadata: artifact,
-        }))
-        .filter((artifact) => artifact.name && artifact.key)
-    : []
+  const artifacts = (decodedPayload.artifacts ?? [])
+    .map((artifact) => {
+      const decoded = decodeSchema(ArtifactSchema, artifact, {})
+      const name = decoded.name ?? ''
+      const key = decoded.key ?? ''
+      if (!name || !key) return null
+      return {
+        name,
+        key,
+        bucket: decoded.bucket ?? null,
+        url: decoded.url ?? null,
+        metadata: isRecord(artifact) ? artifact : {},
+      }
+    })
+    .filter((artifact): artifact is NonNullable<typeof artifact> => Boolean(artifact))
 
   return {
     repository,
@@ -87,7 +159,7 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     workflowName: String(metadata.name ?? ''),
     workflowUid: typeof metadata.uid === 'string' ? metadata.uid : null,
     workflowNamespace: typeof metadata.namespace === 'string' ? metadata.namespace : null,
-    stage: typeof data.stage === 'string' ? data.stage : null,
+    stage: typeof decodedPayload.stage === 'string' ? decodedPayload.stage : null,
     phase: typeof status.phase === 'string' ? status.phase : null,
     startedAt: typeof status.startedAt === 'string' ? status.startedAt : null,
     finishedAt: typeof status.finishedAt === 'string' ? status.finishedAt : null,
