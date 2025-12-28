@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2025-12-28T06:10:35.144Z"
+    deploy.knative.dev/rollout: "2025-12-28T22:47:56.915Z"
 spec:
   replicas: 1
   strategy:
@@ -136,11 +136,13 @@ spec:
                 secretKeyRef:
                   name: jangar-clickhouse-auth
                   key: username
+                  optional: true
             - name: CH_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: jangar-clickhouse-auth
                   key: password
+                  optional: true
             - name: VSCODE_DATA_DIR
               value: /workspace/.ovscode
             - name: VSCODE_DEFAULT_FOLDER
