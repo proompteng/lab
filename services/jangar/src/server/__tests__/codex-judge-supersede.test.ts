@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { CodexEvaluationRecord, CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
-import type { PersistMemoryInput } from '../memories-store'
+import type { CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
 import { storePrivate } from './codex-judge-store-private'
 
-const persistCalls: PersistMemoryInput[] = []
+const upsertRunComplete = vi.fn()
+const upsertArtifacts = vi.fn()
 
 const globalState = globalThis as typeof globalThis & {
   __codexJudgeStoreMock?: CodexJudgeStore
@@ -38,20 +38,7 @@ const globalState = globalThis as typeof globalThis & {
     promptTuningEnabled: boolean
     promptTuningRepo: string | null
   }
-  __codexJudgeMemoryStoreMock?: {
-    persist: (input: PersistMemoryInput) => Promise<{
-      id: string
-      namespace: string
-      content: string
-      summary: string | null
-      tags: string[]
-      metadata: Record<string, unknown>
-      createdAt: string
-    }>
-    retrieve: () => Promise<unknown[]>
-    count: () => Promise<number>
-    close: () => Promise<void>
-  }
+  __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
 }
 
 if (!globalState.__codexJudgeStoreMock) {
@@ -110,21 +97,8 @@ if (!globalState.__codexJudgeConfigMock) {
 
 if (!globalState.__codexJudgeMemoryStoreMock) {
   globalState.__codexJudgeMemoryStoreMock = {
-    persist: async (input: PersistMemoryInput) => {
-      persistCalls.push(input)
-      return {
-        id: `mem-${persistCalls.length}`,
-        namespace: input.namespace ?? 'default',
-        content: input.content,
-        summary: input.summary ?? null,
-        tags: input.tags ?? [],
-        metadata: input.metadata ?? {},
-        createdAt: new Date().toISOString(),
-      }
-    },
-    retrieve: async () => [],
-    count: async () => 0,
-    close: async () => {},
+    persist: vi.fn(),
+    close: vi.fn(),
   }
 }
 
@@ -145,9 +119,9 @@ vi.mock('../memories-store', () => ({
   createPostgresMemoriesStore: () => globalState.__codexJudgeMemoryStoreMock!,
 }))
 
-let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
+let handleRunComplete: Awaited<typeof import('../codex-judge')>['handleRunComplete'] | null = null
 const store = {
-  upsertRunComplete: vi.fn(),
+  upsertRunComplete,
   attachNotify: vi.fn(),
   updateCiStatus: vi.fn(),
   updateReviewStatus: vi.fn(),
@@ -155,7 +129,7 @@ const store = {
   updateRunStatus: vi.fn(),
   updateRunPrompt: vi.fn(),
   updateRunPrInfo: vi.fn(),
-  upsertArtifacts: vi.fn(),
+  upsertArtifacts,
   getRunByWorkflow: vi.fn(),
   getRunById: vi.fn(),
   listRunsByIssue: vi.fn(),
@@ -192,97 +166,93 @@ const config = {
   promptTuningRepo: null,
 }
 const memoriesStore = {
-  persist: async (input: PersistMemoryInput) => {
-    persistCalls.push(input)
-    return {
-      id: `mem-${persistCalls.length}`,
-      namespace: input.namespace ?? 'default',
-      content: input.content,
-      summary: input.summary ?? null,
-      tags: input.tags ?? [],
-      metadata: input.metadata ?? {},
-      createdAt: new Date().toISOString(),
-    }
-  },
-  retrieve: async () => [],
-  count: async () => 0,
-  close: async () => {},
+  persist: vi.fn(),
+  close: vi.fn(),
 }
 
 beforeEach(async () => {
+  upsertRunComplete.mockReset()
+  upsertArtifacts.mockReset()
   Object.assign(globalState.__codexJudgeStoreMock!, store)
   Object.assign(globalState.__codexJudgeGithubMock!, github)
   Object.assign(globalState.__codexJudgeConfigMock!, config)
   Object.assign(globalState.__codexJudgeMemoryStoreMock!, memoriesStore)
-  if (!__private) {
-    __private = (await import('../codex-judge')).__private
+  if (!handleRunComplete) {
+    handleRunComplete = (await import('../codex-judge')).handleRunComplete
   }
 })
 
-describe('codex-judge memory snapshots', () => {
-  it('attaches run metadata to all snapshots', async () => {
-    persistCalls.length = 0
+const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
+  id: 'run-1',
+  repository: 'owner/repo',
+  issueNumber: 123,
+  branch: 'codex/issue-123',
+  attempt: 1,
+  workflowName: 'workflow-1',
+  workflowUid: null,
+  workflowNamespace: 'argo',
+  stage: 'implementation',
+  status: 'superseded',
+  phase: null,
+  prompt: null,
+  nextPrompt: null,
+  commitSha: null,
+  prNumber: null,
+  prUrl: null,
+  ciStatus: null,
+  ciUrl: null,
+  reviewStatus: null,
+  reviewSummary: {},
+  notifyPayload: null,
+  runCompletePayload: null,
+  createdAt: '2025-01-01T00:00:00Z',
+  updatedAt: '2025-01-01T00:00:00Z',
+  startedAt: null,
+  finishedAt: null,
+  ...overrides,
+})
 
-    const run: CodexRunRecord = {
-      id: 'run-1',
-      repository: 'proompteng/lab',
-      issueNumber: 2126,
-      branch: 'codex/issue-2126',
-      attempt: 2,
-      workflowName: 'workflow-1',
-      workflowUid: 'workflow-uid',
-      workflowNamespace: 'jangar',
-      stage: 'implementation',
-      status: 'completed',
-      phase: null,
-      prompt: 'prompt',
-      nextPrompt: 'next prompt',
-      commitSha: 'a'.repeat(40),
-      prNumber: 42,
-      prUrl: 'https://github.com/proompteng/lab/pull/42',
-      ciStatus: 'success',
-      ciUrl: 'https://github.com/proompteng/lab/actions/runs/1',
-      reviewStatus: null,
-      reviewSummary: {},
-      notifyPayload: null,
-      runCompletePayload: null,
-      createdAt: '2025-01-01T00:00:00Z',
-      updatedAt: '2025-01-01T00:00:00Z',
-      startedAt: '2025-01-01T00:00:00Z',
-      finishedAt: '2025-01-01T01:00:00Z',
-    }
+const buildPayload = () => {
+  const eventBody = {
+    repository: 'owner/repo',
+    issueNumber: 123,
+    head: 'codex/issue-123',
+    base: 'main',
+    prompt: 'Do the thing',
+  }
+  const encodedEventBody = Buffer.from(JSON.stringify(eventBody)).toString('base64')
 
-    const evaluation: CodexEvaluationRecord = {
-      id: 'eval-1',
-      runId: 'run-1',
-      decision: 'pass',
-      confidence: 1,
-      reasons: {},
-      missingItems: {},
-      suggestedFixes: {},
-      nextPrompt: null,
-      promptTuning: {},
-      systemSuggestions: {},
-      createdAt: '2025-01-01T01:00:00Z',
-    }
+  return {
+    data: {
+      metadata: {
+        name: 'workflow-1',
+        uid: 'workflow-uid-1',
+        namespace: 'argo',
+      },
+      status: {
+        phase: 'Succeeded',
+        startedAt: '2025-01-01T00:00:00Z',
+        finishedAt: '2025-01-01T00:10:00Z',
+      },
+      arguments: {
+        parameters: [{ name: 'eventBody', value: encodedEventBody }],
+      },
+    },
+  } as Record<string, unknown>
+}
 
-    await __private!.writeMemories(run, evaluation)
+describe('codex judge superseded runs', () => {
+  it('does not schedule evaluation when a run is superseded', async () => {
+    const run = buildRun()
+    upsertRunComplete.mockResolvedValueOnce(run)
+    upsertArtifacts.mockResolvedValueOnce([])
 
-    expect(persistCalls).toHaveLength(10)
+    const timeoutSpy = vi.spyOn(global, 'setTimeout')
+    const result = await handleRunComplete!(buildPayload())
 
-    for (const call of persistCalls) {
-      expect(call.metadata).toMatchObject({
-        runId: 'run-1',
-        commitSha: run.commitSha,
-        ciUrl: run.ciUrl,
-        workflowName: run.workflowName,
-        workflowNamespace: run.workflowNamespace,
-        workflowUid: run.workflowUid,
-        startedAt: run.startedAt,
-        finishedAt: run.finishedAt,
-        createdAt: run.createdAt,
-        updatedAt: run.updatedAt,
-      })
-    }
+    expect(result?.status).toBe('superseded')
+    expect(timeoutSpy).not.toHaveBeenCalled()
+
+    timeoutSpy.mockRestore()
   })
 })

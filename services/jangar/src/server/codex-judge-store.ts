@@ -159,6 +159,59 @@ const ensureSchema = async (db: Db) => {
   await ensureMigrations(db)
 }
 
+const TERMINAL_RUN_STATUS_LIST = ['completed', 'needs_human', 'superseded'] as const
+
+const TERMINAL_RUN_STATUSES = new Set<string>(TERMINAL_RUN_STATUS_LIST)
+
+const isTerminalRunStatus = (status: string) => TERMINAL_RUN_STATUSES.has(status)
+
+const parseTimestamp = (value: string | null) => {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+const getRunSortKey = (run: CodexRunRecord) => {
+  const finished = parseTimestamp(run.finishedAt)
+  const started = parseTimestamp(run.startedAt)
+  const created = parseTimestamp(run.createdAt) ?? 0
+  const primary = finished ?? started ?? created
+  return { primary, created, attempt: run.attempt }
+}
+
+const selectActiveRun = (runs: CodexRunRecord[]) => {
+  const active = runs.filter((run) => !isTerminalRunStatus(run.status))
+  if (active.length === 0) return null
+
+  return active.reduce((latest, run) => {
+    const latestKey = getRunSortKey(latest)
+    const runKey = getRunSortKey(run)
+
+    if (runKey.primary > latestKey.primary) return run
+    if (runKey.primary < latestKey.primary) return latest
+    if (runKey.created > latestKey.created) return run
+    if (runKey.created < latestKey.created) return latest
+    if (runKey.attempt > latestKey.attempt) return run
+    if (runKey.attempt < latestKey.attempt) return latest
+
+    return run.id > latest.id ? run : latest
+  })
+}
+
+const planSupersession = (runs: CodexRunRecord[]) => {
+  const activeRun = selectActiveRun(runs)
+  if (!activeRun) {
+    return { activeRun: null, supersededIds: [] as string[] }
+  }
+
+  const supersededIds = runs
+    .filter((run) => run.id !== activeRun.id)
+    .filter((run) => !isTerminalRunStatus(run.status))
+    .map((run) => run.id)
+
+  return { activeRun, supersededIds }
+}
+
 const rowToRun = (row: Record<string, unknown>): CodexRunRecord => {
   return {
     id: String(row.id),
@@ -272,6 +325,37 @@ export const createCodexJudgeStore = (
     return rows.map((row) => rowToRun(row as Record<string, unknown>))
   }
 
+  const enforceSingleActiveRun = async (run: CodexRunRecord) => {
+    await ensureReady()
+    if (isTerminalRunStatus(run.status)) return run
+
+    const runs = await listRunsByIssue(run.repository, run.issueNumber, run.branch)
+    const plan = planSupersession(runs)
+    if (!plan.activeRun) return run
+
+    if (plan.activeRun.id !== run.id) {
+      const updated = await db
+        .updateTable('codex_judge.runs')
+        .set({ status: 'superseded', updated_at: sql`now()` })
+        .where('id', '=', run.id)
+        .where('status', 'not in', TERMINAL_RUN_STATUS_LIST)
+        .returningAll()
+        .executeTakeFirst()
+      return updated ? rowToRun(updated as Record<string, unknown>) : run
+    }
+
+    if (plan.supersededIds.length > 0) {
+      await db
+        .updateTable('codex_judge.runs')
+        .set({ status: 'superseded', updated_at: sql`now()` })
+        .where('id', 'in', plan.supersededIds)
+        .where('status', 'not in', TERMINAL_RUN_STATUS_LIST)
+        .execute()
+    }
+
+    return run
+  }
+
   const upsertRunComplete = async (input: UpsertRunCompleteInput) => {
     await ensureReady()
     const existingByUid = input.workflowUid
@@ -317,7 +401,7 @@ export const createCodexJudgeStore = (
         .where('id', '=', String(existing.id))
         .returningAll()
         .executeTakeFirstOrThrow()
-      return rowToRun(updated as Record<string, unknown>)
+      return enforceSingleActiveRun(rowToRun(updated as Record<string, unknown>))
     }
 
     const priorRuns = await db
@@ -351,7 +435,7 @@ export const createCodexJudgeStore = (
       .returningAll()
       .executeTakeFirstOrThrow()
 
-    return rowToRun(inserted as Record<string, unknown>)
+    return enforceSingleActiveRun(rowToRun(inserted as Record<string, unknown>))
   }
 
   const attachNotify = async (input: AttachNotifyInput) => {
@@ -393,7 +477,7 @@ export const createCodexJudgeStore = (
         .returningAll()
         .executeTakeFirstOrThrow()
 
-      return rowToRun(inserted as Record<string, unknown>)
+      return enforceSingleActiveRun(rowToRun(inserted as Record<string, unknown>))
     }
 
     const updated = await db
@@ -410,7 +494,7 @@ export const createCodexJudgeStore = (
       .returningAll()
       .executeTakeFirstOrThrow()
 
-    return rowToRun(updated as Record<string, unknown>)
+    return enforceSingleActiveRun(rowToRun(updated as Record<string, unknown>))
   }
 
   const updateCiStatus = async (input: UpdateCiInput) => {
@@ -472,6 +556,7 @@ export const createCodexJudgeStore = (
         updated_at: sql`now()`,
       })
       .where('id', '=', input.runId)
+      .where('status', 'not in', ['superseded'])
       .execute()
 
     return rowToEvaluation(inserted as Record<string, unknown>)
@@ -479,12 +564,11 @@ export const createCodexJudgeStore = (
 
   const updateRunStatus = async (runId: string, status: string) => {
     await ensureReady()
-    const updated = await db
-      .updateTable('codex_judge.runs')
-      .set({ status, updated_at: sql`now()` })
-      .where('id', '=', runId)
-      .returningAll()
-      .executeTakeFirst()
+    let query = db.updateTable('codex_judge.runs').set({ status, updated_at: sql`now()` }).where('id', '=', runId)
+    if (status !== 'superseded') {
+      query = query.where('status', 'not in', ['superseded'])
+    }
+    const updated = await query.returningAll().executeTakeFirst()
     return updated ? rowToRun(updated as Record<string, unknown>) : null
   }
 
@@ -607,4 +691,10 @@ export const createCodexJudgeStore = (
     createPromptTuning,
     close,
   }
+}
+
+export const __private = {
+  isTerminalRunStatus,
+  selectActiveRun,
+  planSupersession,
 }

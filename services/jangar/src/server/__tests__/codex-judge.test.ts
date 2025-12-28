@@ -2,6 +2,8 @@ import { Effect } from 'effect'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CodexEvaluationRecord, CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
+import { storePrivate } from './codex-judge-store-private'
+
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
 
 const globalState = globalThis as typeof globalThis & {
@@ -321,6 +323,7 @@ const harness = (() => {
 })()
 
 vi.mock('~/server/codex-judge-store', () => ({
+  __private: storePrivate,
   createCodexJudgeStore: () => globalState.__codexJudgeStoreMock!,
 }))
 

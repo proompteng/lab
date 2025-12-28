@@ -1147,11 +1147,15 @@ const buildSuggestionsFromEvaluation = (evaluation?: CodexEvaluationRecord) => {
 }
 
 const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: CodexEvaluationRecord) => {
+  const latestRun = await store.getRunById(run.id)
+  if (!latestRun || latestRun.status === 'superseded') return
+
   const attempts = (await store.listRunsByIssue(run.repository, run.issueNumber, run.branch)).length
   const suggestions = buildSuggestionsFromEvaluation(evaluation)
 
   if (attempts >= config.maxAttempts) {
-    await store.updateRunStatus(run.id, 'needs_human')
+    const updated = await store.updateRunStatus(run.id, 'needs_human')
+    if (!updated) return
     if (config.promptTuningEnabled && config.promptTuningRepo) {
       await createPromptTuningPr(run, evaluation?.nextPrompt ?? run.nextPrompt ?? '', suggestions)
     }
@@ -1161,14 +1165,16 @@ const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: Co
 
   const nextPrompt = evaluation?.nextPrompt ?? run.nextPrompt
   if (!nextPrompt) {
-    await store.updateRunStatus(run.id, 'needs_iteration')
+    const updated = await store.updateRunStatus(run.id, 'needs_iteration')
+    if (!updated) return
     if (config.promptTuningEnabled && config.promptTuningRepo) {
       await createPromptTuningPr(run, '', suggestions)
     }
     return
   }
 
-  await store.updateRunStatus(run.id, 'needs_iteration')
+  const updated = await store.updateRunStatus(run.id, 'needs_iteration')
+  if (!updated) return
   const delayIndex = Math.min(Math.max(attempts - 1, 0), config.backoffScheduleMs.length - 1)
   const delayMs = config.backoffScheduleMs[delayIndex] ?? 0
   if (delayMs > 0) {
@@ -1186,6 +1192,9 @@ const submitRerun = async (
   attempt: number,
   suggestions: { promptSuggestions: string[]; systemSuggestions: string[] },
 ) => {
+  const latestRun = await store.getRunById(run.id)
+  if (!latestRun || latestRun.status === 'superseded') return
+
   const deliveryId = `jangar-${run.issueNumber}-attempt-${attempt}`
 
   const { CodexTaskSchema, CodexTaskStage } = await import('./proto/codex_task_pb')
