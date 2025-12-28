@@ -63,6 +63,7 @@ const buildImplementationPrompt = ({
     '- Keep scope tight; smallest viable change set; avoid unrelated refactors.',
     `- Work only on \`${headBranch}\` based on \`${baseBranch}\`.`,
     '- Implement the requested changes.',
+    '- Do not stop until all issue requirements are fully satisfied and the changes meet production-quality standards.',
     `- Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} current using`,
     '  apps/froussard/src/codex/cli/codex-progress-comment.ts.',
     '- Run all required formatters/linters/tests per repo instructions; fix and rerun until green.',
