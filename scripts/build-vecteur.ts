@@ -4,14 +4,15 @@ const imageName = process.env.VECTEUR_IMAGE_NAME ?? 'registry.ide-newton.ts.net/
 const dockerfile = process.env.VECTEUR_DOCKERFILE ?? 'services/vecteur/Dockerfile'
 const contextPath = process.env.VECTEUR_CONTEXT_PATH ?? 'services/vecteur'
 const defaultTag = process.env.VECTEUR_DEFAULT_TAG ?? '18-trixie'
-const targetArch = process.env.VECTEUR_TARGET_ARCH ?? 'arm64'
+const platforms = process.env.VECTEUR_PLATFORMS ?? 'linux/arm64'
+const pgMajor = process.env.VECTEUR_PG_MAJOR ?? '18'
 
 const [tagArg] = Bun.argv.slice(2)
 const tag = tagArg ?? defaultTag
 const fullImageName = `${imageName}:${tag}`
 
 function configSummary() {
-  return { fullImageName, dockerfile, contextPath, targetArch }
+  return { fullImageName, dockerfile, contextPath, platforms, pgMajor }
 }
 
 async function run(cmd: string, args: string[]) {
@@ -29,7 +30,9 @@ async function main() {
     'buildx',
     'build',
     '--platform',
-    `linux/${targetArch}`,
+    platforms,
+    '--build-arg',
+    `PG_MAJOR=${pgMajor}`,
     '-t',
     fullImageName,
     '-f',
