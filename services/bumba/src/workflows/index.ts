@@ -1,4 +1,4 @@
-import { WorkflowBlockedError, defineWorkflow, defineWorkflowSignals, log } from '@proompteng/temporal-bun-sdk/workflow'
+import { defineWorkflow, defineWorkflowSignals, log, WorkflowBlockedError } from '@proompteng/temporal-bun-sdk/workflow'
 import { Effect } from 'effect'
 import * as Cause from 'effect/Cause'
 import * as Chunk from 'effect/Chunk'

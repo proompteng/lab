@@ -3,8 +3,8 @@ import type {
   ActivityResolution,
   Command,
   ExecuteWorkflowInput,
-  WorkflowDeterminismState,
   WorkflowDefinitions,
+  WorkflowDeterminismState,
   WorkflowExecutionOutput,
 } from '@proompteng/temporal-bun-sdk/workflow'
 import {

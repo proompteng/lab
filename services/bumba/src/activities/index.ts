@@ -969,7 +969,7 @@ const formatYamlValue = (value: unknown, maxFactChars: number) => {
   return safeSlice(String(value ?? ''), maxFactChars)
 }
 
-const parseYamlAst = (
+const _parseYamlAst = (
   source: string,
   maxFacts: number,
   maxFactChars: number,
