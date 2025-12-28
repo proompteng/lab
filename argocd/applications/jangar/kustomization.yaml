@@ -13,6 +13,7 @@ resources:
   - app-tailscale-service.yaml
   - tailscale-service.yaml
   - postgres-cluster.yaml
+  - postgres-scheduled-backup.yaml
   - openwebui-redis.yaml
   - pvc-rwx.yaml
   - vscode-tailscale-service.yaml
