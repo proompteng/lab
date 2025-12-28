@@ -925,6 +925,51 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
+    const logExcerpt = extractLogExcerpt(run.notifyPayload)
+    const issueTitle = (run.runCompletePayload?.issueTitle as string | undefined) ?? pr?.title ?? ''
+    const issueBody = (run.runCompletePayload?.issueBody as string | undefined) ?? ''
+    let diff = ''
+
+    if (pr) {
+      const { owner, repo } = parseRepositoryParts(run.repository)
+      diff = await github.getPullRequestDiff(owner, repo, pr.number)
+
+      const gateFailure = evaluateDeterministicGates({
+        diff,
+        logExcerpt,
+        issueTitle,
+        issueBody,
+        prompt: run.nextPrompt ?? run.prompt,
+        runCompletePayload: run.runCompletePayload,
+      })
+
+      if (gateFailure) {
+        const evaluation = await store.updateDecision({
+          runId: run.id,
+          decision: gateFailure.decision,
+          reasons: { error: gateFailure.reason, detail: gateFailure.detail },
+          suggestedFixes: { fix: gateFailure.suggestedFix },
+          nextPrompt: gateFailure.nextPrompt,
+          promptTuning: {},
+          systemSuggestions: {},
+        })
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, evaluation)
+
+        if (gateFailure.decision === 'needs_human') {
+          if (config.promptTuningEnabled && config.promptTuningRepo) {
+            const suggestions = buildSuggestionsFromEvaluation(evaluation)
+            await createPromptTuningPr(run, evaluation.nextPrompt ?? '', suggestions)
+          }
+          await sendDiscordEscalation(run, gateFailure.reason)
+          return
+        }
+
+        await triggerRerun(run, gateFailure.reason, evaluation)
+        return
+      }
+    }
+
     const { commitSha, ci } = await resolveCiContext(run, pr)
     if (!commitSha && !pr) {
       const evaluation = await store.updateDecision({
@@ -1013,47 +1058,6 @@ const evaluateRun = async (runId: string) => {
       const refreshedRun = (await store.getRunById(run.id)) ?? run
       await writeMemories(refreshedRun, evaluation)
       await triggerRerun(run, 'codex_review_changes', evaluation)
-      return
-    }
-
-    const { owner, repo } = parseRepositoryParts(run.repository)
-    const diff = await github.getPullRequestDiff(owner, repo, pr.number)
-
-    const issueTitle = (run.runCompletePayload?.issueTitle as string | undefined) ?? pr.title
-    const issueBody = (run.runCompletePayload?.issueBody as string | undefined) ?? ''
-    const logExcerpt = extractLogExcerpt(run.notifyPayload)
-    const gateFailure = evaluateDeterministicGates({
-      diff,
-      logExcerpt,
-      issueTitle,
-      issueBody,
-      prompt: run.nextPrompt ?? run.prompt,
-      runCompletePayload: run.runCompletePayload,
-    })
-
-    if (gateFailure) {
-      const evaluation = await store.updateDecision({
-        runId: run.id,
-        decision: gateFailure.decision,
-        reasons: { error: gateFailure.reason, detail: gateFailure.detail },
-        suggestedFixes: { fix: gateFailure.suggestedFix },
-        nextPrompt: gateFailure.nextPrompt,
-        promptTuning: {},
-        systemSuggestions: {},
-      })
-      const refreshedRun = (await store.getRunById(run.id)) ?? run
-      await writeMemories(refreshedRun, evaluation)
-
-      if (gateFailure.decision === 'needs_human') {
-        if (config.promptTuningEnabled && config.promptTuningRepo) {
-          const suggestions = buildSuggestionsFromEvaluation(evaluation)
-          await createPromptTuningPr(run, evaluation.nextPrompt ?? '', suggestions)
-        }
-        await sendDiscordEscalation(run, gateFailure.reason)
-        return
-      }
-
-      await triggerRerun(run, gateFailure.reason, evaluation)
       return
     }
 
