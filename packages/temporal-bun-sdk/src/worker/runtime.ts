@@ -95,7 +95,7 @@ import type {
   WorkflowDeterminismState,
   WorkflowRetryPolicyInput,
 } from '../workflow/determinism'
-import { intentsEqual, stableStringify } from '../workflow/determinism'
+import { stableStringify } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import type { WorkflowQueryEvaluationResult, WorkflowUpdateInvocation } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
@@ -2234,45 +2234,28 @@ export class WorkerRuntime {
     if (!previous) {
       return undefined
     }
-    const sliceAppend = <T>(
-      currentList: readonly T[],
-      previousList: readonly T[],
-      equals: (left: T, right: T) => boolean = Object.is,
-    ): T[] | undefined => {
+    const sliceAppend = <T>(currentList: readonly T[], previousList: readonly T[]): T[] | undefined => {
       if (currentList.length < previousList.length) {
         return undefined
-      }
-      for (let index = 0; index < previousList.length; index += 1) {
-        if (!equals(previousList[index] as T, currentList[index] as T)) {
-          return undefined
-        }
       }
       return currentList.slice(previousList.length)
     }
 
-    const commandHistory = sliceAppend(current.commandHistory, previous.commandHistory, (left, right) =>
-      intentsEqual(left?.intent, right?.intent),
-    )
+    const commandHistory = sliceAppend(current.commandHistory, previous.commandHistory)
     const randomValues = sliceAppend(current.randomValues, previous.randomValues)
     const timeValues = sliceAppend(current.timeValues, previous.timeValues)
-    const signals = sliceAppend(current.signals, previous.signals, (left, right) => {
-      return stableStringify(left) === stableStringify(right)
-    })
-    const queries = sliceAppend(current.queries, previous.queries, (left, right) => {
-      return stableStringify(left) === stableStringify(right)
-    })
+    const signals = sliceAppend(current.signals, previous.signals)
+    const queries = sliceAppend(current.queries, previous.queries)
     if (!commandHistory || !randomValues || !timeValues || !signals || !queries) {
       return undefined
     }
 
     const updatesPrev = previous.updates ?? []
     const updatesNext = current.updates ?? []
-    const updates = sliceAppend(updatesNext, updatesPrev, (left, right) => {
-      return stableStringify(left) === stableStringify(right)
-    })
-    if (!updates) {
+    if (updatesNext.length < updatesPrev.length) {
       return undefined
     }
+    const updates = updatesNext.slice(updatesPrev.length)
     const logCount =
       current.logCount !== undefined && current.logCount !== previous.logCount ? current.logCount : undefined
     const failureMetadata =
