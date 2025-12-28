@@ -117,6 +117,35 @@ vi.mock('../memories-store', () => ({
 }))
 
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
+const github = {
+  getRefSha,
+  getCheckRuns,
+  getPullRequestByHead: vi.fn(),
+  getPullRequest: vi.fn(),
+  getPullRequestDiff: vi.fn(),
+  getReviewSummary: vi.fn(),
+  getFile: vi.fn(),
+  updateFile: vi.fn(),
+  createBranch: vi.fn(),
+  createPullRequest: vi.fn(),
+}
+const config = {
+  githubToken: null,
+  githubApiBaseUrl: 'https://api.github.com',
+  codexReviewers: [],
+  ciPollIntervalMs: 1000,
+  reviewPollIntervalMs: 1000,
+  maxAttempts: 3,
+  backoffScheduleMs: [1000],
+  facteurBaseUrl: 'http://facteur',
+  argoServerUrl: null,
+  discordBotToken: null,
+  discordChannelId: null,
+  discordApiBaseUrl: 'https://discord.com/api/v10',
+  judgeModel: 'gpt-5.2-codex',
+  promptTuningEnabled: false,
+  promptTuningRepo: null,
+}
 
 const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   id: 'run-1',
@@ -152,6 +181,8 @@ describe('codex-judge CI fallback', () => {
   beforeEach(async () => {
     getRefSha.mockReset()
     getCheckRuns.mockReset()
+    Object.assign(globalState.__codexJudgeGithubMock!, github)
+    Object.assign(globalState.__codexJudgeConfigMock!, config)
     if (!__private) {
       __private = (await import('../codex-judge')).__private
     }
