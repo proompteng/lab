@@ -1,10 +1,13 @@
 package ai.proompteng.dorvud.ta.stream
 
+import java.time.Instant
+
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.platform.InstantIsoSerializer
 import ai.proompteng.dorvud.platform.Window
-import kotlinx.serialization.Serializable
-import java.time.Instant
 
 @Serializable
 data class TradePayload(
@@ -22,6 +25,26 @@ data class QuotePayload(
   val `as`: Long,
   @Serializable(with = InstantIsoSerializer::class)
   val t: Instant,
+)
+
+@Serializable
+data class AlpacaBarPayload(
+  @SerialName("o")
+  val open: Double,
+  @SerialName("h")
+  val high: Double,
+  @SerialName("l")
+  val low: Double,
+  @SerialName("c")
+  val close: Double,
+  @SerialName("v")
+  val volume: Long,
+  @SerialName("vw")
+  val vwap: Double? = null,
+  @SerialName("n")
+  val tradeCount: Long? = null,
+  @SerialName("t")
+  val timestamp: String,
 )
 
 @Serializable
@@ -106,4 +129,16 @@ fun <T, R> Envelope<T>.withPayload(
     source = source,
     window = window,
     version = version,
+  )
+
+fun AlpacaBarPayload.toMicroBarPayload(): MicroBarPayload =
+  MicroBarPayload(
+    o = open,
+    h = high,
+    l = low,
+    c = close,
+    v = volume.toDouble(),
+    vwap = vwap,
+    count = tradeCount ?: 0L,
+    t = Instant.parse(timestamp),
   )

@@ -36,6 +36,12 @@ class SerializationSchemasTest {
   }
 
   @Test
+  fun `bars1m compat flatmap remains serializable`() {
+    val fn = ParseMicroBarCompatFlatMap()
+    assertSerializable(fn)
+  }
+
+  @Test
   fun `flink ta config is serializable`() {
     assertSerializable(FlinkTaConfig.fromEnv())
   }

@@ -3,10 +3,12 @@ package ai.proompteng.dorvud.ta.flink
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.platform.Window
 import ai.proompteng.dorvud.ta.producer.AvroSerde
+import ai.proompteng.dorvud.ta.stream.AlpacaBarPayload
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.QuotePayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
+import ai.proompteng.dorvud.ta.stream.toMicroBarPayload
 import ai.proompteng.dorvud.ta.stream.withPayload
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
@@ -106,7 +108,7 @@ fun main() {
           kafkaSource(config, config.bars1mTopic),
           WatermarkStrategy.noWatermarks(),
           "ta-bars1m-source",
-        ).flatMap(ParseEnvelopeFlatMap(SerializerFactory { MicroBarPayload.serializer() }))
+        ).flatMap(ParseMicroBarCompatFlatMap())
         .returns(object : TypeHint<Envelope<MicroBarPayload>>() {})
         .assignTimestampsAndWatermarks(watermarkStrategy(config))
     } else {
@@ -634,6 +636,61 @@ internal class ParseEnvelopeFlatMap<T>(
     runCatching { json.decodeFromString(Envelope.serializer(payloadSerializer), value) }
       .onSuccess { out.collect(it) }
       .onFailure { LoggerFactory.getLogger("parse-envelope").warn("Failed to decode envelope", it) }
+  }
+}
+
+internal class ParseMicroBarCompatFlatMap : RichFlatMapFunction<String, Envelope<MicroBarPayload>>(),
+  Serializable {
+  companion object {
+    private const val serialVersionUID: Long = 1L
+  }
+
+  @Transient
+  private lateinit var json: Json
+
+  @Transient
+  private lateinit var microSerializer: KSerializer<MicroBarPayload>
+
+  @Transient
+  private lateinit var alpacaSerializer: KSerializer<AlpacaBarPayload>
+
+  override fun open(openContext: OpenContext) {
+    json = Json { ignoreUnknownKeys = true }
+    microSerializer = MicroBarPayload.serializer()
+    alpacaSerializer = AlpacaBarPayload.serializer()
+  }
+
+  override fun flatMap(
+    value: String,
+    out: Collector<Envelope<MicroBarPayload>>,
+  ) {
+    val microResult = runCatching { json.decodeFromString(Envelope.serializer(microSerializer), value) }
+    if (microResult.isSuccess) {
+      out.collect(microResult.getOrThrow())
+      return
+    }
+
+    val alpacaResult = runCatching { json.decodeFromString(Envelope.serializer(alpacaSerializer), value) }
+    if (alpacaResult.isSuccess) {
+      val alpacaEnv = alpacaResult.getOrThrow()
+      runCatching { alpacaEnv.withPayload(alpacaEnv.payload.toMicroBarPayload()) }
+        .onSuccess { out.collect(it) }
+        .onFailure { LoggerFactory.getLogger("parse-bars1m").warn("Failed to map Alpaca bar payload", it) }
+      return
+    }
+
+    val logger = LoggerFactory.getLogger("parse-bars1m")
+    val microError = microResult.exceptionOrNull()
+    val alpacaError = alpacaResult.exceptionOrNull()
+    val combined = alpacaError ?: microError
+    if (combined != null && microError != null && microError !== combined) {
+      combined.addSuppressed(microError)
+    }
+    if (combined != null) {
+      logger.warn("Failed to decode bars1m envelope", combined)
+    } else {
+      logger.warn("Failed to decode bars1m envelope (unknown error)")
+    }
   }
 }
 
