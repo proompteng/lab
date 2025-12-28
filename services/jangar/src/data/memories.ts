@@ -10,6 +10,7 @@ export type PersistNoteInput = {
   content: string
   summary?: string
   tags?: string[]
+  metadata?: Record<string, unknown>
 }
 
 export type RetrieveNotesInput = {

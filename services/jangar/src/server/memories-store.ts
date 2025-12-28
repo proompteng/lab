@@ -9,6 +9,7 @@ export type MemoryRecord = {
   content: string
   summary: string | null
   tags: string[]
+  metadata: Record<string, unknown>
   createdAt: string
   distance?: number
 }
@@ -18,6 +19,7 @@ export type PersistMemoryInput = {
   content: string
   summary?: string | null
   tags?: string[]
+  metadata?: Record<string, unknown>
 }
 
 export type RetrieveMemoryInput = {
@@ -59,6 +61,13 @@ const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
 }
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
+
+const normalizeMetadata = (value?: Record<string, unknown>) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+  return value
+}
 
 const loadEmbeddingDimension = (fallback: number) => {
   const dimension = Number.parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? String(fallback), 10)
@@ -210,7 +219,7 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     await schemaReady
   }
 
-  const persist: MemoriesStore['persist'] = async ({ namespace, content, summary, tags }) => {
+  const persist: MemoriesStore['persist'] = async ({ namespace, content, summary, tags, metadata }) => {
     await ensureSchema()
 
     const resolvedNamespace = (namespace && namespace.trim().length > 0 ? namespace.trim() : DEFAULT_NAMESPACE).slice(
@@ -232,7 +241,11 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     const vectorString = vectorToPgArray(embedding)
     const encoderModel = process.env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-3-small'
     const derivedSummary = resolvedSummary ?? resolvedContent.slice(0, 300)
-    const metadata = JSON.stringify({ namespace: resolvedNamespace })
+    const resolvedMetadata = {
+      ...normalizeMetadata(metadata),
+      namespace: resolvedNamespace,
+    }
+    const metadataJson = JSON.stringify(resolvedMetadata)
     const source = 'memories.mcp'
 
     const row = await db
@@ -242,12 +255,12 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
         content: resolvedContent,
         summary: derivedSummary,
         tags: sql`${sql.value(resolvedTags)}::text[]`,
-        metadata: sql`${metadata}::jsonb`,
+        metadata: sql`${metadataJson}::jsonb`,
         source,
         embedding: sql`${vectorString}::vector`,
         encoder_model: encoderModel,
       })
-      .returning(['id', 'task_name', 'content', 'summary', 'tags', 'created_at'])
+      .returning(['id', 'task_name', 'content', 'summary', 'tags', 'metadata', 'created_at'])
       .executeTakeFirst()
 
     if (!row) throw new Error('insert failed')
@@ -258,6 +271,7 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
       content: row.content,
       summary: row.summary,
       tags: Array.isArray(row.tags) ? row.tags : [],
+      metadata: (row.metadata as Record<string, unknown>) ?? resolvedMetadata,
       createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
     }
   }
@@ -282,7 +296,7 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
     const distanceExpr = sql<number>`embedding <=> ${vectorString}::vector`
     const rows = await db
       .selectFrom('memories.entries')
-      .select(['id', 'task_name', 'content', 'summary', 'tags', 'created_at', distanceExpr.as('distance')])
+      .select(['id', 'task_name', 'content', 'summary', 'tags', 'metadata', 'created_at', distanceExpr.as('distance')])
       .where('task_name', '=', resolvedNamespace)
       .orderBy(distanceExpr)
       .limit(resolvedLimit)
@@ -306,6 +320,7 @@ export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOption
       content: row.content,
       summary: row.summary,
       tags: Array.isArray(row.tags) ? row.tags : [],
+      metadata: (row.metadata as Record<string, unknown>) ?? {},
       createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
       distance: Number(row.distance),
     }))
