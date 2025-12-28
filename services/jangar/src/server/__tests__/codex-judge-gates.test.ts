@@ -39,6 +39,27 @@ describe('codex judge deterministic gates', () => {
     expect(result?.reason).toBe('merge_conflict')
   })
 
+  it('allows conflict marker override in issue text', () => {
+    const diff = [
+      'diff --git a/file.txt b/file.txt',
+      '@@',
+      '+<<<<<<< HEAD',
+      '+example',
+      '+=======',
+      '+content',
+      '+>>>>>>> branch',
+    ].join('\n')
+
+    const result = evaluateDeterministicGates({
+      diff,
+      issueTitle: 'Conflict markers example',
+      issueBody: 'Include codex:allow-conflict-markers for documentation snippets.',
+      prompt: 'Show conflict markers as examples.',
+    })
+
+    expect(result).toBeNull()
+  })
+
   it('detects patch apply failures from logs', () => {
     const result = evaluateDeterministicGates({
       diff: 'diff --git a/file.txt b/file.txt\n+change',
