@@ -1659,7 +1659,23 @@ const collectWorkflowUpdateInvocations = async (
   events: HistoryEvent[],
   dataConverter: DataConverter,
 ): Promise<WorkflowUpdateInvocation[]> => {
-  const invocations: WorkflowUpdateInvocation[] = []
+  const candidates: Array<{
+    invocation: WorkflowUpdateInvocation
+    sequencing?: bigint
+    order: number
+  }> = []
+  let order = 0
+
+  const parseSequencing = (value: string | undefined): bigint | undefined => {
+    if (!value) {
+      return undefined
+    }
+    try {
+      return BigInt(value)
+    } catch {
+      return undefined
+    }
+  }
 
   for (const event of events) {
     if (event.eventType === EventType.WORKFLOW_EXECUTION_UPDATE_ACCEPTED) {
@@ -1676,26 +1692,8 @@ const collectWorkflowUpdateInvocations = async (
         dataConverter,
       })
       if (invocation) {
-        invocations.push(invocation)
-      }
-      continue
-    }
-
-    if (event.eventType === EventType.WORKFLOW_EXECUTION_UPDATE_REJECTED) {
-      if (event.attributes.case !== 'workflowExecutionUpdateRejectedEventAttributes') {
-        continue
-      }
-      const attrs = event.attributes.value as WorkflowExecutionUpdateRejectedEventAttributes
-      const invocation = await buildUpdateInvocationFromRequest({
-        request: attrs.rejectedRequest,
-        protocolInstanceId: attrs.protocolInstanceId,
-        requestMessageId: attrs.rejectedRequestMessageId,
-        sequencingEventId: attrs.rejectedRequestSequencingEventId,
-        fallbackEventId: event.eventId,
-        dataConverter,
-      })
-      if (invocation) {
-        invocations.push(invocation)
+        candidates.push({ invocation, sequencing: parseSequencing(invocation.sequencingEventId), order })
+        order += 1
       }
       continue
     }
@@ -1714,12 +1712,59 @@ const collectWorkflowUpdateInvocations = async (
         dataConverter,
       })
       if (invocation) {
-        invocations.push(invocation)
+        candidates.push({ invocation, sequencing: parseSequencing(invocation.sequencingEventId), order })
+        order += 1
       }
     }
   }
 
-  return invocations
+  const byUpdateId = new Map<string, { invocation: WorkflowUpdateInvocation; sequencing?: bigint; order: number }>()
+  for (const candidate of candidates) {
+    const updateId = candidate.invocation.updateId
+    const existing = byUpdateId.get(updateId)
+    if (!existing) {
+      byUpdateId.set(updateId, candidate)
+      continue
+    }
+    const existingSeq = existing.sequencing
+    const candidateSeq = candidate.sequencing
+    if (candidateSeq !== undefined && existingSeq !== undefined) {
+      if (candidateSeq < existingSeq) {
+        byUpdateId.set(updateId, candidate)
+      }
+      continue
+    }
+    if (candidateSeq !== undefined && existingSeq === undefined) {
+      byUpdateId.set(updateId, candidate)
+      continue
+    }
+    if (candidateSeq === undefined && existingSeq !== undefined) {
+      continue
+    }
+    if (candidate.order < existing.order) {
+      byUpdateId.set(updateId, candidate)
+    }
+  }
+
+  return [...byUpdateId.values()]
+    .sort((left, right) => {
+      const leftSeq = left.sequencing
+      const rightSeq = right.sequencing
+      if (leftSeq !== undefined && rightSeq !== undefined) {
+        if (leftSeq < rightSeq) {
+          return -1
+        }
+        if (leftSeq > rightSeq) {
+          return 1
+        }
+      } else if (leftSeq !== undefined) {
+        return -1
+      } else if (rightSeq !== undefined) {
+        return 1
+      }
+      return left.order - right.order
+    })
+    .map((entry) => entry.invocation)
 }
 
 const buildUpdateInvocationFromRequest = async (input: {

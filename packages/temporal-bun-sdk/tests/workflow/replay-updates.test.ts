@@ -178,3 +178,73 @@ test('ingestWorkflowHistory captures update rejection metadata', async () => {
     },
   ])
 })
+
+test('ingestWorkflowHistory dedupes update invocations and orders by sequencing id', async () => {
+  const events = [
+    create(HistoryEventSchema, {
+      eventId: 1n,
+      eventType: EventType.WORKFLOW_EXECUTION_UPDATE_ADMITTED,
+      attributes: {
+        case: 'workflowExecutionUpdateAdmittedEventAttributes',
+        value: create(WorkflowExecutionUpdateAdmittedEventAttributesSchema, {
+          request: makeUpdateRequest('upd-a', 'setTitle'),
+          origin: UpdateAdmittedEventOrigin.UPDATE_ADMITTED_EVENT_ORIGIN_CLIENT,
+        }),
+      },
+    }),
+    create(HistoryEventSchema, {
+      eventId: 2n,
+      eventType: EventType.WORKFLOW_EXECUTION_UPDATE_ACCEPTED,
+      attributes: {
+        case: 'workflowExecutionUpdateAcceptedEventAttributes',
+        value: create(WorkflowExecutionUpdateAcceptedEventAttributesSchema, {
+          acceptedRequest: makeUpdateRequest('upd-a', 'setTitle'),
+          acceptedRequestMessageId: 'message-a',
+          acceptedRequestSequencingEventId: 1n,
+        }),
+      },
+    }),
+    create(HistoryEventSchema, {
+      eventId: 3n,
+      eventType: EventType.WORKFLOW_EXECUTION_UPDATE_ACCEPTED,
+      attributes: {
+        case: 'workflowExecutionUpdateAcceptedEventAttributes',
+        value: create(WorkflowExecutionUpdateAcceptedEventAttributesSchema, {
+          protocolInstanceId: 'proto-b',
+          acceptedRequest: makeUpdateRequest('upd-b', 'setStatus'),
+          acceptedRequestMessageId: 'message-b',
+          acceptedRequestSequencingEventId: 3n,
+        }),
+      },
+    }),
+  ]
+
+  const replay = await Effect.runPromise(
+    ingestWorkflowHistory({
+      info: WORKFLOW_INFO,
+      history: events,
+      dataConverter,
+    }),
+  )
+
+  expect(replay.updates).toEqual([
+    {
+      protocolInstanceId: 'history-admitted',
+      requestMessageId: 'history-1',
+      updateId: 'upd-a',
+      name: 'setTitle',
+      payload: undefined,
+      identity: 'client-sdk',
+      sequencingEventId: '1',
+    },
+    {
+      protocolInstanceId: 'proto-b',
+      requestMessageId: 'message-b',
+      updateId: 'upd-b',
+      name: 'setStatus',
+      payload: undefined,
+      identity: 'client-sdk',
+      sequencingEventId: '3',
+    },
+  ])
+})
