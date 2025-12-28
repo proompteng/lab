@@ -1,0 +1,15 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: jangar-clickhouse-auth
+  namespace: jangar
+spec:
+  encryptedData:
+    username: REPLACE_WITH_SEALED_CLICKHOUSE_USERNAME
+    password: REPLACE_WITH_SEALED_CLICKHOUSE_PASSWORD
+  template:
+    metadata:
+      name: jangar-clickhouse-auth
+      namespace: jangar
+    type: Opaque

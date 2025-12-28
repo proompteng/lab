@@ -93,6 +93,24 @@ spec:
               value: require
             - name: JANGAR_DB_CA_CERT
               value: /etc/ssl/certs/jangar-db/ca.crt
+            - name: CH_HOST
+              value: torghut-clickhouse.torghut.svc
+            - name: CH_PORT
+              value: "8123"
+            - name: CH_DATABASE
+              value: default
+            - name: CH_SECURE
+              value: "false"
+            - name: CH_USER
+              valueFrom:
+                secretKeyRef:
+                  name: jangar-clickhouse-auth
+                  key: username
+            - name: CH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: jangar-clickhouse-auth
+                  key: password
             - name: VSCODE_DATA_DIR
               value: /workspace/.ovscode
             - name: VSCODE_DEFAULT_FOLDER
