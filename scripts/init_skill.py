@@ -11,6 +11,7 @@ Examples:
     init_skill.py my-api-helper --path skills/private --resources scripts --examples
     init_skill.py custom-skill --path /custom/location
 """
+# Source: https://github.com/openai/codex/blob/main/codex-rs/core/src/skills/assets/samples/skill-creator/scripts/init_skill.py
 
 import argparse
 import re
