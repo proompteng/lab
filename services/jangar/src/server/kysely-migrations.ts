@@ -1,9 +1,9 @@
 import { type Migration, type MigrationProvider, Migrator, sql } from 'kysely'
 
 import type { Db } from '~/server/db'
+import * as initMigration from '~/server/migrations/20251228_init'
 import * as codexJudgeTimeoutsMigration from '~/server/migrations/20251229_codex_judge_timeouts'
 import * as rerunSubmissionsMigration from '~/server/migrations/20251229_codex_rerun_submissions'
-import * as initMigration from '~/server/migrations/20251228_init'
 import * as workflowCommsAgentMessagesMigration from '~/server/migrations/20251229_workflow_comms_agent_messages'
 
 type MigrationMap = Record<string, Migration>

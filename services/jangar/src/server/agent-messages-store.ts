@@ -13,7 +13,7 @@ export type AgentMessageRecord = {
   agentId: string | null
   role: string
   kind: string
-  timestamp: string
+  timestamp: string | Date
   channel: string | null
   stage: string | null
   content: string
@@ -31,7 +31,7 @@ export type AgentMessageInput = {
   agentId: string | null
   role: string
   kind: string
-  timestamp: string
+  timestamp: string | Date
   channel: string | null
   stage: string | null
   content: string
@@ -113,7 +113,7 @@ const mapRow = (row: {
   agent_id: string | null
   role: string
   kind: string
-  timestamp: string
+  timestamp: string | Date
   channel: string | null
   stage: string | null
   content: string

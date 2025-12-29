@@ -23,6 +23,7 @@ const globalState = globalThis as typeof globalThis & {
     githubToken: string | null
     githubApiBaseUrl: string
     codexReviewers: string[]
+    reviewBypassMode: 'strict' | 'timeout' | 'always'
     ciPollIntervalMs: number
     reviewPollIntervalMs: number
     ciMaxWaitMs: number
