@@ -167,4 +167,3 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 - Use the current/default kube context by default; do not pass a kubeconfig path unless explicitly requested.
 - Scope kubectl to the target namespace with `-n`; prefer read-only queries (get/describe/logs) and short-lived actions (rollout restart). Avoid `kubectl apply` for desired state unless asked.
 - Manage apps declaratively via Git under `argocd/`; pin chart versions and avoid ad-hoc Helm installs.
-- Do not run git commands; propose file edits only. The user commits, pushes, and syncs ArgoCD.

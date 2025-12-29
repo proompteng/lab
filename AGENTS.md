@@ -72,6 +72,7 @@
 
 ## Merge Guidelines
 - Use squash merges for pull requests.
+- Use `gh pr merge 2202 --squash -R proompteng/lab` (no `--delete-branch`; avoids worktree checkout conflicts).
 
 ## Generated Artifacts & Safety
 - Do not edit generated directories (`dist/`, `build/`, `_generated`) or lockfiles (`bun.lock`, `bun.lockb`); regenerate via the owning tool.
