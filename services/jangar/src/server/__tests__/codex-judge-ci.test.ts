@@ -53,6 +53,7 @@ const requireMock = <T>(value: T | undefined, name: string): T => {
 
 if (!globalState.__codexJudgeStoreMock) {
   globalState.__codexJudgeStoreMock = {
+    ready: Promise.resolve(),
     upsertRunComplete: vi.fn(),
     attachNotify: vi.fn(),
     updateCiStatus: vi.fn(),

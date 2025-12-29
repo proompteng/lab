@@ -66,6 +66,7 @@ const globalState = globalThis as typeof globalThis & {
 
 if (!globalState.__codexJudgeStoreMock) {
   globalState.__codexJudgeStoreMock = {
+    ready: Promise.resolve(),
     upsertRunComplete: vi.fn(),
     attachNotify: vi.fn(),
     updateCiStatus: vi.fn(),
@@ -160,6 +161,7 @@ const requirePrivate = async () => {
   return __private
 }
 const store = {
+  ready: Promise.resolve(),
   upsertRunComplete: vi.fn(),
   attachNotify: vi.fn(),
   updateCiStatus: vi.fn(),

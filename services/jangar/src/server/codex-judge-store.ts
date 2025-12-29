@@ -191,6 +191,7 @@ export type UpdateRerunSubmissionInput = {
 }
 
 export type CodexJudgeStore = {
+  ready: Promise<void>
   upsertRunComplete: (input: UpsertRunCompleteInput) => Promise<CodexRunRecord>
   attachNotify: (input: AttachNotifyInput) => Promise<CodexRunRecord | null>
   updateCiStatus: (input: UpdateCiInput) => Promise<CodexRunRecord | null>
@@ -433,17 +434,9 @@ export const createCodexJudgeStore = (
   }
 
   const db = (options.createDb ?? createKyselyDb)(url)
-  let schemaReady: Promise<void> | null = null
-
-  const ensureReady = async () => {
-    if (!schemaReady) {
-      schemaReady = ensureSchema(db)
-    }
-    await schemaReady
-  }
+  const ready = ensureSchema(db)
 
   const getRunByWorkflow = async (workflowName: string, namespace?: string | null) => {
-    await ensureReady()
     const row = await db
       .selectFrom('codex_judge.runs')
       .selectAll()
@@ -454,13 +447,11 @@ export const createCodexJudgeStore = (
   }
 
   const getRunById = async (runId: string) => {
-    await ensureReady()
     const row = await db.selectFrom('codex_judge.runs').selectAll().where('id', '=', runId).executeTakeFirst()
     return row ? rowToRun(row as Record<string, unknown>) : null
   }
 
   const listRunsByIssue = async (repository: string, issueNumber: number, branch: string) => {
-    await ensureReady()
     const rows = await db
       .selectFrom('codex_judge.runs')
       .selectAll()
@@ -473,7 +464,6 @@ export const createCodexJudgeStore = (
   }
 
   const getRunHistory = async (input: GetRunHistoryInput): Promise<CodexRunHistory> => {
-    await ensureReady()
     let query = db
       .selectFrom('codex_judge.runs')
       .selectAll()
@@ -541,7 +531,6 @@ export const createCodexJudgeStore = (
   }
 
   const getLatestPromptTuningByIssue = async (repository: string, issueNumber: number) => {
-    await ensureReady()
     const row = await db
       .selectFrom('codex_judge.prompt_tuning')
       .innerJoin('codex_judge.runs', 'codex_judge.prompt_tuning.run_id', 'codex_judge.runs.id')
@@ -554,7 +543,6 @@ export const createCodexJudgeStore = (
   }
 
   const enforceSingleActiveRun = async (run: CodexRunRecord) => {
-    await ensureReady()
     if (isTerminalRunStatus(run.status)) return run
 
     const runs = await listRunsByIssue(run.repository, run.issueNumber, run.branch)
@@ -585,7 +573,6 @@ export const createCodexJudgeStore = (
   }
 
   const upsertRunComplete = async (input: UpsertRunCompleteInput) => {
-    await ensureReady()
     const existingByUid = input.workflowUid
       ? await db
           .selectFrom('codex_judge.runs')
@@ -667,7 +654,6 @@ export const createCodexJudgeStore = (
   }
 
   const attachNotify = async (input: AttachNotifyInput) => {
-    await ensureReady()
     const row = await db
       .selectFrom('codex_judge.runs')
       .selectAll()
@@ -726,7 +712,6 @@ export const createCodexJudgeStore = (
   }
 
   const updateCiStatus = async (input: UpdateCiInput) => {
-    await ensureReady()
     const existing = await db
       .selectFrom('codex_judge.runs')
       .select(['ci_status', 'ci_status_updated_at', 'commit_sha'])
@@ -754,7 +739,6 @@ export const createCodexJudgeStore = (
   }
 
   const updateReviewStatus = async (input: UpdateReviewInput) => {
-    await ensureReady()
     const existing = await db
       .selectFrom('codex_judge.runs')
       .select(['review_status', 'review_status_updated_at'])
@@ -779,7 +763,6 @@ export const createCodexJudgeStore = (
   }
 
   const updateDecision = async (input: UpdateDecisionInput) => {
-    await ensureReady()
     const inserted = await db
       .insertInto('codex_judge.evaluations')
       .values({
@@ -811,7 +794,6 @@ export const createCodexJudgeStore = (
   }
 
   const updateRunStatus = async (runId: string, status: string) => {
-    await ensureReady()
     let query = db.updateTable('codex_judge.runs').set({ status, updated_at: sql`now()` }).where('id', '=', runId)
     if (status !== 'superseded') {
       query = query.where('status', 'not in', ['superseded'])
@@ -821,7 +803,6 @@ export const createCodexJudgeStore = (
   }
 
   const updateRunPrompt = async (runId: string, prompt: string | null, nextPrompt?: string | null) => {
-    await ensureReady()
     const updated = await db
       .updateTable('codex_judge.runs')
       .set({
@@ -836,7 +817,6 @@ export const createCodexJudgeStore = (
   }
 
   const updateRunPrInfo = async (runId: string, prNumber: number, prUrl: string, commitSha?: string | null) => {
-    await ensureReady()
     const updated = await db
       .updateTable('codex_judge.runs')
       .set({
@@ -852,7 +832,6 @@ export const createCodexJudgeStore = (
   }
 
   const listRunsByStatus = async (statuses: string[]): Promise<CodexPendingRun[]> => {
-    await ensureReady()
     if (statuses.length === 0) return []
     const rows = await db
       .selectFrom('codex_judge.runs')
@@ -869,7 +848,6 @@ export const createCodexJudgeStore = (
   }
 
   const upsertArtifacts = async (input: UpsertArtifactsInput) => {
-    await ensureReady()
     if (input.artifacts.length === 0) return []
 
     const rows: CodexArtifactRecord[] = []
@@ -917,7 +895,6 @@ export const createCodexJudgeStore = (
   }
 
   const claimRerunSubmission = async (input: ClaimRerunSubmissionInput) => {
-    await ensureReady()
     const updated = await db
       .updateTable('codex_judge.rerun_submissions')
       .set({
@@ -977,7 +954,6 @@ export const createCodexJudgeStore = (
   }
 
   const updateRerunSubmission = async (input: UpdateRerunSubmissionInput) => {
-    await ensureReady()
     const update: Record<string, unknown> = { status: input.status, updated_at: sql`now()` }
     if (input.responseStatus !== undefined) {
       update.response_status = input.responseStatus
@@ -1005,7 +981,6 @@ export const createCodexJudgeStore = (
     status: string,
     metadata: Record<string, unknown> = {},
   ) => {
-    await ensureReady()
     const inserted = await db
       .insertInto('codex_judge.prompt_tuning')
       .values({
@@ -1024,6 +999,7 @@ export const createCodexJudgeStore = (
   }
 
   return {
+    ready,
     upsertRunComplete,
     attachNotify,
     updateCiStatus,
