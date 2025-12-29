@@ -15,5 +15,6 @@ register() {
 
 register "torghut.ta.bars.1s.v1-value" "$SCHEMA_DIR/ta-bars-1s.avsc"
 register "torghut.ta.signals.v1-value" "$SCHEMA_DIR/ta-signals.avsc"
+register "torghut.ta.status.v1-value" "$SCHEMA_DIR/ta-status.avsc"
 
 echo "Done"

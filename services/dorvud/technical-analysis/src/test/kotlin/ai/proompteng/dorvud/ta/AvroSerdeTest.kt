@@ -6,6 +6,7 @@ import ai.proompteng.dorvud.ta.producer.AvroSerde
 import ai.proompteng.dorvud.ta.stream.Macd
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
+import ai.proompteng.dorvud.ta.stream.TaStatusPayload
 import org.apache.avro.generic.GenericDatumReader
 import org.apache.avro.io.DecoderFactory
 import java.time.Instant
@@ -89,5 +90,44 @@ class AvroSerdeTest {
     val record = reader.read(null, DecoderFactory.get().binaryDecoder(bytes, null))
     assertEquals("TEST", record.get("symbol").toString())
     assertEquals(1.0, record.get("macd").let { (it as org.apache.avro.generic.GenericRecord).get("macd") })
+  }
+
+  @Test
+  fun `status encodes with schema`() {
+    val now = Instant.parse("2025-01-01T00:00:00Z")
+    val env =
+      Envelope(
+        ingestTs = now,
+        eventTs = now,
+        feed = "ta",
+        channel = "status",
+        symbol = "ta",
+        seq = 3,
+        payload =
+          TaStatusPayload(
+            watermarkLagMs = 1500L,
+            lastEventTs = now.minusSeconds(5).toString(),
+            status = "ok",
+            heartbeat = true,
+          ),
+        isFinal = true,
+        source = "unit",
+        window = null,
+        version = 1,
+      )
+
+    val bytes = serde.encodeStatus(env, "torghut.ta.status.v1")
+    val schemaStream = serde.javaClass.classLoader.getResourceAsStream("schemas/ta-status.avsc") ?: error("schema missing")
+    val schema =
+      schemaStream.use {
+        org.apache.avro.Schema
+          .Parser()
+          .parse(it)
+      }
+    val reader = GenericDatumReader<org.apache.avro.generic.GenericData.Record>(schema)
+    val record = reader.read(null, DecoderFactory.get().binaryDecoder(bytes, null))
+    assertEquals("ta", record.get("symbol").toString())
+    assertEquals(1500L, record.get("watermark_lag_ms"))
+    assertEquals("ok", record.get("status").toString())
   }
 }

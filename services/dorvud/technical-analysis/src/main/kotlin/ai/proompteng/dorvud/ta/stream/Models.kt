@@ -3,6 +3,7 @@ package ai.proompteng.dorvud.ta.stream
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.platform.InstantIsoSerializer
 import ai.proompteng.dorvud.platform.Window
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.time.Instant
 
@@ -22,6 +23,26 @@ data class QuotePayload(
   val `as`: Long,
   @Serializable(with = InstantIsoSerializer::class)
   val t: Instant,
+)
+
+@Serializable
+data class AlpacaBarPayload(
+  @SerialName("o")
+  val open: Double,
+  @SerialName("h")
+  val high: Double,
+  @SerialName("l")
+  val low: Double,
+  @SerialName("c")
+  val close: Double,
+  @SerialName("v")
+  val volume: Long,
+  @SerialName("vw")
+  val vwap: Double? = null,
+  @SerialName("n")
+  val tradeCount: Long? = null,
+  @SerialName("t")
+  val timestamp: String,
 )
 
 @Serializable
@@ -46,6 +67,16 @@ data class TaSignalsPayload(
   val vwap: Vwap? = null,
   val imbalance: Imbalance? = null,
   val vol_realized: RealizedVol? = null,
+)
+
+@Serializable
+data class TaStatusPayload(
+  @SerialName("watermark_lag_ms")
+  val watermarkLagMs: Long? = null,
+  @SerialName("last_event_ts")
+  val lastEventTs: String? = null,
+  val status: String = "ok",
+  val heartbeat: Boolean = true,
 )
 
 @Serializable
@@ -106,4 +137,16 @@ fun <T, R> Envelope<T>.withPayload(
     source = source,
     window = window,
     version = version,
+  )
+
+fun AlpacaBarPayload.toMicroBarPayload(): MicroBarPayload =
+  MicroBarPayload(
+    o = open,
+    h = high,
+    l = low,
+    c = close,
+    v = volume.toDouble(),
+    vwap = vwap,
+    count = tradeCount ?: 0L,
+    t = Instant.parse(timestamp),
   )

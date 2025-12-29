@@ -30,8 +30,20 @@ class SerializationSchemasTest {
   }
 
   @Test
+  fun `status serialization schema is java-serializable`() {
+    val schema = StatusSerializationSchema("topic", serde)
+    assertSerializable(schema)
+  }
+
+  @Test
   fun `parse envelope flatmap remains serializable`() {
     val fn = ParseEnvelopeFlatMap(SerializerFactory { TradePayload.serializer() })
+    assertSerializable(fn)
+  }
+
+  @Test
+  fun `bars1m compat flatmap remains serializable`() {
+    val fn = ParseMicroBarCompatFlatMap()
     assertSerializable(fn)
   }
 

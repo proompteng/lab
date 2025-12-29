@@ -63,6 +63,10 @@ Notes:
   "vol_realized": {"w60s": 0.18}
 }
 ```
+- TA status:
+```json
+{"watermark_lag_ms": 850, "last_event_ts": "2025-12-03T18:32:10Z", "status": "ok", "heartbeat": true}
+```
 
 ## Avro subject naming
 - Use TopicNameStrategy (default) or per-topic subject: `<topic>-value`.
@@ -71,6 +75,7 @@ Notes:
 Schemas stored in `docs/torghut/schemas/`:
 - `ta-bars-1s.avsc`
 - `ta-signals.avsc`
+- `ta-status.avsc`
 
 Registration helper: `docs/torghut/register-schemas.sh` (uses KARAPACE_URL env, defaults to `http://karapace.kafka.svc:8081`).
 
