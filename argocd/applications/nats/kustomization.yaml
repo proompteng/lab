@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: nats
 resources:
   - nats-auth-secrets.yaml
+  - stream-agent-comms.yaml
 helmCharts:
   - name: nats
     repo: https://nats-io.github.io/k8s/helm/charts

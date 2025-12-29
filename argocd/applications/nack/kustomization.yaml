@@ -1,8 +1,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: nack
-resources:
-  - stream-agent-comms.yaml
 helmCharts:
   - name: nack
     repo: https://nats-io.github.io/k8s/helm/charts
