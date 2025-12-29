@@ -34,3 +34,21 @@ data:
             annotations:
               summary: Graf has not processed any requests
               description: The Graf HTTP counter has not incremented in the last 10 minutes.
+      - name: codex-judge-pipeline.rules
+        rules:
+          - alert: CodexEventBusNoWorkflowCompletions
+            expr: changes(nats_stream_last_seq{stream_name="default"}[15m]) == 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Argo Events EventBus has no workflow completion messages
+              description: No new JetStream messages landed in the Argo Events default stream for 15 minutes.
+          - alert: CodexEventBusJetStreamDisabled
+            expr: max(nats_server_jetstream_disabled{cluster="default"}) == 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Argo Events EventBus JetStream is disabled
+              description: JetStream reports disabled on the EventBus NATS cluster, blocking workflow completion delivery.
