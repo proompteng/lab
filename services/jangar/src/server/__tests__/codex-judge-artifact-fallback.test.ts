@@ -203,7 +203,7 @@ describe('codex-judge artifact fetch', () => {
       headers: { get: () => String(payload.byteLength) },
       arrayBuffer: async () => payload.buffer,
     })
-    globalThis.fetch = fetchMock as typeof globalThis.fetch
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
 
     const { fetchArtifactBuffer } = await requirePrivate()
     const result = await fetchArtifactBuffer({
