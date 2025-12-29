@@ -353,7 +353,7 @@ const harness = (() => {
       mergeableState: 'clean',
     })),
     getCheckRuns: vi.fn(async () => ({ status: 'success' as const, url: 'https://ci.example.com' })),
-    getReviewSummary: vi.fn<Promise<ReviewSummary>, []>(async () => defaultReviewSummary),
+    getReviewSummary: vi.fn<() => Promise<ReviewSummary>>(async () => defaultReviewSummary),
     getPullRequestDiff: vi.fn(async () => 'diff --git a/file b/file'),
     getRefSha: vi.fn(async () => 'sha-1'),
     getFile: vi.fn(async (_owner: string, _repo: string, _path: string) => ({ content: '', sha: 'file-sha' })),
