@@ -27,7 +27,7 @@ spec:
         fi
         cd "$APP_PATH"
         if [ -f package.json ]; then
-          bun install --no-save --cwd . 1>&2
+          bun install --no-save --frozen-lockfile --ignore-scripts --cwd . 1>&2
         fi
         WORKDIR="$(mktemp -d)"
         trap 'rm -rf "$WORKDIR"' EXIT
