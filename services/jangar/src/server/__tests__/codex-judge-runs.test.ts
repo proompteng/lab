@@ -66,6 +66,7 @@ describe('codex runs route', () => {
     const store = {
       getRunHistory: vi.fn(async () => history),
       close: vi.fn(async () => {}),
+      ready: Promise.resolve(),
     }
 
     const response = await getCodexRunsHandler(
