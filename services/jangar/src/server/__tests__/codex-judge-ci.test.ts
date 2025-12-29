@@ -63,6 +63,8 @@ if (!globalState.__codexJudgeStoreMock) {
     updateRunPrInfo: vi.fn(),
     upsertArtifacts: vi.fn(),
     listRunsByStatus: vi.fn(),
+    claimRerunSubmission: vi.fn(),
+    updateRerunSubmission: vi.fn(),
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),

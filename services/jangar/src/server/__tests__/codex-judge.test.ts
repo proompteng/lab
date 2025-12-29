@@ -75,6 +75,8 @@ if (!globalState.__codexJudgeStoreMock) {
     updateRunPrInfo: vi.fn(),
     upsertArtifacts: vi.fn(),
     listRunsByStatus: vi.fn(),
+    claimRerunSubmission: vi.fn(),
+    updateRerunSubmission: vi.fn(),
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
@@ -266,6 +268,35 @@ const harness = (() => {
     ),
     listRunsByIssue: vi.fn(async () => [run]),
     listRunsByStatus: vi.fn(async () => [run]),
+    claimRerunSubmission: vi.fn(async ({ attempt, deliveryId }: { attempt: number; deliveryId: string }) => ({
+      submission: {
+        id: `rerun-${attempt}`,
+        parentRunId: run.id,
+        attempt,
+        deliveryId,
+        status: 'queued',
+        submissionAttempt: 0,
+        responseStatus: null,
+        error: null,
+        createdAt: now,
+        updatedAt: now,
+        submittedAt: null,
+      },
+      shouldSubmit: true,
+    })),
+    updateRerunSubmission: vi.fn(async ({ id, status, responseStatus, error, submittedAt }) => ({
+      id,
+      parentRunId: run.id,
+      attempt: run.attempt + 1,
+      deliveryId: `jangar-${run.id}-attempt-${run.attempt + 1}`,
+      status,
+      submissionAttempt: 1,
+      responseStatus: responseStatus ?? null,
+      error: error ?? null,
+      createdAt: now,
+      updatedAt: now,
+      submittedAt: submittedAt ?? null,
+    })),
     getLatestPromptTuningByIssue: vi.fn(async () => null),
     getRunHistory: vi.fn(async () => ({
       runs: [],
@@ -453,6 +484,33 @@ describe('codex judge guardrails', () => {
     )
     expect(harness.store.listRunsByIssue).toHaveBeenCalledTimes(1)
     expect(fetchMock).toHaveBeenCalledWith('http://facteur.test/codex/tasks', expect.any(Object))
+  })
+
+  it('marks runs needs_human when rerun submission fails', async () => {
+    const timeoutSpy = vi.spyOn(global, 'setTimeout').mockImplementation((fn) => {
+      fn()
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+    try {
+      const fetchMock = vi.fn(async () => ({
+        ok: false,
+        status: 500,
+        text: async () => 'nope',
+        json: async () => ({}),
+      }))
+      global.fetch = fetchMock as unknown as typeof global.fetch
+
+      harness.setJudgeResponses(['nope', 'still nope', 'no json here'])
+
+      const privateApi = await requirePrivate()
+      await privateApi.evaluateRun('run-1')
+
+      expect(fetchMock).toHaveBeenCalledTimes(4)
+      expect(harness.store.updateRunStatus).toHaveBeenCalledWith('run-1', 'needs_human')
+      expect(harness.store.updateRerunSubmission).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }))
+    } finally {
+      timeoutSpy.mockRestore()
+    }
   })
 
   it('does not re-enter judging for completed runs', async () => {
