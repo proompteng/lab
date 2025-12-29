@@ -16,14 +16,32 @@ kubectl -n kafka describe pod kafka-pool-a-2
 ```
 Confirm the I/O error in the broker logs and record the PVC name (usually `data-kafka-pool-a-2`).
 
-## 2) Pause Argo CD autosync (recommended)
+## 2) Check Longhorn volume state + minimal available threshold
+When brokers crash-loop with I/O errors, verify the Longhorn volume is attached and healthy. If the volume is `faulted/detached` and logs show `no healthy or scheduled replica for starting`, the minimal available threshold may be blocking salvage/attach.
+
+```bash
+PVC=data-kafka-pool-a-2
+PV=$(kubectl -n kafka get pvc "$PVC" -o jsonpath='{.spec.volumeName}')
+VOLUME=$(kubectl get pv "$PV" -o jsonpath='{.spec.csi.volumeHandle}')
+
+kubectl -n longhorn-system get volume "$VOLUME" -o wide
+```
+
+If the volume cannot be scheduled due to minimal available space, temporarily lower the threshold and retry:
+```bash
+kubectl -n longhorn-system patch settings.longhorn.io storage-minimal-available-percentage \
+  --type merge -p '{"value":"20"}'
+```
+After recovery, persist the intended value in `argocd/applications/longhorn/longhorn-values.yaml`.
+
+## 3) Pause Argo CD autosync (recommended)
 ```bash
 argocd app patch argocd/kafka --type json \
   --patch '[{"op":"remove","path":"/spec/syncPolicy/automated"}]'
 ```
 Restore it after recovery.
 
-## 3) Replace the broker volume (fastest path)
+## 4) Replace the broker volume (fastest path)
 Scale the node pool down to remove the failing broker, delete its PVC, then scale back up.
 ```bash
 kubectl -n kafka patch kafkanodepool pool-a --type merge -p '{"spec":{"replicas":2}}'
@@ -34,7 +52,7 @@ kubectl -n kafka patch kafkanodepool pool-a --type merge -p '{"spec":{"replicas"
 ```
 Wait for `kafka-pool-a-2` to recreate and reach `Ready`.
 
-## 4) Optional: attempt filesystem repair before replacement
+## 5) Optional: attempt filesystem repair before replacement
 If you need to preserve the data volume, run fsck on the Longhorn device while the broker is scaled down.
 ```bash
 PVC=data-kafka-pool-a-2
@@ -77,7 +95,7 @@ POD
 If `NODE` is empty, attach the volume in Longhorn first or set `nodeName` manually to the node hosting the volume device.
 If fsck fails or I/O errors persist, proceed with the volume replacement in step 3.
 
-## 5) Verify Kafka and KafkaSource health
+## 6) Verify Kafka and KafkaSource health
 ```bash
 kubectl -n kafka get kafka
 kubectl -n kafka get pods -o wide
@@ -86,7 +104,7 @@ kubectl -n jangar describe kafkasource jangar-codex-completions | sed -n '/Condi
 ```
 Ensure Kafka reports `Ready=True` and the KafkaSource `Ready` condition is `True`.
 
-## 6) Re-enable Argo CD autosync
+## 7) Re-enable Argo CD autosync
 ```bash
 argocd app set argocd/kafka --sync-policy automated --self-heal --auto-prune
 ```
