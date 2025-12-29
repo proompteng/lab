@@ -210,8 +210,10 @@ type CodexJudgeRuns = {
   pr_url: string | null
   ci_status: string | null
   ci_url: string | null
+  ci_status_updated_at: Timestamp | null
   review_status: string | null
   review_summary: JsonValue
+  review_status_updated_at: Timestamp | null
   notify_payload: JsonValue | null
   run_complete_payload: JsonValue | null
   created_at: Generated<Timestamp>

@@ -22,8 +22,10 @@ export type CodexRunRecord = {
   prUrl: string | null
   ciStatus: string | null
   ciUrl: string | null
+  ciStatusUpdatedAt: string | null
   reviewStatus: string | null
   reviewSummary: Record<string, unknown>
+  reviewStatusUpdatedAt: string | null
   notifyPayload: Record<string, unknown> | null
   runCompletePayload: Record<string, unknown> | null
   createdAt: string
@@ -329,8 +331,10 @@ const rowToRun = (row: Record<string, unknown>): CodexRunRecord => {
     prUrl: row.pr_url ? String(row.pr_url) : null,
     ciStatus: row.ci_status ? String(row.ci_status) : null,
     ciUrl: row.ci_url ? String(row.ci_url) : null,
+    ciStatusUpdatedAt: row.ci_status_updated_at ? String(row.ci_status_updated_at) : null,
     reviewStatus: row.review_status ? String(row.review_status) : null,
     reviewSummary: (row.review_summary as Record<string, unknown>) ?? {},
+    reviewStatusUpdatedAt: row.review_status_updated_at ? String(row.review_status_updated_at) : null,
     notifyPayload: (row.notify_payload as Record<string, unknown>) ?? null,
     runCompletePayload: (row.run_complete_payload as Record<string, unknown>) ?? null,
     createdAt: String(row.created_at),
@@ -677,12 +681,23 @@ export const createCodexJudgeStore = (
 
   const updateCiStatus = async (input: UpdateCiInput) => {
     await ensureReady()
+    const existing = await db
+      .selectFrom('codex_judge.runs')
+      .select(['ci_status', 'ci_status_updated_at', 'commit_sha'])
+      .where('id', '=', input.runId)
+      .executeTakeFirst()
+    const existingStatus = existing?.ci_status ? String(existing.ci_status) : null
+    const existingCommitSha = existing?.commit_sha ? String(existing.commit_sha) : null
+    const statusChanged = existingStatus !== input.status
+    const commitChanged = input.commitSha ? input.commitSha !== existingCommitSha : false
+    const shouldBumpStatus = statusChanged || commitChanged || !existing?.ci_status_updated_at
     const updated = await db
       .updateTable('codex_judge.runs')
       .set({
         ci_status: input.status,
         ci_url: input.url ?? null,
         commit_sha: input.commitSha ?? sql`coalesce(commit_sha, commit_sha)`,
+        ci_status_updated_at: shouldBumpStatus ? sql`now()` : (existing?.ci_status_updated_at ?? sql`now()`),
         updated_at: sql`now()`,
       })
       .where('id', '=', input.runId)
@@ -694,11 +709,20 @@ export const createCodexJudgeStore = (
 
   const updateReviewStatus = async (input: UpdateReviewInput) => {
     await ensureReady()
+    const existing = await db
+      .selectFrom('codex_judge.runs')
+      .select(['review_status', 'review_status_updated_at'])
+      .where('id', '=', input.runId)
+      .executeTakeFirst()
+    const existingStatus = existing?.review_status ? String(existing.review_status) : null
+    const statusChanged = existingStatus !== input.status
+    const shouldBumpStatus = statusChanged || !existing?.review_status_updated_at
     const updated = await db
       .updateTable('codex_judge.runs')
       .set({
         review_status: input.status,
         review_summary: input.summary,
+        review_status_updated_at: shouldBumpStatus ? sql`now()` : (existing?.review_status_updated_at ?? sql`now()`),
         updated_at: sql`now()`,
       })
       .where('id', '=', input.runId)

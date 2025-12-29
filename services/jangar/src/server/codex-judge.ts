@@ -17,14 +17,26 @@ import {
 import { createGitHubClient, type PullRequest, type ReviewSummary } from '~/server/github-client'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
 
-const store = createCodexJudgeStore()
-const config = loadCodexJudgeConfig()
-const github = createGitHubClient({ token: config.githubToken, apiBaseUrl: config.githubApiBaseUrl })
-const argo = config.argoServerUrl ? createArgoClient({ baseUrl: config.argoServerUrl }) : null
 type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
-const getMemoryStoreFactory = () =>
-  (globalThis as { __codexJudgeMemoryStoreFactory?: MemoryStoreFactory }).__codexJudgeMemoryStoreFactory ??
-  createPostgresMemoriesStore
+
+const globalOverrides = globalThis as typeof globalThis & {
+  __codexJudgeStoreMock?: ReturnType<typeof createCodexJudgeStore>
+  __codexJudgeConfigMock?: ReturnType<typeof loadCodexJudgeConfig>
+  __codexJudgeGithubMock?: ReturnType<typeof createGitHubClient>
+  __codexJudgeMemoryStoreMock?: ReturnType<typeof createPostgresMemoriesStore>
+  __codexJudgeMemoryStoreFactory?: MemoryStoreFactory
+  __codexJudgeArgoMock?: ReturnType<typeof createArgoClient> | null
+}
+
+const store = globalOverrides.__codexJudgeStoreMock ?? createCodexJudgeStore()
+const config = globalOverrides.__codexJudgeConfigMock ?? loadCodexJudgeConfig()
+const github =
+  globalOverrides.__codexJudgeGithubMock ??
+  createGitHubClient({ token: config.githubToken, apiBaseUrl: config.githubApiBaseUrl })
+const argo =
+  globalOverrides.__codexJudgeArgoMock ??
+  (config.argoServerUrl ? createArgoClient({ baseUrl: config.argoServerUrl }) : null)
+const getMemoryStoreFactory = () => globalOverrides.__codexJudgeMemoryStoreFactory ?? createPostgresMemoriesStore
 
 const scheduledRuns = new Map<string, NodeJS.Timeout>()
 const activeEvaluations = new Set<string>()
@@ -964,6 +976,25 @@ const normalizeJudgeDecision = (value: string) => {
   return normalized
 }
 
+const parseTimestampMs = (value: string | null | undefined) => {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+const getElapsedMs = (value: string | null | undefined) => {
+  const startMs = parseTimestampMs(value)
+  if (startMs == null) return null
+  return Math.max(0, Date.now() - startMs)
+}
+
+const hasWaitTimedOut = (since: string | null | undefined, maxWaitMs: number) => {
+  if (maxWaitMs <= 0) return false
+  const elapsedMs = getElapsedMs(since)
+  if (elapsedMs == null) return false
+  return elapsedMs >= maxWaitMs
+}
+
 const evaluateRun = async (runId: string) => {
   if (activeEvaluations.has(runId)) return
   activeEvaluations.add(runId)
@@ -1062,9 +1093,31 @@ const evaluateRun = async (runId: string) => {
       return
     }
 
-    await store.updateCiStatus({ runId: run.id, status: ci.status, url: ci.url, commitSha })
+    const ciRun = (await store.updateCiStatus({ runId: run.id, status: ci.status, url: ci.url, commitSha })) ?? run
 
     if (ci.status === 'pending') {
+      if (hasWaitTimedOut(ciRun.ciStatusUpdatedAt, config.ciMaxWaitMs)) {
+        const elapsedMs = getElapsedMs(ciRun.ciStatusUpdatedAt)
+        const evaluation = await store.updateDecision({
+          runId: run.id,
+          decision: 'needs_iteration',
+          reasons: {
+            error: 'ci_timeout',
+            url: ci.url,
+            pending_since: ciRun.ciStatusUpdatedAt,
+            elapsed_ms: elapsedMs,
+            max_wait_ms: config.ciMaxWaitMs,
+          },
+          suggestedFixes: { fix: 'Investigate CI delays and re-run checks if needed.' },
+          nextPrompt: 'CI checks did not complete in time. Re-run CI and ensure all checks finish.',
+          promptTuning: {},
+          systemSuggestions: {},
+        })
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, evaluation)
+        await triggerRerun(run, 'ci_timeout', evaluation)
+        return
+      }
       scheduleEvaluation(run.id, config.ciPollIntervalMs, { reschedule: true })
       return
     }
@@ -1102,17 +1155,39 @@ const evaluateRun = async (runId: string) => {
     }
 
     const review = await fetchReviewStatus(run, pr.number)
-    await store.updateReviewStatus({
-      runId: run.id,
-      status: review.status,
-      summary: {
-        unresolvedThreads: review.unresolvedThreads,
-        requestedChanges: review.requestedChanges,
-        issueComments: review.issueComments,
-      },
-    })
+    const reviewRun =
+      (await store.updateReviewStatus({
+        runId: run.id,
+        status: review.status,
+        summary: {
+          unresolvedThreads: review.unresolvedThreads,
+          requestedChanges: review.requestedChanges,
+          issueComments: review.issueComments,
+        },
+      })) ?? run
 
     if (review.status === 'pending') {
+      if (hasWaitTimedOut(reviewRun.reviewStatusUpdatedAt, config.reviewMaxWaitMs)) {
+        const elapsedMs = getElapsedMs(reviewRun.reviewStatusUpdatedAt)
+        const evaluation = await store.updateDecision({
+          runId: run.id,
+          decision: 'needs_iteration',
+          reasons: {
+            error: 'review_timeout',
+            pending_since: reviewRun.reviewStatusUpdatedAt,
+            elapsed_ms: elapsedMs,
+            max_wait_ms: config.reviewMaxWaitMs,
+          },
+          suggestedFixes: { fix: 'Follow up on Codex review or re-request review to unblock.' },
+          nextPrompt: 'Codex review did not complete in time. Re-request review and resolve feedback.',
+          promptTuning: {},
+          systemSuggestions: {},
+        })
+        const refreshedRun = (await store.getRunById(run.id)) ?? run
+        await writeMemories(refreshedRun, evaluation)
+        await triggerRerun(run, 'review_timeout', evaluation)
+        return
+      }
       scheduleEvaluation(run.id, config.reviewPollIntervalMs, { reschedule: true })
       return
     }
@@ -1230,12 +1305,6 @@ const filterGenericSuggestions = (suggestions: string[], blocked: Set<string>) =
 
 const extractSuggestions = (payload: Record<string, unknown> | undefined, blocked: Set<string>) =>
   filterGenericSuggestions(normalizeSuggestionList(payload?.suggestions), blocked)
-
-const parseTimestampMs = (value: string | null | undefined) => {
-  if (!value) return null
-  const parsed = Date.parse(value)
-  return Number.isNaN(parsed) ? null : parsed
-}
 
 type PromptTuningRunReference = {
   runId: string
@@ -1878,9 +1947,14 @@ const sendDiscordEscalation = async (run: CodexRunRecord, reason: string) => {
 
 const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRecord) => {
   let memoryStore: ReturnType<typeof createPostgresMemoriesStore> | null = null
+  let shouldClose = false
   try {
     const memoryStoreFactory = getMemoryStoreFactory()
-    memoryStore = memoryStoreFactory()
+    memoryStore = globalOverrides.__codexJudgeMemoryStoreMock ?? null
+    if (!memoryStore) {
+      memoryStore = memoryStoreFactory()
+      shouldClose = true
+    }
     const namespace = `codex:${run.repository}:${run.issueNumber}`
     const workflowTag = run.workflowName ? `workflow-${run.workflowName}` : 'workflow-unknown'
     const stageTag = run.stage ? `stage-${run.stage}` : 'stage-unknown'
@@ -1935,7 +2009,7 @@ const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRec
   } catch (error) {
     console.warn('Failed to persist Codex judge memories', error)
   } finally {
-    if (memoryStore) {
+    if (memoryStore && shouldClose) {
       try {
         await memoryStore.close()
       } catch (error) {
