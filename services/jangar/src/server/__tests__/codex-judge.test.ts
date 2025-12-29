@@ -65,6 +65,7 @@ const globalState = globalThis as typeof globalThis & {
 
 if (!globalState.__codexJudgeStoreMock) {
   globalState.__codexJudgeStoreMock = {
+    ready: Promise.resolve(),
     upsertRunComplete: vi.fn(),
     attachNotify: vi.fn(),
     updateCiStatus: vi.fn(),
@@ -201,6 +202,7 @@ const harness = (() => {
   }
 
   const store = {
+    ready: Promise.resolve(),
     getRunById: vi.fn(async (runId: string) => (runId === run.id ? run : null)),
     updateRunStatus: vi.fn(async (runId: string, status: string) => {
       if (runId !== run.id) return null

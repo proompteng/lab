@@ -29,6 +29,13 @@ const globalOverrides = globalThis as typeof globalThis & {
 }
 
 const store = globalOverrides.__codexJudgeStoreMock ?? createCodexJudgeStore()
+const storeReady = store.ready ?? Promise.resolve()
+const ensureStoreReady = async () => {
+  await storeReady
+}
+storeReady.catch((error) => {
+  console.error('Codex judge store failed to initialize', error)
+})
 const config = globalOverrides.__codexJudgeConfigMock ?? loadCodexJudgeConfig()
 const github =
   globalOverrides.__codexJudgeGithubMock ??
@@ -396,6 +403,7 @@ const shouldScheduleReconcile = (run: CodexPendingRun) =>
 
 const reconcilePendingRuns = async () => {
   if (reconcileInFlight) return
+  await ensureStoreReady()
   reconcileInFlight = true
   try {
     const pending = await store.listRunsByStatus([...PENDING_EVALUATION_STATUSES])
@@ -999,6 +1007,7 @@ const hasWaitTimedOut = (since: string | null | undefined, maxWaitMs: number) =>
 }
 
 const evaluateRun = async (runId: string) => {
+  await ensureStoreReady()
   if (activeEvaluations.has(runId)) return
   activeEvaluations.add(runId)
 
@@ -2109,6 +2118,7 @@ export const __private = {
   writeMemories,
 }
 export const handleRunComplete = async (payload: Record<string, unknown>) => {
+  await ensureStoreReady()
   const parsed = parseRunCompletePayload(payload)
   if (!parsed.repository || !parsed.issueNumber || !parsed.head) {
     return null
@@ -2147,6 +2157,7 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
 }
 
 export const handleNotify = async (payload: Record<string, unknown>) => {
+  await ensureStoreReady()
   const parsed = parseNotifyPayload(payload)
   if (!parsed.workflowName) {
     throw new Error('notify payload missing workflow name')
