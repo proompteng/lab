@@ -20,6 +20,7 @@ class ForwarderConfigTest {
       )
 
     assertEquals("http://jangar.test/api/torghut/symbols", cfg.jangarSymbolsUrl)
+    assertEquals(emptyList(), cfg.staticSymbols)
     assertEquals(30_000, cfg.symbolsPollIntervalMs)
     assertEquals(200, cfg.subscribeBatchSize)
     assertEquals(1, cfg.shardCount)
@@ -31,7 +32,7 @@ class ForwarderConfigTest {
   }
 
   @Test
-  fun `requires jangar symbols url`() {
+  fun `requires symbols source when jangar missing`() {
     assertFailsWith<IllegalStateException> {
       ForwarderConfig.fromEnv(
         mapOf(
@@ -43,7 +44,7 @@ class ForwarderConfigTest {
   }
 
   @Test
-  fun `rejects empty jangar symbols url`() {
+  fun `rejects empty jangar symbols url without fallback`() {
     assertFailsWith<IllegalStateException> {
       ForwarderConfig.fromEnv(
         mapOf(
@@ -53,6 +54,21 @@ class ForwarderConfigTest {
         ),
       )
     }
+  }
+
+  @Test
+  fun `accepts static symbols when jangar missing`() {
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "SYMBOLS" to "AAPL, msft,  ,TSLA",
+        ),
+      )
+
+    assertEquals(null, cfg.jangarSymbolsUrl)
+    assertEquals(listOf("AAPL", "msft", "TSLA"), cfg.staticSymbols)
   }
 
   @Test

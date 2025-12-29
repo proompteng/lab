@@ -15,13 +15,14 @@ Single-replica Kotlin/JVM service (Gradle multi-project) that ingests Alpaca mar
 - Env/ConfigMap keys (suggested):
 - `ALPACA_KEY_ID`, `ALPACA_SECRET_KEY`, `ALPACA_FEED` (`iex|sip|delayed`), `ALPACA_BASE_URL` (for paper/live)
 - `ALPACA_STREAM_URL` (WS base; use sandbox `wss://stream.data.sandbox.alpaca.markets` for tests)
-  - `SYMBOLS` (comma list), `ENABLE_TRADE_UPDATES` (bool)
+- `ALPACA_TRADE_STREAM_URL` (optional trade_updates WS base; required when `ENABLE_TRADE_UPDATES=true`)
+  - `SYMBOLS` (comma list fallback if Jangar is unavailable), `ENABLE_TRADE_UPDATES` (bool), `ENABLE_BARS_BACKFILL` (bool)
   - `RECONNECT_BASE_MS` (e.g., 500), `RECONNECT_MAX_MS` (e.g., 30000)
   - `DEDUP_TTL_SEC` (e.g., 5 for quotes/bars), `DEDUP_MAX_ENTRIES`
   - `KAFKA_BOOTSTRAP`, `KAFKA_SASL_USER`, `KAFKA_SASL_PASSWORD`, `KAFKA_SASL_MECH=SCRAM-SHA-512`, `KAFKA_SECURITY_PROTOCOL=SASL_SSL`
 - `KAFKA_LINGER_MS=30`, `KAFKA_BATCH_SIZE` (tune), `KAFKA_ACKS=all`
 - `TOPIC_TRADES`, `TOPIC_QUOTES`, `TOPIC_BARS_1M`, `TOPIC_STATUS`, optional `TOPIC_TRADE_UPDATES`
-- `METRICS_PORT`, `HEALTH_PORT`
+- `METRICS_PORT`, `HEALTH_PORT` (metrics served on `METRICS_PORT`; if equal to `HEALTH_PORT`, they share one server)
 
 ### Local / sandbox testing
 - Copy `services/dorvud/websockets/.env.local.example` to `.env.local` and populate Alpaca sandbox credentials.
@@ -51,9 +52,11 @@ Single-replica Kotlin/JVM service (Gradle multi-project) that ingests Alpaca mar
 - Exponential backoff with jitter; cap at 30 s.
 - On reconnect: re-auth, resubscribe all symbols/channels, emit status event.
 - Dedup caches keyed per channel; evict by TTL or LRU to bound memory.
+- Readiness waits on WS auth + subscription and Kafka metadata; flips not-ready on sustained Kafka send failures.
 
 ### Error handling
-- If Kafka produce fails repeatedly: trip not-ready, continue retrying with backoff; alert via status topic.
+- If Kafka produce fails repeatedly (3+ consecutive send failures): trip not-ready and recover on the next success; continue retrying with backoff; alert via status topic.
+- If Jangar symbol polling fails: keep the last-known symbol list (static fallback if configured) and log the failure.
 - If WS lags beyond threshold (`now - event_ts > 2s`): emit status + metric; consider reconnect.
 - Startup probe waits for first successful WS subscribe and Kafka metadata fetch.
 

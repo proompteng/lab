@@ -6,6 +6,7 @@
 - `services/`: Go, Kotlin, Rails, and Python services.
 - `argocd/`, `kubernetes/`, `tofu/`, `ansible/`: infra + GitOps.
 - `scripts/`, `packages/scripts/`: build/deploy helpers.
+- `scripts/init_skill.py`: bootstrap new skills in `skills/`.
 - `skills/`: agent skills; each skill includes a `SKILL.md`.
 
 ## Prereqs
