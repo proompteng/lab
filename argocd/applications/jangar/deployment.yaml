@@ -96,6 +96,20 @@ spec:
               value: http://facteur-internal.facteur.svc.cluster.local
             - name: ARGO_SERVER_URL
               value: http://argo-workflows-server.argo-workflows.svc.cluster.local:2746
+            - name: MINIO_ENDPOINT
+              value: http://observability-minio.minio.svc.cluster.local:9000
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: observability-minio-creds
+                  key: accesskey
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: observability-minio-creds
+                  key: secretkey
+            - name: MINIO_SECURE
+              value: "false"
             - name: JANGAR_PROMPT_TUNING_ENABLED
               value: "true"
             - name: JANGAR_PROMPT_TUNING_REPO
