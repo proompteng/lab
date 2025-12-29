@@ -1,0 +1,24 @@
+fullnameOverride: nats
+
+config:
+  cluster:
+    enabled: true
+    replicas: 3
+  jetstream:
+    enabled: true
+    fileStore:
+      enabled: true
+      pvc:
+        enabled: true
+        size: 20Gi
+        storageClassName: longhorn
+      maxSize: 20Gi
+
+container:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 2Gi

@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: nats
+helmCharts:
+  - name: nats
+    repo: https://nats-io.github.io/k8s/helm/charts
+    version: 2.12.3
+    releaseName: nats
+    namespace: nats
+    valuesFile: ./values.yaml
