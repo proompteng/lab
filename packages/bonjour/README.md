@@ -8,7 +8,7 @@ TypeScript sample service that renders Kubernetes resources with cdk8s via the o
 - `bun run --filter @proompteng/bonjour synth` – regenerate manifests in `packages/bonjour/manifests/` using `bunx cdk8s-cli synth` (append `-- -- --stdout` to stream YAML to the console).
 - `bun run --filter @proompteng/bonjour build` – compile TypeScript to `dist/` for packaging.
 - `bun run --filter @proompteng/bonjour clean` – remove build and manifest artifacts.
-- `scripts/build-bonjour.sh [tag]` – build and push the Docker image to `registry.ide-newton.ts.net/lab/bonjour` (defaults to the current git SHA if no tag is provided).
+- `bun run packages/scripts/src/bonjour/build-image.ts [tag]` – build and push the Docker image to `registry.ide-newton.ts.net/lab/bonjour` (defaults to `latest` if no tag is provided).
 
 ## Generated Assets
 
