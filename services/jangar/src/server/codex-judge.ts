@@ -1803,9 +1803,8 @@ const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: Co
 
   const attempts = (await store.listRunsByIssue(run.repository, run.issueNumber)).length
   const resolvedReason = resolveFailureReason(reason, evaluation) ?? UNKNOWN_FAILURE_REASON
-  const isEscalationHardFailure = resolvedReason === 'merge_conflict' || resolvedReason === 'rerun_submission_failed'
 
-  if (attempts >= config.maxAttempts && isEscalationHardFailure) {
+  if (attempts >= config.maxAttempts) {
     const updated = await store.updateRunStatus(run.id, 'needs_human')
     if (!updated) return
     await maybeCreatePromptTuningPr(updated, resolvedReason, evaluation?.nextPrompt ?? run.nextPrompt ?? '', evaluation)
