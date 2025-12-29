@@ -2,15 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
+import { storePrivate } from './codex-judge-store-private'
+
 const upsertRunComplete = vi.fn()
 const upsertArtifacts = vi.fn()
-
-const requireMock = <T>(value: T | undefined, name: string): T => {
-  if (!value) {
-    throw new Error(`Missing ${name} mock`)
-  }
-  return value
-}
 
 const globalState = globalThis as typeof globalThis & {
   __codexJudgeStoreMock?: CodexJudgeStore
@@ -32,8 +27,6 @@ const globalState = globalThis as typeof globalThis & {
     codexReviewers: string[]
     ciPollIntervalMs: number
     reviewPollIntervalMs: number
-    ciMaxWaitMs: number
-    reviewMaxWaitMs: number
     maxAttempts: number
     backoffScheduleMs: number[]
     facteurBaseUrl: string
@@ -63,6 +56,8 @@ if (!globalState.__codexJudgeStoreMock) {
     updateRunPrInfo: vi.fn(),
     upsertArtifacts: vi.fn(),
     listRunsByStatus: vi.fn(),
+    claimRerunSubmission: vi.fn(),
+    updateRerunSubmission: vi.fn(),
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
@@ -95,8 +90,6 @@ if (!globalState.__codexJudgeConfigMock) {
     codexReviewers: [],
     ciPollIntervalMs: 1000,
     reviewPollIntervalMs: 1000,
-    ciMaxWaitMs: 10_000,
-    reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [1000],
     facteurBaseUrl: 'http://facteur',
@@ -120,14 +113,55 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
   }
 }
 
-let handleRunComplete: Awaited<typeof import('../codex-judge')>['handleRunComplete'] | null = null
-
-const requireHandleRunComplete = async () => {
-  if (!handleRunComplete) {
-    handleRunComplete = (await import('../codex-judge')).handleRunComplete
+const getStoreMock = () => {
+  if (!globalState.__codexJudgeStoreMock) {
+    throw new Error('codex judge store mock not initialized')
   }
+  return globalState.__codexJudgeStoreMock
+}
+
+const getGithubMock = () => {
+  if (!globalState.__codexJudgeGithubMock) {
+    throw new Error('codex judge github mock not initialized')
+  }
+  return globalState.__codexJudgeGithubMock
+}
+
+const getConfigMock = () => {
+  if (!globalState.__codexJudgeConfigMock) {
+    throw new Error('codex judge config mock not initialized')
+  }
+  return globalState.__codexJudgeConfigMock
+}
+
+const getMemoryStoreMock = () => {
+  if (!globalState.__codexJudgeMemoryStoreMock) {
+    throw new Error('codex judge memory store mock not initialized')
+  }
+  return globalState.__codexJudgeMemoryStoreMock
+}
+
+vi.mock('../codex-judge-config', () => ({
+  loadCodexJudgeConfig: () => getConfigMock(),
+}))
+
+vi.mock('../codex-judge-store', () => ({
+  __private: storePrivate,
+  createCodexJudgeStore: () => getStoreMock(),
+}))
+
+vi.mock('../github-client', () => ({
+  createGitHubClient: () => getGithubMock(),
+}))
+
+vi.mock('../memories-store', () => ({
+  createPostgresMemoriesStore: () => getMemoryStoreMock(),
+}))
+
+let handleRunComplete: Awaited<typeof import('../codex-judge')>['handleRunComplete'] | null = null
+const getHandleRunComplete = () => {
   if (!handleRunComplete) {
-    throw new Error('Missing codex judge handler')
+    throw new Error('codex judge handleRunComplete not initialized')
   }
   return handleRunComplete
 }
@@ -142,6 +176,8 @@ const store = {
   updateRunPrInfo: vi.fn(),
   upsertArtifacts,
   listRunsByStatus: vi.fn(),
+  claimRerunSubmission: vi.fn(),
+  updateRerunSubmission: vi.fn(),
   getRunByWorkflow: vi.fn(),
   getRunById: vi.fn(),
   listRunsByIssue: vi.fn(),
@@ -168,8 +204,6 @@ const config = {
   codexReviewers: [],
   ciPollIntervalMs: 1000,
   reviewPollIntervalMs: 1000,
-  ciMaxWaitMs: 10_000,
-  reviewMaxWaitMs: 10_000,
   maxAttempts: 3,
   backoffScheduleMs: [1000],
   facteurBaseUrl: 'http://facteur',
@@ -192,15 +226,13 @@ const memoriesStore = {
 beforeEach(async () => {
   upsertRunComplete.mockReset()
   upsertArtifacts.mockReset()
-  const storeMock = requireMock(globalState.__codexJudgeStoreMock, 'store')
-  const githubMock = requireMock(globalState.__codexJudgeGithubMock, 'github')
-  const configMock = requireMock(globalState.__codexJudgeConfigMock, 'config')
-  const memoryStoreMock = requireMock(globalState.__codexJudgeMemoryStoreMock, 'memory store')
-  Object.assign(storeMock, store)
-  Object.assign(githubMock, github)
-  Object.assign(configMock, config)
-  Object.assign(memoryStoreMock, memoriesStore)
-  await requireHandleRunComplete()
+  Object.assign(getStoreMock(), store)
+  Object.assign(getGithubMock(), github)
+  Object.assign(getConfigMock(), config)
+  Object.assign(getMemoryStoreMock(), memoriesStore)
+  if (!handleRunComplete) {
+    handleRunComplete = (await import('../codex-judge')).handleRunComplete
+  }
 })
 
 const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
@@ -222,10 +254,8 @@ const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   prUrl: null,
   ciStatus: null,
   ciUrl: null,
-  ciStatusUpdatedAt: null,
   reviewStatus: null,
   reviewSummary: {},
-  reviewStatusUpdatedAt: null,
   notifyPayload: null,
   runCompletePayload: null,
   createdAt: '2025-01-01T00:00:00Z',
@@ -271,8 +301,7 @@ describe('codex judge superseded runs', () => {
     upsertArtifacts.mockResolvedValueOnce([])
 
     const timeoutSpy = vi.spyOn(global, 'setTimeout')
-    const handler = await requireHandleRunComplete()
-    const result = await handler(buildPayload())
+    const result = await getHandleRunComplete()(buildPayload())
 
     expect(result?.status).toBe('superseded')
     expect(timeoutSpy).not.toHaveBeenCalled()

@@ -1,15 +1,21 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexEvaluationRecord, CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
-import type { PersistMemoryInput } from '../memories-store'
+import type { MemoriesStore, PersistMemoryInput } from '../memories-store'
+
+import { storePrivate } from './codex-judge-store-private'
 
 const persistCalls: PersistMemoryInput[] = []
 
-const requireMock = <T>(value: T | undefined, name: string): T => {
-  if (!value) {
-    throw new Error(`Missing ${name} mock`)
+const setMemoryStoreFactory = (factory?: () => MemoriesStore) => {
+  const globalWithOverride = globalThis as typeof globalThis & {
+    __codexJudgeMemoryStoreFactory?: () => MemoriesStore
   }
-  return value
+  if (factory) {
+    globalWithOverride.__codexJudgeMemoryStoreFactory = factory
+  } else {
+    delete globalWithOverride.__codexJudgeMemoryStoreFactory
+  }
 }
 
 const globalState = globalThis as typeof globalThis & {
@@ -32,8 +38,6 @@ const globalState = globalThis as typeof globalThis & {
     codexReviewers: string[]
     ciPollIntervalMs: number
     reviewPollIntervalMs: number
-    ciMaxWaitMs: number
-    reviewMaxWaitMs: number
     maxAttempts: number
     backoffScheduleMs: number[]
     facteurBaseUrl: string
@@ -76,6 +80,8 @@ if (!globalState.__codexJudgeStoreMock) {
     updateRunPrInfo: vi.fn(),
     upsertArtifacts: vi.fn(),
     listRunsByStatus: vi.fn(),
+    claimRerunSubmission: vi.fn(),
+    updateRerunSubmission: vi.fn(),
     getRunByWorkflow: vi.fn(),
     getRunById: vi.fn(),
     listRunsByIssue: vi.fn(),
@@ -108,8 +114,6 @@ if (!globalState.__codexJudgeConfigMock) {
     codexReviewers: [],
     ciPollIntervalMs: 1000,
     reviewPollIntervalMs: 1000,
-    ciMaxWaitMs: 10_000,
-    reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [1000],
     facteurBaseUrl: 'http://facteur',
@@ -146,14 +150,55 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
   }
 }
 
-let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
-
-const requirePrivate = async () => {
-  if (!__private) {
-    __private = (await import('../codex-judge')).__private
+const getStoreMock = () => {
+  if (!globalState.__codexJudgeStoreMock) {
+    throw new Error('codex judge store mock not initialized')
   }
+  return globalState.__codexJudgeStoreMock
+}
+
+const getGithubMock = () => {
+  if (!globalState.__codexJudgeGithubMock) {
+    throw new Error('codex judge github mock not initialized')
+  }
+  return globalState.__codexJudgeGithubMock
+}
+
+const getConfigMock = () => {
+  if (!globalState.__codexJudgeConfigMock) {
+    throw new Error('codex judge config mock not initialized')
+  }
+  return globalState.__codexJudgeConfigMock
+}
+
+const getMemoryStoreMock = () => {
+  if (!globalState.__codexJudgeMemoryStoreMock) {
+    throw new Error('codex judge memory store mock not initialized')
+  }
+  return globalState.__codexJudgeMemoryStoreMock
+}
+
+vi.mock('../codex-judge-config', () => ({
+  loadCodexJudgeConfig: () => getConfigMock(),
+}))
+
+vi.mock('../codex-judge-store', () => ({
+  __private: storePrivate,
+  createCodexJudgeStore: () => getStoreMock(),
+}))
+
+vi.mock('../github-client', () => ({
+  createGitHubClient: () => getGithubMock(),
+}))
+
+vi.mock('../memories-store', () => ({
+  createPostgresMemoriesStore: () => getMemoryStoreMock(),
+}))
+
+let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
+const getPrivate = () => {
   if (!__private) {
-    throw new Error('Missing codex judge private API')
+    throw new Error('codex judge private api not initialized')
   }
   return __private
 }
@@ -168,6 +213,8 @@ const store = {
   updateRunPrInfo: vi.fn(),
   upsertArtifacts: vi.fn(),
   listRunsByStatus: vi.fn(),
+  claimRerunSubmission: vi.fn(),
+  updateRerunSubmission: vi.fn(),
   getRunByWorkflow: vi.fn(),
   getRunById: vi.fn(),
   listRunsByIssue: vi.fn(),
@@ -194,8 +241,6 @@ const config = {
   codexReviewers: [],
   ciPollIntervalMs: 1000,
   reviewPollIntervalMs: 1000,
-  ciMaxWaitMs: 10_000,
-  reviewMaxWaitMs: 10_000,
   maxAttempts: 3,
   backoffScheduleMs: [1000],
   facteurBaseUrl: 'http://facteur',
@@ -229,15 +274,18 @@ const memoriesStore = {
 }
 
 beforeEach(async () => {
-  const storeMock = requireMock(globalState.__codexJudgeStoreMock, 'store')
-  const githubMock = requireMock(globalState.__codexJudgeGithubMock, 'github')
-  const configMock = requireMock(globalState.__codexJudgeConfigMock, 'config')
-  const memoryStoreMock = requireMock(globalState.__codexJudgeMemoryStoreMock, 'memory store')
-  Object.assign(storeMock, store)
-  Object.assign(githubMock, github)
-  Object.assign(configMock, config)
-  Object.assign(memoryStoreMock, memoriesStore)
-  await requirePrivate()
+  Object.assign(getStoreMock(), store)
+  Object.assign(getGithubMock(), github)
+  Object.assign(getConfigMock(), config)
+  Object.assign(getMemoryStoreMock(), memoriesStore)
+  setMemoryStoreFactory(() => memoriesStore)
+  if (!__private) {
+    __private = (await import('../codex-judge')).__private
+  }
+})
+
+afterEach(() => {
+  setMemoryStoreFactory()
 })
 
 describe('codex-judge memory snapshots', () => {
@@ -263,10 +311,8 @@ describe('codex-judge memory snapshots', () => {
       prUrl: 'https://github.com/proompteng/lab/pull/42',
       ciStatus: 'success',
       ciUrl: 'https://github.com/proompteng/lab/actions/runs/1',
-      ciStatusUpdatedAt: '2025-01-01T00:10:00Z',
       reviewStatus: null,
       reviewSummary: {},
-      reviewStatusUpdatedAt: null,
       notifyPayload: null,
       runCompletePayload: null,
       createdAt: '2025-01-01T00:00:00Z',
@@ -289,8 +335,7 @@ describe('codex-judge memory snapshots', () => {
       createdAt: '2025-01-01T01:00:00Z',
     }
 
-    const privateApi = await requirePrivate()
-    await privateApi.writeMemories(run, evaluation)
+    await getPrivate().writeMemories(run, evaluation)
 
     expect(persistCalls).toHaveLength(10)
 

@@ -51,6 +51,7 @@ const RECONCILE_BASE_DELAY_MS = 1_000
 const RECONCILE_JITTER_MS = 15_000
 const PENDING_EVALUATION_STATUSES = ['run_complete', 'judging', 'notified'] as const
 const RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
+const RERUN_SUBMISSION_BACKOFF_MS = [2_000, 7_000, 15_000]
 const JSON_ONLY_REMINDER = [
   'IMPORTANT: Return a single JSON object only.',
   'Do not include markdown, code fences, or extra text.',
@@ -63,6 +64,8 @@ const safeParseJson = (value: string) => {
     return {}
   }
 }
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value)
@@ -1496,18 +1499,52 @@ const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: Co
   const delayMs = config.backoffScheduleMs[delayIndex] ?? 0
   if (delayMs > 0) {
     setTimeout(() => {
-      void submitRerun(run, nextPrompt, attempts + 1)
+      void handleRerunSubmission(run, nextPrompt, attempts + 1)
     }, delayMs)
     return
   }
-  await submitRerun(run, nextPrompt, attempts + 1)
+  await handleRerunSubmission(run, nextPrompt, attempts + 1)
 }
 
-const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number) => {
-  const latestRun = await store.getRunById(run.id)
-  if (!latestRun || latestRun.status === 'superseded') return
+type RerunSubmissionResult = { status: 'submitted' | 'skipped' | 'failed'; error?: string }
 
-  const deliveryId = `jangar-${run.issueNumber}-attempt-${attempt}`
+const handleRerunSubmission = async (run: CodexRunRecord, prompt: string, attempt: number) => {
+  const result = await submitRerun(run, prompt, attempt)
+  if (result.status !== 'failed') return
+
+  await store.updateDecision({
+    runId: run.id,
+    decision: 'needs_human',
+    reasons: { error: 'rerun_submission_failed', detail: result.error ?? null },
+    suggestedFixes: { fix: 'Check Facteur availability and requeue the rerun.' },
+    nextPrompt: null,
+    promptTuning: {},
+    systemSuggestions: {},
+  })
+
+  const updated = await store.updateRunStatus(run.id, 'needs_human')
+  if (!updated) return
+  await sendDiscordEscalation(run, 'rerun_submission_failed')
+}
+
+const submitRerun = async (
+  run: CodexRunRecord,
+  prompt: string,
+  attempt: number,
+): Promise<RerunSubmissionResult> => {
+  const latestRun = await store.getRunById(run.id)
+  if (!latestRun || latestRun.status === 'superseded') {
+    return { status: 'skipped' }
+  }
+
+  const deliveryId = `jangar-${run.id}-attempt-${attempt}`
+  const claimed = await store.claimRerunSubmission({ parentRunId: run.id, attempt, deliveryId })
+  if (!claimed) {
+    return { status: 'failed', error: 'rerun_submission_claim_failed' }
+  }
+  if (!claimed.shouldSubmit) {
+    return { status: 'skipped' }
+  }
 
   const { CodexTaskSchema, CodexTaskStage } = await import('./proto/codex_task_pb')
   const { create, toBinary } = await import('@bufbuild/protobuf')
@@ -1537,11 +1574,59 @@ const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number)
 
   const payload = toBinary(CodexTaskSchema, message)
 
-  await fetch(`${config.facteurBaseUrl}/codex/tasks`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-protobuf' },
-    body: payload,
-  })
+  const maxAttempts = RERUN_SUBMISSION_BACKOFF_MS.length + 1
+  let lastError: string | undefined
+  for (let index = 0; index < maxAttempts; index += 1) {
+    let responseStatus: number | null = null
+    try {
+      const response = await fetch(`${config.facteurBaseUrl}/codex/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-protobuf' },
+        body: payload,
+      })
+      responseStatus = response.status
+
+      const responseText = response.ok ? '' : await response.text().catch(() => '')
+      if (!response.ok) {
+        lastError = `Facteur rerun submission failed with status ${response.status}${responseText ? `: ${responseText}` : ''}`
+        if (index >= maxAttempts - 1) {
+          await store.updateRerunSubmission({
+            id: claimed.submission.id,
+            status: 'failed',
+            responseStatus,
+            error: lastError,
+          })
+          return { status: 'failed', error: lastError }
+        }
+        await wait(RERUN_SUBMISSION_BACKOFF_MS[index] ?? 0)
+        continue
+      }
+
+      await store.updateRerunSubmission({
+        id: claimed.submission.id,
+        status: 'submitted',
+        responseStatus,
+        error: null,
+        submittedAt: new Date().toISOString(),
+      })
+
+      return { status: 'submitted' }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+      if (index >= maxAttempts - 1) {
+        await store.updateRerunSubmission({
+          id: claimed.submission.id,
+          status: 'failed',
+          responseStatus,
+          error: lastError,
+        })
+        return { status: 'failed', error: lastError }
+      }
+      await wait(RERUN_SUBMISSION_BACKOFF_MS[index] ?? 0)
+    }
+  }
+
+  return { status: 'failed', error: lastError ?? 'rerun_submission_failed' }
 }
 
 const PROMPT_TUNING_RUN_REFERENCE_LIMIT = 10
