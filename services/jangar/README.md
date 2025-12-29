@@ -53,6 +53,42 @@ flowchart TD
 bun --cwd services/jangar run dev
 ```
 
+### Local Jangar + remote cluster deps (Tilt)
+
+From the repo root, run:
+
+```bash
+tilt up
+```
+
+This runs Jangar locally (Bun) and keeps `kubectl port-forward` sessions open to the remote cluster for:
+
+- Postgres (CNPG `jangar-db`)
+- Redis (OpenWebUI thread/worktree persistence)
+- NATS (agent comms)
+- ClickHouse (Torghut visuals)
+
+Tilt uses your default kubeconfig/current context. If you need to change ports or disable optional deps:
+
+```bash
+# run Jangar on a different port
+tilt up -- --jangar_port 3001
+
+# avoid conflicts with a local Postgres
+tilt up -- --db_local_port 15433
+
+# disable optional forwards
+tilt up -- --enable_redis=false --enable_nats=false --enable_clickhouse=false
+
+# self-hosted embeddings (recommended if your DB schema uses vector(1024))
+tilt up -- --openai_api_base_url http://127.0.0.1:11434/v1 --openai_embedding_model qwen3-embedding-saigak:0.6b --openai_embedding_dimension 1024
+```
+
+Troubleshooting:
+
+- If a port-forward fails with "address already in use", change the corresponding `*_local_port`.
+- If a secret lookup fails, confirm your kube context has access to the `jangar` namespace.
+
 ## Scripts
 
 ```bash
