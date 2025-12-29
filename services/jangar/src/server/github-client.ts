@@ -593,12 +593,8 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
       status = 'changes_requested'
     } else if (unresolvedThreads.length > 0) {
       status = 'commented'
-    } else if (status === 'pending' && reviews.length === 0 && issueComments.length > 0) {
+    } else if (reviews.length === 0 && issueComments.length > 0) {
       status = 'commented'
-    } else if (status === 'commented') {
-      status = 'commented'
-    } else if (status === 'approved') {
-      status = 'approved'
     } else if (reviews.length === 0) {
       status = 'pending'
     }
