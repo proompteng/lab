@@ -4,6 +4,11 @@ import * as S from '@effect/schema/Schema'
 import { Effect } from 'effect'
 import * as Either from 'effect/Either'
 import { createAgentMessagesStore } from '~/server/agent-messages-store'
+import {
+  buildBackfillDedupeKey,
+  parseAgentMessagesFromEvents,
+  parseAgentMessagesFromLog,
+} from '~/server/codex-judge-agent-messages'
 import { createArgoClient } from '~/server/argo-client'
 import { getCodexClient } from '~/server/codex-client'
 import { extractImplementationManifestFromArchive, extractTextFromArchive } from '~/server/codex-judge-artifacts'
@@ -757,90 +762,6 @@ const extractLogExcerptFromArtifacts = async (artifactMap: Map<string, ResolvedA
   return logExcerpt
 }
 
-type BackfilledAgentMessage = {
-  content: string
-  attrs: Record<string, unknown>
-}
-
-const readString = (value: unknown) => (typeof value === 'string' && value.length > 0 ? value : null)
-
-const extractAgentMessageContent = (item: Record<string, unknown>) => {
-  const direct =
-    readString(item.text) ?? readString(item.message) ?? readString(item.output) ?? readString(item.content)
-  if (direct) return direct
-
-  const content = item.content
-  if (!Array.isArray(content)) return null
-
-  const parts = content
-    .map((entry) => {
-      if (!entry || typeof entry !== 'object') {
-        return typeof entry === 'string' ? entry : null
-      }
-      const segment = entry as Record<string, unknown>
-      return readString(segment.text) ?? readString(segment.delta)
-    })
-    .filter((segment): segment is string => Boolean(segment))
-
-  return parts.length > 0 ? parts.join('') : null
-}
-
-const parseAgentMessagesFromEvents = (text: string | null): BackfilledAgentMessage[] => {
-  if (!text) return []
-  const lines = text.split(/\r?\n/)
-  const messages: BackfilledAgentMessage[] = []
-
-  lines.forEach((line, index) => {
-    const trimmed = line.trim()
-    if (!trimmed) return
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(trimmed)
-    } catch {
-      return
-    }
-    if (!isRecord(parsed)) return
-    if (parsed.type !== 'item.completed') return
-    const item = parsed.item
-    if (!isRecord(item)) return
-    if (typeof item.type !== 'string' || item.type !== 'agent_message') return
-    const content = extractAgentMessageContent(item)
-    if (!content) return
-    messages.push({
-      content,
-      attrs: {
-        source: 'artifact-backfill',
-        artifact: 'implementation-events',
-        eventType: parsed.type,
-        itemId: readString(item.id),
-        line: index + 1,
-      },
-    })
-  })
-
-  return messages
-}
-
-const parseAgentMessagesFromLog = (text: string | null): BackfilledAgentMessage[] => {
-  if (!text) return []
-  const lines = text.split(/\r?\n/)
-  const messages: BackfilledAgentMessage[] = []
-
-  lines.forEach((line, index) => {
-    if (line.trim().length === 0) return
-    messages.push({
-      content: line,
-      attrs: {
-        source: 'artifact-backfill',
-        artifact: 'implementation-agent-log',
-        line: index + 1,
-      },
-    })
-  })
-
-  return messages
-}
-
 const resolveBaseTimestamp = (run: CodexRunRecord) => {
   const candidates = [run.startedAt, run.finishedAt]
   for (const candidate of candidates) {
@@ -851,19 +772,6 @@ const resolveBaseTimestamp = (run: CodexRunRecord) => {
     }
   }
   return new Date()
-}
-
-const buildBackfillDedupeKey = (runId: string, attrs: Record<string, unknown>) => {
-  const artifact = readString(attrs.artifact)
-  const lineValue = attrs.line
-  const line =
-    typeof lineValue === 'number'
-      ? lineValue
-      : typeof lineValue === 'string'
-        ? Number.parseInt(lineValue, 10)
-        : Number.NaN
-  if (!artifact || !Number.isFinite(line)) return null
-  return `backfill:${runId}:${artifact}:${line}`
 }
 
 const extractManifestFromArtifacts = async (artifactMap: Map<string, ResolvedArtifact>) => {
@@ -2285,11 +2193,8 @@ export const __private = {
   evaluateRun,
   extractCommitShaFromArtifacts,
   findCommitShaInValue,
-  parseAgentMessagesFromEvents,
-  parseAgentMessagesFromLog,
   normalizeBranchRef,
   resolveCiContext,
-  buildBackfillDedupeKey,
   writeMemories,
 }
 export const handleRunComplete = async (payload: Record<string, unknown>) => {

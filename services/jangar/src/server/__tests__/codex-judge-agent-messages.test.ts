@@ -1,54 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import type { CodexJudgeStore } from '../codex-judge-store'
-
-const globalState = globalThis as typeof globalThis & {
-  __codexJudgeStoreMock?: CodexJudgeStore
-}
-
-const buildStoreMock = (): CodexJudgeStore => ({
-  upsertRunComplete: vi.fn(),
-  attachNotify: vi.fn(),
-  updateCiStatus: vi.fn(),
-  updateReviewStatus: vi.fn(),
-  updateDecision: vi.fn(),
-  updateRunStatus: vi.fn(),
-  updateRunPrompt: vi.fn(),
-  updateRunPrInfo: vi.fn(),
-  upsertArtifacts: vi.fn(),
-  listRunsByStatus: vi.fn(),
-  claimRerunSubmission: vi.fn(),
-  updateRerunSubmission: vi.fn(),
-  getRunByWorkflow: vi.fn(),
-  getRunById: vi.fn(),
-  listRunsByIssue: vi.fn(),
-  getRunHistory: vi.fn(),
-  getLatestPromptTuningByIssue: vi.fn(),
-  createPromptTuning: vi.fn(),
-  close: vi.fn(),
-})
-
-let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
-
-const getPrivate = async () => {
-  if (!__private) {
-    __private = (await import('../codex-judge')).__private
-  }
-  if (!__private) {
-    throw new Error('Missing codex judge private API')
-  }
-  return __private
-}
-
-beforeEach(() => {
-  globalState.__codexJudgeStoreMock = buildStoreMock()
-})
-
-afterEach(() => {
-  delete globalState.__codexJudgeStoreMock
-  __private = null
-  vi.resetModules()
-})
+import { parseAgentMessagesFromEvents, parseAgentMessagesFromLog } from '../codex-judge-agent-messages'
 
 describe('agent message parsing', () => {
   it('parses agent messages from events', async () => {
@@ -62,8 +14,7 @@ describe('agent message parsing', () => {
       JSON.stringify({ type: 'item.completed', item: { type: 'tool', text: 'skip' } }),
     ].join('\n')
 
-    const privateApi = await getPrivate()
-    const messages = privateApi.parseAgentMessagesFromEvents(payload)
+    const messages = parseAgentMessagesFromEvents(payload)
 
     expect(messages).toHaveLength(2)
     expect(messages[0].content).toBe('hello')
@@ -75,8 +26,7 @@ describe('agent message parsing', () => {
   it('parses agent log lines', async () => {
     const payload = 'first line\n\nsecond line\n'
 
-    const privateApi = await getPrivate()
-    const messages = privateApi.parseAgentMessagesFromLog(payload)
+    const messages = parseAgentMessagesFromLog(payload)
 
     expect(messages).toHaveLength(2)
     expect(messages[0].content).toBe('first line')
