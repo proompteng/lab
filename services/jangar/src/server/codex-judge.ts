@@ -15,7 +15,7 @@ import { extractImplementationManifestFromArchive, extractTextFromArchive } from
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 import { evaluateDeterministicGates } from '~/server/codex-judge-gates'
 import { type CodexEvaluationRecord, type CodexRunRecord, createCodexJudgeStore } from '~/server/codex-judge-store'
-import { GitHubRateLimitError, createGitHubClient, type PullRequest, type ReviewSummary } from '~/server/github-client'
+import { createGitHubClient, GitHubRateLimitError, type PullRequest, type ReviewSummary } from '~/server/github-client'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
 
 type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
