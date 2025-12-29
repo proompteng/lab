@@ -13,8 +13,50 @@ config:
         size: 20Gi
         storageClassName: longhorn
       maxSize: 20Gi
+  merge:
+    authorization:
+      users:
+        - user: system
+          password: << $NATS_SYSTEM_PASSWORD >>
+          permissions:
+            publish:
+              - ">"
+            subscribe:
+              - ">"
+        - user: agents
+          password: << $NATS_AGENTS_PASSWORD >>
+          permissions:
+            publish:
+              - "argo.workflow.>"
+            subscribe:
+              - "_INBOX.>"
+        - user: jangar
+          password: << $NATS_JANGAR_PASSWORD >>
+          permissions:
+            publish:
+              - "$JS.API.>"
+              - "$JS.ACK.>"
+            subscribe:
+              - "argo.workflow.>"
+              - "_INBOX.>"
 
 container:
+  env:
+    NATS_SYSTEM_PASSWORD:
+      valueFrom:
+        secretKeyRef:
+          name: nats-system-credentials
+          key: password
+    NATS_AGENTS_PASSWORD:
+      valueFrom:
+        secretKeyRef:
+          name: nats-agents-credentials
+          key: password
+    NATS_JANGAR_PASSWORD:
+      valueFrom:
+        secretKeyRef:
+          name: nats-jangar-credentials
+          key: password
   resources:
     requests:
       cpu: 200m

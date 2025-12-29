@@ -1,4 +1,4 @@
 jetstream:
   enabled: true
   nats:
-    url: nats://nats.nats.svc.cluster.local:4222
+    url: nats://system:RHypKGgGGhoMRK+uOVpIdLudqxprOmBZ@nats.nats.svc.cluster.local:4222
