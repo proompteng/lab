@@ -4,6 +4,7 @@ resources:
   - rbac.yaml
   - codex-workflow-serviceaccount.yaml
   - codex-docker-policy.yaml
+  - codex-implementation-semaphore.yaml
   - ingressroute.yaml
   - argo-workflows-sso-sealedsecret.yaml
   - minio-bucket-job.yaml

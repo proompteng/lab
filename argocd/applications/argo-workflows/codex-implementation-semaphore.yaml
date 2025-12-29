@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argo-workflows-implementation-semaphore
+  namespace: argo-workflows
+data:
+  max-concurrency: "7"

@@ -7,6 +7,11 @@ metadata:
     codex.stage: implementation
 spec:
   serviceAccountName: codex-workflow
+  synchronization:
+    semaphore:
+      configMapKeyRef:
+        name: argo-workflows-implementation-semaphore
+        key: max-concurrency
   entrypoint: implement
   arguments:
     parameters:
@@ -127,6 +132,9 @@ spec:
           limits:
             cpu: "4"
             memory: 6Gi
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnFailure
       sidecars:
         - name: docker
           image: docker:25.0-dind
