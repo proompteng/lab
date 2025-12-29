@@ -3,6 +3,34 @@
 This document splits the work into parallel tracks and provides concrete interfaces, schemas, and workflow steps.
 The judge pipeline is triggered by the Argo run-complete event (success or failure); notify is enrichment only.
 
+## Project Progress Inventory (as of 2025-12-29)
+
+This section cross-references the design/implementation plan against current code and open GitHub items in this repo.
+
+| Area / Workstream | Design/Doc Ref | Code Status | Evidence (paths) | Open Issues | Open PRs | Notes / Gaps |
+| --- | --- | --- | --- | --- | --- | --- |
+| A) Argo workflow artifacts | `docs/jangar/codex-judge-argo-implementation.md` | Done | `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml` | - | - | Matches required artifact outputs; aligns with tracking doc “completed.” |
+| B) Notify wrapper | `docs/jangar/codex-judge-argo-implementation.md` | Done | `apps/froussard/src/codex/cli/codex-implement.ts` | - | - | Emits `.codex-implementation-notify.json` and POSTs `/api/codex/notify`. |
+| C) Run-complete ingest + persistence | `docs/jangar/codex-judge-argo-design.md` | Partial | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/codex-judge-store.ts`, `services/jangar/src/routes/api/codex/run-complete.tsx` | #2175 | - | Drops run-complete events missing repo/issue/head; can lose failed runs. |
+| D) Artifact retrieval + fallback | `docs/jangar/codex-judge-argo-design.md` | Partial | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/argo-client.ts` | - | - | Fallback uses `.tgz` suffix and requires `artifact.url`; MinIO bucket/key paths will not work when URL is missing. |
+| E) CI gating by commit SHA | `docs/jangar/codex-judge-argo-design.md` | Partial | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/github-client.ts` | - | - | Falls back to branch head when commit SHA missing; can accept stale CI. |
+| F) PR review gate (Codex) | `docs/jangar/codex-judge-argo-implementation.md` | Partial | `services/jangar/src/server/github-client.ts`, `services/jangar/src/server/codex-judge.ts` | - | - | Review bypass mode can skip required gate; review parsing still sensitive to GraphQL thread details. |
+| G) Judge engine (gates + LLM) | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/codex-judge-gates.ts` | - | - | Deterministic gates + LLM judge + retries implemented. |
+| H) Rerun orchestration | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts`, `services/jangar/src/server/migrations/20251229_codex_rerun_submissions.ts` | - | - | Submits to Facteur with backoff + dedupe. |
+| I) Discord notifications | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts` | - | - | Success + escalation flows implemented. |
+| J) Prompt auto-tuning PRs | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts` | - | - | Threshold + cooldown implemented; uses PR template if present. |
+| K) Memory snapshots (10/run) | `docs/jangar/codex-judge-argo-design.md` | Done | `services/jangar/src/server/codex-judge.ts` | - | - | Writes 10 snapshots per run into memories store. |
+| L) Run history API + UI | `docs/jangar/codex-judge-argo-design.md` | Partial (API only) | `services/jangar/src/routes/api/codex/runs.tsx` | #2151 | - | API exists; UI route/components missing. |
+| M) Agent comms ingestion + SSE | `docs/nats-argo-agent-communications.md` | Implemented in code | `services/jangar/src/routes/api/agents/events.ts` | #2187 | - | SSE endpoint exists; remaining deployment/ops tracked in issue. |
+| N) Observability / pipeline ops | `docs/nats-argo-agent-communications.md` | Not in code | - | #2191, #2173, #2174 | - | No code found for these observability tasks yet. |
+| O) Argo events filter validation | `docs/jangar/codex-judge-argo-design.md` | Not in code | - | #2175 | - | Impacts reliability of run-complete ingestion. |
+| P) Other open PRs (unrelated to judge) | - | In progress | - | #2198 | #2203, #2221 | PR #2203 likely addresses #2198 (Oxlint). #2221 unrelated. |
+
+Untracked gaps to consider creating issues for:
+- Artifact fallback: support bucket/key download when `artifact.url` is absent and fix `.tgz` suffix assumptions.
+- CI gate: avoid branch-head fallback when commit SHA is missing; treat as infra failure or retry.
+- Review gate: align review bypass with design requirements (strict by default).
+
 Current production context (see `docs/codex-workflow.md`):
 - Workflow template: `argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`
 - Workflow outputs: `.codex-implementation-changes.tar.gz`, `.codex-implementation.patch`, `.codex-implementation-status.txt`
