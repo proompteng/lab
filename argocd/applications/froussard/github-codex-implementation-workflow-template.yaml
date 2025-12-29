@@ -70,6 +70,18 @@ spec:
                 key: token
           - name: JANGAR_BASE_URL
             value: http://jangar.jangar.svc.cluster.local
+          - name: NATS_URL
+            value: nats://nats.nats.svc.cluster.local:4222
+          - name: NATS_USER
+            valueFrom:
+              secretKeyRef:
+                name: nats-agents-credentials
+                key: username
+          - name: NATS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: nats-agents-credentials
+                key: password
           - name: CODEX_GRAF_BEARER_TOKEN
             valueFrom:
               secretKeyRef:

@@ -42,6 +42,18 @@ spec:
                 name: graf-api
                 key: bearer-tokens
                 optional: true
+          - name: NATS_URL
+            value: nats://nats.nats.svc.cluster.local:4222
+          - name: NATS_USER
+            valueFrom:
+              secretKeyRef:
+                name: nats-agents-credentials
+                key: username
+          - name: NATS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: nats-agents-credentials
+                key: password
           - name: CODEX_GRAF_BASE_URL
             value: "http://graf.graf.svc.cluster.local"
         command: ["/usr/local/bin/codex-bootstrap"]
