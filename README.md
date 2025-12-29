@@ -69,6 +69,8 @@ A multi-language monorepo for experimenting with conversational tooling, data pi
 
 ### Tooling & Quality
 - Husky + Biome formatted on commit (`lint-staged` configuration in `package.json`).
+- Oxlint runs alongside Biome: `bun run lint:oxlint` for repo-wide JS/TS checks and `bun run --filter @proompteng/bumba lint:oxlint:type` (or `bun run lint:oxlint:type`) for the type-aware pilot in `services/bumba`.
+- Type-aware Oxlint uses tsgolint (typescript-go), which skips unsupported tsconfig options (such as `baseUrl`)—keep pilot configs free of those options or use lint-only tsconfigs when needed.
 - TailwindCSS v4 & Radix UI used extensively in frontend components.
 
 ---
