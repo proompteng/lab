@@ -25,11 +25,14 @@ gh api graphql -F owner=ORG -F name=REPO -F number=PR_NUM -f query='query($owner
 gh api graphql -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id,isResolved}}}' -F threadId=THREAD_ID
 ```
 
-- Leave a follow-up summary comment when a review concern is addressed:
+- Reply inline to the original review comment (preferred):
 
 ```bash
-gh pr comment PR_NUM --body "Addressed review note: ..."
+gh api graphql -F pullRequestId=PR_ID -F inReplyTo=COMMENT_ID -F body="Addressed: ..." \
+  -f query='mutation($pullRequestId:ID!,$body:String!,$inReplyTo:ID!){addPullRequestReviewComment(input:{pullRequestId:$pullRequestId,body:$body,inReplyTo:$inReplyTo}){comment{id}}}'
 ```
+
+- For new inline comments (not replies), prefer the GitHub UI to avoid diff-position errors. Use GraphQL only if you already know the exact `path` and diff `position`.
 
 ## PR creation and updates
 
@@ -51,8 +54,3 @@ gh pr create --body-file /tmp/pr-body.md
 ```bash
 gh pr merge PR_NUM --squash --delete-branch
 ```
-
-## Safety
-
-- Do not merge or rerun workflows unless explicitly requested.
-- Avoid editing lockfiles or generated artifacts unless the task requires regeneration.
