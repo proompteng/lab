@@ -56,6 +56,36 @@ spec:
                 key: password
           - name: CODEX_GRAF_BASE_URL
             value: "http://graf.graf.svc.cluster.local"
+          - name: NATS_URL
+            value: nats://nats.nats.svc.cluster.local:4222
+          - name: NATS_USER
+            valueFrom:
+              secretKeyRef:
+                name: nats-agents-credentials
+                key: username
+          - name: NATS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: nats-agents-credentials
+                key: password
+          - name: NATS_CREDS
+            valueFrom:
+              secretKeyRef:
+                name: nats-agent-creds
+                key: creds
+                optional: true
+          - name: WORKFLOW_NAME
+            value: '{{workflow.name}}'
+          - name: WORKFLOW_UID
+            value: '{{workflow.uid}}'
+          - name: WORKFLOW_NAMESPACE
+            value: '{{workflow.namespace}}'
+          - name: WORKFLOW_STAGE
+            value: research
+          - name: WORKFLOW_STEP
+            value: '{{pod.name}}'
+          - name: AGENT_ID
+            value: research
         command: ["/usr/local/bin/codex-bootstrap"]
         args:
           - "/bin/bash"
@@ -85,8 +115,38 @@ spec:
             export AUTO_RESEARCH_AGENT_LOG="${AUTO_RESEARCH_AGENT_LOG:-/workspace/lab/.codex-research-agent.log}"
             export AUTO_RESEARCH_RUNTIME_LOG="${AUTO_RESEARCH_RUNTIME_LOG:-/workspace/lab/.codex-research-runtime.log}"
 
+            AGENT_LOG_PATH="$AUTO_RESEARCH_AGENT_LOG"
+            NATS_PUBLISHER="/usr/local/bin/codex-nats-publish"
+            NATS_TAIL_PID=""
+
+            if [[ -x "$NATS_PUBLISHER" ]]; then
+              touch "$AGENT_LOG_PATH"
+              "$NATS_PUBLISHER" --kind status --status started --content "research started" --publish-general || true
+              "$NATS_PUBLISHER" --kind log --log-file "$AGENT_LOG_PATH" &
+              NATS_TAIL_PID=$!
+            fi
+
+            cleanup_nats() {
+              if [[ -n "${NATS_TAIL_PID:-}" ]]; then
+                kill "$NATS_TAIL_PID" 2>/dev/null || true
+                wait "$NATS_TAIL_PID" 2>/dev/null || true
+              fi
+            }
+            trap cleanup_nats EXIT
+
             echo "Launching Codex research run"
+            set +e
             codex-research "$PROMPT_FILE" "$METADATA_FILE"
+            EXIT_CODE=$?
+            set -e
+
+            cleanup_nats
+
+            if [[ -x "$NATS_PUBLISHER" ]]; then
+              "$NATS_PUBLISHER" --kind status --status completed --exit-code "$EXIT_CODE" --content "research completed" --publish-general || true
+            fi
+
+            exit "$EXIT_CODE"
       retryStrategy:
         limit: 3
         retryPolicy: OnFailure

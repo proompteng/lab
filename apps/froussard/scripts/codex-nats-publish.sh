@@ -122,6 +122,11 @@ trap cleanup_creds EXIT
 nats_args=(--server "$NATS_URL")
 if [[ -n "$creds_file" ]]; then
   nats_args+=(--creds "$creds_file")
+elif [[ -n "${NATS_USER:-}" ]]; then
+  nats_args+=(--user "$NATS_USER")
+  if [[ -n "${NATS_PASSWORD:-}" ]]; then
+    nats_args+=(--password "$NATS_PASSWORD")
+  fi
 fi
 
 run_subject="${subject_prefix}.${workflow_namespace}.${workflow_name}.${workflow_uid}.agent.${agent_id}.${kind}"
@@ -168,7 +173,7 @@ publish_payload() {
   local subject=$1
   local payload=$2
 
-  if ! nats pub "$subject" "${nats_args[@]}" -H 'content-type: application/json' "$payload" >/dev/null 2>&1; then
+  if ! nats pub "${nats_args[@]}" -H 'content-type: application/json' "$subject" "$payload" >/dev/null 2>&1; then
     echo "Failed to publish to $subject" >&2
   fi
 }
