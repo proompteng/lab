@@ -55,7 +55,8 @@ Single-replica Kotlin/JVM service (Gradle multi-project) that ingests Alpaca mar
 - Readiness waits on WS auth + subscription and Kafka metadata; flips not-ready on sustained Kafka send failures.
 
 ### Error handling
-- If Kafka produce fails repeatedly: trip not-ready, continue retrying with backoff; alert via status topic.
+- If Kafka produce fails repeatedly (3+ consecutive send failures): trip not-ready and recover on the next success; continue retrying with backoff; alert via status topic.
+- If Jangar symbol polling fails: keep the last-known symbol list (static fallback if configured) and log the failure.
 - If WS lags beyond threshold (`now - event_ts > 2s`): emit status + metric; consider reconnect.
 - Startup probe waits for first successful WS subscribe and Kafka metadata fetch.
 
