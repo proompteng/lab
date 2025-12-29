@@ -12,7 +12,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: registry.ide-newton.ts.net/lab/dernier:latest
+          image: registry.ide-newton.ts.net/lab/dernier@sha256:4531dafb601e381a2a315b4ec59b6e2fc4babde55cbeb3c3d8f51e7efb029008
           imagePullPolicy: Always
           env:
             - name: RAILS_ENV
