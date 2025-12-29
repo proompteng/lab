@@ -1527,11 +1527,7 @@ const handleRerunSubmission = async (run: CodexRunRecord, prompt: string, attemp
   await sendDiscordEscalation(run, 'rerun_submission_failed')
 }
 
-const submitRerun = async (
-  run: CodexRunRecord,
-  prompt: string,
-  attempt: number,
-): Promise<RerunSubmissionResult> => {
+const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number): Promise<RerunSubmissionResult> => {
   const latestRun = await store.getRunById(run.id)
   if (!latestRun || latestRun.status === 'superseded') {
     return { status: 'skipped' }
