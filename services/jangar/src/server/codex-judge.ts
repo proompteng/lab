@@ -1149,23 +1149,29 @@ const evaluateRun = async (runId: string) => {
   }
 }
 
+const GENERIC_PROMPT_SUGGESTIONS = new Set([
+  'tighten prompt to reduce iteration loops.',
+  'tighten prompt to reduce iteration loops',
+])
+const GENERIC_SYSTEM_SUGGESTIONS = new Set(['clarify judge gating criteria.', 'clarify judge gating criteria'])
+
+const normalizeSuggestion = (value: unknown) => {
+  if (typeof value !== 'string') return ''
+  return value.trim().replace(/\s+/g, ' ')
+}
+
+const normalizeSuggestionKey = (value: string) => normalizeSuggestion(value).toLowerCase()
+
 const normalizeSuggestionList = (value: unknown) => {
   if (!Array.isArray(value)) return []
-  return value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter((entry) => entry.length > 0)
+  return value.map((entry) => normalizeSuggestion(entry)).filter((entry) => entry.length > 0)
 }
 
-const extractSuggestions = (payload: Record<string, unknown> | undefined) =>
-  normalizeSuggestionList(payload?.suggestions)
+const filterGenericSuggestions = (suggestions: string[], blocked: Set<string>) =>
+  suggestions.filter((entry) => !blocked.has(normalizeSuggestionKey(entry)))
 
-const buildSuggestionsFromEvaluation = (evaluation?: CodexEvaluationRecord) => {
-  const promptSuggestions = extractSuggestions(evaluation?.promptTuning as Record<string, unknown> | undefined)
-  const systemSuggestions = extractSuggestions(evaluation?.systemSuggestions as Record<string, unknown> | undefined)
-
-  return {
-    promptSuggestions: promptSuggestions.length > 0 ? promptSuggestions : ['Tighten prompt to reduce iteration loops.'],
-    systemSuggestions: systemSuggestions.length > 0 ? systemSuggestions : ['Clarify judge gating criteria.'],
-  }
-}
+const extractSuggestions = (payload: Record<string, unknown> | undefined, blocked: Set<string>) =>
+  filterGenericSuggestions(normalizeSuggestionList(payload?.suggestions), blocked)
 
 const parseTimestampMs = (value: string | null | undefined) => {
   if (!value) return null
@@ -1268,24 +1274,16 @@ const buildPromptTuningAggregate = async (
   const promptSuggestions = new Set<string>()
   const systemSuggestions = new Set<string>()
   for (const entry of entries) {
-    for (const suggestion of extractSuggestions(entry.evaluation.promptTuning as Record<string, unknown> | undefined)) {
+    for (const suggestion of extractSuggestions(
+      entry.evaluation.promptTuning as Record<string, unknown> | undefined,
+      GENERIC_PROMPT_SUGGESTIONS,
+    )) {
       promptSuggestions.add(suggestion)
     }
     for (const suggestion of extractSuggestions(
       entry.evaluation.systemSuggestions as Record<string, unknown> | undefined,
+      GENERIC_SYSTEM_SUGGESTIONS,
     )) {
-      systemSuggestions.add(suggestion)
-    }
-  }
-
-  const fallback = buildSuggestionsFromEvaluation(evaluation)
-  if (promptSuggestions.size === 0) {
-    for (const suggestion of fallback.promptSuggestions) {
-      promptSuggestions.add(suggestion)
-    }
-  }
-  if (systemSuggestions.size === 0) {
-    for (const suggestion of fallback.systemSuggestions) {
       systemSuggestions.add(suggestion)
     }
   }
@@ -1324,6 +1322,7 @@ const maybeCreatePromptTuningPr = async (
   if (aggregate.totalFailures === 0) return
   const threshold = Math.max(config.promptTuningFailureThreshold, 1)
   if (aggregate.matchingFailures < threshold) return
+  if (aggregate.promptSuggestions.length === 0 && aggregate.systemSuggestions.length === 0) return
 
   const cooldownHours = Math.max(config.promptTuningCooldownHours, 0)
   const cooldownMs = cooldownHours > 0 ? cooldownHours * 60 * 60 * 1000 : null
@@ -1449,20 +1448,25 @@ const createPromptTuningPr = async (run: CodexRunRecord, nextPrompt: string, agg
   await github.createBranch({ owner, repo, branch, baseSha })
 
   const promptPath = 'apps/froussard/src/codex.ts'
-  const promptFile = await github.getFile(owner, repo, promptPath, baseRef)
-  const promptInsert = aggregate.promptSuggestions.map((entry) => `    '- ${entry}',`).join('\n')
-  const marker = "    'Memory:',"
-  const updatedPrompt = promptFile.content.replace(marker, `    '',\n    'Prompt tuning:',\n${promptInsert}\n${marker}`)
+  if (aggregate.promptSuggestions.length > 0) {
+    const promptFile = await github.getFile(owner, repo, promptPath, baseRef)
+    const promptInsert = aggregate.promptSuggestions.map((entry) => `    '- ${entry}',`).join('\n')
+    const marker = "    'Memory:',"
+    const updatedPrompt = promptFile.content.replace(
+      marker,
+      `    '',\n    'Prompt tuning:',\n${promptInsert}\n${marker}`,
+    )
 
-  await github.updateFile({
-    owner,
-    repo,
-    path: promptPath,
-    branch,
-    message: `docs(prompt): tune codex prompt for issue ${run.issueNumber}`,
-    content: updatedPrompt,
-    sha: promptFile.sha,
-  })
+    await github.updateFile({
+      owner,
+      repo,
+      path: promptPath,
+      branch,
+      message: `docs(prompt): tune codex prompt for issue ${run.issueNumber}`,
+      content: updatedPrompt,
+      sha: promptFile.sha,
+    })
+  }
 
   const tuningDocPath = `docs/jangar/prompt-tuning/${run.issueNumber}-${Date.now()}.md`
   const failureReasonEntries = Object.entries(aggregate.failureReasonCounts).sort((a, b) => b[1] - a[1])
@@ -1476,6 +1480,11 @@ const createPromptTuningPr = async (run: CodexRunRecord, nextPrompt: string, agg
   if (aggregate.runReferences.length > PROMPT_TUNING_RUN_REFERENCE_LIMIT) {
     runReferenceLines.push(`- ...and ${aggregate.runReferences.length - PROMPT_TUNING_RUN_REFERENCE_LIMIT} more runs`)
   }
+  const promptSuggestionLines =
+    aggregate.promptSuggestions.length > 0 ? aggregate.promptSuggestions.map((entry) => `- ${entry}`) : ['- None']
+  const systemSuggestionLines =
+    aggregate.systemSuggestions.length > 0 ? aggregate.systemSuggestions.map((entry) => `- ${entry}`) : ['- None']
+
   const tuningDocContent = [
     `# Prompt tuning for ${run.repository}#${run.issueNumber}`,
     '',
@@ -1497,10 +1506,10 @@ const createPromptTuningPr = async (run: CodexRunRecord, nextPrompt: string, agg
     nextPrompt || 'N/A',
     '',
     '## Suggestions',
-    ...aggregate.promptSuggestions.map((entry) => `- ${entry}`),
+    ...promptSuggestionLines,
     '',
     '## System improvements',
-    ...aggregate.systemSuggestions.map((entry) => `- ${entry}`),
+    ...systemSuggestionLines,
   ].join('\n')
 
   await github
