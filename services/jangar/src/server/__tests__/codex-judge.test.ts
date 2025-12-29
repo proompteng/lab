@@ -573,6 +573,47 @@ resolved
   })
 })
 
+describe('codex judge CI gating', () => {
+  it('retries when commit SHA cannot be resolved', async () => {
+    const prPayload = {
+      number: 101,
+      url: 'https://api.github.com/repos/proompteng/lab/pulls/101',
+      htmlUrl: 'https://github.com/proompteng/lab/pull/101',
+      headSha: null as unknown as string,
+      headRef: 'codex/issue-2125',
+      baseRef: 'main',
+      state: 'open',
+      title: 'PR title',
+      body: null,
+      mergeableState: 'clean',
+    }
+
+    harness.github.getPullRequestByHead.mockResolvedValueOnce(prPayload)
+    harness.github.getPullRequest.mockResolvedValueOnce(prPayload)
+    harness.github.getPullRequestDiff.mockResolvedValueOnce('diff --git a/file b/file')
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => '',
+      json: async () => ({}),
+    }))
+    global.fetch = fetchMock as unknown as typeof global.fetch
+
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
+
+    expect(harness.github.getCheckRuns).not.toHaveBeenCalled()
+    expect(harness.store.updateCiStatus).not.toHaveBeenCalled()
+    expect(harness.store.updateDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: 'needs_iteration',
+        reasons: expect.objectContaining({ error: 'missing_commit_sha' }),
+      }),
+    )
+    expect(harness.store.updateRunStatus).toHaveBeenCalledWith('run-1', 'needs_iteration')
+  })
+})
+
 describe('prompt tuning PR gating', () => {
   beforeEach(() => {
     harness.github.getPullRequestByHead.mockResolvedValue({
