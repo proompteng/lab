@@ -118,7 +118,7 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
 }
 
 const harness = (() => {
-  const now = new Date('2025-12-28T00:00:00.000Z').toISOString()
+  const now = new Date().toISOString()
 
   const makeRun = (): CodexRunRecord => ({
     id: 'run-1',
@@ -300,9 +300,15 @@ const harness = (() => {
       issueComments: [],
     })),
     getPullRequestDiff: vi.fn(async () => 'diff --git a/file b/file'),
+    getRefSha: vi.fn(async () => 'sha-1'),
+    getFile: vi.fn(async () => ({ content: '', sha: 'file-sha' })),
+    updateFile: vi.fn(async () => ({})),
+    createBranch: vi.fn(async () => ({})),
+    createPullRequest: vi.fn(async () => ({ html_url: 'https://github.com/proompteng/lab/pull/101' })),
   }
 
-  const config = {
+  const config = requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock')
+  Object.assign(config, {
     githubToken: null,
     githubApiBaseUrl: 'https://api.github.com',
     codexReviewers: [],
@@ -321,7 +327,7 @@ const harness = (() => {
     promptTuningFailureThreshold: 3,
     promptTuningWindowHours: 24,
     promptTuningCooldownHours: 6,
-  }
+  })
 
   const memoriesStore = {
     persist: vi.fn(async () => {}),
@@ -330,7 +336,6 @@ const harness = (() => {
 
   Object.assign(requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock'), store)
   Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock'), github)
-  Object.assign(requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock'), config)
   Object.assign(requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memory store mock'), memoriesStore)
   globalState.__codexJudgeClientMock = codexClient
 
@@ -378,9 +383,8 @@ const ORIGINAL_FETCH = global.fetch
 beforeEach(async () => {
   harness.reset()
   vi.clearAllMocks()
-  if (!__private) {
-    __private = (await import('../codex-judge')).__private
-  }
+  vi.resetModules()
+  __private = (await import('../codex-judge')).__private
 })
 
 afterEach(() => {
@@ -474,6 +478,41 @@ resolved
 })
 
 describe('prompt tuning PR gating', () => {
+  beforeEach(() => {
+    harness.github.getPullRequestByHead.mockResolvedValue({
+      number: 101,
+      url: 'https://api.github.com/repos/proompteng/lab/pulls/101',
+      htmlUrl: 'https://github.com/proompteng/lab/pull/101',
+      headSha: 'sha-1',
+      headRef: 'codex/issue-2125',
+      baseRef: 'main',
+      state: 'open',
+      title: 'PR title',
+      body: null,
+      mergeableState: 'clean',
+    })
+    harness.github.getPullRequest.mockResolvedValue({
+      number: 101,
+      url: 'https://api.github.com/repos/proompteng/lab/pulls/101',
+      htmlUrl: 'https://github.com/proompteng/lab/pull/101',
+      headSha: 'sha-1',
+      headRef: 'codex/issue-2125',
+      baseRef: 'main',
+      state: 'open',
+      title: 'PR title',
+      body: null,
+      mergeableState: 'clean',
+    })
+    harness.github.getPullRequestDiff.mockResolvedValue('diff --git a/file b/file')
+    harness.github.getCheckRuns.mockResolvedValue({ status: 'success', url: 'https://ci.example.com' })
+    harness.github.getReviewSummary.mockResolvedValue({
+      status: 'approved',
+      unresolvedThreads: [],
+      requestedChanges: false,
+      issueComments: [],
+    })
+  })
+
   afterEach(() => {
     harness.config.promptTuningEnabled = false
     harness.config.promptTuningRepo = null
