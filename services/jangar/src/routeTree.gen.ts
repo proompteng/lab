@@ -25,7 +25,6 @@ import { Route as ApiModelsRouteImport } from './routes/api/models'
 import { Route as ApiMemoriesRouteImport } from './routes/api/memories'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiEnrichRouteImport } from './routes/api/enrich'
-import { Route as ApiAgentsEventsRouteImport } from './routes/api/agents/events'
 import { Route as AgentsGeneralRouteImport } from './routes/agents/general'
 import { Route as AgentsRunIdRouteImport } from './routes/agents/$runId'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
@@ -35,6 +34,7 @@ import { Route as ApiCodexRunCompleteRouteImport } from './routes/api/codex/run-
 import { Route as ApiCodexNotifyRouteImport } from './routes/api/codex/notify'
 import { Route as ApiAtlasPathsRouteImport } from './routes/api/atlas/paths'
 import { Route as ApiAtlasIndexedRouteImport } from './routes/api/atlas/indexed'
+import { Route as ApiAgentsEventsRouteImport } from './routes/api/agents/events'
 import { Route as OpenaiV1ChatCompletionsRouteImport } from './routes/openai/v1/chat/completions'
 import { Route as ApiTorghutTaSignalsRouteImport } from './routes/api/torghut/ta/signals'
 import { Route as ApiTorghutTaLatestRouteImport } from './routes/api/torghut/ta/latest'
@@ -121,11 +121,6 @@ const ApiEnrichRoute = ApiEnrichRouteImport.update({
   path: '/api/enrich',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiAgentsEventsRoute = ApiAgentsEventsRouteImport.update({
-  id: '/api/agents/events',
-  path: '/api/agents/events',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AgentsGeneralRoute = AgentsGeneralRouteImport.update({
   id: '/agents/general',
   path: '/agents/general',
@@ -171,6 +166,11 @@ const ApiAtlasIndexedRoute = ApiAtlasIndexedRouteImport.update({
   path: '/api/atlas/indexed',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAgentsEventsRoute = ApiAgentsEventsRouteImport.update({
+  id: '/api/agents/events',
+  path: '/api/agents/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OpenaiV1ChatCompletionsRoute = OpenaiV1ChatCompletionsRouteImport.update({
   id: '/openai/v1/chat/completions',
   path: '/openai/v1/chat/completions',
@@ -204,7 +204,6 @@ export interface FileRoutesByFullPath {
   '/memories': typeof MemoriesRoute
   '/agents/$runId': typeof AgentsRunIdRoute
   '/agents/general': typeof AgentsGeneralRoute
-  '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
   '/api/memories': typeof ApiMemoriesRoute
@@ -217,6 +216,7 @@ export interface FileRoutesByFullPath {
   '/torghut/visuals': typeof TorghutVisualsRoute
   '/agents': typeof AgentsIndexRoute
   '/atlas': typeof AtlasIndexRoute
+  '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/notify': typeof ApiCodexNotifyRoute
@@ -237,7 +237,6 @@ export interface FileRoutesByTo {
   '/memories': typeof MemoriesRoute
   '/agents/$runId': typeof AgentsRunIdRoute
   '/agents/general': typeof AgentsGeneralRoute
-  '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
   '/api/memories': typeof ApiMemoriesRoute
@@ -250,6 +249,7 @@ export interface FileRoutesByTo {
   '/torghut/visuals': typeof TorghutVisualsRoute
   '/agents': typeof AgentsIndexRoute
   '/atlas': typeof AtlasIndexRoute
+  '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/notify': typeof ApiCodexNotifyRoute
@@ -271,7 +271,6 @@ export interface FileRoutesById {
   '/memories': typeof MemoriesRoute
   '/agents/$runId': typeof AgentsRunIdRoute
   '/agents/general': typeof AgentsGeneralRoute
-  '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/enrich': typeof ApiEnrichRoute
   '/api/health': typeof ApiHealthRoute
   '/api/memories': typeof ApiMemoriesRoute
@@ -284,6 +283,7 @@ export interface FileRoutesById {
   '/torghut/visuals': typeof TorghutVisualsRoute
   '/agents/': typeof AgentsIndexRoute
   '/atlas/': typeof AtlasIndexRoute
+  '/api/agents/events': typeof ApiAgentsEventsRoute
   '/api/atlas/indexed': typeof ApiAtlasIndexedRoute
   '/api/atlas/paths': typeof ApiAtlasPathsRoute
   '/api/codex/notify': typeof ApiCodexNotifyRoute
@@ -306,7 +306,6 @@ export interface FileRouteTypes {
     | '/memories'
     | '/agents/$runId'
     | '/agents/general'
-    | '/api/agents/events'
     | '/api/enrich'
     | '/api/health'
     | '/api/memories'
@@ -319,6 +318,7 @@ export interface FileRouteTypes {
     | '/torghut/visuals'
     | '/agents'
     | '/atlas'
+    | '/api/agents/events'
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/codex/notify'
@@ -339,7 +339,6 @@ export interface FileRouteTypes {
     | '/memories'
     | '/agents/$runId'
     | '/agents/general'
-    | '/api/agents/events'
     | '/api/enrich'
     | '/api/health'
     | '/api/memories'
@@ -352,6 +351,7 @@ export interface FileRouteTypes {
     | '/torghut/visuals'
     | '/agents'
     | '/atlas'
+    | '/api/agents/events'
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/codex/notify'
@@ -372,7 +372,6 @@ export interface FileRouteTypes {
     | '/memories'
     | '/agents/$runId'
     | '/agents/general'
-    | '/api/agents/events'
     | '/api/enrich'
     | '/api/health'
     | '/api/memories'
@@ -385,6 +384,7 @@ export interface FileRouteTypes {
     | '/torghut/visuals'
     | '/agents/'
     | '/atlas/'
+    | '/api/agents/events'
     | '/api/atlas/indexed'
     | '/api/atlas/paths'
     | '/api/codex/notify'
@@ -406,7 +406,6 @@ export interface RootRouteChildren {
   MemoriesRoute: typeof MemoriesRoute
   AgentsRunIdRoute: typeof AgentsRunIdRoute
   AgentsGeneralRoute: typeof AgentsGeneralRoute
-  ApiAgentsEventsRoute: typeof ApiAgentsEventsRoute
   ApiEnrichRoute: typeof ApiEnrichRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiMemoriesRoute: typeof ApiMemoriesRoute
@@ -419,6 +418,7 @@ export interface RootRouteChildren {
   TorghutVisualsRoute: typeof TorghutVisualsRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   AtlasIndexRoute: typeof AtlasIndexRoute
+  ApiAgentsEventsRoute: typeof ApiAgentsEventsRoute
   ApiAtlasIndexedRoute: typeof ApiAtlasIndexedRoute
   ApiAtlasPathsRoute: typeof ApiAtlasPathsRoute
   ApiCodexNotifyRoute: typeof ApiCodexNotifyRoute
@@ -546,13 +546,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiEnrichRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/agents/events': {
-      id: '/api/agents/events'
-      path: '/api/agents/events'
-      fullPath: '/api/agents/events'
-      preLoaderRoute: typeof ApiAgentsEventsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/agents/general': {
       id: '/agents/general'
       path: '/agents/general'
@@ -616,6 +609,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAtlasIndexedRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/agents/events': {
+      id: '/api/agents/events'
+      path: '/api/agents/events'
+      fullPath: '/api/agents/events'
+      preLoaderRoute: typeof ApiAgentsEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/openai/v1/chat/completions': {
       id: '/openai/v1/chat/completions'
       path: '/openai/v1/chat/completions'
@@ -672,7 +672,6 @@ const rootRouteChildren: RootRouteChildren = {
   MemoriesRoute: MemoriesRoute,
   AgentsRunIdRoute: AgentsRunIdRoute,
   AgentsGeneralRoute: AgentsGeneralRoute,
-  ApiAgentsEventsRoute: ApiAgentsEventsRoute,
   ApiEnrichRoute: ApiEnrichRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiMemoriesRoute: ApiMemoriesRoute,
@@ -685,6 +684,7 @@ const rootRouteChildren: RootRouteChildren = {
   TorghutVisualsRoute: TorghutVisualsRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   AtlasIndexRoute: AtlasIndexRoute,
+  ApiAgentsEventsRoute: ApiAgentsEventsRoute,
   ApiAtlasIndexedRoute: ApiAtlasIndexedRoute,
   ApiAtlasPathsRoute: ApiAtlasPathsRoute,
   ApiCodexNotifyRoute: ApiCodexNotifyRoute,

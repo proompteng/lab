@@ -67,7 +67,12 @@ const normalizeAgentMessage = (payload: unknown): AgentMessage | null => {
   const candidate = toRecord(rootRecord.message) ?? toRecord(rootRecord.data) ?? rootRecord
 
   const contentFallback = typeof candidate.message === 'string' ? candidate.message : null
-  const content = coerceContent(candidate.content ?? candidate.text ?? contentFallback)
+  const statusFallback = coerceNonEmptyString(candidate.status) ?? coerceNonEmptyString(candidate.error)
+  const content = coerceContent(candidate.content ?? candidate.text ?? contentFallback ?? statusFallback)
+  const kind = coerceNonEmptyString(candidate.kind)
+  const role =
+    coerceNonEmptyString(candidate.role) ??
+    (kind === 'status' || kind === 'error' ? 'system' : kind === 'tool_call' || kind === 'tool_result' ? 'tool' : null)
 
   const message: AgentMessage = {
     id: coerceNonEmptyString(candidate.id ?? candidate.message_id ?? candidate.messageId),
@@ -75,13 +80,17 @@ const normalizeAgentMessage = (payload: unknown): AgentMessage | null => {
     workflowName: coerceNonEmptyString(candidate.workflow_name ?? candidate.workflowName),
     workflowNamespace: coerceNonEmptyString(candidate.workflow_namespace ?? candidate.workflowNamespace),
     runId: coerceString(candidate.run_id ?? candidate.runId),
-    stepId: coerceNonEmptyString(candidate.step_id ?? candidate.stepId),
+    stepId: coerceNonEmptyString(
+      candidate.step_id ?? candidate.stepId ?? candidate.workflow_step ?? candidate.workflowStep,
+    ),
     agentId: coerceNonEmptyString(candidate.agent_id ?? candidate.agentId),
-    role: coerceNonEmptyString(candidate.role),
-    kind: coerceNonEmptyString(candidate.kind),
-    timestamp: coerceNonEmptyString(candidate.timestamp ?? candidate.created_at ?? candidate.createdAt),
+    role,
+    kind,
+    timestamp: coerceNonEmptyString(
+      candidate.timestamp ?? candidate.sent_at ?? candidate.created_at ?? candidate.createdAt,
+    ),
     channel: coerceNonEmptyString(candidate.channel),
-    stage: coerceNonEmptyString(candidate.stage),
+    stage: coerceNonEmptyString(candidate.stage ?? candidate.workflow_stage ?? candidate.workflowStage),
     content,
     tool: toRecord(candidate.tool ?? candidate.tool_call ?? candidate.toolCall),
     attrs: toRecord(candidate.attrs ?? candidate.attributes ?? candidate.meta),
@@ -162,6 +171,7 @@ export const useAgentEventStream = ({ runId, channel, maxMessages }: AgentStream
     const params = new URLSearchParams()
     if (runId?.trim()) params.set('runId', runId.trim())
     if (channel?.trim()) params.set('channel', channel.trim())
+    if (maxMessages) params.set('limit', String(maxMessages))
     const url = `/api/agents/events?${params.toString()}`
     const source = new EventSource(url)
 
@@ -314,7 +324,7 @@ const RunLink = ({ runId }: { runId: string }) => (
 
 export const AgentMessageCard = ({ message, showRunLink }: { message: AgentMessage; showRunLink?: boolean }) => {
   const fallbackAgent = message.agentId ?? 'unknown-agent'
-  const roleLabel = message.role ?? 'role'
+  const roleLabel = message.role ?? 'assistant'
   const kindLabel = message.kind ?? 'message'
   const timestampLabel = formatTimestamp(message.timestamp)
 
