@@ -19,7 +19,7 @@ const opentelemetryExternals = [
   '@opentelemetry/semantic-conventions',
 ]
 
-const ssrExternals = [...opentelemetryExternals, 'kysely', 'pg']
+const ssrExternals = [...opentelemetryExternals, 'kysely', 'nats', 'pg']
 
 const config = defineConfig({
   server: {
