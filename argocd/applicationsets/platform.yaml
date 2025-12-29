@@ -330,6 +330,27 @@ spec:
           jqPathExpressions:
             - .spec.volumeClaimTemplates[].apiVersion
             - .spec.volumeClaimTemplates[].kind
+        - kind: StatefulSet
+          group: apps
+          namespace: nats
+          name: nats
+          jqPathExpressions:
+            - .spec.persistentVolumeClaimRetentionPolicy
+            - .spec.revisionHistoryLimit
+            - .spec.updateStrategy
+            - .spec.volumeClaimTemplates[].apiVersion
+            - .spec.volumeClaimTemplates[].kind
+            - .spec.volumeClaimTemplates[].spec.volumeMode
+            - .spec.volumeClaimTemplates[].status
+            - .spec.template.spec.containers[].livenessProbe.httpGet.scheme
+            - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
+            - .spec.template.spec.containers[].startupProbe.httpGet.scheme
+            - .spec.template.spec.containers[].terminationMessagePath
+            - .spec.template.spec.containers[].terminationMessagePolicy
+            - .spec.template.spec.dnsPolicy
+            - .spec.template.spec.restartPolicy
+            - .spec.template.spec.schedulerName
+            - .spec.template.spec.volumes[].configMap.defaultMode
         - kind: Service
           group: serving.knative.dev
           namespace: graf
