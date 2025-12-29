@@ -175,6 +175,13 @@ spec:
                 kind: Service
                 jsonPointers:
                   - /metadata/annotations
+                  - /metadata/labels
+                  - /spec/traffic
+                  - /spec/template/metadata/annotations
+                  - /spec/template/metadata/creationTimestamp
+                  - /spec/template/metadata/labels
+                  - /spec/template/spec/containers/0/ports/0/protocol
+                  - /spec/template/spec/containers/0/resources
             automation: manual
             enabled: true
       selector:
