@@ -23,7 +23,10 @@ export type CountMemoriesInput = {
   namespace?: string
 }
 
-type MemoryRecordJson = Omit<MemoryRecord, 'metadata'> & { metadata: Record<string, unknown> }
+type JsonValue = string | number | boolean | JsonObject | JsonValue[]
+type JsonObject = { [key: string]: JsonValue }
+
+type MemoryRecordJson = Omit<MemoryRecord, 'metadata'> & { metadata: JsonObject }
 
 export type PersistNoteResult = { ok: true; memory: MemoryRecordJson } | { ok: false; message: string }
 export type RetrieveNotesResult = { ok: true; memories: MemoryRecordJson[] } | { ok: false; message: string }
@@ -33,7 +36,7 @@ const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(MemoriesLive))
 
 const toJsonMemoryRecord = (record: MemoryRecord): MemoryRecordJson => ({
   ...record,
-  metadata: record.metadata,
+  metadata: record.metadata as JsonObject,
 })
 
 const persistNoteServer = createServerFn({ method: 'POST' })
