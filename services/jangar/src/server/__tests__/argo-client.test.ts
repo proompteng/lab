@@ -1,6 +1,59 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { buildArtifactDownloadUrl, extractWorkflowArtifacts } from '~/server/argo-client'
+vi.mock('node:fs', () => ({
+  readFileSync: vi.fn(),
+}))
+
+import { readFileSync } from 'node:fs'
+import { buildArtifactDownloadUrl, createArgoClient, extractWorkflowArtifacts } from '~/server/argo-client'
+
+const DEFAULT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
+const TOKEN_ENV_KEYS = ['ARGO_TOKEN', 'ARGO_SERVER_TOKEN', 'ARGO_TOKEN_FILE', 'ARGO_SERVER_TOKEN_FILE'] as const
+
+const setFetchMock = (body: Record<string, unknown> = {}) => {
+  const fetchMock = vi.fn(
+    async () =>
+      ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(body),
+      }) as Response,
+  )
+  globalThis.fetch = fetchMock as typeof fetch
+  return fetchMock
+}
+
+const snapshotEnv = () =>
+  TOKEN_ENV_KEYS.reduce<Record<string, string | undefined>>((acc, key) => {
+    acc[key] = process.env[key]
+    return acc
+  }, {})
+
+const restoreEnv = (snapshot: Record<string, string | undefined>) => {
+  for (const key of TOKEN_ENV_KEYS) {
+    const value = snapshot[key]
+    if (value === undefined) {
+      delete process.env[key]
+    } else {
+      process.env[key] = value
+    }
+  }
+}
+
+let envSnapshot: Record<string, string | undefined>
+const originalFetch = globalThis.fetch
+const readFileSyncMock = vi.mocked(readFileSync)
+
+beforeEach(() => {
+  envSnapshot = snapshotEnv()
+  readFileSyncMock.mockReset()
+})
+
+afterEach(() => {
+  restoreEnv(envSnapshot)
+  globalThis.fetch = originalFetch
+  readFileSyncMock.mockReset()
+})
 
 describe('extractWorkflowArtifacts', () => {
   it('captures artifacts from outputs and nodes', () => {
@@ -83,5 +136,65 @@ describe('buildArtifactDownloadUrl', () => {
       { name: 'implementation-log', nodeId: 'node-1' },
     )
     expect(url).toBe('http://argo-workflows-server:2746/artifacts/argo-workflows/workflow/node-1/implementation-log')
+  })
+})
+
+describe('createArgoClient auth headers', () => {
+  it('adds Authorization header from ARGO_TOKEN', async () => {
+    process.env.ARGO_TOKEN = 'token-123'
+    const fetchMock = setFetchMock()
+    const client = createArgoClient({ baseUrl: 'http://argo' })
+
+    await client.getWorkflow('argo-workflows', 'workflow-1')
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(init?.headers).toEqual(
+      expect.objectContaining({
+        accept: 'application/json',
+        authorization: 'Bearer token-123',
+      }),
+    )
+    expect(readFileSyncMock).not.toHaveBeenCalled()
+  })
+
+  it('adds Authorization header from ARGO_TOKEN_FILE', async () => {
+    process.env.ARGO_TOKEN_FILE = '/tmp/argo-token'
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (path === '/tmp/argo-token') return 'file-token'
+      throw new Error('missing token')
+    })
+    const fetchMock = setFetchMock()
+    const client = createArgoClient({ baseUrl: 'http://argo' })
+
+    await client.getWorkflow('argo-workflows', 'workflow-2')
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(init?.headers).toEqual(
+      expect.objectContaining({
+        accept: 'application/json',
+        authorization: 'Bearer file-token',
+      }),
+    )
+    expect(readFileSyncMock).toHaveBeenCalledWith('/tmp/argo-token', 'utf8')
+  })
+
+  it('falls back to the service-account token file', async () => {
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (path === DEFAULT_TOKEN_PATH) return 'sa-token'
+      throw new Error('missing token')
+    })
+    const fetchMock = setFetchMock()
+    const client = createArgoClient({ baseUrl: 'http://argo' })
+
+    await client.getWorkflow('argo-workflows', 'workflow-3')
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(init?.headers).toEqual(
+      expect.objectContaining({
+        accept: 'application/json',
+        authorization: 'Bearer sa-token',
+      }),
+    )
+    expect(readFileSyncMock).toHaveBeenCalledWith(DEFAULT_TOKEN_PATH, 'utf8')
   })
 })
