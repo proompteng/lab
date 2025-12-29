@@ -20,7 +20,7 @@ import {
   type CodexRunRecord,
   createCodexJudgeStore,
 } from '~/server/codex-judge-store'
-import { createGitHubClient, type PullRequest, type ReviewSummary } from '~/server/github-client'
+import { GitHubRateLimitError, createGitHubClient, type PullRequest, type ReviewSummary } from '~/server/github-client'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
 
 type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
@@ -90,6 +90,12 @@ const decodeBase64Json = (value: string) => {
   } catch {
     return {}
   }
+}
+
+const isGitHubRateLimitError = (error: unknown): error is GitHubRateLimitError => {
+  if (error instanceof GitHubRateLimitError) return true
+  if (!error || typeof error !== 'object') return false
+  return 'retryAt' in error && 'status' in error
 }
 
 const getParamValue = (params: ReadonlyArray<{ name?: string; value?: string }>, name: string) => {
@@ -1608,6 +1614,20 @@ const evaluateRun = async (runId: string) => {
     const refreshedRun = (await store.getRunById(run.id)) ?? run
     await writeMemories(refreshedRun, evaluation)
     await triggerRerun(run, 'judge_failed', evaluation)
+  } catch (error) {
+    if (isGitHubRateLimitError(error)) {
+      const now = Date.now()
+      const retryAt = typeof error.retryAt === 'number' ? error.retryAt : now + 60_000
+      const delayMs = Math.max(retryAt - now, 5_000)
+      console.warn('GitHub rate limit exceeded; delaying Codex judge evaluation', {
+        runId,
+        delayMs,
+        retryAt: new Date(retryAt).toISOString(),
+      })
+      scheduleEvaluation(runId, delayMs, { reschedule: true })
+      return
+    }
+    console.error('Failed to evaluate Codex run', { runId, error })
   } finally {
     activeEvaluations.delete(runId)
   }

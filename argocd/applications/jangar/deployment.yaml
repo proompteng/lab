@@ -86,6 +86,8 @@ spec:
               value: "30000"
             - name: JANGAR_REVIEW_POLL_INTERVAL_MS
               value: "30000"
+            - name: JANGAR_GITHUB_MIN_REQUEST_SPACING_MS
+              value: "1000"
             - name: JANGAR_CI_MAX_WAIT_MS
               value: "3600000"
             - name: JANGAR_REVIEW_MAX_WAIT_MS
