@@ -364,7 +364,7 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     if (typeof data.metadata === 'string') return safeParseJson(data.metadata)
     return decodedPayload.metadata ?? {}
   })()
-  const metadataRecord = isRecord(rawMetadata) ? rawMetadata : {}
+  const metadataRecord: Record<string, unknown> = isRecord(rawMetadata) ? rawMetadata : {}
   const rawStatus = (() => {
     if (isRecord(data.status)) return data.status
     if (typeof data.status === 'string') return safeParseJson(data.status)
