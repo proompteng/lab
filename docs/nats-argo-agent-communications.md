@@ -22,6 +22,9 @@ Status: Draft
 - NACK controller: `argocd/applications/nack` (JetStream CRDs).
 - Jangar service + UI: `services/jangar` with Postgres (`jangar-db`) and Redis.
 - OpenWebUI runs separately and proxies through Jangar’s OpenAI-compatible API.
+- Codex workflow templates already emit agent/event logs as artifacts (e.g. `.codex-implementation-agent.log`,
+  `.codex-research-agent.log`, `.codex-implementation-events.jsonl`). Jangar already pulls these on run-complete
+  (`services/jangar/src/server/codex-judge.ts`). NATS adds **real-time** delivery; artifacts remain the fallback/backfill.
 
 ## Architecture overview
 
@@ -57,15 +60,17 @@ Every “agent communication” is a single NATS message that can be ordered and
 
 ### Required metadata (headers or JSON fields)
 
-- `workflow_id`: Argo `workflow.uid`
+- `workflow_uid`: Argo `workflow.uid` (maps to `codex_judge.runs.workflow_uid`)
 - `workflow_name`: Argo `metadata.name`
-- `run_id`: logical run id (e.g. same as `workflow_id` unless a run/attempt id is present)
+- `workflow_namespace`: Argo namespace (default `argo-workflows`)
+- `run_id`: optional Jangar run id (maps to `codex_judge.runs.id` when available; omit for non-codex runs)
 - `step_id`: Argo node id or pod name
 - `agent_id`: stable agent identifier (e.g. `planner`, `executor`, `reviewer`)
 - `role`: `system | user | assistant | tool`
 - `kind`: `message | tool_call | tool_result | status | error`
 - `timestamp`: RFC3339
 - `channel`: optional; set to `general` for the shared cross-workflow chat
+- `stage`: optional; can map to `codex_judge.runs.stage` when relevant
 
 ### Payload
 
@@ -77,9 +82,10 @@ Every “agent communication” is a single NATS message that can be ordered and
 
 ```json
 {
-  "workflow_id": "4f5f...",
+  "workflow_uid": "4f5f...",
   "workflow_name": "codex-issue-2180",
-  "run_id": "4f5f...",
+  "workflow_namespace": "argo-workflows",
+  "run_id": null,
   "step_id": "codex-agent-1",
   "agent_id": "executor",
   "role": "assistant",
@@ -94,7 +100,7 @@ Every “agent communication” is a single NATS message that can be ordered and
 Use hierarchical subjects so Jangar can filter quickly.
 
 ```
-argo.workflow.<workflow_name>.<run_id>.agent.<agent_id>.<kind>
+argo.workflow.<workflow_namespace>.<workflow_name>.<workflow_uid>.agent.<agent_id>.<kind>
 ```
 
 ### Global “general” channel
@@ -109,8 +115,8 @@ Set `channel: "general"` in the message body for easy filtering in Jangar.
 
 Examples:
 
-- `argo.workflow.codex-issue-2180.4f5f.agent.executor.message`
-- `argo.workflow.codex-issue-2180.4f5f.agent.executor.tool_call`
+- `argo.workflow.argo-workflows.codex-issue-2180.4f5f.agent.executor.message`
+- `argo.workflow.argo-workflows.codex-issue-2180.4f5f.agent.executor.tool_call`
 
 ### Why this shape
 
@@ -151,7 +157,7 @@ Workflow step containers publish events to NATS directly.
 Example bash step:
 
 ```bash
-nats pub "argo.workflow.${WORKFLOW_NAME}.${WORKFLOW_UID}.agent.${AGENT_ID}.message" \
+nats pub "argo.workflow.${WORKFLOW_NAMESPACE}.${WORKFLOW_NAME}.${WORKFLOW_UID}.agent.${AGENT_ID}.message" \
   --header "content-type: application/json" \
   "${PAYLOAD_JSON}"
 
@@ -161,34 +167,73 @@ nats pub "argo.workflow.general.message" \
   "${PAYLOAD_JSON_GENERAL}"
 ```
 
-If desired, bake a small sidecar or init container that exports a helper script to standardize
-schema and subject construction.
+Notes from current workflow templates:
+
+- Codex workflows already set `JANGAR_BASE_URL` and emit agent/event logs as artifacts
+  (`argocd/applications/froussard/github-codex-implementation-workflow-template.yaml`,
+  `argocd/applications/argo-workflows/codex-research-workflow.yaml`).
+- To publish in real time, either:
+  1) Add a lightweight `nats` CLI to the `codex-universal` image, or
+  2) Add a `natsio/nats-box` sidecar + helper script in a shared volume.
+
+Either way, standardize subject + payload construction in a small wrapper (bash or node).
+
+Recommended workflow env vars (Argo templates):
+
+- `WORKFLOW_NAME={{workflow.name}}`
+- `WORKFLOW_UID={{workflow.uid}}`
+- `WORKFLOW_NAMESPACE={{workflow.namespace}}`
+- `STEP_ID={{pod.name}}` (or `{{tasks.<name>.name}}` depending on template)
+- `AGENT_ID=<role>` (e.g., `planner`, `executor`, `reviewer`)
 
 ## Jangar ingestion + UI
 
 ### Ingestion
 
-- Add a NATS JetStream consumer in Jangar (`services/jangar/src/server/nats/`).
+- Add a NATS JetStream consumer in Jangar (`services/jangar/src/server/agent-comms/`).
 - On message:
   - Validate schema.
   - Persist to Postgres table `agent_messages`.
   - Optionally store a short rolling window in Redis for quick UI streaming.
 
+Implementation alignment with the current Jangar codebase:
+
+- Follow the Effect service pattern (`services/jangar/src/server/effect-services.md`).
+- Add `agent-comms-store.ts` using Kysely + `ensureMigrations` (pattern matches
+  `codex-judge-store.ts`, `atlas-store.ts`, `memories-store.ts`).
+- Add a migration file under `services/jangar/src/server/migrations/` (create schema
+  `workflow_comms`) and register it in `services/jangar/src/server/kysely-migrations.ts`.
+- Update `services/jangar/src/server/db.ts` to include the new table type.
+
+Runtime placement:
+
+- **Preferred:** a dedicated “jangar-agent-comms” worker Deployment (same image) that runs the subscriber
+  continuously, decoupled from HTTP request lifecycles.
+- **Alternative:** start the subscriber inside the Jangar server process via a module-level
+  `ManagedRuntime`, ensuring only one consumer is created per process.
+
 ### Storage (Postgres)
 
 Suggested table:
 
-- `agent_messages`:
+- `workflow_comms.agent_messages` (new schema to keep cross-workflow data separate from `codex_judge`):
   - `id` (uuid)
-  - `workflow_id`, `workflow_name`, `run_id`, `step_id`, `agent_id`
+  - `workflow_uid`, `workflow_name`, `workflow_namespace`, `run_id`, `step_id`, `agent_id`
   - `role`, `kind`, `timestamp`
   - `content` (text), `attrs` (jsonb)
-  - indexes on `(run_id, timestamp)`, `(workflow_id)`, `(agent_id)`
+  - indexes on `(run_id, timestamp)`, `(workflow_uid, timestamp)`, `(agent_id)`, `(channel, timestamp)`
 
 Retention policy:
 
 - Keep 30–90 days in Postgres.
 - JetStream holds 7 days for fast replay.
+
+Backfill / reconciliation:
+
+- On `run-complete`, Jangar already downloads agent/event artifacts (see
+  `services/jangar/src/server/codex-judge.ts` with `implementation-agent-log` and
+  `implementation-events`). Use these artifacts to backfill `workflow_comms.agent_messages`
+  when NATS is unavailable or to seed historical runs.
 
 ### UI
 
@@ -198,6 +243,11 @@ Add a new Jangar UI route:
 - `/agents/:runId` detail view: timeline grouped by agent.
 - `/agents/general` global cross-workflow channel timeline.
 - Filters: agent, kind, time range.
+
+Implementation alignment:
+
+- Routes live under `services/jangar/src/routes` and should use `createFileRoute`.
+- Add nav entry in `services/jangar/src/components/app-sidebar.tsx` under the “App” section.
 
 Rendering:
 
@@ -211,6 +261,12 @@ Expose SSE endpoint:
 - `GET /api/agents/events?runId=...` streams new messages.
 - `GET /api/agents/events?channel=general` streams global channel.
 - UI subscribes to SSE for live updates.
+
+Implementation alignment:
+
+- Use the SSE Response pattern in `services/jangar/src/server/chat.ts` (ReadableStream with
+  `text/event-stream` headers).
+- API route should live under `services/jangar/src/routes/api/agents/events.tsx`.
 
 ## Auth / security
 
@@ -226,7 +282,8 @@ Phase 2 (recommended):
   - `agents` account for Argo workflows.
   - `jangar` account for consumer.
 
-Store creds as Kubernetes secrets in the appropriate namespaces.
+Store creds as Kubernetes secrets in the appropriate namespaces; if needed, mirror them with
+`kubernetes-reflector` (pattern used for Kafka secrets today).
 
 ## Observability
 
@@ -250,3 +307,4 @@ Store creds as Kubernetes secrets in the appropriate namespaces.
 - Should OpenWebUI embed the agent comms view, or should it remain only in Jangar UI?
 - Do we want to **link agent comms** directly to Codex run ids from Kafka completions?
 - Retention: is 7 days in JetStream enough, or should we retain longer?
+- Do we run the NATS subscriber as a **dedicated worker Deployment** or inside the Jangar web process?
