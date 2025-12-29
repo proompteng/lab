@@ -16,8 +16,7 @@ config:
   merge:
     authorization:
       users:
-        - user: system
-          password: << $NATS_SYSTEM_PASSWORD >>
+        - nkey: UC5KXXLYUNIIKIL37XWUVY3CDPLQQ5QTKXHBXYMUOK4A3OGAKLEXLOSQ
           permissions:
             publish:
               - ">"
@@ -42,11 +41,6 @@ config:
 
 container:
   env:
-    NATS_SYSTEM_PASSWORD:
-      valueFrom:
-        secretKeyRef:
-          name: nats-system-credentials
-          key: password
     NATS_AGENTS_PASSWORD:
       valueFrom:
         secretKeyRef:

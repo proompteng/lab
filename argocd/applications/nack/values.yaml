@@ -1,4 +1,8 @@
 jetstream:
   enabled: true
   nats:
-    url: nats://system:RHypKGgGGhoMRK+uOVpIdLudqxprOmBZ@nats.nats.svc.cluster.local:4222
+    url: nats://nats.nats.svc.cluster.local:4222
+    nkey:
+      secret:
+        name: nats-system-nkey
+        key: system.nkey
