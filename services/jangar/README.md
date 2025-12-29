@@ -87,6 +87,7 @@ tilt up -- --openai_api_base_url http://127.0.0.1:11434/v1 --openai_embedding_mo
 Troubleshooting:
 
 - If a port-forward fails with "address already in use", change the corresponding `*_local_port`.
+- If you see "lost connection to pod" on a port-forward, Tilt will automatically retry.
 - If a secret lookup fails, confirm your kube context has access to the `jangar` namespace.
 
 ## Scripts
