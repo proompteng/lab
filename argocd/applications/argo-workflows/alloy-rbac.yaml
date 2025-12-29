@@ -11,7 +11,10 @@ metadata:
   namespace: argo-workflows
 rules:
   - apiGroups: ['']
-    resources: ['pods', 'pods/log']
+    resources: ['pods', 'pods/log', 'endpoints', 'services']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['discovery.k8s.io']
+    resources: ['endpointslices']
     verbs: ['get', 'list', 'watch']
 ---
 apiVersion: rbac.authorization.k8s.io/v1
