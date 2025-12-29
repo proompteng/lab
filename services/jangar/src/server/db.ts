@@ -270,6 +270,25 @@ type CodexJudgeRerunSubmissions = {
   submitted_at: Timestamp | null
 }
 
+type WorkflowCommsAgentMessage = {
+  id: Generated<string>
+  workflow_uid: string | null
+  workflow_name: string | null
+  workflow_namespace: string | null
+  run_id: string | null
+  step_id: string | null
+  agent_id: string | null
+  role: string
+  kind: string
+  timestamp: Timestamp
+  channel: string | null
+  stage: string | null
+  content: string
+  attrs: JsonValue
+  dedupe_key: string | null
+  created_at: Generated<Timestamp>
+}
+
 export type Database = {
   'atlas.repositories': AtlasRepositories
   'atlas.file_keys': AtlasFileKeys
@@ -293,6 +312,7 @@ export type Database = {
   'codex_judge.evaluations': CodexJudgeEvaluations
   'codex_judge.prompt_tuning': CodexJudgePromptTuning
   'codex_judge.rerun_submissions': CodexJudgeRerunSubmissions
+  'workflow_comms.agent_messages': WorkflowCommsAgentMessage
 }
 
 let db: Db | null | undefined
