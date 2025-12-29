@@ -15,17 +15,3 @@ spec:
       resource: workflows
       eventTypes:
         - UPDATE
-      filter:
-        fields:
-          - key: status.phase
-            operation: "!="
-            value: Pending
-          - key: status.phase
-            operation: "!="
-            value: Running
-          - key: status.phase
-            operation: "!="
-            value: Unknown
-          - key: status.finishedAt
-            operation: "!="
-            value: ""
