@@ -3,8 +3,14 @@ import { Buffer } from 'node:buffer'
 import * as S from '@effect/schema/Schema'
 import { Effect } from 'effect'
 import * as Either from 'effect/Either'
+import { createAgentMessagesStore } from '~/server/agent-messages-store'
 import { createArgoClient } from '~/server/argo-client'
 import { getCodexClient } from '~/server/codex-client'
+import {
+  buildBackfillDedupeKey,
+  parseAgentMessagesFromEvents,
+  parseAgentMessagesFromLog,
+} from '~/server/codex-judge-agent-messages'
 import { extractImplementationManifestFromArchive, extractTextFromArchive } from '~/server/codex-judge-artifacts'
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 import { evaluateDeterministicGates } from '~/server/codex-judge-gates'
@@ -709,6 +715,13 @@ const fetchArtifactText = async (artifact: ResolvedArtifact, maxBytes = MAX_ARTI
   return text
 }
 
+const fetchArtifactFullText = async (artifact: ResolvedArtifact, maxBytes = MAX_ARTIFACT_BYTES) => {
+  const buffer = await fetchArtifactBuffer(artifact, maxBytes)
+  if (!buffer) return null
+  const extracted = await extractTextFromArchive(buffer, getArtifactTextHints(artifact.name))
+  return extracted ?? buffer.toString('utf8')
+}
+
 const buildArtifactIndex = (artifacts: ResolvedArtifact[]) =>
   new Map(artifacts.map((artifact) => [artifact.name, artifact]))
 
@@ -747,6 +760,18 @@ const extractLogExcerptFromArtifacts = async (artifactMap: Map<string, ResolvedA
   }
 
   return logExcerpt
+}
+
+const resolveBaseTimestamp = (run: CodexRunRecord) => {
+  const candidates = [run.startedAt, run.finishedAt]
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    const parsed = Date.parse(candidate)
+    if (!Number.isNaN(parsed)) {
+      return new Date(parsed)
+    }
+  }
+  return new Date()
 }
 
 const extractManifestFromArtifacts = async (artifactMap: Map<string, ResolvedArtifact>) => {
@@ -833,6 +858,61 @@ const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArt
     branch: run.branch,
     prompt: run.prompt ?? prompt ?? null,
   })
+}
+
+const backfillAgentMessages = async (run: CodexRunRecord, artifacts: ResolvedArtifact[]) => {
+  let agentStore: ReturnType<typeof createAgentMessagesStore> | null = null
+  try {
+    agentStore = createAgentMessagesStore()
+    const hasMessages = await agentStore.hasMessages({ runId: run.id, workflowUid: run.workflowUid })
+    if (hasMessages) return
+
+    const artifactMap = buildArtifactIndex(artifacts)
+    const eventArtifact = artifactMap.get('implementation-events') ?? null
+    const agentArtifact = artifactMap.get('implementation-agent-log') ?? null
+
+    const eventText = eventArtifact ? await fetchArtifactFullText(eventArtifact) : null
+    let messages = parseAgentMessagesFromEvents(eventText)
+    if (messages.length === 0 && agentArtifact) {
+      const agentText = await fetchArtifactFullText(agentArtifact)
+      messages = parseAgentMessagesFromLog(agentText)
+    }
+
+    if (messages.length === 0) return
+
+    const baseTimestamp = resolveBaseTimestamp(run)
+    const baseMillis = baseTimestamp.getTime()
+    const stage = run.stage ?? null
+
+    const records = messages.map((message, index) => ({
+      workflowUid: run.workflowUid,
+      workflowName: run.workflowName,
+      workflowNamespace: run.workflowNamespace,
+      runId: run.id,
+      stepId: null,
+      agentId: null,
+      role: 'assistant',
+      kind: 'message',
+      timestamp: new Date(baseMillis + index * 1000).toISOString(),
+      channel: null,
+      stage,
+      content: message.content,
+      attrs: message.attrs,
+      dedupeKey: buildBackfillDedupeKey(run.id, message.attrs),
+    }))
+
+    await agentStore.insertMessages(records)
+  } catch (error) {
+    console.warn('Failed to backfill agent messages', error)
+  } finally {
+    if (agentStore) {
+      try {
+        await agentStore.close()
+      } catch (error) {
+        console.warn('Failed to close agent messages store', error)
+      }
+    }
+  }
 }
 
 const normalizeReviewBody = (value: string) => value.replace(/\s+/g, ' ').trim()
@@ -2149,6 +2229,7 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
 
   const resolvedArtifacts = await updateArtifactsFromWorkflow(run, parsed.artifacts)
   await applyArtifactFallback(run, resolvedArtifacts)
+  await backfillAgentMessages(run, resolvedArtifacts)
   if (run.status === 'run_complete') {
     scheduleEvaluation(run.id, 1000)
   }
