@@ -534,6 +534,7 @@ describe('prompt tuning PR gating', () => {
     harness.config.promptTuningEnabled = true
     harness.config.promptTuningRepo = 'proompteng/lab'
     harness.config.promptTuningFailureThreshold = 1
+    harness.config.promptTuningWindowHours = 0
     const fetchMock = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -567,6 +568,7 @@ describe('prompt tuning PR gating', () => {
     harness.config.promptTuningEnabled = true
     harness.config.promptTuningRepo = 'proompteng/lab'
     harness.config.promptTuningFailureThreshold = 1
+    harness.config.promptTuningWindowHours = 0
     const fetchMock = vi.fn(async () => ({
       ok: true,
       status: 200,
