@@ -397,6 +397,27 @@ spec:
           name: knative-serving-operator-aggregated-stable
           jqPathExpressions:
             - .rules
+        - kind: CustomResourceDefinition
+          group: apiextensions.k8s.io
+          name: flinkdeployments.flink.apache.org
+          jqPathExpressions:
+            - .spec.conversion
+            - .spec.names.listKind
+            - .spec.versions[].additionalPrinterColumns[].priority
+        - kind: CustomResourceDefinition
+          group: apiextensions.k8s.io
+          name: flinksessionjobs.flink.apache.org
+          jqPathExpressions:
+            - .spec.conversion
+            - .spec.names.listKind
+            - .spec.versions[].additionalPrinterColumns[].priority
+        - kind: CustomResourceDefinition
+          group: apiextensions.k8s.io
+          name: flinkstatesnapshots.flink.apache.org
+          jqPathExpressions:
+            - .spec.conversion
+            - .spec.names.listKind
+            - .spec.versions[].additionalPrinterColumns[].priority
   templatePatch: |
     {{- if .annotations }}
     metadata:
