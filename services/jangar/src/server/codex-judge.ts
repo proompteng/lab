@@ -940,10 +940,7 @@ const evaluateRun = async (runId: string) => {
       })
       const refreshedRun = (await store.getRunById(run.id)) ?? run
       await writeMemories(refreshedRun, evaluation)
-      if (config.promptTuningEnabled && config.promptTuningRepo) {
-        const suggestions = buildSuggestionsFromEvaluation(evaluation)
-        await createPromptTuningPr(run, evaluation.nextPrompt ?? '', suggestions)
-      }
+      await maybeCreatePromptTuningPr(refreshedRun, 'merge_conflict', evaluation.nextPrompt ?? '', evaluation)
       await sendDiscordEscalation(run, 'merge_conflict')
       return
     }
@@ -980,10 +977,7 @@ const evaluateRun = async (runId: string) => {
         await writeMemories(refreshedRun, evaluation)
 
         if (gateFailure.decision === 'needs_human') {
-          if (config.promptTuningEnabled && config.promptTuningRepo) {
-            const suggestions = buildSuggestionsFromEvaluation(evaluation)
-            await createPromptTuningPr(run, evaluation.nextPrompt ?? '', suggestions)
-          }
+          await maybeCreatePromptTuningPr(refreshedRun, gateFailure.reason, evaluation.nextPrompt ?? '', evaluation)
           await sendDiscordEscalation(run, gateFailure.reason)
           return
         }
@@ -1155,17 +1149,17 @@ const evaluateRun = async (runId: string) => {
   }
 }
 
+const normalizeSuggestionList = (value: unknown) => {
+  if (!Array.isArray(value)) return []
+  return value.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter((entry) => entry.length > 0)
+}
+
+const extractSuggestions = (payload: Record<string, unknown> | undefined) =>
+  normalizeSuggestionList(payload?.suggestions)
+
 const buildSuggestionsFromEvaluation = (evaluation?: CodexEvaluationRecord) => {
-  const promptSuggestions = Array.isArray(
-    (evaluation?.promptTuning as Record<string, unknown> | undefined)?.suggestions,
-  )
-    ? ((evaluation?.promptTuning as Record<string, unknown>).suggestions as string[])
-    : []
-  const systemSuggestions = Array.isArray(
-    (evaluation?.systemSuggestions as Record<string, unknown> | undefined)?.suggestions,
-  )
-    ? ((evaluation?.systemSuggestions as Record<string, unknown>).suggestions as string[])
-    : []
+  const promptSuggestions = extractSuggestions(evaluation?.promptTuning as Record<string, unknown> | undefined)
+  const systemSuggestions = extractSuggestions(evaluation?.systemSuggestions as Record<string, unknown> | undefined)
 
   return {
     promptSuggestions: promptSuggestions.length > 0 ? promptSuggestions : ['Tighten prompt to reduce iteration loops.'],
@@ -1173,19 +1167,190 @@ const buildSuggestionsFromEvaluation = (evaluation?: CodexEvaluationRecord) => {
   }
 }
 
+const parseTimestampMs = (value: string | null | undefined) => {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+type PromptTuningRunReference = {
+  runId: string
+  attempt: number
+  status: string
+  workflowName: string
+  createdAt: string
+  prUrl: string | null
+  ciUrl: string | null
+  failureReason: string
+}
+
+type PromptTuningAggregate = {
+  reason: string
+  matchingFailures: number
+  totalFailures: number
+  windowHours: number
+  failureReasonCounts: Record<string, number>
+  runReferences: PromptTuningRunReference[]
+  promptSuggestions: string[]
+  systemSuggestions: string[]
+}
+
+const UNKNOWN_FAILURE_REASON = 'unknown_failure'
+
+const resolveFailureReason = (reason: string | null | undefined, evaluation?: CodexEvaluationRecord) => {
+  const reasons = evaluation?.reasons as Record<string, unknown> | undefined
+  const error = typeof reasons?.error === 'string' ? reasons.error : null
+  if (error) return error
+  if (reason) return reason
+  if (evaluation && evaluation.decision !== 'pass') return 'judge_failed'
+  return null
+}
+
+const buildPromptTuningAggregate = async (
+  run: CodexRunRecord,
+  reason: string | null,
+  evaluation?: CodexEvaluationRecord,
+) => {
+  const windowHours = Math.max(config.promptTuningWindowHours, 0)
+  const windowMs = windowHours > 0 ? windowHours * 60 * 60 * 1000 : null
+  const now = Date.now()
+  const cutoff = windowMs ? now - windowMs : null
+
+  const history = await store.getRunHistory({
+    repository: run.repository,
+    issueNumber: run.issueNumber,
+    branch: run.branch,
+  })
+
+  const entries: Array<{
+    run: CodexRunRecord
+    evaluation: CodexEvaluationRecord
+    failureReason: string
+    timestamp: number
+    createdAt: string
+  }> = []
+
+  for (const entry of history.runs) {
+    if (!entry.evaluation) continue
+    if (entry.evaluation.decision === 'pass') continue
+    const createdAt =
+      entry.evaluation.createdAt ?? entry.run.updatedAt ?? entry.run.createdAt ?? new Date().toISOString()
+    const timestamp = parseTimestampMs(createdAt) ?? now
+    if (cutoff != null && timestamp < cutoff) continue
+    const failureReason = resolveFailureReason(null, entry.evaluation) ?? UNKNOWN_FAILURE_REASON
+    entries.push({ run: entry.run, evaluation: entry.evaluation, failureReason, timestamp, createdAt })
+  }
+
+  if (evaluation && !entries.some((entry) => entry.run.id === run.id)) {
+    const createdAt = evaluation.createdAt ?? run.updatedAt ?? run.createdAt ?? new Date().toISOString()
+    const timestamp = parseTimestampMs(createdAt) ?? now
+    if (cutoff == null || timestamp >= cutoff) {
+      const failureReason = resolveFailureReason(reason, evaluation) ?? UNKNOWN_FAILURE_REASON
+      entries.push({ run, evaluation, failureReason, timestamp, createdAt })
+    }
+  }
+
+  entries.sort((a, b) => b.timestamp - a.timestamp)
+
+  const failureReasonCounts: Record<string, number> = {}
+  for (const entry of entries) {
+    failureReasonCounts[entry.failureReason] = (failureReasonCounts[entry.failureReason] ?? 0) + 1
+  }
+
+  const resolvedReason =
+    resolveFailureReason(reason, evaluation) ??
+    Object.entries(failureReasonCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ??
+    UNKNOWN_FAILURE_REASON
+
+  const matchingFailures = failureReasonCounts[resolvedReason] ?? 0
+  const totalFailures = entries.length
+
+  const promptSuggestions = new Set<string>()
+  const systemSuggestions = new Set<string>()
+  for (const entry of entries) {
+    for (const suggestion of extractSuggestions(entry.evaluation.promptTuning as Record<string, unknown> | undefined)) {
+      promptSuggestions.add(suggestion)
+    }
+    for (const suggestion of extractSuggestions(
+      entry.evaluation.systemSuggestions as Record<string, unknown> | undefined,
+    )) {
+      systemSuggestions.add(suggestion)
+    }
+  }
+
+  const fallback = buildSuggestionsFromEvaluation(evaluation)
+  if (promptSuggestions.size === 0) {
+    for (const suggestion of fallback.promptSuggestions) {
+      promptSuggestions.add(suggestion)
+    }
+  }
+  if (systemSuggestions.size === 0) {
+    for (const suggestion of fallback.systemSuggestions) {
+      systemSuggestions.add(suggestion)
+    }
+  }
+
+  const runReferences = entries.map((entry) => ({
+    runId: entry.run.id,
+    attempt: entry.run.attempt,
+    status: entry.run.status,
+    workflowName: entry.run.workflowName,
+    createdAt: entry.createdAt,
+    prUrl: entry.run.prUrl ?? null,
+    ciUrl: entry.run.ciUrl ?? null,
+    failureReason: entry.failureReason,
+  }))
+
+  return {
+    reason: resolvedReason,
+    matchingFailures,
+    totalFailures,
+    windowHours,
+    failureReasonCounts,
+    runReferences,
+    promptSuggestions: [...promptSuggestions],
+    systemSuggestions: [...systemSuggestions],
+  }
+}
+
+const maybeCreatePromptTuningPr = async (
+  run: CodexRunRecord,
+  reason: string | null,
+  nextPrompt: string,
+  evaluation?: CodexEvaluationRecord,
+) => {
+  if (!config.promptTuningEnabled || !config.promptTuningRepo) return
+  const aggregate = await buildPromptTuningAggregate(run, reason, evaluation)
+  if (aggregate.totalFailures === 0) return
+  const threshold = Math.max(config.promptTuningFailureThreshold, 1)
+  if (aggregate.matchingFailures < threshold) return
+
+  const cooldownHours = Math.max(config.promptTuningCooldownHours, 0)
+  const cooldownMs = cooldownHours > 0 ? cooldownHours * 60 * 60 * 1000 : null
+  if (cooldownMs) {
+    const latest = await store.getLatestPromptTuningByIssue(run.repository, run.issueNumber)
+    if (latest) {
+      const createdAt = parseTimestampMs(latest.createdAt)
+      if (createdAt != null && Date.now() - createdAt < cooldownMs) {
+        return
+      }
+    }
+  }
+
+  await createPromptTuningPr(run, nextPrompt, aggregate)
+}
+
 const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: CodexEvaluationRecord) => {
   const latestRun = await store.getRunById(run.id)
   if (!latestRun || latestRun.status === 'superseded') return
 
   const attempts = (await store.listRunsByIssue(run.repository, run.issueNumber, run.branch)).length
-  const suggestions = buildSuggestionsFromEvaluation(evaluation)
+  const resolvedReason = resolveFailureReason(reason, evaluation) ?? UNKNOWN_FAILURE_REASON
 
   if (attempts >= config.maxAttempts) {
     const updated = await store.updateRunStatus(run.id, 'needs_human')
     if (!updated) return
-    if (config.promptTuningEnabled && config.promptTuningRepo) {
-      await createPromptTuningPr(run, evaluation?.nextPrompt ?? run.nextPrompt ?? '', suggestions)
-    }
+    await maybeCreatePromptTuningPr(updated, resolvedReason, evaluation?.nextPrompt ?? run.nextPrompt ?? '', evaluation)
     await sendDiscordEscalation(run, reason)
     return
   }
@@ -1194,31 +1359,25 @@ const triggerRerun = async (run: CodexRunRecord, reason: string, evaluation?: Co
   if (!nextPrompt) {
     const updated = await store.updateRunStatus(run.id, 'needs_iteration')
     if (!updated) return
-    if (config.promptTuningEnabled && config.promptTuningRepo) {
-      await createPromptTuningPr(run, '', suggestions)
-    }
+    await maybeCreatePromptTuningPr(updated, resolvedReason, '', evaluation)
     return
   }
 
   const updated = await store.updateRunStatus(run.id, 'needs_iteration')
   if (!updated) return
+  await maybeCreatePromptTuningPr(updated, resolvedReason, nextPrompt, evaluation)
   const delayIndex = Math.min(Math.max(attempts - 1, 0), config.backoffScheduleMs.length - 1)
   const delayMs = config.backoffScheduleMs[delayIndex] ?? 0
   if (delayMs > 0) {
     setTimeout(() => {
-      void submitRerun(run, nextPrompt, attempts + 1, suggestions)
+      void submitRerun(run, nextPrompt, attempts + 1)
     }, delayMs)
     return
   }
-  await submitRerun(run, nextPrompt, attempts + 1, suggestions)
+  await submitRerun(run, nextPrompt, attempts + 1)
 }
 
-const submitRerun = async (
-  run: CodexRunRecord,
-  prompt: string,
-  attempt: number,
-  suggestions: { promptSuggestions: string[]; systemSuggestions: string[] },
-) => {
+const submitRerun = async (run: CodexRunRecord, prompt: string, attempt: number) => {
   const latestRun = await store.getRunById(run.id)
   if (!latestRun || latestRun.status === 'superseded') return
 
@@ -1257,17 +1416,31 @@ const submitRerun = async (
     headers: { 'content-type': 'application/x-protobuf' },
     body: payload,
   })
-
-  if (config.promptTuningEnabled && config.promptTuningRepo) {
-    await createPromptTuningPr(run, prompt, suggestions)
-  }
 }
 
-const createPromptTuningPr = async (
-  run: CodexRunRecord,
-  nextPrompt: string,
-  suggestions: { promptSuggestions: string[]; systemSuggestions: string[] },
-) => {
+const PROMPT_TUNING_RUN_REFERENCE_LIMIT = 10
+
+const formatPromptTuningRunReference = (reference: PromptTuningRunReference) => {
+  const parts = [
+    `run ${reference.runId}`,
+    `attempt ${reference.attempt}`,
+    `status ${reference.status}`,
+    `reason ${reference.failureReason}`,
+    `created ${reference.createdAt}`,
+  ]
+  if (reference.workflowName) {
+    parts.push(`workflow ${reference.workflowName}`)
+  }
+  if (reference.prUrl) {
+    parts.push(`PR ${reference.prUrl}`)
+  }
+  if (reference.ciUrl) {
+    parts.push(`CI ${reference.ciUrl}`)
+  }
+  return `- ${parts.join(' | ')}`
+}
+
+const createPromptTuningPr = async (run: CodexRunRecord, nextPrompt: string, aggregate: PromptTuningAggregate) => {
   if (!config.promptTuningRepo) return
   const { owner, repo } = parseRepositoryParts(config.promptTuningRepo)
   const baseRef = 'main'
@@ -1277,7 +1450,7 @@ const createPromptTuningPr = async (
 
   const promptPath = 'apps/froussard/src/codex.ts'
   const promptFile = await github.getFile(owner, repo, promptPath, baseRef)
-  const promptInsert = suggestions.promptSuggestions.map((entry) => `    '- ${entry}',`).join('\n')
+  const promptInsert = aggregate.promptSuggestions.map((entry) => `    '- ${entry}',`).join('\n')
   const marker = "    'Memory:',"
   const updatedPrompt = promptFile.content.replace(marker, `    '',\n    'Prompt tuning:',\n${promptInsert}\n${marker}`)
 
@@ -1292,17 +1465,42 @@ const createPromptTuningPr = async (
   })
 
   const tuningDocPath = `docs/jangar/prompt-tuning/${run.issueNumber}-${Date.now()}.md`
+  const failureReasonEntries = Object.entries(aggregate.failureReasonCounts).sort((a, b) => b[1] - a[1])
+  const failureReasonLines =
+    failureReasonEntries.length > 0
+      ? failureReasonEntries.map(([reason, count]) => `- ${reason}: ${count}`)
+      : ['- None']
+  const runReferenceLines = aggregate.runReferences
+    .slice(0, PROMPT_TUNING_RUN_REFERENCE_LIMIT)
+    .map((entry) => formatPromptTuningRunReference(entry))
+  if (aggregate.runReferences.length > PROMPT_TUNING_RUN_REFERENCE_LIMIT) {
+    runReferenceLines.push(`- ...and ${aggregate.runReferences.length - PROMPT_TUNING_RUN_REFERENCE_LIMIT} more runs`)
+  }
   const tuningDocContent = [
     `# Prompt tuning for ${run.repository}#${run.issueNumber}`,
     '',
+    '## Aggregated signals',
+    `- Window: last ${aggregate.windowHours} hours`,
+    `- Failure reason: ${aggregate.reason} (${aggregate.matchingFailures}/${Math.max(
+      config.promptTuningFailureThreshold,
+      1,
+    )})`,
+    `- Total failures in window: ${aggregate.totalFailures}`,
+    '',
+    '## Failure reasons',
+    ...failureReasonLines,
+    '',
+    '## Run references',
+    ...(runReferenceLines.length > 0 ? runReferenceLines : ['- None']),
+    '',
     '## Next prompt',
-    nextPrompt,
+    nextPrompt || 'N/A',
     '',
     '## Suggestions',
-    ...suggestions.promptSuggestions.map((entry) => `- ${entry}`),
+    ...aggregate.promptSuggestions.map((entry) => `- ${entry}`),
     '',
     '## System improvements',
-    ...suggestions.systemSuggestions.map((entry) => `- ${entry}`),
+    ...aggregate.systemSuggestions.map((entry) => `- ${entry}`),
   ].join('\n')
 
   await github
@@ -1331,6 +1529,32 @@ const createPromptTuningPr = async (
     // fallback to default body
   }
 
+  const prFailureReasons =
+    failureReasonEntries.length > 0
+      ? failureReasonEntries.map(([reason, count]) => `${reason} (${count})`).join(', ')
+      : 'None'
+  const prRunReferences = runReferenceLines.length > 0 ? runReferenceLines : ['- None']
+  const prSystemSuggestions =
+    aggregate.systemSuggestions.length > 0 ? aggregate.systemSuggestions.map((entry) => `- ${entry}`) : ['- None']
+
+  const promptTuningSection = [
+    '',
+    '## Prompt tuning signals',
+    `- Aggregated ${aggregate.matchingFailures} "${aggregate.reason}" failures in the last ${aggregate.windowHours} hours.`,
+    `- Failure reasons: ${prFailureReasons}`,
+    '',
+    '## Run references',
+    ...prRunReferences,
+    '',
+    '## System improvements',
+    ...prSystemSuggestions,
+    '',
+    '## Prompt tuning doc',
+    `- ${tuningDocPath}`,
+  ].join('\n')
+
+  prBody = `${prBody.trim()}\n${promptTuningSection}\n`
+
   const pr = (await github.createPullRequest({
     owner,
     repo,
@@ -1343,8 +1567,20 @@ const createPromptTuningPr = async (
   const prUrl = typeof pr.html_url === 'string' ? pr.html_url : ''
   if (prUrl) {
     await store.createPromptTuning(run.id, prUrl, 'open', {
-      promptSuggestions: suggestions.promptSuggestions,
-      systemSuggestions: suggestions.systemSuggestions,
+      reason: aggregate.reason,
+      matchingFailures: aggregate.matchingFailures,
+      totalFailures: aggregate.totalFailures,
+      windowHours: aggregate.windowHours,
+      failureReasonCounts: aggregate.failureReasonCounts,
+      runReferences: aggregate.runReferences.map((entry) => ({
+        runId: entry.runId,
+        attempt: entry.attempt,
+        status: entry.status,
+        failureReason: entry.failureReason,
+        createdAt: entry.createdAt,
+      })),
+      promptSuggestions: aggregate.promptSuggestions,
+      systemSuggestions: aggregate.systemSuggestions,
     })
   }
 }

@@ -14,6 +14,9 @@ export type CodexJudgeConfig = {
   judgeModel: string
   promptTuningEnabled: boolean
   promptTuningRepo: string | null
+  promptTuningFailureThreshold: number
+  promptTuningWindowHours: number
+  promptTuningCooldownHours: number
 }
 
 const DEFAULT_GITHUB_API_BASE = 'https://api.github.com'
@@ -53,6 +56,9 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
   const judgeModel = (process.env.JANGAR_CODEX_JUDGE_MODEL ?? 'gpt-5.2-codex').trim()
   const promptTuningEnabled = (process.env.JANGAR_PROMPT_TUNING_ENABLED ?? 'true').trim().toLowerCase() === 'true'
   const promptTuningRepo = (process.env.JANGAR_PROMPT_TUNING_REPO ?? '').trim() || null
+  const promptTuningFailureThreshold = parseNumber(process.env.JANGAR_PROMPT_TUNING_FAILURE_THRESHOLD, 3)
+  const promptTuningWindowHours = parseNumber(process.env.JANGAR_PROMPT_TUNING_WINDOW_HOURS, 24)
+  const promptTuningCooldownHours = parseNumber(process.env.JANGAR_PROMPT_TUNING_COOLDOWN_HOURS, 6)
 
   return {
     githubToken,
@@ -70,5 +76,8 @@ export const loadCodexJudgeConfig = (): CodexJudgeConfig => {
     judgeModel,
     promptTuningEnabled,
     promptTuningRepo,
+    promptTuningFailureThreshold,
+    promptTuningWindowHours,
+    promptTuningCooldownHours,
   }
 }
