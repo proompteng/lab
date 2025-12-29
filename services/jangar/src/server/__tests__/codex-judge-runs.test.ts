@@ -12,6 +12,8 @@ const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   workflowName: 'workflow-1',
   workflowUid: null,
   workflowNamespace: null,
+  turnId: null,
+  threadId: null,
   stage: 'implementation',
   status: 'run_complete',
   phase: null,

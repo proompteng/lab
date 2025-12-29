@@ -12,6 +12,8 @@ export type CodexRunRecord = {
   workflowName: string
   workflowUid: string | null
   workflowNamespace: string | null
+  turnId: string | null
+  threadId: string | null
   stage: string | null
   status: string
   phase: string | null
@@ -121,6 +123,8 @@ export type UpsertRunCompleteInput = {
   workflowName: string
   workflowUid: string | null
   workflowNamespace: string | null
+  turnId: string | null
+  threadId: string | null
   stage: string | null
   status: string
   phase: string | null
@@ -354,6 +358,8 @@ const rowToRun = (row: Record<string, unknown>): CodexRunRecord => {
     workflowName: String(row.workflow_name),
     workflowUid: row.workflow_uid ? String(row.workflow_uid) : null,
     workflowNamespace: row.workflow_namespace ? String(row.workflow_namespace) : null,
+    turnId: row.turn_id ? String(row.turn_id) : null,
+    threadId: row.thread_id ? String(row.thread_id) : null,
     stage: row.stage ? String(row.stage) : null,
     status: String(row.status),
     phase: row.phase ? String(row.phase) : null,
@@ -608,6 +614,8 @@ export const createCodexJudgeStore = (
           branch: input.branch,
           workflow_name: input.workflowName,
           workflow_namespace: input.workflowNamespace ?? null,
+          turn_id: input.turnId ?? (existing.turn_id ? String(existing.turn_id) : null),
+          thread_id: input.threadId ?? (existing.thread_id ? String(existing.thread_id) : null),
           stage: input.stage,
           status: nextStatus,
           phase: input.phase,
@@ -641,6 +649,8 @@ export const createCodexJudgeStore = (
         workflow_name: input.workflowName,
         workflow_uid: input.workflowUid,
         workflow_namespace: input.workflowNamespace,
+        turn_id: input.turnId ?? null,
+        thread_id: input.threadId ?? null,
         stage: input.stage,
         status: 'run_complete',
         phase: input.phase,

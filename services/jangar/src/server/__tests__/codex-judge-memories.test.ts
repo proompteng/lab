@@ -256,6 +256,8 @@ describe('codex-judge memory snapshots', () => {
       workflowName: 'workflow-1',
       workflowUid: 'workflow-uid',
       workflowNamespace: 'jangar',
+      turnId: null,
+      threadId: null,
       stage: 'implementation',
       status: 'completed',
       phase: null,

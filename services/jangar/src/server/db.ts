@@ -200,6 +200,8 @@ type CodexJudgeRuns = {
   workflow_name: string
   workflow_uid: string | null
   workflow_namespace: string | null
+  turn_id: string | null
+  thread_id: string | null
   stage: string | null
   status: string
   phase: string | null

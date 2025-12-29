@@ -59,6 +59,12 @@ const activeEvaluations = new Set<string>()
 const terminalStatuses = new Set(['completed', 'needs_human', 'needs_iteration'])
 const isTerminalStatus = (status: string | null | undefined) => (status ? terminalStatuses.has(status) : false)
 const MAX_JUDGE_JSON_RETRIES = 2
+const RECONCILE_STARTUP_DELAY_MS = 5_000
+const RECONCILE_INTERVAL_MS = 60_000
+const RECONCILE_BASE_DELAY_MS = 1_000
+const RECONCILE_JITTER_MS = 15_000
+const PENDING_EVALUATION_STATUSES = ['run_complete', 'waiting_for_ci', 'judging'] as const
+const RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
 const RERUN_SUBMISSION_BACKOFF_MS = [2_000, 7_000, 15_000]
 const JSON_ONLY_REMINDER = [
   'IMPORTANT: Return a single JSON object only.',
@@ -123,6 +129,10 @@ const EventBodySchema = S.Struct({
   issueTitle: S.optional(S.String),
   issueBody: S.optional(S.String),
   issueUrl: S.optional(S.String),
+  turnId: S.optional(S.String),
+  turn_id: S.optional(S.String),
+  threadId: S.optional(S.String),
+  thread_id: S.optional(S.String),
 })
 
 const RunCompletePayloadSchema = S.Struct({
@@ -171,6 +181,180 @@ const normalizeNumber = (value: unknown) => {
   return 0
 }
 
+const normalizeOptionalString = (value: unknown) => {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+const normalizeStringMap = (value: unknown) => {
+  if (!isRecord(value)) return {}
+  const entries = Object.entries(value)
+  const result: Record<string, string> = {}
+  for (const [key, entry] of entries) {
+    if (entry == null) continue
+    if (typeof entry === 'string') {
+      const trimmed = entry.trim()
+      if (trimmed) {
+        result[key] = trimmed
+      }
+      continue
+    }
+    if (typeof entry === 'number' || typeof entry === 'boolean') {
+      result[key] = String(entry)
+    }
+  }
+  return result
+}
+
+const readMetadataMap = (value: unknown) => {
+  if (typeof value === 'string') {
+    return normalizeStringMap(safeParseJson(value))
+  }
+  return normalizeStringMap(value)
+}
+
+const getMetadataValue = (
+  rawMetadata: Record<string, unknown>,
+  labels: Record<string, string>,
+  annotations: Record<string, string>,
+  keys: string[],
+) => {
+  for (const key of keys) {
+    const candidate = labels[key] ?? annotations[key]
+    if (candidate && candidate.trim().length > 0) {
+      return candidate.trim()
+    }
+    const direct = rawMetadata[key]
+    if (typeof direct === 'string' && direct.trim().length > 0) {
+      return direct.trim()
+    }
+  }
+  return ''
+}
+
+const REPO_METADATA_KEYS = [
+  'codex.repository',
+  'codex.repo',
+  'repository',
+  'repo',
+  'github.repository',
+  'facteur.codex.repository',
+]
+
+const ISSUE_METADATA_KEYS = [
+  'codex.issue_number',
+  'codex.issue-number',
+  'codex.issueNumber',
+  'codex.issue',
+  'issue_number',
+  'issue-number',
+  'issueNumber',
+  'issue',
+  'github.issue_number',
+  'facteur.codex.issue_number',
+]
+
+const HEAD_METADATA_KEYS = [
+  'codex.head',
+  'codex.head_branch',
+  'codex.head-branch',
+  'codex.headBranch',
+  'head',
+  'head_branch',
+  'head-branch',
+  'headBranch',
+  'branch',
+  'codex.branch',
+]
+
+const BASE_METADATA_KEYS = [
+  'codex.base',
+  'codex.base_branch',
+  'codex.base-branch',
+  'codex.baseBranch',
+  'base',
+  'base_branch',
+  'base-branch',
+  'baseBranch',
+]
+
+const TURN_METADATA_KEYS = ['codex.turn_id', 'codex.turn-id', 'codex.turnId', 'turn_id', 'turn-id', 'turnId']
+
+const THREAD_METADATA_KEYS = [
+  'codex.thread_id',
+  'codex.thread-id',
+  'codex.threadId',
+  'thread_id',
+  'thread-id',
+  'threadId',
+]
+
+const extractRepositoryFromRawEvent = (rawEvent: Record<string, unknown>) => {
+  const repositoryValue = rawEvent.repository
+  if (typeof repositoryValue === 'string') {
+    return normalizeRepo(repositoryValue)
+  }
+  if (isRecord(repositoryValue)) {
+    const fullName = normalizeRepo(repositoryValue.full_name)
+    if (fullName) return fullName
+    const repoName = normalizeRepo(repositoryValue.name)
+    if (repoName) {
+      const owner = isRecord(repositoryValue.owner)
+        ? normalizeRepo(repositoryValue.owner.login ?? repositoryValue.owner.name)
+        : ''
+      if (owner) {
+        return `${owner}/${repoName}`
+      }
+    }
+  }
+
+  const repoValue = rawEvent.repo
+  if (typeof repoValue === 'string') {
+    return normalizeRepo(repoValue)
+  }
+  if (isRecord(repoValue)) {
+    const fullName = normalizeRepo(repoValue.full_name)
+    if (fullName) return fullName
+    const repoName = normalizeRepo(repoValue.name)
+    if (repoName) {
+      const owner = isRecord(repoValue.owner) ? normalizeRepo(repoValue.owner.login ?? repoValue.owner.name) : ''
+      if (owner) {
+        return `${owner}/${repoName}`
+      }
+    }
+  }
+
+  return ''
+}
+
+const extractIssueNumberFromRawEvent = (rawEvent: Record<string, unknown>) => {
+  const direct = normalizeNumber(rawEvent.issue_number ?? rawEvent.issueNumber ?? rawEvent.number ?? 0)
+  if (direct) return direct
+  if (isRecord(rawEvent.issue)) {
+    const issueNumber = normalizeNumber(rawEvent.issue.number ?? rawEvent.issue.issue_number ?? 0)
+    if (issueNumber) return issueNumber
+  }
+  if (isRecord(rawEvent.pull_request)) {
+    const prNumber = normalizeNumber(rawEvent.pull_request.number ?? 0)
+    if (prNumber) return prNumber
+  }
+  return 0
+}
+
+const extractBranchFromRawEvent = (rawEvent: Record<string, unknown>, field: 'head' | 'base') => {
+  const direct = rawEvent[field]
+  if (typeof direct === 'string') {
+    return normalizeRepo(direct)
+  }
+  const pr = isRecord(rawEvent.pull_request) ? rawEvent.pull_request : null
+  const branch = pr && isRecord(pr[field]) ? pr[field] : null
+  if (branch && typeof branch.ref === 'string') {
+    return normalizeRepo(branch.ref)
+  }
+  return ''
+}
+
 const parseRunCompletePayload = (payload: Record<string, unknown>) => {
   const rawData = (payload.data as Record<string, unknown> | string | undefined) ?? payload
   const data = typeof rawData === 'string' ? safeParseJson(rawData) : isRecord(rawData) ? rawData : {}
@@ -199,14 +383,45 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
 
   const eventBodyRaw = getParamValue(params, 'eventBody')
   const eventBody = decodeSchema(EventBodySchema, eventBodyRaw ? decodeBase64Json(eventBodyRaw) : {}, {})
-  const repository = normalizeRepo(eventBody.repository ?? eventBody.repo)
-  const issueNumber = normalizeNumber(eventBody.issueNumber ?? eventBody.issue_number ?? 0)
-  const head = normalizeRepo(eventBody.head) || normalizeRepo(getParamValue(params, 'head'))
-  const base = normalizeRepo(eventBody.base) || normalizeRepo(getParamValue(params, 'base'))
+  const rawEventRaw = getParamValue(params, 'rawEvent')
+  const rawEvent = rawEventRaw ? decodeBase64Json(rawEventRaw) : {}
+
+  const labels = readMetadataMap(rawMetadata.labels)
+  const annotations = readMetadataMap(rawMetadata.annotations)
+
+  const metadataRepository = normalizeRepo(getMetadataValue(rawMetadata, labels, annotations, REPO_METADATA_KEYS))
+  const metadataIssueNumber = normalizeNumber(getMetadataValue(rawMetadata, labels, annotations, ISSUE_METADATA_KEYS))
+  const metadataHead = normalizeRepo(getMetadataValue(rawMetadata, labels, annotations, HEAD_METADATA_KEYS))
+  const metadataBase = normalizeRepo(getMetadataValue(rawMetadata, labels, annotations, BASE_METADATA_KEYS))
+  const metadataTurnId = normalizeOptionalString(getMetadataValue(rawMetadata, labels, annotations, TURN_METADATA_KEYS))
+  const metadataThreadId = normalizeOptionalString(
+    getMetadataValue(rawMetadata, labels, annotations, THREAD_METADATA_KEYS),
+  )
+
+  const repository =
+    normalizeRepo(eventBody.repository ?? eventBody.repo) ||
+    metadataRepository ||
+    normalizeRepo(extractRepositoryFromRawEvent(rawEvent))
+  const issueNumber =
+    normalizeNumber(eventBody.issueNumber ?? eventBody.issue_number ?? 0) ||
+    metadataIssueNumber ||
+    extractIssueNumberFromRawEvent(rawEvent)
+  const head =
+    normalizeRepo(eventBody.head) ||
+    normalizeRepo(getParamValue(params, 'head')) ||
+    metadataHead ||
+    normalizeRepo(extractBranchFromRawEvent(rawEvent, 'head'))
+  const base =
+    normalizeRepo(eventBody.base) ||
+    normalizeRepo(getParamValue(params, 'base')) ||
+    metadataBase ||
+    normalizeRepo(extractBranchFromRawEvent(rawEvent, 'base'))
   const prompt = typeof eventBody.prompt === 'string' ? eventBody.prompt.trim() : null
   const issueTitle = typeof eventBody.issueTitle === 'string' ? eventBody.issueTitle : null
   const issueBody = typeof eventBody.issueBody === 'string' ? eventBody.issueBody : null
   const issueUrl = typeof eventBody.issueUrl === 'string' ? eventBody.issueUrl : null
+  const turnId = normalizeOptionalString(eventBody.turnId ?? eventBody.turn_id) ?? metadataTurnId
+  const threadId = normalizeOptionalString(eventBody.threadId ?? eventBody.thread_id) ?? metadataThreadId
   const artifacts = (() => {
     if (Array.isArray(data.artifacts)) return data.artifacts
     if (typeof data.artifacts === 'string') {
@@ -239,6 +454,8 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     issueTitle,
     issueBody,
     issueUrl,
+    turnId,
+    threadId,
     workflowName: String(rawMetadata.name ?? ''),
     workflowUid: typeof rawMetadata.uid === 'string' ? rawMetadata.uid : null,
     workflowNamespace: typeof rawMetadata.namespace === 'string' ? rawMetadata.namespace : null,
@@ -279,6 +496,17 @@ const parseRepositoryParts = (repository: string) => {
     throw new Error(`invalid repository value: ${repository}`)
   }
   return { owner, repo }
+}
+
+const hasRequiredRunMetadata = (run: Pick<CodexRunRecord, 'repository' | 'issueNumber' | 'branch'>) => {
+  if (!run.repository || !run.branch) return false
+  if (!Number.isFinite(run.issueNumber) || run.issueNumber <= 0) return false
+  try {
+    parseRepositoryParts(run.repository)
+    return true
+  } catch {
+    return false
+  }
 }
 
 const FULL_COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i
@@ -1266,8 +1494,40 @@ const evaluateRun = async (runId: string) => {
   activeEvaluations.add(runId)
 
   try {
-    const run = await store.getRunById(runId)
+    let run = await store.getRunById(runId)
     if (!run) return
+
+    if (isTerminalStatus(run.status) || run.status === 'superseded') return
+
+    if (!hasRequiredRunMetadata(run)) {
+      const evaluation = await store.updateDecision({
+        runId: run.id,
+        decision: 'needs_human',
+        reasons: {
+          error: 'missing_run_metadata',
+          repository: run.repository,
+          issue_number: run.issueNumber,
+          branch: run.branch,
+        },
+        suggestedFixes: {
+          fix: 'Ensure the workflow metadata includes repository, issue number, and head branch.',
+        },
+        nextPrompt: null,
+        promptTuning: {},
+        systemSuggestions: {
+          suggestions: ['Attach codex repository/issue/head/base metadata to Argo workflow labels or annotations.'],
+        },
+      })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+      return
+    }
+
+    if (run.status !== 'waiting_for_ci' && run.status !== 'judging') {
+      const updated = await store.updateRunStatus(run.id, 'waiting_for_ci')
+      if (!updated) return
+      run = updated
+    }
 
     const repoParts = (() => {
       try {
@@ -1276,13 +1536,6 @@ const evaluateRun = async (runId: string) => {
         return null
       }
     })()
-
-    if (isTerminalStatus(run.status) || run.status === 'superseded') return
-
-    if (run.status !== 'judging') {
-      const updated = await store.updateRunStatus(run.id, 'judging')
-      if (!updated) return
-    }
 
     let pr = await fetchPullRequest(run)
     const commitShaHint = extractCommitShaFromRun(run)
@@ -1397,6 +1650,12 @@ const evaluateRun = async (runId: string) => {
     const ciRun = (await store.updateCiStatus({ runId: run.id, status: ci.status, url: ci.url, commitSha })) ?? run
 
     if (ci.status === 'pending') {
+      if (ciRun.status !== 'waiting_for_ci') {
+        const updated = await store.updateRunStatus(run.id, 'waiting_for_ci')
+        if (updated) {
+          run = updated
+        }
+      }
       if (hasWaitTimedOut(ciRun.ciStatusUpdatedAt, config.ciMaxWaitMs)) {
         const elapsedMs = getElapsedMs(ciRun.ciStatusUpdatedAt)
         const evaluation = await store.updateDecision({
@@ -1430,6 +1689,12 @@ const evaluateRun = async (runId: string) => {
         repository: run.repository,
       })
       return
+    }
+
+    if (run.status !== 'judging') {
+      const updated = await store.updateRunStatus(run.id, 'judging')
+      if (!updated) return
+      run = updated
     }
 
     if (ci.status === 'failure') {
@@ -2523,28 +2788,47 @@ export const __private = {
 export const handleRunComplete = async (payload: Record<string, unknown>) => {
   await ensureStoreReady()
   const parsed = parseRunCompletePayload(payload)
-  if (!parsed.repository || !parsed.issueNumber || !parsed.head) {
-    return null
-  }
+  const existing =
+    parsed.workflowName.length > 0 ? await store.getRunByWorkflow(parsed.workflowName, parsed.workflowNamespace) : null
+  const resolvedRepository = parsed.repository || existing?.repository || 'unknown/unknown'
+  const resolvedIssueNumber =
+    parsed.issueNumber > 0 ? parsed.issueNumber : existing?.issueNumber ? Number(existing.issueNumber) : 0
+  const resolvedBranch = parsed.head || existing?.branch || 'unknown'
+  const resolvedBase =
+    parsed.base ||
+    (typeof existing?.runCompletePayload?.base === 'string' ? existing.runCompletePayload.base : null) ||
+    null
+  const resolvedPrompt = parsed.prompt ?? existing?.prompt ?? null
+  const resolvedWorkflowUid = parsed.workflowUid ?? existing?.workflowUid ?? null
+  const resolvedWorkflowNamespace = parsed.workflowNamespace ?? existing?.workflowNamespace ?? null
+  const resolvedStage = parsed.stage ?? existing?.stage ?? null
+  const resolvedTurnId = parsed.turnId ?? existing?.turnId ?? null
+  const resolvedThreadId = parsed.threadId ?? existing?.threadId ?? null
 
   const run = await store.upsertRunComplete({
-    repository: parsed.repository,
-    issueNumber: parsed.issueNumber,
-    branch: parsed.head,
+    repository: resolvedRepository,
+    issueNumber: resolvedIssueNumber,
+    branch: resolvedBranch,
     workflowName: parsed.workflowName,
-    workflowUid: parsed.workflowUid,
-    workflowNamespace: parsed.workflowNamespace,
-    stage: parsed.stage,
+    workflowUid: resolvedWorkflowUid,
+    workflowNamespace: resolvedWorkflowNamespace,
+    stage: resolvedStage,
+    turnId: resolvedTurnId,
+    threadId: resolvedThreadId,
     status: 'run_complete',
     phase: parsed.phase,
-    prompt: parsed.prompt,
+    prompt: resolvedPrompt,
     runCompletePayload: {
       ...parsed.runCompletePayload,
       issueTitle: parsed.issueTitle,
       issueBody: parsed.issueBody,
       issueUrl: parsed.issueUrl,
-      base: parsed.base,
-      head: parsed.head,
+      base: resolvedBase,
+      head: resolvedBranch,
+      repository: resolvedRepository,
+      issueNumber: resolvedIssueNumber,
+      turnId: resolvedTurnId,
+      threadId: resolvedThreadId,
     },
     startedAt: parsed.startedAt,
     finishedAt: parsed.finishedAt,
