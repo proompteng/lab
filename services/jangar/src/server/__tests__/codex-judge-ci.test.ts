@@ -2,8 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
-import { storePrivate } from './codex-judge-store-private'
-
 const getRefSha = vi.fn()
 const getCheckRuns = vi.fn()
 
@@ -27,6 +25,8 @@ const globalState = globalThis as typeof globalThis & {
     codexReviewers: string[]
     ciPollIntervalMs: number
     reviewPollIntervalMs: number
+    ciMaxWaitMs: number
+    reviewMaxWaitMs: number
     maxAttempts: number
     backoffScheduleMs: number[]
     facteurBaseUrl: string
@@ -42,6 +42,13 @@ const globalState = globalThis as typeof globalThis & {
     promptTuningCooldownHours: number
   }
   __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
+}
+
+const requireMock = <T>(value: T | undefined, name: string): T => {
+  if (!value) {
+    throw new Error(`Missing ${name} mock`)
+  }
+  return value
 }
 
 if (!globalState.__codexJudgeStoreMock) {
@@ -90,6 +97,8 @@ if (!globalState.__codexJudgeConfigMock) {
     codexReviewers: [],
     ciPollIntervalMs: 1000,
     reviewPollIntervalMs: 1000,
+    ciMaxWaitMs: 10_000,
+    reviewMaxWaitMs: 10_000,
     maxAttempts: 3,
     backoffScheduleMs: [1000],
     facteurBaseUrl: 'http://facteur',
@@ -113,55 +122,14 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
   }
 }
 
-const getStoreMock = () => {
-  if (!globalState.__codexJudgeStoreMock) {
-    throw new Error('codex judge store mock not initialized')
-  }
-  return globalState.__codexJudgeStoreMock
-}
-
-const getGithubMock = () => {
-  if (!globalState.__codexJudgeGithubMock) {
-    throw new Error('codex judge github mock not initialized')
-  }
-  return globalState.__codexJudgeGithubMock
-}
-
-const getConfigMock = () => {
-  if (!globalState.__codexJudgeConfigMock) {
-    throw new Error('codex judge config mock not initialized')
-  }
-  return globalState.__codexJudgeConfigMock
-}
-
-const getMemoryStoreMock = () => {
-  if (!globalState.__codexJudgeMemoryStoreMock) {
-    throw new Error('codex judge memory store mock not initialized')
-  }
-  return globalState.__codexJudgeMemoryStoreMock
-}
-
-vi.mock('../codex-judge-config', () => ({
-  loadCodexJudgeConfig: () => getConfigMock(),
-}))
-
-vi.mock('../codex-judge-store', () => ({
-  __private: storePrivate,
-  createCodexJudgeStore: () => getStoreMock(),
-}))
-
-vi.mock('../github-client', () => ({
-  createGitHubClient: () => getGithubMock(),
-}))
-
-vi.mock('../memories-store', () => ({
-  createPostgresMemoriesStore: () => getMemoryStoreMock(),
-}))
-
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
-const getPrivate = () => {
+
+const requirePrivate = async () => {
   if (!__private) {
-    throw new Error('codex judge private api not initialized')
+    __private = (await import('../codex-judge')).__private
+  }
+  if (!__private) {
+    throw new Error('Missing codex judge private API')
   }
   return __private
 }
@@ -183,6 +151,8 @@ const config = {
   codexReviewers: [],
   ciPollIntervalMs: 1000,
   reviewPollIntervalMs: 1000,
+  ciMaxWaitMs: 10_000,
+  reviewMaxWaitMs: 10_000,
   maxAttempts: 3,
   backoffScheduleMs: [1000],
   facteurBaseUrl: 'http://facteur',
@@ -234,11 +204,11 @@ describe('codex-judge CI fallback', () => {
   beforeEach(async () => {
     getRefSha.mockReset()
     getCheckRuns.mockReset()
-    Object.assign(getGithubMock(), github)
-    Object.assign(getConfigMock(), config)
-    if (!__private) {
-      __private = (await import('../codex-judge')).__private
-    }
+    const githubMock = requireMock(globalState.__codexJudgeGithubMock, 'github')
+    const configMock = requireMock(globalState.__codexJudgeConfigMock, 'config')
+    Object.assign(githubMock, github)
+    Object.assign(configMock, config)
+    await requirePrivate()
   })
 
   it('uses branch head SHA when PR is missing', async () => {
@@ -246,7 +216,8 @@ describe('codex-judge CI fallback', () => {
     getCheckRuns.mockResolvedValueOnce({ status: 'pending' })
 
     const run = buildRun()
-    const result = await getPrivate().resolveCiContext(run, null)
+    const privateApi = await requirePrivate()
+    const result = await privateApi.resolveCiContext(run, null)
 
     expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', 'branchsha1234567890')
@@ -272,7 +243,8 @@ describe('codex-judge CI fallback', () => {
       },
     })
 
-    const result = await getPrivate().resolveCiContext(run, null)
+    const privateApi = await requirePrivate()
+    const result = await privateApi.resolveCiContext(run, null)
 
     expect(getRefSha).not.toHaveBeenCalled()
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', manifestSha)
@@ -292,7 +264,8 @@ describe('codex-judge CI fallback', () => {
       },
     })
 
-    const result = await getPrivate().resolveCiContext(run, null)
+    const privateApi = await requirePrivate()
+    const result = await privateApi.resolveCiContext(run, null)
 
     expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', branchSha)
@@ -306,7 +279,8 @@ describe('codex-judge CI fallback', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     const run = buildRun()
-    const result = await getPrivate().resolveCiContext(run, null)
+    const privateApi = await requirePrivate()
+    const result = await privateApi.resolveCiContext(run, null)
 
     expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
     expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', branchSha)
