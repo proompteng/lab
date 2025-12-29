@@ -364,6 +364,7 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     if (typeof data.metadata === 'string') return safeParseJson(data.metadata)
     return decodedPayload.metadata ?? {}
   })()
+  const metadataRecord = isRecord(rawMetadata) ? rawMetadata : {}
   const rawStatus = (() => {
     if (isRecord(data.status)) return data.status
     if (typeof data.status === 'string') return safeParseJson(data.status)
@@ -386,16 +387,20 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
   const rawEventRaw = getParamValue(params, 'rawEvent')
   const rawEvent = rawEventRaw ? decodeBase64Json(rawEventRaw) : {}
 
-  const labels = readMetadataMap(rawMetadata.labels)
-  const annotations = readMetadataMap(rawMetadata.annotations)
+  const labels = readMetadataMap(metadataRecord.labels)
+  const annotations = readMetadataMap(metadataRecord.annotations)
 
-  const metadataRepository = normalizeRepo(getMetadataValue(rawMetadata, labels, annotations, REPO_METADATA_KEYS))
-  const metadataIssueNumber = normalizeNumber(getMetadataValue(rawMetadata, labels, annotations, ISSUE_METADATA_KEYS))
-  const metadataHead = normalizeRepo(getMetadataValue(rawMetadata, labels, annotations, HEAD_METADATA_KEYS))
-  const metadataBase = normalizeRepo(getMetadataValue(rawMetadata, labels, annotations, BASE_METADATA_KEYS))
-  const metadataTurnId = normalizeOptionalString(getMetadataValue(rawMetadata, labels, annotations, TURN_METADATA_KEYS))
+  const metadataRepository = normalizeRepo(getMetadataValue(metadataRecord, labels, annotations, REPO_METADATA_KEYS))
+  const metadataIssueNumber = normalizeNumber(
+    getMetadataValue(metadataRecord, labels, annotations, ISSUE_METADATA_KEYS),
+  )
+  const metadataHead = normalizeRepo(getMetadataValue(metadataRecord, labels, annotations, HEAD_METADATA_KEYS))
+  const metadataBase = normalizeRepo(getMetadataValue(metadataRecord, labels, annotations, BASE_METADATA_KEYS))
+  const metadataTurnId = normalizeOptionalString(
+    getMetadataValue(metadataRecord, labels, annotations, TURN_METADATA_KEYS),
+  )
   const metadataThreadId = normalizeOptionalString(
-    getMetadataValue(rawMetadata, labels, annotations, THREAD_METADATA_KEYS),
+    getMetadataValue(metadataRecord, labels, annotations, THREAD_METADATA_KEYS),
   )
 
   const repository =
@@ -456,9 +461,9 @@ const parseRunCompletePayload = (payload: Record<string, unknown>) => {
     issueUrl,
     turnId,
     threadId,
-    workflowName: String(rawMetadata.name ?? ''),
-    workflowUid: typeof rawMetadata.uid === 'string' ? rawMetadata.uid : null,
-    workflowNamespace: typeof rawMetadata.namespace === 'string' ? rawMetadata.namespace : null,
+    workflowName: String(metadataRecord.name ?? ''),
+    workflowUid: typeof metadataRecord.uid === 'string' ? metadataRecord.uid : null,
+    workflowNamespace: typeof metadataRecord.namespace === 'string' ? metadataRecord.namespace : null,
     stage: typeof decodedPayload.stage === 'string' ? decodedPayload.stage : null,
     phase: typeof rawStatus.phase === 'string' ? rawStatus.phase : null,
     startedAt: typeof rawStatus.startedAt === 'string' ? rawStatus.startedAt : null,
