@@ -52,7 +52,7 @@ describe('buildCodexPrompt', () => {
       issueUrl: 'https://github.com/proompteng/lab/issues/77',
     })
 
-    expect(prompt).toContain('Implement this issue end to end and open a merge-ready PR.')
+    expect(prompt).toContain('Implement this issue end to end and open a ready-to-merge PR.')
     expect(prompt).toContain('Head branch: codex/issue-77-abc123')
     expect(prompt).toContain('Requirements:')
     expect(prompt).toContain(`Keep the progress comment anchored by ${PROGRESS_COMMENT_MARKER} current`)
