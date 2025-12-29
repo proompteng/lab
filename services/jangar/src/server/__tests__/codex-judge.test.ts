@@ -2,7 +2,7 @@ import type { CodexAppServerClient } from '@proompteng/codex'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resetCodexClient, setCodexClientFactory } from '~/server/codex-client'
-import { GitHubRateLimitError } from '~/server/github-client'
+import { GitHubRateLimitError, type ReviewSummary } from '~/server/github-client'
 import type { CodexEvaluationRecord, CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
 
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
@@ -319,6 +319,14 @@ const harness = (() => {
     })),
   }
 
+  const defaultReviewSummary: ReviewSummary = {
+    status: 'approved',
+    unresolvedThreads: [],
+    requestedChanges: false,
+    reviewComments: [],
+    issueComments: [],
+  }
+
   const github = {
     getPullRequestByHead: vi.fn(async () => ({
       number: 101,
@@ -345,12 +353,7 @@ const harness = (() => {
       mergeableState: 'clean',
     })),
     getCheckRuns: vi.fn(async () => ({ status: 'success' as const, url: 'https://ci.example.com' })),
-    getReviewSummary: vi.fn(async () => ({
-      status: 'approved' as const,
-      unresolvedThreads: [],
-      requestedChanges: false,
-      issueComments: [],
-    })),
+    getReviewSummary: vi.fn<() => Promise<ReviewSummary>>(async () => defaultReviewSummary),
     getPullRequestDiff: vi.fn(async () => 'diff --git a/file b/file'),
     getRefSha: vi.fn(async () => 'sha-1'),
     getFile: vi.fn(async (_owner: string, _repo: string, _path: string) => ({ content: '', sha: 'file-sha' })),
@@ -614,6 +617,172 @@ describe('codex judge CI gating', () => {
   })
 })
 
+describe('codex judge review gate', () => {
+  const defaultClaimRerunSubmission = harness.store.claimRerunSubmission.getMockImplementation()
+
+  beforeEach(() => {
+    harness.github.getPullRequestByHead.mockResolvedValue({
+      number: 101,
+      url: 'https://api.github.com/repos/proompteng/lab/pulls/101',
+      htmlUrl: 'https://github.com/proompteng/lab/pull/101',
+      headSha: 'sha-1',
+      headRef: 'codex/issue-2125',
+      baseRef: 'main',
+      state: 'open',
+      title: 'PR title',
+      body: null,
+      mergeableState: 'clean',
+    })
+    harness.github.getPullRequest.mockResolvedValue({
+      number: 101,
+      url: 'https://api.github.com/repos/proompteng/lab/pulls/101',
+      htmlUrl: 'https://github.com/proompteng/lab/pull/101',
+      headSha: 'sha-1',
+      headRef: 'codex/issue-2125',
+      baseRef: 'main',
+      state: 'open',
+      title: 'PR title',
+      body: null,
+      mergeableState: 'clean',
+    })
+    harness.github.getPullRequestDiff.mockResolvedValue('diff --git a/file b/file')
+    harness.github.getCheckRuns.mockResolvedValue({ status: 'success', url: 'https://ci.example.com' })
+    harness.store.claimRerunSubmission.mockResolvedValue({
+      submission: {
+        id: 'rerun-review-gate',
+        parentRunId: 'run-1',
+        attempt: 2,
+        deliveryId: 'jangar-run-1-attempt-2',
+        status: 'queued',
+        submissionAttempt: 0,
+        responseStatus: null,
+        error: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        submittedAt: null,
+      },
+      shouldSubmit: false,
+    })
+  })
+
+  afterEach(() => {
+    if (defaultClaimRerunSubmission) {
+      harness.store.claimRerunSubmission.mockImplementation(defaultClaimRerunSubmission)
+    }
+  })
+
+  it('waits for review completion when bypass is disabled', async () => {
+    harness.github.getReviewSummary.mockResolvedValue({
+      status: 'pending',
+      unresolvedThreads: [],
+      requestedChanges: false,
+      reviewComments: [],
+      issueComments: [],
+    })
+
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
+
+    expect(harness.codexClient.runTurn).not.toHaveBeenCalled()
+    expect(harness.store.updateDecision).not.toHaveBeenCalled()
+  })
+
+  it('reruns with thread summaries when unresolved threads exist', async () => {
+    const commentBody = 'Please add a regression test for the null guard.'
+    harness.github.getReviewSummary.mockResolvedValue({
+      status: 'commented',
+      unresolvedThreads: [
+        {
+          id: 'thread-1',
+          author: 'codex',
+          comments: [
+            {
+              author: 'codex',
+              body: commentBody,
+              path: 'services/jangar/src/server/codex-judge.ts',
+              line: 120,
+            },
+          ],
+        },
+      ],
+      requestedChanges: false,
+      reviewComments: [],
+      issueComments: [],
+    })
+
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
+
+    const decisionInput = harness.store.updateDecision.mock.calls
+      .map((call) => call[0])
+      .find((call) => call?.decision === 'needs_iteration')
+    expect(decisionInput).toEqual(expect.objectContaining({ decision: 'needs_iteration' }))
+    expect(decisionInput?.nextPrompt).toContain(commentBody)
+    expect(decisionInput?.nextPrompt).toContain('Open Codex review threads:')
+  })
+
+  it('includes review summary comments when changes are requested', async () => {
+    const reviewBody = 'Add a unit test for the review gating timeout.'
+    harness.github.getReviewSummary.mockResolvedValue({
+      status: 'changes_requested',
+      unresolvedThreads: [],
+      requestedChanges: true,
+      reviewComments: [
+        {
+          author: 'codex',
+          body: reviewBody,
+          state: 'changes_requested',
+          submittedAt: '2025-12-28T00:00:00Z',
+          url: 'https://github.com/proompteng/lab/pull/101#review',
+        },
+      ],
+      issueComments: [],
+    })
+
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
+
+    const decisionInput = harness.store.updateDecision.mock.calls
+      .map((call) => call[0])
+      .find((call) => call?.decision === 'needs_iteration')
+    expect(decisionInput?.nextPrompt).toContain(reviewBody)
+    expect(decisionInput?.nextPrompt).toContain('Codex review summary comments:')
+  })
+
+  it('bypasses review only when explicitly configured', async () => {
+    harness.config.reviewBypassMode = 'always'
+    try {
+      harness.github.getReviewSummary.mockResolvedValue({
+        status: 'pending',
+        unresolvedThreads: [],
+        requestedChanges: false,
+        reviewComments: [],
+        issueComments: [],
+      })
+      harness.setJudgeResponses([
+        JSON.stringify({
+          decision: 'pass',
+          confidence: 0.9,
+          requirements_coverage: [],
+          missing_items: [],
+          suggested_fixes: [],
+          next_prompt: null,
+          prompt_tuning_suggestions: [],
+          system_improvement_suggestions: [],
+        }),
+      ])
+
+      const privateApi = await requirePrivate()
+      await privateApi.evaluateRun('run-1')
+
+      expect(harness.codexClient.runTurn).toHaveBeenCalled()
+      expect(harness.store.updateDecision).toHaveBeenCalledWith(expect.objectContaining({ decision: 'pass' }))
+    } finally {
+      harness.config.reviewBypassMode = 'strict'
+    }
+  })
+})
+
 describe('prompt tuning PR gating', () => {
   beforeEach(() => {
     harness.github.getPullRequestByHead.mockResolvedValue({
@@ -646,6 +815,7 @@ describe('prompt tuning PR gating', () => {
       status: 'approved',
       unresolvedThreads: [],
       requestedChanges: false,
+      reviewComments: [],
       issueComments: [],
     })
   })

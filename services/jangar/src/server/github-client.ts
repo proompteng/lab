@@ -46,10 +46,19 @@ export type ReviewThreadComment = {
   line: number | null
 }
 
+export type ReviewSummaryComment = {
+  author: string | null
+  body: string | null
+  state: string | null
+  submittedAt: string | null
+  url: string | null
+}
+
 export type ReviewSummary = {
   status: 'pending' | 'approved' | 'changes_requested' | 'commented'
   unresolvedThreads: Array<{ id: string; author: string | null; comments: ReviewThreadComment[] }>
   requestedChanges: boolean
+  reviewComments: ReviewSummaryComment[]
   issueComments: Array<{ author: string | null; body: string | null; createdAt: string | null; url: string | null }>
 }
 
@@ -371,7 +380,7 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
       repository(owner: $owner, name: $repo) {
         pullRequest(number: $number) {
           reviews(first: 50, after: $cursor) {
-            nodes { author { login } state submittedAt body }
+            nodes { author { login } state submittedAt body url }
             pageInfo { hasNextPage endCursor }
           }
         }
@@ -483,22 +492,43 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
 
     let requestedChanges = false
     let status: ReviewSummary['status'] = 'pending'
-    for (const review of reviews) {
-      const author = (review as Record<string, unknown>).author as Record<string, unknown> | null
-      const login = normalizeLogin(author?.login ?? null)
-      if (!includeAll && login && !reviewerSet.has(login)) {
-        continue
-      }
-      const state = String((review as Record<string, unknown>).state ?? '').toUpperCase()
-      if (state === 'CHANGES_REQUESTED') {
-        requestedChanges = true
-        status = 'changes_requested'
-      } else if (state === 'APPROVED' && status !== 'changes_requested') {
-        status = 'approved'
-      } else if (state === 'COMMENTED' && status === 'pending') {
-        status = 'commented'
-      }
-    }
+    const reviewComments = reviews
+      .map((review) => {
+        const reviewRecord = review as Record<string, unknown>
+        const author = reviewRecord.author as Record<string, unknown> | null
+        const login = normalizeLogin(author?.login ?? null)
+        if (!includeAll && login && !reviewerSet.has(login)) {
+          return null
+        }
+        const rawState = String(reviewRecord.state ?? '').toUpperCase()
+        const body = typeof reviewRecord.body === 'string' ? reviewRecord.body : null
+        const submittedAt = typeof reviewRecord.submittedAt === 'string' ? reviewRecord.submittedAt : null
+        const url = typeof reviewRecord.url === 'string' ? reviewRecord.url : null
+
+        if (rawState === 'CHANGES_REQUESTED') {
+          requestedChanges = true
+          status = 'changes_requested'
+        } else if (rawState === 'APPROVED' && status !== 'changes_requested') {
+          status = 'approved'
+        } else if (rawState === 'COMMENTED' && status === 'pending') {
+          status = 'commented'
+        }
+
+        const shouldIncludeBody = body && body.trim().length > 0
+        const shouldIncludeState = rawState === 'CHANGES_REQUESTED' || rawState === 'COMMENTED'
+        if (!shouldIncludeBody && !shouldIncludeState) {
+          return null
+        }
+
+        return {
+          author: login,
+          body,
+          state: rawState ? rawState.toLowerCase() : null,
+          submittedAt,
+          url,
+        }
+      })
+      .filter((comment): comment is ReviewSummaryComment => comment !== null)
 
     const rawComments: Array<Record<string, unknown>> = []
     for (let page = 1; page <= 10; page += 1) {
@@ -563,17 +593,13 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
       status = 'changes_requested'
     } else if (unresolvedThreads.length > 0) {
       status = 'commented'
-    } else if (status === 'pending' && reviews.length === 0 && issueComments.length > 0) {
+    } else if (reviews.length === 0 && issueComments.length > 0) {
       status = 'commented'
-    } else if (status === 'commented') {
-      status = 'commented'
-    } else if (status === 'approved') {
-      status = 'approved'
     } else if (reviews.length === 0) {
       status = 'pending'
     }
 
-    return { status, unresolvedThreads, requestedChanges, issueComments }
+    return { status, unresolvedThreads, requestedChanges, reviewComments, issueComments }
   }
 
   const getRefSha = async (owner: string, repo: string, ref: string) => {

@@ -276,6 +276,7 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
 - Gate on:
   - Latest Codex review state is `APPROVED` or `COMMENTED` with all threads resolved.
   - No open review threads authored by Codex.
+- Review bypass is disabled by default; opt in with `JANGAR_CODEX_REVIEW_POLICY=timeout|always` and log usage.
 - If Codex review requested changes or has unresolved threads, treat as `needs_iteration` and build
   `next_prompt` that enumerates each review comment with the required fix.
 - If no formal Codex reviews exist but Codex posted PR issue comments, treat the latest Codex comment

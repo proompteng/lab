@@ -40,6 +40,12 @@ storeReady.catch((error) => {
   console.error('Codex judge store failed to initialize', error)
 })
 const config = globalOverrides.__codexJudgeConfigMock ?? loadCodexJudgeConfig()
+if (config.reviewBypassMode !== 'strict') {
+  console.warn('Codex review bypass policy enabled', {
+    mode: config.reviewBypassMode,
+    env: 'JANGAR_CODEX_REVIEW_POLICY',
+  })
+}
 const github =
   globalOverrides.__codexJudgeGithubMock ??
   createGitHubClient({ token: config.githubToken, apiBaseUrl: config.githubApiBaseUrl })
@@ -1017,16 +1023,32 @@ const formatIssueComments = (comments: ReviewSummary['issueComments']) => {
     .join('\n\n')
 }
 
+const formatReviewComments = (comments: ReviewSummary['reviewComments']) => {
+  if (comments.length === 0) return 'None.'
+  return comments
+    .map((comment, index) => {
+      const author = comment.author ?? 'unknown'
+      const state = comment.state ? comment.state.replace(/_/g, ' ') : null
+      const body = comment.body ? normalizeReviewBody(comment.body) : 'no review body provided'
+      const truncated = body.length > 240 ? `${body.slice(0, 237)}...` : body
+      const details = [`author: ${author}`, state ? `state: ${state}` : null].filter(Boolean).join(', ')
+      return `Review ${index + 1} (${details})\n- Required fix: ${truncated}`
+    })
+    .join('\n\n')
+}
+
 const buildReviewNextPrompt = (review: ReviewSummary) => {
   const threadSummary = formatReviewThreads(review.unresolvedThreads)
+  const reviewCommentSummary = formatReviewComments(review.reviewComments)
   const issueSummary = formatIssueComments(review.issueComments)
   const lines = [
     'Address every Codex review comment. Each item below is required before completion.',
     'Make the requested code changes, update the PR description if needed, and reply on each thread with what changed.',
-    '',
-    'Open Codex review threads:',
-    threadSummary,
   ]
+  if (review.reviewComments.length > 0) {
+    lines.push('', 'Codex review summary comments:', reviewCommentSummary)
+  }
+  lines.push('', 'Open Codex review threads:', threadSummary)
   if (review.issueComments.length > 0) {
     lines.push(
       '',
@@ -1468,6 +1490,7 @@ const evaluateRun = async (runId: string) => {
     const reviewSummary = {
       unresolvedThreads: review.unresolvedThreads,
       requestedChanges: review.requestedChanges,
+      reviewComments: review.reviewComments,
       issueComments: review.issueComments,
     }
     const reviewRun =
@@ -1477,6 +1500,25 @@ const evaluateRun = async (runId: string) => {
         summary: reviewSummary,
       })) ?? run
 
+    if (review.requestedChanges || review.unresolvedThreads.length > 0) {
+      const evaluation = await store.updateDecision({
+        runId: run.id,
+        decision: 'needs_iteration',
+        reasons: {
+          error: review.requestedChanges ? 'codex_review_changes_requested' : 'codex_review_unresolved_threads',
+          unresolved: review.unresolvedThreads,
+        },
+        suggestedFixes: { fix: 'Address Codex review comments and resolve all threads.' },
+        nextPrompt: buildReviewNextPrompt(review),
+        promptTuning: {},
+        systemSuggestions: {},
+      })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+      await triggerRerun(run, 'codex_review_changes', evaluation)
+      return
+    }
+
     const shouldBypassReview =
       review.status === 'pending' &&
       (config.reviewBypassMode === 'always' ||
@@ -1484,6 +1526,13 @@ const evaluateRun = async (runId: string) => {
           hasWaitTimedOut(reviewRun.reviewStatusUpdatedAt, config.reviewMaxWaitMs)))
 
     if (shouldBypassReview && reviewRun.reviewStatus !== 'bypassed') {
+      console.warn('Bypassing Codex review gate', {
+        runId: run.id,
+        prNumber: pr.number,
+        mode: config.reviewBypassMode,
+        pendingSince: reviewRun.reviewStatusUpdatedAt,
+        maxWaitMs: config.reviewMaxWaitMs,
+      })
       await store.updateReviewStatus({
         runId: run.id,
         status: 'bypassed',
@@ -1523,25 +1572,6 @@ const evaluateRun = async (runId: string) => {
         prNumber: pr.number,
         repository: run.repository,
       })
-      return
-    }
-
-    if (review.requestedChanges || review.unresolvedThreads.length > 0) {
-      const evaluation = await store.updateDecision({
-        runId: run.id,
-        decision: 'needs_iteration',
-        reasons: {
-          error: review.requestedChanges ? 'codex_review_changes_requested' : 'codex_review_unresolved_threads',
-          unresolved: review.unresolvedThreads,
-        },
-        suggestedFixes: { fix: 'Address Codex review comments and resolve all threads.' },
-        nextPrompt: buildReviewNextPrompt(review),
-        promptTuning: {},
-        systemSuggestions: {},
-      })
-      const refreshedRun = (await store.getRunById(run.id)) ?? run
-      await writeMemories(refreshedRun, evaluation)
-      await triggerRerun(run, 'codex_review_changes', evaluation)
       return
     }
 
