@@ -286,4 +286,4 @@ stateDiagram-v2
 ## Default Policy Decisions
 - Prompt template location: `apps/froussard/src/codex.ts` (`buildImplementationPrompt`).
 - Max attempts: 3 (configurable); backoff: exponential (5m, 15m, 45m) with max cap 60m.
-- CI integration: polling GitHub checks/check-runs by commit SHA (webhook optional).
+- CI integration: GitHub checks/check-runs delivered via Froussard webhooks (no polling in Jangar).

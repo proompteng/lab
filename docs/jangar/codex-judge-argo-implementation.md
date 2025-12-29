@@ -231,8 +231,7 @@ Use the existing Postgres wiring in `services/jangar/src/server/db.ts` (jangar-d
 Provide CI status for the attempt commit SHA (prefer PR head SHA).
 
 ### Options
-- Webhook receiver in Jangar, or
-- Polling GitHub API for workflow runs by commit SHA.
+- Webhook receiver in Froussard (GitHub app), which forwards status updates to Jangar.
 
 ### Expected fields
 - ci_status: pending | success | failure
@@ -248,16 +247,16 @@ Provide CI status for the attempt commit SHA (prefer PR head SHA).
 - Jangar already has `GITHUB_TOKEN` in `argocd/applications/jangar/deployment.yaml`; use it to
   query check-runs or workflow runs by commit SHA.
 - Prefer PR head SHA (from GitHub API) over branch head to avoid stale results.
+- Jangar does not poll. CI status updates are delivered by Froussard and re-trigger judge evaluation.
 
 ### Deliverables
-- CI status updater (webhook or polling).
+- CI status updater (Froussard webhook fan-out).
 - Mapping of CI status to run records.
 
 ### Detailed tasks
-- Decide integration mode (webhook preferred if available).
-- Implement GitHub API client with rate limiting.
+- Confirm Froussard webhook delivery for check runs/suites.
 - Map commit SHA -> workflow run -> conclusion.
-- Store CI status in run record; trigger judge once final.
+- Store CI status in run record; re-trigger judge once final.
 
 ### Acceptance criteria
 - Judge runs only after CI conclusion is success or failure.
@@ -283,7 +282,7 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
   as a `commented` review state and continue.
 
 ### Deliverables
-- PR review poller keyed by PR number + commit SHA.
+- PR review gate keyed by PR number + commit SHA.
 - Configuration for Codex reviewer identities.
 
 ### Detailed tasks
@@ -292,6 +291,7 @@ Ensure the Codex review is complete and all Codex review threads are resolved be
 - Map review threads to unresolved items; store in run record.
 - Build a `next_prompt` that lists each unresolved comment (path/line/body) when reruns are required.
 - Block judge completion until resolved; if unresolved after timeout, classify as needs_iteration.
+ - Re-trigger judge on review updates via Froussard webhook delivery.
 
 ### Acceptance criteria
 - Jangar does not mark success until Codex review is complete and threads are resolved.

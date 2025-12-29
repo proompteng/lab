@@ -14,13 +14,8 @@ import {
 import { extractImplementationManifestFromArchive, extractTextFromArchive } from '~/server/codex-judge-artifacts'
 import { loadCodexJudgeConfig } from '~/server/codex-judge-config'
 import { evaluateDeterministicGates } from '~/server/codex-judge-gates'
-import {
-  type CodexEvaluationRecord,
-  type CodexPendingRun,
-  type CodexRunRecord,
-  createCodexJudgeStore,
-} from '~/server/codex-judge-store'
-import { createGitHubClient, type PullRequest, type ReviewSummary } from '~/server/github-client'
+import { type CodexEvaluationRecord, type CodexRunRecord, createCodexJudgeStore } from '~/server/codex-judge-store'
+import { createGitHubClient, GitHubRateLimitError, type PullRequest, type ReviewSummary } from '~/server/github-client'
 import { createPostgresMemoriesStore } from '~/server/memories-store'
 
 type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
@@ -53,17 +48,9 @@ const getMemoryStoreFactory = () => globalOverrides.__codexJudgeMemoryStoreFacto
 
 const scheduledRuns = new Map<string, NodeJS.Timeout>()
 const activeEvaluations = new Set<string>()
-let reconcileTimer: NodeJS.Timeout | null = null
-let reconcileInFlight = false
 const terminalStatuses = new Set(['completed', 'needs_human', 'needs_iteration'])
 const isTerminalStatus = (status: string | null | undefined) => (status ? terminalStatuses.has(status) : false)
 const MAX_JUDGE_JSON_RETRIES = 2
-const RECONCILE_STARTUP_DELAY_MS = 5_000
-const RECONCILE_INTERVAL_MS = 60_000
-const RECONCILE_BASE_DELAY_MS = 1_000
-const RECONCILE_JITTER_MS = 15_000
-const PENDING_EVALUATION_STATUSES = ['run_complete', 'judging'] as const
-const RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
 const RERUN_SUBMISSION_BACKOFF_MS = [2_000, 7_000, 15_000]
 const JSON_ONLY_REMINDER = [
   'IMPORTANT: Return a single JSON object only.',
@@ -90,6 +77,12 @@ const decodeBase64Json = (value: string) => {
   } catch {
     return {}
   }
+}
+
+const isGitHubRateLimitError = (error: unknown): error is GitHubRateLimitError => {
+  if (error instanceof GitHubRateLimitError) return true
+  if (!error || typeof error !== 'object') return false
+  return 'retryAt' in error && 'status' in error
 }
 
 const getParamValue = (params: ReadonlyArray<{ name?: string; value?: string }>, name: string) => {
@@ -430,48 +423,6 @@ const scheduleEvaluation = (runId: string, delayMs: number, options: { reschedul
   }, delayMs)
   scheduledRuns.set(runId, timeout)
 }
-
-const buildReconcileDelay = () => RECONCILE_BASE_DELAY_MS + Math.floor(Math.random() * RECONCILE_JITTER_MS)
-
-const shouldScheduleReconcile = (run: CodexPendingRun) =>
-  !scheduledRuns.has(run.id) && !activeEvaluations.has(run.id) && !isTerminalStatus(run.status)
-
-const reconcilePendingRuns = async () => {
-  if (reconcileInFlight) return
-  await ensureStoreReady()
-  reconcileInFlight = true
-  try {
-    const pending = await store.listRunsByStatus([...PENDING_EVALUATION_STATUSES])
-    for (const run of pending) {
-      if (!shouldScheduleReconcile(run)) continue
-      scheduleEvaluation(run.id, buildReconcileDelay())
-    }
-  } catch (error) {
-    console.warn('Failed to reconcile Codex judge runs', error)
-  } finally {
-    reconcileInFlight = false
-  }
-}
-
-const scheduleReconcileLoop = (delayMs: number) => {
-  reconcileTimer = setTimeout(() => {
-    void (async () => {
-      try {
-        await reconcilePendingRuns()
-      } finally {
-        scheduleReconcileLoop(RECONCILE_INTERVAL_MS)
-      }
-    })()
-  }, delayMs)
-  reconcileTimer.unref?.()
-}
-
-const startReconcileLoop = () => {
-  if (RECONCILE_DISABLED || reconcileTimer) return
-  scheduleReconcileLoop(RECONCILE_STARTUP_DELAY_MS)
-}
-
-startReconcileLoop()
 
 const DEFAULT_ARTIFACT_BUCKET = 'argo-workflows'
 const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
@@ -1376,7 +1327,11 @@ const evaluateRun = async (runId: string) => {
         await triggerRerun(run, 'ci_timeout', evaluation)
         return
       }
-      scheduleEvaluation(run.id, config.ciPollIntervalMs, { reschedule: true })
+      console.info('CI pending; awaiting external trigger to resume judging', {
+        runId: run.id,
+        commitSha,
+        repository: run.repository,
+      })
       return
     }
 
@@ -1488,7 +1443,11 @@ const evaluateRun = async (runId: string) => {
         await triggerRerun(run, 'review_timeout', evaluation)
         return
       }
-      scheduleEvaluation(run.id, config.reviewPollIntervalMs, { reschedule: true })
+      console.info('Review pending; awaiting external trigger to resume judging', {
+        runId: run.id,
+        prNumber: pr.number,
+        repository: run.repository,
+      })
       return
     }
 
@@ -1513,7 +1472,11 @@ const evaluateRun = async (runId: string) => {
 
     const mergeableOutcome = getMergeableOutcome(pr.mergeableState)
     if (mergeableOutcome.action === 'wait') {
-      scheduleEvaluation(run.id, mergeableOutcome.delayMs, { reschedule: true })
+      console.info('Mergeability pending; awaiting external trigger to resume judging', {
+        runId: run.id,
+        prNumber: pr.number,
+        repository: run.repository,
+      })
       return
     }
 
@@ -1608,6 +1571,20 @@ const evaluateRun = async (runId: string) => {
     const refreshedRun = (await store.getRunById(run.id)) ?? run
     await writeMemories(refreshedRun, evaluation)
     await triggerRerun(run, 'judge_failed', evaluation)
+  } catch (error) {
+    if (isGitHubRateLimitError(error)) {
+      const now = Date.now()
+      const retryAt = typeof error.retryAt === 'number' ? error.retryAt : now + 60_000
+      const delayMs = Math.max(retryAt - now, 5_000)
+      console.warn('GitHub rate limit exceeded; delaying Codex judge evaluation', {
+        runId,
+        delayMs,
+        retryAt: new Date(retryAt).toISOString(),
+      })
+      scheduleEvaluation(runId, delayMs, { reschedule: true })
+      return
+    }
+    console.error('Failed to evaluate Codex run', { runId, error })
   } finally {
     activeEvaluations.delete(runId)
   }
