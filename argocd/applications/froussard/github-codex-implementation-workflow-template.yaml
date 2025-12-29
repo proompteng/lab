@@ -122,11 +122,11 @@ spec:
             readOnly: true
         resources:
           requests:
-            cpu: "4"
-            memory: 8Gi
+            cpu: "2"
+            memory: 4Gi
           limits:
-            cpu: "6"
-            memory: 12Gi
+            cpu: "4"
+            memory: 6Gi
       sidecars:
         - name: docker
           image: docker:25.0-dind
