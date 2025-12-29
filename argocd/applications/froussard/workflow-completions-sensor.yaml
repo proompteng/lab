@@ -25,6 +25,9 @@ spec:
     serviceAccountName: workflow-completions-sensor
   triggers:
     - template:
+        name: log-workflow-completion
+        log: {}
+    - template:
         name: publish-workflow-completion
         kafka:
           url: kafka-kafka-bootstrap.kafka:9092
