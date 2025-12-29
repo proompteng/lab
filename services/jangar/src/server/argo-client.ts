@@ -1,9 +1,40 @@
+import { readFileSync } from 'node:fs'
+
 const normalizeBaseUrl = (value: string) => value.replace(/\/+$/, '')
+
+const DEFAULT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value)
 
 const asNonEmptyString = (value: unknown) => (typeof value === 'string' && value.trim().length > 0 ? value : null)
+
+const coalesceString = (...values: Array<string | null | undefined>) => {
+  for (const value of values) {
+    const normalized = asNonEmptyString(value)
+    if (normalized) return normalized
+  }
+  return null
+}
+
+const readTokenFile = (path: string) => {
+  try {
+    const token = readFileSync(path, 'utf8').trim()
+    return token.length > 0 ? token : null
+  } catch {
+    return null
+  }
+}
+
+const resolveArgoAuthToken = () => {
+  const envToken = coalesceString(process.env.ARGO_TOKEN, process.env.ARGO_SERVER_TOKEN)
+  if (envToken) return envToken
+
+  const tokenFile = coalesceString(process.env.ARGO_TOKEN_FILE, process.env.ARGO_SERVER_TOKEN_FILE)
+  if (tokenFile) return readTokenFile(tokenFile)
+
+  return readTokenFile(DEFAULT_TOKEN_PATH)
+}
 
 const extractArtifactLocation = (artifact: Record<string, unknown>) => {
   const s3 = isRecord(artifact.s3) ? artifact.s3 : null
@@ -120,18 +151,27 @@ const requestJson = async (url: string, init: RequestInit) => {
   const response = await fetch(url, init)
   const text = await response.text()
   if (!response.ok) {
-    throw new Error(`Argo API ${response.status}: ${text}`)
+    const error = new Error(`Argo API ${response.status}: ${text}`)
+    ;(error as Error & { status?: number }).status = response.status
+    throw error
   }
   return text ? (JSON.parse(text) as Record<string, unknown>) : null
 }
 
 export const createArgoClient = ({ baseUrl }: { baseUrl: string }) => {
   const normalized = normalizeBaseUrl(baseUrl)
+  const buildHeaders = () => {
+    const authToken = resolveArgoAuthToken()
+    return {
+      accept: 'application/json',
+      ...(authToken ? { authorization: `Bearer ${authToken}` } : {}),
+    }
+  }
 
   const getWorkflow = async (namespace: string, name: string) => {
     return requestJson(`${normalized}/api/v1/workflows/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, {
       method: 'GET',
-      headers: { accept: 'application/json' },
+      headers: buildHeaders(),
     })
   }
 

@@ -71,6 +71,12 @@ const JSON_ONLY_REMINDER = [
   'Do not include markdown, code fences, or extra text.',
 ].join('\n')
 
+const getErrorStatus = (error: unknown) => {
+  if (!error || typeof error !== 'object') return null
+  const status = (error as { status?: unknown }).status
+  return typeof status === 'number' ? status : null
+}
+
 const safeParseJson = (value: string) => {
   try {
     return JSON.parse(value) as Record<string, unknown>
@@ -771,7 +777,15 @@ const updateArtifactsFromWorkflow = async (
         }
       }
     } catch (error) {
-      console.warn('Failed to fetch Argo workflow artifacts', error)
+      const status = getErrorStatus(error)
+      if (status === 401) {
+        console.warn(
+          'Argo API unauthorized while fetching workflow artifacts. Ensure ARGO_TOKEN/ARGO_TOKEN_FILE is set and the Argo server authModes include server.',
+          { workflowName, workflowNamespace },
+        )
+      } else {
+        console.warn('Failed to fetch Argo workflow artifacts', error)
+      }
     }
   }
 

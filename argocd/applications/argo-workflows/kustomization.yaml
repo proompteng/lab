@@ -35,6 +35,7 @@ helmCharts:
         secure: false
         authModes:
           - sso
+          - server
         sso:
           enabled: true
           issuer: https://argocd.proompteng.ai/api/dex
