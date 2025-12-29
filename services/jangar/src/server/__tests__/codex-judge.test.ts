@@ -2,29 +2,25 @@ import type { CodexAppServerClient } from '@proompteng/codex'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resetCodexClient, setCodexClientFactory } from '~/server/codex-client'
-import type { MemoriesStore, MemoryRecord } from '~/server/memories-store'
 import type { CodexEvaluationRecord, CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
-
-import { storePrivate } from './codex-judge-store-private'
 
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
 
-const requireMock = <T>(value: T | null | undefined, label: string): T => {
+const requireMock = <T>(value: T | undefined, name: string): T => {
   if (!value) {
-    throw new Error(`${label} was not initialized`)
+    throw new Error(`Missing ${name} mock`)
   }
   return value
 }
 
-const setMemoryStoreFactory = (factory?: () => MemoriesStore) => {
-  const globalWithOverride = globalThis as typeof globalThis & {
-    __codexJudgeMemoryStoreFactory?: () => MemoriesStore
+const requirePrivate = async () => {
+  if (!__private) {
+    __private = (await import('../codex-judge')).__private
   }
-  if (factory) {
-    globalWithOverride.__codexJudgeMemoryStoreFactory = factory
-  } else {
-    delete globalWithOverride.__codexJudgeMemoryStoreFactory
+  if (!__private) {
+    throw new Error('Missing codex judge private API')
   }
+  return __private
 }
 
 const globalState = globalThis as typeof globalThis & {
@@ -63,7 +59,8 @@ const globalState = globalThis as typeof globalThis & {
     promptTuningWindowHours: number
     promptTuningCooldownHours: number
   }
-  __codexJudgeMemoryStoreMock?: MemoriesStore
+  __codexJudgeMemoryStoreMock?: { persist: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
+  __codexJudgeClientMock?: CodexAppServerClient
 }
 
 if (!globalState.__codexJudgeStoreMock) {
@@ -130,23 +127,13 @@ if (!globalState.__codexJudgeConfigMock) {
 
 if (!globalState.__codexJudgeMemoryStoreMock) {
   globalState.__codexJudgeMemoryStoreMock = {
-    persist: vi.fn(async () => ({
-      id: 'mem-1',
-      namespace: 'default',
-      content: 'n/a',
-      summary: null,
-      tags: [],
-      metadata: {},
-      createdAt: new Date().toISOString(),
-    })),
-    retrieve: vi.fn(async () => []),
-    count: vi.fn(async () => 0),
-    close: vi.fn(async () => {}),
+    persist: vi.fn(),
+    close: vi.fn(),
   }
 }
 
 const harness = (() => {
-  const now = new Date().toISOString()
+  const now = new Date('2025-12-28T00:00:00.000Z').toISOString()
 
   const makeRun = (): CodexRunRecord => ({
     id: 'run-1',
@@ -208,6 +195,7 @@ const harness = (() => {
       return { text }
     }),
     stop: vi.fn(),
+    ensureReady: vi.fn(),
   }
 
   const store = {
@@ -237,7 +225,6 @@ const harness = (() => {
       }
       return run
     }),
-    listRunsByStatus: vi.fn(async () => []),
     updateReviewStatus: vi.fn(async (input: { runId: string; status: string; summary: Record<string, unknown> }) => {
       if (input.runId !== run.id) return null
       run = { ...run, reviewStatus: input.status, reviewSummary: input.summary }
@@ -278,6 +265,8 @@ const harness = (() => {
       },
     ),
     listRunsByIssue: vi.fn(async () => [run]),
+    listRunsByStatus: vi.fn(async () => [run]),
+    getLatestPromptTuningByIssue: vi.fn(async () => null),
     getRunHistory: vi.fn(async () => ({
       runs: [],
       stats: {
@@ -288,7 +277,6 @@ const harness = (() => {
         avgJudgeConfidence: null,
       },
     })),
-    getLatestPromptTuningByIssue: vi.fn(async () => null),
     createPromptTuning: vi.fn(async () => ({
       id: 'prompt-1',
       runId: run.id,
@@ -339,7 +327,7 @@ const harness = (() => {
     createPullRequest: vi.fn(async () => ({ html_url: 'https://github.com/proompteng/lab/pull/101' })),
   }
 
-  const config = requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock')
+  const config = requireMock(globalState.__codexJudgeConfigMock, 'config')
   Object.assign(config, {
     githubToken: null,
     githubApiBaseUrl: 'https://api.github.com',
@@ -364,26 +352,18 @@ const harness = (() => {
   })
 
   const memoriesStore = {
-    persist: vi.fn(async () => {
-      const record: MemoryRecord = {
-        id: 'mem-1',
-        namespace: 'default',
-        content: 'n/a',
-        summary: null,
-        tags: [],
-        metadata: {},
-        createdAt: new Date().toISOString(),
-      }
-      return record
-    }),
-    retrieve: vi.fn(async () => []),
-    count: vi.fn(async () => 0),
+    persist: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
   }
 
-  Object.assign(requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock'), store)
-  Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock'), github)
-  Object.assign(requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memory store mock'), memoriesStore)
+  const storeMock = requireMock(globalState.__codexJudgeStoreMock, 'store')
+  const githubMock = requireMock(globalState.__codexJudgeGithubMock, 'github')
+  const memoryStoreMock = requireMock(globalState.__codexJudgeMemoryStoreMock, 'memory store')
+
+  Object.assign(storeMock, store)
+  Object.assign(githubMock, github)
+  Object.assign(memoryStoreMock, memoriesStore)
+  globalState.__codexJudgeClientMock = codexClient as unknown as CodexAppServerClient
 
   const setJudgeResponses = (responses: string[]) => {
     judgeResponses.splice(0, judgeResponses.length, ...responses)
@@ -402,35 +382,18 @@ const harness = (() => {
   }
 })()
 
-vi.mock('~/server/codex-judge-store', () => ({
-  __private: storePrivate,
-  createCodexJudgeStore: () => requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock'),
-}))
-
-vi.mock('~/server/codex-judge-config', () => ({
-  loadCodexJudgeConfig: () => requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock'),
-}))
-
-vi.mock('~/server/github-client', () => ({
-  createGitHubClient: () => requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock'),
-}))
-
 const ORIGINAL_FETCH = global.fetch
 
 beforeEach(async () => {
   harness.reset()
   vi.clearAllMocks()
-  setCodexClientFactory(() => harness.codexClient as unknown as CodexAppServerClient)
-  setMemoryStoreFactory(() => harness.memoriesStore as MemoriesStore)
-  if (!__private) {
-    __private = (await import('../codex-judge')).__private
-  }
+  setCodexClientFactory(() => globalState.__codexJudgeClientMock as CodexAppServerClient)
+  await requirePrivate()
 })
 
 afterEach(() => {
-  resetCodexClient()
-  setMemoryStoreFactory()
   global.fetch = ORIGINAL_FETCH
+  resetCodexClient()
 })
 
 describe('codex judge guardrails', () => {
@@ -457,7 +420,8 @@ describe('codex judge guardrails', () => {
       }),
     ])
 
-    await requireMock(__private, 'codex judge private').evaluateRun('run-1')
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
 
     expect(harness.codexClient.runTurn).toHaveBeenCalledTimes(2)
     expect(harness.judgePrompts[1]).toContain('JSON object only')
@@ -477,7 +441,8 @@ describe('codex judge guardrails', () => {
 
     harness.setJudgeResponses(['nope', 'still nope', 'no json here'])
 
-    await requireMock(__private, 'codex judge private').evaluateRun('run-1')
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
 
     expect(harness.codexClient.runTurn).toHaveBeenCalledTimes(3)
     expect(harness.store.updateDecision).toHaveBeenCalledWith(
@@ -493,7 +458,8 @@ describe('codex judge guardrails', () => {
   it('does not re-enter judging for completed runs', async () => {
     harness.setRun({ status: 'completed' })
 
-    await requireMock(__private, 'codex judge private').evaluateRun('run-1')
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
 
     expect(harness.store.updateRunStatus).not.toHaveBeenCalled()
     expect(harness.codexClient.runTurn).not.toHaveBeenCalled()
@@ -509,7 +475,8 @@ conflict
 resolved
 >>>>>>> branch`)
 
-    await requireMock(__private, 'codex judge private').evaluateRun('run-1')
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
 
     expect(harness.github.getCheckRuns).not.toHaveBeenCalled()
     expect(harness.github.getReviewSummary).not.toHaveBeenCalled()
@@ -588,7 +555,8 @@ describe('prompt tuning PR gating', () => {
       }),
     ])
 
-    await requireMock(__private, 'codex judge private').evaluateRun('run-1')
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
 
     expect(harness.github.createBranch).not.toHaveBeenCalled()
     expect(harness.github.updateFile).not.toHaveBeenCalled()
@@ -635,7 +603,8 @@ describe('prompt tuning PR gating', () => {
       }),
     ])
 
-    await requireMock(__private, 'codex judge private').evaluateRun('run-1')
+    const privateApi = await requirePrivate()
+    await privateApi.evaluateRun('run-1')
 
     expect(harness.github.createBranch).toHaveBeenCalledTimes(1)
     expect(harness.github.updateFile).toHaveBeenCalled()

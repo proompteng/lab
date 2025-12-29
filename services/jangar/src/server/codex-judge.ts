@@ -15,16 +15,30 @@ import {
   createCodexJudgeStore,
 } from '~/server/codex-judge-store'
 import { createGitHubClient, type PullRequest, type ReviewSummary } from '~/server/github-client'
+type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
 import { createPostgresMemoriesStore } from '~/server/memories-store'
 
-const store = createCodexJudgeStore()
-const config = loadCodexJudgeConfig()
-const github = createGitHubClient({ token: config.githubToken, apiBaseUrl: config.githubApiBaseUrl })
-const argo = config.argoServerUrl ? createArgoClient({ baseUrl: config.argoServerUrl }) : null
 type MemoryStoreFactory = () => ReturnType<typeof createPostgresMemoriesStore>
+
+const globalOverrides = globalThis as typeof globalThis & {
+  __codexJudgeStoreMock?: ReturnType<typeof createCodexJudgeStore>
+  __codexJudgeConfigMock?: ReturnType<typeof loadCodexJudgeConfig>
+  __codexJudgeGithubMock?: ReturnType<typeof createGitHubClient>
+  __codexJudgeMemoryStoreMock?: ReturnType<typeof createPostgresMemoriesStore>
+  __codexJudgeMemoryStoreFactory?: MemoryStoreFactory
+  __codexJudgeArgoMock?: ReturnType<typeof createArgoClient> | null
+}
+
+const store = globalOverrides.__codexJudgeStoreMock ?? createCodexJudgeStore()
+const config = globalOverrides.__codexJudgeConfigMock ?? loadCodexJudgeConfig()
+const github =
+  globalOverrides.__codexJudgeGithubMock ??
+  createGitHubClient({ token: config.githubToken, apiBaseUrl: config.githubApiBaseUrl })
+const argo =
+  globalOverrides.__codexJudgeArgoMock ??
+  (config.argoServerUrl ? createArgoClient({ baseUrl: config.argoServerUrl }) : null)
 const getMemoryStoreFactory = () =>
-  (globalThis as { __codexJudgeMemoryStoreFactory?: MemoryStoreFactory }).__codexJudgeMemoryStoreFactory ??
-  createPostgresMemoriesStore
+  globalOverrides.__codexJudgeMemoryStoreFactory ?? createPostgresMemoriesStore
 
 const scheduledRuns = new Map<string, NodeJS.Timeout>()
 const activeEvaluations = new Set<string>()
@@ -1941,9 +1955,14 @@ const sendDiscordEscalation = async (run: CodexRunRecord, reason: string) => {
 
 const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRecord) => {
   let memoryStore: ReturnType<typeof createPostgresMemoriesStore> | null = null
+  let shouldClose = false
   try {
     const memoryStoreFactory = getMemoryStoreFactory()
-    memoryStore = memoryStoreFactory()
+    memoryStore = globalOverrides.__codexJudgeMemoryStoreMock ?? null
+    if (!memoryStore) {
+      memoryStore = memoryStoreFactory()
+      shouldClose = true
+    }
     const namespace = `codex:${run.repository}:${run.issueNumber}`
     const workflowTag = run.workflowName ? `workflow-${run.workflowName}` : 'workflow-unknown'
     const stageTag = run.stage ? `stage-${run.stage}` : 'stage-unknown'
@@ -1998,7 +2017,7 @@ const writeMemories = async (run: CodexRunRecord, evaluation: CodexEvaluationRec
   } catch (error) {
     console.warn('Failed to persist Codex judge memories', error)
   } finally {
-    if (memoryStore) {
+    if (memoryStore && shouldClose) {
       try {
         await memoryStore.close()
       } catch (error) {

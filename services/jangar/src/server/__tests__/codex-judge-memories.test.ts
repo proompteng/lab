@@ -1,28 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexEvaluationRecord, CodexJudgeStore, CodexRunRecord } from '../codex-judge-store'
-import type { MemoriesStore, PersistMemoryInput } from '../memories-store'
-
-import { storePrivate } from './codex-judge-store-private'
+import type { PersistMemoryInput } from '../memories-store'
 
 const persistCalls: PersistMemoryInput[] = []
 
-const requireMock = <T>(value: T | null | undefined, label: string): T => {
+const requireMock = <T>(value: T | undefined, name: string): T => {
   if (!value) {
-    throw new Error(`${label} was not initialized`)
+    throw new Error(`Missing ${name} mock`)
   }
   return value
-}
-
-const setMemoryStoreFactory = (factory?: () => MemoriesStore) => {
-  const globalWithOverride = globalThis as typeof globalThis & {
-    __codexJudgeMemoryStoreFactory?: () => MemoriesStore
-  }
-  if (factory) {
-    globalWithOverride.__codexJudgeMemoryStoreFactory = factory
-  } else {
-    delete globalWithOverride.__codexJudgeMemoryStoreFactory
-  }
 }
 
 const globalState = globalThis as typeof globalThis & {
@@ -159,25 +146,17 @@ if (!globalState.__codexJudgeMemoryStoreMock) {
   }
 }
 
-vi.mock('../codex-judge-config', () => ({
-  loadCodexJudgeConfig: () => requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock'),
-}))
-
-vi.mock('../codex-judge-store', () => ({
-  __private: storePrivate,
-  createCodexJudgeStore: () => requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock'),
-}))
-
-vi.mock('../github-client', () => ({
-  createGitHubClient: () => requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock'),
-}))
-
-vi.mock('../memories-store', () => ({
-  createPostgresMemoriesStore: () =>
-    requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memory store mock'),
-}))
-
 let __private: Awaited<typeof import('../codex-judge')>['__private'] | null = null
+
+const requirePrivate = async () => {
+  if (!__private) {
+    __private = (await import('../codex-judge')).__private
+  }
+  if (!__private) {
+    throw new Error('Missing codex judge private API')
+  }
+  return __private
+}
 const store = {
   upsertRunComplete: vi.fn(),
   attachNotify: vi.fn(),
@@ -250,18 +229,15 @@ const memoriesStore = {
 }
 
 beforeEach(async () => {
-  Object.assign(requireMock(globalState.__codexJudgeStoreMock, 'codex judge store mock'), store)
-  Object.assign(requireMock(globalState.__codexJudgeGithubMock, 'codex judge github mock'), github)
-  Object.assign(requireMock(globalState.__codexJudgeConfigMock, 'codex judge config mock'), config)
-  Object.assign(requireMock(globalState.__codexJudgeMemoryStoreMock, 'codex judge memory store mock'), memoriesStore)
-  setMemoryStoreFactory(() => memoriesStore)
-  if (!__private) {
-    __private = (await import('../codex-judge')).__private
-  }
-})
-
-afterEach(() => {
-  setMemoryStoreFactory()
+  const storeMock = requireMock(globalState.__codexJudgeStoreMock, 'store')
+  const githubMock = requireMock(globalState.__codexJudgeGithubMock, 'github')
+  const configMock = requireMock(globalState.__codexJudgeConfigMock, 'config')
+  const memoryStoreMock = requireMock(globalState.__codexJudgeMemoryStoreMock, 'memory store')
+  Object.assign(storeMock, store)
+  Object.assign(githubMock, github)
+  Object.assign(configMock, config)
+  Object.assign(memoryStoreMock, memoriesStore)
+  await requirePrivate()
 })
 
 describe('codex-judge memory snapshots', () => {
@@ -313,7 +289,8 @@ describe('codex-judge memory snapshots', () => {
       createdAt: '2025-01-01T01:00:00Z',
     }
 
-    await requireMock(__private, 'codex judge private').writeMemories(run, evaluation)
+    const privateApi = await requirePrivate()
+    await privateApi.writeMemories(run, evaluation)
 
     expect(persistCalls).toHaveLength(10)
 
