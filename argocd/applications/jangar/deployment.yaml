@@ -114,6 +114,18 @@ spec:
               value: codex
             - name: JANGAR_REDIS_URL
               value: redis://jangar-openwebui-redis:6379/1
+            - name: NATS_URL
+              value: nats://nats.nats.svc.cluster.local:4222
+            - name: NATS_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nats-jangar-credentials
+                  key: username
+            - name: NATS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nats-jangar-credentials
+                  key: password
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

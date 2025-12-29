@@ -2,3 +2,7 @@ jetstream:
   enabled: true
   nats:
     url: nats://nats.nats.svc.cluster.local:4222
+    nkey:
+      secret:
+        name: nats-system-nkey
+        key: system.nkey
