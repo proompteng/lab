@@ -129,7 +129,7 @@ spec:
             memory: 12Gi
       sidecars:
         - name: docker
-          image: docker:25.0-dind-rootless
+          image: docker:25.0-dind
           command: ["dockerd-entrypoint.sh"]
           args:
             - "--host=tcp://0.0.0.0:2375"
