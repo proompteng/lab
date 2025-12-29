@@ -223,11 +223,20 @@ const markdownComponents: Components = {
   blockquote: ({ children }) => (
     <blockquote className="pl-3 border-l border-border text-xs text-muted-foreground">{children}</blockquote>
   ),
-  code: ({ inline, children }) => {
-    if (inline) {
-      return <code className="px-1 py-0.5 rounded-sm border border-border text-[11px]">{children}</code>
-    }
-    return <code className="text-[11px] leading-relaxed text-foreground">{children}</code>
+  code: ({ className, children }) => {
+    const isBlock = typeof className === 'string' && className.length > 0
+    return (
+      <code
+        className={cn(
+          isBlock
+            ? 'text-[11px] leading-relaxed text-foreground'
+            : 'px-1 py-0.5 rounded-sm border border-border text-[11px]',
+          className,
+        )}
+      >
+        {children}
+      </code>
+    )
   },
   pre: ({ children }) => (
     <pre className="overflow-x-auto p-2 rounded-none border border-border bg-muted/30 text-[11px] text-foreground">
