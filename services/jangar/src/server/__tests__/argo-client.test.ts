@@ -45,7 +45,7 @@ const restoreEnv = (snapshot: Record<string, string | undefined>) => {
 
 let envSnapshot: Record<string, string | undefined>
 const originalFetch = globalThis.fetch
-const readFileSyncMock = vi.mocked(readFileSync)
+const readFileSyncMock = readFileSync as unknown as ReturnType<typeof vi.fn>
 type FetchMock = ReturnType<typeof setFetchMock>
 type FetchCall = Parameters<FetchFn>
 
