@@ -383,8 +383,9 @@ const ORIGINAL_FETCH = global.fetch
 beforeEach(async () => {
   harness.reset()
   vi.clearAllMocks()
-  vi.resetModules()
-  __private = (await import('../codex-judge')).__private
+  if (!__private) {
+    __private = (await import('../codex-judge')).__private
+  }
 })
 
 afterEach(() => {
