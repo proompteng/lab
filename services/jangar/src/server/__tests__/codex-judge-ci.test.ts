@@ -198,7 +198,7 @@ const buildRun = (overrides: Partial<CodexRunRecord> = {}): CodexRunRecord => ({
   ...overrides,
 })
 
-describe('codex-judge CI fallback', () => {
+describe('codex-judge CI resolution', () => {
   beforeEach(async () => {
     getRefSha.mockReset()
     getCheckRuns.mockReset()
@@ -209,20 +209,18 @@ describe('codex-judge CI fallback', () => {
     await requirePrivate()
   })
 
-  it('uses branch head SHA when PR is missing', async () => {
-    getRefSha.mockResolvedValueOnce('branchsha1234567890')
-    getCheckRuns.mockResolvedValueOnce({ status: 'pending' })
-
+  it('returns pending when commit SHA is missing', async () => {
     const run = buildRun()
     const privateApi = await requirePrivate()
     const result = await privateApi.resolveCiContext(run, null)
 
-    expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
-    expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', 'branchsha1234567890')
-    expect(result.commitSha).toBe('branchsha1234567890')
+    expect(getRefSha).not.toHaveBeenCalled()
+    expect(getCheckRuns).not.toHaveBeenCalled()
+    expect(result.commitSha).toBeNull()
+    expect(result.ci.status).toBe('pending')
   })
 
-  it('prefers manifest commit SHA over branch head', async () => {
+  it('uses manifest commit SHA when available', async () => {
     const manifestSha = 'a'.repeat(40)
     getCheckRuns.mockResolvedValueOnce({ status: 'success' })
 
@@ -250,10 +248,6 @@ describe('codex-judge CI fallback', () => {
   })
 
   it('ignores short hex values under unrelated keys', async () => {
-    const branchSha = 'b'.repeat(40)
-    getRefSha.mockResolvedValueOnce(branchSha)
-    getCheckRuns.mockResolvedValueOnce({ status: 'pending' })
-
     const run = buildRun({
       runCompletePayload: {
         metadata: {
@@ -265,23 +259,23 @@ describe('codex-judge CI fallback', () => {
     const privateApi = await requirePrivate()
     const result = await privateApi.resolveCiContext(run, null)
 
-    expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
-    expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', branchSha)
-    expect(result.commitSha).toBe(branchSha)
+    expect(getRefSha).not.toHaveBeenCalled()
+    expect(getCheckRuns).not.toHaveBeenCalled()
+    expect(result.commitSha).toBeNull()
+    expect(result.ci.status).toBe('pending')
   })
 
   it('treats CI lookup errors as pending', async () => {
-    const branchSha = 'c'.repeat(40)
-    getRefSha.mockResolvedValueOnce(branchSha)
+    const commitSha = 'c'.repeat(40)
     getCheckRuns.mockRejectedValueOnce(new Error('boom'))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    const run = buildRun()
+    const run = buildRun({ commitSha })
     const privateApi = await requirePrivate()
     const result = await privateApi.resolveCiContext(run, null)
 
-    expect(getRefSha).toHaveBeenCalledWith('owner', 'repo', 'heads/codex/issue-123')
-    expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', branchSha)
+    expect(getRefSha).not.toHaveBeenCalled()
+    expect(getCheckRuns).toHaveBeenCalledWith('owner', 'repo', commitSha)
     expect(result.ci.status).toBe('pending')
 
     warn.mockRestore()

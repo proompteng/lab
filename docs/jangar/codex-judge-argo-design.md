@@ -206,7 +206,8 @@ Artifact access:
 - CI is sourced from GitHub Actions status for the commit SHA produced by the current attempt.
 - Jangar must gate on the exact commit SHA (not branch-level status) to avoid stale green checks from prior attempts.
 - Jangar does not rely on Argo-local tests for completion.
- - Commit SHA source order: PR head SHA (preferred) -> head branch SHA -> fallback to status artifact/manifest.
+- Commit SHA source order: PR head SHA (preferred) -> implementation manifest/status artifacts -> stored commit SHA from notify payload.
+- If the commit SHA cannot be resolved, treat as infra failure and retry (no branch-head fallback).
 
 ## PR Review Gate (Codex Review)
 - Jangar must wait for the Codex review to complete on the PR (review by `codex`/`codex[bot]` or the configured reviewer identity).

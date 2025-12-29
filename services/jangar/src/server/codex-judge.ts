@@ -399,18 +399,6 @@ const normalizeBranchRef = (branch: string) => {
   return `heads/${trimmed}`
 }
 
-const fetchBranchHeadSha = async (repository: string, branch: string) => {
-  if (!branch) return null
-  const ref = normalizeBranchRef(branch)
-  if (!ref) return null
-  const { owner, repo } = parseRepositoryParts(repository)
-  try {
-    return await github.getRefSha(owner, repo, ref)
-  } catch {
-    return null
-  }
-}
-
 const scheduleEvaluation = (runId: string, delayMs: number, options: { reschedule?: boolean } = {}) => {
   const existing = scheduledRuns.get(runId)
   if (existing) {
@@ -616,11 +604,7 @@ const resolveCiContext = async (run: CodexRunRecord, pr: PullRequest | null) => 
   const prSha = pr?.headSha ?? null
   const artifactSha = prSha ? null : extractCommitShaFromRun(run)
   const existingSha = prSha ? null : run.commitSha
-  let commitSha = prSha ?? artifactSha ?? existingSha ?? null
-
-  if (!commitSha && !prSha) {
-    commitSha = await fetchBranchHeadSha(run.repository, run.branch)
-  }
+  const commitSha = prSha ?? artifactSha ?? existingSha ?? null
 
   const ci = await fetchCiStatus(run, commitSha)
   return { commitSha, ci }
@@ -800,11 +784,7 @@ const resolveCommitSha = async (run: CodexRunRecord, fallbackCommitSha: string |
     await store.updateCiStatus({ runId: run.id, status: run.ciStatus ?? 'pending', commitSha })
     return commitSha
   }
-  if (!run.repository || !run.branch) return null
-  const sha = await fetchBranchHeadSha(run.repository, run.branch)
-  if (!sha) return null
-  await store.updateCiStatus({ runId: run.id, status: run.ciStatus ?? 'pending', commitSha: sha })
-  return sha
+  return null
 }
 
 const applyArtifactFallback = async (run: CodexRunRecord, artifacts: ResolvedArtifact[]) => {
@@ -1276,7 +1256,29 @@ const evaluateRun = async (runId: string) => {
     }
 
     const { commitSha, ci } = await resolveCiContext(run, pr)
-    if (!pr && !commitSha) {
+    if (!commitSha) {
+      const evaluation = await store.updateDecision({
+        runId: run.id,
+        decision: 'needs_iteration',
+        reasons: { error: 'missing_commit_sha' },
+        suggestedFixes: {
+          fix: 'Ensure the current attempt publishes a commit SHA (PR head SHA or implementation manifest).',
+        },
+        nextPrompt: 'Ensure the run reports its commit SHA for this attempt, then rerun CI gating.',
+        promptTuning: {},
+        systemSuggestions: {
+          suggestions: [
+            'Include commit_sha in notify payloads or implementation manifests for every attempt.',
+            'Ensure PR creation completes before CI gating so head SHA is available.',
+          ],
+        },
+      })
+      const refreshedRun = (await store.getRunById(run.id)) ?? run
+      await writeMemories(refreshedRun, evaluation)
+      await triggerRerun(run, 'missing_commit_sha', evaluation)
+      return
+    }
+    if (!pr) {
       const evaluation = await store.updateDecision({
         runId: run.id,
         decision: 'needs_iteration',
