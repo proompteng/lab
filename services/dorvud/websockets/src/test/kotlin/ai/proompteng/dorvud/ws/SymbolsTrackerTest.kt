@@ -42,4 +42,27 @@ class SymbolsTrackerTest {
       assertEquals(listOf("TSLA"), result.symbols)
       assertTrue(result.hadError.not())
     }
+
+  @Test
+  fun `keeps last known after success when polling later fails`() =
+    runBlocking {
+      var shouldFail = false
+      val tracker =
+        SymbolsTracker(
+          listOf("AAPL"),
+          fetcher = {
+            if (shouldFail) throw IllegalStateException("boom")
+            listOf("TSLA", "MSFT")
+          },
+        )
+
+      val first = tracker.refresh()
+      assertEquals(listOf("TSLA", "MSFT"), first.symbols)
+      assertTrue(first.hadError.not())
+
+      shouldFail = true
+      val second = tracker.refresh()
+      assertEquals(listOf("TSLA", "MSFT"), second.symbols)
+      assertTrue(second.hadError)
+    }
 }

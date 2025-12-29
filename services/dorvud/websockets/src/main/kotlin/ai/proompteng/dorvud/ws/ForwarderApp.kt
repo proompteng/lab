@@ -672,7 +672,9 @@ class ForwarderApp(
         add(config.topics.quotes)
         add(config.topics.bars1m)
         add(config.topics.status)
-        config.topics.tradeUpdates?.let { add(it) }
+        if (tradeUpdatesEnabled) {
+          config.topics.tradeUpdates?.let { add(it) }
+        }
       }
 
     val readyNow =
@@ -769,6 +771,8 @@ class ForwarderApp(
         }
       }
     } catch (e: Exception) {
+      val elapsed = Duration.ofNanos(System.nanoTime() - start)
+      metrics.recordKafkaLatency(elapsed)
       metrics.kafkaSendErrors.increment()
       recordKafkaFailure(e)
     }
@@ -781,8 +785,13 @@ class ForwarderApp(
 
   private fun recordKafkaFailure(exception: Exception) {
     val failures = kafkaFailureCount.incrementAndGet()
+    if (failures == 1) {
+      logger.warn(exception) { "kafka send failure detected; count=$failures" }
+    }
     if (failures >= 3) {
-      logger.warn(exception) { "kafka send failures reached $failures; marking not-ready" }
+      if (failures == 3) {
+        logger.warn(exception) { "kafka send failures reached $failures; marking not-ready" }
+      }
       setKafkaReady(false)
     }
   }

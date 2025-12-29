@@ -23,4 +23,11 @@ class ReconnectBackoffTest {
 
     assertTrue(delay in 800..1_200)
   }
+
+  @Test
+  fun `attempt zero returns base delay`() {
+    val backoff = ReconnectBackoff(baseMs = 750, maxMs = 5_000, jitterRatio = 0.0, random = Random(7))
+
+    assertEquals(750, backoff.nextDelay(0))
+  }
 }
