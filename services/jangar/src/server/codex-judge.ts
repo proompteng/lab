@@ -498,8 +498,12 @@ const parseRepositoryParts = (repository: string) => {
   return { owner, repo }
 }
 
+const UNKNOWN_REPOSITORY = 'unknown/unknown'
+const UNKNOWN_BRANCH = 'unknown'
+
 const hasRequiredRunMetadata = (run: Pick<CodexRunRecord, 'repository' | 'issueNumber' | 'branch'>) => {
   if (!run.repository || !run.branch) return false
+  if (run.repository === UNKNOWN_REPOSITORY || run.branch === UNKNOWN_BRANCH) return false
   if (!Number.isFinite(run.issueNumber) || run.issueNumber <= 0) return false
   try {
     parseRepositoryParts(run.repository)
@@ -2790,10 +2794,10 @@ export const handleRunComplete = async (payload: Record<string, unknown>) => {
   const parsed = parseRunCompletePayload(payload)
   const existing =
     parsed.workflowName.length > 0 ? await store.getRunByWorkflow(parsed.workflowName, parsed.workflowNamespace) : null
-  const resolvedRepository = parsed.repository || existing?.repository || 'unknown/unknown'
+  const resolvedRepository = parsed.repository || existing?.repository || UNKNOWN_REPOSITORY
   const resolvedIssueNumber =
     parsed.issueNumber > 0 ? parsed.issueNumber : existing?.issueNumber ? Number(existing.issueNumber) : 0
-  const resolvedBranch = parsed.head || existing?.branch || 'unknown'
+  const resolvedBranch = parsed.head || existing?.branch || UNKNOWN_BRANCH
   const resolvedBase =
     parsed.base ||
     (typeof existing?.runCompletePayload?.base === 'string' ? existing.runCompletePayload.base : null) ||
