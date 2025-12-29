@@ -24,7 +24,7 @@ spec:
       serviceAccountName: graf
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/proompteng/graf@sha256:ad2c177f2a1111172ccf615ab59c0caf6d762b133f4effc65f41ecd03cf67074
+          image: registry.ide-newton.ts.net/proompteng/graf@sha256:e00fce9e6ad0d04741e0a35168e1e6748cdbb561433c24b3a3542277ef6621fb
           imagePullPolicy: Always
           ports:
             - name: http1
@@ -51,9 +51,9 @@ spec:
                   name: graf-api
                   key: bearer-tokens
             - name: GRAF_VERSION
-              value: v0.316.1-4-g08b95180
+              value: v0.309.1-1-g94f5e999
             - name: GRAF_COMMIT
-              value: 08b951805cbe7f9e35b5b920581d0a9750c2ebfd
+              value: 94f5e99956ef8c91bbe620cb17585ee88581d098
             - name: MINIO_ENDPOINT
               value: http://observability-minio.minio.svc.cluster.local:9000
             - name: MINIO_BUCKET
