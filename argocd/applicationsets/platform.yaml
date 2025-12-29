@@ -105,14 +105,14 @@ spec:
             namespace: nats
             annotations:
               argocd.argoproj.io/sync-wave: "3"
-            automation: auto
+            automation: manual
             enabled: "true"
           - name: nack
             path: argocd/applications/nack
             namespace: nack
             annotations:
               argocd.argoproj.io/sync-wave: "4"
-            automation: auto
+            automation: manual
             enabled: "true"
           - name: kubernetes-reflector
             path: argocd/applications/kubernetes-reflector
