@@ -37,7 +37,7 @@ data:
       - name: codex-judge-pipeline.rules
         rules:
           - alert: CodexEventBusNoWorkflowCompletions
-            expr: changes(nats_stream_last_seq{stream_name="default"}[15m]) == 0
+            expr: sum(changes({__name__=~"(nats|jetstream)_stream_last_seq", stream_name="default"}[15m])) == 0
             for: 15m
             labels:
               severity: warning
@@ -45,7 +45,7 @@ data:
               summary: Argo Events EventBus has no workflow completion messages
               description: No new JetStream messages landed in the Argo Events default stream for 15 minutes.
           - alert: CodexEventBusJetStreamDisabled
-            expr: max(nats_server_jetstream_disabled{cluster="default"}) == 1
+            expr: max({__name__=~"(nats|jetstream)_server_jetstream_disabled", cluster="default"}) == 1
             for: 5m
             labels:
               severity: critical
