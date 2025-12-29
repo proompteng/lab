@@ -393,7 +393,7 @@ export function projectTemplates(name: string): Template[] {
             'docker:build': 'bun run scripts/build-docker.ts --tag temporal-worker:latest',
           },
           dependencies: {
-            '@proompteng/temporal-bun-sdk': '^0.1.0',
+            '@proompteng/temporal-bun-sdk': '^0.5.0',
             effect: '^3.2.0',
           },
           devDependencies: {
