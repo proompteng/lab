@@ -125,7 +125,7 @@ COPY apps/froussard/src/codex/cli/codex-bootstrap.ts /usr/local/bin/codex-bootst
 COPY apps/froussard/src/codex/cli/codex-implement.ts /usr/local/bin/codex-implement
 COPY apps/froussard/src/codex/cli/codex-research.ts /usr/local/bin/codex-research
 COPY apps/froussard/src/codex/cli/codex-graf.ts /usr/local/bin/codex-graf
-COPY apps/froussard/scripts/codex-nats-publish.sh /usr/local/bin/codex-nats-publish
+COPY apps/froussard/scripts/codex-nats-publish.ts /usr/local/bin/codex-nats-publish
 COPY apps/froussard/scripts/discord-channel.ts /usr/local/bin/discord-channel.ts
 COPY apps/froussard/src/codex/cli/lib /usr/local/bin/lib
 # Provide @proompteng/codex for the CLI helpers at runtime.
