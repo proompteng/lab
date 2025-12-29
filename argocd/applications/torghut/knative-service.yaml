@@ -17,13 +17,13 @@ spec:
       annotations:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/target: "80"
-        client.knative.dev/updateTimestamp: 2025-12-29T00:51:12.630Z
+        client.knative.dev/updateTimestamp: 2025-12-29T01:50:48.323Z
     spec:
       containerConcurrency: 0
       timeoutSeconds: 60
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:3e017a6681d70db3490bc32ae693bb3d027d784e50680f8051b92a8437679295
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:9ecb053e4bb8464925b12171e5d648700f70ee8d409e0fedff8ca50cc5975f56
           imagePullPolicy: Always
           ports:
             - name: http1
@@ -72,9 +72,9 @@ spec:
             - name: CLICKHOUSE_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.374.0-12-g08054def
+              value: v0.374.2-9-g68d870d6
             - name: TORGHUT_COMMIT
-              value: 08054def4798b7a705948717c7c8a2dc1a8859a9
+              value: 68d870d6b2f1b01ab951e4bfc1f7e24ba5bb023f
           livenessProbe:
             httpGet:
               path: /healthz

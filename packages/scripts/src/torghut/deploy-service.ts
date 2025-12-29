@@ -22,10 +22,23 @@ const databaseSecretName = 'torghut-db-app'
 const databaseNamespace = 'torghut'
 const databaseService = 'svc/torghut-db-rw'
 const databasePort = 5432
+const defaultMigrationAttempts = 3
 
 type PortForwardHandle = {
   localPort: number
   stop: () => Promise<void>
+}
+
+type RunOptions = {
+  cwd?: string
+  env?: Record<string, string | undefined>
+}
+
+type DeploymentStatus = {
+  desired: number
+  updated: number
+  ready: number
+  available: number
 }
 
 const ensureTools = () => {
@@ -34,6 +47,25 @@ const ensureTools = () => {
   ensureCli('kubectl')
   ensureCli('uv')
 }
+
+const buildEnv = (env?: Record<string, string | undefined>) => {
+  const source = env ? { ...process.env, ...env } : process.env
+  return Object.fromEntries(Object.entries(source).filter(([, value]) => value !== undefined)) as Record<string, string>
+}
+
+const runWithStatus = async (command: string, args: string[], options: RunOptions = {}) => {
+  console.log(`$ ${command} ${args.join(' ')}`.trim())
+  const subprocess = Bun.spawn([command, ...args], {
+    cwd: options.cwd,
+    env: buildEnv(options.env),
+    stdout: 'inherit',
+    stderr: 'inherit',
+  })
+
+  return subprocess.exited
+}
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const capture = async (command: string, args: string[]): Promise<string> => {
   const subprocess = Bun.spawn([command, ...args], {
@@ -187,20 +219,36 @@ const runMigrations = async () => {
     return
   }
   const databaseUrl = await resolveDatabaseUrl()
-  const forward = await startPortForward()
-  const localUrl = rewriteDatabaseUrl(databaseUrl, forward.localPort)
+  const attempts = Number.parseInt(process.env.TORGHUT_MIGRATION_ATTEMPTS ?? '', 10) || defaultMigrationAttempts
 
-  try {
-    console.log('Running torghut migrations via local port-forwarded connection')
-    await run('uv', ['run', 'alembic', 'upgrade', 'head'], {
-      cwd: resolve(repoRoot, 'services/torghut'),
-      env: {
-        DB_DSN: localUrl,
-      },
-    })
-  } finally {
-    await forward.stop()
-    console.log('kubectl port-forward closed')
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let forward: PortForwardHandle | null = null
+    try {
+      forward = await startPortForward()
+      const localUrl = rewriteDatabaseUrl(databaseUrl, forward.localPort)
+      console.log(`Running torghut migrations via local port-forwarded connection (attempt ${attempt}/${attempts})`)
+      const exitCode = await runWithStatus('uv', ['run', 'alembic', 'upgrade', 'head'], {
+        cwd: resolve(repoRoot, 'services/torghut'),
+        env: {
+          DB_DSN: localUrl,
+        },
+      })
+      if (exitCode === 0) {
+        return
+      }
+      throw new Error(`alembic exited with code ${exitCode}`)
+    } catch (error) {
+      if (attempt === attempts) {
+        fatal('Failed to run torghut migrations after multiple attempts', error)
+      }
+      console.warn(`Migration attempt ${attempt} failed; retrying...`)
+      await delay(2000 * attempt)
+    } finally {
+      if (forward) {
+        await forward.stop()
+        console.log('kubectl port-forward closed')
+      }
+    }
   }
 }
 
@@ -371,6 +419,58 @@ const updateTechnicalAnalysisDeployment = (image: string, version: string, commi
   console.log(`Updated ${taDeploymentPath} with image ${image}`)
 }
 
+const resolveDeploymentReplicas = async (deploymentName: string): Promise<number> => {
+  const raw = (
+    await capture('kubectl', [
+      '-n',
+      databaseNamespace,
+      'get',
+      'deployment',
+      deploymentName,
+      '-o',
+      'jsonpath={.spec.replicas}',
+    ])
+  ).trim()
+  const replicas = Number.parseInt(raw, 10)
+  return Number.isFinite(replicas) && replicas > 0 ? replicas : 1
+}
+
+const readDeploymentStatus = async (deploymentName: string): Promise<DeploymentStatus> => {
+  const raw = await capture('kubectl', ['-n', databaseNamespace, 'get', 'deployment', deploymentName, '-o', 'json'])
+  const parsed = JSON.parse(raw) as {
+    spec?: { replicas?: number }
+    status?: {
+      updatedReplicas?: number
+      readyReplicas?: number
+      availableReplicas?: number
+    }
+  }
+  const desired = Number(parsed?.spec?.replicas ?? 1)
+  return {
+    desired: Number.isFinite(desired) && desired > 0 ? desired : 1,
+    updated: Number(parsed?.status?.updatedReplicas ?? 0),
+    ready: Number(parsed?.status?.readyReplicas ?? 0),
+    available: Number(parsed?.status?.availableReplicas ?? 0),
+  }
+}
+
+const formatDeploymentStatus = (status: DeploymentStatus) =>
+  `desired=${status.desired} updated=${status.updated} ready=${status.ready} available=${status.available}`
+
+const isDeploymentReady = (status: DeploymentStatus) =>
+  status.ready >= status.desired && status.available >= status.desired && status.updated >= status.desired
+
+const deploymentReady = async (deploymentName: string, context: string) => {
+  const status = await readDeploymentStatus(deploymentName)
+  const formatted = formatDeploymentStatus(status)
+  if (isDeploymentReady(status)) {
+    console.log(`${deploymentName} deployment ready (${context}): ${formatted}`)
+    return true
+  }
+  console.warn(`${deploymentName} deployment not ready (${context}): ${formatted}`)
+  return false
+}
+
 const applyManifest = async () => {
   const waitTimeout = process.env.TORGHUT_KN_WAIT_TIMEOUT ?? '300'
   await run('kn', [
@@ -390,7 +490,48 @@ const applyManifest = async () => {
 const applyWebsocketResources = async () => {
   const waitTimeout = '300s'
   await run('kubectl', ['apply', '-k', websocketKustomizePath])
-  await run('kubectl', ['-n', 'torghut', 'rollout', 'status', 'deployment/torghut-ws', `--timeout=${waitTimeout}`])
+  const rolloutExit = await runWithStatus('kubectl', [
+    '-n',
+    databaseNamespace,
+    'rollout',
+    'status',
+    'deployment/torghut-ws',
+    `--timeout=${waitTimeout}`,
+  ])
+
+  if (rolloutExit === 0) {
+    return
+  }
+
+  console.warn('torghut-ws rollout timed out; forcing a single-replica restart to clear Alpaca connection limits')
+  const desiredReplicas = await resolveDeploymentReplicas('torghut-ws')
+  await run('kubectl', ['-n', databaseNamespace, 'scale', 'deployment/torghut-ws', '--replicas=0'])
+  await run('kubectl', ['-n', databaseNamespace, 'scale', 'deployment/torghut-ws', `--replicas=${desiredReplicas}`])
+  const availableExit = await runWithStatus('kubectl', [
+    '-n',
+    databaseNamespace,
+    'wait',
+    '--for=condition=available',
+    'deployment/torghut-ws',
+    `--timeout=${waitTimeout}`,
+  ])
+
+  if (availableExit !== 0 && !(await deploymentReady('torghut-ws', 'after restart wait'))) {
+    fatal('torghut-ws failed to become ready after restart')
+  }
+
+  const restartRolloutExit = await runWithStatus('kubectl', [
+    '-n',
+    databaseNamespace,
+    'rollout',
+    'status',
+    'deployment/torghut-ws',
+    `--timeout=${waitTimeout}`,
+  ])
+
+  if (restartRolloutExit !== 0 && !(await deploymentReady('torghut-ws', 'after restart rollout'))) {
+    fatal('torghut-ws failed to roll out after restart')
+  }
 }
 
 const applyTechnicalAnalysisResources = async () => {
