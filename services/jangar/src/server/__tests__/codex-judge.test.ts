@@ -301,7 +301,7 @@ const harness = (() => {
     })),
     getPullRequestDiff: vi.fn(async () => 'diff --git a/file b/file'),
     getRefSha: vi.fn(async () => 'sha-1'),
-    getFile: vi.fn(async () => ({ content: '', sha: 'file-sha' })),
+    getFile: vi.fn(async (_owner: string, _repo: string, _path: string) => ({ content: '', sha: 'file-sha' })),
     updateFile: vi.fn(async () => ({})),
     createBranch: vi.fn(async () => ({})),
     createPullRequest: vi.fn(async () => ({ html_url: 'https://github.com/proompteng/lab/pull/101' })),
