@@ -21,12 +21,15 @@ data class ForwarderConfig(
   val alpacaFeed: String,
   val alpacaStreamUrl: String,
   val alpacaBaseUrl: String,
+  val alpacaTradeStreamUrl: String?,
   val jangarSymbolsUrl: String?,
+  val staticSymbols: List<String>,
   val symbolsPollIntervalMs: Long,
   val subscribeBatchSize: Int,
   val shardCount: Int,
   val shardIndex: Int,
   val enableTradeUpdates: Boolean,
+  val enableBarsBackfill: Boolean,
   val reconnectBaseMs: Long,
   val reconnectMaxMs: Long,
   val dedupTtlSeconds: Long,
@@ -50,9 +53,19 @@ data class ForwarderConfig(
       if (symbolsPollIntervalMs <= 0) error("SYMBOLS_POLL_INTERVAL_MS must be > 0")
       if (subscribeBatchSize <= 0) error("SUBSCRIBE_BATCH_SIZE must be > 0")
 
+      val staticSymbols =
+        mergedEnv["SYMBOLS"]
+          ?.split(",")
+          ?.map { it.trim() }
+          ?.filter { it.isNotEmpty() }
+          ?: emptyList()
+
       val jangarSymbolsUrl =
         mergedEnv["JANGAR_SYMBOLS_URL"]?.trim()?.takeIf { it.isNotEmpty() }
-          ?: error("JANGAR_SYMBOLS_URL must be set")
+
+      if (jangarSymbolsUrl == null && staticSymbols.isEmpty()) {
+        error("JANGAR_SYMBOLS_URL or SYMBOLS must be set")
+      }
 
       val topics =
         TopicConfig(
@@ -92,12 +105,15 @@ data class ForwarderConfig(
         alpacaFeed = mergedEnv["ALPACA_FEED"] ?: "iex",
         alpacaStreamUrl = mergedEnv["ALPACA_STREAM_URL"] ?: "wss://stream.data.alpaca.markets",
         alpacaBaseUrl = mergedEnv["ALPACA_BASE_URL"] ?: "https://data.alpaca.markets",
+        alpacaTradeStreamUrl = mergedEnv["ALPACA_TRADE_STREAM_URL"]?.trim()?.takeIf { it.isNotEmpty() },
         jangarSymbolsUrl = jangarSymbolsUrl,
+        staticSymbols = staticSymbols,
         symbolsPollIntervalMs = symbolsPollIntervalMs,
         subscribeBatchSize = subscribeBatchSize,
         shardCount = shardCount,
         shardIndex = shardIndex,
         enableTradeUpdates = mergedEnv["ENABLE_TRADE_UPDATES"]?.toBooleanStrictOrNull() ?: false,
+        enableBarsBackfill = mergedEnv["ENABLE_BARS_BACKFILL"]?.toBooleanStrictOrNull() ?: false,
         reconnectBaseMs = mergedEnv["RECONNECT_BASE_MS"]?.toLongOrNull() ?: 500,
         reconnectMaxMs = mergedEnv["RECONNECT_MAX_MS"]?.toLongOrNull() ?: 30_000,
         dedupTtlSeconds = mergedEnv["DEDUP_TTL_SEC"]?.toLongOrNull() ?: 5,

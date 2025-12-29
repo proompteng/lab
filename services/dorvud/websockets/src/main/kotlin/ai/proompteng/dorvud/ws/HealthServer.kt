@@ -25,6 +25,7 @@ class HealthServer(
   private val config: ForwarderConfig,
 ) {
   private var engine: ApplicationEngine? = null
+  private var metricsEngine: ApplicationEngine? = null
 
   fun start() {
     if (engine != null) return
@@ -34,22 +35,43 @@ class HealthServer(
         install(ContentNegotiation) {
           json(Json { encodeDefaults = true })
         }
-        metricsRoutes()
+        healthRoutes()
+        if (config.metricsPort == config.healthPort) {
+          metricsRoutes()
+        }
       }.start(wait = false)
     logger.info { "health server listening on ${config.healthPort}" }
+
+    if (config.metricsPort != config.healthPort) {
+      metricsEngine =
+        embeddedServer(CIO, port = config.metricsPort) {
+          install(ContentNegotiation) {
+            json(Json { encodeDefaults = true })
+          }
+          metricsRoutes()
+        }.start(wait = false)
+      logger.info { "metrics server listening on ${config.metricsPort}" }
+    }
   }
 
   fun stop() {
     engine?.stop()
     engine = null
+    metricsEngine?.stop()
+    metricsEngine = null
   }
 
-  private fun Application.metricsRoutes() {
+  private fun Application.healthRoutes() {
     routing {
       get("/healthz") { call.respondText("ok") }
       get("/readyz") {
         if (app.isReady()) call.respondText("ready") else call.respondText("not-ready", status = HttpStatusCode.ServiceUnavailable)
       }
+    }
+  }
+
+  private fun Application.metricsRoutes() {
+    routing {
       get("/metrics") {
         val scrape = (Metrics.registry as? PrometheusMeterRegistry)?.scrape() ?: ""
         call.respondText(scrape)
